@@ -63,6 +63,11 @@ LICENSE text eol=lf
 # adopted copies may still use one consistent CRLF style, which audit normalizes.
 tools/markdownlint/* text eol=lf
 
+# The prior-default image list is embedded into the binary and captured by the bootstrap
+# source archive, and devcontainer bump rewrites it in its LF form; a CRLF checkout would
+# change the archive digest and make every bump rewrite the whole file.
+internal/devcontainer/prior-images.json text eol=lf
+
 # Every staged .sh is shellchecked and every staged .yml/.yaml is yamllint --strict-ed
 # by .config/lefthook/scripts/checks.py, and both reject carriage returns outright:
 # shellcheck raises SC1017 ("Literal carriage return") on the shebang line and yamllint's

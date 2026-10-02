@@ -132,10 +132,12 @@ a malformed digest is refused (`validateBootstrapImages` in
 `internal/devcontainer/bootstrap_digest_test.go`).
 
 The reviewed defaults, `DefaultBuilderImage` and `DefaultBaseImage` in
-`internal/devcontainer/bootstrap.go`, are digest-only references. The comment
-beside each keeps the full `repository:tag@sha256:<digest>` reference it was
-reviewed at, and `TestReviewedDefaultCommentsNameTheirDigest` holds that comment
-to the constant's digest. `@devcontainers/cli` 0.89.0 refuses
+`internal/devcontainer/bootstrap.go`, are digest-only references. The
+`// Reviewed at` line directly above each keeps the full
+`repository:tag@sha256:<digest>` reference it was reviewed at, and
+`TestReviewedDefaultCommentsNameTheirDigest` holds that line to the constant's
+digest. The line is the image's one pin
+([Moving a reviewed default image](#moving-a-reviewed-default-image)). `@devcontainers/cli` 0.89.0 refuses
 a `repository:tag@sha256:<digest>` reference while it inspects the registry
 (devcontainers/cli#1307), so it cannot build a bundle that records one
 ([#333](https://github.com/cordanaLLM/praetor/issues/333)). Praetor still
@@ -147,9 +149,9 @@ recorded there. A recorded image that is an earlier reviewed default, such as
 the `ubuntu-24.04` base Praetor shipped before the 26.04 move, is refreshed to
 the current reviewed pin. So is the current default recorded with a tag, such as
 the `ubuntu26.04` form generation recorded before the defaults became
-digest-only. Earlier defaults are listed as `repository@digest` in
-`priorDefaultBaseImages` and `priorDefaultBuilderImages` in
-`internal/devcontainer/bootstrap.go`, and a recorded image matches the current or
+digest-only. Earlier defaults are listed as `repository@digest`, oldest first,
+under `base` and `builder` in `internal/devcontainer/prior-images.json`, which
+is compiled into the binary, and a recorded image matches the current or
 an earlier default when it names the same repository and digest, under any tag
 or none (`isReviewedPin` in `internal/devcontainer/bootstrap_recorded.go`). Any
 other recorded image is the adopter's choice and is kept, so `--force` does not
@@ -173,6 +175,101 @@ Dry-run lists planned companion paths without writing them. Existing custom
 DevContainers are preserved and reported as execution-unverified. Forced
 adoption keeps recorded images by the same rule and lists each note as a
 warning.
+
+## Moving a reviewed default image
+
+The bundle files are generated, so an image never moves by an edit to
+`.devcontainer/Dockerfile.praetor` or `devcontainer.json`: verification rejects
+the edit and names the two commands that repair it. In a Praetor checkout, one
+command moves a default
+([#323](https://github.com/cordanaLLM/praetor/issues/323)):
+
+```bash
+praetorctl devcontainer bump \
+  --builder-image docker.io/library/golang:<tag>@sha256:<digest>
+```
+
+`--base-image` moves the base the same way, and both may be given. The command
+(`Bump` in `internal/devcontainer/bootstrap_bump.go`):
+
+1. Rewrites the pin in `internal/devcontainer/bootstrap.go`, the `// Reviewed at`
+   line and the digest-only constant below it, and the `FROM` line of
+   `docker/dev/Dockerfile`, which builds from the builder pin.
+2. Appends the replaced image to `internal/devcontainer/prior-images.json`, so a
+   regeneration refreshes an adopter's bundle that recorded it instead of
+   keeping it as the adopter's choice.
+3. Regenerates the bundle at `--output` from the checkout with the new pins and
+   verifies it.
+
+A failure at any step restores every file the command wrote. The new reference
+must carry a tag and a digest and stay in the pin's repository; a tagless
+reference is refused. `--source-root` selects the checkout and defaults to the
+directory of `--config`; `--force` and `--verify` are not accepted. Commit the
+pin, the prior list, the Dockerfile and the bundle together.
+
+The tag moves with the same command. Give the new tag with its digest, and the
+command rewrites the tag in the `// Reviewed at` line and in the `FROM` line,
+also when the new tag names the digest already pinned (a floating tag and a
+patch tag share one). The tests read the tag and the digest from the
+`// Reviewed at` line (`ReviewedReferences` in
+`internal/devcontainer/reviewed_images.go`) and spell neither, so the tree
+passes after a move to another tag, by this command or by a Renovate tag
+update. Prose that explains a tag, such as the comment above `DefaultBaseImage`,
+is not rewritten: review it in the same change. A tag that also occurs in the
+image's repository or digest is refused, because Renovate replaces the tag's
+text inside the pin and could not move such a tag alone.
+
+The prior list only grows, and nothing prunes it: a bundle that recorded a
+removed image would be kept as the adopter's choice instead of refreshed. Each
+role holds at most 256 images (`maxPriorImages` in
+`internal/devcontainer/reviewed_images.go`). A bump that would pass that bound
+is refused before it writes anything, and the refusal names the remedy: raise
+`maxPriorImages` in a reviewed change, then run the bump again.
+
+Without an image option the command finishes a move already made to the pin: it
+records the image the bundle still holds as replaced and regenerates. That is
+how a Renovate update lands, of the digest or of the tag with it.
+`renovate.json` points Renovate at the pin, never at the bundle:
+
+- A regex custom manager reads the `// Reviewed at` line and its constant with
+  `ReviewedPinPattern` (`internal/devcontainer/reviewed_images.go`). Renovate
+  looks the digest up under the reviewed tag and rewrites every occurrence of
+  the old digest in the match, so the line and the constant move together.
+- A `packageRules` entry disables Renovate for `.devcontainer/devcontainer.json`
+  and `.devcontainer/Dockerfile.praetor`. The Dockerfile pins its images
+  digest-only, and Renovate looks a reference without a tag up as `latest`: it
+  proposed `golang:latest` and `devcontainers/base:latest` that way.
+- A group keeps the pin and the `FROM` line of `docker/dev/Dockerfile` in one
+  branch.
+- DevContainer features move through the catalog, not through
+  `devcontainer.json`: two custom managers read the feature references and the
+  Node.js version under `.config/archetypes/`
+  ([archetype authoring](archetype-authoring.md)).
+
+The Renovate branch moves the pin and the Dockerfile only, so
+`TestPinnedImagesMatchTheDockerfilesThatUseThem` fails on its takeover until
+`praetorctl devcontainer bump` has run there
+([Renovate pull requests](contributing.md#renovate-pull-requests)).
+
+Tests: `internal/devcontainer/bootstrap_bump_test.go`, which also bumps to
+another tag and to the bound of the prior list,
+`internal/devcontainer/reviewed_images_test.go`,
+`cmd/standardsctl/devcontainer_bump_test.go`, which replays a Renovate builder
+update and a tag move through the command and requires `devcontainer verify` to
+pass, and `internal/devcontainer/renovate_test.go`, which applies
+`renovate.json` to the tree: the pins are read with their tags, the bundle is
+disabled, and no file Renovate reads pins a digest without a tag. The assertions
+the committed tree is held to are in
+`internal/devcontainer/reviewed_tree_test.go`, and the bump tests run them on
+the checkout a bump leaves.
+
+An adopted repository gets the same protection from adoption. When its bundle
+is one Praetor generated, the `renovate-ignore` step lists
+`.devcontainer/devcontainer.json` and `.devcontainer/Dockerfile.praetor` in the
+entry that disables the adopter's Renovate for Praetor-managed files
+([documentation governance](documentation-governance.md)). A DevContainer of
+the adopter's own is preserved and stays with their Renovate. Image updates
+reach an adopter with a regeneration from a reviewed Praetor checkout.
 
 ## Bundle freshness
 

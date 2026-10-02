@@ -1,0 +1,11 @@
+# A job in a container runs its steps under sh by default; until false is unbounded there too.
+on: push
+jobs:
+  wait:
+    runs-on: ubuntu-latest
+    container: alpine:3
+    steps:
+      - run: |
+          until false; do
+            sleep 1
+          done

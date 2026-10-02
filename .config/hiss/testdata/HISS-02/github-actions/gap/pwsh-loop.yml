@@ -1,0 +1,11 @@
+# A Windows runner runs a block under pwsh by default, which the shell scanner does not read: the
+# block is counted as an unscanned pwsh block and its unbounded loop goes unreported.
+on: push
+jobs:
+  poll:
+    runs-on: windows-latest
+    steps:
+      - run: |
+          while ($true) {
+            Start-Sleep -Seconds 5
+          }

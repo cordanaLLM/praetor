@@ -1,0 +1,10 @@
+# A failure handled by its exit status is not discarded, and || true inside an expression is
+# evaluated by GitHub before the shell starts, so it is not shell.
+on: push
+jobs:
+  urls:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          grep -rhoE 'https?://[^" ]+' site/ || [ $? -eq 1 ]
+          echo "${{ github.event.inputs.flag || true }}"

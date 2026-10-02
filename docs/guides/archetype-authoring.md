@@ -52,9 +52,16 @@ fails while the catalog names one feature two ways, and
 (`internal/config/shipped_feature_combinations_test.go`) resolves every profile alone, with each
 facet and with the whole catalog declared at once, and fails on each selection that does not
 resolve. Praetor's own `.devcontainer/devcontainer.json` is verified against the rendering of the
-pinned catalog, so an update of that file alone, as a Renovate DevContainer branch makes it,
+pinned catalog, so an update of that file alone, as a Renovate DevContainer branch made it,
 fails `praetorctl devcontainer verify` and the audit until the catalog files, the lock and
-`catalogValuesChangedSinceBUG782` move with it.
+`catalogValuesChangedSinceBUG782` move with it. `renovate.json` therefore disables Renovate for
+the generated bundle and reads the features from the catalog instead: one custom manager matches
+every `ghcr.io/devcontainers/features/<name>:<major>` reference under `.config/archetypes/`, so
+its branch moves every file naming the feature, and another the `version` option of the node
+feature (`TestRenovateReadsDevContainerFeaturesFromTheCatalog` in
+`internal/devcontainer/renovate_test.go`). The takeover of such a branch re-pins
+`.standards.lock`, lists the changed files in `catalogValuesChangedSinceBUG782` and regenerates
+the bundle.
 
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
 settings and toolchains a repository of that kind requires. Five profiles currently have any flavor

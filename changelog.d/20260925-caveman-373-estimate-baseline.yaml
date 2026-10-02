@@ -1,0 +1,4 @@
+type: added
+title: "praetorctl caveman estimate --base=<rev> compares each path with a git revision and prints before, after and difference per file and in total; a directory counts the files git tracks or would track, and a symlinked directory or a path in another letter case than git tracks is an error"
+issue: "#373"
+breaking: false

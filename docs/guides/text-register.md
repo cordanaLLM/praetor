@@ -302,7 +302,11 @@ docs register, and a reply to a person is full prose.
 Register compliance on human-typed surfaces (issues, PR bodies, review comments, commit
 bodies, ADRs, docs pages, changelog titles) is advisory, by the operator's own decision
 (ADR-0010, "Consequences"): nothing measures whether a pull-request body reads
-as social prose.
+as social prose. The docs and social registers have no lint of their own, and the command
+never reports that absence as a pass: `praetorctl caveman check --surface=docs <file>` reads
+the file, so a missing path fails as it does on every surface, and then exits non-zero with
+`surfaces.docs = docs has no Caveman verdict; input NOT checked` (see "Surfaces" below;
+`TestCavemanCheckSurfaceWithoutLint` in `cmd/standardsctl/caveman_test.go`).
 
 Mechanical: the block in AGENTS.md must match the manifest; AGENTS.md, every canonical
 persona under `.agents/agents/` and every canonical skill under `.agents/skills/` must pass
@@ -399,6 +403,7 @@ praetorctl caveman check --kind=context AGENTS.md .agents/agents/
 praetorctl caveman check --kind=message candidate-note.md
 praetorctl caveman floor AGENTS.md AGENTS.caveman.md
 praetorctl caveman estimate AGENTS.md
+praetorctl caveman estimate --base=origin/main AGENTS.md .agents/
 ```
 
 `check` prints one summary line per input, then its findings as `<path>:<line> <rule>:
@@ -661,12 +666,90 @@ estimator. The SARIF distillation in `internal/lockdown` and the package-docs di
 `internal/docdistill` call it, and `praetorctl caveman estimate` prints it per input and in
 total.
 
+#### Measuring a rewrite against a git revision
+
+`estimate --base=<rev>` answers what a rewrite saved: it measures each path at the revision
+and in the working tree and prints before, after and the signed difference per file and in
+total, under the keys of the plain line. The fixture of `TestCavemanEstimateBasePositive` in
+`cmd/standardsctl/caveman_baseline_test.go` reports:
+
+```text
+base: main = <40-digit commit>
+docs/edited.md: bytes=23->11 (-12) lines=1->1 (+0) tokens_est=5->2 (-3)
+docs/gone.md: bytes=30->0 (-30) lines=2->0 (-2) tokens_est=7->0 (-7) worktree=absent
+docs/kept.md: bytes=14->14 (+0) lines=1->1 (+0) tokens_est=3->3 (+0)
+docs/new.md: bytes=0->10 (+10) lines=0->1 (+1) tokens_est=0->2 (+2) base=absent
+docs/old/x.md: bytes=4->0 (-4) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent
+total: inputs=5 bytes=71->35 (-36) tokens_est=17->7 (-10) base_absent=1 worktree_absent=2 worktree_ignored=0
+```
+
+| Input | Behaviour |
+| :--- | :--- |
+| `<rev>` | any revision that names a commit: a branch, a tag, `HEAD~1`, an object id. It is resolved once, in the repository of the first path, and the first line prints the commit, so every read sees one tree. A revision with a shell metacharacter (`HEAD@{1}`) or a leading `-` is refused (`util.ValidateExecArg`) |
+| a file | measured on both sides. On one side only it is a row ending in `base=absent` or `worktree=absent`, the missing side counted as zero; on neither side it is an error, so a typo is never a row. A file whose directory was deleted or renamed since the revision is such a `worktree=absent` row too. A file git ignores is measured all the same, because it was asked for by name, and its row ends in `worktree=ignored` |
+| a directory | the union of the Markdown files below it at the revision and of those git tracks or would track in the working tree, in lexical order, so a file or a whole subdirectory deleted since the revision is still reported. A directory the working tree no longer holds is its Markdown files at the revision, each `worktree=absent`; one with no such file on either side is an error. A symlink named as the directory is refused |
+| `-` | an error: standard input has no revision |
+
+A renamed file is two rows, the old path `worktree=absent` and the new one `base=absent`.
+Git runs in the deepest directory of each path that the working tree still holds
+(`util.SplitAtExistingDir`) and is given the rest as a literal pathspec, so a path below a
+removed or renamed directory is read like any other deleted file, and the paths
+`git diff --name-only <rev>` prints at the repository root can be handed over as they are;
+`TestCavemanEstimateBaseDeletedDirectory` pins it.
+
+Both sides of a directory describe one set. The working-tree side is read off
+`git ls-files --cached --others --exclude-standard` run in that directory: tracked files, and
+untracked files that no ignore rule of the repository hides. The tree itself is never
+walked. Git does not list a file it ignores, and it lists a nested repository as one entry
+without looking inside, so a run at the repository root neither reports nor counts ledgers,
+dependencies or other checkouts, however many Markdown files they hold
+(`baselineWorktreeFiles` in `cmd/standardsctl/caveman_baseline_worktree.go`,
+`TestCavemanEstimateBaseDirectoryCountsWhatGitTracks`,
+`TestCavemanEstimateBaseLeftAloneTreeAboveBound`). From the listing the command keeps the
+entries that end in `.md` and are regular files; an index entry whose file is gone, a
+symlink and a submodule are none (`TestBaselineWorktreeMarkdown`). The listing goes through
+`util.RunGitProbe`, which reads no per-user git configuration, so a personal ignore file
+does not change the answer between machines. A file the revision holds stays a row whatever
+git does with it now: still on disk but ignored since, it is measured on both sides and
+marked `worktree=ignored`. The total counts the three marks as `base_absent`,
+`worktree_absent` and `worktree_ignored`.
+
+Two bounds apply, and each error says what was counted:
+
+| Bound | Error |
+| :--- | :--- |
+| 4096 Markdown files that git tracks or would track below one directory (`maxCavemanFiles`) | `directory <path> holds more than 4096 Markdown files that git tracks or would track; name its subdirectories or files` (`TestBaselineWorktreeFilesBound`) |
+| 4096 files in one run, files deleted since the revision included | `more than 4096 input files` |
+| 4 MiB for one git listing of a directory | the listing fails with `command output exceeds 4194304 bytes per stream`; it is never cut |
+
+A file reached twice is measured twice: named two times, or named beside its directory, its
+row is printed two times and added to the total two times, as the plain `estimate` does.
+Name each path once.
+
+No row reports a deletion that did not happen:
+
+| Situation | Result | Pinned by |
+| :--- | :--- | :--- |
+| the directory named is a symlink | the error the reader gives a file below such a link, `confinement root must be a directory, never a symlink`; the reader does not read through the link while git lists its target, which would read every file as deleted. A path may reach the directory through a symlink, the directory itself may not be one | `TestCavemanEstimateBaseRefusesSymlinkedDirectory` |
+| a tracked directory was replaced by a symlink | its files are refused by the reader, not counted as deleted | `TestCavemanEstimateBaseSymlinkBoundary` |
+| a path is named in another letter case than git tracks it under, on a file system that ignores case (the default on macOS and Windows) | an error naming the tracked spelling relative to the top of the repository, `<path> is tracked as <tracked spelling>`, for a file and for a directory. Git matches a path exactly, so the base side would read as absent. The tracked spellings come from one bounded listing at the top of the repository (`git ls-files --cached --with-tree=<commit>` with an `icase` pathspec), and a spelling counts only when it is the same file (`os.SameFile`). Where case is distinguished, `readme.md` beside a tracked `README.md` is its own file and a `base=absent` row; only a hard link to the tracked file under that second spelling is refused like the spelling itself, because it is the same file | `TestCavemanEstimateBaseTrackedSpelling`, `TestCavemanEstimateBaseCaseInsensitiveFileSystem` |
+
+The base side is read from git as stored (`git ls-tree`, `git cat-file blob`) through
+`util.RunGitProbe`, each call under its 5 s bound and the command under the 30 s bound of
+`contextopt.MaxDuration`; a blob above 1 MiB or one that is not UTF-8 is an error, as it is
+for a working-tree file. On a checkout that converts line ends, the working-tree bytes include
+the carriage returns the stored blob lacks; the token estimate counts words and is unaffected.
+The implementation is `cavemanEstimateBase` in `cmd/standardsctl/caveman_baseline.go`.
+
 ### Surfaces
 
 `--surface=<name>` makes `check` resolve that surface from the repository at `--root`
-(default `.`) through the same loader `compile-context` uses. When the surface resolves to
-`docs` or `social`, the command returns an error naming the deciding row; a surface without
-a Caveman verdict never produces a green skip:
+(default `.`) through the same loader `compile-context` uses. The inputs are read first, so
+a missing or oversized input is an error whichever surface is named. When the surface
+resolves to `docs` or `social`, the command then returns an error naming the deciding row
+and stating that the input was not checked
+(`surfaces.docs = docs has no Caveman verdict; input NOT checked`); a surface without a
+Caveman verdict never produces a green skip:
 
 ```bash
 praetorctl caveman check --surface=mcp descriptions.md
@@ -944,7 +1027,10 @@ MiB. Positive, negative, exact-limit, and +1 fixtures live in
 ### Ceilings
 
 `--max-words=N` (C7) and `--max-tokens=N` (C8) add an opt-in ceiling to `check`, on top of
-whatever C1-C6 and C11 already judge; 0 (the default) means no ceiling:
+whatever C1-C6 and C11 already judge; 0 (the default) means no ceiling. A negative value is
+refused before any input is read, with an error naming the flag, so a typo such as
+`--max-tokens=-1` cannot switch a ceiling off (`validateCavemanCeilings` in
+`cmd/standardsctl/caveman.go`, `TestCavemanCheckRefusesNegativeCeilings`):
 
 ```bash
 praetorctl caveman check --kind=context --max-words=600 .agents/skills/<skill>/SKILL.md

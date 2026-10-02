@@ -23,9 +23,12 @@ const (
 	cavemanUsage = "usage: praetorctl caveman check [--kind=message|brief|return|context] [--surface=<name>] [--root=.] [--ext=.md,.py] [--selector=<path>] <file|dir|-> [...]\n" +
 		"       praetorctl caveman check --root=. --configured-sources [--max-words=N] [--max-tokens=N]\n" +
 		"       praetorctl caveman floor <before> <after>\n" +
-		"       praetorctl caveman estimate <file|dir|-> [...]"
+		"       praetorctl caveman estimate <file|dir|-> [...]\n" +
+		"       praetorctl caveman estimate --base=<git-rev> <file|dir> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
 	maxCavemanFiles = 4096
+	// cavemanProseExtension is the extension of the files a directory expands to by default.
+	cavemanProseExtension = ".md"
 	// maxPrintedFindings bounds the findings printed per file; the count line says how many
 	// more exist.
 	maxPrintedFindings = 200
@@ -69,7 +72,7 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 // input breaks a rule. --kind defaults to runtime message grammar; brief and return add
 // schemas, while context selects the policy-document profile. With --surface it first
 // resolves the register from --root and errors when the surface is not internal. --max-words
-// and --max-tokens are opt-in ceilings (0 means none).
+// and --max-tokens are opt-in ceilings (0 means none; a negative value is refused).
 func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
 	fset := flag.NewFlagSet("caveman check", flag.ContinueOnError)
 	kindName := fset.String("kind", string(caveman.KindMessage), "Caveman contract: message, brief, return, or context")
@@ -79,8 +82,8 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	configured := fset.Bool("configured-sources", false, "Check register.sources from .standards.yaml with expected coverage")
 	var selectors repeatedStringFlag
 	fset.Var(&selectors, "selector", "Dotted JSON/YAML string selector; repeat for multiple fields")
-	maxWords := fset.Int("max-words", 0, "Prose-word ceiling per input (caveman.Options.MaxProseWords, C7); 0 means no ceiling")
-	maxTokens := fset.Int("max-tokens", 0, "Estimated-token ceiling per input (caveman.EstimateTokens, C8); 0 means no ceiling")
+	maxWords := fset.Int("max-words", 0, "Prose-word ceiling per input (caveman.Options.MaxProseWords, C7); 0 means no ceiling, a negative value is refused")
+	maxTokens := fset.Int("max-tokens", 0, "Estimated-token ceiling per input (caveman.EstimateTokens, C8); 0 means no ceiling, a negative value is refused")
 	if _, err := parseInterspersed(fset, args); err != nil {
 		return err
 	}
@@ -93,6 +96,9 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	kind := caveman.MessageKind(*kindName)
 	if !kind.Valid() {
 		return fmt.Errorf("caveman check: unsupported kind %q (want message, brief, return, or context)", *kindName)
+	}
+	if err := validateCavemanCeilings(*maxWords, *maxTokens); err != nil {
+		return err
 	}
 	inputs, note, err := prepareCavemanCheckInputs(ctx, stdin, cavemanCheckRequest{
 		root: *root, surface: *surface, kind: kind, extensions: *extensions,
@@ -107,6 +113,21 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	}
 	if failed > 0 {
 		return fmt.Errorf("caveman check: %d of %d input(s) failed", failed, len(inputs))
+	}
+	return nil
+}
+
+// validateCavemanCeilings refuses a negative --max-words or --max-tokens before any input is
+// read. caveman.Options reads a non-positive ceiling as unset, so a typo such as
+// --max-tokens=-1 would otherwise pass every input (#382). 0 stays the documented opt-out.
+func validateCavemanCeilings(maxWords, maxTokens int) error {
+	for _, ceiling := range []struct {
+		flag  string
+		value int
+	}{{"--max-words", maxWords}, {"--max-tokens", maxTokens}} {
+		if ceiling.value < 0 {
+			return fmt.Errorf("caveman check: %s=%d is negative; use a positive ceiling, or 0 for none", ceiling.flag, ceiling.value)
+		}
 	}
 	return nil
 }
@@ -426,7 +447,8 @@ func requireCavemanSurface(ctx context.Context, root string, surface config.Regi
 }
 
 // requireSurfaceVerdict fails when surface resolves to a register the Caveman lint does not
-// judge (docs or social).
+// judge (docs or social). The error says the input was not checked: the caller has read it by
+// then, and a reader of the line must not take the missing verdict for a pass (#367).
 func requireSurfaceVerdict(policy config.RegisterPolicy, surface config.RegisterSurface) error {
 	enforced, err := policy.LintEnforced(surface)
 	if err != nil {
@@ -436,7 +458,7 @@ func requireSurfaceVerdict(policy config.RegisterPolicy, surface config.Register
 		return nil
 	}
 	resolution := policy.Resolve(surface, "")
-	return fmt.Errorf("caveman check: %s = %s has no Caveman verdict", resolution.Source, resolution.Register)
+	return fmt.Errorf("caveman check: %s = %s has no Caveman verdict; input NOT checked", resolution.Source, resolution.Register)
 }
 
 // formatCavemanReport appends the summary line and the bounded findings; it returns whether
@@ -527,21 +549,30 @@ func cavemanFloor(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	return nil
 }
 
-// cavemanEstimate prints bytes, lines and estimated tokens per input and in total.
+// cavemanEstimate prints bytes, lines and estimated tokens per input and in total. With
+// --base=<rev> it compares each path with that git revision instead (cavemanEstimateBase).
 func cavemanEstimate(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
-	inputs, err := readCavemanInputs(ctx, args, stdin)
+	fset := flag.NewFlagSet("caveman estimate", flag.ContinueOnError)
+	base := fset.String("base", "", "Git revision to compare each path with: prints before, after and difference per file and in total")
+	paths, err := parseInterspersed(fset, args)
+	if err != nil {
+		return err
+	}
+	if visitedFlags(fset)["base"] {
+		return cavemanEstimateBase(ctx, *base, paths, out)
+	}
+	inputs, err := readCavemanInputs(ctx, paths, stdin)
 	if err != nil {
 		return err
 	}
 	var text strings.Builder
-	var bytesTotal, tokensTotal int
+	var total cavemanMeasure
 	for _, input := range inputs {
-		tokens := caveman.EstimateTokens(input.text)
-		fmt.Fprintf(&text, "%s: bytes=%d lines=%d tokens_est=%d\n", input.name, len(input.text), util.CountLines(input.text), tokens)
-		bytesTotal += len(input.text)
-		tokensTotal += tokens
+		measure := measureCavemanText(input.text)
+		fmt.Fprintf(&text, "%s: bytes=%d lines=%d tokens_est=%d\n", input.name, measure.bytes, measure.lines, measure.tokens)
+		total = total.plus(measure)
 	}
-	fmt.Fprintf(&text, "total: inputs=%d bytes=%d tokens_est=%d\n", len(inputs), bytesTotal, tokensTotal)
+	fmt.Fprintf(&text, "total: inputs=%d bytes=%d tokens_est=%d\n", len(inputs), total.bytes, total.tokens)
 	_, err = io.WriteString(out, text.String())
 	return err
 }
@@ -553,7 +584,7 @@ func readCavemanInputs(ctx context.Context, args []string, stdin io.Reader) ([]c
 	if len(args) == 0 {
 		return nil, errors.New(cavemanUsage)
 	}
-	paths, err := expandCavemanPaths(ctx, args, map[string]bool{".md": true})
+	paths, err := expandCavemanPaths(ctx, args, map[string]bool{cavemanProseExtension: true})
 	if err != nil {
 		return nil, err
 	}

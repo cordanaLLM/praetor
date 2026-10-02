@@ -50,6 +50,15 @@ type contentScanner interface {
 	claims(src sourceFile) bool
 }
 
+// boundedScanner is a language scanner that reads at most fileBound files in one scan
+// (HISS-02). A file past the bound is recorded as unscanned source of its language, never as
+// clean: GitHub reads its workflows out of one directory, and the workflow scanner reads no more
+// of them than the forge audits do (ghworkflow.MaxFiles).
+type boundedScanner interface {
+	languageScanner
+	fileBound() int
+}
+
 // packageScanner is a language scanner whose rules also need every file it examined once the
 // walk is over: a call cycle through two functions is only visible when every file of their
 // package has been read.
@@ -81,7 +90,7 @@ func (s sourceFile) lfLines() []string {
 // languageScanners is the one dispatch table. No two scanners claim one extension.
 var languageScanners = [...]languageScanner{
 	goLanguage{}, nativeLanguage{}, pythonLanguage{}, rustLanguage{}, scriptLanguage{},
-	shellLanguage{}, systemdLanguage{}, ansibleLanguage{},
+	shellLanguage{}, workflowLanguage{}, systemdLanguage{}, ansibleLanguage{},
 }
 
 // scannerIndex returns the index of the scanner that reads ext, a lower-cased extension, or -1
@@ -162,8 +171,9 @@ func (w *scanWalker) scanFile(path, rel string) error {
 		}
 	}
 	scanner := languageScanners[idx]
-	if !scanner.scan(src, w.rep, w.opts) {
-		// A declined file is source of the scanner's language that no rule examined.
+	if !w.admit(idx) || !scanner.scan(src, w.rep, w.opts) {
+		// A declined file, or one past its scanner's file bound, is source of the scanner's
+		// language that no rule examined.
 		w.rep.Coverage.recordUnscannedAs(rel, fileLanguage(scanner, rel))
 		return nil
 	}
@@ -173,6 +183,20 @@ func (w *scanWalker) scanFile(path, rel string) error {
 		w.packages[idx] = append(w.packages[idx], path)
 	}
 	return nil
+}
+
+// admit counts one more file for the scanner at idx and reports whether it is within that
+// scanner's file bound. A scanner without a bound admits every file.
+func (w *scanWalker) admit(idx int) bool {
+	bounded, ok := languageScanners[idx].(boundedScanner)
+	if !ok {
+		return true
+	}
+	if w.admitted[idx] >= bounded.fileBound() {
+		return false
+	}
+	w.admitted[idx]++
+	return true
 }
 
 // readFailed accounts for a file the bounded read refused. A content candidate was never known

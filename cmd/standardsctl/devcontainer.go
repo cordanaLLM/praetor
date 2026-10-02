@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"path/filepath"
@@ -13,12 +14,18 @@ import (
 
 type devContainerOptions struct {
 	configPath, outputPath, sourceRoot, builderImage, baseImage string
-	verify, force, freshness                                    bool
+	verify, force, freshness, bump                              bool
 }
 
 // devContainerFreshnessBound bounds one freshness check: it recaptures the build source, as
 // preparation does, and reads three git answers.
 const devContainerFreshnessBound = 5 * time.Minute
+
+// devContainerBumpBound bounds one bump command: resolving the declared policy, then
+// devcontainer.Bump, which edits the pin source, the prior list and the Dockerfiles, captures
+// the source once for the regenerated bundle, writes it and verifies it, and holds its own
+// part to the same ten minutes.
+const devContainerBumpBound = 10 * time.Minute
 
 func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	var opts devContainerOptions
@@ -26,9 +33,9 @@ func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	fs.StringVar(&opts.configPath, "config", ".standards.yaml", "Path to .standards.yaml")
 	fs.StringVar(&opts.outputPath, "output", ".devcontainer/devcontainer.json", "Target path for devcontainer.json")
 	fs.BoolVar(&opts.verify, "verify", false, "Verify configuration against declared standards and recorded bootstrap inputs")
-	fs.StringVar(&opts.sourceRoot, "source-root", "", "Explicit complete Praetor source checkout for a portable bootstrap bundle")
-	fs.StringVar(&opts.builderImage, "builder-image", "", "Digest-pinned Go builder image, repository[:tag]@sha256:<digest> (default: the recorded image unless it names a reviewed default's repository and digest, else the reviewed bootstrap image)")
-	fs.StringVar(&opts.baseImage, "base-image", "", "Digest-pinned DevContainer base image, repository[:tag]@sha256:<digest> (default: the recorded image unless it names a reviewed default's repository and digest, else the reviewed base)")
+	fs.StringVar(&opts.sourceRoot, "source-root", "", "Explicit complete Praetor source checkout for a portable bootstrap bundle (bump: the checkout whose pins move, default the directory of --config)")
+	fs.StringVar(&opts.builderImage, "builder-image", "", "Digest-pinned Go builder image, repository[:tag]@sha256:<digest> (default: the recorded image unless it names a reviewed default's repository and digest, else the reviewed bootstrap image; bump: the new reviewed pin, repository:tag@sha256:<digest>)")
+	fs.StringVar(&opts.baseImage, "base-image", "", "Digest-pinned DevContainer base image, repository[:tag]@sha256:<digest> (default: the recorded image unless it names a reviewed default's repository and digest, else the reviewed base; bump: the new reviewed pin, repository:tag@sha256:<digest>)")
 	fs.BoolVar(&opts.force, "force", false, "Replace only the reviewed generated DevContainer bundle files")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -37,22 +44,38 @@ func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	return opts, applyDevContainerAction(&opts, positionalAt(positional, 0, "generate"))
 }
 
-// applyDevContainerAction selects verify or freshness from the positional action and refuses
-// options the selected action would ignore.
+// applyDevContainerAction selects verify, freshness or bump from the positional action and
+// refuses options the selected action would ignore.
 func applyDevContainerAction(opts *devContainerOptions, action string) error {
+	selected := *opts
 	switch action {
 	case "freshness":
-		if opts.generationSelected() || opts.verify {
-			return fmt.Errorf("freshness measures the committed bundle; generation and verify options are not accepted")
-		}
-		opts.freshness = true
+		selected.freshness = true
+	case "bump":
+		selected.bump = true
 	case "generate", "verify":
-		opts.verify = opts.verify || action == "verify"
-		if opts.verify && opts.generationSelected() {
-			return fmt.Errorf("verify uses the recorded bootstrap specification; generation-only options are not accepted")
-		}
+		selected.verify = opts.verify || action == "verify"
 	default:
-		return fmt.Errorf("unknown devcontainer action: %s (supported: generate, verify, freshness)", action)
+		return fmt.Errorf("unknown devcontainer action: %s (supported: generate, verify, freshness, bump)", action)
+	}
+	if err := selected.refuseIgnoredOptions(); err != nil {
+		return err
+	}
+	*opts = selected
+	return nil
+}
+
+// refuseIgnoredOptions names the options the selected action would ignore: freshness and bump
+// take no --verify, freshness no generation option, bump no --force, and verify no
+// generation-only option.
+func (o devContainerOptions) refuseIgnoredOptions() error {
+	switch {
+	case o.freshness && (o.verify || o.generationSelected()):
+		return errors.New("freshness measures the committed bundle; generation and verify options are not accepted")
+	case o.bump && (o.verify || o.force):
+		return errors.New("bump regenerates and verifies the bundle itself; --verify and --force are not accepted")
+	case o.verify && o.generationSelected():
+		return errors.New("verify uses the recorded bootstrap specification; generation-only options are not accepted")
 	}
 	return nil
 }
@@ -70,20 +93,14 @@ func runDevContainer(args []string) error {
 	if opts.freshness {
 		return runDevContainerFreshness(opts)
 	}
+	if opts.bump {
+		return runDevContainerBump(opts)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	policy, policyErr := config.LoadEffectivePolicyContext(ctx, config.EffectiveOptions{Root: filepath.Dir(opts.configPath), ManifestPath: opts.configPath})
-	if policyErr != nil {
-		return fmt.Errorf("failed to resolve pinned catalog: %w", policyErr)
-	}
-	manifest := policy.Manifest
-	features, err := config.ResolveDevContainerFeatures(ctx, policy)
+	manifest, features, dc, err := declaredDevContainer(ctx, opts.configPath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve selected DevContainer features: %w", err)
-	}
-	dc, err := devcontainer.SynthesizeWithFeatures(manifest, features)
-	if err != nil {
-		return fmt.Errorf("failed to synthesize devcontainer: %w", err)
+		return err
 	}
 	if opts.verify {
 		fmt.Printf("Verifying %s against %s...\n", opts.outputPath, opts.configPath)
@@ -94,6 +111,52 @@ func runDevContainer(args []string) error {
 		return nil
 	}
 	return generateDevContainerBundle(ctx, manifest, dc, features, opts)
+}
+
+// declaredDevContainer resolves the pinned catalog of the manifest at configPath and returns
+// the manifest, its selected features and the configuration they synthesize.
+func declaredDevContainer(ctx context.Context, configPath string) (*config.Manifest, []config.DevContainerFeature, *devcontainer.DevContainer, error) {
+	policy, err := config.LoadEffectivePolicyContext(ctx, config.EffectiveOptions{Root: filepath.Dir(configPath), ManifestPath: configPath})
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to resolve pinned catalog: %w", err)
+	}
+	features, err := config.ResolveDevContainerFeatures(ctx, policy)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to resolve selected DevContainer features: %w", err)
+	}
+	dc, err := devcontainer.SynthesizeWithFeatures(policy.Manifest, features)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to synthesize devcontainer: %w", err)
+	}
+	return policy.Manifest, features, dc, nil
+}
+
+// runDevContainerBump moves the reviewed default images of the Praetor checkout at the
+// source root (the directory of --config unless given) to the selected pins, records the
+// replaced ones, regenerates the bundle at the output path and verifies it (#323).
+func runDevContainerBump(opts devContainerOptions) error {
+	ctx, cancel := context.WithTimeout(context.Background(), devContainerBumpBound)
+	defer cancel()
+	manifest, features, dc, err := declaredDevContainer(ctx, opts.configPath)
+	if err != nil {
+		return err
+	}
+	sourceRoot := opts.sourceRoot
+	if sourceRoot == "" {
+		sourceRoot = filepath.Dir(opts.configPath)
+	}
+	changes, err := devcontainer.Bump(ctx, devcontainer.BumpOptions{
+		SourceRoot: sourceRoot, Output: opts.outputPath, Name: dc.Name, Profiles: manifest.Profiles, Facets: manifest.Facets,
+		Features: features, Expected: dc, BuilderImage: opts.builderImage, BaseImage: opts.baseImage,
+	})
+	if err != nil {
+		return fmt.Errorf("devcontainer bump failed: %w", err)
+	}
+	for _, change := range changes {
+		fmt.Println(change)
+	}
+	fmt.Printf("[PASS] %s regenerated from %s and verified; commit the pins, %s and the bundle together.\n", opts.outputPath, sourceRoot, devcontainer.PriorImagesFile)
+	return nil
 }
 
 func generateDevContainerBundle(ctx context.Context, manifest *config.Manifest, dc *devcontainer.DevContainer, features []config.DevContainerFeature, opts devContainerOptions) error {

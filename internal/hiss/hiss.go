@@ -229,6 +229,8 @@ type scanWalker struct {
 	packages [len(languageScanners)][]string
 	// files counts the file entries visited, bounding the walk by ScanOptions.MaxFiles.
 	files int
+	// admitted counts, per bounded scanner (languageScanners index), the files it was handed.
+	admitted [len(languageScanners)]int
 }
 
 // maxGitFileListBytes bounds the file list read from git (HISS-02). A listing larger than

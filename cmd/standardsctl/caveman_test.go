@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -352,6 +353,44 @@ func TestCavemanCheckBoundary(t *testing.T) {
 	}
 }
 
+// TestCavemanCheckSurfaceWithoutLint pins #367: a surface the lint does not apply to is never a
+// pass. Positive: on the docs, forge and operator surfaces an existing file and standard input
+// both end in an error that names the deciding row and says the input was NOT checked, with no
+// report line. Negative: a missing path is the read error on every known surface, whether or
+// not the lint applies there, so the input is read before the surface is judged. Boundary:
+// input above the reader's bound is refused before the surface is judged too, and a surface
+// with a lint still prints its verdict.
+func TestCavemanCheckSurfaceWithoutLint(t *testing.T) {
+	dir := t.TempDir()
+	terse := writeFixtureFile(t, dir, "terse.md", cavemanTerse)
+	for surface, row := range map[string]string{
+		"docs":     "surfaces.docs = docs",
+		"forge":    "surfaces.forge = social",
+		"operator": "surfaces.operator = docs",
+	} {
+		for _, input := range []string{terse, "-"} {
+			out, err := runCavemanCLI(t, cavemanTerse, "check", "--surface="+surface, "--root="+dir, input)
+			if err == nil || out != "" || !strings.Contains(err.Error(), row+" has no Caveman verdict; input NOT checked") {
+				t.Errorf("--surface=%s %s: want the row and NOT checked, no report: err=%v\n%s", surface, input, err, out)
+			}
+		}
+	}
+	absent := filepath.Join(dir, "absent.md")
+	for _, surface := range []string{"forge", "docs", "agent", "operator", "context", "mcp", "hooks", "prompts", "ledger"} {
+		out, err := runCavemanCLI(t, "", "check", "--surface="+surface, "--root="+dir, absent)
+		if err == nil || out != "" || !strings.Contains(err.Error(), "absent.md") || strings.Contains(err.Error(), "Caveman verdict") {
+			t.Errorf("--surface=%s: a missing path must be the read error: err=%v\n%s", surface, err, out)
+		}
+	}
+	out, err := runCavemanCLI(t, strings.Repeat("a", 1<<20+1), "check", "--surface=docs", "--root="+dir, "-")
+	if err == nil || out != "" || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized input on a surface without a lint must be the read error: err=%v\n%s", err, out)
+	}
+	if out, err = runCavemanCLI(t, "", "check", "--surface=mcp", "--root="+dir, terse); err != nil || !strings.Contains(out, ": PASS") || strings.Contains(out, "NOT checked") {
+		t.Fatalf("a surface with a lint must print its verdict: err=%v\n%s", err, out)
+	}
+}
+
 // TestCavemanFloorNumbers runs F9 through the command: a dropped number fails with its line in
 // <before>, and a kept one passes.
 func TestCavemanFloorNumbers(t *testing.T) {
@@ -394,6 +433,42 @@ func TestCavemanCheckCeilingFlags(t *testing.T) {
 	words := strings.Fields(cavemanTerse)
 	if out, err = runCavemanCLI(t, "", "check", fmt.Sprintf("--max-words=%d", len(words)), terse); err != nil || strings.Contains(out, "ceiling") {
 		t.Fatalf("exactly at the word ceiling must pass: err=%v\n%s", err, out)
+	}
+}
+
+// TestCavemanCheckRefusesNegativeCeilings pins #382: a negative ceiling is a usage error that
+// names its flag, never a ceiling silently switched off. Negative: -1 on either flag, on the
+// configured-sources form too, and the refusal comes before any input is read. Boundary: the
+// most negative int is refused like -1, and 0 beside it stays the opt-out. Positive: a
+// ceiling of 1 still judges the text.
+func TestCavemanCheckRefusesNegativeCeilings(t *testing.T) {
+	dir := t.TempDir()
+	terse := writeFixtureFile(t, dir, "terse.md", cavemanTerse)
+	absent := filepath.Join(dir, "absent.md")
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"words":                 {[]string{"check", "--max-words=-1", terse}, "--max-words=-1 is negative"},
+		"tokens":                {[]string{"check", "--max-tokens=-1", terse}, "--max-tokens=-1 is negative"},
+		"tokens after the path": {[]string{"check", terse, "--max-tokens", "-7"}, "--max-tokens=-7 is negative"},
+		"words beside zero":     {[]string{"check", "--max-tokens=0", "--max-words=-1", terse}, "--max-words=-1 is negative"},
+		"most negative":         {[]string{"check", fmt.Sprintf("--max-words=%d", math.MinInt), terse}, "--max-words=-"},
+		"before the read":       {[]string{"check", "--max-words=-1", absent}, "--max-words=-1 is negative"},
+		"configured sources":    {[]string{"check", "--root=" + dir, "--configured-sources", "--max-tokens=-1"}, "--max-tokens=-1 is negative"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := runCavemanCLI(t, "", tc.args...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || out != "" {
+				t.Fatalf("want a refusal naming the flag (%q) and no report: err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+	if out, err := runCavemanCLI(t, "", "check", "--max-words=0", "--max-tokens=0", terse); err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("0 must stay the documented opt-out: err=%v\n%s", err, out)
+	}
+	if out, err := runCavemanCLI(t, "", "check", "--max-tokens=1", terse); err == nil || !strings.Contains(out, "C8 token-ceiling") {
+		t.Fatalf("the smallest positive ceiling must still judge the text: err=%v\n%s", err, out)
 	}
 }
 

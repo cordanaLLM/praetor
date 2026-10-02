@@ -26,6 +26,21 @@ import (
 // code under test.
 var renovateManagedFixturePaths = append(slices.Clone(documentationFixturePaths), apiCompatibilityFixturePaths...)
 
+// devContainerBundleFixturePaths are the generated DevContainer bundle files Renovate's
+// managers read, which the managed entry lists after the family paths when the bundle is
+// Praetor's (#323).
+var devContainerBundleFixturePaths = []string{".devcontainer/devcontainer.json", ".devcontainer/Dockerfile.praetor"}
+
+// withBundleFixturePaths returns paths followed by the bundle files, as adoption declares them
+// in a repository whose DevContainer it generates.
+func withBundleFixturePaths(paths []string) []string {
+	return append(slices.Clone(paths), devContainerBundleFixturePaths...)
+}
+
+// ownDevContainer is an operator's own DevContainer, which adoption preserves and whose
+// updates stay with the operator's Renovate.
+const ownDevContainer = "{\n  \"image\": \"ghcr.io/acme/dev:1\"\n}\n"
+
 // apiCompatibilityFixturePaths are the managed paths of the api:public-contract family.
 var apiCompatibilityFixturePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go"}
 
@@ -101,8 +116,9 @@ func memberNames(root clientjson.Object) []string {
 }
 
 // Positive: adoption adds one packageRules entry disabling Renovate for exactly the managed
-// family files and keeps every setting of the adopter's own, in order, the number literal
-// included; the rerun, and a rerun after a formatter compacted the file, change nothing.
+// family files and the DevContainer bundle files it generated, and keeps every setting of the
+// adopter's own, in order, the number literal included; the rerun, and a rerun after a
+// formatter compacted the file, change nothing.
 func TestRenovateIgnorePositiveDeclaresManagedFilesOnce(t *testing.T) {
 	repo := newTestRepo(t, "renovate-positive")
 	trackGoModule(t, repo, "go.mod")
@@ -115,8 +131,8 @@ func TestRenovateIgnorePositiveDeclaresManagedFilesOnce(t *testing.T) {
 	}
 	first := mustRead(t, path)
 	root, managed, rules := renovateTestRules(t, first)
-	if len(managed) != 1 || managed[0].Enabled || !slices.Equal(managed[0].MatchFileNames, renovateManagedFixturePaths) {
-		t.Fatalf("want one disabled rule over the managed files, got %+v\n%s", managed, first)
+	if len(managed) != 1 || managed[0].Enabled || !slices.Equal(managed[0].MatchFileNames, withBundleFixturePaths(renovateManagedFixturePaths)) {
+		t.Fatalf("want one disabled rule over the managed files and the generated bundle, got %+v\n%s", managed, first)
 	}
 	if want := []string{"$schema", "extends", "ignorePaths", "packageRules", "prConcurrentLimit"}; !slices.Equal(memberNames(root), want) {
 		t.Fatalf("members %v, want %v", memberNames(root), want)
@@ -293,7 +309,8 @@ func TestFindRenovateConfigNegativePropagatesCancellation(t *testing.T) {
 
 // Boundary: in the repository that holds a family's Source the managed files are sources its
 // own Renovate updates, so adoption adds no rule for them there: the origin of one family keeps
-// the rule over the other's files only, and the origin of both removes a rule it added before.
+// the rule over the other's files, and the bundle adoption generated, only, and the origin of
+// all, with a DevContainer of its own, removes a rule it added before.
 func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 	markdownOrigin := newTestRepo(t, "renovate-markdown-origin")
 	trackGoModule(t, markdownOrigin, "go.mod")
@@ -303,8 +320,8 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 		t.Fatalf("adopt at the Markdown origin: %v", err)
 	}
 	if _, managed, _ := renovateTestRules(t, mustRead(t, filepath.Join(markdownOrigin, "renovate.json"))); len(managed) != 1 ||
-		!slices.Equal(managed[0].MatchFileNames, renovateManagedFixturePaths[6:]) {
-		t.Fatalf("the Markdown origin's rule = %+v, want the figure engine's and the API gate's files only", managed)
+		!slices.Equal(managed[0].MatchFileNames, withBundleFixturePaths(renovateManagedFixturePaths[6:])) {
+		t.Fatalf("the Markdown origin's rule = %+v, want the figure engine's, the API gate's and the bundle's files only", managed)
 	}
 	repo := newTestRepo(t, "renovate-origin")
 	path := filepath.Join(repo, "renovate.json")
@@ -316,6 +333,7 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 	mustWrite(t, filepath.Join(repo, "tools", "markdownlint", "assets.go"), "package markdownlint\n")
 	mustWrite(t, filepath.Join(repo, "tools", "figures", "assets.go"), "package figures\n")
 	mustWrite(t, filepath.Join(repo, "tools", "apicompat", "assets.go"), "package apicompat\n")
+	mustWrite(t, filepath.Join(repo, filepath.FromSlash(devcontainerFile)), ownDevContainer)
 	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
 	report, err := Adopt(t.Context(), opts)
 	if err != nil {
@@ -405,7 +423,7 @@ const adopterOwnRenovateRule = `{"matchManagers": ["github-actions"], "pinDigest
 
 // equivalentRenovateRule is an adopter's own rule with the managed entry's effect: globs that
 // cover every managed path, and enabled false.
-const equivalentRenovateRule = `{"description": "keep update bots off vendored lint tooling", "matchFileNames": [".github/workflows/praetor-*.yml", "tools/markdownlint/**", "tools/figures/**", "tools/apicompat/**"], "enabled": false}`
+const equivalentRenovateRule = `{"description": "keep update bots off vendored lint tooling", "matchFileNames": [".github/workflows/praetor-*.yml", "tools/markdownlint/**", "tools/figures/**", "tools/apicompat/**", ".devcontainer/*"], "enabled": false}`
 
 // adopterRenovateConfigWith returns adopterRenovateConfig with rules appended to its own rule.
 func adopterRenovateConfigWith(rules ...string) string {
@@ -468,14 +486,14 @@ func TestRenovateIgnoreNegativeDeclaresOnlyUncoveredPaths(t *testing.T) {
 	}
 	got := mustRead(t, path)
 	_, managed, rules := renovateTestRules(t, got)
-	uncovered := append([]string{renovateManagedFixturePaths[0]}, apiCompatibilityFixturePaths...)
+	uncovered := withBundleFixturePaths(append([]string{renovateManagedFixturePaths[0]}, apiCompatibilityFixturePaths...))
 	if len(managed) != 1 || managed[0].Enabled || !slices.Equal(managed[0].MatchFileNames, uncovered) {
-		t.Fatalf("want one disabled entry over the uncovered workflows and gate only, got %+v\n%s", managed, got)
+		t.Fatalf("want one disabled entry over the uncovered workflows, gate and bundle only, got %+v\n%s", managed, got)
 	}
 	if len(rules) != 3 || !sameJSON(rules[0], jsontext.Value(adopterOwnRenovateRule)) || !sameJSON(rules[1], jsontext.Value(partial)) {
 		t.Fatalf("adopter rules reordered or changed:\n%s", got)
 	}
-	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, fmt.Sprintf("the %d of %d Praetor-managed files", len(uncovered), len(renovateManagedFixturePaths))) {
+	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, fmt.Sprintf("the %d of %d Praetor-managed files", len(uncovered), len(withBundleFixturePaths(renovateManagedFixturePaths)))) {
 		t.Fatalf("partial declaration not reported: %q", detail)
 	}
 	if _, err := Adopt(t.Context(), opts); err != nil || mustRead(t, path) != got {

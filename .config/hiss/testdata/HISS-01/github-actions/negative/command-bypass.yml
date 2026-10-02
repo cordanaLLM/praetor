@@ -1,0 +1,13 @@
+# A call through command reaches the program, never the function of the same name, and a name
+# inside an expression is substituted text, not a call.
+on: push
+jobs:
+  wrap:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          git() {
+            command git -c core.quotepath=off "$@"
+          }
+          git status
+          echo "${{ github.event.inputs.git }}"

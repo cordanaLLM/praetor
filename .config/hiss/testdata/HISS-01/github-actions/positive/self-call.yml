@@ -1,0 +1,13 @@
+# A run: block on a Linux runner is a bash script: a function that runs its own name recurses.
+on: push
+jobs:
+  walk:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          countdown() {
+            if [ "$1" -gt 0 ]; then
+              countdown "$(($1 - 1))"
+            fi
+          }
+          countdown 3

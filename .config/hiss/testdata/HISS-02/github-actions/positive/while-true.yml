@@ -1,0 +1,11 @@
+# while true carries no bound; the job's timeout-minutes is the only thing that ends it.
+on: push
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for the service
+        run: |
+          while true; do
+            sleep 5
+          done

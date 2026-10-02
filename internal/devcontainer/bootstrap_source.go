@@ -305,7 +305,8 @@ type bootstrapAssetFamily struct {
 
 // bootstrapAssetFamilies declares the embedded asset sets go build ./cmd/standardsctl needs:
 // every managed asset family adoption emits (internal/managedasset), in registry order, the
-// template bodies flavor apply scaffolds, and the gate's devcontainer CLI pins (cli.go).
+// template bodies flavor apply scaffolds, the gate's devcontainer CLI pins (cli.go) and this
+// package's prior-default image list.
 func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 	templateAssets, err := templateBootstrapAssetPaths()
 	if err != nil {
@@ -321,7 +322,9 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 	}
 	return append(families, bootstrapAssetFamily{
 		name: "template", source: templates.SourceFile, directive: "//go:embed " + templates.Pattern, assets: templateAssets,
-	}, cliBootstrapFamily()), nil
+	}, cliBootstrapFamily(), bootstrapAssetFamily{
+		name: "reviewed images", source: reviewedImagesSource, directive: priorImagesDirective, assets: []string{PriorImagesFile},
+	}), nil
 }
 
 // templateBootstrapAssetPaths names every embedded template body as a repository path.

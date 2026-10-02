@@ -31,34 +31,25 @@ const (
 	// @devcontainers/cli 0.89.0 refuses repository:tag@sha256:<digest> while it
 	// inspects the registry (devcontainers/cli#1307; fixed upstream by #1311, which no
 	// release carries yet), so a bundle built on the tagged form could not be built by
-	// the documented consumer (#333). The digest is what the bundle pulls. The comment
-	// beside each default keeps the full reference it was reviewed at, tag included, so
-	// the repository pin scan still holds that tag to one digest across files;
-	// TestReviewedDefaultCommentsNameTheirDigest binds it to the constant. A recorded
-	// tagged form of the same repository and digest still counts as this default
-	// (isReviewedPin).
+	// the documented consumer (#333). The digest is what the bundle pulls. The
+	// "Reviewed at" line directly above each default is its one canonical pin: the full
+	// reference it was reviewed at, tag included. Renovate reads that line through the
+	// customManagers entry in renovate.json (ReviewedPinPattern), so it looks the digest
+	// up under the reviewed tag rather than as latest, and one update moves the comment
+	// and the constant together; devcontainer bump does the same by hand and finishes
+	// either move (#323). TestReviewedDefaultCommentsNameTheirDigest binds each comment to
+	// its constant, and the repository pin scan holds the tag to one digest across files.
+	// A recorded tagged form of the same repository and digest still counts as this
+	// default (isReviewedPin). Earlier defaults are in prior-images.json
+	// (reviewed_images.go).
 	//
 	// Reviewed at docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
 	DefaultBuilderImage = "docker.io/library/golang@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
-	// Reviewed at mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4
 	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried: that repository
 	// publishes "ubuntu26.04", and "ubuntu-26.04" is not a tag on it.
+	//
+	// Reviewed at mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4
 	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4"
-)
-
-// Every earlier reviewed default, as repository@digest. Moving DefaultBaseImage or
-// DefaultBuilderImage appends the replaced pin here, its reviewed tag in the comment, so
-// a regeneration refreshes a bundle that recorded it (InheritRecordedImages); a pin
-// missing here is kept as the adopter's choice, with a note. The digest names the image
-// and the tag only labels it, and a retired digest written beside its tag would read as
-// a second live pin of that tag to TestRepositoryPinsOneDigestPerImageTag.
-var (
-	priorDefaultBaseImages = []string{
-		"mcr.microsoft.com/devcontainers/base@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae", // ubuntu-24.04, before #352
-	}
-	priorDefaultBuilderImages = []string{
-		"docker.io/library/golang@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125", // 1.27-alpine, before #352
-	}
 )
 
 // BootstrapOptions selects a local Praetor source snapshot and immutable images.
@@ -246,7 +237,7 @@ func validateReadyBootstrap(spec *BootstrapSpec) error {
 		}
 	}
 	if bootstrapDigest([]byte(renderBootstrapDockerfile(spec))) != spec.DockerfileSHA256 {
-		return errors.New("bootstrap Dockerfile identity differs from its recorded inputs")
+		return errors.New("bootstrap Dockerfile identity differs from its recorded inputs; " + bundleRepair)
 	}
 	return nil
 }

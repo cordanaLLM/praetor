@@ -249,8 +249,12 @@ func TestDevContainerCLIDigestOnlyImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Boundary: the tagged form of the same defaults, as recorded before #333, is refreshed.
-	taggedBase := strings.Replace(devcontainer.DefaultBaseImage, "@", ":ubuntu26.04@", 1)
-	taggedBuilder := strings.Replace(devcontainer.DefaultBuilderImage, "@", ":1.27-alpine@", 1)
+	// The tags are the ones the committed pins were reviewed at, read from the pin source.
+	reviewed := reviewedReferences(t, filepath.Join("..", ".."))
+	taggedBase, taggedBuilder := reviewed["base"], reviewed["builder"]
+	if digestOnly(taggedBase) != devcontainer.DefaultBaseImage || digestOnly(taggedBuilder) != devcontainer.DefaultBuilderImage {
+		t.Fatalf("the committed pins %v are not the compiled defaults", reviewed)
+	}
 	if _, err := generateCLI(t, base, "--force", "--base-image", taggedBase, "--builder-image", taggedBuilder); err != nil || recordedBaseImage(t, output) != taggedBase {
 		t.Fatalf("tagged images not recorded: %v", err)
 	}

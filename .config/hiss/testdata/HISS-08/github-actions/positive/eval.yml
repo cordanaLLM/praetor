@@ -1,0 +1,13 @@
+# eval runs text as code; here the text comes from the workflow's input.
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        type: string
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          COMMAND: ${{ inputs.command }}
+        run: eval "$COMMAND"

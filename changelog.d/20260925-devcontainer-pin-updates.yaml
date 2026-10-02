@@ -1,0 +1,4 @@
+type: fixed
+title: Move reviewed DevContainer images with devcontainer bump and keep Renovate, here and in adopted repositories, off the generated bundle
+issue: "#323"
+breaking: false
