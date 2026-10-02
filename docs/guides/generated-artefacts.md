@@ -133,6 +133,12 @@ It runs in a temporary worktree of the commit being judged, checked out below
 `.standards/worktrees/` and removed afterwards, so it sees committed files only. It exits non-zero
 when it cannot render; its standard error is quoted in the failure.
 
+That worktree is checked out with the host's git configuration. Under `core.autocrlf=true`, the
+default of Git for Windows, a text source arrives with CRLF line endings and the rendering goes
+back with them. Pin the sources and artefacts whose bytes must not vary in `.gitattributes`
+(`text eol=lf`, or `-text`), as the built-in artefacts of this repository are; the fixture of
+`cmd/standardsctl/ci_generated_test.go` does the same.
+
 ## Pull requests: `ci generated check`
 
 `check` compares the merge base of `--base` and `--head` (default `HEAD`) with the head:

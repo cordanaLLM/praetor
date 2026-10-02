@@ -67,6 +67,12 @@ func newGeneratedFixture(t *testing.T, fail bool) generatedFixture {
 		"      paths: [\"out/a.txt\"]\n      command: ["+strconv.Quote(renderer)+", \""+verb+"\", \"src/a.txt\", \"out/a.txt\"]\n"+
 		"      sources: [\"src/*.txt\"]\n")
 	writeFixtureFile(t, f.dir, ".gitignore", "/.standards/worktrees/\n")
+	// The fixture is built with the hermetic git environment, but the command under test checks
+	// its rendering worktree out with the host's git configuration. Where that sets
+	// core.autocrlf (Git for Windows does), the worktree would hold CRLF sources and the
+	// renderer would hand CRLF back; the attribute keeps every checkout of the fixture byte
+	// exact, so the tests compare the bytes they wrote on every platform (HISS-21).
+	writeFixtureFile(t, f.dir, ".gitattributes", "* -text\n")
 	writeFixtureFile(t, f.dir, "src/a.txt", "alpha\n")
 	writeFixtureFile(t, f.dir, "out/a.txt", "ALPHA\n")
 	f.git(t, "init", "-q", "-b", "main")
