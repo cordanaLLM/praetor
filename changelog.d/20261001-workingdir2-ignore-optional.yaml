@@ -1,0 +1,4 @@
+type: fixed
+title: "A repository can retire .workingdir2 from the managed .gitignore block, which still ignores it by default"
+issue: "#641"
+breaking: false

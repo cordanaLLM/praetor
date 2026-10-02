@@ -196,8 +196,9 @@ func TestKconfigConfigRule_ClassifiesTheRuleThatHidesConfig(t *testing.T) {
 // request, a later merge that does not ask keeps it, a merge that never asked has none, and
 // audit accepts exactly the two canonical blocks.
 func TestMergeGitIgnoreRules_ConfigNegationIsAddedKeptAndAudited(t *testing.T) {
-	negated, err := mergeGitIgnoreRules(".config\n", true)
-	if err != nil || !strings.Contains(negated, "\n"+configDirNegation+"\n"+gitIgnoreManagedEnd) || !HasManagedGitIgnoreTail(negated) {
+	root := t.TempDir()
+	negated, err := mergeGitIgnoreRules(".config\n", false, true)
+	if err != nil || !strings.Contains(negated, "\n"+configDirNegation+"\n"+gitIgnoreManagedEnd) || !HasManagedGitIgnoreTail(root, negated) {
 		t.Fatalf("negated merge = %q, %v", negated, err)
 	}
 	kept, err := mergeGitIgnore(negated)
@@ -209,7 +210,7 @@ func TestMergeGitIgnoreRules_ConfigNegationIsAddedKeptAndAudited(t *testing.T) {
 		t.Fatalf("an operator's own negation moved into the block: %q, %v", plain, err)
 	}
 	for _, text := range []string{"dist/\n", strings.Replace(negated, configDirNegation, "!docs/", 1)} {
-		if HasManagedGitIgnoreTail(text) {
+		if HasManagedGitIgnoreTail(root, text) {
 			t.Fatalf("audit accepted a non-canonical tail: %q", text)
 		}
 	}
