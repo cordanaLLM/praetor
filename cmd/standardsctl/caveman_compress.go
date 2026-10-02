@@ -6,7 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
@@ -35,7 +38,8 @@ type cavemanCompression struct {
 // with caveman.Floor: Compress folds identical consecutive prose lines, which lowers the count
 // of a MUST, a prohibition or a numbered rule that such a line carries. The floor compares
 // against the input without its ANSI escapes (caveman.StripANSI), whose parameter digits are
-// no number of the text.
+// no number of the text: Floor's F9 reads them as numbers (#713). Once that is fixed the
+// workaround can go; TestStripANSI in internal/caveman fails then and says so.
 func compressCavemanInput(input cavemanInput) cavemanCompression {
 	text, stats := caveman.Compress(input.text)
 	floor := caveman.Floor(caveman.StripANSI(input.text), text)
@@ -66,20 +70,27 @@ func (c cavemanCompression) refusal() error {
 // else. --stats prints one before/after line per input and a total and writes nothing;
 // --in-place rewrites each file that changes, through the compare-and-swap snapshot writer,
 // and prints the same lines. A directory expands to the Markdown files below it, as it does
-// for check. An input whose compression fails caveman.Floor is refused: it is never printed
-// or rewritten, and the command exits non-zero. No change is a success.
+// for check, and a file reached twice (named twice, or named beside its directory) is one
+// input. --in-place rewrites Markdown files only: Compress reads its input as Markdown, so a
+// file of another extension is refused by name before anything is written. An input whose
+// compression fails caveman.Floor is refused: it is never printed or rewritten, and the
+// command exits non-zero. No change is a success.
 func cavemanCompress(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
 	fset := flag.NewFlagSet("caveman compress", flag.ContinueOnError)
-	inPlace := fset.Bool("in-place", false, "Rewrite each named file; a refused or unchanged file is left untouched")
+	inPlace := fset.Bool("in-place", false, "Rewrite each named Markdown file; a refused or unchanged file is left untouched")
 	statsOnly := fset.Bool("stats", false, "Print the before/after line per input and a total; write nothing")
-	paths, err := parseInterspersed(fset, args)
+	args, err := parseInterspersed(fset, args)
 	if err != nil {
 		return err
 	}
-	if err := validateCompressRequest(*inPlace, *statsOnly, paths); err != nil {
+	if err := validateCompressRequest(*inPlace, *statsOnly, args); err != nil {
 		return err
 	}
-	inputs, err := readCavemanInputs(ctx, paths, stdin)
+	paths, err := compressPaths(ctx, args, *inPlace)
+	if err != nil {
+		return err
+	}
+	inputs, err := readCavemanPaths(ctx, paths, stdin)
 	if err != nil {
 		return err
 	}
@@ -87,6 +98,107 @@ func cavemanCompress(ctx context.Context, args []string, stdin io.Reader, out io
 		return reportCavemanCompressions(ctx, inputs, *inPlace, out)
 	}
 	return printCavemanCompression(inputs, out)
+}
+
+// compressPaths expands args into the files to compress, each once, and under inPlace refuses
+// every file that is not Markdown.
+func compressPaths(ctx context.Context, args []string, inPlace bool) ([]string, error) {
+	expanded, err := expandCavemanPaths(ctx, args, cavemanProseExtensions())
+	if err != nil {
+		return nil, err
+	}
+	paths, err := uniqueCavemanPaths(expanded)
+	if err != nil || !inPlace {
+		return paths, err
+	}
+	return paths, requireMarkdownPaths(paths)
+}
+
+// maxNamedRefusals bounds the files one refusal names; the count says how many more there are.
+const maxNamedRefusals = 8
+
+// requireMarkdownPaths refuses, by name, every path that is not a Markdown file. Compress
+// protects what Markdown makes code; in Python or YAML it would collapse the blanks of an
+// aligned column or a single-quoted literal, where they carry meaning. Standard output and
+// --stats write no file and take any text.
+func requireMarkdownPaths(paths []string) error {
+	var refused []string
+	for _, path := range paths {
+		if !strings.EqualFold(filepath.Ext(path), cavemanProseExtension) {
+			refused = append(refused, filepath.ToSlash(path))
+		}
+	}
+	if len(refused) == 0 {
+		return nil
+	}
+	more := ""
+	if extra := len(refused) - maxNamedRefusals; extra > 0 {
+		refused, more = refused[:maxNamedRefusals], fmt.Sprintf(" (+%d more)", extra)
+	}
+	return fmt.Errorf("caveman compress: --in-place rewrites %s files only, not %s%s; nothing written (print one with no flag, or measure with --stats)",
+		cavemanProseExtension, strings.Join(refused, ", "), more)
+}
+
+// seenCavemanPath is one path a run already holds: its spelling with the directory resolved,
+// and the file it names.
+type seenCavemanPath struct {
+	resolved string
+	info     fs.FileInfo
+}
+
+// uniqueCavemanPaths drops every path that names a file an earlier path names, keeping order:
+// the same spelling twice, a directory beside a file below it, a relative beside an absolute
+// spelling, and on a file system that ignores case two spellings that differ in case. A file
+// compressed twice in one run would fail its second compare-and-swap write, since the first
+// changed the bytes the second was bound to. Hard links under different names are distinct
+// paths and stay distinct: the atomic write replaces one name, so each name needs its own.
+// "-" is no file and passes.
+func uniqueCavemanPaths(paths []string) ([]string, error) {
+	unique := make([]string, 0, len(paths))
+	seen := make(map[string][]seenCavemanPath, len(paths))
+	for _, path := range paths {
+		if path == "-" {
+			unique = append(unique, path)
+			continue
+		}
+		entry, err := resolveCavemanPath(path)
+		if err != nil {
+			return nil, err
+		}
+		key := strings.ToLower(entry.resolved)
+		if !slices.ContainsFunc(seen[key], entry.sameFile) {
+			seen[key] = append(seen[key], entry)
+			unique = append(unique, path)
+		}
+	}
+	return unique, nil
+}
+
+// resolveCavemanPath spells path absolutely with the symlinks of its directory resolved. The
+// last element is not followed: a symlinked file stays its own path, for the reader to refuse.
+func resolveCavemanPath(path string) (seenCavemanPath, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return seenCavemanPath{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	dir, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if err != nil {
+		return seenCavemanPath{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	resolved := filepath.Join(dir, filepath.Base(absolute))
+	// #nosec G703 -- path is a file the operator names on the command line; it is only
+	// compared here, and read through the bounded, symlink-resistant contextopt.ReadSnapshot.
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return seenCavemanPath{}, fmt.Errorf("read %s: %w", path, err)
+	}
+	return seenCavemanPath{resolved: resolved, info: info}, nil
+}
+
+// sameFile reports whether other names the file p names: the same resolved spelling, or
+// spellings that differ only in case and reach one file.
+func (p seenCavemanPath) sameFile(other seenCavemanPath) bool {
+	return p.resolved == other.resolved || os.SameFile(p.info, other.info)
 }
 
 func validateCompressRequest(inPlace, statsOnly bool, paths []string) error {
@@ -178,8 +290,9 @@ func compressCavemanInputs(ctx context.Context, inputs []cavemanInput, inPlace b
 
 // applyCavemanCompression decides one input's status and, under inPlace, rewrites a file that
 // changes. The write is contextopt.ReplaceSnapshot bound to the bytes that were read, so a file
-// edited since the read is refused rather than overwritten, and its permissions are never
-// widened.
+// edited since the read is refused rather than overwritten. The file keeps the mode it had
+// (KeepMode): a cleanup of its text is no reason to drop an execute bit, which git would
+// record as a mode change beside the text change.
 func applyCavemanCompression(ctx context.Context, compression cavemanCompression, inPlace bool) (string, error) {
 	switch {
 	case !compression.floor.Passed():
@@ -190,7 +303,7 @@ func applyCavemanCompression(ctx context.Context, compression cavemanCompression
 		return compressWouldChange, nil
 	}
 	path := filepath.FromSlash(compression.input.name)
-	options := contextopt.ReplaceOptions{Expected: []byte(compression.input.text), Exists: true, Mode: util.TrackedFilePerm}
+	options := contextopt.ReplaceOptions{Expected: []byte(compression.input.text), Exists: true, Mode: util.TrackedFilePerm, KeepMode: true}
 	if err := contextopt.ReplaceSnapshot(ctx, path, []byte(compression.text), options); err != nil {
 		return "", fmt.Errorf("caveman compress: write %s: %w", compression.input.name, err)
 	}
