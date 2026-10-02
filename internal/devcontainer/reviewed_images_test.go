@@ -8,7 +8,9 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -77,6 +79,20 @@ func TestParsePriorImagesRefusesMalformedLists(t *testing.T) {
 	}
 }
 
+// The guide states the bound of the prior list beside its remedy; the number it gives is the
+// bound the code enforces, so raising maxPriorImages moves the guide in the same change.
+func TestGuideStatesThePriorImageBound(t *testing.T) {
+	guide, err := os.ReadFile(filepath.Join("..", "..", "docs", "guides", "devcontainer-bootstrap.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"at most " + strconv.Itoa(maxPriorImages) + " images (`maxPriorImages` in", "`maxPriorImages` in a reviewed change"} {
+		if !strings.Contains(string(guide), want) {
+			t.Errorf("docs/guides/devcontainer-bootstrap.md does not state %q", want)
+		}
+	}
+}
+
 // pinSource renders a bootstrap.go fragment pinning both reviewed defaults.
 func pinSource(builderTag, builderDigest, constantDigest string) string {
 	return "const (\n\t// Reviewed at docker.io/library/golang:" + builderTag + "@" + builderDigest + "\n" +
@@ -85,24 +101,44 @@ func pinSource(builderTag, builderDigest, constantDigest string) string {
 		"\tDefaultBaseImage = \"mcr.microsoft.com/devcontainers/base@" + fixtureDigest(9) + "\"\n)\n"
 }
 
-// Positive: the committed bootstrap.go yields one tagged pin per role whose digest-only form
-// is the constant, so the reference Renovate reads is the one the bundle pulls.
-func TestParseReviewedPinsReadsBootstrapSource(t *testing.T) {
+// ReviewedReferences is where a caller reads the tag a default was reviewed at. Positive: the
+// committed bootstrap.go yields one tagged reference per role whose digest-only form is the
+// constant, so the reference Renovate reads is the one the bundle pulls, and a source moved to
+// another tag yields that tag. Boundary: the CRLF form of a source, as a Windows checkout
+// holds it, reads the same. Negative: a pin whose constant disagrees, mixed line endings and
+// an empty source are refused.
+func TestReviewedReferencesReadsTheTaggedPins(t *testing.T) {
 	source, err := os.ReadFile("bootstrap.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, _, err := util.NormalizeLineEndingsStrict(string(source))
-	if err != nil {
-		t.Fatal(err)
-	}
-	pins, err := parseReviewedPins(text)
+	references, err := ReviewedReferences(source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for role, constant := range map[string]string{"base": DefaultBaseImage, "builder": DefaultBuilderImage} {
-		if pin := pins[role]; pin.image() != constant || pin.tag == "" {
-			t.Fatalf("%s pin %s does not carry a tag over %s", role, pin.reference(), constant)
+		repository, tag, digest := util.SplitImageReference(references[role])
+		if tag == "" || repository+"@"+digest != constant {
+			t.Fatalf("%s reference %s does not carry a tag over %s", role, references[role], constant)
+		}
+	}
+	if len(references) != len(reviewedRoles) {
+		t.Fatalf("references %v, want one per reviewed role", references)
+	}
+	moved := pinSource("1.28-alpine", fixtureDigest(1), fixtureDigest(1))
+	for name, text := range map[string]string{"LF": moved, "CRLF": strings.ReplaceAll(moved, "\n", "\r\n")} {
+		references, err := ReviewedReferences([]byte(text))
+		if want := "docker.io/library/golang:1.28-alpine@" + fixtureDigest(1); err != nil || references["builder"] != want {
+			t.Errorf("%s source: builder reference %q, want %q (%v)", name, references["builder"], want, err)
+		}
+	}
+	for name, tc := range map[string]struct{ source, reason string }{
+		"constant digest differs": {pinSource("1.28-alpine", fixtureDigest(1), fixtureDigest(2)), "but its comment was reviewed at"},
+		"mixed line endings":      {strings.Replace(moved, "\n", "\r\n", 1), "mixed LF and CRLF"},
+		"empty source":            {"", "directly above DefaultBaseImage"},
+	} {
+		if references, err := ReviewedReferences([]byte(tc.source)); err == nil || references != nil || !strings.Contains(err.Error(), tc.reason) {
+			t.Errorf("%s: references %v, error %v does not name %q", name, references, err, tc.reason)
 		}
 	}
 }

@@ -19,7 +19,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// bumpBound bounds one bump: two source captures, the bundle plan and its verification.
+// bumpBound bounds one bump: reading and writing the pin source, the prior list and the
+// Dockerfiles, then one source capture for the regenerated bundle, its plan, its publication
+// and its verification. That is one generation, which bootstrapBound bounds, and the source
+// edits and the verification around it, so the bound is twice bootstrapBound.
 const bumpBound = 2 * bootstrapBound
 
 // BumpOptions selects the Praetor checkout whose reviewed default images a bump moves, the
@@ -115,11 +118,7 @@ func planBump(ctx context.Context, options BumpOptions) (*bumpPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	text, crlf, err := util.NormalizeLineEndingsStrict(string(source.before))
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", ReviewedPinsFile, err)
-	}
-	current, err := parseReviewedPins(text)
+	current, text, crlf, err := readReviewedPins(source.before)
 	if err != nil {
 		return nil, err
 	}
