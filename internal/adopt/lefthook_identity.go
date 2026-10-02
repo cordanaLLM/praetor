@@ -33,7 +33,10 @@ const (
 // checkpoint jobs, ran the pre-commit audit against the forge before it passed --offline
 // (preCommitAuditArgs); the "strict pre-push gate" entries, one per language set with and
 // without checkpoint jobs, ran the gate without --admit-unsupported, which refused every push
-// from a root with neither go.mod nor Cargo.lock (prePushGateArgs, #648).
+// from a root with neither go.mod nor Cargo.lock (prePushGateArgs, #648); the "python3 by
+// name" entries, one per language set, are the renderings whose checkpoint jobs named the
+// interpreter python3 instead of reading PRAETOR_PYTHON (lefthookPythonCommand, #339). A
+// rendering without checkpoint jobs names no interpreter and did not change.
 var priorLefthookDigests = map[string]string{
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
@@ -61,6 +64,10 @@ var priorLefthookDigests = map[string]string{
 	"5a7e085fb6a1e26b054c7f67fd6ee81dac1407d8128eaed63013c1407dc5c2c6": "strict pre-push gate, Rust jobs, checkpoint jobs",
 	"5d969d0e03af74f7d75025770c98e93d40cd8ac7a14ed1913d958ffd21313cb8": "strict pre-push gate, Go and Rust jobs",
 	"04e116207015f34efad4490a3d8573574b63a054b349463201e2d28f0c061541": "strict pre-push gate, Go and Rust jobs, checkpoint jobs",
+	"6366ca411ab68b633d7e5e579cf3c4497735243112ba41118093b9c38c220d08": "python3 by name, governance jobs only, checkpoint jobs",
+	"42cf6d9aa761700aa453b9fa4a19364f508db89828ef8d493b31836a8bc47c55": "python3 by name, Go jobs, checkpoint jobs",
+	"7c7e9329b33038eaca07e3216d56d21dafd178b3445026af6be3326384f5a93c": "python3 by name, Rust jobs, checkpoint jobs",
+	"80b28343df274a2fd174931c219cf883fe94a1338a9ce0169bdad979d4f407a4": "python3 by name, Go and Rust jobs, checkpoint jobs",
 }
 
 // lefthookIdentity is what adoption concluded about an existing lefthook.yml.

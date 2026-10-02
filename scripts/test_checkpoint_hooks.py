@@ -295,7 +295,7 @@ class NativeLefthook(unittest.TestCase):
         return result.stdout
 
     def invoke(self, payload):
-        result = subprocess.run(["python3", "-B", str(self.root / SCRIPT)], cwd=self.root,
+        result = subprocess.run([sys.executable, "-B", str(self.root / SCRIPT)], cwd=self.root,
                                 input=json.dumps(payload), text=True, capture_output=True,
                                 timeout=60, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -518,7 +518,7 @@ class NativeLefthook(unittest.TestCase):
         with self.assertRaises(ValueError):
             SCOPE.check(malformed)
         oversized = json.dumps(deleted) + " " * (1 << 20)
-        result = subprocess.run(["python3", "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
+        result = subprocess.run([sys.executable, "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
                                 cwd=self.root, input=oversized, text=True, capture_output=True, timeout=60)
         self.assertEqual(result.returncode, 2)
 
@@ -603,7 +603,7 @@ class NativeLefthook(unittest.TestCase):
                 "tool_input": {"file_path": path}, "cwd": str(self.root), **changes}
 
     def scope_bridge(self, raw):
-        return subprocess.run(["python3", "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
+        return subprocess.run([sys.executable, "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
                               cwd=self.root, input=raw, capture_output=True, timeout=20)
 
     def test_registered_file_guards_block_new_paths_before_write(self):

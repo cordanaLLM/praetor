@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Behavioral gates in disposable Git repositories; never disable real hooks."""
 
+import ast
 import contextlib
 import importlib.util
 import io
@@ -17,13 +18,14 @@ import time
 import unittest
 from unittest import mock
 
+import checks
 import common
 from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
                     clean_env, run, snapshot, stop_process_group)
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
                     semgrep_commands, is_fixture, is_chart_template, file_checks, gofmt_check,
-                    lint_commands,
+                    lint_commands, self_test_commands,
                     run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
                     GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES)
 import hooks
@@ -316,6 +318,16 @@ class GitHooks(unittest.TestCase):
         if maintain_state and name in {"pre-commit", "pre-push", "commit-msg"}:
             command(self.repo, cli_path(self.repo), "state", "sync", ".")
         return command(self.repo, "lefthook", "run", name, *args, data=data, ok=False)
+
+    def test_hook_jobs_start_the_interpreter_praetor_python_names(self):
+        with mock.patch.dict(os.environ, {"PRAETOR_PYTHON": "praetor-no-such-interpreter"}):
+            refused = self.hook("pre-rebase")
+        self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+        self.assertIn(b"missing dependency: Python 3 interpreter 'praetor-no-such-interpreter'",
+                      refused.stdout + refused.stderr)
+        with mock.patch.dict(os.environ, {"PRAETOR_PYTHON": sys.executable}):
+            passed = self.hook("pre-rebase")
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
 
     def test_docs_commit_preserves_unstaged_and_untracked_files(self):
         self.write("README.md", "# Intended\n")
@@ -758,14 +770,14 @@ print("fixture hook self-tests passed")
                  (b'{"tool_input":{"command":null}}', 2), (b" " * ((1 << 20) + 1), 2)]
         for payload, expected in cases:
             with self.subTest(size=len(payload), prefix=payload[:48]):
-                result = command(self.repo, "python3", str(adapter), data=payload, ok=False)
+                result = command(self.repo, sys.executable, str(adapter), data=payload, ok=False)
                 self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
                 self.assertNotIn(b"policy-test\n", result.stdout)
 
     def test_codex_adapter_missing_guard_blocks(self):
         adapter = self.repo / ".config/agent/hooks/codex_pre_tool.py"
         (self.repo / ".config/agent/hooks/block_evasion.py").unlink()
-        result = command(self.repo, "python3", str(adapter),
+        result = command(self.repo, sys.executable, str(adapter),
                          data=b'{"tool_input":{"command":"git status"}}', ok=False)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
@@ -1593,7 +1605,7 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertNotIn(b"PRAETOR_COMMAND_POLICY_OK", result.stdout)
 
     def guard_input(self, data):
-        return subprocess.run(["python3", str(GUARD)], input=data, capture_output=True,
+        return subprocess.run([sys.executable, str(GUARD)], input=data, capture_output=True,
                               timeout=10, check=False)
 
     def test_guard_rejects_missing_or_wrong_json_command(self):
@@ -1691,7 +1703,7 @@ class ScopeAndGuard(unittest.TestCase):
 
     def test_guard_preserves_argv_and_environment_entry_points(self):
         for args in (("git", "status"), ("--environment",)):
-            result = subprocess.run(["python3", str(GUARD), *args], input=b"",
+            result = subprocess.run([sys.executable, str(GUARD), *args], input=b"",
                                     capture_output=True, timeout=10, check=False)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, b"")
@@ -1708,7 +1720,7 @@ class ScopeAndGuard(unittest.TestCase):
         adapter = self.load_codex_adapter()
         payload = b'{"tool_input":{"command":"git status"}}'
         for failure in (FileNotFoundError("missing fixture executable"),
-                        subprocess.TimeoutExpired(["python3", "block_evasion.py"], 10)):
+                        subprocess.TimeoutExpired([sys.executable, "block_evasion.py"], 10)):
             with self.subTest(failure=type(failure).__name__), \
                     mock.patch.object(adapter.subprocess, "run", side_effect=failure), \
                     contextlib.redirect_stderr(io.StringIO()) as diagnostic:
@@ -1720,7 +1732,7 @@ class ScopeAndGuard(unittest.TestCase):
         payload = b'{"tool_input":{"command":"git status"}}'
         def skipped_guard(*_args, **kwargs):
             kwargs["stdout"].write(b"guard process completed without checking policy\n")
-            return subprocess.CompletedProcess(["python3", "block_evasion.py"], 0)
+            return subprocess.CompletedProcess([sys.executable, "block_evasion.py"], 0)
         with mock.patch.object(adapter.subprocess, "run", side_effect=skipped_guard), \
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(adapter.check(payload), 2)
@@ -2087,9 +2099,9 @@ class ScopeAndGuard(unittest.TestCase):
 
     def test_process_failure_and_timeout_are_not_swallowed(self):
         with self.assertRaises(HookError):
-            run(["python3", "-c", "raise SystemExit(7)"])
+            run([sys.executable, "-c", "raise SystemExit(7)"])
         with self.assertRaises(HookError):
-            run(["python3", "-c", "import time; time.sleep(10)"], timeout=0.01)
+            run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.01)
 
     def test_timeout_kills_child_process_group(self):
         """The timeout stops the command and the child it started.
@@ -2104,12 +2116,12 @@ class ScopeAndGuard(unittest.TestCase):
             marker = Path(temp) / "child-survived"
             child = f"import time; from pathlib import Path; time.sleep(5); Path({str(marker)!r}).touch()"
             parent = (
-                "import subprocess, time; from pathlib import Path; "
-                f"subprocess.Popen(['python3', '-c', {child!r}]); "
+                "import subprocess, sys, time; from pathlib import Path; "
+                f"subprocess.Popen([sys.executable, '-c', {child!r}]); "
                 f"Path({str(spawned)!r}).write_text(repr(time.time())); time.sleep(30)"
             )
             with self.assertRaises(HookError):
-                run(["python3", "-c", parent], timeout=3)
+                run([sys.executable, "-c", parent], timeout=3)
             self.assertTrue(spawned.exists(), "the parent did not start its child within the timeout")
             started = float(spawned.read_text())
             time.sleep(max(0.0, started + 5.5 - time.time()))
@@ -2126,7 +2138,7 @@ class ScopeAndGuard(unittest.TestCase):
         with mock.patch("common.os", _WithoutProcessGroup()), \
                 mock.patch("common.subprocess.run") as tree:
             with self.assertRaises(HookError):
-                run(["python3", "-c", "import time; time.sleep(10)"], timeout=0.05)
+                run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.05)
         self.assertEqual(tree.call_args.args[0][:3], ["taskkill", "/F", "/T"])
 
     @unittest.skipUnless(hasattr(os, "killpg"), "Windows has no process group; _kill_bounded "
@@ -2174,7 +2186,7 @@ class ScopeAndGuard(unittest.TestCase):
         # Ctrl-C reaches the child as SIGINT, a timeout as SIGTERM.
         with mock.patch("common._kill_bounded", wraps=common._kill_bounded) as stop:
             with self.assertRaises(HookError):
-                run(["python3", "-c", "import time; time.sleep(10)"], timeout=0.05)
+                run([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.05)
             self.assertEqual(stop.call_args.args[1], signal.SIGTERM)
             real = subprocess.Popen.communicate
             calls = []
@@ -2185,7 +2197,7 @@ class ScopeAndGuard(unittest.TestCase):
                 return real(process, *args, **kwargs)
             with mock.patch.object(subprocess.Popen, "communicate", interrupted):
                 with self.assertRaises(KeyboardInterrupt):
-                    run(["python3", "-c", "import time; time.sleep(10)"])
+                    run([sys.executable, "-c", "import time; time.sleep(10)"])
             self.assertEqual(stop.call_args.args[1], signal.SIGINT)
 
     def test_hook_budget_hands_out_what_is_left_and_refuses_once_spent(self):
@@ -2466,6 +2478,171 @@ class ToolFloors(unittest.TestCase):
         if len(absent) == len(toolchain.VERSION_OUTPUT):
             self.skipTest("none of " + ", ".join(absent) + " is on PATH; the readers are "
                           "replayed against recorded --version output instead")
+
+
+LAUNCHER = ".config/lefthook/python.sh"
+POSIX_STUB = ("a PATH stub is a shebang script, which the Windows loader does not start; "
+              "the Windows leg sets PRAETOR_PYTHON and its workflow asserts it")
+
+
+class HookInterpreter(unittest.TestCase):
+    """Every hook starts its interpreter through one launcher that reads PRAETOR_PYTHON (#339)."""
+
+    def launch(self, *args, python=None, path=None):
+        env = {key: value for key, value in os.environ.items() if key != "PRAETOR_PYTHON"}
+        if python is not None:
+            env["PRAETOR_PYTHON"] = python
+        if path is not None:
+            env["PATH"] = path
+        # The path is relative and the directory is the repository root, as for every hook.
+        return subprocess.run([shutil.which("sh") or "sh", LAUNCHER, *args], cwd=ROOT, env=env,
+                              input=b"", capture_output=True, timeout=60, check=False)
+
+    def stub(self, directory, name):
+        """A program that prints its name and arguments, standing in for an interpreter."""
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / name
+        path.write_text('#!/bin/sh\necho "stub:$0:$*"\n', newline="\n")
+        path.chmod(0o755)
+        return path
+
+    def test_the_named_interpreter_runs_the_hook_and_returns_its_status(self):
+        result = self.launch("-c", "print(40+2)", python=sys.executable)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, b"42"), result.stderr)
+        failed = self.launch("-c", "raise SystemExit(7)", python=sys.executable)
+        self.assertEqual(failed.returncode, 7, failed.stderr)
+        self.assertNotIn(b"missing dependency", failed.stderr)
+
+    def test_a_missing_interpreter_is_reported_as_a_missing_dependency(self):
+        # python3 is on PATH for this suite, so the failure also shows the variable wins.
+        result = self.launch("-c", "print(40+2)", python="praetor-no-such-interpreter")
+        self.assertEqual(result.returncode, 127, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(b"missing dependency", result.stderr)
+        self.assertIn(b"'praetor-no-such-interpreter'", result.stderr)
+        self.assertIn(b"PRAETOR_PYTHON", result.stderr)
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_unset_and_empty_select_python3_and_a_path_with_a_space_is_one_word(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temp:
+            default = self.stub(Path(temp) / "bin", "python3")
+            for python in (None, ""):
+                with self.subTest(python=python):
+                    result = self.launch("-B", "hook.py", python=python, path=str(default.parent))
+                    self.assertEqual(result.stdout.decode().strip(),
+                                     f"stub:{default}:-B hook.py", result.stderr)
+            spaced = self.stub(Path(temp) / "program files", "py thon")
+            result = self.launch("a b", python=str(spaced), path=str(default.parent))
+            self.assertEqual(result.stdout.decode().strip(), f"stub:{spaced}:a b", result.stderr)
+
+    def test_the_policy_names_no_interpreter_but_the_launcher(self):
+        policy = (ROOT / ".config/lefthook/praetor.yml").read_text(encoding="utf-8")
+        script = (ROOT / ".config/lefthook/pre-push/pushed-checks.sh").read_text(encoding="utf-8")
+        for name, text in (("praetor.yml", policy), ("pushed-checks.sh", script)):
+            lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+            body = "\n".join(lines)
+            with self.subTest(file=name):
+                self.assertIsNone(re.search(r"\bpython(?!\.sh\b)", body), body)
+                # One launcher call for each hook script a job or the push script starts.
+                self.assertEqual(body.count(LAUNCHER), len(re.findall(r"\.py\b", body)))
+                self.assertGreater(body.count(LAUNCHER), 0)
+        variable, default = toolchain.RESOLVED["python"]
+        launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
+        self.assertIn(f'python="${{{variable}:-{default}}}"', launcher)
+        self.assertEqual(toolchain.LAUNCHER, LAUNCHER)
+
+    def test_no_hook_script_spells_an_interpreter(self):
+        scripts = sorted(path for path in (ROOT / ".config/lefthook/scripts").glob("*.py")
+                         if not path.name.startswith("test_"))
+        self.assertGreater(len(scripts), 5)
+        names = {"python", "python3", "py"}
+        for path in scripts:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+            # A command is a list or tuple whose first element is the program.
+            spelled = [node.lineno for node in ast.walk(tree)
+                       if isinstance(node, (ast.List, ast.Tuple)) and node.elts
+                       and isinstance(node.elts[0], ast.Constant) and node.elts[0].value in names]
+            self.assertEqual(spelled, [], f"{path.name} starts an interpreter by name")
+        # The default is declared once, in toolchain.RESOLVED, for python.sh to apply.
+        source = (ROOT / ".config/lefthook/scripts/toolchain.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count('"python3"'), 1)
+        probe = ast.parse('run(["python3", "-B", "x.py"])')
+        self.assertTrue(any(isinstance(node, ast.List) and node.elts[0].value in names
+                            for node in ast.walk(probe)))
+
+    def test_self_tests_run_under_the_interpreter_running_the_hook(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(self_test_commands(root),
+                             [["lefthook", "validate"],
+                              *([sys.executable, "-B", suite] for suite in checks.SELF_TESTS)])
+            (root / "scripts").mkdir()
+            (root / "scripts/test_praetor_hook.py").write_text("", encoding="utf-8")
+            self.assertEqual(self_test_commands(root)[-1],
+                             [sys.executable, "-B", "scripts/test_praetor_hook.py"])
+            self.assertEqual(len(self_test_commands(root)), len(checks.SELF_TESTS) + 2)
+
+    def test_resolved_program_reads_the_variable_or_the_default(self):
+        self.assertEqual(toolchain.resolved_program("python", {}), "python3")
+        self.assertEqual(toolchain.resolved_program("python", {"PRAETOR_PYTHON": ""}), "python3")
+        self.assertEqual(toolchain.resolved_program("python", {"PRAETOR_PYTHON": "py"}), "py")
+        with self.assertRaises(KeyError):
+            toolchain.resolved_program("gofmt", {})
+
+    def test_the_launcher_reports_the_interpreter_it_starts(self):
+        with mock.patch.dict(os.environ, {"PRAETOR_PYTHON": sys.executable}):
+            version = toolchain.python_version()
+        self.assertTrue(version.startswith("%d.%d.%d" % sys.version_info[:3]), version)
+        self.assertIn(sys.executable, version)
+        with mock.patch.dict(os.environ, {"PRAETOR_PYTHON": "praetor-no-such-interpreter"}), \
+                self.assertRaisesRegex(HookError, "praetor-no-such-interpreter did not start "
+                                                  r"\(PRAETOR_PYTHON names it, python3 where unset\)"):
+            toolchain.python_version()
+        with mock.patch("toolchain.run", return_value=b"Python 2.7.18\n"), \
+                self.assertRaisesRegex(HookError, "is not Python 3"):
+            toolchain.python_version()
+
+    def check(self, required, states):
+        """Run toolchain.check with describe answering from states; return (failed, lines)."""
+        def describe(tool, _floors):
+            if isinstance(states.get(tool), Exception):
+                raise states[tool]
+            return states.get(tool, "present")
+        out = io.StringIO()
+        with mock.patch("toolchain.describe", side_effect=describe), \
+                contextlib.redirect_stdout(out):
+            failed = toolchain.check(required)
+        return failed, out.getvalue().splitlines()
+
+    def test_check_fails_only_the_required_tools_and_reports_every_declared_one(self):
+        declared = [*toolchain.RESOLVED, *toolchain.tool_floors()]
+        failed, lines = self.check(["python", "yamllint"], {})
+        self.assertEqual(failed, [])
+        self.assertEqual(lines, [f"{tool}: present" for tool in declared])
+        gone = {"hadolint": HookError("hadolint >= 2.14.0 is required"),
+                "yamllint": HookError("yamllint >= 1.38.0 is required")}
+        failed, lines = self.check(["python", "yamllint"], gone)
+        self.assertEqual(failed, ["yamllint"])
+        self.assertIn("hadolint: not asserted: hadolint >= 2.14.0 is required", lines)
+        self.assertIn("yamllint: UNUSABLE: yamllint >= 1.38.0 is required", lines)
+        # Boundary: nothing required, so nothing fails, and every tool is still reported.
+        failed, lines = self.check([], gone)
+        self.assertEqual((failed, len(lines)), ([], len(declared)))
+        with self.assertRaisesRegex(HookError, "not declared hook tools: gofmt"):
+            self.check(["gofmt"], {})
+
+    def test_check_exits_nonzero_for_a_required_tool_that_is_unusable(self):
+        runner = [sys.executable, "-B", str(ROOT / ".config/lefthook/scripts/toolchain.py")]
+        env = dict(os.environ, PRAETOR_PYTHON="praetor-no-such-interpreter")
+        refused = subprocess.run([*runner, "--require", "python"], env=env, capture_output=True,
+                                 timeout=120, check=False)
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertIn(b"python: UNUSABLE: hook interpreter praetor-no-such-interpreter",
+                      refused.stdout)
+        self.assertIn(b"required hook tools unusable: python", refused.stderr)
+        reported = subprocess.run(runner, env=env, capture_output=True, timeout=120, check=False)
+        self.assertEqual(reported.returncode, 0, reported.stdout + reported.stderr)
+        self.assertIn(b"python: not asserted: hook interpreter", reported.stdout)
 
 
 if __name__ == "__main__":

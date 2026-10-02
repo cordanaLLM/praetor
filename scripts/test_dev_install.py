@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -131,6 +132,81 @@ class ProbeMCPTests(unittest.TestCase):
              patch.object(dev_install, "probe", return_value={"passed": []}):
             with self.assertRaisesRegex(RuntimeError, "changed during the MCP probe;"):
                 dev_install.probe_mcp(Path("/fixture"))
+
+
+class HookInterpreterTests(unittest.TestCase):
+    """settle_hook_interpreter decides what the Git hooks start on this host (#339). The
+    PATH lookup and the per-user store are injected, so no case reads this host's PATH or
+    writes a user environment."""
+
+    setx_status = 0
+
+    def settle(self, environ, on_path, platform="linux"):
+        stored = []
+
+        def run(argv, **settings):
+            stored.append((argv, settings["timeout"]))
+            return subprocess.CompletedProcess(argv, self.setx_status, b"", b"access denied\n")
+
+        def store(variable, value, default):
+            dev_install.store_user_variable(variable, value, default, platform=platform, run=run)
+
+        report = dev_install.settle_hook_interpreter(
+            environ, which=lambda name: name if name in on_path else None, store=store)
+        return report, stored
+
+    def test_spelling_is_read_from_the_hook_policy(self):
+        self.assertEqual(dev_install.hook_interpreter_spelling(), ("PRAETOR_PYTHON", "python3"))
+        self.assertNotIn(str(dev_install.HOOK_SCRIPTS), sys.path)
+        launcher = (dev_mcp.ROOT / ".config/lefthook/python.sh").read_text(encoding="utf-8")
+        self.assertIn('"${PRAETOR_PYTHON:-python3}"', launcher)
+
+    def test_default_name_on_path_needs_nothing_stored(self):
+        report, stored = self.settle({}, {"python3"})
+        self.assertEqual(report, {"variable": "PRAETOR_PYTHON", "value": "python3", "source": "default"})
+        self.assertEqual(stored, [])
+        # Boundary: an empty variable is unset, as python.sh reads it.
+        report, stored = self.settle({"PRAETOR_PYTHON": ""}, {"python3"})
+        self.assertEqual((report["source"], stored), ("default", []))
+
+    def test_a_set_variable_is_kept_when_it_resolves_and_refused_when_it_does_not(self):
+        report, stored = self.settle({"PRAETOR_PYTHON": "py"}, {"py", "python3"})
+        self.assertEqual(report, {"variable": "PRAETOR_PYTHON", "value": "py", "source": "environment"})
+        self.assertEqual(stored, [])
+        with self.assertRaisesRegex(RuntimeError, "PRAETOR_PYTHON=py names no program on PATH"):
+            self.settle({"PRAETOR_PYTHON": "py"}, {"python3"})
+
+    def test_windows_without_python3_stores_the_running_interpreter(self):
+        report, stored = self.settle({}, set(), platform="win32")
+        executable = sys.executable
+        self.assertEqual(report, {"variable": "PRAETOR_PYTHON", "value": executable, "source": "stored"})
+        self.assertEqual(stored, [(["setx", "PRAETOR_PYTHON", executable], dev_install.SETX_TIMEOUT)])
+
+    def test_a_failed_store_and_a_platform_without_one_fail_the_install(self):
+        self.setx_status = 1
+        with self.assertRaisesRegex(RuntimeError, "setx PRAETOR_PYTHON failed: access denied"):
+            self.settle({}, set(), platform="win32")
+        with self.assertRaisesRegex(RuntimeError, "python3 is not on PATH.*export PRAETOR_PYTHON="):
+            self.settle({}, set(), platform="linux")
+
+    def test_main_reports_the_interpreter_and_settles_it_before_installing(self):
+        order = []
+        settled = {"variable": "PRAETOR_PYTHON", "value": "python3", "source": "default"}
+        with patch.object(dev_install, "settle_hook_interpreter",
+                          side_effect=lambda: order.append("settle") or settled), \
+             patch.object(dev_install, "probe_mcp", side_effect=lambda _: order.append("probe")), \
+             patch.object(dev_install, "install",
+                          side_effect=lambda *_: order.append("install") or {"manifest_path": "/x"}), \
+             patch("sys.argv", ["dev_install.py"]), patch("builtins.print") as printed:
+            dev_install.main()
+        self.assertEqual(order, ["settle", "probe", "install"])
+        self.assertEqual(json.loads(printed.call_args.args[0]),
+                         {"manifest_path": "/x", "hook_interpreter": settled})
+        with patch.object(dev_install, "settle_hook_interpreter", side_effect=RuntimeError("no")), \
+             patch.object(dev_install, "install") as install, patch("sys.argv", ["dev_install.py"]):
+            with self.assertRaises(RuntimeError):
+                dev_install.main()
+        install.assert_not_called()
 
 
 if __name__ == "__main__":

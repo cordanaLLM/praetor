@@ -267,20 +267,38 @@ jobs:
         shell: bash
         run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
 
+      # Every hook the self-tests drive starts its interpreter through
+      # .config/lefthook/python.sh, which runs what PRAETOR_PYTHON names (#339). The leg sets it
+      # to the interpreter the setup action installed, and this step starts that interpreter
+      # through the launcher before any self-test does: a leg that cannot start it fails here
+      # as a missing dependency, not later as a hook rejecting a commit. The same run holds the
+      # linters this job installs to the floors in .config/lefthook/tool-floors.txt (#343) and
+      # prints one line per declared tool; a declared tool outside --require is reported as
+      # not asserted, never silently absent.
+      - name: Assert Hook Toolchain
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          PRAETOR_PYTHON: ${{ steps.python.outputs.python-path }}
+          REQUIRED: python,shellcheck,yamllint
+
       # The self-tests are the part that could not run on Windows at all before #102, and the
       # part that governs the hooks, so they are the highest-value cell in the matrix. The
       # driver refuses to report a pass that executed nothing and prints every skip with its
       # reason, so a platform losing coverage shows up as a number that moved.
       #
-      # Python is invoked through the path the setup action reports rather than by name:
-      # `python3` is not guaranteed to exist on a Windows runner, and assuming a platform's
-      # binary naming is the exact defect this job exists to catch.
+      # Python is invoked through the path the setup action reports rather than by name, and
+      # PRAETOR_PYTHON hands the same path to the hooks: assuming a platform's binary naming
+      # is the exact defect this job exists to catch.
       - name: Harness Self-Tests
         if: ${{ !cancelled() }}
         shell: bash
         run: '"$PYTHON" -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"'
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
+          PRAETOR_PYTHON: ${{ steps.python.outputs.python-path }}
           # Deliberately a collapse detector, not a coverage assertion. The honest floor per
           # platform is not yet measured on macOS or Windows -- this matrix is what measures
           # it. Raise it to each platform's real figure once the first green run reports one,

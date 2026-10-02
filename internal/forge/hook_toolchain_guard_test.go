@@ -150,3 +150,121 @@ func TestHookToolFloorGuardFixtures(t *testing.T) {
 		})
 	}
 }
+
+// The hook interpreter is resolved once, from PRAETOR_PYTHON (#339), and the portability
+// harness asserts the declared hook toolchain before the self-tests start any hook.
+const (
+	hookToolchainCheck    = ".config/lefthook/scripts/toolchain.py --require"
+	hookSelfTests         = "scripts/portability_selftest.py"
+	hookInterpreter       = "PRAETOR_PYTHON"
+	hookToolchainRequired = "REQUIRED"
+)
+
+// hookToolchainGap names why a job does not assert the hook toolchain on every leg before
+// its self-tests, with the interpreter both steps hand the hooks, or returns "" when it does.
+func hookToolchainGap(job workflowJob) string {
+	if advisoryJob(job.ContinueOnError) {
+		return "job is advisory"
+	}
+	asserted := ""
+	for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
+		step := job.Steps[i]
+		env, readable := stepEnv(step)
+		switch {
+		case strings.Contains(step.Run, hookToolchainCheck):
+			if gap := hookToolchainStepGap(step, env, readable); gap != "" {
+				return gap
+			}
+			asserted = env[hookInterpreter]
+		case strings.Contains(step.Run, hookSelfTests):
+			return hookSelfTestGap(step, env, asserted)
+		}
+	}
+	return "no step runs " + hookSelfTests
+}
+
+// hookToolchainStepGap judges the assertion step itself.
+func hookToolchainStepGap(step workflowStep, env map[string]string, readable bool) string {
+	switch {
+	case !runsOnEveryLeg(step):
+		return "toolchain assertion is conditional: " + step.If
+	case !readable || env[hookInterpreter] == "":
+		return "toolchain assertion does not set " + hookInterpreter
+	case !slices.Contains(strings.Split(env[hookToolchainRequired], ","), "python"):
+		return "toolchain assertion does not require python"
+	}
+	return ""
+}
+
+// hookSelfTestGap judges the self-test step against the interpreter the assertion started.
+func hookSelfTestGap(step workflowStep, env map[string]string, asserted string) string {
+	switch {
+	case asserted == "":
+		return "self-tests run before the hook toolchain is asserted"
+	case !runsOnEveryLeg(step):
+		return "self-tests are conditional: " + step.If
+	case env[hookInterpreter] != asserted:
+		return "self-tests run the hooks under another interpreter than the one asserted"
+	}
+	return ""
+}
+
+// envNode builds a step env block from name and value pairs.
+func envNode(pairs ...string) yaml.Node {
+	node := yaml.Node{Kind: yaml.MappingNode}
+	for i := 0; i+1 < len(pairs) && i < maxStepsPerJob; i += 2 {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: pairs[i]},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: pairs[i+1]})
+	}
+	return node
+}
+
+// HISS-21 evidence for the hook interpreter. Positive: the real harness job asserts the
+// toolchain on every leg, python included, before the self-tests, and both steps hand the
+// hooks one interpreter. Negative and boundary: no assertion, one after the self-tests, an
+// OS-guarded one, one that does not require python, and self-tests under another interpreter.
+func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
+	workflows, _ := engineWorkflows(t)
+	var spec workflowSpec
+	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
+		t.Fatalf("parse portability.yml: %v", err)
+	}
+	if gap := hookToolchainGap(spec.Jobs["harness"]); gap != "" {
+		t.Fatalf("portability harness: %s", gap)
+	}
+	every := "${{ !cancelled() }}"
+	check := func(condition string, pairs ...string) workflowStep {
+		return workflowStep{Run: `"$PYTHON" -B ` + hookToolchainCheck + ` "$REQUIRED"`, If: condition, Env: envNode(pairs...)}
+	}
+	tests := func(python string) workflowStep {
+		return workflowStep{Run: `"$PYTHON" -B ` + hookSelfTests, If: every, Env: envNode(hookInterpreter, python)}
+	}
+	asserted := check(every, hookInterpreter, "py", hookToolchainRequired, "python,yamllint")
+	cases := []struct {
+		name string
+		job  workflowJob
+		want string
+	}{
+		{"positive", workflowJob{Steps: []workflowStep{asserted, tests("py")}}, ""},
+		{"negative missing", workflowJob{Steps: []workflowStep{tests("py")}}, "before the hook toolchain is asserted"},
+		{"negative no self-tests", workflowJob{Steps: []workflowStep{asserted}}, "no step runs"},
+		{"boundary order", workflowJob{Steps: []workflowStep{tests("py"), asserted}}, "before the hook toolchain is asserted"},
+		{"boundary os guard", workflowJob{Steps: []workflowStep{
+			check("runner.os != 'Windows'", hookInterpreter, "py", hookToolchainRequired, "python"), tests("py")}}, "conditional"},
+		{"boundary python not required", workflowJob{Steps: []workflowStep{
+			check(every, hookInterpreter, "py", hookToolchainRequired, "yamllint"), tests("py")}}, "does not require python"},
+		{"boundary variable unset", workflowJob{Steps: []workflowStep{
+			check(every, hookToolchainRequired, "python"), tests("py")}}, "does not set " + hookInterpreter},
+		{"boundary other interpreter", workflowJob{Steps: []workflowStep{asserted, tests("python3")}}, "another interpreter"},
+		{"boundary advisory", workflowJob{ContinueOnError: "true", Steps: []workflowStep{asserted, tests("py")}}, "advisory"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hookToolchainGap(tc.job)
+			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+				t.Fatalf("gap = %q, want containing %q", got, tc.want)
+			}
+		})
+	}
+}

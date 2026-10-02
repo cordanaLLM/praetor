@@ -1,10 +1,20 @@
-"""The hook policy's declared external tools: the version floors its linters are held to."""
+#!/usr/bin/env python3
+"""The hook policy's declared external tools: linter version floors and resolved programs.
 
+Run this file to see what the host provides, one line per declared tool:
+`python3 -B .config/lefthook/scripts/toolchain.py`. With `--require NAMES` the named tools
+must be usable and the run fails when one is not.
+"""
+
+import argparse
+import os
 from pathlib import Path
 import re
+import sys
 
 from common import HookError, clean_env, run
 
+ROOT = Path(__file__).resolve().parents[3]
 # The one place the floors are declared, beside the policy that enforces them (#343).
 FLOORS = Path(__file__).resolve().parents[1] / "tool-floors.txt"
 FLOORS_NAME = ".config/lefthook/" + FLOORS.name
@@ -23,6 +33,12 @@ VERSION_OUTPUT = {
     "shellcheck": re.compile(r"^version: (\d+(?:\.\d+)+)\s*$", re.M),
     "yamllint": re.compile(r"\Ayamllint (\d+(?:\.\d+)+)"),
 }
+# Programs the policy resolves once from the environment, {tool: (variable, default)},
+# instead of by a name each command spells (#339). python.sh, beside the policy, is the one
+# place a shell starts the interpreter; a hook already running reuses sys.executable.
+RESOLVED = {"python": ("PRAETOR_PYTHON", "python3")}
+LAUNCHER = ".config/lefthook/python.sh"
+PYTHON_VERSION = re.compile(r"\APython (3\.\d+\.\d+\S*)")
 
 
 def parse_floors(text):
@@ -83,19 +99,23 @@ def installed_version(tool):
     return match.group(1)
 
 
-def floor_failure(tool, floors):
-    """Return why tool does not meet its declared floor, or None when it does."""
+def checked_version(tool, floors):
+    """Return the installed version of tool when it meets its declared floor.
+
+    A tool without a floor, one that is missing or states no version, and one older than its
+    floor are each a HookError naming the requirement.
+    """
     floor = floors.get(tool)
     if floor is None:
-        return f"{tool}: no version floor declared in {FLOORS_NAME}"
+        raise HookError(f"{tool}: no version floor declared in {FLOORS_NAME}")
     required = f"{tool} >= {floor} is required ({FLOORS_NAME})"
     try:
         version = installed_version(tool)
     except HookError as error:
-        return f"{required}: {error}"
+        raise HookError(f"{required}: {error}") from error
     if below(version, floor):
-        return f"{required}: the {tool} on PATH is {version}"
-    return None
+        raise HookError(f"{required}: the {tool} on PATH is {version}")
+    return version
 
 
 def require_floors(tools):
@@ -107,7 +127,88 @@ def require_floors(tools):
     if not names:
         return
     floors = tool_floors()
-    failures = [failure for failure in (floor_failure(tool, floors) for tool in names)
-                if failure is not None]
+    failures = []
+    for tool in names:
+        try:
+            checked_version(tool, floors)
+        except HookError as error:
+            failures.append(str(error))
     if failures:
         raise HookError("\n".join(failures))
+
+
+def resolved_program(tool, environ=None):
+    """Return the program the policy runs for a resolved tool.
+
+    It is the value of the tool's variable, or its default where the variable is unset or
+    empty: the rule python.sh applies to PRAETOR_PYTHON.
+    """
+    variable, default = RESOLVED[tool]
+    return (os.environ if environ is None else environ).get(variable) or default
+
+
+def python_version():
+    """Start the interpreter the way every hook does, through python.sh, and return what it is.
+
+    A launcher that cannot start it, and a program that is no Python 3, are a HookError.
+    """
+    variable, default = RESOLVED["python"]
+    program = resolved_program("python")
+    try:
+        output = run(["sh", LAUNCHER, "-V"], cwd=ROOT, timeout=VERSION_TIMEOUT)
+    except HookError as error:
+        raise HookError(f"hook interpreter {program} did not start ({variable} names it, "
+                        f"{default} where unset): {error}") from error
+    match = PYTHON_VERSION.search(output.decode(errors="replace"))
+    if match is None:
+        raise HookError(f"{program} is not Python 3; set {variable} to a Python 3 interpreter")
+    return f"{match.group(1)} ({program})"
+
+
+def describe(tool, floors):
+    """Return one declared tool's state on this host; a HookError says what is wrong with it."""
+    if tool == "python":
+        return python_version()
+    return f"{checked_version(tool, floors)} (floor {floors[tool]})"
+
+
+def check(required):
+    """Print one line per declared tool and return the required ones that are unusable.
+
+    A tool outside required is reported and never fails the run: a host without hadolint is
+    usable until a Dockerfile is staged, and its line carries what the hook would say then.
+    """
+    floors = tool_floors()
+    declared = [*RESOLVED, *floors]
+    unknown = sorted(set(required) - set(declared))
+    if unknown:
+        raise HookError(f"not declared hook tools: {', '.join(unknown)}; "
+                        f"declared: {', '.join(declared)}")
+    failed = []
+    for tool in declared:
+        try:
+            line = f"{tool}: {describe(tool, floors)}"
+        except HookError as error:
+            state = "UNUSABLE" if tool in required else "not asserted"
+            failed.extend([tool] if tool in required else [])
+            line = f"{tool}: {state}: {error}"
+        print(line)  # caveman:not-applicable structured-protocol
+    return failed
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--require", default="", metavar="NAMES",
+                        help="comma-separated declared tools that must be usable")
+    args = parser.parse_args(argv)
+    failed = check([name for name in args.require.split(",") if name])
+    if failed:
+        raise HookError("required hook tools unusable: " + ", ".join(failed))
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except HookError as error:
+        print(f"praetor hooks: {error}", file=sys.stderr)
+        sys.exit(1)

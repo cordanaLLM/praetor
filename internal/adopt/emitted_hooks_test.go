@@ -1,13 +1,16 @@
 package adopt
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,10 +59,11 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 
 // Positive: folding changes the layout, never a value. Every earlier unfolded rendering
 // decodes to exactly what the current Go rendering decodes to, so lefthook runs the same
-// commands in a Go repository and lefthook_identity.go sees the same jobs. The two values that
-// changed since are the pre-commit audit, which now passes --offline (preCommitAuditArgs), and
-// the pre-push gate, which now passes --admit-unsupported (prePushGateArgs); the unfolded
-// renderings ran both without, and nothing else differs.
+// commands in a Go repository and lefthook_identity.go sees the same jobs. The values that
+// changed since are the pre-commit audit, which now passes --offline (preCommitAuditArgs), the
+// pre-push gate, which now passes --admit-unsupported (prePushGateArgs), and the two checkpoint
+// jobs, which now read their interpreter from PRAETOR_PYTHON (lefthookPythonCommand); the
+// unfolded renderings ran the first two without and named python3, and nothing else differs.
 func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 	fixtures := readPriorLefthookFixtures(t)
 	for name, checkpoint := range map[string]bool{"unfolded.lefthook.yml": false, "unfolded-checkpoint.lefthook.yml": true} {
@@ -80,10 +84,118 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			t.Fatalf("%s: the pre-push gate was not the strict one: %v", name, gate["run"])
 		}
 		gate["run"] = lefthookGovernedCommand(prePushGateArgs)
+		for _, event := range checkpointEvents(checkpoint) {
+			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
+			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"
+			if job["run"] != hookPythonDefault+" "+arguments {
+				t.Fatalf("%s: the %s checkpoint job did not name %s: %v", name, event, hookPythonDefault, job["run"])
+			}
+			job["run"] = lefthookPythonCommand(arguments)
+		}
 		if !reflect.DeepEqual(prior, current) {
 			t.Errorf("checkpoint=%v: the current rendering changed a value of %s", checkpoint, name)
 		}
 	}
+}
+
+// checkpointEvents names the lifecycle events a rendering carries checkpoint jobs for.
+func checkpointEvents(checkpoint bool) []string {
+	if !checkpoint {
+		return nil
+	}
+	return []string{"tool", "stop"}
+}
+
+// The generated checkpoint jobs and the canonical launcher resolve one interpreter by one
+// rule (#339). Positive: the rendered line reads the variable and falls back to the default
+// the launcher names, and both checkpoint jobs of every rendering use it. Negative: no
+// rendering names an interpreter outside that line. Boundary: the line is plain shell with
+// no ${...} expansion, and a rendering without checkpoint jobs names no interpreter at all.
+func TestLefthookPythonCommandMatchesTheCanonicalLauncher(t *testing.T) {
+	launcher, err := os.ReadFile(filepath.Join("..", "..", ".config", "lefthook", "python.sh"))
+	if err != nil {
+		t.Fatalf("read the canonical launcher: %v", err)
+	}
+	if rule := `python="${` + hookPythonVariable + `:-` + hookPythonDefault + `}"`; !strings.Contains(string(launcher), rule) {
+		t.Fatalf("the canonical launcher does not resolve %s", rule)
+	}
+	const arguments = "-B hook.py --flag"
+	want := `if [ -z "$PRAETOR_PYTHON" ]; then PRAETOR_PYTHON=python3; fi; "$PRAETOR_PYTHON" ` + arguments
+	if got := lefthookPythonCommand(arguments); got != want {
+		t.Fatalf("lefthookPythonCommand = %q, want %q", got, want)
+	}
+	if strings.Contains(lefthookPythonCommand(arguments), "${") {
+		t.Fatal("the generated line uses a ${...} expansion")
+	}
+	for _, languages := range lefthookLanguageSets {
+		var with map[string]any
+		if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(languages, true)), &with); err != nil {
+			t.Fatalf("decode the rendering with checkpoint jobs: %v", err)
+		}
+		for _, event := range checkpointEvents(true) {
+			run := decodedJob(t, with, "agent-checkpoint-"+event, "checkpoint")["run"]
+			if run != lefthookPythonCommand("-B "+checkpointScript+" --event "+event+" --json --marker") {
+				t.Errorf("languages=%v: the %s checkpoint job runs %v", languages, event, run)
+			}
+		}
+		without := buildLefthookYAMLFor(languages, false)
+		if strings.Contains(without, "python") || strings.Contains(without, hookPythonVariable) {
+			t.Errorf("languages=%v: a rendering without checkpoint jobs names an interpreter", languages)
+		}
+		named := strings.Count(buildLefthookYAMLFor(languages, true), hookPythonDefault)
+		if named != len(checkpointEvents(true)) {
+			t.Errorf("languages=%v: %s is named %d times, want once per checkpoint job", languages, hookPythonDefault, named)
+		}
+	}
+}
+
+// The generated line is run, not only compared. Positive: with the variable set, sh starts the
+// interpreter it names. Negative: a name that resolves to nothing fails with the shell's
+// command-not-found status, python3 on PATH notwithstanding. Boundary: unset and empty both
+// select the default name.
+func TestLefthookPythonCommandRunsTheNamedInterpreter(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh on PATH; Lefthook itself runs every job through sh, so no generated job runs here")
+	}
+	python := testsupport.PythonInterpreter(t)
+	line := lefthookPythonCommand(`-c "import sys; sys.exit(41)"`)
+	run := func(setting ...string) int {
+		cmd := exec.CommandContext(t.Context(), shell, "-c", line)
+		cmd.Env = append(envWithout(os.Environ(), hookPythonVariable), setting...)
+		err := cmd.Run()
+		var exit *exec.ExitError
+		if err != nil && !errors.As(err, &exit) {
+			t.Fatalf("run the generated line: %v", err)
+		}
+		return cmd.ProcessState.ExitCode()
+	}
+	if code := run(hookPythonVariable + "=" + python); code != 41 {
+		t.Errorf("%s=%s: exit %d, want the script's 41", hookPythonVariable, python, code)
+	}
+	if code := run(hookPythonVariable + "=praetor-no-such-interpreter"); code != 127 {
+		t.Errorf("a missing interpreter: exit %d, want 127", code)
+	}
+	if _, err := exec.LookPath(hookPythonDefault); err != nil {
+		t.Logf("%s is not on PATH; the default is covered by the rendered text alone here", hookPythonDefault)
+		return
+	}
+	for _, setting := range [][]string{nil, {hookPythonVariable + "="}} {
+		if code := run(setting...); code != 41 {
+			t.Errorf("setting %v: exit %d, want %s to run the script", setting, code, hookPythonDefault)
+		}
+	}
+}
+
+// envWithout returns environ without the entries of name, in the same order.
+func envWithout(environ []string, name string) []string {
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		if !strings.HasPrefix(entry, name+"=") {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
 }
 
 // decodedJob returns the commands entry job of hook in a decoded rendering.

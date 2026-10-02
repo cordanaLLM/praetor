@@ -12,16 +12,14 @@ agent-checkpoint-tool:
   commands:
     checkpoint:
       run: >-
-        if [ -z "$PRAETOR_PYTHON" ]; then PRAETOR_PYTHON=python3; fi;
-        "$PRAETOR_PYTHON" -B .config/lefthook/scripts/checkpoint.py --event tool
-        --json --marker
+        python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json
+        --marker
 agent-checkpoint-stop:
   commands:
     checkpoint:
       run: >-
-        if [ -z "$PRAETOR_PYTHON" ]; then PRAETOR_PYTHON=python3; fi;
-        "$PRAETOR_PYTHON" -B .config/lefthook/scripts/checkpoint.py --event stop
-        --json --marker
+        python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json
+        --marker
 pre-commit:
   parallel: true
   commands:

@@ -77,6 +77,24 @@ func lefthookGovernedCommand(args string) string {
 		util.PraetorCLI+" nor "+util.LegacyCLI+" is installed")
 }
 
+const (
+	// hookPythonVariable is the one spelling every Praetor hook reads its Python 3 interpreter
+	// from, and hookPythonDefault the name used where it is unset or empty (#339). The canonical
+	// policy resolves the same pair in .config/lefthook/python.sh, which adoption does not write;
+	// TestLefthookPythonCommandMatchesTheCanonicalLauncher holds the two equal.
+	hookPythonVariable = "PRAETOR_PYTHON"
+	hookPythonDefault  = "python3"
+)
+
+// lefthookPythonCommand renders a lefthook run line that starts a Python hook script with the
+// interpreter hookPythonVariable names. The generated configuration carries no launcher file,
+// so the line states the rule itself: a host whose interpreter is not called python3, such as
+// a stock Windows install, sets the variable instead of editing the generated file.
+func lefthookPythonCommand(args string) string {
+	return `if [ -z "$` + hookPythonVariable + `" ]; then ` + hookPythonVariable + "=" + hookPythonDefault +
+		`; fi; "$` + hookPythonVariable + `" ` + args
+}
+
 // optionalToolCommand renders a lefthook run line for a third-party tool that is skipped
 // when absent but blocks when it fails.
 func optionalToolCommand(tool, args string) string {
@@ -186,9 +204,9 @@ func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) strin
 	checkpointJobs := ""
 	if checkpoint {
 		checkpointJobs = "agent-checkpoint-tool:\n  commands:\n    checkpoint:\n" +
-			lefthookRun("python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker") +
+			lefthookRun(lefthookPythonCommand("-B "+checkpointScript+" --event tool --json --marker")) +
 			"agent-checkpoint-stop:\n  commands:\n    checkpoint:\n" +
-			lefthookRun("python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker")
+			lefthookRun(lefthookPythonCommand("-B "+checkpointScript+" --event stop --json --marker"))
 	}
 	return lefthookHeader(languages) +
 		"---\n" +

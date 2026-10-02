@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import re
+import sys
 
 from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
 from privacy import PRIVATE_STATE_ERROR
@@ -170,6 +171,25 @@ def lint_commands(directory, files):
     return commands
 
 
+# The harness self-tests a change to the hook policy runs. The first three travel with the
+# policy; the scripts/ suites exist only where the snapshot carries them.
+SELF_TESTS = (".config/lefthook/scripts/test_hooks.py",
+              ".config/lefthook/scripts/test_security_scope.py",
+              ".config/lefthook/scripts/test_checkpoint.py")
+OPTIONAL_SELF_TESTS = ("scripts/test_checkpoint_hooks.py", "scripts/test_praetor_hook.py")
+
+
+def self_test_commands(directory):
+    """Return the policy validation and one command per self-test suite in directory.
+
+    Each suite runs under sys.executable: the interpreter .config/lefthook/python.sh resolved
+    for this hook, so a suite never runs under a second interpreter named by a command (#339).
+    """
+    suites = [*SELF_TESTS,
+              *(name for name in OPTIONAL_SELF_TESTS if (directory / name).exists())]
+    return [["lefthook", "validate"], *([sys.executable, "-B", suite] for suite in suites)]
+
+
 def file_checks(directory, names):
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
@@ -185,14 +205,7 @@ def file_checks(directory, names):
                     ".agents/plugins/praetor/praetor_hook.py", "scripts/test_checkpoint_hooks.py",
                     "scripts/test_praetor_hook.py"}
            or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
-        commands.append(["lefthook", "validate"])
-        commands.append(["python3", "-B", ".config/lefthook/scripts/test_hooks.py"])
-        commands.append(["python3", "-B", ".config/lefthook/scripts/test_security_scope.py"])
-        commands.append(["python3", "-B", ".config/lefthook/scripts/test_checkpoint.py"])
-        if (directory / "scripts/test_checkpoint_hooks.py").exists():
-            commands.append(["python3", "-B", "scripts/test_checkpoint_hooks.py"])
-        if (directory / "scripts/test_praetor_hook.py").exists():
-            commands.append(["python3", "-B", "scripts/test_praetor_hook.py"])
+        commands.extend(self_test_commands(directory))
     if context_changed(names):
         commands.append(["go", "run", "./cmd/standardsctl", "compile-context", "--verify"])
     parallel(commands, directory)

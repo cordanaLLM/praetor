@@ -22,7 +22,9 @@ OID = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 
 
 def guard():
-    run(["python3", ".config/agent/hooks/block_evasion.py", "--environment"])
+    # sys.executable, here and wherever a hook starts Python: the interpreter python.sh
+    # resolved for this hook is the one its children run under, so none names its own (#339).
+    run([sys.executable, ".config/agent/hooks/block_evasion.py", "--environment"])
 
 
 def pre_commit():
@@ -196,7 +198,7 @@ def check_pushed_snapshot(head, base, mode, names):
             if gated:
                 preserve_receipt(directory, head)
             if os.environ.get("PRAETOR_HOOK_SANDBOX") == "1":
-                run(["python3", ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
+                run([sys.executable, ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
                     capture=False)
 
 

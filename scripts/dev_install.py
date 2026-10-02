@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,65 @@ from dev_mcp_probe import probe
 # the MCP functional probe as a pre-flight gate and the subprocess call that reaches the
 # Go engine.
 INSTALL_TIMEOUT = 300
+# The hook policy's own modules; toolchain.RESOLVED there declares the interpreter spelling.
+HOOK_SCRIPTS = dev_mcp.ROOT / ".config" / "lefthook" / "scripts"
+# setx writes one registry value and returns.
+SETX_TIMEOUT = 30
+
+
+def hook_interpreter_spelling():
+    """Return (variable, default): the one spelling the Git hooks read their interpreter from.
+
+    It is declared once, in the hook policy (toolchain.RESOLVED, applied by
+    .config/lefthook/python.sh), and read from there instead of being repeated here.
+    """
+    sys.path.insert(0, str(HOOK_SCRIPTS))
+    try:
+        import toolchain
+    finally:
+        sys.path.remove(str(HOOK_SCRIPTS))
+    return toolchain.RESOLVED["python"]
+
+
+def store_user_variable(variable, value, default, platform=sys.platform, run=subprocess.run):
+    """Store variable=value for the user's later processes, where the platform keeps such a store.
+
+    Windows has per-user environment variables, written with setx and read by every process
+    started afterwards, Git hooks included. No other platform has one store every shell
+    reads, so there the install fails with the line to add rather than guessing a profile.
+    """
+    if platform != "win32":
+        raise RuntimeError(
+            f"{default} is not on PATH, so the Git hooks cannot start; this platform has no "
+            f"per-user environment store, so export {variable}={value} in the shell profile "
+            "that starts git and run the install again")
+    result = run(["setx", variable, value], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                 timeout=SETX_TIMEOUT, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"setx {variable} failed: {result.stderr.decode(errors='replace').strip()}")
+
+
+def settle_hook_interpreter(environ=None, which=shutil.which, store=store_user_variable):
+    """Make sure the Git hooks can start their interpreter on this host, and report how.
+
+    Every hook starts through .config/lefthook/python.sh, which runs the interpreter the
+    variable names, or the default name where it is unset or empty. A set variable is the
+    operator's choice: it is checked, never replaced. Where neither resolves -- a stock
+    Windows install has python.exe and no python3 -- the interpreter running this install
+    is stored as the user's variable, which a shell opened afterwards reads.
+    """
+    environ = os.environ if environ is None else environ
+    variable, default = hook_interpreter_spelling()
+    configured = environ.get(variable, "")
+    if configured:
+        if which(configured) is None:
+            raise RuntimeError(f"{variable}={configured} names no program on PATH; unset it "
+                               "or point it at a Python 3 interpreter")
+        return {"variable": variable, "value": configured, "source": "environment"}
+    if which(default) is not None:
+        return {"variable": variable, "value": default, "source": "default"}
+    store(variable, sys.executable, default)
+    return {"variable": variable, "value": sys.executable, "source": "stored"}
 
 
 def standardsctl_argv():
@@ -68,9 +128,12 @@ def main():
     parser.add_argument("--manifest", type=Path, default=None,
                         help="Install manifest path (default: the per-user configuration directory)")
     args = parser.parse_args()
+    # Before anything is installed: a host whose hooks cannot start is not a working install.
+    interpreter = settle_hook_interpreter()
     with tempfile.TemporaryDirectory(prefix="praetor-dev-install-") as temporary:
         probe_mcp(Path(temporary))
     report = install(args.bin_dir.resolve(), args.manifest)
+    report["hook_interpreter"] = interpreter
     print(json.dumps(report, indent=2))
 
 
