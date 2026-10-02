@@ -76,10 +76,13 @@ evaluates no function except to know that `info`, `warning` and `error` expand t
 bare expansion beside a define counts, `$(if ...)` included. A define that is never closed is
 left to Make too, since it would swallow an appended block. The
 documentation gate uses the same reader to decide whether the project already owns `docs-lint`
-(`mayDefineTarget` in `internal/adopt/verification_makefile.go`, define tracking in
-`internal/adopt/verification_makefile_define.go`). The table tests behind this contract are in
-`internal/adopt/verification_makefile_target_test.go` and
-`internal/adopt/verification_makefile_define_test.go`; each row was measured against GNU Make 4.4.1.
+(`MakefileMayDefineTarget` in `internal/util/makefile_target.go`, define tracking in
+`internal/util/makefile_define.go`). Editor generation reads the Makefile through that reader too
+(`MakefileHasTarget`, called by `hasLiteralMakeTarget` in `internal/editor/capabilities.go`), so
+adoption and the generated editor tasks cannot disagree on whether a line declares `verify-all`
+([editor capabilities](editor-capabilities.md)). The table tests behind this contract are in
+`internal/util/makefile_target_test.go` and `internal/adopt/verification_makefile_define_test.go`;
+each row was measured against GNU Make 4.4.1.
 When an edited documentation gate block stops the run, whether adoption was appending verification
 targets or only attaching the gate, the error names the forced re-adoption that restores the block,
 `praetorctl adopt --force --lock-source-root=<praetor checkout>`, with the run's own lock source

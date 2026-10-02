@@ -452,20 +452,3 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 func mayDefineVerificationTarget(data string) bool {
 	return util.MakefileMayDefineTarget(data, verificationTarget)
 }
-
-// The names below forward to the reader that moved to internal/util, so this package's table
-// tests replay unchanged against the moved code. The tests move beside the reader next, and
-// these names go with them.
-const maxMakefileLineBytes = util.MaxMakefileLineBytes
-
-func hasVerificationTarget(data, target string) bool {
-	return util.MakefileHasTarget(data, target)
-}
-
-func mayDefineTarget(data, target string) bool {
-	return util.MakefileMayDefineTarget(data, target)
-}
-
-func verificationTargetRecipe(data, target string) (string, bool) {
-	return util.MakefileTargetRecipe(data, target)
-}
