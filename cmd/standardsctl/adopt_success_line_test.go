@@ -19,6 +19,14 @@ const adoptSuccessLine = "Repository successfully adopted into cordanaLLM/praeto
 // against.
 func adoptSuccessLineFixture(t *testing.T, files map[string]string) (repo, source string) {
 	t.Helper()
+	repo = t.TempDir()
+	return repo, adoptFixtureAt(t, repo, files)
+}
+
+// adoptFixtureAt builds the adoptSuccessLineFixture repository at repo, a directory the caller
+// chose (one below a dev root for --all-missing), and returns the source checkout.
+func adoptFixtureAt(t *testing.T, repo string, files map[string]string) (source string) {
+	t.Helper()
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Skipf("git unavailable: %v", err)
@@ -28,7 +36,6 @@ func adoptSuccessLineFixture(t *testing.T, files map[string]string) (repo, sourc
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+filepath.Dir(gitPath))
-	repo = t.TempDir()
 	for rel, content := range files {
 		writeFixtureFile(t, repo, rel, content)
 	}
@@ -40,7 +47,7 @@ func adoptSuccessLineFixture(t *testing.T, files map[string]string) (repo, sourc
 	if err != nil {
 		t.Fatal(err)
 	}
-	return repo, source
+	return source
 }
 
 // runAdoptOutput runs one plain adoption of repo through runAdopt and returns what it printed.

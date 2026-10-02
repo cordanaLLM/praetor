@@ -99,8 +99,8 @@ func TestAdopt_Negative_ReAdoptionDoesNotAbsorbNewDebt(t *testing.T) {
 				t.Fatalf("re-adoption absorbed the new infraction into the baseline:\n%s", got)
 			}
 			kept, err := baseline.LoadBaseline(full)
-			if err != nil || kept.TotalInfractions != 1 || strings.Contains(recorded, "added.go") {
-				t.Fatalf("kept baseline = %+v, %v; want the one recorded infraction and no added.go", kept, err)
+			if err != nil || kept.TotalInfractions != 1 {
+				t.Fatalf("kept baseline = %+v, %v; want the one recorded infraction", kept, err)
 			}
 			verdict := rep.BaselineRatchet
 			if verdict == nil || verdict.Passed || verdict.Recorded != 1 || verdict.Active != 2 || verdict.Unbaselined != 1 {

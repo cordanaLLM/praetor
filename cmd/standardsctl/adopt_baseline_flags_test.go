@@ -82,3 +82,84 @@ func TestAdoptBaselineFlags_3D(t *testing.T) {
 	}
 	mustContain(t, out, "Legacy Technical Debt Baselined (2 infractions)", "recorded rationale: generated shim")
 }
+
+// pendingBaselineLine is how an applied run closes when only the kept baseline holds it back.
+const pendingBaselineLine = "Repository adopted into cordanaLLM/praetor governance; not ready yet: Debt Baseline. See the warnings above."
+
+// TestAdoptRejectedKeptBaseline_3D pins the shape #358 was reported in through the command: a
+// repository adopted without debt holds a baseline with zero entries and then gains one finding.
+// Positive: the first adoption ends with the success line. Negative: a default re-run, --force
+// included, keeps the baseline byte for byte and ends without the success line, naming the Debt
+// Baseline as not ready, the verdict and each command that resolves it; it exits 0, as a pending
+// Verification Gate does (#594), while `praetorctl baseline --verify` rejects the same tree.
+// Boundary: once the debt is accepted with the allowed re-record the success line returns.
+func TestAdoptRejectedKeptBaseline_3D(t *testing.T) {
+	repo, source := adoptSuccessLineFixture(t, map[string]string{"go.mod": "module example.invalid/adopted\n\ngo 1.27\n"})
+	full := filepath.Join(repo, cliBaseline)
+	out, err := adoptWithFlags(t, repo, source)
+	if err != nil {
+		t.Fatalf("first adoption: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Legacy Technical Debt: 0 infractions (Baselined)", adoptSuccessLine)
+	recorded := readFixtureFile(t, repo, cliBaseline)
+	if zero, err := baseline.LoadBaseline(full); err != nil || len(zero.Infractions) != 0 {
+		t.Fatalf("first baseline = %+v, %v; want zero entries", zero, err)
+	}
+
+	writeFixtureFile(t, repo, "added.go", cliDebt)
+	for _, flags := range [][]string{nil, {"--force"}} {
+		out, err = adoptWithFlags(t, repo, source, flags...)
+		if err != nil || readFixtureFile(t, repo, cliBaseline) != recorded {
+			t.Fatalf("re-adoption %v = %v; want exit 0 and the baseline kept byte for byte\n%s", flags, err, out)
+		}
+		mustContain(t, out, pendingBaselineLine,
+			"  Debt Baseline: Baseline kept, not re-recorded; HISS-13 ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline",
+			"  Resolve: fix the findings, or accept them deliberately with 'praetorctl adopt --rerecord-baseline --allow-increase --reason=<why>' or "+
+				"'praetorctl baseline --record --allow-increase --reason=<why>'; until then praetorctl audit rejects the repository",
+			"added.go:4")
+		if strings.Contains(out, adoptSuccessLine) {
+			t.Fatalf("re-adoption %v ended with the success line over a rejected baseline:\n%s", flags, out)
+		}
+		if verify, err := captureStdout(t, func() error { return runBaseline([]string{"--verify", "--file", full}) }); err == nil {
+			t.Fatalf("baseline --verify passed the tree adoption %v reported as rejected:\n%s", flags, verify)
+		}
+	}
+
+	out, err = adoptWithFlags(t, repo, source, "--rerecord-baseline", "--allow-increase", "--reason=generated shim")
+	if err != nil {
+		t.Fatalf("allowed re-record: %v\n%s", err, out)
+	}
+	mustContain(t, out, adoptSuccessLine)
+	if strings.Contains(out, "not ready yet") {
+		t.Fatalf("an accepted baseline still held the success line back:\n%s", out)
+	}
+}
+
+// TestAdoptAllMissing_PassesTheRerecordFlags: --all-missing hands every repository the baseline
+// flags of the command line. An unmanaged repository that carries a baseline with zero entries
+// and one finding is re-recorded with the rationale, which only the three flags together allow;
+// without them the kept baseline would still hold zero entries.
+func TestAdoptAllMissing_PassesTheRerecordFlags(t *testing.T) {
+	devDir := t.TempDir()
+	repo := filepath.Join(devDir, "unmanaged")
+	full := writeFixtureFile(t, repo, cliBaseline, "")
+	if err := baseline.SaveBaseline(full, &baseline.Baseline{Version: 1, Infractions: []baseline.Infraction{}}); err != nil {
+		t.Fatal(err)
+	}
+	source := adoptFixtureAt(t, repo, map[string]string{"go.mod": "module example.invalid/adopted\n\ngo 1.27\n", "main.go": cliDebt})
+
+	out, err := captureStdout(t, func() error {
+		return runAdopt([]string{
+			"--all-missing", "--dev-dir", devDir, "--lock-source-root", source,
+			"--rerecord-baseline", "--allow-increase", "--reason=imported shim",
+		})
+	})
+	if err != nil {
+		t.Fatalf("adopt --all-missing: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[ADOPTED] unmanaged", "recorded rationale: imported shim")
+	raised, err := baseline.LoadBaseline(full)
+	if err != nil || raised.TotalInfractions != 1 || raised.IncreaseRationale != "imported shim" {
+		t.Fatalf("baseline after --all-missing = %+v, %v; want the finding re-recorded with the rationale", raised, err)
+	}
+}

@@ -200,14 +200,20 @@ func (r *AdoptReport) qualifyVerificationPillar(pillar *Pillar) {
 	}
 }
 
-// PendingPillars names the pillars that hold back an applied run's success line: the Verification
-// Gate when the run left it warned, failed or unreached. A renderer closing an applied run
-// qualifies the success line with these names (#594). Only the Verification Gate counts: its
-// verify-all is the contract the success line vouches for, and an unavailable plan leaves it able
-// only to exit 1. Every other pillar's warning is informational and stays on its own pillar line,
-// such as the notice that an existing DevContainer was preserved, which every plain re-run
-// repeats and which leaves the adopter nothing to fix. A declined pillar is the manifest's
-// decision and is not pending either.
+// debtBaselinePillar names the kept debt baseline where PendingPillars counts it. It has no line
+// among Pillars: the debt summary carries its state (BaselineRatchet.Line).
+const debtBaselinePillar = "Debt Baseline"
+
+// PendingPillars names what holds back an applied run's success line: the Verification Gate when
+// the run left it warned, failed or unreached, and the debt baseline when the run kept one its
+// rescan rejects. A renderer closing an applied run qualifies the success line with these names
+// (#594, #358). Both are contracts the success line vouches for: an unavailable plan leaves
+// verify-all able only to exit 1, and `praetorctl audit` rejects a repository carrying debt its
+// baseline does not record. Every other pillar's warning is informational and stays on its own
+// pillar line, such as the notice that an existing DevContainer was preserved, which every plain
+// re-run repeats and which leaves the adopter nothing to fix. A declined pillar is the manifest's
+// decision and is not pending either, and neither is a kept baseline that passes with a stale
+// entry.
 func (r *AdoptReport) PendingPillars() []string {
 	var names []string
 	for _, pillar := range r.Pillars() {
@@ -220,7 +226,29 @@ func (r *AdoptReport) PendingPillars() []string {
 			names = append(names, pillar.Name)
 		}
 	}
+	if r.baselineRejected() {
+		names = append(names, debtBaselinePillar)
+	}
 	return names
+}
+
+// baselineRejected reports whether the run kept a baseline its rescan rejects (checkKeptBaseline).
+func (r *AdoptReport) baselineRejected() bool {
+	return r.BaselineRatchet != nil && !r.BaselineRatchet.Passed
+}
+
+// PendingBaseline returns the lines that close a run whose kept baseline is pending: the verdict
+// `praetorctl baseline --verify` gives and what resolves it. It returns nil when the baseline
+// holds nothing back.
+func (r *AdoptReport) PendingBaseline() []string {
+	if !r.baselineRejected() {
+		return nil
+	}
+	return []string{
+		debtBaselinePillar + ": " + r.BaselineRatchet.Line(),
+		"Resolve: fix the findings, or accept them deliberately with " + rerecordRemedy +
+			"; until then praetorctl audit rejects the repository",
+	}
 }
 
 func pillarStatus(step StepOutcome, dryRun bool) PillarStatus {

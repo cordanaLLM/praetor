@@ -138,7 +138,8 @@ type AdoptReport struct {
 	// one the repository has, "skipped", "failed" or "not_run".
 	BaselineStatus string `json:"baseline_status"`
 	// BaselineRatchet is the read-only HISS-13 verdict on a baseline the run kept and rescanned
-	// (checkKeptBaseline); nil when the run recorded, re-recorded or did not scan.
+	// (checkKeptBaseline); nil when the run recorded, re-recorded or did not scan. A rejecting
+	// verdict holds back an applied run's success line (PendingPillars, PendingBaseline).
 	BaselineRatchet *BaselineRatchet `json:"baseline_ratchet,omitempty"`
 	DryRun          bool             `json:"dry_run"`
 	Errors          []string         `json:"errors,omitempty"`
