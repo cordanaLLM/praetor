@@ -1,0 +1,4 @@
+type: fixed
+title: "caveman floor no longer fails F9 number-lost on rewrites removing ANSI colour codes"
+breaking: false
+issue: "#713"

@@ -313,3 +313,113 @@ func TestFloorNumbersMoveIntoCode(t *testing.T) {
 		})
 	}
 }
+
+// TestFloorANSIEscapesPositive pins #713: ANSI escape sequences (CSI, OSC and two-byte escapes)
+// are ignored on both sides before collecting number facts, so a rewrite removing colour codes
+// passes the clarity floor.
+func TestFloorANSIEscapesPositive(t *testing.T) {
+	cases := map[string]struct {
+		before, after string
+	}{
+		"csi color removed": {
+			before: "a \x1b[31mMUST\x1b[0m b\n",
+			after:  "a MUST b\n",
+		},
+		"csi 256 color with real number kept": {
+			before: "result: \x1b[38;5;196mred 7\x1b[0m\n",
+			after:  "result: red 7\n",
+		},
+		"osc title removed": {
+			before: "\x1b]0;build 42\x07run\n",
+			after:  "run\n",
+		},
+		"osc hyperlink removed": {
+			before: "see \x1b]8;;https://example.test/1\x1b\\link\x1b]8;;\x1b\\\n",
+			after:  "see link\n",
+		},
+		"two-byte escape removed": {
+			before: "a\x1bMb\n",
+			after:  "ab\n",
+		},
+		"both sides have escapes": {
+			before: "\x1b[31mred 7\x1b[0m\n",
+			after:  "\x1b[32mgreen 7\x1b[0m\n",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if report := Floor(tc.before, tc.after); !report.Passed() {
+				t.Fatalf("want floor held, got findings: %v", report.Findings)
+			}
+		})
+	}
+}
+
+// TestFloorANSIEscapesNegative pins #713: a real number lost beside or inside an escape
+// sequence still fails with F9 number-lost.
+func TestFloorANSIEscapesNegative(t *testing.T) {
+	cases := map[string]struct {
+		before, after string
+		want          []Finding
+	}{
+		"real number lost beside escape": {
+			before: "a \x1b[31mred 7\x1b[0m b\n",
+			after:  "a red b\n",
+			want:   []Finding{{1, RuleFloorNumber, "7"}},
+		},
+		"real number inside escape lost": {
+			before: "status: \x1b[38;5;196m42\x1b[0m\n",
+			after:  "status: ok\n",
+			want:   []Finding{{1, RuleFloorNumber, "42"}},
+		},
+		"multiple numbers with one lost beside escape": {
+			before: "count: 1 and \x1b[31m2\x1b[0m\n",
+			after:  "count: 1\n",
+			want:   []Finding{{1, RuleFloorNumber, "2"}},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Floor(tc.before, tc.after).Findings; !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("findings\n got %v\nwant %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFloorANSIEscapesBoundary pins #713: unterminated escapes stay text and their parameter
+// digits still count as numbers.
+func TestFloorANSIEscapesBoundary(t *testing.T) {
+	cases := map[string]struct {
+		before, after string
+		want          []Finding
+	}{
+		"unterminated csi digits lost": {
+			before: "unterminated \x1b[38;5\n",
+			after:  "unterminated\n",
+			want:   []Finding{{1, RuleFloorNumber, "38"}, {1, RuleFloorNumber, "5"}},
+		},
+		"unterminated osc digits lost": {
+			before: "unterminated \x1b]0;build 42\n",
+			after:  "unterminated\n",
+			want:   []Finding{{1, RuleFloorNumber, "0"}, {1, RuleFloorNumber, "42"}},
+		},
+		"unterminated escape kept": {
+			before: "unterminated \x1b[38;5\n",
+			after:  "unterminated \x1b[38;5\n",
+			want:   nil,
+		},
+		"escape character alone": {
+			before: "raw \x1b alone\n",
+			after:  "raw \x1b alone\n",
+			want:   nil,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Floor(tc.before, tc.after).Findings; !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("findings\n got %v\nwant %v", got, tc.want)
+			}
+		})
+	}
+}

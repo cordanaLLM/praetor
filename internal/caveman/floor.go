@@ -243,17 +243,33 @@ func fencedCommand(ln line, continued bool) (string, bool) {
 // numbersOf returns the number facts of a line outside fenced code. Code spans, link
 // targets, URLs, HTML markers and ids are masked first, since F1 and F3 to F5 already hold
 // them, and so are the labels of Markdown syntax (orderedMarkerRe, headingNumberRe,
-// refLabelRe) and HTML entities, which are no facts of the text.
+// refLabelRe) and HTML entities, which are no facts of the text. ANSI escape sequences
+// (CSI, OSC and two-byte escapes) are masked before URLs so their parameters are no
+// numbers and their URIs do not misparse (#713).
 func numbersOf(ln line) []string {
-	masked := markerRe.ReplaceAllString(proseOf(ln), " ")
+	clean := ln
+	clean.text = maskANSI(ln.text)
+	masked := markerRe.ReplaceAllString(proseOf(clean), " ")
 	masked = runtimeHTMLEntityRe.ReplaceAllString(idRe.ReplaceAllString(masked, " "), " ")
 	masked = refLabelRe.ReplaceAllString(headingNumberRe.ReplaceAllString(masked, "$1 "), " ")
 	return numbersIn(orderedMarkerRe.ReplaceAllString(masked, " "))
 }
 
+// maskANSI replaces terminated ANSI escape sequences with spaces of the same byte length,
+// keeping line byte offsets and code span bounds intact while removing escape parameters.
+// Unterminated escapes stay text.
+func maskANSI(text string) string {
+	return ansiRe.ReplaceAllStringFunc(text, func(m string) string {
+		return strings.Repeat(" ", len(m))
+	})
+}
+
 // numbersIn returns the number facts of text: every word that holds a digit (numberTokenRe),
-// read by numberFact.
+// read by numberFact. Escape sequences (CSI, OSC and two-byte escapes) are ignored before digits
+// are collected, through the one ANSI pattern Compress uses (ansiRe, #713). An unterminated
+// escape stays text.
 func numbersIn(text string) []string {
+	text = ansiRe.ReplaceAllString(text, "")
 	matches := numberTokenRe.FindAllStringSubmatch(text, -1)
 	numbers := make([]string, 0, len(matches))
 	for _, match := range matches {
