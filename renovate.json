@@ -39,6 +39,16 @@
       "/^\\.config/hook-lint/requirements\\.txt$/"
     ]
   },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The renovate release CI validates this file with: the exact RENOVATE_VERSION pin in .github/workflows/ci.yml. An update that cannot be installed or that rejects this configuration fails on its own pull request (#709).",
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "matchStrings": ["RENOVATE_VERSION: '(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)'"],
+      "depNameTemplate": "renovate",
+      "datasourceTemplate": "npm"
+    }
+  ],
   "packageRules": [
     {
       "matchPackageNames": ["*"],

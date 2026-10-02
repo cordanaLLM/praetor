@@ -1,0 +1,4 @@
+type: fixed
+title: "Pin the Renovate configuration validator CI runs to an exact release that Renovate updates"
+issue: "#709"
+breaking: false
