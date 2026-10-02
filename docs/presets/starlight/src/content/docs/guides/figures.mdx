@@ -16,8 +16,8 @@ JavaScript, and under reduced motion, the page shows the SVG, its caption and th
 description below it.
 
 After you add or edit a spec, render the figures and commit the spec with its three outputs.
-Render them before the first site build too: the build fails on a `figure` block whose figure has
-no JSON yet.
+Render them before the first site build too: a `figure` block whose figure has no JSON yet fails
+the build of an `.mdx` page, and an `.md` page builds without its content.
 
 ```bash
 node tools/figures/build.mjs build

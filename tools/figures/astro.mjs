@@ -9,12 +9,18 @@
 //     integrations: [starlight({ customCss: ['./tools/figures/figures.css'] }), figures()],
 //   });
 //
-// * A remark plugin replaces each ```figure code block, in .md and .mdx pages alike, with the markup
-//   tools/figures/core.mjs wrote into docs/assets/figures/<slug>.json as `html`: `{{base}}` becomes
-//   the root-absolute URL of the figures under the site's `base`, and the `{{link}}` line is dropped
-//   (`fillSlots` in checks.mjs). It works on the Markdown syntax tree, so it needs no fence scanner.
-//   A block naming a figure that has no JSON fails the build, as a strict MkDocs build fails on the
-//   hook's warning.
+// * A Markdown plugin replaces each ```figure code block, in .md and .mdx pages alike, with the
+//   markup tools/figures/core.mjs wrote into docs/assets/figures/<slug>.json as `html`: `{{base}}`
+//   becomes the root-absolute URL of the figures under the site's `base`, and the `{{link}}` line is
+//   dropped (`fillSlots` in checks.mjs). It works on the Markdown syntax tree, so it needs no fence
+//   scanner. A block naming a figure that has no JSON fails the build of an .mdx page; on an .md
+//   page Astro's content loader logs the error and builds the page without its content, so
+//   `make docs-figures`, whose `sources` check fails on the block, is the gate for both.
+//   `addFigurePlugin` picks the plugin the site's Markdown processor runs. From Astro 6.4, Markdown
+//   and MDX render through `markdown.processor`: Sätteri, Astro 7's default (`satteriFigures`), or
+//   `unified()` from @astrojs/markdown-remark, Astro 6's default and an option on Astro 7
+//   (`remarkFigures`). Astro 6.3 and earlier have no processor and take `remarkFigures` in
+//   `markdown.remarkPlugins`.
 // * Astro keeps the rendered .md pages of a content collection in node_modules/.astro/data-store.json
 //   and renders one again only when its own bytes change, or when the Astro configuration does
 //   (the digest check in astro/dist/content/content-layer.js). The plugin's options therefore carry
@@ -143,8 +149,79 @@ export function replaceFigures(tree, options) {
 export function remarkFigures(options) {
   return (tree, file) => {
     const errors = replaceFigures(tree, options);
-    if (errors.length) throw new Error(`figures: ${file?.path ?? 'a Markdown page'}: ${errors.join('; ')}`);
+    if (errors.length) throw pageError(file?.path, errors);
   };
+}
+
+/** The error that fails the page at `path` (a path, a file: URL or nothing) for the findings `errors`. */
+function pageError(path, errors) {
+  const page = path ? rootPath(path) : 'a Markdown page';
+  return new Error(`figures: ${page}: ${errors.join('; ')}`);
+}
+
+/**
+ * The node that puts the figure markup `html` on a page Sätteri compiles as `format`. A Markdown
+ * page takes an `html` node, which Sätteri writes out unchanged. Sätteri's MDX compiler refuses an
+ * `html` node unless the MDX integration optimizes static content, which Starlight's own mdx() does
+ * and an mdx() the site registers itself does not by default. An MDX page therefore takes
+ * `<Fragment set:html>` with the markup as a string: the element Astro's static optimization writes
+ * itself, from the Fragment every MDX page receives (the `components` of Content in
+ * @astrojs/mdx/dist/vite-plugin-mdx-postprocess.js). The markup stays one string, byte for byte:
+ * re-parsed as JSX, its unclosed <source> and <img> would swallow the elements after them, and its
+ * braces would become expressions.
+ */
+function figureMarkupNode(html, format) {
+  if (format !== 'mdx') return { type: 'html', value: html };
+  const markup = { type: 'mdxJsxAttribute', name: 'set:html', value: html };
+  return { type: 'mdxJsxFlowElement', name: 'Fragment', attributes: [markup], children: [] };
+}
+
+/**
+ * The Sätteri plugin, for Astro 7's default Markdown processor: each figure block becomes its figure
+ * markup (`figureMarkupNode`, by the page's `ctx.sourceFormat`), and a block that cannot fails the
+ * page, as `remarkFigures` does. Sätteri reports a node's line only to a plugin that asks for
+ * positions. The options ride on the plugin as `figures`, which Sätteri does not read, so that the
+ * Astro configuration changes whenever a figure does.
+ */
+export function satteriFigures(options) {
+  return {
+    name: NAME,
+    options: { position: true },
+    figures: options,
+    code(node, ctx) {
+      if (!isFigureBlock(node)) return undefined;
+      const errors = [];
+      const replaced = figureNode(node, options, errors);
+      if (!replaced) throw pageError(ctx?.fileURL, errors);
+      return figureMarkupNode(replaced.value, ctx?.sourceFormat);
+    },
+  };
+}
+
+/**
+ * Adds the figure plugin with `options` to the Markdown processor of the site Astro set up with
+ * `config`, and returns the plugin kind: 'satteri' or 'unified' into `markdown.processor`, where
+ * Astro 6.4 and later keep the plugins their Markdown and MDX pages run, and 'remark' through
+ * `updateConfig` into `markdown.remarkPlugins` for Astro 6.3 and earlier, which have no processor.
+ * A processor that takes neither plugin fails the setup, since every figure block would stay a
+ * code block.
+ */
+export function addFigurePlugin(config, updateConfig, options) {
+  const processor = config.markdown?.processor;
+  if (!processor) {
+    updateConfig({ markdown: { remarkPlugins: [[remarkFigures, options]] } });
+    return 'remark';
+  }
+  const lists = processor.options ?? {};
+  if (Array.isArray(lists.mdastPlugins)) {
+    lists.mdastPlugins.push(satteriFigures(options));
+    return 'satteri';
+  }
+  if (Array.isArray(lists.remarkPlugins)) {
+    lists.remarkPlugins.push([remarkFigures, options]);
+    return 'unified';
+  }
+  throw new Error(`figures: the Markdown processor ${JSON.stringify(processor.name ?? '')} runs neither Sätteri nor remark plugins, so figure blocks would stay code blocks; use Astro's default processor or unified() from @astrojs/markdown-remark`);
 }
 
 /** Copies the figure and player files into the built site at `dir` (a path or a file: URL), logging what it could not. */
@@ -165,7 +242,7 @@ export default function figures(options = {}) {
         const base = config.base ?? '/';
         const figuresDir = mounts[0].dir;
         const plugin = { figuresDir, base: figureBase(base), digest: figuresDigest(figuresDir) };
-        updateConfig({ markdown: { remarkPlugins: [[remarkFigures, plugin]] } });
+        addFigurePlugin(config, updateConfig, plugin);
         injectScript('head-inline', loaderScript(base));
       },
       // Astro's development server cuts the site's base path from a request before an

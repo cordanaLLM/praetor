@@ -70,7 +70,9 @@ export default defineConfig({
     starlight({
       title: 'example-org/example-repo Documentation',
       description: 'Project documentation',
-      social: sourceCode.repository ? { github: sourceCode.repository } : {},
+      social: sourceCode.repository
+        ? [{ icon: 'github', label: 'GitHub', href: sourceCode.repository }]
+        : [],
       customCss: [
         './src/styles/custom.css',
         // Figure colours from Starlight's theme variables, for the light and the dark scheme.
@@ -93,11 +95,11 @@ export default defineConfig({
         },
         {
           label: 'Standards & Invariants',
-          autogenerate: { directory: 'standards' },
+          items: [{ autogenerate: { directory: 'standards' } }],
         },
         {
           label: 'Guides',
-          autogenerate: { directory: 'guides' },
+          items: [{ autogenerate: { directory: 'guides' } }],
         },
       ],
     }),

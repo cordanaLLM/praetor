@@ -1,0 +1,4 @@
+type: security
+title: "The Starlight docs preset moves to astro 7.3.5 and sharp 0.35.5, clearing a critical astro and a high sharp advisory"
+issue: "#647"
+breaking: false

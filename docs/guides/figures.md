@@ -266,10 +266,19 @@ export default defineConfig({
 });
 ```
 
-- A remark plugin turns each `figure` code block, in `.md` and `.mdx` pages alike, into the
+- A Markdown plugin turns each `figure` code block, in `.md` and `.mdx` pages alike, into the
   figure's JSON `html`, with `{{base}}` set to the root-absolute URL of the figures under the
-  site's `base` (`/assets/figures`, or `/docs/assets/figures` for base `/docs/`). A block naming a
-  figure without JSON fails the build.
+  site's `base` (`/assets/figures`, or `/docs/assets/figures` for base `/docs/`). `addFigurePlugin`
+  adds it to the Markdown processor the site runs, `markdown.processor` from Astro 6.4: Sätteri,
+  Astro 7's default (`satteriFigures`), or `unified()` from `@astrojs/markdown-remark`, Astro 6's
+  default and an option on Astro 7 (`remarkFigures`). Astro 6.3 and earlier have no processor and
+  take `remarkFigures` in `markdown.remarkPlugins`. A processor that runs neither fails the setup. On an `.mdx` page `satteriFigures` hands the markup to Astro's `<Fragment set:html>` as
+  one string, because Sätteri's MDX compiler refuses a raw HTML node unless MDX optimizes static
+  content. Starlight's own `mdx()` optimizes; an `mdx()` the site registers itself does not by
+  default, and the figure renders byte for byte the same under both. A block naming a figure
+  without JSON fails the build of an `.mdx` page; on an `.md` page Astro's content loader logs the
+  error and builds the page without its content (`astro/dist/content/loaders/glob.js`), so
+  `make docs-figures`, whose `sources` check fails on the block, is the gate for both.
 - Astro keeps the rendered `.md` pages of a content collection in `node_modules/.astro/` and renders
   one again only when the page or the Astro configuration changes. The plugin's options carry a
   digest of `docs/assets/figures/*.json` (`figuresDigest`), so after `build.mjs build` a warm
@@ -284,12 +293,14 @@ export default defineConfig({
 - The loader gives the player host Starlight's `not-content` class, so Starlight's Markdown
   typography does not reach into the player.
 
-`tools/figures/astro.test.mjs` covers the plugin, the hooks and `serve.mjs`.
+`tools/figures/astro.test.mjs` covers the plugin, the hooks and `serve.mjs`. It compiles `.md` and
+`.mdx` pages through `satteri`, pinned in `tools/figures/package.json` to the version the Starlight
+preset's lock installs, and fails when the two versions differ.
 
 The Starlight preset, `docs/presets/starlight/`, wires both lines and ships an example figure,
 `docs/presets/starlight/docs/figures/site-build.ts`, on an `.mdx` page. The CI `docs-presets` job builds it in an adopter
-fixture and runs the checks below on each of its three builds
-([preset README](../presets/starlight/README.md#figures)).
+fixture and runs the checks below on each of its four builds, the fourth with an `mdx()` of its
+own ([preset README](../presets/starlight/README.md#figures)).
 
 Check a Starlight build with its configuration, its docs collection and the base it was built for;
 serve it to the smoke test under the same base:

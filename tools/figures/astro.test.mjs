@@ -1,7 +1,8 @@
 // Tests for the Astro integration (astro.mjs) and the file serving it shares with the smoke test
 // (serve.mjs): the remark plugin replays the markup fixture the MkDocs hook and `portable` replay,
-// in both directions (a block that renders and one that cannot), the head loader, the figure digest
-// that makes Astro render pages again, the development middleware and restart, the build copy, the
+// in both directions (a block that renders and one that cannot), and so does the Sätteri plugin,
+// through the satteri the Starlight preset locks, on .md and .mdx pages; the head loader, the
+// figure digest that makes Astro render pages again, the development middleware and restart, the build copy, the
 // base path, and the static server, with positive, negative and boundary cases. Every temporary tree is built with node:path, so the tests run on Linux, macOS
 // and Windows.
 import { test } from 'node:test';
@@ -9,9 +10,10 @@ import assert from 'node:assert/strict';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { evaluate, markdownToHtml, mdxToJs } from 'satteri';
 import figures, {
-  MAX_NODES, NAME, RESTART_DELAY_MS, figureBase, figureMounts, figuresDigest, loaderScript, publishFigures, remarkFigures,
-  replaceFigures, rootPath, watchFigures,
+  MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, figureBase, figureMounts, figuresDigest, loaderScript, publishFigures,
+  remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
 } from './astro.mjs';
 import { ROOT, fillSlots } from './checks.mjs';
 import { sha256 } from './core.mjs';
@@ -123,6 +125,166 @@ test('a figure block that cannot render stays, and the page fails naming the blo
   assert.equal(fine.children[0].type, 'html');
 }));
 
+// ---------------------------------------------------------------------------------------------
+// The Sätteri plugin and the processor choice
+// ---------------------------------------------------------------------------------------------
+
+/** The Markdown processors Astro 7 hands an integration: Sätteri (its default) and unified(). */
+const satteri = () => ({ name: 'satteri', options: { mdastPlugins: [], hastPlugins: [] } });
+const unified = () => ({ name: 'unified', options: { remarkPlugins: [], rehypePlugins: [], remarkRehype: {} } });
+
+/** The node Sätteri gets for figure markup `html` on an MDX page: Astro's Fragment with the markup as one string. */
+const fragment = (html) => ({ type: 'mdxJsxFlowElement', name: 'Fragment', attributes: [{ type: 'mdxJsxAttribute', name: 'set:html', value: html }], children: [] });
+
+test('the Sätteri plugin writes the remark plugin\'s HTML node on a Markdown page and the same markup as one Fragment string on an MDX page', () => withTempDir((dir) => {
+  const cases = MARKUP.cases.filter((item) => !item.link);
+  for (const item of cases) {
+    const plugin = satteriFigures({ figuresDir: demoFigures(dir), base: item.base });
+    const tree = root(code('figure', 'demo\n'));
+    replaceFigures(tree, { figuresDir: demoFigures(dir), base: item.base });
+    assert.equal(tree.children[0].value, item.html);
+    assert.deepEqual(plugin.code(code('figure', 'demo\n'), { sourceFormat: 'markdown' }), { type: 'html', value: item.html });
+    assert.deepEqual(plugin.code(code('figure', 'demo\n'), { sourceFormat: 'mdx' }), fragment(item.html));
+    // A context without a source format is a Markdown page.
+    assert.deepEqual(plugin.code(code('FIGURE', '\n  demo  \n'), { fileURL: undefined }), { type: 'html', value: item.html });
+    assert.deepEqual(plugin.code(code('figure', 'demo'), undefined), { type: 'html', value: item.html });
+  }
+}));
+
+test('the Sätteri plugin leaves every other code block to the next plugin and asks for positions', () => withTempDir((dir) => {
+  const options = { figuresDir: demoFigures(dir), base: '/assets/figures', digest: 'd' };
+  const plugin = satteriFigures(options);
+  assert.equal(plugin.name, NAME);
+  assert.deepEqual(plugin.options, { position: true });
+  assert.equal(plugin.code(code('js', 'figure'), {}), undefined);
+  assert.equal(plugin.code({ type: 'code', lang: null, value: 'demo' }, {}), undefined);
+  assert.equal(plugin.code({ type: 'code', value: 'demo' }, {}), undefined);
+  // Astro hashes its configuration with JSON.stringify, which drops the visitor but keeps the options.
+  assert.deepEqual(JSON.parse(JSON.stringify(plugin)), { name: NAME, options: { position: true }, figures: options });
+}));
+
+test('a figure block Sätteri cannot render fails the page, naming the page and the block\'s line', () => withTempDir((dir) => {
+  const plugin = satteriFigures({ figuresDir: demoFigures(dir), base: '/assets/figures' });
+  const page = join(dir, 'src', 'content', 'docs', 'a.md');
+  const escaped = page.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  assert.throws(() => plugin.code(code('figure', 'absent', 7), { fileURL: pathToFileURL(page) }),
+    new RegExp(`^Error: figures: ${escaped}: line 7: figure 'absent' has no .*absent\\.json; add docs/figures/absent\\.ts`));
+  assert.throws(() => plugin.code({ type: 'code', lang: 'figure', value: '' }, {}), /^Error: figures: a Markdown page: figure slug '' is not lowercase kebab-case$/);
+  assert.throws(() => plugin.code(code('figure', 'absent'), undefined), /^Error: figures: a Markdown page: line 3: /);
+}));
+
+// ---------------------------------------------------------------------------------------------
+// The Sätteri plugin through Sätteri itself, at the version the Starlight preset locks
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Astro's static optimization for an MDX page (@astrojs/markdown-satteri/dist/mdx/create-processor.js):
+ * Starlight's own mdx() turns it on, and an mdx() a site registers itself leaves it off.
+ */
+const OPTIMIZED = { component: 'Fragment', prop: 'set:html' };
+
+/** A page with prose, a JSX expression, and a ```figure block for `slug` that opens on line 5. */
+const figurePage = (slug) => `# Figures\n\nBefore {1 + 1}.\n\n\`\`\`figure\n${slug}\n\`\`\`\n\nAfter.\n`;
+
+/**
+ * Evaluates the MDX page `source` with `plugin`, as Astro compiles it (`optimizeStatic` on or off),
+ * and returns the `set:html` strings the page hands its Fragment component, in order: the markup
+ * Astro's Fragment writes into the built page. The runtime renders no element of its own.
+ */
+function mdxMarkup(source, plugin, optimizeStatic) {
+  const markup = [];
+  const jsx = (type, props) => (typeof type === 'function' ? type(props) : null);
+  const Fragment = (props) => {
+    markup.push(props['set:html']);
+    return null;
+  };
+  const { default: Content } = evaluate(source, {
+    jsx, jsxs: jsx, Fragment: Symbol('fragment'), mdastPlugins: [plugin], optimizeStatic, elementAttributeNameCase: 'html',
+  });
+  Content({ components: { Fragment } });
+  return markup;
+}
+
+test('the tests compile through the Sätteri the Starlight preset locks', () => {
+  const version = (lock) => JSON.parse(readFileSync(join(ROOT, lock), 'utf8')).packages['node_modules/satteri']?.version;
+  const preset = version('docs/presets/starlight/package-lock.json');
+  assert.ok(preset, 'docs/presets/starlight/package-lock.json installs satteri');
+  assert.equal(version('tools/figures/package-lock.json'), preset,
+    'pin satteri in tools/figures/package.json to the version docs/presets/starlight/package-lock.json installs');
+});
+
+test('Sätteri renders each markup case unchanged on a Markdown page and on an MDX page, optimized or not', () => withTempDir((dir) => {
+  for (const item of MARKUP.cases.filter((c) => !c.link)) {
+    const plugin = () => satteriFigures({ figuresDir: demoFigures(dir), base: item.base });
+    const html = markdownToHtml(figurePage('demo'), { mdastPlugins: [plugin()] }).html;
+    assert.ok(html.includes(`<p>Before {1 + 1}.</p>\n${item.html}\n<p>After.</p>`), html);
+    // An mdx() the site registers itself: the figure is the page's only Fragment.
+    assert.deepEqual(mdxMarkup(figurePage('demo'), plugin()), [item.html]);
+    // Starlight's mdx(): the static prose around the figure becomes Fragment strings of its own.
+    const optimized = mdxMarkup(figurePage('demo'), plugin(), OPTIMIZED);
+    assert.equal(optimized.filter((markup) => markup === item.html).length, 1, optimized.join('\n---\n'));
+  }
+}));
+
+test('an MDX page that is not optimized refuses an HTML node, which is why the plugin hands MDX a Fragment', () => {
+  const htmlNode = { name: 'html-node', code: (node) => (node.lang === 'figure' ? { type: 'html', value: '<p>figure</p>' } : undefined) };
+  assert.throws(() => mdxToJs(figurePage('demo'), { mdastPlugins: [htmlNode] }), /mdxjs-rs:raw-html/);
+  assert.match(mdxToJs(figurePage('demo'), { mdastPlugins: [htmlNode], optimizeStatic: OPTIMIZED }).code, /<p>figure<\/p>/);
+});
+
+test('braces, quotes and non-ASCII text in the markup stay literal on an MDX page, never an expression', () => withTempDir((dir) => {
+  const figuresDir = demoFigures(dir);
+  const html = META.html.replace('</ul>', '<li>{config} } {{ &amp; "quoted" → done</li>\n</ul>');
+  write(join(figuresDir, 'braces.json'), JSON.stringify({ ...META, slug: 'braces', html }));
+  const expected = fillSlots({ ...META, html }, '/assets/figures');
+  assert.ok(expected.includes('{config} } {{ &amp; "quoted" → done'));
+  const plugin = () => satteriFigures({ figuresDir, base: '/assets/figures' });
+  assert.deepEqual(mdxMarkup(figurePage('braces'), plugin()), [expected]);
+  assert.ok(mdxMarkup(figurePage('braces'), plugin(), OPTIMIZED).includes(expected));
+  assert.ok(markdownToHtml(figurePage('braces'), { mdastPlugins: [plugin()] }).html.includes(expected));
+}));
+
+test('Sätteri fails a Markdown or MDX page whose figure has no JSON, naming the page and the block\'s line', () => withTempDir((dir) => {
+  const figuresDir = demoFigures(dir);
+  const page = join(dir, 'src', 'content', 'docs', 'a.mdx');
+  const escaped = page.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  const finding = new RegExp(`^Error: figures: ${escaped}: line 5: figure 'absent' has no .*absent\\.json`);
+  const options = () => ({ mdastPlugins: [satteriFigures({ figuresDir, base: '/assets/figures' })], fileURL: pathToFileURL(page) });
+  assert.throws(() => markdownToHtml(figurePage('absent'), options()), finding);
+  assert.throws(() => mdxToJs(figurePage('absent'), options()), finding);
+  assert.throws(() => mdxToJs(figurePage('absent'), { ...options(), optimizeStatic: OPTIMIZED }), finding);
+}));
+
+test('the figure plugin goes to the processor that runs it: Sätteri, unified, or the remark list of an Astro without one', () => {
+  const options = { figuresDir: '.', base: '/assets/figures', digest: 'd' };
+  const updates = [];
+  const update = (value) => updates.push(value);
+  const fast = satteri();
+  assert.equal(addFigurePlugin({ markdown: { processor: fast } }, update, options), 'satteri');
+  assert.deepEqual(JSON.parse(JSON.stringify(fast.options.mdastPlugins)), [{ name: NAME, options: { position: true }, figures: options }]);
+  assert.deepEqual(fast.options.hastPlugins, []);
+  const remark = unified();
+  assert.equal(addFigurePlugin({ markdown: { processor: remark } }, update, options), 'unified');
+  assert.deepEqual(remark.options.remarkPlugins, [[remarkFigures, options]]);
+  assert.deepEqual(updates, [], 'a processor takes the plugin directly, so the deprecated markdown.remarkPlugins stays empty');
+  for (const config of [{}, { markdown: {} }, { markdown: { processor: null } }]) {
+    assert.equal(addFigurePlugin(config, update, options), 'remark');
+  }
+  assert.deepEqual(updates, Array(3).fill({ markdown: { remarkPlugins: [[remarkFigures, options]] } }));
+});
+
+test('a processor that runs neither plugin fails the setup instead of leaving figure blocks as code', () => {
+  const options = { figuresDir: '.', base: '/assets/figures' };
+  const refuse = (processor) => () => addFigurePlugin({ markdown: { processor } }, () => assert.fail('no update expected'), options);
+  assert.throws(refuse({ name: 'custom', options: { hastPlugins: [] } }), /^Error: figures: the Markdown processor "custom" runs neither Sätteri nor remark plugins/);
+  assert.throws(refuse({ name: 'bare' }), /processor "bare" runs neither/);
+  assert.throws(refuse({ options: { mdastPlugins: 'not a list', remarkPlugins: {} } }), /processor "" runs neither/);
+  // Both lists present: Sätteri's wins, and the plugin is added once.
+  const both = { name: 'both', options: { mdastPlugins: [], remarkPlugins: [] } };
+  assert.equal(addFigurePlugin({ markdown: { processor: both } }, () => assert.fail('no update expected'), options), 'satteri');
+  assert.equal(both.options.mdastPlugins.length + both.options.remarkPlugins.length, 1);
+});
+
 test('the tree walk is bounded: exactly MAX_NODES nodes pass, one more fails', () => {
   const children = (count) => Array.from({ length: count }, () => ({ type: 'text', value: '' }));
   assert.deepEqual(replaceFigures({ type: 'root', children: children(MAX_NODES - 1) }, { figuresDir: '.', base: '' }), []);
@@ -180,6 +342,18 @@ test('config setup adds the remark plugin and the head loader for the site\'s ba
     assert.deepEqual(options, { figuresDir, base: `${prefix}assets/figures`, digest: figuresDigest(figuresDir) });
     assert.deepEqual(scripts, [['head-inline', loaderScript(prefix)]]);
   }
+}));
+
+test('config setup on Astro 7 adds the Sätteri plugin to the site\'s processor and the head loader, with no config update', () => withTempDir((dir) => {
+  const processor = satteri();
+  const scripts = [];
+  figures({ root: dir }).hooks['astro:config:setup']({
+    config: { base: '/docs/', markdown: { processor } }, updateConfig: () => assert.fail('no update expected'), injectScript: (...args) => scripts.push(args),
+  });
+  const figuresDir = join(dir, 'docs', 'assets', 'figures');
+  const [plugin] = processor.options.mdastPlugins;
+  assert.deepEqual(plugin.figures, { figuresDir, base: '/docs/assets/figures', digest: figuresDigest(figuresDir) });
+  assert.deepEqual(scripts, [['head-inline', loaderScript('/docs/')]]);
 }));
 
 // Astro renders a collection's .md page again only when the page or the configuration changes
