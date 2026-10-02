@@ -18,8 +18,9 @@
 # That release is the floor .config/lefthook/tool-floors.txt declares for actionlint,
 # and the hook refuses an older one before it runs (scripts/toolchain.py, #343), so the
 # measurement holds for every actionlint a commit or push here is checked with.
-# TestInstalledHookLintersSatisfyTheDeclaredFloors (internal/forge) fails when this
-# header and the floor name different releases. A newer release passes the floor:
+# test_the_versions_this_repository_installs_meet_the_floors
+# (scripts/test_portability_selftest.py) fails when this header and the floor name
+# different releases. A newer release passes the floor:
 # wherever actionlint is on PATH, TestActionlintStillRejectsTheDeclaredLabels
 # (internal/adopt/actionlint_test.go) re-runs the measurement on every workflow adoption
 # writes and fails once actionlint knows ubuntu-26.04; then upstream has shipped the

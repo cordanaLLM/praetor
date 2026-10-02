@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -15,8 +16,17 @@ import (
 const (
 	checkpointScript = ".config/lefthook/scripts/checkpoint.py"
 	checkpointCommon = ".config/lefthook/scripts/common.py"
-	checkpointPolicy = ".config/agent/checkpoint.json"
+	// checkpointLauncher starts the interpreter of the checkpoint jobs. It is the canonical
+	// policy's launcher: it tries a fixed list of candidates and runs the first that answers a
+	// version probe as Python 3 (#339). The generated lefthook.yml calls it by this path
+	// (lefthookPythonCommand).
+	checkpointLauncher = ".config/lefthook/python.sh"
+	checkpointPolicy   = ".config/agent/checkpoint.json"
 )
+
+// checkpointBundle lists the files adoption copies from the verified source root, in the
+// order it installs them.
+var checkpointBundle = []string{checkpointScript, checkpointCommon, checkpointLauncher}
 
 var checkpointBranchPrefixes = []string{"checkpoint/", "audit/", "fix/", "feat/", "chore/", "docs/", "refactor/", "test/", "ci/"}
 
@@ -51,10 +61,13 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"a414804b60c86153208c0265b824a759e01c06b43ab4810d57ffd20c5d5b30aa": "Platform Neutrality gaps (#469)",
 		"c1572868510a383605b92cd80fad267c1a0b3d14e2bfd3dadd4d29db1aa5907a": "neutrality sweep (#509)",
 	},
+	checkpointLauncher: {
+		"8b6266ea16912a362c2e26d9a936887ca955ecf68f69744c935f2259d1a2c8dc": "proven interpreter candidates (#339)",
+	},
 }
 
 // reconcileCheckpointBundle installs the exact shared evaluator only when the explicitly
-// selected source root contains both required files. An existing file that differs from the
+// selected source root contains every file of the bundle (checkpointBundle). An existing file that differs from the
 // source bundle is kept, --force included, and leaves the lifecycle unavailable; one holding an
 // earlier Praetor text of it is refreshed (installCheckpointSources). With vendored set, the
 // repository's lefthook.yml extends the canonical policy, whose scripts are vendored from one
@@ -189,8 +202,8 @@ func readCheckpointSources(ctx context.Context, root string) (result []checkpoin
 	if err := validateCheckpointSourceRoot(root); err != nil {
 		return nil, err
 	}
-	result = make([]checkpointSource, 0, 2)
-	for _, name := range []string{checkpointScript, checkpointCommon} {
+	result = make([]checkpointSource, 0, len(checkpointBundle))
+	for _, name := range checkpointBundle {
 		source, readErr := readCheckpointSource(ctx, root, name)
 		if readErr != nil {
 			return nil, readErr
@@ -259,7 +272,7 @@ func checkpointPolicyJSON(ctx context.Context, s *adoptSession) ([]byte, error) 
 }
 
 func checkpointFilesPresent(root string) bool {
-	for _, name := range []string{checkpointScript, checkpointCommon, checkpointPolicy} {
+	for _, name := range slices.Concat(checkpointBundle, []string{checkpointPolicy}) {
 		info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name)))
 		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return false

@@ -6,11 +6,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -62,7 +65,7 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 // commands in a Go repository and lefthook_identity.go sees the same jobs. The values that
 // changed since are the pre-commit audit, which now passes --offline (preCommitAuditArgs), the
 // pre-push gate, which now passes --admit-unsupported (prePushGateArgs), and the two checkpoint
-// jobs, which now read their interpreter from PRAETOR_PYTHON (lefthookPythonCommand); the
+// jobs, which now start their interpreter through the launcher (lefthookPythonCommand); the
 // unfolded renderings ran the first two without and named python3, and nothing else differs.
 func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 	fixtures := readPriorLefthookFixtures(t)
@@ -87,8 +90,8 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
 			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"
-			if job["run"] != hookPythonDefault+" "+arguments {
-				t.Fatalf("%s: the %s checkpoint job did not name %s: %v", name, event, hookPythonDefault, job["run"])
+			if job["run"] != "python3 "+arguments {
+				t.Fatalf("%s: the %s checkpoint job did not name python3: %v", name, event, job["run"])
 			}
 			job["run"] = lefthookPythonCommand(arguments)
 		}
@@ -106,30 +109,40 @@ func checkpointEvents(checkpoint bool) []string {
 	return []string{"tool", "stop"}
 }
 
-// The generated checkpoint jobs and the canonical launcher resolve one interpreter by one
-// rule (#339). Positive: the rendered line reads the variable and falls back to the default
-// the launcher names, and both checkpoint jobs of every rendering use it. Negative: no
-// rendering names an interpreter outside that line. Boundary: the line is plain shell with
-// no ${...} expansion, and a rendering without checkpoint jobs names no interpreter at all.
-func TestLefthookPythonCommandMatchesTheCanonicalLauncher(t *testing.T) {
-	launcher, err := os.ReadFile(filepath.Join("..", "..", ".config", "lefthook", "python.sh"))
-	if err != nil {
-		t.Fatalf("read the canonical launcher: %v", err)
-	}
-	if rule := `python="${` + hookPythonVariable + `:-` + hookPythonDefault + `}"`; !strings.Contains(string(launcher), rule) {
-		t.Fatalf("the canonical launcher does not resolve %s", rule)
-	}
+// lefthookWindowsUnsafe are the characters a generated checkpoint line must not hold. Lefthook's
+// Windows executor wraps a run line in one pair of double quotes for sh -c without escaping the
+// quotes inside it, so a quoted word loses its quotes there, and an expansion or a glob is then
+// split or matched by the shell.
+const lefthookWindowsUnsafe = "\"'$`\\;|&<>(){}*?[]~#"
+
+// The generated checkpoint jobs start their interpreter through the launcher adoption writes
+// (#339). Positive: the rendered line is the launcher path and the arguments, the launcher is a
+// file of the checkpoint bundle, and both checkpoint jobs of every rendering use it. Negative:
+// no rendering names an interpreter or the variable that once selected one. Boundary: the line
+// holds no quote, expansion or other shell syntax, and a rendering without checkpoint jobs
+// names neither the launcher nor an interpreter.
+func TestLefthookPythonCommandStartsTheBundledLauncher(t *testing.T) {
 	const arguments = "-B hook.py --flag"
-	want := `if [ -z "$PRAETOR_PYTHON" ]; then PRAETOR_PYTHON=python3; fi; "$PRAETOR_PYTHON" ` + arguments
-	if got := lefthookPythonCommand(arguments); got != want {
-		t.Fatalf("lefthookPythonCommand = %q, want %q", got, want)
+	line := lefthookPythonCommand(arguments)
+	if want := "sh .config/lefthook/python.sh " + arguments; line != want {
+		t.Fatalf("lefthookPythonCommand = %q, want %q", line, want)
 	}
-	if strings.Contains(lefthookPythonCommand(arguments), "${") {
-		t.Fatal("the generated line uses a ${...} expansion")
+	if strings.ContainsAny(line, lefthookWindowsUnsafe) {
+		t.Fatalf("the generated line %q holds shell syntax Lefthook's Windows executor does not preserve", line)
+	}
+	if !strings.ContainsAny(`"$PRAETOR_PYTHON" `+arguments, lefthookWindowsUnsafe) {
+		t.Fatal("the inline rule this line replaced passes the same check")
+	}
+	if !slices.Contains(checkpointBundle, checkpointLauncher) {
+		t.Fatalf("the launcher %s is not a file of the checkpoint bundle %v", checkpointLauncher, checkpointBundle)
+	}
+	if _, err := os.Stat(filepath.Join("..", "..", filepath.FromSlash(checkpointLauncher))); err != nil {
+		t.Fatalf("the canonical launcher adoption copies: %v", err)
 	}
 	for _, languages := range lefthookLanguageSets {
+		rendering := buildLefthookYAMLFor(languages, true)
 		var with map[string]any
-		if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(languages, true)), &with); err != nil {
+		if err := yaml.Unmarshal([]byte(rendering), &with); err != nil {
 			t.Fatalf("decode the rendering with checkpoint jobs: %v", err)
 		}
 		for _, event := range checkpointEvents(true) {
@@ -138,64 +151,68 @@ func TestLefthookPythonCommandMatchesTheCanonicalLauncher(t *testing.T) {
 				t.Errorf("languages=%v: the %s checkpoint job runs %v", languages, event, run)
 			}
 		}
-		without := buildLefthookYAMLFor(languages, false)
-		if strings.Contains(without, "python") || strings.Contains(without, hookPythonVariable) {
-			t.Errorf("languages=%v: a rendering without checkpoint jobs names an interpreter", languages)
+		if named := strings.Count(rendering, "python"); named != strings.Count(rendering, checkpointLauncher) || named != len(checkpointEvents(true)) {
+			t.Errorf("languages=%v: python is named %d times, want only in the launcher path of each checkpoint job", languages, named)
 		}
-		named := strings.Count(buildLefthookYAMLFor(languages, true), hookPythonDefault)
-		if named != len(checkpointEvents(true)) {
-			t.Errorf("languages=%v: %s is named %d times, want once per checkpoint job", languages, hookPythonDefault, named)
+		without := buildLefthookYAMLFor(languages, false)
+		if strings.Contains(without, "python") || strings.Contains(rendering+without, "PRAETOR_PYTHON") {
+			t.Errorf("languages=%v: a rendering names an interpreter or the variable that selected one", languages)
 		}
 	}
 }
 
-// The generated line is run, not only compared. Positive: with the variable set, sh starts the
-// interpreter it names. Negative: a name that resolves to nothing fails with the shell's
-// command-not-found status, python3 on PATH notwithstanding. Boundary: unset and empty both
-// select the default name.
-func TestLefthookPythonCommandRunsTheNamedInterpreter(t *testing.T) {
+// The generated line is run, not only compared: through sh -c, as Lefthook runs it, in a
+// directory holding the launcher adoption writes. Positive: the hook's status is the line's.
+// Negative: with no interpreter on PATH the line fails as a missing dependency instead of
+// passing. Boundary: a variable naming a program that exits 0 does not take the line off the
+// interpreter, and a CRLF checkout of the launcher still runs the hook.
+func TestLefthookPythonCommandRunsTheHookThroughTheLauncher(t *testing.T) {
 	shell, err := exec.LookPath("sh")
 	if err != nil {
 		t.Skip("no sh on PATH; Lefthook itself runs every job through sh, so no generated job runs here")
 	}
 	python := testsupport.PythonInterpreter(t)
-	line := lefthookPythonCommand(`-c "import sys; sys.exit(41)"`)
-	run := func(setting ...string) int {
+	launcher := mustRead(t, filepath.Join("..", "..", filepath.FromSlash(checkpointLauncher)))
+	line := lefthookPythonCommand("-B hook.py 41")
+	run := func(launcherText, path string, setting ...string) (int, string) {
+		root := t.TempDir()
+		mustWrite(t, filepath.Join(root, filepath.FromSlash(checkpointLauncher)), launcherText)
+		mustWrite(t, filepath.Join(root, "hook.py"), "import sys\nsys.exit(int(sys.argv[1]))\n")
 		cmd := exec.CommandContext(t.Context(), shell, "-c", line)
-		cmd.Env = append(envWithout(os.Environ(), hookPythonVariable), setting...)
-		err := cmd.Run()
+		cmd.Dir = root
+		environ := util.FilterEnvironment(os.Environ(), func(name string) bool { return name == "PATH" })
+		cmd.Env = append(append(environ, "PATH="+path), setting...)
+		output, err := cmd.CombinedOutput()
 		var exit *exec.ExitError
 		if err != nil && !errors.As(err, &exit) {
 			t.Fatalf("run the generated line: %v", err)
 		}
-		return cmd.ProcessState.ExitCode()
+		return cmd.ProcessState.ExitCode(), string(output)
 	}
-	if code := run(hookPythonVariable + "=" + python); code != 41 {
-		t.Errorf("%s=%s: exit %d, want the script's 41", hookPythonVariable, python, code)
+	// The line starts sh by name and the launcher starts the interpreter by name, so PATH holds
+	// the directories of both and nothing else.
+	interpreters := filepath.Dir(python) + string(os.PathListSeparator) + filepath.Dir(shell)
+	if code, output := run(launcher, interpreters); code != 41 {
+		t.Errorf("exit %d, want the hook's 41: %s", code, output)
 	}
-	if code := run(hookPythonVariable + "=praetor-no-such-interpreter"); code != 127 {
-		t.Errorf("a missing interpreter: exit %d, want 127", code)
+	// A PATH that holds the shell and nothing else: a link to it in a directory of its own.
+	// On Windows sh.exe does not start from a link, away from the libraries beside it, so the
+	// case runs on the other platforms; test_no_candidate_on_path_is_a_missing_dependency in
+	// .config/lefthook/scripts/test_hooks.py runs the launcher without one on every platform.
+	shellOnly := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Log("the missing-interpreter case needs a link to sh, which does not start on Windows")
+	} else if err := os.Symlink(shell, filepath.Join(shellOnly, "sh")); err != nil {
+		t.Errorf("link %s: %v", shell, err)
+	} else if code, output := run(launcher, shellOnly); code != 127 || !strings.Contains(output, "missing dependency") {
+		t.Errorf("no interpreter on PATH: exit %d, want 127 and a missing dependency: %s", code, output)
 	}
-	if _, err := exec.LookPath(hookPythonDefault); err != nil {
-		t.Logf("%s is not on PATH; the default is covered by the rendered text alone here", hookPythonDefault)
-		return
+	if code, output := run(launcher, interpreters, "PRAETOR_PYTHON=true"); code != 41 {
+		t.Errorf("PRAETOR_PYTHON=true: exit %d, want the hook's 41: %s", code, output)
 	}
-	for _, setting := range [][]string{nil, {hookPythonVariable + "="}} {
-		if code := run(setting...); code != 41 {
-			t.Errorf("setting %v: exit %d, want %s to run the script", setting, code, hookPythonDefault)
-		}
+	if code, output := run(crlfText(launcher), interpreters); code != 41 {
+		t.Errorf("a CRLF checkout of the launcher: exit %d, want the hook's 41: %s", code, output)
 	}
-}
-
-// envWithout returns environ without the entries of name, in the same order.
-func envWithout(environ []string, name string) []string {
-	kept := make([]string, 0, len(environ))
-	for _, entry := range environ {
-		if !strings.HasPrefix(entry, name+"=") {
-			kept = append(kept, entry)
-		}
-	}
-	return kept
 }
 
 // decodedJob returns the commands entry job of hook in a decoded rendering.

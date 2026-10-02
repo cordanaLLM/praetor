@@ -1,9 +1,11 @@
 # Local Git hooks
 
 Install Lefthook 2.1.14 or newer, then run `make hooks` and `make hooks-check`.
-The configuration is tested with 2.1.14. Python 3, Git and the repository Go
-version are required; the hooks start `python3` unless `PRAETOR_PYTHON` names
-another interpreter ([the interpreter the hooks run](#the-interpreter-the-hooks-run)).
+The configuration is tested with 2.1.14. Python 3.10 or newer, GNU Make, Git, a POSIX `sh`
+and the repository Go version are required. The hooks find the interpreter and `make`
+themselves, from fixed names, and prove each before they run it
+([the interpreter the hooks run](#the-interpreter-the-hooks-run),
+[the make the hooks run](#the-make-the-hooks-run)).
 Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing
 or older than its floor ([linter version floors](#linter-version-floors)).
@@ -157,15 +159,26 @@ separately from Git.
 ## Linter version floors
 
 `shellcheck`, `actionlint`, `hadolint` and `yamllint` run by name from `PATH`, so the hook
-holds each to a version floor instead of trusting whichever build is installed.
-`.config/lefthook/tool-floors.txt` declares the floors, one `tool>=version` line per linter
-in the shape of the `requirements` files beside it, and each line's comment names where its
-version comes from.
+checks each one before it trusts its verdict. `.config/lefthook/tool-floors.txt` declares
+them, one line per linter in the shape of the `requirements` files beside it:
+
+| Line | The hook requires |
+| :--- | :--- |
+| `tool>=version` | the linter, at that version or newer |
+| `tool` | the linter, at any version |
+
+A floor needs a source in this repository, and each line's comment names it: the
+`actionlint` release `.github/actionlint.yaml` measures against, the `shellcheck` release
+`.github/workflows/portability.yml` installs and the `yamllint` pin in
+`.config/hook-lint/requirements.in`. `hadolint` has no floor. No workflow, container image
+or configuration file here installs it or names a version of it, and a version taken from
+one workstation would refuse contributors on another without evidence that the verdict
+on the root `Dockerfile` differs.
 
 Before any linter runs, `file_checks` (`.config/lefthook/scripts/checks.py`) passes the
 linters with files to check to `require_floors` (`.config/lefthook/scripts/toolchain.py`),
-which reads each one's `--version` in one process bounded to 30 seconds. The commit or push
-is refused, with the required version and the floors file named, when a linter:
+which reads each floored one's `--version` in one process bounded to 30 seconds. The commit
+or push is refused, with the requirement and the floors file named, when a linter:
 
 - is not installed or does not start;
 - prints no version the policy reads, such as an `actionlint` built from an untagged
@@ -175,69 +188,97 @@ is refused, with the required version and the floors file named, when a linter:
 A newer release passes: a floor is the oldest version the tree's verdict is known to hold
 with, not a pin. A linter is probed only when a file of its type is staged or pushed, so a
 missing `hadolint` blocks a commit that stages a `Dockerfile` and no other. A linter the hook
-runs without a declared floor fails the same way, as does a floors file that is unreadable
-or holds a line that is not a requirement.
+runs without a line in the floors file fails the same way, as does a floors file that is
+unreadable or holds a line in any other shape.
 
 ```text
 praetor hooks: shellcheck >= 0.11.0 is required (.config/lefthook/tool-floors.txt): the shellcheck on PATH is 0.9.0
+praetor hooks: hadolint is required (.config/lefthook/tool-floors.txt, any version): it is not on PATH
 ```
 
 The `ToolFloors` cases in `.config/lefthook/scripts/test_hooks.py` cover each outcome and
-replay the version readers against the linters installed on the host.
-`TestInstalledHookLintersSatisfyTheDeclaredFloors` (`internal/forge/hook_toolchain_guard_test.go`)
-fails when the `yamllint` pin in `.config/hook-lint/requirements.in` or the `shellcheck`
-release `.github/workflows/portability.yml` installs falls below its floor, or when
-`.github/actionlint.yaml` measures against another `actionlint` release than the floor.
-To raise a floor, change its line together with the source its comment names.
+replay the version readers against the linters installed on the host. The
+`HookToolFloorSources` cases in `scripts/test_portability_selftest.py` hold each floor to its
+source: they fail when the `yamllint` pin or the `shellcheck` release falls below its floor,
+when `.github/actionlint.yaml` measures against another `actionlint` release than the floor,
+and when a workflow or the development container starts to name `hadolint` while its line
+still declares no floor. To raise a floor, change its line together with the source its
+comment names.
+
+One reader serves every requirement line (`requirement` in `toolchain.py`): the floors file
+and the hash-locked lint lock that `scripts/test_emitted_hook_lint.py` installs from are
+parsed by it, and `stated_version` is the one version probe behind the linters, the
+interpreter and `make`.
 
 ## The interpreter the hooks run
 
-No hook command names a Python interpreter. Every job in `.config/lefthook/praetor.yml`
-and the pre-push script start their hook through `.config/lefthook/python.sh`, the one
-place the interpreter is resolved:
+No hook command names a Python interpreter, and no environment variable selects one. Every
+job in `.config/lefthook/praetor.yml` and the pre-push script start their hook through
+`.config/lefthook/python.sh`, which tries a fixed list of candidates in order and runs the
+first that proves itself:
 
-| `PRAETOR_PYTHON` | The hooks run |
+| Candidate | Where it is the interpreter |
 | :--- | :--- |
-| unset or empty | `python3`, the name Linux and macOS give Python 3 |
-| a command name, such as `python` | that command, found on `PATH` |
-| a path, such as `C:\Python313\python.exe` | that file |
+| `python3` | the name Linux and macOS give Python 3 |
+| `python` | the command an install on Windows provides |
+| `py -3` | the `py` launcher an install on Windows provides, asked for Python 3 |
+
+The Windows commands are the ones
+[Using Python on Windows](https://docs.python.org/3/using/windows.html) lists.
+
+A candidate proves itself by running a one-line program that prints its version, and the
+launcher accepts it only when the answer is Python 3 at 3.10 or newer, the release
+`.config/hook-lint/requirements.txt` is compiled for. Finding a file of that name is not
+proof. Windows 10 and 11 put `python3.exe` and `python.exe` on the user's `PATH` as App
+Execution Aliases for the Microsoft Store: every `PATH` lookup finds them, and started with
+arguments they print `Python was not found` and exit nonzero. Such a candidate, a program
+that exits 0 without answering and a Python older than the floor are skipped for the next
+one. The proven candidate then replaces the launcher's shell, so the status it returns is
+the hook's verdict and nothing else's.
+
+With no candidate left the hook fails with status 127 and names what it tried:
+
+```text
+praetor hooks: missing dependency: no Python 3.10 or newer interpreter.
+Tried: python3, python, py -3; none answered the version probe.
+Install Python 3.10 or newer under one of these names.
+```
+
+A variable that named the program a hook starts would turn every gate into a pass once it
+named a program that exits 0, so none is read. `test_no_variable_selects_the_interpreter`
+and `test_no_variable_takes_a_hook_job_off_its_interpreter_or_its_make` set such variables
+and require the hook to judge as before.
 
 A hook that starts another Python process, such as the harness self-tests or the command
-guard, reuses the interpreter it is running under (`sys.executable`), so a second name can
-never run beside the first.
+guard, reuses the interpreter it is running under (`sys.executable`), so a second
+interpreter can never run beside the first.
 
-A nonzero status is the hook's verdict only when the interpreter ran. On any failure the
-launcher therefore starts the interpreter once more with an empty program, and where that
-fails too it prints
-`praetor hooks: missing dependency: Python 3 interpreter '<name>' did not start` before it
-returns the first status unchanged. The status is not what decides: the shell gives 127 for
-a command it cannot find and 126 for one it cannot execute, a hook may return either
-itself, and the Windows alias below returns a status of its own
-(`test_a_failing_hook_is_a_verdict_whatever_its_status` and
-`test_a_python3_that_is_no_interpreter_is_reported_as_a_missing_dependency` in
-`.config/lefthook/scripts/test_hooks.py`).
+The candidate list exists once per language that needs it and tests hold the copies equal:
 
-On Windows the name `python3` is not a reliable interpreter. An install from python.org
-provides `python` and `py`, and Windows 10 and 11 put a `python3.exe` on the user's `PATH`
-that is an App Execution Alias for the Microsoft Store: every `PATH` lookup finds it, and
-started with arguments it prints `Python was not found` and exits nonzero. Set the variable
-there, or run `scripts/dev_install.py`. Before it installs anything,
-`settle_hook_interpreter` starts the program the variable names, or `python3` where it is
-unset, with `-V` and requires it to state a Python 3 version (`interpreter_fault`, which
-calls `interpreter_version` in `.config/lefthook/scripts/toolchain.py`); finding a file of
-that name is not accepted as proof. Where `python3` is missing or does not start as
-Python 3, it stores the interpreter running the install as the user's `PRAETOR_PYTHON` with
-`setx` on Windows, which every shell opened afterwards reads; on any other platform it stops
-and prints the reason and the `export` line to add. A variable that is already set is
-checked the same way and never replaced: one that does not start fails the install. The
-install report carries the result under `hook_interpreter`.
+| Where | Used by | Held equal by |
+| :--- | :--- | :--- |
+| `.config/lefthook/python.sh` | every Lefthook job, before any interpreter runs | the two tests below |
+| `PYTHON_CANDIDATES`, `PYTHON_FLOOR` and `PYTHON_PROBE` in `.config/lefthook/scripts/toolchain.py` | the report below and `scripts/dev_install.py` | `test_the_launcher_and_the_policy_declare_one_candidate_list`, and `test_candidates_are_tried_in_order_and_held_to_the_floor`, which runs both on the same stand-in programs |
+| the `hooks.python` default in `internal/config/operator_sections.go` | the Go checkpoint evaluator ([checkpoint cadence](checkpoint-cadence.md)) | `TestHookLauncherCandidatesAreTheOperatorDefault` in `internal/forge/hook_toolchain_guard_test.go` |
 
-To see what a host provides, run the declared-toolchain report. It starts the interpreter
-through the launcher, asks `make` for its version and reads each floored linter's version:
+`scripts/dev_install.py` resolves the same list before it installs anything
+(`hook_interpreter`, which calls `python_program` in `toolchain.py`). It reports the command
+and version the hooks will start under `hook_interpreter` in its install report, stops when
+no candidate proves itself, and stores nothing in the environment.
+
+Every line of the launcher ends in a comment sign. `praetorctl adopt` copies the file into
+other repositories ([the launcher adoption writes](#the-launcher-adoption-writes)), where a
+checkout under `core.autocrlf` may give it CRLF line endings, and a shell reads a carriage
+return as part of the last word of a line; behind a comment sign it is part of the comment
+(`test_a_crlf_checkout_of_the_launcher_runs_the_hook`).
+
+To see what a host provides, run the declared-toolchain report. It resolves the interpreter
+and `make` from their candidates, looks up each program the hooks start by name and reads
+each floored linter's version:
 
 ```bash
 python3 -B .config/lefthook/scripts/toolchain.py
-python3 -B .config/lefthook/scripts/toolchain.py --require python,make,shellcheck,yamllint
+python3 -B .config/lefthook/scripts/toolchain.py --require python,make,sh,shellcheck,yamllint
 ```
 
 Each declared tool gets one line. Without `--require` the run always exits 0 and a tool that
@@ -246,17 +287,33 @@ tool that is unusable is reported as `UNUSABLE` and the run exits 1. The Platfor
 job runs the second form on every leg before the harness self-tests
 ([HISS-21](../standards/hiss-21-platform-neutrality.md#enforcement-in-this-repository)).
 
-The `lefthook.yml` that `praetorctl adopt` writes carries no launcher file, so its two
-checkpoint jobs state the same rule inline (`lefthookPythonCommand` in
-`internal/adopt/hooks.go`): `PRAETOR_PYTHON`, or `python3` where it is unset or empty.
-`TestLefthookPythonCommandMatchesTheCanonicalLauncher` holds the generated line and the
-launcher to one variable and one default, and
-`TestLefthookPythonCommandRunsTheNamedInterpreter` runs the line through `sh`. The
-`HookInterpreter` cases in `.config/lefthook/scripts/test_hooks.py` cover the launcher, and
-`test_hook_jobs_start_the_interpreter_praetor_python_names` drives a real Lefthook job with
-the variable set. The agent-client registrations (`.claude/settings.json`,
-`.codex/hooks.json`, `.gemini/settings.json`) still name `python3` themselves; see
-[agent hooks](agent-hooks.md).
+The `HookInterpreter` cases in `.config/lefthook/scripts/test_hooks.py` cover the launcher,
+and `test_a_hook_job_refuses_stand_ins_for_its_interpreter_and_its_make` drives a real
+Lefthook job with stand-in programs first on `PATH`. The agent-client registrations
+(`.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`) still name `python3`
+themselves; see [agent hooks](agent-hooks.md).
+
+### The launcher adoption writes
+
+The `lefthook.yml` that `praetorctl adopt` writes starts its two checkpoint jobs through the
+same launcher. Adoption copies `.config/lefthook/python.sh` from the `--lock-source-root`
+bundle with the checkpoint scripts (`checkpointBundle` in `internal/adopt/checkpoint.go`), and
+each job runs `sh .config/lefthook/python.sh -B .config/lefthook/scripts/checkpoint.py ...`
+(`lefthookPythonCommand` in `internal/adopt/hooks.go`).
+
+The generated line holds a script path and plain arguments, with no quote and no expansion.
+Lefthook's Windows executor hands a run line to `sh -c` inside one pair of double quotes
+without escaping the quotes in it, so a rule stated inline with a quoted variable would lose
+its quotes there and split an interpreter path that holds a space.
+`TestLefthookPythonCommandStartsTheBundledLauncher` refuses any such character in the line,
+and `TestLefthookPythonCommandRunsTheHookThroughTheLauncher` runs it through `sh`, also with
+a CRLF copy of the launcher.
+
+A `lefthook.yml` from an earlier release, whose checkpoint jobs named `python3`, is migrated
+on the next adoption from a source bundle, and the launcher is installed in the same run
+(`TestAdopt_Boundary_Python3ByNameRenderingMigratesToTheLauncher`). A source root without the
+launcher installs no part of the bundle and enables no checkpoint job
+(`TestCheckpointLauncher_Negative_SourceWithoutItInstallsNothing`).
 
 ## The make the hooks run
 
@@ -266,25 +323,30 @@ it (`cli`, `refresh` and `refresh_install` in `.config/lefthook/scripts/hooks.py
 strict push runs the `state-audit` target (`source_checks` in `checks.py`). They pass
 `--always-make` and `--no-print-directory`, which are GNU Make options.
 
-All four calls take the program from `make_program` (`.config/lefthook/scripts/toolchain.py`):
-the program `PRAETOR_MAKE` names, or `make` where the variable is unset or empty. Set it where
-GNU Make has another name, such as `gmake` or `mingw32-make`. When the program is not on
-`PATH` the hook stops before it runs anything:
+All four calls take the program from `make_program` (`.config/lefthook/scripts/toolchain.py`).
+It tries `make`, then `gmake`, then `mingw32-make`, skipping a name that is not on `PATH`,
+and uses the first whose `--version` output begins with `GNU Make`. `gmake` is the name GNU
+Make has where `make` is another make, as on the BSDs; `mingw32-make` is its name on a MinGW
+host. A candidate that exits 0 without stating GNU Make is skipped like one that fails, and
+no environment variable selects the program, for the reason given for the interpreter.
+
+Before the CLI is built, `pre-commit` has already run the environment guard, read the staged
+paths and checked the index for private state. When no candidate proves itself, the hook
+stops at that point, before the CLI is built and before any check that needs it:
 
 ```text
-praetor hooks: missing dependency: make program make is not on PATH; the hooks build the CLI through the hook-cli Make target. Install GNU Make, or set PRAETOR_MAKE to it (make where unset)
+praetor hooks: missing dependency: GNU Make, which builds the CLI the hooks run (the hook-cli target). Tried: make (not on PATH); gmake (not on PATH); mingw32-make (not on PATH)
 ```
 
 Nothing is skipped in that case. A hook that cannot build the CLI would run a stale binary
-or none, so a missing `make` refuses the commit or push and says what to install.
+or none, so a missing `make` refuses the commit or push and says what was tried.
 
-The declared-toolchain report above prints the GNU Make version the hooks would run, and
-reports any other `make` as unusable. The Platform Neutrality job requires it on every leg
-before the self-tests; no leg installs it, each uses the one its image carries
+The declared-toolchain report above prints the GNU Make version and the path the hooks would
+run. The Platform Neutrality job requires it on every leg before the self-tests; no leg
+installs it, each uses the one its image carries
 ([HISS-21](../standards/hiss-21-platform-neutrality.md#the-hook-toolchain-is-declared-and-the-matrix-asserts-it)).
 The `HookMake` cases in `.config/lefthook/scripts/test_hooks.py` cover the resolution, and
-`test_hook_jobs_run_the_make_praetor_make_names` drives a real Lefthook job with the variable
-set to a program that does not exist and to the host's `make`.
+the Lefthook job test named above puts stand-ins for all three names first on `PATH`.
 
 ## The lefthook.yml adoption writes
 
@@ -390,7 +452,7 @@ in its own line endings. An edited one is kept, `--force` included, with a warni
 | File | Unedited earlier text | Edited copy | Tests (`internal/adopt`) |
 | --- | --- | --- | --- |
 | `.config/agent/hooks/block_evasion.py` | refreshed to the current rendering (`priorEvasionHookDigests`, `testdata/evasion`) | kept | `TestAdopt_Positive_PriorEvasionHookRefreshedOnPlainRun`, `TestAdopt_Negative_EditedEvasionHookKeptUnderForce` |
-| `.config/lefthook/scripts/checkpoint.py` and `common.py` | refreshed to the `--lock-source-root` bundle (`priorCheckpointDigests`, `testdata/checkpoint`) | kept; the checkpoint lifecycle is unavailable and no other bundle file is written | `TestReconcileCheckpointBundle_Positive_PriorScriptRefreshedOnPlainRun`, `TestReconcileCheckpointBundle_Negative_NoHalfRefreshBesideAKeptFile`, `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable` |
+| `.config/lefthook/scripts/checkpoint.py` and `common.py`, and `.config/lefthook/python.sh` | refreshed to the `--lock-source-root` bundle (`priorCheckpointDigests`, `testdata/checkpoint`) | kept; the checkpoint lifecycle is unavailable and no other bundle file is written | `TestReconcileCheckpointBundle_Positive_PriorScriptRefreshedOnPlainRun`, `TestReconcileCheckpointBundle_Negative_NoHalfRefreshBesideAKeptFile`, `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable` |
 | the `pre-commit` hook in the directory git reports, written only when lefthook cannot install | not applicable | a hook praetor did not write is kept: the audit requires only that one exists | `TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce` |
 
 Beside a `lefthook.yml` that extends the canonical policy, the interceptor and the checkpoint
@@ -804,8 +866,8 @@ naming it, not a Python traceback.
 ## Running the gate on Windows
 
 A Windows checkout depends on four platform behaviours. Each one blocks `git commit` if it is
-missing, so all four must hold. Two programs must also resolve there: the hooks' interpreter,
-which Windows does not reliably provide under the name `python3`
+missing, so all four must hold. Two programs must also prove themselves there: the hooks'
+interpreter, which Windows does not reliably provide under the name `python3`
 ([the interpreter the hooks run](#the-interpreter-the-hooks-run)), and GNU Make
 ([the make the hooks run](#the-make-the-hooks-run)).
 

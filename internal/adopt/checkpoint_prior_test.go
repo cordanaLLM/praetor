@@ -13,9 +13,11 @@ import (
 // shipped at it, in a directory named after the file.
 const priorCheckpointFixtures = "testdata/checkpoint"
 
-// checkpointFixtureDir is the fixture directory of the bundle file at rel.
+// checkpointFixtureDir is the fixture directory of the bundle file at rel: its base name
+// without the extension.
 func checkpointFixtureDir(rel string) string {
-	return filepath.Join(priorCheckpointFixtures, strings.TrimSuffix(path.Base(rel), ".py"))
+	base := path.Base(rel)
+	return filepath.Join(priorCheckpointFixtures, strings.TrimSuffix(base, path.Ext(base)))
 }
 
 // firstPriorCheckpointText returns the oldest recorded text of the bundle file at rel, which is
@@ -27,7 +29,7 @@ func firstPriorCheckpointText(t *testing.T, rel string) string {
 
 // Each bundle file's digest set is replayable in both directions against its fixtures.
 func TestPriorCheckpointDigests_Positive_ReproducedByFixtures(t *testing.T) {
-	for _, rel := range []string{checkpointScript, checkpointCommon} {
+	for _, rel := range checkpointBundle {
 		assertPriorDigestsReproduced(t, checkpointFixtureDir(rel), priorCheckpointDigests[rel])
 	}
 }
@@ -36,10 +38,10 @@ func TestPriorCheckpointDigests_Positive_ReproducedByFixtures(t *testing.T) {
 // still refreshes the one adopters hold; --force no longer does. After changing one, copy it
 // under testdata/checkpoint and add its digest to priorCheckpointDigests.
 func TestPriorCheckpointDigests_Boundary_CurrentSourcesRecorded(t *testing.T) {
-	if len(priorCheckpointDigests) != 2 {
-		t.Fatalf("priorCheckpointDigests covers %d paths, want the 2 bundle files", len(priorCheckpointDigests))
+	if len(priorCheckpointDigests) != len(checkpointBundle) {
+		t.Fatalf("priorCheckpointDigests covers %d paths, want the %d bundle files", len(priorCheckpointDigests), len(checkpointBundle))
 	}
-	for _, rel := range []string{checkpointScript, checkpointCommon} {
+	for _, rel := range checkpointBundle {
 		data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatal(err)

@@ -11,16 +11,26 @@ import (
 	"testing"
 )
 
+// checkpointFixtureTexts are stand-in texts for every file of the checkpoint bundle.
+var checkpointFixtureTexts = map[string]string{
+	checkpointScript:   "#!/usr/bin/env python3\nprint('shared')\n",
+	checkpointCommon:   "class HookError(Exception):\n    pass\n",
+	checkpointLauncher: "#!/bin/sh\nexec python3 \"$@\"\n",
+}
+
+// writeCheckpointBundle writes a stand-in for every file of the checkpoint bundle under root.
+func writeCheckpointBundle(t *testing.T, root string) {
+	t.Helper()
+	for _, name := range checkpointBundle {
+		mustWrite(t, filepath.Join(root, filepath.FromSlash(name)), checkpointFixtureTexts[name])
+	}
+}
+
 func checkpointSourceFixture(t *testing.T, complete bool) string {
 	t.Helper()
 	root := t.TempDir()
 	if complete {
-		for name, body := range map[string]string{
-			checkpointScript: "#!/usr/bin/env python3\nprint('shared')\n",
-			checkpointCommon: "class HookError(Exception):\n    pass\n",
-		} {
-			mustWrite(t, filepath.Join(root, name), body)
-		}
+		writeCheckpointBundle(t, root)
 	}
 	return root
 }
@@ -66,7 +76,7 @@ func TestAdoptCheckpointBundleAddsJobsAndLocalPolicy(t *testing.T) {
 	if err != nil || !ready {
 		t.Fatalf("complete source was not installed: ready=%v err=%v", ready, err)
 	}
-	for _, name := range []string{checkpointScript, checkpointCommon, checkpointPolicy} {
+	for _, name := range []string{checkpointScript, checkpointCommon, checkpointLauncher, checkpointPolicy} {
 		if _, err := os.Stat(filepath.Join(session.repoPath, filepath.FromSlash(name))); err != nil {
 			t.Fatalf("missing installed checkpoint file %s: %v", name, err)
 		}
@@ -122,8 +132,8 @@ func TestAdoptCheckpointBundleRunsActualEvaluator(t *testing.T) {
 		t.Fatalf("checkpoint integration requires python3: %v", err)
 	}
 	session := checkpointSession(t, checkpointSourceFixture(t, false))
-	for _, name := range []string{checkpointScript, checkpointCommon} {
-		data, err := os.ReadFile(filepath.Join("..", "..", ".config", "lefthook", "scripts", filepath.FromSlash(filepath.Base(name))))
+	for _, name := range checkpointBundle {
+		data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(name)))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -181,8 +191,7 @@ func TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable(t 
 	drifted := "print('stale')\n"
 	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript)), drifted)
 	source := newAdoptLockSource(t)
-	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointScript)), "#!/usr/bin/env python3\nprint('shared')\n")
-	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointCommon)), "class HookError(Exception):\n    pass\n")
+	writeCheckpointBundle(t, source)
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Force: true})
 	if err != nil {
 		t.Fatalf("Adopt --force: %v", err)
@@ -211,8 +220,7 @@ func TestAdopt_Boundary_ForceKeepsCheckpointScriptBesideRemoteCanonicalPolicy(t 
 	vendored := "#!/usr/bin/env python3\nprint('vendored')\n"
 	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript)), vendored)
 	source := newAdoptLockSource(t)
-	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointScript)), "#!/usr/bin/env python3\nprint('shared')\n")
-	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointCommon)), "class HookError(Exception):\n    pass\n")
+	writeCheckpointBundle(t, source)
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Force: true})
 	if err != nil {
 		t.Fatalf("Adopt --force: %v", err)

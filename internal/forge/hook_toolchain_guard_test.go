@@ -7,63 +7,34 @@ package forge
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/cordanaLLM/praetor/internal/semver"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
-// The hook linters are held to the version floors of one file (#343). Each floor names the
-// place its version comes from, and this guard holds those places to it: a version this
-// repository installs or measures against must never be older than the floor the hooks enforce.
+// The hook policy resolves its interpreter and its make from fixed candidates, each proven
+// before use (#339, #341), and the portability harness asserts the declared hook toolchain
+// before the self-tests start any hook. The linter floors of the policy and the sources they
+// come from are held together by scripts/test_portability_selftest.py, which reads the floors
+// file through the policy's own reader.
 const (
-	hookToolFloors  = ".config/lefthook/tool-floors.txt"
-	actionlintFile  = ".github/actionlint.yaml"
-	shellcheckPin   = "SHELLCHECK_VERSION"
-	shellcheckStep  = "Install Shell Linter"
-	maxFloorLines   = 256
-	yamllintPinName = "yamllint"
+	hookLauncher          = ".config/lefthook/python.sh"
+	hookToolchainCheck    = ".config/lefthook/scripts/toolchain.py --require"
+	hookSelfTests         = "scripts/portability_selftest.py"
+	hookToolchainRequired = "REQUIRED"
+	// maxLauncherLines bounds the launcher scan; the file is a few dozen lines (HISS-02).
+	maxLauncherLines = 256
 )
 
-var (
-	hookToolFloor = regexp.MustCompile(`^([a-z][a-z0-9_.-]*)>=(\d+\.\d+\.\d+)$`)
-	yamllintPin   = regexp.MustCompile(`(?m)^yamllint==(\d+\.\d+\.\d+)\s*$`)
-)
-
-// hookToolFloorsOf returns the tool>=version lines of the floors file, comments aside.
-func hookToolFloorsOf(text string) map[string]string {
-	floors := map[string]string{}
-	lines := strings.Split(text, "\n")
-	for i := 0; i < len(lines) && i < maxFloorLines; i++ {
-		line, _, _ := strings.Cut(lines[i], "#")
-		if match := hookToolFloor.FindStringSubmatch(strings.TrimSpace(line)); match != nil {
-			floors[match[1]] = match[2]
-		}
-	}
-	return floors
-}
-
-// floorGap names why an installed version does not satisfy a tool's floor, or returns "".
-func floorGap(tool, installed string, floors map[string]string) string {
-	floor, declared := floors[tool]
-	if !declared {
-		return tool + " has no floor in " + hookToolFloors
-	}
-	want, wantOK := semver.Parse(floor)
-	got, gotOK := semver.Parse(installed)
-	switch {
-	case !wantOK:
-		return tool + " floor " + floor + " is not a version"
-	case !gotOK:
-		return tool + " version " + installed + " is not a version"
-	case semver.Compare(got, want) < 0:
-		return tool + " " + installed + " is below the declared floor " + floor
-	}
-	return ""
-}
+// launcherCandidate matches one candidate line of the launcher: the words it proves and the
+// words it then starts. Every line of the launcher ends in a comment sign, so a CRLF checkout
+// of it still runs.
+var launcherCandidate = regexp.MustCompile(`^if proven (.+); then exec (.+) "\$@"; fi #$`)
 
 func engineText(t *testing.T, relative string) string {
 	t.Helper()
@@ -74,100 +45,69 @@ func engineText(t *testing.T, relative string) string {
 	return string(data)
 }
 
-// shellcheckVersion returns the release the portability harness installs.
-func shellcheckVersion(t *testing.T) string {
-	t.Helper()
-	workflows, _ := engineWorkflows(t)
-	var spec workflowSpec
-	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
-		t.Fatalf("parse portability.yml: %v", err)
+// launcherCandidates returns the candidates the launcher tries, in order, and reports whether
+// every one is started exactly as it was proven.
+func launcherCandidates(text string) (candidates [][]string, faithful bool) {
+	faithful = true
+	lines := strings.Split(text, "\n")
+	for i := 0; i < len(lines) && i < maxLauncherLines; i++ {
+		match := launcherCandidate.FindStringSubmatch(strings.TrimRight(lines[i], "\r"))
+		if match == nil {
+			continue
+		}
+		faithful = faithful && match[1] == match[2]
+		candidates = append(candidates, strings.Fields(match[1]))
 	}
-	job := spec.Jobs["harness"]
-	index := stepIndex(job, func(step workflowStep) bool { return step.Name == shellcheckStep })
-	if index < 0 {
-		t.Fatalf("portability harness has no %q step", shellcheckStep)
-	}
-	env, ok := stepEnv(job.Steps[index])
-	if !ok || env[shellcheckPin] == "" {
-		t.Fatalf("%q does not set %s", shellcheckStep, shellcheckPin)
-	}
-	return env[shellcheckPin]
+	return candidates, faithful
 }
 
-// Positive: the floors file declares the four hook linters, the yamllint pin and the
-// shellcheck release the Platform Neutrality legs install satisfy their floors, and
-// .github/actionlint.yaml measures against the actionlint floor itself.
-func TestInstalledHookLintersSatisfyTheDeclaredFloors(t *testing.T) {
-	floors := hookToolFloorsOf(engineText(t, hookToolFloors))
-	tools := make([]string, 0, len(floors))
-	for tool := range floors {
-		tools = append(tools, tool)
+// HISS-19: one candidate list. The operator setting hooks.python defaults to it
+// (config.DefaultOperatorSettings, consumed by internal/agenthook) and the shell launcher every
+// Lefthook job starts through spells it out, because the launcher runs before any interpreter.
+// Positive: the two are equal, in order. Negative and boundary: a candidate started under
+// another name than it was proven with, a reordered list and a launcher without candidates
+// each differ.
+func TestHookLauncherCandidatesAreTheOperatorDefault(t *testing.T) {
+	want := config.DefaultOperatorSettings().Hooks.Python
+	got, faithful := launcherCandidates(engineText(t, hookLauncher))
+	if !faithful || !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s tries %v (started as proven: %v), want the hooks.python default %v", hookLauncher, got, faithful, want)
 	}
-	slices.Sort(tools)
-	if want := []string{"actionlint", "hadolint", "shellcheck", "yamllint"}; !slices.Equal(tools, want) {
-		t.Fatalf("%s declares %v, want %v", hookToolFloors, tools, want)
-	}
-	pin := yamllintPin.FindStringSubmatch(engineText(t, hookLintInput))
-	if pin == nil {
-		t.Fatalf("%s pins no yamllint version", hookLintInput)
-	}
-	if gap := floorGap(yamllintPinName, pin[1], floors); gap != "" {
-		t.Errorf("%s: %s", hookLintInput, gap)
-	}
-	if gap := floorGap("shellcheck", shellcheckVersion(t), floors); gap != "" {
-		t.Errorf("portability.yml %s: %s", shellcheckPin, gap)
-	}
-	if measured := "actionlint v" + floors["actionlint"]; !strings.Contains(engineText(t, actionlintFile), measured) {
-		t.Errorf("%s does not name %s, the floor its runner-label measurement holds for", actionlintFile, measured)
-	}
-}
-
-// Negative and boundary: a version below its floor, a tool without one and a value that is
-// no version are each named; the floor itself and anything newer pass, with or without the
-// tag prefix a release carries.
-func TestHookToolFloorGuardFixtures(t *testing.T) {
-	floors := hookToolFloorsOf("# header\n\nshellcheck>=0.11.0  # source\nyamllint>=1.38.0\r\nbroken==1.0.0\nloose >= 1.0.0\n")
-	if len(floors) != 2 || floors["shellcheck"] != "0.11.0" || floors["yamllint"] != "1.38.0" {
-		t.Fatalf("hookToolFloorsOf = %v", floors)
+	line := func(proved, started string) string {
+		return "if proven " + proved + "; then exec " + started + ` "$@"; fi #`
 	}
 	cases := []struct {
-		name, tool, installed, want string
+		name     string
+		text     string
+		want     [][]string
+		faithful bool
 	}{
-		{"at the floor", "shellcheck", "0.11.0", ""},
-		{"tagged release at the floor", "shellcheck", "v0.11.0", ""},
-		{"newer", "yamllint", "1.39.0", ""},
-		{"numeric, not textual", "shellcheck", "0.9.0", "below the declared floor 0.11.0"},
-		{"one patch short", "yamllint", "1.37.9", "below the declared floor 1.38.0"},
-		{"no floor", "hadolint", "2.14.0", "has no floor"},
-		{"not a version", "shellcheck", "stable", "is not a version"},
+		{"positive", line("python3", "python3") + "\n" + line("py -3", "py -3") + "\n", [][]string{{"python3"}, {"py", "-3"}}, true},
+		{"boundary crlf checkout", line("python3", "python3") + "\r\n", [][]string{{"python3"}}, true},
+		{"negative started under another name", line("python3", "python") + "\n", [][]string{{"python3"}}, false},
+		{"boundary no candidates", "#!/bin/sh\nset -eu\nexit 127\n", nil, true},
+		{"boundary comment is no candidate", "# " + line("python3", "python3") + "\n", nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := floorGap(tc.tool, tc.installed, floors)
-			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
-				t.Fatalf("floorGap = %q, want containing %q", got, tc.want)
+			got, faithful := launcherCandidates(tc.text)
+			if !reflect.DeepEqual(got, tc.want) || faithful != tc.faithful {
+				t.Fatalf("launcherCandidates = %v, %v; want %v, %v", got, faithful, tc.want, tc.faithful)
 			}
 		})
 	}
+	if reordered, _ := launcherCandidates(line("python", "python") + "\n" + line("python3", "python3") + "\n"); reflect.DeepEqual(reordered, want[:2]) {
+		t.Fatal("a reordered candidate list compares equal to the default")
+	}
 }
 
-// The hook interpreter and make are each resolved once, from PRAETOR_PYTHON and PRAETOR_MAKE
-// (#339, #341), and the portability harness asserts the declared hook toolchain before the
-// self-tests start any hook.
-const (
-	hookToolchainCheck    = ".config/lefthook/scripts/toolchain.py --require"
-	hookSelfTests         = "scripts/portability_selftest.py"
-	hookInterpreter       = "PRAETOR_PYTHON"
-	hookToolchainRequired = "REQUIRED"
-)
-
-// hookToolchainGap names why a job does not assert the hook toolchain on every leg before
-// its self-tests, with the interpreter both steps hand the hooks, or returns "" when it does.
+// hookToolchainGap names why a job does not assert the hook toolchain on every leg before its
+// self-tests, or returns "" when it does.
 func hookToolchainGap(job workflowJob) string {
 	if advisoryJob(job.ContinueOnError) {
 		return "job is advisory"
 	}
-	asserted := ""
+	asserted := false
 	for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
 		step := job.Steps[i]
 		env, readable := stepEnv(step)
@@ -176,9 +116,9 @@ func hookToolchainGap(job workflowJob) string {
 			if gap := hookToolchainStepGap(step, env, readable); gap != "" {
 				return gap
 			}
-			asserted = env[hookInterpreter]
+			asserted = true
 		case strings.Contains(step.Run, hookSelfTests):
-			return hookSelfTestGap(step, env, asserted)
+			return hookSelfTestGap(step, asserted)
 		}
 	}
 	return "no step runs " + hookSelfTests
@@ -189,11 +129,11 @@ func hookToolchainStepGap(step workflowStep, env map[string]string, readable boo
 	switch {
 	case !runsOnEveryLeg(step):
 		return "toolchain assertion is conditional: " + step.If
-	case !readable || env[hookInterpreter] == "":
-		return "toolchain assertion does not set " + hookInterpreter
+	case !readable:
+		return "toolchain assertion has no readable env block"
 	}
 	required := strings.Split(env[hookToolchainRequired], ",")
-	for _, tool := range hookResolvedTools {
+	for _, tool := range hookRequiredTools {
 		if !slices.Contains(required, tool) {
 			return "toolchain assertion does not require " + tool
 		}
@@ -201,20 +141,18 @@ func hookToolchainStepGap(step workflowStep, env map[string]string, readable boo
 	return ""
 }
 
-// hookResolvedTools are the programs the hooks cannot start without (toolchain.RESOLVED in
-// .config/lefthook/scripts); scripts/test_portability_selftest.py holds the workflow's list to
-// the declaration itself.
-var hookResolvedTools = []string{"python", "make"}
+// hookRequiredTools are the programs no hook starts without: the interpreter and make the
+// policy resolves (toolchain.RESOLVED in .config/lefthook/scripts) and the shell that runs every
+// job. scripts/test_portability_selftest.py holds the workflow's list to the declaration itself.
+var hookRequiredTools = []string{"python", "make", "sh"}
 
-// hookSelfTestGap judges the self-test step against the interpreter the assertion started.
-func hookSelfTestGap(step workflowStep, env map[string]string, asserted string) string {
+// hookSelfTestGap judges the self-test step against the assertion before it.
+func hookSelfTestGap(step workflowStep, asserted bool) string {
 	switch {
-	case asserted == "":
+	case !asserted:
 		return "self-tests run before the hook toolchain is asserted"
 	case !runsOnEveryLeg(step):
 		return "self-tests are conditional: " + step.If
-	case env[hookInterpreter] != asserted:
-		return "self-tests run the hooks under another interpreter than the one asserted"
 	}
 	return ""
 }
@@ -231,9 +169,9 @@ func envNode(pairs ...string) yaml.Node {
 }
 
 // HISS-21 evidence for the hook toolchain. Positive: the real harness job asserts it on every
-// leg, python and make included, before the self-tests, and both steps hand the hooks one
-// interpreter. Negative and boundary: no assertion, one after the self-tests, an OS-guarded
-// one, one that does not require python or make, and self-tests under another interpreter.
+// leg, python, make and sh included, before the self-tests. Negative and boundary: no
+// assertion, one after the self-tests, an OS-guarded one, one that does not require python,
+// make or sh, conditional self-tests and an advisory job.
 func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	var spec workflowSpec
@@ -244,32 +182,29 @@ func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 		t.Fatalf("portability harness: %s", gap)
 	}
 	every := "${{ !cancelled() }}"
-	check := func(condition string, pairs ...string) workflowStep {
-		return workflowStep{Run: `"$PYTHON" -B ` + hookToolchainCheck + ` "$REQUIRED"`, If: condition, Env: envNode(pairs...)}
+	check := func(condition, required string) workflowStep {
+		return workflowStep{Run: `"$PYTHON" -B ` + hookToolchainCheck + ` "$REQUIRED"`, If: condition,
+			Env: envNode(hookToolchainRequired, required)}
 	}
-	tests := func(python string) workflowStep {
-		return workflowStep{Run: `"$PYTHON" -B ` + hookSelfTests, If: every, Env: envNode(hookInterpreter, python)}
+	tests := func(condition string) workflowStep {
+		return workflowStep{Run: `"$PYTHON" -B ` + hookSelfTests, If: condition}
 	}
-	asserted := check(every, hookInterpreter, "py", hookToolchainRequired, "python,make,yamllint")
+	asserted := check(every, "python,make,sh,yamllint")
 	cases := []struct {
 		name string
 		job  workflowJob
 		want string
 	}{
-		{"positive", workflowJob{Steps: []workflowStep{asserted, tests("py")}}, ""},
-		{"negative missing", workflowJob{Steps: []workflowStep{tests("py")}}, "before the hook toolchain is asserted"},
+		{"positive", workflowJob{Steps: []workflowStep{asserted, tests(every)}}, ""},
+		{"negative missing", workflowJob{Steps: []workflowStep{tests(every)}}, "before the hook toolchain is asserted"},
 		{"negative no self-tests", workflowJob{Steps: []workflowStep{asserted}}, "no step runs"},
-		{"boundary order", workflowJob{Steps: []workflowStep{tests("py"), asserted}}, "before the hook toolchain is asserted"},
-		{"boundary os guard", workflowJob{Steps: []workflowStep{
-			check("runner.os != 'Windows'", hookInterpreter, "py", hookToolchainRequired, "python,make"), tests("py")}}, "conditional"},
-		{"boundary python not required", workflowJob{Steps: []workflowStep{
-			check(every, hookInterpreter, "py", hookToolchainRequired, "make,yamllint"), tests("py")}}, "does not require python"},
-		{"boundary make not required", workflowJob{Steps: []workflowStep{
-			check(every, hookInterpreter, "py", hookToolchainRequired, "python,yamllint"), tests("py")}}, "does not require make"},
-		{"boundary variable unset", workflowJob{Steps: []workflowStep{
-			check(every, hookToolchainRequired, "python,make"), tests("py")}}, "does not set " + hookInterpreter},
-		{"boundary other interpreter", workflowJob{Steps: []workflowStep{asserted, tests("python3")}}, "another interpreter"},
-		{"boundary advisory", workflowJob{ContinueOnError: "true", Steps: []workflowStep{asserted, tests("py")}}, "advisory"},
+		{"boundary order", workflowJob{Steps: []workflowStep{tests(every), asserted}}, "before the hook toolchain is asserted"},
+		{"boundary os guard", workflowJob{Steps: []workflowStep{check("runner.os != 'Windows'", "python,make,sh"), tests(every)}}, "assertion is conditional"},
+		{"boundary python not required", workflowJob{Steps: []workflowStep{check(every, "make,sh,yamllint"), tests(every)}}, "does not require python"},
+		{"boundary make not required", workflowJob{Steps: []workflowStep{check(every, "python,sh,yamllint"), tests(every)}}, "does not require make"},
+		{"boundary sh not required", workflowJob{Steps: []workflowStep{check(every, "python,make,yamllint"), tests(every)}}, "does not require sh"},
+		{"boundary conditional self-tests", workflowJob{Steps: []workflowStep{asserted, tests("runner.os == 'Linux'")}}, "self-tests are conditional"},
+		{"boundary advisory", workflowJob{ContinueOnError: "true", Steps: []workflowStep{asserted, tests(every)}}, "advisory"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

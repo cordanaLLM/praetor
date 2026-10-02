@@ -63,14 +63,17 @@ MAX_FAILURE_BLOCK_LINES = 40
 
 # The hook toolchain table of the HISS-21 page is rendered, never written by hand: three
 # attempts to state in prose which tools the matrix covers each published a false list (#341).
-# Its rows are the hook policy's own declarations (toolchain.RESOLVED and tool-floors.txt) and
-# its last column is the REQUIRED list of the workflow's Assert Hook Toolchain step.
+# Its rows are the hook policy's own declarations (RESOLVED, BY_NAME and tool-floors.txt, read
+# through .config/lefthook/scripts/toolchain.py) and its last column is the REQUIRED list of
+# the workflow's Assert Hook Toolchain step.
 HOOK_SCRIPTS = Path(".config/lefthook/scripts")
 WORKFLOW = Path(".github/workflows/portability.yml")
 PAGE = Path("docs/standards/hiss-21-platform-neutrality.md")
 TABLE_START = "<!-- praetor:hook-toolchain:start -->"
 TABLE_END = "<!-- praetor:hook-toolchain:end -->"
 REQUIRED = re.compile(r"^ +REQUIRED: ([a-z0-9_.,-]+)$", re.M)
+# What each resolved program must state before the policy runs it.
+PROOFS = {"python": "Python {floor} or newer", "make": "GNU Make"}
 
 
 def hook_toolchain():
@@ -92,25 +95,39 @@ def asserted_tools(workflow):
     return found[0].split(",")
 
 
-def toolchain_table(resolved, floors, asserted):
+def declared_requirements(toolchain):
+    """Return {tool: what the hook policy requires of it}, one entry per declared tool.
+
+    The order is the policy's own: the programs it resolves from candidates, the programs it
+    starts by name, then the linters of the floors file.
+    """
+    required = {}
+    for tool, candidates in toolchain.RESOLVED.items():
+        names = ", ".join(f"`{' '.join(candidate)}`" for candidate in candidates)
+        proof = PROOFS[tool].format(floor=toolchain.PYTHON_FLOOR)
+        required[tool] = f"the first of {names} on `PATH` that states {proof}"
+    for tool in toolchain.BY_NAME:
+        required[tool] = "found on `PATH` under this name"
+    for tool, floor in toolchain.tool_floors().items():
+        required[tool] = "installed; no version floor" if floor is None \
+            else f"version {floor} or newer"
+    return required
+
+
+def toolchain_table(required, asserted):
     """Render the declared hook tools and what the matrix asserts for each as a Markdown table."""
-    def coverage(tool):
-        return "asserted on every leg" if tool in asserted else "reported, not asserted"
     rows = ["| Tool | The hook policy requires | Platform Neutrality job |",
             "| :--- | :--- | :--- |"]
-    for tool, (variable, default) in resolved.items():
-        rows.append(f"| `{tool}` | the program `{variable}` names, `{default}` where unset | "
-                    f"{coverage(tool)} |")
-    for tool, floor in floors.items():
-        rows.append(f"| `{tool}` | version {floor} or newer | {coverage(tool)} |")
+    for tool, requirement in required.items():
+        coverage = "asserted on every leg" if tool in asserted else "reported, not asserted"
+        rows.append(f"| `{tool}` | {requirement} | {coverage} |")
     return "\n".join(rows)
 
 
 def current_toolchain_table():
     """Render the table from the declarations and the workflow of this checkout."""
-    toolchain = hook_toolchain()
     workflow = (ROOT / WORKFLOW).read_text(encoding="utf-8")
-    return toolchain_table(toolchain.RESOLVED, toolchain.tool_floors(), asserted_tools(workflow))
+    return toolchain_table(declared_requirements(hook_toolchain()), asserted_tools(workflow))
 
 
 def marked_table(page):

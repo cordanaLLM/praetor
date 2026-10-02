@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The hook policy's declared external tools: linter version floors and resolved programs.
+"""The hook policy's declared external tools: resolved programs, programs started by name and
+linters with their version floors.
 
 Run this file to see what the host provides, one line per declared tool:
 `python3 -B .config/lefthook/scripts/toolchain.py`. With `--require NAMES` the named tools
@@ -7,7 +8,6 @@ must be usable and the run fails when one is not.
 """
 
 import argparse
-import os
 from pathlib import Path
 import re
 import shutil
@@ -15,42 +15,90 @@ import sys
 
 from common import HookError, clean_env, run
 
-ROOT = Path(__file__).resolve().parents[3]
-# The one place the floors are declared, beside the policy that enforces them (#343).
+# The one place the linters and their floors are declared, beside the policy that enforces
+# them (#343).
 FLOORS = Path(__file__).resolve().parents[1] / "tool-floors.txt"
 FLOORS_NAME = ".config/lefthook/" + FLOORS.name
-FLOOR_LINE = re.compile(r"([a-z][a-z0-9_.-]*)>=(\d+(?:\.\d+)*)")
+# One requirement line, as the requirements files beside the policy write one: a name, then
+# an operator and a version, or the name alone. The floors file and the lint lock
+# (scripts/test_emitted_hook_lint.py) are both read through it.
+REQUIREMENT = re.compile(r"([A-Za-z][A-Za-z0-9_.-]*)(?:(>=|==)([0-9][0-9A-Za-z.]*))?")
+FLOOR_VERSION = re.compile(r"\d+(?:\.\d+)*")
 # The file holds a handful of requirement lines and their comments (HISS-02).
 MAX_FLOOR_LINES = 256
-# One `--version` call: a start-up and a line of output. A tool that hangs must fail the
+# One version probe: a start-up and a line of output. A tool that hangs must fail the
 # hook, not hold it.
 VERSION_TIMEOUT = 30
-# Where each floored tool states its own version in `--version` output. Anchored per tool,
+# Where each floored linter states its own version in `--version` output. Anchored per tool,
 # never "the first dotted number": an actionlint built from an untagged checkout prints
 # "(devel)" and then "built with go1.26.4 ...", and the Go version must not pass as its own.
 VERSION_OUTPUT = {
     "actionlint": re.compile(r"\Av?(\d+(?:\.\d+)+)\s"),
-    "hadolint": re.compile(r"\AHaskell Dockerfile Linter v?(\d+(?:\.\d+)+)"),
     "shellcheck": re.compile(r"^version: (\d+(?:\.\d+)+)\s*$", re.M),
     "yamllint": re.compile(r"\Ayamllint (\d+(?:\.\d+)+)"),
 }
-# Programs the policy resolves once from the environment, {tool: (variable, default)},
-# instead of by a name each command spells (#339, #341). python.sh, beside the policy, is
-# the one place a shell starts the interpreter; a hook already running reuses
-# sys.executable. make builds the repository's CLI through the hook-cli target and runs
-# state-audit, and make_program is the one place the hooks take it from.
-RESOLVED = {"python": ("PRAETOR_PYTHON", "python3"), "make": ("PRAETOR_MAKE", "make")}
+# The two programs the policy resolves instead of starting by a name a command spells (#339,
+# #341). No environment variable selects either: one naming any program that exits 0 would
+# pass every gate without running it. Each has a fixed candidate list, tried in order, and a
+# candidate is used only once it has proven what it is (proven).
+#
+# python.sh applies PYTHON_CANDIDATES, PYTHON_FLOOR and PYTHON_PROBE in shell, before any
+# Python runs, and the operator setting hooks.python defaults to the same candidates
+# (internal/config/operator_sections.go). The HookInterpreter cases of test_hooks.py and
+# TestHookLauncherCandidatesAreTheOperatorDefault (internal/forge) hold the three equal.
+PYTHON_CANDIDATES = (("python3",), ("python",), ("py", "-3"))
+# The release .config/hook-lint/requirements.txt is compiled for (--python-version).
+PYTHON_FLOOR = "3.10"
+PYTHON_PROBE = "import sys; print(sys.version_info[0], sys.version_info[1], sep=chr(46))"
+PYTHON_STATED = re.compile(r"\A(\d+\.\d+)\s*\Z")
 LAUNCHER = ".config/lefthook/python.sh"
-PYTHON_VERSION = re.compile(r"\APython (3\.\d+\.\d+\S*)")
-# The policy passes --always-make and --no-print-directory, which are GNU Make's.
-MAKE_VERSION = re.compile(r"\AGNU Make (\d+(?:\.\d+)+)")
+# GNU Make under the names it is installed by: gmake where make is another make, as on the
+# BSDs, and mingw32-make on a MinGW host. The policy passes --always-make and
+# --no-print-directory, which are GNU Make's, so any other make is not accepted.
+MAKE_CANDIDATES = (("make",), ("gmake",), ("mingw32-make",))
+MAKE_STATED = re.compile(r"\AGNU Make (\d+(?:\.\d+)+)")
+RESOLVED = {"python": PYTHON_CANDIDATES, "make": MAKE_CANDIDATES}
+# Every other program checks.py and hooks.py start, by the name PATH resolves, and sh, which
+# starts every job of praetor.yml and the pre-push script. run (common.py) refuses the hook
+# with the program named when one is missing. The DeclaredPrograms cases of test_hooks.py
+# hold this list to what those files start, so a new program cannot land undeclared (#341).
+BY_NAME = ("git", "go", "gofmt", "gosec", "govulncheck", "lefthook", "semgrep", "sh")
+# What a rejected candidate printed is quoted in one bounded line of the refusal.
+MAX_REASON = 240
+
+
+def requirement(line):
+    """Return (name, operator, version) for one requirement line, or None for any other line.
+
+    A comment, an environment marker and a line continuation are set aside. Operator and
+    version are None where the line is a name alone.
+    """
+    text = line.split("#", 1)[0].split(";", 1)[0].strip().rstrip("\\").strip()
+    match = REQUIREMENT.fullmatch(text)
+    return match.groups() if match else None
+
+
+def floor_line(line):
+    """Return (tool, floor) for a floors line written exactly `tool>=version` or `tool`.
+
+    The floor is None for a tool alone. Any other spelling returns None.
+    """
+    parsed = requirement(line)
+    if parsed is None:
+        return None
+    tool, operator, version = parsed
+    exact = tool if operator is None else f"{tool}>={version}"
+    if exact != line or (version is not None and FLOOR_VERSION.fullmatch(version) is None):
+        return None
+    return tool, version
 
 
 def parse_floors(text):
-    """Return {tool: floor} for the `tool>=version` lines of text; comments and blanks aside.
+    """Return {tool: floor} for the requirement lines of text; comments and blanks aside.
 
-    Any other line, and a tool named twice, is an error naming the line: a floor that was
-    misread is a gate that silently stopped checking.
+    A `tool>=version` line gives the floor. A `tool` line gives None: a linter that must be
+    installed, at any version. Any other line, and a tool named twice, is an error naming the
+    line: a floor that was misread is a gate that silently stopped checking.
     """
     lines = text.splitlines()
     if len(lines) > MAX_FLOOR_LINES:
@@ -60,16 +108,16 @@ def parse_floors(text):
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
-        match = FLOOR_LINE.fullmatch(line)
-        if match is None or match.group(1) in floors:
-            raise HookError(f"{FLOORS_NAME}:{number}: expected one 'tool>=version' line per "
-                            f"tool, got {raw.strip()!r}")
-        floors[match.group(1)] = match.group(2)
+        declared = floor_line(line)
+        if declared is None or declared[0] in floors:
+            raise HookError(f"{FLOORS_NAME}:{number}: expected one 'tool>=version' or 'tool' "
+                            f"line per tool, got {raw.strip()!r}")
+        floors[declared[0]] = declared[1]
     return floors
 
 
 def tool_floors():
-    """Return the declared floors; an unreadable file fails the hook rather than waiving them."""
+    """Return the declared linters; an unreadable file fails the hook rather than waiving them."""
     try:
         text = FLOORS.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
@@ -88,8 +136,20 @@ def below(version, floor):
     return left + [0] * (width - len(left)) < right + [0] * (width - len(right))
 
 
+def stated_version(argv, pattern):
+    """Return what pattern reads in the output of argv, run in one bounded process, or None.
+
+    The policy's one version probe: a linter, an interpreter candidate and a make candidate
+    are all asked this way. A program that is missing, does not start or exits nonzero is a
+    HookError.
+    """
+    output = run(argv, env=clean_env(), timeout=VERSION_TIMEOUT)
+    match = pattern.search(output.decode(errors="replace"))
+    return match.group(1) if match else None
+
+
 def installed_version(tool):
-    """Return the version `tool --version` states, from one bounded process.
+    """Return the version `tool --version` states.
 
     A tool that is missing, exits nonzero, or states no version this policy reads is a
     HookError saying which; the caller adds the floor it was needed for.
@@ -97,22 +157,27 @@ def installed_version(tool):
     pattern = VERSION_OUTPUT.get(tool)
     if pattern is None:
         raise HookError(f"{tool}: no --version reader in toolchain.VERSION_OUTPUT")
-    output = run([tool, "--version"], env=clean_env(), timeout=VERSION_TIMEOUT)
-    match = pattern.search(output.decode(errors="replace"))
-    if match is None:
+    version = stated_version([tool, "--version"], pattern)
+    if version is None:
         raise HookError(f"{tool} --version states no version this policy reads")
-    return match.group(1)
+    return version
 
 
-def checked_version(tool, floors):
-    """Return the installed version of tool when it meets its declared floor.
+def checked_version(tool, floors, which=shutil.which):
+    """Return the installed version of tool when it meets its floor, or None where it has none.
 
-    A tool without a floor, one that is missing or states no version, and one older than its
-    floor are each a HookError naming the requirement.
+    A tool the floors file does not declare, one that is missing or states no version, and
+    one older than its floor are each a HookError naming the requirement. A tool declared
+    without a floor only has to be on PATH.
     """
-    floor = floors.get(tool)
+    if tool not in floors:
+        raise HookError(f"{tool}: not declared in {FLOORS_NAME}")
+    floor = floors[tool]
     if floor is None:
-        raise HookError(f"{tool}: no version floor declared in {FLOORS_NAME}")
+        if which(tool) is None:
+            raise HookError(f"{tool} is required ({FLOORS_NAME}, any version): "
+                            f"it is not on PATH")
+        return None
     required = f"{tool} >= {floor} is required ({FLOORS_NAME})"
     try:
         version = installed_version(tool)
@@ -123,8 +188,8 @@ def checked_version(tool, floors):
     return version
 
 
-def require_floors(tools):
-    """Fail unless every named tool is installed at or above its declared floor.
+def require_floors(tools, which=shutil.which):
+    """Fail unless every named linter is installed, at or above its floor where it has one.
 
     Every failing tool is reported, not only the first, so one run names the whole gap.
     """
@@ -135,93 +200,100 @@ def require_floors(tools):
     failures = []
     for tool in names:
         try:
-            checked_version(tool, floors)
+            checked_version(tool, floors, which)
         except HookError as error:
             failures.append(str(error))
     if failures:
         raise HookError("\n".join(failures))
 
 
-def resolved_program(tool, environ=None):
-    """Return the program the policy runs for a resolved tool.
+def python_proof(argv):
+    """Return the version argv states for the probe: Python 3 at or above the floor.
 
-    It is the value of the tool's variable, or its default where the variable is unset or
-    empty: the rule python.sh applies to PRAETOR_PYTHON.
+    The probe is a program only an interpreter can run, so a stand-in that exits 0, the
+    Microsoft Store alias Windows names python3 and a Python older than the floor each fail
+    it with a HookError.
     """
-    variable, default = RESOLVED[tool]
-    return (os.environ if environ is None else environ).get(variable) or default
+    stated = stated_version([*argv, "-c", PYTHON_PROBE], PYTHON_STATED)
+    if stated is None:
+        raise HookError("does not answer the version probe as Python")
+    if not stated.startswith("3.") or below(stated, PYTHON_FLOOR):
+        raise HookError(f"is Python {stated}; Python {PYTHON_FLOOR} or newer is required")
+    return stated
 
 
-def stated_python(output, program):
-    """Return the Python 3 version a `-V` output states; any other output is a HookError."""
-    match = PYTHON_VERSION.search(output.decode(errors="replace"))
-    if match is None:
-        variable = RESOLVED["python"][0]
-        raise HookError(f"{program} is not Python 3; set {variable} to a Python 3 interpreter")
-    return match.group(1)
+def make_proof(argv):
+    """Return the GNU Make version argv states; any other make or program is a HookError."""
+    stated = stated_version([*argv, "--version"], MAKE_STATED)
+    if stated is None:
+        raise HookError("does not state a GNU Make version")
+    return stated
 
 
-def interpreter_version(program):
-    """Start program with -V, in one bounded process, and return the Python 3 version it states.
+def proven(what, candidates, proof, which=shutil.which):
+    """Return (argv, version) for the first candidate on PATH that proves itself.
 
-    A file of that name is no evidence of an interpreter. Windows 10 and 11 put python3.exe on
-    the user's PATH as an App Execution Alias for the Microsoft Store: it is found by every
-    PATH lookup, and started with an argument it prints "Python was not found" and exits
-    nonzero. A program that does not start, exits nonzero or states no Python 3 version is a
-    HookError saying which.
+    A candidate that is not on PATH, does not start, exits nonzero or fails proof is skipped
+    with its reason. With none left this is a missing dependency naming every candidate
+    tried: the caller is refused, never passed.
     """
-    output = run([program, "-V"], env=clean_env(), timeout=VERSION_TIMEOUT)
-    return stated_python(output, program)
+    tried = []
+    for candidate in candidates:
+        name = " ".join(candidate)
+        path = which(candidate[0])
+        if path is None:
+            tried.append(f"{name} (not on PATH)")
+            continue
+        argv = [path, *candidate[1:]]
+        try:
+            return argv, proof(argv)
+        except HookError as error:
+            tried.append(f"{name} ({' '.join(str(error).split())[:MAX_REASON]})")
+    raise HookError(f"missing dependency: {what}. Tried: {'; '.join(tried)}")
 
 
-def python_version():
-    """Start the interpreter the way every hook does, through python.sh, and return what it is.
-
-    A launcher that cannot start it, and a program that is no Python 3, are a HookError.
-    """
-    variable, default = RESOLVED["python"]
-    program = resolved_program("python")
-    try:
-        output = run(["sh", LAUNCHER, "-V"], cwd=ROOT, timeout=VERSION_TIMEOUT)
-    except HookError as error:
-        raise HookError(f"hook interpreter {program} did not start ({variable} names it, "
-                        f"{default} where unset): {error}") from error
-    return f"{stated_python(output, program)} ({program})"
+def python_program(which=shutil.which):
+    """Return (argv, version) of the interpreter python.sh starts on this host."""
+    return proven(f"a Python {PYTHON_FLOOR} or newer interpreter", PYTHON_CANDIDATES,
+                  python_proof, which)
 
 
-def make_program(environ=None, which=shutil.which):
-    """Return the make the hooks run, or fail as a missing dependency when there is none.
+def resolved_make(which=shutil.which):
+    """Return (argv, version) of the GNU Make the hooks run on this host."""
+    return proven("GNU Make, which builds the CLI the hooks run (the hook-cli target)",
+                  MAKE_CANDIDATES, make_proof, which)
+
+
+def make_program(which=shutil.which):
+    """Return the GNU Make the hooks run, or fail as a missing dependency when there is none.
 
     A hook without make cannot build the CLI it is about to run, so nothing is skipped: the
-    commit or push is refused with the program and the variable named, where a bare
-    "[Errno 2]" from the first command read like a rule the commit had broken (#341).
+    commit or push is refused with every candidate named, where a bare "[Errno 2]" from the
+    first command read like a rule the commit had broken (#341).
     """
-    variable, default = RESOLVED["make"]
-    program = resolved_program("make", environ)
-    if which(program) is None:
-        raise HookError(f"missing dependency: make program {program} is not on PATH; the "
-                        f"hooks build the CLI through the hook-cli Make target. Install "
-                        f"GNU Make, or set {variable} to it ({default} where unset)")
-    return program
+    return resolved_make(which)[0][0]
 
 
-def make_version():
-    """Return the GNU Make version of the make the hooks run; any other make is a HookError."""
-    program = make_program()
-    output = run([program, "--version"], env=clean_env(), timeout=VERSION_TIMEOUT)
-    match = MAKE_VERSION.search(output.decode(errors="replace"))
-    if match is None:
-        raise HookError(f"{program} is not GNU Make; the hooks pass it GNU Make options")
-    return f"{match.group(1)} ({program})"
+def on_path(tool, which=shutil.which):
+    """Return where PATH resolves a program the policy starts by name; a HookError when nowhere."""
+    path = which(tool)
+    if path is None:
+        raise HookError(f"{tool} is not on PATH")
+    return path
 
 
 def describe(tool, floors):
     """Return one declared tool's state on this host; a HookError says what is wrong with it."""
     if tool == "python":
-        return python_version()
+        argv, version = python_program()
+        return f"{version} ({' '.join(argv)})"
     if tool == "make":
-        return make_version()
-    return f"{checked_version(tool, floors)} (floor {floors[tool]})"
+        argv, version = resolved_make()
+        return f"{version} ({argv[0]})"
+    if tool in BY_NAME:
+        return on_path(tool)
+    version = checked_version(tool, floors)
+    return "installed (no floor)" if version is None else f"{version} (floor {floors[tool]})"
 
 
 def check(required):
@@ -231,7 +303,7 @@ def check(required):
     usable until a Dockerfile is staged, and its line carries what the hook would say then.
     """
     floors = tool_floors()
-    declared = [*RESOLVED, *floors]
+    declared = [*RESOLVED, *BY_NAME, *floors]
     unknown = sorted(set(required) - set(declared))
     if unknown:
         raise HookError(f"not declared hook tools: {', '.join(unknown)}; "

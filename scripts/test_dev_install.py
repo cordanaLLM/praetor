@@ -21,8 +21,8 @@ import dev_install
 import dev_mcp
 
 # Why the cases that start a stand-in program skip on Windows (HISS-21).
-POSIX_STUB = ("a PATH stub is a shebang script, which the Windows loader does not start; "
-              "the injected-check cases cover the same decisions on this platform")
+POSIX_STUB = ("a stand-in program is a shebang script, which the Windows loader does not "
+              "start; the injected-lookup cases cover the same decisions on this platform")
 
 STUB = """#!/usr/bin/env python3
 import json, os, sys
@@ -140,157 +140,107 @@ class ProbeMCPTests(unittest.TestCase):
 
 
 class HookInterpreterTests(unittest.TestCase):
-    """settle_hook_interpreter decides what the Git hooks start on this host (#339). The
-    per-user store is injected, so no case writes a user environment; the interpreter check
-    is injected where the decision is under test and real where the check itself is."""
+    """hook_interpreter reports what the Git hooks start on this host and stores nothing (#339).
 
-    setx_status = 0
+    The PATH lookup is injected, so a case decides which candidates exist without touching
+    the process environment; the probe itself is real and starts the program it is given.
+    """
 
-    def settle(self, environ, faults, platform="linux", fault=None):
-        """Settle with faults naming why a program cannot run the hooks; any other one starts."""
-        stored = []
-
-        def run(argv, **settings):
-            stored.append((argv, settings["timeout"]))
-            return subprocess.CompletedProcess(argv, self.setx_status, b"", b"access denied\n")
-
-        def store(variable, value, reason):
-            dev_install.store_user_variable(variable, value, reason, platform=platform, run=run)
-
-        report = dev_install.settle_hook_interpreter(environ, fault=fault or faults.get, store=store)
-        return report, stored
-
-    def program(self, name, body):
-        """A POSIX program on a PATH of its own; return a PATH lookup that sees only it."""
-        temporary = tempfile.TemporaryDirectory(prefix="praetor-interpreter-")
-        self.addCleanup(temporary.cleanup)
-        path = Path(temporary.name) / name
+    def stand_in(self, name, body, directory=None):
+        """A POSIX program in a directory of its own, or beside an earlier one."""
+        if directory is None:
+            temporary = tempfile.TemporaryDirectory(prefix="praetor-interpreter-")
+            self.addCleanup(temporary.cleanup)
+            directory = Path(temporary.name)
+        path = directory / name
         path.write_text("#!/bin/sh\n" + body, newline="\n")
         path.chmod(0o755)
-        return path, lambda program: shutil.which(program, path=temporary.name)
+        return path
 
-    def test_spelling_is_read_from_the_hook_policy(self):
-        self.assertEqual(dev_install.hook_interpreter_spelling(), ("PRAETOR_PYTHON", "python3"))
+    @staticmethod
+    def only(directory):
+        """A PATH lookup that sees directory alone."""
+        return lambda program: shutil.which(program, path=str(directory))
+
+    def test_the_interpreter_of_this_host_is_reported_and_nothing_is_stored(self):
+        before = dict(os.environ)
+        report = dev_install.hook_interpreter()
+        self.assertEqual(sorted(report), ["command", "version"])
+        self.assertTrue(Path(report["command"][0]).is_file(), report)
+        self.assertRegex(report["version"], r"^3\.\d+$")
+        self.assertEqual(dict(os.environ), before)
         self.assertNotIn(str(dev_mcp.ROOT / ".config" / "lefthook" / "scripts"), sys.path)
+        source = (dev_mcp.ROOT / "scripts" / "dev_install.py").read_text(encoding="utf-8")
+        for store in ("setx", "PRAETOR_PYTHON", "environ["):
+            self.assertNotIn(store, source)
+
+    def test_the_candidates_are_the_hook_policys_in_its_order(self):
+        asked = []
+
+        def which(program):
+            asked.append(program)
+            return sys.executable if program == "python" else None
+        report = dev_install.hook_interpreter(which)
+        self.assertEqual(report, {"command": [sys.executable],
+                                  "version": "%d.%d" % sys.version_info[:2]})
+        # Boundary: the lookup stops at the first candidate that proves itself.
+        self.assertEqual(asked, ["python3", "python"])
         launcher = (dev_mcp.ROOT / ".config/lefthook/python.sh").read_text(encoding="utf-8")
-        self.assertIn('"${PRAETOR_PYTHON:-python3}"', launcher)
+        for candidate in ("python3", "python", "py -3"):
+            self.assertIn(f"if proven {candidate}; then exec {candidate} ", launcher)
 
-    def test_default_name_that_starts_needs_nothing_stored(self):
-        report, stored = self.settle({}, {})
-        self.assertEqual(report, {"variable": "PRAETOR_PYTHON", "value": "python3", "source": "default"})
-        self.assertEqual(stored, [])
-        # Boundary: an empty variable is unset, as python.sh reads it.
-        report, stored = self.settle({"PRAETOR_PYTHON": ""}, {})
-        self.assertEqual((report["source"], stored), ("default", []))
-
-    def test_a_set_variable_is_kept_when_it_starts_and_refused_when_it_does_not(self):
-        report, stored = self.settle({"PRAETOR_PYTHON": "py"}, {"python3": "python3 is not on PATH"})
-        self.assertEqual(report, {"variable": "PRAETOR_PYTHON", "value": "py", "source": "environment"})
-        self.assertEqual(stored, [])
-        # A set variable is never replaced: not where the default would start, and not on
-        # the platform that has a store.
-        for platform in ("linux", "win32"):
-            with self.subTest(platform=platform), self.assertRaisesRegex(
-                    RuntimeError, "PRAETOR_PYTHON names an interpreter the Git hooks cannot "
-                                  "run: py is not on PATH; unset it"):
-                self.settle({"PRAETOR_PYTHON": "py"}, {"py": "py is not on PATH"}, platform=platform)
-
-    def test_windows_without_python3_stores_the_running_interpreter(self):
-        reason = "python3 is not on PATH"
-        report, stored = self.settle({}, {"python3": reason}, platform="win32")
-        executable = sys.executable
-        self.assertEqual(report, {"variable": "PRAETOR_PYTHON", "value": executable,
-                                  "source": "stored", "reason": reason})
-        self.assertEqual(stored, [(["setx", "PRAETOR_PYTHON", executable], dev_install.SETX_TIMEOUT)])
-
-    def test_a_python3_on_path_that_is_no_interpreter_is_not_taken_for_the_default(self):
-        # The injected check stands for the Microsoft Store alias on every platform: the
-        # name resolves, the program is no interpreter. A lookup alone reported "default".
-        reason = "python3 does not start as Python 3 (python3.exe -V exited 9009)"
-        report, stored = self.settle({}, {"python3": reason}, platform="win32")
-        self.assertEqual((report["source"], report["value"], report["reason"]),
-                         ("stored", sys.executable, reason))
-        self.assertEqual(len(stored), 1)
-        with self.assertRaisesRegex(RuntimeError, r"exited 9009\), so the Git hooks cannot start"
-                                                  ".*export PRAETOR_PYTHON="):
-            self.settle({}, {"python3": reason}, platform="linux")
-
-    @unittest.skipIf(os.name == "nt", POSIX_STUB)
-    def test_the_store_alias_is_started_and_found_out(self):
-        # What the alias does when a hook starts it: a message, and a status of its own.
-        alias, which = self.program(
-            "python3", 'echo "Python was not found; run without arguments to install from the '
-                       'Microsoft Store" >&2\nexit 49\n')
-        self.assertEqual(which("python3"), str(alias))
-        report, stored = self.settle(
-            {}, {}, platform="win32", fault=lambda name: dev_install.interpreter_fault(name, which))
-        self.assertEqual((report["source"], report["value"]), ("stored", sys.executable))
-        self.assertRegex(report["reason"], r"\Apython3 does not start as Python 3 \(.*python3 -V "
-                                           r"exited 49 Python was not found; .*\)\Z")
-        self.assertEqual(stored, [(["setx", "PRAETOR_PYTHON", sys.executable],
-                                   dev_install.SETX_TIMEOUT)])
-        with self.assertRaisesRegex(RuntimeError, "PRAETOR_PYTHON names an interpreter the Git "
-                                                  "hooks cannot run: python3 does not start"):
-            self.settle({"PRAETOR_PYTHON": "python3"}, {}, platform="win32",
-                        fault=lambda name: dev_install.interpreter_fault(name, which))
-
-    def test_interpreter_fault_starts_the_program_it_names(self):
-        # Positive, on every platform: the interpreter running this suite, by path and by a
-        # name the lookup resolves to it.
-        self.assertIsNone(dev_install.interpreter_fault(sys.executable))
-        self.assertIsNone(dev_install.interpreter_fault("python3", which=lambda _: sys.executable))
-        # Negative: nothing to start. A name is looked up; a path is the file itself.
-        self.assertEqual(dev_install.interpreter_fault("praetor-no-such-interpreter"),
-                         "praetor-no-such-interpreter is not on PATH")
-        gone = str(Path(tempfile.gettempdir()) / "praetor-no-such-directory" / "python")
-        self.assertEqual(dev_install.interpreter_fault(gone), f"{gone} is not an executable file")
-        # Negative: the lookup resolves to a file the platform cannot start.
+    def test_a_host_without_an_interpreter_stops_the_install(self):
+        with self.assertRaisesRegex(
+                RuntimeError, r"the Git hooks cannot start on this host: missing dependency: "
+                              r"a Python 3\.\d+ or newer interpreter\. Tried: python3 \(not on "
+                              r"PATH\); python \(not on PATH\); py -3 \(not on PATH\)"):
+            dev_install.hook_interpreter(lambda _program: None)
+        # Negative: a lookup that resolves to a file the platform cannot start is no proof.
         with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temporary:
-            self.assertRegex(dev_install.interpreter_fault("python3", which=lambda _: temporary),
-                             r"\Apython3 does not start as Python 3 \(")
+            with self.assertRaisesRegex(RuntimeError, r"Tried: python3 \(.+\); python \("):
+                dev_install.hook_interpreter(lambda _program: temporary)
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
-    def test_interpreter_fault_reads_what_the_program_states(self):
-        # Boundary: the stated version decides, not the name and not a zero status.
-        for body, starts in (('echo "Python 3.13.1"\n', True),
-                             ('echo "Python 2.7.18"\n', False),
-                             ('echo "Python 2.7.18" >&2\n', False),
-                             ("exit 0\n", False),
-                             ('echo "Python 3.13.1"\nexit 1\n', False)):
-            with self.subTest(body=body):
-                _, which = self.program("python3", body)
-                fault = dev_install.interpreter_fault("python3", which)
-                self.assertEqual(fault is None, starts, fault)
-        # Boundary: a long failure is quoted up to the bound, on one line.
-        _, which = self.program("python3", 'yes "not an interpreter" | head -n 500 >&2\nexit 3\n')
-        fault = dev_install.interpreter_fault("python3", which)
-        self.assertNotIn("\n", fault)
-        self.assertEqual(len(fault), len("python3 does not start as Python 3 ()")
-                         + dev_install.MAX_FAULT_DETAIL)
+    def test_a_program_that_exits_zero_without_being_python_is_refused(self):
+        quiet = self.stand_in("python3", "exit 0\n")
+        with self.assertRaisesRegex(RuntimeError, r"python3 \(does not answer the version probe "
+                                                  r"as Python\); python \(not on PATH\)"):
+            dev_install.hook_interpreter(self.only(quiet.parent))
+        # Boundary: what the program states decides, not its name: a release below the
+        # floor, Python 2 and the answer of -V are each refused.
+        for answer in ("3.9", "2.7", "Python 3.13.1"):
+            with self.subTest(answer=answer):
+                old = self.stand_in("python3", f'echo "{answer}"\n')
+                with self.assertRaisesRegex(RuntimeError, "missing dependency"):
+                    dev_install.hook_interpreter(self.only(old.parent))
 
-    def test_a_failed_store_and_a_platform_without_one_fail_the_install(self):
-        self.setx_status = 1
-        missing = {"python3": "python3 is not on PATH"}
-        with self.assertRaisesRegex(RuntimeError, "setx PRAETOR_PYTHON failed: access denied"):
-            self.settle({}, missing, platform="win32")
-        with self.assertRaisesRegex(RuntimeError, "python3 is not on PATH, so the Git hooks cannot "
-                                                  "start.*export PRAETOR_PYTHON="):
-            self.settle({}, missing, platform="linux")
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_the_store_alias_is_found_out_and_the_next_candidate_is_reported(self):
+        # What the alias does when a hook starts it: a message, and a status of its own.
+        alias = ('echo "Python was not found; run without arguments to install from the '
+                 'Microsoft Store" >&2\nexit 49\n')
+        python3 = self.stand_in("python3", alias)
+        with self.assertRaisesRegex(RuntimeError, r"python3 \(.*exited 49 Python was not found; "
+                                                  r".*\); python \(not on PATH\)"):
+            dev_install.hook_interpreter(self.only(python3.parent))
+        python = self.stand_in("python", 'echo "3.13"\n', python3.parent)
+        self.assertEqual(dev_install.hook_interpreter(self.only(python3.parent)),
+                         {"command": [str(python)], "version": "3.13"})
 
-    def test_main_reports_the_interpreter_and_settles_it_before_installing(self):
+    def test_main_reports_the_interpreter_and_checks_it_before_installing(self):
         order = []
-        settled = {"variable": "PRAETOR_PYTHON", "value": "python3", "source": "default"}
-        with patch.object(dev_install, "settle_hook_interpreter",
-                          side_effect=lambda: order.append("settle") or settled), \
+        resolved = {"command": ["/usr/bin/python3"], "version": "3.13"}
+        with patch.object(dev_install, "hook_interpreter",
+                          side_effect=lambda: order.append("interpreter") or resolved), \
              patch.object(dev_install, "probe_mcp", side_effect=lambda _: order.append("probe")), \
              patch.object(dev_install, "install",
                           side_effect=lambda *_: order.append("install") or {"manifest_path": "/x"}), \
              patch("sys.argv", ["dev_install.py"]), patch("builtins.print") as printed:
             dev_install.main()
-        self.assertEqual(order, ["settle", "probe", "install"])
+        self.assertEqual(order, ["interpreter", "probe", "install"])
         self.assertEqual(json.loads(printed.call_args.args[0]),
-                         {"manifest_path": "/x", "hook_interpreter": settled})
-        with patch.object(dev_install, "settle_hook_interpreter", side_effect=RuntimeError("no")), \
+                         {"manifest_path": "/x", "hook_interpreter": resolved})
+        with patch.object(dev_install, "hook_interpreter", side_effect=RuntimeError("no")), \
              patch.object(dev_install, "install") as install, patch("sys.argv", ["dev_install.py"]):
             with self.assertRaises(RuntimeError):
                 dev_install.main()

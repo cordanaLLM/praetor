@@ -35,8 +35,9 @@ const (
 // without checkpoint jobs, ran the gate without --admit-unsupported, which refused every push
 // from a root with neither go.mod nor Cargo.lock (prePushGateArgs, #648); the "python3 by
 // name" entries, one per language set, are the renderings whose checkpoint jobs named the
-// interpreter python3 instead of reading PRAETOR_PYTHON (lefthookPythonCommand, #339). A
-// rendering without checkpoint jobs names no interpreter and did not change.
+// interpreter python3 instead of starting it through the launcher adoption writes
+// (lefthookPythonCommand, #339). A rendering without checkpoint jobs starts no interpreter and
+// did not change.
 var priorLefthookDigests = map[string]string{
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",

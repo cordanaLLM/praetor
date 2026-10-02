@@ -169,6 +169,38 @@ CODEX_WINDOWS_GAP = ("Codex runs hooks through cmd.exe on Windows, which has no 
 STATE_VERIFIED = b'PRAETOR_STATE_RESULT={"schema_version":1,"verified":true}'
 
 
+LAUNCHER = ".config/lefthook/python.sh"
+# Why the cases that put a stand-in program on PATH skip on Windows (HISS-21).
+POSIX_STUB = ("a stand-in program is a shebang script, which the Windows loader does not "
+              "start; the cases that answer the version probe from a stubbed process cover "
+              "the same decisions on this platform")
+
+
+def stand_in(directory, name, body):
+    """Write a POSIX program named name into directory and return its path."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text("#!/bin/sh\n" + body, newline="\n")
+    path.chmod(0o755)
+    return path
+
+
+def interpreter_stand_in(directory, name, answer):
+    """A stand-in that answers the version probe with printf format answer.
+
+    Started any other way it prints its own path, its argument count and its arguments, so a
+    test reads which candidate the launcher ran and with what.
+    """
+    body = ('if [ "$1" = -c ] || [ "$2" = -c ]; then printf \'' + answer + "'; exit 0; fi\n"
+            'echo "stub:$0:$#:$*"\n')
+    return stand_in(directory, name, body)
+
+
+def only(directory):
+    """A PATH lookup that sees directory alone."""
+    return lambda program: shutil.which(program, path=str(directory))
+
+
 def cli_path(repo):
     """The fixture CLI as an absolute path.
 
@@ -319,27 +351,48 @@ class GitHooks(unittest.TestCase):
             command(self.repo, cli_path(self.repo), "state", "sync", ".")
         return command(self.repo, "lefthook", "run", name, *args, data=data, ok=False)
 
-    def test_hook_jobs_start_the_interpreter_praetor_python_names(self):
-        with mock.patch.dict(os.environ, {"PRAETOR_PYTHON": "praetor-no-such-interpreter"}):
-            refused = self.hook("pre-rebase")
+    def test_no_variable_takes_a_hook_job_off_its_interpreter_or_its_make(self):
+        # PRAETOR_PYTHON and PRAETOR_MAKE once named the programs a job started, so a value
+        # naming anything that exits 0 passed every gate without running it. Both are plain
+        # variables now: the commit-msg job still judges the message and the pre-commit job
+        # still runs the hook-cli target, which this fixture makes fail.
+        skipped = {"PRAETOR_PYTHON": "true", "PRAETOR_MAKE": "true"}
+        message = self.repo / "message.txt"
+        message.write_text("bad subject\n")
+        with mock.patch.dict(os.environ, skipped):
+            refused = self.hook("commit-msg", message.as_posix())
         self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
-        self.assertIn(b"missing dependency: Python 3 interpreter 'praetor-no-such-interpreter'",
-                      refused.stdout + refused.stderr)
-        with mock.patch.dict(os.environ, {"PRAETOR_PYTHON": sys.executable}):
-            passed = self.hook("pre-rebase")
-        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
-
-    def test_hook_jobs_run_the_make_praetor_make_names(self):
+        self.assertIn(b"Commit subject must be", refused.stdout + refused.stderr)
         self.write("README.md", "# Staged\n")
-        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": "praetor-no-such-make"}):
-            refused = self.hook()
-        self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
-        self.assertIn(b"praetor hooks: missing dependency: make program praetor-no-such-make "
-                      b"is not on PATH", refused.stdout + refused.stderr)
-        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": shutil.which("make")}):
+        with mock.patch.dict(os.environ, skipped):
             passed = self.hook()
         self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
         self.assertIn(b"Index: 1 changed paths checked", passed.stdout + passed.stderr)
+        (self.repo / "Makefile").write_text("hook-cli:\n\t@exit 3\n")
+        with mock.patch.dict(os.environ, skipped):
+            built = self.hook()
+        self.assertNotEqual(built.returncode, 0, built.stdout + built.stderr)
+        # GNU Make names the target whose recipe failed: the target ran.
+        self.assertIn(b"hook-cli] Error 3", built.stdout + built.stderr)
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_a_hook_job_refuses_stand_ins_for_its_interpreter_and_its_make(self):
+        # A program that exits 0 is neither Python nor GNU Make. First on PATH under every
+        # candidate name, it must fail the job as a missing dependency, never pass it.
+        self.write("README.md", "# Staged\n")
+        with tempfile.TemporaryDirectory(prefix="praetor-stand-in-") as temp:
+            shadowed = os.pathsep.join([temp, os.environ["PATH"]])
+            for names, missing in (
+                    (toolchain.MAKE_CANDIDATES, b"praetor hooks: missing dependency: GNU Make"),
+                    (toolchain.PYTHON_CANDIDATES,
+                     b"praetor hooks: missing dependency: no Python 3.10 or newer interpreter")):
+                for candidate in names:
+                    stand_in(Path(temp), candidate[0], "exit 0\n")
+                with self.subTest(names=names), mock.patch.dict(os.environ, {"PATH": shadowed}):
+                    refused = self.hook()
+                    self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+                    self.assertIn(missing, refused.stdout + refused.stderr)
+                    self.assertNotIn(b"changed paths checked", refused.stdout + refused.stderr)
 
     def test_docs_commit_preserves_unstaged_and_untracked_files(self):
         self.write("README.md", "# Intended\n")
@@ -1874,7 +1927,7 @@ class ScopeAndGuard(unittest.TestCase):
                 return b'{"timeout_seconds": 480}' if argv[3:5] == ["gate", "deadline"] else b""
             with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=process):
                 self.assertTrue(source_checks(root, [".standards.yaml"], base=base))
-                self.assertEqual(calls, [[toolchain.resolved_program("make"), "--no-print-directory", "state-audit"],
+                self.assertEqual(calls, [[toolchain.make_program(), "--no-print-directory", "state-audit"],
                                         ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"],
                                         ["go", "run", "./cmd/standardsctl", "gate", "run", "--path=."],
                                         ["go", "run", "./cmd/standardsctl", "gate", "verify", "--path=."]])
@@ -2331,14 +2384,20 @@ class InstallRefresh(unittest.TestCase):
 VERSION_REPORTS = {
     "actionlint": b"v1.7.12\ninstalled by building from source\n"
                   b"built with go1.26.4 compiler for linux/amd64\n",
-    "hadolint": b"Haskell Dockerfile Linter 2.14.0\n",
     "shellcheck": b"ShellCheck - shell script analysis tool\nversion: 0.11.0\n"
                   b"license: GNU General Public License, version 3\n",
     "yamllint": b"yamllint 1.38.0\n",
 }
-# One staged path per floored linter, in the order lint_commands schedules them.
+# One staged path per declared linter, in the order lint_commands schedules them.
 LINTED_PATHS = {"shellcheck": "run.sh", "actionlint": ".github/workflows/ci.yml",
                 "hadolint": "Dockerfile", "yamllint": "config.yaml"}
+# The linter declared without a floor: no file in the repository names a version of it.
+UNFLOORED = "hadolint"
+
+
+def installed(tool):
+    """A PATH lookup that finds every program."""
+    return "/usr/bin/" + tool
 
 
 class ToolFloors(unittest.TestCase):
@@ -2364,7 +2423,7 @@ class ToolFloors(unittest.TestCase):
             path.write_text("a: b\n", encoding="utf-8")
         return [LINTED_PATHS[tool] for tool in tools]
 
-    def test_declared_floors_cover_exactly_the_linters_the_hook_runs(self):
+    def test_declared_linters_are_exactly_the_ones_the_hook_runs(self):
         floors = toolchain.tool_floors()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -2372,27 +2431,48 @@ class ToolFloors(unittest.TestCase):
         scheduled = [command[0] for command in commands]
         self.assertEqual(scheduled, list(LINTED_PATHS))
         self.assertEqual(sorted(floors), sorted(scheduled))
-        self.assertEqual(sorted(toolchain.VERSION_OUTPUT), sorted(scheduled))
-        for tool, floor in floors.items():
+        floored = {tool: floor for tool, floor in floors.items() if floor is not None}
+        # A version reader exists for each floored linter and for no other tool.
+        self.assertEqual(sorted(toolchain.VERSION_OUTPUT), sorted(floored))
+        self.assertEqual([tool for tool in floors if tool not in floored], [UNFLOORED])
+        for tool, floor in floored.items():
             self.assertRegex(floor, r"^\d+\.\d+\.\d+$", tool)
 
     def test_floor_lines_parse_with_comments_and_blanks(self):
-        text = "# header\n\nshellcheck>=0.11.0  # trailing\n  yamllint>=1.38\r\n"
-        self.assertEqual(toolchain.parse_floors(text), {"shellcheck": "0.11.0", "yamllint": "1.38"})
+        text = "# header\n\nshellcheck>=0.11.0  # trailing\n  yamllint>=1.38\r\nhadolint\n"
+        self.assertEqual(toolchain.parse_floors(text),
+                         {"shellcheck": "0.11.0", "yamllint": "1.38", "hadolint": None})
         self.assertEqual(toolchain.parse_floors(""), {})
-        boundary = "\n" * (toolchain.MAX_FLOOR_LINES - 1) + "hadolint>=2.14.0"
-        self.assertEqual(toolchain.parse_floors(boundary), {"hadolint": "2.14.0"})
+        boundary = "\n" * (toolchain.MAX_FLOOR_LINES - 1) + "shellcheck>=0.11.0"
+        self.assertEqual(toolchain.parse_floors(boundary), {"shellcheck": "0.11.0"})
 
     def test_malformed_floor_lines_are_refused_with_their_line(self):
-        cases = {"shellcheck==0.11.0\n": ":1:", "\nshellcheck\n": ":2:",
+        cases = {"shellcheck==0.11.0\n": ":1:", "\nshell check\n": ":2:",
                  "shellcheck>=0.11.0\nshellcheck>=0.12.0\n": ":2:",
-                 "shellcheck >= 0.11.0\n": ":1:", "shellcheck>=v0.11.0\n": ":1:"}
+                 "hadolint\nhadolint>=2.14.0\n": ":2:",
+                 "shellcheck >= 0.11.0\n": ":1:", "shellcheck>=v0.11.0\n": ":1:",
+                 "shellcheck>=0.11.0rc1\n": ":1:", "shellcheck>=\n": ":1:",
+                 "shellcheck>=0.11.0 ; marker\n": ":1:", "shellcheck>=0.11.0 \\\n": ":1:"}
         for text, where in cases.items():
             with self.subTest(text=text), self.assertRaises(HookError) as refused:
                 toolchain.parse_floors(text)
             self.assertIn(toolchain.FLOORS_NAME + where, str(refused.exception))
         with self.assertRaisesRegex(HookError, "more than"):
             toolchain.parse_floors("\n" * (toolchain.MAX_FLOOR_LINES + 1))
+
+    def test_one_reader_serves_every_requirement_line(self):
+        # The floors file and the hash-locked lint lock are read through the same function.
+        lines = {"yamllint>=1.38.0  # pin": ("yamllint", ">=", "1.38.0"),
+                 "black==26.5.1 \\": ("black", "==", "26.5.1"),
+                 "tomli==2.4.1 ; python_full_version < '3.11' \\": ("tomli", "==", "2.4.1"),
+                 "hadolint": ("hadolint", None, None)}
+        for line, parsed in lines.items():
+            with self.subTest(line=line):
+                self.assertEqual(toolchain.requirement(line), parsed)
+        for line in ("", "# comment", "    --hash=sha256:0e48b87e", "-r other.txt", "a b",
+                     "tool>=", "tool<2.0"):
+            with self.subTest(line=line):
+                self.assertIsNone(toolchain.requirement(line))
 
     def test_unreadable_floors_fail_the_hook(self):
         with tempfile.TemporaryDirectory() as directory, \
@@ -2409,20 +2489,22 @@ class ToolFloors(unittest.TestCase):
         self.assertTrue(toolchain.below("1.7", "1.7.1"))
         self.assertFalse(toolchain.below("2.0", "1.38.0"))
 
-    def test_each_linter_states_the_version_the_policy_reads(self):
+    def test_each_floored_linter_states_the_version_the_policy_reads(self):
         with self.reports():
-            for tool, floor in toolchain.tool_floors().items():
+            for tool in toolchain.VERSION_OUTPUT:
                 with self.subTest(tool=tool):
-                    self.assertEqual(toolchain.installed_version(tool), floor)
-        with self.assertRaisesRegex(HookError, "no --version reader"):
-            toolchain.installed_version("gofmt")
+                    self.assertEqual(toolchain.installed_version(tool),
+                                     toolchain.tool_floors()[tool])
+        for tool in ("gofmt", UNFLOORED):
+            with self.subTest(tool=tool), self.assertRaisesRegex(HookError, "no --version reader"):
+                toolchain.installed_version(tool)
 
     def test_a_build_that_states_no_version_is_refused(self):
         # An untagged actionlint build prints "(devel)" and names the Go release it was
         # built with; reading that as its own version would pass any floor.
         devel = b"(devel)\ninstalled by building from source\nbuilt with go1.26.4 compiler\n"
-        with self.reports(actionlint=devel, hadolint=b"Haskell Dockerfile Linter UNKNOWN\n"):
-            for tool in ("actionlint", "hadolint"):
+        with self.reports(actionlint=devel, yamllint=b"yamllint UNKNOWN\n"):
+            for tool in ("actionlint", "yamllint"):
                 with self.subTest(tool=tool), \
                         self.assertRaisesRegex(HookError, "states no version"):
                     toolchain.installed_version(tool)
@@ -2430,7 +2512,7 @@ class ToolFloors(unittest.TestCase):
     def test_a_linter_below_its_floor_fails_with_the_required_version(self):
         old = {"actionlint": b"v1.7.11\n", "shellcheck": b"version: 0.9.0\n"}
         with self.reports(**old), self.assertRaises(HookError) as refused:
-            toolchain.require_floors(list(LINTED_PATHS))
+            toolchain.require_floors(list(LINTED_PATHS), which=installed)
         message = str(refused.exception)
         self.assertIn("actionlint >= 1.7.12 is required (.config/lefthook/tool-floors.txt): "
                       "the actionlint on PATH is 1.7.11", message)
@@ -2440,22 +2522,36 @@ class ToolFloors(unittest.TestCase):
         self.assertNotIn("yamllint", message)
 
     def test_a_linter_at_or_above_its_floor_passes(self):
-        newer = {"hadolint": b"Haskell Dockerfile Linter 2.15.1\n", "yamllint": b"yamllint 2.0\n"}
+        newer = {"actionlint": b"v1.8.0\n", "yamllint": b"yamllint 2.0\n"}
         with self.reports(**newer) as process:
-            toolchain.require_floors(list(LINTED_PATHS))
-        self.assertEqual(process.call_count, len(LINTED_PATHS))
+            toolchain.require_floors(list(LINTED_PATHS), which=installed)
+        # One probe per floored linter; the linter without a floor is not asked its version.
+        self.assertEqual(process.call_count, len(VERSION_REPORTS))
         with self.reports() as process:
             toolchain.require_floors([])
         process.assert_not_called()
 
     def test_a_missing_linter_fails_with_the_required_version(self):
-        missing = HookError("hadolint: [Errno 2] No such file or directory: 'hadolint'")
-        with self.reports(hadolint=missing), self.assertRaises(HookError) as refused:
-            toolchain.require_floors(["hadolint"])
-        self.assertIn("hadolint >= 2.14.0 is required", str(refused.exception))
+        missing = HookError("yamllint: [Errno 2] No such file or directory: 'yamllint'")
+        with self.reports(yamllint=missing), self.assertRaises(HookError) as refused:
+            toolchain.require_floors(["yamllint"])
+        self.assertIn("yamllint >= 1.38.0 is required", str(refused.exception))
         self.assertIn("No such file or directory", str(refused.exception))
-        with self.assertRaisesRegex(HookError, "gofmt: no version floor declared"):
+        with self.assertRaisesRegex(HookError, "gofmt: not declared in"):
             toolchain.require_floors(["gofmt"])
+
+    def test_a_linter_without_a_floor_only_has_to_be_installed(self):
+        floors = toolchain.tool_floors()
+        self.assertIsNone(floors[UNFLOORED])
+        with self.reports() as process:
+            self.assertIsNone(toolchain.checked_version(UNFLOORED, floors, which=installed))
+            toolchain.require_floors([UNFLOORED], which=installed)
+            with self.assertRaisesRegex(
+                    HookError, r"hadolint is required \(\.config/lefthook/tool-floors\.txt, "
+                               r"any version\): it is not on PATH"):
+                toolchain.require_floors([UNFLOORED], which=lambda _tool: None)
+        # Present is accepted: no version is read, so none can refuse a contributor.
+        process.assert_not_called()
 
     def test_file_checks_settles_the_floor_before_any_linter_runs(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2481,7 +2577,7 @@ class ToolFloors(unittest.TestCase):
     def test_installed_linters_state_a_readable_version(self):
         """Replay the readers against the real tools on this host; an absent one is named."""
         absent = []
-        for tool in toolchain.tool_floors():
+        for tool in toolchain.VERSION_OUTPUT:
             if shutil.which(tool) is None:
                 absent.append(tool)
                 continue
@@ -2492,86 +2588,127 @@ class ToolFloors(unittest.TestCase):
                           "replayed against recorded --version output instead")
 
 
-LAUNCHER = ".config/lefthook/python.sh"
-POSIX_STUB = ("a PATH stub is a shebang script, which the Windows loader does not start; "
-              "the Windows leg sets PRAETOR_PYTHON and its workflow asserts it")
-
-
 class HookInterpreter(unittest.TestCase):
-    """Every hook starts its interpreter through one launcher that reads PRAETOR_PYTHON (#339)."""
+    """Every hook starts through one launcher, which proves its interpreter first (#339)."""
 
-    def launch(self, *args, python=None, path=None):
-        env = {key: value for key, value in os.environ.items() if key != "PRAETOR_PYTHON"}
-        if python is not None:
-            env["PRAETOR_PYTHON"] = python
+    def launch(self, *args, path=None, data=b"", **variables):
+        env = dict(os.environ, **variables)
         if path is not None:
             env["PATH"] = path
         # The path is relative and the directory is the repository root, as for every hook.
         return subprocess.run([shutil.which("sh") or "sh", LAUNCHER, *args], cwd=ROOT, env=env,
-                              input=b"", capture_output=True, timeout=60, check=False)
+                              input=data, capture_output=True, timeout=60, check=False)
 
-    def stub(self, directory, name, body='echo "stub:$0:$*"\n'):
-        """A program standing in for an interpreter; it prints its name and arguments."""
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / name
-        path.write_text("#!/bin/sh\n" + body, newline="\n")
-        path.chmod(0o755)
-        return path
-
-    def test_the_named_interpreter_runs_the_hook_and_returns_its_status(self):
-        result = self.launch("-c", "print(40+2)", python=sys.executable)
+    def test_the_proven_interpreter_runs_the_hook_and_returns_its_status(self):
+        result = self.launch("-c", "print(40+2)")
         self.assertEqual((result.returncode, result.stdout.strip()), (0, b"42"), result.stderr)
-        failed = self.launch("-c", "raise SystemExit(7)", python=sys.executable)
-        self.assertEqual(failed.returncode, 7, failed.stderr)
-        self.assertNotIn(b"missing dependency", failed.stderr)
+        # Boundary: the statuses a shell gives for a program it cannot start are a verdict
+        # when a hook returns them. The interpreter was proven before the hook ran.
+        for status in (1, 7, 49, 126, 127):
+            with self.subTest(status=status):
+                failed = self.launch("-c", f"raise SystemExit({status})")
+                self.assertEqual(failed.returncode, status, failed.stderr)
+                self.assertNotIn(b"missing dependency", failed.stderr)
 
-    def test_a_missing_interpreter_is_reported_as_a_missing_dependency(self):
-        # python3 is on PATH for this suite, so the failure also shows the variable wins.
-        result = self.launch("-c", "print(40+2)", python="praetor-no-such-interpreter")
+    def test_the_probe_leaves_standard_input_to_the_hook(self):
+        # The command guard and the post-rewrite hook read their input from stdin.
+        result = self.launch("-c", "import sys; print(sys.stdin.read().upper())", data=b"payload")
+        self.assertEqual(result.stdout.strip(), b"PAYLOAD", result.stderr)
+
+    def test_no_variable_selects_the_interpreter(self):
+        for variable in ("PRAETOR_PYTHON", "PYTHON"):
+            with self.subTest(variable=variable):
+                result = self.launch("-c", "raise SystemExit(7)", **{variable: "true"})
+                self.assertEqual(result.returncode, 7, result.stdout + result.stderr)
+        # The launcher expands its arguments and its own lower-case variables, nothing else.
+        launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"\$\{?[A-Z_][A-Z0-9_]*", launcher), [])
+        self.assertIsNotNone(re.search(r"\$\{?[A-Z_][A-Z0-9_]*", '"${PRAETOR_PYTHON:-python3}"'))
+
+    def refused(self, result):
         self.assertEqual(result.returncode, 127, result.stdout + result.stderr)
         self.assertEqual(result.stdout, b"")
-        self.assertIn(b"missing dependency", result.stderr)
-        self.assertIn(b"'praetor-no-such-interpreter'", result.stderr)
-        self.assertIn(b"PRAETOR_PYTHON", result.stderr)
-
-    def test_a_failing_hook_is_a_verdict_whatever_its_status(self):
-        # Boundary: the statuses a shell and the Store alias give an interpreter that never
-        # ran are a verdict when a hook returns them; the status alone decides nothing.
-        for status in (1, 49, 126, 127):
-            with self.subTest(status=status):
-                result = self.launch("-c", f"raise SystemExit({status})", python=sys.executable)
-                self.assertEqual(result.returncode, status, result.stderr)
-                self.assertNotIn(b"missing dependency", result.stderr)
+        self.assertIn(b"praetor hooks: missing dependency: no Python 3.10 or newer interpreter.",
+                      result.stderr)
+        self.assertIn(b"Tried: python3, python, py -3; none answered the version probe.",
+                      result.stderr)
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
-    def test_a_python3_that_is_no_interpreter_is_reported_as_a_missing_dependency(self):
-        # The Microsoft Store alias Windows puts on PATH as python3: it starts, prints its
-        # own message and returns a status that is neither 126 nor 127.
+    def test_a_stand_in_that_exits_zero_is_no_interpreter(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temp:
+            directory = Path(temp) / "bin"
+            for candidate in toolchain.PYTHON_CANDIDATES:
+                stand_in(directory, candidate[0], "exit 0\n")
+            self.refused(self.launch("-c", "raise SystemExit(0)", path=str(directory)))
+            with self.assertRaisesRegex(
+                    HookError, r"missing dependency: a Python 3\.10 or newer interpreter\. Tried: "
+                               r"python3 \(does not answer the version probe as Python\); "
+                               r"python \(does not answer .*\); py -3 \(does not answer"):
+                toolchain.python_program(which=only(directory))
+
+    def test_no_candidate_on_path_is_a_missing_dependency(self):
+        # Boundary, on every platform: nothing under any candidate name. The launcher needs
+        # nothing but its shell to say so.
+        with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as empty:
+            self.refused(self.launch("-B", "hook.py", path=empty))
+            with self.assertRaisesRegex(HookError, r"python3 \(not on PATH\); python \(not on "
+                                                   r"PATH\); py -3 \(not on PATH\)"):
+                toolchain.python_program(which=only(empty))
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_the_store_alias_is_skipped_for_the_next_candidate(self):
+        # What Windows puts on PATH as python3.exe and python.exe: found by every lookup,
+        # and started with arguments it prints its own message and exits nonzero.
         alias = ('echo "Python was not found; run without arguments to install from the '
                  'Microsoft Store" >&2\nexit 49\n')
         with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temp:
-            stub = self.stub(Path(temp) / "bin", "python3", alias)
-            for python in (None, str(stub)):
-                with self.subTest(python=python):
-                    result = self.launch("-B", "hook.py", python=python, path=str(stub.parent))
-                    self.assertEqual(result.returncode, 49, result.stdout + result.stderr)
-                    self.assertIn(b"Python was not found", result.stderr)
-                    self.assertIn(b"missing dependency", result.stderr)
-                    self.assertIn(f"'{python or 'python3'}'".encode(), result.stderr)
-                    self.assertIn(b"PRAETOR_PYTHON", result.stderr)
+            directory = Path(temp) / "bin"
+            for name in ("python3", "python"):
+                stand_in(directory, name, alias)
+            self.refused(self.launch("-B", "hook.py", path=str(directory)))
+            with self.assertRaisesRegex(HookError, r"python3 \(.* exited 49 Python was not found"):
+                toolchain.python_program(which=only(directory))
+            launcher = interpreter_stand_in(directory, "py", "3.13\\n")
+            result = self.launch("-B", "hook.py", path=str(directory))
+            self.assertEqual(result.stdout.decode().strip(), f"stub:{launcher}:3:-3 -B hook.py",
+                             result.stderr)
+            self.assertEqual(toolchain.python_program(which=only(directory)),
+                             ([str(launcher), "-3"], "3.13"))
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
-    def test_unset_and_empty_select_python3_and_a_path_with_a_space_is_one_word(self):
+    def test_candidates_are_tried_in_order_and_held_to_the_floor(self):
+        # What python3 and python answer the probe with, and the candidate that then runs
+        # the hook. The launcher and toolchain.python_program must agree on every row.
+        cases = (("3.14\\n", "3.13\\n", "python3"),
+                 ("3.9\\n", "3.10\\n", "python"),
+                 ("2.7\\n", "3.12\\r\\n", "python"),
+                 ("3.x\\n", "3.\\n", None),
+                 ("Python 3.13.1\\n", "4.0\\n", None),
+                 ("3.10.1\\n", "\\n", None))
+        for first, second, expected in cases:
+            with self.subTest(python3=first, python=second), \
+                    tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temp:
+                directory = Path(temp)
+                interpreter_stand_in(directory, "python3", first)
+                interpreter_stand_in(directory, "python", second)
+                result = self.launch("-B", "hook.py", path=temp)
+                if expected is None:
+                    self.refused(result)
+                    with self.assertRaisesRegex(HookError, "missing dependency"):
+                        toolchain.python_program(which=only(directory))
+                    continue
+                chosen = str(directory / expected)
+                self.assertEqual(result.stdout.decode().strip(), f"stub:{chosen}:2:-B hook.py",
+                                 result.stderr)
+                self.assertEqual(toolchain.python_program(which=only(directory))[0], [chosen])
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_a_path_and_arguments_with_spaces_stay_whole(self):
         with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temp:
-            default = self.stub(Path(temp) / "bin", "python3")
-            for python in (None, ""):
-                with self.subTest(python=python):
-                    result = self.launch("-B", "hook.py", python=python, path=str(default.parent))
-                    self.assertEqual(result.stdout.decode().strip(),
-                                     f"stub:{default}:-B hook.py", result.stderr)
-            spaced = self.stub(Path(temp) / "program files", "py thon")
-            result = self.launch("a b", python=str(spaced), path=str(default.parent))
-            self.assertEqual(result.stdout.decode().strip(), f"stub:{spaced}:a b", result.stderr)
+            program = interpreter_stand_in(Path(temp) / "program files", "python3", "3.13\\n")
+            result = self.launch("a b", "c", path=str(program.parent))
+            self.assertEqual(result.stdout.decode().strip(), f"stub:{program}:2:a b c",
+                             result.stderr)
 
     def test_the_policy_names_no_interpreter_but_the_launcher(self):
         policy = (ROOT / ".config/lefthook/praetor.yml").read_text(encoding="utf-8")
@@ -2584,29 +2721,51 @@ class HookInterpreter(unittest.TestCase):
                 # One launcher call for each hook script a job or the push script starts.
                 self.assertEqual(body.count(LAUNCHER), len(re.findall(r"\.py\b", body)))
                 self.assertGreater(body.count(LAUNCHER), 0)
-        variable, default = toolchain.RESOLVED["python"]
-        launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
-        self.assertIn(f'python="${{{variable}:-{default}}}"', launcher)
         self.assertEqual(toolchain.LAUNCHER, LAUNCHER)
 
-    def test_no_hook_script_spells_an_interpreter(self):
-        scripts = sorted(path for path in (ROOT / ".config/lefthook/scripts").glob("*.py")
-                         if not path.name.startswith("test_"))
-        self.assertGreater(len(scripts), 5)
-        names = {"python", "python3", "py"}
-        for path in scripts:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
-            # A command is a list or tuple whose first element is the program.
-            spelled = [node.lineno for node in ast.walk(tree)
-                       if isinstance(node, (ast.List, ast.Tuple)) and node.elts
-                       and isinstance(node.elts[0], ast.Constant) and node.elts[0].value in names]
-            self.assertEqual(spelled, [], f"{path.name} starts an interpreter by name")
-        # The default is declared once, in toolchain.RESOLVED, for python.sh to apply.
-        source = (ROOT / ".config/lefthook/scripts/toolchain.py").read_text(encoding="utf-8")
-        self.assertEqual(source.count('"python3"'), 1)
-        probe = ast.parse('run(["python3", "-B", "x.py"])')
-        self.assertTrue(any(isinstance(node, ast.List) and node.elts[0].value in names
-                            for node in ast.walk(probe)))
+    def test_the_launcher_and_the_policy_declare_one_candidate_list(self):
+        launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
+        lines = re.findall(r'^if proven (.+); then exec (.+) "\$@"; fi #$', launcher, re.M)
+        self.assertEqual([tuple(proved.split()) for proved, _ in lines],
+                         list(toolchain.PYTHON_CANDIDATES))
+        # A candidate is started exactly as it was proven, and nothing else is started.
+        self.assertEqual([proved for proved, _ in lines], [started for _, started in lines])
+        self.assertEqual(len(re.findall(r"\bexec\b", launcher)), len(lines))
+        self.assertIn(f"\nprobe='{toolchain.PYTHON_PROBE}' #\n", launcher)
+        major, minor = toolchain.PYTHON_FLOOR.split(".")
+        self.assertEqual(major, "3")
+        self.assertIn(f"\nfloor={minor} #\n", launcher)
+
+    def test_a_crlf_checkout_of_the_launcher_runs_the_hook(self):
+        # Adoption writes the launcher into repositories whose checkout may convert it
+        # (core.autocrlf), and a shell takes a carriage return as part of a line's last word.
+        launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
+        code = [line for line in launcher.splitlines()[1:] if not line.startswith("#")]
+        self.assertGreater(len(code), 20)
+        self.assertEqual([line for line in code if not line.endswith(" #")], [])
+        self.assertNotIn("\r", launcher)
+        with tempfile.TemporaryDirectory(prefix="praetor-launcher-") as temp:
+            converted = Path(temp) / "python.sh"
+            converted.write_bytes(launcher.replace("\n", "\r\n").encode())
+            shell = shutil.which("sh") or "sh"
+            for status in (0, 7):
+                with self.subTest(status=status):
+                    result = subprocess.run(
+                        [shell, str(converted), "-c", f"print(40+2); raise SystemExit({status})"],
+                        input=b"", capture_output=True, timeout=60, check=False)
+                    self.assertEqual((result.returncode, result.stdout.strip()), (status, b"42"),
+                                     result.stderr)
+            if os.name == "nt":
+                # A Windows shell may be configured to drop carriage returns itself, so
+                # what the layout prevents is shown on the platforms where no shell does.
+                return
+            # Negative: the same conversion of a launcher without the comment signs stops
+            # at its first line.
+            bare = Path(temp) / "bare.sh"
+            bare.write_bytes(b"#!/bin/sh\r\nset -eu\r\nexit 0\r\n")
+            broken = subprocess.run([shell, str(bare)], input=b"", capture_output=True,
+                                    timeout=60, check=False)
+            self.assertNotEqual(broken.returncode, 0, broken.stdout + broken.stderr)
 
     def test_self_tests_run_under_the_interpreter_running_the_hook(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -2620,52 +2779,34 @@ class HookInterpreter(unittest.TestCase):
                              [sys.executable, "-B", "scripts/test_praetor_hook.py"])
             self.assertEqual(len(self_test_commands(root)), len(checks.SELF_TESTS) + 2)
 
-    def test_resolved_program_reads_the_variable_or_the_default(self):
-        self.assertEqual(toolchain.resolved_program("python", {}), "python3")
-        self.assertEqual(toolchain.resolved_program("python", {"PRAETOR_PYTHON": ""}), "python3")
-        self.assertEqual(toolchain.resolved_program("python", {"PRAETOR_PYTHON": "py"}), "py")
-        with self.assertRaises(KeyError):
-            toolchain.resolved_program("gofmt", {})
-
-    def test_the_launcher_reports_the_interpreter_it_starts(self):
-        with mock.patch.dict(os.environ, {"PRAETOR_PYTHON": sys.executable}):
-            version = toolchain.python_version()
-        self.assertTrue(version.startswith("%d.%d.%d" % sys.version_info[:3]), version)
-        self.assertIn(sys.executable, version)
-        with mock.patch.dict(os.environ, {"PRAETOR_PYTHON": "praetor-no-such-interpreter"}), \
-                self.assertRaisesRegex(HookError, "praetor-no-such-interpreter did not start "
-                                                  r"\(PRAETOR_PYTHON names it, python3 where unset\)"):
-            toolchain.python_version()
-        with mock.patch("toolchain.run", return_value=b"Python 2.7.18\n"), \
-                self.assertRaisesRegex(HookError, "is not Python 3"):
-            toolchain.python_version()
-
-    def test_interpreter_version_starts_the_program_and_reads_what_it_states(self):
-        version = toolchain.interpreter_version(sys.executable)
-        self.assertTrue(version.startswith("%d.%d.%d" % sys.version_info[:3]), version)
-        with self.assertRaisesRegex(HookError, "praetor-no-such-interpreter"):
-            toolchain.interpreter_version("praetor-no-such-interpreter")
-        # Boundary: Python 2 states its version on stderr, and a name alone states nothing.
-        for output in (b"", b"Python 2.7.18\n", b"python3\n"):
+    def test_the_probe_answer_decides_not_the_name_or_the_status(self):
+        for output, version in ((b"3.14\n", "3.14"), (b"3.10\r\n", "3.10"), (b"3.100\n", "3.100")):
+            with self.subTest(output=output), \
+                    mock.patch("toolchain.run", return_value=output) as process:
+                self.assertEqual(toolchain.python_proof(["py", "-3"]), version)
+                self.assertEqual(process.call_args.args[0],
+                                 ["py", "-3", "-c", toolchain.PYTHON_PROBE])
+                self.assertEqual(process.call_args.kwargs["timeout"], toolchain.VERSION_TIMEOUT)
+        # A zero status with any other answer proves nothing: no output, the answer of -V,
+        # a release below the floor, Python 2, and a major version that is not 3.
+        refused = {b"": "does not answer the version probe as Python",
+                   b"Python 3.13.1\n": "does not answer the version probe as Python",
+                   b"3.10.1\n": "does not answer the version probe as Python",
+                   b"3.9\n": "is Python 3.9; Python 3.10 or newer is required",
+                   b"2.7\n": "is Python 2.7; Python 3.10 or newer is required",
+                   b"4.0\n": "is Python 4.0; Python 3.10 or newer is required"}
+        for output, reason in refused.items():
             with self.subTest(output=output), mock.patch("toolchain.run", return_value=output), \
-                    self.assertRaisesRegex(HookError, "python3 is not Python 3; set PRAETOR_PYTHON"):
-                toolchain.interpreter_version("python3")
-        with mock.patch("toolchain.run", return_value=b"Python 3.9.0\n") as run:
-            self.assertEqual(toolchain.interpreter_version("python3"), "3.9.0")
-        self.assertEqual(run.call_args.args[0], ["python3", "-V"])
-        self.assertEqual(run.call_args.kwargs["timeout"], toolchain.VERSION_TIMEOUT)
+                    self.assertRaisesRegex(HookError, re.escape(reason)):
+                toolchain.python_proof(["python3"])
 
-    @unittest.skipIf(os.name == "nt", POSIX_STUB)
-    def test_interpreter_version_refuses_a_program_that_exits_nonzero(self):
-        # The Microsoft Store alias: found under the name, started, and no interpreter.
-        with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temp:
-            alias = self.stub(Path(temp), "python3", 'echo "Python was not found" >&2\nexit 49\n')
-            with self.assertRaisesRegex(HookError, r"python3 -V exited 49\nPython was not found"):
-                toolchain.interpreter_version(str(alias))
-            # Boundary: a status of zero is not enough either without a stated version.
-            quiet = self.stub(Path(temp), "python", "exit 0\n")
-            with self.assertRaisesRegex(HookError, "is not Python 3"):
-                toolchain.interpreter_version(str(quiet))
+    def test_the_interpreter_on_this_host_proves_itself(self):
+        argv, version = toolchain.python_program()
+        self.assertTrue(Path(argv[0]).is_file(), argv)
+        self.assertRegex(version, r"^3\.\d+$")
+        self.assertEqual(toolchain.python_proof([sys.executable]), "%d.%d" % sys.version_info[:2])
+        with self.assertRaisesRegex(HookError, "praetor-no-such-interpreter"):
+            toolchain.python_proof(["praetor-no-such-interpreter"])
 
     def check(self, required, states):
         """Run toolchain.check with describe answering from states; return (failed, lines)."""
@@ -2680,104 +2821,222 @@ class HookInterpreter(unittest.TestCase):
         return failed, out.getvalue().splitlines()
 
     def test_check_fails_only_the_required_tools_and_reports_every_declared_one(self):
-        declared = [*toolchain.RESOLVED, *toolchain.tool_floors()]
+        declared = [*toolchain.RESOLVED, *toolchain.BY_NAME, *toolchain.tool_floors()]
         failed, lines = self.check(["python", "yamllint"], {})
         self.assertEqual(failed, [])
         self.assertEqual(lines, [f"{tool}: present" for tool in declared])
-        gone = {"hadolint": HookError("hadolint >= 2.14.0 is required"),
+        gone = {"hadolint": HookError("hadolint is required"),
                 "yamllint": HookError("yamllint >= 1.38.0 is required")}
         failed, lines = self.check(["python", "yamllint"], gone)
         self.assertEqual(failed, ["yamllint"])
-        self.assertIn("hadolint: not asserted: hadolint >= 2.14.0 is required", lines)
+        self.assertIn("hadolint: not asserted: hadolint is required", lines)
         self.assertIn("yamllint: UNUSABLE: yamllint >= 1.38.0 is required", lines)
         # Boundary: nothing required, so nothing fails, and every tool is still reported.
         failed, lines = self.check([], gone)
         self.assertEqual((failed, len(lines)), ([], len(declared)))
-        with self.assertRaisesRegex(HookError, "not declared hook tools: gofmt"):
-            self.check(["gofmt"], {})
+        with self.assertRaisesRegex(HookError, "not declared hook tools: docker"):
+            self.check(["docker"], {})
+
+    def test_a_program_started_by_name_is_reported_where_path_resolves_it(self):
+        self.assertEqual(toolchain.describe("gofmt", {}), shutil.which("gofmt"))
+        self.assertEqual(toolchain.on_path("sh", which=installed), "/usr/bin/sh")
+        with self.assertRaisesRegex(HookError, "^sh is not on PATH$"):
+            toolchain.on_path("sh", which=lambda _program: None)
 
     def test_check_exits_nonzero_for_a_required_tool_that_is_unusable(self):
         runner = [sys.executable, "-B", str(ROOT / ".config/lefthook/scripts/toolchain.py")]
-        env = dict(os.environ, PRAETOR_PYTHON="praetor-no-such-interpreter")
-        refused = subprocess.run([*runner, "--require", "python"], env=env, capture_output=True,
-                                 timeout=120, check=False)
-        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
-        self.assertIn(b"python: UNUSABLE: hook interpreter praetor-no-such-interpreter",
-                      refused.stdout)
-        self.assertIn(b"required hook tools unusable: python", refused.stderr)
-        reported = subprocess.run(runner, env=env, capture_output=True, timeout=120, check=False)
-        self.assertEqual(reported.returncode, 0, reported.stdout + reported.stderr)
-        self.assertIn(b"python: not asserted: hook interpreter", reported.stdout)
+        with tempfile.TemporaryDirectory(prefix="praetor-toolchain-") as empty:
+            env = dict(os.environ, PATH=empty)
+            refused = subprocess.run([*runner, "--require", "python,sh"], env=env, cwd=empty,
+                                     capture_output=True, timeout=120, check=False)
+            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+            self.assertIn(b"python: UNUSABLE: missing dependency: a Python 3.10 or newer "
+                          b"interpreter. Tried: python3 (not on PATH); python (not on PATH); "
+                          b"py -3 (not on PATH)", refused.stdout)
+            self.assertIn(b"sh: UNUSABLE: sh is not on PATH", refused.stdout)
+            self.assertIn(b"required hook tools unusable: python, sh", refused.stderr)
+            reported = subprocess.run(runner, env=env, cwd=empty, capture_output=True,
+                                      timeout=120, check=False)
+            self.assertEqual(reported.returncode, 0, reported.stdout + reported.stderr)
+            self.assertIn(b"python: not asserted: missing dependency", reported.stdout)
+            self.assertIn(b"make: not asserted: missing dependency: GNU Make", reported.stdout)
 
 
 class HookMake(unittest.TestCase):
-    """The hooks take make from one place and fail as a missing dependency without it (#341)."""
+    """The hooks take GNU Make from fixed candidates, each proven by what it states (#341)."""
 
-    def test_make_program_is_the_variable_or_the_default(self):
-        def found(program):
-            return "/usr/bin/" + program
-        self.assertEqual(toolchain.make_program({}, which=found), "make")
-        self.assertEqual(toolchain.make_program({"PRAETOR_MAKE": ""}, which=found), "make")
-        self.assertEqual(toolchain.make_program({"PRAETOR_MAKE": "gmake"}, which=found), "gmake")
-        self.assertEqual(toolchain.RESOLVED["make"], ("PRAETOR_MAKE", "make"))
+    GNU = b"GNU Make 4.4.1\nBuilt for x86_64-pc-linux-gnu\n"
 
-    def test_a_missing_make_is_a_missing_dependency_naming_the_variable(self):
-        for environ, program in (({}, "make"), ({"PRAETOR_MAKE": "gmake"}, "gmake")):
-            with self.subTest(program=program), self.assertRaises(HookError) as refused:
-                toolchain.make_program(environ, which=lambda _program: None)
+    def resolve(self, answers):
+        """Resolve make on a PATH holding the candidates of answers, by their --version output."""
+        def process(argv, **settings):
+            self.assertEqual(argv[1:], ["--version"])
+            self.assertEqual(settings["timeout"], toolchain.VERSION_TIMEOUT)
+            answer = answers[argv[0].rsplit("/", 1)[1]]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        def which(program):
+            return "/opt/bin/" + program if program in answers else None
+        with mock.patch("toolchain.run", side_effect=process):
+            return toolchain.make_program(which=which)
+
+    def test_the_first_candidate_that_states_gnu_make_is_the_make_the_hooks_run(self):
+        self.assertEqual([candidate[0] for candidate in toolchain.MAKE_CANDIDATES],
+                         ["make", "gmake", "mingw32-make"])
+        self.assertEqual(self.resolve({"make": self.GNU}), "/opt/bin/make")
+        old = b"GNU Make 3.81\nCopyright (C) 2006  Free Software Foundation, Inc.\n"
+        self.assertEqual(self.resolve({"make": old, "gmake": self.GNU}), "/opt/bin/make")
+        # Where make is another make, GNU Make is installed as gmake.
+        other = HookError("/opt/bin/make --version exited 2\nusage: make [-BeikNnqrSstWwX]")
+        self.assertEqual(self.resolve({"make": other, "gmake": self.GNU}), "/opt/bin/gmake")
+        self.assertEqual(self.resolve({"mingw32-make": self.GNU}), "/opt/bin/mingw32-make")
+
+    def test_a_program_that_is_no_gnu_make_is_a_missing_dependency(self):
+        gone = HookError("/opt/bin/make --version exited 49\nnot found")
+        cases = (({}, "make (not on PATH); gmake (not on PATH); mingw32-make (not on PATH)"),
+                 ({"make": b""}, "make (does not state a GNU Make version); gmake (not on PATH)"),
+                 ({"make": b"bmake 20240108\n", "gmake": b"usage: gmake\n"},
+                  "make (does not state a GNU Make version); gmake (does not state"),
+                 ({"make": gone}, "make (/opt/bin/make --version exited 49 not found); gmake"))
+        for answers, tried in cases:
+            with self.subTest(answers=answers), self.assertRaises(HookError) as refused:
+                self.resolve(answers)
             message = str(refused.exception)
-            self.assertIn(f"missing dependency: make program {program} is not on PATH", message)
-            self.assertIn("PRAETOR_MAKE", message)
+            self.assertIn("missing dependency: GNU Make", message)
             self.assertIn("hook-cli", message)
+            self.assertIn("Tried: " + tried, message)
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_a_stand_in_on_path_that_exits_zero_is_not_make(self):
+        with tempfile.TemporaryDirectory(prefix="praetor-make-") as temp:
+            directory = Path(temp)
+            stand_in(directory, "make", "exit 0\n")
+            with self.assertRaisesRegex(HookError, r"Tried: make \(does not state a GNU Make "
+                                                   r"version\); gmake \(not on PATH\)"):
+                toolchain.make_program(which=only(directory))
+            real = stand_in(directory, "gmake", 'echo "GNU Make 4.4.1"\n')
+            self.assertEqual(toolchain.make_program(which=only(directory)), str(real))
+
+    def test_no_variable_selects_make(self):
+        resolved = toolchain.make_program()
+        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": "true", "MAKE": "true"}):
+            self.assertEqual(toolchain.make_program(), resolved)
+        # The module reads no environment variable at all.
+        source = (POLICY_SCRIPTS / "toolchain.py").read_text(encoding="utf-8")
+        for reader in ("import os", "os.environ", "getenv"):
+            self.assertNotIn(reader, source)
 
     def test_every_make_call_of_the_hooks_runs_the_resolved_program(self):
-        # Any program on PATH stands in for make here; no call is executed.
-        stand_in = sys.executable
-        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": stand_in}), \
+        with mock.patch("hooks.make_program", return_value="proven-make") as resolved, \
                 mock.patch("hooks.run", return_value=b'{"refreshed":false}') as process:
             hooks.cli(["state", "audit", "."])
             hooks.refresh(["main.go"])
             hooks.refresh_install()
         built = [call.args[0] for call in process.call_args_list if "hook-cli" in call.args[0]]
-        self.assertEqual([argv[0] for argv in built], [stand_in] * 3)
+        self.assertEqual([argv[0] for argv in built], ["proven-make"] * 3)
+        self.assertEqual(resolved.call_count, 3)
         self.assertEqual(built[0][1:], ["--always-make", "--no-print-directory", "-s", "hook-cli"])
-        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": "praetor-no-such-make"}), \
+        missing = HookError("missing dependency: GNU Make")
+        with mock.patch("hooks.make_program", side_effect=missing), \
                 mock.patch("hooks.run") as process, \
-                self.assertRaisesRegex(HookError, "missing dependency: make program"):
+                self.assertRaisesRegex(HookError, "missing dependency: GNU Make"):
             hooks.cli(["state", "audit", "."])
         process.assert_not_called()
 
-    def test_no_hook_script_starts_make_by_name(self):
-        names = {"make", "gmake", "mingw32-make"}
-        scripts = sorted(path for path in (ROOT / ".config/lefthook/scripts").glob("*.py")
-                         if not path.name.startswith("test_"))
-        for path in scripts:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
-            spelled = [node.lineno for node in ast.walk(tree)
-                       if isinstance(node, (ast.List, ast.Tuple)) and node.elts
-                       and isinstance(node.elts[0], ast.Constant) and node.elts[0].value in names]
-            self.assertEqual(spelled, [], f"{path.name} starts make by name")
-        resolved = sum(path.read_text(encoding="utf-8").count("[make_program(), ")
-                       for path in scripts)
-        self.assertEqual(resolved, 4)
-
-    def test_only_gnu_make_is_reported_as_usable(self):
-        builds = {b"GNU Make 4.4.1\nBuilt for x86_64-pc-linux-gnu\n": "4.4.1 (make)",
-                  b"GNU Make 3.81\nCopyright (C) 2006\n": "3.81 (make)"}
-        for output, expected in builds.items():
-            with self.subTest(output=output), \
-                    mock.patch("toolchain.make_program", return_value="make"), \
-                    mock.patch("toolchain.run", return_value=output) as process:
-                self.assertEqual(toolchain.make_version(), expected)
-                self.assertEqual(process.call_args.args[0], ["make", "--version"])
-                self.assertEqual(process.call_args.kwargs["timeout"], toolchain.VERSION_TIMEOUT)
-        with mock.patch("toolchain.make_program", return_value="make"), \
-                mock.patch("toolchain.run", return_value=b"bmake 20240108\n"), \
-                self.assertRaisesRegex(HookError, "make is not GNU Make"):
-            toolchain.make_version()
-
     def test_the_make_on_this_host_is_reported(self):
-        self.assertRegex(toolchain.make_version(), r"^\d+(\.\d+)+ \(.+\)$")
+        argv, version = toolchain.resolved_make()
+        self.assertTrue(Path(argv[0]).is_file(), argv)
+        self.assertRegex(version, r"^\d+(\.\d+)+$")
+        self.assertEqual(toolchain.make_program(), argv[0])
+        self.assertEqual(toolchain.describe("make", {}), f"{version} ({argv[0]})")
+
+
+POLICY_SCRIPTS = ROOT / ".config/lefthook/scripts"
+PROGRAM_NAME = re.compile(r"[a-z][a-z0-9_-]*")
+
+
+def started_programs(source, kinds=(ast.List,)):
+    """Return the bare program names source starts: the first element of each command.
+
+    A command is a list literal that opens with a string spelled like a program name. A list
+    handed to cli() holds arguments of the repository's own CLI and a list compared with
+    another value is data; neither starts a program.
+    """
+    tree = ast.parse(source)
+    data = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "cli":
+            data.update(id(argument) for argument in node.args)
+        elif isinstance(node, ast.Compare):
+            data.update(id(operand) for operand in node.comparators)
+    return {node.elts[0].value for node in ast.walk(tree)
+            if isinstance(node, kinds) and id(node) not in data and node.elts
+            and isinstance(node.elts[0], ast.Constant) and isinstance(node.elts[0].value, str)
+            and PROGRAM_NAME.fullmatch(node.elts[0].value)}
+
+
+class DeclaredPrograms(unittest.TestCase):
+    """Every program the command tables start by name is declared in toolchain.py (#341)."""
+
+    def scripts(self):
+        return sorted(path for path in POLICY_SCRIPTS.glob("*.py")
+                      if not path.name.startswith("test_"))
+
+    def test_the_declared_programs_are_what_the_command_tables_start(self):
+        started = set()
+        for name in ("checks.py", "hooks.py"):
+            started |= started_programs((POLICY_SCRIPTS / name).read_text(encoding="utf-8"))
+        linters = set(toolchain.tool_floors())
+        # sh starts the jobs themselves, not a command of these two files.
+        self.assertEqual(started - linters, set(toolchain.BY_NAME) - {"sh"})
+        self.assertLessEqual(linters, started)
+        self.assertEqual(len(toolchain.BY_NAME), len(set(toolchain.BY_NAME)))
+        self.assertEqual(list(toolchain.RESOLVED), ["python", "make"])
+        self.assertEqual(set(toolchain.RESOLVED) & (started | set(toolchain.BY_NAME)), set())
+
+    def test_sh_is_the_one_program_the_jobs_start(self):
+        policy = (ROOT / ".config/lefthook/praetor.yml").read_text(encoding="utf-8")
+        runs = re.findall(r"^ +run: (?:>-\n +)?(\S+)", policy, re.M)
+        runners = re.findall(r"^ +runner: (\S+)$", policy, re.M)
+        self.assertGreater(len(runs), 10)
+        self.assertEqual(len(runners), 1)
+        self.assertEqual(set(runs) | set(runners), {"sh"})
+        self.assertIn("sh", toolchain.BY_NAME)
+        script = (ROOT / ".config/lefthook/pre-push/pushed-checks.sh").read_text(encoding="utf-8")
+        self.assertIn(f"\nexec sh {LAUNCHER} ", script)
+
+    def test_a_new_program_is_found_and_data_is_not(self):
+        source = ('run(["newtool", "--flag"])\n'
+                  'groups = [(["linter"], None)]\n'
+                  'cli(["state", "sync"])\n'
+                  'full = command[3:4] == ["audit"]\n'
+                  'options = ["--exclude", "x"]\n'
+                  'names = ["go.mod", "Makefile"]\n'
+                  'pair = ("git", "x")\n')
+        self.assertEqual(started_programs(source), {"newtool", "linter"})
+        self.assertEqual(started_programs(source, (ast.List, ast.Tuple)),
+                         {"newtool", "linter", "git"})
+
+    def test_no_hook_script_starts_an_interpreter_or_make_by_name(self):
+        resolved = {candidate[0] for candidates in toolchain.RESOLVED.values()
+                    for candidate in candidates}
+        self.assertEqual(resolved, {"python3", "python", "py", "make", "gmake", "mingw32-make"})
+        scripts = self.scripts()
+        self.assertGreater(len(scripts), 5)
+        for path in scripts:
+            source = path.read_text(encoding="utf-8")
+            with self.subTest(script=path.name):
+                # A command is a list; the candidates are declared once, as tuples, in
+                # toolchain.py, and no other script holds one in either form.
+                self.assertEqual(started_programs(source) & resolved, set())
+                declared = resolved if path.name == "toolchain.py" else set()
+                self.assertEqual(started_programs(source, (ast.List, ast.Tuple)) & resolved,
+                                 declared)
+        calls = sum(path.read_text(encoding="utf-8").count("[make_program(), ")
+                    for path in scripts)
+        self.assertEqual(calls, 4)
 
 
 if __name__ == "__main__":

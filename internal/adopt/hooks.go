@@ -77,22 +77,17 @@ func lefthookGovernedCommand(args string) string {
 		util.PraetorCLI+" nor "+util.LegacyCLI+" is installed")
 }
 
-const (
-	// hookPythonVariable is the one spelling every Praetor hook reads its Python 3 interpreter
-	// from, and hookPythonDefault the name used where it is unset or empty (#339). The canonical
-	// policy resolves the same pair in .config/lefthook/python.sh, which adoption does not write;
-	// TestLefthookPythonCommandMatchesTheCanonicalLauncher holds the two equal.
-	hookPythonVariable = "PRAETOR_PYTHON"
-	hookPythonDefault  = "python3"
-)
-
-// lefthookPythonCommand renders a lefthook run line that starts a Python hook script with the
-// interpreter hookPythonVariable names. The generated configuration carries no launcher file,
-// so the line states the rule itself: a host whose interpreter is not called python3, such as
-// a stock Windows install, sets the variable instead of editing the generated file.
+// lefthookPythonCommand renders a lefthook run line that starts a Python hook script through
+// the launcher adoption writes with the checkpoint scripts (checkpointLauncher). Which
+// interpreter runs is the launcher's decision alone: it tries fixed candidates and proves one
+// before it starts it, and no variable selects another (#339).
+//
+// The line holds no quote and no expansion. Lefthook's Windows executor hands a run line to sh
+// without preserving its inner quotes, so a rule stated inline, with a quoted variable, split an
+// interpreter path that held a space there; a path to a script and plain arguments cannot be
+// split that way.
 func lefthookPythonCommand(args string) string {
-	return `if [ -z "$` + hookPythonVariable + `" ]; then ` + hookPythonVariable + "=" + hookPythonDefault +
-		`; fi; "$` + hookPythonVariable + `" ` + args
+	return "sh " + checkpointLauncher + " " + args
 }
 
 // optionalToolCommand renders a lefthook run line for a third-party tool that is skipped

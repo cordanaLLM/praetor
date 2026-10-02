@@ -1,8 +1,9 @@
 # Compatible with Lefthook 2.1.14. One stdin consumer per hook is intentional.
 # Print job output and failures only: the banner, summary and success lines cost
 # about 2,000 characters of agent context per run (README "Output policy").
-# Every Python hook starts through python.sh, the one place that names the
-# interpreter: PRAETOR_PYTHON, or python3 when unset (README "Interpreter").
+# Every Python hook starts through python.sh, the one place that starts the
+# interpreter: the first of python3, python and py -3 that proves itself
+# Python 3 (README "Interpreter").
 ---
 output:
   - execution_out

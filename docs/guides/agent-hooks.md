@@ -85,8 +85,9 @@ What this means in practice:
   than shipping a form no test here can run. The self-tests skip the Codex cases on Windows
   and say why. The gap closes when the registrations move to `praetorctl hook codex <event>`,
   one executable call that `cmd /c` runs. All three registrations still name `python3`
-  themselves (#209). The Lefthook jobs they reach do not: those start the interpreter
-  `PRAETOR_PYTHON` names ([the interpreter the hooks run](git-hooks.md#the-interpreter-the-hooks-run)).
+  themselves (#209). The Lefthook jobs they reach do not: those start the first of `python3`,
+  `python` and `py -3` that proves itself Python 3
+  ([the interpreter the hooks run](git-hooks.md#the-interpreter-the-hooks-run)).
 - **The batch-scope hook judges nothing before a checkpoint is due.**
   `.config/lefthook/scripts/checkpoint_scope.py` checks only the payload's shape until then,
   so a memory or scratch file outside the repository, or a session cwd outside it, passes.

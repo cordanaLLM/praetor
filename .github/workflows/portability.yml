@@ -271,40 +271,40 @@ jobs:
         run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
 
       # Every hook the self-tests drive starts its interpreter through
-      # .config/lefthook/python.sh, which runs what PRAETOR_PYTHON names (#339). The leg sets it
-      # to the interpreter the setup action installed, and this step starts that interpreter
-      # through the launcher before any self-test does: a leg that cannot start it fails here
-      # as a missing dependency, not later as a hook rejecting a commit. The hooks also run
-      # make on every leg (hook-cli, state-audit), so the step requires a GNU Make on PATH and
-      # prints its version (#341); no leg installs one, each image carries its own. The same
-      # run holds the linters this job installs to the floors in
-      # .config/lefthook/tool-floors.txt (#343) and prints one line per declared tool; a
-      # declared tool outside --require is reported as not asserted, never silently absent.
-      # The table in docs/standards/hiss-21-platform-neutrality.md is rendered from REQUIRED.
+      # .config/lefthook/python.sh, which tries a fixed list of candidates and runs the first
+      # that answers a version probe as Python 3 at the supported floor (#339). No variable
+      # selects the interpreter, so this step sets none: it resolves the same candidates from
+      # the leg's PATH, where the setup action put its interpreter first, and a leg on which
+      # none proves itself fails here as a missing dependency, not later as a hook rejecting a
+      # commit. The hooks also run GNU Make on every leg (hook-cli, state-audit): the step
+      # resolves it the same way, from make, gmake and mingw32-make, by its version output
+      # (#341); no leg installs one, each image carries its own. The programs the hooks start
+      # by name are looked up on PATH, and the linters this job installs are held to the
+      # floors in .config/lefthook/tool-floors.txt (#343). One line is printed per declared
+      # tool; one outside --require is reported as not asserted, never silently absent. The
+      # table in docs/standards/hiss-21-platform-neutrality.md is rendered from REQUIRED.
       - name: Assert Hook Toolchain
         if: ${{ !cancelled() }}
         shell: bash
         run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
-          PRAETOR_PYTHON: ${{ steps.python.outputs.python-path }}
-          REQUIRED: python,make,shellcheck,yamllint
+          REQUIRED: python,make,git,go,gofmt,gosec,lefthook,sh,shellcheck,yamllint
 
       # The self-tests are the part that could not run on Windows at all before #102, and the
       # part that governs the hooks, so they are the highest-value cell in the matrix. The
       # driver refuses to report a pass that executed nothing and prints every skip with its
       # reason, so a platform losing coverage shows up as a number that moved.
       #
-      # Python is invoked through the path the setup action reports rather than by name, and
-      # PRAETOR_PYTHON hands the same path to the hooks: assuming a platform's binary naming
-      # is the exact defect this job exists to catch.
+      # The suites themselves are started through the path the setup action reports rather
+      # than by name: assuming a platform's binary naming is the exact defect this job exists
+      # to catch. The hooks they drive resolve their own interpreter, as on any host.
       - name: Harness Self-Tests
         if: ${{ !cancelled() }}
         shell: bash
         run: '"$PYTHON" -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"'
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
-          PRAETOR_PYTHON: ${{ steps.python.outputs.python-path }}
           # Deliberately a collapse detector, not a coverage assertion. The honest floor per
           # platform is not yet measured on macOS or Windows -- this matrix is what measures
           # it. Raise it to each platform's real figure once the first green run reports one,
