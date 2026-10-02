@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"path/filepath"
@@ -20,8 +21,10 @@ type devContainerOptions struct {
 // preparation does, and reads three git answers.
 const devContainerFreshnessBound = 5 * time.Minute
 
-// devContainerBumpBound bounds one bump: policy resolution, two source captures, the bundle
-// write and its verification (devcontainer.Bump bounds its own part as well).
+// devContainerBumpBound bounds one bump command: resolving the declared policy, then
+// devcontainer.Bump, which edits the pin source, the prior list and the Dockerfiles, captures
+// the source once for the regenerated bundle, writes it and verifies it, and holds its own
+// part to the same ten minutes.
 const devContainerBumpBound = 10 * time.Minute
 
 func parseDevContainerOptions(args []string) (devContainerOptions, error) {
@@ -41,27 +44,38 @@ func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	return opts, applyDevContainerAction(&opts, positionalAt(positional, 0, "generate"))
 }
 
-// applyDevContainerAction selects verify or freshness from the positional action and refuses
-// options the selected action would ignore.
+// applyDevContainerAction selects verify, freshness or bump from the positional action and
+// refuses options the selected action would ignore.
 func applyDevContainerAction(opts *devContainerOptions, action string) error {
+	selected := *opts
 	switch action {
 	case "freshness":
-		if opts.generationSelected() || opts.verify {
-			return fmt.Errorf("freshness measures the committed bundle; generation and verify options are not accepted")
-		}
-		opts.freshness = true
+		selected.freshness = true
 	case "bump":
-		if opts.verify || opts.force {
-			return fmt.Errorf("bump regenerates and verifies the bundle itself; --verify and --force are not accepted")
-		}
-		opts.bump = true
+		selected.bump = true
 	case "generate", "verify":
-		opts.verify = opts.verify || action == "verify"
-		if opts.verify && opts.generationSelected() {
-			return fmt.Errorf("verify uses the recorded bootstrap specification; generation-only options are not accepted")
-		}
+		selected.verify = opts.verify || action == "verify"
 	default:
 		return fmt.Errorf("unknown devcontainer action: %s (supported: generate, verify, freshness, bump)", action)
+	}
+	if err := selected.refuseIgnoredOptions(); err != nil {
+		return err
+	}
+	*opts = selected
+	return nil
+}
+
+// refuseIgnoredOptions names the options the selected action would ignore: freshness and bump
+// take no --verify, freshness no generation option, bump no --force, and verify no
+// generation-only option.
+func (o devContainerOptions) refuseIgnoredOptions() error {
+	switch {
+	case o.freshness && (o.verify || o.generationSelected()):
+		return errors.New("freshness measures the committed bundle; generation and verify options are not accepted")
+	case o.bump && (o.verify || o.force):
+		return errors.New("bump regenerates and verifies the bundle itself; --verify and --force are not accepted")
+	case o.verify && o.generationSelected():
+		return errors.New("verify uses the recorded bootstrap specification; generation-only options are not accepted")
 	}
 	return nil
 }
