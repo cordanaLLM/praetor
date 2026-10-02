@@ -238,12 +238,13 @@ func baselineMarkdownObjects(dir string, entries []util.GitTreeEntry) map[string
 	return objects
 }
 
-// baselineOnlyFiles turns objects, files of the base listing taken in gitDir that the walk of
-// the working tree did not find, into rows in lexical order. Each is looked up once more by
-// its tracked spelling (splitBaselinePath) before it is called absent: on a file system that
-// ignores case the working tree can hold it under another letter case, and a path that now
-// runs through a symlink is not a deleted file. Such a file is measured, or refused by the
-// reader, never reported as a deletion. A lookup that fails is an error, not an absence.
+// baselineOnlyFiles turns objects, files of the base listing taken in gitDir that git's
+// listing of the working tree did not yield as regular files, into rows in lexical order. Each
+// is looked up by its tracked spelling (splitBaselinePath) before it is called absent: a file
+// git tracked at the base and leaves alone now (ignored since, or inside a repository nested
+// since) is still on disk, and a path that now is or runs through a symlink is not a deleted
+// file. Such a file is measured and marked ignored, or refused by the reader, never reported
+// as a deletion. A lookup that fails is an error, not an absence.
 func baselineOnlyFiles(gitDir string, objects map[string]string) ([]baselineFile, error) {
 	files := make([]baselineFile, 0, len(objects))
 	for path, object := range objects {
@@ -252,7 +253,7 @@ func baselineOnlyFiles(gitDir string, objects map[string]string) ([]baselineFile
 			return nil, err
 		}
 		held := split.Exists && split.Rest != ""
-		files = append(files, baselineFile{path: path, object: object, worktree: held, gitDir: gitDir})
+		files = append(files, baselineFile{path: path, object: object, worktree: held, ignored: held, gitDir: gitDir})
 	}
 	sortBaselineFiles(files)
 	return files, nil
@@ -264,9 +265,10 @@ func sortBaselineFiles(files []baselineFile) {
 
 // baselineDirFiles is the union of the Markdown files below dir in the working tree and at the
 // base revision, so a file added since the base and one deleted since are both rows. The
-// working-tree side is what git tracks or would track there (baselineWorktreeFiles). A
-// symlink named as the directory is refused with the reader's own error: the walk does not
-// follow it while git lists its target, which read every file of the target as deleted.
+// working-tree side is what git tracks or would track there (baselineWorktreeFiles); a base
+// file that listing lacks is absent, or still on disk and left alone by git
+// (baselineOnlyFiles). A symlink named as the directory is refused with the reader's own
+// error: the reader does not read through it while git lists its target.
 func baselineDirFiles(ctx context.Context, commit, dir string) ([]baselineFile, error) {
 	if err := requireBaselineDir(ctx, dir); err != nil {
 		return nil, err

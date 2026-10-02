@@ -697,26 +697,42 @@ removed or renamed directory is read like any other deleted file, and the paths
 `git diff --name-only <rev>` prints at the repository root can be handed over as they are;
 `TestCavemanEstimateBaseDeletedDirectory` pins it.
 
-Both sides of a directory describe one set. The working-tree side is what
-`git ls-files --cached --others --exclude-standard` lists below it: tracked files, and
-untracked files that no ignore rule of the repository hides. A file git ignores and every
-file of a nested repository or a submodule stay out, so a run at the repository root does
-not count ledgers, dependencies or other checkouts as new text
+Both sides of a directory describe one set. The working-tree side is read off
+`git ls-files --cached --others --exclude-standard` run in that directory: tracked files, and
+untracked files that no ignore rule of the repository hides. The tree itself is never
+walked. Git does not list a file it ignores, and it lists a nested repository as one entry
+without looking inside, so a run at the repository root neither reports nor counts ledgers,
+dependencies or other checkouts, however many Markdown files they hold
 (`baselineWorktreeFiles` in `cmd/standardsctl/caveman_baseline_worktree.go`,
-`TestCavemanEstimateBaseDirectoryCountsWhatGitTracks`). The listing goes through
+`TestCavemanEstimateBaseDirectoryCountsWhatGitTracks`,
+`TestCavemanEstimateBaseLeftAloneTreeAboveBound`). From the listing the command keeps the
+entries that end in `.md` and are regular files; an index entry whose file is gone, a
+symlink and a submodule are none (`TestBaselineWorktreeMarkdown`). The listing goes through
 `util.RunGitProbe`, which reads no per-user git configuration, so a personal ignore file
 does not change the answer between machines. A file the revision holds stays a row whatever
 git does with it now: still on disk but ignored since, it is measured on both sides and
 marked `worktree=ignored`. The total counts the three marks as `base_absent`,
 `worktree_absent` and `worktree_ignored`.
 
+Two bounds apply, and each error says what was counted:
+
+| Bound | Error |
+| :--- | :--- |
+| 4096 Markdown files that git tracks or would track below one directory (`maxCavemanFiles`) | `directory <path> holds more than 4096 Markdown files that git tracks or would track; name its subdirectories or files` (`TestBaselineWorktreeFilesBound`) |
+| 4096 files in one run, files deleted since the revision included | `more than 4096 input files` |
+| 4 MiB for one git listing of a directory | the listing fails with `command output exceeds 4194304 bytes per stream`; it is never cut |
+
+A file reached twice is measured twice: `estimate --base=HEAD docs docs/a.md` prints the row
+of `docs/a.md` two times and adds it to the total two times, as the plain `estimate` does.
+Name each path once.
+
 No row reports a deletion that did not happen:
 
 | Situation | Result | Pinned by |
 | :--- | :--- | :--- |
-| the directory named is a symlink | the error the reader gives a file below such a link, `confinement root must be a directory, never a symlink`; the walk does not follow the link while git lists its target, which would read every file as deleted. A path may reach the directory through a symlink, the directory itself may not be one | `TestCavemanEstimateBaseRefusesSymlinkedDirectory` |
+| the directory named is a symlink | the error the reader gives a file below such a link, `confinement root must be a directory, never a symlink`; the reader does not read through the link while git lists its target, which would read every file as deleted. A path may reach the directory through a symlink, the directory itself may not be one | `TestCavemanEstimateBaseRefusesSymlinkedDirectory` |
 | a tracked directory was replaced by a symlink | its files are refused by the reader, not counted as deleted | `TestCavemanEstimateBaseSymlinkBoundary` |
-| a path is named in another letter case than git tracks it under, on a file system that ignores case (the default on macOS and Windows) | an error naming the tracked spelling relative to the top of the repository, `<path> is tracked as <tracked spelling>`, for a file and for a directory. Git matches a path exactly, so the base side would read as absent. The tracked spellings come from one bounded listing at the top of the repository (`git ls-files --cached --with-tree=<commit>` with an `icase` pathspec), and a spelling counts only when it is the same file (`os.SameFile`). Where case is distinguished, `readme.md` beside a tracked `README.md` is its own file and a `base=absent` row | `TestCavemanEstimateBaseTrackedSpelling`, `TestCavemanEstimateBaseCaseInsensitiveFileSystem` |
+| a path is named in another letter case than git tracks it under, on a file system that ignores case (the default on macOS and Windows) | an error naming the tracked spelling relative to the top of the repository, `<path> is tracked as <tracked spelling>`, for a file and for a directory. Git matches a path exactly, so the base side would read as absent. The tracked spellings come from one bounded listing at the top of the repository (`git ls-files --cached --with-tree=<commit>` with an `icase` pathspec), and a spelling counts only when it is the same file (`os.SameFile`). Where case is distinguished, `readme.md` beside a tracked `README.md` is its own file and a `base=absent` row; only a hard link to the tracked file under that second spelling is refused like the spelling itself, because it is the same file | `TestCavemanEstimateBaseTrackedSpelling`, `TestCavemanEstimateBaseCaseInsensitiveFileSystem` |
 
 The base side is read from git as stored (`git ls-tree`, `git cat-file blob`) through
 `util.RunGitProbe`, each call under its 5 s bound and the command under the 30 s bound of
