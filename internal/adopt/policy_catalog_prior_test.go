@@ -38,6 +38,11 @@ var catalogValuesChangedSinceBUG782 = map[string]bool{
 	"facets/tooling-vscode-extension.yaml": true,
 	"pages-site.yaml":                      true,
 	"web-package.yaml":                     true,
+	// #727: the docker-in-docker DevContainer feature moved from docker-in-docker:2 to
+	// docker-in-docker:4 in both profiles that select it. Major 2 refuses its default Moby
+	// install on Ubuntu 26.04, the reviewed base image; 4.1.1 and later install it there.
+	"app-service.yaml":     true,
+	"container-image.yaml": true,
 }
 
 // Positive and negative, a deliberate tripwire: the shipped text of every earlier catalog file

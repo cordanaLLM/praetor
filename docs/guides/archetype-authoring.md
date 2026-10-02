@@ -45,7 +45,8 @@ different options, such as `node:2` bare beside `node:2` with `version: "24"`
 (`ResolveDevContainerFeatures` in `internal/config/devcontainer_features.go`), so a repository
 declaring two of those files would stop resolving. A feature bump or an options change therefore
 moves every file that selects the feature: `pages-site`, `web-package` and the
-`tooling:vscode-extension` facet all select `node:2` with `version: "24"`.
+`tooling:vscode-extension` facet all select `node:2` with `version: "24"`, and `app-service`
+and `container-image` both select `docker-in-docker:4` with no options.
 `TestShippedFeatures_Positive_OneReferencePerFeature` (`internal/config/shipped_features_test.go`)
 fails while the catalog names one feature two ways, and
 `TestShippedFeatures_Positive_EveryProfileWithEveryFacetResolves`
@@ -59,9 +60,18 @@ the generated bundle and reads the features from the catalog instead: one custom
 every `ghcr.io/devcontainers/features/<name>:<major>` reference under `.config/archetypes/`, so
 its branch moves every file naming the feature, and another the `version` option of the node
 feature (`TestRenovateReadsDevContainerFeaturesFromTheCatalog` in
-`internal/devcontainer/renovate_test.go`). The takeover of such a branch re-pins
-`.standards.lock`, lists the changed files in `catalogValuesChangedSinceBUG782` and regenerates
-the bundle.
+`internal/devcontainer/renovate_test.go`). The takeover of such a branch lists the changed files
+in `catalogValuesChangedSinceBUG782`. It re-pins `.standards.lock` and regenerates the bundle
+only when a file Praetor's own `.standards.yaml` declares moved: `praetorctl audit --offline`
+and `praetorctl devcontainer verify` say so, and both passed unchanged for the
+`docker-in-docker:4` move, because Praetor declares neither `app-service` nor `container-image`.
+
+A major bump is first read against the feature's own definition in
+[devcontainers/features](https://github.com/devcontainers/features) (`devcontainer-feature.json`,
+`NOTES.md` and `install.sh` under `src/<name>/`): the options the catalog passes must still exist,
+and the feature must install on the reviewed base image, `DefaultBaseImage` in
+`internal/devcontainer/bootstrap.go`. That image is Ubuntu 26.04, where `docker-in-docker:2`
+exits on its default `moby: true` and releases from 4.1.1 install Moby.
 
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
 settings and toolchains a repository of that kind requires. Five profiles currently have any flavor
