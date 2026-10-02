@@ -39,8 +39,11 @@ func DocumentationFamilies() []managedasset.Family {
 	return managedasset.ForFacet(managedasset.DocumentationFacet)
 }
 
-// reconcileDocumentationGate emits every documentation family, and the attribute block their
-// hashed files need, while the facet is enabled, and removes both once it is disabled.
+// reconcileDocumentationGate emits every documentation family, and the attribute rules their
+// hashed files need, while the facet is enabled, and removes both once it is disabled. Either
+// way it leaves the attribute block holding the rules of this run (reconcileManagedAttributes),
+// the DevContainer rule among them: the block is one, so it has one writer, and this step runs
+// in every adoption because it cannot be declined.
 func reconcileDocumentationGate(ctx context.Context, s *adoptSession) error {
 	enabled, err := documentationEnabledForSession(s)
 	if err != nil {
@@ -55,7 +58,7 @@ func reconcileDocumentationGate(ctx context.Context, s *adoptSession) error {
 			return err
 		}
 	}
-	return reconcileGitAttributes(ctx, s, DocumentationAttributes())
+	return reconcileManagedAttributes(ctx, s, true)
 }
 
 // DocumentationAssetPaths returns every canonical text file owned only by the documentation facet.
@@ -83,7 +86,7 @@ func removeDocumentationGate(ctx context.Context, s *adoptSession) error {
 	if err := removeManagedFamilies(ctx, s, DocumentationFamilies()); err != nil {
 		return err
 	}
-	return reconcileGitAttributes(ctx, s, nil)
+	return reconcileManagedAttributes(ctx, s, false)
 }
 
 func preflightDocumentationDeprovision(ctx context.Context, s *adoptSession) error {

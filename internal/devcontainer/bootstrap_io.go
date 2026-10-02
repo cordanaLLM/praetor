@@ -236,9 +236,8 @@ func validateBundleContents(ctx context.Context, bundle *Bundle) error {
 	if err != nil {
 		return err
 	}
-	dockerfile := artifacts[bootstrapDockerfile]
-	if !bytes.Equal(dockerfile, []byte(renderBootstrapDockerfile(spec))) {
-		return errors.New("bootstrap Dockerfile differs from its recorded inputs; " + bundleRepair)
+	if err := verifyBootstrapDockerfile(artifacts[bootstrapDockerfile], spec); err != nil {
+		return err
 	}
 	return validateArchivedSource(ctx, spec, artifacts)
 }
