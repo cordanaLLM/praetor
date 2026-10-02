@@ -143,6 +143,11 @@ func TestHermeticGitEnv_Boundary_EnvironmentContents(t *testing.T) {
 	set := map[string]string{}
 	for _, entry := range env {
 		key, value, _ := strings.Cut(entry, "=")
+		if key == "" {
+			// Windows keeps each drive's working directory as a hidden entry ("=C:=C:\\dir"),
+			// and os.Environ returns them; they are not variables a caller sets.
+			continue
+		}
 		if _, dup := set[key]; dup {
 			t.Errorf("%s is set twice", key)
 		}
