@@ -63,9 +63,9 @@ pycodestyle==2.15.0 \
     --hash=sha256:12fd2f73c7b8ee8845a0431111df8faf4c1a07d6e64e2ee7f0c74014dab14181 \
     --hash=sha256:318f5db083869b4c4dad922d0b11124fb27ab181b6730b93371da671e31bd50e
     # via flake8
-pyflakes==4.0.0 \
-    --hash=sha256:0f7b7a78e8fcffd78b205200f045a70911f4179be1b42eac82c3323e0bf5c8aa \
-    --hash=sha256:492b27735181e3d4a6acfc08738948b666bf3e696781854ea6e0d8540d566d52
+pyflakes==4.0.1 \
+    --hash=sha256:1559b701962c803eadeb9c215dbac279585367b73ac12e1f0c42868785e6caad \
+    --hash=sha256:cb4e721195b96e1792f3dfaefa02fb36a4f6253e899bbe0793f8aef6ed0065ef
     # via flake8
 pytokens==0.4.1 \
     --hash=sha256:0fc71786e629cef478cbf29d7ea1923299181d0699dbe7c3c0f4a583811d9fc1 \
