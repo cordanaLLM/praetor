@@ -31,6 +31,11 @@ var catalogValuesChangedSinceBUG782 = map[string]bool{
 	// #357: the description stopped claiming OpenAPI drift checks nothing ran and names the Go
 	// API Compatibility workflow adoption now adds.
 	"facets/api-public.yaml": true,
+	// The Node.js DevContainer feature moved from node:1 to node:2 in every catalog file that
+	// selects it, so a repository declaring several of them still resolves one node feature.
+	"facets/tooling-vscode-extension.yaml": true,
+	"pages-site.yaml":                      true,
+	"web-package.yaml":                     true,
 }
 
 // Positive and negative, a deliberate tripwire: the shipped text of every earlier catalog file

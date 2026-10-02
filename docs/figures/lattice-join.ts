@@ -11,7 +11,7 @@ export default {
     'internal/config/effective_load.go:finishEffectivePolicy',
     'internal/config/effective_pins.go:pinnedLayers',
     'internal/config/effective_pins.go:pinnedLayer',
-    'internal/config/effective_pins.go:ErrLockDigestMismatch',
+    'internal/config/lockdigest.go:ErrLockDigestMismatch',
     'internal/config/effective.go:newEffectivePolicy',
     'internal/config/effective.go:ResolvePolicy',
     'internal/config/effective.go:applyLayer',
