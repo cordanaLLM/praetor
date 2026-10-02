@@ -815,10 +815,28 @@ func TestStageOutput_3D(t *testing.T) {
 		},
 	}
 
-	// Positive: deterministic and complete.
+	// Positive: the rendering is pinned byte for byte. This is the payload the receipt signs
+	// and gate verify re-reads, so the order of the header lines, the order of the stages,
+	// the separators and the final newline are all part of the contract. Comparing two calls
+	// with each other, as this case used to, holds for any rendering at all (#345).
+	const golden = "praetor-gate-output/v2\n" +
+		"repository\tacme/widget\n" +
+		"commit_sha\tdeadbeef\n" +
+		"worktree_clean\ttrue\n" +
+		"dry_run\tfalse\n" +
+		"stage\tPrefetch & Lockfiles\tpassed\t\n" +
+		"stage\tHISS Invariant Scan\tpassed\t0 infractions within limit\n"
 	first := string(rep.StageOutput())
-	if first != string(rep.StageOutput()) {
-		t.Error("StageOutput is not deterministic")
+	if first != golden {
+		t.Errorf("stage output changed:\n got %q\nwant %q", first, golden)
+	}
+	// Where the toolchain stages ran is a header line: it sits after dry_run and before the
+	// first stage, which is where a reader of the header stops.
+	withExecution := *rep
+	withExecution.Execution = hostExecution("no devcontainer")
+	executionGolden := strings.Replace(golden, "dry_run\tfalse\n", "dry_run\tfalse\nexecution\thost\treason=no devcontainer\n", 1)
+	if got := string(withExecution.StageOutput()); got != executionGolden {
+		t.Errorf("the execution line must be the last header line and the only addition:\n got %q\nwant %q", got, executionGolden)
 	}
 	for _, want := range []string{"repository\tacme/widget", "commit_sha\tdeadbeef", "worktree_clean\ttrue", "dry_run\tfalse"} {
 		if !strings.Contains(first, want) {
