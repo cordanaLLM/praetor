@@ -302,7 +302,11 @@ docs register, and a reply to a person is full prose.
 Register compliance on human-typed surfaces (issues, PR bodies, review comments, commit
 bodies, ADRs, docs pages, changelog titles) is advisory, by the operator's own decision
 (ADR-0010, "Consequences"): nothing measures whether a pull-request body reads
-as social prose.
+as social prose. The docs and social registers have no lint of their own, and the command
+never reports that absence as a pass: `praetorctl caveman check --surface=docs <file>` reads
+the file, so a missing path fails as it does on every surface, and then exits non-zero with
+`surfaces.docs = docs has no Caveman verdict; input NOT checked` (see "Surfaces" below;
+`TestCavemanCheckSurfaceWithoutLint` in `cmd/standardsctl/caveman_test.go`).
 
 Mechanical: the block in AGENTS.md must match the manifest; AGENTS.md, every canonical
 persona under `.agents/agents/` and every canonical skill under `.agents/skills/` must pass
@@ -736,9 +740,12 @@ The implementation is `cavemanEstimateBase` in `cmd/standardsctl/caveman_baselin
 ### Surfaces
 
 `--surface=<name>` makes `check` resolve that surface from the repository at `--root`
-(default `.`) through the same loader `compile-context` uses. When the surface resolves to
-`docs` or `social`, the command returns an error naming the deciding row; a surface without
-a Caveman verdict never produces a green skip:
+(default `.`) through the same loader `compile-context` uses. The inputs are read first, so
+a missing or oversized input is an error whichever surface is named. When the surface
+resolves to `docs` or `social`, the command then returns an error naming the deciding row
+and stating that the input was not checked
+(`surfaces.docs = docs has no Caveman verdict; input NOT checked`); a surface without a
+Caveman verdict never produces a green skip:
 
 ```bash
 praetorctl caveman check --surface=mcp descriptions.md

@@ -1,0 +1,4 @@
+type: fixed
+title: "caveman check on a surface without a lint says its input was NOT checked, and tests pin that a missing path fails on every surface"
+issue: "#367"
+breaking: false

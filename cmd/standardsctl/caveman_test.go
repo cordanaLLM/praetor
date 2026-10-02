@@ -353,6 +353,44 @@ func TestCavemanCheckBoundary(t *testing.T) {
 	}
 }
 
+// TestCavemanCheckSurfaceWithoutLint pins #367: a surface the lint does not apply to is never a
+// pass. Positive: on the docs, forge and operator surfaces an existing file and standard input
+// both end in an error that names the deciding row and says the input was NOT checked, with no
+// report line. Negative: a missing path is the read error on every known surface, whether or
+// not the lint applies there, so the input is read before the surface is judged. Boundary:
+// input above the reader's bound is refused before the surface is judged too, and a surface
+// with a lint still prints its verdict.
+func TestCavemanCheckSurfaceWithoutLint(t *testing.T) {
+	dir := t.TempDir()
+	terse := writeFixtureFile(t, dir, "terse.md", cavemanTerse)
+	for surface, row := range map[string]string{
+		"docs":     "surfaces.docs = docs",
+		"forge":    "surfaces.forge = social",
+		"operator": "surfaces.operator = docs",
+	} {
+		for _, input := range []string{terse, "-"} {
+			out, err := runCavemanCLI(t, cavemanTerse, "check", "--surface="+surface, "--root="+dir, input)
+			if err == nil || out != "" || !strings.Contains(err.Error(), row+" has no Caveman verdict; input NOT checked") {
+				t.Errorf("--surface=%s %s: want the row and NOT checked, no report: err=%v\n%s", surface, input, err, out)
+			}
+		}
+	}
+	absent := filepath.Join(dir, "absent.md")
+	for _, surface := range []string{"forge", "docs", "agent", "operator", "context", "mcp", "hooks", "prompts", "ledger"} {
+		out, err := runCavemanCLI(t, "", "check", "--surface="+surface, "--root="+dir, absent)
+		if err == nil || out != "" || !strings.Contains(err.Error(), "absent.md") || strings.Contains(err.Error(), "Caveman verdict") {
+			t.Errorf("--surface=%s: a missing path must be the read error: err=%v\n%s", surface, err, out)
+		}
+	}
+	out, err := runCavemanCLI(t, strings.Repeat("a", 1<<20+1), "check", "--surface=docs", "--root="+dir, "-")
+	if err == nil || out != "" || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized input on a surface without a lint must be the read error: err=%v\n%s", err, out)
+	}
+	if out, err = runCavemanCLI(t, "", "check", "--surface=mcp", "--root="+dir, terse); err != nil || !strings.Contains(out, ": PASS") || strings.Contains(out, "NOT checked") {
+		t.Fatalf("a surface with a lint must print its verdict: err=%v\n%s", err, out)
+	}
+}
+
 // TestCavemanFloorNumbers runs F9 through the command: a dropped number fails with its line in
 // <before>, and a kept one passes.
 func TestCavemanFloorNumbers(t *testing.T) {
