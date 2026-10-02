@@ -340,6 +340,9 @@ so a finding in code unchanged since then is tagged as coming from a changed che
 ([A HISS rejection names the violations](adoption-verification.md#a-hiss-rejection-names-the-violations)).
 The tool takes no listing flag; `praetorctl baseline --verify --all-violations` prints every
 violation.
+The tool keys a finding as the CLI does (`hiss.ConvertToBaseline`): by rule, file and the function
+that holds it, never by its line, so a baselined function that only moved passes the tool's ratchet
+as well ([A baseline entry survives a line shift](adoption-verification.md#a-baseline-entry-survives-a-line-shift)).
 Both tools share the same authority implementations for artifact checks. When
 verifying branch protection rulesets, `standards_audit` consults
 `adopt.AuditBranchProtectionWithPolicy` with the effective policy it resolved
