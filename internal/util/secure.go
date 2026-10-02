@@ -303,31 +303,21 @@ func WithinRoot(root, p string) bool {
 }
 
 // resolveExistingAncestor resolves symlinks in the deepest existing ancestor of path and
-// re-attaches the not-yet-existing trailing segments.
+// re-attaches the not-yet-existing trailing segments. The walk is walkToExistingAncestor under
+// os.Lstat, so a symlink counts as existing whatever it points at.
 func resolveExistingAncestor(path string) (string, error) {
-	current := path
-	rest := ""
-	for i := 0; i < maxPathAncestorWalk; i++ {
-		if _, err := os.Lstat(current); err == nil {
-			resolved, evalErr := filepath.EvalSymlinks(current)
-			if evalErr != nil {
-				return "", fmt.Errorf("util: resolve symlinks for %q: %w", current, evalErr)
-			}
-			if rest == "" {
-				return resolved, nil
-			}
-			return filepath.Join(resolved, rest), nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", fmt.Errorf("util: inspect %q: %w", current, err)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", fmt.Errorf("util: no existing ancestor for %q", path)
-		}
-		rest = filepath.Join(filepath.Base(current), rest)
-		current = parent
+	walk, err := walkToExistingAncestor(path, os.Lstat)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("util: %q exceeds the %d level ancestor walk bound", path, maxPathAncestorWalk)
+	resolved, evalErr := filepath.EvalSymlinks(walk.existing)
+	if evalErr != nil {
+		return "", fmt.Errorf("util: resolve symlinks for %q: %w", walk.existing, evalErr)
+	}
+	if walk.rest == "" {
+		return resolved, nil
+	}
+	return filepath.Join(resolved, walk.rest), nil
 }
 
 // WriteFileSecure creates or truncates path and writes data. perm is a permission

@@ -125,7 +125,7 @@ func TestCavemanEstimateBaseNegative(t *testing.T) {
 		"stdin beside a file": {[]string{"estimate", "--base=main", kept, "-"}, "standard input has none"},
 		"on neither side":     {[]string{"estimate", "--base=main", filepath.Join(dir, "docs", "typo.md")}, "docs/typo.md is a file neither in the working tree nor at"},
 		"no markdown":         {[]string{"estimate", "--base=main", filepath.Join(dir, "empty")}, "holds no Markdown file in the working tree or at"},
-		"missing directory":   {[]string{"estimate", "--base=main", filepath.Join(dir, "absent", "x.md")}, "caveman estimate:"},
+		"missing directory":   {[]string{"estimate", "--base=main", filepath.Join(dir, "absent", "x.md")}, "absent/x.md is a file neither in the working tree nor at"},
 		"not a repository":    {[]string{"estimate", "--base=main", outside}, "caveman estimate: --base"},
 		"base is not text":    {[]string{"estimate", "--base=HEAD", filepath.Join(dir, "docs", "binary.md")}, "docs/binary.md at the base revision is not UTF-8 text"},
 	} {
@@ -135,6 +135,118 @@ func TestCavemanEstimateBaseNegative(t *testing.T) {
 				t.Fatalf("want an error holding %q and no report: err=%v\n%s", tc.want, err, out)
 			}
 		})
+	}
+}
+
+// deletedDirFixture commits a directory tree, a directory without Markdown and a directory of
+// one file on top of baselineFixture, then removes all of them from the working tree, so every
+// path below them exists at HEAD only.
+func deletedDirFixture(t *testing.T) string {
+	t.Helper()
+	dir, env := baselineFixture(t)
+	writeFixtureFile(t, dir, "docs/old/deep/y.md", "one two three\n")
+	writeFixtureFile(t, dir, "docs/old/n.txt", "plain text\n")
+	writeFixtureFile(t, dir, "docs/single/only.md", "one\n")
+	writeFixtureFile(t, dir, "assets/logo.txt", "no markdown\n")
+	writeFixtureFile(t, dir, "gone/a/b/c.md", "one two\n")
+	gitCommitAll(t, dir, env, "directories")
+	for _, rel := range []string{"docs/old", "docs/single", "assets", "gone"} {
+		removeBaselinePath(t, dir, rel)
+	}
+	return dir
+}
+
+// TestCavemanEstimateBaseDeletedDirectory pins the review finding on #373: a path whose
+// directory the working tree no longer holds is read from the base revision like any other
+// deleted file. Git used to be started in that missing directory, so naming such a file was a
+// "fork/exec git: no such file or directory" error instead of a worktree=absent row.
+func TestCavemanEstimateBaseDeletedDirectory(t *testing.T) {
+	dir := deletedDirFixture(t)
+	x := filepath.Join(dir, "docs", "old", "x.md")
+	xRow := "docs/old/x.md: bytes=4->0 (-4) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent\n"
+	yRow := "docs/old/deep/y.md: bytes=14->0 (-14) lines=1->0 (-1) tokens_est=3->0 (-3) worktree=absent\n"
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		// Named first, the revision is resolved in the nearest directory that still exists.
+		"file named first": {[]string{x}, xRow + "total: inputs=1 bytes=4->0 (-4) tokens_est=2->0 (-2) base_absent=0 worktree_absent=1\n"},
+		"file named after a kept one": {
+			[]string{filepath.Join(dir, "root.md"), x},
+			"root.md: bytes=15->15 (+0) lines=1->1 (+0) tokens_est=3->3 (+0)\n" + filepath.ToSlash(dir) + "/" + xRow +
+				"total: inputs=2 bytes=19->15 (-4) tokens_est=5->3 (-2) base_absent=0 worktree_absent=1\n",
+		},
+		// A named file is measured whatever its extension, as it is in the working tree.
+		"text file": {[]string{filepath.Join(dir, "docs", "old", "n.txt")}, "docs/old/n.txt: bytes=11->0 (-11) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent\n"},
+		// A deleted directory is its Markdown files at the base, in lexical order.
+		"directory": {
+			[]string{filepath.Join(dir, "docs", "old")},
+			yRow + filepath.ToSlash(dir) + "/" + xRow + "total: inputs=2 bytes=18->0 (-18) tokens_est=5->0 (-5) base_absent=0 worktree_absent=2\n",
+		},
+		"several levels gone": {[]string{filepath.Join(dir, "gone", "a", "b", "c.md")}, "gone/a/b/c.md: bytes=8->0 (-8) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent\n"},
+		"top directory gone":  {[]string{filepath.Join(dir, "gone")}, "gone/a/b/c.md: bytes=8->0 (-8) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent\ntotal: inputs=1 "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := runCavemanCLI(t, "", append([]string{"estimate", "--base=HEAD"}, tc.args...)...)
+			if err != nil || !strings.Contains(out, tc.want) || strings.Contains(out, "n.txt") != (name == "text file") {
+				t.Fatalf("want a report holding %q: err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+}
+
+// TestCavemanEstimateBaseDeletedDirectoryNegative: a path below a missing directory that the
+// base does not hold either stays an error that names the path, never a git start failure.
+func TestCavemanEstimateBaseDeletedDirectoryNegative(t *testing.T) {
+	dir := deletedDirFixture(t)
+	outside := filepath.Join(t.TempDir(), "gone", "plain.md")
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"typo in a deleted directory":    {[]string{filepath.Join(dir, "docs", "old", "typo.md")}, "docs/old/typo.md is a file neither in the working tree nor at"},
+		"typo after a kept file":         {[]string{filepath.Join(dir, "root.md"), filepath.Join(dir, "docs", "old", "typo.md")}, "docs/old/typo.md is a file neither in the working tree nor at"},
+		"directory that never existed":   {[]string{filepath.Join(dir, "absent", "x.md")}, "absent/x.md is a file neither in the working tree nor at"},
+		"path through a file":            {[]string{filepath.Join(dir, "docs", "kept.md", "x.md")}, "docs/kept.md/x.md is a file neither in the working tree nor at"},
+		"deleted directory, no text":     {[]string{filepath.Join(dir, "assets")}, "assets holds no Markdown file in the working tree or at"},
+		"deleted path, not a repository": {[]string{outside}, "caveman estimate: --base"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := runCavemanCLI(t, "", append([]string{"estimate", "--base=HEAD"}, tc.args...)...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "fork/exec") || out != "" {
+				t.Fatalf("want an error holding %q, no git start failure and no report: err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+}
+
+// TestCavemanEstimateBaseDeletedDirectoryBoundary covers the edges of the file-or-directory
+// answer the base listing gives for a path the working tree lacks.
+func TestCavemanEstimateBaseDeletedDirectoryBoundary(t *testing.T) {
+	dir := deletedDirFixture(t)
+	// A deleted directory of exactly one file is one listing entry, as a deleted file is; the
+	// row is the file below the directory, not the directory.
+	out, err := runCavemanCLI(t, "", "estimate", "--base=HEAD", filepath.Join(dir, "docs", "single"))
+	if err != nil || !strings.Contains(out, "docs/single/only.md: bytes=4->0 (-4) lines=1->0 (-1) tokens_est=1->0 (-1) worktree=absent\ntotal: inputs=1 ") {
+		t.Fatalf("directory of one file: err=%v\n%s", err, out)
+	}
+	// A directory replaced by a file of its name: the files it held are absent from the working
+	// tree on every host (POSIX answers ENOTDIR, Windows a missing path).
+	writeFixtureFile(t, dir, "docs/old", "a file now\n")
+	out, err = runCavemanCLI(t, "", "estimate", "--base=HEAD", filepath.Join(dir, "docs", "old", "x.md"))
+	if err != nil || !strings.Contains(out, "docs/old/x.md: bytes=4->0 (-4) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent\n") {
+		t.Fatalf("directory replaced by a file: err=%v\n%s", err, out)
+	}
+	// Relative spellings, the form `git diff --name-only | xargs` hands over: git starts in the
+	// nearest existing directory, here the repository root itself (".").
+	t.Chdir(dir)
+	out, err = runCavemanCLI(t, "", "estimate", "--base=HEAD", "gone/a/b/c.md", "root.md", "docs/single")
+	want := "gone/a/b/c.md: bytes=8->0 (-8) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent\n" +
+		"root.md: bytes=15->15 (+0) lines=1->1 (+0) tokens_est=3->3 (+0)\n" +
+		"docs/single/only.md: bytes=4->0 (-4) lines=1->0 (-1) tokens_est=1->0 (-1) worktree=absent\n" +
+		"total: inputs=3 bytes=27->15 (-12) tokens_est=6->3 (-3) base_absent=0 worktree_absent=2\n"
+	if err != nil || !strings.HasSuffix(out, want) {
+		t.Fatalf("relative paths: err=%v\n%s\nwant suffix:\n%s", err, out, want)
 	}
 }
 
