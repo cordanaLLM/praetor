@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -602,16 +603,45 @@ func TestMatchPattern_3D(t *testing.T) {
 }
 
 func TestAssignReviewers_Boundary_PathLimit(t *testing.T) {
-	paths := make([]string, MaxPathsLimit+10)
-	for i := range paths {
-		paths[i] = "internal/forge/pr.go"
+	codeowners := "internal/base/* @team-base\ninternal/limit/* @team-limit\ninternal/beyond/* @team-beyond\n"
+
+	// 1. Exactly at limit (MaxPathsLimit paths): the path at the boundary index
+	// MaxPathsLimit-1 must be evaluated and contribute its reviewer.
+	pathsAtLimit := make([]string, MaxPathsLimit)
+	for i := 0; i < MaxPathsLimit-1; i++ {
+		pathsAtLimit[i] = "internal/base/file.go"
 	}
-	assignment, err := AssignReviewers(paths, "internal/forge/* @team\n", nil)
+	pathsAtLimit[MaxPathsLimit-1] = "internal/limit/boundary.go"
+
+	atLimit, err := AssignReviewers(pathsAtLimit, codeowners, nil)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected error at limit: %v", err)
 	}
-	if len(assignment.HumanReviewers) != 1 || assignment.HumanReviewers[0] != "@team" {
-		t.Fatalf("unexpected reviewers: %v", assignment.HumanReviewers)
+	wantAtLimit := []string{"@team-base", "@team-limit"}
+	if !slices.Equal(atLimit.HumanReviewers, wantAtLimit) {
+		t.Fatalf("expected reviewers %v at limit, got %v", wantAtLimit, atLimit.HumanReviewers)
+	}
+
+	// 2. Beyond limit (MaxPathsLimit+10 paths): paths at and past MaxPathsLimit
+	// must be ignored and not change the reviewer assignment.
+	pathsBeyond := make([]string, MaxPathsLimit+10)
+	for i := 0; i < MaxPathsLimit; i++ {
+		pathsBeyond[i] = "internal/base/file.go"
+	}
+	for i := MaxPathsLimit; i < len(pathsBeyond); i++ {
+		pathsBeyond[i] = "internal/beyond/ignored.go"
+	}
+
+	beyond, err := AssignReviewers(pathsBeyond, codeowners, nil)
+	if err != nil {
+		t.Fatalf("unexpected error beyond limit: %v", err)
+	}
+	wantBeyond := []string{"@team-base"}
+	if !slices.Equal(beyond.HumanReviewers, wantBeyond) {
+		t.Fatalf("expected reviewers %v beyond limit, got %v", wantBeyond, beyond.HumanReviewers)
+	}
+	if slices.Contains(beyond.HumanReviewers, "@team-beyond") {
+		t.Fatalf("reviewer beyond limit was unexpectedly assigned: %v", beyond.HumanReviewers)
 	}
 }
 
@@ -1023,47 +1053,48 @@ func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing
 	tempDir := t.TempDir()
 
 	first := Discussion{
-		ID:           11,
-		Title:        "設計方針",
-		Status:       "approved",
-		ContextText:  "context",
-		DecisionText: "decision",
+		ID: 11, Title: "設計方針", Status: "approved",
+		ContextText: "context", DecisionText: "decision",
 	}
 	adr1, err := TranscribeDiscussionToADR(ctx, first, tempDir, tempDir)
-	if err != nil {
-		t.Fatalf("unexpected error transcribing a non-Latin title: %v", err)
-	}
-	if adr1.Slug == "" {
-		t.Fatalf("expected a non-empty fallback slug, got %+v", adr1)
+	if err != nil || adr1.Slug == "" {
+		t.Fatalf("unexpected error or empty slug: %v, %+v", err, adr1)
 	}
 
 	second := first
 	second.ID = 12
 	second.Title = "アーキテクチャ"
 	adr2, err := TranscribeDiscussionToADR(ctx, second, tempDir, tempDir)
-	if err != nil {
-		t.Fatalf("unexpected error transcribing the second non-Latin title: %v", err)
-	}
-	if adr2.Number != 2 {
-		t.Errorf("expected the slug-less record to participate in the numbering, got %d", adr2.Number)
-	}
-	if adr2.FilePath == adr1.FilePath {
-		t.Fatalf("the second ADR overwrote the first at %s", adr1.FilePath)
+	if err != nil || adr2.Number != 2 || adr2.FilePath == adr1.FilePath {
+		t.Fatalf("unexpected second adr: %+v, err=%v", adr2, err)
 	}
 
 	data, err := os.ReadFile(adr1.FilePath)
-	if err != nil {
-		t.Fatalf("read first ADR: %v", err)
-	}
-	if !strings.Contains(string(data), "設計方針") {
-		t.Errorf("the first ADR was overwritten: %s", string(data))
+	if err != nil || !strings.Contains(string(data), "設計方針") {
+		t.Fatalf("first ADR missing or overwritten: %v, %s", err, string(data))
 	}
 
-	// An existing record is immutable: a collision is an error, never a silent rewrite.
+	// 1. Reusing an existing discussion ID advances the sequence number without overwriting.
 	third := first
 	third.ID = 11
-	if _, err := TranscribeDiscussionToADR(ctx, third, tempDir, tempDir); err == nil {
-		t.Log("no collision possible because the sequence number advanced")
+	adr3, err := TranscribeDiscussionToADR(ctx, third, tempDir, tempDir)
+	if err != nil || adr3.Number != 3 || adr3.FilePath == adr1.FilePath {
+		t.Fatalf("expected non-overwriting ADR #3, got adr=%+v, err=%v", adr3, err)
+	}
+
+	// 2. An existing record is immutable: an actual path collision is an error, never a silent rewrite.
+	collisionPath := filepath.Join(tempDir, "0004-discussion-11.md")
+	if err := os.Mkdir(collisionPath, 0o750); err != nil {
+		t.Fatalf("failed to create existing collision path: %v", err)
+	}
+	fourth := first
+	fourth.ID = 11
+	_, err = TranscribeDiscussionToADR(ctx, fourth, tempDir, tempDir)
+	if err == nil {
+		t.Fatalf("expected collision error for %s, got nil", collisionPath)
+	}
+	if !strings.Contains(err.Error(), "already exists: an accepted record is immutable") {
+		t.Fatalf("expected collision immutability error, got: %v", err)
 	}
 }
 
