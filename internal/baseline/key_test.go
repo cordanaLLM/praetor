@@ -83,6 +83,12 @@ func TestEvaluateRatchet_Negative_NewAndRenamedFunctionsAreNew(t *testing.T) {
 	if res.Passed || len(res.NewViolations) != 1 || res.CurrentCount != res.PreviousCount {
 		t.Fatalf("a renamed function's finding must be new at an unchanged total: %+v", res)
 	}
+	// The attribution still explains it without a commit: the baseline records the same finding
+	// under the old name, so the plain re-record is the remedy (describe.go).
+	res.AttributeUntraced(b, renamed, "no commit")
+	if !slices.Equal(res.Attribution, []Attribution{AttributionMoved}) || !strings.Contains(res.Summary(), "under another key of the same file") {
+		t.Fatalf("the renamed function's finding must be attributed as recorded under another key: %v\n%s", res.Attribution, res.Summary())
+	}
 
 	touched := EvaluateRatchet(b, anchored(loop("a.go", 30, "fn:spin")), []string{"a.go"})
 	if touched.Passed || len(touched.TouchedCleanViolations) != 1 || !touched.TouchedBaselined[0] {

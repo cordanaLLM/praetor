@@ -195,7 +195,7 @@ func TestRatchetResultAttribute_Negative_ChangedCodeAndMovedFinding(t *testing.T
 		"(3 total infractions, 3 unbaselined (1 introduced, 1 from checks added or changed since the baseline, 1 recorded at another line), 0 in touched files):",
 		"[HISS-07] hooks/guard.py:50 - sys.exit ends the process from library code (recorded in the baseline at line 40)",
 		"[HISS-07] hooks/guard.py:58 - sys.exit ends the process from library code (check added or changed since the baseline)",
-		"1 of them the baseline records at another line of the same file",
+		"1 of them the baseline records under another key of the same file",
 	} {
 		if !strings.Contains(got, line) {
 			t.Errorf("Summary() missing %q:\n%s", line, got)
@@ -282,7 +282,8 @@ func TestRatchetResultAttribute_Positive_MovedFindingNeedsOnlyARerecord(t *testi
 	want := strings.Join([]string{
 		"HISS invariant violations the baseline records at other lines (1 total infractions, 1 moved, 0 in touched files):",
 		"  [HISS-07] a.py:12 - sys.exit ends the process from library code (recorded in the baseline at line 10)",
-		"  1 of them the baseline records at another line of the same file: lines above them were added or removed, " +
+		"  1 of them the baseline records under another key of the same file: an entry keyed by its line moved, " +
+			"or the function or line an entry is anchored to was renamed or edited, " +
 			"and the debt did not change; re-record the baseline with 'praetorctl baseline --record', which needs no --allow-increase for them",
 	}, "\n")
 	if got := res.Summary(); got != want {
