@@ -13,21 +13,30 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// maxCheckoutAttributeLines bounds the .gitattributes lines the remedy reads (HISS-02).
-const maxCheckoutAttributeLines = 4096
+const (
+	// maxCheckoutAttributeLines bounds the .gitattributes lines the remedy reads (HISS-02).
+	maxCheckoutAttributeLines = 4096
+	// maxRecheckoutCommands bounds the git commands the remedy names (HISS-02).
+	maxRecheckoutCommands = 8
+	// devContainerDeclineStep is the adoption step whose decline keeps the rule out of the block.
+	devContainerDeclineStep = "dev-container"
+)
 
 // devContainerCheckoutRemedy adds the remedy to a DevContainer verification failure that is a
 // checkout's line-ending conversion (devcontainer.ErrCheckoutLineEndings): the .gitattributes
-// rule that keeps the bundle LF (adopt.DevContainerAttributes), which adoption writes. A
-// .gitattributes at rootDir without the rule names it as missing; one that carries it says the
-// working tree predates the rule or another attribute source overrides it. Every other
-// failure, nil included, is returned unchanged.
-func devContainerCheckoutRemedy(ctx context.Context, rootDir string, err error) error {
+// rule that keeps the bundle's Dockerfile LF (adopt.DevContainerAttributes), and the git
+// commands that write the file again under it (recheckoutRemedy). A .gitattributes at rootDir
+// without the rule names it as missing and says who writes it: adoption, or the operator where
+// manifest declines the dev-container step, since adoption then leaves the rule out. One that
+// carries the rule says the working tree predates it or another attribute source overrides it.
+// Every other failure, nil included, is returned unchanged.
+func devContainerCheckoutRemedy(ctx context.Context, rootDir string, manifest *config.Manifest, err error) error {
 	if !errors.Is(err, devcontainer.ErrCheckoutLineEndings) {
 		return err
 	}
@@ -35,11 +44,30 @@ func devContainerCheckoutRemedy(ctx context.Context, rootDir string, err error) 
 	rule := strings.Join(rules, "; ")
 	if checkoutAttributesPresent(ctx, rootDir, rules) {
 		return fmt.Errorf("%w; .gitattributes carries %q, so this working tree was checked out before the rule or another "+
-			"attribute source overrides it (git check-attr text eol -- .devcontainer/Dockerfile.praetor): "+
-			"check the .devcontainer files out again", err, rule)
+			"attribute source overrides it (git check-attr text eol -- %s): %s",
+			err, rule, devcontainer.CheckoutPinnedFile, recheckoutRemedy())
 	}
-	return fmt.Errorf("%w; .gitattributes lacks %q: run 'praetorctl adopt', which writes the rule, commit .gitattributes "+
-		"and check the .devcontainer files out again", err, rule)
+	// A decline list that cannot be resolved is reported by the gate that reads it; the remedy
+	// then names adoption, which fails on the same list.
+	if declined, declineErr := adopt.ManifestArtifactDeclined(manifest, devContainerDeclineStep); declineErr == nil && declined {
+		return fmt.Errorf("%w; .gitattributes lacks %q, and adoption.decline lists %s, so 'praetorctl adopt' does not write it: "+
+			"add the rule to .gitattributes, commit it, then %s", err, rule, devContainerDeclineStep, recheckoutRemedy())
+	}
+	return fmt.Errorf("%w; .gitattributes lacks %q: run 'praetorctl adopt', which writes the rule, commit .gitattributes, "+
+		"then %s", err, rule, recheckoutRemedy())
+}
+
+// recheckoutRemedy names the git commands that write the pinned file again
+// (devcontainer.RecheckoutCommands) and why git checkout alone is not one of them: it skips a
+// file whose index entry is unchanged, which a converted file is.
+func recheckoutRemedy() string {
+	commands := devcontainer.RecheckoutCommands()
+	quoted := make([]string, 0, len(commands))
+	for index := 0; index < len(commands) && index < maxRecheckoutCommands; index++ {
+		quoted = append(quoted, "'git "+strings.Join(commands[index], " ")+"'")
+	}
+	return "write the file again with " + strings.Join(quoted, " and then ") +
+		" (git checkout alone leaves a file whose index entry is unchanged as it is)"
 }
 
 // checkoutAttributesPresent reports whether the .gitattributes at rootDir holds every rule of

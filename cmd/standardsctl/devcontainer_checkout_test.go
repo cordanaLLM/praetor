@@ -18,9 +18,16 @@ import (
 
 // A checkout with core.autocrlf=true converts Dockerfile.praetor, which verification compares
 // as raw bytes (#313). These tests pin that audit and devcontainer verify name the
-// .gitattributes rule as the remedy, missing or present, and leave every other failure alone.
+// .gitattributes rule as the remedy, missing or present, with the git commands that write the
+// file again, and leave every other failure alone.
 
-const devContainerRule = ".devcontainer/* text eol=lf"
+const (
+	devContainerRule = ".devcontainer/Dockerfile.praetor text eol=lf"
+	// recheckoutCommands is the part of the remedy an operator runs, spelled out: git checkout
+	// alone would leave the converted file as it is.
+	recheckoutCommands = "write the file again with 'git rm --cached --quiet -- .devcontainer/Dockerfile.praetor' and then " +
+		"'git checkout HEAD -- .devcontainer/Dockerfile.praetor' (git checkout alone leaves a file whose index entry is unchanged as it is)"
+)
 
 // convertedBundle generates a ready bundle and converts its Dockerfile to CRLF, as a checkout
 // with core.autocrlf=true does. It returns the manifest path, the config path and the root.
@@ -51,23 +58,61 @@ func verifyBundle(t *testing.T, manifest, output string) error {
 
 // Positive: a converted bundle in a repository without the rule fails naming the rule as
 // missing and adoption as what writes it; once .gitattributes carries the block adoption
-// writes, the same failure says the working tree predates the rule.
+// writes, the same failure says the working tree predates the rule. Both name the commands
+// that write the file again, and neither tells the operator to check the files out again,
+// which git answers by doing nothing.
 func TestDevContainerCheckoutRemedy_Positive(t *testing.T) {
 	manifest, output, root := convertedBundle(t)
 	err := verifyBundle(t, manifest, output)
 	if !errors.Is(err, devcontainer.ErrCheckoutLineEndings) {
 		t.Fatalf("a converted Dockerfile: %v", err)
 	}
-	for _, want := range []string{"only by line endings", `.gitattributes lacks "` + devContainerRule + `"`, "run 'praetorctl adopt'", "check the .devcontainer files out again"} {
+	for _, want := range []string{"only by line endings", `.gitattributes lacks "` + devContainerRule + `"`,
+		"run 'praetorctl adopt', which writes the rule, commit .gitattributes, then " + recheckoutCommands} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the remedy lacks %q: %v", want, err)
 		}
 	}
 	writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+adopt.ManagedGitAttributesBlock(adopt.ManagedAttributes(true, false)))
 	err = verifyBundle(t, manifest, output)
-	for _, want := range []string{`.gitattributes carries "` + devContainerRule + `"`, "checked out before the rule", "git check-attr text eol"} {
+	for _, want := range []string{`.gitattributes carries "` + devContainerRule + `"`, "checked out before the rule",
+		"git check-attr text eol -- .devcontainer/Dockerfile.praetor): " + recheckoutCommands} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("with the rule present the remedy lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "out again") {
+		t.Fatalf("the remedy names a checkout git skips: %v", err)
+	}
+}
+
+// Negative for the adoption remedy: a repository whose manifest declines dev-container gets no
+// rule from adoption, so devcontainer verify does not send the operator there; it says to add
+// the rule by hand. A decline of another step, and no decline, name adoption.
+func TestDevContainerCheckoutRemedy_Negative_DeclinedStepDoesNotNameAdoption(t *testing.T) {
+	manifest, output, _ := convertedBundle(t)
+	base, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for decline, adopts := range map[string]bool{"dev-container": false, "editors": true, "": true} {
+		text := string(base)
+		if decline != "" {
+			text += "adoption:\n  decline: [" + decline + "]\n"
+		}
+		if err := os.WriteFile(manifest, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := verifyBundle(t, manifest, output)
+		if !errors.Is(err, devcontainer.ErrCheckoutLineEndings) || !strings.Contains(err.Error(), recheckoutCommands) {
+			t.Fatalf("decline %q: %v", decline, err)
+		}
+		if named := strings.Contains(err.Error(), "run 'praetorctl adopt', which writes the rule"); named != adopts {
+			t.Fatalf("decline %q: names adoption = %v, want %v: %v", decline, named, adopts, err)
+		}
+		byHand := strings.Contains(err.Error(), "adoption.decline lists dev-container, so 'praetorctl adopt' does not write it: add the rule to .gitattributes, commit it, then ")
+		if byHand == adopts {
+			t.Fatalf("decline %q: names the rule to add by hand = %v: %v", decline, byHand, err)
 		}
 	}
 }
@@ -77,10 +122,10 @@ func TestDevContainerCheckoutRemedy_Positive(t *testing.T) {
 func TestDevContainerCheckoutRemedy_Negative(t *testing.T) {
 	root := t.TempDir()
 	plain := errors.New("bootstrap Dockerfile differs from its recorded inputs")
-	if got := devContainerCheckoutRemedy(t.Context(), root, plain); !errors.Is(got, plain) || got.Error() != plain.Error() {
+	if got := devContainerCheckoutRemedy(t.Context(), root, nil, plain); !errors.Is(got, plain) || got.Error() != plain.Error() {
 		t.Fatalf("an unrelated failure was rewritten: %v", got)
 	}
-	if got := devContainerCheckoutRemedy(t.Context(), root, nil); got != nil {
+	if got := devContainerCheckoutRemedy(t.Context(), root, nil, nil); got != nil {
 		t.Fatalf("no failure became %v", got)
 	}
 	manifest, output, _ := convertedBundle(t)
@@ -107,7 +152,7 @@ func TestDevContainerCheckoutRemedy_Boundary(t *testing.T) {
 		"CRLF file":      {"* text=auto\r\n" + devContainerRule + "\r\n", true},
 		"no final LF":    {"* text=auto\n" + devContainerRule, true},
 		"comment":        {"# " + devContainerRule + "\n", false},
-		"other pattern":  {".devcontainer/** text eol=lf\n", false},
+		"other pattern":  {".devcontainer/* text eol=lf\n", false},
 		"indented":       {"  " + devContainerRule + "\n", false},
 		"mixed endings":  {"* text=auto\r\n" + devContainerRule + "\n", false},
 		"empty file":     {"", false},
@@ -118,7 +163,7 @@ func TestDevContainerCheckoutRemedy_Boundary(t *testing.T) {
 		if test.attributes != "\x00absent" {
 			writeFixtureFile(t, root, ".gitattributes", test.attributes)
 		}
-		err := devContainerCheckoutRemedy(t.Context(), root, converted)
+		err := devContainerCheckoutRemedy(t.Context(), root, nil, converted)
 		if !errors.Is(err, devcontainer.ErrCheckoutLineEndings) {
 			t.Fatalf("%s: the remedy dropped the cause: %v", name, err)
 		}

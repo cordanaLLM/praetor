@@ -7,6 +7,7 @@ package devcontainer
 import (
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -49,11 +50,18 @@ func expectedOf(t *testing.T, path string) *DevContainer {
 	return actual
 }
 
-// Positive: the bundle declares the one rule that pins its directory to LF, the bundle as
-// written verifies, and a CRLF checkout of devcontainer.json alone still verifies.
+// Positive: the bundle declares the one rule that pins its Dockerfile to LF, and the commands
+// that write that file again drop its index entry before the checkout; the bundle as written
+// verifies, and a CRLF checkout of devcontainer.json alone still verifies, which is why no rule
+// names it.
 func TestCheckoutAttributes_Positive(t *testing.T) {
-	if got := Attributes(); !slices.Equal(got, []string{".devcontainer/* text eol=lf"}) {
+	if got := Attributes(); !slices.Equal(got, []string{".devcontainer/Dockerfile.praetor text eol=lf"}) {
 		t.Fatalf("Attributes() = %q", got)
+	}
+	commands := RecheckoutCommands()
+	if len(commands) != 2 || !slices.Equal(commands[0], []string{"rm", "--cached", "--quiet", "--", CheckoutPinnedFile}) ||
+		!slices.Equal(commands[1], []string{"checkout", "HEAD", "--", CheckoutPinnedFile}) {
+		t.Fatalf("RecheckoutCommands() = %q", commands)
 	}
 	path := readyBundleFixture(t)
 	expected := expectedOf(t, path)
@@ -82,6 +90,25 @@ func TestCheckoutAttributes_Negative(t *testing.T) {
 	err = Verify(t.Context(), path, expected)
 	if err == nil || errors.Is(err, ErrCheckoutLineEndings) || !strings.Contains(err.Error(), "bootstrap Dockerfile differs from its recorded inputs") {
 		t.Fatalf("an edited Dockerfile: %v", err)
+	}
+}
+
+// Negative for the rules' reach: every pattern is the literal path of a file the bundle writes,
+// so the block at the tail of .gitattributes cannot claim an operator's file beside the bundle.
+// A wildcard would make an image there text, over the repository's own binary rule.
+func TestCheckoutAttributes_Negative_NoRuleUsesAWildcard(t *testing.T) {
+	rules := Attributes()
+	if len(rules) == 0 {
+		t.Fatal("the bundle declares no rule")
+	}
+	for _, rule := range rules {
+		pattern, attributes, found := strings.Cut(rule, " ")
+		if !found || attributes != "text eol=lf" || strings.ContainsAny(pattern, `*?[\"`) {
+			t.Fatalf("rule %q is no literal path pinned to LF", rule)
+		}
+		if pattern != CheckoutPinnedFile || path.Dir(pattern) != ".devcontainer" || path.Base(pattern) != bootstrapDockerfile {
+			t.Fatalf("rule %q names another file than the bundle's Dockerfile", rule)
+		}
 	}
 }
 
