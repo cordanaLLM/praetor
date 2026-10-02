@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
 )
@@ -933,7 +934,8 @@ func Write(set *EditorConfigSet, rootDir string) error {
 // WriteWithReport resolves every generated file before the first mutation and
 // reports the outcome per file. An existing JSON file keeps its unrelated keys,
 // list entries and exact number literals while missing managed values are added;
-// invalid JSON, duplicate keys or a conflicting managed value abort the whole run
+// invalid JSON, duplicate keys, a conflicting managed value or a .vscode file whose
+// comments a merge would lose (CommentedJSONError) abort the whole run
 // without writing any file. An existing developer-owned file (IsPreservedEditorFile) is
 // preserved, and any other existing file that differs from its template is rewritten.
 func WriteWithReport(set *EditorConfigSet, rootDir string) (WriteReport, error) {
@@ -1042,9 +1044,14 @@ type Resolution struct {
 // false) and adoption (keepDrift true) share:
 //
 //   - a JSON file keeps its unrelated keys, list entries and number literals and gains the
-//     missing managed values (WriteMerged with the merged document, or WritePresent); invalid
-//     JSON, JSONC comments, duplicate keys and a conflicting managed value are an error, and
-//     ErrExistingJSONInvalid marks the ones where existing is not strict JSON;
+//     missing managed values (WriteMerged with the merged document, or WritePresent). It is
+//     read in the dialect its editor documents for the path (strictjson.DialectOf): JSON with
+//     Comments for the .vscode files VS Code reads that way, strict JSON for every other one.
+//     Invalid JSON, duplicate keys and a conflicting managed value are an error, and
+//     ErrExistingJSONInvalid marks the ones where existing is not a valid document. A JSONC
+//     file holding every managed value is WritePresent, comments and all; one that lacks a
+//     value and carries comments or trailing commas is refused with a *CommentedJSONError,
+//     because the merge rewrites the file and would lose them;
 //   - any other file equal to its template (matchesTemplate: a checkout's CRLF line endings
 //     count as equal) is WritePresent;
 //   - a developer-owned file (IsPreservedEditorFile) that differs is WritePreserved;
@@ -1053,7 +1060,7 @@ type Resolution struct {
 func ResolveExisting(file GeneratedFile, existing []byte, keepDrift bool) (Resolution, error) {
 	switch {
 	case isJSONEditorFile(file.Path):
-		merged, added, err := mergeJSONDocument(existing, []byte(file.Content))
+		merged, added, err := mergeJSONDocument(existing, []byte(file.Content), strictjson.DialectOf(file.Path))
 		if err != nil {
 			return Resolution{}, fmt.Errorf("cannot safely merge existing %s: %w", file.Path, err)
 		}
@@ -1111,7 +1118,9 @@ func Verify(set *EditorConfigSet, rootDir string) error {
 }
 
 // VerifyWithReport checks that every generated file exists in rootDir. A JSON file
-// must contain every managed value, with unrelated keys and list entries allowed;
+// must contain every managed value, with unrelated keys and list entries allowed, and
+// in a .vscode file VS Code reads as JSON with Comments (strictjson.DialectOf) comments
+// and trailing commas too;
 // any other file must match its template, a checkout's consistent CRLF line endings
 // allowed (matchesTemplate). A developer-owned file
 // (IsPreservedEditorFile) that differs from its template is preserved by Write, so it is
@@ -1151,7 +1160,7 @@ func verifyEditorFile(ctx context.Context, rootDir string, file GeneratedFile) (
 	}
 	switch {
 	case isJSONEditorFile(file.Path):
-		contains, err := jsonDocumentContains(existing, []byte(file.Content))
+		contains, err := jsonDocumentContains(existing, []byte(file.Content), strictjson.DialectOf(file.Path))
 		if err != nil {
 			return false, fmt.Errorf("cannot verify managed configuration in %s: %w", file.Path, err)
 		}

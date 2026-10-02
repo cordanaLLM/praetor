@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
 // The settings cases elsewhere in this package all reach the catalog through
@@ -72,13 +73,18 @@ func TestCatalog_Negative_EveryDeclaredValidatorJudgesItsShape(t *testing.T) {
 			"pre-commit:\n  jobs:\n    - run: cargo fmt --all --check\n    - name: clippy\n      run: cargo clippy\n",
 		},
 	}
-	// Rejected by both shapes: nothing, a container with no members, a non-mapping
-	// document, and JSON with comments, which neither consumer of these paths parses
-	// through this audit.
+	// Rejected by both shapes: nothing, a container with no members and a non-mapping
+	// document. For JSON also what no dialect accepts: a member name repeated in one object, a
+	// block comment nothing closes and a document holding comments alone.
 	rejected := map[settingShape][]string{
-		shapeJSON: {"", "{}", "[]", "null", "{ // operator note\n\"a\": 1}", "{\"a\": 1,}", "a: 1"},
+		shapeJSON: {"", "{}", "[]", "null", "a: 1", "{\"a\": 1, \"a\": 2}", "{\"a\": 1 /* open }", "// {\"a\": 1}\n", "{ // only a comment\n}"},
 		shapeYAML: {"", "{}", "just a scalar", "- a\n- b\n", "pre-commit: [unterminated\n"},
 	}
+	// JSON with Comments is a valid document exactly where the consumer of the path documents
+	// it (strictjson.DialectOf): VS Code for .vscode/settings.json. Every other JSON setting
+	// stays strict, so a validator wired to the wrong dialect fails here in either direction.
+	jsonc := []string{"{ // operator note\n\"a\": 1}", "{/* operator note */\"a\": 1}", "{\"a\": 1,}", "{\"a\": \"// data\", /* note */ \"b\": [1,],}"}
+	dialects := map[strictjson.Dialect]int{}
 
 	for _, flv := range flavor.List() {
 		for _, s := range flv.RequiredSettings() {
@@ -98,7 +104,50 @@ func TestCatalog_Negative_EveryDeclaredValidatorJudgesItsShape(t *testing.T) {
 						flv.Name(), s.Path, body)
 				}
 			}
+			if shape != shapeJSON {
+				continue
+			}
+			dialect := strictjson.DialectOf(s.Path)
+			dialects[dialect]++
+			for _, body := range jsonc {
+				if got, want := s.Validator([]byte(body)), dialect == strictjson.JSONC; got != want {
+					t.Errorf("%s %s is read as %v: validator returned %v for %q, want %v",
+						flv.Name(), s.Path, dialect, got, body, want)
+				}
+			}
 		}
+	}
+	if dialects[strictjson.JSONC] != 8 || dialects[strictjson.StrictJSON] == 0 {
+		t.Errorf("the sweep judged %d JSONC and %d strict JSON settings, want the 8 .vscode/settings.json entries and at least one strict one",
+			dialects[strictjson.JSONC], dialects[strictjson.StrictJSON])
+	}
+}
+
+// TestCatalog_Negative_JSONTemplatesStayStrict is the template half of the dialect line: a
+// template the catalog validates as a JSON object is at a path nothing documents as JSONC, and
+// its validator refuses a comment and a trailing comma.
+func TestCatalog_Negative_JSONTemplatesStayStrict(t *testing.T) {
+	checked := 0
+	for _, flv := range flavor.List() {
+		for _, tmpl := range flv.RequiredTemplates() {
+			// tsconfig.json is validated as code, not as an object (carriesCode accepts any
+			// text, an array included): tsc reads it with comments.
+			if shapeOf(tmpl.Path) != shapeJSON || tmpl.Validator == nil || tmpl.Validator([]byte(`["a"]`)) {
+				continue
+			}
+			checked++
+			if dialect := strictjson.DialectOf(tmpl.Path); dialect != strictjson.StrictJSON {
+				t.Errorf("%s %s is read as %v, want strict JSON", flv.Name(), tmpl.Path, dialect)
+			}
+			for _, body := range []string{"{ // note\n\"a\": 1}", "{/* note */\"a\": 1}", "{\"a\": 1,}", "{\"a\": 1, \"a\": 2}"} {
+				if tmpl.Validator([]byte(body)) {
+					t.Errorf("%s %s: strict JSON template accepted %q", flv.Name(), tmpl.Path, body)
+				}
+			}
+		}
+	}
+	if checked < 2 {
+		t.Fatalf("the sweep inspected %d JSON object templates, fewer than the 2 the catalog declares (.gosec.json, .paperclip/harness.json)", checked)
 	}
 }
 

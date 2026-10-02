@@ -147,9 +147,16 @@ same commit therefore scores the same on every machine.
   and for `rust-systems`, which describes it as clippy and rustfmt enforcement, its `pre-commit`
   run lines must call `cargo fmt` and `cargo clippy`
   ([`internal/flavor/lefthook_setting_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/lefthook_setting_test.go));
-  `.github/rulesets/main.json` and `.vscode/settings.json` must parse as non-empty JSON objects
-  (strict JSON — comments and trailing commas are rejected, the same line
-  [`internal/clientsetup`](https://github.com/cordanaLLM/praetor/blob/main/internal/clientsetup/plan.go) draws for client configuration). A
+  `.github/rulesets/main.json` and `.vscode/settings.json` must parse as non-empty JSON objects.
+  The ruleset is strict JSON: comments and trailing commas are rejected, the same line
+  [`internal/clientsetup`](https://github.com/cordanaLLM/praetor/blob/main/internal/clientsetup/plan.go) draws for client configuration.
+  `.vscode/settings.json` is JSON with Comments, the format
+  [VS Code documents for it](https://code.visualstudio.com/docs/languages/json): `//` and
+  `/* */` comments and a trailing comma are accepted, so a commented settings file counts as valid
+  (`DialectOf` in
+  [`internal/strictjson/dialect.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/strictjson/dialect.go);
+  [`internal/flavor/settings_jsonc_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/settings_jsonc_test.go)).
+  In either format a member name repeated in one object is invalid. A
   file that is present but does not parse is reported under **Missing or Invalid Settings** and
   costs its share of the score: it configures no more than a file that is not there. Settings with
   no checkable shape are satisfied by presence, which is all that can be claimed about them.
