@@ -514,6 +514,26 @@ func TestCavemanFloorPositive(t *testing.T) {
 	}
 }
 
+// TestCavemanFloorANSIEscapes pins #713: ANSI escape sequence parameters are not counted as
+// numbers, so a rewrite removing colour codes passes the clarity floor. A real number lost
+// beside an escape sequence fails.
+func TestCavemanFloorANSIEscapes(t *testing.T) {
+	dir := t.TempDir()
+	before := writeFixtureFile(t, dir, "before.md", "a \033[31mMUST\033[0m b\n")
+	after := writeFixtureFile(t, dir, "after.md", "a MUST b\n")
+	out, err := runCavemanCLI(t, "", "floor", before, after)
+	if err != nil || !strings.Contains(out, "after.md: PASS findings=0") {
+		t.Fatalf("issue #713 reproduction files must pass: err=%v\n%s", err, out)
+	}
+
+	lossyBefore := writeFixtureFile(t, dir, "lossy_before.md", "a \033[31mred 7\033[0m b\n")
+	lossyAfter := writeFixtureFile(t, dir, "lossy_after.md", "a red b\n")
+	out, err = runCavemanCLI(t, "", "floor", lossyBefore, lossyAfter)
+	if err == nil || !strings.Contains(out, "lossy_before.md:1 F9 number-lost: 7") {
+		t.Fatalf("real number lost beside escape must fail: err=%v\n%s", err, out)
+	}
+}
+
 func TestCavemanFloorNegative(t *testing.T) {
 	dir := t.TempDir()
 	before := writeFixtureFile(t, dir, "before.md", floorBefore)
