@@ -33,6 +33,8 @@ var catalogValuesChangedSinceBUG782 = map[string]bool{
 	"facets/api-public.yaml": true,
 	// The Node.js DevContainer feature moved from node:1 to node:2 in every catalog file that
 	// selects it, so a repository declaring several of them still resolves one node feature.
+	// #663: pages-site and web-package then took the facet's option, version "24", because one
+	// reference with different options does not resolve either.
 	"facets/tooling-vscode-extension.yaml": true,
 	"pages-site.yaml":                      true,
 	"web-package.yaml":                     true,
