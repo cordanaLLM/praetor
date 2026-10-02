@@ -96,3 +96,18 @@ account `renovate[bot]` opened it. Each of these jobs leads its condition with
   up-to-date branches.
 - `automerge: false` holds for every rule. A skipped check reports success, so an automerging
   rule could merge an update that nothing verified.
+
+Some updates need a step Renovate cannot make, and the takeover pull request fails CI until it
+is made:
+
+- The `reviewed devcontainer images` group moves the reviewed pin in
+  `internal/devcontainer/bootstrap.go` and the `FROM` line of `docker/dev/Dockerfile`, never the
+  generated bundle. Run `praetorctl devcontainer bump` on the takeover branch and commit what it
+  writes: it records the replaced image in `internal/devcontainer/prior-images.json` and
+  regenerates and verifies `.devcontainer/`
+  ([moving a reviewed default image](devcontainer-bootstrap.md#moving-a-reviewed-default-image)).
+- A DevContainer feature update moves the catalog under `.config/archetypes/`; re-pin
+  `.standards.lock` and regenerate the bundle
+  ([archetype authoring](archetype-authoring.md)).
+- The documentation and API gate action groups need the outgoing workflow text recorded
+  ([documentation governance](documentation-governance.md)).
