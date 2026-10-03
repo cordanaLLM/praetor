@@ -108,10 +108,26 @@ func copyPolicyTemplate(t *testing.T, template *policyTemplate) *PublicLoopRepor
 	if err := json.Unmarshal([]byte(rebased), &report); err != nil {
 		t.Fatal(err)
 	}
+	// A path the loop spelled differently from the template root would keep naming the
+	// template, and a test changing that checkout would change every later copy.
+	within := evidence + string(filepath.Separator)
+	for _, path := range append([]string{report.RunDir}, reportCheckouts(&report)...) {
+		if !strings.HasPrefix(path, within) {
+			t.Fatalf("report copy names %s outside its copy %s", path, evidence)
+		}
+	}
 	if err := restoreHiddenPolicies(&report, template.report); err != nil {
 		t.Fatal(err)
 	}
 	return &report
+}
+
+func reportCheckouts(report *PublicLoopReport) []string {
+	checkouts := make([]string, 0, len(report.Results))
+	for i := range report.Results {
+		checkouts = append(checkouts, report.Results[i].Checkout)
+	}
+	return checkouts
 }
 
 // restoreHiddenPolicies copies the effective policies' manifest and catalog artifacts, which
@@ -179,9 +195,8 @@ func copyFixtureTree(t *testing.T, src, dst string) {
 // confined to its own test directory, and each copy is the exact tree the loop verified (its
 // snapshot digest equals the last attempt's), modes included.
 func TestAdoptedPolicyFixtureCopiesAreIndependent(t *testing.T) {
-	first := copyPolicyTemplate(t, sharedPolicyTemplate(t, 35, 40))
-	second := copyPolicyTemplate(t, sharedPolicyTemplate(t, 35, 40))
-	firstAnchor := publicPolicyAnchor{Policy: first.Results[0].Plan.EffectivePolicy, Scan: first.Results[0].OriginalScan}
+	first, firstAnchor := adoptedPolicyFixture(t, 35, 40)
+	second, _ := adoptedPolicyFixture(t, 35, 40)
 	a, b := first.Results[0], second.Results[0]
 	if a.Checkout == b.Checkout || !strings.HasPrefix(a.Checkout, first.Options.ArtifactDir) || !strings.HasPrefix(first.RunDir, first.Options.ArtifactDir) {
 		t.Fatalf("copies share or escape their evidence directory: %s, %s (%s)", a.Checkout, b.Checkout, first.Options.ArtifactDir)

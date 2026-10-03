@@ -18,17 +18,13 @@ func publicPolicyFunction(lines int) string {
 		strings.Repeat(" value++\n", lines-4) + " return value\n}\n"
 }
 
+// adoptedPolicyFixture returns a verified public-loop report for a fixture whose manifest sets
+// max_func_loc to limit and whose one function spans lines, with the anchor its checks run
+// against. The loop runs once per argument pair and package run (sharedPolicyTemplate); every
+// caller gets its own copy of the retained checkout and of the report, so it may change either.
 func adoptedPolicyFixture(t *testing.T, limit, lines int) (*PublicLoopReport, publicPolicyAnchor) {
 	t.Helper()
-	manifest := fmt.Sprintf("version: 1\nrepository:\n  owner: example\n  name: fixture\nprofiles: [framework]\noverrides:\n  complexity:\n    max_func_loc: %d\n", limit)
-	opts, _ := publicLoopFixture(t, map[string]string{
-		"fixture.go": publicPolicyFunction(lines), ".standards.yaml": manifest,
-	})
-	opts.Apply = true
-	report, err := RunPublicLoop(t.Context(), opts)
-	if err != nil || !report.Verified {
-		t.Fatalf("policy adoption failed: %v (%+v)", err, report)
-	}
+	report := copyPolicyTemplate(t, sharedPolicyTemplate(t, limit, lines))
 	item := report.Results[0]
 	return report, publicPolicyAnchor{Policy: item.Plan.EffectivePolicy, Scan: item.OriginalScan}
 }
