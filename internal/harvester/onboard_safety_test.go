@@ -2,9 +2,6 @@ package harvester
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -87,16 +84,7 @@ func verifiedOnboardFixture(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	mustWriteFile(t, filepath.Join(repo, ".standards.yaml"), "version: 1\nprofiles: [framework]\n")
-	digest := sha256.Sum256([]byte(onboardFixtureArchetype))
-	pin := "sha256:" + hex.EncodeToString(digest[:])
-	aggregate := sha256.Sum256([]byte("profile:framework=" + pin + "\n"))
-	lock := map[string]any{"version": 1, "pinned_version": "v1.2.3", "digest": "sha256:" + hex.EncodeToString(aggregate[:]),
-		"profiles": []map[string]string{{"id": "framework", "version": "v1.2.3", "digest": pin}}}
-	data, err := json.Marshal(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustWriteFile(t, filepath.Join(repo, ".standards.lock"), string(data))
+	testsupport.WritePinnedLock(t, repo, "framework", onboardFixtureArchetype)
 	return repo
 }
 

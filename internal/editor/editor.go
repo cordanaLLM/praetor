@@ -22,6 +22,11 @@ const (
 	maxFilesToGenerate = 50
 	maxLoopBound       = 1000
 	defaultIOTimeout   = 5 * time.Second
+	// editorRunTimeout bounds a whole write or verification run that has no caller context.
+	// It allows one defaultIOTimeout for each operation a run can make (an observation and a
+	// write per file), so it never expires before the per-operation budgets newEditorIOContext
+	// derives from it.
+	editorRunTimeout = 2 * maxFilesToGenerate * defaultIOTimeout
 )
 
 // Supported editor identifiers.
@@ -947,11 +952,40 @@ func WriteWithReport(set *EditorConfigSet, rootDir string) (WriteReport, error) 
 		rootDir = "."
 	}
 
-	pending, err := prepareEditorWrites(set, rootDir)
+	ctx, cancel := context.WithTimeout(context.Background(), editorRunTimeout)
+	defer cancel()
+	pending, err := prepareEditorWrites(ctx, set, newEditorIOContext, workspaceObserver(rootDir))
 	if err != nil {
 		return report, err
 	}
-	return publishPreparedEditorFiles(pending, newEditorIOContext, writeSingleFileWithContext)
+	return publishPreparedEditorFiles(ctx, pending, newEditorIOContext, writeSingleFileWithContext)
+}
+
+// WriteWithReportIn is WriteWithReport under the caller's context, with root as the
+// confinement boundary: every file is resolved by the same rule before the first mutation,
+// so a refused file (CommentedJSONError, invalid JSON, a conflicting managed value) aborts
+// the run with no file written. Each file is observed through contextopt.ObserveSnapshotIn
+// and written through contextopt.WriteSnapshotIn, so a symlinked directory or file below
+// root is refused rather than followed. Each operation gets its own defaultIOTimeout budget
+// derived from ctx. Onboarding writes editor files through it (#717).
+func WriteWithReportIn(ctx context.Context, set *EditorConfigSet, root string) (WriteReport, error) {
+	report := WriteReport{Files: []WriteResult{}}
+	if ctx == nil {
+		return report, errors.New("editor write requires a context")
+	}
+	if err := validateEditorFiles(set); err != nil {
+		return report, err
+	}
+	if root == "" {
+		root = "."
+	}
+	pending, err := prepareEditorWrites(ctx, set, newEditorIOContext, confinedObserver(root))
+	if err != nil {
+		return report, err
+	}
+	return publishPreparedEditorFiles(ctx, pending, newEditorIOContext, func(ctx context.Context, rel, content string) error {
+		return contextopt.WriteSnapshotIn(ctx, root, rel, []byte(content), util.TrackedFilePerm)
+	})
 }
 
 type pendingEditorWrite struct {
@@ -961,24 +995,57 @@ type pendingEditorWrite struct {
 	result  WriteResult
 }
 
-type editorIOContextFactory func() (context.Context, context.CancelFunc)
+// editorIOContextFactory derives the context of one bounded file operation from its parent.
+type editorIOContextFactory func(parent context.Context) (context.Context, context.CancelFunc)
 
 type editorFileWriter func(context.Context, string, string) error
+
+// editorObserver reads what a generated file's path holds before anything is written. It
+// returns the path the file's write targets, the bytes found there and whether the file
+// exists; an absent file is (target, nil, false, nil).
+type editorObserver func(ctx context.Context, file GeneratedFile) (target string, existing []byte, exists bool, err error)
+
+// workspaceObserver reads below rootDir as WriteWithReport always has: a path that holds no
+// regular file is absent.
+func workspaceObserver(rootDir string) editorObserver {
+	return func(ctx context.Context, file GeneratedFile) (string, []byte, bool, error) {
+		target := filepath.Join(rootDir, file.Path)
+		if !fileExists(target) {
+			return target, nil, false, nil
+		}
+		existing, err := readSingleFileWithContext(ctx, target)
+		return target, existing, true, err
+	}
+}
+
+// confinedObserver reads below root through contextopt.ObserveSnapshotIn, which refuses the
+// files contextopt.WriteSnapshotIn refuses to replace, so a refusal surfaces before the first
+// write. The target is the host-separated relative path WriteSnapshotIn takes.
+func confinedObserver(root string) editorObserver {
+	return func(ctx context.Context, file GeneratedFile) (string, []byte, bool, error) {
+		rel := filepath.FromSlash(file.Path)
+		existing, exists, err := contextopt.ObserveSnapshotIn(ctx, root, rel)
+		return rel, existing, exists, err
+	}
+}
 
 // newEditorIOContext gives each bounded file operation its own progress budget. A single
 // deadline shared by the whole generated set made the last file depend on cumulative host
 // latency: a hosted Windows run exhausted five seconds after several successful durable
 // writes. maxFilesToGenerate still bounds the total number of independent operations.
-func newEditorIOContext() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), defaultIOTimeout)
+func newEditorIOContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, defaultIOTimeout)
 }
 
-func prepareEditorWrites(set *EditorConfigSet, rootDir string) ([]pendingEditorWrite, error) {
+// prepareEditorWrites observes and resolves every file in set before anything is written,
+// giving each observation its own context, derived from parent by newContext.
+func prepareEditorWrites(parent context.Context, set *EditorConfigSet, newContext editorIOContextFactory, observe editorObserver) ([]pendingEditorWrite, error) {
 	pending := make([]pendingEditorWrite, 0, len(set.Files))
 	for _, file := range set.Files {
-		ctx, cancel := newEditorIOContext()
-		write, err := prepareEditorWrite(ctx, file, filepath.Join(rootDir, file.Path))
+		ctx, cancel := newContext(parent)
+		target, existing, exists, observeErr := observe(ctx, file)
 		cancel()
+		write, err := prepareEditorWrite(file, target, existing, exists, observeErr)
 		if err != nil {
 			return nil, err
 		}
@@ -987,11 +1054,13 @@ func prepareEditorWrites(set *EditorConfigSet, rootDir string) ([]pendingEditorW
 	return pending, nil
 }
 
-func publishPreparedEditorFiles(pending []pendingEditorWrite, newContext editorIOContextFactory, writer editorFileWriter) (WriteReport, error) {
+// publishPreparedEditorFiles writes every pending file that needs it, each under its own
+// context derived from parent by newContext, and reports every outcome in order.
+func publishPreparedEditorFiles(parent context.Context, pending []pendingEditorWrite, newContext editorIOContextFactory, writer editorFileWriter) (WriteReport, error) {
 	report := WriteReport{Files: make([]WriteResult, 0, len(pending))}
 	for _, write := range pending {
 		if write.write {
-			ctx, cancel := newContext()
+			ctx, cancel := newContext(parent)
 			err := writer(ctx, write.path, write.content)
 			cancel()
 			if err != nil {
@@ -1003,20 +1072,21 @@ func publishPreparedEditorFiles(pending []pendingEditorWrite, newContext editorI
 	return report, nil
 }
 
-func prepareEditorWrite(ctx context.Context, file GeneratedFile, fullPath string) (pendingEditorWrite, error) {
-	write := pendingEditorWrite{path: fullPath, content: file.Content, write: true,
+// prepareEditorWrite decides what becomes of file from what an editorObserver found at
+// target: an absent file is created from its template, and an existing one is resolved by
+// ResolveExisting without keeping drift.
+func prepareEditorWrite(file GeneratedFile, target string, existing []byte, exists bool, observeErr error) (pendingEditorWrite, error) {
+	write := pendingEditorWrite{path: target, content: file.Content, write: true,
 		result: WriteResult{Path: file.Path, Editor: file.Editor, Outcome: WriteCreated}}
-	if !fileExists(fullPath) {
+	switch {
+	case observeErr != nil && IsPreservedEditorFile(file.Path):
+		// Preserved files are never replaced, so an unreadable one is left as is.
+		write.write, write.result.Outcome = false, WritePreserved
 		return write, nil
-	}
-	existing, err := readSingleFileWithContext(ctx, fullPath)
-	if err != nil {
-		if IsPreservedEditorFile(file.Path) {
-			// Preserved files are never replaced, so an unreadable one is left as is.
-			write.write, write.result.Outcome = false, WritePreserved
-			return write, nil
-		}
-		return write, fmt.Errorf("read existing %s: %w", file.Path, err)
+	case observeErr != nil:
+		return write, fmt.Errorf("read existing %s: %w", file.Path, observeErr)
+	case !exists:
+		return write, nil
 	}
 	resolution, err := ResolveExisting(file, existing, false)
 	if err != nil {
@@ -1134,10 +1204,12 @@ func VerifyWithReport(set *EditorConfigSet, rootDir string) (VerificationReport,
 		rootDir = "."
 	}
 
+	run, cancelRun := context.WithTimeout(context.Background(), editorRunTimeout)
+	defer cancelRun()
 	limit := len(set.Files)
 	for i := 0; i < limit && i < maxFilesToGenerate; i++ {
 		f := set.Files[i]
-		ctx, cancel := newEditorIOContext()
+		ctx, cancel := newEditorIOContext(run)
 		verified, err := verifyEditorFile(ctx, rootDir, f)
 		cancel()
 		if err != nil {

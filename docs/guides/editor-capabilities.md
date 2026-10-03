@@ -317,7 +317,7 @@ the flavor audit applies the same rule to `.vscode/settings.json`
   reports it `PRESENT` and leaves its bytes alone, and `editors verify` passes it.
 - **A commented file that lacks a managed value is never rewritten.** A merge decodes
   the file and writes it again, which would delete every comment. `editors generate`
-  stops before it writes any file with
+  and onboarding stop before they write any editor file with
   `cannot safely merge existing <path>: it carries comments or trailing commas, which a merge would lose because it rewrites the file`,
   followed by the JSON Pointer of each managed value the file lacks. Add those values
   by hand, or remove the comments and trailing commas and generate again.
@@ -397,11 +397,22 @@ How a kept file stops warning depends on what it is:
   way. Set the value the warning names to the managed one, then re-run adoption with
   `--force`; or delete the file and re-run adoption.
 
-Onboarding
-(`internal/harvester/onboard.go`) skips every existing developer-owned file through
-the same `IsPreservedEditorFile`.
+Onboarding (`praetorctl harvest onboard`, `writeOnboardEditors` in
+`internal/harvester/onboard.go`) applies the `editors generate` rule itself:
+`editor.WriteWithReportIn` is `WriteWithReport` under the caller's context, confined to
+the repository so that a link below it is refused rather than followed. An existing
+JSON file keeps every key and gains the missing managed values, a developer-owned file
+is preserved, and a commented `.vscode` file that lacks managed values, like any other
+file the rule refuses, fails onboarding with the `cannot safely merge existing <path>`
+error before any editor file is written. The run prints each file's outcome
+(`CREATED`, `MERGED`, `PRESENT`, `REWRITTEN` or `PRESERVED`) as `editors generate`
+prints it, and its plan lists them under `editor_files`; a dry run writes and lists
+nothing. Before #717 onboarding replaced every existing editor file that was not
+developer-owned, dropping the repository's own keys and comments.
 
 Tests: `internal/adopt/editor_files_test.go`, `internal/adopt/editor_jsonc_test.go`,
-`internal/editor/resolve_existing_test.go` and
+`internal/editor/resolve_existing_test.go`, `internal/editor/write_in_test.go`,
+`internal/harvester/onboard_editor_merge_test.go`,
 `TestOnboardRepository_Boundary_KeepsDeveloperOwnedNvimLua` in
-`internal/harvester/onboard_selection_test.go`.
+`internal/harvester/onboard_selection_test.go` and
+`cmd/standardsctl/harvest_onboard_editors_test.go`.

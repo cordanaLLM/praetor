@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -339,6 +340,10 @@ func runHarvestOnboard(ctx context.Context, args []string) error {
 		fmt.Printf("\n[TARGET] %s (Archetype: %s)\n", plan.RepoPath, plan.Archetype)
 		for _, action := range plan.Actions {
 			fmt.Printf("  - %s\n", action)
+		}
+		// Each editor file's outcome is printed as `editors generate` prints it.
+		if len(plan.EditorFiles) > 0 {
+			printPreservedEditorFiles(reportEditorFiles(editor.WriteReport{Files: plan.EditorFiles}))
 		}
 		if line := onboardLockLine(plan.LockStatus); line != "" {
 			fmt.Println(line)
