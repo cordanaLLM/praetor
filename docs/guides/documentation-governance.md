@@ -261,6 +261,8 @@ letter or number, so wildcards alone (`**`, `*/**`) cannot stand for every file.
 The gate also refuses, naming the glob and the reason, every shape it does not
 support rather than matching it differently:
 
+<!-- praetor:docs-references:off the list shows illustrative globs and the paths micromatch matched with them; no repository carries them -->
+
 - extglobs and `( | )` groups, POSIX classes such as `[[:alpha:]]`, brace
   ranges such as `{1..3}`, nested brace lists, and `**` inside a segment
   (`docs/**.md`);
@@ -278,6 +280,8 @@ support rather than matching it differently:
   outside one, so `a{x,.*}` did not match `a.`, though `a.*` did;
 - an unmatched bracket or brace, a brace list without a comma, and a brace
   alternative that leaves an empty segment or wildcards alone.
+
+<!-- praetor:docs-references:on -->
 
 Exclusions apply after the built-in style exclusions and before the style rules
 run. They narrow the style run only: the private-link rule still reads every
