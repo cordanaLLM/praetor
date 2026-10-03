@@ -419,9 +419,7 @@ repository, so a link below it is refused rather than followed:
   under `editor_files`; a dry run lists none.
 
 Before #717 onboarding replaced every existing editor file that was not
-developer-owned, dropping the repository's own keys and comments, and it resolved
-editor files last, so a refusal left a half-onboarded repository that
-`harvest onboard --all-missing` then skipped.
+developer-owned, dropping the repository's own keys and comments.
 
 Tests: `internal/adopt/editor_files_test.go`, `internal/adopt/editor_jsonc_test.go`,
 `internal/editor/resolve_existing_test.go`, `internal/editor/write_in_test.go`,

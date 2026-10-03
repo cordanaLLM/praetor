@@ -259,7 +259,8 @@ func writeCompiledHarness(ctx context.Context, repoPath, agentsPath string, clie
 // error naming it. Onboarding used to replace every existing editor file that was not
 // developer-owned, dropping the repository's own keys and comments (#717).
 //
-// It runs before the scaffold is written. The scaffold adds YAML, Markdown and JSON files, and
+// It runs before the scaffold is written. The scaffold adds configuration and agent context
+// (YAML, Markdown, JSON and the compiled vendor files such as .mdc and .windsurfrules), and
 // the synthesis derives editor content only from Go sources, a language server binary and a
 // Makefile verify-all target, none of which the scaffold writes; so the set resolved here is
 // the one the scaffolded repository synthesizes, which
