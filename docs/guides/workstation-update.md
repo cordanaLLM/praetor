@@ -166,11 +166,20 @@ stamped build matches when:
 - it is a clean build and no non-test `.go` file, `go.mod` or `go.sum` differs between its
   revision and the working tree, committed or untracked; or
 - it was built from a modified tree (`-dirty`), its executable lies inside the checkout (for
-  example `bin/praetorctl`), and every changed input is older than the executable.
+  example `bin/praetorctl`), and every changed input is older than the executable; or
+- it was built from a modified tree outside the checkout, its executable lies in another
+  checkout of the module (the nearest directory above it whose `go.mod` declares the module),
+  and no Go build input of that checkout differs from the build's revision. Only files outside
+  the Go build marked it `-dirty`, so it is judged as a clean build of its revision.
 
-Go marks a build `-dirty` for an untracked file alone, so both builders that feed this check
-avoid a `-dirty` build outside the checkout when nothing tracked changed:
-`workstation install` builds a clean clone of HEAD (install step 4), and
+Go marks a build `-dirty` for an untracked file alone, such as the gate receipt
+`.standards-receipt.json`. The third rule covers `ci generated render`, which runs
+`compile-context` in a temporary worktree of HEAD below the checkout
+(`internal/generated/render.go`): the checkout's own `bin/praetorctl` renders there after a
+gate run (#760). The same build fails there once the checkout changes a Go build input, because
+the worktree renders HEAD without that change. An installed copy lies in no checkout, so both
+builders that feed this check keep a build clean or inside a checkout when nothing tracked
+changed: `workstation install` builds a clean clone of HEAD (install step 4), and
 `scripts/dev_mcp.py` builds under the checkout's git-ignored `bin/` (`build_directory`).
 A work-in-progress install, built from modified tracked files into the bin directory, is
 refused.
@@ -186,7 +195,8 @@ compile-context wrote nothing: engine build does not match this checkout: build 
 `compile-context --verify` and `verify_only` never write and are never refused. Tests:
 `internal/workstation/freshness_test.go`, `internal/workstation/source_test.go` (a real
 refresh from a checkout holding an untracked receipt passes the check),
-`cmd/standardsctl/compile_context_engine_test.go`,
+`cmd/standardsctl/compile_context_engine_test.go` (`RenderWorktree` tests: the render worktree
+of a checkout holding the receipt),
 `cmd/standards-mcp/compile_context_engine_test.go`, `BuildDirectoryTests` in
 `scripts/test_dev_mcp.py`.
 
