@@ -1,0 +1,4 @@
+type: fixed
+title: "Snapshot directory lock no longer outlives its release while another goroutine starts a process"
+issue: "#732"
+breaking: false
