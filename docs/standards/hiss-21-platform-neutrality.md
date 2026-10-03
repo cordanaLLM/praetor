@@ -429,5 +429,7 @@ config, forge and adopt, and adopt alone takes close to three minutes on `window
 deadline went from four to eight minutes, and `portability.yml` passes `go test -timeout 30m`
 because the package was already near the 10-minute default per package there. The next Windows
 run passed every test and was still cancelled by the job's own 45-minute limit during the figure
-build check (go test took 27 minutes, the harness self-tests 13), so the job limit is now 75
-minutes.
+build check (go test took 27 minutes, the harness self-tests 13), so the job limit went to 75
+minutes. By October 2026 the Windows leg took 55 to 80 minutes (go test 41 to 63, the harness
+self-tests 12 to 13), and a slow runner was cancelled at 75 minutes in its last step with every
+step green, so the job limit is now 120 minutes (#729).
