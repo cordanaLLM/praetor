@@ -228,7 +228,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded before truncation)", hiss.ErrScanTruncated, scanRep.TotalInfractions)
 	}
 	printLines(scanRep.Complexity.Lines())
-	current := fingerprintViolations(scanRep.Violations)
+	current := hiss.ConvertToBaseline(scanRep.Violations)
 
 	touched, err := resolveTouchedFiles(ctx, opts)
 	if err != nil {

@@ -168,16 +168,83 @@ func TestBaselineVerify_Boundary_NoRecordedCommitIsNeutral(t *testing.T) {
 	}
 }
 
-// Positive (#29, #599): lines added above a recorded finding move its fingerprint, not its debt.
-// The rejection names the line the baseline records, never an untraced reason or
-// --allow-increase, and the plain re-record it names does clear it.
-func TestBaselineVerify_Positive_MovedFindingNeedsOnlyARerecord(t *testing.T) {
+// movedLegacyGoSource is legacyGoSource with two lines inserted above its function: the finding
+// sits on line 6 instead of 4 and nothing about it changed.
+var movedLegacyGoSource = strings.Replace(legacyGoSource, "func legacy", "// moved\n// down\nfunc legacy", 1)
+
+// Positive (#29): lines inserted above a recorded function move its finding, not its entry. The
+// baseline still verifies, the audit passes, and a re-record keeps the file byte for byte, so
+// a change that only moves recorded findings leaves no diff in the baseline. Before, the entry
+// was keyed by its line: the verify failed and the re-record rewrote the file.
+func TestBaselineVerify_Positive_MovedFindingStillVerifies(t *testing.T) {
 	f := newAuditFixture(t)
 	f.addViolation(t)
 	if out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=legacy debt inventory"); err != nil {
 		t.Fatalf("record the legacy finding: %v\n%s", err, out)
 	}
-	writeFixtureFile(t, f.dir, "legacy.go", strings.Replace(legacyGoSource, "func legacy", "// moved\n// down\nfunc legacy", 1))
+	recorded := readFixtureFile(t, f.dir, ".standards-baseline.json")
+	writeFixtureFile(t, f.dir, "legacy.go", movedLegacyGoSource)
+
+	out, err := runBaselineCmd(t, f, "--verify")
+	if err != nil {
+		t.Fatalf("verify after lines were inserted above the baselined function: %v\n%s", err, out)
+	}
+	mustContain(t, out, "1 active infractions within the 1 recorded")
+	if strings.Contains(out, "[WARN]") {
+		t.Errorf("a moved finding left a stale entry:\n%s", out)
+	}
+	if out, err := f.audit(t); err != nil {
+		t.Fatalf("audit after the move: %v\n%s", err, out)
+	}
+
+	out, err = runBaselineCmd(t, f, "--record")
+	if err != nil {
+		t.Fatalf("re-record after the move: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Baseline unchanged")
+	if now := readFixtureFile(t, f.dir, ".standards-baseline.json"); now != recorded {
+		t.Fatalf("a re-record of moved findings rewrote the baseline:\n%s\nwas:\n%s", now, recorded)
+	}
+}
+
+// Negative (#29): the ratchet still refuses what is new. A second function with the same
+// violation and a renamed function are findings the baseline does not record, even though each
+// sits on a line near the recorded one.
+func TestBaselineVerify_Negative_NewAndRenamedFunctionsAreRefused(t *testing.T) {
+	f := newAuditFixture(t)
+	f.addViolation(t)
+	if out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=legacy debt inventory"); err != nil {
+		t.Fatalf("record the legacy finding: %v\n%s", err, out)
+	}
+
+	writeFixtureFile(t, f.dir, "legacy.go", legacyGoSource+"\nfunc fresh() {\n\t"+"_"+" = fail()\n}\n")
+	_, err := runBaselineCmd(t, f, "--verify")
+	mustErrContain(t, err, "[HISS-07] legacy.go:10 - Legacy unchecked error assignment")
+	mustErrContain(t, err, "total infractions rose from 1 to 2")
+	if strings.Contains(err.Error(), "legacy.go:4 ") {
+		t.Errorf("the recorded finding was listed with the new one:\n%v", err)
+	}
+	if out, err := runBaselineCmd(t, f, "--record"); err == nil {
+		t.Fatalf("a plain re-record took the new finding:\n%s", out)
+	}
+
+	writeFixtureFile(t, f.dir, "legacy.go", strings.ReplaceAll(legacyGoSource, "legacy()", "renamed()"))
+	_, err = runBaselineCmd(t, f, "--verify")
+	mustErrContain(t, err, "[HISS-07] legacy.go:4 - Legacy unchecked error assignment")
+}
+
+// Boundary (#29, #599): a baseline recorded in the line-keyed form. It verifies the tree it was
+// recorded on. Lines added above a recorded finding still move its key there: the rejection
+// names the line the baseline records, never an untraced reason or --allow-increase, and the
+// plain re-record it names clears it, at the same count, by rewriting the entry in the anchored
+// form, which the next shift no longer disturbs.
+func TestBaselineVerify_Boundary_LineKeyedBaselineMigrates(t *testing.T) {
+	f := newAuditFixture(t)
+	f.writeBaseline(t, []baseline.Infraction{f.addViolation(t)}, "")
+	if out, err := runBaselineCmd(t, f, "--verify"); err != nil {
+		t.Fatalf("a line-keyed baseline must verify the tree it records: %v\n%s", err, out)
+	}
+	writeFixtureFile(t, f.dir, "legacy.go", movedLegacyGoSource)
 
 	_, err := runBaselineCmd(t, f, "--verify")
 	mustErrContain(t, err, "HISS invariant violations the baseline records at other lines (1 total infractions, 1 moved, 0 in touched files):")
@@ -189,10 +256,20 @@ func TestBaselineVerify_Positive_MovedFindingNeedsOnlyARerecord(t *testing.T) {
 		}
 	}
 
-	if out, err := runBaselineCmd(t, f, "--record"); err != nil {
+	out, err := runBaselineCmd(t, f, "--record")
+	if err != nil {
 		t.Fatalf("the plain re-record the rejection names failed: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Total: 1 infractions, previously 1")
+	b, err := baseline.LoadBaseline(f.baselinePath)
+	if err != nil || len(b.Infractions) != 1 || b.Infractions[0].Anchor != "fn:legacy" || b.Infractions[0].LineNumber != 6 {
+		t.Fatalf("the re-record must write the anchored form: %+v, %v", b, err)
 	}
 	if out, err := runBaselineCmd(t, f, "--verify"); err != nil {
 		t.Fatalf("verify after the re-record: %v\n%s", err, out)
+	}
+	writeFixtureFile(t, f.dir, "legacy.go", "// a third line\n"+movedLegacyGoSource)
+	if out, err := runBaselineCmd(t, f, "--verify"); err != nil {
+		t.Fatalf("the migrated baseline must survive the next shift: %v\n%s", err, out)
 	}
 }

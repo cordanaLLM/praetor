@@ -127,7 +127,10 @@ A generator must be idempotent: rendering unchanged sources leaves its files byt
 are. One that stamps the current time on every run is never fresh, and `render --check` fails on it
 forever. `praetorctl baseline --record` keeps a baseline whose debt did not change and
 `praetorctl needs scan --write` keeps a manifest that differs only in `updated_at` for this reason
-(`cmd/standardsctl/generator_idempotence_test.go`).
+(`cmd/standardsctl/generator_idempotence_test.go`). A recorded finding that only moved is the same
+debt: an entry is keyed by its function or its line's text, not its line, so lines inserted above a
+baselined function leave the baseline fresh
+([entry keys](adoption-verification.md#a-baseline-entry-survives-a-line-shift)).
 
 It runs in a temporary worktree of the commit being judged, checked out below
 `.standards/worktrees/` and removed afterwards, so it sees committed files only. It exits non-zero
@@ -195,10 +198,11 @@ change; a session that needs current projections sooner runs `praetorctl compile
   inside the hand-edited `.standards.yaml`, without markers, so it is not declared. The proposed fix
   moves it to a file of its own beside the manifest, written by a write mode of
   `praetorctl caveman check --configured-sources` ([text register](text-register.md)).
-- Phase 2 wires the hooks, CI and the release gate to `check` and `render --check`, folds the
-  scheduled DevContainer bundle regeneration (#338) into the declared list, and replaces the
-  line-keyed baseline fingerprint (#29), which today changes the baseline whenever lines move above
-  a baselined function.
+- Phase 2 wires the hooks, CI and the release gate to `check` and `render --check`, and folds the
+  scheduled DevContainer bundle regeneration (#338) into the declared list.
+- A baseline recorded in the line-keyed form (#29) still changes whenever lines move above a
+  baselined function, until one `praetorctl baseline --record` rewrites it in the anchored form
+  ([migration](adoption-verification.md#a-baseline-entry-survives-a-line-shift)).
 
 ## Output reference
 

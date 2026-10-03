@@ -946,21 +946,16 @@ func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baselin
 		return fmt.Errorf("scan legacy debt in %s: %w", repoPath, hiss.ErrScanTruncated)
 	}
 
-	for i := 0; i < len(scanRep.Violations) && i < maxInfractionsCap; i++ {
-		v := scanRep.Violations[i]
+	// Keyed as every ratchet keys a scan (hiss.ConvertToBaseline), so the audit that judges this
+	// baseline finds its own entries in it.
+	infractions := hiss.ConvertToBaseline(scanRep.Violations[:min(len(scanRep.Violations), maxInfractionsCap)])
+	for i := 0; i < len(infractions); i++ {
 		// The recorded path is normalised so a baseline written on one platform is readable
 		// as the same record on another. Comparison normalises too, so an already-committed
 		// Windows baseline keeps working; this stops new ones from being written that way.
-		path := baseline.NormalizePath(v.FilePath)
-		base.Infractions = append(base.Infractions, baseline.Infraction{
-			RuleID:      v.RuleID,
-			FilePath:    path,
-			LineNumber:  v.LineNumber,
-			Symbol:      v.Symbol,
-			Message:     v.Message,
-			Fingerprint: fmt.Sprintf("%s:%d:%s", path, v.LineNumber, v.RuleID),
-		})
+		infractions[i].FilePath = baseline.NormalizePath(infractions[i].FilePath)
 	}
+	base.Infractions = append(base.Infractions, infractions...)
 	base.TotalInfractions = len(base.Infractions)
 	for k, count := range scanRep.Breakdown {
 		report.DebtBreakdown[k] = count

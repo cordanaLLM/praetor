@@ -75,6 +75,10 @@ type InvariantViolation struct {
 	LineNumber int    `json:"line_number"`
 	Symbol     string `json:"symbol,omitempty"`
 	Message    string `json:"message"`
+	// Anchor is the part of the finding's place that survives a line shift (anchor.go): the
+	// function holding it, or a hash of its own line. The debt baseline keys an entry by it
+	// (baseline.AssignFingerprints). A report written before anchors existed carries none.
+	Anchor string `json:"anchor,omitempty"`
 }
 
 // ScanSkips records what the scanner deliberately left out, so that a clean report
@@ -117,6 +121,9 @@ type ScanReport struct {
 	Complexity ComplexityReport `json:"complexity"`
 
 	capLimit int
+	// functions are the functions the scanner located in the file being read (noteFunction);
+	// the walk anchors that file's findings to them and starts the next file empty.
+	functions []funcSpan
 }
 
 // Incomplete reports whether the scan left part of its scope unexamined, so that
@@ -174,6 +181,8 @@ func scanTree(ctx context.Context, repoPath string, opts ScanOptions, visibility
 		return nil, fmt.Errorf("hiss: scan %q: %w", repoPath, err)
 	}
 	w.finish()
+	anchorBySymbol(rep.Violations)
+	rep.functions = nil
 	rep.TotalInfractions = len(rep.Violations)
 	return rep, nil
 }
@@ -575,7 +584,11 @@ func (r *ScanReport) recordSkippedDir(rel string) {
 	}
 }
 
-// ConvertToBaseline converts an InvariantViolation slice to baseline infractions.
+// ConvertToBaseline converts an InvariantViolation slice to baseline infractions, each with
+// the fingerprint the ratchet matches it on (baseline.AssignFingerprints). It is the one place a
+// scan becomes baseline entries: the audit, `praetorctl baseline`, the gate, the standards_audit
+// MCP tool, adoption and the dogfood verification all key a finding here, so a baseline one of
+// them records is one every other verifies.
 func ConvertToBaseline(violations []InvariantViolation) []baseline.Infraction {
 	result := make([]baseline.Infraction, 0, len(violations))
 	for _, v := range violations {
@@ -585,7 +598,9 @@ func ConvertToBaseline(violations []InvariantViolation) []baseline.Infraction {
 			LineNumber: v.LineNumber,
 			Symbol:     v.Symbol,
 			Message:    v.Message,
+			Anchor:     v.Anchor,
 		})
 	}
+	baseline.AssignFingerprints(result)
 	return result
 }

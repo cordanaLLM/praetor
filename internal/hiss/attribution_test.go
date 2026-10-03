@@ -83,9 +83,6 @@ func ratchetAttributedWith(ctx context.Context, t *testing.T, dir string, b *bas
 		t.Fatalf("scan: %v", err)
 	}
 	current := ConvertToBaseline(rep.Violations)
-	for i := range current {
-		current[i].Fingerprint = fmt.Sprintf("%s:%d:%s", current[i].FilePath, current[i].LineNumber, current[i].RuleID)
-	}
 	res := baseline.EvaluateRatchet(b, current, nil)
 	AttributeRatchet(ctx, dir, baselineFile(dir), opts, b, current, res)
 	byFile := make(map[string]baseline.Attribution, len(res.Attribution))

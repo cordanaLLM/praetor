@@ -126,9 +126,6 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 	}
 
 	current := hiss.ConvertToBaseline(scanRep.Violations)
-	for i := range current {
-		current[i].Fingerprint = fmt.Sprintf("%s:%d:%s", current[i].FilePath, current[i].LineNumber, current[i].RuleID)
-	}
 
 	ratchet := baseline.EvaluateRatchet(base, current, nil)
 	if !ratchet.Passed {

@@ -848,7 +848,7 @@ file unread, or a file of the commit that does not parse, traces nothing:
 | :--- | :--- |
 | `(new)` | The checks report it at neither commit: the code changed since the baseline was recorded and committed. |
 | `(check added or changed since the baseline)` | The checks report the same rule, file, symbol and message at one of the commits, yet the baseline does not record it: a check or limit changed, not the code. |
-| `(recorded in the baseline at line N)` | The baseline records the same rule, file, symbol and message at line N, which no current violation occupies: lines above it moved, the debt did not. Needs no commit, so a baseline without `commit_sha` gets it too. |
+| `(recorded in the baseline at line N)` | The baseline records the same rule, file, symbol and message, at line N, under a key no current violation carries: lines moved above an entry of the line-keyed form, or the function or line an anchored entry names was renamed or edited ([entry keys](#a-baseline-entry-survives-a-line-shift)). The debt did not change. Needs no commit, so a baseline without `commit_sha` gets it too. |
 | `(not in the baseline)` | Not traced. The baseline records no `commit_sha`, the clone holds neither commit, the violations span more than 200 files, they need more than 1000 committed files (a large Go package a call cycle brings counts whole), the copy scan was incomplete, or the rejection comes from a surface that does not attribute (the gate's HISS stage, dogfood verification). The rejection states the reason. |
 
 Only a rejection whose every unbaselined violation is `(new)` keeps the header `HISS invariant
@@ -863,7 +863,7 @@ order.
 The verdict never changes: HISS-13 still refuses the higher count
 ([`internal/hiss/attribution_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution_test.go),
 `TestRatchetResultAttribute*` in `internal/baseline/describe_test.go`,
-`TestBaselineVerify_Positive_MovedFindingNeedsOnlyARerecord` and
+`TestBaselineVerify_Boundary_LineKeyedBaselineMigrates` and
 `TestBaselineVerify_Positive_RecordThenCommitIsNotNew` in
 `cmd/standardsctl/baseline_ratchet_report_test.go`).
 
@@ -893,10 +893,11 @@ The touched count alone read as N new findings when most of them were recorded d
 The split compares counts, not fingerprints (`touchedMarks` in
 [`internal/baseline/baseline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/baseline.go)).
 Per file and rule, the baseline accounts for as many findings as it records there, and only the
-excess counts as not in the baseline. A fingerprint holds the line, and a touched file is an
-edited one, so a line inserted above recorded debt would otherwise read every finding below it as
-new. The recorded slots go first to findings whose fingerprint the baseline records, then to
-findings it records at another line, then to the rest in scan order.
+excess counts as not in the baseline. A touched file is an edited one, so a recorded finding whose
+key changed without its debt changing is the normal case there: a line inserted above an entry of
+the line-keyed form, an edited line under a text anchor. Comparing fingerprints would read each as
+new. The recorded slots go first to findings the baseline records, then to findings it records
+under another key, then to the rest in scan order.
 
 The baselined findings fail too, and the rejection says why:
 
@@ -912,6 +913,79 @@ and `TestAudit_Positive_TouchedCountNamesBaselined` in
 [`cmd/standardsctl/audit_stale_baseline_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/audit_stale_baseline_test.go)
 pin the split, its line-shift case and the explanations.
 
+### A baseline entry survives a line shift
+
+Inserting lines above a baselined function does not change the baseline. The entry still matches,
+`praetorctl baseline --verify` passes, and `praetorctl baseline --record` keeps the file byte for
+byte, so two pull requests that both move recorded findings no longer conflict in
+`.standards-baseline.json`. `praetorctl audit` judges a touched file by its own rule, as before: a
+touched file that carries baselined findings is refused unless the change states a
+touched-debt-delta reason (see the split above). An entry used to be keyed `<file>:<line>:<rule>`: the same
+insert turned the unchanged function into a new infraction and every such pull request had to
+re-record (#29).
+
+An entry's `fingerprint` is now `<file>:<rule>:<anchor>#<ordinal>`
+([`internal/baseline/key.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/key.go)):
+
+```json
+{
+  "rule_id": "HISS-04",
+  "file_path": "db/cdc/cdc.go",
+  "line_number": 320,
+  "symbol": "dispatch",
+  "message": "Function 'dispatch' (82 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
+  "anchor": "fn:dispatch",
+  "fingerprint": "db/cdc/cdc.go:HISS-04:fn:dispatch#1"
+}
+```
+
+- **`anchor`** is the place the scanner gives the finding
+  ([`internal/hiss/anchor.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/anchor.go)); a scan report carries it per
+  violation. It is one of the three forms in the table below.
+- **`#<ordinal>`** tells apart the findings of one rule that share an anchor, two unbounded loops
+  in one function say. It is the finding's rank among them in line order, from 1, so it follows the
+  order of the findings and not their line numbers.
+- **`line_number`** is where the finding sat when it was recorded. No match reads it. A record
+  that finds the same entries keeps the file, so the line can lag the tree until the next record
+  that changes the debt (`Baseline.SameDebt`).
+
+| Anchor | Finding | Scanners |
+| :--- | :--- | :--- |
+| `fn:<name>` | At or inside a function the scanner located. Go names a method `<Type>.<name>`, Python `<Class>.<name>`. | Go, Python, C, C++, CUDA, HIP, Rust, JavaScript, TypeScript, Svelte, shell; a Go call cycle, by the function it is reported at |
+| `text:<hash>` | Held by no located function: a statement at file level, a function literal bound at package level in Go, a function the scanner could not close. The hash is the first 12 hex digits of the SHA-256 of the finding's line with its whitespace removed. | every scanner; always for systemd (the directive's line) and Ansible (the task key's line) |
+| `file` | On a line the file does not hold. | every scanner |
+
+The ratchet's guarantees are unchanged. A new finding is refused, in a touched file too, and the
+total cannot rise without `--allow-increase`. What counts as new follows the key:
+
+- A new function with the same violation, a renamed function and a renamed file carry keys the
+  baseline does not record. For a rename the count does not rise, so the plain `praetorctl
+  baseline --record` clears it; the rejection tags the finding `(recorded in the baseline at line
+  N)` when the baseline records its rule, file, symbol and message.
+- Editing the line of a `text:` finding changes its key the same way; re-indenting the line or
+  changing its line ending does not.
+- A second finding of the rule in a baselined function is new. When it sits above the recorded one
+  the ordinals shift, so exactly one finding is refused, the last in line order, which need not be
+  the one that was added.
+
+**Migration.** A baseline recorded before this change needs nothing to keep working. An entry
+without `anchor` is in the line-keyed form and is matched as it was recorded, on its file, line and
+rule, so it verifies the tree it was recorded on and still refuses a shift. Run `praetorctl baseline
+--record` once: it rewrites every entry in the anchored form, the count does not change, and no
+`--allow-increase` is needed. A baseline may hold entries of both forms; each is matched in its own.
+An engine older than this change cannot match an anchored entry and reports every finding as not
+in the baseline, so move every pin (hooks, CI, the gate) before recording.
+
+`TestAnchor_KeySurvivesInsertedLines`, `TestAnchor_RenamedAndNewFunctionsAreNewKeys` and
+`TestAnchor_Boundaries` in
+[`internal/hiss/anchor_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/anchor_test.go) pin the anchors per scanner;
+`TestEvaluateRatchet_*` and `TestLineKeyedBaseline_*` in
+[`internal/baseline/key_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/key_test.go) pin the matching and
+the migration; `TestBaselineVerify_Positive_MovedFindingStillVerifies`,
+`TestBaselineVerify_Negative_NewAndRenamedFunctionsAreRefused` and
+`TestBaselineVerify_Boundary_LineKeyedBaselineMigrates` in
+`cmd/standardsctl/baseline_ratchet_report_test.go` pin the commands.
+
 ### A baseline looser than the tree is reported
 
 A cleanup that lands without `praetorctl baseline --record` leaves baseline entries that match
@@ -920,7 +994,8 @@ ratchet would otherwise refuse (#349). On a pass, `praetorctl audit` and `praeto
 --verify` count them: per file and rule, how many more infractions the baseline records than the
 scan found (`RatchetResult.Stale`, set by `staleEntries` in
 [`internal/baseline/baseline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/baseline.go)).
-Counts are compared, not fingerprints, so a line shift above a baselined finding is not stale.
+Counts are compared, not fingerprints, so a finding whose key changed without its debt changing, a
+line shift above an entry of the line-keyed form or a renamed function, is not stale.
 
 ```text
 [WARN] 19 baseline entries match nothing in the tree: per file and rule the baseline records more infractions than the scan found, and each stale entry is room for a new finding; tighten the baseline with 'praetorctl baseline --record' (reported only; --max-stale-baseline-entries=<n> fails the audit past n)

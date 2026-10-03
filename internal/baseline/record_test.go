@@ -178,8 +178,8 @@ func TestRecord_Identity(t *testing.T) {
 }
 
 // TestBaselineSameDebt_3D pins the comparison a writer uses to keep an unchanged baseline:
-// positive, the same debt under another commit and timestamp; negative, one changed field;
-// boundary, nil snapshots and empty debt.
+// positive, the same debt under another commit and timestamp, and at another line (#29);
+// negative, one changed field; boundary, nil snapshots and empty debt.
 func TestBaselineSameDebt_3D(t *testing.T) {
 	recorded := &Baseline{Version: 1, GeneratedAt: "2020-01-01T00:00:00Z", Repository: "acme/widgets",
 		CommitSHA: "abc", Infractions: sampleInfractions(2), TotalInfractions: 2}
@@ -188,12 +188,18 @@ func TestBaselineSameDebt_3D(t *testing.T) {
 	if !recorded.SameDebt(rescanned) {
 		t.Fatal("the same debt under a later commit and timestamp must compare equal")
 	}
+	rescanned.Infractions[1].LineNumber += 40
+	if !recorded.SameDebt(rescanned) {
+		t.Fatal("a recorded line is a display field: the same entries at other lines are the same debt")
+	}
 
 	for name, change := range map[string]func(*Baseline){
-		"version":    func(b *Baseline) { b.Version = 2 },
-		"repository": func(b *Baseline) { b.Repository = "acme/gadgets" },
-		"infraction": func(b *Baseline) { b.Infractions[1].LineNumber = 9 },
-		"count":      func(b *Baseline) { b.Infractions = b.Infractions[:1] },
+		"version":     func(b *Baseline) { b.Version = 2 },
+		"repository":  func(b *Baseline) { b.Repository = "acme/gadgets" },
+		"message":     func(b *Baseline) { b.Infractions[1].Message = "another finding" },
+		"fingerprint": func(b *Baseline) { b.Infractions[1].Fingerprint = "f.go:HISS-04:fn:other#1" },
+		"anchor":      func(b *Baseline) { b.Infractions[1].Anchor = "fn:other" },
+		"count":       func(b *Baseline) { b.Infractions = b.Infractions[:1] },
 	} {
 		next := *rescanned
 		next.Infractions = sampleInfractions(2)

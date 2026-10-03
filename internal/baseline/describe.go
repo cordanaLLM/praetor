@@ -24,10 +24,12 @@ const (
 	// baseline's commits too, yet the baseline does not record it: the code is unchanged, and a check or limit
 	// added or changed after the baseline was recorded reports it.
 	AttributionCheckChanged Attribution = "check-changed"
-	// AttributionMoved means the baseline records the same rule, file, symbol and message at a
-	// line no current violation occupies: lines above it were added or removed since the
-	// baseline was recorded, and the debt did not change (#29). The baseline and the scan tell
-	// it without a commit, and a plain re-record, without --allow-increase, clears it.
+	// AttributionMoved means the baseline records the same rule, file, symbol and message under
+	// a key no current violation carries, and the debt did not change (#29). For an entry of the
+	// line-keyed form, lines above it were added or removed since the baseline was recorded; for
+	// an anchored one, the function holding it was renamed or its anchored line edited (key.go).
+	// The baseline and the scan tell it without a commit, and a plain re-record, without
+	// --allow-increase, clears it.
 	AttributionMoved Attribution = "moved"
 )
 
@@ -263,7 +265,8 @@ func (r *RatchetResult) explanations(p rejectionPartition) []string {
 			"not a code change; fix them or record them with %s", n, shortCommits(r.AttributionCommits), recordRemedy))
 	}
 	if n := len(p.moved); n > 0 {
-		out = append(out, fmt.Sprintf("  %d of them the baseline records at another line of the same file: lines above them were added or removed, "+
+		out = append(out, fmt.Sprintf("  %d of them the baseline records under another key of the same file: an entry keyed by its line moved, "+
+			"or the function or line an entry is anchored to was renamed or edited, "+
 			"and the debt did not change; re-record the baseline with %s, which needs no --allow-increase for them", n, reRecord))
 	}
 	if n := len(p.unknown); n > 0 {
@@ -433,16 +436,14 @@ func takeLine(lines map[string][]int, key string) (int, bool) {
 	return queue[0], true
 }
 
-// movedRecorded lists, per finding, the lines of the recorded infractions whose fingerprint no
-// current violation carries: findings the recorder saw at a line they no longer occupy.
+// movedRecorded lists, per finding, the lines of the recorded infractions no current violation
+// matches (scannedKeys): findings the recorder saw under a key they no longer carry, a line for
+// an entry of the line-keyed form, an anchor for any other.
 func movedRecorded(recorded, current []Infraction) map[string][]int {
-	present := make(map[string]struct{}, len(current))
-	for i := 0; i < len(current); i++ {
-		present[fingerprintOf(current[i])] = struct{}{}
-	}
+	present := indexScanned(current)
 	moved := make(map[string][]int)
 	for i := 0; i < len(recorded); i++ {
-		if _, ok := present[fingerprintOf(recorded[i])]; !ok {
+		if !present.carries(recorded[i]) {
 			key := findingKey(recorded[i])
 			moved[key] = append(moved[key], recorded[i].LineNumber)
 		}
@@ -450,8 +451,7 @@ func movedRecorded(recorded, current []Infraction) map[string][]int {
 	return moved
 }
 
-// countBy counts findings by key: findingKey for their line-independent identity, fingerprintOf
-// for the line-bound one.
+// countBy counts findings by key: findingKey for the identity the attribution compares.
 func countBy(findings []Infraction, key func(Infraction) string) map[string]int {
 	counts := make(map[string]int, len(findings))
 	for i := 0; i < len(findings); i++ {

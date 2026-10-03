@@ -405,7 +405,8 @@ func TestHissScanRules(t *testing.T) {
 	for i, v := range report.Violations {
 		c := converted[i]
 		if c.RuleID != v.RuleID || c.FilePath != v.FilePath || c.LineNumber != v.LineNumber ||
-			c.Symbol != v.Symbol || c.Message != v.Message || c.Fingerprint != "" {
+			c.Symbol != v.Symbol || c.Message != v.Message || c.Anchor != v.Anchor || v.Anchor == "" ||
+			!strings.HasPrefix(c.Fingerprint, v.FilePath+":"+v.RuleID+":"+v.Anchor+"#") {
 			t.Errorf("ConvertToBaseline[%d] = %+v, want fields of %+v", i, c, v)
 		}
 	}

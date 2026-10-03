@@ -1,0 +1,4 @@
+type: fixed
+title: "Baselined code that only moved was reported as a new infraction: a baseline entry is now keyed by rule, file and function, not by its line"
+issue: "#29"
+breaking: true

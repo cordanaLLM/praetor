@@ -89,6 +89,7 @@ func (scriptLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bo
 	for _, v := range file.Violations {
 		recordViolation(rep, v.RuleID, v.FilePath, v.LineNumber, v.Symbol, v.Message)
 	}
+	rep.adoptFunctions(file)
 	return true
 }
 
@@ -339,6 +340,7 @@ func (s *scriptScanner) closeDeeper(code string, col, lineNum int) {
 			return
 		}
 		s.observeBody(top, code[top.from:col], lineNum)
+		noteFunction(s.rep, top.name, top.start, lineNum)
 		if length := lineNum - top.start + 1; length > s.maxLOC {
 			recordViolation(s.rep, "HISS-04", s.rel, top.start, top.name,
 				fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", top.name, length, s.maxLOC))

@@ -83,7 +83,7 @@ func parseBaselineMode(args []string) (baselineMode, error) {
 
 // scanBaselineInfractions scans root under the complexity policy `praetorctl audit` enforces
 // there (config.ResolveRepositoryComplexity resolves a locked repository exactly as the audit
-// does) and fingerprints the violations. --record used to scan with the scanner defaults
+// does) and keys the violations (hiss.ConvertToBaseline). --record used to scan with the scanner defaults
 // instead, so in a repository that tightened its function-length limit the recorded baseline
 // and the audit that judges it disagreed on what counts as debt. It also returns the scan
 // options, so --verify attributes a rejection under the same policy.
@@ -102,7 +102,7 @@ func scanBaselineInfractions(ctx context.Context, root string) ([]baseline.Infra
 	if scanRep.Truncated {
 		return nil, scanOpts, fmt.Errorf("refusing an incomplete scan: %w", hiss.ErrScanTruncated)
 	}
-	return fingerprintViolations(scanRep.Violations), scanOpts, nil
+	return hiss.ConvertToBaseline(scanRep.Violations), scanOpts, nil
 }
 
 // verifyBaseline is the read-only ratchet check: it rescans and evaluates the stored baseline

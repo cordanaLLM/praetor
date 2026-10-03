@@ -61,16 +61,6 @@ func auditStaleBaseline(ratchet *baseline.RatchetResult, bound int) error {
 	return nil
 }
 
-// fingerprintViolations converts scanner violations into baseline infractions carrying
-// the canonical "<file>:<line>:<rule>" fingerprint used by the ratchet.
-func fingerprintViolations(violations []hiss.InvariantViolation) []baseline.Infraction {
-	current := hiss.ConvertToBaseline(violations)
-	for i := range current {
-		current[i].Fingerprint = fmt.Sprintf("%s:%d:%s", current[i].FilePath, current[i].LineNumber, current[i].RuleID)
-	}
-	return current
-}
-
 // describeRejection renders a failed ratchet for `praetorctl audit` and `praetorctl baseline
 // --verify`: it first attributes each unbaselined finding against the baseline's commits, the one
 // it was recorded at and the one that last committed baselinePath (hiss.AttributeRatchet, #599),

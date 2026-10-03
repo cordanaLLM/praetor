@@ -112,11 +112,8 @@ func scanPublicTree(ctx context.Context, dir string, policy *config.EffectivePol
 	return report, nil
 }
 
+// publicInfractions keys a retained scan the way every ratchet keys one (hiss.ConvertToBaseline).
+// A scan retained before findings carried anchors yields line-keyed entries.
 func publicInfractions(scan *hiss.ScanReport) []baseline.Infraction {
-	infractions := hiss.ConvertToBaseline(scan.Violations)
-	for i := 0; i < len(infractions) && i < 10000; i++ {
-		inf := &infractions[i]
-		inf.Fingerprint = fmt.Sprintf("%s:%d:%s", inf.FilePath, inf.LineNumber, inf.RuleID)
-	}
-	return infractions
+	return hiss.ConvertToBaseline(scan.Violations)
 }

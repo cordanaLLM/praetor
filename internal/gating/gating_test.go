@@ -612,12 +612,7 @@ func TestRunHissStage_3D(t *testing.T) {
 
 	// Positive: with the debt recorded in .standards-baseline.json the ratchet passes,
 	// which is what lets an adopted brownfield repository push at all.
-	infractions := hiss.ConvertToBaseline(scan.Violations)
-	for i := range infractions {
-		infractions[i].Fingerprint = fmt.Sprintf("%s:%d:%s",
-			infractions[i].FilePath, infractions[i].LineNumber, infractions[i].RuleID)
-	}
-	base := &baseline.Baseline{Version: 1, Infractions: infractions}
+	base := &baseline.Baseline{Version: 1, Infractions: hiss.ConvertToBaseline(scan.Violations)}
 	if err := baseline.SaveBaseline(filepath.Join(repoDir, ".standards-baseline.json"), base); err != nil {
 		t.Fatalf("save baseline: %v", err)
 	}

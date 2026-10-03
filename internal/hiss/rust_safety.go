@@ -154,7 +154,7 @@ func rustUnsafeFnHeader(code string) bool {
 
 // checkRustUnsafe enforces HISS-09 on lines[idx], whose stripped code is code. member is the
 // kind of impl or trait body the line stands directly in. A line reports at most one finding,
-// because a baseline fingerprints a finding by rule, path and line.
+// because a baseline recorded in the line-keyed form identifies a finding by rule, path and line.
 func checkRustUnsafe(lines []string, idx int, code string, site rustProofSite, member rustBodyKind, rel string, rep *ScanReport) {
 	lineNum := idx + 1
 	if rustUnsafeFnHeader(strings.TrimSpace(code)) && member != rustTraitImplBody &&

@@ -28,11 +28,19 @@ var (
 
 // Infraction represents a baselined legacy technical debt violation.
 type Infraction struct {
-	RuleID      string `json:"rule_id"`
-	FilePath    string `json:"file_path"`
-	LineNumber  int    `json:"line_number"`
-	Symbol      string `json:"symbol,omitempty"`
-	Message     string `json:"message"`
+	RuleID   string `json:"rule_id"`
+	FilePath string `json:"file_path"`
+	// LineNumber is where the finding sat when it was recorded. It is for a reader: an entry
+	// that carries an Anchor is never matched on it, so a line shift leaves the entry valid and
+	// the recorded line behind until the next record that changes the debt (SameDebt).
+	LineNumber int    `json:"line_number"`
+	Symbol     string `json:"symbol,omitempty"`
+	Message    string `json:"message"`
+	// Anchor is the place the scanner gives the finding that survives a line shift: the
+	// function holding it ("fn:<name>"), a hash of its own line ("text:<hash>"), or "file". An
+	// entry without one was recorded in the line-keyed form (key.go).
+	Anchor string `json:"anchor,omitempty"`
+	// Fingerprint is the key the ratchet matches the entry on (AssignFingerprints).
 	Fingerprint string `json:"fingerprint"`
 }
 
@@ -265,6 +273,10 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 // version, the repository and every infraction match. The commit and the timestamp are not
 // compared, as Record keeps the earlier commit when the infractions did not change; a writer
 // that finds SameDebt true keeps the recorded file instead of leaving a diff of generated_at.
+//
+// An infraction's line is not compared either (sameInfractions): a change that only moves
+// recorded findings leaves the baseline file as it is, so two such changes no longer conflict in
+// it (#29). An entry of the line-keyed form holds its line in its fingerprint and still differs.
 func (b *Baseline) SameDebt(next *Baseline) bool {
 	if b == nil || next == nil {
 		return b == next
@@ -272,12 +284,17 @@ func (b *Baseline) SameDebt(next *Baseline) bool {
 	return b.Version == next.Version && b.Repository == next.Repository && sameInfractions(b.Infractions, next.Infractions)
 }
 
+// sameInfractions reports whether a and b hold the same entries in the same order, the recorded
+// line aside: it is a display field of an anchored entry and part of the fingerprint of a
+// line-keyed one.
 func sameInfractions(a, b []Infraction) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		x, y := a[i], b[i]
+		x.LineNumber, y.LineNumber = 0, 0
+		if x != y {
 			return false
 		}
 	}
@@ -328,10 +345,9 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		touchedMap[NormalizePath(f)] = struct{}{}
 	}
 
-	baselinedFingerprints := make(map[string]struct{}, len(b.Infractions))
-	for _, inf := range b.Infractions {
-		baselinedFingerprints[NormalizePath(inf.Fingerprint)] = struct{}{}
-	}
+	// A finding is baselined when an entry carries its fingerprint, or when an entry of the
+	// line-keyed form names its rule at its file and line (key.go).
+	recorded := indexRecorded(b.Infractions)
 
 	var newViolations []Infraction
 	var touchedCleanViolations []Infraction
@@ -343,7 +359,7 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 	for _, curr := range currentViolations {
 		file := NormalizePath(curr.FilePath)
 		_, isTouched := touchedMap[file]
-		_, isBaselined := baselinedFingerprints[NormalizePath(curr.Fingerprint)]
+		isBaselined := recorded.records(curr)
 
 		if isTouched && revokes(file) {
 			// Touched-File Clean Rule: the file's baseline exemptions are revoked.
@@ -372,8 +388,8 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 
 // staleEntries counts the recorded infractions no current violation accounts for: per file and
 // rule, how many more the baseline records than the scan found. Like worsenedFiles it compares
-// counts rather than fingerprints, so a line shift above a baselined infraction, which changes
-// its fingerprint and not the debt, is not read as a stale entry.
+// counts rather than fingerprints, so a change of key that leaves the debt alone, a line shift
+// above an entry of the line-keyed form or a renamed function, is not read as a stale entry.
 func staleEntries(recorded, current []Infraction) int {
 	before := countByFileRule(recorded, nil)
 	after := countByFileRule(current, nil)
@@ -397,11 +413,12 @@ func ratchetVerdict(listed bool, current, baselined int) (passed, countRegressed
 // worsenedFiles reports which touched files carry more infractions of some rule than the
 // baseline recorded for them.
 //
-// It compares per-file, per-rule counts rather than fingerprints, on purpose. A fingerprint is
-// path:line:rule, so adding or removing a line above a baselined infraction changes its
-// fingerprint without changing the debt. Comparing fingerprints would read any line shift as new
-// debt and reproduce the defect this function exists to fix. A count for one rule in one file
-// is independent of where in the file the infraction sits.
+// It compares per-file, per-rule counts rather than fingerprints, on purpose. A fingerprint
+// names where in the file the infraction sits: its line in the line-keyed form, its function or
+// its line's text in the anchored one (key.go). A mechanical change can move any of them without
+// changing the debt, and comparing fingerprints would read that as new debt, the defect this
+// function exists to fix. A count for one rule in one file is independent of where in the file
+// the infraction sits.
 //
 // A file is worse when any single rule's count rose. Trading one rule's infraction for another's
 // is still a new infraction of the second rule, and a lower total must not hide it.
@@ -440,16 +457,17 @@ func countByFileRule(infractions []Infraction, touched map[string]struct{}) map[
 // touchedMarks marks, per touched-file violation, whether the baseline accounts for it (#348).
 // Like worsenedFiles and staleEntries it compares counts, not fingerprints: per file and rule the
 // baseline accounts for as many current findings as it records, and only the excess is not in the
-// baseline. A fingerprint is path:line:rule, and a touched file is an edited one, so a line shift
-// above recorded debt is the normal case; comparing fingerprints read every shifted finding as
-// new. Which findings take the recorded slots: those whose fingerprint the baseline records, then
-// those it records at another line (movedRecorded), then the rest in scan order.
+// baseline. A touched file is an edited one, so a recorded finding whose key changed without its
+// debt changing is the normal case there: a line shift above an entry of the line-keyed form, an
+// edited line under a text anchor. Comparing fingerprints read every such finding as new. Which
+// findings take the recorded slots: those the baseline records (recordedKeys), then those it
+// records under another key (movedRecorded), then the rest in scan order.
 func touchedMarks(recorded, touched []Infraction) []bool {
 	room := countByFileRule(recorded, nil)
-	fingerprints := countBy(recorded, fingerprintOf)
+	keys := indexRecorded(recorded)
 	moved := movedRecorded(recorded, touched)
 	marks := make([]bool, len(touched))
-	claimSlots(touched, marks, room, func(v Infraction) bool { return take(fingerprints, fingerprintOf(v)) })
+	claimSlots(touched, marks, room, keys.take)
 	claimSlots(touched, marks, room, func(v Infraction) bool {
 		_, ok := takeLine(moved, findingKey(v))
 		return ok

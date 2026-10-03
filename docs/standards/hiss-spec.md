@@ -137,6 +137,7 @@ Total recorded infractions never grow against the committed baseline:
 
 - An increase in technical debt requires a deliberately recorded rationale.
 - Evaluated against `.standards-baseline.json` by `praetorctl baseline --verify` (read-only), `praetorctl audit` and the gate's HISS stage.
+- A recorded infraction is identified by its rule, its file and the function that holds it (or, outside a function, the text of its line), never by its line number, so code that only moves stays baselined ([A baseline entry survives a line shift](../guides/adoption-verification.md#a-baseline-entry-survives-a-line-shift)).
 - A rejection still fails when a check added after the baseline was recorded finds debt in unchanged code, but it attributes those findings to the check, not to the change, and names the deliberate re-record ([A HISS rejection names the violations](../guides/adoption-verification.md#a-hiss-rejection-names-the-violations)).
 
 ### HISS-14: Append-Only ABI & Migration Footers

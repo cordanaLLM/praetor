@@ -1,0 +1,3 @@
+type: changed
+title: Move the docker-in-docker DevContainer feature to docker-in-docker:4 in app-service and container-image
+breaking: true
