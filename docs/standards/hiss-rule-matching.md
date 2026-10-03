@@ -172,8 +172,8 @@ itself is visible in one file, but a cycle through two functions is not, because
 AST shows the loop closing. `internal/hiss/go_callgraph.go` therefore runs after the walk, builds
 each package's call graph from the Go files the scan read, and reports every strongly connected
 component of two or more functions, naming the path. Calls with explicit generic type arguments
-(`ast.IndexExpr` and `ast.IndexListExpr`) unwrap to their callee identifier so mutual recursion
-between generic functions is reported as for bare calls.
+(`ast.IndexExpr` and `ast.IndexListExpr`), including parenthesised forms, unwrap to their callee
+identifier so mutual recursion between generic functions is reported as for bare calls.
 
 Package scope is complete here rather than convenient. A call cycle spanning two packages would
 need each package to import the other, and the Go compiler rejects that outright, so every call
@@ -195,8 +195,9 @@ block, or one declared after the call, hides nothing, so the call still reaches 
 function is walked once, so the cost grows with its size, not with its size times its calls. A
 method is called through its receiver, so a local named like the method does not hide its
 recursion. `TestGoScope_*` in `internal/hiss/go_scope_test.go`,
-`TestCallGraphSeesACycleBehindAnOutOfScopeLocal` and
-`TestCallGraphReportsGenericCallCycle` in `internal/hiss/go_callgraph_test.go` pin
+`TestCallGraphSeesACycleBehindAnOutOfScopeLocal`,
+`TestCallGraphReportsGenericCallCycle` and
+`TestCallGraphReportsParenthesisedGenericCallCycle` in `internal/hiss/go_callgraph_test.go` pin
 these rules.
 
 ### Go: the net/http abort sentinel
