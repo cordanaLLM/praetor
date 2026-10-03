@@ -1105,6 +1105,7 @@ func TestWriteFileConfinedExclusive_Negative(t *testing.T) {
 		want error
 	}{
 		{filepath.Join("inner", "symlink.json"), 0o600, os.ErrExist},
+		// The confinement check cannot resolve a dangling link, so it refuses before any create.
 		{filepath.Join("inner", "dangling.json"), 0o600, os.ErrNotExist},
 		{filepath.Join("inner", "victim.txt"), 0o600, os.ErrExist},
 		{filepath.Join("out", "planted.json"), 0o600, ErrPathEscapesRoot},
@@ -1126,8 +1127,10 @@ func TestWriteFileConfinedExclusive_Negative(t *testing.T) {
 	}
 }
 
-// TestWriteFileConfinedExclusive_Boundary_SwapAfterCheck pins BUG-826's window for exclusive writes:
-// an output directory swapped for an escaping link after ConfinePath's check.
+// TestWriteFileConfinedExclusive_Boundary_SwapAfterCheck pins BUG-826's window for exclusive
+// writes: an output directory swapped for an escaping link after ConfinePath's check. The
+// post-check writer WriteFileConfinedExclusive runs refuses it; the root-less composition
+// (the checked path handed to WriteFileExclusive) follows the link out of the root.
 func TestWriteFileConfinedExclusive_Boundary_SwapAfterCheck(t *testing.T) {
 	root, outside := confinedFixture(t)
 	if err := WriteFileConfinedExclusive(root, ".", []byte("x"), 0o600); !errors.Is(err, ErrRootItself) {
@@ -1145,13 +1148,7 @@ func TestWriteFileConfinedExclusive_Boundary_SwapAfterCheck(t *testing.T) {
 		t.Fatalf("confineBelow: %v", err)
 	}
 	swapForLink(t, filepath.Join(root, "inner"), outside)
-
-	parent := filepath.Dir(inside)
-	name := filepath.Base(inside)
-	err = InConfinedDirectory(absRoot, parent, func(dir *os.Root) error {
-		return createExclusively(dir, name, []byte("data"), filePermission{mode: 0o600, exact: true})
-	})
-	if !errors.Is(err, ErrPathEscapesRoot) {
+	if err := writeConfinedExclusive(absRoot, inside, []byte("data"), 0o600); !errors.Is(err, ErrPathEscapesRoot) {
 		t.Errorf("directory swapped for an escaping link = %v, want ErrPathEscapesRoot like the check reports", err)
 	}
 	assertEmptyDir(t, outside)

@@ -1190,15 +1190,21 @@ func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing
 	if err == nil {
 		t.Fatalf("expected collision error for %s, got nil", collisionPath)
 	}
-	if !strings.Contains(err.Error(), "already exists: an accepted record is immutable") {
-		t.Fatalf("expected collision immutability error, got: %v", err)
+	if !strings.Contains(err.Error(), "already exists: an accepted record is immutable") || !errors.Is(err, os.ErrExist) {
+		t.Fatalf("expected collision immutability error matching os.ErrExist, got: %v", err)
 	}
 }
 
+// TestTranscribeDiscussionToADR_Boundary_ConcurrentExclusiveCreate pins the contract for
+// concurrent calls on one discussion: exactly one writes the record and every other returns
+// it as existing, with no error. Workers start together on each round so that some scan the
+// directory before the winner links its record and collide on the exclusive create; a
+// collision that is refused instead of rescanned fails the round.
 func TestTranscribeDiscussionToADR_Boundary_ConcurrentExclusiveCreate(t *testing.T) {
-	ctx := context.Background()
-	tempDir := t.TempDir()
-
+	const (
+		workers = 8
+		rounds  = 20
+	)
 	disc := Discussion{
 		ID:           99,
 		Title:        "Concurrent Decision",
@@ -1206,47 +1212,51 @@ func TestTranscribeDiscussionToADR_Boundary_ConcurrentExclusiveCreate(t *testing
 		ContextText:  "Testing concurrent writers",
 		DecisionText: "Only one writer creates the record",
 	}
-
-	const workers = 4
-	errs := make(chan error, workers)
-	adrs := make(chan *ADR, workers)
-
-	for i := 0; i < workers; i++ {
-		go func() {
-			adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
-			if err != nil {
-				errs <- err
-				return
-			}
-			adrs <- adr
-		}()
-	}
-
-	var createdCount int
-	var existingCount int
-	for i := 0; i < workers; i++ {
-		select {
-		case err := <-errs:
-			if !strings.Contains(err.Error(), "already exists: an accepted record is immutable") {
-				t.Fatalf("unexpected error from worker: %v", err)
-			}
-		case adr := <-adrs:
-			if adr.Existing {
-				existingCount++
-			} else {
-				createdCount++
-			}
+	for round := 0; round < rounds; round++ {
+		created, existing, errs := transcribeConcurrently(t, disc, workers)
+		if len(errs) != 0 || created != 1 || existing != workers-1 {
+			t.Fatalf("round %d: created=%d existing=%d errors=%v; want created=1 existing=%d and no error",
+				round, created, existing, errs, workers-1)
 		}
 	}
+}
 
-	if createdCount != 1 {
-		t.Fatalf("expected exactly 1 worker to create the record, got created=%d, existing=%d", createdCount, existingCount)
+// transcribeConcurrently runs workers calls of TranscribeDiscussionToADR for disc into one
+// fresh directory, released together, and counts the records created, the records returned
+// as existing and the errors. It also requires the directory to hold exactly one entry.
+func transcribeConcurrently(t *testing.T, disc Discussion, workers int) (created, existing int, errs []error) {
+	t.Helper()
+	tempDir := t.TempDir()
+	type outcome struct {
+		adr *ADR
+		err error
 	}
-
+	start := make(chan struct{})
+	results := make(chan outcome, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			<-start
+			adr, err := TranscribeDiscussionToADR(context.Background(), disc, tempDir, tempDir)
+			results <- outcome{adr: adr, err: err}
+		}()
+	}
+	close(start)
+	for i := 0; i < workers; i++ {
+		res := <-results
+		switch {
+		case res.err != nil:
+			errs = append(errs, res.err)
+		case res.adr.Existing:
+			existing++
+		default:
+			created++
+		}
+	}
 	entries, err := os.ReadDir(tempDir)
 	if err != nil || len(entries) != 1 {
-		t.Fatalf("expected exactly 1 file created in tempDir, got %d: %v", len(entries), entries)
+		t.Fatalf("expected exactly 1 entry in %s, got %v (err %v)", tempDir, entries, err)
 	}
+	return created, existing, errs
 }
 
 func TestTranscribeDiscussionToADR_Boundary_SymlinkToDirEntry(t *testing.T) {

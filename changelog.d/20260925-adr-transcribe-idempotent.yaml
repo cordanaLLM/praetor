@@ -1,4 +1,4 @@
 type: fixed
-title: "TranscribeDiscussionToADR duplicates records on re-transcription"
+title: Transcribe each ADR discussion once, returning its existing record instead of a duplicate, even under concurrent calls
 breaking: false
 issue: "#719"
