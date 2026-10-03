@@ -6,6 +6,7 @@ package hiss
 
 import (
 	"context"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"math"
@@ -257,11 +258,16 @@ const (
 
 // Boundary: a function of 10001 calls costs one walk. Checking every call by walking the whole
 // body again made the cost calls times nodes, so eight times the calls took about 64 times as
-// long; linear cost takes about 8 times. The bound sits between the two, and each size is
-// timed as the best of three samples so one scheduling stall cannot decide it.
+// long; linear cost takes about 8 times. The bound sits between the two. The two sizes are
+// sampled in alternation, three rounds, and each keeps its fastest sample, so a load change
+// between samples reaches both sizes rather than deciding the ratio.
 func TestCallGraphScansCallsInLinearTime(t *testing.T) {
-	small := bestAddCallsTime(t, 1250)
-	large := bestAddCallsTime(t, 10001)
+	smallFile, largeFile := parseCallsFile(t, 1250), parseCallsFile(t, 10001)
+	small, large := time.Duration(math.MaxInt64), time.Duration(math.MaxInt64)
+	for range 3 {
+		small = min(small, addCallsSampleTime(t, smallFile, 1250))
+		large = min(large, addCallsSampleTime(t, largeFile, 10001))
+	}
 	t.Logf("1250 calls: %v; 10001 calls: %v per build", small, large)
 	if large > 24*small {
 		t.Fatalf("8x the calls took %v against %v (%.0fx); one walk per function is linear",
@@ -269,30 +275,32 @@ func TestCallGraphScansCallsInLinearTime(t *testing.T) {
 	}
 }
 
-// bestAddCallsTime builds the call graph of one function making calls bare calls, and returns
-// the time of one build in the fastest of three samples of at least addCallsSample each.
-func bestAddCallsTime(t *testing.T, calls int) time.Duration {
+// parseCallsFile parses one function making calls bare calls to leaf.
+func parseCallsFile(t *testing.T, calls int) *ast.File {
 	t.Helper()
 	src := "package p\n\nfunc leaf() {}\n\nfunc big() {\n" + strings.Repeat("\tleaf()\n", calls) + "}\n"
 	file, err := parser.ParseFile(token.NewFileSet(), "big.go", src, parser.SkipObjectResolution)
 	if err != nil {
 		t.Fatal(err)
 	}
-	best := time.Duration(math.MaxInt64)
-	for range 3 {
-		runs, start, elapsed := 0, time.Now(), time.Duration(0)
-		for ; elapsed < addCallsSample && runs < addCallsMaxRuns; elapsed = time.Since(start) {
-			graph := newCallGraph()
-			graph.addFile(file, "big.go")
-			if _, edge := graph.edges["big"]["leaf"]; !edge || graph.count != 1 {
-				t.Fatalf("one function calling leaf %d times is one edge, got %d", calls, graph.count)
-			}
-			runs++
+	return file
+}
+
+// addCallsSampleTime builds file's call graph repeatedly for at least addCallsSample and
+// returns the time of one build.
+func addCallsSampleTime(t *testing.T, file *ast.File, calls int) time.Duration {
+	t.Helper()
+	runs, start, elapsed := 0, time.Now(), time.Duration(0)
+	for ; elapsed < addCallsSample && runs < addCallsMaxRuns; elapsed = time.Since(start) {
+		graph := newCallGraph()
+		graph.addFile(file, "big.go")
+		if _, edge := graph.edges["big"]["leaf"]; !edge || graph.count != 1 {
+			t.Fatalf("one function calling leaf %d times is one edge, got %d", calls, graph.count)
 		}
-		if elapsed < addCallsSample {
-			t.Fatalf("the clock moved %v in %d builds; a sample needs %v", elapsed, runs, addCallsSample)
-		}
-		best = min(best, elapsed/time.Duration(runs))
+		runs++
 	}
-	return best
+	if elapsed < addCallsSample {
+		t.Fatalf("the clock moved %v in %d builds; a sample needs %v", elapsed, runs, addCallsSample)
+	}
+	return elapsed / time.Duration(runs)
 }

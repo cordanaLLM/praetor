@@ -43,9 +43,8 @@ rules:
           positive/recursion-behind-later-local.go replay that bypass, and
           negative/call-reaches-enclosing-local.go the true shadow. Mutual and indirect
           recursion between plain functions are now reported too: the call-graph pass builds
-          each package's graph
-          after the walk and names every strongly connected component of two or more
-          functions. Package scope is complete rather than convenient, because a call cycle
+          each package's graph after the walk and names every strongly connected component
+          of two or more functions. Package scope is complete rather than convenient, because a call cycle
           spanning two packages would need each to import the other and the compiler rejects
           that. A cycle through methods remains a gap: resolving a method call needs the
           receiver's type, and guessing it would invent edges that do not exist.
@@ -446,8 +445,8 @@ rules:
           a plain, aliased or dot import, is not reported, because net/http documents it as
           the way a handler aborts its response and recovers it (AbortsHTTPResponse, issue
           #331). A same-named local, another package's ErrAbortHandler, a package name
-          shadowed at the panic inside the enclosing declared function and a wrapped sentinel are still
-          reported; a parameter of a package-level function literal is not seen as shadowing. The sentinel is recovered only on the
+          shadowed at the panic inside the enclosing declared function and a wrapped sentinel
+          are still reported; a parameter of a package-level function literal is not seen as shadowing. The sentinel is recovered only on the
           goroutine net/http runs the handler on, and which goroutine runs a function is not
           visible in syntax, so gap/abort-handler-goroutine.go records the sentinel panicked
           on a goroutine the code started itself, which ends the process unreported.
