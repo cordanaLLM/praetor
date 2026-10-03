@@ -35,6 +35,9 @@ import (
 type goScope struct {
 	frames  []scopeFrame
 	visible map[string]int
+	// steps counts the nodes inspect has visited, so a caller can prove one walk per function
+	// (TestCallGraphScansCallsInLinearTime) without timing it.
+	steps int
 }
 
 // scopeFrame is one open scope: the node whose extent it covers and the names bound in it.
@@ -104,6 +107,7 @@ func (s *goScope) inspect(root ast.Node, visit func(ast.Node) bool) {
 		if len(stack) >= maxNodeStack || !visit(n) {
 			return false
 		}
+		s.steps++
 		s.enter(n)
 		stack = append(stack, n)
 		return true

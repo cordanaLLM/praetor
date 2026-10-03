@@ -46,6 +46,8 @@ type callGraph struct {
 	file  map[string]string
 	order []string
 	count int
+	// steps sums the scope walks' node visits over every function added.
+	steps int
 }
 
 func newCallGraph() *callGraph {
@@ -287,6 +289,7 @@ func (g *callGraph) addCalls(caller string, fn *ast.FuncDecl) {
 		g.addEdge(caller, ident.Name)
 		return true
 	})
+	g.steps += scope.steps
 }
 
 // addEdge records that caller calls callee, once.
