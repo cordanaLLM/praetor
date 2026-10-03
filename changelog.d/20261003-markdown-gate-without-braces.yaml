@@ -1,0 +1,4 @@
+type: fixed
+title: "The Markdown gate lock shipped braces, whose advisory GHSA-vfj7-8cjw-p6xm has no fixed release; the gate now lints without braces, micromatch or markdownlint-cli2"
+issue: "#736"
+breaking: true

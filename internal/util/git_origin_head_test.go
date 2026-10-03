@@ -97,6 +97,34 @@ func TestGitAnsweredNotARepository_3D(t *testing.T) {
 	}
 }
 
+// A .git file whose gitdir is missing is no repository on every git version, though git 2.56
+// words the answer differently; a .git file that is not a gitfile at all is a malformed
+// checkout, not that answer.
+func TestGitAnsweredNotARepository_Gitfile(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	dangling := t.TempDir()
+	writeGitfile(t, dangling, "gitdir: "+filepath.Join(dangling, "missing")+"\n")
+	result, err := RunGitProbe(t.Context(), dangling, maxOriginHeadBytes, "rev-parse", "--git-dir")
+	if !GitAnsweredNotARepository(result, err) {
+		t.Fatalf("a gitfile naming a missing gitdir must be no repository: %q, %v", result.Stderr, err)
+	}
+	malformed := t.TempDir()
+	writeGitfile(t, malformed, "not a gitfile\n")
+	result, err = RunGitProbe(t.Context(), malformed, maxOriginHeadBytes, "rev-parse", "--git-dir")
+	if err == nil || GitAnsweredNotARepository(result, err) {
+		t.Fatalf("a malformed .git file is no such answer: %q, %v", result.Stderr, err)
+	}
+}
+
+func writeGitfile(t *testing.T, dir, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // A target outside origin's branches, a missing directory and a context that already ended are
 // errors: none of them answers which branch origin's HEAD names.
 func TestReadOriginHeadBranch_Boundary_UnansweredReadsAreErrors(t *testing.T) {

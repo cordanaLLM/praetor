@@ -58,15 +58,39 @@ is bounded to 4,096 bytes.
 ## Locked Markdown rules
 
 `tools/markdownlint/package-lock.json` pins the complete Node dependency graph.
-The runner copies the canonical tool assets to a temporary directory, executes
-`npm ci --ignore-scripts --no-audit --no-fund`, and invokes the installed
-`markdownlint-cli2` binary directly. It does not use `npx` or leave a source-tree
-`node_modules/` directory. Before it lints, it checks that the installed
-`markdownlint-cli2` is the version the lock pins and exposes the expected binary
-(`markdownlintBinary` in `tools/markdownlint/verify.mjs`). The runner reads that
-version from the lock, so a pin update leaves `verify.mjs` unchanged. Every
-subprocess has a timeout, and the temporary installation is removed after success
-or failure.
+The runner copies the canonical tool assets to a temporary directory and
+executes `npm ci --ignore-scripts --no-audit --no-fund`. It does not use `npx` or
+leave a source-tree `node_modules/` directory. The style rules come from the
+[markdownlint](https://github.com/DavidAnson/markdownlint) library, which the
+runner calls itself rather than through the `markdownlint-cli2` command it ran
+before (#736). It starts one child process of its own script per batch of
+files, `node tools/markdownlint/verify.mjs --lint <install> <file>...` from the
+repository root (`runMarkdownlint` and `lintChild` in
+`tools/markdownlint/verify.mjs`). Each batch gets a fresh heap, a timeout and a
+bounded output capture. Before it starts the first child, the runner checks that
+the installed `markdownlint` is the version the lock pins and exposes the
+synchronous entry the children import (`markdownlintLibrary`). A mismatch fails
+the gate with status 2, also when no file is selected for styling
+(`lintEntrySelfTest`). The runner reads that version from the lock, so a pin
+update leaves `verify.mjs` unchanged. The temporary installation is removed
+after success or failure.
+
+A finding prints as `markdownlint-cli2`'s default formatter printed it, one line
+per finding on standard error:
+
+```text
+docs/guide.md:1:1 error MD018/no-missing-space-atx No space after hash on atx style heading [Context: "#Guide"]
+```
+
+The line holds the path, the line number, the column when the rule reports one,
+the severity, the rule's names, its description, and any detail and context.
+Findings are ordered by path, line and rule name, as before. On the same files
+the output is byte for byte what `markdownlint-cli2` 0.23.3 printed:
+`lintOutputSelfTest` replays a fixture set captured from it. The one difference
+is that the `markdownlint-cli2 v0.23.3 (markdownlint v0.41.1)` banner line is
+no longer printed. Inline `<!-- markdownlint-configure-file ... -->` comments
+are parsed as JSONC, TOML or YAML, in that order, as `markdownlint-cli2` parsed
+them (`configurationParsers`).
 
 The lock installs no package with a known high or critical advisory, except one
 that has no fixed release and a reviewed exception. The
@@ -75,43 +99,40 @@ runs `scripts/npm_audit_gate.py` on it for every pull request and daily. The
 script runs `npm audit --package-lock-only --json` and fails on every high or
 critical advisory that `.config/security/npm-audit-exceptions.json` does not name
 for this lock, with a reason and an expiry date at most 90 days ahead. An
-expired exception fails like a missing one. The current exception is braces
-GHSA-vfj7-8cjw-p6xm, reached through `micromatch`. It is a stack-exhaustion
-denial of service, and the gate only expands globs the repository itself
-declares. An adopter that audits its copy of the lock sees the same advisory and
-can record the same reasoning. `TestMarkdownGateLockClearsFixedAdvisories` in
-`internal/supplychain/npm_advisories_test.go` keeps `smol-toml`, `js-yaml` and
-`markdown-it` at or above the versions that fixed their advisories (#643).
+expired exception fails like a missing one. The Markdown gate's lock needs no
+exception: it no longer installs braces (GHSA-vfj7-8cjw-p6xm, no fixed release),
+which `micromatch` and `markdownlint-cli2` pulled in (#736).
+`TestPackageLockInstallsNoBraces` in `tools/markdownlint/assets_test.go` keeps
+all three out. `TestMarkdownGateLockClearsFixedAdvisories` in
+`internal/supplychain/npm_advisories_test.go` keeps `smol-toml` and `js-yaml` at
+or above the versions that fixed their advisories (#643).
 Because audit locks the lock byte for byte, an adopter cannot patch it: a fix
 ships as a new Praetor text, and a plain `praetorctl adopt` replaces an
 unedited earlier lock, `package.json` and `verify.mjs` without `--force`
 (`priorDigests` in `tools/markdownlint/assets.go`).
 
-The locked configuration is hermetic. `markdownlint-cli2` (read through 0.23.3)
-has no option that turns configuration discovery off: beside the `--config` file
-it reads `.markdownlint-cli2.{jsonc,yaml,cjs,mjs}` and
-`.markdownlint.{jsonc,json,yaml,yml,cjs,mjs}` from its working directory and
-from every directory down to a linted file (`getAndProcessDirInfo` and
-`enumerateParents` in its `markdownlint-cli2.mjs`). A `.markdownlint.*` file
-found there replaces the locked rules outright, and the `.cjs` and `.mjs` forms
-run repository code. The runner therefore copies the selected Markdown files, at
-their repository-relative paths, into an empty directory inside its temporary
-installation and lints them from there (`stageStyleTree` in
-`tools/markdownlint/verify.mjs`). No configuration file name ends in a Markdown
-suffix, so the copy holds none, and diagnostics keep repository-relative paths.
-A repository may keep its own `.markdownlint.json` for other tooling; the gate
-ignores it whether it loosens or tightens the rules, and never executes a
-configuration module. The self-test proves both directions, and a control run
-from the fixture root shows the same files take effect when `markdownlint-cli2`
-is left to discover them.
+The locked configuration is hermetic. The lint child reads the rules from the
+`config` mapping of `tools/markdownlint/markdownlint-cli2.yaml` and hands the
+library each file's text as a string, so the library opens no file and finds no
+configuration of its own. The file keeps its name and the `noProgress` key
+`markdownlint-cli2` read, so adopted copies need no change; any other key is
+refused (`lintConfiguration`). `markdownlint-cli2` had no option that turned
+configuration discovery off: it read `.markdownlint-cli2.{jsonc,yaml,cjs,mjs}`
+and `.markdownlint.{jsonc,json,yaml,yml,cjs,mjs}` from every directory down to
+a linted file, a `.markdownlint.*` file replaced the locked rules, and the
+`.cjs` and `.mjs` forms ran repository code (#533). Nothing in the gate looks
+for those files now. A repository may keep its own `.markdownlint.json` for
+other tooling; the gate ignores it whether it loosens or tightens the rules,
+and never executes a configuration module. `hermeticConfigSelfTest` proves both
+directions with every configuration file form in the fixture tree.
 
-The private-link rule also runs from that temporary copy. It acts only when started
-as a script, which `invokedAsScript` in `tools/markdownlint/no-private-scratch-links.mjs`
-decides by comparing real paths: Node loads a main module from its real path, and
-every macOS temporary directory sits under the `/var` symlink, so comparing
-spellings let the rule exit 0 there without reading a file. The self-test runs the
-rule a second time through a symlinked path to the temporary directory, so that
-failure shows on every host.
+The private-link rule also runs from the temporary installation directory. It
+acts only when started as a script, which `invokedAsScript` in
+`tools/markdownlint/no-private-scratch-links.mjs` decides by comparing real paths:
+Node loads a main module from its real path, and every macOS temporary directory
+sits under the `/var` symlink, so comparing spellings let the rule exit 0 there
+without reading a file. The self-test runs the rule a second time through a
+symlinked path to the temporary directory, so that failure shows on every host.
 
 On Linux and macOS the runner starts `npm` from `PATH`. On Windows it cannot:
 Node refuses to spawn the `npm.cmd` batch shim without a shell and fails with
@@ -204,19 +225,83 @@ documentation:
 
 The bounds can be raised but not removed: HISS-02 requires one, and the
 ceilings are fixed in `tools/markdownlint/verify.mjs`. The per-file ceiling is a
-memory bound. `markdownlint-cli2` lints a 4 MiB file of linked bullets within a
-1 GiB heap, but at 8 MiB it needed more than 1.5 GiB. That is close to Node's
-default heap on a 7 GB hosted runner. The private-link rule follows a raised
+memory bound. The markdownlint library lints a 4 MiB file of linked and
+code-spanned bullets within a 1.5 GiB heap (`lintMemorySelfTest` replays it),
+and an 8 MiB file of linked bullets needed more than 1.5 GiB. That is close to
+Node's default heap on a 7 GB hosted runner. `markdownlint-cli2` needed the same,
+since it lints through the same library. The private-link rule follows a raised
 bound. It accepts inventories up to the file-count ceiling, each file's parse
 bound grows with its size, and every parse runs within a fixed memory budget
 ([Private scratch links](#private-scratch-links)).
 
-`style_exclude` entries are micromatch globs over repository-relative paths,
-matched with dot files included, so `docs/**` also reaches dot-directories below
-`docs/`. A glob is refused when it is absolute, drive-lettered, or negated with
-`!`, when it contains a backslash or an empty, `.`, or `..` segment, or when it
-holds no letter or number, so wildcards alone (`**`, `*/**`) cannot stand for
-every file.
+`style_exclude` entries are globs over repository-relative paths, matched with
+dot files included, so `docs/**` also reaches dot-directories below `docs/`. The
+gate matches them itself (`styleExclusionMatcher` in
+`tools/markdownlint/verify.mjs`), the way micromatch 4.0.8 matched them before
+it left the lock (#736):
+
+| Shape | Matches |
+| :--- | :--- |
+| `*` | any run of characters inside one path segment, a leading dot included |
+| `?` | one character inside one path segment |
+| `[abc]`, `[a-z]` | one listed character; `[ab]` also matches the text `[ab]`, as in micromatch, while a class holding `-`, `^`, `{`, `}` or another regular-expression character does not |
+| `[^a]` | one character that is not listed, never `/` |
+| `{a,b}` | either alternative, inside one path segment; at most 64 alternatives per segment, where each class that also matches its own text (`[ab]`) doubles the count |
+| `**` as a whole segment | any number of segments, none included |
+
+A trailing `/**` after a segment that ends in `*` (`docs/*/**`) needs at least
+one more segment, and consecutive `**` segments count as one, as in micromatch.
+A path spelled exactly as the glob matches it too, so `docs/{a,c}.md` also
+excludes a file named `docs/{a,c}.md`: micromatch compares the two before its
+pattern. Matching is case-sensitive on every platform; on Windows a backslash
+in a path also separates segments. `styleExclusionGrammarSelfTest` replays a
+table of micromatch's answers for these shapes.
+
+A glob is refused when it is absolute, drive-lettered, or negated with `!`, when
+it contains a backslash or an empty, `.`, or `..` segment, or when it holds no
+letter or number, so wildcards alone (`**`, `*/**`) cannot stand for every file.
+
+Its characters come from an allow-list: letters, combining marks and digits of
+any script, the space, and only this ASCII punctuation: the grammar's own
+`. _ - / * ? [ ] ^ { } ,` and `! # $ % & ' + : ; < = > @ ~` and the backtick,
+which micromatch read as themselves. The gate refuses any other character and
+names its code point: a double quote, which micromatch read as a quote around
+literal text, `( | )`, a tab, a no-break space, an emoji, a joiner. A character
+nobody compared with micromatch is therefore refused, never matched differently.
+Random differentials against micromatch 4.0.8, drawing globs and paths from
+every printable ASCII character, tab and a Unicode sample, found no mismatch
+over 112 million glob-path pairs; that is a measurement over that alphabet, not
+a proof (the comment above `STYLE_EXCLUSION_TABLE` gives the counts).
+
+The gate also refuses, naming the glob and the reason, every shape it does not
+support rather than matching it differently:
+
+<!-- praetor:docs-references:off the list shows illustrative globs and the paths micromatch matched with them; no repository carries them -->
+
+- extglobs and `( | )` groups, POSIX classes such as `[[:alpha:]]`, brace
+  ranges such as `{1..3}`, nested brace lists, and `**` inside a segment
+  (`docs/**.md`);
+- a class that starts with `!`: micromatch read `[!a]` as the characters `!`
+  and `a`; write `[^a]`;
+- a class range that spans `/`, such as `[ -~]`: micromatch let it match a
+  path separator, so `a[ -~]b/x.md` matched `a/b/x.md`;
+- a `+` straight after `]`, `{` or `}`: micromatch read it as a
+  regular-expression repeat, so `docs/[0-9]+.md` matched `docs/12.md` and not
+  `docs/1+.md`;
+- a brace alternative of `*` alone: micromatch let it match nothing, so
+  `docs/x/**/{*,draft}` matched `docs/x`; list that alternative as a separate
+  glob;
+- `.*` inside a brace list: micromatch matched it differently from `.*`
+  outside one, so `a{x,.*}` did not match `a.`, though `a.*` did;
+- a run of `+`, `$` or `^` in a glob of one segment: micromatch escaped only the
+  first character of the run there, so `c++.md` matched `c+.md` and `a$$*`
+  matched `a$`; the same run in a longer glob, such as `docs/c++/**`, is
+  accepted;
+- an unmatched bracket or brace, a brace list without a comma, and a brace
+  alternative that leaves an empty segment or wildcards alone.
+
+<!-- praetor:docs-references:on -->
+
 Exclusions apply after the built-in style exclusions and before the style rules
 run. They narrow the style run only: the private-link rule still reads every
 inventory file, excluded or not. When the globs would remove every file the
@@ -233,8 +318,9 @@ markdown-governance: styled 1402 public Markdown files (259 excluded by document
 ```
 
 `praetorctl audit` validates the block when it loads the manifest
-(`internal/config/documentation.go`), with the same ranges and glob rules, and
-records the effective values on their own line:
+(`internal/config/documentation.go`), with the same ranges and the same
+repository-relative glob rules, and records the effective values on their own
+line. The unsupported-shape refusals above run in the gate only:
 
 ```text
 [PASS] Documentation gate settings from .standards.yaml: max_files 8192, max_file_bytes 4194304, 3 style exclusions (changelog.d/**, docs/adr/_index_fragments/*.md, **/testdata/**).
@@ -243,8 +329,8 @@ records the effective values on their own line:
 The gate reads the block at run time, so a declaration changes no locked asset.
 `TestDocumentationSettingsMirrorConfig` in `tools/markdownlint/assets_test.go`
 keeps the gate's constants equal to audit's, and `make docs-lint-test` replays
-the settings, raised-bound, style-exclusion, and hermetic-configuration
-fixtures.
+the settings, raised-bound, style-exclusion, glob-grammar, glob-character,
+lint-entry, lint-output, lint-memory, and hermetic-configuration fixtures.
 
 ## Private scratch links
 

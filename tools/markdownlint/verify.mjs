@@ -9,14 +9,17 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Inventory bounds. documentation.max_files and documentation.max_file_bytes in .standards.yaml
 // raise the file-count and per-file bounds from their defaults up to their ceilings; nothing
 // raises the aggregate bound. internal/config/documentation.go validates the same ranges for
 // audit, and TestDocumentationSettingsMirrorConfig keeps the two in step. The per-file ceiling
-// is a memory bound: markdownlint-cli2 lints a 4 MiB file of linked bullets in a 1 GiB heap,
-// while at 8 MiB it needed more than 1.5 GiB, close to Node's default heap on a 7 GB runner.
+// is a memory bound: the markdownlint library lints a 4 MiB file of linked and code-spanned
+// bullets in a 1.5 GiB heap (lintMemorySelfTest replays it with LINT_MEMORY_HEAP_MB), while a
+// file of linked bullets at 8 MiB needed more than 1.5 GiB, close to Node's default heap on a
+// 7 GB runner. markdownlint-cli2, which the gate ran before, needed the same: it lints through
+// the same library.
 const DEFAULT_MAX_FILES = 4_096;
 const MAX_FILES_CEILING = 16_384;
 const DEFAULT_MAX_FILE_BYTES = 1_048_576;
@@ -29,10 +32,10 @@ const MAX_MANIFEST_ALIASES = 1_024;
 const MAX_STYLE_EXCLUSIONS = 64;
 const MAX_STYLE_EXCLUSION_BYTES = 256;
 const DOCUMENTATION_KEYS = new Set(["max_files", "max_file_bytes", "style_exclude"]);
-// A declared exclusion is a micromatch glob over the repository-relative path; dot lets
-// `docs/**` reach dot-directories below docs/ as well.
-const GLOB_OPTIONS = Object.freeze({ dot: true });
-const STYLE_TREE = "style-tree";
+// Brace lists in one path segment of a declared exclusion expand to at most this many
+// alternatives; a list past it is refused rather than expanded (HISS-02).
+const MAX_BRACE_ALTERNATIVES = 64;
+const GLOBSTAR = "**";
 const DEFAULT_SETTINGS = Object.freeze({
   declared: false,
   maxFiles: DEFAULT_MAX_FILES,
@@ -54,14 +57,22 @@ const MAX_COMMAND_BYTES = 24_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 300_000;
 const NPM_CI_ARGS = Object.freeze(["ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
-const MARKDOWNLINT_BIN = "./markdownlint-cli2-bin.mjs";
+// The gate lints in a child process of its own script: `node verify.mjs --lint <install> <file>...`
+// from the repository root. The child imports the markdownlint library's synchronous entry from
+// the locked install and reads its rules from the config mapping of markdownlint-cli2.yaml; the
+// file keeps the name and the noProgress key markdownlint-cli2 read, so adopted copies need no
+// change, and every other key is refused.
+const LINT_MODE = "--lint";
+const MARKDOWNLINT_ENTRY = "./lib/exports-sync.mjs";
+const LINT_CONFIG_FILE = "markdownlint-cli2.yaml";
+const LINT_CONFIG_KEYS = new Set(["config", "noProgress"]);
 const MARKDOWN_SUFFIXES = [".md", ".markdown", ".mdx", ".md.tmpl", ".markdown.tmpl", ".mdx.tmpl"];
 const SCRATCH_ROOTS = new Set([".workingdir", ".workingdir2"]);
 const FILESYSTEM_SYMLINK_UNAVAILABLE = new Set(["EPERM", "EACCES", "ENOSYS"]);
 const TOOL_FILES = [
   "package.json",
   "package-lock.json",
-  "markdownlint-cli2.yaml",
+  LINT_CONFIG_FILE,
   "no-private-scratch-links.mjs",
 ];
 // Style-only exclusions. These files are generated release/agent surfaces or
@@ -285,6 +296,431 @@ function styleExclusionProblem(pattern) {
   return null;
 }
 
+// Declared exclusions are matched here, not through micromatch: micromatch expands braces through
+// the braces package, whose stack-exhaustion advisory has no fixed release (#736). The grammar is
+// the part of micromatch's, with dot files included, that the gate supports, and it matches as
+// micromatch 4.0.8 with { dot: true } does: `*` and `?` stay inside one path segment and match a
+// leading dot; `[abc]`, `[a-z]` and `[^a]` match one character; `{a,b}` lists alternatives
+// inside one segment; a `**` segment spans any number of segments, none included, except that a
+// trailing `/**` after a segment ending in `*` needs at least one more segment, and consecutive
+// `**` segments count as one; and a path spelled exactly as the glob matches it, as picomatch
+// compares the two before its regular expression. Matching is case-sensitive on every platform,
+// and on Windows a backslash in a path is a separator.
+//
+// The characters are an allow-list, not a deny-list: a glob may hold letters, combining marks and
+// digits of any script, the space, and only the ASCII punctuation in GLOB_PUNCTUATION, which is
+// the grammar's own `. _ - / * ? [ ] ^ { } ,` and the characters micromatch read as themselves,
+// `! # $ % & ' + : ; < = > @ ~` and the backtick. Any other character is refused with its code
+// point, so a character nobody compared with micromatch is never matched differently. Of the
+// ASCII punctuation that leaves `"`, which micromatch reads as a quote around literal text,
+// `( | )`, which build extglobs and groups, and the backslash, an escape there.
+//
+// Every other shape is refused when the settings are read, never matched differently: POSIX
+// classes, nested lists, brace ranges, `**` inside a segment, an unmatched bracket or brace, a
+// `[!a]` class, a class range spanning `/`, a `+` straight after `]`, `{` or `}` (a
+// regular-expression repeat in micromatch), a brace alternative of `*` alone (micromatch lets it
+// match nothing), `.*` inside a brace list, and a run of `+`, `$` or `^` in a glob of one segment.
+// picomatch compiles a glob of one segment without brackets or braces through a shortcut that
+// escapes only the first character of such a run: `c++.md` matched `c+.md`, and `a$$*` matched
+// `a$`. styleExclusionGrammarSelfTest pins each shape against the answers micromatch gave.
+const GLOB_PUNCTUATION = "._-/*?[]^{},!#$%&'+:;<=>@`~";
+const GLOB_UNSUPPORTED_CHARACTER = new RegExp(
+  `[^\\p{L}\\p{M}\\p{N} ${GLOB_PUNCTUATION.replace(/[\\\]\[^/-]/gu, "\\$&")}]`, "u");
+const GROUP_PROBLEM = "extglobs and regex groups are not supported";
+const CHARACTER_PROBLEMS = new Map([
+  ["\"", "micromatch reads it as a quote around literal text"],
+  ["(", GROUP_PROBLEM],
+  [")", GROUP_PROBLEM],
+  ["|", GROUP_PROBLEM],
+]);
+const ONE_SEGMENT_RUN = /\+\+|\$\$|\^\^/u;
+const GLOB_STAR_TOKEN = Object.freeze({ type: "star" });
+const GLOB_ANY_TOKEN = Object.freeze({ type: "any" });
+const ANY_SEGMENT = Object.freeze({ globstar: false, wildcard: true, alternatives: [[GLOB_STAR_TOKEN]] });
+const SLASH_CODE = 0x2f;
+// picomatch's REGEX_SPECIAL_CHARS: a class body holding none of them also matches its own text.
+const PICOMATCH_REGEX_CHARS = /[-*+?.^${}(|)[\]]/u;
+// picomatch's REGEX_BACKSLASH: the backslashes its Windows path format turns into /.
+const PICOMATCH_BACKSLASH = /\\(?![*+?^${}(|)[\]])/gu;
+const REPEAT_PROBLEM = "puts + straight after ], { or }, where micromatch reads it as a regular-expression " +
+  "repeat, not as the character +";
+
+// classEnd returns the index of the ] closing the [ ] class opened at index, or the problem.
+function classEnd(segment, index) {
+  const end = segment.indexOf("]", index + 1);
+  if (end < 0) {
+    return "has a [ without a closing ]";
+  }
+  if (segment.slice(index + 1, end).includes("[")) {
+    return "uses [ inside a [ ] class; POSIX classes such as [:alpha:] are not supported";
+  }
+  if (segment[end + 1] === "+") {
+    return REPEAT_PROBLEM;
+  }
+  return end;
+}
+
+// braceParts splits one segment into literal text and brace lists, skipping [ ] classes so a
+// brace or comma inside a class stays literal. It returns the parts or the problem refusing them.
+function braceParts(segment) {
+  const parts = [];
+  let literal = "";
+  let list = null;
+  for (let index = 0; index < segment.length && index < MAX_STYLE_EXCLUSION_BYTES; index += 1) {
+    const character = segment[index];
+    if (character === "]") {
+      return "has a ] without an opening [";
+    }
+    if (character === "{" || character === "}" || (character === "," && list !== null)) {
+      const state = braceDelimiter(character, segment[index + 1], parts, { list, literal });
+      if (typeof state === "string") {
+        return state;
+      }
+      ({ list, literal } = state);
+      continue;
+    }
+    if (character !== "[") {
+      literal += character;
+      continue;
+    }
+    const end = classEnd(segment, index);
+    if (typeof end === "string") {
+      return end;
+    }
+    literal += segment.slice(index, end + 1);
+    index = end;
+  }
+  if (list !== null) {
+    return "has a { without a closing }";
+  }
+  parts.push(literal);
+  return parts;
+}
+
+// braceDelimiter applies one {, } or list comma, followed by next, to the open list and the
+// literal text read so far: it opens a list, closes it into parts, or starts the next
+// alternative. It returns the new state or the problem refusing the delimiter.
+function braceDelimiter(character, next, parts, { list, literal }) {
+  if (character === "{") {
+    if (list !== null) {
+      return "nests a brace list inside another; nested lists are not supported";
+    }
+    parts.push(literal);
+    return next === "+" ? REPEAT_PROBLEM : { list: [], literal: "" };
+  }
+  if (list === null) {
+    return "has a } without an opening {";
+  }
+  list.push(literal);
+  if (character === ",") {
+    return { list, literal: "" };
+  }
+  const problem = closedListProblem(list, next);
+  if (problem !== null) {
+    return problem;
+  }
+  parts.push(list);
+  return { list: null, literal: "" };
+}
+
+// closedListProblem names why a brace list just closed, followed by next, is refused, or returns
+// null. Inside a list picomatch reads every . outside a class as a dot token and makes a * right
+// after it match differently: `a{x,.*}` does not match `a.`, while `a.*` does.
+function closedListProblem(list, next) {
+  if (list.some((alternative) => alternative.includes(".."))) {
+    return "uses .. inside a brace list; brace ranges are not supported";
+  }
+  if (list.some((alternative) => alternative.replace(/\[[^\]]*\]/gu, "c").includes(".*"))) {
+    return "puts .* inside a brace list, which micromatch matches differently from .* outside one; " +
+      "list those alternatives as separate globs";
+  }
+  if (list.length < 2) {
+    return "has a brace list without a comma; write at least two alternatives";
+  }
+  return next === "+" ? REPEAT_PROBLEM : null;
+}
+
+// expandBraces returns every alternative one segment's brace lists spell, or the problem.
+function expandBraces(segment) {
+  const parts = braceParts(segment);
+  if (typeof parts === "string") {
+    return parts;
+  }
+  let alternatives = [""];
+  for (let index = 0; index < parts.length && index < MAX_STYLE_EXCLUSION_BYTES; index += 1) {
+    const choices = typeof parts[index] === "string" ? [parts[index]] : parts[index];
+    if (alternatives.length * choices.length > MAX_BRACE_ALTERNATIVES) {
+      return `expands to more than ${MAX_BRACE_ALTERNATIVES} alternatives in one segment`;
+    }
+    alternatives = alternatives.flatMap((prefix) => choices.map((choice) => prefix + choice));
+  }
+  return [...new Set(alternatives)];
+}
+
+// classRanges reads the characters and a-z ranges of a [ ] class body from start as [low, high]
+// pairs of UTF-16 code units, the units micromatch's regular expressions compare.
+function classRanges(body, start) {
+  const ranges = [];
+  for (let index = start; index < body.length && index < MAX_STYLE_EXCLUSION_BYTES; index += 1) {
+    const low = body.charCodeAt(index);
+    const ranged = body[index + 1] === "-" && index + 2 < body.length;
+    ranges.push([low, ranged ? body.charCodeAt(index + 2) : low]);
+    index += ranged ? 2 : 0;
+  }
+  return ranges;
+}
+
+function rangeText([low, high]) {
+  return `${String.fromCharCode(low)}-${String.fromCharCode(high)}`;
+}
+
+// classToken reads the body of a [ ] class: an optional leading ^, then characters and a-z ranges.
+// As in micromatch, a body without a character from picomatch's regular-expression set
+// (`[ab]`, not `[a-c]`, `[^a]` or `[{a]`) also matches its own bracketed text, and literal holds
+// that text. micromatch reads a leading ! as the character !, not as negation, and lets a range
+// spanning / match a path separator, since only a negated class has / added; both are refused.
+function classToken(body) {
+  if (body.startsWith("!")) {
+    return "starts a [ ] class with !, which micromatch reads as the character !; write [^...] to negate";
+  }
+  const negated = body.startsWith("^");
+  const start = negated ? 1 : 0;
+  if (body.length === start) {
+    return "has an empty [ ] class; a class may not begin with ]";
+  }
+  const ranges = classRanges(body, start);
+  const reversed = ranges.find(([low, high]) => high < low);
+  if (reversed !== undefined) {
+    return `has the reversed range ${rangeText(reversed)} in a [ ] class`;
+  }
+  const spanning = negated ? undefined : ranges.find(([low, high]) => low <= SLASH_CODE && SLASH_CODE <= high);
+  if (spanning !== undefined) {
+    return `has the range ${rangeText(spanning)} in a [ ] class, which spans / and so lets micromatch match ` +
+      "a path separator";
+  }
+  const literal = PICOMATCH_REGEX_CHARS.test(body) ? null : `[${body}]`;
+  return { type: "class", negated, ranges, literal };
+}
+
+function literalTokens(text) {
+  return Array.from({ length: text.length }, (_, index) => ({ type: "literal", code: text.charCodeAt(index) }));
+}
+
+// bracketVariants returns every token list one alternative spells when each class that also
+// matches its bracketed text is read either way, or the problem when they exceed the bound.
+function bracketVariants(tokens) {
+  let variants = [[]];
+  for (let index = 0; index < tokens.length && index < MAX_STYLE_EXCLUSION_BYTES; index += 1) {
+    const token = tokens[index];
+    const choices = token.type === "class" && token.literal !== null ? [[token], literalTokens(token.literal)] : [[token]];
+    if (variants.length * choices.length > MAX_BRACE_ALTERNATIVES) {
+      return `expands to more than ${MAX_BRACE_ALTERNATIVES} alternatives in one segment`;
+    }
+    variants = variants.flatMap((prefix) => choices.map((choice) => [...prefix, ...choice]));
+  }
+  return variants;
+}
+
+// segmentTokens reads one brace-free alternative into literal, `*`, `?` and class tokens.
+function segmentTokens(text) {
+  const tokens = [];
+  for (let index = 0; index < text.length && index < MAX_STYLE_EXCLUSION_BYTES; index += 1) {
+    const character = text[index];
+    if (character === "*") {
+      if (tokens.at(-1) !== GLOB_STAR_TOKEN) {
+        tokens.push(GLOB_STAR_TOKEN);
+      }
+    } else if (character === "?") {
+      tokens.push(GLOB_ANY_TOKEN);
+    } else if (character === "[") {
+      const end = text.indexOf("]", index + 1);
+      const token = classToken(text.slice(index + 1, end));
+      if (typeof token === "string") {
+        return token;
+      }
+      tokens.push(token);
+      index = end;
+    } else {
+      tokens.push({ type: "literal", code: text.charCodeAt(index) });
+    }
+  }
+  return tokens;
+}
+
+// alternativeProblem names why one brace alternative of segment is refused, or returns null. A
+// brace alternative of `*` alone may match nothing in micromatch: `docs/x/**/{*,draft}` matches
+// `docs/x` there, as a whole-segment `*` never does.
+function alternativeProblem(alternative, segment) {
+  if (alternative === "" || alternative === "." || alternative === "..") {
+    return "has a brace list that leaves an empty, . or .. segment";
+  }
+  if (alternative !== segment && /^\*+$/u.test(alternative)) {
+    return "has a brace alternative of * alone, which micromatch lets match nothing; list that " +
+      "alternative as a separate glob";
+  }
+  return null;
+}
+
+// compileSegment turns one path segment of a declared exclusion into a globstar or a list of
+// token alternatives, or returns the problem refusing it.
+function compileSegment(segment) {
+  if (segment === GLOBSTAR) {
+    return { globstar: true, wildcard: true, alternatives: [] };
+  }
+  if (segment.includes(GLOBSTAR)) {
+    return "uses ** inside a path segment; ** must be a whole segment";
+  }
+  const expanded = expandBraces(segment);
+  if (typeof expanded === "string") {
+    return expanded;
+  }
+  const alternatives = [];
+  for (let index = 0; index < expanded.length && index < MAX_BRACE_ALTERNATIVES; index += 1) {
+    const problem = alternativeProblem(expanded[index], segment);
+    if (problem !== null) {
+      return problem;
+    }
+    const tokens = segmentTokens(expanded[index]);
+    const variants = typeof tokens === "string" ? tokens : bracketVariants(tokens);
+    if (typeof variants === "string") {
+      return variants;
+    }
+    if (alternatives.length + variants.length > MAX_BRACE_ALTERNATIVES) {
+      return `expands to more than ${MAX_BRACE_ALTERNATIVES} alternatives in one segment`;
+    }
+    alternatives.push(...variants);
+  }
+  const wildcard = expanded.some((alternative) => !/[\p{L}\p{N}]/u.test(alternative));
+  return { globstar: false, wildcard, alternatives };
+}
+
+// characterProblem names the first character of pattern outside the allow-list, with its code
+// point and the reason, or returns null.
+function characterProblem(pattern) {
+  const match = GLOB_UNSUPPORTED_CHARACTER.exec(pattern);
+  if (match === null) {
+    return null;
+  }
+  const codePoint = match[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+  const reason = CHARACTER_PROBLEMS.get(match[0]) ?? "a glob may hold letters, combining marks and digits " +
+    `of any script, the space and only the ASCII punctuation ${GLOB_PUNCTUATION}`;
+  return `contains ${JSON.stringify(match[0])} (U+${codePoint}); ${reason}`;
+}
+
+// parseStyleExclusion compiles one declared exclusion, already checked by styleExclusionProblem,
+// into its segments, or returns { problem } naming the character or shape the gate does not
+// support.
+function parseStyleExclusion(pattern) {
+  const unsupported = characterProblem(pattern);
+  if (unsupported !== null) {
+    return { problem: unsupported };
+  }
+  if (!pattern.includes("/") && ONE_SEGMENT_RUN.test(pattern)) {
+    return { problem: "repeats +, $ or ^ in a glob of one segment, where micromatch escapes only the first " +
+      "character of the run, so c++.md matched c+.md" };
+  }
+  const raw = pattern.split("/").filter((segment, index, all) =>
+    !(segment === GLOBSTAR && index > 0 && all[index - 1] === GLOBSTAR));
+  const segments = [];
+  for (let index = 0; index < raw.length && index < MAX_STYLE_EXCLUSION_BYTES; index += 1) {
+    const segment = compileSegment(raw[index]);
+    if (typeof segment === "string") {
+      return { problem: segment };
+    }
+    segments.push(segment);
+  }
+  if (segments.every((segment) => segment.wildcard)) {
+    return { problem: "must name a path: a brace alternative of wildcards alone would match every file" };
+  }
+  if (raw.length > 1 && raw.at(-1) === GLOBSTAR && raw.at(-2).endsWith("*")) {
+    segments.splice(segments.length - 1, 0, ANY_SEGMENT);
+  }
+  return { segments };
+}
+
+function tokenMatches(token, code) {
+  if (token.type === "any") {
+    return true;
+  }
+  if (token.type === "literal") {
+    return token.code === code;
+  }
+  return token.ranges.some(([low, high]) => code >= low && code <= high) !== token.negated;
+}
+
+// tokensMatch matches one segment's tokens against one path segment: `*` takes any run, falling
+// back to the last `*` on a mismatch, so the work is bounded by the product of both lengths.
+function tokensMatch(tokens, text) {
+  let token = 0;
+  let position = 0;
+  let star = -1;
+  let starPosition = 0;
+  const bound = (tokens.length + 1) * (text.length + 1);
+  for (let step = 0; position < text.length && step < bound; step += 1) {
+    if (token < tokens.length && tokens[token] === GLOB_STAR_TOKEN) {
+      star = token;
+      starPosition = position;
+      token += 1;
+    } else if (token < tokens.length && tokenMatches(tokens[token], text.charCodeAt(position))) {
+      token += 1;
+      position += 1;
+    } else if (star >= 0) {
+      token = star + 1;
+      starPosition += 1;
+      position = starPosition;
+    } else {
+      return false;
+    }
+  }
+  while (token < tokens.length && tokens[token] === GLOB_STAR_TOKEN) {
+    token += 1;
+  }
+  return position === text.length && token === tokens.length;
+}
+
+// segmentsMatch matches compiled segments against path segments; a globstar spans any number of
+// path segments, none included. The table is bounded by both lengths (HISS-01: no recursion).
+function segmentsMatch(segments, parts) {
+  let reached = segments.map(() => false);
+  reached.push(false);
+  reached[0] = true;
+  for (let index = 0; index < segments.length && segments[index].globstar; index += 1) {
+    reached[index + 1] = true;
+  }
+  for (let part = 0; part < parts.length && part < MAX_PATH_BYTES; part += 1) {
+    const next = [false];
+    for (let index = 1; index <= segments.length; index += 1) {
+      const segment = segments[index - 1];
+      next.push(segment.globstar ? next[index - 1] || reached[index] :
+        reached[index - 1] && segment.alternatives.some((tokens) => tokensMatch(tokens, parts[part])));
+    }
+    reached = next;
+  }
+  return reached[segments.length];
+}
+
+// styleExclusionMatcher returns a predicate over repository-relative paths for one declared
+// exclusion; platform decides whether a backslash separates path segments, as it does on Windows.
+// A path spelled exactly as the glob matches, as picomatch tests that before its expression; on
+// Windows picomatch first turns each backslash into / except one before a glob character
+// (PICOMATCH_BACKSLASH), so `docs\{a,c}.md` is not the spelling of `docs/{a,c}.md` there. Such a
+// kept backslash stays an ordinary character for picomatch's classes, so `[^a]` could match it,
+// while this matcher reads every backslash as a separator. The gate's paths come from git
+// ls-files, which separates segments with / on every platform, and a Windows file name cannot
+// hold a backslash, so no such path reaches the matcher.
+function styleExclusionMatcher(pattern, platform) {
+  const parsed = parseStyleExclusion(pattern);
+  if (parsed.problem !== undefined) {
+    fail(`${MANIFEST_FILE} documentation.style_exclude ${JSON.stringify(pattern)} ${parsed.problem}`);
+  }
+  const windows = platform === "win32";
+  return (relative) => {
+    const spelled = windows ? relative.replace(PICOMATCH_BACKSLASH, "/") : relative;
+    const parts = (windows ? relative.replaceAll("\\", "/") : relative).split("/");
+    return spelled === pattern || segmentsMatch(parsed.segments, parts);
+  };
+}
+
 function styleExclusions(value) {
   if (value === undefined) {
     return [];
@@ -297,8 +733,8 @@ function styleExclusions(value) {
   }
   const seen = new Set();
   for (let index = 0; index < value.length && index < MAX_STYLE_EXCLUSIONS; index += 1) {
-    const problem = styleExclusionProblem(value[index]);
-    if (problem !== null) {
+    const problem = styleExclusionProblem(value[index]) ?? parseStyleExclusion(value[index]).problem;
+    if (problem !== null && problem !== undefined) {
       fail(`${MANIFEST_FILE} documentation.style_exclude[${index}] ${problem}`);
     }
     if (seen.has(value[index])) {
@@ -377,8 +813,8 @@ function isStyleSelected(relative) {
 // counts the files each declared glob removes. Declared exclusions narrow the style run only: the
 // private-link rule still reads every inventory file. They may never empty it: a declaration that
 // removes every file the built-in selection styles fails the gate.
-function styleSelection(files, settings, micromatch) {
-  const matchers = settings.styleExclude.map((pattern) => micromatch.matcher(pattern, GLOB_OPTIONS));
+function styleSelection(files, settings, platform) {
+  const matchers = settings.styleExclude.map((pattern) => styleExclusionMatcher(pattern, platform));
   const counts = matchers.map(() => 0);
   const styled = [];
   let eligible = 0;
@@ -542,7 +978,9 @@ function inventory(root, settings = DEFAULT_SETTINGS) {
   let totalBytes = 0;
   for (let index = 0; index < selected.length && index < settings.maxFiles; index += 1) {
     const relative = selected[index];
-    if (Buffer.byteLength(relative) > MAX_PATH_BYTES || /[\0\r\n]/u.test(relative)) {
+    // U+2028 and U+2029 are refused with the line breaks: micromatch's patterns never match
+    // them, so a path holding one would be selected differently from the micromatch rules.
+    if (Buffer.byteLength(relative) > MAX_PATH_BYTES || /[\0\r\n\u2028\u2029]/u.test(relative)) {
       fail(`refusing unsafe or oversized Markdown path at inventory index ${index}`);
     }
     const full = path.join(root, relative);
@@ -870,51 +1308,193 @@ function writeFixtureFiles(root, files) {
   }
 }
 
+// lintCommand runs the lint child on files from root, as runMarkdownlint does, and returns the result.
+function lintCommand(root, temporary, files, nodeOptions = []) {
+  return command(process.execPath, [...nodeOptions, fileURLToPath(import.meta.url), LINT_MODE, temporary, ...files], {
+    cwd: root,
+    allowFailure: true,
+  });
+}
+
 // Negative: markdownlint configuration files anywhere in the repository, loosening (rules off,
 // everything ignored, rules replaced by code) or tightening (an 80-column MD013 against the
-// locked MD013: false), change nothing, and a configuration module is never executed. The
-// control run from the repository root shows the same files do take effect when markdownlint-cli2
-// is left to discover them, which is what the staged copy prevents.
+// locked MD013: false), change nothing, and a configuration module is never executed: the lint
+// child hands the library file text and the locked rules only. Boundary: a lint child given no
+// file reports nothing and passes.
 function hermeticConfigSelfTest(temporary) {
   const fixture = path.join(temporary, "hermetic-fixture");
   const marker = path.join(temporary, "adopter-configuration-ran");
-  const cli = markdownlintEntry(temporary);
-  const config = path.join(temporary, "markdownlint-cli2.yaml");
   writeFixtureFiles(fixture, {
     ".markdownlint.json": "{ \"default\": false }\n",
     ".markdownlint-cli2.jsonc": "{ \"ignores\": [\"**\"], \"config\": { \"default\": false } }\n",
+    ".markdownlint-cli2.yaml": "config:\n  default: false\n",
     "docs/.markdownlint.yaml": "default: false\n",
     "docs/.markdownlint-cli2.mjs": `import fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(marker)}, "ran");\n` +
       "export default { config: { default: false } };\n",
+    "docs/.markdownlint.cjs": `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");\n` +
+      "module.exports = { default: false };\n",
     "README.md": "#Malformed root\n",
     "docs/guide.md": "#Malformed guide\n",
   });
   const files = ["README.md", "docs/guide.md"];
   assert.equal(runMarkdownlint(fixture, temporary, files, false), 1);
+  const direct = lintCommand(fixture, temporary, files);
+  assert.equal(direct.status, 1);
+  assert.equal(direct.stderr,
+    "docs/guide.md:1:1 error MD018/no-missing-space-atx No space after hash on atx style heading " +
+    "[Context: \"#Malformed guide\"]\n" +
+    "README.md:1:1 error MD018/no-missing-space-atx No space after hash on atx style heading " +
+    "[Context: \"#Malformed root\"]\n");
   assert.equal(fs.existsSync(marker), false);
-  const tree = stageStyleTree(fixture, temporary, files);
-  const staged = command(process.execPath, [cli, "--config", config, "--no-globs", ":docs/guide.md"], {
-    cwd: tree,
-    allowFailure: true,
-  });
-  assert.match(`${staged.stdout}${staged.stderr}`, /^docs\/guide\.md:1(?::\d+)? error MD018/mu);
-  const discovered = command(process.execPath, [cli, "--config", config, "--no-globs", ":README.md", ":docs/guide.md"], {
-    cwd: fixture,
-    allowFailure: true,
-  });
-  assert.equal(discovered.status, 0, "control: markdownlint-cli2 no longer discovers repository configuration");
-  assert.equal(fs.existsSync(marker), true, "control: markdownlint-cli2 no longer imports a configuration module");
   const longLine = `# Guide\n\n${"word ".repeat(40).trim()}\n`;
   writeFixtureFiles(fixture, {
     ".markdownlint.json": "{ \"MD013\": { \"line_length\": 80 } }\n",
     ".markdownlint-cli2.jsonc": "{ \"config\": { \"MD013\": { \"line_length\": 80 } } }\n",
+    ".markdownlint-cli2.yaml": "config:\n  MD013:\n    line_length: 80\n",
     "docs/.markdownlint.yaml": "MD013:\n  line_length: 80\n",
     "docs/.markdownlint-cli2.mjs": "export default { config: { MD013: { line_length: 80 } } };\n",
     "README.md": longLine,
     "docs/guide.md": longLine,
   });
   assert.equal(runMarkdownlint(fixture, temporary, files, false), 0);
+  assert.equal(fs.existsSync(marker), false);
+  const empty = lintCommand(fixture, temporary, []);
+  assert.deepEqual([empty.status, empty.stdout, empty.stderr], [0, "", ""]);
   process.stdout.write("hermetic configuration fixtures: repository markdownlint files ignored, never executed\n");
+}
+
+// Positive: the locked markdownlint-cli2.yaml yields its config mapping, noProgress is accepted, and
+// inline markdownlint-configure-file comments parse as JSONC (comments, trailing comma), TOML or
+// YAML, as markdownlint-cli2 parsed them. Negative: a key markdownlint-cli2 read beyond config
+// (ignores, customRules), a missing or non-mapping config, a list and invalid YAML are refused, and
+// text no parser reads throws in each. Boundary: a config mapping alone suffices.
+function lintConfigurationSelfTest(temporary) {
+  const yaml = loadDependency(temporary, "js-yaml");
+  const locked = lintConfiguration(yaml, fs.readFileSync(path.join(temporary, LINT_CONFIG_FILE), "utf8"));
+  assert.equal(locked.default, true);
+  assert.equal(locked.MD013, false);
+  assert.deepEqual(lintConfiguration(yaml, "config:\n  default: true\n"), { default: true });
+  assert.deepEqual(lintConfiguration(yaml, "config: {}\nnoProgress: false\n"), {});
+  for (const [text, message] of [
+    ["config: {}\nignores: [\"**\"]\n", /has unsupported key "ignores"; the gate reads config/u],
+    ["customRules: [\"./rule.cjs\"]\nconfig: {}\n", /has unsupported key "customRules"/u],
+    ["noProgress: true\n", /must be a mapping with a config mapping/u],
+    ["config: [MD013]\n", /must be a mapping with a config mapping/u],
+    ["- config\n", /must be a mapping with a config mapping/u],
+    ["", /markdownlint-cli2\.yaml is not valid YAML/u],
+    ["config: [\n", /markdownlint-cli2\.yaml is not valid YAML/u],
+  ]) {
+    assert.throws(() => lintConfiguration(yaml, text), message, text);
+  }
+  const [jsonc, toml, yamlParser] = configurationParsers(temporary, yaml);
+  assert.deepEqual(jsonc("{ /* off */ \"MD018\": false, }"), { MD018: false });
+  assert.deepEqual(toml("MD018 = false\n"), { MD018: false });
+  assert.deepEqual(yamlParser("MD018: false\n"), { MD018: false });
+  assert.throws(() => jsonc("MD018: false"), /Unable to parse JSONC content/u);
+  assert.throws(() => toml("{ not: [toml"));
+  assert.throws(() => yamlParser("{ not: [yaml"));
+  process.stdout.write("lint configuration fixtures: locked config read, other keys refused, inline parsers in order\n");
+}
+
+// LINT_OUTPUT_FIXTURES and LINT_OUTPUT_EXPECTED pin what a failing style run prints. The expected
+// lines are the output markdownlint-cli2 0.23.3 printed for these files with the locked
+// configuration, captured before the gate moved to the library (#736): the format
+// (file:line[:column] severity rule description [detail] [Context]), the order (file by
+// localeCompare, then line, then rule name), inline configure-file comments in JSONC, TOML and
+// YAML, an unparseable one ignored, TOML front matter, CRLF line endings, MDX and templates.
+const LINT_OUTPUT_FIXTURES = Object.freeze({
+  "README.md": "#Root\n",
+  "docs/a b.md": "#space name\n",
+  "docs/Zeta.md": "#zeta\n",
+  "docs/alpha.md": "# Alpha\n\nText  \n\n\n## Two\n### Skip\n",
+  "docs/crlf.md": "# CRLF\r\n\r\ntext  \r\n#bad\r\n",
+  "docs/emphasis.md": "# Emph\n\n* * *\n___\nsome *emph * here and __strong__ vs **strong** and _e_ vs *e*\n",
+  "docs/inline-jsonc.md": "<!-- markdownlint-configure-file { /* c */ \"MD018\": false, } -->\n#No space jsonc\n",
+  "docs/inline-toml.md": "<!-- markdownlint-configure-file\nMD018 = false\n-->\n#No space toml\n",
+  "docs/inline-yaml.md": "<!-- markdownlint-configure-file\nMD018: false\n-->\n#No space yaml\n",
+  "docs/configure-bad.md": "<!-- markdownlint-configure-file { not: [valid -->\n#bad configure\n",
+  "docs/disable.md": "# D\n\n<!-- markdownlint-disable-next-line MD018 -->\n#skip\n#bad\n",
+  "docs/frontmatter.md": "+++\ntitle = \"x\"\n+++\n#bad\n",
+  "docs/tables.md": "# Tables\n\n| a | b |\n|---|---|\n| 1 | 2 | 3 |\n",
+  "docs/unicode.md": "# Ünïcödé \u{1F600}\n\n\u{1F600} *x *\n",
+  "docs/notrailing.md": "# No newline",
+  "docs/page.mdx": "# MDX\n\n<Card href=\"../README.md\">Public</Card>\n\n#bad\n",
+  "templates/T.md.tmpl": "# {{ .Name }}\n\n- {{ . }}\n#bad\n",
+  "docs/empty.md": "",
+});
+const MD018 = "error MD018/no-missing-space-atx No space after hash on atx style heading";
+const LINT_OUTPUT_EXPECTED = Object.freeze([
+  `docs/a b.md:1:1 ${MD018} [Context: "#space name"]`,
+  "docs/alpha.md:5 error MD012/no-multiple-blanks Multiple consecutive blank lines [Expected: 1; Actual: 2]",
+  "docs/alpha.md:6 error MD022/blanks-around-headings Headings should be surrounded by blank lines " +
+    "[Expected: 1; Actual: 0; Below] [Context: \"## Two\"]",
+  "docs/alpha.md:7 error MD022/blanks-around-headings Headings should be surrounded by blank lines " +
+    "[Expected: 1; Actual: 0; Above] [Context: \"### Skip\"]",
+  `docs/configure-bad.md:2:1 ${MD018} [Context: "#bad configure"]`,
+  `docs/crlf.md:4:1 ${MD018} [Context: "#bad"]`,
+  `docs/disable.md:5:1 ${MD018} [Context: "#bad"]`,
+  "docs/emphasis.md:4 error MD035/hr-style Horizontal rule style [Expected: * * *; Actual: ___]",
+  "docs/emphasis.md:5:11 error MD037/no-space-in-emphasis Spaces inside emphasis markers [Context: \"h *\"]",
+  "docs/emphasis.md:5:59 error MD049/emphasis-style Emphasis style [Expected: underscore; Actual: asterisk]",
+  "docs/emphasis.md:5:61 error MD049/emphasis-style Emphasis style [Expected: underscore; Actual: asterisk]",
+  "docs/emphasis.md:5:37 error MD050/strong-style Strong style [Expected: underscore; Actual: asterisk]",
+  "docs/emphasis.md:5:45 error MD050/strong-style Strong style [Expected: underscore; Actual: asterisk]",
+  `docs/frontmatter.md:4:1 ${MD018} [Context: "#bad"]`,
+  "docs/notrailing.md:1:12 error MD047/single-trailing-newline Files should end with a single newline character",
+  `docs/page.mdx:5:1 ${MD018} [Context: "#bad"]`,
+  "docs/tables.md:5:9 error MD056/table-column-count Table column count " +
+    "[Expected: 2; Actual: 3; Too many cells, extra data will be missing]",
+  "docs/unicode.md:3:6 error MD037/no-space-in-emphasis Spaces inside emphasis markers [Context: \"x *\"]",
+  `docs/Zeta.md:1:1 ${MD018} [Context: "#zeta"]`,
+  `README.md:1:1 ${MD018} [Context: "#Root"]`,
+  `templates/T.md.tmpl:4:1 ${MD018} [Context: "#bad"]`,
+]);
+
+// Positive: the lint child prints exactly what markdownlint-cli2 printed for the same files,
+// whatever order the files come in. Negative: a symbolic link or a missing file is refused.
+function lintOutputSelfTest(temporary) {
+  const fixture = path.join(temporary, "lint-output-fixture");
+  writeFixtureFiles(fixture, LINT_OUTPUT_FIXTURES);
+  const files = Object.keys(LINT_OUTPUT_FIXTURES);
+  for (const order of [[...files].sort(), [...files].reverse()]) {
+    const result = lintCommand(fixture, temporary, order);
+    assert.deepEqual([result.status, result.stdout], [1, ""]);
+    assert.equal(result.stderr, `${LINT_OUTPUT_EXPECTED.join("\n")}\n`);
+  }
+  const missing = lintCommand(fixture, temporary, ["docs/absent.md"]);
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /refusing to lint non-file Markdown source docs\/absent\.md/u);
+  try {
+    fs.symlinkSync("README.md", path.join(fixture, "linked.md"));
+    assert.match(lintCommand(fixture, temporary, ["linked.md"]).stderr, /refusing to lint non-file Markdown source/u);
+  } catch (error) {
+    if (!filesystemSymlinkUnavailable(error)) {
+      throw error;
+    }
+    process.stdout.write(filesystemSymlinkSkipDiagnostic(process.platform, error.code));
+  }
+  process.stdout.write("lint output fixtures: findings, order and format match markdownlint-cli2 0.23.3\n");
+}
+
+// The per-file ceiling is a memory bound (see MAX_FILE_BYTES_CEILING). Boundary: a file exactly at
+// the ceiling, of linked and code-spanned bullets, lints clean in a lint child capped at
+// LINT_MEMORY_HEAP_MB. Negative: one byte past the ceiling is refused before it is read.
+const LINT_MEMORY_HEAP_MB = 1_536;
+function lintMemorySelfTest(temporary) {
+  const fixture = path.join(temporary, "lint-memory-fixture");
+  const bullet = "- Lorem ipsum dolor sit amet, [consectetur](https://example.invalid/x) `adipiscing` elit.\n";
+  const count = Math.floor((MAX_FILE_BYTES_CEILING - 16) / bullet.length);
+  const headingBytes = MAX_FILE_BYTES_CEILING - count * bullet.length;
+  const markdown = `# ${"a".repeat(headingBytes - 4)}\n\n${bullet.repeat(count)}`;
+  assert.equal(Buffer.byteLength(markdown), MAX_FILE_BYTES_CEILING);
+  writeFixtureFiles(fixture, { "docs/ceiling.md": markdown, "docs/over.md": `${markdown}a` });
+  const ceiling = lintCommand(fixture, temporary, ["docs/ceiling.md"], [`--max-old-space-size=${LINT_MEMORY_HEAP_MB}`]);
+  assert.deepEqual([ceiling.status, ceiling.stderr], [0, ""]);
+  const over = lintCommand(fixture, temporary, ["docs/over.md"]);
+  assert.equal(over.status, 2);
+  assert.match(over.stderr, /docs\/over\.md is 4194305 bytes; per-file ceiling is 4194304/u);
+  process.stdout.write(`lint memory fixture: a ${MAX_FILE_BYTES_CEILING}-byte file lints in a ` +
+    `${LINT_MEMORY_HEAP_MB} MiB heap\n`);
 }
 
 // Positive: declared globs remove fragments, generated indexes and fixtures from the style run
@@ -923,25 +1503,25 @@ function hermeticConfigSelfTest(temporary) {
 // the private-link rule. Boundary: all but one file excluded passes, and a repository whose only
 // Markdown is built-in excluded has nothing for a declaration to empty.
 function styleExclusionSelfTest(temporary) {
-  const micromatch = loadDependency(temporary, "micromatch");
+  const platform = "linux";
   const files = ["AGENTS.md", "README.md", "changelog.d/fixed/fragment.md", "docs/adr/_index_fragments/0001.md",
     "docs/adr/_index_fragments/nested/0002.md", "docs/guide.md", "pkg/bench/testdata/golden.md"];
   const declared = (styleExclude) => ({ ...DEFAULT_SETTINGS, declared: true, styleExclude });
   const selection = styleSelection(files,
-    declared(["changelog.d/**", "docs/adr/_index_fragments/*.md", "**/testdata/**", "unused/**"]), micromatch);
+    declared(["changelog.d/**", "docs/adr/_index_fragments/*.md", "**/testdata/**", "unused/**"]), platform);
   assert.deepEqual(selection, {
     styled: ["README.md", "docs/adr/_index_fragments/nested/0002.md", "docs/guide.md"],
     excluded: 3,
     counts: [1, 1, 1, 0],
   });
-  assert.deepEqual(styleSelection(files, DEFAULT_SETTINGS, micromatch).styled, files.filter(isStyleSelected));
+  assert.deepEqual(styleSelection(files, DEFAULT_SETTINGS, platform).styled, files.filter(isStyleSelected));
   assert.deepEqual(styleSelection([".github/ISSUE_TEMPLATE/bug.md", "README.md"], declared([".github/**"]),
-    micromatch).styled, ["README.md"]);
-  assert.throws(() => styleSelection(files, declared(["README.md", "docs/**", "changelog.d/**", "pkg/**"]), micromatch),
+    platform).styled, ["README.md"]);
+  assert.throws(() => styleSelection(files, declared(["README.md", "docs/**", "changelog.d/**", "pkg/**"]), platform),
     /documentation\.style_exclude excludes all 6 style-selected Markdown files/u);
-  assert.deepEqual(styleSelection(files, declared(["docs/**", "changelog.d/**", "pkg/**"]), micromatch).styled,
+  assert.deepEqual(styleSelection(files, declared(["docs/**", "changelog.d/**", "pkg/**"]), platform).styled,
     ["README.md"]);
-  assert.deepEqual(styleSelection(["AGENTS.md"], declared(["docs/**"]), micromatch).styled, []);
+  assert.deepEqual(styleSelection(["AGENTS.md"], declared(["docs/**"]), platform).styled, []);
   const fixture = path.join(temporary, "exclusion-fixture");
   writeFixtureFiles(fixture, {
     ".gitignore": "/.workingdir/\n",
@@ -953,7 +1533,7 @@ function styleExclusionSelfTest(temporary) {
   const real = fs.realpathSync(fixture);
   const settings = repositorySettings(real, loadDependency(temporary, "js-yaml"));
   const all = inventory(real, settings);
-  const fixtureSelection = styleSelection(all, settings, micromatch);
+  const fixtureSelection = styleSelection(all, settings, platform);
   assert.deepEqual(fixtureSelection.styled, ["README.md"]);
   assert.equal(summaryLine(settings, fixtureSelection, all.length), "markdown-governance: styled 1 public Markdown " +
     "files (1 excluded by documentation.style_exclude); checked 2 tracked/non-ignored Markdown files for private links\n");
@@ -961,6 +1541,168 @@ function styleExclusionSelfTest(temporary) {
   assert.equal(runMarkdownlint(fixture, temporary, all.filter(isStyleSelected), false), 1);
   assert.equal(runScratchRule(fixture, temporary, all, false, false), 1);
   process.stdout.write("style exclusion fixtures: declared globs, counts, never everything, private links kept\n");
+}
+
+// STYLE_EXCLUSION_TABLE holds, for each pattern, the paths of STYLE_EXCLUSION_PATHS that
+// micromatch 4.0.8 with { dot: true } matched, recorded before the gate dropped it (#736), and
+// CHARACTER_TABLE does the same for CHARACTER_PATHS: the ASCII punctuation the gate reads as
+// itself, in a glob of one segment and in a longer one, + repeated in a longer glob, a combining
+// mark, and letters whose case pairs differ. Random differentials of the matcher against
+// micromatch found each refused shape. An earlier count of no difference over about 54 million
+// pairs came from a generator that never wrote a double quote or a run of +, $ or ^ in a glob of
+// one segment, both of which micromatch matched differently. Drawing globs and paths from every
+// printable ASCII character, tab and a Unicode sample (no-break space, dotted and dotless I, the
+// Kelvin sign, combining marks, a letter outside the Basic Multilingual Plane), 8 runs found no
+// mismatch over 112,136,472 glob-path pairs from 113,607 accepted globs: no mismatch found over
+// that alphabet, which is a measurement, not a proof of equivalence.
+// LITERAL_STYLE_PATHS spell glob characters, or a character outside ASCII, in a file name.
+const LITERAL_STYLE_PATHS = Object.freeze(["docs/{a,c}.md", "docs/[a-b].md", "docs/[{a]x.md", "docs/{x.md",
+  "docs/é.md", "docs/1+.md"]);
+const STYLE_EXCLUSION_PATHS = Object.freeze(["README.md", "docs/guide.md", "docs/.hidden/note.md",
+  "docs/x/y/deep.md", "docs/a.md", "docs/b.md", "docs/c.md", "docs/[ab].md", "pkg/testdata/golden.md",
+  "testdata/top.md", ".github/ISSUE_TEMPLATE/bug.md", "Docs/guide.md", "changelog.d/fixed/x.md", "docs/x.markdown",
+  ...LITERAL_STYLE_PATHS]);
+const STYLE_EXCLUSION_TABLE = Object.freeze([
+  ["docs/**", ["docs/guide.md", "docs/.hidden/note.md", "docs/x/y/deep.md", "docs/a.md", "docs/b.md", "docs/c.md",
+    "docs/[ab].md", "docs/x.markdown", ...LITERAL_STYLE_PATHS]],
+  ["**/testdata/**", ["pkg/testdata/golden.md", "testdata/top.md"]],
+  [".github/**", [".github/ISSUE_TEMPLATE/bug.md"]],
+  ["docs/*.md", ["docs/guide.md", "docs/a.md", "docs/b.md", "docs/c.md", "docs/[ab].md", ...LITERAL_STYLE_PATHS]],
+  ["docs/?.md", ["docs/a.md", "docs/b.md", "docs/c.md", "docs/é.md"]],
+  ["docs/[ab].md", ["docs/a.md", "docs/b.md", "docs/[ab].md"]],
+  ["docs/[a-b].md", ["docs/a.md", "docs/b.md", "docs/[a-b].md"]],
+  ["docs/[^a].md", ["docs/b.md", "docs/c.md", "docs/é.md"]],
+  ["docs/{a,c}.md", ["docs/a.md", "docs/c.md", "docs/{a,c}.md"]],
+  ["docs/*.{md,markdown}", ["docs/guide.md", "docs/a.md", "docs/b.md", "docs/c.md", "docs/[ab].md", "docs/x.markdown",
+    ...LITERAL_STYLE_PATHS]],
+  ["docs/*/**", ["docs/.hidden/note.md", "docs/x/y/deep.md"]],
+  ["docs/**/*.md", ["docs/guide.md", "docs/.hidden/note.md", "docs/x/y/deep.md", "docs/a.md", "docs/b.md", "docs/c.md",
+    "docs/[ab].md", ...LITERAL_STYLE_PATHS]],
+  ["*.md", ["README.md"]],
+  ["changelog.d/**/x.md", ["changelog.d/fixed/x.md"]],
+  ["README.md/**", ["README.md"]],
+  ["docs/[{a]*.md", ["docs/a.md", "docs/{a,c}.md", "docs/{x.md"]],
+  ["docs/[^ -~].md", ["docs/é.md"]],
+  ["docs/?+.md", ["docs/1+.md"]],
+  ["docs/{a,c}.*", ["docs/a.md", "docs/c.md"]],
+  ["docs/{x,c.[m]*}", ["docs/c.md"]],
+  ["docs/{x*,c}.md", ["docs/c.md"]],
+]);
+
+// LITERAL_PUNCTUATION is the ASCII punctuation micromatch read as itself outside a class or list.
+const LITERAL_PUNCTUATION = "!#$%&'+,:;<=>@^`~";
+const CHARACTER_PATHS = Object.freeze([`a ${LITERAL_PUNCTUATION}.md`, `a ${LITERAL_PUNCTUATION}.mdx`,
+  `docs/a ${LITERAL_PUNCTUATION}.md`, "docs/c++/x.md", "docs/c+/x.md", "c+.md", "c++.md", "docs/e\u0301.md",
+  "docs/\u00e9.md", "docs/\u0130\u0131\u212a.md", "docs/iik.md", "docs/a$/x.md", "docs/$/x.md"]);
+const CHARACTER_TABLE = Object.freeze([
+  [`? ${LITERAL_PUNCTUATION}.md`, [`a ${LITERAL_PUNCTUATION}.md`]],
+  [`docs/? ${LITERAL_PUNCTUATION}.md`, [`docs/a ${LITERAL_PUNCTUATION}.md`]],
+  ["docs/c++/**", ["docs/c++/x.md"]],
+  ["c+.md", ["c+.md"]],
+  ["docs/{c+,c++}/**", ["docs/c++/x.md", "docs/c+/x.md"]],
+  ["docs/*$/**", ["docs/a$/x.md", "docs/$/x.md"]],
+  ["docs/e\u0301.*", ["docs/e\u0301.md"]],
+  ["docs/\u0130\u0131\u212a.md", ["docs/\u0130\u0131\u212a.md"]],
+]);
+const REPEAT_REFUSAL = /puts \+ straight after \], \{ or \}, where micromatch reads it as a regular-expression repeat/u;
+const RUN_REFUSAL = /repeats \+, \$ or \^ in a glob of one segment, where micromatch escapes only the first character/u;
+const GROUP_REFUSAL = /contains "[()|]" \(U\+00(28|29|7C)\); extglobs and regex groups are not supported/u;
+const REFUSED_STYLE_EXCLUSIONS = Object.freeze([
+  ["docs/@(a|b).md", GROUP_REFUSAL],
+  ["docs/+(a).md", GROUP_REFUSAL],
+  ["docs/a|b.md", GROUP_REFUSAL],
+  ["docs/\"draft\"/**", /contains "\\"" \(U\+0022\); micromatch reads it as a quote around literal text/u],
+  ["docs/a\tb.md", /contains "\\t" \(U\+0009\); a glob may hold letters/u],
+  ["docs/a\u00a0b.md", /contains "\u00a0" \(U\+00A0\)/u],
+  ["docs/\u{1f600}.md", /contains "\u{1f600}" \(U\+1F600\)/u],
+  ["docs/a\u200db.md", /contains "\u200d" \(U\+200D\)/u],
+  ["docs/[[:alpha:]].md", /POSIX classes such as \[:alpha:\] are not supported/u],
+  ["docs/{1..3}.md", /brace ranges are not supported/u],
+  ["docs/{a,{b,c}}.md", /nested lists are not supported/u],
+  ["docs/{a}.md", /brace list without a comma/u],
+  ["docs/{a,b.md", /has a \{ without a closing \}/u],
+  ["docs/a}.md", /has a \} without an opening \{/u],
+  ["docs/[ab.md", /has a \[ without a closing \]/u],
+  ["docs/a]b.md", /has a \] without an opening \[/u],
+  ["docs/[].md", /has an empty \[ \] class/u],
+  ["docs/[!a].md", /starts a \[ \] class with !, which micromatch reads as the character !/u],
+  ["docs/[b-a].md", /has the reversed range b-a/u],
+  ["docs/a**.md", /\*\* must be a whole segment/u],
+  ["docs/**.md", /\*\* must be a whole segment/u],
+  ["docs/{,}/x.md", /leaves an empty, \. or \.\. segment/u],
+  ["{?,docs}/**", /a brace alternative of wildcards alone would match every file/u],
+  ["docs/[0-9]+.md", REPEAT_REFUSAL],
+  ["docs/v{1,2}+.md", REPEAT_REFUSAL],
+  ["docs/{+,a}.md", REPEAT_REFUSAL],
+  ["c++.md", RUN_REFUSAL],
+  ["a$$*.md", RUN_REFUSAL],
+  ["^^a*.md", RUN_REFUSAL],
+  ["docs/a[ -~]b.md", /has the range  -~ in a \[ \] class, which spans \/ and so lets micromatch match a path/u],
+  ["docs/[--z].md", /has the range --z in a \[ \] class, which spans \//u],
+  ["docs/x/**/{*,draft}", /has a brace alternative of \* alone, which micromatch lets match nothing/u],
+  ["docs/*{,a}", /has a brace alternative of \* alone/u],
+  ["{*,docs}/**", /has a brace alternative of \* alone/u],
+  ["docs/{x,.*}", /puts \.\* inside a brace list, which micromatch matches differently/u],
+  ["docs/{x,[a].*}", /puts \.\* inside a brace list/u],
+  [`docs/${"{a,b}".repeat(7)}.md`, /expands to more than 64 alternatives in one segment/u],
+  [`docs/${"[ab]".repeat(7)}.md`, /expands to more than 64 alternatives in one segment/u],
+]);
+
+// Positive: every pattern in STYLE_EXCLUSION_TABLE and CHARACTER_TABLE matches exactly the paths
+// micromatch matched, a path spelled as the glob included, and on Windows a backslash separates
+// segments, though one before a glob character does not make the glob's own spelling. Negative:
+// every shape and character the gate does not support is refused with the reason, never matched
+// differently. Boundary: the tables keep the accepted neighbours of each refused shape (+ after ?,
+// a negated range spanning /, .* after a list, a class between . and * in a list, a * with more
+// text in a list, one + in a glob of one segment, ++ in a longer glob); a segment spelling exactly
+// MAX_BRACE_ALTERNATIVES alternatives passes and twice that is refused; and an empty exclusion
+// list styles every file the built-in selection styles.
+function styleExclusionGrammarSelfTest() {
+  for (const [paths, table] of [[STYLE_EXCLUSION_PATHS, STYLE_EXCLUSION_TABLE], [CHARACTER_PATHS, CHARACTER_TABLE]]) {
+    for (const [pattern, matched] of table) {
+      assert.deepEqual(paths.filter(styleExclusionMatcher(pattern, "linux")), matched, pattern);
+    }
+  }
+  assert.equal(styleExclusionMatcher("docs/*.md", "win32")("docs\\guide.md"), true);
+  assert.equal(styleExclusionMatcher("docs/*.md", "linux")("docs\\guide.md"), false);
+  assert.equal(styleExclusionMatcher("**/testdata/**", "win32")("pkg\\testdata\\golden.md"), true);
+  assert.equal(styleExclusionMatcher("docs/{a,c}.md", "win32")("docs\\a.md"), true);
+  assert.equal(styleExclusionMatcher("docs/{a,c}.md", "win32")("docs\\{a,c}.md"), false);
+  assert.equal(styleExclusionMatcher("docs/[ab].md", "win32")("docs\\[ab].md"), true);
+  assert.equal(styleExclusionMatcher("docs/{a,c}.md", "linux")("docs/{a,c}.mdx"), false);
+  for (const [pattern, message] of REFUSED_STYLE_EXCLUSIONS) {
+    assert.throws(() => styleExclusions([pattern]), message, pattern);
+    assert.throws(() => styleExclusions([pattern]), /documentation\.style_exclude\[0\] /u, pattern);
+  }
+  for (const pattern of [`docs/${"{a,b}".repeat(6)}.md`, `docs/${"[ab]".repeat(6)}.md`]) {
+    assert.deepEqual(styleExclusions([pattern]), [pattern]);
+    assert.equal(styleExclusionMatcher(pattern, "linux")("docs/abbaab.md"), true);
+  }
+  styleExclusionCharacterSelfTest();
+  const files = ["AGENTS.md", "README.md", "docs/guide.md"];
+  assert.deepEqual(styleSelection(files, { ...DEFAULT_SETTINGS, declared: true, styleExclude: [] }, "linux"),
+    { styled: ["README.md", "docs/guide.md"], excluded: 0, counts: [] });
+  process.stdout.write("style exclusion grammar fixtures: micromatch answers kept, unsupported shapes refused\n");
+}
+
+// Negative: of the printable ASCII characters exactly " ( ) \ | are refused, and a tab, a
+// no-break space, an emoji, a joiner and a line separator are refused with their code points.
+// Positive: letters, combining marks and digits of other scripts pass. Boundary: each character
+// of LITERAL_PUNCTUATION and the space passes inside a file name and matches only itself there.
+function styleExclusionCharacterSelfTest() {
+  const ascii = Array.from({ length: 0x7f - 0x20 }, (_, index) => String.fromCharCode(0x20 + index));
+  assert.equal(ascii.filter((character) => characterProblem(character) !== null).join(""), "\"()\\|");
+  for (const character of ["\t", "\u00a0", "\u{1f600}", "\u200d", "\u2028"]) {
+    const codePoint = character.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+    assert.match(characterProblem(`docs/${character}.md`), new RegExp(`^contains .+ \\(U\\+${codePoint}\\); a glob`, "su"));
+  }
+  assert.equal(characterProblem("docs/\u00e9e\u0301\u093f\u0130\u0131\u212a\u4e2d\u{1d400}\u0663.md"), null);
+  for (const character of ` ${LITERAL_PUNCTUATION}`) {
+    const pattern = `docs/a${character}b.md`;
+    assert.deepEqual(styleExclusions([pattern]), [pattern], pattern);
+    const matcher = styleExclusionMatcher(pattern, "linux");
+    assert.deepEqual([matcher(pattern), matcher("docs/ab.md"), matcher("docs/a_b.md")], [true, false, false], pattern);
+  }
 }
 
 // Boundary: a file exactly at a raised per-file bound passes inventory, the private-link rule and
@@ -1015,42 +1757,174 @@ function runScratchRule(root, temporary, files, selfTest, emitDiagnostics = true
   return overflow ? 2 : result.status ?? 2;
 }
 
-// The installed markdownlint-cli2 must be the version the copied lock pins and expose the entry
-// the gate starts. The lock is the only place the version is written, so a pin update needs no
-// change here; npm ci has already checked the package's integrity against the same lock.
-function markdownlintBinary(lock, metadata) {
-  const locked = lock?.packages?.["node_modules/markdownlint-cli2"]?.version;
+// The installed markdownlint must be the version the copied lock pins and expose the synchronous
+// entry the lint child imports. The lock is the only place the version is written, so a pin update
+// needs no change here; npm ci has already checked the package's integrity against the same lock.
+function markdownlintLibrary(lock, metadata) {
+  const locked = lock?.packages?.["node_modules/markdownlint"]?.version;
   if (typeof locked !== "string" || locked === "") {
-    fail("package-lock.json pins no markdownlint-cli2 version");
+    fail("package-lock.json pins no markdownlint version");
   }
-  if (metadata?.version !== locked || metadata?.bin?.["markdownlint-cli2"] !== MARKDOWNLINT_BIN) {
-    fail(`installed markdownlint-cli2 package does not match locked ${locked} binary contract`);
+  if (metadata?.version !== locked || metadata?.exports?.["./sync"] !== MARKDOWNLINT_ENTRY) {
+    fail(`installed markdownlint package does not match locked ${locked} library contract`);
   }
-  return MARKDOWNLINT_BIN;
+  return MARKDOWNLINT_ENTRY;
 }
 
 function markdownlintEntry(temporary) {
   const lock = JSON.parse(fs.readFileSync(path.join(temporary, "package-lock.json"), "utf8"));
-  const packageDir = path.join(temporary, "node_modules", "markdownlint-cli2");
+  const packageDir = path.join(temporary, "node_modules", "markdownlint");
   const metadata = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
-  return path.join(packageDir, markdownlintBinary(lock, metadata));
+  return path.join(packageDir, markdownlintLibrary(lock, metadata));
 }
 
-function markdownlintBinarySelfTest() {
-  const lock = { packages: { "node_modules/markdownlint-cli2": { version: "1.2.3" } } };
-  const installed = { version: "1.2.3", bin: { "markdownlint-cli2": MARKDOWNLINT_BIN } };
-  assert.equal(markdownlintBinary(lock, installed), MARKDOWNLINT_BIN);
-  assert.throws(() => markdownlintBinary(lock, { ...installed, version: "1.2.4" }),
-    (error) => error.message === "installed markdownlint-cli2 package does not match locked 1.2.3 binary contract");
-  assert.throws(() => markdownlintBinary(lock, { ...installed, bin: { "markdownlint-cli2": "./other.mjs" } }),
-    /does not match locked 1\.2\.3 binary contract/u);
-  assert.throws(() => markdownlintBinary(lock, { version: "1.2.3" }), /does not match locked 1\.2\.3/u);
-  for (const missing of [{}, { packages: {} }, { packages: { "node_modules/markdownlint-cli2": { version: "" } } }]) {
-    assert.throws(() => markdownlintBinary(missing, installed),
-      (error) => error.message === "package-lock.json pins no markdownlint-cli2 version");
+function markdownlintLibrarySelfTest() {
+  const lock = { packages: { "node_modules/markdownlint": { version: "1.2.3" } } };
+  const installed = { version: "1.2.3", exports: { "./sync": MARKDOWNLINT_ENTRY } };
+  assert.equal(markdownlintLibrary(lock, installed), MARKDOWNLINT_ENTRY);
+  assert.throws(() => markdownlintLibrary(lock, { ...installed, version: "1.2.4" }),
+    (error) => error.message === "installed markdownlint package does not match locked 1.2.3 library contract");
+  assert.throws(() => markdownlintLibrary(lock, { ...installed, exports: { "./sync": "./other.mjs" } }),
+    /does not match locked 1\.2\.3 library contract/u);
+  assert.throws(() => markdownlintLibrary(lock, { version: "1.2.3" }), /does not match locked 1\.2\.3/u);
+  for (const missing of [{}, { packages: {} }, { packages: { "node_modules/markdownlint": { version: "" } } }]) {
+    assert.throws(() => markdownlintLibrary(missing, installed),
+      (error) => error.message === "package-lock.json pins no markdownlint version");
   }
-  process.stdout.write("markdownlint binary fixtures: the lock's version passes, another version, " +
+  process.stdout.write("markdownlint library fixtures: the lock's version passes, another version, " +
     "another entry or an unpinned lock fails\n");
+}
+
+// Negative: an installation whose markdownlint is not the locked version fails the style run with
+// status 2 before any lint child starts, rather than reading as findings. Boundary: it fails so
+// with no file to lint too. Positive: the locked installation passes with no file to lint.
+function lintEntrySelfTest(temporary) {
+  const fixture = path.join(temporary, "lint-entry-fixture");
+  const install = path.join(temporary, "lint-entry-install");
+  const lock = JSON.parse(fs.readFileSync(path.join(temporary, "package-lock.json"), "utf8"));
+  const locked = lock.packages["node_modules/markdownlint"].version;
+  writeFixtureFiles(install, {
+    "package-lock.json": JSON.stringify(lock),
+    "node_modules/markdownlint/package.json": JSON.stringify({
+      version: `${locked}-other`,
+      exports: { "./sync": MARKDOWNLINT_ENTRY },
+    }),
+  });
+  writeFixtureFiles(fixture, { "docs/guide.md": "# Guide\n" });
+  const expected = `installed markdownlint package does not match locked ${locked} library contract`;
+  for (const files of [[], ["docs/guide.md"]]) {
+    assert.throws(() => runMarkdownlint(fixture, install, files, false),
+      (error) => error instanceof GateFailure && error.status === 2 && error.message === expected);
+  }
+  assert.equal(runMarkdownlint(fixture, temporary, [], false), 0);
+  assert.equal(runMarkdownlint(fixture, temporary, ["docs/guide.md"], false), 0);
+  process.stdout.write("lint entry fixtures: a markdownlint other than the locked one fails with status 2 " +
+    "before any lint child, with or without files\n");
+}
+
+// lintConfiguration reads the rules from markdownlint-cli2.yaml: one bounded YAML mapping whose
+// config mapping is the rule configuration. noProgress, a markdownlint-cli2 display option, is
+// accepted and changes nothing; any other key is refused rather than silently ignored.
+function lintConfiguration(yaml, text) {
+  let document;
+  try {
+    document = yaml.load(text, {
+      filename: LINT_CONFIG_FILE,
+      maxAliases: MAX_MANIFEST_ALIASES,
+      maxDepth: MAX_MANIFEST_DEPTH,
+    });
+  } catch (error) {
+    fail(`${LINT_CONFIG_FILE} is not valid YAML: ${error.message}`);
+  }
+  if (!isMapping(document) || !isMapping(document.config)) {
+    fail(`${LINT_CONFIG_FILE} must be a mapping with a config mapping`);
+  }
+  const unknown = Object.keys(document).find((key) => !LINT_CONFIG_KEYS.has(key));
+  if (unknown !== undefined) {
+    fail(`${LINT_CONFIG_FILE} has unsupported key ${JSON.stringify(unknown.slice(0, 64))}; the gate reads config`);
+  }
+  return document.config;
+}
+
+// configurationParsers returns the parsers markdownlint-cli2 0.23.3 gave the library for inline
+// markdownlint-configure-file comments, in its order: JSONC, TOML, then YAML. They parse data
+// only; the library tries each until one succeeds and ignores a comment none can parse.
+function configurationParsers(temporary, yaml) {
+  const jsonc = loadDependency(temporary, "jsonc-parser");
+  const toml = loadDependency(temporary, "smol-toml");
+  const parseJSONC = (text) => {
+    const errors = [];
+    const result = jsonc.parse(text, errors, { allowTrailingComma: true });
+    if (errors.length > 0) {
+      throw new Error(`Unable to parse JSONC content: ${errors.length} errors`);
+    }
+    return result;
+  };
+  return [parseJSONC, (text) => toml.parse(text),
+    (text) => yaml.load(text, { maxAliases: MAX_MANIFEST_ALIASES, maxDepth: MAX_MANIFEST_DEPTH })];
+}
+
+// lintFinding formats one result as markdownlint-cli2's default formatter printed it, so a failure
+// reads as before: file:line[:column] severity RULE/alias description [detail] [Context: "..."].
+function lintFinding(result) {
+  const column = result.errorRange?.[0] ? `:${result.errorRange[0]}` : "";
+  const severity = result.severity ? ` ${result.severity}` : "";
+  const detail = result.errorDetail ? ` [${result.errorDetail}]` : "";
+  const context = result.errorContext ? ` [Context: "${result.errorContext}"]` : "";
+  return `${result.fileName}:${result.lineNumber}${column}${severity} ${result.ruleNames.join("/")} ` +
+    `${result.ruleDescription}${detail}${context}`;
+}
+
+// compareFindings orders results as markdownlint-cli2 did: by file, line and first rule name, then
+// in the order the library reported them.
+function compareFindings(left, right) {
+  return left.fileName.localeCompare(right.fileName) || left.lineNumber - right.lineNumber ||
+    left.ruleNames[0].localeCompare(right.ruleNames[0]) || left.order - right.order;
+}
+
+function readLintSource(relative) {
+  const stat = fs.lstatSync(relative, { throwIfNoEntry: false });
+  if (stat === undefined || stat.isSymbolicLink() || !stat.isFile()) {
+    fail(`refusing to lint non-file Markdown source ${relative}`);
+  }
+  if (stat.size > MAX_FILE_BYTES_CEILING) {
+    fail(`${relative} is ${stat.size} bytes; per-file ceiling is ${MAX_FILE_BYTES_CEILING}`);
+  }
+  return fs.readFileSync(relative, "utf8");
+}
+
+// lintChild is the child-process side of runMarkdownlint, started from the repository root. It
+// hands the library each file's text as a string, so markdownlint opens no file and finds no
+// configuration of its own: the rules are the locked config mapping and nothing in the repository.
+// markdownlint-cli2, which the gate ran before, read .markdownlint-cli2.* and .markdownlint.*
+// files from every directory down to a linted file and executed their .cjs and .mjs forms (#533);
+// nothing here looks for them. One file is linted at a time, so the heap holds one file's parse.
+async function lintChild(args) {
+  if (args.length < 1) {
+    fail(`usage: node tools/markdownlint/verify.mjs ${LINT_MODE} <install directory> <file>...`);
+  }
+  const [temporary, ...files] = args;
+  if (files.length > MAX_FILES_CEILING) {
+    fail(`lint batch has ${files.length} files; maximum is ${MAX_FILES_CEILING}`);
+  }
+  const { lint } = await import(pathToFileURL(markdownlintEntry(temporary)).href);
+  const yaml = loadDependency(temporary, "js-yaml");
+  const options = {
+    config: lintConfiguration(yaml, fs.readFileSync(path.join(temporary, LINT_CONFIG_FILE), "utf8")),
+    configParsers: configurationParsers(temporary, yaml),
+    handleRuleFailures: true,
+    noInlineConfig: false,
+  };
+  const findings = [];
+  for (let index = 0; index < files.length && index < MAX_FILES_CEILING; index += 1) {
+    const results = lint({ ...options, strings: { [files[index]]: readLintSource(files[index]) } });
+    for (const result of results[files[index]] ?? []) {
+      findings.push({ ...result, fileName: files[index], order: findings.length });
+    }
+  }
+  findings.sort(compareFindings);
+  process.stderr.write(findings.map((finding) => `${lintFinding(finding)}\n`).join(""));
+  return findings.length === 0 ? 0 : 1;
 }
 
 function batches(files) {
@@ -1058,14 +1932,14 @@ function batches(files) {
   let current = [];
   let bytes = 0;
   for (let index = 0; index < files.length && index < MAX_FILES_CEILING; index += 1) {
-    const literal = `:${files[index]}`;
-    if (current.length > 0 && bytes + Buffer.byteLength(literal) + 1 > MAX_COMMAND_BYTES) {
+    const size = Buffer.byteLength(files[index]) + 1;
+    if (current.length > 0 && bytes + size > MAX_COMMAND_BYTES) {
       result.push(current);
       current = [];
       bytes = 0;
     }
-    current.push(literal);
-    bytes += Buffer.byteLength(literal) + 1;
+    current.push(files[index]);
+    bytes += size;
   }
   if (current.length > 0) {
     result.push(current);
@@ -1073,41 +1947,20 @@ function batches(files) {
   return result;
 }
 
-// markdownlint-cli2 has no option that turns configuration discovery off (read through 0.23.3;
-// hermeticConfigSelfTest's control run shows discovery on whatever version the lock pins). Beside
-// the --config file it reads .markdownlint-cli2.{jsonc,yaml,cjs,mjs} and
-// .markdownlint.{jsonc,json,yaml,yml,cjs,mjs} from its working directory and from every directory
-// between it and a linted file (getAndProcessDirInfo and enumerateParents in
-// markdownlint-cli2.mjs). A .markdownlint.* file found there replaces the --config rules
-// outright, and the .cjs and .mjs forms execute repository code. The gate therefore lints a copy:
-// stageStyleTree copies only the selected Markdown files, at their repository-relative paths,
-// into an empty directory the linter runs from. No configuration file name ends in a Markdown
-// suffix, so the copy holds none, and diagnostics keep the repository-relative paths.
-function stageStyleTree(root, temporary, files) {
-  const tree = path.join(temporary, STYLE_TREE);
-  fs.rmSync(tree, { recursive: true, force: true });
-  fs.mkdirSync(tree, { recursive: true });
-  for (let index = 0; index < files.length && index < MAX_FILES_CEILING; index += 1) {
-    const target = path.join(tree, files[index]);
-    if (target === tree || escapesDirectory(tree, target)) {
-      fail(`refusing to stage Markdown path outside the style tree: ${files[index]}`);
-    }
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(root, files[index]), target);
-  }
-  return tree;
-}
-
+// runMarkdownlint lints the style-selected files in child processes of this script (lintChild),
+// one batch of paths each, as the gate ran markdownlint-cli2 before: every batch gets a fresh
+// heap, the command timeout and a bounded capture, and its diagnostics share one output budget.
+// It checks the installed library against the lock before the first child, even with no file to
+// lint, so a mismatch fails the gate with status 2 instead of reading as findings.
 function runMarkdownlint(root, temporary, files, emitDiagnostics = true) {
-  const cli = markdownlintEntry(temporary);
-  const config = path.join(temporary, "markdownlint-cli2.yaml");
-  const tree = stageStyleTree(root, temporary, files);
+  markdownlintEntry(temporary);
+  const script = fileURLToPath(import.meta.url);
   let failed = false;
   let overflow = false;
   const budget = outputBudget();
   for (const batch of batches(files)) {
-    const result = command(process.execPath, [cli, "--config", config, "--no-globs", ...batch], {
-      cwd: tree,
+    const result = command(process.execPath, [script, LINT_MODE, temporary, ...batch], {
+      cwd: root,
       allowFailure: true,
     });
     failed ||= result.status !== 0;
@@ -1129,13 +1982,18 @@ function main() {
   try {
     if (selfTest) {
       npmInvocationSelfTest(temporary);
-      markdownlintBinarySelfTest();
+      markdownlintLibrarySelfTest();
+      styleExclusionGrammarSelfTest();
     }
     install(toolDir, temporary);
     if (selfTest) {
       inventorySelfTest(temporary);
       settingsSelfTest(temporary);
+      lintConfigurationSelfTest(temporary);
+      lintEntrySelfTest(temporary);
       hermeticConfigSelfTest(temporary);
+      lintOutputSelfTest(temporary);
+      lintMemorySelfTest(temporary);
       styleExclusionSelfTest(temporary);
       raisedBoundSelfTest(temporary);
       process.exitCode = runScratchRule(process.cwd(), temporary, [], true);
@@ -1144,7 +2002,7 @@ function main() {
     const root = repositoryRoot();
     const settings = repositorySettings(root, loadDependency(temporary, "js-yaml"));
     const scratchFiles = inventory(root, settings);
-    const selection = styleSelection(scratchFiles, settings, loadDependency(temporary, "micromatch"));
+    const selection = styleSelection(scratchFiles, settings, process.platform);
     const styleFiles = selection.styled;
     reportSettings(settings, selection);
     const scratchStatus = runScratchRule(root, temporary, scratchFiles, false);
@@ -1157,9 +2015,16 @@ function main() {
   }
 }
 
-try {
+// entry runs the gate, or, given LINT_MODE, the lint child runMarkdownlint starts.
+async function entry() {
+  if (process.argv[2] === LINT_MODE) {
+    process.exitCode = await lintChild(process.argv.slice(3));
+    return;
+  }
   main();
-} catch (error) {
+}
+
+entry().catch((error) => {
   process.stderr.write(`markdown-governance: ${error.message}\n`);
   process.exitCode = error instanceof GateFailure ? error.status : 2;
-}
+});

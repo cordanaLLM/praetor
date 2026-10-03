@@ -69,8 +69,10 @@ func TestCanonicalAgentsFloorCatchesLoss(t *testing.T) {
 		"command":     {regexp.MustCompile(`(?m)^   standardsctl compile-context$`), caveman.RuleFloorCommand},
 		"inline code": {regexp.MustCompile("`AskUserQuestion`"), caveman.RuleFloorCodeSpan},
 		"prohibition": {regexp.MustCompile(`(?i)\b(?:never|no)\b`), caveman.RuleFloorProhibition},
-		"numbered":    {regexp.MustCompile(`12\. \*\*No tool attribution`), caveman.RuleFloorNumbered},
-		"link":        {regexp.MustCompile(`\(docs/guides/checkpoint-cadence\.md\)`), caveman.RuleFloorLink},
+		// F8 is a count with the live file free to add rules, so the case unnumbers every rule
+		// from 12 on: the count then falls below the fixture's 12 however many rules follow.
+		"numbered": {regexp.MustCompile(`(?m)^1[2-9]\. \*\*`), caveman.RuleFloorNumbered},
+		"link":     {regexp.MustCompile(`\(docs/guides/checkpoint-cadence\.md\)`), caveman.RuleFloorLink},
 	}
 	for name, tc := range cases {
 		if !tc.cut.MatchString(live) {

@@ -9,11 +9,10 @@
   },
   "dependencies": {
     "js-yaml": "5.4.2",
-    "jsonc-parser": "3.3.1",
-    "markdownlint": "0.41.1",
+    "markdownlint-cli2": "0.23.3",
     "micromark": "4.0.3",
     "micromark-extension-mdxjs": "3.0.0",
-    "parse5": "8.0.1",
-    "smol-toml": "1.8.0"
+    "micromatch": "4.0.8",
+    "parse5": "8.0.1"
   }
 }

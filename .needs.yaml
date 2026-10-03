@@ -22,7 +22,6 @@ capabilities:
         - ui.external.types_node
         - ui.external.types_vscode
         - ui.external.vscode_languageclient
-        - ui.external.markdownlint_cli2
         - ui.external.micromark
         - ui.external.micromark_extension_mdxjs
         - ui.external.parse5
@@ -63,9 +62,11 @@ capabilities:
         - ui.external.react_dom
         - clikit.cli
         - ui.external.js_yaml
-        - ui.external.micromatch
         - ui.external.satteri
         - ui.external.devcontainers_cli
+        - ui.external.jsonc_parser
+        - ui.external.markdownlint
+        - ui.external.smol_toml
     optional:
         - clikit.cli
         - mcp.server
@@ -431,11 +432,18 @@ dependencies:
       capability: ui.external.js_yaml
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
-    - package: markdownlint-cli2
-      version: 0.23.3
+    - package: jsonc-parser
+      version: 3.3.1
       language: typescript
       ecosystem: npm
-      capability: ui.external.markdownlint_cli2
+      capability: ui.external.jsonc_parser
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: markdownlint
+      version: 0.41.1
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.markdownlint
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: micromark
@@ -452,13 +460,6 @@ dependencies:
       capability: ui.external.micromark_extension_mdxjs
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
-    - package: micromatch
-      version: 4.0.8
-      language: typescript
-      ecosystem: npm
-      capability: ui.external.micromatch
-      status: gap
-      notes: External npm dependency requiring a target framework adapter or evaluation
     - package: parse5
       version: 8.0.1
       language: typescript
@@ -466,10 +467,17 @@ dependencies:
       capability: ui.external.parse5
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: smol-toml
+      version: 1.8.0
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.smol_toml
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
 readiness:
     basis: not-configured
     score: 0
-    total_third_party_deps: 56
+    total_third_party_deps: 57
     covered_deps: 0
-    gap_deps: 56
-updated_at: 2026-10-02T15:22:50.087460691Z
+    gap_deps: 57
+updated_at: 2026-10-03T07:22:41.637865335Z

@@ -18,13 +18,14 @@ import (
 
 // npmAdvisoryFloors names each package of the Markdown gate's lock that had a security
 // advisory fixed, with the first version on the installed line free of it: smol-toml
-// GHSA-7w5x-hrqm-74c2 (<= 1.7.0), js-yaml GHSA-r3ph-w7gj-g6xm (5.0.0 to 5.4.0) and markdown-it
-// GHSA-253c-mchw-3w2r (< 14.3.1 and 15.0.0). The lock installed all three affected versions
-// through markdownlint-cli2 0.23.2 (#643).
+// GHSA-7w5x-hrqm-74c2 (<= 1.7.0) and js-yaml GHSA-r3ph-w7gj-g6xm (5.0.0 to 5.4.0). The lock
+// installed both affected versions through markdownlint-cli2 0.23.2, beside markdown-it 14.3.0
+// (GHSA-253c-mchw-3w2r) (#643). markdown-it left the lock with markdownlint-cli2 (#736): the
+// markdownlint library needs it only for custom rules on the markdown-it parser, and the gate
+// passes none, so it has no floor here.
 var npmAdvisoryFloors = map[string]string{
-	"smol-toml":   "1.7.1",
-	"js-yaml":     "5.4.1",
-	"markdown-it": "15.0.1",
+	"smol-toml": "1.7.1",
+	"js-yaml":   "5.4.1",
 }
 
 // advisoryFloorViolations lists every installed name@version of a floor package that orders
@@ -73,7 +74,7 @@ func TestMarkdownGateLockClearsFixedAdvisories(t *testing.T) {
 	}
 }
 
-// Negative: the lock shipped before #643 fails on each of the three affected packages.
+// Negative: the lock shipped before #643 fails on each affected package that still has a floor.
 func TestMarkdownGateLockAdvisoryFloorsRejectPriorLock(t *testing.T) {
 	prior := filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior",
 		"package-lock.markdownlint-cli2-0.23.2.json")
@@ -83,7 +84,6 @@ func TestMarkdownGateLockAdvisoryFloorsRejectPriorLock(t *testing.T) {
 	}
 	want := []string{
 		"js-yaml 5.2.2 is below 5.4.1",
-		"markdown-it 14.3.0 is below 15.0.1",
 		"smol-toml 1.7.0 is below 1.7.1",
 	}
 	got := advisoryFloorViolations(mustLockRuntimePackages(t, lock), npmAdvisoryFloors)

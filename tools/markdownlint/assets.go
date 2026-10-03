@@ -143,6 +143,12 @@ var priorDigests = map[string]string{
 	// verify.mjs once the HISS script scanner read the documentation gate's scripts, before the
 	// non-major dependency update.
 	"b39f736a108e13579aa25249ef2ccb0fec28981f9fe86027f15793be6b2443e6": Directory + "/verify.mjs",
+	// package.json, package-lock.json and verify.mjs that ran the markdownlint-cli2 0.23.3 binary
+	// and matched style exclusions with micromatch 4.0.8, whose lock installed braces 3.0.3
+	// (GHSA-vfj7-8cjw-p6xm, no fixed release; #736).
+	"321e5210fc0ec943b369164932e87622811ebb0c7c49907343a25fd2d28d8ae5": Directory + "/package.json",
+	"b1cb57bf987fe1f70a9e80e627fe2d3838bbab6dacc7150a1b66df6460364d2a": Directory + "/package-lock.json",
+	"70a908977d34a88a789e3139209f3d501fe2493076f194527332487353ebf9b4": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{

@@ -209,10 +209,6 @@ as the lock records them, copyright lines as each package's license file states 
 
 | Package | Version | License | Copyright |
 | :-- | :-- | :-- | :-- |
-| `@nodelib/fs.scandir` | 2.1.5 | MIT | `Copyright (c) Denis Malinochkin` |
-| `@nodelib/fs.stat` | 2.0.5 | MIT | `Copyright (c) Denis Malinochkin` |
-| `@nodelib/fs.walk` | 1.2.8 | MIT | `Copyright (c) Denis Malinochkin` |
-| `@sindresorhus/merge-streams` | 4.0.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `@types/debug` | 4.1.13 | MIT | `Copyright (c) Microsoft Corporation.` |
 | `@types/estree` | 1.0.9 | MIT | `Copyright (c) Microsoft Corporation.` |
 | `@types/estree-jsx` | 1.0.5 | MIT | `Copyright (c) Microsoft Corporation.` |
@@ -224,8 +220,6 @@ as the lock records them, copyright lines as each package's license file states 
 | `acorn-jsx` | 5.3.2 | MIT | `Copyright (C) 2012-2017 by Ingvar Stepanyan` |
 | `ansi-regex` | 6.3.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `argparse` | 2.0.1 | Python-2.0 | `Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020 Python Software Foundation; All Rights Reserved` |
-| `argparse` | 3.0.2 | PSF-2.0 | `Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019 Python Software Foundation; All Rights Reserved` |
-| `braces` | 3.0.3 | MIT | `Copyright (c) 2014-present, Jon Schlinkert.` |
 | `character-entities` | 2.0.2 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
 | `character-entities-legacy` | 3.0.0 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
 | `character-reference-invalid` | 2.0.1 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
@@ -237,33 +231,15 @@ as the lock records them, copyright lines as each package's license file states 
 | `entities` | 8.1.0 | BSD-2-Clause | `Copyright (c) Felix Böhm` |
 | `estree-util-is-identifier-name` | 3.0.0 | MIT | `Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>` |
 | `estree-util-visit` | 2.0.0 | MIT | `Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>` |
-| `fast-glob` | 3.3.3 | MIT | `Copyright (c) Denis Malinochkin` |
-| `fastq` | 1.20.3 | ISC | `Copyright (c) 2015-2020, Matteo Collina <matteo.collina@gmail.com>` |
-| `fill-range` | 7.1.1 | MIT | `Copyright (c) 2014-present, Jon Schlinkert.` |
 | `get-east-asian-width` | 1.7.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
-| `glob-parent` | 5.1.2 | ISC | `Copyright (c) 2015, 2019 Elan Shanker` |
-| `globby` | 16.2.4 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
-| `ignore` | 7.0.10 | MIT | `Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors` |
 | `is-alphabetical` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `is-alphanumerical` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `is-decimal` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
-| `is-extglob` | 2.1.1 | MIT | `Copyright (c) 2014-2016, Jon Schlinkert` |
-| `is-glob` | 4.0.3 | MIT | `Copyright (c) 2014-2017, Jon Schlinkert.` |
 | `is-hexadecimal` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
-| `is-number` | 7.0.0 | MIT | `Copyright (c) 2014-present, Jon Schlinkert.` |
-| `is-path-inside` | 4.0.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
-| `js-yaml` | 5.4.1 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
 | `js-yaml` | 5.4.2 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
 | `jsonc-parser` | 3.3.1 | MIT | `Copyright (c) Microsoft` |
-| `jsonpointer` | 5.0.1 | MIT | `Copyright (c) 2011-2015 Jan Lehnardt <jan@apache.org> & Marc Bachmann <https://github.com/marcbachmann>` |
 | `katex` | 0.16.47 | MIT | `Copyright (c) 2013-2020 Khan Academy and other contributors` |
-| `linkify-it` | 6.1.0 | MIT | `Copyright (c) 2015 Vitaly Puzrin.` |
-| `markdown-it` | 15.0.1 | MIT | `Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.` |
 | `markdownlint` | 0.41.1 | MIT | `Copyright (c) David Anson` |
-| `markdownlint-cli2` | 0.23.3 | MIT | `Copyright (c) David Anson` |
-| `markdownlint-cli2-formatter-default` | 0.0.6 | MIT | `Copyright (c) David Anson` |
-| `mdurl` | 2.1.0 | MIT | `Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.`, `Copyright Joyent, Inc. and other Node contributors. All rights reserved.` |
-| `merge2` | 1.4.1 | MIT | `Copyright (c) 2014-2020 Teambition` |
 | `micromark` | 4.0.2 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark` | 4.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-core-commonmark` | 2.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
@@ -298,22 +274,12 @@ as the lock records them, copyright lines as each package's license file states 
 | `micromark-util-subtokenize` | 2.1.0 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-util-symbol` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-util-types` | 2.0.2 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
-| `micromatch` | 4.0.8 | MIT | `Copyright (c) 2014-present, Jon Schlinkert.` |
 | `ms` | 2.1.3 | MIT | `Copyright (c) 2020 Vercel, Inc.` |
 | `parse-entities` | 4.0.2 | MIT | `Copyright (c) Titus Wormer <mailto:tituswormer@gmail.com>` |
 | `parse5` | 8.0.1 | MIT | `Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)` |
-| `picomatch` | 2.3.2 | MIT | `Copyright (c) 2017-present, Jon Schlinkert.` |
-| `punycode.js` | 2.3.1 | MIT | `Copyright Mathias Bynens <https://mathiasbynens.be/>` |
-| `queue-microtask` | 1.2.3 | MIT | `Copyright (c) Feross Aboukhadijeh` |
-| `reusify` | 1.1.0 | MIT | `Copyright (c) 2015-2024 Matteo Collina` |
-| `run-parallel` | 1.2.0 | MIT | `Copyright (c) Feross Aboukhadijeh` |
-| `slash` | 5.1.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `smol-toml` | 1.8.0 | BSD-3-Clause | `Copyright (c) Squirrel Chat et al., All rights reserved.` |
 | `string-width` | 8.2.1 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `strip-ansi` | 7.2.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
-| `to-regex-range` | 5.0.1 | MIT | `Copyright (c) 2015-present, Jon Schlinkert.` |
-| `uc.micro` | 3.0.0 | MIT | `Copyright Mathias Bynens <https://mathiasbynens.be/>` |
-| `unicorn-magic` | 0.4.1 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `unist-util-position-from-estree` | 2.0.0 | MIT | `Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>` |
 | `unist-util-stringify-position` | 4.0.0 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `vfile-message` | 4.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |

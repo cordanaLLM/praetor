@@ -1,0 +1,3 @@
+type: changed
+title: "AGENTS.md adds four operating rules: proven checks, exceptions instead of tiers, no silent fallback, per-hunk conflict resolution"
+breaking: false

@@ -1,0 +1,3 @@
+type: fixed
+title: "A .git file that names a missing gitdir counts as no repository again under git 2.56, whose message changed"
+breaking: false
