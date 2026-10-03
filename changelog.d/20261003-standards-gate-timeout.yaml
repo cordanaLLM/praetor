@@ -1,0 +1,4 @@
+type: fixed
+title: "The standards gate job gets a 45-minute limit, because it ran within minutes of its 30-minute one"
+issue: "#729"
+breaking: false
