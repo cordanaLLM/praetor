@@ -246,7 +246,7 @@ it left the lock (#736):
 | `?` | one character inside one path segment |
 | `[abc]`, `[a-z]` | one listed character; `[ab]` also matches the text `[ab]`, as in micromatch, while a class holding `-`, `^`, `{`, `}` or another regular-expression character does not |
 | `[^a]` | one character that is not listed, never `/` |
-| `{a,b}` | either alternative, inside one path segment; at most 64 alternatives per segment |
+| `{a,b}` | either alternative, inside one path segment; at most 64 alternatives per segment, where each class that also matches its own text (`[ab]`) doubles the count |
 | `**` as a whole segment | any number of segments, none included |
 
 A trailing `/**` after a segment that ends in `*` (`docs/*/**`) needs at least

@@ -978,7 +978,9 @@ function inventory(root, settings = DEFAULT_SETTINGS) {
   let totalBytes = 0;
   for (let index = 0; index < selected.length && index < settings.maxFiles; index += 1) {
     const relative = selected[index];
-    if (Buffer.byteLength(relative) > MAX_PATH_BYTES || /[\0\r\n]/u.test(relative)) {
+    // U+2028 and U+2029 are refused with the line breaks: micromatch's patterns never match
+    // them, so a path holding one would be selected differently from the micromatch rules.
+    if (Buffer.byteLength(relative) > MAX_PATH_BYTES || /[\0\r\n\u2028\u2029]/u.test(relative)) {
       fail(`refusing unsafe or oversized Markdown path at inventory index ${index}`);
     }
     const full = path.join(root, relative);
