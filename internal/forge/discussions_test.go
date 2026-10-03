@@ -148,6 +148,26 @@ func TestTranscribeDiscussionToADR_Boundary_CRLFCheckoutReported(t *testing.T) {
 	requireExistingRecord(t, disc, dir, adr, "Accepted", content)
 }
 
+// TestTranscribeDiscussionToADR_Boundary_CRLFDiscussionBodyReported pins that a discussion body
+// carrying CRLF, as forge bodies usually do, is written with LF only and its second
+// transcription reports the record instead of refusing it as changed.
+func TestTranscribeDiscussionToADR_Boundary_CRLFDiscussionBodyReported(t *testing.T) {
+	dir := t.TempDir()
+	disc := adrTestDiscussion(35, "First line of the body\r\nsecond line of the body")
+	adr := transcribeOrFail(t, disc, dir)
+	data, err := os.ReadFile(adr.FilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "\r") {
+		t.Fatalf("record keeps a carriage return: %q", data)
+	}
+	again := transcribeOrFail(t, disc, dir)
+	if !again.Existing || again.FilePath != adr.FilePath {
+		t.Fatalf("second transcription of a CRLF body = %+v, want the existing record %s", again, adr.FilePath)
+	}
+}
+
 // TestTranscribeDiscussionToADR_Boundary_MarkerOnlyAtRenderedPosition pins the spec boundary
 // that a record without the marker in its rendered position belongs to no discussion: a
 // marker-like line in an older record's Context, a variant spelling in the marker position

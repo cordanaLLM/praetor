@@ -90,9 +90,9 @@ var (
 // discussion and only holds its number.
 //
 // A new record takes the next free number and is created exclusively: of concurrent calls
-// for one discussion, one writes the record and every other returns it as existing.
-// Concurrent calls for different discussions are not serialised and can take the same
-// number. A non-positive discussion ID and a title spanning several lines are refused.
+// for one discussion, one writes the record and every other returns it as existing, as
+// long as no record of another discussion is created at the same time. Concurrent calls for
+// different discussions are not serialised and can take the same number (#748). A non-positive discussion ID and a title spanning several lines are refused.
 //
 // A relative adrDir is a location inside repoRoot and the record is written confined to
 // repoRoot, so a repository that ships its ADR directory (or an ancestor) as a link leading
@@ -364,5 +364,8 @@ func renderADRContent(number int, disc Discussion) string {
 		sb.WriteString("- **Negative**: " + strings.TrimSpace(disc.NegativeConsequences[i]) + "\n")
 	}
 
-	return sb.String()
+	// Discussion bodies from the forge usually carry CRLF; the record is written with LF only,
+	// so its later read-back (normalised by inspectExistingADR) compares equal to this rendering.
+	rendered, _ := util.NormalizeLineEndings(sb.String())
+	return rendered
 }
