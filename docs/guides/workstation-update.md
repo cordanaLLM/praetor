@@ -12,9 +12,10 @@ praetorctl workstation install --source /path/to/praetor/checkout
 praetorctl workstation status
 ```
 
-`install` builds `praetorctl`, `praetor-mcp` and `praetor-lsp` from the given checkout
-and places them, with their legacy aliases (`standardsctl`, `standards-mcp`,
-`standards-lsp`), into a bin directory — `~/.local/bin` on Linux and macOS,
+`install` builds `praetorctl`, `praetor-mcp`, `praetor-lsp` and `tribunusctl` (the
+[Tribunus data sync](../tribunus/data-sync.md)) from the given checkout and places them,
+with the legacy aliases of the first three (`standardsctl`, `standards-mcp`,
+`standards-lsp`; `tribunusctl` has none), into a bin directory — `~/.local/bin` on Linux and macOS,
 `%LOCALAPPDATA%\Programs\praetor` on Windows by default (the per-OS default in
 `internal/clientsetup/roots.go`, `LocationBinDir`). `status` reports what is installed
 there without changing anything.
@@ -50,7 +51,7 @@ praetorctl workstation install --source PATH [--bin-dir PATH] [--manifest PATH] 
 
 | Flag | Meaning |
 | --- | --- |
-| `--source` | Checkout to build the three binaries from. Required; there is no default. |
+| `--source` | Checkout to build the four binaries from. Required; there is no default. |
 | `--bin-dir` | Destination directory. Default: the loaded `update.bin_dir` setting, else the per-OS default. |
 | `--manifest` | Install manifest path. Default: the per-user configuration directory (below). |
 | `--fleet-config`, `--workstation-config` | Layered settings documents (see [effective policy](effective-policy.md#which-documents-the-hook-client-and-workstation-commands-use)). Loading one requires `--source` to be a governed checkout (it carries the `.standards.yaml` the loader reads). Neither is required: a plain `install --source .` never touches a settings document. |
@@ -103,7 +104,8 @@ Prints one JSON object (`internal/workstation/status.go`):
 | --- | --- |
 | `installed`, `manifest` | Whether a manifest exists at `--manifest`, and its contents when it does. |
 | `manifest_sha256` | Digest of the manifest file itself, for external tooling to reference an exact reported state. |
-| `checkout_head`, `up_to_date` | `--source`'s current commit, and whether it equals the installed `engine_commit`. Omitted when `--source` is not given. |
+| `missing_binaries` | The binaries `install` builds that the manifest does not record, in build order. A manifest written before `tribunusctl` was installed lists `tribunusctl` here until the next `install`, or a refresh, records it (`missingBinaries`, `internal/workstation/workstation.go`). Omitted when nothing is missing. |
+| `checkout_head`, `up_to_date` | `--source`'s current commit, and whether it equals the installed `engine_commit` with nothing under `missing_binaries`. Omitted when `--source` is not given. |
 | `commits_behind` | How many commits `--source`'s HEAD is ahead of the installed `engine_commit`: `0` at HEAD. Omitted when `--source` is not given, and when the installed commit is not an ancestor of HEAD or not in the checkout at all (`workstation.InstallLag`, `internal/workstation/refresh.go`). |
 | `lock_held` | Whether an installation lock is currently held in the bin directory (`--bin-dir`, or the manifest's own `bin_dir` when not given). Status never takes the lock itself. |
 | `clients` | Per-client configuration-root presence, resolved through C1 (`internal/clientsetup/roots.go`, `clientsetup.Root`). Every known client has a root entry; a client whose resolution fails, for example a relocation variable naming a missing directory, reports a stated reason instead of a false negative; `--home` selects a foreign home directory for this resolution, the same override `harvest bundle --home` uses. |
@@ -129,7 +131,9 @@ nothing and prints the first reason that failed:
 3. The checkout is on the update branch: `update.branch` from the selected operator
    settings, `main` by default ([effective policy](effective-policy.md)).
 4. The installed `engine_commit` is a strict ancestor of the checkout HEAD, so a refresh
-   never downgrades or moves sideways.
+   never downgrades or moves sideways. An install at the HEAD itself qualifies only while
+   its manifest lacks a binary (`missing_binaries` above); the refresh then reinstalls the
+   same commit and its `reason` names the missing binaries.
 5. No tracked file is modified. Untracked files do not block a refresh, and they stay out
    of the build: the refresh builds a clean clone of HEAD (install step 4), so the refreshed
    install passes the [engine build check](#engine-build-check).
@@ -195,6 +199,14 @@ renamed into place so a concurrent reader never observes a partial file. Default
 honoring `XDG_CONFIG_HOME`; `%APPDATA%\praetor\install.json` on Windows) — the same
 per-user configuration directory as the receipt signing key
 (`internal/lockdown/keys.go`). It is never committed and is git-ignored.
+
+`binaries` maps each installed binary to its SHA-256 digest. The reader accepts any
+non-empty subset of `config.InstalledBinaryNames` (`praetorctl`, `praetor-mcp`,
+`praetor-lsp`, `tribunusctl`), so a manifest written before `tribunusctl` was installed
+stays readable and `status` reports what it lacks. An engine built before `tribunusctl`
+joined that list refuses a manifest that records it; run `hook`, `clients` and
+`workstation` from an engine at or after that change, or reinstall from the older checkout
+(`TestInstalledBinaryNames`, `internal/config/install_manifest_test.go`).
 
 `hook`, `clients *` and `workstation *` resolve settings documents in order: an explicit
 flag, then `PRAETOR_FLEET_CONFIG` / `PRAETOR_WORKSTATION_CONFIG`, then the paths this

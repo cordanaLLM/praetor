@@ -40,9 +40,9 @@ Refresh the regular commands on this workstation with `make dev-install`.
 `make build` writes only to the checkout's `bin/` directory; it does not update
 standalone executables already on `PATH`. `scripts/dev_install.py` runs the MCP
 behavior probe against a fresh build, then delegates the atomic install itself to
-`praetorctl workstation install` (HISS-19: one installer, not two): it builds all
-three Praetor binaries from current source and installs them into `~/.local/bin`
-with the three legacy aliases. With no tracked file modified, current source is a
+`praetorctl workstation install` (HISS-19: one installer, not two): it builds the
+three Praetor binaries and `tribunusctl` from current source and installs them into
+`~/.local/bin` with the three legacy aliases. With no tracked file modified, current source is a
 clean clone of HEAD, so untracked files stay out of the build; see
 [install step 4](workstation-update.md#workstation-install). `python3 scripts/dev_install.py --help` lists
 destination overrides for isolated installations.

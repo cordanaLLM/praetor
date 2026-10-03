@@ -1,0 +1,4 @@
+type: fixed
+title: tribunusctl was missing from every install; workstation install and make build now build it, and workstation status no longer reports an install without it as current
+issue: "#377"
+breaking: true
