@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -36,23 +37,13 @@ type goModParse struct {
 	} `json:"Replace"`
 }
 
-// offlineGoContext returns a context whose child Go commands cannot reach a module proxy,
-// read a workspace file, switch toolchains or reuse the host's module cache. `go get` then
-// fails for any module, deterministically and without network, which is the failure the
-// fallback edit exists for.
+// offlineGoContext returns a context whose child Go commands run under
+// testsupport.OfflineGoEnv: no module proxy, workspace file, toolchain switch or host module
+// cache. `go get` then fails for any module, deterministically and without network, which is
+// the failure the fallback edit exists for.
 func offlineGoContext(t *testing.T) context.Context {
 	t.Helper()
-	inherited := os.Environ()
-	env := make([]string, 0, len(inherited)+6)
-	for _, entry := range inherited {
-		key, _, _ := strings.Cut(entry, "=")
-		if !strings.HasPrefix(strings.ToUpper(key), "GO") {
-			env = append(env, entry)
-		}
-	}
-	env = append(env, "GOPROXY=off", "GOFLAGS=", "GOTOOLCHAIN=local", "GOWORK=off",
-		"GOSUMDB=off", "GOMODCACHE="+t.TempDir())
-	ctx, err := util.WithCommandEnvironment(t.Context(), env)
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.OfflineGoEnv(t))
 	if err != nil {
 		t.Fatalf("offline Go environment: %v", err)
 	}

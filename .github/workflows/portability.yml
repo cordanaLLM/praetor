@@ -176,8 +176,11 @@ jobs:
         shell: bash
         run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
 
-      # `make` is not on PATH on the Windows runner image (MSYS2 ships it but is unlisted),
-      # so the Makefile target cannot be reused here. The executable extension comes from
+      # The steps below run the commands of Makefile targets directly rather than through
+      # make. The Windows image's only make is a copy of mingw32-make that its build script
+      # writes to C:\mingw64\bin and its software list does not name (#341): the hooks run
+      # their hook-cli target with it, which Assert Hook Toolchain checks on every leg, and
+      # no other target has been run under it. The executable extension comes from
       # `go env GOEXE` rather than a second copy of the Makefile's EXE_SUFFIX rule: the
       # toolchain already knows it, and a duplicate would be free to drift (HISS-19).
       # checks.py shells out to yamllint, which is pinned and installed nowhere: it happens to
@@ -260,21 +263,42 @@ jobs:
 
       # BUG-992. The documentation reference gate reads Markdown that the Windows image checks
       # out with CRLF, lists the tree through git and reads Go source by slash-separated
-      # repository path: the three places a platform difference would make it wrong. `make`
-      # is not on the Windows image, so the binary built above runs it directly.
+      # repository path: the three places a platform difference would make it wrong. The
+      # binary built above runs it directly, not through its Makefile target.
       - name: Documentation References
         if: ${{ !cancelled() }}
         shell: bash
         run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
+
+      # Every hook the self-tests drive starts its interpreter through
+      # .config/lefthook/python.sh, which tries a fixed list of candidates and runs the first
+      # that answers a version probe as Python 3 at the supported floor (#339). No variable
+      # selects the interpreter, so this step sets none: it resolves the same candidates from
+      # the leg's PATH, where the setup action put its interpreter first, and a leg on which
+      # none proves itself fails here as a missing dependency, not later as a hook rejecting a
+      # commit. The hooks also run GNU Make on every leg (hook-cli, state-audit): the step
+      # resolves it the same way, from make, gmake and mingw32-make, by its version output
+      # (#341); no leg installs one, each image carries its own. The programs the hooks start
+      # by name are looked up on PATH, and the linters this job installs are held to the
+      # floors in .config/lefthook/tool-floors.txt (#343). One line is printed per declared
+      # tool; one outside --require is reported as not asserted, never silently absent. The
+      # table in docs/standards/hiss-21-platform-neutrality.md is rendered from REQUIRED.
+      - name: Assert Hook Toolchain
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          REQUIRED: python,make,git,go,gofmt,gosec,lefthook,sh,shellcheck,yamllint
 
       # The self-tests are the part that could not run on Windows at all before #102, and the
       # part that governs the hooks, so they are the highest-value cell in the matrix. The
       # driver refuses to report a pass that executed nothing and prints every skip with its
       # reason, so a platform losing coverage shows up as a number that moved.
       #
-      # Python is invoked through the path the setup action reports rather than by name:
-      # `python3` is not guaranteed to exist on a Windows runner, and assuming a platform's
-      # binary naming is the exact defect this job exists to catch.
+      # The suites themselves are started through the path the setup action reports rather
+      # than by name: assuming a platform's binary naming is the exact defect this job exists
+      # to catch. The hooks they drive resolve their own interpreter, as on any host.
       - name: Harness Self-Tests
         if: ${{ !cancelled() }}
         shell: bash
@@ -308,8 +332,8 @@ jobs:
         run: node tools/markdownlint/verify.mjs --self-test
 
       # `make docs-figures-check` and the managed `make docs-figures` are verify-all gates, so they
-      # must run on every platform, and make is not on the Windows image: these are the commands
-      # of both targets, and `check` and `sources` are exactly what adopters run. esbuild and
+      # must run on every platform: these are the commands of both targets, run directly, and
+      # `check` and `sources` are exactly what adopters run. esbuild and
       # TypeScript arrive as per-platform npm optional dependencies, so this leg proves the
       # locked --ignore-scripts install works, that a rebuild is byte-identical to the committed
       # SVG and JSON, that each platform's esbuild rebuilds the committed player in

@@ -14,6 +14,7 @@ from common import HookError, changed, clean_env, git, paths, run, snapshot
 from checks import (checkpoint_checks, context_changed, file_checks, go_packages, gofmt_check,
                     source_checks)
 from privacy import check_private_history, check_private_index
+from toolchain import make_program
 
 SUBJECT = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
                      r"(\([^()\n]+\))?!?: \S.*$")
@@ -22,7 +23,9 @@ OID = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 
 
 def guard():
-    run(["python3", ".config/agent/hooks/block_evasion.py", "--environment"])
+    # sys.executable, here and wherever a hook starts Python: the interpreter python.sh
+    # resolved for this hook is the one its children run under, so none names its own (#339).
+    run([sys.executable, ".config/agent/hooks/block_evasion.py", "--environment"])
 
 
 def pre_commit():
@@ -196,7 +199,7 @@ def check_pushed_snapshot(head, base, mode, names):
             if gated:
                 preserve_receipt(directory, head)
             if os.environ.get("PRAETOR_HOOK_SANDBOX") == "1":
-                run(["python3", ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
+                run([sys.executable, ".config/lefthook/scripts/sandbox.py", head], timeout=2400,
                     capture=False)
 
 
@@ -225,7 +228,8 @@ def praetorctl_path():
     return os.path.abspath(os.path.join("bin", "praetorctl" + suffix))
 
 def cli(args):
-    run(["make", "--always-make", "--no-print-directory", "-s", "hook-cli"], capture=False, timeout=180)
+    run([make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"],
+        capture=False, timeout=180)
     run([praetorctl_path(), *args], capture=False, timeout=180)
 
 
@@ -246,7 +250,7 @@ def refresh(names):
         with snapshot("HEAD") as directory:
             run(["go", "mod", "download"], cwd=directory, env=clean_env(), capture=False)
     if any(name.endswith(".go") or name in {"go.mod", "go.sum"} for name in names):
-        run(["make", "--no-print-directory", "-s", "hook-cli"], capture=False)
+        run([make_program(), "--no-print-directory", "-s", "hook-cli"], capture=False)
     if context_changed(names):
         cli(["compile-context", "--verify"])
     if ".standards.yaml" in names:
@@ -267,7 +271,7 @@ def refresh_install():
     install, only from a checkout of its own module on the update branch, only forward and only
     from a clean tree. A skip prints nothing; a rebuild prints one line.
     """
-    run(["make", "--no-print-directory", "-s", "hook-cli"], capture=False)
+    run([make_program(), "--no-print-directory", "-s", "hook-cli"], capture=False)
     report = json.loads(run([praetorctl_path(), "workstation", "install", "--source", os.getcwd(),
                              "--if-stale"], timeout=WORKSTATION_REFRESH_TIMEOUT))
     if not isinstance(report, dict) or type(report.get("refreshed")) is not bool:

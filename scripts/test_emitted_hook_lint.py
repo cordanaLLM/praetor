@@ -46,11 +46,17 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+from portability_selftest import hook_toolchain
+
 ROOT = Path(__file__).resolve().parents[1]
+# The hook policy's own reader of requirement lines and its one version probe: the lock is
+# read and the tools are asked their version here the way the hooks do it (HISS-19).
+TOOLCHAIN = hook_toolchain()
 LOCK = ROOT / ".config" / "hook-lint" / "requirements.txt"
 TOOL_DIR_ENV = "PRAETOR_HOOK_LINT_BIN"
 TOOLS = ("black", "flake8", "yamllint")
@@ -118,21 +124,21 @@ def pinned_versions(text):
     """Return {tool: version} for each tool pinned with == in the lock text."""
     pins = {}
     for line in text.splitlines()[:2000]:
-        match = re.match(r"^([A-Za-z0-9_.-]+)==([^\s;\\]+)", line)
-        if match and match.group(1).lower() in TOOLS:
-            pins[match.group(1).lower()] = match.group(2)
+        parsed = TOOLCHAIN.requirement(line)
+        if parsed and parsed[1] == "==" and parsed[0].lower() in TOOLS:
+            pins[parsed[0].lower()] = parsed[2]
     return pins
 
 
 def probe_version(executable):
-    """Return the first dotted version number `executable --version` prints, or None."""
+    """Return the first dotted version number `executable --version` prints, or None.
+
+    A tool that is missing, does not start or exits nonzero states no version.
+    """
     try:
-        result = subprocess.run([executable, "--version"], capture_output=True, text=True,
-                                timeout=LINT_TIMEOUT_SECONDS, check=False)
-    except (OSError, subprocess.TimeoutExpired):
+        return TOOLCHAIN.stated_version([executable, "--version"], VERSION)
+    except TOOLCHAIN.HookError:
         return None
-    match = VERSION.search(result.stdout + result.stderr)
-    return match.group(1) if match else None
 
 
 def resolve_tool(name, pins, environ=None, which=shutil.which, probe=probe_version):
@@ -322,6 +328,12 @@ class ResolutionTest(unittest.TestCase):
 
     def test_lock_pins_every_tool(self):
         self.assertEqual(sorted(LintCase.pins), sorted(TOOLS))
+
+    def test_probe_reads_the_version_a_program_states(self):
+        self.assertEqual(probe_version(sys.executable), "%d.%d.%d" % sys.version_info[:3])
+        # Negative: a program that is not there, and one that is no program.
+        self.assertIsNone(probe_version(str(ROOT / "praetor-no-such-tool")))
+        self.assertIsNone(probe_version(str(ROOT)))
 
     def test_matching_version_resolves(self):
         found = resolve_tool("black", self.pins, environ={}, which=lambda name: "/bin/black",

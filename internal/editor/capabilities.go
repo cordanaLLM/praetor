@@ -306,6 +306,13 @@ func validateCommands(input []Command) ([]Command, error) {
 	return result, nil
 }
 
+// hasLiteralMakeTarget reports whether the Makefile at path declares a rule for target on a line
+// the reader resolves without Make. The answer is util.MakefileHasTarget's, the reader adoption
+// decides verify-all ownership with: a line test of this package's own once read eight
+// assignment forms, "verify-all ?= a:b" among them, as rules and bound a task to a target Make
+// does not have (issue #304). A Makefile only Make can resolve (an include, an eval call, a
+// pattern target) declares no literal rule, so it yields no command: a renderer asserts only what
+// was observed. A missing Makefile is no rule; one that cannot be read is an error.
 func hasLiteralMakeTarget(ctx context.Context, path, target string) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
@@ -316,16 +323,7 @@ func hasLiteralMakeTarget(ctx context.Context, path, target string) (bool, error
 		}
 		return false, fmt.Errorf("read Makefile command capabilities: %w", err)
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "\t") || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		left, right, ok := strings.Cut(line, ":")
-		if ok && !strings.HasPrefix(strings.TrimSpace(right), "=") && slices.Contains(strings.Fields(left), target) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return util.MakefileHasTarget(string(data), target), nil
 }
 
 func verifiedExtensions(input []ExtensionRecommendation, registry string) []string {

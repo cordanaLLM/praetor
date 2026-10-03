@@ -28,6 +28,19 @@ it runs the MCP functional probe first, then calls `workstation install --source
 checkout>` (HISS-19 — the atomic install exists in one place, not two). See
 [Develop against this checkout's MCP](development-mcp.md) for that workflow.
 
+Before either step the wrapper checks that the Git hooks can start their interpreter on
+this host (`hook_interpreter`). The hooks try `python3`, `python` and `py -3` in that order
+and run the first that answers a version probe as Python 3.10 or newer; the wrapper resolves
+the same list with the hook policy's own resolver (`python_program` in
+`.config/lefthook/scripts/toolchain.py`). A name that merely resolves on `PATH` is not
+accepted, because the `python3` and `python` Windows puts there are Microsoft Store aliases
+and no interpreters. When no candidate proves itself the install stops and names each one
+with the reason it was skipped. The wrapper stores nothing in the environment: no variable
+selects the interpreter. The printed report carries the result under `hook_interpreter`, as
+the `command` the hooks will start and the `version` it stated.
+See [the interpreter the hooks run](git-hooks.md#the-interpreter-the-hooks-run); the
+`HookInterpreterTests` cases in `scripts/test_dev_install.py` cover each outcome.
+
 ## `workstation install`
 
 ```text

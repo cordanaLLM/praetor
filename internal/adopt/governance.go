@@ -101,7 +101,7 @@ func noteExistingTestTarget(s *adoptSession, data string, exists, generated bool
 		return
 	}
 	normalized, _ := util.NormalizeLineEndings(withoutDocumentationMakefileBlock(data))
-	recipe, found := verificationTargetRecipe(normalized, "test")
+	recipe, found := util.MakefileTargetRecipe(normalized, "test")
 	if !found || recipe == unavailableVerificationRecipe {
 		return
 	}

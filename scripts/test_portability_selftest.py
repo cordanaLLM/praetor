@@ -13,6 +13,7 @@ passes a healthy suite proves almost nothing on its own.
 import contextlib
 import importlib.util
 import io
+import os
 import re
 import sys
 import tempfile
@@ -259,6 +260,171 @@ class PortabilityDriver(unittest.TestCase):
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 0, output)
         self.assertNotIn("failed ", output)
+
+
+# Rewrites the page's table from its rendering instead of comparing.
+UPDATE_TABLE_ENV = "PRAETOR_UPDATE_HOOK_TOOLCHAIN_TABLE"
+
+
+class HookToolchainTable(unittest.TestCase):
+    """The HISS-21 page's tool table is the rendering of the declared list, never prose (#341)."""
+
+    def test_hook_toolchain_table_matches_the_declarations(self):
+        page = (ROOT / driver.PAGE).read_text(encoding="utf-8").replace("\r\n", "\n")
+        table, before, after = driver.marked_table(page)
+        rendered = driver.current_toolchain_table()
+        if os.environ.get(UPDATE_TABLE_ENV) == "1":
+            (ROOT / driver.PAGE).write_text(before + rendered + after, encoding="utf-8",
+                                            newline="\n")
+            return
+        self.assertEqual(table, rendered, f"{driver.PAGE.as_posix()} differs from the declared "
+                         f"hook toolchain; regenerate it with {UPDATE_TABLE_ENV}=1 "
+                         "python3 -B scripts/test_portability_selftest.py")
+
+    def test_the_table_names_every_declared_tool_once(self):
+        # The page carries exactly this rendering (the case above), and the DeclaredPrograms
+        # cases of .config/lefthook/scripts/test_hooks.py hold the declarations to what the
+        # hook scripts start, so a program a hook starts cannot be missing from the page.
+        toolchain = driver.hook_toolchain()
+        declared = [*toolchain.RESOLVED, *toolchain.BY_NAME, *toolchain.tool_floors()]
+        rows = driver.current_toolchain_table().splitlines()[2:]
+        self.assertEqual([re.match(r"\| `([^`]+)` \|", row).group(1) for row in rows], declared)
+        self.assertEqual(len(declared), len(set(declared)))
+        self.assertIn("sh", declared)
+
+    def test_the_workflow_requires_only_declared_tools_and_every_one_a_hook_needs(self):
+        toolchain = driver.hook_toolchain()
+        asserted = driver.asserted_tools((ROOT / driver.WORKFLOW).read_text(encoding="utf-8"))
+        declared = [*toolchain.RESOLVED, *toolchain.BY_NAME, *toolchain.tool_floors()]
+        self.assertEqual([tool for tool in asserted if tool not in declared], [])
+        self.assertEqual(len(asserted), len(set(asserted)))
+        # No hook starts without its interpreter, make and the shell that runs every job.
+        self.assertEqual([tool for tool in (*toolchain.RESOLVED, "sh") if tool not in asserted], [])
+        self.assertNotIn(str(ROOT / driver.HOOK_SCRIPTS), sys.path)
+
+    def test_requirements_are_read_from_the_policy_declarations(self):
+        class Policy:
+            RESOLVED = {"python": (("python3",), ("py", "-3")), "make": (("make",),)}
+            PYTHON_FLOOR = "3.10"
+            BY_NAME = ("git",)
+
+            @staticmethod
+            def tool_floors():
+                return {"shellcheck": "0.11.0", "hadolint": None}
+        required = driver.declared_requirements(Policy)
+        self.assertEqual(required, {
+            "python": "the first of `python3`, `py -3` on `PATH` that states Python 3.10 or newer",
+            "make": "the first of `make` on `PATH` that states GNU Make",
+            "git": "found on `PATH` under this name",
+            "shellcheck": "version 0.11.0 or newer",
+            "hadolint": "installed; no version floor"})
+        self.assertEqual(list(required), ["python", "make", "git", "shellcheck", "hadolint"])
+        # Every program the real policy resolves has a stated proof.
+        self.assertEqual(sorted(driver.PROOFS), sorted(driver.hook_toolchain().RESOLVED))
+
+    def test_table_rows_follow_the_requirements_and_the_required_list(self):
+        required = {"python": "states Python 3.10 or newer", "sh": "found on `PATH`",
+                    "hadolint": "installed; no version floor"}
+        table = driver.toolchain_table(required, ["python", "sh"])
+        self.assertEqual(table.splitlines()[2:], [
+            "| `python` | states Python 3.10 or newer | asserted on every leg |",
+            "| `sh` | found on `PATH` | asserted on every leg |",
+            "| `hadolint` | installed; no version floor | reported, not asserted |"])
+        # Negative: nothing required, so nothing is claimed as asserted.
+        self.assertNotIn("asserted on every leg", driver.toolchain_table(required, []))
+        # Boundary: no declaration leaves the header alone.
+        self.assertEqual(len(driver.toolchain_table({}, ["python"]).splitlines()), 2)
+
+    def test_the_required_list_is_read_from_one_workflow_line(self):
+        step = "        env:\n          REQUIRED: python,make,yamllint\n"
+        self.assertEqual(driver.asserted_tools(step), ["python", "make", "yamllint"])
+        for workflow in ("jobs: {}\n", step + step, "REQUIRED: python\n",
+                         "          REQUIRED: python make\n"):
+            with self.subTest(workflow=workflow), self.assertRaises(ValueError):
+                driver.asserted_tools(workflow)
+
+    def test_a_page_without_the_marked_block_is_refused(self):
+        block = f"intro\n{driver.TABLE_START}\n| a |\n| b |\n{driver.TABLE_END}\noutro\n"
+        table, before, after = driver.marked_table(block)
+        self.assertEqual(table, "| a |\n| b |")
+        self.assertEqual(before + table + after, block)
+        for page in ("no markers\n", f"{driver.TABLE_START}\n| a |\n",
+                     f"| a |\n{driver.TABLE_END}\n"):
+            with self.subTest(page=page), self.assertRaises(ValueError):
+                driver.marked_table(page)
+
+
+# Where each floor of .config/lefthook/tool-floors.txt takes its version from.
+HOOK_LINT_INPUT = ".config/hook-lint/requirements.in"
+HOOK_LINT_LOCK = ".config/hook-lint/requirements.txt"
+ACTIONLINT_FILE = ".github/actionlint.yaml"
+SHELLCHECK_PIN = re.compile(r"^ +SHELLCHECK_VERSION: (\S+)$", re.M)
+LOCK_PYTHON = re.compile(r"--python-version=(\d+\.\d+)\b")
+# Files that would install a linter in this repository: the workflows and the container.
+INSTALL_SOURCES = (".github/workflows/*.yml", ".devcontainer/devcontainer.json",
+                   ".devcontainer/Dockerfile.praetor")
+
+
+def floor_gap(toolchain, tool, installed, floors):
+    """Return why installed does not meet tool's floor, or "" when it does."""
+    floor = floors.get(tool)
+    if floor is None:
+        return f"{tool} has no floor"
+    version = installed.removeprefix("v")
+    if re.fullmatch(r"\d+(\.\d+)*", version) is None:
+        return f"{tool} version {installed} is not a version"
+    if toolchain.below(version, floor):
+        return f"{tool} {installed} is below the declared floor {floor}"
+    return ""
+
+
+class HookToolFloorSources(unittest.TestCase):
+    """A floor needs a source in this repository, and that source is held to the floor (#343)."""
+
+    def text(self, relative):
+        return (ROOT / relative).read_text(encoding="utf-8")
+
+    def test_the_versions_this_repository_installs_meet_the_floors(self):
+        toolchain = driver.hook_toolchain()
+        floors = toolchain.tool_floors()
+        self.assertEqual(sorted(floors), ["actionlint", "hadolint", "shellcheck", "yamllint"])
+        # The lint lock input is read by the reader the floors file is read by.
+        parsed = [toolchain.requirement(line) for line in self.text(HOOK_LINT_INPUT).splitlines()]
+        pins = {name: version for name, operator, version in filter(None, parsed)
+                if operator == "=="}
+        self.assertEqual(floor_gap(toolchain, "yamllint", pins["yamllint"], floors), "")
+        released = SHELLCHECK_PIN.findall(self.text(driver.WORKFLOW))
+        self.assertEqual(len(released), 1, released)
+        self.assertEqual(floor_gap(toolchain, "shellcheck", released[0], floors), "")
+        self.assertIn(f"actionlint v{floors['actionlint']}", self.text(ACTIONLINT_FILE))
+        # The interpreter floor is the release the lint lock is compiled for.
+        self.assertEqual(LOCK_PYTHON.findall(self.text(HOOK_LINT_LOCK)), [toolchain.PYTHON_FLOOR])
+
+    def test_a_linter_without_a_source_has_no_floor(self):
+        # Nothing here installs hadolint or names a version of it, so its line declares no
+        # floor. Once a file below does, derive the floor from that file.
+        floors = driver.hook_toolchain().tool_floors()
+        self.assertEqual([tool for tool, floor in floors.items() if floor is None], ["hadolint"])
+        named = [path.relative_to(ROOT).as_posix()
+                 for pattern in INSTALL_SOURCES for path in sorted(ROOT.glob(pattern))
+                 if "hadolint" in path.read_text(encoding="utf-8")]
+        self.assertEqual(named, [])
+        self.assertGreater(len(list(ROOT.glob(INSTALL_SOURCES[0]))), 3)
+
+    def test_floor_gaps_are_named(self):
+        toolchain = driver.hook_toolchain()
+        floors = {"shellcheck": "0.11.0", "yamllint": "1.38.0", "hadolint": None}
+        cases = (("shellcheck", "0.11.0", ""), ("shellcheck", "v0.11.0", ""),
+                 ("yamllint", "1.39.0", ""),
+                 ("shellcheck", "0.9.0", "below the declared floor 0.11.0"),
+                 ("yamllint", "1.37.9", "below the declared floor 1.38.0"),
+                 ("hadolint", "2.14.0", "has no floor"), ("actionlint", "1.7.12", "has no floor"),
+                 ("shellcheck", "stable", "is not a version"))
+        for tool, installed, want in cases:
+            with self.subTest(tool=tool, installed=installed):
+                gap = floor_gap(toolchain, tool, installed, floors)
+                self.assertEqual(gap == "", want == "", gap)
+                self.assertIn(want, gap)
 
 
 if __name__ == "__main__":

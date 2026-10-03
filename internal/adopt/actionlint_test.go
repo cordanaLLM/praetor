@@ -498,8 +498,9 @@ func TestActionlintStillRejectsTheDeclaredLabels(t *testing.T) {
 	}
 }
 
-// requireActionlint returns the actionlint on PATH, skipping when there is none: praetor does
-// not install or pin it (#343), so the check runs where a developer's hooks already use it.
+// requireActionlint returns the actionlint on PATH, skipping when there is none: no workflow
+// installs it, so the check runs where a developer's hooks already use it. Those hooks hold
+// it to the floor in .config/lefthook/tool-floors.txt.
 func requireActionlint(t *testing.T) string {
 	t.Helper()
 	bin, err := exec.LookPath("actionlint")

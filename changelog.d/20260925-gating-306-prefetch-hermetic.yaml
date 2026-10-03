@@ -1,0 +1,4 @@
+type: fixed
+title: "The gating prefetch test no longer runs the host go command against a go 1.27 fixture: the test drives the injected runner, and the one real-toolchain case runs offline"
+issue: "#306"
+breaking: false

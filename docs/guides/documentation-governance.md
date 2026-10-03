@@ -611,8 +611,9 @@ adoption step therefore declares the label to actionlint under
   accepts the workflows adoption writes without the declaration, and
   `TestActionlintAcceptsEveryEmittedWorkflow` checks that it accepts each of
   them, every committed rendering of the Node template included, beside the
-  file adoption creates for it. Both skip where actionlint is not installed;
-  Praetor does not pin it (#343). `TestActionlintUnknownLabelsBoundary` runs
+  file adoption creates for it. Both skip where actionlint is not installed:
+  no workflow installs it, and the Git hooks hold the one on `PATH` to a
+  [version floor](git-hooks.md#linter-version-floors). `TestActionlintUnknownLabelsBoundary` runs
   everywhere and fails when a listed label is one no emitted workflow runs on.
 
 The `TestActionlintLabels*`, `TestActionlintLabelsOfBoundary` and

@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,12 +14,35 @@ sys.dont_write_bytecode = True
 
 import dev_mcp
 from dev_mcp_probe import probe
+from portability_selftest import hook_toolchain
 
 # The atomic install itself -- lock, backup, swap, manifest -- is
 # internal/workstation (HISS-19: two installers never coexist). This script keeps only
 # the MCP functional probe as a pre-flight gate and the subprocess call that reaches the
 # Go engine.
 INSTALL_TIMEOUT = 300
+
+
+def hook_interpreter(which=shutil.which):
+    """Return the interpreter the Git hooks start on this host, or stop the install.
+
+    Every hook starts through .config/lefthook/python.sh, which tries a fixed list of
+    candidates and runs the first that proves itself: it must answer a version probe as
+    Python 3 at or above the supported floor. A name that merely resolves on PATH is not
+    proof. Windows 10 and 11 put python3.exe and python.exe there as Microsoft Store aliases,
+    which a lookup finds and which answer the probe with "Python was not found".
+
+    The check here is the hook policy's own resolver for that list (toolchain.python_program),
+    so the install reports what the hooks will run and refuses a host where every hook would
+    fail as a missing dependency. Nothing is stored: no environment variable selects the
+    interpreter, so there is none to set.
+    """
+    toolchain = hook_toolchain()
+    try:
+        argv, version = toolchain.python_program(which)
+    except toolchain.HookError as error:
+        raise RuntimeError(f"the Git hooks cannot start on this host: {error}") from error
+    return {"command": argv, "version": version}
 
 
 def standardsctl_argv():
@@ -68,9 +92,12 @@ def main():
     parser.add_argument("--manifest", type=Path, default=None,
                         help="Install manifest path (default: the per-user configuration directory)")
     args = parser.parse_args()
+    # Before anything is installed: a host whose hooks cannot start is not a working install.
+    interpreter = hook_interpreter()
     with tempfile.TemporaryDirectory(prefix="praetor-dev-install-") as temporary:
         probe_mcp(Path(temporary))
     report = install(args.bin_dir.resolve(), args.manifest)
+    report["hook_interpreter"] = interpreter
     print(json.dumps(report, indent=2))
 
 

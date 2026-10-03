@@ -1,3 +1,3 @@
 #!/bin/sh
 set -eu
-exec python3 .config/lefthook/scripts/hooks.py pre-push "${1-}"
+exec sh .config/lefthook/python.sh .config/lefthook/scripts/hooks.py pre-push "${1-}"

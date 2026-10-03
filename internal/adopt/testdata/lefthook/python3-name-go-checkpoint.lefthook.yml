@@ -1,4 +1,4 @@
-# Lefthook Configuration (Go, Rust & HISS Governance)
+# Lefthook Configuration (Go & HISS Governance)
 # Go and Rust jobs follow the detected languages; both when none was detected.
 # Governance commands fail closed: a failing or missing praetorctl blocks the
 # commit or push. The pre-commit audit runs --offline; the pre-push audit
@@ -12,14 +12,14 @@ agent-checkpoint-tool:
   commands:
     checkpoint:
       run: >-
-        sh .config/lefthook/python.sh -B .config/lefthook/scripts/checkpoint.py
-        --event tool --json --marker
+        python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json
+        --marker
 agent-checkpoint-stop:
   commands:
     checkpoint:
       run: >-
-        sh .config/lefthook/python.sh -B .config/lefthook/scripts/checkpoint.py
-        --event stop --json --marker
+        python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json
+        --marker
 pre-commit:
   parallel: true
   commands:
@@ -32,17 +32,6 @@ pre-commit:
       run: >-
         if [ -f go.mod ]; then go vet ./...; else echo no go.mod at the
         repository root, skipping go vet >&2; fi
-    rustfmt:
-      glob: "*.rs"
-      run: >-
-        if [ -f Cargo.toml ]; then cargo fmt --all --check; else echo no
-        Cargo.toml at the repository root, skipping cargo fmt >&2; fi
-    clippy:
-      glob: "*.rs"
-      run: >-
-        if [ -f Cargo.toml ]; then cargo clippy --workspace --all-targets -- -D
-        warnings; else echo no Cargo.toml at the repository root, skipping cargo
-        clippy >&2; fi
     context-check:
       run: >-
         if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v

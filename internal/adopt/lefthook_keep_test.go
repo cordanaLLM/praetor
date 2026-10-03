@@ -12,8 +12,7 @@ import (
 func checkpointLockSource(t *testing.T) string {
 	t.Helper()
 	source := newAdoptLockSource(t)
-	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointScript)), "#!/usr/bin/env python3\nprint('shared')\n")
-	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointCommon)), "class HookError(Exception):\n    pass\n")
+	writeCheckpointBundle(t, source)
 	return source
 }
 

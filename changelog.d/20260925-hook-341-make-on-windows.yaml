@@ -1,0 +1,4 @@
+type: fixed
+title: The Git hooks ran make on every platform without declaring it; they now run the first of make, gmake and mingw32-make whose version output states GNU Make, a host without one is refused as a missing dependency that names what was tried, every program the hooks start by name is declared and listed on the HISS-21 page, and the Platform Neutrality job asserts the declared toolchain on every leg
+issue: "#341"
+breaking: false

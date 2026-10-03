@@ -1,0 +1,4 @@
+type: fixed
+title: Editor generation no longer offers a Verify All task for a Makefile that only assigns a verify-all variable; it reads the Makefile with the reader adoption uses
+issue: "#304"
+breaking: false

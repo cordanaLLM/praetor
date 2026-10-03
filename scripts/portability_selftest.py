@@ -61,6 +61,83 @@ SUMMARY_RULE = re.compile(r"^-{70}\nRan \d+ tests? in ", re.M)
 MAX_FAILURE_BLOCKS = 12
 MAX_FAILURE_BLOCK_LINES = 40
 
+# The hook toolchain table of the HISS-21 page is rendered, never written by hand: three
+# attempts to state in prose which tools the matrix covers each published a false list (#341).
+# Its rows are the hook policy's own declarations (RESOLVED, BY_NAME and tool-floors.txt, read
+# through .config/lefthook/scripts/toolchain.py) and its last column is the REQUIRED list of
+# the workflow's Assert Hook Toolchain step.
+HOOK_SCRIPTS = Path(".config/lefthook/scripts")
+WORKFLOW = Path(".github/workflows/portability.yml")
+PAGE = Path("docs/standards/hiss-21-platform-neutrality.md")
+TABLE_START = "<!-- praetor:hook-toolchain:start -->"
+TABLE_END = "<!-- praetor:hook-toolchain:end -->"
+REQUIRED = re.compile(r"^ +REQUIRED: ([a-z0-9_.,-]+)$", re.M)
+# What each resolved program must state before the policy runs it.
+PROOFS = {"python": "Python {floor} or newer", "make": "GNU Make"}
+
+
+def hook_toolchain():
+    """Load the hook policy's toolchain module, which declares what the hooks depend on."""
+    scripts = str(ROOT / HOOK_SCRIPTS)
+    sys.path.insert(0, scripts)
+    try:
+        import toolchain
+    finally:
+        sys.path.remove(scripts)
+    return toolchain
+
+
+def asserted_tools(workflow):
+    """Return the tools the workflow's Assert Hook Toolchain step requires on every leg."""
+    found = REQUIRED.findall(workflow)
+    if len(found) != 1:
+        raise ValueError(f"{WORKFLOW.as_posix()}: expected one REQUIRED list, found {len(found)}")
+    return found[0].split(",")
+
+
+def declared_requirements(toolchain):
+    """Return {tool: what the hook policy requires of it}, one entry per declared tool.
+
+    The order is the policy's own: the programs it resolves from candidates, the programs it
+    starts by name, then the linters of the floors file.
+    """
+    required = {}
+    for tool, candidates in toolchain.RESOLVED.items():
+        names = ", ".join(f"`{' '.join(candidate)}`" for candidate in candidates)
+        proof = PROOFS[tool].format(floor=toolchain.PYTHON_FLOOR)
+        required[tool] = f"the first of {names} on `PATH` that states {proof}"
+    for tool in toolchain.BY_NAME:
+        required[tool] = "found on `PATH` under this name"
+    for tool, floor in toolchain.tool_floors().items():
+        required[tool] = "installed; no version floor" if floor is None \
+            else f"version {floor} or newer"
+    return required
+
+
+def toolchain_table(required, asserted):
+    """Render the declared hook tools and what the matrix asserts for each as a Markdown table."""
+    rows = ["| Tool | The hook policy requires | Platform Neutrality job |",
+            "| :--- | :--- | :--- |"]
+    for tool, requirement in required.items():
+        coverage = "asserted on every leg" if tool in asserted else "reported, not asserted"
+        rows.append(f"| `{tool}` | {requirement} | {coverage} |")
+    return "\n".join(rows)
+
+
+def current_toolchain_table():
+    """Render the table from the declarations and the workflow of this checkout."""
+    workflow = (ROOT / WORKFLOW).read_text(encoding="utf-8")
+    return toolchain_table(declared_requirements(hook_toolchain()), asserted_tools(workflow))
+
+
+def marked_table(page):
+    """Return the table the page carries between its markers, and the text around it."""
+    before, start, rest = page.partition(TABLE_START + "\n")
+    table, end, after = rest.partition("\n" + TABLE_END)
+    if not start or not end:
+        raise ValueError(f"{PAGE.as_posix()}: no {TABLE_START} ... {TABLE_END} block")
+    return table, before + start, end + after
+
 
 def failure_blocks(output):
     """Return one printable block per failing case, bounded in count and in length."""

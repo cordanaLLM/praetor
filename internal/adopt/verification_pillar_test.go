@@ -379,30 +379,6 @@ func TestNoteExistingTestTargetNamesOnlyTheAdoptersTarget(t *testing.T) {
 	}
 }
 
-// verificationTargetRecipe reads the recipe lines of the first rule for a target, stops at the
-// first line that is not a recipe line, and finds no rule inside a define body.
-func TestVerificationTargetRecipe(t *testing.T) {
-	for _, tc := range []struct {
-		name, data string
-		want       string
-		found      bool
-	}{
-		{"recipe", "test:\n\tpython3 -m pytest\n\tpython3 -m mypy\n\nbuild:\n\techo b\n", "\tpython3 -m pytest\n\tpython3 -m mypy\n", true},
-		{"last-line-without-newline", "test: build\n\tpython3 -m pytest", "\tpython3 -m pytest\n", true},
-		{"first-rule-wins", "test: build\ntest:\n\tpython3 -m pytest\n", "", true},
-		{"absent", "build:\n\techo b\n", "", false},
-		{"define-body", "define rules\ntest:\n\techo t\nendef\n", "", false},
-		{"empty", "", "", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got, found := verificationTargetRecipe(tc.data, "test")
-			if got != tc.want || found != tc.found {
-				t.Fatalf("verificationTargetRecipe = %q, %v; want %q, %v", got, found, tc.want, tc.found)
-			}
-		})
-	}
-}
-
 // pytestSectionFixture is the optional pytest configuration file rel holding its pytest section,
 // padded with comment bytes to size bytes when size is larger.
 func pytestSectionFixture(rel string, size int) string {

@@ -71,8 +71,8 @@ func assertDocsLintOwnership(t *testing.T, rows map[string]docsLintOwnershipRow)
 	t.Helper()
 	for name, tc := range rows {
 		t.Run(name, func(t *testing.T) {
-			if got := mayDefineTarget(tc.makefile, "docs-lint"); got != tc.refused {
-				t.Fatalf("mayDefineTarget(%q, docs-lint) = %v, want %v", tc.makefile, got, tc.refused)
+			if got := util.MakefileMayDefineTarget(tc.makefile, "docs-lint"); got != tc.refused {
+				t.Fatalf("MakefileMayDefineTarget(%q, docs-lint) = %v, want %v", tc.makefile, got, tc.refused)
 			}
 			_, err := mergeDocumentationMakefile(tc.makefile, false)
 			if (err != nil) != tc.refused {
@@ -101,28 +101,6 @@ var makefileBareExpansionRows = map[string]docsLintOwnershipRow{
 
 func TestMakefileBareExpansionRuleText(t *testing.T) {
 	assertDocsLintOwnership(t, makefileBareExpansionRows)
-}
-
-// A define body is variable text: a rule line inside one declares nothing, while the same line
-// after endef does. The verify-all reader shares this, so a define holding a verify-all template
-// no longer makes adoption preserve a rule Make cannot run.
-func TestMakefileDefineBodyDeclaresNoTarget(t *testing.T) {
-	body := "define gates\nverify-all: lint\n\t@echo template\nendef\n"
-	if hasVerificationTarget(body, "verify-all") || mayDefineVerificationTarget(body) {
-		t.Fatal("a rule inside a define body was read as a declared target")
-	}
-	if !hasVerificationTarget(body+"verify-all: lint\n", "verify-all") {
-		t.Fatal("a rule after endef was not read")
-	}
-	nested := "define outer\ndefine inner\nendef\nverify-all: lint\nendef\n"
-	if hasVerificationTarget(nested, "verify-all") {
-		t.Fatal("the inner endef closed the outer define")
-	}
-	for _, assignment := range []string{"define := x\n", "define = x\n", "override define ?= x\n"} {
-		if !hasVerificationTarget(assignment+"verify-all: lint\n", "verify-all") {
-			t.Fatalf("%q binds a variable named define but was read as opening a block", assignment)
-		}
-	}
 }
 
 // Replayed both directions against the installed GNU Make: an accepted Makefile has no docs-lint

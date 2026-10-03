@@ -12,14 +12,14 @@ agent-checkpoint-tool:
   commands:
     checkpoint:
       run: >-
-        sh .config/lefthook/python.sh -B .config/lefthook/scripts/checkpoint.py
-        --event tool --json --marker
+        python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json
+        --marker
 agent-checkpoint-stop:
   commands:
     checkpoint:
       run: >-
-        sh .config/lefthook/python.sh -B .config/lefthook/scripts/checkpoint.py
-        --event stop --json --marker
+        python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json
+        --marker
 pre-commit:
   parallel: true
   commands:

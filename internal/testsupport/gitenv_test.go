@@ -23,9 +23,16 @@ func requireGit(t *testing.T) {
 // runGit runs git in dir with env and returns its trimmed combined output.
 func runGit(t *testing.T, dir string, env []string, args ...string) (string, error) {
 	t.Helper()
+	return runTool(t, "git", dir, env, args...)
+}
+
+// runTool runs the named program in dir with env, under the bound every fixture command
+// gets, and returns its trimmed combined output.
+func runTool(t *testing.T, name, dir string, env []string, args ...string) (string, error) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), fixtureGitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
@@ -136,6 +143,11 @@ func TestHermeticGitEnv_Boundary_EnvironmentContents(t *testing.T) {
 	set := map[string]string{}
 	for _, entry := range env {
 		key, value, _ := strings.Cut(entry, "=")
+		if key == "" {
+			// Windows keeps each drive's working directory as a hidden entry ("=C:=C:\\dir"),
+			// and os.Environ returns them; they are not variables a caller sets.
+			continue
+		}
 		if _, dup := set[key]; dup {
 			t.Errorf("%s is set twice", key)
 		}

@@ -77,6 +77,19 @@ func lefthookGovernedCommand(args string) string {
 		util.PraetorCLI+" nor "+util.LegacyCLI+" is installed")
 }
 
+// lefthookPythonCommand renders a lefthook run line that starts a Python hook script through
+// the launcher adoption writes with the checkpoint scripts (checkpointLauncher). Which
+// interpreter runs is the launcher's decision alone: it tries fixed candidates and proves one
+// before it starts it, and no variable selects another (#339).
+//
+// The line holds no quote and no expansion. Lefthook's Windows executor hands a run line to sh
+// without preserving its inner quotes, so a rule stated inline, with a quoted variable, split an
+// interpreter path that held a space there; a path to a script and plain arguments cannot be
+// split that way.
+func lefthookPythonCommand(args string) string {
+	return "sh " + checkpointLauncher + " " + args
+}
+
 // optionalToolCommand renders a lefthook run line for a third-party tool that is skipped
 // when absent but blocks when it fails.
 func optionalToolCommand(tool, args string) string {
@@ -186,9 +199,9 @@ func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) strin
 	checkpointJobs := ""
 	if checkpoint {
 		checkpointJobs = "agent-checkpoint-tool:\n  commands:\n    checkpoint:\n" +
-			lefthookRun("python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker") +
+			lefthookRun(lefthookPythonCommand("-B "+checkpointScript+" --event tool --json --marker")) +
 			"agent-checkpoint-stop:\n  commands:\n    checkpoint:\n" +
-			lefthookRun("python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker")
+			lefthookRun(lefthookPythonCommand("-B "+checkpointScript+" --event stop --json --marker"))
 	}
 	return lefthookHeader(languages) +
 		"---\n" +

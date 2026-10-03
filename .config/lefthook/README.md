@@ -1,8 +1,8 @@
 # Canonical hook policy
 
-`praetor.yml` is consumed through `extends` by Praetor itself. Keep the policy and
-`scripts/` and `pre-push/` together: the YAML entry points intentionally use stable
-repository paths. The pre-push script job preserves checks when Lefthook's final
+`praetor.yml` is consumed through `extends` by Praetor itself. Keep the policy,
+`python.sh`, `tool-floors.txt`, `scripts/` and `pre-push/` together: the YAML entry
+points intentionally use stable repository paths. The pre-push script job preserves checks when Lefthook's final
 file diff is empty. See [the hook guide](../../docs/guides/git-hooks.md) for behavior
 and tools.
 
@@ -52,6 +52,15 @@ See [upstream agent integration](https://lefthook.dev/configuration/ai/) and the
 No `stage_fixed` jobs are used. Checking exported index content avoids changing
 partially staged hunks while retaining the formatting gate.
 
+`tool-floors.txt` declares the linters the file checks run: a `tool>=version` line
+for the oldest `shellcheck`, `actionlint` and `yamllint` they accept, and a bare
+`hadolint` line, a linter that must be installed at any version because no file
+here names one. `scripts/toolchain.py` reads a floored linter's `--version` before
+it runs and refuses a missing or older one with the required version; a linter
+with no staged or pushed file of its type is not probed. Vendor the file with the
+policy: without it every commit that needs a linter is refused. See
+[linter version floors](../../docs/guides/git-hooks.md#linter-version-floors).
+
 `agent-checkpoint-tool` and `agent-checkpoint-stop` share the bounded checkpoint
 evaluator. Add a reviewed `.config/agent/checkpoint.json` for the adopting repo
 to enable it; missing policy is explicitly disabled. Configure publication only
@@ -70,6 +79,24 @@ including forced staging, submodule entries and private content added then remov
 within outgoing history. Removing legacy tracked entries is allowed. Adopters
 must keep this whole directory ignored and publish reviewed documentation under
 `docs/` instead.
+
+## Interpreter
+
+No job names a Python interpreter and no environment variable selects one. Each
+job starts its hook with `sh .config/lefthook/python.sh <script> ...`. `python.sh`
+tries `python3`, `python` and `py -3` in that order and runs the first that
+answers a version probe as Python 3.10 or newer, so a program that merely has
+one of these names, such as the Microsoft Store alias Windows puts on `PATH`, is
+skipped. With none left the hook fails as a missing dependency and names what it
+tried. Hooks that start further Python processes reuse `sys.executable`.
+`scripts/toolchain.py` prints what the host provides for every declared tool.
+See [the interpreter the hooks run](../../docs/guides/git-hooks.md#the-interpreter-the-hooks-run).
+
+The `hook-cli` and `state-audit` targets are run with GNU Make, resolved the same
+way: the first of `make`, `gmake` and `mingw32-make` whose `--version` states GNU
+Make. A host without one is refused with a missing-dependency message before the
+CLI is built; no hook skips the build.
+See [the make the hooks run](../../docs/guides/git-hooks.md#the-make-the-hooks-run).
 
 ## Output policy
 

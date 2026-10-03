@@ -1,0 +1,4 @@
+type: fixed
+title: "Git hooks ran shellcheck, actionlint, hadolint and yamllint at whatever version was on PATH; shellcheck, actionlint and yamllint are now refused below the floor declared in .config/lefthook/tool-floors.txt, and hadolint, for which the repository names no version, must be installed at any version. Migration: install shellcheck >= 0.11.0, actionlint >= 1.7.12 and yamllint >= 1.38.0 before committing files of their types; a repository that vendors .config/lefthook copies tool-floors.txt, scripts/toolchain.py and python.sh with the policy"
+issue: "#343"
+breaking: true

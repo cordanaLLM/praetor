@@ -5,9 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import re
+import sys
 
 from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
 from privacy import PRIVATE_STATE_ERROR
+from toolchain import make_program, require_floors
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
              ".golangci.yml", ".gosec.json"}
@@ -148,38 +150,62 @@ def gofmt_check(directory, names):
         raise HookError("Run gofmt and stage the intended changes:\n" + "".join(unformatted))
 
 
+def lint_commands(directory, files):
+    """Return one command per linter that has files to check among files, in a fixed order.
+
+    These are the tools held to a version floor (.config/lefthook/tool-floors.txt): each
+    command starts with the tool's name, which file_checks hands to require_floors before
+    anything runs. A linter with no file of its type yields no command and is not probed.
+    """
+    groups = [(["shellcheck"], lambda p: p.endswith(".sh")),
+              (["actionlint"], lambda p: p.startswith(".github/workflows/")
+               and p.endswith((".yml", ".yaml"))),
+              (["hadolint"], lambda p: Path(p).name == "Dockerfile"),
+              (["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}"],
+               lambda p: p.endswith((".yml", ".yaml")) and not is_chart_template(directory, p))]
+    commands = []
+    for command, predicate in groups:
+        matches = [name for name in files if predicate(name)]
+        if matches:
+            commands.append([*command, *matches])
+    return commands
+
+
+# The harness self-tests a change to the hook policy runs. The first three travel with the
+# policy; the scripts/ suites exist only where the snapshot carries them.
+SELF_TESTS = (".config/lefthook/scripts/test_hooks.py",
+              ".config/lefthook/scripts/test_security_scope.py",
+              ".config/lefthook/scripts/test_checkpoint.py")
+OPTIONAL_SELF_TESTS = ("scripts/test_checkpoint_hooks.py", "scripts/test_praetor_hook.py")
+
+
+def self_test_commands(directory):
+    """Return the policy validation and one command per self-test suite in directory.
+
+    Each suite runs under sys.executable: the interpreter .config/lefthook/python.sh resolved
+    for this hook, so a suite never runs under a second interpreter named by a command (#339).
+    """
+    suites = [*SELF_TESTS,
+              *(name for name in OPTIONAL_SELF_TESTS if (directory / name).exists())]
+    return [["lefthook", "validate"], *([sys.executable, "-B", suite] for suite in suites)]
+
+
 def file_checks(directory, names):
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
         raise HookError(PRIVATE_STATE_ERROR)
     text_checks(directory, files)
     gofmt_check(directory, files)
-    commands = []
-    groups = [(["shellcheck"], lambda p: p.endswith(".sh")),
-              (["actionlint"], lambda p: p.startswith(".github/workflows/")
-               and p.endswith((".yml", ".yaml"))),
-              (["hadolint"], lambda p: Path(p).name == "Dockerfile")]
-    for command, predicate in groups:
-        matches = [name for name in files if predicate(name)]
-        if matches:
-            commands.append([*command, *matches])
-    yaml = [name for name in files
-            if name.endswith((".yml", ".yaml")) and not is_chart_template(directory, name)]
-    if yaml:
-        commands.append(["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}", *yaml])
+    commands = lint_commands(directory, files)
+    # A linter below its floor gives a verdict the tree was never measured with (#343), so
+    # the version is settled before any of them runs.
+    require_floors(command[0] for command in commands)
     if any(name in {"lefthook.yml", ".codex/hooks.json", ".claude/settings.json",
                     ".gemini/settings.json", ".agents/plugins/praetor/hooks.json",
                     ".agents/plugins/praetor/praetor_hook.py", "scripts/test_checkpoint_hooks.py",
                     "scripts/test_praetor_hook.py"}
            or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
-        commands.append(["lefthook", "validate"])
-        commands.append(["python3", "-B", ".config/lefthook/scripts/test_hooks.py"])
-        commands.append(["python3", "-B", ".config/lefthook/scripts/test_security_scope.py"])
-        commands.append(["python3", "-B", ".config/lefthook/scripts/test_checkpoint.py"])
-        if (directory / "scripts/test_checkpoint_hooks.py").exists():
-            commands.append(["python3", "-B", "scripts/test_checkpoint_hooks.py"])
-        if (directory / "scripts/test_praetor_hook.py").exists():
-            commands.append(["python3", "-B", "scripts/test_praetor_hook.py"])
+        commands.extend(self_test_commands(directory))
     if context_changed(names):
         commands.append(["go", "run", "./cmd/standardsctl", "compile-context", "--verify"])
     parallel(commands, directory)
@@ -291,7 +317,8 @@ def source_checks(directory, names, gate="all", base=None):
     if full_gate:
         # The Make target initializes only absent state, then audits it strictly.
         # Finish before parallel flavor checks and the later receipt pipeline.
-        run(["make", "--no-print-directory", "state-audit"], cwd=directory, env=clean_env())
+        run([make_program(), "--no-print-directory", "state-audit"], cwd=directory,
+            env=clean_env())
     if gate == "all":
         parallel(governance, directory)
         parallel(semgrep_commands(directory, names), directory)
