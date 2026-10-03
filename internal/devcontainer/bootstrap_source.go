@@ -22,7 +22,7 @@ import (
 
 const (
 	maxBootstrapFiles       = 4096
-	maxBootstrapSourceBytes = 8 * 1024 * 1024
+	maxBootstrapSourceBytes = 16 * 1024 * 1024
 	maxBootstrapPathBytes   = 256
 )
 

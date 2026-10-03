@@ -193,11 +193,21 @@ func WriteFileAt(path string, data []byte, perm os.FileMode) error {
 // the pinned handle on absRoot, and an escape the handle refuses is classified by
 // classifyEscape.
 func writeConfined(absRoot, inside string, data []byte, perm os.FileMode) error {
+	return inConfinedParent(absRoot, inside, func(dir *os.Root, name string) error {
+		return replaceNoFollow(dir, name, filepath.Join(absRoot, inside), data, perm)
+	})
+}
+
+// inConfinedParent runs fn with a pinned handle on inside's directory, opened through the
+// handle on absRoot, and inside's final element. It refuses an inside naming absRoot itself
+// with ErrRootItself, and an escape the handle refuses is classified by classifyEscape. It
+// is the post-check step writeConfined and writeConfinedExclusive share.
+func inConfinedParent(absRoot, inside string, fn func(dir *os.Root, name string) error) error {
 	if inside == "." {
 		return fmt.Errorf("%w: %q", ErrRootItself, absRoot)
 	}
 	return classifyEscape(absRoot, inside, inRoot(absRoot, filepath.Dir(inside), func(dir *os.Root) error {
-		return replaceNoFollow(dir, filepath.Base(inside), filepath.Join(absRoot, inside), data, perm)
+		return fn(dir, filepath.Base(inside))
 	}))
 }
 

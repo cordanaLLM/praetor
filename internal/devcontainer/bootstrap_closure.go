@@ -2,7 +2,6 @@ package devcontainer
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -172,7 +171,7 @@ func (c *closureCapture) read(name string) ([]byte, error) {
 	}
 	c.total += len(data)
 	if c.total > maxBootstrapSourceBytes {
-		return nil, errors.New("bootstrap source exceeds 8 MiB")
+		return nil, fmt.Errorf("bootstrap source exceeds %d MiB", maxBootstrapSourceBytes>>20)
 	}
 	return data, nil
 }

@@ -1,0 +1,3 @@
+type: changed
+title: "The DevContainer bootstrap captures up to 16 MiB of source instead of 8 MiB, because praetorctl's own source had reached 80% of the old limit"
+breaking: false

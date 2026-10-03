@@ -160,3 +160,86 @@ func writeLimitedFixture(t *testing.T, path, body string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// openTestRoot opens dir as a pinned directory handle that is closed at cleanup.
+func openTestRoot(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("open root %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Errorf("close root %s: %v", dir, err)
+		}
+	})
+	return root
+}
+
+func TestReadLimitedIn_Positive(t *testing.T) {
+	dir := t.TempDir()
+	writeLimitedFixture(t, filepath.Join(dir, "0001-record.md"), "record\n")
+	root := openTestRoot(t, dir)
+	if data, err := ReadLimitedIn(root, "0001-record.md", 1<<10); err != nil || string(data) != "record\n" {
+		t.Errorf("ReadLimitedIn = %q, %v; want %q, nil", data, err, "record\n")
+	}
+
+	// A relative link that stays inside the directory is followed through the handle.
+	if err := os.Symlink("0001-record.md", filepath.Join(dir, "alias.md")); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+	if data, err := ReadLimitedIn(root, "alias.md", 1<<10); err != nil || string(data) != "record\n" {
+		t.Errorf("ReadLimitedIn through an in-directory link = %q, %v; want %q, nil", data, err, "record\n")
+	}
+}
+
+func TestReadLimitedIn_Negative(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "adr")
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeLimitedFixture(t, filepath.Join(dir, "0001-record.md"), "record\n")
+	// The escape target exists and is readable, so a refusal can only come from the handle.
+	writeLimitedFixture(t, filepath.Join(parent, "outside.md"), "secret")
+	root := openTestRoot(t, dir)
+
+	if _, err := ReadLimitedIn(root, "absent.md", 1<<10); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("an absent entry must report ErrNotExist, got %v", err)
+	}
+	if _, err := ReadLimitedIn(root, "0001-record.md", 0); !errors.Is(err, ErrInvalidReadLimit) {
+		t.Errorf("a zero limit must be refused, got %v", err)
+	}
+	if _, err := ReadLimitedIn(root, "sub", 1<<10); !errors.Is(err, ErrNotRegularFile) {
+		t.Errorf("a directory is not a readable file: got %v, want ErrNotRegularFile", err)
+	}
+	if _, err := ReadLimitedIn(root, filepath.Join("..", "outside.md"), 1<<10); err == nil {
+		t.Error("a name climbing out of the directory must be refused by the handle")
+	}
+	if err := os.Symlink(filepath.Join("..", "outside.md"), filepath.Join(dir, "escape.md")); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+	if data, err := ReadLimitedIn(root, "escape.md", 1<<10); err == nil || data != nil {
+		t.Errorf("a link leading out of the directory must be refused, got %q, %v", data, err)
+	}
+}
+
+// TestReadLimitedIn_Boundary pins ReadFileLimited's one-byte edge for the pinned reader: a
+// file of exactly the limit is content, one byte more is refused with no data.
+func TestReadLimitedIn_Boundary(t *testing.T) {
+	dir := t.TempDir()
+	writeLimitedFixture(t, filepath.Join(dir, "exact.md"), strings.Repeat("x", 64))
+	writeLimitedFixture(t, filepath.Join(dir, "over.md"), strings.Repeat("x", 65))
+	writeLimitedFixture(t, filepath.Join(dir, "empty.md"), "")
+	root := openTestRoot(t, dir)
+
+	if data, err := ReadLimitedIn(root, "exact.md", 64); err != nil || len(data) != 64 {
+		t.Errorf("a file of exactly the limit must be read: %d bytes, err %v", len(data), err)
+	}
+	if data, err := ReadLimitedIn(root, "over.md", 64); !errors.Is(err, ErrFileTooLarge) || data != nil {
+		t.Errorf("one byte past the limit must report ErrFileTooLarge and no data, got %d bytes, %v", len(data), err)
+	}
+	if data, err := ReadLimitedIn(root, "empty.md", 1); err != nil || len(data) != 0 {
+		t.Errorf("an empty file under the smallest limit must read as empty, got %d bytes, %v", len(data), err)
+	}
+}

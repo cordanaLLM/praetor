@@ -125,3 +125,34 @@ func TestGeneratedDir_Boundary_AncestorLinkAndAbsoluteChoice(t *testing.T) {
 		t.Errorf("Home.md missing in the absolute output: %v", err)
 	}
 }
+
+// TestGeneratedDir_Boundary_SwapAfterCheckExclusive verifies that writeExclusive and
+// readLimited take the confined path for a relative dir: an output directory replaced by an
+// escaping link after mkdir is refused instead of followed. The window after the check inside
+// the confined writer is pinned by util's TestWriteFileConfinedExclusive_Boundary_SwapAfterCheck.
+func TestGeneratedDir_Boundary_SwapAfterCheckExclusive(t *testing.T) {
+	root := wikiRepoRoot(t, "repo", canonicalAgentsMD(t))
+	outside := t.TempDir()
+	adrDir := filepath.Join(root, "docs", "adr")
+	if err := os.MkdirAll(adrDir, 0o700); err != nil {
+		t.Fatalf("mkdir adrDir: %v", err)
+	}
+	out := generatedDir{root: root, dir: filepath.Join("docs", "adr")}
+	if err := os.Remove(adrDir); err != nil {
+		t.Fatalf("remove adrDir: %v", err)
+	}
+	linkOrSkip(t, outside, adrDir)
+	err := out.writeExclusive("0001-swap.md", []byte("content"), 0o644)
+	if !errors.Is(err, util.ErrPathEscapesRoot) {
+		t.Errorf("writeExclusive through swapped link = %v, want ErrPathEscapesRoot", err)
+	}
+	requireEmptyDir(t, outside)
+
+	// The escape target exists and is readable, so a refusal can only come from confinement.
+	if err := os.WriteFile(filepath.Join(outside, "0001-planted.md"), []byte("planted"), 0o600); err != nil {
+		t.Fatalf("seed outside: %v", err)
+	}
+	if data, err := out.readLimited("0001-planted.md", 1<<10); !errors.Is(err, util.ErrPathEscapesRoot) || data != nil {
+		t.Errorf("readLimited through swapped link = %q, %v; want ErrPathEscapesRoot", data, err)
+	}
+}

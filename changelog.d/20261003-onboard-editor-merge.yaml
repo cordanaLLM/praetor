@@ -1,0 +1,4 @@
+type: fixed
+title: "Onboarding merges an existing .vscode/settings.json instead of replacing it and losing its keys and comments"
+issue: "#717"
+breaking: false

@@ -132,21 +132,54 @@ func ReadConfinedLimited(root, rel string, limit int64) ([]byte, error) {
 // deadline can interrupt a blocked open, so a named pipe planted at a configuration path
 // would hang the reader instead of failing it; a FIFO, device or directory is refused with
 // ErrNotRegularFile before any open.
-func ReadFileLimited(path string, limit int64) (data []byte, resultErr error) {
+func ReadFileLimited(path string, limit int64) ([]byte, error) {
 	if err := checkReadLimit(limit); err != nil {
 		return nil, err
 	}
-	file, err := openRegular(path)
+	file, err := openRegular(path, func() (os.FileInfo, error) { return os.Stat(path) }, func() (*os.File, error) {
+		// #nosec G304 -- callers confine path to their root before opening it.
+		return os.Open(path)
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
-	data, err = io.ReadAll(io.LimitReader(file, limit+1))
+	return readAllLimited(file, path, limit)
+}
+
+// ReadLimitedIn is ReadFileLimited for the entry name inside dir, a pinned directory handle
+// (os.Root): name is inspected and opened through that handle, which follows a link only while
+// it stays inside dir, and the read carries ReadFileLimited's limit and regular-file check.
+//
+// On Windows a file os.Root opens shares delete access (FILE_SHARE_DELETE), where os.Open does
+// not. A reader holding one hard link of a file open would otherwise keep a concurrent writer
+// from removing another link to it, such as the stage name WriteFileExclusive drops after
+// linking, and a reader opening it while that removal runs would be refused with a sharing
+// violation. Reading through the handle takes part in neither conflict.
+func ReadLimitedIn(dir *os.Root, name string, limit int64) ([]byte, error) {
+	if err := checkReadLimit(limit); err != nil {
+		return nil, err
+	}
+	label := filepath.Join(dir.Name(), name)
+	file, err := openRegular(label, func() (os.FileInfo, error) { return dir.Stat(name) }, func() (*os.File, error) {
+		return dir.Open(name)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("util: read %q: %w", path, err)
+		return nil, err
+	}
+	return readAllLimited(file, label, limit)
+}
+
+// readAllLimited reads file, which openRegular opened, to its end but never past limit+1
+// bytes, refuses a file carrying more than limit bytes with ErrFileTooLarge, and closes
+// file. label names the file in errors.
+func readAllLimited(file *os.File, label string, limit int64) (data []byte, resultErr error) {
+	defer func() { resultErr = errors.Join(resultErr, file.Close()) }()
+	data, err := io.ReadAll(io.LimitReader(file, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("util: read %q: %w", label, err)
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("%w: %q carries more than %d bytes", ErrFileTooLarge, path, limit)
+		return nil, fmt.Errorf("%w: %q carries more than %d bytes", ErrFileTooLarge, label, limit)
 	}
 	return data, nil
 }
@@ -160,24 +193,24 @@ func checkReadLimit(limit int64) error {
 	return nil
 }
 
-// openRegular opens path only when it names a regular file, and refuses a file that was
-// replaced between the check and the open.
-func openRegular(path string) (*os.File, error) {
-	before, err := os.Stat(path)
+// openRegular opens a file only when stat reports a regular file, and refuses a file that
+// was replaced between the check and the open. stat and open reach the same file, by path
+// or through a pinned directory; label names it in errors.
+func openRegular(label string, stat func() (os.FileInfo, error), open func() (*os.File, error)) (*os.File, error) {
+	before, err := stat()
 	if err != nil {
 		return nil, err
 	}
 	if !before.Mode().IsRegular() {
-		return nil, fmt.Errorf("%w: %q", ErrNotRegularFile, path)
+		return nil, fmt.Errorf("%w: %q", ErrNotRegularFile, label)
 	}
-	// #nosec G304 -- callers confine path to their root before opening it.
-	file, err := os.Open(path)
+	file, err := open()
 	if err != nil {
 		return nil, err
 	}
 	opened, err := file.Stat()
 	if err == nil && !os.SameFile(before, opened) {
-		err = fmt.Errorf("%w: %q changed while opening", ErrNotRegularFile, path)
+		err = fmt.Errorf("%w: %q changed while opening", ErrNotRegularFile, label)
 	}
 	if err != nil {
 		return nil, errors.Join(err, file.Close())
@@ -438,6 +471,42 @@ func WriteFileExclusive(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return inParentDirectory(path, func(dir *os.Root, name string) error {
+		return createExclusively(dir, name, data, filePermission{mode: perm, exact: true})
+	})
+}
+
+// WriteFileConfinedExclusive is WriteFileExclusive for rel below root, confined through
+// the whole operation (BUG-826). rel first passes ConfinePath's check; its directory is
+// then opened, and the file created exclusively, through a pinned handle on root (os.Root),
+// which follows a link only while it stays inside root. A component swapped for an
+// escaping link after the check is refused instead of followed. perm is the same ceiling
+// WriteFileExclusive applies: zero selects SecureFilePerm; world-writable and non-permission
+// bits are refused.
+//
+// root and rel's directory must exist. An existing file or directory at rel, or a link
+// there that resolves inside root, returns an error matching os.ErrExist and is left as it
+// is. A dangling link at rel fails the confinement check, which cannot resolve it, with an
+// error matching os.ErrNotExist, and nothing is written either. A rel naming root itself is
+// ErrRootItself. An in-root link with an absolute target is refused, since os.Root follows
+// only relative links. An escape is ErrPathEscapesRoot whether the check or the pinned
+// handle refuses it.
+func WriteFileConfinedExclusive(root, rel string, data []byte, perm os.FileMode) error {
+	perm, err := effectivePerm(perm, SecureFilePerm)
+	if err != nil {
+		return err
+	}
+	absRoot, inside, err := confineBelow(root, rel)
+	if err != nil {
+		return err
+	}
+	return writeConfinedExclusive(absRoot, inside, data, perm)
+}
+
+// writeConfinedExclusive is WriteFileConfinedExclusive after the check: inside's directory
+// resolves through the pinned handle on absRoot, as writeConfined's does, and the file is
+// created there by createExclusively.
+func writeConfinedExclusive(absRoot, inside string, data []byte, perm os.FileMode) error {
+	return inConfinedParent(absRoot, inside, func(dir *os.Root, name string) error {
 		return createExclusively(dir, name, data, filePermission{mode: perm, exact: true})
 	})
 }

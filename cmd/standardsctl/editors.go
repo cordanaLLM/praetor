@@ -178,10 +178,16 @@ func runEditorsGenerate(opts editor.Options, root string) error {
 	fmt.Printf("[OK] Editor requirements: %d created, %d merged, %d already present, %d rewritten across: %v\n",
 		counts[editor.WriteCreated], counts[editor.WriteMerged], counts[editor.WritePresent],
 		counts[editor.WriteRewritten], set.Editors)
+	printPreservedEditorFiles(counts)
+	return nil
+}
+
+// printPreservedEditorFiles states how many existing human-owned files an editor write left
+// unverified. `editors generate` and `harvest onboard` share it, so both say it alike.
+func printPreservedEditorFiles(counts map[editor.WriteOutcome]int) {
 	if preserved := counts[editor.WritePreserved]; preserved > 0 {
 		fmt.Printf("[UNVERIFIED] %d existing human-owned file(s) preserved without verification.\n", preserved)
 	}
-	return nil
 }
 
 func runEditorsVerify(opts editor.Options, root string) error {
