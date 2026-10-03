@@ -22,7 +22,6 @@ capabilities:
         - ui.external.types_node
         - ui.external.types_vscode
         - ui.external.vscode_languageclient
-        - ui.external.markdownlint_cli2
         - ui.external.micromark
         - ui.external.micromark_extension_mdxjs
         - ui.external.parse5
@@ -63,7 +62,6 @@ capabilities:
         - ui.external.react_dom
         - clikit.cli
         - ui.external.js_yaml
-        - ui.external.micromatch
         - ui.external.satteri
         - ui.external.devcontainers_cli
         - ui.external.jsonc_parser
