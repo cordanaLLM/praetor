@@ -53,13 +53,14 @@ reporting a command the project's `make` answers with `No rule to make target 'v
 
 An assignment operator binds a variable only when one word stands in front of it, after the
 `override`, `export`, `unexport` and `private` modifiers: Make takes no blank inside a variable
-name. So `foo bar = verify-all: ; @echo x` and `override foo bar = verify-all: ; @echo x` are rules
-that declare `verify-all`, `$(R) x = y` is a bare expansion (below), and `export foo bar = ...`
-stays the export directive. In a rule's prerequisites such an operator leaves the line to Make,
-which reads `verify-all: A B = x` as a rule with the prerequisites `A B = x` and stops at
-`verify-all: A B := x` with `multiple target patterns`; the reader claims neither. A backslash
-escapes `#` and other bytes but never `$`: Make has no escape for a reference, so `\$(R)` expands
-`R` like `$(R)` does.
+name. So `foo bar = verify-all: ; @echo x`, `foo\ bar = verify-all: ; @echo x` and `override foo
+bar = verify-all: ; @echo x` are rules that declare `verify-all`, `$(R) x = y` is a bare expansion
+(below), and `export foo bar = ...` stays the export directive. In a rule's prerequisites such an
+operator leaves the line to Make, which reads `verify-all: A B = x` as a rule with the
+prerequisites `A B = x` and stops at `verify-all: A B := x` with `multiple target patterns`; the
+reader claims neither. A backslash escapes `#`, `:` and other bytes but neither `$` nor a blank:
+Make has no escape for a reference, so `\$(R)` expands `R` like `$(R)` does, and a blank behind a
+backslash still separates two words.
 
 Because the cut comes first, an `=` that a comment or a recipe carries decides nothing:
 `verify-all: lint ## run gates (FAST=1)` and `verify-all: ; FOO=1 echo c` are rules and are
@@ -89,10 +90,18 @@ both `verify-all` and `other`. A comment ending in a backslash continues onto th
 continued line inside a `define` body swallows an `endef` right after it, as in Make.
 
 Also preserved are the forms only Make itself can resolve: an `include` directive, a call that
-evaluates text (`$(eval ...)`, `${eval ...}`, `$(guile ...)`, or `$(call ...)` of `eval` or of a
-computed name, since `call` invokes the built-in function its first argument names), a target
-name containing `$` or `%`, a Makefile that names `.RECIPEPREFIX` (below), and every top-level
-bare expansion but one shape. A bare expansion is a line that holds a variable reference and is
+evaluates text (`$(eval ...)`, `${eval ...}`, `$(guile ...)`, or a `$(call ...)` whose first
+argument may name `eval`, `guile` or `call`, since `call` invokes the built-in function its first
+argument names), a `!=` binding, a target name containing `$` or `%`, a Makefile that names
+`.RECIPEPREFIX` (below), and every top-level bare expansion but one shape. A first argument holding
+a reference may name such a function when every literal run around its references occurs in the
+name: `$(call e$(S),...)` with `S = val` calls `eval`, while `$(call build_$(ARCH),...)` calls a
+variable of the project. A `!=` binding, `X != cmd` or `define X !=`, stores the command's output as
+the value of a recursively expanded variable, so Make expands that output as makefile text wherever
+the variable is expanded: measured against GNU Make 4.4.1, with `rules.txt` holding `$(eval
+docs-lint: ; @echo operator)`, `X != cat rules.txt` declares `docs-lint` from `all: $(X)`, `Y :=
+$(X)`, `ifeq ($(X),)` and `$(info $(X))`. The reader runs no command, so even `verify-all != date
++%H:%M`, which declares no target, leaves the file to review. A bare expansion is a line that holds a variable reference and is
 no assignment, rule, recipe line, comment or directive (a conditional, `define`, `export`, `vpath`
 or an include). Make expands such a line and parses the result as makefile syntax, so whatever its
 references hold can declare a rule. Measured against GNU Make 4.4.1, every expansion below
@@ -114,14 +123,16 @@ $(file <rules.txt)
 
 Telling such a line from a harmless one needs Make's evaluation, so the reader evaluates nothing
 and leaves every bare expansion to Make. The rule of thumb: adoption appends to a Makefile only
-when the reader can prove the target absent, and a file it cannot prove fails for review, as the
-[documentation governance guide](documentation-governance.md) describes. The one exempt shape is a
+when the reader finds the target absent, and a file it cannot read that far fails for review, as
+the [documentation governance guide](documentation-governance.md) describes. The reader's
+answer covers every shape in this guide; the known gaps below list the shapes it does not cover
+yet. The one exempt shape is a
 line made only of `$(info ...)`, `$(warning ...)` and `$(error ...)` calls, separated by blanks:
 those calls expand to nothing whatever they print, so the line declares nothing. A call nested
 inside that evaluates text, runs a command or calls another function (`eval`, `guile`, `call`,
 `shell`) takes the exemption away, and so does anything outside the calls. A plain reference inside
 stays exempt: `$(warning CC is $(CC))` prints `CC`, and a variable whose value evaluates text holds
-a call the reader reports on its own line. Measured against GNU Make 4.4.1, the first three lines
+a call, or comes from a `!=` binding, that the reader reports on its own line. Measured against GNU Make 4.4.1, the first three lines
 below declare nothing and stay appendable; the last three declare nothing either, yet each leaves
 the file to review, the price of failing closed:
 
@@ -148,35 +159,80 @@ A define that is never closed is left to Make too, since it
 would swallow an appended block.
 
 A tab-indented line is a recipe line only while a rule's recipe is open: after a rule line, with
-nothing since but blank lines, comments, conditionals and further recipe lines. Before the first
-rule, or after an assignment, a define, an include, an `export` or `vpath` directive or a bare
-expansion, Make parses a tab-indented line as makefile syntax, and so does the reader. Measured
-against GNU Make 4.4.1, a tab-indented `include rules.mk` between `ifneq ($(wildcard rules.mk),)`
-and `endif` before the first rule declares `docs-lint` when `rules.mk` does, and so does a
-tab-indented `X := $(eval docs-lint: ; @echo operator)` between `ifdef MAKE` and `endif`; each
-leaves the file to review. The same tab-indented include right after `all:` is a recipe line of
-`all` and decides nothing.
+nothing since but blank lines, comments, conditional directives and further recipe lines. Before
+the first rule, or after an assignment, a define, an include, an `export` or `vpath` directive or a
+bare expansion, Make parses a tab-indented line as makefile syntax, and so does the reader.
+Measured against GNU Make 4.4.1, a tab-indented `include rules.mk` between `ifneq ($(wildcard
+rules.mk),)` and `endif` before the first rule declares `docs-lint` when `rules.mk` does, and so
+does a tab-indented `X := $(eval docs-lint: ; @echo operator)` between `ifdef MAKE` and `endif`;
+each leaves the file to review. The same tab-indented include right after `all:` is a recipe line
+of `all` and decides nothing.
+
+A conditional keeps a recipe open only in the branch Make takes: a rule line inside a branch opens
+a recipe, and an assignment inside one closes it, only when Make takes that branch. The reader
+evaluates no condition, so it reads each branch as taken, starts an `else` branch in the state the
+conditional opened in, and merges the branches at `endif`. Where they disagree, or a branch without
+a plain `else` may be skipped, the recipe state after `endif` depends on the branch Make takes.
+Measured against GNU Make 4.4.1, each of these shapes declares `docs-lint`, and the reader leaves
+each file to review:
+
+- `ifeq ($(wildcard rules.txt),)`, `config:`, a tab-indented `./configure`, `else`, a tab-indented
+  `include rules.txt` and `endif`, with that rule in `rules.txt`: `config:` sits in the branch
+  Make skips, so the include in the `else` branch is the directive.
+- `ifeq (a,b)`, `foo:` and `endif`, then a tab-indented `X := $(eval docs-lint: ; @echo
+  operator)`: `foo:` opens no recipe, so the tab-indented eval is makefile syntax.
+- `all:` with a recipe, `ifeq (a,b)`, `X = 1` and `endif`, then a tab-indented `define X`, a
+  `docs-lint: ; @echo operator` rule and an `endef` inside a second `ifeq (a,b)`: `X = 1` closes no
+  recipe, so the tab-indented `define X` is a recipe line of `all` and the rule below it counts.
+
+Where the recipe state depends on a branch, a tab-indented include, eval call or `!=` binding
+leaves the file to Make. A tab-indented `define` or conditional there changes how Make reads every
+later line, read either way, so the reader stops at it: it claims no rule at or after it and opens
+no define. It stops the same way inside a conditional whose branches leave different states, since
+Make reads such a line in a skipped branch too, in the state the taken branches left, and at a
+define inside a conditional whose body nests another `define` or holds a tab-indented `endef`: in a
+skipped branch Make ends that define at its first `endef`. A recipe open in every branch stays
+open, so an in-recipe `$(eval ...)` after `endif` stays recipe text.
 
 Outside a recipe, a tab-indented `define` opens a block, and a tab-indented assignment calling
 `$(shell ...)` binds a variable like an unindented one. Assigning `.RECIPEPREFIX` changes which
 lines are recipe lines (after `.RECIPEPREFIX = >`, a tab-indented `docs-lint: ; @echo operator` is a
 rule and `> docs-lint: dep` a recipe line), so a Makefile that names `.RECIPEPREFIX` outside a
-comment is left to review and the reader claims no rule from it.
+comment is left to review and the reader claims no rule from it. A binding whose computed name may
+be `.RECIPEPREFIX`, such as `$(P)PREFIX := >` with `P = .RECIPE` or `$(N) := >`, stops the reader
+the same way; `$(PKG)_SRCS := a.c` cannot name it and stays readable.
 
 The reader reads a Makefile up to the first point it cannot resolve: line 4097, a logical line
-longer than 8192 bytes once its continuations are joined, or a chain of more than 256 continuation
-lines (257 physical lines). A rule before that point counts and nothing at or after it does, so
-adoption leaves the whole file to review and editor generation offers no task for a `verify-all`
-rule there, although Make reads it. That includes a rule whose own line is longer than 8192 bytes,
-such as one with a very long prerequisite list, which the reader used to claim from the part before
-the bound. The documentation gate uses the same reader to decide whether the project already owns `docs-lint`
-(`MakefileMayDefineTarget` in `internal/util/makefile_target.go`, define tracking in
-`internal/util/makefile_define.go`). Editor generation reads the Makefile through that reader too
+longer than 8192 bytes once its continuations are joined, a chain of more than 256 continuation
+lines (257 physical lines), a line whose meaning depends on a conditional branch (above), or a
+binding whose computed name may be `.RECIPEPREFIX`. A rule before that point counts and nothing at
+or after it does, so adoption leaves the whole file to review and editor generation offers no task
+for a `verify-all` rule there, although Make reads it. That includes a rule whose own line is
+longer than 8192 bytes, such as one with a very long prerequisite list, which the reader used to
+claim from the part before the bound. The documentation gate uses the same reader to decide whether
+the project already owns `docs-lint`
+(`MakefileMayDefineTarget` in `internal/util/makefile_target.go`, ownership rules in
+`internal/util/makefile_define.go`, define, recipe and conditional tracking in
+`internal/util/makefile_scanner.go`). Editor generation reads the Makefile through that reader too
 (`MakefileHasTarget`, called by `hasLiteralMakeTarget` in `internal/editor/capabilities.go`), so
 adoption and the generated editor tasks cannot disagree on whether a line declares `verify-all`
 ([editor capabilities](editor-capabilities.md)). The table tests behind this contract are in
 `internal/util/makefile_target_test.go` and `internal/adopt/verification_makefile_define_test.go`;
 each row was measured against GNU Make 4.4.1.
+
+Known gaps, where the reader's answer can still differ from Make's:
+
+- A `load` or `-load` directive, and a variable imported from the environment or the command line
+  whose value evaluates text, can declare a target the reader does not see.
+- The reader evaluates no condition, so `MakefileHasTarget` claims a rule inside a conditional
+  whichever branch Make takes, and editor generation can offer a Verify All task for a rule in a
+  branch Make skips. Adoption stays safe: a rule the reader claims also leaves the file to review.
+- The reader does not check that Make accepts the whole file. In a Makefile that Make rejects
+  elsewhere, for example with `empty variable name`, `multiple target patterns` or `missing
+  'endif'`, `MakefileHasTarget` can still claim a rule.
+- A newline-terminated Makefile of exactly 4096 lines counts as past the line bound, so it fails
+  for review.
+
 When an edited documentation gate block stops the run, whether adoption was appending verification
 targets or only attaching the gate, the error names the forced re-adoption that restores the block,
 `praetorctl adopt --force --lock-source-root=<praetor checkout>`, with the run's own lock source

@@ -93,14 +93,17 @@ func assertDocsLintOwnership(t *testing.T, rows map[string]docsLintOwnershipRow)
 // template, a variable read as $R, $(value R) or $($(N)), a computed call name, the file and shell
 // functions, a != or := assignment holding shell output, a chain of 80 variables, and text in front
 // of the reference. These rows are the shapes issue #554 and its review reported. The accepted
-// rows declare nothing and stay appendable: computed-assignment binds a variable, a $(shell ...) in
-// a rule's prerequisites or a conditional is never parsed as makefile syntax, and the silent rows
+// rows declare nothing and stay appendable: a $(shell ...) in
+// a rule's prerequisites or a conditional is never parsed as makefile syntax, computed-name-suffix
+// binds a variable whose computed name cannot be .RECIPEPREFIX, and the silent rows
 // are lines made only of info, warning and error calls, which expand to nothing whatever they
 // print -- cobra-missing-tool-warning holds the lines of spf13/cobra's Makefile, a public dogfood
 // repository (.config/dogfood/public-suite.json). error-inside-if declares nothing either and is
 // refused all the same: an $(if ...) around the call is a bare expansion whose branches could hold
-// a rule, and the reader evaluates nothing. silent-call-then-reference shows that text beside the
-// calls is a bare expansion again.
+// a rule, and the reader evaluates nothing. computed-assignment declares nothing and is refused
+// too: its computed name may expand to .RECIPEPREFIX, which changes how Make reads every recipe
+// line after it. silent-call-then-reference shows that text beside the calls is a bare expansion
+// again.
 var makefileBareExpansionRows = map[string]docsLintOwnershipRow{
 	"literal-rule":               {"$(if X,docs-lint: ; @echo template)\n", true},
 	"nested-literal-rule":        {"X = 1\n$(if $(X),docs-lint: ; @echo template)\n", true},
@@ -130,7 +133,8 @@ var makefileBareExpansionRows = map[string]docsLintOwnershipRow{
 	"cobra-missing-tool-warning": {"ifeq (, $(shell which golangci-lint))\n$(warning \"could not find golangci-lint in $(PATH), run: curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh\")\nendif\nall: ; @echo all\n", false},
 	"silent-call-then-reference": {"R = docs-lint: ; @echo template\n$(warning x) $(R)\n", true},
 	"error-inside-if":            {"V = 1\n$(if $(V),,$(error V: set it))\nall: ; @echo all\n", true},
-	"computed-assignment":        {"A = 1\n$(if $(A),docs-lint:c) = x\nall: ; @echo all\n", false},
+	"computed-assignment":        {"A = 1\n$(if $(A),docs-lint:c) = x\nall: ; @echo all\n", true},
+	"computed-name-suffix":       {"PKG = app\n$(PKG)_SRCS := a.c\nall: ; @echo all\n", false},
 	"shell-in-prerequisites":     {"all: $(shell echo a.c b.c)\n\t@echo all\n", false},
 	"shell-in-conditional":       {"ifeq ($(shell echo x),x)\nX = 1\nendif\nall: ; @echo all\n", false},
 }
@@ -250,16 +254,25 @@ func TestAdoptionDocumentationGateAcceptsCalledDefine(t *testing.T) {
 // appending a block whose docs-lint recipe would override the operator's, and the Makefile is
 // unchanged.
 func TestAdoptionDocumentationGateRefusesBareExpansion(t *testing.T) {
-	root := newTestRepo(t, "documentation-bare-expansion")
-	makefile := "make-rule = $(1): ; @echo operator\n$(call make-rule,docs-lint)\n\n.PHONY: verify-all\nverify-all: docs-lint\n"
-	mustWrite(t, filepath.Join(root, makefileName), makefile)
-	opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
-	_, err := Adopt(t.Context(), opts)
-	if err == nil || !strings.Contains(err.Error(), "may define target docs-lint outside the Praetor-managed block") {
-		t.Fatalf("adoption beside a bare template expansion was not stopped by the collision: %v", err)
-	}
-	if got := mustRead(t, filepath.Join(root, makefileName)); got != makefile {
-		t.Fatalf("the refused Makefile changed:\n%s", got)
+	for name, makefile := range map[string]string{
+		"bare-template-expansion": "make-rule = $(1): ; @echo operator\n$(call make-rule,docs-lint)\n\n.PHONY: verify-all\nverify-all: docs-lint\n",
+		// The "!=" form of issue #304 binds a variable and declares no target, but Make expands the
+		// command's output as makefile text wherever the variable is expanded, and the reader runs
+		// no command (makefileCommandOutputRows in internal/util/makefile_target_test.go).
+		"command-output-binding": "verify-all != date +%H:%M\nall:\n\t@echo original\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := newTestRepo(t, "documentation-"+name)
+			mustWrite(t, filepath.Join(root, makefileName), makefile)
+			opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
+			_, err := Adopt(t.Context(), opts)
+			if err == nil || !strings.Contains(err.Error(), "may define target docs-lint outside the Praetor-managed block") {
+				t.Fatalf("adoption was not stopped by the collision: %v", err)
+			}
+			if got := mustRead(t, filepath.Join(root, makefileName)); got != makefile {
+				t.Fatalf("the refused Makefile changed:\n%s", got)
+			}
+		})
 	}
 }
 
