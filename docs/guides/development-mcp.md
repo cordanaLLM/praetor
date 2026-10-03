@@ -395,6 +395,17 @@ needs `source_root`, a dry run included
 `TestCreateAdoptTool_ForceStatesTheContract` in
 `cmd/standards-mcp/tools_adoption_force_test.go`).
 
+`record_baseline` records a first `.standards-baseline.json` and keeps an existing one. On a
+repository that already has the file the tool prints `Existing Legacy Debt Baseline: <n>
+infractions` and, below it, the ratchet verdict on the kept file, the line `praetorctl adopt`
+prints (`adopt.BaselineRatchet.Line`; `TestFormatAdoptionBaselineStatesAndDryRunLabels` in
+`cmd/standards-mcp/tools_test.go`). A rejecting verdict stays in that line and in a `[WARN]`
+entry that lists the findings: the tool prints no closing line, where `praetorctl adopt` ends
+with `not ready yet: Debt Baseline` in place of its success line. The tool has no argument that
+re-records an existing baseline; that is `praetorctl adopt --rerecord-baseline` or
+`praetorctl baseline --record`
+([the baseline on a re-adoption](../adoption.md#the-baseline-on-a-re-adoption)).
+
 A dry run also prints the branch ruleset preview the CLI prints: the action
 (`create`, `update`, `unchanged` or `keep`), its note, and the rendered ruleset or
 the diff. Both print `adopt.FilePreview.Text` (`internal/adopt/preview.go`;

@@ -585,6 +585,36 @@ func TestPraetorAdoptAction_Negative_FailingRunStillPublishesItsReport(t *testin
 	}
 }
 
+// TestPraetorAdoptAction_Boundary_PendingBaselineReachesReportAndSummary: an adoption that keeps a
+// baseline its rescan rejects exits 0 and closes with three lines in place of the success line
+// (TestAdoptRejectedKeptBaseline_3D in cmd/standardsctl pins the command printing them). The
+// action shows that verdict and no other: every closing line reaches the report output and the
+// job summary unchanged, and the step keeps the command's exit status.
+func TestPraetorAdoptAction_Boundary_PendingBaselineReachesReportAndSummary(t *testing.T) {
+	closing := []string{
+		"Repository adopted into cordanaLLM/praetor governance; not ready yet: Debt Baseline. See the warnings above.",
+		"  Debt Baseline: Baseline kept, not re-recorded; HISS-13 ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline",
+		"  Resolve: fix the findings, or accept them deliberately with 'praetorctl adopt --rerecord-baseline --allow-increase --reason=<why>'",
+	}
+	got := executeAdoptBody(t, adoptRunStepID, "standardsctl", func(binDir, _ string) []string {
+		return append(adoptStepEnv(t, nil, binDir), "PRAETOR_STUB_STDOUT="+strings.Join(closing, "\n"))
+	})
+	if got.exitCode != 0 {
+		t.Fatalf("a run with a pending baseline exited %d, want the command's 0:\n%s", got.exitCode, got.combined)
+	}
+	for _, line := range closing {
+		if !strings.Contains(got.outputs["report"], line) {
+			t.Errorf("report output lost %q:\n%s", line, got.outputs["report"])
+		}
+		if !strings.Contains(got.summary, line) {
+			t.Errorf("the job summary lost %q:\n%s", line, got.summary)
+		}
+	}
+	if strings.Contains(got.outputs["report"], "successfully adopted") {
+		t.Errorf("the action added a success line of its own:\n%s", got.outputs["report"])
+	}
+}
+
 // TestPraetorAdoptAction_Negative_ShellMetacharactersInPathStayOneArgument is the defect's own
 // payload: a path that used to become script text now reaches the binary as data.
 func TestPraetorAdoptAction_Negative_ShellMetacharactersInPathStayOneArgument(t *testing.T) {

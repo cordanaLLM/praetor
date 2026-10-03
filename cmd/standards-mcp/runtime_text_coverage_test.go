@@ -49,10 +49,10 @@ func TestMCPRuntimeOutputsHaveNoUnclassifiedCallsites(t *testing.T) {
 	for _, callsite := range callsites {
 		kinds[callsite.kind]++
 	}
-	wantKinds := map[string]int{"builder-append": 1, "builder-external": 10, "builder-template": 49,
+	wantKinds := map[string]int{"builder-append": 1, "builder-external": 11, "builder-template": 49,
 		"classified-result": 70, "governed-result": 16, "http-error": 14, "result": 42,
 		"template": 1, "wire-format": 4}
-	if len(callsites) != 207 || !equalTextCensus(kinds, wantKinds) {
+	if len(callsites) != 208 || !equalTextCensus(kinds, wantKinds) {
 		t.Fatalf("independent MCP output inventory drift: records=%d kinds=%v", len(callsites), kinds)
 	}
 	productionKinds, productionCount := productionOutputCensus(t, root)

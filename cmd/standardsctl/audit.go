@@ -736,5 +736,5 @@ func resolveDebtDeltaReason(flagValue string) string {
 func missingBaselineFailure(path string, infractions int) error {
 	return fmt.Errorf("[FAIL] no baseline exists at %s, so all %d existing infractions are being ratcheted as new debt; "+
 		"this is not a regression in the change -- record the existing debt with 'praetorctl baseline --record' "+
-		"(or adopt with --record-baseline), then re-run the audit", path, infractions)
+		"(or adopt, which records a first baseline unless --record-baseline=false), then re-run the audit", path, infractions)
 }

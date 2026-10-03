@@ -147,7 +147,8 @@ func executePublicRepository(ctx context.Context, opts PublicLoopOptions, source
 		return err
 	}
 	result.OriginalTreeDigest = original.digest()
-	adoptOpts := adopt.AdoptOptions{Path: result.Checkout, DryRun: true, RecordBaseline: true, SkipHookActivation: true, LockSourceRoot: opts.SourceRoot, VerificationLimits: &opts.InputLimits.Verification}
+	adoptOpts := adopt.AdoptOptions{Path: result.Checkout, DryRun: true, SkipHookActivation: true, LockSourceRoot: opts.SourceRoot, VerificationLimits: &opts.InputLimits.Verification}
+	recordPublicBaseline(&adoptOpts, true)
 	result.Plan, err = adopt.Adopt(ctx, adoptOpts)
 	if err := publicAdoptionError(result.Plan, err); err != nil {
 		return fmt.Errorf("plan: %w", err)
@@ -160,6 +161,23 @@ func executePublicRepository(ctx context.Context, opts PublicLoopOptions, source
 		return nil
 	}
 	return reconcilePublicRepository(ctx, opts, result, original, adoptOpts)
+}
+
+// publicBaselineReason is the rationale the loop stores when its re-record raises a baseline the
+// checkout already carried.
+const publicBaselineReason = "public dogfood loop: baseline anchored to the scan of the original tree of a disposable checkout"
+
+// recordPublicBaseline sets how one adoption of the disposable checkout treats the baseline. The
+// plan and the first attempt record it, and re-record one the checkout already carries: the
+// loop's contract is that the adopted baseline matches the independent scan of the original
+// tree (verifyPublicBaseline), and a plain adoption keeps an existing baseline, whatever it
+// records (#358). Later attempts scan nothing and keep what the first one recorded.
+func recordPublicBaseline(opts *adopt.AdoptOptions, record bool) {
+	opts.RecordBaseline, opts.RerecordBaseline, opts.AllowBaselineIncrease = record, record, record
+	opts.BaselineIncreaseReason = ""
+	if record {
+		opts.BaselineIncreaseReason = publicBaselineReason
+	}
 }
 
 func scanPublicOriginal(ctx context.Context, result *PublicRepositoryResult) error {
@@ -186,7 +204,7 @@ func reconcilePublicRepository(ctx context.Context, opts PublicLoopOptions, resu
 	anchor := publicPolicyAnchor{Policy: result.Plan.EffectivePolicy, Scan: result.OriginalScan, snapshotLimits: &opts.InputLimits.Snapshot}
 	for i := 0; i < opts.MaxAttempts && i < MaxPublicAttempts; i++ {
 		adoptOpts.DryRun = false
-		adoptOpts.RecordBaseline = i == 0
+		recordPublicBaseline(&adoptOpts, i == 0)
 		attempt := applyPublicAttempt(ctx, adoptOpts, original, anchor, i+1)
 		result.Attempts = append(result.Attempts, attempt)
 		if attempt.Error != "" {

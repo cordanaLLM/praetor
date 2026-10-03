@@ -302,8 +302,14 @@ func repoWithFiles(t *testing.T, files map[string]string) string {
 // gitProbeLimit bounds each output stream of a fixture's git command.
 const gitProbeLimit = 1 << 20
 
+// fixtureGitTimeout bounds one fixture git command (HISS-02). A setup mutation such as
+// `git add -A` over an npm fixture on a loaded Windows runner exceeds the 5-second
+// util.GitProbeTimeout; 30 seconds matches internal/testsupport's fixtureGitTimeout
+// and util.DefaultCommandTimeout.
+const fixtureGitTimeout = util.DefaultCommandTimeout
+
 // gitRepoWithFiles is repoWithFiles in a fresh Git work tree, for a check that asks Git what
-// the repository commits. The fixture's git runs through util.RunGitProbe, so no global or
+// the repository commits. The fixture's git runs through util.RunGitProbeWithin, so no global or
 // system configuration of the host reaches it.
 func gitRepoWithFiles(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -316,9 +322,11 @@ func gitRepoWithFiles(t *testing.T, files map[string]string) string {
 }
 
 // runFixtureGit runs one git command in a test fixture and returns its standard output.
+// It uses util.RunGitProbeWithin with fixtureGitTimeout so mutations on loaded runners
+// do not exceed the probe deadline, while keeping host configuration isolated.
 func runFixtureGit(t *testing.T, dir string, args ...string) []byte {
 	t.Helper()
-	result, err := util.RunGitProbe(t.Context(), dir, gitProbeLimit, args...)
+	result, err := util.RunGitProbeWithin(t.Context(), dir, gitProbeLimit, fixtureGitTimeout, args...)
 	if err != nil {
 		t.Fatalf("git %v in fixture: %v (%s)", args, err, result.Stderr)
 	}
