@@ -42,7 +42,7 @@ embedding source, such as `tools/markdownlint/assets.go` or `templates/embed.go`
 must hold every asset that source embeds, and each source may carry only its
 declared directive (`bootstrapAssetFamilies`). Undeclared
 `go:embed` inputs and unsupported native build inputs fail explicitly rather
-than being omitted. Capture is bounded to 4,096 files, 8 MiB total, and 1 MiB
+than being omitted. Capture is bounded to 4,096 files, 16 MiB total, and 1 MiB
 per file.
 
 The recorded `customizations.praetor.bootstrap` specification identifies the
@@ -59,9 +59,11 @@ or a release signature.
 
 `TestRepositoryBootstrapSourceKeepsHeadroom`
 (`internal/devcontainer/bootstrap_source_test.go`) measures Praetor's own
-capture against the frame capacity, the 8 MiB total and the file count. It
+capture against the frame capacity, the 16 MiB total and the file count. It
 fails above 80% of any of them, so growth is reported before a bootstrap stops
-fitting; run it with `go test -v` to print the current usage.
+fitting; run it with `go test -v` to print the current usage. With Praetor's
+source compressing to about a third, the frame capacity (eight 512 KiB base64
+files) binds before the 16 MiB total does.
 
 The Dockerfile verifies the archive, checks module integrity without changing
 `go.mod` or `go.sum`, and builds the selected CLI. The runtime installs it at
