@@ -262,29 +262,40 @@ func (g *callGraph) addFile(file *ast.File, rel string) {
 	}
 }
 
-// addCalls adds an edge for every bare identifier this function calls.
+// addCalls adds an edge for every bare identifier this function calls, in one walk of it.
+//
+// A binding of the callee's name in scope at the call -- the receiver, a parameter, a named
+// result, or a local declared earlier in an enclosing block, a function literal's included --
+// shadows the function, so the call does not reach it (go_scope.go). A binding that is not in
+// scope at the call hides nothing. Asking whether the name was declared anywhere in the body
+// dropped the edge for a local in an unrelated block, which hid a real cycle, and walked the
+// whole body once per call.
 func (g *callGraph) addCalls(caller string, fn *ast.FuncDecl) {
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
+	var scope goScope
+	scope.inspect(fn, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 		ident, ok := call.Fun.(*ast.Ident)
-		// A parameter, named result or local of the same name shadows the function, so the
-		// call does not reach it.
-		if !ok || funcDeclares(fn, ident.Name) || ident.Name == caller {
+		if !ok || ident.Name == caller || scope.binds(ident.Name) {
 			return true
 		}
 		if g.count >= maxCallGraphEdges {
 			return false
 		}
-		if g.edges[caller] == nil {
-			g.edges[caller] = make(map[string]struct{})
-		}
-		if _, dup := g.edges[caller][ident.Name]; !dup {
-			g.edges[caller][ident.Name] = struct{}{}
-			g.count++
-		}
+		g.addEdge(caller, ident.Name)
 		return true
 	})
+}
+
+// addEdge records that caller calls callee, once.
+func (g *callGraph) addEdge(caller, callee string) {
+	if g.edges[caller] == nil {
+		g.edges[caller] = make(map[string]struct{})
+	}
+	if _, dup := g.edges[caller][callee]; !dup {
+		g.edges[caller][callee] = struct{}{}
+		g.count++
+	}
 }

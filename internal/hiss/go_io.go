@@ -93,8 +93,8 @@ type ContextlessCall struct {
 	// Replacement is the context-aware call that replaces it.
 	Replacement string
 	// Local is the identifier through which the file reached the package: its package
-	// name, or the function itself under a dot import. A local binding of that name in the
-	// enclosing function shadows the package, and the call then reaches the local instead.
+	// name, or the function itself under a dot import. A local binding of that name in scope
+	// at the call shadows the package, and the call then reaches the local instead.
 	Local string
 }
 

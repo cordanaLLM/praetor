@@ -68,7 +68,12 @@ The Dockerfile verifies the archive, checks module integrity without changing
 `/usr/local/bin/praetorctl`, plus a `standardsctl` compatibility name. Startup
 uses that absolute CLI to compile the agent context, then invokes
 `/usr/bin/make verify-all`. Native application tools must still be supplied by
-the selected DevContainer features or a reviewed custom container.
+the selected DevContainer features or a reviewed custom container. The image
+carries `praetorctl` only, not the other binaries a
+[workstation install](workstation-update.md#workstation-install) places:
+`tribunusctl` syncs the operator's model data for the
+[Tribunus router](../tribunus/data-sync.md), which an adopter DevContainer does
+not run (`renderBootstrapDockerfile` in `internal/devcontainer/bootstrap.go`).
 
 To exercise the prepared Dockerfile independently of an IDE:
 

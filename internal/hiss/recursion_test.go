@@ -134,6 +134,30 @@ func TestScanRecursiveMethodDespiteASameNamedLocal(t *testing.T) {
 	}
 }
 
+// TestScanGoDirectRecursionFollowsScope covers all three dimensions of Go shadowing. A local
+// of the function's name hides the recursion only where it is in scope at the call. One in
+// another block, in a sibling clause, inside a function literal or after the call leaves the
+// call reaching the function, and the whole-body check let that recursion pass (#733). One
+// declared before the call in an enclosing block is what the call reaches.
+func TestScanGoDirectRecursionFollowsScope(t *testing.T) {
+	for name, tc := range map[string]struct {
+		src  string
+		want int
+	}{
+		"inner block":     {"func f(b bool) {\n\tif b {\n\t\tf := 1\n\t\t_ = f\n\t}\n\tf(b)\n}\n", 1},
+		"after call":      {"func f(b bool) {\n\tf(b)\n\tf := 1\n\t_ = f\n}\n", 1},
+		"sibling case":    {"func f(n int) {\n\tswitch n {\n\tcase 0:\n\t\tf := 1\n\t\t_ = f\n\tdefault:\n\t\tf(n - 1)\n\t}\n}\n", 1},
+		"literal local":   {"func f(b bool) {\n\th := func() {\n\t\tf := 1\n\t\t_ = f\n\t}\n\th()\n\tf(b)\n}\n", 1},
+		"enclosing block": {"func f(b bool) {\n\tf := func(bool) {}\n\tif b {\n\t\tf(b)\n\t}\n}\n", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := scanSource(t, "package p\n\n"+tc.src).Breakdown["HISS-01"]; got != tc.want {
+				t.Fatalf("HISS-01 findings = %d, want %d\n%s", got, tc.want, tc.src)
+			}
+		})
+	}
+}
+
 // selfCallLines scans one Rust or Python source and returns the lines HISS-01 reported, with
 // the symbols they named.
 func selfCallLines(t *testing.T, rel, src string) ([]int, []string) {

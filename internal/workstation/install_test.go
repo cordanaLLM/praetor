@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -44,11 +45,173 @@ func TestInstallFirstInstallHasNoPrevious(t *testing.T) {
 	}
 	for _, name := range binaryNames {
 		assertContent(t, filepath.Join(opts.BinDir, name), "v1:"+name)
-		alias := binaryAliases[name]
-		target, err := os.Readlink(filepath.Join(opts.BinDir, alias))
-		if err != nil || target != name {
-			t.Fatalf("alias %s -> %q, %v; want -> %s", alias, target, err, name)
+		for _, alias := range targetsOf(name)[1:] {
+			target, err := os.Readlink(filepath.Join(opts.BinDir, alias))
+			if err != nil || target != name {
+				t.Fatalf("alias %s -> %q, %v; want -> %s", alias, target, err, name)
+			}
 		}
+	}
+}
+
+// Positive (#377): a fresh install places tribunusctl beside the three engine binaries,
+// records all four in the manifest, places no alias for it, and status reports the install
+// current with nothing missing.
+func TestInstall_Positive_DistributesTribunusctl(t *testing.T) {
+	opts := testOptions(t, fakeBuild("v1"))
+	ctx := context.Background()
+	result, err := Install(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"praetorctl", "praetor-mcp", "praetor-lsp", "tribunusctl"}
+	if !slices.Equal(binaryNames, want) || len(result.Manifest.Binaries) != len(want) {
+		t.Fatalf("binaryNames = %v, manifest binaries = %v; want %v", binaryNames, result.Manifest.Binaries, want)
+	}
+	if _, ok := result.Manifest.Binaries["tribunusctl"]; !ok {
+		t.Fatalf("manifest must record tribunusctl: %v", result.Manifest.Binaries)
+	}
+	assertContent(t, filepath.Join(opts.BinDir, "tribunusctl"), "v1:tribunusctl")
+	entries, err := os.ReadDir(opts.BinDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != len(allTargetNames()) || len(allTargetNames()) != 7 {
+		t.Fatalf("bin directory holds %d entries, targets %v; want four binaries and three aliases", len(entries), allTargetNames())
+	}
+	status, err := Status(ctx, StatusOptions{Checkout: opts.Checkout, ManifestPath: opts.ManifestPath})
+	if err != nil || !status.UpToDate || len(status.MissingBinaries) != 0 {
+		t.Fatalf("a fresh install must be current with nothing missing: %+v, %v", status, err)
+	}
+}
+
+// dropRecordedBinary rewrites the manifest at path without name and removes the installed
+// file: the state an install made before name joined binaryNames leaves behind.
+func dropRecordedBinary(t *testing.T, opts Options, name string) {
+	t.Helper()
+	manifest, err := config.ReadInstallManifest(context.Background(), opts.ManifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(manifest.Binaries, name)
+	if err := config.WriteInstallManifest(opts.ManifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(opts.BinDir, name)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Negative (#377): a manifest written before tribunusctl was distributed, at the checkout
+// HEAD, is reported not current and names the missing binary; the next install places it
+// and records it, and status is current again.
+func TestStatus_Negative_ManifestWithoutTribunusctlIsNotCurrent(t *testing.T) {
+	opts := testOptions(t, fakeBuild("v1"))
+	ctx := context.Background()
+	if _, err := Install(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	dropRecordedBinary(t, opts, "tribunusctl")
+	status, err := Status(ctx, StatusOptions{Checkout: opts.Checkout, ManifestPath: opts.ManifestPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.UpToDate || !slices.Equal(status.MissingBinaries, []string{"tribunusctl"}) ||
+		status.CommitsBehind == nil || *status.CommitsBehind != 0 {
+		t.Fatalf("an install lacking tribunusctl at HEAD must be not current and name it: %+v", status)
+	}
+	opts.Build = fakeBuild("v2")
+	repaired, err := Install(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := repaired.Manifest.Binaries["tribunusctl"]; !ok {
+		t.Fatalf("the next install must record tribunusctl: %v", repaired.Manifest.Binaries)
+	}
+	assertContent(t, filepath.Join(opts.BinDir, "tribunusctl"), "v2:tribunusctl")
+	status, err = Status(ctx, StatusOptions{Checkout: opts.Checkout, ManifestPath: opts.ManifestPath})
+	if err != nil || !status.UpToDate || len(status.MissingBinaries) != 0 {
+		t.Fatalf("status after the repairing install: %+v, %v", status, err)
+	}
+}
+
+// Boundary (#377): a failed install over a prior set without tribunusctl restores exactly
+// that set, tribunusctl still absent and the manifest still lacking it; a failure over a full
+// set restores the engine binaries. tribunusctl builds last, so no build failure places it;
+// TestRestoreFromBackup_Boundary_TribunusctlAsRecorded restores a placed one.
+func TestInstall_Boundary_RollbackRestoresRecordedSet(t *testing.T) {
+	opts := testOptions(t, fakeBuild("v1"))
+	ctx := context.Background()
+	if _, err := Install(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	dropRecordedBinary(t, opts, "tribunusctl")
+	opts.Build = failingBuild("tribunusctl", errors.New("fixture compiler failure"))
+	if _, err := Install(ctx, opts); err == nil {
+		t.Fatal("a tribunusctl build failure must fail Install")
+	}
+	for _, name := range []string{"praetorctl", "praetor-mcp", "praetor-lsp"} {
+		assertContent(t, filepath.Join(opts.BinDir, name), "v1:"+name)
+	}
+	if _, err := os.Lstat(filepath.Join(opts.BinDir, "tribunusctl")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a prior set without tribunusctl must stay without it, lstat: %v", err)
+	}
+	manifest, err := config.ReadInstallManifest(ctx, opts.ManifestPath)
+	if err != nil || !slices.Equal(missingBinaries(manifest), []string{"tribunusctl"}) {
+		t.Fatalf("a failed install must leave the prior manifest: %+v, %v", manifest, err)
+	}
+
+	opts.Build = fakeBuild("v1")
+	if _, err := Install(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	opts.Build = failingBuild("praetor-lsp", errors.New("fixture compiler failure"))
+	if _, err := Install(ctx, opts); err == nil {
+		t.Fatal("a praetor-lsp build failure must fail Install")
+	}
+	for _, name := range binaryNames {
+		assertContent(t, filepath.Join(opts.BinDir, name), "v1:"+name)
+	}
+}
+
+// Boundary (#377): restoring every target after a full placement returns a prior set to what
+// was recorded: a tribunusctl that was absent is removed again, one that was present is
+// restored byte for byte.
+func TestRestoreFromBackup_Boundary_TribunusctlAsRecorded(t *testing.T) {
+	for name, prior := range map[string]bool{"absent before": false, "present before": true} {
+		t.Run(name, func(t *testing.T) {
+			opts := testOptions(t, fakeBuild("v1"))
+			ctx := context.Background()
+			if _, err := Install(ctx, opts); err != nil {
+				t.Fatal(err)
+			}
+			if !prior {
+				dropRecordedBinary(t, opts, "tribunusctl")
+			}
+			states, err := inspectTargets(opts.BinDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backupDir, err := backupTargets(opts.BinDir, states)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts.Build = fakeBuild("v2")
+			if _, err := placeAll(ctx, opts, opts.Checkout, states, backupDir); err != nil {
+				t.Fatal(err)
+			}
+			assertContent(t, filepath.Join(opts.BinDir, "tribunusctl"), "v2:tribunusctl")
+			if failures := restoreFromBackup(opts.GOOS, opts.BinDir, backupDir, states, allTargetNames()); len(failures) != 0 {
+				t.Fatalf("restore failures: %v", failures)
+			}
+			assertContent(t, filepath.Join(opts.BinDir, "praetorctl"), "v1:praetorctl")
+			_, err = os.Lstat(filepath.Join(opts.BinDir, "tribunusctl"))
+			if prior {
+				assertContent(t, filepath.Join(opts.BinDir, "tribunusctl"), "v1:tribunusctl")
+			} else if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a tribunusctl absent before must be removed by the restore, lstat: %v", err)
+			}
+		})
 	}
 }
 
@@ -184,6 +347,41 @@ func TestInstallRespectsExistingNonExecutablePermission(t *testing.T) {
 	opts.Build = fakeBuild("v2")
 	if _, err := Install(ctx, opts); err == nil {
 		t.Fatal("a non-executable existing permission must refuse the install")
+	}
+}
+
+// Positive + negative + boundary: every installed binary has a build package that is a main
+// package of this module and none else does, aliases belong only to installed binaries and
+// tribunusctl has none, no name without an alias resolves as one, and goBuild refuses a
+// name with no build package.
+func TestBuildTables_CoverEveryBinary(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, name := range binaryNames {
+		pkg, ok := buildPackages[name]
+		if !ok {
+			t.Fatalf("%s has no build package", name)
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(pkg), "main.go")); err != nil {
+			t.Fatalf("%s builds from %s, which holds no main.go: %v", name, pkg, err)
+		}
+	}
+	if len(buildPackages) != len(binaryNames) {
+		t.Fatalf("build packages %v name more than binaryNames %v", buildPackages, binaryNames)
+	}
+	for name := range binaryAliases {
+		if !slices.Contains(binaryNames, name) {
+			t.Fatalf("alias table names %s, which is not installed", name)
+		}
+	}
+	if _, ok := binaryAliases["tribunusctl"]; ok {
+		t.Fatal("tribunusctl never had a legacy name and must place no alias")
+	}
+	if name, ok := primaryFor(""); ok {
+		t.Fatalf("the empty name resolved as the alias of %s", name)
+	}
+	err := goBuild(context.Background(), t.TempDir(), "praetor-evil", filepath.Join(t.TempDir(), "out"))
+	if err == nil {
+		t.Fatal("goBuild accepted a binary with no build package")
 	}
 }
 

@@ -242,6 +242,12 @@ func validateReadyBootstrap(spec *BootstrapSpec) error {
 	return nil
 }
 
+// renderBootstrapDockerfile builds praetorctl alone (bootstrapBuildPackage) and installs it
+// under its praetorctl and standardsctl names: the postCreateCommand compiles agent context
+// and runs the gates, and needs nothing else. A workstation install places more
+// (binaryNames, internal/workstation/workstation.go); tribunusctl in particular stays out of
+// the image on purpose, because it syncs the operator's model data for the Tribunus router
+// and an adopter DevContainer never runs that sync (#377).
 func renderBootstrapDockerfile(spec *BootstrapSpec) string {
 	var s strings.Builder
 	fmt.Fprintf(&s, "# Praetor bootstrap v1; selected source digest %s\nFROM %s AS praetor_build\nWORKDIR /praetor-source\n", spec.SourceSHA256, spec.BuilderImage)

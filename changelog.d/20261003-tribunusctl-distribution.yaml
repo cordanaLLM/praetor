@@ -1,0 +1,4 @@
+type: fixed
+title: workstation install and make build now build tribunusctl; engines older than this one refuse the install manifest it writes
+issue: "#377"
+breaking: true

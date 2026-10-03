@@ -50,16 +50,18 @@ func runRefreshCmd(t *testing.T, args ...string) (workstation.RefreshResult, err
 	return result, nil
 }
 
+// writeManifestAt writes a manifest at commit that records every installed binary, so only the
+// commit decides whether a refresh is due.
 func writeManifestAt(t *testing.T, path, commit string) {
 	t.Helper()
 	manifest := config.InstallManifest{
 		Version: config.InstallManifestVersion, EngineCommit: commit,
 		InstalledAt: time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
 		BinDir:      filepath.Join(filepath.Dir(path), "bin"),
-		Binaries: map[string]config.InstalledBinary{
-			"praetorctl": {SHA256: strings.Repeat("a", 64)}, "praetor-mcp": {SHA256: strings.Repeat("b", 64)},
-			"praetor-lsp": {SHA256: strings.Repeat("c", 64)},
-		},
+		Binaries:    map[string]config.InstalledBinary{},
+	}
+	for _, name := range config.InstalledBinaryNames() {
+		manifest.Binaries[name] = config.InstalledBinary{SHA256: strings.Repeat("a", 64)}
 	}
 	if err := config.WriteInstallManifest(path, manifest); err != nil {
 		t.Fatal(err)

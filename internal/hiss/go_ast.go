@@ -101,15 +101,19 @@ type goScanner struct {
 	// without a deadline to the end of the scope that binding lives in (go_io.go). It is
 	// cleared at every function declaration.
 	freeContexts map[string]token.Pos
+	// scope tracks which names are bound at the node the walk has reached (go_scope.go).
+	scope goScope
 }
 
 // walk visits every node once with an explicit ancestor stack; the traversal itself is
-// the standard library's ast.Inspect, this code holds no recursion.
+// the standard library's ast.Inspect, this code holds no recursion. Each node is inspected
+// in the scope in force where it begins, before it opens a scope of its own.
 func (g *goScanner) walk(file *ast.File) {
 	ast.Inspect(file, func(n ast.Node) bool {
 		if n == nil {
-			if len(g.stack) > 0 {
-				g.stack = g.stack[:len(g.stack)-1]
+			if last := len(g.stack) - 1; last >= 0 {
+				g.scope.leave(g.stack[last])
+				g.stack = g.stack[:last]
 			}
 			return true
 		}
@@ -118,6 +122,7 @@ func (g *goScanner) walk(file *ast.File) {
 			return false
 		}
 		g.inspect(n)
+		g.scope.enter(n)
 		g.stack = append(g.stack, n)
 		return true
 	})
@@ -191,98 +196,6 @@ func CallTargetsEnclosing(fun ast.Expr, fnName, recv string) bool {
 	}
 }
 
-// declaresLocal reports whether body declares name as a local identifier, by short variable
-// declaration or by a var statement.
-//
-// A call to that name reaches the local, not the enclosing function, so it is not recursion.
-// Without this, a closure that shadows its enclosing function's name was reported as direct
-// recursion: the rule compared identifiers without asking what the identifier resolved to.
-func declaresLocal(body *ast.BlockStmt, name string) bool {
-	if body == nil || name == "" {
-		return false
-	}
-	found := false
-	ast.Inspect(body, func(n ast.Node) bool {
-		if found || n == nil {
-			return false
-		}
-		found = nodeDeclares(n, name)
-		return !found
-	})
-	return found
-}
-
-// nodeDeclares reports whether one node of a function body binds name: a short variable
-// declaration, a var or const statement, a range clause that declares its variables, or a
-// parameter or named result of a function literal.
-func nodeDeclares(n ast.Node, name string) bool {
-	switch decl := n.(type) {
-	case *ast.AssignStmt:
-		return decl.Tok == token.DEFINE && identListDeclares(decl.Lhs, name)
-	case *ast.ValueSpec:
-		return identsDeclare(decl.Names, name)
-	case *ast.RangeStmt:
-		return decl.Tok == token.DEFINE && identListDeclares([]ast.Expr{decl.Key, decl.Value}, name)
-	case *ast.FuncLit:
-		return funcTypeDeclares(decl.Type, name)
-	default:
-		return false
-	}
-}
-
-// funcDeclares reports whether fn binds name anywhere in its scope: as its receiver, a
-// parameter, a named result, or a local its body declares. Each of these hides a
-// package-level function or an imported package of the same name for the whole body.
-//
-// Checking only the body missed the signature, so `func F(os fs) { os.Exit(1) }` was
-// reported as the process exit and `func walk(walk func()) { walk() }` as recursion.
-func funcDeclares(fn *ast.FuncDecl, name string) bool {
-	if fn == nil {
-		return false
-	}
-	return fieldListDeclares(fn.Recv, name) || funcTypeDeclares(fn.Type, name) || declaresLocal(fn.Body, name)
-}
-
-// funcTypeDeclares reports whether a function signature binds name as a parameter or a named
-// result.
-func funcTypeDeclares(ft *ast.FuncType, name string) bool {
-	return ft != nil && (fieldListDeclares(ft.Params, name) || fieldListDeclares(ft.Results, name))
-}
-
-// fieldListDeclares reports whether any field of a receiver, parameter or result list is
-// named name.
-func fieldListDeclares(list *ast.FieldList, name string) bool {
-	if list == nil {
-		return false
-	}
-	for i := 0; i < len(list.List); i++ {
-		if identsDeclare(list.List[i].Names, name) {
-			return true
-		}
-	}
-	return false
-}
-
-// identListDeclares reports whether any expression is an identifier with the given name.
-func identListDeclares(exprs []ast.Expr, name string) bool {
-	for i := 0; i < len(exprs); i++ {
-		if ident, ok := exprs[i].(*ast.Ident); ok && ident.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// identsDeclare reports whether any identifier carries the given name.
-func identsDeclare(idents []*ast.Ident, name string) bool {
-	for i := 0; i < len(idents); i++ {
-		if idents[i] != nil && idents[i].Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 // enclosingFunc returns the innermost function declaration on the walk stack, or nil when
 // the node is not inside one. The stack is already maintained by walk and is bounded by
 // maxNodeStack, so this costs a bounded scan rather than a second traversal (HISS-02).
@@ -300,8 +213,7 @@ func (g *goScanner) enclosingFunc() *ast.FuncDecl {
 // HISS-01 requires the call graph to form a DAG and declares an immediate build failure,
 // but the scanner reported only `goto`, so every form of recursion passed the gate. This
 // closes direct recursion, which is the shape a single file can decide. Mutual and
-// indirect recursion need a whole-program call graph and remain uncovered: that gap is
-// real and is not claimed to be closed here.
+// indirect recursion need the package call graph, which go_callgraph.go builds after the walk.
 func (g *goScanner) checkSelfRecursion(call *ast.CallExpr) {
 	fn := g.enclosingFunc()
 	if fn == nil || fn.Name == nil {
@@ -310,11 +222,12 @@ func (g *goScanner) checkSelfRecursion(call *ast.CallExpr) {
 	if !CallTargetsEnclosing(call.Fun, fn.Name.Name, ReceiverName(fn)) {
 		return
 	}
-	// In a plain function a parameter, named result or local of the same name shadows the
-	// function, so the call reaches that binding rather than recursing. A method is called
-	// through its receiver, which no binding of the method's name can shadow. Checked only
-	// once a name match is found, so the cost is paid only by candidate findings.
-	if fn.Recv == nil && funcDeclares(fn, fn.Name.Name) {
+	// In a plain function a binding of the same name in scope at the call -- a parameter, a
+	// named result, or a local declared earlier in an enclosing block -- shadows the function,
+	// so the call reaches that binding rather than recursing; one declared in another block or
+	// after the call does not. A method is called through its receiver, which no binding of
+	// the method's name can shadow.
+	if fn.Recv == nil && g.shadowed(fn.Name.Name) {
 		return
 	}
 	g.record("HISS-01", call.Pos(), fn.Name.Name,
@@ -432,8 +345,10 @@ var httpAbortSentinel = map[goFunc]struct{}{{"net/http", "ErrAbortHandler"}: {}}
 //
 // The argument is resolved through the file's imports im, so an aliased or dot import of
 // net/http is the sentinel. A same-named local or package variable, another package's
-// ErrAbortHandler, a binding in fn that shadows the package name, a wrapped or recovered
-// value and a second argument are not, and the caller keeps reporting those panics.
+// ErrAbortHandler, a binding made in fn that shadows the package name where the panic is, a
+// wrapped or recovered value and a second argument are not, and the caller keeps reporting
+// those panics. Whether a binding shadows is decided by scope (go_scope.go): one declared in
+// another block of fn, or after the panic, leaves the package name in force.
 func AbortsHTTPResponse(im GoImports, fn *ast.FuncDecl, call *ast.CallExpr) bool {
 	if call == nil || len(call.Args) != 1 || call.Ellipsis.IsValid() {
 		return false
@@ -442,7 +357,7 @@ func AbortsHTTPResponse(im GoImports, fn *ast.FuncDecl, call *ast.CallExpr) bool
 		return false
 	}
 	_, _, local, ok := resolvePackageCall(im, call.Args[0], httpAbortSentinel)
-	return ok && !funcDeclares(fn, local)
+	return ok && !bindsAt(fn, local, call.Pos())
 }
 
 // osExitCallee reports whether fun names os.Exit, and returns the identifier that reached
@@ -452,10 +367,12 @@ func (g *goScanner) osExitCallee(fun ast.Expr) (string, bool) {
 	return local, ok
 }
 
-// shadowed reports whether the enclosing function binds name as its receiver, a parameter,
-// a named result or a local, any of which hides the package-level binding of the same name.
+// shadowed reports whether a binding of name is in scope at the node the walk has reached: a
+// receiver, a parameter or named result of an enclosing function or function literal, or a
+// local declared earlier in an enclosing block. Any of these hides the package-level binding
+// of the same name; a local of another block, or one declared later, does not (go_scope.go).
 func (g *goScanner) shadowed(name string) bool {
-	return funcDeclares(g.enclosingFunc(), name)
+	return g.scope.binds(name)
 }
 
 // inEntryPoint reports whether the walk is inside main.main, the binary entry point, which

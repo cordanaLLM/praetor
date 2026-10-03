@@ -101,6 +101,40 @@ func TestReadInstallManifestRejectsInvalid(t *testing.T) {
 	}
 }
 
+// Positive + negative + boundary (#377): the installed binaries are the three engine binaries
+// then tribunusctl, in build order, and the list is a copy; a manifest recording all four
+// is accepted, one recording only the three that predate tribunusctl too, and a fifth name
+// past the list is refused.
+func TestInstalledBinaryNames(t *testing.T) {
+	names := InstalledBinaryNames()
+	want := []string{"praetorctl", "praetor-mcp", "praetor-lsp", "tribunusctl"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("InstalledBinaryNames() = %v, want %v", names, want)
+	}
+	names[0] = "praetor-evil"
+	if InstalledBinaryNames()[0] != "praetorctl" {
+		t.Fatal("InstalledBinaryNames must return a copy")
+	}
+	full := manifestFixture(t, nil, nil)
+	for _, name := range want {
+		full.Binaries[name] = InstalledBinary{SHA256: strings.Repeat("b", 64)}
+	}
+	if _, err := ReadInstallManifest(t.Context(), writeInstallManifest(t, full)); err != nil {
+		t.Fatalf("a manifest recording every installed binary was refused: %v", err)
+	}
+	older := manifestFixture(t, nil, nil)
+	for _, name := range want[:3] {
+		older.Binaries[name] = InstalledBinary{SHA256: strings.Repeat("c", 64)}
+	}
+	if _, err := ReadInstallManifest(t.Context(), writeInstallManifest(t, older)); err != nil {
+		t.Fatalf("a manifest written before tribunusctl was installed was refused: %v", err)
+	}
+	full.Binaries["praetor-evil"] = InstalledBinary{SHA256: strings.Repeat("d", 64)}
+	if _, err := ReadInstallManifest(t.Context(), writeInstallManifest(t, full)); err == nil {
+		t.Fatal("a manifest naming more binaries than are installed was accepted")
+	}
+}
+
 func TestSelectOperatorSettingsOrder(t *testing.T) {
 	fleet, workstation := recorded(t, "clients: {}\n"), recorded(t, "update: {}\n")
 	manifest := writeInstallManifest(t, manifestFixture(t, fleet, workstation))

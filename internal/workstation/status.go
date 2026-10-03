@@ -34,17 +34,20 @@ type ClientStatus struct {
 	Reason      string      `json:"reason,omitempty"`
 }
 
-// StatusReport answers "which commit is this workstation on".
+// StatusReport answers "which commit is this workstation on". MissingBinaries names the
+// binaries this engine installs that the manifest does not record; an install missing any is
+// never UpToDate, whatever commit it records.
 type StatusReport struct {
-	ManifestPath   string                  `json:"manifest_path"`
-	Installed      bool                    `json:"installed"`
-	Manifest       *config.InstallManifest `json:"manifest,omitempty"`
-	ManifestSHA256 string                  `json:"manifest_sha256,omitempty"`
-	CheckoutHead   string                  `json:"checkout_head,omitempty"`
-	UpToDate       bool                    `json:"up_to_date"`
-	CommitsBehind  *int                    `json:"commits_behind,omitempty"`
-	LockHeld       bool                    `json:"lock_held"`
-	Clients        []ClientStatus          `json:"clients"`
+	ManifestPath    string                  `json:"manifest_path"`
+	Installed       bool                    `json:"installed"`
+	Manifest        *config.InstallManifest `json:"manifest,omitempty"`
+	ManifestSHA256  string                  `json:"manifest_sha256,omitempty"`
+	MissingBinaries []string                `json:"missing_binaries,omitempty"`
+	CheckoutHead    string                  `json:"checkout_head,omitempty"`
+	UpToDate        bool                    `json:"up_to_date"`
+	CommitsBehind   *int                    `json:"commits_behind,omitempty"`
+	LockHeld        bool                    `json:"lock_held"`
+	Clients         []ClientStatus          `json:"clients"`
 }
 
 // Status reports the installed commit and manifest digest against ManifestPath, the
@@ -94,11 +97,13 @@ func fillManifestStatus(ctx context.Context, report *StatusReport, path string) 
 	report.Installed = true
 	report.Manifest = &manifest
 	report.ManifestSHA256 = digestBytes(data)
+	report.MissingBinaries = missingBinaries(manifest)
 	return nil
 }
 
-// fillCheckoutStatus compares the installed commit with checkout's HEAD: equality, and how
-// many commits the install lags when the checkout descends from it (InstallLag).
+// fillCheckoutStatus compares the installed commit with checkout's HEAD: equality with every
+// binary recorded, and how many commits the install lags when the checkout descends from it
+// (InstallLag).
 func fillCheckoutStatus(ctx context.Context, report *StatusReport, checkout string) error {
 	head, err := engineCommit(ctx, checkout)
 	if err != nil {
@@ -108,7 +113,7 @@ func fillCheckoutStatus(ctx context.Context, report *StatusReport, checkout stri
 	if report.Manifest == nil {
 		return nil
 	}
-	report.UpToDate = report.Manifest.EngineCommit == head
+	report.UpToDate = report.Manifest.EngineCommit == head && len(report.MissingBinaries) == 0
 	behind, ancestor, err := InstallLag(ctx, checkout, report.Manifest.EngineCommit)
 	if err != nil {
 		return err

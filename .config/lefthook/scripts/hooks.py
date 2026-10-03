@@ -257,7 +257,8 @@ def refresh(names):
         print("governance configuration: changed. next: run make audit before next push.")
 
 
-# WORKSTATION_REFRESH_TIMEOUT bounds the engine refresh a merge may start: three engine builds,
+# WORKSTATION_REFRESH_TIMEOUT bounds the engine refresh a merge may start: one build per
+# installed binary (binaryNames in internal/workstation/workstation.go),
 # inside the engine's own five-minute workstation bound (cmd/standardsctl/workstation.go).
 WORKSTATION_REFRESH_TIMEOUT = 330
 

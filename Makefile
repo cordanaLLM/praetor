@@ -12,6 +12,9 @@ PRAETOR_MCP := $(BIN_DIR)/praetor-mcp$(EXE_SUFFIX)
 STANDARDS_MCP := $(BIN_DIR)/standards-mcp$(EXE_SUFFIX)
 PRAETOR_LSP := $(BIN_DIR)/praetor-lsp$(EXE_SUFFIX)
 STANDARDS_LSP := $(BIN_DIR)/standards-lsp$(EXE_SUFFIX)
+# tribunusctl is the Tribunus model data sync (docs/tribunus/data-sync.md); it has no legacy
+# alias. workstation install builds the same set (binaryNames, internal/workstation).
+TRIBUNUSCTL := $(BIN_DIR)/tribunusctl$(EXE_SUFFIX)
 # CI obtains coverage from the same race run used by verify-all.
 TEST_COVERPROFILE ?=
 
@@ -25,6 +28,7 @@ build:
 	@ln -sf praetor-mcp$(EXE_SUFFIX) $(STANDARDS_MCP)
 	go build -v -o $(PRAETOR_LSP) ./cmd/standards-lsp
 	@ln -sf praetor-lsp$(EXE_SUFFIX) $(STANDARDS_LSP)
+	go build -v -o $(TRIBUNUSCTL) ./tribunus/cmd/tribunusctl
 
 # -timeout replaces go test's ten-minute default per package: internal/dogfood reached
 # 600 s under -race on the CI runner and panicked mid-suite.

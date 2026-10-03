@@ -6,10 +6,15 @@ package hiss
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // scanSources writes each named source into one package directory and returns the HISS-01
@@ -186,4 +191,116 @@ func TestCallGraphReportsEachCycleSeparately(t *testing.T) {
 	if len(found) != 2 {
 		t.Fatalf("expected two independent cycles, got %d: %s", len(found), cycleMessages(found))
 	}
+}
+
+// Positive: a local of the callee's name that is not in scope at the call hides nothing. The
+// whole-body check dropped each of these edges, so the cycle through it went unreported (#733).
+func TestCallGraphSeesACycleBehindAnOutOfScopeLocal(t *testing.T) {
+	for name, caller := range map[string]string{
+		"inner block": "func f(b bool) {\n\tif b {\n\t\tg := 1\n\t\t_ = g\n\t}\n\tg(b)\n}\n",
+		"after call":  "func f(b bool) {\n\tg(b)\n\tg := 1\n\t_ = g\n}\n",
+		"sibling case": "func f(b bool) {\n\tswitch b {\n\tcase true:\n\t\tg := 1\n\t\t_ = g\n" +
+			"\tcase false:\n\t\tg(b)\n\t}\n}\n",
+		"literal local": "func f(b bool) {\n\th := func() {\n\t\tg := 1\n\t\t_ = g\n\t}\n\th()\n\tg(b)\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			found := scanSources(t, map[string]string{"a.go": "package p\n\n" + caller + "\nfunc g(b bool) { f(b) }\n"})
+			if len(found) != 1 || !strings.Contains(found[0].Message, "f -> g -> f") {
+				t.Fatalf("the cycle f -> g -> f must be reported once, got %d: %s", len(found), cycleMessages(found))
+			}
+		})
+	}
+}
+
+// Negative: a binding of the callee's name in scope at the call is what the call reaches, so
+// no edge exists and no cycle closes.
+func TestCallGraphIgnoresBindingsInScopeAtTheCall(t *testing.T) {
+	for name, caller := range map[string]string{
+		"short variable":  "func f(b bool) {\n\tg := func(bool) {}\n\tg(b)\n}\n",
+		"parameter":       "func f(b bool, g func(bool)) {\n\tg(b)\n}\n",
+		"named result":    "func f(b bool) (g func(bool)) {\n\tg(b)\n\treturn\n}\n",
+		"enclosing block": "func f(b bool) {\n\tg := func(bool) {}\n\tif b {\n\t\tfor i := 0; i < 1; i++ {\n\t\t\tg(b)\n\t\t}\n\t}\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			found := scanSources(t, map[string]string{"a.go": "package p\n\n" + caller + "\nfunc g(b bool) { f(b) }\n"})
+			if len(found) != 0 {
+				t.Fatalf("a call reaching a binding in scope adds no edge, got: %s", cycleMessages(found))
+			}
+		})
+	}
+}
+
+// Boundary: a binding inside a function literal shadows only the calls inside that literal.
+// The literal's own call to g reaches its parameter; the enclosing function's call after it
+// reaches the function g and closes the cycle.
+func TestCallGraphScopesALiteralsBindingsToTheLiteral(t *testing.T) {
+	inside := "package p\n\nfunc f(b bool) {\n\th := func(g func(bool)) { g(b) }\n\th(nil)\n}\n\nfunc g(b bool) { f(b) }\n"
+	if found := scanSources(t, map[string]string{"a.go": inside}); len(found) != 0 {
+		t.Fatalf("a call inside the literal reaches its parameter, got: %s", cycleMessages(found))
+	}
+	after := "package p\n\nfunc f(b bool) {\n\th := func(g func(bool)) { g(b) }\n\th(nil)\n\tg(b)\n}\n\nfunc g(b bool) { f(b) }\n"
+	if found := scanSources(t, map[string]string{"a.go": after}); len(found) != 1 {
+		t.Fatalf("the call after the literal reaches the function g, got %d: %s", len(found), cycleMessages(found))
+	}
+}
+
+const (
+	// addCallsSample is the shortest timing sample. On Windows time.Now reads INTERRUPT_TIME
+	// (runtime/time_windows_amd64.s), which advances once per clock interrupt, every 15.6 ms
+	// unless a process asks for a finer one. One call-graph build takes well under a
+	// millisecond, so timing a single build reads one clock step or zero. Repeating the build
+	// until a sample spans four of the coarsest steps keeps the step under a quarter of it.
+	addCallsSample = 64 * time.Millisecond
+	// addCallsMaxRuns bounds the builds in one sample (HISS-02): over 60 seconds of the small
+	// case, so a sample short of addCallsSample at the bound means a clock that did not move.
+	addCallsMaxRuns = 1 << 20
+)
+
+// Boundary: a function of 10001 calls costs one walk. Checking every call by walking the whole
+// body again made the cost calls times nodes, so eight times the calls took about 64 times as
+// long; linear cost takes about 8 times. The bound sits between the two. The two sizes are
+// sampled in alternation, three rounds, and each keeps its fastest sample, so a load change
+// between samples reaches both sizes rather than deciding the ratio.
+func TestCallGraphScansCallsInLinearTime(t *testing.T) {
+	smallFile, largeFile := parseCallsFile(t, 1250), parseCallsFile(t, 10001)
+	small, large := time.Duration(math.MaxInt64), time.Duration(math.MaxInt64)
+	for range 3 {
+		small = min(small, addCallsSampleTime(t, smallFile, 1250))
+		large = min(large, addCallsSampleTime(t, largeFile, 10001))
+	}
+	t.Logf("1250 calls: %v; 10001 calls: %v per build", small, large)
+	if large > 24*small {
+		t.Fatalf("8x the calls took %v against %v (%.0fx); one walk per function is linear",
+			large, small, float64(large)/float64(small))
+	}
+}
+
+// parseCallsFile parses one function making calls bare calls to leaf.
+func parseCallsFile(t *testing.T, calls int) *ast.File {
+	t.Helper()
+	src := "package p\n\nfunc leaf() {}\n\nfunc big() {\n" + strings.Repeat("\tleaf()\n", calls) + "}\n"
+	file, err := parser.ParseFile(token.NewFileSet(), "big.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+// addCallsSampleTime builds file's call graph repeatedly for at least addCallsSample and
+// returns the time of one build.
+func addCallsSampleTime(t *testing.T, file *ast.File, calls int) time.Duration {
+	t.Helper()
+	runs, start, elapsed := 0, time.Now(), time.Duration(0)
+	for ; elapsed < addCallsSample && runs < addCallsMaxRuns; elapsed = time.Since(start) {
+		graph := newCallGraph()
+		graph.addFile(file, "big.go")
+		if _, edge := graph.edges["big"]["leaf"]; !edge || graph.count != 1 {
+			t.Fatalf("one function calling leaf %d times is one edge, got %d", calls, graph.count)
+		}
+		runs++
+	}
+	if elapsed < addCallsSample {
+		t.Fatalf("the clock moved %v in %d builds; a sample needs %v", elapsed, runs, addCallsSample)
+	}
+	return elapsed / time.Duration(runs)
 }

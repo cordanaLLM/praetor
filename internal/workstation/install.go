@@ -60,7 +60,7 @@ type Result struct {
 	ManifestPath string                 `json:"manifest_path"`
 }
 
-// Install builds the three engine binaries from Checkout and places them atomically in
+// Install builds every binary in binaryNames from Checkout and places them atomically in
 // BinDir, then writes the install manifest. It holds the exclusive bin-directory lock for
 // its whole run: a concurrent install or update is refused (ErrLockHeld), never merged. A
 // build or placement failure restores every target this run already touched from a backup
@@ -150,12 +150,13 @@ func placeAll(ctx context.Context, opts Options, source string, states map[strin
 			return nil, rollbackAndWrap(opts, backupDir, states, done, placeErr)
 		}
 		digests[name] = digest
-		done = append(done, name, binaryAliases[name])
+		done = append(done, targetsOf(name)...)
 	}
 	return digests, nil
 }
 
-// placeOne builds one binary from source, hashes it and swaps it in plus its alias symlink.
+// placeOne builds one binary from source, hashes it and swaps it in plus its alias symlink
+// when it has one.
 func placeOne(ctx context.Context, opts Options, source, name, buildDir string, states map[string]targetState) (string, error) {
 	built := filepath.Join(buildDir, name)
 	if err := opts.Build(ctx, source, name, built); err != nil {
@@ -174,7 +175,10 @@ func placeOne(ctx context.Context, opts Options, source, name, buildDir string, 
 	}); err != nil {
 		return "", err
 	}
-	alias := binaryAliases[name]
+	alias, ok := binaryAliases[name]
+	if !ok {
+		return digest, nil
+	}
 	if err := stageAndSwap(opts.GOOS, opts.BinDir, alias, func(path string) error {
 		return os.Symlink(name, path)
 	}); err != nil {
@@ -205,7 +209,7 @@ func installMode(built os.FileMode, name string, states map[string]targetState) 
 		return built.Perm() & 0o755, nil
 	}
 	mode := built.Perm() & 0o755
-	for _, target := range []string{name, binaryAliases[name]} {
+	for _, target := range targetsOf(name) {
 		if state := states[target]; state.kind == targetFile {
 			mode &= state.mode
 		}

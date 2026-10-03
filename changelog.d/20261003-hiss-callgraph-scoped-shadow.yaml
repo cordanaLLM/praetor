@@ -1,0 +1,4 @@
+type: fixed
+title: "Go scans no longer let a same-named local that is out of scope at the call hide a call cycle, recursion, os.Exit, unsafe use or context-less I/O"
+issue: "#733"
+breaking: true

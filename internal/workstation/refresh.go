@@ -61,7 +61,8 @@ const (
 // something the operator did not already choose (BUG-1004). It refreshes only when all hold:
 // the checkout declares the running engine's module, an install manifest exists, the
 // checkout is on the update branch, the installed commit is a strict ancestor of the
-// checkout HEAD (never a downgrade or a sideways move), and no tracked file is modified.
+// checkout HEAD (never a downgrade or a sideways move) or is the HEAD itself while the
+// manifest lacks a binary this engine installs (#377), and no tracked file is modified.
 // Otherwise it installs nothing and reports the first reason that failed.
 func Refresh(ctx context.Context, opts RefreshOptions) (RefreshResult, error) {
 	if ctx == nil || opts.Select == nil {
@@ -74,7 +75,7 @@ func Refresh(ctx context.Context, opts RefreshOptions) (RefreshResult, error) {
 	if err != nil || reason != "" {
 		return skipRefresh(reason), err
 	}
-	behind, reason, err := refreshGate(ctx, plan.install.Checkout, plan.branch, plan.installed)
+	behind, reason, err := refreshGate(ctx, plan)
 	if err != nil || reason != "" {
 		return skipRefresh(reason), err
 	}
@@ -83,18 +84,32 @@ func Refresh(ctx context.Context, opts RefreshOptions) (RefreshResult, error) {
 		return RefreshResult{}, err
 	}
 	return RefreshResult{Refreshed: true, CommitsBehind: behind, Install: &result,
-		Reason: "install was " + strconv.Itoa(behind) + " commits behind the checkout"}, nil
+		Reason: refreshReason(behind, plan.missing)}, nil
 }
 
 func skipRefresh(reason string) RefreshResult {
 	return RefreshResult{Reason: reason}
 }
 
-// refreshPlan is the install a qualifying refresh makes, the commit it replaces and the
-// update branch the checkout must be on.
+// refreshReason says why a refresh reinstalled: the commits the install lagged, the binaries
+// its manifest lacked, or both.
+func refreshReason(behind int, missing []string) string {
+	reasons := make([]string, 0, 2)
+	if behind > 0 {
+		reasons = append(reasons, "install was "+strconv.Itoa(behind)+" commits behind the checkout")
+	}
+	if len(missing) > 0 {
+		reasons = append(reasons, "install lacked "+strings.Join(missing, ", "))
+	}
+	return strings.Join(reasons, "; ")
+}
+
+// refreshPlan is the install a qualifying refresh makes, the commit it replaces, the binaries
+// its manifest lacks and the update branch the checkout must be on.
 type refreshPlan struct {
 	install   Options
 	installed string
+	missing   []string
 	branch    string
 }
 
@@ -121,7 +136,8 @@ func planRefresh(ctx context.Context, opts RefreshOptions) (refreshPlan, string,
 	if install.BinDir == "" {
 		install.BinDir = manifest.BinDir
 	}
-	return refreshPlan{install: install, installed: manifest.EngineCommit, branch: settings.Branch}, "", nil
+	return refreshPlan{install: install, installed: manifest.EngineCommit, missing: missingBinaries(manifest),
+		branch: settings.Branch}, "", nil
 }
 
 // manifestPathOrDefault returns path, or the default install manifest path when path is
@@ -137,22 +153,24 @@ func manifestPathOrDefault(path string) (string, error) {
 	return resolved, nil
 }
 
-// refreshGate returns how many commits the install is behind checkout, or the reason the
-// checkout must not refresh it; see Refresh.
-func refreshGate(ctx context.Context, checkout, branch, installed string) (int, string, error) {
+// refreshGate returns how many commits the install is behind the plan's checkout, or the
+// reason the checkout must not refresh it; see Refresh. An install at the checkout HEAD
+// qualifies only while its manifest lacks a binary.
+func refreshGate(ctx context.Context, plan refreshPlan) (int, string, error) {
+	checkout := plan.install.Checkout
 	current, err := currentBranch(ctx, checkout)
 	if err != nil {
 		return 0, "", err
 	}
-	if branch == "" || current != branch {
-		return 0, fmt.Sprintf("checkout is on %q, not the update branch %q", current, branch), nil
+	if plan.branch == "" || current != plan.branch {
+		return 0, fmt.Sprintf("checkout is on %q, not the update branch %q", current, plan.branch), nil
 	}
-	behind, ancestor, err := InstallLag(ctx, checkout, installed)
+	behind, ancestor, err := InstallLag(ctx, checkout, plan.installed)
 	if err != nil {
 		return 0, "", err
 	}
-	if !ancestor || behind == 0 {
-		return 0, "installed commit " + buildid.Short(installed) + " is not behind the checkout HEAD", nil
+	if !ancestor || (behind == 0 && len(plan.missing) == 0) {
+		return 0, "installed commit " + buildid.Short(plan.installed) + " is not behind the checkout HEAD", nil
 	}
 	dirty, err := trackedChanges(ctx, checkout)
 	if err != nil || dirty {

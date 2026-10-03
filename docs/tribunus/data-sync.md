@@ -21,8 +21,9 @@ Tribunus starts inside `cordanaLLM/praetor` as a move-ready first slice. The
 routing graph needs full data sync working first, and there is no interim
 praetor-side routing policy to build against yet. The layout is move-ready:
 `tribunus/` sits inside praetor's Go module with no nested `go.mod`, so
-`go build ./...` and `go test ./...` already cover it without a Makefile or
-CI change. Nothing under `tribunus/` imports praetor's `internal` packages,
+`go build ./...` and `go test ./...` already cover it without a CI change.
+Praetor's installers build the `tribunusctl` binary
+([Running it](#running-it)). Nothing under `tribunus/` imports praetor's `internal` packages,
 and praetor does not import `tribunus/catalog` yet -- that import is the
 only thing praetor may eventually take from this tree, once the routing
 graph is built and Tribunus moves to its own repository (`git subtree split
@@ -64,6 +65,21 @@ oversight:
 | `gemini`/`agy` quota | No readable local store for it. Same follow-up-item treatment. |
 
 ## Running it
+
+`tribunusctl` reaches `PATH` through the workstation install, which builds it
+beside `praetorctl`, `praetor-mcp` and `praetor-lsp` and records it in the
+install manifest ([workstation install](../guides/workstation-update.md#workstation-install),
+`binaryNames` in `internal/workstation/workstation.go`):
+
+```bash
+praetorctl workstation install --source /path/to/praetor/checkout
+```
+
+`make build` in a checkout writes `bin/tribunusctl` instead, without touching
+`PATH`. `praetorctl workstation status --source <checkout>` lists
+`tribunusctl` under `missing_binaries`, and does not report the install
+current, while the install manifest lacks it. The Praetor DevContainer image
+does not carry it ([DevContainer bootstrap](../guides/devcontainer-bootstrap.md)).
 
 ```bash
 # every source, written to ./tribunus-snapshot.json
