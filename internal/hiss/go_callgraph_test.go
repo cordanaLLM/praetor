@@ -242,6 +242,61 @@ func TestCallGraphScopesALiteralsBindingsToTheLiteral(t *testing.T) {
 	}
 }
 
+// Positive: a cycle between generic functions with explicit type arguments is reported (#738).
+func TestCallGraphReportsGenericCallCycle(t *testing.T) {
+	found := scanSources(t, map[string]string{
+		"generic.go": "package p\n\nfunc f[T any](x T) T {\n\treturn g[T](x)\n}\n\nfunc g[T any](x T) T {\n\treturn f[T](x)\n}\n",
+	})
+	if len(found) != 1 {
+		t.Fatalf("expected one generic cycle, got %d: %s", len(found), cycleMessages(found))
+	}
+	if !strings.Contains(found[0].Message, "f -> g -> f") {
+		t.Errorf("message must name the cycle f -> g -> f, got %q", found[0].Message)
+	}
+}
+
+// Positive: a cycle with two type parameters (an IndexListExpr) is reported (#738).
+func TestCallGraphReportsTwoTypeParameterGenericCycle(t *testing.T) {
+	found := scanSources(t, map[string]string{
+		"two_params.go": "package p\n\nfunc alpha[A, B any](a A, b B) (A, B) {\n\treturn beta[A, B](a, b)\n}\n\n" +
+			"func beta[A, B any](a A, b B) (A, B) {\n\treturn alpha[A, B](a, b)\n}\n",
+	})
+	if len(found) != 1 {
+		t.Fatalf("expected one two-type-parameter cycle, got %d: %s", len(found), cycleMessages(found))
+	}
+	if !strings.Contains(found[0].Message, "alpha -> beta -> alpha") {
+		t.Errorf("message must name the cycle alpha -> beta -> alpha, got %q", found[0].Message)
+	}
+}
+
+// Negative: an instantiated name that is a local function value in scope adds no edge (#738).
+func TestCallGraphIgnoresInstantiatedLocalInScope(t *testing.T) {
+	found := scanSources(t, map[string]string{
+		"shadow_generic.go": "package p\n\nfunc helper[T any](x T) T {\n\treturn caller[T](x)\n}\n\n" +
+			"func caller[T any](x T) T {\n\thelper := func(v T) T { return v }\n\t_ = helper\n\treturn helper[T](x)\n}\n",
+	})
+	if len(found) != 0 {
+		t.Fatalf("an instantiated local in scope must not add a call-graph edge, got: %s", cycleMessages(found))
+	}
+}
+
+// Boundary: a direct self-call through an explicit instantiation is reported once by the
+// per-file scanner, not duplicated by the call-graph cycle pass (#738).
+func TestCallGraphDoesNotDoubleReportGenericDirectRecursion(t *testing.T) {
+	found := scanSources(t, map[string]string{
+		"self_generic.go": "package p\n\nfunc loop[T any](x T) T {\n\tif true {\n\t\treturn x\n\t}\n\treturn loop[T](x)\n}\n",
+	})
+	if len(found) != 1 {
+		t.Fatalf("direct generic recursion must be reported exactly once, got %d: %s", len(found), cycleMessages(found))
+	}
+	if strings.Contains(found[0].Message, "Call cycle through") {
+		t.Errorf("direct generic recursion must keep its own message, got %q", found[0].Message)
+	}
+	if !strings.Contains(found[0].Message, "Direct recursion in loop") {
+		t.Errorf("message must be direct recursion, got %q", found[0].Message)
+	}
+}
+
 // Boundary: a function of 10001 calls costs one walk. Checking every call by walking the whole
 // body again made the cost calls times nodes. The scope walk counts the nodes it visits
 // (goScope.steps), so the test holds the build to a bounded number of visits per node instead

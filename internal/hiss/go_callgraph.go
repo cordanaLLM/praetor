@@ -264,14 +264,31 @@ func (g *callGraph) addFile(file *ast.File, rel string) {
 	}
 }
 
-// addCalls adds an edge for every bare identifier this function calls, in one walk of it.
+// calleeIdent returns the bare or explicitly instantiated callee's identifier, or nil when
+// the callee is any other expression.
+func calleeIdent(fun ast.Expr) *ast.Ident {
+	switch indexed := fun.(type) {
+	case *ast.IndexExpr:
+		fun = indexed.X
+	case *ast.IndexListExpr:
+		fun = indexed.X
+	}
+	ident, ok := fun.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	return ident
+}
+
+// addCalls adds an edge for every bare or generic function call, in one walk of it.
 //
-// A binding of the callee's name in scope at the call -- the receiver, a parameter, a named
-// result, or a local declared earlier in an enclosing block, a function literal's included --
-// shadows the function, so the call does not reach it (go_scope.go). A binding that is not in
-// scope at the call hides nothing. Asking whether the name was declared anywhere in the body
-// dropped the edge for a local in an unrelated block, which hid a real cycle, and walked the
-// whole body once per call.
+// A call with explicit type arguments (an IndexExpr or IndexListExpr) contributes to the
+// call graph like a bare call. A binding of the callee's name in scope at the call -- the
+// receiver, a parameter, a named result, or a local declared earlier in an enclosing block,
+// a function literal's included -- shadows the function, so the call does not reach it
+// (go_scope.go). A binding that is not in scope at the call hides nothing. Asking whether the
+// name was declared anywhere in the body dropped the edge for a local in an unrelated block,
+// which hid a real cycle, and walked the whole body once per call.
 func (g *callGraph) addCalls(caller string, fn *ast.FuncDecl) {
 	var scope goScope
 	scope.inspect(fn, func(n ast.Node) bool {
@@ -279,8 +296,8 @@ func (g *callGraph) addCalls(caller string, fn *ast.FuncDecl) {
 		if !ok {
 			return true
 		}
-		ident, ok := call.Fun.(*ast.Ident)
-		if !ok || ident.Name == caller || scope.binds(ident.Name) {
+		ident := calleeIdent(call.Fun)
+		if ident == nil || ident.Name == caller || scope.binds(ident.Name) {
 			return true
 		}
 		if g.count >= maxCallGraphEdges {

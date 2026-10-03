@@ -1,0 +1,4 @@
+type: fixed
+title: "Calls with explicit type arguments no longer hide Go call-graph cycles"
+issue: "#738"
+breaking: false

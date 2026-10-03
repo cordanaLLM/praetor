@@ -44,7 +44,10 @@ rules:
           negative/call-reaches-enclosing-local.go the true shadow. Mutual and indirect
           recursion between plain functions are now reported too: the call-graph pass builds
           each package's graph after the walk and names every strongly connected component
-          of two or more functions. Package scope is complete rather than convenient, because a call cycle
+          of two or more functions. Explicit generic type arguments on calls are unwrapped so
+          mutual cycles across generic functions are reported
+          (positive/generic-instantiation-cycle.go), while a same-named local function in scope
+          adds no edge (negative/generic-instantiated-local.go). Package scope is complete rather than convenient, because a call cycle
           spanning two packages would need each to import the other and the compiler rejects
           that. A cycle through methods remains a gap: resolving a method call needs the
           receiver's type, and guessing it would invent edges that do not exist.
