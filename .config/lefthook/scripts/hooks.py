@@ -258,7 +258,7 @@ def refresh(names):
 
 
 # WORKSTATION_REFRESH_TIMEOUT bounds the engine refresh a merge may start: one build per
-# installed binary (binaryNames in internal/workstation/workstation.go, four since #377),
+# installed binary (binaryNames in internal/workstation/workstation.go),
 # inside the engine's own five-minute workstation bound (cmd/standardsctl/workstation.go).
 WORKSTATION_REFRESH_TIMEOUT = 330
 

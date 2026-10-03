@@ -13,6 +13,7 @@
 /praetorctl
 /praetor-mcp
 /praetor-lsp
+/tribunusctl
 
 # Test and coverage artifacts
 *.out

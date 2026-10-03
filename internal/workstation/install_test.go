@@ -136,8 +136,9 @@ func TestStatus_Negative_ManifestWithoutTribunusctlIsNotCurrent(t *testing.T) {
 }
 
 // Boundary (#377): a failed install over a prior set without tribunusctl restores exactly
-// that set, tribunusctl still absent and the manifest still lacking it; over a prior set with
-// tribunusctl, the restore keeps tribunusctl as it was.
+// that set, tribunusctl still absent and the manifest still lacking it; a failure over a full
+// set restores the engine binaries. tribunusctl builds last, so no build failure places it;
+// TestRestoreFromBackup_Boundary_TribunusctlAsRecorded restores a placed one.
 func TestInstall_Boundary_RollbackRestoresRecordedSet(t *testing.T) {
 	opts := testOptions(t, fakeBuild("v1"))
 	ctx := context.Background()
