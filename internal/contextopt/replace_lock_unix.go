@@ -15,8 +15,11 @@ func lockSnapshotDirectory(root *os.Root) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	fd := int(file.Fd())
+	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return nil, errors.Join(fmt.Errorf("snapshot directory busy or un-lockable: %w", err), file.Close())
 	}
-	return file.Close, nil
+	return func() error {
+		return errors.Join(syscall.Flock(fd, syscall.LOCK_UN), file.Close())
+	}, nil
 }

@@ -1,0 +1,4 @@
+type: fixed
+title: "Snapshot directory flock outlives release across concurrent exec fork"
+issue: "#732"
+breaking: false
