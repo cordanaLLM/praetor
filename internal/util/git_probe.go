@@ -10,13 +10,31 @@ import (
 	"time"
 )
 
+// gitNotARepositoryAnswers are the untranslated messages with which git refuses a directory as
+// no repository: one outside any work tree, and one whose .git file names a gitdir that is no
+// repository. Git before 2.56 reported the second as "not a git repository: <gitdir>"; 2.56
+// reports "gitfile does not point to a valid repository: <path>" (setup.c,
+// read_gitfile_error_die). A malformed .git file ("invalid gitfile format") is not this answer.
+var gitNotARepositoryAnswers = [...][]byte{
+	[]byte("not a git repository"),
+	[]byte("gitfile does not point to a valid repository"),
+}
+
 // GitAnsweredNotARepository reports whether a RunGitProbe that returned result and err failed
 // because git answered that its directory is not inside a repository, rather than because the
-// read did not complete. RunGitProbe runs git under LANG=C.UTF-8, so the message it matches is
-// the untranslated one.
+// read did not complete. RunGitProbe runs git under LANG=C.UTF-8, so the messages it matches are
+// the untranslated ones.
 func GitAnsweredNotARepository(result CommandBytes, err error) bool {
 	var exit *exec.ExitError
-	return errors.As(err, &exit) && bytes.Contains(result.Stderr, []byte("not a git repository"))
+	if !errors.As(err, &exit) {
+		return false
+	}
+	for i := 0; i < len(gitNotARepositoryAnswers); i++ {
+		if bytes.Contains(result.Stderr, gitNotARepositoryAnswers[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // GitProbeTimeout bounds one RunGitProbe inspection.
