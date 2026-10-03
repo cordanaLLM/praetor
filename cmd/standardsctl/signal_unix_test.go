@@ -9,9 +9,11 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -27,6 +29,17 @@ const signalProcessRun = "-test.run=^TestSignalProcessHelper$"
 // outlives a one-second pause. A marker present after praetorctl died is an orphaned command.
 const stubGit = "#!/bin/sh\ntrap 'rm -f index.lock; touch cleaned; exit 130' INT\n: > index.lock\n" +
 	"echo $$ > ready.tmp && mv ready.tmp ready && sleep 1 && touch marker\n"
+
+var catchHangupOnce sync.Once
+
+// catchHangupForExec installs a parent-side SIGHUP handler so subprocesses spawned via exec
+// inherit the default signal disposition (SIG_DFL) rather than SIG_IGN when the test runner
+// itself was invoked under nohup.
+func catchHangupForExec() {
+	catchHangupOnce.Do(func() {
+		signal.Notify(make(chan os.Signal, 1), syscall.SIGHUP)
+	})
+}
 
 // TestSignalProcessHelper is the child of the signal tests: it runs main with the arguments
 // in PRAETOR_SIGNAL_PROCESS_TEST, as the praetorctl binary does.
@@ -210,6 +223,9 @@ func startGateRunHelper(t *testing.T, ignoreHangup bool, extraEnv ...string) *ga
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !ignoreHangup {
+		catchHangupForExec()
 	}
 	h := &gateRunHelper{repo: newHermeticGateRepo(t), ready: filepath.Join(t.TempDir(), "ready"), done: make(chan struct{})}
 	h.cmd = exec.Command(binary, signalProcessRun)

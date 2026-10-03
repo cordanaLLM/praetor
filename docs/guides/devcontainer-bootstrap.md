@@ -90,12 +90,10 @@ checkout with `core.autocrlf=true` does not report that file as drift (HISS-21).
 JSON forbids an unescaped carriage return inside a string, so every CRLF in the
 file is whitespace between tokens and the normalisation cannot hide an edit.
 The normalisation covers `devcontainer.json` only. Companions such as
-`Dockerfile.praetor` are checked against their recorded hashes as raw bytes,
-and adoption does not yet write a `.gitattributes` pin for `.devcontainer/`
-([#313](https://github.com/cordanaLLM/praetor/issues/313)). Until it does, a
-CRLF checkout of a ready bootstrap still fails verification on
-`Dockerfile.praetor`; add `.devcontainer/* text eol=lf` to the adopted
-repository's `.gitattributes`, as Praetor does for itself (`.gitattributes:51`).
+`Dockerfile.praetor` are checked against their recorded hashes as raw bytes, so
+a CRLF checkout of a ready bootstrap fails verification on `Dockerfile.praetor`;
+[checkout line endings](#checkout-line-endings) describes the `.gitattributes`
+rule adoption writes to prevent that.
 Verification does not compare a re-render of what decoded, because
 Go's JSON decoder matches member names case-insensitively and keeps the last of a
 duplicate pair: `POSTCREATECOMMAND`, `RemoteUser` and a repeated
@@ -270,6 +268,103 @@ entry that disables the adopter's Renovate for Praetor-managed files
 ([documentation governance](documentation-governance.md)). A DevContainer of
 the adopter's own is preserved and stays with their Renovate. Image updates
 reach an adopter with a regeneration from a reviewed Praetor checkout.
+
+## Checkout line endings
+
+`praetorctl adopt` pins the bundle's Dockerfile to LF. It writes
+`.devcontainer/Dockerfile.praetor text eol=lf` (`Attributes` in
+`internal/devcontainer/checkout.go`) as the first rule of the managed block at
+the end of `.gitattributes`, the block that also carries the figure engine's
+rules while `docs:seo-portal` is enabled (`ManagedAttributes` in
+`internal/adopt/gitattributes.go`). Without the rule, a clone with
+`core.autocrlf=true`, git's default on Windows, checks `Dockerfile.praetor` out
+with CRLF and fails audit on a file nobody edited
+([#313](https://github.com/cordanaLLM/praetor/issues/313)).
+
+The rule names that one file and no wildcard. `Dockerfile.praetor` is the only
+bundle file verification compares as raw bytes: `devcontainer.json` is compared
+after normalisation and the base64 source parts carry no line terminator
+(`TestCheckoutAttributes_Positive` in `internal/devcontainer/checkout_test.go`).
+The block sits at the end of the file, where git lets it win, so a rule on
+`.devcontainer/*` would also claim the repository's own files beside the
+bundle: an image there would become text in spite of a `*.png binary` rule, and
+the next `git add` would rewrite the CRLF byte pairs every PNG signature holds.
+With the rule on the one file, an image, a CRLF script and every other file the
+repository keeps in `.devcontainer/` stay under the repository's own rules
+(`TestCheckoutAttributes_Negative_NoRuleUsesAWildcard`,
+`TestDevContainerAttribute_Negative_OperatorFilesBesideTheBundleKeepTheirBytes`
+in `internal/adopt/gitattributes_devcontainer_test.go`).
+
+- **Fresh and existing files.** A repository without `.gitattributes` gets one
+  holding the block. An existing file keeps every line outside the block, the
+  repository's own rules on `.devcontainer/` included, and gains the block
+  once; a rerun changes nothing (`TestDevContainerAttributeAdoptionGolden`).
+- **Earlier adoptions.** A repository adopted before the rule existed receives
+  it on its next plain `praetorctl adopt`: the documentation-only block is
+  refreshed without `--force`, and a repository without the documentation facet
+  gains the block
+  (`TestReconcileGitAttributes_Positive_EarlierBlockRefreshedWithoutForce`).
+  Until then `praetorctl audit` still passes on an LF checkout, because audit
+  accepts the block with and without the rule (`GitAttributesCanonical`).
+- **Conflicting rules.** A rule outside the block conflicts when its pattern
+  starts with `.devcontainer/`, can match `Dockerfile.praetor`, and gives
+  `text` or `eol` a state that contradicts `text eol=lf`: `-text`, `!text`,
+  `binary`, `-eol`, `!eol` or an `eol` other than `lf`. Examples are
+  `.devcontainer/* -text`, `.devcontainer/Dockerfile.praetor eol=crlf` and
+  `.devcontainer/** binary`. Such a rule stops adoption before its first write,
+  in a dry run too, and the message quotes it, because the block would
+  silently override it for that file. Remove or change the rule, or decline
+  the step. Everything else is kept and merges: a rule on another file, such
+  as `.devcontainer/*.json eol=crlf`, or on a subdirectory of the directory; a
+  compatible rule, such as `.devcontainer/* text=auto eol=lf`; and a rule on a
+  wider pattern, such as `* -text`, which is the repository's default and
+  which the block overrides for the one file adoption writes
+  (`TestManagedAttributes_Negative_ConflictingOperatorRuleRefused`,
+  `TestManagedAttributes_Boundary_OnlyRulesOnThePinnedFileConflict`,
+  `TestAttributePatternMatches`,
+  `TestAdopt_Negative_ConflictingAttributeRuleStopsBeforeAnyWrite`).
+- **Edited block.** A block whose lines were edited stops a plain run before
+  its first write and names the forced rerun; `--force` restores it as a
+  replace with a backup, whether or not the documentation facet is enabled
+  (`TestAdopt_EditedAttributeBlockWithoutDocumentationFacet`,
+  `TestPreflightAttributes_Boundary_EditedBlock`).
+- **Declined step.** With `dev-container` in `adoption.decline` the bundle is
+  the repository's own, so the block carries no DevContainer rule, and no
+  block remains once the documentation facet is disabled as well
+  (`TestReconcileManagedAttributes_Boundary_DeclineDropsTheRule`).
+
+When the bundle differs from its recorded inputs only by line endings,
+`praetorctl audit` and `praetorctl devcontainer verify` say so and name the
+remedy (`devContainerCheckoutRemedy` in
+`cmd/standardsctl/devcontainer_checkout.go`). A `.gitattributes` without the
+rule is told to run `praetorctl adopt` and commit `.gitattributes`; where the
+manifest declines `dev-container`, adoption writes no rule, so the message says
+to add it by hand
+(`TestDevContainerCheckoutRemedy_Negative_DeclinedStepDoesNotNameAdoption`). A
+`.gitattributes` that carries the rule means the working tree was checked out
+before the rule existed, or another attribute source overrides it;
+`git check-attr text eol -- .devcontainer/Dockerfile.praetor` shows which.
+Either way the file in the working tree is still CRLF, and `git checkout` does
+not rewrite it: git skips a file whose index entry is unchanged, and a
+converted file is unchanged to git. The message therefore names the two
+commands that do (`RecheckoutCommands` in `internal/devcontainer/checkout.go`):
+
+```bash
+git rm --cached --quiet -- .devcontainer/Dockerfile.praetor
+git checkout HEAD -- .devcontainer/Dockerfile.praetor
+```
+
+The first drops the index entry and leaves the file in place; the second
+restores the entry from `HEAD` and writes the file under the attributes now in
+force. Verification fails until then: a CRLF `Dockerfile.praetor` is not the
+file the specification records (`TestCheckoutAttributes_Negative`,
+`TestAuditDevContainer_ConvertedCheckoutNamesTheRule` in
+`cmd/standardsctl/devcontainer_checkout_test.go`).
+`TestDevContainerAttribute_Positive_CRLFCheckoutVerifiesOnceTheRuleExists`
+commits a bundle in a repository with `core.autocrlf=true` and shows each
+step: the clone fails verification without the rule, the two commands bring a
+working tree that predates the rule to LF without deleting a file by hand, and
+a clone under the rule verifies as it is.
 
 ## Bundle freshness
 

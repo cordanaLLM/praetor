@@ -373,10 +373,11 @@ func auditDocumentationMakefileWiring(ctx context.Context, rootDir string) error
 
 // auditManagedGitAttributesBlock requires .gitattributes to end with the attribute block of the
 // enabled documentation families, which keeps their hashed files unconverted on every platform.
-// Nothing is required while no family declares a rule.
+// The block passes with and without the DevContainer rule adoption writes ahead of the
+// documentation rules (adopt.GitAttributesCanonical). Nothing is required while no family
+// declares a rule.
 func auditManagedGitAttributesBlock(ctx context.Context, rootDir string) error {
-	block := adopt.ManagedGitAttributesBlock(adopt.DocumentationAttributes())
-	if block == "" {
+	if len(adopt.DocumentationAttributes()) == 0 {
 		return nil
 	}
 	attributes, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootDir, ".gitattributes"))
@@ -392,14 +393,17 @@ func auditManagedGitAttributesBlock(ctx context.Context, rootDir string) error {
 	if _, err := adopt.GitAttributesBlockPresent(normalized); err != nil {
 		return fmt.Errorf("[FAIL] .gitattributes attribute block is ambiguous (repair it, then run 'praetorctl adopt'): %w", err)
 	}
-	if !strings.HasSuffix(normalized, block) {
+	canonical, err := adopt.GitAttributesCanonical(normalized, true)
+	if err != nil || !canonical {
 		return fmt.Errorf("[FAIL] .gitattributes must end with the canonical Praetor attribute block; run 'praetorctl adopt'")
 	}
 	return nil
 }
 
 // auditDisabledDocumentationAttributes fails while a disabled facet's .gitattributes still carries
-// the Praetor attribute block.
+// documentation rules in the Praetor attribute block. The block adoption leaves there holds the
+// DevContainer rule alone, at the end of the file, and a file without a block passes too
+// (adopt.GitAttributesCanonical).
 func auditDisabledDocumentationAttributes(ctx context.Context, rootDir string) error {
 	attributes, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(rootDir, ".gitattributes"))
 	if err != nil {
@@ -408,12 +412,13 @@ func auditDisabledDocumentationAttributes(ctx context.Context, rootDir string) e
 	if !exists {
 		return nil
 	}
-	present, err := adopt.GitAttributesBlockPresent(string(attributes))
+	canonical, err := adopt.GitAttributesCanonical(string(attributes), false)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Inspect disabled documentation .gitattributes block: %w", err)
 	}
-	if present {
-		return fmt.Errorf("[FAIL] Disabled documentation facet retains the Praetor .gitattributes block")
+	if !canonical {
+		return fmt.Errorf("[FAIL] Disabled documentation facet retains the Praetor .gitattributes block: it holds more than " +
+			"the DevContainer rule, or is not at the end of the file; run 'praetorctl adopt'")
 	}
 	return nil
 }

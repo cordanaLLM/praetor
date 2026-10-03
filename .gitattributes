@@ -145,10 +145,16 @@ editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 docs/presets/mkdocs/docs/figures/*.ts text eol=lf
 docs/presets/mkdocs/docs/assets/figures/* text eol=lf
 
-# The figure engine's rules are the managed attribute block at the end of this file, which
-# `praetorctl adopt` writes for docs:seo-portal in every adopting repository
-# (internal/adopt/gitattributes.go, rules from Attributes in tools/figures/assets.go):
+# The managed attribute block at the end of this file is what `praetorctl adopt` writes in
+# every adopting repository (internal/adopt/gitattributes.go): the DevContainer rule unless
+# adoption.decline lists dev-container (rule from Attributes in internal/devcontainer/checkout.go),
+# then the figure engine's rules for docs:seo-portal (Attributes in tools/figures/assets.go):
 #
+#   .devcontainer/Dockerfile.praetor text eol=lf
+#                                  the one bundle file verification compares as raw bytes. This
+#                                  file pins the whole directory above, which is Praetor's own
+#                                  choice; adoption names the file alone, so an adopter's own
+#                                  files beside the bundle keep their attributes (#313).
 #   tools/figures/** text eol=lf   tools/figures/assets.go embeds the engine into the adopter
 #                                  binary, internal/managedasset's TestShippedTextLedger records
 #                                  the digest of every embedded text, and `bundle.mjs --check`
@@ -164,6 +170,7 @@ docs/presets/mkdocs/docs/assets/figures/* text eol=lf
 
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
+.devcontainer/Dockerfile.praetor text eol=lf
 tools/figures/** text eol=lf
 docs/figures/*.ts text eol=lf
 docs/assets/figures/* text eol=lf

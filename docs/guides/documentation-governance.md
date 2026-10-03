@@ -394,9 +394,16 @@ a disable removes it (`priorDocumentationMakefileBlocks` in
 `internal/adopt/verification_makefile.go`). A refresh or repair that adds a
 target, such as `docs-figures`, stops when the rest of the Makefile may already
 define it, as a first attachment does. The `.gitattributes` block follows the
-same contract: an edited block fails a plain run, `--force` restores it as a
-replace with a backup, and a disable refuses to remove it
-(`internal/adopt/gitattributes.go`).
+same contract: an edited block fails a plain run before its first write, and
+`--force` restores it as a replace with a backup, with the facet enabled or
+disabled, because the block stays for its DevContainer rule. Only a disable
+that would remove the block, in a repository whose `adoption.decline` lists
+`dev-container`, refuses an edited one under `--force` too
+(`internal/adopt/gitattributes.go`,
+`TestAdopt_EditedAttributeBlockWithoutDocumentationFacet`,
+`TestPreflightAttributes_Boundary_EditedBlock`). The block of an earlier release, without
+the DevContainer rule, is an unedited block and is refreshed by a plain run
+(`TestReconcileGitAttributes_Positive_EarlierBlockRefreshedWithoutForce`).
 
 The tool assets and the workflow form the Markdown entry of the managed asset
 family registry (`managedasset.Families`, `internal/managedasset/family.go`).
@@ -411,15 +418,21 @@ off, so `--force` replaces those files as described above; the figure engine
 sets it (`TestManagedFamilyRefusesForeignFilesOnFirstAdopt`,
 `TestMarkdownFamilyForeignFilesGolden` and `TestFigureFamilyForeignFilesGolden`
 in `internal/adopt`). A family may also declare `.gitattributes` rules
-(`Family.Attributes`); adoption writes the rules of every enabled family as one
-tail block and removes the block once no enabled family declares one.
+(`Family.Attributes`); adoption writes the rules of every enabled family into
+one tail block, after the DevContainer rule that block opens with
+([checkout line endings](devcontainer-bootstrap.md#checkout-line-endings)), and
+removes the block once nothing declares a rule: no enabled family, and
+`dev-container` in `adoption.decline` (`ManagedAttributes` in
+`internal/adopt/gitattributes.go`).
 
 Disabling `docs:seo-portal` is a convergent transition. Run
 `praetorctl adopt --force --lock-source-root=<praetor checkout>` so the generated branch ruleset can drop its hosted
 status context; without that authorization, adoption refuses before deleting
 local assets. The transition removes only canonical-equivalent workflow/tool assets, earlier
-Praetor texts of them, the exact managed Makefile block and the `.gitattributes`
-attribute block (deleting the file when it held nothing else), strips the README badge and gate entry, removes
+Praetor texts of them, the exact managed Makefile block and the documentation rules of the
+`.gitattributes` attribute block, which keeps its DevContainer rule (the block goes, and a file
+that held nothing else is deleted, only where `adoption.decline` lists `dev-container`;
+`TestFigureFamilyAdoptionGolden`, `TestDevContainerAttributeAdoptionGolden`), strips the README badge and gate entry, removes
 the required status context, and rebuilds the formatter-ignore inventory without
 documentation paths; the inventory keeps the files of every family still enabled, such as the
 [Go API compatibility gate](api-compatibility.md) (`managedArtifacts` in
@@ -438,7 +451,8 @@ hosted context, and records any declared
 the repository declares its licensing in `REUSE.toml` but no annotation labels
 `tools/figures/third_party/interfig/upstream/**` MIT, or a later table that
 also covers those files, such as `**`, relabels them. When the facet is disabled, audit rejects stale Praetor
-documentation assets, exact Makefile marker lines, the `.gitattributes` block, README contract text,
+documentation assets, exact Makefile marker lines, a `.gitattributes` block that holds more than the
+DevContainer rule or is not at the end of the file (`TestAuditFigureFamilyGolden`), README contract text,
 formatter paths, or a structurally declared hosted status context instead of
 silently treating them as active. Operator-owned files at the same paths, prose
 that mentions a marker, and unrelated ruleset metadata are not claimed by the

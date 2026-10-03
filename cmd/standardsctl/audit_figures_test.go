@@ -31,6 +31,7 @@ const reuseWithOverride = reuseWithoutOverride + "\n[[annotations]]\npath = [\"t
 
 func figureAuditGoldenCases() []auditGoldenCase {
 	block := adopt.ManagedGitAttributesBlock(adopt.DocumentationAttributes())
+	devContainerBlock := adopt.ManagedGitAttributesBlock(adopt.ManagedAttributes(true, false))
 	return []auditGoldenCase{
 		{name: "canonical without REUSE.toml", enabled: true},
 		{name: "canonical, REUSE.toml without the override", enabled: true, mutate: func(t *testing.T, root string) {
@@ -82,6 +83,23 @@ func figureAuditGoldenCases() []auditGoldenCase {
 		}},
 		{name: "disabled with the operator's own figure rules", mutate: func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".gitattributes", "tools/figures/** text eol=lf\n")
+		}},
+		// The block adoption writes since #313 opens with the DevContainer rule; the fixture's
+		// block, without it, is the one every earlier release wrote, and audit accepts both.
+		{name: "attribute block with the DevContainer rule", enabled: true, mutate: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+adopt.ManagedGitAttributesBlock(adopt.ManagedAttributes(true, true)))
+		}},
+		{name: "disabled with the DevContainer rule alone", mutate: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+devContainerBlock)
+		}},
+		{name: "disabled with the DevContainer rule alone, CRLF", mutate: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", strings.ReplaceAll("* text=auto\n\n"+devContainerBlock, "\n", "\r\n"))
+		}},
+		{name: "disabled, DevContainer block not at the tail", mutate: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", devContainerBlock+"tools/** -text\n")
+		}},
+		{name: "disabled retains documentation rules beside the DevContainer rule", mutate: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+adopt.ManagedGitAttributesBlock(adopt.ManagedAttributes(true, true)))
 		}},
 	}
 }

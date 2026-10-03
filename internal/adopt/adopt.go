@@ -502,10 +502,15 @@ func runOrSkipStep(ctx context.Context, s *adoptSession, step namedStep, decline
 }
 
 // preflightSteps runs, before the first step writes anything, the refusals of the agent steps
-// (preflightAgentSurfaces) and the read-only policy resolution of a declined policy-catalog
-// step (preflightDeclinedPolicyCatalog), so either stops a run that has written nothing.
+// (preflightAgentSurfaces), the refusal of a .gitattributes the DevContainer rule cannot be
+// merged into (preflightManagedAttributes) and the read-only policy resolution of a declined
+// policy-catalog step (preflightDeclinedPolicyCatalog), so each stops a run that has written
+// nothing.
 func preflightSteps(ctx context.Context, s *adoptSession, declined map[string]bool) error {
 	if err := preflightAgentSurfaces(ctx, s, declined); err != nil {
+		return err
+	}
+	if err := preflightManagedAttributes(ctx, s, declined); err != nil {
 		return err
 	}
 	return preflightDeclinedPolicyCatalog(ctx, s, declined)

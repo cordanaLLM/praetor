@@ -1,0 +1,4 @@
+type: fixed
+title: "Adoption pins the generated DevContainer Dockerfile to LF, and refuses a repository rule that contradicts the pin"
+issue: "#313"
+breaking: true
