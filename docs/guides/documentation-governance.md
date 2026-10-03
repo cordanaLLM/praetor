@@ -67,11 +67,13 @@ before (#736). It starts one child process of its own script per batch of
 files, `node tools/markdownlint/verify.mjs --lint <install> <file>...` from the
 repository root (`runMarkdownlint` and `lintChild` in
 `tools/markdownlint/verify.mjs`). Each batch gets a fresh heap, a timeout and a
-bounded output capture. Before it lints, the child checks that the installed
-`markdownlint` is the version the lock pins and exposes the synchronous entry it
-imports (`markdownlintLibrary`). The runner reads that version from the lock, so
-a pin update leaves `verify.mjs` unchanged. The temporary installation is
-removed after success or failure.
+bounded output capture. Before it starts the first child, the runner checks that
+the installed `markdownlint` is the version the lock pins and exposes the
+synchronous entry the children import (`markdownlintLibrary`). A mismatch fails
+the gate with status 2, also when no file is selected for styling
+(`lintEntrySelfTest`). The runner reads that version from the lock, so a pin
+update leaves `verify.mjs` unchanged. The temporary installation is removed
+after success or failure.
 
 A finding prints as `markdownlint-cli2`'s default formatter printed it, one line
 per finding on standard error:
@@ -124,13 +126,13 @@ other tooling; the gate ignores it whether it loosens or tightens the rules,
 and never executes a configuration module. `hermeticConfigSelfTest` proves both
 directions with every configuration file form in the fixture tree.
 
-The private-link rule also runs from that temporary copy. It acts only when started
-as a script, which `invokedAsScript` in `tools/markdownlint/no-private-scratch-links.mjs`
-decides by comparing real paths: Node loads a main module from its real path, and
-every macOS temporary directory sits under the `/var` symlink, so comparing
-spellings let the rule exit 0 there without reading a file. The self-test runs the
-rule a second time through a symlinked path to the temporary directory, so that
-failure shows on every host.
+The private-link rule also runs from the temporary installation directory. It
+acts only when started as a script, which `invokedAsScript` in
+`tools/markdownlint/no-private-scratch-links.mjs` decides by comparing real paths:
+Node loads a main module from its real path, and every macOS temporary directory
+sits under the `/var` symlink, so comparing spellings let the rule exit 0 there
+without reading a file. The self-test runs the rule a second time through a
+symlinked path to the temporary directory, so that failure shows on every host.
 
 On Linux and macOS the runner starts `npm` from `PATH`. On Windows it cannot:
 Node refuses to spawn the `npm.cmd` batch shim without a shell and fails with
@@ -258,6 +260,19 @@ table of micromatch's answers for these shapes.
 A glob is refused when it is absolute, drive-lettered, or negated with `!`, when
 it contains a backslash or an empty, `.`, or `..` segment, or when it holds no
 letter or number, so wildcards alone (`**`, `*/**`) cannot stand for every file.
+
+Its characters come from an allow-list: letters, combining marks and digits of
+any script, the space, and only this ASCII punctuation: the grammar's own
+`. _ - / * ? [ ] ^ { } ,` and `! # $ % & ' + : ; < = > @ ~` and the backtick,
+which micromatch read as themselves. The gate refuses any other character and
+names its code point: a double quote, which micromatch read as a quote around
+literal text, `( | )`, a tab, a no-break space, an emoji, a joiner. A character
+nobody compared with micromatch is therefore refused, never matched differently.
+Random differentials against micromatch 4.0.8, drawing globs and paths from
+every printable ASCII character, tab and a Unicode sample, found no mismatch
+over 112 million glob-path pairs; that is a measurement over that alphabet, not
+a proof (the comment above `STYLE_EXCLUSION_TABLE` gives the counts).
+
 The gate also refuses, naming the glob and the reason, every shape it does not
 support rather than matching it differently:
 
@@ -278,6 +293,10 @@ support rather than matching it differently:
   glob;
 - `.*` inside a brace list: micromatch matched it differently from `.*`
   outside one, so `a{x,.*}` did not match `a.`, though `a.*` did;
+- a run of `+`, `$` or `^` in a glob of one segment: micromatch escaped only the
+  first character of the run there, so `c++.md` matched `c+.md` and `a$$*`
+  matched `a$`; the same run in a longer glob, such as `docs/c++/**`, is
+  accepted;
 - an unmatched bracket or brace, a brace list without a comma, and a brace
   alternative that leaves an empty segment or wildcards alone.
 
@@ -310,8 +329,8 @@ line. The unsupported-shape refusals above run in the gate only:
 The gate reads the block at run time, so a declaration changes no locked asset.
 `TestDocumentationSettingsMirrorConfig` in `tools/markdownlint/assets_test.go`
 keeps the gate's constants equal to audit's, and `make docs-lint-test` replays
-the settings, raised-bound, style-exclusion, glob-grammar, lint-output,
-lint-memory, and hermetic-configuration fixtures.
+the settings, raised-bound, style-exclusion, glob-grammar, glob-character,
+lint-entry, lint-output, lint-memory, and hermetic-configuration fixtures.
 
 ## Private scratch links
 

@@ -15,10 +15,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // raise the file-count and per-file bounds from their defaults up to their ceilings; nothing
 // raises the aggregate bound. internal/config/documentation.go validates the same ranges for
 // audit, and TestDocumentationSettingsMirrorConfig keeps the two in step. The per-file ceiling
-// is a memory bound: the markdownlint library lints a 4 MiB file of linked bullets in a 1 GiB heap
-// (lintMemorySelfTest replays it), while at 8 MiB it needed more than 1.5 GiB, close to Node's
-// default heap on a 7 GB runner. markdownlint-cli2, which the gate ran before, needed the same:
-// it lints through the same library.
+// is a memory bound: the markdownlint library lints a 4 MiB file of linked and code-spanned
+// bullets in a 1.5 GiB heap (lintMemorySelfTest replays it with LINT_MEMORY_HEAP_MB), while a
+// file of linked bullets at 8 MiB needed more than 1.5 GiB, close to Node's default heap on a
+// 7 GB runner. markdownlint-cli2, which the gate ran before, needed the same: it lints through
+// the same library.
 const DEFAULT_MAX_FILES = 4_096;
 const MAX_FILES_CEILING = 16_384;
 const DEFAULT_MAX_FILE_BYTES = 1_048_576;
@@ -304,19 +305,43 @@ function styleExclusionProblem(pattern) {
 // trailing `/**` after a segment ending in `*` needs at least one more segment, and consecutive
 // `**` segments count as one; and a path spelled exactly as the glob matches it, as picomatch
 // compares the two before its regular expression. Matching is case-sensitive on every platform,
-// and on Windows a backslash in a path is a separator. Every other shape is refused when the
-// settings are read, never matched differently: extglobs and `( | )` groups, POSIX classes,
-// nested lists, brace ranges, `**` inside a segment, an unmatched bracket or brace, a `[!a]`
-// class, a class range spanning `/`, a `+` straight after `]`, `{` or `}` (a regular-expression
-// repeat in micromatch), a brace alternative of `*` alone (micromatch lets it match nothing), and
-// `.*` inside a brace list. styleExclusionGrammarSelfTest pins each shape against the answers
-// micromatch gave.
+// and on Windows a backslash in a path is a separator.
+//
+// The characters are an allow-list, not a deny-list: a glob may hold letters, combining marks and
+// digits of any script, the space, and only the ASCII punctuation in GLOB_PUNCTUATION, which is
+// the grammar's own `. _ - / * ? [ ] ^ { } ,` and the characters micromatch read as themselves,
+// `! # $ % & ' + : ; < = > @ ~` and the backtick. Any other character is refused with its code
+// point, so a character nobody compared with micromatch is never matched differently. Of the
+// ASCII punctuation that leaves `"`, which micromatch reads as a quote around literal text,
+// `( | )`, which build extglobs and groups, and the backslash, an escape there.
+//
+// Every other shape is refused when the settings are read, never matched differently: POSIX
+// classes, nested lists, brace ranges, `**` inside a segment, an unmatched bracket or brace, a
+// `[!a]` class, a class range spanning `/`, a `+` straight after `]`, `{` or `}` (a
+// regular-expression repeat in micromatch), a brace alternative of `*` alone (micromatch lets it
+// match nothing), `.*` inside a brace list, and a run of `+`, `$` or `^` in a glob of one segment.
+// picomatch compiles a glob of one segment without brackets or braces through a shortcut that
+// escapes only the first character of such a run: `c++.md` matched `c+.md`, and `a$$*` matched
+// `a$`. styleExclusionGrammarSelfTest pins each shape against the answers micromatch gave.
+const GLOB_PUNCTUATION = "._-/*?[]^{},!#$%&'+:;<=>@`~";
+const GLOB_UNSUPPORTED_CHARACTER = new RegExp(
+  `[^\\p{L}\\p{M}\\p{N} ${GLOB_PUNCTUATION.replace(/[\\\]\[^/-]/gu, "\\$&")}]`, "u");
+const GROUP_PROBLEM = "extglobs and regex groups are not supported";
+const CHARACTER_PROBLEMS = new Map([
+  ["\"", "micromatch reads it as a quote around literal text"],
+  ["(", GROUP_PROBLEM],
+  [")", GROUP_PROBLEM],
+  ["|", GROUP_PROBLEM],
+]);
+const ONE_SEGMENT_RUN = /\+\+|\$\$|\^\^/u;
 const GLOB_STAR_TOKEN = Object.freeze({ type: "star" });
 const GLOB_ANY_TOKEN = Object.freeze({ type: "any" });
 const ANY_SEGMENT = Object.freeze({ globstar: false, wildcard: true, alternatives: [[GLOB_STAR_TOKEN]] });
 const SLASH_CODE = 0x2f;
 // picomatch's REGEX_SPECIAL_CHARS: a class body holding none of them also matches its own text.
 const PICOMATCH_REGEX_CHARS = /[-*+?.^${}(|)[\]]/u;
+// picomatch's REGEX_BACKSLASH: the backslashes its Windows path format turns into /.
+const PICOMATCH_BACKSLASH = /\\(?![*+?^${}(|)[\]])/gu;
 const REPEAT_PROBLEM = "puts + straight after ], { or }, where micromatch reads it as a regular-expression " +
   "repeat, not as the character +";
 
@@ -569,11 +594,30 @@ function compileSegment(segment) {
   return { globstar: false, wildcard, alternatives };
 }
 
+// characterProblem names the first character of pattern outside the allow-list, with its code
+// point and the reason, or returns null.
+function characterProblem(pattern) {
+  const match = GLOB_UNSUPPORTED_CHARACTER.exec(pattern);
+  if (match === null) {
+    return null;
+  }
+  const codePoint = match[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+  const reason = CHARACTER_PROBLEMS.get(match[0]) ?? "a glob may hold letters, combining marks and digits " +
+    `of any script, the space and only the ASCII punctuation ${GLOB_PUNCTUATION}`;
+  return `contains ${JSON.stringify(match[0])} (U+${codePoint}); ${reason}`;
+}
+
 // parseStyleExclusion compiles one declared exclusion, already checked by styleExclusionProblem,
-// into its segments, or returns { problem } naming the shape the gate does not support.
+// into its segments, or returns { problem } naming the character or shape the gate does not
+// support.
 function parseStyleExclusion(pattern) {
-  if (/[()|]/u.test(pattern)) {
-    return { problem: "uses ( ) or |; extglobs and regex groups are not supported" };
+  const unsupported = characterProblem(pattern);
+  if (unsupported !== null) {
+    return { problem: unsupported };
+  }
+  if (!pattern.includes("/") && ONE_SEGMENT_RUN.test(pattern)) {
+    return { problem: "repeats +, $ or ^ in a glob of one segment, where micromatch escapes only the first " +
+      "character of the run, so c++.md matched c+.md" };
   }
   const raw = pattern.split("/").filter((segment, index, all) =>
     !(segment === GLOBSTAR && index > 0 && all[index - 1] === GLOBSTAR));
@@ -657,15 +701,23 @@ function segmentsMatch(segments, parts) {
 
 // styleExclusionMatcher returns a predicate over repository-relative paths for one declared
 // exclusion; platform decides whether a backslash separates path segments, as it does on Windows.
-// A path spelled exactly as the glob matches, as picomatch tests that before its expression.
+// A path spelled exactly as the glob matches, as picomatch tests that before its expression; on
+// Windows picomatch first turns each backslash into / except one before a glob character
+// (PICOMATCH_BACKSLASH), so `docs\{a,c}.md` is not the spelling of `docs/{a,c}.md` there. Such a
+// kept backslash stays an ordinary character for picomatch's classes, so `[^a]` could match it,
+// while this matcher reads every backslash as a separator. The gate's paths come from git
+// ls-files, which separates segments with / on every platform, and a Windows file name cannot
+// hold a backslash, so no such path reaches the matcher.
 function styleExclusionMatcher(pattern, platform) {
   const parsed = parseStyleExclusion(pattern);
   if (parsed.problem !== undefined) {
     fail(`${MANIFEST_FILE} documentation.style_exclude ${JSON.stringify(pattern)} ${parsed.problem}`);
   }
+  const windows = platform === "win32";
   return (relative) => {
-    const normalized = platform === "win32" ? relative.replaceAll("\\", "/") : relative;
-    return normalized === pattern || segmentsMatch(parsed.segments, normalized.split("/"));
+    const spelled = windows ? relative.replace(PICOMATCH_BACKSLASH, "/") : relative;
+    const parts = (windows ? relative.replaceAll("\\", "/") : relative).split("/");
+    return spelled === pattern || segmentsMatch(parsed.segments, parts);
   };
 }
 
@@ -1490,10 +1542,17 @@ function styleExclusionSelfTest(temporary) {
 }
 
 // STYLE_EXCLUSION_TABLE holds, for each pattern, the paths of STYLE_EXCLUSION_PATHS that
-// micromatch 4.0.8 with { dot: true } matched, recorded before the gate dropped it (#736). Random
-// differentials of the matcher against micromatch, the last over 38,203 accepted patterns and
-// about 54 million pattern-path pairs, found no difference before the table was cut down to
-// these rows; each earlier difference became a row below or a refused shape.
+// micromatch 4.0.8 with { dot: true } matched, recorded before the gate dropped it (#736), and
+// CHARACTER_TABLE does the same for CHARACTER_PATHS: the ASCII punctuation the gate reads as
+// itself, in a glob of one segment and in a longer one, + repeated in a longer glob, a combining
+// mark, and letters whose case pairs differ. Random differentials of the matcher against
+// micromatch found each refused shape. An earlier count of no difference over about 54 million
+// pairs came from a generator that never wrote a double quote or a run of +, $ or ^ in a glob of
+// one segment, both of which micromatch matched differently. Drawing globs and paths from every
+// printable ASCII character, tab and a Unicode sample (no-break space, dotted and dotless I, the
+// Kelvin sign, combining marks, a letter outside the Basic Multilingual Plane), 8 runs found no
+// mismatch over 112,136,472 glob-path pairs from 113,607 accepted globs: no mismatch found over
+// that alphabet, which is a measurement, not a proof of equivalence.
 // LITERAL_STYLE_PATHS spell glob characters, or a character outside ASCII, in a file name.
 const LITERAL_STYLE_PATHS = Object.freeze(["docs/{a,c}.md", "docs/[a-b].md", "docs/[{a]x.md", "docs/{x.md",
   "docs/é.md", "docs/1+.md"]);
@@ -1528,57 +1587,88 @@ const STYLE_EXCLUSION_TABLE = Object.freeze([
   ["docs/{x*,c}.md", ["docs/c.md"]],
 ]);
 
-// Positive: every pattern in STYLE_EXCLUSION_TABLE matches exactly the paths micromatch matched,
-// a path spelled as the glob included, and on Windows a backslash separates segments. Negative:
-// every shape the gate does not support is refused with the reason, never matched differently.
-// Boundary: the table keeps the accepted neighbours of each refused shape (+ after ?, a negated
-// range spanning /, .* after a list, a class between . and * in a list, a * with more text in
-// a list); a segment spelling exactly MAX_BRACE_ALTERNATIVES alternatives passes and twice that
-// is refused; and an empty exclusion list styles every file the built-in selection styles.
+// LITERAL_PUNCTUATION is the ASCII punctuation micromatch read as itself outside a class or list.
+const LITERAL_PUNCTUATION = "!#$%&'+,:;<=>@^`~";
+const CHARACTER_PATHS = Object.freeze([`a ${LITERAL_PUNCTUATION}.md`, `a ${LITERAL_PUNCTUATION}.mdx`,
+  `docs/a ${LITERAL_PUNCTUATION}.md`, "docs/c++/x.md", "docs/c+/x.md", "c+.md", "c++.md", "docs/e\u0301.md",
+  "docs/\u00e9.md", "docs/\u0130\u0131\u212a.md", "docs/iik.md", "docs/a$/x.md", "docs/$/x.md"]);
+const CHARACTER_TABLE = Object.freeze([
+  [`? ${LITERAL_PUNCTUATION}.md`, [`a ${LITERAL_PUNCTUATION}.md`]],
+  [`docs/? ${LITERAL_PUNCTUATION}.md`, [`docs/a ${LITERAL_PUNCTUATION}.md`]],
+  ["docs/c++/**", ["docs/c++/x.md"]],
+  ["c+.md", ["c+.md"]],
+  ["docs/{c+,c++}/**", ["docs/c++/x.md", "docs/c+/x.md"]],
+  ["docs/*$/**", ["docs/a$/x.md", "docs/$/x.md"]],
+  ["docs/e\u0301.*", ["docs/e\u0301.md"]],
+  ["docs/\u0130\u0131\u212a.md", ["docs/\u0130\u0131\u212a.md"]],
+]);
+const REPEAT_REFUSAL = /puts \+ straight after \], \{ or \}, where micromatch reads it as a regular-expression repeat/u;
+const RUN_REFUSAL = /repeats \+, \$ or \^ in a glob of one segment, where micromatch escapes only the first character/u;
+const GROUP_REFUSAL = /contains "[()|]" \(U\+00(28|29|7C)\); extglobs and regex groups are not supported/u;
+const REFUSED_STYLE_EXCLUSIONS = Object.freeze([
+  ["docs/@(a|b).md", GROUP_REFUSAL],
+  ["docs/+(a).md", GROUP_REFUSAL],
+  ["docs/a|b.md", GROUP_REFUSAL],
+  ["docs/\"draft\"/**", /contains "\\"" \(U\+0022\); micromatch reads it as a quote around literal text/u],
+  ["docs/a\tb.md", /contains "\\t" \(U\+0009\); a glob may hold letters/u],
+  ["docs/a\u00a0b.md", /contains "\u00a0" \(U\+00A0\)/u],
+  ["docs/\u{1f600}.md", /contains "\u{1f600}" \(U\+1F600\)/u],
+  ["docs/a\u200db.md", /contains "\u200d" \(U\+200D\)/u],
+  ["docs/[[:alpha:]].md", /POSIX classes such as \[:alpha:\] are not supported/u],
+  ["docs/{1..3}.md", /brace ranges are not supported/u],
+  ["docs/{a,{b,c}}.md", /nested lists are not supported/u],
+  ["docs/{a}.md", /brace list without a comma/u],
+  ["docs/{a,b.md", /has a \{ without a closing \}/u],
+  ["docs/a}.md", /has a \} without an opening \{/u],
+  ["docs/[ab.md", /has a \[ without a closing \]/u],
+  ["docs/a]b.md", /has a \] without an opening \[/u],
+  ["docs/[].md", /has an empty \[ \] class/u],
+  ["docs/[!a].md", /starts a \[ \] class with !, which micromatch reads as the character !/u],
+  ["docs/[b-a].md", /has the reversed range b-a/u],
+  ["docs/a**.md", /\*\* must be a whole segment/u],
+  ["docs/**.md", /\*\* must be a whole segment/u],
+  ["docs/{,}/x.md", /leaves an empty, \. or \.\. segment/u],
+  ["{?,docs}/**", /a brace alternative of wildcards alone would match every file/u],
+  ["docs/[0-9]+.md", REPEAT_REFUSAL],
+  ["docs/v{1,2}+.md", REPEAT_REFUSAL],
+  ["docs/{+,a}.md", REPEAT_REFUSAL],
+  ["c++.md", RUN_REFUSAL],
+  ["a$$*.md", RUN_REFUSAL],
+  ["^^a*.md", RUN_REFUSAL],
+  ["docs/a[ -~]b.md", /has the range  -~ in a \[ \] class, which spans \/ and so lets micromatch match a path/u],
+  ["docs/[--z].md", /has the range --z in a \[ \] class, which spans \//u],
+  ["docs/x/**/{*,draft}", /has a brace alternative of \* alone, which micromatch lets match nothing/u],
+  ["docs/*{,a}", /has a brace alternative of \* alone/u],
+  ["{*,docs}/**", /has a brace alternative of \* alone/u],
+  ["docs/{x,.*}", /puts \.\* inside a brace list, which micromatch matches differently/u],
+  ["docs/{x,[a].*}", /puts \.\* inside a brace list/u],
+  [`docs/${"{a,b}".repeat(7)}.md`, /expands to more than 64 alternatives in one segment/u],
+  [`docs/${"[ab]".repeat(7)}.md`, /expands to more than 64 alternatives in one segment/u],
+]);
+
+// Positive: every pattern in STYLE_EXCLUSION_TABLE and CHARACTER_TABLE matches exactly the paths
+// micromatch matched, a path spelled as the glob included, and on Windows a backslash separates
+// segments, though one before a glob character does not make the glob's own spelling. Negative:
+// every shape and character the gate does not support is refused with the reason, never matched
+// differently. Boundary: the tables keep the accepted neighbours of each refused shape (+ after ?,
+// a negated range spanning /, .* after a list, a class between . and * in a list, a * with more
+// text in a list, one + in a glob of one segment, ++ in a longer glob); a segment spelling exactly
+// MAX_BRACE_ALTERNATIVES alternatives passes and twice that is refused; and an empty exclusion
+// list styles every file the built-in selection styles.
 function styleExclusionGrammarSelfTest() {
-  for (const [pattern, matched] of STYLE_EXCLUSION_TABLE) {
-    const matcher = styleExclusionMatcher(pattern, "linux");
-    assert.deepEqual(STYLE_EXCLUSION_PATHS.filter(matcher), matched, pattern);
+  for (const [paths, table] of [[STYLE_EXCLUSION_PATHS, STYLE_EXCLUSION_TABLE], [CHARACTER_PATHS, CHARACTER_TABLE]]) {
+    for (const [pattern, matched] of table) {
+      assert.deepEqual(paths.filter(styleExclusionMatcher(pattern, "linux")), matched, pattern);
+    }
   }
   assert.equal(styleExclusionMatcher("docs/*.md", "win32")("docs\\guide.md"), true);
   assert.equal(styleExclusionMatcher("docs/*.md", "linux")("docs\\guide.md"), false);
   assert.equal(styleExclusionMatcher("**/testdata/**", "win32")("pkg\\testdata\\golden.md"), true);
-  assert.equal(styleExclusionMatcher("docs/{a,c}.md", "win32")("docs\\{a,c}.md"), true);
+  assert.equal(styleExclusionMatcher("docs/{a,c}.md", "win32")("docs\\a.md"), true);
+  assert.equal(styleExclusionMatcher("docs/{a,c}.md", "win32")("docs\\{a,c}.md"), false);
+  assert.equal(styleExclusionMatcher("docs/[ab].md", "win32")("docs\\[ab].md"), true);
   assert.equal(styleExclusionMatcher("docs/{a,c}.md", "linux")("docs/{a,c}.mdx"), false);
-  const repeat = /puts \+ straight after \], \{ or \}, where micromatch reads it as a regular-expression repeat/u;
-  const refused = [
-    ["docs/@(a|b).md", /uses \( \) or \|; extglobs and regex groups are not supported/u],
-    ["docs/+(a).md", /extglobs and regex groups/u],
-    ["docs/(a|b).md", /extglobs and regex groups/u],
-    ["docs/[[:alpha:]].md", /POSIX classes such as \[:alpha:\] are not supported/u],
-    ["docs/{1..3}.md", /brace ranges are not supported/u],
-    ["docs/{a,{b,c}}.md", /nested lists are not supported/u],
-    ["docs/{a}.md", /brace list without a comma/u],
-    ["docs/{a,b.md", /has a \{ without a closing \}/u],
-    ["docs/a}.md", /has a \} without an opening \{/u],
-    ["docs/[ab.md", /has a \[ without a closing \]/u],
-    ["docs/a]b.md", /has a \] without an opening \[/u],
-    ["docs/[].md", /has an empty \[ \] class/u],
-    ["docs/[!a].md", /starts a \[ \] class with !, which micromatch reads as the character !/u],
-    ["docs/[b-a].md", /has the reversed range b-a/u],
-    ["docs/a**.md", /\*\* must be a whole segment/u],
-    ["docs/**.md", /\*\* must be a whole segment/u],
-    ["docs/{,}/x.md", /leaves an empty, \. or \.\. segment/u],
-    ["{?,docs}/**", /a brace alternative of wildcards alone would match every file/u],
-    ["docs/[0-9]+.md", repeat],
-    ["docs/v{1,2}+.md", repeat],
-    ["docs/{+,a}.md", repeat],
-    ["docs/a[ -~]b.md", /has the range  -~ in a \[ \] class, which spans \/ and so lets micromatch match a path/u],
-    ["docs/[--z].md", /has the range --z in a \[ \] class, which spans \//u],
-    ["docs/x/**/{*,draft}", /has a brace alternative of \* alone, which micromatch lets match nothing/u],
-    ["docs/*{,a}", /has a brace alternative of \* alone/u],
-    ["{*,docs}/**", /has a brace alternative of \* alone/u],
-    ["docs/{x,.*}", /puts \.\* inside a brace list, which micromatch matches differently/u],
-    ["docs/{x,[a].*}", /puts \.\* inside a brace list/u],
-    [`docs/${"{a,b}".repeat(7)}.md`, /expands to more than 64 alternatives in one segment/u],
-    [`docs/${"[ab]".repeat(7)}.md`, /expands to more than 64 alternatives in one segment/u],
-  ];
-  for (const [pattern, message] of refused) {
+  for (const [pattern, message] of REFUSED_STYLE_EXCLUSIONS) {
     assert.throws(() => styleExclusions([pattern]), message, pattern);
     assert.throws(() => styleExclusions([pattern]), /documentation\.style_exclude\[0\] /u, pattern);
   }
@@ -1586,10 +1676,31 @@ function styleExclusionGrammarSelfTest() {
     assert.deepEqual(styleExclusions([pattern]), [pattern]);
     assert.equal(styleExclusionMatcher(pattern, "linux")("docs/abbaab.md"), true);
   }
+  styleExclusionCharacterSelfTest();
   const files = ["AGENTS.md", "README.md", "docs/guide.md"];
   assert.deepEqual(styleSelection(files, { ...DEFAULT_SETTINGS, declared: true, styleExclude: [] }, "linux"),
     { styled: ["README.md", "docs/guide.md"], excluded: 0, counts: [] });
   process.stdout.write("style exclusion grammar fixtures: micromatch answers kept, unsupported shapes refused\n");
+}
+
+// Negative: of the printable ASCII characters exactly " ( ) \ | are refused, and a tab, a
+// no-break space, an emoji, a joiner and a line separator are refused with their code points.
+// Positive: letters, combining marks and digits of other scripts pass. Boundary: each character
+// of LITERAL_PUNCTUATION and the space passes inside a file name and matches only itself there.
+function styleExclusionCharacterSelfTest() {
+  const ascii = Array.from({ length: 0x7f - 0x20 }, (_, index) => String.fromCharCode(0x20 + index));
+  assert.equal(ascii.filter((character) => characterProblem(character) !== null).join(""), "\"()\\|");
+  for (const character of ["\t", "\u00a0", "\u{1f600}", "\u200d", "\u2028"]) {
+    const codePoint = character.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+    assert.match(characterProblem(`docs/${character}.md`), new RegExp(`^contains .+ \\(U\\+${codePoint}\\); a glob`, "su"));
+  }
+  assert.equal(characterProblem("docs/\u00e9e\u0301\u093f\u0130\u0131\u212a\u4e2d\u{1d400}\u0663.md"), null);
+  for (const character of ` ${LITERAL_PUNCTUATION}`) {
+    const pattern = `docs/a${character}b.md`;
+    assert.deepEqual(styleExclusions([pattern]), [pattern], pattern);
+    const matcher = styleExclusionMatcher(pattern, "linux");
+    assert.deepEqual([matcher(pattern), matcher("docs/ab.md"), matcher("docs/a_b.md")], [true, false, false], pattern);
+  }
 }
 
 // Boundary: a file exactly at a raised per-file bound passes inventory, the private-link rule and
@@ -1680,6 +1791,33 @@ function markdownlintLibrarySelfTest() {
   }
   process.stdout.write("markdownlint library fixtures: the lock's version passes, another version, " +
     "another entry or an unpinned lock fails\n");
+}
+
+// Negative: an installation whose markdownlint is not the locked version fails the style run with
+// status 2 before any lint child starts, rather than reading as findings. Boundary: it fails so
+// with no file to lint too. Positive: the locked installation passes with no file to lint.
+function lintEntrySelfTest(temporary) {
+  const fixture = path.join(temporary, "lint-entry-fixture");
+  const install = path.join(temporary, "lint-entry-install");
+  const lock = JSON.parse(fs.readFileSync(path.join(temporary, "package-lock.json"), "utf8"));
+  const locked = lock.packages["node_modules/markdownlint"].version;
+  writeFixtureFiles(install, {
+    "package-lock.json": JSON.stringify(lock),
+    "node_modules/markdownlint/package.json": JSON.stringify({
+      version: `${locked}-other`,
+      exports: { "./sync": MARKDOWNLINT_ENTRY },
+    }),
+  });
+  writeFixtureFiles(fixture, { "docs/guide.md": "# Guide\n" });
+  const expected = `installed markdownlint package does not match locked ${locked} library contract`;
+  for (const files of [[], ["docs/guide.md"]]) {
+    assert.throws(() => runMarkdownlint(fixture, install, files, false),
+      (error) => error instanceof GateFailure && error.status === 2 && error.message === expected);
+  }
+  assert.equal(runMarkdownlint(fixture, temporary, [], false), 0);
+  assert.equal(runMarkdownlint(fixture, temporary, ["docs/guide.md"], false), 0);
+  process.stdout.write("lint entry fixtures: a markdownlint other than the locked one fails with status 2 " +
+    "before any lint child, with or without files\n");
 }
 
 // lintConfiguration reads the rules from markdownlint-cli2.yaml: one bounded YAML mapping whose
@@ -1810,7 +1948,10 @@ function batches(files) {
 // runMarkdownlint lints the style-selected files in child processes of this script (lintChild),
 // one batch of paths each, as the gate ran markdownlint-cli2 before: every batch gets a fresh
 // heap, the command timeout and a bounded capture, and its diagnostics share one output budget.
+// It checks the installed library against the lock before the first child, even with no file to
+// lint, so a mismatch fails the gate with status 2 instead of reading as findings.
 function runMarkdownlint(root, temporary, files, emitDiagnostics = true) {
+  markdownlintEntry(temporary);
   const script = fileURLToPath(import.meta.url);
   let failed = false;
   let overflow = false;
@@ -1847,6 +1988,7 @@ function main() {
       inventorySelfTest(temporary);
       settingsSelfTest(temporary);
       lintConfigurationSelfTest(temporary);
+      lintEntrySelfTest(temporary);
       hermeticConfigSelfTest(temporary);
       lintOutputSelfTest(temporary);
       lintMemorySelfTest(temporary);
