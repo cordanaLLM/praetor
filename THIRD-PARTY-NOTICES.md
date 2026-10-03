@@ -218,7 +218,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `@types/unist` | 3.0.3 | MIT | `Copyright (c) Microsoft Corporation.` |
 | `acorn` | 8.18.0 | MIT | `Copyright (C) 2012-2022 by various contributors (see AUTHORS)` |
 | `acorn-jsx` | 5.3.2 | MIT | `Copyright (C) 2012-2017 by Ingvar Stepanyan` |
-| `ansi-regex` | 6.3.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
+| `ansi-regex` | 6.4.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `argparse` | 2.0.1 | Python-2.0 | `Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020 Python Software Foundation; All Rights Reserved` |
 | `character-entities` | 2.0.2 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
 | `character-entities-legacy` | 3.0.0 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
@@ -256,7 +256,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `micromark-factory-destination` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-factory-label` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-factory-mdx-expression` | 2.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
-| `micromark-factory-space` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
+| `micromark-factory-space` | 2.1.0 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-factory-title` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-factory-whitespace` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-util-character` | 2.1.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
@@ -277,7 +277,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `ms` | 2.1.3 | MIT | `Copyright (c) 2020 Vercel, Inc.` |
 | `parse-entities` | 4.0.2 | MIT | `Copyright (c) Titus Wormer <mailto:tituswormer@gmail.com>` |
 | `parse5` | 8.0.1 | MIT | `Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin)` |
-| `smol-toml` | 1.8.0 | BSD-3-Clause | `Copyright (c) Squirrel Chat et al., All rights reserved.` |
+| `smol-toml` | 1.9.0 | BSD-3-Clause | `Copyright (c) Squirrel Chat et al., All rights reserved.` |
 | `string-width` | 8.2.1 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `strip-ansi` | 7.2.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `unist-util-position-from-estree` | 2.0.0 | MIT | `Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>` |

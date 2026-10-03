@@ -149,6 +149,11 @@ var priorDigests = map[string]string{
 	"321e5210fc0ec943b369164932e87622811ebb0c7c49907343a25fd2d28d8ae5": Directory + "/package.json",
 	"b1cb57bf987fe1f70a9e80e627fe2d3838bbab6dacc7150a1b66df6460364d2a": Directory + "/package-lock.json",
 	"70a908977d34a88a789e3139209f3d501fe2493076f194527332487353ebf9b4": Directory + "/verify.mjs",
+	// package.json, package-lock.json and verify.mjs on smol-toml 1.8.0 before the 1.9.0 update and lockfile
+	// maintenance refresh (#645, #658).
+	"1c9f14af6a030dc78bce47b521711a44d5c37af67dadd5d77358f104f4059cba": Directory + "/package.json",
+	"2a11b6947b2513b654772a53c9249e0ed1322e9344666f0a42aaa1f72670d266": Directory + "/package-lock.json",
+	"a3080c17ab3bb62974b1347950a1dc3feac795f758abfb416edf22854dcff45f": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{
