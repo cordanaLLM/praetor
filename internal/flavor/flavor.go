@@ -8,6 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
 )
@@ -148,11 +149,37 @@ func validYAMLMapping(content []byte) bool {
 // audit reports as valid is one every JSON consumer can also read. An object with no members
 // is rejected for the same reason an empty YAML mapping is: `{}` configures nothing.
 func validJSONObject(content []byte) bool {
+	return jsonObject(content, strictjson.StrictJSON)
+}
+
+// validJSONCObject reports whether content parses as a non-empty object of JSON with Comments.
+// It is the validator of a path its consumer documents as JSONC (strictjson.DialectOf), which
+// among the catalog's settings is .vscode/settings.json: VS Code reads that file with line
+// comments, block comments and trailing commas, so the audit counting such a file invalid told
+// the operator to fix a file that is not broken (#316). Everything else validJSONObject
+// refuses stays refused.
+func validJSONCObject(content []byte) bool {
+	return jsonObject(content, strictjson.JSONC)
+}
+
+// maxSettingJSONDepth bounds the nesting of one audited JSON document, the bound
+// internal/editor holds the same .vscode files to when it merges them.
+const maxSettingJSONDepth = 128
+
+// jsonObject reads content through the one bounded JSON reader (internal/strictjson, HISS-19)
+// in dialect and reports whether it is an object with at least one member. A document that
+// repeats a member name in one object is not valid: which value its consumer keeps is the
+// consumer's choice, and `editors verify` refuses the same file. Names are compared exactly,
+// because a settings object carries case-sensitive glob patterns as names.
+func jsonObject(content []byte, dialect strictjson.Dialect) bool {
 	var document map[string]json.RawMessage
-	if err := json.Unmarshal(content, &document); err != nil {
-		return false
-	}
-	return len(document) > 0
+	err := strictjson.Decode(content, &document, strictjson.Options{
+		MaxBytes: maxSettingBytes,
+		MaxDepth: maxSettingJSONDepth,
+		Names:    strictjson.ExactNames,
+		Dialect:  dialect,
+	})
+	return err == nil && len(document) > 0
 }
 
 // ToolchainItem defines an external CLI tool or compiler required by a flavor.

@@ -166,7 +166,8 @@ reader. Each validator checks what its format makes checkable and no more:
 | `assignsTOMLKey` | TOML assigning at least one key |
 | `validXMLDocument` | well-formed XML with an element |
 | `validMarkdownDocument` | text beyond headings and HTML comments |
-| `validYAMLMapping`, `validJSONObject` | a non-empty mapping or object, as for settings |
+| `validYAMLMapping`, `validJSONObject` | a non-empty mapping or object, as for settings; the JSON is strict |
+| `validJSONCObject` | a non-empty object of JSON with Comments, for a path whose consumer documents that format: `.vscode/settings.json` (`DialectOf` in `internal/strictjson/dialect.go`) |
 | `carriesCode` | a line that is not a comment, for JavaScript, TypeScript and `tsconfig.json`, which is JSON with comments |
 
 `flavor apply` asks a narrower question than the audit. It writes nothing under the canonical name

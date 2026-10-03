@@ -514,6 +514,35 @@ func TestCavemanFloorPositive(t *testing.T) {
 	}
 }
 
+// TestCavemanFloorANSIEscapes pins #713 through the command: a rewrite that removes colour
+// codes holds the floor, and a number, id or directive lost beside an escape fails its rule,
+// on a line below an OSC left unterminated on its own line too.
+func TestCavemanFloorANSIEscapes(t *testing.T) {
+	dir := t.TempDir()
+	before := writeFixtureFile(t, dir, "before.md", "a \033[31mMUST\033[0m b\n")
+	after := writeFixtureFile(t, dir, "after.md", "a MUST b\n")
+	out, err := runCavemanCLI(t, "", "floor", before, after)
+	if err != nil || !strings.Contains(out, "after.md: PASS findings=0") {
+		t.Fatalf("issue #713 reproduction files must pass: err=%v\n%s", err, out)
+	}
+	cases := map[string]struct{ before, after, want string }{
+		"number": {"a \033[31mred 7\033[0m b\n", "a red b\n", "number_before.md:1 F9 number-lost: 7"},
+		"id":     {"rule \033[1mHISS-17\033[0m applies\n", "rule applies\n", "id_before.md:1 F3 id-lost: HISS-17"},
+		"must":   {"x \033[31mMUST\033[0m y\n", "x y\n", "must_before.md:0 F6 must-dropped: 1 -> 0"},
+		"osc":    {"log \033]0;title\nrule HISS-17\ndone\a end\n", "log 0;title\ndone end\n", "osc_before.md:2 F3 id-lost: HISS-17"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			lossyBefore := writeFixtureFile(t, dir, name+"_before.md", tc.before)
+			lossyAfter := writeFixtureFile(t, dir, name+"_after.md", tc.after)
+			out, err := runCavemanCLI(t, "", "floor", lossyBefore, lossyAfter)
+			if err == nil || !strings.Contains(out, tc.want) {
+				t.Fatalf("fact lost beside an escape must fail %q: err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+}
+
 func TestCavemanFloorNegative(t *testing.T) {
 	dir := t.TempDir()
 	before := writeFixtureFile(t, dir, "before.md", floorBefore)

@@ -92,7 +92,7 @@ func (f *GoServiceFlavor) RequiredTemplates() []TemplateItem {
 func (f *GoServiceFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
 		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit and pre-push gating", Producer: producerAdopt, Validator: validYAMLMapping},
-		{Name: "VSCode Go Settings", Path: ".vscode/settings.json", Description: "Editor workspace settings", Producer: producerEditors, Validator: validJSONObject},
+		{Name: "VSCode Go Settings", Path: ".vscode/settings.json", Description: "Editor workspace settings", Producer: producerEditors, Validator: validJSONCObject},
 		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
@@ -171,7 +171,7 @@ func (f *NativeGPUSystemsFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *NativeGPUSystemsFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode C/C++ Settings", Path: ".vscode/settings.json", Description: "Editor workspace config", Producer: producerEditors, Validator: validJSONObject},
+		{Name: "VSCode C/C++ Settings", Path: ".vscode/settings.json", Description: "Editor workspace config", Producer: producerEditors, Validator: validJSONCObject},
 		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
@@ -212,7 +212,7 @@ func (f *FrontendSvelteFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *FrontendSvelteFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode Svelte Settings", Path: ".vscode/settings.json", Description: "Editor workspace config", Producer: producerEditors, Validator: validJSONObject},
+		{Name: "VSCode Svelte Settings", Path: ".vscode/settings.json", Description: "Editor workspace config", Producer: producerEditors, Validator: validJSONCObject},
 		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
@@ -296,7 +296,7 @@ func (f *PythonMLFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *PythonMLFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode Python Settings", Path: ".vscode/settings.json", Description: "Python interpreter and test runner", Producer: producerEditors, Validator: validJSONObject},
+		{Name: "VSCode Python Settings", Path: ".vscode/settings.json", Description: "Python interpreter and test runner", Producer: producerEditors, Validator: validJSONCObject},
 	}
 }
 
@@ -483,7 +483,7 @@ func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
 func (f *RustSystemsFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
 		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit clippy and rustfmt enforcement", Producer: producerAdopt, Validator: validRustLefthook},
-		{Name: "VSCode Rust Settings", Path: ".vscode/settings.json", Description: "Rust-analyzer and clippy editor configuration", Producer: producerEditors, Validator: validJSONObject},
+		{Name: "VSCode Rust Settings", Path: ".vscode/settings.json", Description: "Rust-analyzer and clippy editor configuration", Producer: producerEditors, Validator: validJSONCObject},
 		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
@@ -541,7 +541,7 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *TypeScriptNodeFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode TypeScript Settings", Path: ".vscode/settings.json", Description: "TypeScript language server and formatter configuration", Producer: producerEditors, Validator: validJSONObject},
+		{Name: "VSCode TypeScript Settings", Path: ".vscode/settings.json", Description: "TypeScript language server and formatter configuration", Producer: producerEditors, Validator: validJSONCObject},
 		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
@@ -589,7 +589,7 @@ func (f *JVMServiceFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *JVMServiceFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode Java Settings", Path: ".vscode/settings.json", Description: "Java language server and build tool config", Producer: producerEditors, Validator: validJSONObject},
+		{Name: "VSCode Java Settings", Path: ".vscode/settings.json", Description: "Java language server and build tool config", Producer: producerEditors, Validator: validJSONCObject},
 		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }
@@ -632,7 +632,7 @@ func (f *MobileFlutterFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *MobileFlutterFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "VSCode Dart Settings", Path: ".vscode/settings.json", Description: "Dart and Flutter editor workspace configuration", Producer: producerEditors, Validator: validJSONObject},
+		{Name: "VSCode Dart Settings", Path: ".vscode/settings.json", Description: "Dart and Flutter editor workspace configuration", Producer: producerEditors, Validator: validJSONCObject},
 		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}
 }

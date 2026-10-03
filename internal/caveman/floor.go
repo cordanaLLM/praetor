@@ -97,6 +97,12 @@ func Floor(before, after string) Report {
 	return Report{Findings: found.sorted()}
 }
 
+// extractFacts extracts the clarity floor facts from Markdown text. ANSI escape sequences are
+// removed zero-width before any rule reads a line, through the reader Compress uses
+// (stripANSI, #713): the parameters of an escape are no numbers, a word glued to an escape is
+// the word it shows, in prose, code spans and fences alike, and Floor(in, Compress(in)) holds
+// for coloured text. An escape left unterminated on its line is no sequence: its digits and
+// words stay facts, and so does every line up to a terminator further down (stripANSI).
 func extractFacts(text string) facts {
 	f := facts{
 		items:  map[string]map[string]int{},
@@ -106,7 +112,7 @@ func extractFacts(text string) facts {
 	for _, rule := range setRules {
 		f.items[rule] = map[string]int{}
 	}
-	lines, _ := scan(text)
+	lines, _ := scan(stripANSI(text))
 	for _, span := range codeSpanTexts(lines) {
 		f.collect(RuleFloorCodeSpan, span.num, []string{span.text})
 		f.keep(RuleFloorCodeWord, codeTokenRe.FindAllString(span.text, -1))

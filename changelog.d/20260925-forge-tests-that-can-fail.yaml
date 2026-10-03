@@ -1,0 +1,4 @@
+type: fixed
+title: "Forge tests for the reviewer path limit and the ADR collision now fail when the property breaks"
+breaking: false
+issue: "#344"

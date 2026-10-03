@@ -6,12 +6,7 @@ import (
 	"strings"
 )
 
-var (
-	// ansiRe matches CSI sequences (colours, cursor moves), OSC sequences (titles,
-	// hyperlinks) and the two-byte escapes.
-	ansiRe     = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]`)
-	spaceRunRe = regexp.MustCompile(`[ \t]{2,}`)
-)
+var spaceRunRe = regexp.MustCompile(`[ \t]{2,}`)
 
 // Stats measures one Compress call. Token figures come from EstimateTokens.
 type Stats struct {
@@ -21,7 +16,8 @@ type Stats struct {
 
 // Compress applies the cleanups that cannot change meaning, and nothing else:
 //
-//   - ANSI escape sequences are removed everywhere;
+//   - ANSI escape sequences are removed everywhere (stripANSI); an escape left unterminated
+//     on its line is no sequence and stays text, the lines after it too;
 //   - CRLF line ends become LF;
 //   - in prose lines, trailing blanks go and inner runs of blanks outside code spans
 //     collapse to one space, leading indentation kept;
@@ -32,7 +28,7 @@ type Stats struct {
 // ledger rows, hook protocol lines, evidence pointers) keep their bytes apart from ANSI and
 // CRLF. Prose is never rewritten: no word is dropped or replaced.
 func Compress(text string) (string, Stats) {
-	lines, _ := scan(ansiRe.ReplaceAllString(text, ""))
+	lines, _ := scan(stripANSI(text))
 	out := make([]string, 0, len(lines))
 	var c compactor
 	for _, ln := range lines {

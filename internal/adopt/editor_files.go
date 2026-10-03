@@ -8,6 +8,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/editor"
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -23,9 +24,11 @@ const maxQuotedEditorMembers = 5
 //     (editor.IsPreservedEditorFile) is preserved;
 //   - a JSON file missing managed values is kept on a plain run, with a warning naming them, and
 //     merged under --force (mergeEditorFile): every adopter key stays, the managed ones are added;
-//   - a JSON file adoption cannot merge (JSONC comments, invalid JSON, a conflicting managed
-//     value), a differing non-JSON file and an unreadable one are kept with a warning, and
-//     adoption continues.
+//   - a JSON file adoption cannot merge (invalid JSON, a conflicting managed value, or a
+//     .vscode file whose comments or trailing commas the merge would lose), a differing non-JSON
+//     file and an unreadable one are kept with a warning, and adoption continues. A .vscode file
+//     VS Code reads as JSON with Comments is read that way (strictjson.DialectOf), so a
+//     commented one holding every managed value is verified, not kept.
 func (s *adoptSession) reconcileEditorFile(ctx context.Context, f editor.GeneratedFile) error {
 	full, err := repoFile(s.repoPath, f.Path)
 	if err != nil {
@@ -44,7 +47,7 @@ func (s *adoptSession) reconcileEditorFile(ctx context.Context, f editor.Generat
 	}
 	resolution, err := editor.ResolveExisting(f, existing, true)
 	if err != nil {
-		s.keepEditorFile(f.Path, unmergedEditorReason(err, s.forceCommand()))
+		s.keepEditorFile(f.Path, unmergedEditorReason(f.Path, err, s.forceCommand()))
 		return nil
 	}
 	return s.applyEditorResolution(ctx, full, f, existing, resolution)
@@ -116,15 +119,30 @@ func (s *adoptSession) keepEditorFile(rel, reason string) {
 	s.report.addWarning("%s: kept unchanged, not verified: %s", rel, reason)
 }
 
-// unmergedEditorReason says why editor.ResolveExisting refused to merge an existing JSON file
-// and what the operator can do about it: fix it, then run rerun, the forced re-adoption
-// (ForceCommand).
-func unmergedEditorReason(err error, rerun string) string {
-	if errors.Is(err, editor.ErrExistingJSONInvalid) {
+// unmergedEditorReason says why editor.ResolveExisting refused to merge the existing JSON file
+// rel and what the operator can do about it: fix it, then run rerun, the forced re-adoption
+// (ForceCommand). The advice follows the dialect the file's editor reads it in
+// (strictjson.DialectOf): a .vscode file VS Code reads as JSON with Comments keeps its comments,
+// so it is never told to remove them to become valid, only that a merge cannot write around
+// them (editor.CommentedJSONError).
+func unmergedEditorReason(rel string, err error, rerun string) string {
+	var commented *editor.CommentedJSONError
+	switch {
+	case errors.As(err, &commented):
+		return "it carries comments or trailing commas, which a merge would lose because it rewrites the file, and lacks the managed values " +
+			quoteFirst(commented.Lacks, len(commented.Lacks), maxQuotedEditorMembers, strconv.Quote) +
+			". Add them by hand and re-run adopt, or remove the comments and trailing commas and run " + rerun + " to merge them"
+	case !errors.Is(err, editor.ErrExistingJSONInvalid):
+		return "its managed values were not merged (" + err.Error() + "). Resolve the conflict, then run " + rerun
+	case strictjson.DialectOf(rel) == strictjson.JSONC:
+		return "it is not valid " + strictjson.JSONC.String() + " (" + err.Error() + "), the format its editor reads it in, " +
+			"so it never verifies as it is. Fix what the error names (comments and trailing commas may stay, a " +
+			"duplicate key may not) and run " + rerun + " to merge the managed values, or delete it and re-run adopt " +
+			"to regenerate it"
+	default:
 		return "it is not strict JSON (" + err.Error() + "). Adoption and `" + util.PraetorCLI + " editors verify` " +
-			"read strict JSON only, and a merge would drop its comments or other non-JSON content, so it never " +
+			"read strict JSON there, and a merge would drop its comments or other non-JSON content, so it never " +
 			"verifies as it is. Make it strict JSON (remove its comments, trailing commas and duplicate keys) and " +
 			"run " + rerun + " to merge the managed values, or delete it and re-run adopt to regenerate it"
 	}
-	return "its managed values were not merged (" + err.Error() + "). Resolve the conflict, then run " + rerun
 }

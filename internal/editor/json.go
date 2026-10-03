@@ -8,6 +8,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -24,11 +25,33 @@ const (
 
 var errEditorJSONNodeBound = fmt.Errorf("editor JSON exceeds %d nodes", maxJSONNodes)
 
-// ErrExistingJSONInvalid marks a merge refused because the existing file is not one strict JSON
-// document: JSONC comments or trailing commas, a duplicate key, invalid UTF-8, an unpaired
-// surrogate escape or a document past the node bound. Re-encoding it would drop what the strict
-// decoder cannot represent, so a caller that keeps such a file (adoption) can say why.
+// ErrExistingJSONInvalid marks a merge refused because the existing file is not one valid
+// document in the dialect its editor reads it in (strictjson.DialectOf): a syntax error, a
+// duplicate key, invalid UTF-8, an unpaired surrogate escape or a document past the node bound.
+// Comments and trailing commas are a syntax error everywhere but in the .vscode files VS Code
+// reads as JSON with Comments. Re-encoding such a file would drop what the decoder cannot
+// represent, so a caller that keeps it (adoption) can say why.
 var ErrExistingJSONInvalid = errors.New("existing JSON is invalid")
+
+// CommentedJSONError refuses a merge into a file that is valid JSON with Comments, lacks
+// managed values and carries comments or trailing commas. A merge decodes the document and
+// writes it again, and the decoder keeps neither, so merging would silently delete the
+// adopter's comments (#316). The file is left as it is; the operator adds the values by hand,
+// or removes the comments and trailing commas so that the merge can write the file. A
+// commented file that already holds every managed value is not refused: nothing is written.
+type CommentedJSONError struct {
+	// Lacks names each managed member the file lacks, as Resolution.Added names a merged one.
+	Lacks []string
+}
+
+func (e *CommentedJSONError) Error() string {
+	quoted := make([]string, 0, len(e.Lacks))
+	for _, pointer := range e.Lacks {
+		quoted = append(quoted, strconv.Quote(pointer))
+	}
+	return "it carries comments or trailing commas, which a merge would lose because it rewrites the file, and lacks the managed values " +
+		strings.Join(quoted, ", ") + "; add them by hand, or remove the comments and trailing commas and run again"
+}
 
 // jsonPointerEscaper escapes one object key as an RFC 6901 reference token.
 var jsonPointerEscaper = strings.NewReplacer("~", "~0", "/", "~1")
@@ -55,12 +78,14 @@ var editorJSON = strictjson.Options{
 	},
 }
 
-// decodeEditorJSON decodes exactly one bounded UTF-8 JSON document. Numbers stay
-// json.Number literals so re-encoding never rounds them, and duplicate object keys
+// decodeEditorJSON decodes exactly one bounded UTF-8 JSON document written in dialect. Numbers
+// stay json.Number literals so re-encoding never rounds them, and duplicate object keys
 // are rejected because a map decode would silently keep only the last value.
-func decodeEditorJSON(raw []byte) (any, error) {
+func decodeEditorJSON(raw []byte, dialect strictjson.Dialect) (any, error) {
+	opts := editorJSON
+	opts.Dialect = dialect
 	var value any
-	if err := strictjson.Decode(raw, &value, editorJSON); err != nil {
+	if err := strictjson.Decode(raw, &value, opts); err != nil {
 		return nil, err
 	}
 	if err := validateJSONNodeBound(value); err != nil {
@@ -109,16 +134,19 @@ func isJSONEditorFile(path string) bool {
 	return strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".sublime-project")
 }
 
-// mergeJSONDocument adds the managed values of desired to existing and returns the merged
-// document with the JSON Pointer of every member it added (see Resolution.Added). Unrelated keys
-// and list entries are retained; nothing added returns existing unchanged, and a managed value
-// that conflicts with an existing one is an error and nothing is returned for writing.
-func mergeJSONDocument(existing, desired []byte) ([]byte, []string, error) {
-	have, err := decodeEditorJSON(existing)
+// mergeJSONDocument adds the managed values of desired to existing, which its editor reads in
+// dialect, and returns the merged document with the JSON Pointer of every member it added (see
+// Resolution.Added). Unrelated keys and list entries are retained; nothing added returns
+// existing unchanged, comments included. A managed value that conflicts with an existing one is
+// an error, and so is a document that needs values added while it carries comments or trailing
+// commas (CommentedJSONError); nothing is returned for writing in either case. desired is
+// generated and always strict JSON.
+func mergeJSONDocument(existing, desired []byte, dialect strictjson.Dialect) ([]byte, []string, error) {
+	have, err := decodeEditorJSON(existing, dialect)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", ErrExistingJSONInvalid, err)
 	}
-	want, err := decodeEditorJSON(desired)
+	want, err := decodeEditorJSON(desired, strictjson.StrictJSON)
 	if err != nil {
 		return nil, nil, fmt.Errorf("generated JSON is invalid: %w", err)
 	}
@@ -129,11 +157,21 @@ func mergeJSONDocument(existing, desired []byte) ([]byte, []string, error) {
 	if len(added) == 0 {
 		return existing, nil, nil
 	}
+	if carriesJSONCSyntax(existing, dialect) {
+		return nil, nil, &CommentedJSONError{Lacks: added}
+	}
 	data, err := encodeEditorJSON(merged)
 	if err != nil {
 		return nil, nil, err
 	}
 	return data, added, nil
+}
+
+// carriesJSONCSyntax reports whether raw, which decodeEditorJSON accepted in dialect, uses what
+// JSONC adds to JSON. The two dialects differ in comments and trailing commas only, so a
+// document JSONC accepts and strict JSON refuses carries one of them.
+func carriesJSONCSyntax(raw []byte, dialect strictjson.Dialect) bool {
+	return dialect == strictjson.JSONC && strictjson.Validate(raw, editorJSON) != nil
 }
 
 type jsonMergeFrame struct {
@@ -216,15 +254,17 @@ func mergeJSONArray(root *any, frame jsonMergeFrame, desired []any, added *[]str
 	return nil
 }
 
-// jsonDocumentContains reports whether existing contains every managed value in
-// desired while allowing unrelated keys and list items. Both documents are decoded
-// strictly, so ambiguous duplicate keys are an error rather than a pass.
-func jsonDocumentContains(existing, desired []byte) (bool, error) {
-	have, err := decodeEditorJSON(existing)
+// jsonDocumentContains reports whether existing, which its editor reads in dialect, contains
+// every managed value in desired while allowing unrelated keys and list items. Both documents
+// are decoded through the one bounded reader, so ambiguous duplicate keys are an error rather
+// than a pass; the comments and trailing commas of a JSONC file change nothing about what it
+// holds.
+func jsonDocumentContains(existing, desired []byte, dialect strictjson.Dialect) (bool, error) {
+	have, err := decodeEditorJSON(existing, dialect)
 	if err != nil {
 		return false, err
 	}
-	want, err := decodeEditorJSON(desired)
+	want, err := decodeEditorJSON(desired, strictjson.StrictJSON)
 	if err != nil {
 		return false, err
 	}
