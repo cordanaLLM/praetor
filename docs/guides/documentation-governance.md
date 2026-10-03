@@ -242,27 +242,43 @@ it left the lock (#736):
 | :--- | :--- |
 | `*` | any run of characters inside one path segment, a leading dot included |
 | `?` | one character inside one path segment |
-| `[abc]`, `[a-z]` | one listed character; `[ab]` also matches the text `[ab]`, as in micromatch |
-| `[^a]` | one character that is not listed |
+| `[abc]`, `[a-z]` | one listed character; `[ab]` also matches the text `[ab]`, as in micromatch, while a class holding `-`, `^`, `{`, `}` or another regular-expression character does not |
+| `[^a]` | one character that is not listed, never `/` |
 | `{a,b}` | either alternative, inside one path segment; at most 64 alternatives per segment |
 | `**` as a whole segment | any number of segments, none included |
 
 A trailing `/**` after a segment that ends in `*` (`docs/*/**`) needs at least
 one more segment, and consecutive `**` segments count as one, as in micromatch.
-Matching is case-sensitive on every platform; on Windows a backslash in a path
-also separates segments. `styleExclusionGrammarSelfTest` replays a table of
-micromatch's answers for these shapes.
+A path spelled exactly as the glob matches it too, so `docs/{a,c}.md` also
+excludes a file named `docs/{a,c}.md`: micromatch compares the two before its
+pattern. Matching is case-sensitive on every platform; on Windows a backslash
+in a path also separates segments. `styleExclusionGrammarSelfTest` replays a
+table of micromatch's answers for these shapes.
 
 A glob is refused when it is absolute, drive-lettered, or negated with `!`, when
 it contains a backslash or an empty, `.`, or `..` segment, or when it holds no
 letter or number, so wildcards alone (`**`, `*/**`) cannot stand for every file.
 The gate also refuses, naming the glob and the reason, every shape it does not
-support rather than matching it differently: extglobs and `( | )` groups, POSIX
-classes such as `[[:alpha:]]`, brace ranges such as `{1..3}`, nested brace lists,
-`**` inside a segment (`docs/**.md`), a class that starts with `!` (micromatch
-read `[!a]` as the characters `!` and `a`; write `[^a]`), an unmatched bracket
-or brace, a brace list without a comma, and a brace alternative that leaves an
-empty segment or wildcards alone.
+support rather than matching it differently:
+
+- extglobs and `( | )` groups, POSIX classes such as `[[:alpha:]]`, brace
+  ranges such as `{1..3}`, nested brace lists, and `**` inside a segment
+  (`docs/**.md`);
+- a class that starts with `!`: micromatch read `[!a]` as the characters `!`
+  and `a`; write `[^a]`;
+- a class range that spans `/`, such as `[ -~]`: micromatch let it match a
+  path separator, so `a[ -~]b/x.md` matched `a/b/x.md`;
+- a `+` straight after `]`, `{` or `}`: micromatch read it as a
+  regular-expression repeat, so `docs/[0-9]+.md` matched `docs/12.md` and not
+  `docs/1+.md`;
+- a brace alternative of `*` alone: micromatch let it match nothing, so
+  `docs/x/**/{*,draft}` matched `docs/x`; list that alternative as a separate
+  glob;
+- `.*` inside a brace list: micromatch matched it differently from `.*`
+  outside one, so `a{x,.*}` did not match `a.`, though `a.*` did;
+- an unmatched bracket or brace, a brace list without a comma, and a brace
+  alternative that leaves an empty segment or wildcards alone.
+
 Exclusions apply after the built-in style exclusions and before the style rules
 run. They narrow the style run only: the private-link rule still reads every
 inventory file, excluded or not. When the globs would remove every file the

@@ -299,17 +299,26 @@ function styleExclusionProblem(pattern) {
 // the braces package, whose stack-exhaustion advisory has no fixed release (#736). The grammar is
 // the part of micromatch's, with dot files included, that the gate supports, and it matches as
 // micromatch 4.0.8 with { dot: true } does: `*` and `?` stay inside one path segment and match a
-// leading dot; `[abc]`, `[a-z]` and `[!a]` (or `[^a]`) match one character; `{a,b}` lists
-// alternatives inside one segment; a `**` segment spans any number of segments, none included,
-// except that a trailing `/**` after a segment ending in `*` needs at least one more segment, and
-// consecutive `**` segments count as one. Matching is case-sensitive on every platform, and on
-// Windows a backslash in a path is a separator. Every other shape is refused when the settings
-// are read, never matched differently: extglobs and `( | )` groups, POSIX classes, nested
-// lists, brace ranges, `**` inside a segment, and an unmatched bracket or brace.
-// styleExclusionGrammarSelfTest pins each shape against the answers micromatch gave.
+// leading dot; `[abc]`, `[a-z]` and `[^a]` match one character; `{a,b}` lists alternatives
+// inside one segment; a `**` segment spans any number of segments, none included, except that a
+// trailing `/**` after a segment ending in `*` needs at least one more segment, and consecutive
+// `**` segments count as one; and a path spelled exactly as the glob matches it, as picomatch
+// compares the two before its regular expression. Matching is case-sensitive on every platform,
+// and on Windows a backslash in a path is a separator. Every other shape is refused when the
+// settings are read, never matched differently: extglobs and `( | )` groups, POSIX classes,
+// nested lists, brace ranges, `**` inside a segment, an unmatched bracket or brace, a `[!a]`
+// class, a class range spanning `/`, a `+` straight after `]`, `{` or `}` (a regular-expression
+// repeat in micromatch), a brace alternative of `*` alone (micromatch lets it match nothing), and
+// `.*` inside a brace list. styleExclusionGrammarSelfTest pins each shape against the answers
+// micromatch gave.
 const GLOB_STAR_TOKEN = Object.freeze({ type: "star" });
 const GLOB_ANY_TOKEN = Object.freeze({ type: "any" });
 const ANY_SEGMENT = Object.freeze({ globstar: false, wildcard: true, alternatives: [[GLOB_STAR_TOKEN]] });
+const SLASH_CODE = 0x2f;
+// picomatch's REGEX_SPECIAL_CHARS: a class body holding none of them also matches its own text.
+const PICOMATCH_REGEX_CHARS = /[-*+?.^${}(|)[\]]/u;
+const REPEAT_PROBLEM = "puts + straight after ], { or }, where micromatch reads it as a regular-expression " +
+  "repeat, not as the character +";
 
 // classEnd returns the index of the ] closing the [ ] class opened at index, or the problem.
 function classEnd(segment, index) {
@@ -319,6 +328,9 @@ function classEnd(segment, index) {
   }
   if (segment.slice(index + 1, end).includes("[")) {
     return "uses [ inside a [ ] class; POSIX classes such as [:alpha:] are not supported";
+  }
+  if (segment[end + 1] === "+") {
+    return REPEAT_PROBLEM;
   }
   return end;
 }
@@ -335,7 +347,7 @@ function braceParts(segment) {
       return "has a ] without an opening [";
     }
     if (character === "{" || character === "}" || (character === "," && list !== null)) {
-      const state = braceDelimiter(character, parts, list, literal);
+      const state = braceDelimiter(character, segment[index + 1], parts, { list, literal });
       if (typeof state === "string") {
         return state;
       }
@@ -360,15 +372,16 @@ function braceParts(segment) {
   return parts;
 }
 
-// braceDelimiter applies one {, } or list comma: it opens a list, closes it into parts, or starts
-// the next alternative. It returns the new state or the problem refusing the delimiter.
-function braceDelimiter(character, parts, list, literal) {
+// braceDelimiter applies one {, } or list comma, followed by next, to the open list and the
+// literal text read so far: it opens a list, closes it into parts, or starts the next
+// alternative. It returns the new state or the problem refusing the delimiter.
+function braceDelimiter(character, next, parts, { list, literal }) {
   if (character === "{") {
     if (list !== null) {
       return "nests a brace list inside another; nested lists are not supported";
     }
     parts.push(literal);
-    return { list: [], literal: "" };
+    return next === "+" ? REPEAT_PROBLEM : { list: [], literal: "" };
   }
   if (list === null) {
     return "has a } without an opening {";
@@ -377,14 +390,29 @@ function braceDelimiter(character, parts, list, literal) {
   if (character === ",") {
     return { list, literal: "" };
   }
+  const problem = closedListProblem(list, next);
+  if (problem !== null) {
+    return problem;
+  }
+  parts.push(list);
+  return { list: null, literal: "" };
+}
+
+// closedListProblem names why a brace list just closed, followed by next, is refused, or returns
+// null. Inside a list picomatch reads every . outside a class as a dot token and makes a * right
+// after it match differently: `a{x,.*}` does not match `a.`, while `a.*` does.
+function closedListProblem(list, next) {
   if (list.some((alternative) => alternative.includes(".."))) {
     return "uses .. inside a brace list; brace ranges are not supported";
+  }
+  if (list.some((alternative) => alternative.replace(/\[[^\]]*\]/gu, "c").includes(".*"))) {
+    return "puts .* inside a brace list, which micromatch matches differently from .* outside one; " +
+      "list those alternatives as separate globs";
   }
   if (list.length < 2) {
     return "has a brace list without a comma; write at least two alternatives";
   }
-  parts.push(list);
-  return { list: null, literal: "" };
+  return next === "+" ? REPEAT_PROBLEM : null;
 }
 
 // expandBraces returns every alternative one segment's brace lists spell, or the problem.
@@ -404,11 +432,28 @@ function expandBraces(segment) {
   return [...new Set(alternatives)];
 }
 
-// classToken reads the body of a [ ] class: an optional leading ^, then characters and a-z ranges,
-// compared as UTF-16 code units as micromatch's regular expressions compare them. As in
-// micromatch, a body without a range or another regular-expression character (`[ab]`, not
-// `[a-c]` or `[^a]`) also matches its own bracketed text, and literal holds that text. micromatch
-// reads a leading ! as the character !, not as negation, so the gate refuses it.
+// classRanges reads the characters and a-z ranges of a [ ] class body from start as [low, high]
+// pairs of UTF-16 code units, the units micromatch's regular expressions compare.
+function classRanges(body, start) {
+  const ranges = [];
+  for (let index = start; index < body.length && index < MAX_STYLE_EXCLUSION_BYTES; index += 1) {
+    const low = body.charCodeAt(index);
+    const ranged = body[index + 1] === "-" && index + 2 < body.length;
+    ranges.push([low, ranged ? body.charCodeAt(index + 2) : low]);
+    index += ranged ? 2 : 0;
+  }
+  return ranges;
+}
+
+function rangeText([low, high]) {
+  return `${String.fromCharCode(low)}-${String.fromCharCode(high)}`;
+}
+
+// classToken reads the body of a [ ] class: an optional leading ^, then characters and a-z ranges.
+// As in micromatch, a body without a character from picomatch's regular-expression set
+// (`[ab]`, not `[a-c]`, `[^a]` or `[{a]`) also matches its own bracketed text, and literal holds
+// that text. micromatch reads a leading ! as the character !, not as negation, and lets a range
+// spanning / match a path separator, since only a negated class has / added; both are refused.
 function classToken(body) {
   if (body.startsWith("!")) {
     return "starts a [ ] class with !, which micromatch reads as the character !; write [^...] to negate";
@@ -418,21 +463,17 @@ function classToken(body) {
   if (body.length === start) {
     return "has an empty [ ] class; a class may not begin with ]";
   }
-  const ranges = [];
-  for (let index = start; index < body.length && index < MAX_STYLE_EXCLUSION_BYTES; index += 1) {
-    const low = body.charCodeAt(index);
-    if (body[index + 1] !== "-" || index + 2 >= body.length) {
-      ranges.push([low, low]);
-      continue;
-    }
-    const high = body.charCodeAt(index + 2);
-    if (high < low) {
-      return `has the reversed range ${body.slice(index, index + 3)} in a [ ] class`;
-    }
-    ranges.push([low, high]);
-    index += 2;
+  const ranges = classRanges(body, start);
+  const reversed = ranges.find(([low, high]) => high < low);
+  if (reversed !== undefined) {
+    return `has the reversed range ${rangeText(reversed)} in a [ ] class`;
   }
-  const literal = /[-*+?.^$]/u.test(body) ? null : `[${body}]`;
+  const spanning = negated ? undefined : ranges.find(([low, high]) => low <= SLASH_CODE && SLASH_CODE <= high);
+  if (spanning !== undefined) {
+    return `has the range ${rangeText(spanning)} in a [ ] class, which spans / and so lets micromatch match ` +
+      "a path separator";
+  }
+  const literal = PICOMATCH_REGEX_CHARS.test(body) ? null : `[${body}]`;
   return { type: "class", negated, ranges, literal };
 }
 
@@ -481,6 +522,20 @@ function segmentTokens(text) {
   return tokens;
 }
 
+// alternativeProblem names why one brace alternative of segment is refused, or returns null. A
+// brace alternative of `*` alone may match nothing in micromatch: `docs/x/**/{*,draft}` matches
+// `docs/x` there, as a whole-segment `*` never does.
+function alternativeProblem(alternative, segment) {
+  if (alternative === "" || alternative === "." || alternative === "..") {
+    return "has a brace list that leaves an empty, . or .. segment";
+  }
+  if (alternative !== segment && /^\*+$/u.test(alternative)) {
+    return "has a brace alternative of * alone, which micromatch lets match nothing; list that " +
+      "alternative as a separate glob";
+  }
+  return null;
+}
+
 // compileSegment turns one path segment of a declared exclusion into a globstar or a list of
 // token alternatives, or returns the problem refusing it.
 function compileSegment(segment) {
@@ -496,8 +551,9 @@ function compileSegment(segment) {
   }
   const alternatives = [];
   for (let index = 0; index < expanded.length && index < MAX_BRACE_ALTERNATIVES; index += 1) {
-    if (expanded[index] === "" || expanded[index] === "." || expanded[index] === "..") {
-      return "has a brace list that leaves an empty, . or .. segment";
+    const problem = alternativeProblem(expanded[index], segment);
+    if (problem !== null) {
+      return problem;
     }
     const tokens = segmentTokens(expanded[index]);
     const variants = typeof tokens === "string" ? tokens : bracketVariants(tokens);
@@ -601,6 +657,7 @@ function segmentsMatch(segments, parts) {
 
 // styleExclusionMatcher returns a predicate over repository-relative paths for one declared
 // exclusion; platform decides whether a backslash separates path segments, as it does on Windows.
+// A path spelled exactly as the glob matches, as picomatch tests that before its expression.
 function styleExclusionMatcher(pattern, platform) {
   const parsed = parseStyleExclusion(pattern);
   if (parsed.problem !== undefined) {
@@ -608,7 +665,7 @@ function styleExclusionMatcher(pattern, platform) {
   }
   return (relative) => {
     const normalized = platform === "win32" ? relative.replaceAll("\\", "/") : relative;
-    return segmentsMatch(parsed.segments, normalized.split("/"));
+    return normalized === pattern || segmentsMatch(parsed.segments, normalized.split("/"));
   };
 }
 
@@ -1433,37 +1490,51 @@ function styleExclusionSelfTest(temporary) {
 }
 
 // STYLE_EXCLUSION_TABLE holds, for each pattern, the paths of STYLE_EXCLUSION_PATHS that
-// micromatch 4.0.8 with { dot: true } matched, recorded before the gate dropped it (#736). A
-// differential of the matcher against micromatch over 2,357 accepted patterns and 1,107 paths
-// found no difference before the table was cut down to these rows.
+// micromatch 4.0.8 with { dot: true } matched, recorded before the gate dropped it (#736). Random
+// differentials of the matcher against micromatch, the last over 38,203 accepted patterns and
+// about 54 million pattern-path pairs, found no difference before the table was cut down to
+// these rows; each earlier difference became a row below or a refused shape.
+// LITERAL_STYLE_PATHS spell glob characters, or a character outside ASCII, in a file name.
+const LITERAL_STYLE_PATHS = Object.freeze(["docs/{a,c}.md", "docs/[a-b].md", "docs/[{a]x.md", "docs/{x.md",
+  "docs/é.md", "docs/1+.md"]);
 const STYLE_EXCLUSION_PATHS = Object.freeze(["README.md", "docs/guide.md", "docs/.hidden/note.md",
   "docs/x/y/deep.md", "docs/a.md", "docs/b.md", "docs/c.md", "docs/[ab].md", "pkg/testdata/golden.md",
-  "testdata/top.md", ".github/ISSUE_TEMPLATE/bug.md", "Docs/guide.md", "changelog.d/fixed/x.md", "docs/x.markdown"]);
+  "testdata/top.md", ".github/ISSUE_TEMPLATE/bug.md", "Docs/guide.md", "changelog.d/fixed/x.md", "docs/x.markdown",
+  ...LITERAL_STYLE_PATHS]);
 const STYLE_EXCLUSION_TABLE = Object.freeze([
   ["docs/**", ["docs/guide.md", "docs/.hidden/note.md", "docs/x/y/deep.md", "docs/a.md", "docs/b.md", "docs/c.md",
-    "docs/[ab].md", "docs/x.markdown"]],
+    "docs/[ab].md", "docs/x.markdown", ...LITERAL_STYLE_PATHS]],
   ["**/testdata/**", ["pkg/testdata/golden.md", "testdata/top.md"]],
   [".github/**", [".github/ISSUE_TEMPLATE/bug.md"]],
-  ["docs/*.md", ["docs/guide.md", "docs/a.md", "docs/b.md", "docs/c.md", "docs/[ab].md"]],
-  ["docs/?.md", ["docs/a.md", "docs/b.md", "docs/c.md"]],
+  ["docs/*.md", ["docs/guide.md", "docs/a.md", "docs/b.md", "docs/c.md", "docs/[ab].md", ...LITERAL_STYLE_PATHS]],
+  ["docs/?.md", ["docs/a.md", "docs/b.md", "docs/c.md", "docs/é.md"]],
   ["docs/[ab].md", ["docs/a.md", "docs/b.md", "docs/[ab].md"]],
-  ["docs/[a-b].md", ["docs/a.md", "docs/b.md"]],
-  ["docs/[^a].md", ["docs/b.md", "docs/c.md"]],
-  ["docs/{a,c}.md", ["docs/a.md", "docs/c.md"]],
-  ["docs/*.{md,markdown}", ["docs/guide.md", "docs/a.md", "docs/b.md", "docs/c.md", "docs/[ab].md", "docs/x.markdown"]],
+  ["docs/[a-b].md", ["docs/a.md", "docs/b.md", "docs/[a-b].md"]],
+  ["docs/[^a].md", ["docs/b.md", "docs/c.md", "docs/é.md"]],
+  ["docs/{a,c}.md", ["docs/a.md", "docs/c.md", "docs/{a,c}.md"]],
+  ["docs/*.{md,markdown}", ["docs/guide.md", "docs/a.md", "docs/b.md", "docs/c.md", "docs/[ab].md", "docs/x.markdown",
+    ...LITERAL_STYLE_PATHS]],
   ["docs/*/**", ["docs/.hidden/note.md", "docs/x/y/deep.md"]],
   ["docs/**/*.md", ["docs/guide.md", "docs/.hidden/note.md", "docs/x/y/deep.md", "docs/a.md", "docs/b.md", "docs/c.md",
-    "docs/[ab].md"]],
+    "docs/[ab].md", ...LITERAL_STYLE_PATHS]],
   ["*.md", ["README.md"]],
   ["changelog.d/**/x.md", ["changelog.d/fixed/x.md"]],
   ["README.md/**", ["README.md"]],
+  ["docs/[{a]*.md", ["docs/a.md", "docs/{a,c}.md", "docs/{x.md"]],
+  ["docs/[^ -~].md", ["docs/é.md"]],
+  ["docs/?+.md", ["docs/1+.md"]],
+  ["docs/{a,c}.*", ["docs/a.md", "docs/c.md"]],
+  ["docs/{x,c.[m]*}", ["docs/c.md"]],
+  ["docs/{x*,c}.md", ["docs/c.md"]],
 ]);
 
 // Positive: every pattern in STYLE_EXCLUSION_TABLE matches exactly the paths micromatch matched,
-// and on Windows a backslash separates segments. Negative: every shape the gate does not support
-// is refused with the reason, never matched differently. Boundary: a segment spelling exactly
-// MAX_BRACE_ALTERNATIVES alternatives passes and twice that is refused, and an empty exclusion
-// list styles every file the built-in selection styles.
+// a path spelled as the glob included, and on Windows a backslash separates segments. Negative:
+// every shape the gate does not support is refused with the reason, never matched differently.
+// Boundary: the table keeps the accepted neighbours of each refused shape (+ after ?, a negated
+// range spanning /, .* after a list, a class between . and * in a list, a * with more text in
+// a list); a segment spelling exactly MAX_BRACE_ALTERNATIVES alternatives passes and twice that
+// is refused; and an empty exclusion list styles every file the built-in selection styles.
 function styleExclusionGrammarSelfTest() {
   for (const [pattern, matched] of STYLE_EXCLUSION_TABLE) {
     const matcher = styleExclusionMatcher(pattern, "linux");
@@ -1472,6 +1543,9 @@ function styleExclusionGrammarSelfTest() {
   assert.equal(styleExclusionMatcher("docs/*.md", "win32")("docs\\guide.md"), true);
   assert.equal(styleExclusionMatcher("docs/*.md", "linux")("docs\\guide.md"), false);
   assert.equal(styleExclusionMatcher("**/testdata/**", "win32")("pkg\\testdata\\golden.md"), true);
+  assert.equal(styleExclusionMatcher("docs/{a,c}.md", "win32")("docs\\{a,c}.md"), true);
+  assert.equal(styleExclusionMatcher("docs/{a,c}.md", "linux")("docs/{a,c}.mdx"), false);
+  const repeat = /puts \+ straight after \], \{ or \}, where micromatch reads it as a regular-expression repeat/u;
   const refused = [
     ["docs/@(a|b).md", /uses \( \) or \|; extglobs and regex groups are not supported/u],
     ["docs/+(a).md", /extglobs and regex groups/u],
@@ -1490,7 +1564,17 @@ function styleExclusionGrammarSelfTest() {
     ["docs/a**.md", /\*\* must be a whole segment/u],
     ["docs/**.md", /\*\* must be a whole segment/u],
     ["docs/{,}/x.md", /leaves an empty, \. or \.\. segment/u],
-    ["{*,docs}/**", /a brace alternative of wildcards alone would match every file/u],
+    ["{?,docs}/**", /a brace alternative of wildcards alone would match every file/u],
+    ["docs/[0-9]+.md", repeat],
+    ["docs/v{1,2}+.md", repeat],
+    ["docs/{+,a}.md", repeat],
+    ["docs/a[ -~]b.md", /has the range  -~ in a \[ \] class, which spans \/ and so lets micromatch match a path/u],
+    ["docs/[--z].md", /has the range --z in a \[ \] class, which spans \//u],
+    ["docs/x/**/{*,draft}", /has a brace alternative of \* alone, which micromatch lets match nothing/u],
+    ["docs/*{,a}", /has a brace alternative of \* alone/u],
+    ["{*,docs}/**", /has a brace alternative of \* alone/u],
+    ["docs/{x,.*}", /puts \.\* inside a brace list, which micromatch matches differently/u],
+    ["docs/{x,[a].*}", /puts \.\* inside a brace list/u],
     [`docs/${"{a,b}".repeat(7)}.md`, /expands to more than 64 alternatives in one segment/u],
     [`docs/${"[ab]".repeat(7)}.md`, /expands to more than 64 alternatives in one segment/u],
   ];
