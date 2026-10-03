@@ -312,6 +312,35 @@ func TestAbortPolicy_Negative_GoSignatureBindingsShadowOS(t *testing.T) {
 	}
 }
 
+// A local named os hides the package only where it is in scope, so os.Exit past a local of
+// another block, or before one declared later, is the process exit (#733).
+func TestAbortPolicy_Positive_GoShadowOutOfScopeIsTheProcessExit(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "lib/later.go", strings.Join([]string{
+		"package lib",          // 1
+		"",                     // 2
+		"import \"os\"",        // 3
+		"",                     // 4
+		"func Inner(b bool) {", // 5
+		"\tif b {",             // 6
+		"\t\tos := 1",          // 7
+		"\t\t_ = os",           // 8
+		"\t}",                  // 9
+		"\tos.Exit(1)",         // 10
+		"}",                    // 11
+		"",                     // 12
+		"func Later() {",       // 13
+		"\tos.Exit(1)",         // 14
+		"\tos := 1",            // 15
+		"\t_ = os",             // 16
+		"}",                    // 17
+		"",
+	}, "\n"))
+
+	rep := scanFixture(t, root, ScanOptions{})
+	assertViolations(t, rep, []expectedViolation{{"HISS-07", "lib/later.go", 10}, {"HISS-07", "lib/later.go", 14}})
+}
+
 func TestAbortPolicy_Boundary_GoShadowIsScopedToItsFunction(t *testing.T) {
 	root := t.TempDir()
 	// A parameter named os shadows the package only inside its own function; the next

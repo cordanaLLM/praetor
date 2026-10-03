@@ -177,11 +177,24 @@ Package scope is complete here rather than convenient. A call cycle spanning two
 need each package to import the other, and the Go compiler rejects that outright, so every call
 cycle a buildable program can contain is inside one package.
 
-A name the function binds itself shadows the package-level name of the same spelling for the whole
-body: its receiver, a parameter, a named result, a local, a range variable or a closure parameter.
-A call through such a name adds no edge, a bare call is not direct recursion, and `os.Exit` on a
-binding named `os` is not the process exit (`funcDeclares` in `internal/hiss/go_ast.go`). A method
-is called through its receiver, so a local named like the method does not hide its recursion.
+A name bound inside a function shadows the package-level name of the same spelling only where Go
+puts the binding in scope (`goScope` in `internal/hiss/go_scope.go`):
+
+- a receiver, type parameter, parameter or named result for the whole body, and a closure
+  parameter for the closure's body;
+- a local declared by `:=`, `var` or `const` from the end of its declaration to the end of the
+  innermost block holding it, a local type from its name on, and a range variable in the loop body;
+- a variable an `if`, `for`, `switch` or type switch header declares, or a `select` case receives
+  into, until that statement or clause ends.
+
+At a call where such a binding is in scope, the call adds no call-graph edge, a bare call is not
+direct recursion, and `os.Exit` on a binding named `os` is not the process exit. A local of another
+block, or one declared after the call, hides nothing, so the call still reaches the function. Each
+function is walked once, so the cost grows with its size, not with its size times its calls. A
+method is called through its receiver, so a local named like the method does not hide its
+recursion. `TestGoScope_*` in `internal/hiss/go_scope_test.go` and
+`TestCallGraphSeesACycleBehindAnOutOfScopeLocal` in `internal/hiss/go_callgraph_test.go` pin
+these rules.
 
 ### Go: the net/http abort sentinel
 
@@ -194,10 +207,11 @@ argument is that sentinel (`AbortsHTTPResponse` in `internal/hiss/go_ast.go`):
 - The argument is resolved through the file's imports, so `http.ErrAbortHandler`, an alias such as
   `web.ErrAbortHandler`, and `ErrAbortHandler` under a dot import of `net/http` are the sentinel.
 - A local or package variable named `ErrAbortHandler`, another package's `ErrAbortHandler`, a
-  receiver, parameter or local of the enclosing declared function that shadows the package name, a
-  wrapped sentinel (`fmt.Errorf("%w", ...)`), a recovered value re-panicked as is, and a second
-  argument are still reported. A function literal assigned at package level has no enclosing
-  declared function, so a parameter of it that shadows the package name is not seen.
+  receiver, parameter or local of the enclosing declared function that shadows the package name
+  where the panic is (scoped as above), a wrapped sentinel (`fmt.Errorf("%w", ...)`), a recovered
+  value re-panicked as is, and a second argument are still reported. A function literal assigned
+  at package level has no enclosing declared function, so a parameter of it that shadows the
+  package name is not seen.
 - `standards-lsp` asks the same function, so the editor and `praetorctl audit` agree
   (`refusedPanic` in `cmd/standards-lsp/server.go`).
 

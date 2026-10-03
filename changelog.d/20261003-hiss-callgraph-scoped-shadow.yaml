@@ -1,0 +1,4 @@
+type: fixed
+title: HISS-01 missed a call cycle or recursion behind a same-named local that is out of scope at the call
+issue: "#733"
+breaking: false

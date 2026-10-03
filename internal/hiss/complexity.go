@@ -147,6 +147,7 @@ func MeasureFunc(fset *token.FileSet, fn ast.Node) FuncMetrics {
 		return FuncMetrics{}
 	}
 	if body != nil {
+		v.scope.enter(fn)
 		ast.Inspect(body, v.visit)
 		v.metrics.Statements = countStatements(body)
 	}
@@ -168,14 +169,17 @@ type complexityVisitor struct {
 	// nil for a method or a literal.
 	fn      *ast.FuncDecl
 	metrics FuncMetrics
+	// scope tracks which names are bound at the node the walk has reached (go_scope.go).
+	scope goScope
 }
 
 // visit is the ast.Inspect callback: a non-nil node is entered, nil pops the last one. A
 // node refused at the depth bound is never pushed, and ast.Inspect sends no nil for it.
 func (v *complexityVisitor) visit(n ast.Node) bool {
 	if n == nil {
-		if len(v.stack) > 0 {
-			v.stack = v.stack[:len(v.stack)-1]
+		if last := len(v.stack) - 1; last >= 0 {
+			v.scope.leave(v.stack[last])
+			v.stack = v.stack[:last]
 		}
 		return true
 	}
@@ -184,6 +188,7 @@ func (v *complexityVisitor) visit(n ast.Node) bool {
 	}
 	v.countCyclomatic(n)
 	v.countCognitive(n)
+	v.scope.enter(n)
 	v.stack = append(v.stack, n)
 	return true
 }
@@ -243,14 +248,15 @@ func (v *complexityVisitor) countIf(x *ast.IfStmt) {
 }
 
 // countRecursion adds gocognit's increment for a plain function calling itself by name. A
-// parameter, result or local of the same name shadows the function, so calling it is not
-// recursion.
+// parameter, result or local of the same name in scope at the call shadows the function, so
+// calling it is not recursion (go_scope.go); gocognit decides the same through the parser's
+// scoped identifier resolution.
 func (v *complexityVisitor) countRecursion(call *ast.CallExpr) {
 	ident, ok := call.Fun.(*ast.Ident)
 	if !ok || v.fn == nil || v.fn.Name == nil || ident.Name != v.fn.Name.Name {
 		return
 	}
-	if !funcDeclares(v.fn, ident.Name) {
+	if !v.scope.binds(ident.Name) {
 		v.metrics.Cognitive++
 	}
 }

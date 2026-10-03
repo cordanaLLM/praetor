@@ -6,10 +6,14 @@ package hiss
 
 import (
 	"context"
+	"go/parser"
+	"go/token"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // scanSources writes each named source into one package directory and returns the HISS-01
@@ -186,4 +190,91 @@ func TestCallGraphReportsEachCycleSeparately(t *testing.T) {
 	if len(found) != 2 {
 		t.Fatalf("expected two independent cycles, got %d: %s", len(found), cycleMessages(found))
 	}
+}
+
+// Positive: a local of the callee's name that is not in scope at the call hides nothing. The
+// whole-body check dropped each of these edges, so the cycle through it went unreported (#733).
+func TestCallGraphSeesACycleBehindAnOutOfScopeLocal(t *testing.T) {
+	for name, caller := range map[string]string{
+		"inner block": "func f(b bool) {\n\tif b {\n\t\tg := 1\n\t\t_ = g\n\t}\n\tg(b)\n}\n",
+		"after call":  "func f(b bool) {\n\tg(b)\n\tg := 1\n\t_ = g\n}\n",
+		"sibling case": "func f(b bool) {\n\tswitch b {\n\tcase true:\n\t\tg := 1\n\t\t_ = g\n" +
+			"\tcase false:\n\t\tg(b)\n\t}\n}\n",
+		"literal local": "func f(b bool) {\n\th := func() {\n\t\tg := 1\n\t\t_ = g\n\t}\n\th()\n\tg(b)\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			found := scanSources(t, map[string]string{"a.go": "package p\n\n" + caller + "\nfunc g(b bool) { f(b) }\n"})
+			if len(found) != 1 || !strings.Contains(found[0].Message, "f -> g -> f") {
+				t.Fatalf("the cycle f -> g -> f must be reported once, got %d: %s", len(found), cycleMessages(found))
+			}
+		})
+	}
+}
+
+// Negative: a binding of the callee's name in scope at the call is what the call reaches, so
+// no edge exists and no cycle closes.
+func TestCallGraphIgnoresBindingsInScopeAtTheCall(t *testing.T) {
+	for name, caller := range map[string]string{
+		"short variable":  "func f(b bool) {\n\tg := func(bool) {}\n\tg(b)\n}\n",
+		"parameter":       "func f(b bool, g func(bool)) {\n\tg(b)\n}\n",
+		"named result":    "func f(b bool) (g func(bool)) {\n\tg(b)\n\treturn\n}\n",
+		"enclosing block": "func f(b bool) {\n\tg := func(bool) {}\n\tif b {\n\t\tfor i := 0; i < 1; i++ {\n\t\t\tg(b)\n\t\t}\n\t}\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			found := scanSources(t, map[string]string{"a.go": "package p\n\n" + caller + "\nfunc g(b bool) { f(b) }\n"})
+			if len(found) != 0 {
+				t.Fatalf("a call reaching a binding in scope adds no edge, got: %s", cycleMessages(found))
+			}
+		})
+	}
+}
+
+// Boundary: a binding inside a function literal shadows only the calls inside that literal.
+// The literal's own call to g reaches its parameter; the enclosing function's call after it
+// reaches the function g and closes the cycle.
+func TestCallGraphScopesALiteralsBindingsToTheLiteral(t *testing.T) {
+	inside := "package p\n\nfunc f(b bool) {\n\th := func(g func(bool)) { g(b) }\n\th(nil)\n}\n\nfunc g(b bool) { f(b) }\n"
+	if found := scanSources(t, map[string]string{"a.go": inside}); len(found) != 0 {
+		t.Fatalf("a call inside the literal reaches its parameter, got: %s", cycleMessages(found))
+	}
+	after := "package p\n\nfunc f(b bool) {\n\th := func(g func(bool)) { g(b) }\n\th(nil)\n\tg(b)\n}\n\nfunc g(b bool) { f(b) }\n"
+	if found := scanSources(t, map[string]string{"a.go": after}); len(found) != 1 {
+		t.Fatalf("the call after the literal reaches the function g, got %d: %s", len(found), cycleMessages(found))
+	}
+}
+
+// Boundary: a function of 10001 calls costs one walk. Checking every call by walking the whole
+// body again made the cost calls times nodes, so eight times the calls took about 64 times as
+// long; linear cost takes about 8 times. The bound sits between the two, and each size is
+// timed as the best of several runs so one scheduling stall cannot decide it.
+func TestCallGraphScansCallsInLinearTime(t *testing.T) {
+	small := bestAddCallsTime(t, 1250)
+	large := bestAddCallsTime(t, 10001)
+	t.Logf("1250 calls: %v; 10001 calls: %v", small, large)
+	if large > 24*small {
+		t.Fatalf("8x the calls took %v against %v (%.0fx); one walk per function is linear",
+			large, small, float64(large)/float64(small))
+	}
+}
+
+// bestAddCallsTime builds the call graph of one function making calls bare calls, and returns
+// the fastest of five runs.
+func bestAddCallsTime(t *testing.T, calls int) time.Duration {
+	t.Helper()
+	src := "package p\n\nfunc leaf() {}\n\nfunc big() {\n" + strings.Repeat("\tleaf()\n", calls) + "}\n"
+	file, err := parser.ParseFile(token.NewFileSet(), "big.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	best := time.Duration(math.MaxInt64)
+	for range 5 {
+		start := time.Now()
+		graph := newCallGraph()
+		graph.addFile(file, "big.go")
+		best = min(best, time.Since(start))
+		if _, edge := graph.edges["big"]["leaf"]; !edge || graph.count != 1 {
+			t.Fatalf("one function calling leaf %d times is one edge, got %d", calls, graph.count)
+		}
+	}
+	return best
 }

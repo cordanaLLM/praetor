@@ -142,6 +142,24 @@ func firstPanic(t *testing.T, src string) (GoImports, *ast.FuncDecl, *ast.CallEx
 	return FileImports(file), fn, call
 }
 
+// Positive, negative and boundary: a binding shadows the package name only where it is in
+// scope at the panic. A local of another block, one declared after the panic and a function
+// literal's parameter leave http.ErrAbortHandler the sentinel; a local declared before the
+// panic in an enclosing block is what the selector reads (#733).
+func TestAbortsHTTPResponse_ShadowFollowsScope(t *testing.T) {
+	for src, want := range map[string]bool{
+		"func F(b bool) { if b { http := 1; _ = http }; panic(http.ErrAbortHandler) }":                       true,
+		"func F() { panic(http.ErrAbortHandler); http := 1; _ = http }":                                      true,
+		"func F() { _ = func(http int) {}; panic(http.ErrAbortHandler) }":                                    true,
+		"func F(b bool) { http := struct{ ErrAbortHandler error }{}; if b { panic(http.ErrAbortHandler) } }": false,
+	} {
+		im, fn, call := firstPanic(t, "package p\n\nimport \"net/http\"\n\n"+src+"\n")
+		if got := AbortsHTTPResponse(im, fn, call); got != want {
+			t.Errorf("AbortsHTTPResponse = %v, want %v for %s", got, want, src)
+		}
+	}
+}
+
 func TestAbortsHTTPResponse_Positive_ExactSentinel(t *testing.T) {
 	im, fn, call := firstPanic(t, "package p\n\nimport h \"net/http\"\n\nfunc F() { panic(h.ErrAbortHandler) }\n")
 	if !AbortsHTTPResponse(im, fn, call) {

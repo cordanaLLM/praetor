@@ -154,6 +154,49 @@ func TestMeasureFunc_MatchesReferenceTools(t *testing.T) {
 	}
 }
 
+// scopedRecursionSource holds a call to the function's own name past a local of that name
+// that is out of scope (Inner, Later) and one that reaches a local in scope (Outer).
+const scopedRecursionSource = `package p
+
+func Inner(n int) int {
+	if n > 0 {
+		Inner := 1
+		_ = Inner
+	}
+	return Inner(n - 1)
+}
+
+func Outer(n int) int {
+	Outer := func(int) int { return 0 }
+	if n > 0 {
+		return Outer(n)
+	}
+	return 0
+}
+
+func Later(n int) int {
+	if n > 0 {
+		return Later(n - 1)
+	}
+	Later := 1
+	return Later
+}
+`
+
+// Positive, negative and boundary: the recursion increment follows scope, as gocognit's does
+// through the parser's identifier resolution. gocognit v1.2.1 (ComplexityStats) reports this
+// exact source as Inner 2, Outer 1 and Later 2: a local of another block or one declared after
+// the call hides nothing, a local declared before it in an enclosing block does.
+func TestMeasureFunc_RecursionFollowsScope(t *testing.T) {
+	fset, file := parseReference(t, scopedRecursionSource)
+	units := unitsByName(t, fset, file)
+	for name, want := range map[string]int{"Inner": 2, "Outer": 1, "Later": 2} {
+		if got := units[name].Metrics.Cognitive; got != want {
+			t.Errorf("%s: cognitive = %d, want %d", name, got, want)
+		}
+	}
+}
+
 // Boundary: a declaration without a body, a nil declaration and a node that is no function.
 func TestMeasureFunc_BoundaryShapes(t *testing.T) {
 	fset, file := parseReference(t, "package p\n\nfunc Asm(x int) int\n\nfunc Nop() {}\n")
