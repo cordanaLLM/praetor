@@ -181,6 +181,47 @@ func TestRefresh_Boundary_NothingToCatchUp(t *testing.T) {
 	e.requireBinary(t, "v1:praetorctl")
 }
 
+// Positive + negative + boundary (#377): an install at the checkout HEAD whose manifest
+// lacks tribunusctl is skipped off the update branch, refreshed at the same commit on it, and
+// has nothing left to repair afterwards.
+func TestRefresh_Positive_InstallLackingBinaryAtHeadIsRepaired(t *testing.T) {
+	e := newInstalledEngine(t)
+	ctx := context.Background()
+	dropRecordedBinary(t, e.opts, "tribunusctl")
+	result, err := Refresh(ctx, e.refreshOptions("release"))
+	requireSkipped(t, result, err, `not the update branch "release"`)
+
+	result, err = Refresh(ctx, e.refreshOptions(e.branch))
+	if err != nil || !result.Refreshed || result.CommitsBehind != 0 || result.Reason != "install lacked tribunusctl" {
+		t.Fatalf("want a same-commit refresh naming tribunusctl, got %+v, %v", result, err)
+	}
+	assertContent(t, filepath.Join(e.opts.BinDir, "tribunusctl"), "v2:tribunusctl")
+	manifest, err := config.ReadInstallManifest(ctx, e.opts.ManifestPath)
+	if err != nil || manifest.EngineCommit != e.installed || len(missingBinaries(manifest)) != 0 {
+		t.Fatalf("manifest after the repairing refresh: %+v, %v", manifest, err)
+	}
+
+	result, err = Refresh(ctx, e.refreshOptions(e.branch))
+	requireSkipped(t, result, err, "is not behind the checkout HEAD")
+}
+
+// Positive + boundary: the refresh reason names the lag, the missing binaries, or both.
+func TestRefreshReason(t *testing.T) {
+	for _, tc := range []struct {
+		behind  int
+		missing []string
+		want    string
+	}{
+		{1, nil, "install was 1 commits behind the checkout"},
+		{0, []string{"tribunusctl"}, "install lacked tribunusctl"},
+		{2, []string{"praetor-lsp", "tribunusctl"}, "install was 2 commits behind the checkout; install lacked praetor-lsp, tribunusctl"},
+	} {
+		if got := refreshReason(tc.behind, tc.missing); got != tc.want {
+			t.Errorf("refreshReason(%d, %v) = %q, want %q", tc.behind, tc.missing, got, tc.want)
+		}
+	}
+}
+
 // Positive: InstallLag counts the commits the checkout HEAD is ahead of the install.
 func TestInstallLag_Positive_CountsCommitsBehind(t *testing.T) {
 	c := newEngineCheckout(t)

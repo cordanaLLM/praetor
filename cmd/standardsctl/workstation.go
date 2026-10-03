@@ -43,7 +43,7 @@ func runWorkstation(args []string) error {
 
 func runWorkstationInstall(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("workstation install", flag.ContinueOnError)
-	source := fs.String("source", "", "Checkout to build the three engine binaries from (required)")
+	source := fs.String("source", "", "Checkout to build the engine binaries and tribunusctl from (required)")
 	binDir := fs.String("bin-dir", "", "Destination directory (default: update.bin_dir, else the per-OS default)")
 	manifest := fs.String("manifest", "", "Install manifest path (default: the per-user configuration directory)")
 	fleetConfig := fs.String("fleet-config", "", "Fleet settings document; recorded into the install manifest")
