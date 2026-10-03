@@ -68,19 +68,20 @@ and is read as a value or recipe, not a rule. Target names continued with a back
 
 Also preserved are the forms only Make itself can resolve: an `include` directive, `$(eval ...)` or
 `${eval ...}`, a target name containing `$` or `%`, a line longer than the 8192-byte scan bound,
-which is read in part, and a Makefile longer than 4096 lines, which is read only in part as well;
-both are left to Make. A `define` alone only binds a variable: a rule line inside its body declares
-nothing, and a helper used only through `$(call ...)` in recipes leaves the Makefile readable. A
-define is left to Make when something can parse its body as rules, which is an eval call anywhere in
-the file, define bodies included, or a top-level bare expansion such as `$(name)`, `$(call name)` or
-`$(call name,$(P)x,A=b)`. A bare expansion needs no define to declare a rule, so one with a colon
-in its arguments, such as `$(if $(X),docs-lint: ; @echo x)` or a bare expansion continued across lines
-with a backslash, is left to Make as well. So is any top-level expansion that could produce a rule:
-a `$(call ...)` of a variable whose value holds a colon (`make-rule = $(1): ; @echo operator`),
-`$(shell ...)`, or a rule reached through variable value expansion (`$(A)$(B):`). That includes a
-colon inside a message argument, such as `$(call check_defined,CC,hint: set it)`, which Make only
-prints: telling the two apart needs the function evaluated, so the reader stays on the safe side
-and the file fails for review, as the
+which is read in part, a continuation chain exceeding 256 physical lines or 8192 bytes, and a Makefile
+longer than 4096 lines, which is read only in part as well; all are left to Make. A `define` alone
+only binds a variable: a rule line inside its body declares nothing, and a helper used only through
+`$(call ...)` in recipes leaves the Makefile readable. A define is left to Make when something can
+parse its body as rules, which is an eval call anywhere in the file, define bodies included, or a
+top-level bare expansion such as `$(name)`, `$(call name)` or `$(call name,$(P)x,A=b)`. A bare expansion
+needs no define to declare a rule, so one with a colon in its arguments, such as
+`$(if $(X),docs-lint: ; @echo x)` or a bare expansion continued across lines with a backslash, is left
+to Make as well. So is any top-level expansion that could produce a rule: a `$(call ...)` of a
+colon-capable variable (`make-rule = $(1): ; @echo operator`, or one referencing a colon-capable
+variable), an unredirected `$(shell ...)`, or a rule reached through variable value expansion (a bare
+`$(A)$(B)` or indirect `$(R)`). That includes a colon inside a message argument, such as
+`$(call check_defined,CC,hint: set it)`, which Make only prints: telling the two apart needs the
+function evaluated, so the reader stays on the safe side and the file fails for review, as the
 [documentation governance guide](documentation-governance.md) describes. So does a computed
 target name such as `$(BUILD_DIR):`, even when the variable holds a plain directory. The reader
 evaluates no function except to know that `info`, `warning` and `error` expand to nothing, so

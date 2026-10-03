@@ -99,9 +99,9 @@ func makefileDefineName(line string) string {
 	return ""
 }
 
-func makefileAssignmentHasColon(line string) (string, bool) {
+func makefileAssignmentNameAndValue(line string) (string, string, bool) {
 	if !makefileBindsVariable(line) {
-		return "", false
+		return "", "", false
 	}
 	assign, _, _ := makefileSplit(line)
 	_, width := makefileOperatorAt(line, assign)
@@ -109,24 +109,60 @@ func makefileAssignmentHasColon(line string) (string, bool) {
 	fields := strings.Fields(rawName)
 	idx := makefileDirectiveIndex(fields)
 	if idx >= len(fields) {
-		return "", false
+		return "", "", false
 	}
 	name := fields[idx]
 	val := line[assign+width:]
 	if comment := strings.Index(val, "#"); comment >= 0 {
 		val = val[:comment]
 	}
-	return name, strings.Contains(val, ":")
+	return name, val, true
+}
+
+func makefilePropagateColonVars(colonVars map[string]bool, varDeps map[string][]string) {
+	const maxFixpointIterations = 16
+	for iter := 0; iter < maxFixpointIterations; iter++ {
+		changed := false
+		for name, deps := range varDeps {
+			if colonVars[name] {
+				continue
+			}
+			for _, dep := range deps {
+				if colonVars[dep] {
+					colonVars[name] = true
+					changed = true
+					break
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+}
+
+// makefileRecordColonSource records colon-holding sources and referenced variable dependencies.
+func makefileRecordColonSource(name, content string, colonVars map[string]bool, varDeps map[string][]string) {
+	if name == "" {
+		return
+	}
+	if makefileReferenceHoldsColon(content) || makefileHasUnredirectedShell(content) {
+		colonVars[name] = true
+	}
+	if deps := makefileExtractReferencedVars(content); len(deps) > 0 {
+		varDeps[name] = append(varDeps[name], deps...)
+	}
 }
 
 // makefileColonVariables scans logical lines for variables whose assigned value or define body
 // holds a colon, which can produce rules when expanded (HISS-02).
-func makefileColonVariables(lines []string) map[string]bool {
-	vars := make(map[string]bool)
+func makefileColonVariables(lines []makefileLogicalLine) map[string]bool {
+	colonVars := make(map[string]bool)
+	varDeps := make(map[string][]string)
 	var define makefileDefineTracker
 	var currentDefine string
 	for i := 0; i < len(lines) && i < MaxMakefileLines; i++ {
-		line := lines[i]
+		line := lines[i].text
 		if strings.HasPrefix(line, "\t") {
 			continue
 		}
@@ -134,16 +170,17 @@ func makefileColonVariables(lines []string) map[string]bool {
 			currentDefine = makefileDefineName(line)
 		}
 		if define.body(line) {
-			if define.depth > 0 && strings.Contains(line, ":") && currentDefine != "" {
-				vars[currentDefine] = true
+			if define.depth > 0 {
+				makefileRecordColonSource(currentDefine, line, colonVars, varDeps)
 			}
 			continue
 		}
-		if name, hasColon := makefileAssignmentHasColon(line); hasColon {
-			vars[name] = true
+		if name, val, ok := makefileAssignmentNameAndValue(line); ok {
+			makefileRecordColonSource(name, val, colonVars, varDeps)
 		}
 	}
-	return vars
+	makefilePropagateColonVars(colonVars, varDeps)
+	return colonVars
 }
 
 // makefileCallTargetName extracts the template name from a $(call name,...) or ${call name,...} reference.
@@ -185,19 +222,91 @@ func makefileReferenceTargetName(ref string) string {
 	return trimmed
 }
 
-func (s *makefileOwnershipScan) referenceHoldsColonVar(ref string) bool {
-	if callName := makefileCallTargetName(ref); callName != "" && s.colonVars[callName] {
-		return true
+// makefileExtractReferencedVars extracts all variable and call target names referenced in text
+// at any nesting depth outside silent function calls (HISS-02).
+func makefileExtractReferencedVars(text string) []string {
+	var vars []string
+	for i := 0; i < len(text) && i < MaxMakefileLineBytes; {
+		if strings.HasPrefix(text[i:], "$$") {
+			i += 2
+			continue
+		}
+		if width := makefileSilentCallWidth(text[i:]); width > 0 {
+			i += width
+			continue
+		}
+		if strings.HasPrefix(text[i:], "$(") || strings.HasPrefix(text[i:], "${") {
+			width := makefileReferenceWidth(text[i:])
+			ref := text[i : i+width]
+			if callName := makefileCallTargetName(ref); callName != "" {
+				vars = append(vars, callName)
+			}
+			if varName := makefileReferenceTargetName(ref); varName != "" {
+				vars = append(vars, varName)
+			}
+			i += 2
+			continue
+		}
+		i++
 	}
-	if varName := makefileReferenceTargetName(ref); varName != "" && s.colonVars[varName] {
-		return true
+	return vars
+}
+
+func makefileShellIsRedirected(shellContent string) bool {
+	return strings.Contains(shellContent, ">/dev/null") || strings.Contains(shellContent, "> /dev/null")
+}
+
+func makefileIsUnredirectedShellRef(ref string) bool {
+	if len(ref) < 8 {
+		return false
+	}
+	inner := ref[2:]
+	if !strings.HasPrefix(inner, "shell ") && !strings.HasPrefix(inner, "shell\t") {
+		return false
+	}
+	return !makefileShellIsRedirected(ref)
+}
+
+// makefileHasUnredirectedShell reports whether text contains an unredirected $(shell ...) call (HISS-02).
+func makefileHasUnredirectedShell(text string) bool {
+	for i := 0; i < len(text) && i < MaxMakefileLineBytes; {
+		if strings.HasPrefix(text[i:], "$$") {
+			i += 2
+			continue
+		}
+		if width := makefileSilentCallWidth(text[i:]); width > 0 {
+			i += width
+			continue
+		}
+		if strings.HasPrefix(text[i:], "$(") || strings.HasPrefix(text[i:], "${") {
+			width := makefileReferenceWidth(text[i:])
+			if makefileIsUnredirectedShellRef(text[i : i+width]) {
+				return true
+			}
+			i += 2
+			continue
+		}
+		i++
 	}
 	return false
 }
 
-// referencesMayDefine reports whether line references a colon-holding variable or combines multiple
-// variable expansions like $(A)$(B) (HISS-02).
-func (s *makefileOwnershipScan) referencesMayDefine(line string) bool {
+func (s *makefileOwnershipScan) referenceMayDefine(ref string) bool {
+	if makefileReferenceHoldsColon(ref) || makefileHasUnredirectedShell(ref) {
+		return true
+	}
+	for _, dep := range makefileExtractReferencedVars(ref) {
+		if s.colonVars[dep] {
+			return true
+		}
+	}
+	return false
+}
+
+// expansionMayDefine reports whether a bare expansion line may define rules (HISS-02): a colon
+// outside silent calls, an unredirected shell invocation, a call or reference of a colon-capable
+// variable, multiple references like $(A)$(B), or an expansion beside a multi-line define.
+func (s *makefileOwnershipScan) expansionMayDefine(line string) (mayDefine, expands bool) {
 	refCount := 0
 	for i := 0; i < len(line) && i < MaxMakefileLineBytes; {
 		kind, width := makefileOperatorAt(line, i)
@@ -205,28 +314,19 @@ func (s *makefileOwnershipScan) referencesMayDefine(line string) bool {
 			break
 		}
 		if kind == makefileReferenceToken && makefileSilentCallWidth(line[i:]) == 0 {
+			expands = true
 			refCount++
-			if s.referenceHoldsColonVar(line[i : i+width]) {
-				return true
+			ref := line[i : i+width]
+			if s.referenceMayDefine(ref) {
+				return true, true
 			}
 		}
 		i += width
 	}
-	return refCount >= 2
-}
-
-// expansionMayDefine reports whether a bare expansion line may define rules (HISS-02): a colon
-// outside silent calls, a shell invocation, a call or reference of a variable holding a colon,
-// multiple references like $(A)$(B), or an expansion beside a multi-line define.
-func (s *makefileOwnershipScan) expansionMayDefine(line string) (mayDefine, expands bool) {
-	expands, colon := makefileBareExpansion(line)
-	if !expands {
-		return false, false
+	if refCount >= 2 || (s.define.defines && expands) {
+		return true, expands
 	}
-	if colon || strings.Contains(line, "$(shell") || strings.Contains(line, "${shell") || s.define.defines {
-		return true, true
-	}
-	return s.referencesMayDefine(line), true
+	return false, expands
 }
 
 // read classifies one logical line and reports whether it alone leaves ownership to Make: a line
@@ -276,25 +376,6 @@ func makefileLineKind(line string) string {
 		return makefileLineExpansion
 	}
 	return makefileLinePlain
-}
-
-// makefileBareExpansion reads a line makefileLineKind reports as a bare expansion. expands reports a
-// reference outside the info, warning and error calls, which may expand to a define body; colon
-// reports a colon outside those calls, which the expansion may carry into a rule. The walk ends
-// where Make stops reading the line: at a comment or the ";" of an inline recipe.
-func makefileBareExpansion(line string) (expands, colon bool) {
-	for i := 0; i < len(line) && i < MaxMakefileLineBytes; {
-		kind, width := makefileOperatorAt(line, i)
-		if kind == makefileEndToken {
-			break
-		}
-		if kind == makefileReferenceToken && makefileSilentCallWidth(line[i:]) == 0 {
-			expands = true
-			colon = colon || makefileReferenceHoldsColon(line[i:i+width])
-		}
-		i += width
-	}
-	return expands, colon
 }
 
 // makefileReferenceHoldsColon reports whether reference text holds a colon outside the info,

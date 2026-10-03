@@ -90,14 +90,20 @@ func assertDocsLintOwnership(t *testing.T, rows map[string]docsLintOwnershipRow)
 // binds a variable. Nesting decides: the colon sits inside a nested reference in the refused
 // nested and foreach rows and in the accepted error-inside-if and computed-assignment rows.
 var makefileBareExpansionRows = map[string]docsLintOwnershipRow{
-	"literal-rule":             {"$(if X,docs-lint: ; @echo template)\n", true},
-	"nested-literal-rule":      {"X = 1\n$(if $(X),docs-lint: ; @echo template)\n", true},
-	"brace-literal-rule":       {"X = 1\n${if ${X},docs-lint: ; @echo template}\n", true},
-	"foreach-literal-rule":     {"X = 1\n$(foreach t,docs-lint,$(if $(X),$(t): ; @echo template))\n", true},
-	"info-literal-rule":        {"$(info docs-lint: ; @echo template)\nall: ; @echo all\n", false},
-	"warning-tab-literal-rule": {"$(warning\tdocs-lint: ; @echo template)\nall: ; @echo all\n", false},
-	"error-inside-if":          {"V = 1\n$(if $(V),,$(error V: set it))\nall: ; @echo all\n", false},
-	"computed-assignment":      {"A = 1\n$(if $(A),docs-lint:c) = x\nall: ; @echo all\n", false},
+	"literal-rule":               {"$(if X,docs-lint: ; @echo template)\n", true},
+	"nested-literal-rule":        {"X = 1\n$(if $(X),docs-lint: ; @echo template)\n", true},
+	"brace-literal-rule":         {"X = 1\n${if ${X},docs-lint: ; @echo template}\n", true},
+	"foreach-literal-rule":       {"X = 1\n$(foreach t,docs-lint,$(if $(X),$(t): ; @echo template))\n", true},
+	"foreach-call-template":      {"make-rule = $(1): ; @echo template\n$(foreach t,docs-lint,$(call make-rule,$(t)))\n", true},
+	"if-call-template":           {"make-rule = $(1): ; @echo template\nX = 1\n$(if $(X),$(call make-rule,docs-lint))\n", true},
+	"strip-call-template":        {"make-rule = $(1): ; @echo template\n$(strip $(call make-rule,docs-lint))\n", true},
+	"indirect-rule-in-if":        {"R = docs-lint: ; @echo template\n$(if 1,$(R))\n", true},
+	"concatenated-rule-indirect": {"A = docs-lint\nB = : ; @echo template\nR = $(A)$(B)\n$(R)\n", true},
+	"indirect-colon-template":    {"C = :\nmake-rule = $(1)$(C) ; @echo template\n$(call make-rule,docs-lint)\n", true},
+	"info-literal-rule":          {"$(info docs-lint: ; @echo template)\nall: ; @echo all\n", false},
+	"warning-tab-literal-rule":   {"$(warning\tdocs-lint: ; @echo template)\nall: ; @echo all\n", false},
+	"error-inside-if":            {"V = 1\n$(if $(V),,$(error V: set it))\nall: ; @echo all\n", false},
+	"computed-assignment":        {"A = 1\n$(if $(A),docs-lint:c) = x\nall: ; @echo all\n", false},
 }
 
 func TestMakefileBareExpansionRuleText(t *testing.T) {
@@ -140,7 +146,7 @@ func TestMakefileDefineOwnershipGNUReplay(t *testing.T) {
 	makePath := resolveGNUMake(t)
 	// Make imports the environment as variables, so a caller's P, A or MAKEFLAGS would change
 	// what the rows that reference $(P) and $(A) expand to.
-	for _, name := range []string{"P", "A", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"} {
+	for _, name := range []string{"P", "A", "B", "C", "R", "X", "V", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"} {
 		t.Setenv(name, "")
 	}
 	accepted := map[string]string{}
@@ -157,7 +163,11 @@ func TestMakefileDefineOwnershipGNUReplay(t *testing.T) {
 	for _, name := range []string{"eval-expanded", "brace-eval-expanded", "bare-expansion", "bare-call", "bare-call-nested-arg", "if-nested-arg", "info-variable"} {
 		refused[name] = makefileDefineOwnershipRows[name].makefile
 	}
-	for _, name := range []string{"literal-rule", "nested-literal-rule", "brace-literal-rule", "foreach-literal-rule"} {
+	for _, name := range []string{
+		"literal-rule", "nested-literal-rule", "brace-literal-rule", "foreach-literal-rule",
+		"foreach-call-template", "if-call-template", "strip-call-template",
+		"indirect-rule-in-if", "concatenated-rule-indirect", "indirect-colon-template",
+	} {
 		refused[name] = makefileBareExpansionRows[name].makefile
 	}
 	for name, makefile := range refused {

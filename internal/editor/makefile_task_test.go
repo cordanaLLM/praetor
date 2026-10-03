@@ -143,3 +143,37 @@ func TestWorkspaceCommands_Positive_ContinuedTargetNameIsVerifyAllTask(t *testin
 		t.Fatalf("a backslash-continued target name got no Verify All task: %q", makefile)
 	}
 }
+
+// Boundary: a continuation chain past MaxMakefileContinuations leaves target resolution
+// ambiguous, so editor generation must not offer the Verify All task.
+func TestWorkspaceCommands_Boundary_ContinuedBoundaries(t *testing.T) {
+	buildLines := func(prefix, step, suffix string, count int) string {
+		var b strings.Builder
+		b.WriteString(prefix)
+		for i := 0; i < count; i++ {
+			b.WriteString(step)
+		}
+		b.WriteString(suffix)
+		return b.String()
+	}
+	// At-bound assignment (256 continuations): no rule, no task
+	atBoundAssignment := buildLines("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@true\n", 255)
+	if verifyAllOffered(t, atBoundAssignment) {
+		t.Fatal("an at-bound assignment got a Verify All task")
+	}
+	// Past-bound assignment (300 continuations): ambiguous, no task
+	pastBoundAssignment := buildLines("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@true\n", 299)
+	if verifyAllOffered(t, pastBoundAssignment) {
+		t.Fatal("a past-bound assignment got a Verify All task")
+	}
+	// At-bound rule (256 continuations): rule found, task offered
+	atBoundRule := buildLines("verify-all \\\n", "  step \\\n", "  other: dep\n\t@true\n", 255)
+	if !verifyAllOffered(t, atBoundRule) {
+		t.Fatal("an at-bound rule got no Verify All task")
+	}
+	// Past-bound rule (300 continuations): ambiguous, no task
+	pastBoundRule := buildLines("verify-all \\\n", "  step \\\n", "  other: dep\n\t@true\n", 299)
+	if verifyAllOffered(t, pastBoundRule) {
+		t.Fatal("a past-bound rule got a Verify All task")
+	}
+}

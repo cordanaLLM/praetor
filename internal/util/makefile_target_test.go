@@ -179,16 +179,34 @@ var makefileIssue554Rows = map[string]makefileIssue554Row{
 		makeTarget: true,
 	},
 	"variable-value-rule": {
-		makefile:   "A = verify-\nB = all\n$(A)$(B): ; @echo custom\n",
+		makefile:   "A = verify-all\nB = : ; @echo custom\n$(A)$(B)\n",
+		hasTarget:  false,
+		mayDefine:  true,
+		makeTarget: true,
+	},
+	"indirect-variable-rule": {
+		makefile:   "A = verify-all\nB = : ; @echo custom\nR = $(A)$(B)\n$(R)\n",
 		hasTarget:  false,
 		mayDefine:  true,
 		makeTarget: true,
 	},
 	"shell-expansion-rule": {
-		makefile:   "$(shell echo verify-all): ; @echo custom\n",
+		makefile:   "$(shell echo 'verify-all: ; @echo custom')\n",
 		hasTarget:  false,
 		mayDefine:  true,
 		makeTarget: true,
+	},
+	"redirected-shell-expansion": {
+		makefile:   "$(shell mkdir -p build >/dev/null 2>&1)\nall:\n\t@echo all\n",
+		hasTarget:  false,
+		mayDefine:  false,
+		makeTarget: false,
+	},
+	"simple-assign-colon": {
+		makefile:   "make-rule := $(1): ; @echo custom\nall:\n\t@echo all\n",
+		hasTarget:  false,
+		mayDefine:  false,
+		makeTarget: false,
 	},
 	"continued-assignment": {
 		makefile:   "HELP = usage \\\n  verify-all: run every gate\nall:\n\t@echo all\n",
@@ -229,7 +247,7 @@ func TestMakefileIssue554Forms(t *testing.T) {
 // TestMakefileIssue554FormsGNUReplay replays the issue #554 forms against GNU Make 4.x.
 func TestMakefileIssue554FormsGNUReplay(t *testing.T) {
 	makePath := resolveGNUMake(t)
-	for _, name := range []string{"A", "B", "X", "HELP", "SRCS", "CFLAGS", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
+	for _, name := range []string{"A", "B", "R", "X", "HELP", "SRCS", "CFLAGS", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
 		t.Setenv(name, "")
 	}
 	for name, tc := range makefileIssue554Rows {
@@ -241,6 +259,89 @@ func TestMakefileIssue554FormsGNUReplay(t *testing.T) {
 			out, err := RunCommand(t.Context(), root, makePath, "--no-print-directory", "-n", "verify-all")
 			if declared := err == nil && (strings.Contains(out, "echo custom") || strings.Contains(out, "echo all")); declared != tc.makeTarget {
 				t.Fatalf("GNU Make declares verify-all = %v, the test row says %v: %q %v", declared, tc.makeTarget, out, err)
+			}
+		})
+	}
+}
+
+func buildContinuationMakefile(prefix, step, suffix string, count int) string {
+	var b strings.Builder
+	b.WriteString(prefix)
+	for i := 0; i < count; i++ {
+		b.WriteString(step)
+	}
+	b.WriteString(suffix)
+	return b.String()
+}
+
+func TestMakefileContinuationBounds(t *testing.T) {
+	atBoundAssignment := buildContinuationMakefile("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@echo all\n", 255)
+	pastBoundAssignment := buildContinuationMakefile("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@echo all\n", 299)
+	atBoundRule := buildContinuationMakefile("verify-all \\\n", "  step \\\n", "  other: dep\n\t@echo custom\n", 255)
+	pastBoundRule := buildContinuationMakefile("verify-all \\\n", "  step \\\n", "  other: dep\n\t@echo custom\n", 299)
+
+	t.Run("at-bound-assignment", func(t *testing.T) {
+		if got := MakefileHasTarget(atBoundAssignment, "verify-all"); got != false {
+			t.Fatalf("MakefileHasTarget = %v, want false", got)
+		}
+		if got := MakefileMayDefineTarget(atBoundAssignment, "verify-all"); got != false {
+			t.Fatalf("MakefileMayDefineTarget = %v, want false", got)
+		}
+	})
+	t.Run("past-bound-assignment", func(t *testing.T) {
+		if got := MakefileHasTarget(pastBoundAssignment, "verify-all"); got != false {
+			t.Fatalf("MakefileHasTarget = %v, want false", got)
+		}
+		if got := MakefileMayDefineTarget(pastBoundAssignment, "verify-all"); got != true {
+			t.Fatalf("MakefileMayDefineTarget = %v, want true", got)
+		}
+	})
+	t.Run("at-bound-rule", func(t *testing.T) {
+		if got := MakefileHasTarget(atBoundRule, "verify-all"); got != true {
+			t.Fatalf("MakefileHasTarget = %v, want true", got)
+		}
+		if got := MakefileMayDefineTarget(atBoundRule, "verify-all"); got != true {
+			t.Fatalf("MakefileMayDefineTarget = %v, want true", got)
+		}
+	})
+	t.Run("past-bound-rule", func(t *testing.T) {
+		if got := MakefileHasTarget(pastBoundRule, "verify-all"); got != false {
+			t.Fatalf("MakefileHasTarget = %v, want false", got)
+		}
+		if got := MakefileMayDefineTarget(pastBoundRule, "verify-all"); got != true {
+			t.Fatalf("MakefileMayDefineTarget = %v, want true", got)
+		}
+	})
+}
+
+func TestMakefileContinuationBoundsGNUReplay(t *testing.T) {
+	makePath := resolveGNUMake(t)
+	for _, name := range []string{"HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
+		t.Setenv(name, "")
+	}
+	atBoundAssignment := buildContinuationMakefile("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@echo all\n", 255)
+	pastBoundAssignment := buildContinuationMakefile("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@echo all\n", 299)
+	atBoundRule := buildContinuationMakefile("verify-all \\\n", "  step \\\n", "  other: dep\n\t@echo custom\n", 255)
+	pastBoundRule := buildContinuationMakefile("verify-all \\\n", "  step \\\n", "  other: dep\n\t@echo custom\n", 299)
+
+	cases := map[string]struct {
+		makefile   string
+		makeTarget bool
+	}{
+		"at-bound-assignment":   {atBoundAssignment, false},
+		"past-bound-assignment": {pastBoundAssignment, false},
+		"at-bound-rule":         {atBoundRule, true},
+		"past-bound-rule":       {pastBoundRule, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(tc.makefile+"dep: ;\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := RunCommand(t.Context(), root, makePath, "--no-print-directory", "-n", "verify-all")
+			if declared := err == nil && (strings.Contains(out, "echo custom") || strings.Contains(out, "echo all")); declared != tc.makeTarget {
+				t.Fatalf("GNU Make declares verify-all = %v, want %v: %q %v", declared, tc.makeTarget, out, err)
 			}
 		})
 	}

@@ -176,6 +176,9 @@ func makefileTargetNames(line string) []string {
 	if strings.HasPrefix(line, "\t") || makefileExportDirective(line) {
 		return nil
 	}
+	if len(line) > MaxMakefileLineBytes {
+		return nil
+	}
 	_, colon, _ := makefileSplit(line)
 	if colon < 0 || makefileBindsVariable(line) {
 		return nil
@@ -189,56 +192,68 @@ func makefileTargetNames(line string) []string {
 
 // makefileLineIsRule reports whether line opens a rule rather than an assignment or directive.
 func makefileLineIsRule(line string) bool {
-	if strings.HasPrefix(line, "\t") || makefileExportDirective(line) {
-		return false
-	}
-	_, colon, _ := makefileSplit(line)
-	if colon < 0 || makefileBindsVariable(line) {
-		return false
-	}
-	_, width := makefileOperatorAt(line, colon)
-	return !makefileBindsVariable(line[colon+width:])
+	return makefileTargetNames(line) != nil
+}
+
+// makefileLogicalLine holds one joined logical line and whether its continuation chain or byte
+// length exceeded the scan bounds, leaving target resolution ambiguous (HISS-02).
+type makefileLogicalLine struct {
+	text      string
+	ambiguous bool
 }
 
 // makefileJoinRecipeContinuation joins physical continuation lines for a recipe line that begins
 // with a tab (HISS-02).
-func makefileJoinRecipeContinuation(lines []string, start int) (string, int) {
+func makefileJoinRecipeContinuation(lines []string, start int) (makefileLogicalLine, int) {
 	line := strings.TrimSuffix(lines[start], "\r")
 	if !makefileContinues(line) {
-		return line, 1
+		return makefileLogicalLine{text: line, ambiguous: len(line) > MaxMakefileLineBytes}, 1
 	}
 	var joined strings.Builder
 	joined.WriteString(line)
 	consumed := 1
-	for start+consumed < len(lines) && start+consumed < MaxMakefileLines && consumed < MaxMakefileContinuations {
-		if !makefileContinues(line) || joined.Len() >= MaxMakefileLineBytes {
-			break
-		}
+	ambiguous := false
+	for start+consumed < len(lines) && start+consumed < MaxMakefileLines && makefileContinues(line) {
 		next := strings.TrimSuffix(lines[start+consumed], "\r")
+		continuations := consumed
+		if continuations > MaxMakefileContinuations || joined.Len() >= MaxMakefileLineBytes {
+			ambiguous = true
+			line = next
+			consumed++
+			continue
+		}
 		joined.WriteByte('\n')
 		joined.WriteString(next)
 		line = next
 		consumed++
 	}
-	return joined.String(), consumed
+	if makefileContinues(line) || joined.Len() > MaxMakefileLineBytes {
+		ambiguous = true
+	}
+	return makefileLogicalLine{text: joined.String(), ambiguous: ambiguous}, consumed
 }
 
 // makefileJoinStatementContinuation joins backslash-continued non-recipe lines (variable
 // assignments, rule lines, directives), collapsing whitespace according to GNU Make rules (HISS-02).
-func makefileJoinStatementContinuation(lines []string, start int) (string, int) {
+func makefileJoinStatementContinuation(lines []string, start int) (makefileLogicalLine, int) {
 	line := strings.TrimSuffix(lines[start], "\r")
 	if !makefileContinues(line) {
-		return line, 1
+		return makefileLogicalLine{text: line, ambiguous: len(line) > MaxMakefileLineBytes}, 1
 	}
 	trimmed := strings.TrimRight(line[:len(line)-1], " \t")
 	var joined strings.Builder
 	joined.WriteString(trimmed)
 	consumed := 1
-	for start+consumed < len(lines) && start+consumed < MaxMakefileLines && consumed < MaxMakefileContinuations {
-		if !makefileContinues(line) || joined.Len() >= MaxMakefileLineBytes {
-			break
-		}
+	ambiguous := false
+	for start+consumed < len(lines) && start+consumed < MaxMakefileLines && makefileContinues(line) {
 		next := strings.TrimSuffix(lines[start+consumed], "\r")
+		continuations := consumed
+		if continuations > MaxMakefileContinuations || joined.Len() >= MaxMakefileLineBytes {
+			ambiguous = true
+			line = next
+			consumed++
+			continue
+		}
 		nextContent := next
 		if makefileContinues(next) {
 			nextContent = next[:len(next)-1]
@@ -248,20 +263,23 @@ func makefileJoinStatementContinuation(lines []string, start int) (string, int) 
 		line = next
 		consumed++
 	}
-	return joined.String(), consumed
+	if makefileContinues(line) || joined.Len() > MaxMakefileLineBytes {
+		ambiguous = true
+	}
+	return makefileLogicalLine{text: joined.String(), ambiguous: ambiguous}, consumed
 }
 
 // makefileLogicalLines joins backslash continuations into logical lines before classifying (HISS-02):
 // a backslash-newline in a variable assignment, a rule line or a recipe line.
-func makefileLogicalLines(data string) []string {
+func makefileLogicalLines(data string) []makefileLogicalLine {
 	physical := strings.Split(data, "\n")
-	result := make([]string, 0, len(physical))
+	result := make([]makefileLogicalLine, 0, len(physical))
 	var define makefileDefineTracker
 	inRule := false
 	for index := 0; index < len(physical) && index < MaxMakefileLines; {
 		raw := strings.TrimSuffix(physical[index], "\r")
 		if define.body(raw) {
-			result = append(result, raw)
+			result = append(result, makefileLogicalLine{text: raw, ambiguous: len(raw) > MaxMakefileLineBytes})
 			index++
 			inRule = false
 			continue
@@ -275,8 +293,8 @@ func makefileLogicalLines(data string) []string {
 		line, consumed := makefileJoinStatementContinuation(physical, index)
 		result = append(result, line)
 		index += consumed
-		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			inRule = makefileLineIsRule(line)
+		if strings.TrimSpace(line.text) != "" && !strings.HasPrefix(strings.TrimSpace(line.text), "#") {
+			inRule = !line.ambiguous && makefileLineIsRule(line.text)
 		}
 	}
 	return result
@@ -293,13 +311,16 @@ func MakefileHasTarget(data, target string) bool {
 
 // makefileTargetLine returns the index of the first line that declares a rule for target, or
 // -1 when none within the scan bound does.
-func makefileTargetLine(lines []string, target string) int {
+func makefileTargetLine(lines []makefileLogicalLine, target string) int {
 	var define makefileDefineTracker
 	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
-		if define.body(lines[index]) {
+		if lines[index].ambiguous {
 			continue
 		}
-		if slices.Contains(makefileTargetNames(lines[index]), target) {
+		if define.body(lines[index].text) {
+			continue
+		}
+		if slices.Contains(makefileTargetNames(lines[index].text), target) {
 			return index
 		}
 	}
@@ -317,8 +338,8 @@ func MakefileTargetRecipe(data, target string) (string, bool) {
 		return "", false
 	}
 	var recipe strings.Builder
-	for next := index + 1; next < len(lines) && next < MaxMakefileLines && strings.HasPrefix(lines[next], "\t"); next++ {
-		recipe.WriteString(lines[next])
+	for next := index + 1; next < len(lines) && next < MaxMakefileLines && strings.HasPrefix(lines[next].text, "\t"); next++ {
+		recipe.WriteString(lines[next].text)
 		recipe.WriteByte('\n')
 	}
 	return recipe.String(), true
@@ -399,7 +420,7 @@ func MakefileMayDefineTarget(data, target string) bool {
 	var scan makefileOwnershipScan
 	scan.colonVars = colonVars
 	for index := 0; index < len(logicalLines) && index < MaxMakefileLines; index++ {
-		if scan.read(logicalLines[index]) {
+		if logicalLines[index].ambiguous || scan.read(logicalLines[index].text) {
 			return true
 		}
 	}
