@@ -83,7 +83,7 @@ func checkPrivateLock(root *os.Root, path string, file *os.File) error {
 	if err != nil {
 		return err
 	}
-	if !opened.Mode().IsRegular() || opened.Mode().Perm()&0o077 != 0 {
+	if private, _ := ArtefactPrivacy(opened); !opened.Mode().IsRegular() || !private {
 		return errors.New("must be a private regular file")
 	}
 	named, err := root.Lstat(path)
