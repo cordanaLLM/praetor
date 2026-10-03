@@ -442,6 +442,37 @@ func WriteFileExclusive(path string, data []byte, perm os.FileMode) error {
 	})
 }
 
+// WriteFileConfinedExclusive is WriteFileExclusive for rel below root, confined through
+// the whole operation (BUG-826). rel first passes ConfinePath's check; its directory is
+// then opened, and the file created exclusively, through a pinned handle on root (os.Root),
+// which follows a link only while it stays inside root. A component swapped for an
+// escaping link after the check is refused instead of followed. perm is the same ceiling
+// WriteFileExclusive applies: zero selects SecureFilePerm; world-writable and non-permission
+// bits are refused.
+//
+// root must exist. An existing entry matching rel (file, directory, dangling symbolic link)
+// returns an error matching os.ErrExist. A rel naming root itself is ErrRootItself. An
+// in-root link with an absolute target is refused, since os.Root follows only relative
+// links. An escape is ErrPathEscapesRoot whether the check or the pinned handle refuses it.
+func WriteFileConfinedExclusive(root, rel string, data []byte, perm os.FileMode) error {
+	perm, err := effectivePerm(perm, SecureFilePerm)
+	if err != nil {
+		return err
+	}
+	absRoot, inside, err := confineBelow(root, rel)
+	if err != nil {
+		return err
+	}
+	if inside == "." {
+		return fmt.Errorf("%w: %q", ErrRootItself, absRoot)
+	}
+	parent := filepath.Dir(inside)
+	name := filepath.Base(inside)
+	return InConfinedDirectory(absRoot, parent, func(dir *os.Root) error {
+		return createExclusively(dir, name, data, filePermission{mode: perm, exact: true})
+	})
+}
+
 // createExclusively is WriteFileExclusive inside the pinned directory: it stages data in a
 // fresh sibling of name, fsyncs it, and links the stage onto name.
 func createExclusively(dir *os.Root, name string, data []byte, perm filePermission) error {

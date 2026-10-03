@@ -1068,3 +1068,98 @@ func TestWriteFileConfined_Boundary_SwapAfterCheck(t *testing.T) {
 		t.Errorf("expected the root-less write to follow the swapped link (documented contract), stat err = %v", err)
 	}
 }
+
+func TestWriteFileConfinedExclusive_Positive(t *testing.T) {
+	root, _ := confinedFixture(t)
+	rel := filepath.Join("alias", "exclusive.json")
+	if err := WriteFileConfinedExclusive(root, rel, []byte("first"), 0o600); err != nil {
+		t.Fatalf("WriteFileConfinedExclusive through an in-root link: %v", err)
+	}
+	if data, err := ReadFileNoFollow(filepath.Join(root, "inner", "exclusive.json")); err != nil || string(data) != "first" {
+		t.Errorf("exclusive file = (%q, %v), want 'first' at the link target", data, err)
+	}
+	// A second exclusive write to the existing path fails with os.ErrExist and does not overwrite.
+	if err := WriteFileConfinedExclusive(root, rel, []byte("second"), 0o600); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("WriteFileConfinedExclusive over existing file = %v, want os.ErrExist", err)
+	}
+	if data, err := ReadFileNoFollow(filepath.Join(root, "inner", "exclusive.json")); err != nil || string(data) != "first" {
+		t.Errorf("exclusive file after collision = (%q, %v), want unchanged 'first'", data, err)
+	}
+}
+
+func TestWriteFileConfinedExclusive_Negative(t *testing.T) {
+	root, outside := confinedFixture(t)
+	victim := filepath.Join(root, "inner", "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	if err := os.Symlink("victim.txt", filepath.Join(root, "inner", "symlink.json")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := os.Symlink("non-existent-target", filepath.Join(root, "inner", "dangling.json")); err != nil {
+		t.Fatalf("dangling symlink: %v", err)
+	}
+	cases := []struct {
+		rel  string
+		perm os.FileMode
+		want error
+	}{
+		{filepath.Join("inner", "symlink.json"), 0o600, os.ErrExist},
+		{filepath.Join("inner", "dangling.json"), 0o600, os.ErrNotExist},
+		{filepath.Join("inner", "victim.txt"), 0o600, os.ErrExist},
+		{filepath.Join("out", "planted.json"), 0o600, ErrPathEscapesRoot},
+		{filepath.Join("..", "sibling.json"), 0o600, ErrPathEscapesRoot},
+		{filepath.Join(outside, "abs.json"), 0o600, ErrAbsoluteRelPath},
+		{"ok.json", 0o666, ErrInsecurePerm},
+	}
+	for _, tc := range cases {
+		if err := WriteFileConfinedExclusive(root, tc.rel, []byte("clobber"), tc.perm); !errors.Is(err, tc.want) {
+			t.Errorf("WriteFileConfinedExclusive(%q, %#o) = %v, want %v", tc.rel, tc.perm, err, tc.want)
+		}
+	}
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "keep" { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("victim = (%q, %v), want it untouched", data, err)
+	}
+	assertEmptyDir(t, outside)
+	if err := WriteFileConfinedExclusive(root, filepath.Join("missing", "ledger.json"), []byte("x"), 0o600); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("expected a write below a missing directory to fail with os.ErrNotExist, got %v", err)
+	}
+}
+
+// TestWriteFileConfinedExclusive_Boundary_SwapAfterCheck pins BUG-826's window for exclusive writes:
+// an output directory swapped for an escaping link after ConfinePath's check.
+func TestWriteFileConfinedExclusive_Boundary_SwapAfterCheck(t *testing.T) {
+	root, outside := confinedFixture(t)
+	if err := WriteFileConfinedExclusive(root, ".", []byte("x"), 0o600); !errors.Is(err, ErrRootItself) {
+		t.Errorf(`WriteFileConfinedExclusive(root, ".") = %v, want ErrRootItself only`, err)
+	}
+	if err := os.Symlink(filepath.Join(root, "inner"), filepath.Join(root, "absolute")); err != nil {
+		t.Fatalf("symlink absolute: %v", err)
+	}
+	if err := WriteFileConfinedExclusive(root, filepath.Join("absolute", "exclusive.json"), []byte("x"), 0o600); err == nil {
+		t.Errorf("expected an in-root link with an absolute target to be refused by the pinned open")
+	}
+
+	absRoot, inside, err := confineBelow(root, filepath.Join("inner", "exclusive.json"))
+	if err != nil {
+		t.Fatalf("confineBelow: %v", err)
+	}
+	swapForLink(t, filepath.Join(root, "inner"), outside)
+
+	parent := filepath.Dir(inside)
+	name := filepath.Base(inside)
+	err = InConfinedDirectory(absRoot, parent, func(dir *os.Root) error {
+		return createExclusively(dir, name, []byte("data"), filePermission{mode: 0o600, exact: true})
+	})
+	if !errors.Is(err, ErrPathEscapesRoot) {
+		t.Errorf("directory swapped for an escaping link = %v, want ErrPathEscapesRoot like the check reports", err)
+	}
+	assertEmptyDir(t, outside)
+
+	if err := WriteFileExclusive(filepath.Join(absRoot, inside), []byte("leak"), 0o600); err != nil {
+		t.Fatalf("WriteFileExclusive on the checked path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "exclusive.json")); err != nil {
+		t.Errorf("expected the root-less exclusive write to follow the swapped link, stat err = %v", err)
+	}
+}

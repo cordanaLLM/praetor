@@ -61,9 +61,16 @@ func (g generatedDir) write(name string, data []byte, perm os.FileMode) error {
 // writeExclusive creates the file name inside dir exclusively, refusing an existing entry or link.
 func (g generatedDir) writeExclusive(name string, data []byte, perm os.FileMode) error {
 	if g.confined() {
-		if _, err := util.ConfinePath(g.root, filepath.Join(g.dir, name)); err != nil {
-			return err
-		}
+		return util.WriteFileConfinedExclusive(g.root, filepath.Join(g.dir, name), data, perm)
 	}
 	return util.WriteFileExclusive(g.path(name), data, perm)
+}
+
+// readLimited reads the file name inside dir up to limit bytes, refusing non-regular entries
+// and link escapes.
+func (g generatedDir) readLimited(name string, limit int64) ([]byte, error) {
+	if g.confined() {
+		return util.ReadConfinedLimited(g.root, filepath.Join(g.dir, name), limit)
+	}
+	return util.ReadFileLimited(g.path(name), limit)
 }

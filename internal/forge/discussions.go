@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 // Invariant bounds adhering to HISS-02.
 const (
 	MaxADRFilesLimit    = 10000
+	maxADRFileBytes     = 1 << 20
 	maxHeaderLinesLimit = 64
 	// adrFilePerm is the mode applied to a transcribed ADR file.
 	adrFilePerm = 0o644
@@ -78,7 +78,7 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, repoRoot, a
 		return nil, fmt.Errorf("failed to create ADR directory %s: %w", out.location(), err)
 	}
 
-	existing, nextNumber, err := scanADRDirectory(out.location(), disc)
+	existing, nextNumber, err := scanADRDirectory(ctx, out, disc)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, repoRoot, a
 		return existing, nil
 	}
 
-	return writeNewADR(out, disc, nextNumber)
+	return writeNewADR(ctx, out, disc, nextNumber)
 }
 
 func adrSlug(discID int, title string) string {
@@ -97,9 +97,9 @@ func adrSlug(discID int, title string) string {
 	return slug
 }
 
-func handleWriteCollision(location string, disc Discussion, filePath string, writeErr error) (*ADR, error) {
+func handleWriteCollision(ctx context.Context, out generatedDir, disc Discussion, filePath string, writeErr error) (*ADR, error) {
 	if errors.Is(writeErr, os.ErrExist) {
-		if recheck, err := findExistingDiscussionADR(location, disc); err == nil && recheck != nil {
+		if recheck, err := findExistingDiscussionADR(ctx, out, disc); err == nil && recheck != nil {
 			return recheck, nil
 		}
 		return nil, fmt.Errorf("ADR %s already exists: an accepted record is immutable", filePath)
@@ -107,7 +107,7 @@ func handleWriteCollision(location string, disc Discussion, filePath string, wri
 	return nil, fmt.Errorf("failed to write ADR file to %s: %w", filePath, writeErr)
 }
 
-func writeNewADR(out generatedDir, disc Discussion, nextNumber int) (*ADR, error) {
+func writeNewADR(ctx context.Context, out generatedDir, disc Discussion, nextNumber int) (*ADR, error) {
 	slug := adrSlug(disc.ID, disc.Title)
 	filename := fmt.Sprintf("%04d-%s.md", nextNumber, slug)
 	filePath := out.path(filename)
@@ -117,7 +117,7 @@ func writeNewADR(out generatedDir, disc Discussion, nextNumber int) (*ADR, error
 
 	content := renderADRContent(nextNumber, disc)
 	if err := out.writeExclusive(filename, []byte(content), adrFilePerm); err != nil {
-		return handleWriteCollision(out.location(), disc, filePath, err)
+		return handleWriteCollision(ctx, out, disc, filePath, err)
 	}
 
 	return &ADR{
@@ -174,11 +174,27 @@ func normalizeADRContent(text string) string {
 	return strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
 }
 
-func inspectExistingADR(filePath string, matches []string, disc Discussion) (*ADR, bool, error) {
-	// #nosec G304 -- filePath is constructed from entry.Name() enumerated from adrDir.
-	data, err := os.ReadFile(filePath)
+func isIgnorableADRError(err error) bool {
+	return errors.Is(err, util.ErrNotRegularFile) ||
+		errors.Is(err, util.ErrFileTooLarge) ||
+		errors.Is(err, util.ErrPathEscapesRoot) ||
+		errors.Is(err, os.ErrNotExist)
+}
+
+func resolveExistingADRSlug(candidate string, disc Discussion) string {
+	if candidate != "" {
+		return candidate
+	}
+	return adrSlug(disc.ID, disc.Title)
+}
+
+func inspectExistingADR(out generatedDir, name string, matches []string, disc Discussion) (*ADR, bool, error) {
+	data, err := out.readLimited(name, maxADRFileBytes)
 	if err != nil {
-		return nil, false, fmt.Errorf("read ADR file %q: %w", filePath, err)
+		if isIgnorableADRError(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("read ADR file %q: %w", out.path(name), err)
 	}
 	content := string(data)
 	discID, ok := extractDiscussionID(content)
@@ -193,21 +209,13 @@ func inspectExistingADR(filePath string, matches []string, disc Discussion) (*AD
 
 	expected := renderADRContent(num, disc)
 	if normalizeADRContent(content) != normalizeADRContent(expected) {
-		return nil, false, fmt.Errorf("discussion #%d already transcribed in %s: an accepted record is immutable", disc.ID, filePath)
-	}
-
-	slug := matches[2]
-	if slug == "" {
-		slug = slugify(disc.Title)
-		if slug == "" {
-			slug = fmt.Sprintf("discussion-%d", disc.ID)
-		}
+		return nil, false, fmt.Errorf("discussion #%d already transcribed in %s: an accepted record is immutable", disc.ID, out.path(name))
 	}
 
 	return &ADR{
 		Number:   num,
-		Slug:     slug,
-		FilePath: filePath,
+		Slug:     resolveExistingADRSlug(matches[2], disc),
+		FilePath: out.path(name),
 		Title:    disc.Title,
 		Status:   "Accepted",
 		Content:  content,
@@ -215,7 +223,10 @@ func inspectExistingADR(filePath string, matches []string, disc Discussion) (*AD
 	}, true, nil
 }
 
-func processADREntry(adrDir string, entry os.DirEntry, disc Discussion) (int, *ADR, error) {
+func processADREntry(ctx context.Context, out generatedDir, entry os.DirEntry, disc Discussion) (int, *ADR, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, nil, fmt.Errorf("context cancelled during ADR directory scan: %w", err)
+	}
 	if entry.IsDir() {
 		return 0, nil, nil
 	}
@@ -230,8 +241,7 @@ func processADREntry(adrDir string, entry os.DirEntry, disc Discussion) (int, *A
 	if disc.ID <= 0 {
 		return num, nil, nil
 	}
-	filePath := filepath.Join(adrDir, entry.Name())
-	adr, match, err := inspectExistingADR(filePath, matches, disc)
+	adr, match, err := inspectExistingADR(out, entry.Name(), matches, disc)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -241,15 +251,15 @@ func processADREntry(adrDir string, entry os.DirEntry, disc Discussion) (int, *A
 	return num, nil, nil
 }
 
-func scanADRDirectory(adrDir string, disc Discussion) (*ADR, int, error) {
-	entries, err := os.ReadDir(adrDir)
+func scanADRDirectory(ctx context.Context, out generatedDir, disc Discussion) (*ADR, int, error) {
+	entries, err := os.ReadDir(out.location())
 	if err != nil {
-		return nil, 0, fmt.Errorf("read ADR directory %q: %w", adrDir, err)
+		return nil, 0, fmt.Errorf("read ADR directory %q: %w", out.location(), err)
 	}
 
 	maxNumber := 0
 	for i := 0; i < len(entries) && i < MaxADRFilesLimit; i++ {
-		num, adr, processErr := processADREntry(adrDir, entries[i], disc)
+		num, adr, processErr := processADREntry(ctx, out, entries[i], disc)
 		if processErr != nil {
 			return nil, 0, processErr
 		}
@@ -263,8 +273,8 @@ func scanADRDirectory(adrDir string, disc Discussion) (*ADR, int, error) {
 	return nil, maxNumber + 1, nil
 }
 
-func findExistingDiscussionADR(adrDir string, disc Discussion) (*ADR, error) {
-	adr, _, err := scanADRDirectory(adrDir, disc)
+func findExistingDiscussionADR(ctx context.Context, out generatedDir, disc Discussion) (*ADR, error) {
+	adr, _, err := scanADRDirectory(ctx, out, disc)
 	return adr, err
 }
 

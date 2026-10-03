@@ -1249,6 +1249,98 @@ func TestTranscribeDiscussionToADR_Boundary_ConcurrentExclusiveCreate(t *testing
 	}
 }
 
+func TestTranscribeDiscussionToADR_Boundary_SymlinkToDirEntry(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	targetDir := filepath.Join(tempDir, "target-sub-dir")
+	if err := os.MkdirAll(targetDir, 0o750); err != nil {
+		t.Fatalf("mkdir targetDir: %v", err)
+	}
+
+	linkPath := filepath.Join(tempDir, "0001-directory-link.md")
+	if err := os.Symlink(targetDir, linkPath); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	disc := Discussion{
+		ID:           102,
+		Title:        "Decision After Symlinked Dir",
+		Status:       "approved",
+		ContextText:  "Testing symlink to directory entry handling",
+		DecisionText: "TranscribeDiscussionToADR skips reading symlinked directory and counts it toward sequence",
+	}
+
+	adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
+	if err != nil {
+		t.Fatalf("unexpected error with symlinked directory entry: %v", err)
+	}
+	if adr.Number != 2 {
+		t.Fatalf("expected next ADR number 2, got %d", adr.Number)
+	}
+	if !strings.HasSuffix(adr.FilePath, "0002-decision-after-symlinked-dir.md") {
+		t.Fatalf("unexpected file path: %s", adr.FilePath)
+	}
+}
+
+func TestTranscribeDiscussionToADR_Boundary_OversizeEntry(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	oversizePath := filepath.Join(tempDir, "0001-oversize.md")
+	file, err := os.Create(oversizePath)
+	if err != nil {
+		t.Fatalf("create oversize file: %v", err)
+	}
+	if err := file.Truncate(maxADRFileBytes + 16); err != nil {
+		if closeErr := file.Close(); closeErr != nil {
+			t.Fatalf("close oversize file: %v (truncate err: %v)", closeErr, err)
+		}
+		t.Fatalf("truncate oversize file: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close oversize file: %v", err)
+	}
+
+	disc := Discussion{
+		ID:           103,
+		Title:        "Decision After Oversize File",
+		Status:       "approved",
+		ContextText:  "Testing oversize entry handling",
+		DecisionText: "TranscribeDiscussionToADR skips oversize entry and counts it toward sequence",
+	}
+
+	adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
+	if err != nil {
+		t.Fatalf("unexpected error with oversize entry: %v", err)
+	}
+	if adr.Number != 2 {
+		t.Fatalf("expected next ADR number 2, got %d", adr.Number)
+	}
+	if !strings.HasSuffix(adr.FilePath, "0002-decision-after-oversize-file.md") {
+		t.Fatalf("unexpected file path: %s", adr.FilePath)
+	}
+}
+
+func TestTranscribeDiscussionToADR_Negative_CancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tempDir := t.TempDir()
+
+	disc := Discussion{
+		ID:           104,
+		Title:        "Cancelled",
+		Status:       "approved",
+		ContextText:  "Context",
+		DecisionText: "Decision",
+	}
+
+	_, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
+	if err == nil || !strings.Contains(err.Error(), "context cancelled") {
+		t.Fatalf("expected context cancelled error, got %v", err)
+	}
+}
+
 func TestGenerateWiki_Boundary_RepoNameFromRelativeRoot(t *testing.T) {
 	ctx := context.Background()
 
