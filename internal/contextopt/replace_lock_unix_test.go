@@ -159,3 +159,84 @@ func TestLockSnapshotDirectoryReleaseAfterReleaseReported(t *testing.T) {
 		t.Fatal("second release should report an error on closed file descriptor")
 	}
 }
+
+func TestLockSnapshotDirectoryDoubleReleaseDoesNotDropReusedFDLock(t *testing.T) {
+	dirA := t.TempDir()
+	rootA, err := OpenDirectory(t.Context(), dirA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := rootA.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	dirB := t.TempDir()
+	rootB, err := OpenDirectory(t.Context(), dirB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := rootB.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	rootC, err := OpenDirectory(t.Context(), dirB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := rootC.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+
+	releaseA, err := lockSnapshotDirectory(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := releaseA(); err != nil {
+		t.Fatalf("first release A failed: %v", err)
+	}
+
+	releaseB, err := lockSnapshotDirectory(rootB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var releasedB bool
+	defer func() {
+		if !releasedB {
+			if err := releaseB(); err != nil {
+				t.Errorf("cleanup release B failed: %v", err)
+			}
+		}
+	}()
+
+	// Second release on A must not drop B's lock when the fd number is reused.
+	if err := releaseA(); err == nil {
+		t.Fatal("second release A should report an error on closed file")
+	}
+
+	releaseC, err := lockSnapshotDirectory(rootC)
+	if err == nil {
+		if err := releaseC(); err != nil {
+			t.Errorf("unexpected release C failed: %v", err)
+		}
+		t.Fatal("lock C succeeded while B held the lock")
+	}
+
+	if err := releaseB(); err != nil {
+		t.Fatalf("release B failed: %v", err)
+	}
+	releasedB = true
+
+	releaseC2, err := lockSnapshotDirectory(rootC)
+	if err != nil {
+		t.Fatalf("lock C failed after B released: %v", err)
+	}
+	if err := releaseC2(); err != nil {
+		t.Fatalf("release C failed: %v", err)
+	}
+}
