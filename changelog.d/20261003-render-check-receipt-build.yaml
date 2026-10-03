@@ -1,0 +1,4 @@
+type: fixed
+title: Let ci generated render --check use the checkout's own bin/praetorctl after a gate run, when the untracked receipt is all that marks the build modified
+issue: "#760"
+breaking: false

@@ -53,11 +53,29 @@ func newEngineCheckout(t *testing.T) *engineCheckout {
 
 func (c *engineCheckout) git(args ...string) string {
 	c.t.Helper()
-	out, err := util.RunGit(c.ctx, c.root, args...)
+	return c.gitIn(c.root, args...)
+}
+
+// gitIn runs git in dir, a worktree of the checkout, with the checkout's hermetic environment.
+func (c *engineCheckout) gitIn(dir string, args ...string) string {
+	c.t.Helper()
+	out, err := util.RunGit(c.ctx, dir, args...)
 	if err != nil {
-		c.t.Fatalf("git %v: %v", args, err)
+		c.t.Fatalf("git %v in %s: %v", args, dir, err)
 	}
 	return out
+}
+
+// renderWorktree mirrors ci generated render (internal/generated/render.go): it ignores bin/ and
+// .standards/worktrees/ as the engine's own .gitignore does, commits that, and checks the new
+// HEAD out into a temporary worktree below .standards/worktrees. It returns HEAD and the worktree.
+func (c *engineCheckout) renderWorktree() (string, string) {
+	c.t.Helper()
+	c.write(".gitignore", "/bin/\n/.standards/worktrees/\n")
+	head := c.commit("ignore build output")
+	dir := filepath.Join(c.root, ".standards", "worktrees", "render")
+	c.git("worktree", "add", "-q", "--detach", dir, head)
+	return head, dir
 }
 
 func (c *engineCheckout) write(rel, content string) {
@@ -226,6 +244,91 @@ func TestCheckBuildCurrent_Boundary_BuildInputSet(t *testing.T) {
 	c.write("go.sum", "example.org/dep v1.0.0 h1:x=\n")
 	c.commit("dependency")
 	requireStale(t, CheckBuildCurrent(context.Background(), c.root, c.build(head, false, time.Now())), "first go.sum")
+}
+
+// Positive (#760): after a gate run the untracked receipt marks the checkout's own
+// bin/praetorctl modified. ci generated render runs its compile-context in a worktree of HEAD
+// below the checkout, and the build matches there: no Go build input of the checkout holding it
+// differs from its revision, so only files outside the Go build marked it.
+func TestCheckBuildCurrent_Positive_RenderWorktreeOfReceiptCheckout(t *testing.T) {
+	c := newEngineCheckout(t)
+	head, render := c.renderWorktree()
+	c.write(".standards-receipt.json", "{}\n")
+	c.write("cmd/engine/main_test.go", "package main\n")
+	built := c.build(head, true, time.Now())
+	if err := CheckBuildCurrent(context.Background(), render, built); err != nil {
+		t.Fatalf("checkout build marked modified by the receipt alone, judged in its render worktree: %v", err)
+	}
+	if err := CheckBuildCurrent(context.Background(), c.root, built); err != nil {
+		t.Fatalf("the same build in its own checkout: %v", err)
+	}
+	built.Executable = filepath.Join(c.root, "praetorctl")
+	if err := CheckBuildCurrent(context.Background(), render, built); err != nil {
+		t.Fatalf("a build at the checkout root: %v", err)
+	}
+}
+
+// Negative (#760): a build outside the judged worktree still fails when it may carry a Go edit:
+// its checkout changes a tracked or untracked Go source, even one older than the build that its
+// own checkout accepts, or it is a build of another worktree holding a Go edit.
+func TestCheckBuildCurrent_Negative_EditedBuildOutsideTheWorktree(t *testing.T) {
+	c := newEngineCheckout(t)
+	head, render := c.renderWorktree()
+	c.write(".standards-receipt.json", "{}\n")
+	c.write("cmd/engine/main.go", "package main\n\nfunc main() { println() }\n")
+	built := c.build(head, true, time.Now().Add(time.Hour))
+	if err := CheckBuildCurrent(context.Background(), c.root, built); err != nil {
+		t.Fatalf("its own checkout accepts the edited build: %v", err)
+	}
+	requireStale(t, CheckBuildCurrent(context.Background(), render, built),
+		"modified tree outside this checkout ("+c.root+" changes 1 Go build inputs, first cmd/engine/main.go)")
+
+	c.git("checkout", "-q", "--", "cmd/engine/main.go")
+	c.write("internal/extra/extra.go", "package extra\n")
+	requireStale(t, CheckBuildCurrent(context.Background(), render, built), "first internal/extra/extra.go")
+
+	other := filepath.Join(t.TempDir(), "other")
+	c.git("worktree", "add", "-q", "--detach", other, head)
+	if err := os.WriteFile(filepath.Join(other, "cmd", "engine", "main.go"), []byte("package main\n\nfunc main() { print() }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(c.root, "internal", "extra", "extra.go")); err != nil {
+		t.Fatal(err)
+	}
+	built.Executable = filepath.Join(other, "bin", "praetorctl")
+	requireStale(t, CheckBuildCurrent(context.Background(), c.root, built), "first cmd/engine/main.go")
+}
+
+// Boundary (#760): a build judged by the checkout holding it is judged as a clean build, so a Go
+// change in the worktree gets no modification-time allowance; an executable in no checkout of the
+// module, or in a checkout that lacks the revision, cannot be judged and fails.
+func TestCheckBuildCurrent_Boundary_CheckoutHoldingTheBuild(t *testing.T) {
+	c := newEngineCheckout(t)
+	head, _ := c.renderWorktree()
+	c.write(".standards-receipt.json", "{}\n")
+	next := filepath.Join(c.root, ".standards", "worktrees", "next")
+	c.git("worktree", "add", "-q", "-b", "next", next, head)
+	if err := os.MkdirAll(filepath.Join(next, "internal", "render"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(next, "internal", "render", "render.go"), []byte("package render\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.gitIn(next, "add", "-A")
+	c.gitIn(next, "-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-q", "-m", "renderer")
+	built := c.build(head, true, time.Now().Add(time.Hour))
+	requireStale(t, CheckBuildCurrent(context.Background(), next, built), "lacks 1 changed Go build inputs (first internal/render/render.go)")
+
+	foreign := t.TempDir()
+	if err := os.WriteFile(filepath.Join(foreign, "go.mod"), []byte("module example.com/other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	built.Executable = filepath.Join(foreign, "bin", "praetorctl")
+	requireStale(t, CheckBuildCurrent(context.Background(), next, built), "was built from a modified tree outside this checkout; rebuild")
+
+	unrelated := newEngineCheckout(t)
+	built.Executable = filepath.Join(unrelated.root, "bin", "praetorctl")
+	requireStale(t, CheckBuildCurrent(context.Background(), c.root, built), unrelated.root+" cannot be compared")
 }
 
 // Positive: a build is described from the VCS stamp every praetor surface reads

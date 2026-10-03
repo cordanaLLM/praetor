@@ -46,6 +46,8 @@ const (
 	maxBuildInputs         = 1 << 16
 	buildInputProbeBytes   = 8 << 20
 	buildInputProbeTimeout = 20 * time.Second
+	// maxCheckoutDepth bounds the directories buildCheckout climbs from an executable.
+	maxCheckoutDepth = 256
 )
 
 // objectNamePattern is a full SHA-1 or SHA-256 object name, the only revision form Go stamps.
@@ -89,15 +91,19 @@ func describeBuild(info *debug.BuildInfo, executable string) Build {
 // an unstamped build, which `go run` produces by compiling the checkout on the spot.
 //
 // A stamped build matches when no Go build input -- a non-test .go file, go.mod or go.sum --
-// differs between its revision and the working tree. A build of a modified tree carries edits
-// its stamp does not name: it matches only when its executable lies inside root and every
-// changed input is older than it, which is the binary the checkout's own build or hook just
-// produced. Every other build fails with ErrStaleEngine and a one-line reason.
+// differs between its revision and the working tree. A build of a modified tree may carry edits
+// its stamp does not name (carriesEdits): built inside root, it matches when every changed input
+// is older than it, which is the binary the checkout's own build or hook just produced; built
+// elsewhere, it matches only when the checkout holding its executable changes no Go build input
+// either, so it compiles exactly its revision's inputs and is judged as a clean build. Every
+// other build fails with ErrStaleEngine and a one-line reason.
 //
-// Go marks a build modified for an untracked file alone, so the builders that feed this check
-// keep such builds clean or inside the checkout: Install builds a checkout whose tracked files
-// match HEAD from a clean clone of it (prepareBuildSource), and scripts/dev_mcp.py builds
-// under the checkout's bin/.
+// Go marks a build modified for an untracked file alone, such as the gate receipt
+// .standards-receipt.json. The second rule lets the checkout's own bin/praetorctl write into a
+// worktree of its revision: ci generated render runs compile-context in a temporary worktree of
+// HEAD below the checkout (#760). An installed copy lies in no checkout, so Install builds a
+// checkout whose tracked files match HEAD from a clean clone of it (prepareBuildSource), and
+// scripts/dev_mcp.py builds under the checkout's bin/.
 func CheckBuildCurrent(ctx context.Context, root string, build Build) error {
 	if ctx == nil {
 		return errors.New("workstation: build check requires a context")
@@ -112,14 +118,65 @@ func CheckBuildCurrent(ctx context.Context, root string, build Build) error {
 	if err != nil {
 		return fmt.Errorf("workstation: resolve checkout %s: %w", root, err)
 	}
-	if build.Modified && !builtInside(absRoot, build) {
-		return staleBuild(build, "was built from a modified tree outside this checkout")
+	edited, err := carriesEdits(ctx, absRoot, build)
+	if err != nil {
+		return err
 	}
 	changed, err := changedBuildInputs(ctx, absRoot, build.Revision)
 	if err != nil {
 		return staleBuild(build, fmt.Sprintf("cannot be compared with this checkout (%v)", err))
 	}
-	return judgeChanges(absRoot, build, changed)
+	return judgeChanges(absRoot, build, edited, changed)
+}
+
+// carriesEdits reports whether build may hold Go edits its revision does not name, so
+// judgeChanges accepts a changed input of root only when the executable is newer. A clean build
+// holds none, and a build of a modified tree inside root holds root's own edits. A build of a
+// modified tree elsewhere is judged against the checkout holding its executable
+// (buildCheckout): when no Go build input there differs from the revision, only other files
+// marked it modified and it holds no edit. Any other build of a modified tree outside root is
+// refused: its edits are unknown, so no comparison with root can show it current.
+func carriesEdits(ctx context.Context, root string, build Build) (bool, error) {
+	if !build.Modified {
+		return false, nil
+	}
+	if builtInside(root, build) {
+		return true, nil
+	}
+	const outside = "was built from a modified tree outside this checkout"
+	home := buildCheckout(build)
+	if home == "" {
+		return false, staleBuild(build, outside)
+	}
+	edits, err := changedBuildInputs(ctx, home, build.Revision)
+	if err != nil {
+		return false, staleBuild(build, fmt.Sprintf("%s (%s cannot be compared: %v)", outside, home, err))
+	}
+	if len(edits) > 0 {
+		return false, staleBuild(build, fmt.Sprintf("%s (%s changes %d Go build inputs, first %s)", outside, home, len(edits), edits[0]))
+	}
+	return false, nil
+}
+
+// buildCheckout returns the nearest directory holding build's executable whose go.mod declares
+// build.Module: the checkout a binary under its bin/ was built from. It returns "" for an
+// unknown executable and for one in no checkout of the module, such as an installed copy.
+func buildCheckout(build Build) string {
+	if build.Executable == "" {
+		return ""
+	}
+	dir := filepath.Dir(build.Executable)
+	for depth := 0; depth < maxCheckoutDepth; depth++ {
+		if checkoutModule(dir) == build.Module {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+	return ""
 }
 
 // judgesCheckout reports whether CheckBuildCurrent judges build against root at all: a
@@ -134,12 +191,12 @@ func builtInside(root string, build Build) bool {
 }
 
 // judgeChanges decides a stamped build against the Go build inputs that differ from its
-// revision; see CheckBuildCurrent.
-func judgeChanges(root string, build Build, changed []string) error {
+// revision; edited is the answer of carriesEdits. See CheckBuildCurrent.
+func judgeChanges(root string, build Build, edited bool, changed []string) error {
 	if len(changed) == 0 {
 		return nil
 	}
-	if !build.Modified {
+	if !edited {
 		return staleBuild(build, fmt.Sprintf("lacks %d changed Go build inputs (first %s)", len(changed), changed[0]))
 	}
 	if newer, found := firstNewerInput(root, changed, build.ModTime); found {
