@@ -46,7 +46,7 @@ type markdownScan struct {
 // as exactly that. A leading YAML front matter block is skipped, as markdownlint skips it,
 // so the first line after it counts as the document's first line.
 //
-// The documentation gate runs the real markdownlint-cli2 (tools/markdownlint) with MD013
+// The documentation gate runs the real markdownlint library (tools/markdownlint) with MD013
 // off and generated agent paths excluded; an adopter's own lint may run the defaults on
 // every file Praetor writes. This subset holds a generator to those defaults in a unit test
 // without the gate's Node toolchain.

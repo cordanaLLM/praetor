@@ -1,13 +1,6 @@
 {
   "exceptions": [
     {
-      "advisory": "GHSA-vfj7-8cjw-p6xm",
-      "package": "braces",
-      "locks": ["tools/markdownlint"],
-      "reason": "Stack-exhaustion denial of service through deeply nested brace patterns. The Markdown gate expands only globs the repository itself declares: markdownlint-cli2's configuration and the style exclusions in verify.mjs settings. A hostile pattern would have to be committed, and it would only exhaust that repository's own lint run. No fixed release exists: braces 3.0.3, micromatch 4.0.8 and markdownlint-cli2 0.23.3 are the latest.",
-      "expires": "2026-11-02"
-    },
-    {
       "advisory": "GHSA-ch52-4w7c-c8xp",
       "package": "http-cache-semantics",
       "locks": ["docs/presets/starlight"],

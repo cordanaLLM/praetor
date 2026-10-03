@@ -90,11 +90,12 @@ func containsExactLFLine(text, want string) bool {
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	wantDirect := map[string]string{
 		"js-yaml":                   "5.4.2",
-		"markdownlint-cli2":         "0.23.3",
+		"jsonc-parser":              "3.3.1",
+		"markdownlint":              "0.41.1",
 		"micromark":                 "4.0.3",
 		"micromark-extension-mdxjs": "3.0.0",
-		"micromatch":                "4.0.8",
 		"parse5":                    "8.0.1",
+		"smol-toml":                 "1.8.0",
 	}
 	manifestData, err := Read("package.json")
 	if err != nil {
@@ -136,8 +137,8 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 			t.Fatalf("%s lacks exact version, source, or integrity", name)
 		}
 	}
-	if lock.Packages["node_modules/markdownlint-cli2"].Version != "0.23.3" {
-		t.Fatal("markdownlint-cli2 is not pinned to 0.23.3")
+	if lock.Packages["node_modules/markdownlint"].Version != "0.41.1" {
+		t.Fatal("markdownlint is not pinned to 0.41.1")
 	}
 	if lock.Packages["node_modules/micromark"].Version != "4.0.3" {
 		t.Fatal("micromark is not pinned to 4.0.3")
@@ -151,12 +152,69 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	if lock.Packages["node_modules/parse5"].Version != "8.0.1" {
 		t.Fatal("parse5 is not pinned to 8.0.1")
 	}
-	// verify.mjs requires js-yaml (the .standards.yaml documentation block) and micromatch
-	// (declared style exclusions) from the locked install, so both are direct dependencies.
-	for name, version := range map[string]string{"js-yaml": "5.4.2", "micromatch": "4.0.8"} {
+	// verify.mjs loads js-yaml (the .standards.yaml documentation block and the lint
+	// configuration), markdownlint (the style rules), and jsonc-parser and smol-toml (inline
+	// markdownlint-configure-file comments) from the locked install, so all four are direct
+	// dependencies installed at the top level.
+	for name, version := range map[string]string{
+		"js-yaml": "5.4.2", "markdownlint": "0.41.1", "jsonc-parser": "3.3.1", "smol-toml": "1.8.0",
+	} {
 		if lock.Packages["node_modules/"+name].Version != version {
 			t.Fatalf("%s is not installed at the top level pinned to %s", name, version)
 		}
+	}
+}
+
+// lockedPackageNames returns the package name of every entry of an npm v3 lock, nested copies
+// included: node_modules/a/node_modules/b names b.
+func lockedPackageNames(t *testing.T, data []byte) []string {
+	t.Helper()
+	var lock struct {
+		Packages map[string]json.RawMessage `json:"packages"`
+	}
+	if err := json.Unmarshal(data, &lock); err != nil {
+		t.Fatalf("decode package lock: %v", err)
+	}
+	names := make([]string, 0, len(lock.Packages))
+	for key := range lock.Packages {
+		if index := strings.LastIndex(key, "node_modules/"); index >= 0 {
+			names = append(names, key[index+len("node_modules/"):])
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
+// The shipped lock must install neither braces, which carries GHSA-vfj7-8cjw-p6xm with no fixed
+// release, nor micromatch or markdownlint-cli2, the two packages that pulled it in (#736).
+// Positive: the current lock is free of all three. Negative: the lock shipped before #736
+// installs each. Boundary: a nested copy counts as installed, and a name that only starts with a
+// banned one does not.
+func TestPackageLockInstallsNoBraces(t *testing.T) {
+	banned := []string{"braces", "markdownlint-cli2", "micromatch"}
+	current, err := Read("package-lock.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range lockedPackageNames(t, current) {
+		if slices.Contains(banned, name) {
+			t.Fatalf("the shipped lock installs %s", name)
+		}
+	}
+	prior, err := os.ReadFile(filepath.Join("testdata", "prior", "package-lock.markdownlint-cli2-micromatch.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorNames := lockedPackageNames(t, prior)
+	for _, name := range banned {
+		if !slices.Contains(priorNames, name) {
+			t.Fatalf("the prior lock fixture no longer installs %s", name)
+		}
+	}
+	nested := lockedPackageNames(t, []byte(`{"packages": {"": {}, "node_modules/a/node_modules/braces": {},
+		"node_modules/braces-extra": {}}}`))
+	if !slices.Equal(nested, []string{"braces", "braces-extra"}) {
+		t.Fatalf("nested lock names = %v", nested)
 	}
 }
 
@@ -202,28 +260,33 @@ func TestRunnerUsesLockedInstallWithoutNpx(t *testing.T) {
 	}
 }
 
-// markdownlint-cli2 reads .markdownlint* and .markdownlint-cli2.* files from its working directory
-// and every directory down to a linted file, and a .markdownlint.* file there replaces the locked
-// rules (#533). The runner must lint a staged copy of the selected files from an empty directory;
-// the self-test (make docs-lint-test) proves loosening and tightening files have no effect.
-func TestRunnerLintsAStagedCopy(t *testing.T) {
+// markdownlint-cli2 read .markdownlint* and .markdownlint-cli2.* files from its working directory
+// and every directory down to a linted file, and a .markdownlint.* file there replaced the locked
+// rules (#533); it also pulled braces into the lock (#736). The runner lints through the
+// markdownlint library in a child process of verify.mjs, handing it file text as strings and the
+// locked config, so the library opens no file and finds no configuration. The self-test (make
+// docs-lint-test) proves loosening and tightening files have no effect.
+func TestRunnerLintsThroughTheLibrary(t *testing.T) {
 	data, err := Read("verify.mjs")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
 	for _, required := range []string{
-		"const tree = stageStyleTree(root, temporary, files);",
-		"fs.copyFileSync(path.join(root, files[index]), target);",
-		"[cli, \"--config\", config, \"--no-globs\", ...batch], {\n      cwd: tree,",
+		`const MARKDOWNLINT_ENTRY = "./lib/exports-sync.mjs";`,
+		"const results = lint({ ...options, strings: { [files[index]]: readLintSource(files[index]) } });",
+		"[script, LINT_MODE, temporary, ...batch], {\n      cwd: root,",
 		"hermeticConfigSelfTest(temporary);",
+		"lintOutputSelfTest(temporary);",
 	} {
 		if !strings.Contains(text, required) {
-			t.Fatalf("runner does not lint a hermetic staged copy: missing %q", required)
+			t.Fatalf("runner does not lint hermetically through the library: missing %q", required)
 		}
 	}
-	if strings.Contains(text, "...batch], {\n      cwd: root,") {
-		t.Fatal("runner lints from the repository root, where markdownlint-cli2 discovers repository configuration")
+	for _, forbidden := range []string{"markdownlint-cli2-bin", `"micromatch"`, "lint({ files", "files: files"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("runner still reaches %s", forbidden)
+		}
 	}
 }
 
