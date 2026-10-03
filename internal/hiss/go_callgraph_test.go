@@ -243,14 +243,26 @@ func TestCallGraphScopesALiteralsBindingsToTheLiteral(t *testing.T) {
 	}
 }
 
+const (
+	// addCallsSample is the shortest timing sample. On Windows time.Now reads INTERRUPT_TIME
+	// (runtime/time_windows_amd64.s), which advances once per clock interrupt, every 15.6 ms
+	// unless a process asks for a finer one. One call-graph build takes well under a
+	// millisecond, so timing a single build reads one clock step or zero. Repeating the build
+	// until a sample spans four of the coarsest steps keeps the step under a quarter of it.
+	addCallsSample = 64 * time.Millisecond
+	// addCallsMaxRuns bounds the builds in one sample (HISS-02): over 60 seconds of the small
+	// case, so a sample short of addCallsSample at the bound means a clock that did not move.
+	addCallsMaxRuns = 1 << 20
+)
+
 // Boundary: a function of 10001 calls costs one walk. Checking every call by walking the whole
 // body again made the cost calls times nodes, so eight times the calls took about 64 times as
 // long; linear cost takes about 8 times. The bound sits between the two, and each size is
-// timed as the best of several runs so one scheduling stall cannot decide it.
+// timed as the best of three samples so one scheduling stall cannot decide it.
 func TestCallGraphScansCallsInLinearTime(t *testing.T) {
 	small := bestAddCallsTime(t, 1250)
 	large := bestAddCallsTime(t, 10001)
-	t.Logf("1250 calls: %v; 10001 calls: %v", small, large)
+	t.Logf("1250 calls: %v; 10001 calls: %v per build", small, large)
 	if large > 24*small {
 		t.Fatalf("8x the calls took %v against %v (%.0fx); one walk per function is linear",
 			large, small, float64(large)/float64(small))
@@ -258,7 +270,7 @@ func TestCallGraphScansCallsInLinearTime(t *testing.T) {
 }
 
 // bestAddCallsTime builds the call graph of one function making calls bare calls, and returns
-// the fastest of five runs.
+// the time of one build in the fastest of three samples of at least addCallsSample each.
 func bestAddCallsTime(t *testing.T, calls int) time.Duration {
 	t.Helper()
 	src := "package p\n\nfunc leaf() {}\n\nfunc big() {\n" + strings.Repeat("\tleaf()\n", calls) + "}\n"
@@ -267,14 +279,20 @@ func bestAddCallsTime(t *testing.T, calls int) time.Duration {
 		t.Fatal(err)
 	}
 	best := time.Duration(math.MaxInt64)
-	for range 5 {
-		start := time.Now()
-		graph := newCallGraph()
-		graph.addFile(file, "big.go")
-		best = min(best, time.Since(start))
-		if _, edge := graph.edges["big"]["leaf"]; !edge || graph.count != 1 {
-			t.Fatalf("one function calling leaf %d times is one edge, got %d", calls, graph.count)
+	for range 3 {
+		runs, start, elapsed := 0, time.Now(), time.Duration(0)
+		for ; elapsed < addCallsSample && runs < addCallsMaxRuns; elapsed = time.Since(start) {
+			graph := newCallGraph()
+			graph.addFile(file, "big.go")
+			if _, edge := graph.edges["big"]["leaf"]; !edge || graph.count != 1 {
+				t.Fatalf("one function calling leaf %d times is one edge, got %d", calls, graph.count)
+			}
+			runs++
 		}
+		if elapsed < addCallsSample {
+			t.Fatalf("the clock moved %v in %d builds; a sample needs %v", elapsed, runs, addCallsSample)
+		}
+		best = min(best, elapsed/time.Duration(runs))
 	}
 	return best
 }
