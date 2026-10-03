@@ -195,10 +195,12 @@ block, or one declared after the call, hides nothing, so the call still reaches 
 function is walked once, so the cost grows with its size, not with its size times its calls. A
 method is called through its receiver, so a local named like the method does not hide its
 recursion. `TestGoScope_*` in `internal/hiss/go_scope_test.go`,
-`TestCallGraphSeesACycleBehindAnOutOfScopeLocal`,
-`TestCallGraphReportsGenericCallCycle` and
-`TestCallGraphReportsParenthesisedGenericCallCycle` in `internal/hiss/go_callgraph_test.go` pin
-these rules.
+`TestCallGraphSeesACycleBehindAnOutOfScopeLocal`, `TestCallGraphIgnoresInstantiatedLocalInScope`
+and `TestCallGraphIgnoresParenthesisedInstantiatedLocalInScope` in
+`internal/hiss/go_callgraph_test.go` pin these rules; `TestCallGraphReportsGenericCallCycle` and
+`TestCallGraphReportsParenthesisedGenericCallCycle` pin that explicit type arguments still
+reach the function, and `TestCallTargetsEnclosingShapes` (`internal/hiss/go_ast_targets_test.go`)
+pins the parenthesised self-call shapes shared with the editor server.
 
 ### Go: the net/http abort sentinel
 

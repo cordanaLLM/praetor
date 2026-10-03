@@ -1,11 +1,10 @@
 package p
 
 // No cycle: the local variable named Follow shadows the package function Follow, so
-// calling Follow[T] reaches the local function value in scope rather than the package function.
+// Follow[0](x) indexes the local slice of function values in scope, not the package function.
 func Lead[T any](x T) T {
-	Follow := func(v T) T { return v }
-	_ = Follow
-	return Follow[T](x)
+	Follow := []func(T) T{func(v T) T { return v }}
+	return Follow[0](x)
 }
 
 func Follow[T any](x T) T {

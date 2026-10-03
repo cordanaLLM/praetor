@@ -273,7 +273,7 @@ func TestCallGraphReportsTwoTypeParameterGenericCycle(t *testing.T) {
 func TestCallGraphIgnoresInstantiatedLocalInScope(t *testing.T) {
 	found := scanSources(t, map[string]string{
 		"shadow_generic.go": "package p\n\nfunc helper[T any](x T) T {\n\treturn caller[T](x)\n}\n\n" +
-			"func caller[T any](x T) T {\n\thelper := func(v T) T { return v }\n\t_ = helper\n\treturn helper[T](x)\n}\n",
+			"func caller[T any](x T) T {\n\thelper := []func(T) T{func(v T) T { return v }}\n\treturn helper[0](x)\n}\n",
 	})
 	if len(found) != 0 {
 		t.Fatalf("an instantiated local in scope must not add a call-graph edge, got: %s", cycleMessages(found))
@@ -314,7 +314,7 @@ func TestCallGraphReportsParenthesisedGenericCallCycle(t *testing.T) {
 func TestCallGraphIgnoresParenthesisedInstantiatedLocalInScope(t *testing.T) {
 	found := scanSources(t, map[string]string{
 		"shadow_paren_generic.go": "package p\n\nfunc helper[T any](x T) T {\n\treturn caller[T](x)\n}\n\n" +
-			"func caller[T any](x T) T {\n\thelper := func(v T) T { return v }\n\t_ = helper\n\treturn (helper[T])(x)\n}\n",
+			"func caller[T any](x T) T {\n\thelper := []func(T) T{func(v T) T { return v }}\n\treturn (helper[0])(x)\n}\n",
 	})
 	if len(found) != 0 {
 		t.Fatalf("a parenthesised instantiated local in scope must not add a call-graph edge, got: %s", cycleMessages(found))

@@ -49,7 +49,8 @@ rules:
           reported (positive/generic-instantiation-cycle.go,
           positive/parenthesised-generic-cycle.go), while a same-named local function in scope
           adds no edge (negative/generic-instantiated-local.go,
-          negative/parenthesised-generic-local.go). Package scope is complete rather than convenient, because a call cycle
+          negative/parenthesised-generic-local.go). Package scope is complete rather than
+          convenient, because a call cycle
           spanning two packages would need each to import the other and the compiler rejects
           that. A cycle through methods remains a gap: resolving a method call needs the
           receiver's type, and guessing it would invent edges that do not exist.
