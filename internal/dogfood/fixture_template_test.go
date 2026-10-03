@@ -1,16 +1,19 @@
 package dogfood
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
@@ -132,7 +135,8 @@ func reportCheckouts(report *PublicLoopReport) []string {
 
 // restoreHiddenPolicies copies the effective policies' manifest and catalog artifacts, which
 // config keeps out of JSON, from the template report into its copy. The scans read the
-// manifest's declared HISS exceptions, so a copy without it would scan differently.
+// manifest's declared HISS exceptions, so a copy without it would scan differently. Each copy
+// gets its own manifest and artifact bytes: a test changing them must not change the template.
 func restoreHiddenPolicies(copied, template *PublicLoopReport) error {
 	if len(copied.Results) != len(template.Results) {
 		return fmt.Errorf("report copy has %d results, template %d", len(copied.Results), len(template.Results))
@@ -143,22 +147,50 @@ func restoreHiddenPolicies(copied, template *PublicLoopReport) error {
 		}
 		source, target := &template.Results[i], &copied.Results[i]
 		if source.Plan != nil {
-			restoreHiddenPolicy(target.Plan.EffectivePolicy, source.Plan.EffectivePolicy)
+			if target.Plan == nil {
+				return fmt.Errorf("report copy result %d has no plan", i)
+			}
+			if err := restoreHiddenPolicy(target.Plan.EffectivePolicy, source.Plan.EffectivePolicy); err != nil {
+				return fmt.Errorf("report copy result %d plan: %w", i, err)
+			}
 		}
 		for j := range source.Attempts {
-			if source.Attempts[j].Adoption != nil {
-				restoreHiddenPolicy(target.Attempts[j].Adoption.EffectivePolicy, source.Attempts[j].Adoption.EffectivePolicy)
+			if source.Attempts[j].Adoption == nil {
+				continue
+			}
+			if target.Attempts[j].Adoption == nil {
+				return fmt.Errorf("report copy result %d attempt %d has no adoption", i, j)
+			}
+			if err := restoreHiddenPolicy(target.Attempts[j].Adoption.EffectivePolicy, source.Attempts[j].Adoption.EffectivePolicy); err != nil {
+				return fmt.Errorf("report copy result %d attempt %d: %w", i, j, err)
 			}
 		}
 	}
 	return nil
 }
 
-func restoreHiddenPolicy(target, source *config.EffectivePolicy) {
+// restoreHiddenPolicy gives target its own copy of source's manifest, through the one text
+// Praetor writes a manifest as and the one decoder that reads it back, and of the artifacts.
+func restoreHiddenPolicy(target, source *config.EffectivePolicy) error {
 	if target == nil || source == nil {
-		return
+		return nil
 	}
-	target.Manifest, target.CatalogArtifacts = source.Manifest, source.CatalogArtifacts
+	target.Manifest = nil
+	if source.Manifest != nil {
+		data, err := config.RenderManifest(source.Manifest)
+		if err != nil {
+			return err
+		}
+		if target.Manifest, err = config.DecodeManifest(data); err != nil {
+			return err
+		}
+	}
+	target.CatalogArtifacts = make([]config.PolicyArtifact, len(source.CatalogArtifacts))
+	for k, artifact := range source.CatalogArtifacts {
+		artifact.Content = bytes.Clone(artifact.Content)
+		target.CatalogArtifacts[k] = artifact
+	}
+	return nil
 }
 
 // copyFixtureTree copies src to dst, links included, then restores each entry's exact mode:
@@ -221,6 +253,27 @@ func TestAdoptedPolicyFixtureCopiesAreIndependent(t *testing.T) {
 	if second.Results[0].Plan.EffectivePolicy.Sources[0].SHA256 == "changed" {
 		t.Fatal("a change to one report copy reached another")
 	}
+	assertHiddenPolicyCopied(t, a.Plan.EffectivePolicy, b.Plan.EffectivePolicy)
+}
+
+// assertHiddenPolicyCopied holds two copies' manifests and catalog artifacts equal in content
+// and apart in storage: changing one copy's manifest or artifact bytes leaves the other as is.
+func assertHiddenPolicyCopied(t *testing.T, first, second *config.EffectivePolicy) {
+	t.Helper()
+	if first.Manifest == second.Manifest || !reflect.DeepEqual(first.Manifest, second.Manifest) {
+		t.Fatalf("copies must hold equal manifests apart: %p, %p", first.Manifest, second.Manifest)
+	}
+	first.Manifest.Repository.Name = "changed"
+	if second.Manifest.Repository.Name == "changed" {
+		t.Fatal("a change to one copy's manifest reached another")
+	}
+	if len(first.CatalogArtifacts) == 0 || !reflect.DeepEqual(first.CatalogArtifacts, second.CatalogArtifacts) {
+		t.Fatalf("copies must carry the template's catalog artifacts: %d, %d", len(first.CatalogArtifacts), len(second.CatalogArtifacts))
+	}
+	first.CatalogArtifacts[0].Content[0] ^= 0xff
+	if bytes.Equal(first.CatalogArtifacts[0].Content, second.CatalogArtifacts[0].Content) {
+		t.Fatal("a change to one copy's artifact bytes reached another")
+	}
 }
 
 // Negative and boundary: a copy whose shape differs from its template is refused rather than
@@ -231,6 +284,15 @@ func TestRestoreHiddenPoliciesRefusesMismatchedCopy(t *testing.T) {
 		if err := restoreHiddenPolicies(copied, template); err == nil {
 			t.Fatalf("a copy shaped %+v was restored from %+v", copied, template)
 		}
+	}
+	policy := &config.EffectivePolicy{}
+	planned := &PublicLoopReport{Results: []PublicRepositoryResult{{Plan: &adopt.AdoptReport{EffectivePolicy: policy}}}}
+	if err := restoreHiddenPolicies(&PublicLoopReport{Results: []PublicRepositoryResult{{}}}, planned); err == nil {
+		t.Fatal("a copy without the template's plan was restored")
+	}
+	adopted := &PublicLoopReport{Results: []PublicRepositoryResult{{Attempts: []PublicAttempt{{Adoption: &adopt.AdoptReport{EffectivePolicy: policy}}}}}}
+	if err := restoreHiddenPolicies(&PublicLoopReport{Results: []PublicRepositoryResult{{Attempts: []PublicAttempt{{}}}}}, adopted); err == nil {
+		t.Fatal("a copy without the template's adoption was restored")
 	}
 	if err := restoreHiddenPolicies(&PublicLoopReport{}, &PublicLoopReport{}); err != nil {
 		t.Fatalf("matching empty reports refused: %v", err)

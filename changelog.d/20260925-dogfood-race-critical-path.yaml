@@ -1,3 +1,0 @@
-type: fixed
-title: "The internal/dogfood race suite, the critical path of the Standards gate, ran the same public-loop policy fixture fourteen times; it now runs it once per package run and hands each test its own copy, which cuts the package's -race time by 44 to 52 percent"
-breaking: false

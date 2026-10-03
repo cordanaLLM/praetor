@@ -1,0 +1,3 @@
+type: fixed
+title: "Build the internal/dogfood policy fixture once per test run instead of fourteen times, cutting the package's race-test time by about 45 percent"
+breaking: false
