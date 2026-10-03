@@ -692,8 +692,32 @@ func TestTranscribeDiscussionToADR_Positive(t *testing.T) {
 	if adr.Slug != "multi-forge-git-collaboration-federation" {
 		t.Fatalf("unexpected slug: %s", adr.Slug)
 	}
-	if _, err := os.Stat(adr.FilePath); os.IsNotExist(err) {
-		t.Fatalf("expected ADR file to exist at %s", adr.FilePath)
+	if adr.Existing {
+		t.Fatalf("expected newly created ADR to have Existing=false")
+	}
+	initialData, err := os.ReadFile(adr.FilePath)
+	if err != nil {
+		t.Fatalf("expected ADR file to exist at %s: %v", adr.FilePath, err)
+	}
+	if !strings.Contains(string(initialData), "Discussion: #42") {
+		t.Fatalf("expected ADR file to carry discussion marker, got:\n%s", string(initialData))
+	}
+
+	// Positive (second transcription for the same discussion writes nothing and reports the existing record)
+	adr2, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
+	if err != nil {
+		t.Fatalf("unexpected error on idempotent second transcription: %v", err)
+	}
+	if !adr2.Existing {
+		t.Fatalf("expected second transcription to report Existing=true")
+	}
+	if adr2.Number != adr.Number || adr2.FilePath != adr.FilePath || adr2.Content != adr.Content {
+		t.Fatalf("expected reported ADR to match existing record, got adr2=%+v, want adr1=%+v", adr2, adr)
+	}
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected exactly 1 ADR file in directory, got %d: %v", len(entries), entries)
 	}
 }
 
@@ -894,6 +918,61 @@ func TestTranscribeDiscussionToADR_Negative_UnapprovedAndEmpty(t *testing.T) {
 	if errTitle == nil {
 		t.Fatalf("expected error on empty discussion title")
 	}
+
+	negativeID := Discussion{
+		ID:           -1,
+		Title:        "Negative ID",
+		Status:       "approved",
+		ContextText:  "Some context",
+		DecisionText: "Some decision",
+	}
+	if _, errNeg := TranscribeDiscussionToADR(ctx, negativeID, tempDir, tempDir); errNeg == nil {
+		t.Fatalf("expected error on negative discussion ID")
+	}
+}
+
+func TestTranscribeDiscussionToADR_Negative_ChangedDiscussionRefused(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	original := Discussion{
+		ID:           55,
+		Title:        "Initial Decision",
+		Status:       "approved",
+		ContextText:  "Original context",
+		DecisionText: "Original decision",
+	}
+	adr, err := TranscribeDiscussionToADR(ctx, original, tempDir, tempDir)
+	if err != nil {
+		t.Fatalf("transcribe initial discussion: %v", err)
+	}
+
+	origContent, err := os.ReadFile(adr.FilePath)
+	if err != nil {
+		t.Fatalf("read original ADR: %v", err)
+	}
+
+	// Negative: a changed discussion with an existing record is refused, file unchanged.
+	changed := original
+	changed.DecisionText = "Modified decision after acceptance"
+	_, err = TranscribeDiscussionToADR(ctx, changed, tempDir, tempDir)
+	if err == nil {
+		t.Fatalf("expected refusal when transcribing changed discussion")
+	}
+	if !strings.Contains(err.Error(), "already transcribed in") || !strings.Contains(err.Error(), "an accepted record is immutable") {
+		t.Fatalf("expected immutable refusal naming file, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), adr.FilePath) {
+		t.Fatalf("expected error to name existing file %s, got: %v", adr.FilePath, err)
+	}
+
+	currentContent, err := os.ReadFile(adr.FilePath)
+	if err != nil {
+		t.Fatalf("read ADR after refusal: %v", err)
+	}
+	if string(currentContent) != string(origContent) {
+		t.Fatalf("expected ADR file to remain unchanged on disk, got %s, want %s", string(currentContent), string(origContent))
+	}
 }
 
 func TestGenerateWiki_Negative_EmptyOutputDirAndCancelledContext(t *testing.T) {
@@ -1017,31 +1096,51 @@ func TestTranscribeDiscussionToADR_Boundary_IncrementalNumbering(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	// Seed directory with 0001-first.md and 0002-second.md
-	if err := os.WriteFile(filepath.Join(tempDir, "0001-first.md"), []byte("first"), 0644); err != nil {
+	// Seed directory with 0001-first.md and 0002-second.md without markers (written by older version).
+	if err := os.WriteFile(filepath.Join(tempDir, "0001-first.md"), []byte("# ADR-0001: First\n\n## Status\nAccepted\n\n## Context\nLegacy context without marker.\n"), 0644); err != nil {
 		t.Fatalf("failed to seed 0001: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(tempDir, "0002-second.md"), []byte("second"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tempDir, "0002-second.md"), []byte("# ADR-0002: Second\n\n## Status\nAccepted\n\n## Context\nLegacy context without marker.\n"), 0644); err != nil {
 		t.Fatalf("failed to seed 0002: %v", err)
 	}
 
-	disc := Discussion{
-		ID:           3,
-		Title:        "Third Architectural Choice",
+	// Boundary: a record without a marker written by an older version is not taken for any discussion.
+	// Transcribing discussion #1 does not take 0001-first.md; it allocates the next available sequence number.
+	disc1 := Discussion{
+		ID:           1,
+		Title:        "First Modern Choice",
 		Status:       "Accepted",
 		ContextText:  "Valid context",
 		DecisionText: "Valid decision",
 	}
-
-	adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
+	adr1, err := TranscribeDiscussionToADR(ctx, disc1, tempDir, tempDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if adr.Number != 3 {
-		t.Fatalf("expected next ADR number 3, got %d", adr.Number)
+	if adr1.Number != 3 {
+		t.Fatalf("expected next ADR number 3, got %d", adr1.Number)
 	}
-	if !strings.HasSuffix(adr.FilePath, "0003-third-architectural-choice.md") {
-		t.Fatalf("unexpected file path: %s", adr.FilePath)
+	if !strings.HasSuffix(adr1.FilePath, "0003-first-modern-choice.md") {
+		t.Fatalf("unexpected file path: %s", adr1.FilePath)
+	}
+
+	// Boundary: two different discussions get two records with consecutive numbers.
+	disc2 := Discussion{
+		ID:           2,
+		Title:        "Second Modern Choice",
+		Status:       "Accepted",
+		ContextText:  "Valid context 2",
+		DecisionText: "Valid decision 2",
+	}
+	adr2, err := TranscribeDiscussionToADR(ctx, disc2, tempDir, tempDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if adr2.Number != 4 {
+		t.Fatalf("expected consecutive ADR number 4, got %d", adr2.Number)
+	}
+	if !strings.HasSuffix(adr2.FilePath, "0004-second-modern-choice.md") {
+		t.Fatalf("unexpected file path: %s", adr2.FilePath)
 	}
 }
 
@@ -1049,13 +1148,14 @@ func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
+	// Boundary: non-Latin title falls back to discussion-<id> slug while retaining original title in markdown.
 	first := Discussion{
 		ID: 11, Title: "設計方針", Status: "approved",
 		ContextText: "context", DecisionText: "decision",
 	}
 	adr1, err := TranscribeDiscussionToADR(ctx, first, tempDir, tempDir)
-	if err != nil || adr1.Slug == "" {
-		t.Fatalf("unexpected error or empty slug: %v, %+v", err, adr1)
+	if err != nil || adr1.Slug != "discussion-11" {
+		t.Fatalf("unexpected error or slug: %v, %+v", err, adr1)
 	}
 
 	second := first
@@ -1067,31 +1167,85 @@ func TestTranscribeDiscussionToADR_Boundary_NonLatinTitleAndOverwrite(t *testing
 	}
 
 	data, err := os.ReadFile(adr1.FilePath)
-	if err != nil || !strings.Contains(string(data), "設計方針") {
+	if err != nil || !strings.Contains(string(data), "設計方針") || !strings.Contains(string(data), "Discussion: #11") {
 		t.Fatalf("first ADR missing or overwritten: %v, %s", err, string(data))
 	}
 
-	// 1. Reusing an existing discussion ID advances the sequence number without overwriting.
+	// 1. Reusing an existing discussion ID reports the existing record without advancing sequence or overwriting.
 	third := first
 	third.ID = 11
 	adr3, err := TranscribeDiscussionToADR(ctx, third, tempDir, tempDir)
-	if err != nil || adr3.Number != 3 || adr3.FilePath == adr1.FilePath {
-		t.Fatalf("expected non-overwriting ADR #3, got adr=%+v, err=%v", adr3, err)
+	if err != nil || adr3.Number != 1 || adr3.FilePath != adr1.FilePath || !adr3.Existing {
+		t.Fatalf("expected existing ADR #1 reported without advance, got adr=%+v, err=%v", adr3, err)
 	}
 
-	// 2. An existing record is immutable: an actual path collision is an error, never a silent rewrite.
-	collisionPath := filepath.Join(tempDir, "0004-discussion-11.md")
+	// 2. An existing record is immutable: an actual path collision on disk is an error, never a silent rewrite.
+	collisionPath := filepath.Join(tempDir, "0003-discussion-13.md")
 	if err := os.Mkdir(collisionPath, 0o750); err != nil {
 		t.Fatalf("failed to create existing collision path: %v", err)
 	}
 	fourth := first
-	fourth.ID = 11
+	fourth.ID = 13
 	_, err = TranscribeDiscussionToADR(ctx, fourth, tempDir, tempDir)
 	if err == nil {
 		t.Fatalf("expected collision error for %s, got nil", collisionPath)
 	}
 	if !strings.Contains(err.Error(), "already exists: an accepted record is immutable") {
 		t.Fatalf("expected collision immutability error, got: %v", err)
+	}
+}
+
+func TestTranscribeDiscussionToADR_Boundary_ConcurrentExclusiveCreate(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	disc := Discussion{
+		ID:           99,
+		Title:        "Concurrent Decision",
+		Status:       "approved",
+		ContextText:  "Testing concurrent writers",
+		DecisionText: "Only one writer creates the record",
+	}
+
+	const workers = 4
+	errs := make(chan error, workers)
+	adrs := make(chan *ADR, workers)
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			adr, err := TranscribeDiscussionToADR(ctx, disc, tempDir, tempDir)
+			if err != nil {
+				errs <- err
+				return
+			}
+			adrs <- adr
+		}()
+	}
+
+	var createdCount int
+	var existingCount int
+	for i := 0; i < workers; i++ {
+		select {
+		case err := <-errs:
+			if !strings.Contains(err.Error(), "already exists: an accepted record is immutable") {
+				t.Fatalf("unexpected error from worker: %v", err)
+			}
+		case adr := <-adrs:
+			if adr.Existing {
+				existingCount++
+			} else {
+				createdCount++
+			}
+		}
+	}
+
+	if createdCount != 1 {
+		t.Fatalf("expected exactly 1 worker to create the record, got created=%d, existing=%d", createdCount, existingCount)
+	}
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected exactly 1 file created in tempDir, got %d: %v", len(entries), entries)
 	}
 }
 

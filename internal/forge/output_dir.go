@@ -57,3 +57,13 @@ func (g generatedDir) write(name string, data []byte, perm os.FileMode) error {
 	}
 	return util.WriteFileNoFollow(g.path(name), data, perm)
 }
+
+// writeExclusive creates the file name inside dir exclusively, refusing an existing entry or link.
+func (g generatedDir) writeExclusive(name string, data []byte, perm os.FileMode) error {
+	if g.confined() {
+		if _, err := util.ConfinePath(g.root, filepath.Join(g.dir, name)); err != nil {
+			return err
+		}
+	}
+	return util.WriteFileExclusive(g.path(name), data, perm)
+}

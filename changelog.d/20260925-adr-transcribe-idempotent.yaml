@@ -1,0 +1,4 @@
+type: fixed
+title: "TranscribeDiscussionToADR duplicates records on re-transcription"
+breaking: false
+issue: "#719"

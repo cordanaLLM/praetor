@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,7 +16,8 @@ import (
 
 // Invariant bounds adhering to HISS-02.
 const (
-	MaxADRFilesLimit = 10000
+	MaxADRFilesLimit    = 10000
+	maxHeaderLinesLimit = 64
 	// adrFilePerm is the mode applied to a transcribed ADR file.
 	adrFilePerm = 0o644
 	// adrDirPerm is the mode applied to the ADR directory.
@@ -44,6 +46,7 @@ type ADR struct {
 	Title    string `json:"title"`
 	Status   string `json:"status"`
 	Content  string `json:"content"`
+	Existing bool   `json:"existing,omitempty"`
 }
 
 var (
@@ -52,6 +55,8 @@ var (
 	// and cannot be silently overwritten by the next such record.
 	adrFileRegex  = regexp.MustCompile(`^(\d{4})(?:-([a-z0-9\-]*))?\.md$`)
 	nonAlphaRegex = regexp.MustCompile(`[^a-z0-9]+`)
+	// discussionMarkerRegex matches an ADR reference line or front-matter entry carrying the discussion ID.
+	discussionMarkerRegex = regexp.MustCompile(`(?i)^(?:[-*]\s+)?(?:Reference:\s*)?(?:Discussion|Discussion-ID|discussion_id)(?:\s*ID)?:\s*#?\s*(\d+)\s*$`)
 )
 
 // TranscribeDiscussionToADR converts an approved RFC discussion into an immutable ADR record.
@@ -73,17 +78,37 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, repoRoot, a
 		return nil, fmt.Errorf("failed to create ADR directory %s: %w", out.location(), err)
 	}
 
-	nextNumber, err := resolveNextADRNumber(out.location())
+	existing, nextNumber, err := scanADRDirectory(out.location(), disc)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve next ADR sequence number: %w", err)
+		return nil, err
+	}
+	if existing != nil {
+		return existing, nil
 	}
 
-	slug := slugify(disc.Title)
+	return writeNewADR(out, disc, nextNumber)
+}
+
+func adrSlug(discID int, title string) string {
+	slug := slugify(title)
 	if slug == "" {
-		// A title written entirely outside [a-z0-9] (for example a CJK title) would
-		// otherwise produce the same slug-less filename for every such discussion.
-		slug = fmt.Sprintf("discussion-%d", disc.ID)
+		return fmt.Sprintf("discussion-%d", discID)
 	}
+	return slug
+}
+
+func handleWriteCollision(location string, disc Discussion, filePath string, writeErr error) (*ADR, error) {
+	if errors.Is(writeErr, os.ErrExist) {
+		if recheck, err := findExistingDiscussionADR(location, disc); err == nil && recheck != nil {
+			return recheck, nil
+		}
+		return nil, fmt.Errorf("ADR %s already exists: an accepted record is immutable", filePath)
+	}
+	return nil, fmt.Errorf("failed to write ADR file to %s: %w", filePath, writeErr)
+}
+
+func writeNewADR(out generatedDir, disc Discussion, nextNumber int) (*ADR, error) {
+	slug := adrSlug(disc.ID, disc.Title)
 	filename := fmt.Sprintf("%04d-%s.md", nextNumber, slug)
 	filePath := out.path(filename)
 	if util.PathExists(filePath) {
@@ -91,8 +116,8 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, repoRoot, a
 	}
 
 	content := renderADRContent(nextNumber, disc)
-	if err := out.write(filename, []byte(content), adrFilePerm); err != nil {
-		return nil, fmt.Errorf("failed to write ADR file to %s: %w", filePath, err)
+	if err := out.writeExclusive(filename, []byte(content), adrFilePerm); err != nil {
+		return handleWriteCollision(out.location(), disc, filePath, err)
 	}
 
 	return &ADR{
@@ -102,6 +127,7 @@ func TranscribeDiscussionToADR(ctx context.Context, disc Discussion, repoRoot, a
 		Title:    disc.Title,
 		Status:   "Accepted",
 		Content:  content,
+		Existing: false,
 	}, nil
 }
 
@@ -120,29 +146,126 @@ func validateDiscussion(disc Discussion) error {
 	if strings.TrimSpace(disc.DecisionText) == "" {
 		return errors.New("discussion decision cannot be empty")
 	}
+	if disc.ID <= 0 {
+		return fmt.Errorf("cannot transcribe discussion #%d: discussion ID must be positive", disc.ID)
+	}
 	return nil
 }
 
-func resolveNextADRNumber(adrDir string) (int, error) {
+func extractDiscussionID(content string) (int, bool) {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	for i := 0; i < len(lines) && i < maxHeaderLinesLimit; i++ {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		matches := discussionMarkerRegex.FindStringSubmatch(line)
+		if len(matches) == 2 {
+			id, err := strconv.Atoi(matches[1])
+			if err == nil && id > 0 {
+				return id, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func normalizeADRContent(text string) string {
+	return strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+}
+
+func inspectExistingADR(filePath string, matches []string, disc Discussion) (*ADR, bool, error) {
+	// #nosec G304 -- filePath is constructed from entry.Name() enumerated from adrDir.
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, false, fmt.Errorf("read ADR file %q: %w", filePath, err)
+	}
+	content := string(data)
+	discID, ok := extractDiscussionID(content)
+	if !ok || discID != disc.ID {
+		return nil, false, nil
+	}
+
+	num, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return nil, false, fmt.Errorf("parse ADR number %q: %w", matches[1], err)
+	}
+
+	expected := renderADRContent(num, disc)
+	if normalizeADRContent(content) != normalizeADRContent(expected) {
+		return nil, false, fmt.Errorf("discussion #%d already transcribed in %s: an accepted record is immutable", disc.ID, filePath)
+	}
+
+	slug := matches[2]
+	if slug == "" {
+		slug = slugify(disc.Title)
+		if slug == "" {
+			slug = fmt.Sprintf("discussion-%d", disc.ID)
+		}
+	}
+
+	return &ADR{
+		Number:   num,
+		Slug:     slug,
+		FilePath: filePath,
+		Title:    disc.Title,
+		Status:   "Accepted",
+		Content:  content,
+		Existing: true,
+	}, true, nil
+}
+
+func processADREntry(adrDir string, entry os.DirEntry, disc Discussion) (int, *ADR, error) {
+	if entry.IsDir() {
+		return 0, nil, nil
+	}
+	matches := adrFileRegex.FindStringSubmatch(entry.Name())
+	if len(matches) != 3 {
+		return 0, nil, nil
+	}
+	num, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse ADR number %q: %w", matches[1], err)
+	}
+	if disc.ID <= 0 {
+		return num, nil, nil
+	}
+	filePath := filepath.Join(adrDir, entry.Name())
+	adr, match, err := inspectExistingADR(filePath, matches, disc)
+	if err != nil {
+		return 0, nil, err
+	}
+	if match {
+		return num, adr, nil
+	}
+	return num, nil, nil
+}
+
+func scanADRDirectory(adrDir string, disc Discussion) (*ADR, int, error) {
 	entries, err := os.ReadDir(adrDir)
 	if err != nil {
-		return 0, fmt.Errorf("read ADR directory %q: %w", adrDir, err)
+		return nil, 0, fmt.Errorf("read ADR directory %q: %w", adrDir, err)
 	}
 
 	maxNumber := 0
 	for i := 0; i < len(entries) && i < MaxADRFilesLimit; i++ {
-		entry := entries[i]
-		if entry.IsDir() {
-			continue
+		num, adr, processErr := processADREntry(adrDir, entries[i], disc)
+		if processErr != nil {
+			return nil, 0, processErr
 		}
-		matches := adrFileRegex.FindStringSubmatch(entry.Name())
-		if len(matches) == 3 {
-			if num, parseErr := strconv.Atoi(matches[1]); parseErr == nil && num > maxNumber {
-				maxNumber = num
-			}
+		if adr != nil {
+			return adr, 0, nil
+		}
+		if num > maxNumber {
+			maxNumber = num
 		}
 	}
-	return maxNumber + 1, nil
+	return nil, maxNumber + 1, nil
+}
+
+func findExistingDiscussionADR(adrDir string, disc Discussion) (*ADR, error) {
+	adr, _, err := scanADRDirectory(adrDir, disc)
+	return adr, err
 }
 
 func slugify(text string) string {
@@ -153,9 +276,9 @@ func slugify(text string) string {
 
 func renderADRContent(number int, disc Discussion) string {
 	var sb strings.Builder
-	header := fmt.Sprintf("# ADR-%04d: %s\n\n", number, disc.Title)
-	sb.WriteString(header)
+	fmt.Fprintf(&sb, "# ADR-%04d: %s\n\n", number, disc.Title)
 	sb.WriteString("## Status\nAccepted\n\n")
+	fmt.Fprintf(&sb, "Discussion: #%d\n\n", disc.ID)
 	sb.WriteString("## Context\n")
 	sb.WriteString(strings.TrimSpace(disc.ContextText) + "\n\n")
 	sb.WriteString("## Decision\n")
