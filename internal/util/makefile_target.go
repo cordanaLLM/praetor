@@ -17,6 +17,10 @@ import (
 // longer file as one only Make can resolve.
 const MaxMakefileLines = 4096
 
+// MaxMakefileContinuations bounds how many physical continuation lines can be joined into a single
+// logical line (HISS-02).
+const MaxMakefileContinuations = 256
+
 // A Makefile line is read token by token; these name what a token turned out to be.
 const (
 	makefileAssignToken    = "assign"
@@ -183,13 +187,108 @@ func makefileTargetNames(line string) []string {
 	return strings.Fields(line[:colon])
 }
 
+// makefileLineIsRule reports whether line opens a rule rather than an assignment or directive.
+func makefileLineIsRule(line string) bool {
+	if strings.HasPrefix(line, "\t") || makefileExportDirective(line) {
+		return false
+	}
+	_, colon, _ := makefileSplit(line)
+	if colon < 0 || makefileBindsVariable(line) {
+		return false
+	}
+	_, width := makefileOperatorAt(line, colon)
+	return !makefileBindsVariable(line[colon+width:])
+}
+
+// makefileJoinRecipeContinuation joins physical continuation lines for a recipe line that begins
+// with a tab (HISS-02).
+func makefileJoinRecipeContinuation(lines []string, start int) (string, int) {
+	line := strings.TrimSuffix(lines[start], "\r")
+	if !makefileContinues(line) {
+		return line, 1
+	}
+	var joined strings.Builder
+	joined.WriteString(line)
+	consumed := 1
+	for start+consumed < len(lines) && start+consumed < MaxMakefileLines && consumed < MaxMakefileContinuations {
+		if !makefileContinues(line) || joined.Len() >= MaxMakefileLineBytes {
+			break
+		}
+		next := strings.TrimSuffix(lines[start+consumed], "\r")
+		joined.WriteByte('\n')
+		joined.WriteString(next)
+		line = next
+		consumed++
+	}
+	return joined.String(), consumed
+}
+
+// makefileJoinStatementContinuation joins backslash-continued non-recipe lines (variable
+// assignments, rule lines, directives), collapsing whitespace according to GNU Make rules (HISS-02).
+func makefileJoinStatementContinuation(lines []string, start int) (string, int) {
+	line := strings.TrimSuffix(lines[start], "\r")
+	if !makefileContinues(line) {
+		return line, 1
+	}
+	trimmed := strings.TrimRight(line[:len(line)-1], " \t")
+	var joined strings.Builder
+	joined.WriteString(trimmed)
+	consumed := 1
+	for start+consumed < len(lines) && start+consumed < MaxMakefileLines && consumed < MaxMakefileContinuations {
+		if !makefileContinues(line) || joined.Len() >= MaxMakefileLineBytes {
+			break
+		}
+		next := strings.TrimSuffix(lines[start+consumed], "\r")
+		nextContent := next
+		if makefileContinues(next) {
+			nextContent = next[:len(next)-1]
+		}
+		joined.WriteByte(' ')
+		joined.WriteString(strings.TrimLeft(strings.TrimRight(nextContent, " \t"), " \t"))
+		line = next
+		consumed++
+	}
+	return joined.String(), consumed
+}
+
+// makefileLogicalLines joins backslash continuations into logical lines before classifying (HISS-02):
+// a backslash-newline in a variable assignment, a rule line or a recipe line.
+func makefileLogicalLines(data string) []string {
+	physical := strings.Split(data, "\n")
+	result := make([]string, 0, len(physical))
+	var define makefileDefineTracker
+	inRule := false
+	for index := 0; index < len(physical) && index < MaxMakefileLines; {
+		raw := strings.TrimSuffix(physical[index], "\r")
+		if define.body(raw) {
+			result = append(result, raw)
+			index++
+			inRule = false
+			continue
+		}
+		if inRule && strings.HasPrefix(raw, "\t") {
+			line, consumed := makefileJoinRecipeContinuation(physical, index)
+			result = append(result, line)
+			index += consumed
+			continue
+		}
+		line, consumed := makefileJoinStatementContinuation(physical, index)
+		result = append(result, line)
+		index += consumed
+		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			inRule = makefileLineIsRule(line)
+		}
+	}
+	return result
+}
+
 // MakefileHasTarget reports whether data, the text of a Makefile, declares a rule for target on a
 // line this reader resolves without Make: makefileTargetNames decides rule versus assignment, and
 // a define body is variable text, not rules, so a "target:" line inside one declares nothing.
 // MakefileMayDefineTarget reports the files where Make may still declare the target some other
 // way. Lines may end in "\n" or "\r\n"; only the first MaxMakefileLines lines are read.
 func MakefileHasTarget(data, target string) bool {
-	return makefileTargetLine(strings.Split(data, "\n"), target) >= 0
+	return makefileTargetLine(makefileLogicalLines(data), target) >= 0
 }
 
 // makefileTargetLine returns the index of the first line that declares a rule for target, or
@@ -212,7 +311,7 @@ func makefileTargetLine(lines []string, target string) int {
 // reads it. A rule without recipe lines, such as "test: build" alone, returns an empty recipe.
 // data holds "\n" line endings: a caller normalizes a CRLF file first.
 func MakefileTargetRecipe(data, target string) (string, bool) {
-	lines := strings.Split(data, "\n")
+	lines := makefileLogicalLines(data)
 	index := makefileTargetLine(lines, target)
 	if index < 0 {
 		return "", false
@@ -282,9 +381,11 @@ func makefileLineIsAmbiguous(line string) bool {
 // MakefileMayDefineTarget reports whether data, the text of a Makefile with "\n" line endings,
 // may already own target: a rule for it (MakefileHasTarget), a line only Make can resolve (an
 // include, an eval call, a computed or pattern target name, a line past the scan bound), a define
-// Make may expand into rules or that is never closed, or more than MaxMakefileLines lines, whose
-// unread tail may hold any of these (HISS-02). A caller about to append a rule for target must
-// not when this reports true: Make would override one of the two recipes.
+// Make may expand into rules or that is never closed, a top-level expansion that could produce a
+// rule (a call of a variable holding a colon, $(shell ...), $(A)$(B)), or more than
+// MaxMakefileLines lines, whose unread tail may hold any of these (HISS-02). A caller about to
+// append a rule for target must not when this reports true: Make would override one of the two
+// recipes.
 func MakefileMayDefineTarget(data, target string) bool {
 	if MakefileHasTarget(data, target) {
 		return true
@@ -293,9 +394,12 @@ func MakefileMayDefineTarget(data, target string) bool {
 	if len(lines) > MaxMakefileLines {
 		return true
 	}
+	logicalLines := makefileLogicalLines(data)
+	colonVars := makefileColonVariables(logicalLines)
 	var scan makefileOwnershipScan
-	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
-		if scan.read(lines[index]) {
+	scan.colonVars = colonVars
+	for index := 0; index < len(logicalLines) && index < MaxMakefileLines; index++ {
+		if scan.read(logicalLines[index]) {
 			return true
 		}
 	}

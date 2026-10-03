@@ -116,3 +116,30 @@ func TestWorkspaceCommands_Negative_UnreadableMakefileIsAnError(t *testing.T) {
 		t.Fatalf("a directory named Makefile was read as a Makefile without a rule on %s", runtime.GOOS)
 	}
 }
+
+// End to end: a backslash-continued assignment whose continuation line looks like a rule (shape 4)
+// binds no target in Make, so editor generation must not offer the Verify All task for it.
+func TestWorkspaceCommands_Negative_ContinuedAssignmentIsNoVerifyAllTask(t *testing.T) {
+	makefile := "HELP = usage \\\n  verify-all: run every gate\nall:\n\t@true\n"
+	if verifyAllOffered(t, makefile) {
+		t.Fatalf("a backslash-continued assignment got a Verify All task: %q", makefile)
+	}
+}
+
+// A backslash-continued recipe line whose continuation line looks like a rule (shape 5)
+// binds no target in Make, so editor generation must not offer the Verify All task for it.
+func TestWorkspaceCommands_Negative_ContinuedRecipeIsNoVerifyAllTask(t *testing.T) {
+	makefile := "other:\n\t@echo step 1 \\\n  verify-all: not a rule\n"
+	if verifyAllOffered(t, makefile) {
+		t.Fatalf("a backslash-continued recipe line got a Verify All task: %q", makefile)
+	}
+}
+
+// A backslash-continued target name (shape 6) binds verify-all in Make, so editor generation
+// must offer the Verify All task for it.
+func TestWorkspaceCommands_Positive_ContinuedTargetNameIsVerifyAllTask(t *testing.T) {
+	makefile := "verify-all \\\n  other: dep\n\t@true\n"
+	if !verifyAllOffered(t, makefile) {
+		t.Fatalf("a backslash-continued target name got no Verify All task: %q", makefile)
+	}
+}

@@ -127,12 +127,13 @@ not asserted anyway:
   target exists. The Makefile is read by the reader adoption decides `verify-all`
   ownership with (`util.MakefileHasTarget` in `internal/util/makefile_target.go`,
   called by `hasLiteralMakeTarget` in `internal/editor/capabilities.go`), so a line
-  that only binds a variable, such as `verify-all ?= a:b` or
-  `verify-all: CFLAGS := -g`, offers no command, and neither does a rule line inside
-  a `define` body; [adoption verification](adoption-verification.md) lists the
-  forms. A Makefile only Make can resolve (an `include`, an `$(eval ...)` call, a
-  pattern target such as `verify-%`) declares no literal rule and offers no command
-  either, although adoption preserves such a file as possibly owning the target.
+  that only binds a variable, such as `verify-all ?= a:b`, `verify-all: CFLAGS := -g`,
+  or a continued assignment or recipe line whose continuation looks like a rule,
+  offers no command, and neither does a rule line inside a `define` body;
+  [adoption verification](adoption-verification.md) lists the forms. A Makefile only
+  Make can resolve (an `include`, an `$(eval ...)` call, a pattern target such as
+  `verify-%`) declares no literal rule and offers no command either, although
+  adoption preserves such a file as possibly owning the target.
   The tests are `internal/editor/makefile_task_test.go` and
   `internal/util/makefile_target_test.go`. The generator does not add `make build`
   merely because a Makefile exists. VS Code tasks, JetBrains external tools, Neovim

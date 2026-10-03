@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -103,21 +104,40 @@ func TestMakefileBareExpansionRuleText(t *testing.T) {
 	assertDocsLintOwnership(t, makefileBareExpansionRows)
 }
 
+// makefileCandidates names the GNU Make candidates tried in order on any platform (HISS-21).
+var makefileCandidates = []string{"make", "gmake", "mingw32-make"}
+
+// resolveGNUMake finds the first GNU Make binary on PATH that reports GNU Make 4.x.
+// If make is absent or not GNU Make 4.x, it skips the test with a stated reason (HISS-21).
+func resolveGNUMake(t *testing.T) string {
+	t.Helper()
+	var tried []string
+	for _, name := range makefileCandidates {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			tried = append(tried, fmt.Sprintf("%s (not on PATH)", name))
+			continue
+		}
+		version, err := util.RunCommand(t.Context(), t.TempDir(), path, "--version")
+		if err != nil {
+			tried = append(tried, fmt.Sprintf("%s (%v)", path, err))
+			continue
+		}
+		firstLine := strings.SplitN(version, "\n", 2)[0]
+		if strings.HasPrefix(version, "GNU Make 4.") {
+			return path
+		}
+		tried = append(tried, fmt.Sprintf("%s (%s)", path, firstLine))
+	}
+	t.Skipf("GNU Make 4.x is required for replay; tried: %s", strings.Join(tried, "; "))
+	return ""
+}
+
 // Replayed both directions against the installed GNU Make: an accepted Makefile has no docs-lint
 // rule before the merge and exactly one managed recipe after it; a refused one already answers
 // docs-lint on its own, so appending the block would override an operator rule.
 func TestMakefileDefineOwnershipGNUReplay(t *testing.T) {
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skipf("make is not on PATH, so the replay cannot run; the table test covers the reader: %v", err)
-	}
-	// The rows were measured on GNU Make 4.x. macOS ships GNU Make 3.81, whose parser differs in
-	// places the rows exercise, so another version skips rather than replaying unmeasured answers
-	// (HISS-21: a skip with its reason, never a silent pass).
-	version, err := util.RunCommand(t.Context(), t.TempDir(), makePath, "--version")
-	if err != nil || !strings.HasPrefix(version, "GNU Make 4.") {
-		t.Skipf("the replay rows were measured on GNU Make 4.x; %s reports %q (%v)", makePath, strings.SplitN(version, "\n", 2)[0], err)
-	}
+	makePath := resolveGNUMake(t)
 	// Make imports the environment as variables, so a caller's P, A or MAKEFLAGS would change
 	// what the rows that reference $(P) and $(A) expand to.
 	for _, name := range []string{"P", "A", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"} {
@@ -187,5 +207,18 @@ func TestAdoptionDocumentationGateAcceptsCalledDefine(t *testing.T) {
 	got := mustRead(t, filepath.Join(root, makefileName))
 	if !strings.HasPrefix(got, makefile) || strings.Count(got, DocumentationMakefileBlock()) != 1 {
 		t.Fatalf("custom Makefile did not gain exactly one documentation block:\n%s", got)
+	}
+}
+
+// End to end: a project whose Makefile defines a single-line template expanded at top level
+// (shape 1) may define docs-lint, so adoption refuses to append rather than overriding it.
+func TestAdoptionDocumentationGateRefusesSingleLineTemplate(t *testing.T) {
+	makefile := "make-rule = $(1): ; @echo operator\n$(call make-rule,docs-lint)\n"
+	if !util.MakefileMayDefineTarget(makefile, "docs-lint") {
+		t.Fatal("MakefileMayDefineTarget must report true for single-line template")
+	}
+	_, err := mergeDocumentationMakefile(makefile, false)
+	if err == nil {
+		t.Fatal("mergeDocumentationMakefile must refuse to append to a single-line template Makefile")
 	}
 }

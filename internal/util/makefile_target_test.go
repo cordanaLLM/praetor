@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,21 +101,40 @@ func TestMakefileHasTargetIssue304Forms(t *testing.T) {
 	assertMakefileTargetRows(t, makefileIssue304Rows)
 }
 
+// gnuMakeCandidates names the candidates tried in order on any platform (HISS-21).
+var gnuMakeCandidates = []string{"make", "gmake", "mingw32-make"}
+
+// resolveGNUMake finds the first GNU Make binary on PATH that reports GNU Make 4.x.
+// If make is absent or not GNU Make 4.x, it skips the test with a stated reason (HISS-21).
+func resolveGNUMake(t *testing.T) string {
+	t.Helper()
+	var tried []string
+	for _, name := range gnuMakeCandidates {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			tried = append(tried, fmt.Sprintf("%s (not on PATH)", name))
+			continue
+		}
+		version, err := RunCommand(t.Context(), t.TempDir(), path, "--version")
+		if err != nil {
+			tried = append(tried, fmt.Sprintf("%s (%v)", path, err))
+			continue
+		}
+		firstLine := strings.SplitN(version, "\n", 2)[0]
+		if strings.HasPrefix(version, "GNU Make 4.") {
+			return path
+		}
+		tried = append(tried, fmt.Sprintf("%s (%s)", path, firstLine))
+	}
+	t.Skipf("GNU Make 4.x is required for replay; tried: %s", strings.Join(tried, "; "))
+	return ""
+}
+
 // Replayed against the installed GNU Make, both directions: "make -n verify-all" fails for the
 // eight assignments, which declare no rule, and prints the recipe for the four rules. A "dep" rule
 // is appended so a rule row fails for no other reason than a missing verify-all.
 func TestMakefileIssue304FormsGNUReplay(t *testing.T) {
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skipf("make is not on PATH, so the replay cannot run; the table test covers the reader: %v", err)
-	}
-	// The rows were measured on GNU Make 4.x. macOS ships GNU Make 3.81, which has no "::=",
-	// ":::=" or "!=", so another version skips rather than replaying unmeasured answers (HISS-21:
-	// a skip with its reason, never a silent pass).
-	version, err := RunCommand(t.Context(), t.TempDir(), makePath, "--version")
-	if err != nil || !strings.HasPrefix(version, "GNU Make 4.") {
-		t.Skipf("the replay rows were measured on GNU Make 4.x; %s reports %q (%v)", makePath, strings.SplitN(version, "\n", 2)[0], err)
-	}
+	makePath := resolveGNUMake(t)
 	// Make imports the environment as variables, so a caller's SRCS or MAKEFLAGS would change
 	// what the rows expand to.
 	for _, name := range []string{"SRCS", "CFLAGS", "HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
@@ -129,6 +149,98 @@ func TestMakefileIssue304FormsGNUReplay(t *testing.T) {
 			out, err := RunCommand(t.Context(), root, makePath, "--no-print-directory", "-n", "verify-all")
 			if declared := err == nil && strings.Contains(out, "echo custom"); declared != tc.want {
 				t.Fatalf("GNU Make declares verify-all = %v, the reader's row says %v: %q %v", declared, tc.want, out, err)
+			}
+		})
+	}
+}
+
+// makefileIssue554Row represents one shape from issue #554, whether the shared Makefile reader
+// finds a target (hasTarget), whether it reports the file may define it (mayDefine), and whether
+// GNU Make 4.x resolves it as a rule (makeTarget).
+type makefileIssue554Row struct {
+	makefile   string
+	hasTarget  bool
+	mayDefine  bool
+	makeTarget bool
+}
+
+// makefileIssue554Rows covers the six shapes from issue #554 measured against GNU Make 4.4.1.
+var makefileIssue554Rows = map[string]makefileIssue554Row{
+	"single-line-template": {
+		makefile:   "make-rule = $(1): ; @echo custom\n$(call make-rule,verify-all)\n",
+		hasTarget:  false,
+		mayDefine:  true,
+		makeTarget: true,
+	},
+	"bare-expansion-backslash": {
+		makefile:   "X = 1\n$(if $(X),verify-all \\\n  : ; @echo custom)\n",
+		hasTarget:  false,
+		mayDefine:  true,
+		makeTarget: true,
+	},
+	"variable-value-rule": {
+		makefile:   "A = verify-\nB = all\n$(A)$(B): ; @echo custom\n",
+		hasTarget:  false,
+		mayDefine:  true,
+		makeTarget: true,
+	},
+	"shell-expansion-rule": {
+		makefile:   "$(shell echo verify-all): ; @echo custom\n",
+		hasTarget:  false,
+		mayDefine:  true,
+		makeTarget: true,
+	},
+	"continued-assignment": {
+		makefile:   "HELP = usage \\\n  verify-all: run every gate\nall:\n\t@echo all\n",
+		hasTarget:  false,
+		mayDefine:  false,
+		makeTarget: false,
+	},
+	"continued-recipe": {
+		makefile:   "other:\n\t@echo step 1 \\\n  verify-all: not a rule\n",
+		hasTarget:  false,
+		mayDefine:  false,
+		makeTarget: false,
+	},
+	"continued-target-name": {
+		makefile:   "verify-all \\\n  other: dep\n\t@echo custom\n",
+		hasTarget:  true,
+		mayDefine:  true,
+		makeTarget: true,
+	},
+}
+
+// TestMakefileIssue554Forms tests that the shared Makefile reader handles all six shapes from
+// issue #554 correctly: continuations are joined before classifying, and dynamic top-level
+// expansions are left to Make (MakefileMayDefineTarget = true, MakefileHasTarget = false).
+func TestMakefileIssue554Forms(t *testing.T) {
+	for name, tc := range makefileIssue554Rows {
+		t.Run(name, func(t *testing.T) {
+			if got := MakefileHasTarget(tc.makefile, "verify-all"); got != tc.hasTarget {
+				t.Fatalf("MakefileHasTarget(%q) = %v, want %v", tc.makefile, got, tc.hasTarget)
+			}
+			if got := MakefileMayDefineTarget(tc.makefile, "verify-all"); got != tc.mayDefine {
+				t.Fatalf("MakefileMayDefineTarget(%q) = %v, want %v", tc.makefile, got, tc.mayDefine)
+			}
+		})
+	}
+}
+
+// TestMakefileIssue554FormsGNUReplay replays the issue #554 forms against GNU Make 4.x.
+func TestMakefileIssue554FormsGNUReplay(t *testing.T) {
+	makePath := resolveGNUMake(t)
+	for _, name := range []string{"A", "B", "X", "HELP", "SRCS", "CFLAGS", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
+		t.Setenv(name, "")
+	}
+	for name, tc := range makefileIssue554Rows {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(tc.makefile+"dep: ;\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			out, err := RunCommand(t.Context(), root, makePath, "--no-print-directory", "-n", "verify-all")
+			if declared := err == nil && (strings.Contains(out, "echo custom") || strings.Contains(out, "echo all")); declared != tc.makeTarget {
+				t.Fatalf("GNU Make declares verify-all = %v, the test row says %v: %q %v", declared, tc.makeTarget, out, err)
 			}
 		})
 	}

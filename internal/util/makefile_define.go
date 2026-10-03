@@ -82,41 +82,172 @@ func makefileOpensDefine(fields []string) bool {
 
 // makefileOwnershipScan walks a Makefile once and records what only Make can resolve.
 type makefileOwnershipScan struct {
-	define makefileDefineTracker
-	// carry marks a line that continues a logical line already read as a comment, recipe,
-	// directive, assignment or rule, so its text cannot open a bare expansion.
-	carry bool
-	// expands records a top-level bare expansion, which parses a define body as makefile syntax.
-	expands bool
+	define    makefileDefineTracker
+	colonVars map[string]bool
+	expands   bool
 }
 
-// read classifies one physical line and reports whether it alone leaves ownership to Make: a line
-// makefileLineIsAmbiguous reports, or a define body line that calls eval.
+func makefileDefineName(line string) string {
+	fields := strings.Fields(line)
+	if !makefileOpensDefine(fields) {
+		return ""
+	}
+	idx := makefileDirectiveIndex(fields)
+	if idx+1 < len(fields) {
+		return fields[idx+1]
+	}
+	return ""
+}
+
+func makefileAssignmentHasColon(line string) (string, bool) {
+	if !makefileBindsVariable(line) {
+		return "", false
+	}
+	assign, _, _ := makefileSplit(line)
+	_, width := makefileOperatorAt(line, assign)
+	rawName := strings.TrimSpace(line[:assign])
+	fields := strings.Fields(rawName)
+	idx := makefileDirectiveIndex(fields)
+	if idx >= len(fields) {
+		return "", false
+	}
+	name := fields[idx]
+	val := line[assign+width:]
+	if comment := strings.Index(val, "#"); comment >= 0 {
+		val = val[:comment]
+	}
+	return name, strings.Contains(val, ":")
+}
+
+// makefileColonVariables scans logical lines for variables whose assigned value or define body
+// holds a colon, which can produce rules when expanded (HISS-02).
+func makefileColonVariables(lines []string) map[string]bool {
+	vars := make(map[string]bool)
+	var define makefileDefineTracker
+	var currentDefine string
+	for i := 0; i < len(lines) && i < MaxMakefileLines; i++ {
+		line := lines[i]
+		if strings.HasPrefix(line, "\t") {
+			continue
+		}
+		if define.depth == 0 {
+			currentDefine = makefileDefineName(line)
+		}
+		if define.body(line) {
+			if define.depth > 0 && strings.Contains(line, ":") && currentDefine != "" {
+				vars[currentDefine] = true
+			}
+			continue
+		}
+		if name, hasColon := makefileAssignmentHasColon(line); hasColon {
+			vars[name] = true
+		}
+	}
+	return vars
+}
+
+// makefileCallTargetName extracts the template name from a $(call name,...) or ${call name,...} reference.
+func makefileCallTargetName(ref string) string {
+	if len(ref) < 8 {
+		return ""
+	}
+	last := len(ref)
+	if ref[last-1] == ')' || ref[last-1] == '}' {
+		last--
+	}
+	inner := ref[2:last]
+	trimmed := strings.TrimLeft(inner, " \t")
+	if !strings.HasPrefix(trimmed, "call ") && !strings.HasPrefix(trimmed, "call\t") {
+		return ""
+	}
+	after := strings.TrimLeft(trimmed[5:], " \t")
+	end := strings.IndexAny(after, ", \t)}")
+	if end < 0 {
+		return after
+	}
+	return after[:end]
+}
+
+// makefileReferenceTargetName extracts the variable name from a simple $(var) or ${var} reference.
+func makefileReferenceTargetName(ref string) string {
+	if len(ref) < 3 {
+		return ""
+	}
+	last := len(ref)
+	if ref[last-1] == ')' || ref[last-1] == '}' {
+		last--
+	}
+	inner := ref[2:last]
+	trimmed := strings.TrimSpace(inner)
+	if strings.ContainsAny(trimmed, " \t(),$:") {
+		return ""
+	}
+	return trimmed
+}
+
+func (s *makefileOwnershipScan) referenceHoldsColonVar(ref string) bool {
+	if callName := makefileCallTargetName(ref); callName != "" && s.colonVars[callName] {
+		return true
+	}
+	if varName := makefileReferenceTargetName(ref); varName != "" && s.colonVars[varName] {
+		return true
+	}
+	return false
+}
+
+// referencesMayDefine reports whether line references a colon-holding variable or combines multiple
+// variable expansions like $(A)$(B) (HISS-02).
+func (s *makefileOwnershipScan) referencesMayDefine(line string) bool {
+	refCount := 0
+	for i := 0; i < len(line) && i < MaxMakefileLineBytes; {
+		kind, width := makefileOperatorAt(line, i)
+		if kind == makefileEndToken {
+			break
+		}
+		if kind == makefileReferenceToken && makefileSilentCallWidth(line[i:]) == 0 {
+			refCount++
+			if s.referenceHoldsColonVar(line[i : i+width]) {
+				return true
+			}
+		}
+		i += width
+	}
+	return refCount >= 2
+}
+
+// expansionMayDefine reports whether a bare expansion line may define rules (HISS-02): a colon
+// outside silent calls, a shell invocation, a call or reference of a variable holding a colon,
+// multiple references like $(A)$(B), or an expansion beside a multi-line define.
+func (s *makefileOwnershipScan) expansionMayDefine(line string) (mayDefine, expands bool) {
+	expands, colon := makefileBareExpansion(line)
+	if !expands {
+		return false, false
+	}
+	if colon || strings.Contains(line, "$(shell") || strings.Contains(line, "${shell") || s.define.defines {
+		return true, true
+	}
+	return s.referencesMayDefine(line), true
+}
+
+// read classifies one logical line and reports whether it alone leaves ownership to Make: a line
+// makefileLineIsAmbiguous reports, a define body line that calls eval, or a bare expansion that
+// may define rules.
 func (s *makefileOwnershipScan) read(line string) bool {
-	carried := s.carry
-	s.carry = false
 	if s.define.body(line) {
 		return makefileCallsEval(line)
 	}
 	if strings.HasPrefix(line, "\t") {
-		s.carry = makefileContinues(line)
 		return false
 	}
 	trimmed := strings.TrimSpace(line)
 	if makefileLineIsAmbiguous(trimmed) {
 		return true
 	}
-	if carried {
-		s.carry = makefileContinues(line)
-		return false
-	}
 	switch makefileLineKind(trimmed) {
 	case makefileLineExpansion:
-		expands, colon := makefileBareExpansion(trimmed)
+		mayDefine, expands := s.expansionMayDefine(trimmed)
 		s.expands = s.expands || expands
-		return colon
-	case makefileLineDecided:
-		s.carry = makefileContinues(line)
+		return mayDefine
 	}
 	return false
 }
@@ -125,7 +256,7 @@ func (s *makefileOwnershipScan) read(line string) bool {
 // define that is never closed swallows the rest of the file, text appended after it included, and
 // a define beside a bare expansion may become rules.
 func (s *makefileOwnershipScan) unresolved() bool {
-	return s.define.depth > 0 || s.define.defines && s.expands
+	return s.define.depth > 0 || (s.define.defines && s.expands)
 }
 
 // makefileLineKind reports whether a trimmed top-level line is a bare expansion: it holds a variable
