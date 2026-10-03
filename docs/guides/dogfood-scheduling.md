@@ -58,7 +58,10 @@ new run is admitted, after at least `retry_seconds` since the previous start.
 A clock rollback delays admission. No reset or force-execution command exists.
 
 An advisory lock prevents overlapping invocations and is released by the kernel
-when a process exits. The lock file is retained. Before executing the suite the
+when a process exits. A tick that finishes unlocks it before closing it, so a
+subprocess still holding a copy of the descriptor cannot leave the next tick
+`busy` (`LockExclusive` in `internal/util/file_lock_unix.go`). The lock file is
+retained. Before executing the suite the
 scheduler saves and fsyncs the attempt's running state and provisional failure
 count. An abandoned running attempt is recorded as interrupted on the next tick;
 its partial evidence remains. Corrupt or inconsistent state, missing attempt

@@ -3,38 +3,24 @@
 package repairrun
 
 import (
-	"errors"
 	"os"
 	"syscall"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func openRegular(root *os.Root, name string) (*os.File, error) {
 	return root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 }
 
-func lockState(root *os.Root, create bool) (*os.File, bool, error) {
-	flags := os.O_RDWR | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+// lockState takes the execution lock and returns its release; busy means another run holds
+// it. Without create, a missing lock file returns an error matching os.ErrNotExist.
+func lockState(root *os.Root, create bool) (func() error, bool, error) {
+	flag := os.O_RDWR
 	if create {
-		flags |= os.O_CREATE
+		flag |= os.O_CREATE
 	}
-	file, err := root.OpenFile("execution.lock", flags, 0o600)
-	if err != nil {
-		return nil, false, err
-	}
-	info, err := file.Stat()
-	if err == nil && (!info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0) {
-		err = errors.New("execution lock must be a private regular file")
-	}
-	if err != nil {
-		return nil, false, errors.Join(err, file.Close())
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, true, file.Close()
-		}
-		return nil, false, errors.Join(err, file.Close())
-	}
-	return file, false, nil
+	return util.LockPrivateFile(root, "execution.lock", flag, "repair execution")
 }
 
 // ExecutionSupported reports whether repair execution can run on this platform. It needs
