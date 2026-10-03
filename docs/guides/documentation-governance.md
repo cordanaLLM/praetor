@@ -68,10 +68,18 @@ version from the lock, so a pin update leaves `verify.mjs` unchanged. Every
 subprocess has a timeout, and the temporary installation is removed after success
 or failure.
 
-The lock installs no package with a known high or critical advisory. The
+The lock installs no package with a known high or critical advisory, except one
+that has no fixed release and a reviewed exception. The
 `Go Vulnerability & AST Security Scan` job in `.github/workflows/security.yml`
-runs `npm audit --package-lock-only --audit-level=high` on it for every pull
-request and daily, and `TestMarkdownGateLockClearsFixedAdvisories` in
+runs `scripts/npm_audit_gate.py` on it for every pull request and daily. The
+script runs `npm audit --package-lock-only --json` and fails on every high or
+critical advisory that `.config/security/npm-audit-exceptions.json` does not name
+for this lock, with a reason and an expiry date at most 90 days ahead. An
+expired exception fails like a missing one. The current exception is braces
+GHSA-vfj7-8cjw-p6xm, reached through `micromatch`. It is a stack-exhaustion
+denial of service, and the gate only expands globs the repository itself
+declares. An adopter that audits its copy of the lock sees the same advisory and
+can record the same reasoning. `TestMarkdownGateLockClearsFixedAdvisories` in
 `internal/supplychain/npm_advisories_test.go` keeps `smol-toml`, `js-yaml` and
 `markdown-it` at or above the versions that fixed their advisories (#643).
 Because audit locks the lock byte for byte, an adopter cannot patch it: a fix

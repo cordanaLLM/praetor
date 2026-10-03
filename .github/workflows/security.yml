@@ -69,11 +69,8 @@ jobs:
         with:
           node-version: 24
 
+      # A high or critical advisory fails unless .config/security/npm-audit-exceptions.json
+      # names it for that lock with a reason and an unexpired date (scripts/npm_audit_gate.py;
+      # scripts/test_npm_audit_gate.py pins this step).
       - name: Audit npm Locks (npm audit, high and critical)
-        run: |
-          status=0
-          for dir in tools/markdownlint tools/figures editors/vscode docs/presets/starlight; do
-            echo "npm audit --package-lock-only --audit-level=high: $dir"
-            (cd "$dir" && npm audit --package-lock-only --audit-level=high) || status=1
-          done
-          exit "$status"
+        run: python3 -B scripts/npm_audit_gate.py tools/markdownlint tools/figures editors/vscode docs/presets/starlight

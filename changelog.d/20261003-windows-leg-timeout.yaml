@@ -1,0 +1,4 @@
+type: fixed
+title: "The Windows Platform Neutrality leg gets a 120-minute limit, because a slow runner took a green run past 75 minutes"
+issue: "#729"
+breaking: false
