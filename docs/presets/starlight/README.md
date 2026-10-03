@@ -116,10 +116,14 @@ updates as `starlight docs preset`. The `docs-presets` job in `.github/workflows
 whenever a file under `docs/presets/` or `tools/figures/`, or the adoption code that writes the
 engine, changes.
 
-The lock installs no package with a known high or critical advisory: the
-`Go Vulnerability & AST Security Scan` job in `.github/workflows/security.yml` runs
-`npm audit --package-lock-only --audit-level=high` on it for every pull request and daily. Run the
-same command here before you commit a changed lock.
+The lock installs no package with a known high or critical advisory, except one that has no
+fixed release and a reviewed exception. The `Go Vulnerability & AST Security Scan` job in
+`.github/workflows/security.yml` runs `scripts/npm_audit_gate.py` on it for every pull request and
+daily. The script fails on any high or critical advisory that
+`.config/security/npm-audit-exceptions.json` does not name for this lock, with a reason and an
+unexpired date. The current exception is http-cache-semantics GHSA-ch52-4w7c-c8xp. Astro uses the
+package only to reuse remote images fetched during the static build, and a build serves no other
+user. Run `npm audit --package-lock-only` here before you commit a changed lock.
 
 The preset targets Astro 7 and Starlight 0.42. The content collection is configured in
 `src/content.config.ts` with Starlight's `docsLoader()` (the Content Layer layout Starlight 0.30+

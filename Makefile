@@ -193,6 +193,11 @@ docs-assets-test:
 github-app-test:
 	python3 -B scripts/test_github_app_permissions.py
 
+.PHONY: npm-audit-gate-test
+verify-all: npm-audit-gate-test
+npm-audit-gate-test:
+	python3 -B scripts/test_npm_audit_gate.py
+
 # BEGIN praetor documentation gate
 .PHONY: docs-lint docs-figures
 verify-all: docs-lint docs-figures
