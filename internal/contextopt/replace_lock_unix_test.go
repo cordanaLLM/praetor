@@ -115,6 +115,11 @@ func TestLockSnapshotDirectoryReleasesAcrossExecFork(t *testing.T) {
 			}
 		}
 	}()
+	// A t.Fatalf below must not leave the exec goroutine running past the test.
+	defer func() {
+		stop.Store(true)
+		wg.Wait()
+	}()
 
 	const lockCycles = 2000
 	var failures int
@@ -160,6 +165,10 @@ func TestLockSnapshotDirectoryReleaseAfterReleaseReported(t *testing.T) {
 	}
 }
 
+// Boundary: a stale release of lock A must not unlock lock B. The case relies on POSIX
+// handing out the lowest free descriptor, so B's directory reuses the number A's release
+// closed; nothing else in this test opens a file in between, and the package's tests do not
+// run in parallel. Against a release that unlocks the raw descriptor number, lock C succeeds.
 func TestLockSnapshotDirectoryDoubleReleaseDoesNotDropReusedFDLock(t *testing.T) {
 	dirA := t.TempDir()
 	rootA, err := OpenDirectory(t.Context(), dirA)

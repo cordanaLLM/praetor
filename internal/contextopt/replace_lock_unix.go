@@ -34,6 +34,9 @@ func lockSnapshotDirectory(root *os.Root) (func() error, error) {
 				unlockErr = syscall.Flock(int(fd), syscall.LOCK_UN)
 			})
 		}
-		return errors.Join(ctlErr, unlockErr, file.Close())
+		if err := errors.Join(ctlErr, unlockErr, file.Close()); err != nil {
+			return fmt.Errorf("release snapshot directory lock: %w", err)
+		}
+		return nil
 	}, nil
 }
