@@ -1,12 +1,14 @@
-package util
+package util_test
 
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // makefileTargetRow is one Makefile and whether it declares a verify-all rule.
@@ -85,7 +87,7 @@ func assertMakefileTargetRows(t *testing.T, rows map[string]makefileTargetRow) {
 	t.Helper()
 	for name, tc := range rows {
 		t.Run(name, func(t *testing.T) {
-			if got := MakefileHasTarget(tc.makefile, "verify-all"); got != tc.want {
+			if got := util.MakefileHasTarget(tc.makefile, "verify-all"); got != tc.want {
 				t.Fatalf("MakefileHasTarget(%q) = %v, want %v", tc.makefile, got, tc.want)
 			}
 		})
@@ -101,249 +103,187 @@ func TestMakefileHasTargetIssue304Forms(t *testing.T) {
 	assertMakefileTargetRows(t, makefileIssue304Rows)
 }
 
-// gnuMakeCandidates names the candidates tried in order on any platform (HISS-21).
-var gnuMakeCandidates = []string{"make", "gmake", "mingw32-make"}
-
-// resolveGNUMake finds the first GNU Make binary on PATH that reports GNU Make 4.x.
-// If make is absent or not GNU Make 4.x, it skips the test with a stated reason (HISS-21).
-func resolveGNUMake(t *testing.T) string {
+// clearMakeEnvironment empties the variables the rows reference, since Make imports the
+// environment as variables and a caller's SRCS, PREFIX or MAKEFLAGS would change what they expand to.
+func clearMakeEnvironment(t *testing.T) {
 	t.Helper()
-	var tried []string
-	for _, name := range gnuMakeCandidates {
-		path, err := exec.LookPath(name)
-		if err != nil {
-			tried = append(tried, fmt.Sprintf("%s (not on PATH)", name))
-			continue
-		}
-		version, err := RunCommand(t.Context(), t.TempDir(), path, "--version")
-		if err != nil {
-			tried = append(tried, fmt.Sprintf("%s (%v)", path, err))
-			continue
-		}
-		firstLine := strings.SplitN(version, "\n", 2)[0]
-		if strings.HasPrefix(version, "GNU Make 4.") {
-			return path
-		}
-		tried = append(tried, fmt.Sprintf("%s (%s)", path, firstLine))
+	for _, name := range []string{"A", "B", "R", "X", "PREFIX", "SRCS", "CFLAGS", "HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
+		t.Setenv(name, "")
 	}
-	t.Skipf("GNU Make 4.x is required for replay; tried: %s", strings.Join(tried, "; "))
-	return ""
+}
+
+// makeDeclaresVerifyAll writes makefile with a "dep" rule appended, so a rule row fails for no
+// other reason than a missing verify-all, and rules.txt holding a verify-all rule for the rows that
+// read it, and reports whether "make -n verify-all" prints the row's recipe.
+func makeDeclaresVerifyAll(t *testing.T, makePath, makefile string) (bool, string) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(makefile+"dep: ;\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "rules.txt"), []byte("verify-all: ; @echo custom\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "-n", "verify-all")
+	return err == nil && strings.Contains(out, "echo custom"), fmt.Sprintf("%q %v", out, err)
 }
 
 // Replayed against the installed GNU Make, both directions: "make -n verify-all" fails for the
-// eight assignments, which declare no rule, and prints the recipe for the four rules. A "dep" rule
-// is appended so a rule row fails for no other reason than a missing verify-all.
+// eight assignments, which declare no rule, and prints the recipe for the four rules.
 func TestMakefileIssue304FormsGNUReplay(t *testing.T) {
-	makePath := resolveGNUMake(t)
-	// Make imports the environment as variables, so a caller's SRCS or MAKEFLAGS would change
-	// what the rows expand to.
-	for _, name := range []string{"SRCS", "CFLAGS", "HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
-		t.Setenv(name, "")
-	}
+	makePath := testsupport.GNUMake(t)
+	clearMakeEnvironment(t)
 	for name, tc := range makefileIssue304Rows {
 		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(tc.makefile+"dep: ;\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			out, err := RunCommand(t.Context(), root, makePath, "--no-print-directory", "-n", "verify-all")
-			if declared := err == nil && strings.Contains(out, "echo custom"); declared != tc.want {
-				t.Fatalf("GNU Make declares verify-all = %v, the reader's row says %v: %q %v", declared, tc.want, out, err)
+			if declared, out := makeDeclaresVerifyAll(t, makePath, tc.makefile); declared != tc.want {
+				t.Fatalf("GNU Make declares verify-all = %v, the reader's row says %v: %s", declared, tc.want, out)
 			}
 		})
 	}
 }
 
-// makefileIssue554Row represents one shape from issue #554, whether the shared Makefile reader
-// finds a target (hasTarget), whether it reports the file may define it (mayDefine), and whether
-// GNU Make 4.x resolves it as a rule (makeTarget).
-type makefileIssue554Row struct {
-	makefile   string
-	hasTarget  bool
-	mayDefine  bool
-	makeTarget bool
+// makefileOwnershipRow is a Makefile, what the reader answers for verify-all (hasTarget for
+// MakefileHasTarget, mayDefine for MakefileMayDefineTarget), what GNU Make 4.4.1 answers
+// (makeTarget: "make -n verify-all" prints the recipe), and whether the replay runs a shell
+// command (shell: sh with cat, see testsupport.RequireGNUMakeShell). The reader may refuse more
+// than Make declares, never less: makeTarget implies mayDefine, and hasTarget implies makeTarget.
+type makefileOwnershipRow struct {
+	makefile                         string
+	hasTarget, mayDefine, makeTarget bool
+	shell                            bool
 }
 
-// makefileIssue554Rows covers the six shapes from issue #554 measured against GNU Make 4.4.1.
-var makefileIssue554Rows = map[string]makefileIssue554Row{
+// makefileIssue554Rows are the shapes issue #554 reports and the ones review of its fix found. Each
+// row's reader answer differs from the reader before the fix, which read physical lines and
+// counted a bare expansion only when its own text held a colon: the bare expansions there were
+// appendable, a continued assignment, recipe line or comment declared verify-all, a continued
+// target name declared nothing, and a define whose continued line swallows endef closed there.
+// info-message is the price of failing closed: Make only prints the message, yet the reader, which
+// evaluates nothing, leaves the file to Make. computed-target-list declares verify-all, but the
+// reader claims no target from a line whose target list holds a reference.
+var makefileIssue554Rows = map[string]makefileOwnershipRow{
 	"single-line-template": {
-		makefile:   "make-rule = $(1): ; @echo custom\n$(call make-rule,verify-all)\n",
-		hasTarget:  false,
-		mayDefine:  true,
-		makeTarget: true,
+		makefile:  "make-rule = $(1): ; @echo custom\n$(call make-rule,verify-all)\n",
+		mayDefine: true, makeTarget: true,
 	},
-	"bare-expansion-backslash": {
-		makefile:   "X = 1\n$(if $(X),verify-all \\\n  : ; @echo custom)\n",
-		hasTarget:  false,
-		mayDefine:  true,
-		makeTarget: true,
+	"bare-expansion-continued": {
+		makefile:  "X = 1\n$(if $(X),verify-all \\\n  : ; @echo custom)\n",
+		mayDefine: true, makeTarget: true,
 	},
-	"variable-value-rule": {
-		makefile:   "A = verify-all\nB = : ; @echo custom\n$(A)$(B)\n",
-		hasTarget:  false,
-		mayDefine:  true,
-		makeTarget: true,
+	"concatenated-values": {
+		makefile:  "A = verify-all\nB = : ; @echo custom\n$(A)$(B)\n",
+		mayDefine: true, makeTarget: true,
 	},
-	"indirect-variable-rule": {
-		makefile:   "A = verify-all\nB = : ; @echo custom\nR = $(A)$(B)\n$(R)\n",
-		hasTarget:  false,
-		mayDefine:  true,
-		makeTarget: true,
+	"shell-output": {
+		makefile:  "$(shell cat rules.txt)\n",
+		mayDefine: true, makeTarget: true, shell: true,
 	},
-	"shell-expansion-rule": {
-		makefile:   "$(shell echo 'verify-all: ; @echo custom')\n",
-		hasTarget:  false,
-		mayDefine:  true,
-		makeTarget: true,
+	"info-message": {
+		makefile:  "$(info verify-all: ; @echo custom)\nall:\n\t@echo all\n",
+		mayDefine: true,
 	},
-	"redirected-shell-expansion": {
-		makefile:   "$(shell mkdir -p build >/dev/null 2>&1)\nall:\n\t@echo all\n",
-		hasTarget:  false,
-		mayDefine:  false,
-		makeTarget: false,
-	},
-	"simple-assign-colon": {
-		makefile:   "make-rule := $(1): ; @echo custom\nall:\n\t@echo all\n",
-		hasTarget:  false,
-		mayDefine:  false,
-		makeTarget: false,
+	"computed-target-list": {
+		makefile:  "$(PREFIX) verify-all: dep\n\t@echo custom\n",
+		mayDefine: true, makeTarget: true,
 	},
 	"continued-assignment": {
-		makefile:   "HELP = usage \\\n  verify-all: run every gate\nall:\n\t@echo all\n",
-		hasTarget:  false,
-		mayDefine:  false,
-		makeTarget: false,
+		makefile: "HELP = usage \\\n  verify-all: run every gate\nall:\n\t@echo all\n",
 	},
 	"continued-recipe": {
-		makefile:   "other:\n\t@echo step 1 \\\n  verify-all: not a rule\n",
-		hasTarget:  false,
-		mayDefine:  false,
-		makeTarget: false,
+		makefile: "other:\n\t@echo step 1 \\\n  verify-all: not a rule\n",
+	},
+	"continued-comment": {
+		makefile: "# old: \\\nverify-all: dep\n\t@echo custom\n",
 	},
 	"continued-target-name": {
-		makefile:   "verify-all \\\n  other: dep\n\t@echo custom\n",
-		hasTarget:  true,
-		mayDefine:  true,
-		makeTarget: true,
+		makefile:  "verify-all \\\n  other: dep\n\t@echo custom\n",
+		hasTarget: true, mayDefine: true, makeTarget: true,
+	},
+	"define-swallows-endef": {
+		makefile:  "define gates\nbody \\\nendef\nverify-all: dep\n\t@echo custom\n",
+		mayDefine: true,
 	},
 }
 
-// TestMakefileIssue554Forms tests that the shared Makefile reader handles all six shapes from
-// issue #554 correctly: continuations are joined before classifying, and dynamic top-level
-// expansions are left to Make (MakefileMayDefineTarget = true, MakefileHasTarget = false).
-func TestMakefileIssue554Forms(t *testing.T) {
-	for name, tc := range makefileIssue554Rows {
+// continuedRule returns a rule for verify-all whose target list runs over continuations
+// continuation lines, and continuedValue an assignment whose value does, with a rule-shaped last
+// line: GNU Make declares verify-all for the first at any length and never for the second.
+func continuedRule(continuations int) string {
+	return "verify-all \\\n" + strings.Repeat("  step \\\n", continuations-1) + "  other: dep\n\t@echo custom\n"
+}
+
+func continuedValue(continuations int) string {
+	return "HELP = usage \\\n" + strings.Repeat("  step \\\n", continuations-1) + "  verify-all: not a rule\nall:\n\t@echo all\n"
+}
+
+// joinedRule returns a rule for verify-all continued once whose joined logical line is exactly
+// length bytes long.
+func joinedRule(length int) string {
+	const joined = "verify-all other: dep # "
+	return "verify-all \\\n  other: dep # " + strings.Repeat("x", length-len(joined)) + "\n\t@echo custom\n"
+}
+
+// makefileBoundRows hold the continuation and joined-length bounds (HISS-02). At a bound the
+// logical line is read whole; past it the reader stops: it claims nothing from that line on and
+// leaves the file to Make, which still reads it.
+var makefileBoundRows = map[string]makefileOwnershipRow{
+	"rule-at-continuation-bound":    {makefile: continuedRule(util.MaxMakefileContinuations), hasTarget: true, mayDefine: true, makeTarget: true},
+	"rule-past-continuation-bound":  {makefile: continuedRule(util.MaxMakefileContinuations + 1), mayDefine: true, makeTarget: true},
+	"value-at-continuation-bound":   {makefile: continuedValue(util.MaxMakefileContinuations)},
+	"value-past-continuation-bound": {makefile: continuedValue(util.MaxMakefileContinuations + 1), mayDefine: true},
+	"rule-at-joined-byte-bound":     {makefile: joinedRule(util.MaxMakefileLineBytes), hasTarget: true, mayDefine: true, makeTarget: true},
+	"rule-past-joined-byte-bound":   {makefile: joinedRule(util.MaxMakefileLineBytes + 1), mayDefine: true, makeTarget: true},
+}
+
+func assertOwnershipRows(t *testing.T, rows map[string]makefileOwnershipRow) {
+	t.Helper()
+	for name, tc := range rows {
 		t.Run(name, func(t *testing.T) {
-			if got := MakefileHasTarget(tc.makefile, "verify-all"); got != tc.hasTarget {
+			if tc.makeTarget && !tc.mayDefine || tc.hasTarget && !tc.makeTarget {
+				t.Fatalf("the row fails open: hasTarget %v, mayDefine %v, makeTarget %v", tc.hasTarget, tc.mayDefine, tc.makeTarget)
+			}
+			if got := util.MakefileHasTarget(tc.makefile, "verify-all"); got != tc.hasTarget {
 				t.Fatalf("MakefileHasTarget(%q) = %v, want %v", tc.makefile, got, tc.hasTarget)
 			}
-			if got := MakefileMayDefineTarget(tc.makefile, "verify-all"); got != tc.mayDefine {
+			if got := util.MakefileMayDefineTarget(tc.makefile, "verify-all"); got != tc.mayDefine {
 				t.Fatalf("MakefileMayDefineTarget(%q) = %v, want %v", tc.makefile, got, tc.mayDefine)
 			}
 		})
 	}
 }
 
-// TestMakefileIssue554FormsGNUReplay replays the issue #554 forms against GNU Make 4.x.
-func TestMakefileIssue554FormsGNUReplay(t *testing.T) {
-	makePath := resolveGNUMake(t)
-	for _, name := range []string{"A", "B", "R", "X", "HELP", "SRCS", "CFLAGS", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
-		t.Setenv(name, "")
-	}
-	for name, tc := range makefileIssue554Rows {
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(tc.makefile+"dep: ;\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			out, err := RunCommand(t.Context(), root, makePath, "--no-print-directory", "-n", "verify-all")
-			if declared := err == nil && (strings.Contains(out, "echo custom") || strings.Contains(out, "echo all")); declared != tc.makeTarget {
-				t.Fatalf("GNU Make declares verify-all = %v, the test row says %v: %q %v", declared, tc.makeTarget, out, err)
-			}
-		})
-	}
+func TestMakefileIssue554Forms(t *testing.T) {
+	assertOwnershipRows(t, makefileIssue554Rows)
 }
 
-func buildContinuationMakefile(prefix, step, suffix string, count int) string {
-	var b strings.Builder
-	b.WriteString(prefix)
-	for i := 0; i < count; i++ {
-		b.WriteString(step)
-	}
-	b.WriteString(suffix)
-	return b.String()
+func TestMakefileContinuationAndJoinedByteBounds(t *testing.T) {
+	assertOwnershipRows(t, makefileBoundRows)
 }
 
-func TestMakefileContinuationBounds(t *testing.T) {
-	atBoundAssignment := buildContinuationMakefile("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@echo all\n", 255)
-	pastBoundAssignment := buildContinuationMakefile("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@echo all\n", 299)
-	atBoundRule := buildContinuationMakefile("verify-all \\\n", "  step \\\n", "  other: dep\n\t@echo custom\n", 255)
-	pastBoundRule := buildContinuationMakefile("verify-all \\\n", "  step \\\n", "  other: dep\n\t@echo custom\n", 299)
-
-	t.Run("at-bound-assignment", func(t *testing.T) {
-		if got := MakefileHasTarget(atBoundAssignment, "verify-all"); got != false {
-			t.Fatalf("MakefileHasTarget = %v, want false", got)
+// Replayed against the installed GNU Make: Make's answer must be the row's, and the reader's live
+// answers must not fail open against it -- Make declaring verify-all implies MakefileMayDefineTarget,
+// and MakefileHasTarget implies Make declaring it.
+func TestMakefileOwnershipRowsGNUReplay(t *testing.T) {
+	makePath := testsupport.GNUMake(t)
+	clearMakeEnvironment(t)
+	for _, rows := range []map[string]makefileOwnershipRow{makefileIssue554Rows, makefileBoundRows} {
+		for name, tc := range rows {
+			t.Run(name, func(t *testing.T) {
+				if tc.shell {
+					testsupport.RequireGNUMakeShell(t, "cat")
+				}
+				declared, out := makeDeclaresVerifyAll(t, makePath, tc.makefile)
+				if declared != tc.makeTarget {
+					t.Fatalf("GNU Make declares verify-all = %v, the row says %v: %s", declared, tc.makeTarget, out)
+				}
+				if declared && !util.MakefileMayDefineTarget(tc.makefile, "verify-all") {
+					t.Fatalf("GNU Make declares verify-all, MakefileMayDefineTarget reports false: %s", out)
+				}
+				if util.MakefileHasTarget(tc.makefile, "verify-all") && !declared {
+					t.Fatalf("MakefileHasTarget claims verify-all, GNU Make declares none: %s", out)
+				}
+			})
 		}
-		if got := MakefileMayDefineTarget(atBoundAssignment, "verify-all"); got != false {
-			t.Fatalf("MakefileMayDefineTarget = %v, want false", got)
-		}
-	})
-	t.Run("past-bound-assignment", func(t *testing.T) {
-		if got := MakefileHasTarget(pastBoundAssignment, "verify-all"); got != false {
-			t.Fatalf("MakefileHasTarget = %v, want false", got)
-		}
-		if got := MakefileMayDefineTarget(pastBoundAssignment, "verify-all"); got != true {
-			t.Fatalf("MakefileMayDefineTarget = %v, want true", got)
-		}
-	})
-	t.Run("at-bound-rule", func(t *testing.T) {
-		if got := MakefileHasTarget(atBoundRule, "verify-all"); got != true {
-			t.Fatalf("MakefileHasTarget = %v, want true", got)
-		}
-		if got := MakefileMayDefineTarget(atBoundRule, "verify-all"); got != true {
-			t.Fatalf("MakefileMayDefineTarget = %v, want true", got)
-		}
-	})
-	t.Run("past-bound-rule", func(t *testing.T) {
-		if got := MakefileHasTarget(pastBoundRule, "verify-all"); got != false {
-			t.Fatalf("MakefileHasTarget = %v, want false", got)
-		}
-		if got := MakefileMayDefineTarget(pastBoundRule, "verify-all"); got != true {
-			t.Fatalf("MakefileMayDefineTarget = %v, want true", got)
-		}
-	})
-}
-
-func TestMakefileContinuationBoundsGNUReplay(t *testing.T) {
-	makePath := resolveGNUMake(t)
-	for _, name := range []string{"HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
-		t.Setenv(name, "")
-	}
-	atBoundAssignment := buildContinuationMakefile("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@echo all\n", 255)
-	pastBoundAssignment := buildContinuationMakefile("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@echo all\n", 299)
-	atBoundRule := buildContinuationMakefile("verify-all \\\n", "  step \\\n", "  other: dep\n\t@echo custom\n", 255)
-	pastBoundRule := buildContinuationMakefile("verify-all \\\n", "  step \\\n", "  other: dep\n\t@echo custom\n", 299)
-
-	cases := map[string]struct {
-		makefile   string
-		makeTarget bool
-	}{
-		"at-bound-assignment":   {atBoundAssignment, false},
-		"past-bound-assignment": {pastBoundAssignment, false},
-		"at-bound-rule":         {atBoundRule, true},
-		"past-bound-rule":       {pastBoundRule, true},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			root := t.TempDir()
-			if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(tc.makefile+"dep: ;\n"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			out, err := RunCommand(t.Context(), root, makePath, "--no-print-directory", "-n", "verify-all")
-			if declared := err == nil && (strings.Contains(out, "echo custom") || strings.Contains(out, "echo all")); declared != tc.makeTarget {
-				t.Fatalf("GNU Make declares verify-all = %v, want %v: %q %v", declared, tc.makeTarget, out, err)
-			}
-		})
 	}
 }
 
@@ -352,18 +292,18 @@ func TestMakefileHasTargetSeparatesRulesFromAssignments(t *testing.T) {
 }
 
 // An assignment of the issue's eight forms binds no target, so a caller may append its own rule:
-// MakefileMayDefineTarget agrees with MakefileHasTarget on every one of the twelve rows.
+// util.MakefileMayDefineTarget agrees with util.MakefileHasTarget on every one of the twelve rows.
 func TestMakefileMayDefineTargetIssue304Forms(t *testing.T) {
 	for name, tc := range makefileIssue304Rows {
 		t.Run(name, func(t *testing.T) {
-			if got := MakefileMayDefineTarget(tc.makefile, "verify-all"); got != tc.want {
-				t.Fatalf("MakefileMayDefineTarget(%q) = %v, want %v", tc.makefile, got, tc.want)
+			if got := util.MakefileMayDefineTarget(tc.makefile, "verify-all"); got != tc.want {
+				t.Fatalf("util.MakefileMayDefineTarget(%q) = %v, want %v", tc.makefile, got, tc.want)
 			}
 		})
 	}
 }
 
-// MakefileMayDefineTarget decides whether a caller may append its own rule. An assignment binds
+// util.MakefileMayDefineTarget decides whether a caller may append its own rule. An assignment binds
 // no target and is appendable; the ambiguous forms documented in
 // docs/guides/adoption-verification.md still require Make evaluation.
 func TestMakefileMayDefineTargetSeparatesAssignmentsFromAmbiguousForms(t *testing.T) {
@@ -398,8 +338,8 @@ func TestMakefileMayDefineTargetSeparatesAssignmentsFromAmbiguousForms(t *testin
 		"empty":                    {"", false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := MakefileMayDefineTarget(tc.makefile, "verify-all"); got != tc.want {
-				t.Fatalf("MakefileMayDefineTarget(%q) = %v, want %v", tc.makefile, got, tc.want)
+			if got := util.MakefileMayDefineTarget(tc.makefile, "verify-all"); got != tc.want {
+				t.Fatalf("util.MakefileMayDefineTarget(%q) = %v, want %v", tc.makefile, got, tc.want)
 			}
 		})
 	}
@@ -409,72 +349,90 @@ func TestMakefileMayDefineTargetSeparatesAssignmentsFromAmbiguousForms(t *testin
 // after endef does, so a define holding a verify-all template is no rule Make can run.
 func TestMakefileDefineBodyDeclaresNoTarget(t *testing.T) {
 	body := "define gates\nverify-all: lint\n\t@echo template\nendef\n"
-	if MakefileHasTarget(body, "verify-all") || MakefileMayDefineTarget(body, "verify-all") {
+	if util.MakefileHasTarget(body, "verify-all") || util.MakefileMayDefineTarget(body, "verify-all") {
 		t.Fatal("a rule inside a define body was read as a declared target")
 	}
-	if !MakefileHasTarget(body+"verify-all: lint\n", "verify-all") {
+	if !util.MakefileHasTarget(body+"verify-all: lint\n", "verify-all") {
 		t.Fatal("a rule after endef was not read")
 	}
 	nested := "define outer\ndefine inner\nendef\nverify-all: lint\nendef\n"
-	if MakefileHasTarget(nested, "verify-all") {
+	if util.MakefileHasTarget(nested, "verify-all") {
 		t.Fatal("the inner endef closed the outer define")
 	}
 	for _, assignment := range []string{"define := x\n", "define = x\n", "override define ?= x\n"} {
-		if !MakefileHasTarget(assignment+"verify-all: lint\n", "verify-all") {
+		if !util.MakefileHasTarget(assignment+"verify-all: lint\n", "verify-all") {
 			t.Fatalf("%q binds a variable named define but was read as opening a block", assignment)
 		}
 	}
 }
 
-// Boundary: the line scan stops at MaxMakefileLineBytes (HISS-02), so a longer line is read in
-// part and its ownership is unresolved rather than decided. The reader reports no target for it,
-// and MakefileMayDefineTarget reports it as ambiguous so a caller preserves the Makefile instead
+// Boundary: a logical line longer than MaxMakefileLineBytes (HISS-02) is a point the reader cannot
+// resolve, so the reading stops there: no target is claimed from that line or any later one, and
+// MakefileMayDefineTarget reports the file as ambiguous so a caller preserves the Makefile instead
 // of appending a rule that would override one Make does see. A line exactly at the bound is still
-// read whole.
+// read whole. Before the reader stopped there, it claimed a rule whose colon came before the bound
+// on a longer line, and every rule after it.
 func TestMakefileScanBoundLeavesOwnershipAmbiguous(t *testing.T) {
 	const declaration = " verify-all: dep"
-	past := strings.Repeat("x", MaxMakefileLineBytes) + declaration + "\n"
-	if MakefileHasTarget(past, "verify-all") {
-		t.Fatalf("target read past the %d byte scan bound", MaxMakefileLineBytes)
+	past := strings.Repeat("x", util.MaxMakefileLineBytes) + declaration + "\n"
+	if util.MakefileHasTarget(past, "verify-all") {
+		t.Fatalf("target read past the %d byte scan bound", util.MaxMakefileLineBytes)
 	}
-	if !MakefileMayDefineTarget(past, "verify-all") {
+	if !util.MakefileMayDefineTarget(past, "verify-all") {
 		t.Fatal("a line past the scan bound must stay ambiguous so a caller preserves it")
 	}
-	at := strings.Repeat("x", MaxMakefileLineBytes-len(declaration)) + declaration + "\n"
-	if !MakefileHasTarget(at, "verify-all") {
-		t.Fatalf("a line of exactly %d bytes must still be read whole", MaxMakefileLineBytes)
+	at := strings.Repeat("x", util.MaxMakefileLineBytes-len(declaration)) + declaration + "\n"
+	if !util.MakefileHasTarget(at, "verify-all") {
+		t.Fatalf("a line of exactly %d bytes must still be read whole", util.MaxMakefileLineBytes)
+	}
+	longPrerequisites := "verify-all: " + strings.Repeat("dep ", util.MaxMakefileLineBytes/4) + "\n"
+	afterLongLine := "HELP = " + strings.Repeat("x", util.MaxMakefileLineBytes) + "\nverify-all: dep\n"
+	for name, makefile := range map[string]string{"long-prerequisites": longPrerequisites, "rule-after-long-line": afterLongLine} {
+		if util.MakefileHasTarget(makefile, "verify-all") || !util.MakefileMayDefineTarget(makefile, "verify-all") {
+			t.Fatalf("%s: a rule at or after a line past the %d byte bound was claimed", name, util.MaxMakefileLineBytes)
+		}
 	}
 }
 
-// Boundary: the file scan stops at MaxMakefileLines (HISS-02). The last line inside the bound is
+// Boundary: the file scan stops at util.MaxMakefileLines (HISS-02). The last line inside the bound is
 // still read by the rule-versus-assignment parser, a rule one line further is not, a Makefile of
 // exactly the bound built from assignments owns nothing, and one line more leaves the unread tail
 // unresolved, so the ownership check reports it as ambiguous for every target.
 func TestMakefileLineCountBoundLeavesOwnershipAmbiguous(t *testing.T) {
-	assignments := strings.Repeat("V := a:b\n", MaxMakefileLines-1)
-	if !MakefileHasTarget(assignments+"verify-all: dep", "verify-all") {
-		t.Fatalf("a rule on line %d was not read", MaxMakefileLines)
+	assignments := strings.Repeat("V := a:b\n", util.MaxMakefileLines-1)
+	if !util.MakefileHasTarget(assignments+"verify-all: dep", "verify-all") {
+		t.Fatalf("a rule on line %d was not read", util.MaxMakefileLines)
 	}
-	if MakefileHasTarget(assignments+"verify-all := dep", "verify-all") {
-		t.Fatalf("an assignment on line %d was read as a rule", MaxMakefileLines)
+	if util.MakefileHasTarget(assignments+"verify-all := dep", "verify-all") {
+		t.Fatalf("an assignment on line %d was read as a rule", util.MaxMakefileLines)
 	}
-	if MakefileHasTarget("V := a:b\n"+assignments+"verify-all: dep", "verify-all") {
-		t.Fatalf("a rule on line %d, past the bound, was read", MaxMakefileLines+1)
+	if util.MakefileHasTarget("V := a:b\n"+assignments+"verify-all: dep", "verify-all") {
+		t.Fatalf("a rule on line %d, past the bound, was read", util.MaxMakefileLines+1)
 	}
-	if MakefileMayDefineTarget(assignments, "verify-all") || MakefileMayDefineTarget(assignments, "docs-lint") {
-		t.Fatalf("a Makefile of exactly %d lines of assignments was reported as owning a target", MaxMakefileLines)
+	if util.MakefileMayDefineTarget(assignments, "verify-all") || util.MakefileMayDefineTarget(assignments, "docs-lint") {
+		t.Fatalf("a Makefile of exactly %d lines of assignments was reported as owning a target", util.MaxMakefileLines)
 	}
 	past := assignments + "V := c\n"
-	if !MakefileMayDefineTarget(past, "verify-all") || !MakefileMayDefineTarget(past, "docs-lint") {
-		t.Fatalf("a Makefile past %d lines must stay ambiguous so a caller preserves it", MaxMakefileLines)
+	if !util.MakefileMayDefineTarget(past, "verify-all") || !util.MakefileMayDefineTarget(past, "docs-lint") {
+		t.Fatalf("a Makefile past %d lines must stay ambiguous so a caller preserves it", util.MaxMakefileLines)
+	}
+	// A rule continued from line MaxMakefileLines-1 onto the last line read is read whole; one
+	// continued from the last line read onto the next is not, and leaves the file to Make.
+	inside := strings.Repeat("V := a:b\n", util.MaxMakefileLines-2) + "verify-all \\\n  other: dep"
+	if !util.MakefileHasTarget(inside, "verify-all") {
+		t.Fatalf("a rule continued onto line %d was not read", util.MaxMakefileLines)
+	}
+	crossing := assignments + "verify-all \\\n  other: dep"
+	if util.MakefileHasTarget(crossing, "verify-all") || !util.MakefileMayDefineTarget(crossing, "verify-all") {
+		t.Fatalf("a rule continued past line %d was claimed or left appendable", util.MaxMakefileLines)
 	}
 }
 
-// MakefileTargetRecipe reads the recipe lines of the first rule for a target, stops at the first
-// line that is not a recipe line, finds no rule inside a define body or behind an assignment, and
-// stops reading at MaxMakefileLines.
+// MakefileTargetRecipe reads the recipe lines of the first rule for a target, a continued recipe
+// line with its continuation lines, stops at the first line that is not a recipe line, finds no
+// rule inside a define body or behind an assignment, and stops reading at MaxMakefileLines.
 func TestMakefileTargetRecipe(t *testing.T) {
-	bound := strings.Repeat("V := a:b\n", MaxMakefileLines-2)
+	bound := strings.Repeat("V := a:b\n", util.MaxMakefileLines-2)
 	for _, tc := range []struct {
 		name, data string
 		want       string
@@ -489,11 +447,13 @@ func TestMakefileTargetRecipe(t *testing.T) {
 		{"empty", "", "", false},
 		{"recipe-at-line-bound", bound + "test:\n\techo last\n\techo unread\n", "\techo last\n", true},
 		{"rule-past-line-bound", bound + "V := c\nV := d\ntest:\n\techo t\n", "", false},
+		{"continued-recipe-line", "test:\n\tgo test \\\n  ./...\n\techo b\nbuild:\n", "\tgo test \\\n  ./...\n\techo b\n", true},
+		{"continued-rule-line", "test: \\\n  build\n\techo t\n", "\techo t\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, found := MakefileTargetRecipe(tc.data, "test")
+			got, found := util.MakefileTargetRecipe(tc.data, "test")
 			if got != tc.want || found != tc.found {
-				t.Fatalf("MakefileTargetRecipe = %q, %v; want %q, %v", got, found, tc.want, tc.found)
+				t.Fatalf("util.MakefileTargetRecipe = %q, %v; want %q, %v", got, found, tc.want, tc.found)
 			}
 		})
 	}

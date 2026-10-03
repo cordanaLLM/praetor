@@ -117,7 +117,7 @@ func TestWorkspaceCommands_Negative_UnreadableMakefileIsAnError(t *testing.T) {
 	}
 }
 
-// End to end: a backslash-continued assignment whose continuation line looks like a rule (shape 4)
+// End to end: a backslash-continued assignment whose continuation line looks like a rule (issue #554)
 // binds no target in Make, so editor generation must not offer the Verify All task for it.
 func TestWorkspaceCommands_Negative_ContinuedAssignmentIsNoVerifyAllTask(t *testing.T) {
 	makefile := "HELP = usage \\\n  verify-all: run every gate\nall:\n\t@true\n"
@@ -126,7 +126,7 @@ func TestWorkspaceCommands_Negative_ContinuedAssignmentIsNoVerifyAllTask(t *test
 	}
 }
 
-// A backslash-continued recipe line whose continuation line looks like a rule (shape 5)
+// A backslash-continued recipe line whose continuation line looks like a rule (issue #554)
 // binds no target in Make, so editor generation must not offer the Verify All task for it.
 func TestWorkspaceCommands_Negative_ContinuedRecipeIsNoVerifyAllTask(t *testing.T) {
 	makefile := "other:\n\t@echo step 1 \\\n  verify-all: not a rule\n"
@@ -135,7 +135,7 @@ func TestWorkspaceCommands_Negative_ContinuedRecipeIsNoVerifyAllTask(t *testing.
 	}
 }
 
-// A backslash-continued target name (shape 6) binds verify-all in Make, so editor generation
+// A backslash-continued target name (issue #554) binds verify-all in Make, so editor generation
 // must offer the Verify All task for it.
 func TestWorkspaceCommands_Positive_ContinuedTargetNameIsVerifyAllTask(t *testing.T) {
 	makefile := "verify-all \\\n  other: dep\n\t@true\n"
@@ -144,36 +144,30 @@ func TestWorkspaceCommands_Positive_ContinuedTargetNameIsVerifyAllTask(t *testin
 	}
 }
 
-// Boundary: a continuation chain past MaxMakefileContinuations leaves target resolution
-// ambiguous, so editor generation must not offer the Verify All task.
-func TestWorkspaceCommands_Boundary_ContinuedBoundaries(t *testing.T) {
-	buildLines := func(prefix, step, suffix string, count int) string {
-		var b strings.Builder
-		b.WriteString(prefix)
-		for i := 0; i < count; i++ {
-			b.WriteString(step)
-		}
-		b.WriteString(suffix)
-		return b.String()
+// Boundary: a rule continued over util.MaxMakefileContinuations continuation lines is read whole,
+// and so is an assignment of that length whose last line looks like a rule. One continuation more
+// is a point the reader cannot resolve: it claims no rule there, so no Verify All task is offered,
+// although Make declares verify-all for the longer rule.
+func TestWorkspaceCommands_Boundary_ContinuationBound(t *testing.T) {
+	rule := func(continuations int) string {
+		return "verify-all \\\n" + strings.Repeat("  step \\\n", continuations-1) + "  other: dep\n\t@true\n"
 	}
-	// At-bound assignment (256 continuations): no rule, no task
-	atBoundAssignment := buildLines("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@true\n", 255)
-	if verifyAllOffered(t, atBoundAssignment) {
-		t.Fatal("an at-bound assignment got a Verify All task")
+	value := func(continuations int) string {
+		return "HELP = usage \\\n" + strings.Repeat("  step \\\n", continuations-1) + "  verify-all: not a rule\nall:\n\t@true\n"
 	}
-	// Past-bound assignment (300 continuations): ambiguous, no task
-	pastBoundAssignment := buildLines("HELP = usage \\\n", "  step \\\n", "  verify-all: not a rule\nall:\n\t@true\n", 299)
-	if verifyAllOffered(t, pastBoundAssignment) {
-		t.Fatal("a past-bound assignment got a Verify All task")
-	}
-	// At-bound rule (256 continuations): rule found, task offered
-	atBoundRule := buildLines("verify-all \\\n", "  step \\\n", "  other: dep\n\t@true\n", 255)
-	if !verifyAllOffered(t, atBoundRule) {
-		t.Fatal("an at-bound rule got no Verify All task")
-	}
-	// Past-bound rule (300 continuations): ambiguous, no task
-	pastBoundRule := buildLines("verify-all \\\n", "  step \\\n", "  other: dep\n\t@true\n", 299)
-	if verifyAllOffered(t, pastBoundRule) {
-		t.Fatal("a past-bound rule got a Verify All task")
+	for name, tc := range map[string]struct {
+		makefile string
+		offered  bool
+	}{
+		"rule-at-bound":    {rule(util.MaxMakefileContinuations), true},
+		"rule-past-bound":  {rule(util.MaxMakefileContinuations + 1), false},
+		"value-at-bound":   {value(util.MaxMakefileContinuations), false},
+		"value-past-bound": {value(util.MaxMakefileContinuations + 1), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := verifyAllOffered(t, tc.makefile); got != tc.offered {
+				t.Fatalf("Verify All task offered = %v, want %v", got, tc.offered)
+			}
+		})
 	}
 }

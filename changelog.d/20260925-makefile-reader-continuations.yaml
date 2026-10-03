@@ -1,4 +1,0 @@
-type: fixed
-title: The Makefile target reader misreads backslash continuations and dynamic template, shell and variable expansions
-issue: "#554"
-breaking: false

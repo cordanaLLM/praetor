@@ -58,37 +58,83 @@ rules whose prerequisites hold a substitution reference (`verify-all: $(SRCS:.c=
 call with a nested reference (`verify-all: $(filter-out $(X),a=b)`): like Make, the reader counts
 nested brackets, so a colon or `=` anywhere inside a reference is not an operator.
 
-Before classifying, backslash continuations are joined into logical lines following GNU Make's
-continuation rules (in variable assignments, rule lines, and recipe lines; bounded by 256 physical
-continuations). A variable assignment continued with a backslash whose continuation looks like a
-rule (`HELP = usage \\\n  verify-all: run every gate`) or a continued recipe line whose continuation
-looks like a rule (`other:\n\t@echo step 1 \\\n  verify-all: not a rule`) binds no target in Make
-and is read as a value or recipe, not a rule. Target names continued with a backslash
-(`verify-all \\\n  other: dep`) join before the colon and declare their targets.
+Make joins a line that ends in a backslash to the next one before it reads either, and so does
+the reader: it classifies the joined logical line as a whole. Three shapes a line-by-line read gets
+wrong are decided that way:
+
+```make
+HELP = usage \
+  verify-all: run every gate
+
+other: ; @echo step 1 \
+  verify-all: not a rule
+
+verify-all \
+  other: dep
+```
+
+The first binds `HELP` and the second continues the inline recipe of `other`, so neither declares
+`verify-all`; a continued tab-indented recipe line is recipe text the same way. The third declares
+both `verify-all` and `other`. A comment ending in a backslash continues onto the next line, and a
+continued line inside a `define` body swallows an `endef` right after it, as in Make.
 
 Also preserved are the forms only Make itself can resolve: an `include` directive, `$(eval ...)` or
-`${eval ...}`, a target name containing `$` or `%`, a line longer than the 8192-byte scan bound,
-which is read in part, a continuation chain exceeding 256 physical lines or 8192 bytes, and a Makefile
-longer than 4096 lines, which is read only in part as well; all are left to Make. A `define` alone
-only binds a variable: a rule line inside its body declares nothing, and a helper used only through
-`$(call ...)` in recipes leaves the Makefile readable. A define is left to Make when something can
-parse its body as rules, which is an eval call anywhere in the file, define bodies included, or a
-top-level bare expansion such as `$(name)`, `$(call name)` or `$(call name,$(P)x,A=b)`. A bare expansion
-needs no define to declare a rule, so one with a colon in its arguments, such as
-`$(if $(X),docs-lint: ; @echo x)` or a bare expansion continued across lines with a backslash, is left
-to Make as well. So is any top-level expansion that could produce a rule: a `$(call ...)` of a
-colon-capable variable (`make-rule = $(1): ; @echo operator`, or one referencing a colon-capable
-variable), an unredirected `$(shell ...)`, or a rule reached through variable value expansion (a bare
-`$(A)$(B)` or indirect `$(R)`). That includes a colon inside a message argument, such as
-`$(call check_defined,CC,hint: set it)`, which Make only prints: telling the two apart needs the
-function evaluated, so the reader stays on the safe side and the file fails for review, as the
-[documentation governance guide](documentation-governance.md) describes. So does a computed
-target name such as `$(BUILD_DIR):`, even when the variable holds a plain directory. The reader
-evaluates no function except to know that `info`, `warning` and `error` expand to nothing, so
-`$(info ...)` beside a define and a colon inside `$(error ...)` decide nothing, while any other
-bare expansion beside a define counts, `$(if ...)` included. A define that is never closed is
-left to Make too, since it would swallow an appended block. The
-documentation gate uses the same reader to decide whether the project already owns `docs-lint`
+`${eval ...}`, a target name containing `$` or `%`, and every top-level bare expansion. A bare
+expansion is a line that holds a variable reference and is no assignment, rule, recipe line,
+comment or directive (a conditional, `define`, `export`, `vpath` or an include). Make expands such
+a line and parses the result as makefile syntax, so whatever its references hold can declare a
+rule. Measured against GNU Make 4.4.1, every expansion below declares `docs-lint`, the
+`docs$(SUFFIX)` line with `SUFFIX = -lint: ; @echo operator` and the last two with that rule in
+`rules.txt`:
+
+```make
+make-rule = $(1): ; @echo operator
+$(call make-rule,docs-lint)
+
+R = docs-lint: ; @echo operator
+$R
+$(value R)
+$(strip $(R))
+docs$(SUFFIX)
+$(shell cat rules.txt)
+$(file <rules.txt)
+```
+
+Telling such a line from a harmless one needs Make's evaluation, so the reader evaluates nothing
+and leaves every bare expansion to Make. The rule of thumb: adoption appends to a Makefile only
+when the reader can prove the target absent, and a file it cannot prove fails for review, as the
+[documentation governance guide](documentation-governance.md) describes. The price of failing
+closed is that harmless bare expansions fail for review too. None of these lines declares a target
+in Make, yet each leaves the file to review:
+
+```make
+$(info building $(VERSION))
+$(warning CC is not set)
+$(error set CC first)
+$(if $(CI),,$(error run this in CI))
+$(shell mkdir -p build)
+```
+
+Moving such a call into an assignment (`_ := $(shell mkdir -p build)`) or a recipe, where Make never
+parses its output as makefile syntax, makes the file readable again. A `$(shell ...)` in a rule's
+prerequisites (`all: $(shell echo a.c b.c)`) or in a conditional (`ifeq ($(shell uname),Linux)`) is
+no bare expansion and decides nothing: measured against GNU Make 4.4.1, its output never becomes a
+target. A computed target name such as `$(BUILD_DIR):` fails for review too, even when the variable
+holds a plain directory, and the reader claims no target from a line whose target list holds a
+reference: `$(PREFIX) verify-all: dep` counts as no `verify-all` rule. A `define` alone only binds a
+variable: a rule line inside its body declares nothing, and a helper used only through `$(call ...)`
+in recipes leaves the Makefile readable. A define is left to Make when something can parse its body
+as rules, which is an eval call anywhere in the file, define bodies included, or a bare expansion.
+A define that is never closed is left to Make too, since it
+would swallow an appended block.
+
+The reader reads a Makefile up to the first point it cannot resolve: line 4097, a logical line
+longer than 8192 bytes once its continuations are joined, or a chain of more than 256 continuation
+lines (257 physical lines). A rule before that point counts and nothing at or after it does, so
+adoption leaves the whole file to review and editor generation offers no task for a `verify-all`
+rule there, although Make reads it. That includes a rule whose own line is longer than 8192 bytes,
+such as one with a very long prerequisite list, which the reader used to claim from the part before
+the bound. The documentation gate uses the same reader to decide whether the project already owns `docs-lint`
 (`MakefileMayDefineTarget` in `internal/util/makefile_target.go`, define tracking in
 `internal/util/makefile_define.go`). Editor generation reads the Makefile through that reader too
 (`MakefileHasTarget`, called by `hasLiteralMakeTarget` in `internal/editor/capabilities.go`), so
