@@ -123,16 +123,37 @@ Every renderer reads the resolved plan and nothing else (`Plan` in
 `internal/editor/capabilities.go`); a capability the resolver rejected is omitted,
 not asserted anyway:
 
-- Commands. Default commands include `make verify-all` only when that literal
-  target exists. The Makefile is read by the reader adoption decides `verify-all`
-  ownership with (`util.MakefileHasTarget` in `internal/util/makefile_target.go`,
-  called by `hasLiteralMakeTarget` in `internal/editor/capabilities.go`), so a line
-  that only binds a variable, such as `verify-all ?= a:b` or
-  `verify-all: CFLAGS := -g`, offers no command, and neither does a rule line inside
-  a `define` body; [adoption verification](adoption-verification.md) lists the
-  forms. A Makefile only Make can resolve (an `include`, an `$(eval ...)` call, a
-  pattern target such as `verify-%`) declares no literal rule and offers no command
-  either, although adoption preserves such a file as possibly owning the target.
+- Commands. Default commands include `make verify-all` only when the reader finds
+  that literal target; a Makefile it cannot read that far offers no command. The
+  Makefile is read by the reader adoption decides `verify-all` ownership with
+  (`util.MakefileHasTarget` in `internal/util/makefile_target.go`, called by
+  `hasLiteralMakeTarget` in `internal/editor/capabilities.go`), so a line that only
+  binds a variable, such as `verify-all ?= a:b` or `verify-all: CFLAGS := -g`,
+  offers no command, and neither does a rule line inside a `define` body;
+  [adoption verification](adoption-verification.md) lists the forms. The reader joins
+  backslash continuations first, as Make does, so the first rule-shaped line below
+  is part of the value of `HELP` and offers no command, while the continued target
+  list declares `verify-all` and offers it:
+
+  ```make
+  HELP = usage \
+    verify-all: run every gate
+
+  verify-all \
+    other: dep
+  ```
+
+  A line the reader claims no rule from offers no command either, although adoption
+  preserves such a file as possibly owning the target: an `include`, an `$(eval ...)`
+  call, a pattern target such as `verify-%`, a target list holding a reference such
+  as `$(PREFIX) verify-all: dep`, every rule of a Makefile that names `.RECIPEPREFIX`
+  (assigning it changes which lines are recipe lines), and every rule at or after the
+  first point the reader cannot resolve: line 4097, a logical line longer than 8192
+  bytes, a chain of more than 256 continuation lines (257 physical lines), a
+  tab-indented `define` or conditional whose meaning depends on a conditional branch,
+  or a binding whose computed name may be `.RECIPEPREFIX`. The reader evaluates no
+  condition, so a `verify-all` rule inside `ifdef CI` ... `endif` offers the command
+  whichever branch Make takes, a known gap the adoption guide lists.
   The tests are `internal/editor/makefile_task_test.go` and
   `internal/util/makefile_target_test.go`. The generator does not add `make build`
   merely because a Makefile exists. VS Code tasks, JetBrains external tools, Neovim

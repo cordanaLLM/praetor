@@ -1,0 +1,4 @@
+type: fixed
+title: "Adoption no longer overrides an operator's docs-lint or verify-all rule that the Makefile declares through a continued line, a bare expansion such as $(call make-rule,docs-lint) or \\$(R), a tab-indented include or eval outside a recipe (after a rule in a conditional branch Make skips included), a != binding, a $(call ...) that names eval through a computed name, or a .RECIPEPREFIX change, and editor generation no longer offers a Verify All task that fails because a continued assignment or recipe line looked like a rule; every top-level bare expansion except a line made only of $(info ...), $(warning ...) and $(error ...) calls now leaves the Makefile to review"
+issue: "#554"
+breaking: true

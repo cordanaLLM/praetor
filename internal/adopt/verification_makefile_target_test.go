@@ -10,7 +10,10 @@ import (
 
 // End to end: a Makefile whose only mention of verify-all is a variable assignment owns no
 // verify-all rule, so adoption appends its own targets instead of preserving and certifying a
-// rule that make cannot run. The eight assignment forms of issue #304 are among the rows.
+// rule that make cannot run. Seven of the eight assignment forms of issue #304 are among the rows.
+// The eighth, "verify-all != date +%H:%M", declares no rule either, but Make expands a "!="
+// command's output as makefile text wherever the variable is expanded, so adoption leaves that
+// file to review (TestAdoptionDocumentationGateRefusesBareExpansion).
 //
 // Adoption decides through the shared reader (util.MakefileMayDefineTarget), whose table tests
 // are in internal/util/makefile_target_test.go: the preserved verdict is that reader's answer for
@@ -28,7 +31,6 @@ func TestVerificationAssignmentIsNotAPreservedTarget(t *testing.T) {
 		"value-colon-assignment":   {"verify-all = docker run --rm ci:latest check\nall:\n\t@echo original\n", false},
 		"conditional-value-colon":  {"verify-all ?= a:b\nall:\n\t@echo original\n", false},
 		"appending-value-colon":    {"verify-all += x:y\nall:\n\t@echo original\n", false},
-		"shell-value-colon":        {"verify-all != date +%H:%M\nall:\n\t@echo original\n", false},
 		"target-specific-variable": {"verify-all: CFLAGS := -g\nall:\n\t@echo original\n", false},
 		"value-names-target":       {"HELP = verify-all: run every gate\nall:\n\t@echo original\n", false},
 		"rule":                     {"verify-all:\n\t@echo claimed\n", true},

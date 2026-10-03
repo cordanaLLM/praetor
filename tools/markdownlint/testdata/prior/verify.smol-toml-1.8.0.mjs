@@ -1388,7 +1388,7 @@ function lintConfigurationSelfTest(temporary) {
   }
   const [jsonc, toml, yamlParser] = configurationParsers(temporary, yaml);
   assert.deepEqual(jsonc("{ /* off */ \"MD018\": false, }"), { MD018: false });
-  assert.deepEqual(toml("MD018 = false\n"), Object.assign(Object.create(null), { MD018: false }));
+  assert.deepEqual(toml("MD018 = false\n"), { MD018: false });
   assert.deepEqual(yamlParser("MD018: false\n"), { MD018: false });
   assert.throws(() => jsonc("MD018: false"), /Unable to parse JSONC content/u);
   assert.throws(() => toml("{ not: [toml"));
