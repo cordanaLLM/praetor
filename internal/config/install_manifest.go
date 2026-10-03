@@ -86,11 +86,23 @@ type InstallAttempt struct {
 }
 
 var (
-	commitPattern     = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	sha256Pattern     = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	installedBinaries = []string{"praetor-lsp", "praetor-mcp", "praetorctl"}
+	commitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	// installedBinaries are the executables `workstation install` builds, in build and
+	// manifest order (InstalledBinaryNames). A manifest records a non-empty subset: one
+	// written before an executable joined this list lacks it, and workstation status reports
+	// that install as not current until the next install records it (#377).
+	installedBinaries = []string{"praetorctl", "praetor-mcp", "praetor-lsp", "tribunusctl"}
 	attemptResults    = []string{"updated", "up-to-date", "held", "rolled-back", "failed"}
 )
+
+// InstalledBinaryNames returns the executables `workstation install` builds and an install
+// manifest may record, in build order. internal/workstation keys its build packages, aliases,
+// placement, rollback and status on this one list (HISS-19), so the manifest writer and its
+// reader cannot disagree about which binaries exist. The slice is a copy.
+func InstalledBinaryNames() []string {
+	return slices.Clone(installedBinaries)
+}
 
 // DefaultInstallManifestPath is install.json under the per-user configuration directory,
 // beside the receipt signing key.
