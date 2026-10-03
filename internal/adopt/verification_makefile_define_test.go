@@ -16,9 +16,10 @@ import (
 // docs-lint", and TestMakefileDefineOwnershipGNUReplay replays them: the accepted rows answer "No
 // rule to make target 'docs-lint'", the refused rows either declare the target or leave the file
 // to Make (include, an unterminated define). The reader evaluates no function, so every bare
-// expansion beside a define counts, $(if ...) included, and so does $(info ...): info-bare-expansion
-// and info-prints-define declare nothing in Make and are refused all the same, the price of failing
-// closed.
+// expansion beside a define counts, $(if ...) included, except a line made only of info, warning
+// and error calls, which expands to nothing: info-bare-expansion and info-prints-define stay
+// appendable, while "$(info)" with no blank after the name references a variable named info, which
+// info-variable shows can hold the define.
 var makefileDefineOwnershipRows = map[string]docsLintOwnershipRow{
 	"called-in-recipe":     {calledDefineMakefile, false},
 	"body-names-target":    {"define docs-rule\ndocs-lint:\n\t@echo template\nendef\n\nall:\n\t@echo all\n", false},
@@ -36,8 +37,8 @@ var makefileDefineOwnershipRows = map[string]docsLintOwnershipRow{
 	"bare-call-nested-arg": {"define docs-rule\n$(1): ; @echo template $(2)\nendef\n$(call docs-rule,$(P)docs-lint,FOO=bar)\n", true},
 	"if-nested-arg":        {"define docs-rule\ndocs-lint: ; @echo template\nendef\n$(if $(A),A=B,$(docs-rule))\n", true},
 	"info-variable":        {"define docs-rule\ndocs-lint: ; @echo template\nendef\ninfo = $(docs-rule)\n$(info)\n", true},
-	"info-bare-expansion":  {"define docs-rule\n@echo template\nendef\n$(info building)\n", true},
-	"info-prints-define":   {"define docs-rule\ndocs-lint: ; @echo template\nendef\n$(info $(docs-rule))\n", true},
+	"info-bare-expansion":  {"define docs-rule\n@echo template\nendef\n$(info building)\n", false},
+	"info-prints-define":   {"define docs-rule\ndocs-lint: ; @echo template\nendef\n$(info $(docs-rule))\n", false},
 	"eval-in-body":         {"define docs-rule\n$(eval docs-lint: ; @echo template)\nendef\n", true},
 	"include":              {"define docs-rule\n@echo template\nendef\n-include docs.mk\n", true},
 	"unterminated":         {"define docs-rule\n@echo template\n", true},
@@ -91,11 +92,15 @@ func assertDocsLintOwnership(t *testing.T, rows map[string]docsLintOwnershipRow)
 // docs-lint, each through a different way of reaching rule text: a literal argument, a call of a
 // template, a variable read as $R, $(value R) or $($(N)), a computed call name, the file and shell
 // functions, a != or := assignment holding shell output, a chain of 80 variables, and text in front
-// of the reference. These rows are the shapes issue #554 and its review reported. The silent rows
-// declare nothing, since info, warning and error expand to nothing, yet the reader refuses them:
-// it evaluates nothing, which is the price of failing closed. The accepted rows declare nothing and
-// stay appendable: computed-assignment binds a variable, and a $(shell ...) in a rule's
-// prerequisites or a conditional is never parsed as makefile syntax.
+// of the reference. These rows are the shapes issue #554 and its review reported. The accepted
+// rows declare nothing and stay appendable: computed-assignment binds a variable, a $(shell ...) in
+// a rule's prerequisites or a conditional is never parsed as makefile syntax, and the silent rows
+// are lines made only of info, warning and error calls, which expand to nothing whatever they
+// print -- cobra-missing-tool-warning holds the lines of spf13/cobra's Makefile, a public dogfood
+// repository (.config/dogfood/public-suite.json). error-inside-if declares nothing either and is
+// refused all the same: an $(if ...) around the call is a bare expansion whose branches could hold
+// a rule, and the reader evaluates nothing. silent-call-then-reference shows that text beside the
+// calls is a bare expansion again.
 var makefileBareExpansionRows = map[string]docsLintOwnershipRow{
 	"literal-rule":               {"$(if X,docs-lint: ; @echo template)\n", true},
 	"nested-literal-rule":        {"X = 1\n$(if $(X),docs-lint: ; @echo template)\n", true},
@@ -120,8 +125,10 @@ var makefileBareExpansionRows = map[string]docsLintOwnershipRow{
 	"simple-shell-assignment":    {"R := $(shell cat rules.txt 2>/dev/null)\n$(R)\n", true},
 	"variable-chain":             {variableChain(80), true},
 	"prefixed-expansion":         {"R = -lint: ; @echo template\ndocs$(R)\n", true},
-	"info-literal-rule":          {"$(info docs-lint: ; @echo template)\nall: ; @echo all\n", true},
-	"warning-tab-literal-rule":   {"$(warning\tdocs-lint: ; @echo template)\nall: ; @echo all\n", true},
+	"info-literal-rule":          {"$(info docs-lint: ; @echo template)\nall: ; @echo all\n", false},
+	"warning-tab-literal-rule":   {"$(warning\tdocs-lint: ; @echo template)\nall: ; @echo all\n", false},
+	"cobra-missing-tool-warning": {"ifeq (, $(shell which golangci-lint))\n$(warning \"could not find golangci-lint in $(PATH), run: curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh\")\nendif\nall: ; @echo all\n", false},
+	"silent-call-then-reference": {"R = docs-lint: ; @echo template\n$(warning x) $(R)\n", true},
 	"error-inside-if":            {"V = 1\n$(if $(V),,$(error V: set it))\nall: ; @echo all\n", true},
 	"computed-assignment":        {"A = 1\n$(if $(A),docs-lint:c) = x\nall: ; @echo all\n", false},
 	"shell-in-prerequisites":     {"all: $(shell echo a.c b.c)\n\t@echo all\n", false},
@@ -153,7 +160,7 @@ var makeDeclaresDocsLint = []string{
 	"indirect-rule-in-if", "concatenated-rule", "concatenated-rule-indirect", "indirect-colon-template",
 	"single-letter-reference", "value-function", "computed-variable-name", "computed-call-name",
 	"file-function", "shell-function", "shell-stderr-silenced", "shell-assignment",
-	"simple-shell-assignment", "variable-chain", "prefixed-expansion",
+	"simple-shell-assignment", "variable-chain", "prefixed-expansion", "silent-call-then-reference",
 }
 
 // Replayed against the installed GNU Make for every row of both tables. Make's answer must be the
@@ -253,5 +260,39 @@ func TestAdoptionDocumentationGateRefusesBareExpansion(t *testing.T) {
 	}
 	if got := mustRead(t, filepath.Join(root, makefileName)); got != makefile {
 		t.Fatalf("the refused Makefile changed:\n%s", got)
+	}
+}
+
+// cobraShapedMakefile has the shape of spf13/cobra's Makefile, a public dogfood repository
+// (.config/dogfood/public-suite.json): a $(warning ...) inside a conditional before the first
+// rule, and recipes that open with $(info ...) and run $(shell ...).
+const cobraShapedMakefile = "SRC=$(shell find . -name \"*.go\")\n\n" +
+	"ifeq (, $(shell which golangci-lint))\n" +
+	"$(warning \"could not find golangci-lint in $(PATH), run: curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh\")\n" +
+	"endif\n\n" +
+	".PHONY: fmt test\n\n" +
+	"all: fmt test\n\n" +
+	"fmt:\n" +
+	"\t$(info ******************** checking formatting ********************)\n" +
+	"\t@test -z $(shell gofmt -l $(SRC)) || (gofmt -d $(SRC); exit 1)\n\n" +
+	"test:\n" +
+	"\t$(info ******************** running tests ********************)\n" +
+	"\tgo test -v ./...\n"
+
+// End to end: a Makefile whose only bare expansion is a line of silent calls declares neither
+// verify-all nor docs-lint, so adoption appends both, the verification targets and the
+// documentation gate, instead of preserving a verify-all that does not exist or stopping on a
+// docs-lint collision.
+func TestAdoptionAppendsBesideSilentWarning(t *testing.T) {
+	root := newTestRepo(t, "documentation-silent-warning")
+	mustWrite(t, filepath.Join(root, makefileName), cobraShapedMakefile)
+	opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("adoption beside a silent $(warning ...) failed: %v", err)
+	}
+	got := mustRead(t, filepath.Join(root, makefileName))
+	if !strings.HasPrefix(got, cobraShapedMakefile) || !util.MakefileHasTarget(got, verificationTarget) ||
+		strings.Count(got, DocumentationMakefileBlock()) != 1 {
+		t.Fatalf("the Makefile did not gain verify-all and exactly one documentation block:\n%s", got)
 	}
 }

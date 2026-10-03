@@ -52,13 +52,8 @@ func makefileReferenceWidth(text string) int {
 	if len(text) < 2 {
 		return 1
 	}
-	var closer byte
-	switch text[1] {
-	case '(':
-		closer = ')'
-	case '{':
-		closer = '}'
-	default:
+	closer := makefileCloser(text[1])
+	if closer == 0 {
 		return 2
 	}
 	depth := 0
@@ -74,6 +69,18 @@ func makefileReferenceWidth(text string) int {
 		}
 	}
 	return len(text)
+}
+
+// makefileCloser returns the bracket that closes a variable reference opened with open, "(" or
+// "{", and 0 for any other byte.
+func makefileCloser(open byte) byte {
+	switch open {
+	case '(':
+		return ')'
+	case '{':
+		return '}'
+	}
+	return 0
 }
 
 // makefileReference classifies the "$" text opens with: "$$" is an escaped dollar sign that
@@ -101,7 +108,8 @@ func makefileColonOperator(line string, i int) (string, int) {
 // makefileOperatorAt classifies the token starting at line[i] and reports the bytes it spans. Make
 // ends a variable name at "=", "+=", "?=", "!=" or a run of colons followed by "="; it stops
 // reading the line at an unescaped "#" (a comment) or ";" (the inline recipe), and a backslash
-// escapes the byte behind it.
+// escapes the byte behind it -- except "$": Make has no backslash escape for a reference, so
+// measured against GNU Make 4.4.1 "\$(R)" with "R = x docs-lint: ; @echo x" declares docs-lint.
 func makefileOperatorAt(line string, i int) (string, int) {
 	switch line[i] {
 	case '=':
@@ -117,7 +125,9 @@ func makefileOperatorAt(line string, i int) (string, int) {
 	case '#', ';':
 		return makefileEndToken, 1
 	case '\\':
-		return "", 2
+		if i+1 < len(line) && line[i+1] != '$' {
+			return "", 2
+		}
 	}
 	return "", 1
 }
@@ -148,10 +158,52 @@ func makefileSplit(line string) (assign, colon, reference int) {
 }
 
 // makefileBindsVariable reports whether text binds a variable rather than opening a rule, decided
-// by whichever operator Make reaches first.
+// by whichever operator Make reaches first and by the name in front of it (makefileAssignment).
 func makefileBindsVariable(text string) bool {
+	binds, _ := makefileAssignment(text)
+	return binds
+}
+
+// makefileAssignment reports whether Make reaches an assignment operator in text before any rule
+// colon, and if so whether it binds a variable (binds) or not, because its name side holds two or
+// more words after the modifiers (unnamed). GNU Make takes no blank inside a variable name, so
+// measured against GNU Make 4.4.1 "foo bar = docs-lint: ; @echo x" and "override foo bar = ..." are
+// rules declaring docs-lint, "$(R) x = y" is a bare expansion, and "export foo bar = ..." stays an
+// export directive.
+func makefileAssignment(text string) (binds, unnamed bool) {
 	assign, colon, _ := makefileSplit(text)
-	return assign >= 0 && (colon < 0 || assign < colon)
+	if assign < 0 || colon >= 0 && colon < assign {
+		return false, false
+	}
+	named := makefileNameWords(text[:assign]) <= 1
+	return named, !named
+}
+
+// makefileNameWords counts the blank-separated words of text, the name side of an assignment,
+// after the override, export, unexport and private modifiers in front of it. A variable reference
+// belongs to the word it sits in, so "$(a b)x" is one word.
+func makefileNameWords(text string) int {
+	words := make([]string, 0, 4)
+	start := -1
+	for i := 0; i < len(text) && i < MaxMakefileLineBytes; {
+		if text[i] == ' ' || text[i] == '\t' {
+			if start >= 0 {
+				words = append(words, text[start:i])
+			}
+			start = -1
+			i++
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+		_, width := makefileOperatorAt(text, i)
+		i += width
+	}
+	if start >= 0 {
+		words = append(words, text[start:])
+	}
+	return len(words) - makefileDirectiveIndex(words)
 }
 
 // makefileExportDirective reports whether line is an export or unexport directive: its first word,
@@ -181,18 +233,26 @@ func makefileExportDirective(line string) bool {
 // "verify-all: lint ## run gates (FAST=1)" and "verify-all: ; FOO=1 echo c" all declare the target:
 // an "=" a comment or a recipe carries is not an assignment operator.
 func makefileTargetNames(line string) []string {
+	targets, _ := makefileRule(line)
+	return targets
+}
+
+// makefileRule returns the target names and the prerequisite text of the rule line declares, and
+// none when the line declares no rule (makefileTargetNames).
+func makefileRule(line string) ([]string, string) {
 	if strings.HasPrefix(line, "\t") || makefileExportDirective(line) {
-		return nil
+		return nil, ""
 	}
 	_, colon, _ := makefileSplit(line)
 	if colon < 0 || makefileBindsVariable(line) {
-		return nil
+		return nil, ""
 	}
 	_, width := makefileOperatorAt(line, colon)
-	if makefileBindsVariable(line[colon+width:]) {
-		return nil
+	prerequisites := line[colon+width:]
+	if makefileBindsVariable(prerequisites) {
+		return nil, ""
 	}
-	return strings.Fields(line[:colon])
+	return strings.Fields(line[:colon]), prerequisites
 }
 
 // makefileLogicalLines returns the logical lines of data up to the first point the reader cannot
@@ -258,20 +318,34 @@ func makefileJoinText(parts []string) string {
 // line this reader resolves without Make: makefileTargetNames decides rule versus assignment, a
 // define body is variable text, not rules, so a "target:" line inside one declares nothing, and a
 // line makefileLineIsAmbiguous reports, such as "$(PREFIX) verify-all: dep", declares nothing the
-// reader can claim. MakefileMayDefineTarget reports the files where Make may still declare the
-// target some other way. Lines may end in "\n" or "\r\n"; the reading stops where
-// makefileLogicalLines does.
+// reader can claim. A Makefile that names .RECIPEPREFIX declares nothing the reader can claim
+// either (makefileNamesRecipePrefix). MakefileMayDefineTarget reports the files where Make may
+// still declare the target some other way. Lines may end in "\n" or "\r\n"; the reading stops
+// where makefileLogicalLines does.
 func MakefileHasTarget(data, target string) bool {
 	lines, _ := makefileLogicalLines(data)
 	return makefileTargetLine(lines, target) >= 0
 }
 
+// makefileNamesRecipePrefix reports whether line, unless it is a comment line, names .RECIPEPREFIX.
+// Assigning it changes which lines are recipe lines: measured against GNU Make 4.4.1, after
+// ".RECIPEPREFIX = >" a tab-indented "docs-lint: ; @echo x" declares docs-lint and "> docs-lint:
+// dep" is a recipe line. The reader tells recipe lines by the tab alone, so a Makefile that names
+// the variable anywhere, in an assignment, an eval or a define body, is one only Make can read.
+func makefileNamesRecipePrefix(line string) bool {
+	return strings.Contains(line, ".RECIPEPREFIX") && !strings.HasPrefix(strings.TrimSpace(line), "#")
+}
+
 // makefileTargetLine returns the index of the first logical line that declares a rule for target,
-// or -1 when none does.
+// or -1 when none does or the Makefile names .RECIPEPREFIX. A tab-prefixed line outside a recipe
+// declares nothing: Make stops at it with "recipe commences before first target".
 func makefileTargetLine(lines []string, target string) int {
-	var define makefileDefineTracker
+	if slices.ContainsFunc(lines, makefileNamesRecipePrefix) {
+		return -1
+	}
+	var scanner makefileScanner
 	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
-		if define.body(lines[index]) {
+		if scanner.next(lines[index]) != makefileSyntaxLine {
 			continue
 		}
 		if slices.Contains(makefileTargetNames(lines[index]), target) &&
@@ -326,12 +400,15 @@ func makefileDirectiveIndex(fields []string) int {
 }
 
 // makefileLineIsAmbiguous reports whether a line may define targets only Make can resolve: an
-// include, an $(eval ...) or ${eval ...} call, or a computed or pattern target name. The line is
-// already trimmed and is neither a recipe line nor part of a define body. A define alone is not
-// ambiguous: it only binds a variable, and makefileBareExpansion reports the lines that may expand
-// it into rules. A bare modifier is not ambiguous either: measured against GNU Make 4.4.1, a
-// Makefile holding "override verify-all := x" or "override CFLAGS += -Wall" beside an "all:" rule
-// answers "make verify-all" with "No rule to make target".
+// include, a call that evaluates text (makefileCallsEval), a computed or pattern target name, or a
+// rule whose prerequisites hold an assignment operator behind two or more words. Measured against
+// GNU Make 4.4.1, Make reads "docs-lint: A B = x" as a rule with the prerequisites "A B = x" and
+// stops at "docs-lint: A B := x" with "multiple target patterns", so the reader claims neither.
+// The line is already trimmed and is neither a recipe line nor part of a define body. A define
+// alone is not ambiguous: it only binds a variable, and makefileBareExpansion reports the lines
+// that may expand it into rules. A bare modifier is not ambiguous either: measured against GNU
+// Make 4.4.1, a Makefile holding "override verify-all := x" or "override CFLAGS += -Wall" beside an
+// "all:" rule answers "make verify-all" with "No rule to make target".
 func makefileLineIsAmbiguous(line string) bool {
 	if strings.HasPrefix(line, "#") {
 		return false
@@ -343,7 +420,11 @@ func makefileLineIsAmbiguous(line string) bool {
 	if makefileCallsEval(line) {
 		return true
 	}
-	for _, name := range makefileTargetNames(line) {
+	targets, prerequisites := makefileRule(line)
+	if _, unnamed := makefileAssignment(prerequisites); unnamed && targets != nil {
+		return true
+	}
+	for _, name := range targets {
 		if strings.ContainsAny(name, "$%") {
 			return true
 		}
@@ -353,21 +434,22 @@ func makefileLineIsAmbiguous(line string) bool {
 
 // MakefileMayDefineTarget reports whether data, the text of a Makefile with "\n" line endings,
 // may already own target: a rule for it (MakefileHasTarget), a line only Make can resolve (an
-// include, an eval call, a computed or pattern target name), a top-level bare expansion
-// (makefileBareExpansion), a define that is never closed, or a point the reader cannot resolve
-// (makefileLogicalLines), past which an unread line may hold any of these (HISS-02). A caller about
-// to append a rule for target must not when this reports true: Make would override one of the two
-// recipes.
+// include, an eval call, a computed or pattern target name), a top-level bare expansion other
+// than silent calls (makefileBareExpansion, makefileSilentCalls), a tab-prefixed line Make parses
+// as one of these because no recipe is open (makefileScanner), a mention of .RECIPEPREFIX, a define
+// that is never closed, or a point the reader cannot resolve (makefileLogicalLines), past which an
+// unread line may hold any of these (HISS-02). A caller about to append a rule for target must not
+// when this reports true: Make would override one of the two recipes.
 func MakefileMayDefineTarget(data, target string) bool {
 	lines, whole := makefileLogicalLines(data)
-	if !whole || makefileTargetLine(lines, target) >= 0 {
+	if !whole || slices.ContainsFunc(lines, makefileNamesRecipePrefix) || makefileTargetLine(lines, target) >= 0 {
 		return true
 	}
-	var define makefileDefineTracker
+	var scanner makefileScanner
 	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
-		if makefileLeavesOwnershipToMake(&define, lines[index]) {
+		if makefileLeavesOwnershipToMake(&scanner, lines[index]) {
 			return true
 		}
 	}
-	return define.depth > 0
+	return scanner.depth > 0
 }

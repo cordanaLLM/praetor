@@ -107,7 +107,7 @@ func TestMakefileHasTargetIssue304Forms(t *testing.T) {
 // environment as variables and a caller's SRCS, PREFIX or MAKEFLAGS would change what they expand to.
 func clearMakeEnvironment(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"A", "B", "R", "X", "PREFIX", "SRCS", "CFLAGS", "HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
+	for _, name := range []string{"A", "B", "R", "T", "V", "X", "PREFIX", "SRCS", "CFLAGS", "HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
 		t.Setenv(name, "")
 	}
 }
@@ -158,9 +158,9 @@ type makefileOwnershipRow struct {
 // counted a bare expansion only when its own text held a colon: the bare expansions there were
 // appendable, a continued assignment, recipe line or comment declared verify-all, a continued
 // target name declared nothing, and a define whose continued line swallows endef closed there.
-// info-message is the price of failing closed: Make only prints the message, yet the reader, which
-// evaluates nothing, leaves the file to Make. computed-target-list declares verify-all, but the
-// reader claims no target from a line whose target list holds a reference.
+// info-message is the one bare expansion the reader exempts: a line made only of info, warning
+// and error calls expands to nothing (makefileSilentRows). computed-target-list declares
+// verify-all, but the reader claims no target from a line whose target list holds a reference.
 var makefileIssue554Rows = map[string]makefileOwnershipRow{
 	"single-line-template": {
 		makefile:  "make-rule = $(1): ; @echo custom\n$(call make-rule,verify-all)\n",
@@ -179,8 +179,7 @@ var makefileIssue554Rows = map[string]makefileOwnershipRow{
 		mayDefine: true, makeTarget: true, shell: true,
 	},
 	"info-message": {
-		makefile:  "$(info verify-all: ; @echo custom)\nall:\n\t@echo all\n",
-		mayDefine: true,
+		makefile: "$(info verify-all: ; @echo custom)\nall:\n\t@echo all\n",
 	},
 	"computed-target-list": {
 		makefile:  "$(PREFIX) verify-all: dep\n\t@echo custom\n",
@@ -203,6 +202,114 @@ var makefileIssue554Rows = map[string]makefileOwnershipRow{
 		makefile:  "define gates\nbody \\\nendef\nverify-all: dep\n\t@echo custom\n",
 		mayDefine: true,
 	},
+}
+
+// makefileSilentRows hold the one bare expansion the reader exempts: a line made only of info,
+// warning and error calls, which expands to nothing whatever the calls print. A nested plain
+// reference stays exempt (silent-call-prints-rule); a nested eval, call, guile or shell call, text
+// outside the calls and an $(if ...) around them do not. silent-call-runs-shell declares nothing in
+// Make and is refused all the same. The two variable rows show why a nested reference is safe: a
+// value that evaluates text holds a call the reader reports on the assignment line itself.
+var makefileSilentRows = map[string]makefileOwnershipRow{
+	"silent-calls":            {makefile: "$(info a) $(warning b)\n${info c}\nall:\n\t@echo all\n"},
+	"silent-call-prints-rule": {makefile: "R = verify-all: ; @echo custom\n$(info $(R))\nall:\n\t@echo all\n"},
+	"silent-call-then-reference": {
+		makefile:  "R = verify-all: ; @echo custom\n$(warning x) $(R)\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"silent-call-inside-if": {
+		makefile:  "V = verify-all: ; @echo custom\n$(if $(V),$(V),$(error x))\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"silent-call-nested-eval": {
+		makefile:  "$(info $(eval verify-all: ; @echo custom))\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"silent-call-nested-call-eval": {
+		makefile:  "$(info $(call eval,verify-all: ; @echo custom))\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"silent-call-runs-shell": {
+		makefile:  "$(info $(shell cat rules.txt))\nall:\n\t@echo all\n",
+		mayDefine: true, shell: true,
+	},
+	"variable-calls-eval": {
+		makefile:  "X = $(call eval,verify-all: ; @echo custom)\n$(info $(X))\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"variable-calls-computed-name": {
+		makefile:  "T = eval\nX = $(call $(T),verify-all: ; @echo custom)\n$(info $(X))\n",
+		mayDefine: true, makeTarget: true,
+	},
+}
+
+// makefileNameRows hold the two ways Make reads a line the reader used to read as an assignment
+// or as an escape. Make has no backslash escape for "$", so "\$(R)" expands R; and Make takes no
+// blank inside a variable name, so an assignment operator behind two words (after the modifiers)
+// binds nothing: the line is a rule or a bare expansion, except after export, which stays the
+// export directive. In a rule's prerequisites such an operator leaves the line to Make, which reads
+// it as prerequisites or stops with "multiple target patterns".
+var makefileNameRows = map[string]makefileOwnershipRow{
+	"escaped-dollar-reference": {
+		makefile:  "R = x verify-all: ; @echo custom\n\\$(R)\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"escaped-backslash-reference": {
+		makefile:  "R = x verify-all: ; @echo custom\n\\\\$(R)\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"two-word-name-reference": {
+		makefile:  "R = verify-all: ; @echo custom\n$(R) x = y\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"two-word-name": {
+		makefile:  "foo bar = verify-all: ; @echo custom\n",
+		hasTarget: true, mayDefine: true, makeTarget: true,
+	},
+	"override-two-word-name": {
+		makefile:  "override foo bar = verify-all: ; @echo custom\n",
+		hasTarget: true, mayDefine: true, makeTarget: true,
+	},
+	"export-two-word-name":           {makefile: "export foo bar = verify-all: ; @echo custom\n"},
+	"two-word-prerequisite-assign":   {makefile: "verify-all: A B = x ; @echo custom\n", mayDefine: true},
+	"two-word-prerequisite-simple":   {makefile: "verify-all: A B := x\n", mayDefine: true},
+	"one-word-prerequisite-variable": {makefile: "verify-all: export CFLAGS = -g\nall:\n\t@echo all\n"},
+}
+
+// makefileRecipeRows hold when a tab-prefixed line is a recipe line: only while a rule's recipe
+// is open. Before the first rule, or after an assignment or any other line but a blank line, a
+// comment or a conditional, Make parses it as makefile syntax, so a tab-indented include or eval
+// declares the target and a tab-indented define opens a block. tab-assignment-runs-shell is such a
+// line too: an assignment, whose shell output Make never parses as rules. A Makefile that names
+// .RECIPEPREFIX is one only Make can read: the reader claims no rule from it.
+var makefileRecipeRows = map[string]makefileOwnershipRow{
+	"tab-include-in-conditional": {
+		makefile:  "ifneq ($(wildcard rules.txt),)\n\tinclude rules.txt\nendif\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"tab-eval-in-conditional": {
+		makefile:  "ifdef MAKE\n\tX := $(eval verify-all: ; @echo custom)\nendif\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"tab-include-after-assignment": {
+		makefile:  "all:\n\t@echo all\nX = 1\n\tinclude rules.txt\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"tab-include-after-silent-call": {
+		makefile:  "all:\n\t@echo all\n$(info x)\n\t-include rules.txt\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"tab-include-in-recipe":  {makefile: "all:\nifdef MAKE\n\t-include rules.txt\nendif\n\n# note\n\t-include rules.txt\n"},
+	"tab-define-before-rule": {makefile: "\tdefine X\nverify-all: ; @echo custom\nendef\nall: ; @echo all\n"},
+	"tab-assignment-runs-shell": {
+		makefile: "ifdef MAKE\n\tX := $(shell cat rules.txt)\nendif\nall: ; @echo all\n",
+		shell:    true,
+	},
+	"recipe-prefix-tab-rule": {
+		makefile:  ".RECIPEPREFIX = >\nall:\n> @echo all\n\tverify-all: ; @echo custom\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"recipe-prefix-recipe-line": {makefile: ".RECIPEPREFIX = >\nall:\n> verify-all: dep\n", mayDefine: true},
 }
 
 // continuedRule returns a rule for verify-all whose target list runs over continuations
@@ -256,6 +363,18 @@ func TestMakefileIssue554Forms(t *testing.T) {
 	assertOwnershipRows(t, makefileIssue554Rows)
 }
 
+func TestMakefileSilentCallsDeclareNothing(t *testing.T) {
+	assertOwnershipRows(t, makefileSilentRows)
+}
+
+func TestMakefileNamesAndEscapesAsMakeReadsThem(t *testing.T) {
+	assertOwnershipRows(t, makefileNameRows)
+}
+
+func TestMakefileTabLinesOutsideRecipes(t *testing.T) {
+	assertOwnershipRows(t, makefileRecipeRows)
+}
+
 func TestMakefileContinuationAndJoinedByteBounds(t *testing.T) {
 	assertOwnershipRows(t, makefileBoundRows)
 }
@@ -266,7 +385,7 @@ func TestMakefileContinuationAndJoinedByteBounds(t *testing.T) {
 func TestMakefileOwnershipRowsGNUReplay(t *testing.T) {
 	makePath := testsupport.GNUMake(t)
 	clearMakeEnvironment(t)
-	for _, rows := range []map[string]makefileOwnershipRow{makefileIssue554Rows, makefileBoundRows} {
+	for _, rows := range []map[string]makefileOwnershipRow{makefileIssue554Rows, makefileBoundRows, makefileSilentRows, makefileNameRows, makefileRecipeRows} {
 		for name, tc := range rows {
 			t.Run(name, func(t *testing.T) {
 				if tc.shell {
