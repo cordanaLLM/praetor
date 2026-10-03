@@ -24,7 +24,7 @@ func TestPublishPreparedEditorFilesUsesOneBoundedContextPerWrite(t *testing.T) {
 		return ctx, func() { cancelled++ }
 	}
 	written := 0
-	writer := func(ctx context.Context, _, _ string) error {
+	writer := func(ctx context.Context, _ pendingEditorWrite) error {
 		written++
 		if got := ctx.Value(editorIOContextKey{}); got != written {
 			t.Fatalf("write %d received context marker %v", written, got)
@@ -56,7 +56,7 @@ func TestPublishPreparedEditorFilesCancelsFailedWrite(t *testing.T) {
 		return parent, func() { cancelled++ }
 	}
 	_, err := publishPreparedEditorFiles(context.Background(), []pendingEditorWrite{{path: "one", write: true}}, newContext,
-		func(context.Context, string, string) error { return want })
+		func(context.Context, pendingEditorWrite) error { return want })
 	if !errors.Is(err, want) {
 		t.Fatalf("error = %v, want %v", err, want)
 	}
@@ -70,7 +70,7 @@ func TestPublishPreparedEditorFilesEmptySetCreatesNoContext(t *testing.T) {
 	report, err := publishPreparedEditorFiles(context.Background(), nil, func(parent context.Context) (context.Context, context.CancelFunc) {
 		created++
 		return parent, func() {}
-	}, func(context.Context, string, string) error {
+	}, func(context.Context, pendingEditorWrite) error {
 		t.Fatal("empty set called writer")
 		return nil
 	})

@@ -25,6 +25,11 @@ var ErrNotADirectory = errors.New("harvester: onboarding target is not a directo
 // invalid. A valid lock without a local catalog is reported through LockStatus instead.
 var ErrOnboardingIncomplete = errors.New("harvester: onboarding scaffold requires a valid dependency lock")
 
+// ErrEditorFilesIncomplete identifies a run that wrote the scaffold and agent harness but not
+// every editor file. Onboarding resolves editor files before its first write, so only a
+// failure while publishing them, such as a file edited after it was resolved, ends here.
+var ErrEditorFilesIncomplete = errors.New("harvester: onboarding wrote the scaffold but not its editor files")
+
 // onboardFilePerm is the mode of every file onboarding scaffolds into a repository.
 const (
 	onboardFilePerm         os.FileMode = util.TrackedFilePerm
@@ -62,15 +67,9 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 		return nil, fmt.Errorf("%w: %q", ErrNotADirectory, repoPath)
 	}
 
-	// The plan names the vendor files the run will write, so it reads the same agent_clients
-	// selection writeAgentHarness compiles with (#202).
-	declared, err := config.LoadDeclaredTooling(ctx, repoPath)
+	inputs, err := readOnboardInputs(ctx, repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("read editors and agent_clients selection: %w", err)
-	}
-	transpile, err := transpileAction(declared.AgentClients)
-	if err != nil {
-		return nil, fmt.Errorf("agent_clients in .standards.yaml: %w", err)
+		return nil, err
 	}
 
 	repoName := filepath.Base(repoPath)
@@ -88,14 +87,14 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 	plan.Actions = append(plan.Actions, fmt.Sprintf("Scaffold .standards.yaml (Profile: %s, Facets: %v)", arch, facets))
 	plan.Actions = append(plan.Actions, "Initialize .standards-baseline.json (0 infractions)")
 	plan.Actions = append(plan.Actions, "Verify existing .standards.lock pins and digests (source pin resolution is required if absent)")
-	plan.Actions = append(plan.Actions, transpile)
+	plan.Actions = append(plan.Actions, inputs.transpile)
 	plan.Actions = append(plan.Actions, "Generate IDE settings (.vscode, .idea, .nvim.lua)")
 
 	if dryRun {
 		return plan, nil
 	}
 
-	editorFiles, err := executeOnboarding(ctx, repoPath, repoName, arch, facets)
+	editorFiles, err := executeOnboarding(ctx, repoPath, repoName, arch, facets, inputs.editors)
 	if err != nil {
 		return plan, err
 	}
@@ -106,6 +105,38 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 	}
 	plan.LockStatus, plan.LockVerified = lock.Status, lock.Verified()
 	return plan, nil
+}
+
+// onboardInputs is what onboarding reads and decides before its first write.
+type onboardInputs struct {
+	// transpile is the plan's compile-context action under the agent_clients selection.
+	transpile string
+	// editors are the selected editors' files, resolved and not yet written; nil when the
+	// selection holds no editor.
+	editors *editor.PreparedWrites
+}
+
+// readOnboardInputs reads the manifest's editors and agent_clients selection and resolves the
+// editor files before onboarding writes anything, dry run included. The plan names the vendor
+// files the run will write, so it reads the same agent_clients selection writeAgentHarness
+// compiles with (#202). A refused editor file therefore fails the run with nothing written and
+// a dry run predicts it: the editor step used to run last, so a refusal left the scaffold and
+// harness behind and `harvest onboard --all-missing` then skipped the half-onboarded
+// repository because AGENTS.md existed (#717).
+func readOnboardInputs(ctx context.Context, repoPath string) (onboardInputs, error) {
+	declared, err := config.LoadDeclaredTooling(ctx, repoPath)
+	if err != nil {
+		return onboardInputs{}, fmt.Errorf("read editors and agent_clients selection: %w", err)
+	}
+	transpile, err := transpileAction(declared.AgentClients)
+	if err != nil {
+		return onboardInputs{}, fmt.Errorf("agent_clients in .standards.yaml: %w", err)
+	}
+	editors, err := prepareOnboardEditors(ctx, repoPath, declared.Editors)
+	if err != nil {
+		return onboardInputs{}, err
+	}
+	return onboardInputs{transpile: transpile, editors: editors}, nil
 }
 
 // transpileAction names the vendor files compile-context writes under the manifest's
@@ -150,11 +181,11 @@ func detectRepoArchetype(repoPath string) string {
 	return "template-seed"
 }
 
-// executeOnboarding writes the governance scaffold and the compiled agent harnesses, and
-// returns the outcome of each editor file. Every step propagates its failure: the returned
-// plan claims these actions were performed, so a swallowed transpile or editor error would
-// make the plan a lie.
-func executeOnboarding(ctx context.Context, repoPath, repoName, arch string, facets []string) ([]editor.WriteResult, error) {
+// executeOnboarding writes the governance scaffold, the compiled agent harnesses and the
+// editor files resolved before it (readOnboardInputs), and returns the outcome of each editor
+// file. Every step propagates its failure: the returned plan claims these actions were
+// performed, so a swallowed transpile or editor error would make the plan a lie.
+func executeOnboarding(ctx context.Context, repoPath, repoName, arch string, facets []string, editors *editor.PreparedWrites) ([]editor.WriteResult, error) {
 	if err := ensureOnboardingManifest(ctx, repoPath, repoName, arch, facets); err != nil {
 		return nil, err
 	}
@@ -164,63 +195,76 @@ func executeOnboarding(ctx context.Context, repoPath, repoName, arch string, fac
 	if err := ensureOnboardingHarness(ctx, repoPath, repoName); err != nil {
 		return nil, err
 	}
-
-	return writeAgentHarness(ctx, repoPath)
-}
-
-// writeAgentHarness writes generated outputs with the caller's context and confinement, and
-// returns the outcome of each editor file. The compiler convenience writer does not accept
-// that context; editor files go through editor.WriteWithReportIn (writeOnboardEditors).
-func writeAgentHarness(ctx context.Context, repoPath string) ([]editor.WriteResult, error) {
-	agentsPath, err := util.ConfinePath(repoPath, "AGENTS.md")
-	if err != nil {
+	if err := writeAgentHarness(ctx, repoPath); err != nil {
 		return nil, err
 	}
+	return publishOnboardEditors(ctx, repoPath, editors)
+}
+
+// writeAgentHarness writes generated outputs with the caller's context and confinement. The
+// compiler convenience writer does not accept that context.
+func writeAgentHarness(ctx context.Context, repoPath string) error {
+	agentsPath, err := util.ConfinePath(repoPath, "AGENTS.md")
+	if err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	// The scaffolded harness tells its reader to run compile-context --verify, which requires
 	// the text register block; splice it first so that instruction holds from the start.
 	if _, err := compiler.SyncRegisterBlock(ctx, repoPath, agentsPath, true); err != nil {
-		return nil, fmt.Errorf("splice text register into %s: %w", agentsPath, err)
+		return fmt.Errorf("splice text register into %s: %w", agentsPath, err)
 	}
-	// An existing manifest may select editors and agent clients (#202); the manifest
-	// onboarding scaffolds itself selects neither, so every one applies.
+	// An existing manifest may select agent clients (#202); the manifest onboarding scaffolds
+	// itself selects none, so every one applies.
 	declared, err := config.LoadDeclaredTooling(ctx, repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("read editors and agent_clients selection: %w", err)
+		return fmt.Errorf("read editors and agent_clients selection: %w", err)
 	}
+	return writeCompiledHarness(ctx, repoPath, agentsPath, declared.AgentClients)
+}
+
+// writeCompiledHarness compiles agentsPath for the selected agent clients and writes each
+// vendor file confined to repoPath.
+func writeCompiledHarness(ctx context.Context, repoPath, agentsPath string, clients []string) error {
 	tr := compiler.NewTranspiler()
-	tr.Clients = declared.AgentClients
+	tr.Clients = clients
 	data, err := readOnboardDocument(ctx, agentsPath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	res, err := tr.CompileContent(string(data))
 	if err != nil {
-		return nil, fmt.Errorf("compile %s: %w", agentsPath, err)
+		return fmt.Errorf("compile %s: %w", agentsPath, err)
 	}
 	if len(res.Files) > maxOnboardOutputs {
-		return nil, fmt.Errorf("too many compiled outputs: %d", len(res.Files))
+		return fmt.Errorf("too many compiled outputs: %d", len(res.Files))
 	}
 	for i := 0; i < len(res.Files) && i < maxOnboardOutputs; i++ {
 		f := res.Files[i]
 		if err := writeOnboardFile(ctx, repoPath, f.RelativePath, []byte(f.Content)); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return writeOnboardEditors(ctx, repoPath, declared.Editors)
+	return nil
 }
 
-// writeOnboardEditors writes the selected editors' files through editor.WriteWithReportIn, the
-// rule `editors generate` applies (editor.WriteWithReport) under ctx and confined to the
-// repository, and returns the outcome of each file. An existing JSON file keeps every key and
-// gains the missing managed values; a developer-owned file (editor.IsPreservedEditorFile) is
-// preserved. A file the rule refuses, such as a commented .vscode file that lacks managed values
-// (editor.CommentedJSONError, #316), fails onboarding with an error naming it before any editor
-// file is written. Onboarding used to replace every existing editor file that was not
+// prepareOnboardEditors resolves the selected editors' files through editor.PrepareWritesIn,
+// the rule `editors generate` applies (editor.WriteWithReport) under ctx and confined to the
+// repository, and writes nothing; it returns nil when the selection holds no editor. An
+// existing JSON file keeps every key and gains the missing managed values; a developer-owned
+// file (editor.IsPreservedEditorFile) is preserved. A file the rule refuses, such as a
+// commented .vscode file that lacks managed values (editor.CommentedJSONError, #316), is an
+// error naming it. Onboarding used to replace every existing editor file that was not
 // developer-owned, dropping the repository's own keys and comments (#717).
-func writeOnboardEditors(ctx context.Context, repoPath string, declared []string) ([]editor.WriteResult, error) {
+//
+// It runs before the scaffold is written. The scaffold adds YAML, Markdown and JSON files, and
+// the synthesis derives editor content only from Go sources, a language server binary and a
+// Makefile verify-all target, none of which the scaffold writes; so the set resolved here is
+// the one the scaffolded repository synthesizes, which
+// TestOnboardRepository_Positive_EditorSetResolvedBeforeScaffoldVerifies pins.
+func prepareOnboardEditors(ctx context.Context, repoPath string, declared []string) (*editor.PreparedWrites, error) {
 	selection, err := editor.SelectEditors(declared)
 	if err != nil {
 		return nil, fmt.Errorf("editors in .standards.yaml: %w", err)
@@ -231,11 +275,10 @@ func writeOnboardEditors(ctx context.Context, repoPath string, declared []string
 	opts := editor.DefaultOptions()
 	opts.WorkspaceRoot = repoPath
 	opts.Editors = selection.Editors
-	// Complexity is deliberately left at config.HISSComplexityCeiling here. Onboarding writes
-	// the manifest and lock before the pinned profile catalog is materialized in the target
-	// repository, so the declared policy is not resolvable at this point in the scaffold;
-	// `praetorctl adopt` and `praetorctl editors generate` restate the resolved ceilings once
-	// it is (issue #360).
+	// Complexity is deliberately left at config.HISSComplexityCeiling here. Onboarding never
+	// materializes the pinned profile catalog in the target repository, so the declared policy
+	// is not resolvable at this point; `praetorctl adopt` and `praetorctl editors generate`
+	// restate the resolved ceilings once it is (issue #360).
 	set, err := editor.SynthesizeContext(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("synthesize editor configs: %w", err)
@@ -250,9 +293,25 @@ func writeOnboardEditors(ctx context.Context, repoPath string, declared []string
 	if err != nil {
 		return nil, fmt.Errorf("resolve onboarding repository %s: %w", repoPath, err)
 	}
-	report, err := editor.WriteWithReportIn(ctx, set, root)
+	prepared, err := editor.PrepareWritesIn(ctx, set, root)
 	if err != nil {
-		return nil, fmt.Errorf("write editor configs: %w", err)
+		return nil, fmt.Errorf("resolve editor configs: %w", err)
+	}
+	return prepared, nil
+}
+
+// publishOnboardEditors writes the editor files prepareOnboardEditors resolved and returns the
+// outcome of each. It runs after the scaffold is written, so a failure here, such as a file
+// edited since it was resolved (editor.PreparedWrites.Publish refuses it), is wrapped with
+// ErrEditorFilesIncomplete and names the command that finishes the run.
+func publishOnboardEditors(ctx context.Context, repoPath string, editors *editor.PreparedWrites) ([]editor.WriteResult, error) {
+	if editors == nil {
+		return nil, ctx.Err()
+	}
+	report, err := editors.Publish(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w; scaffold files have been written: write editor configs: %w; "+
+			"resolve it and run praetorctl harvest onboard --repo=%s --dry-run=false again", ErrEditorFilesIncomplete, err, repoPath)
 	}
 	return report.Files, ctx.Err()
 }

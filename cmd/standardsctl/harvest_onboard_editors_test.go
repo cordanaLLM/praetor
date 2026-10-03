@@ -64,29 +64,34 @@ func TestHarvestOnboard_Positive_PrintsMergedEditorFile(t *testing.T) {
 	}
 }
 
-// Negative: a commented settings file lacking managed values fails the run with the refusal,
-// which names the file, and its bytes stay.
+// Negative: a commented settings file lacking managed values fails the run, live or dry, with
+// the refusal, which names the file; its bytes stay and the run writes no AGENTS.md.
 func TestHarvestOnboard_Negative_RefusesCommentedEditorFile(t *testing.T) {
 	const commented = "{\n  // repository note\n  \"repo.key\": true\n}\n"
-	repo := onboardEditorsRepo(t, "vscode", commented)
-	out, err := onboardCLI(t, repo, true)
-	var refusal *editor.CommentedJSONError
-	if !errors.As(err, &refusal) {
-		t.Fatalf("refusal lost: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "[FAIL]") || !strings.Contains(out, "cannot safely merge existing .vscode/settings.json") {
-		t.Errorf("refusal not printed by name:\n%s", out)
-	}
-	if got := readOnboardFile(t, repo, ".vscode/settings.json"); got != commented {
-		t.Errorf("refused file rewritten:\n%s", got)
+	for _, live := range []bool{true, false} {
+		repo := onboardEditorsRepo(t, "vscode", commented)
+		out, err := onboardCLI(t, repo, live)
+		var refusal *editor.CommentedJSONError
+		if !errors.As(err, &refusal) {
+			t.Fatalf("live=%v: refusal lost: %v\n%s", live, err, out)
+		}
+		if !strings.Contains(out, "[FAIL]") || !strings.Contains(out, "cannot safely merge existing .vscode/settings.json") {
+			t.Errorf("live=%v: refusal not printed by name:\n%s", live, out)
+		}
+		if got := readOnboardFile(t, repo, ".vscode/settings.json"); got != commented {
+			t.Errorf("live=%v: refused file rewritten:\n%s", live, got)
+		}
+		if _, err := os.Stat(filepath.Join(repo, "AGENTS.md")); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("live=%v: a refused run wrote AGENTS.md: %v", live, err)
+		}
 	}
 }
 
-// Boundary: a dry run prints no editor outcome and leaves even a refusable file alone; a
-// preserved developer-owned file is printed and counted unverified, as `editors generate` does.
+// Boundary: a dry run prints no editor outcome and leaves a file a live run would merge alone;
+// a preserved developer-owned file is printed and counted unverified, as `editors generate` does.
 func TestHarvestOnboard_Boundary_DryRunAndPreservedFile(t *testing.T) {
-	const commented = "{\n  // repository note\n  \"repo.key\": true\n}\n"
-	repo := onboardEditorsRepo(t, "vscode", commented)
+	const mergeable = "{\n  \"repo.key\": true\n}\n"
+	repo := onboardEditorsRepo(t, "vscode", mergeable)
 	out, err := onboardCLI(t, repo, false)
 	if err != nil {
 		t.Fatalf("dry run: %v\n%s", err, out)
@@ -94,7 +99,7 @@ func TestHarvestOnboard_Boundary_DryRunAndPreservedFile(t *testing.T) {
 	if strings.Contains(out, "[MERGED]") || strings.Contains(out, "[CREATED]") {
 		t.Errorf("dry run printed editor outcomes:\n%s", out)
 	}
-	if got := readOnboardFile(t, repo, ".vscode/settings.json"); got != commented {
+	if got := readOnboardFile(t, repo, ".vscode/settings.json"); got != mergeable {
 		t.Errorf("dry run changed the settings file:\n%s", got)
 	}
 

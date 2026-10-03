@@ -958,47 +958,89 @@ func WriteWithReport(set *EditorConfigSet, rootDir string) (WriteReport, error) 
 	if err != nil {
 		return report, err
 	}
-	return publishPreparedEditorFiles(ctx, pending, newEditorIOContext, writeSingleFileWithContext)
+	return publishPreparedEditorFiles(ctx, pending, newEditorIOContext, func(ctx context.Context, write pendingEditorWrite) error {
+		return writeSingleFileWithContext(ctx, write.path, write.content)
+	})
 }
 
-// WriteWithReportIn is WriteWithReport under the caller's context, with root as the
-// confinement boundary: every file is resolved by the same rule before the first mutation,
-// so a refused file (CommentedJSONError, invalid JSON, a conflicting managed value) aborts
-// the run with no file written. Each file is observed through contextopt.ObserveSnapshotIn
-// and written through contextopt.WriteSnapshotIn, so a symlinked directory or file below
-// root is refused rather than followed. Each operation gets its own defaultIOTimeout budget
-// derived from ctx. Onboarding writes editor files through it (#717).
-func WriteWithReportIn(ctx context.Context, set *EditorConfigSet, root string) (WriteReport, error) {
-	report := WriteReport{Files: []WriteResult{}}
+// PreparedWrites is an editor set resolved below a confinement root and not yet written: each
+// file's outcome is decided by the WriteWithReport rule, and each write is bound to the bytes,
+// or the absence, it was decided from. PrepareWritesIn makes one and Publish writes it, under
+// the caller's context, so a caller can resolve its editor files before any other write it
+// makes and fail with nothing written when one is refused. Onboarding does so (#717).
+type PreparedWrites struct {
+	root    string
+	pending []pendingEditorWrite
+}
+
+// PrepareWritesIn observes every file of set below root through contextopt.ObserveSnapshotIn
+// and resolves it by the WriteWithReport rule, writing nothing. A refused file
+// (CommentedJSONError, invalid JSON, a conflicting managed value) and a path the confined walk
+// refuses (a symlinked directory or file below root, a special file) are an error naming the
+// file. Each observation gets its own defaultIOTimeout budget derived from ctx.
+func PrepareWritesIn(ctx context.Context, set *EditorConfigSet, root string) (*PreparedWrites, error) {
 	if ctx == nil {
-		return report, errors.New("editor write requires a context")
+		return nil, errors.New("editor write requires a context")
 	}
 	if err := validateEditorFiles(set); err != nil {
-		return report, err
+		return nil, err
 	}
 	if root == "" {
 		root = "."
 	}
 	pending, err := prepareEditorWrites(ctx, set, newEditorIOContext, confinedObserver(root))
 	if err != nil {
-		return report, err
+		return nil, err
 	}
-	return publishPreparedEditorFiles(ctx, pending, newEditorIOContext, func(ctx context.Context, rel, content string) error {
-		return contextopt.WriteSnapshotIn(ctx, root, rel, []byte(content), util.TrackedFilePerm)
-	})
+	return &PreparedWrites{root: root, pending: pending}, nil
 }
 
+// Results lists the outcome each file will have once published, in set order.
+func (p *PreparedWrites) Results() []WriteResult {
+	results := make([]WriteResult, 0, len(p.pending))
+	for _, write := range p.pending {
+		results = append(results, write.result)
+	}
+	return results
+}
+
+// Publish writes every file the preparation decided to write, through
+// contextopt.ReplaceSnapshotIn bound to what PrepareWritesIn observed: a file edited since is
+// refused with an error naming it instead of being overwritten with content merged from the
+// earlier read, and a file created since is refused the same way. Files written before a
+// refused one stay written. Each write gets its own defaultIOTimeout budget derived from ctx.
+func (p *PreparedWrites) Publish(ctx context.Context) (WriteReport, error) {
+	if ctx == nil {
+		return WriteReport{Files: []WriteResult{}}, errors.New("editor write requires a context")
+	}
+	return publishPreparedEditorFiles(ctx, p.pending, newEditorIOContext, confinedWriter(p.root))
+}
+
+// confinedWriter replaces a prepared file below root only while it still holds the bytes it
+// was resolved from, or is still absent when it was resolved absent.
+func confinedWriter(root string) editorFileWriter {
+	return func(ctx context.Context, write pendingEditorWrite) error {
+		return contextopt.ReplaceSnapshotIn(ctx, root, write.path, []byte(write.content), contextopt.ReplaceOptions{
+			Expected: write.existing, Exists: write.exists, Mode: util.TrackedFilePerm})
+	}
+}
+
+// pendingEditorWrite is what preparation decided for one file: whether and what to write at
+// path, and the bytes (existing) or absence (exists false) the decision was made from.
 type pendingEditorWrite struct {
-	path    string
-	content string
-	write   bool
-	result  WriteResult
+	path     string
+	content  string
+	write    bool
+	existing []byte
+	exists   bool
+	result   WriteResult
 }
 
 // editorIOContextFactory derives the context of one bounded file operation from its parent.
 type editorIOContextFactory func(parent context.Context) (context.Context, context.CancelFunc)
 
-type editorFileWriter func(context.Context, string, string) error
+// editorFileWriter publishes one prepared file under ctx.
+type editorFileWriter func(ctx context.Context, write pendingEditorWrite) error
 
 // editorObserver reads what a generated file's path holds before anything is written. It
 // returns the path the file's write targets, the bytes found there and whether the file
@@ -1019,8 +1061,8 @@ func workspaceObserver(rootDir string) editorObserver {
 }
 
 // confinedObserver reads below root through contextopt.ObserveSnapshotIn, which refuses the
-// files contextopt.WriteSnapshotIn refuses to replace, so a refusal surfaces before the first
-// write. The target is the host-separated relative path WriteSnapshotIn takes.
+// files contextopt.ReplaceSnapshotIn refuses to replace, so a refusal surfaces before the first
+// write. The target is the host-separated relative path ReplaceSnapshotIn takes.
 func confinedObserver(root string) editorObserver {
 	return func(ctx context.Context, file GeneratedFile) (string, []byte, bool, error) {
 		rel := filepath.FromSlash(file.Path)
@@ -1061,7 +1103,7 @@ func publishPreparedEditorFiles(parent context.Context, pending []pendingEditorW
 	for _, write := range pending {
 		if write.write {
 			ctx, cancel := newContext(parent)
-			err := writer(ctx, write.path, write.content)
+			err := writer(ctx, write)
 			cancel()
 			if err != nil {
 				return WriteReport{Files: []WriteResult{}}, fmt.Errorf("failed writing %s: %w", write.path, err)
@@ -1076,16 +1118,12 @@ func publishPreparedEditorFiles(parent context.Context, pending []pendingEditorW
 // target: an absent file is created from its template, and an existing one is resolved by
 // ResolveExisting without keeping drift.
 func prepareEditorWrite(file GeneratedFile, target string, existing []byte, exists bool, observeErr error) (pendingEditorWrite, error) {
-	write := pendingEditorWrite{path: target, content: file.Content, write: true,
+	write := pendingEditorWrite{path: target, content: file.Content, write: true, existing: existing, exists: exists,
 		result: WriteResult{Path: file.Path, Editor: file.Editor, Outcome: WriteCreated}}
-	switch {
-	case observeErr != nil && IsPreservedEditorFile(file.Path):
-		// Preserved files are never replaced, so an unreadable one is left as is.
-		write.write, write.result.Outcome = false, WritePreserved
-		return write, nil
-	case observeErr != nil:
-		return write, fmt.Errorf("read existing %s: %w", file.Path, observeErr)
-	case !exists:
+	if observeErr != nil {
+		return unreadableEditorWrite(write, file.Path, observeErr)
+	}
+	if !exists {
 		return write, nil
 	}
 	resolution, err := ResolveExisting(file, existing, false)
@@ -1095,6 +1133,21 @@ func prepareEditorWrite(file GeneratedFile, target string, existing []byte, exis
 	write.content, write.result.Outcome = resolution.Content, resolution.Outcome
 	write.write = resolution.Outcome == WriteMerged || resolution.Outcome == WriteRewritten
 	return write, nil
+}
+
+// unreadableEditorWrite decides a file whose observation failed. A developer-owned file
+// (IsPreservedEditorFile) is never replaced, so one that could not be read is left as is and
+// reported WritePreserved; any other file fails the run. A cancelled or expired context fails
+// the run for a developer-owned file too: it says nothing about what the path holds, and
+// counting it preserved let a run under a cancelled context report success for a set of
+// developer-owned files, absent ones included.
+func unreadableEditorWrite(write pendingEditorWrite, path string, observeErr error) (pendingEditorWrite, error) {
+	stopped := errors.Is(observeErr, context.Canceled) || errors.Is(observeErr, context.DeadlineExceeded)
+	if IsPreservedEditorFile(path) && !stopped {
+		write.write, write.result.Outcome = false, WritePreserved
+		return write, nil
+	}
+	return write, fmt.Errorf("read existing %s: %w", path, observeErr)
 }
 
 // Resolution is what ResolveExisting decided for one generated file that already exists.

@@ -9,7 +9,17 @@ import (
 	"testing"
 )
 
-// WriteWithReportIn is WriteWithReport under the caller's context, confined to root (#717).
+// PrepareWritesIn followed by PreparedWrites.Publish is WriteWithReport under the caller's
+// context, confined to root (#717).
+
+// writeIn prepares set below root and publishes it, as onboarding does with nothing in between.
+func writeIn(ctx context.Context, set *EditorConfigSet, root string) (WriteReport, error) {
+	prepared, err := PrepareWritesIn(ctx, set, root)
+	if err != nil {
+		return WriteReport{}, err
+	}
+	return prepared.Publish(ctx)
+}
 
 // symlinkOrSkip creates link pointing at target, or skips the test where the platform refuses
 // an unprivileged symlink (Windows without developer mode).
@@ -22,13 +32,13 @@ func symlinkOrSkip(t *testing.T, target, link string) {
 
 // Positive: an existing JSON file keeps its key and gains the managed one, an absent file is
 // created from its template, and the report names each outcome in set order.
-func TestWriteWithReportIn_Positive_MergesAndCreates(t *testing.T) {
+func TestPrepareWritesIn_Positive_MergesAndCreates(t *testing.T) {
 	root := writeFixture(t, map[string]string{".vscode/settings.json": `{"human":true}`})
 	set := &EditorConfigSet{Files: []GeneratedFile{
 		{Path: ".vscode/settings.json", Editor: EditorVSCode, Content: `{"managed":1}`},
 		{Path: ".vscode/tasks.json", Editor: EditorVSCode, Content: `{"version":"2.0.0"}` + "\n"},
 	}}
-	report, err := WriteWithReportIn(context.Background(), set, root)
+	report, err := writeIn(context.Background(), set, root)
 	if err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -47,14 +57,14 @@ func TestWriteWithReportIn_Positive_MergesAndCreates(t *testing.T) {
 // Negative: a refused file (a commented .vscode file lacking a managed value) aborts the run
 // before any write, a symlinked directory below root is refused instead of followed, and a
 // missing context or a cancelled one writes nothing.
-func TestWriteWithReportIn_Negative_RefusesBeforeAnyWrite(t *testing.T) {
+func TestPrepareWritesIn_Negative_RefusesBeforeAnyWrite(t *testing.T) {
 	const commented = "{\n  // adopter note\n  \"human\": true\n}\n"
 	root := writeFixture(t, map[string]string{".vscode/settings.json": commented})
 	set := &EditorConfigSet{Files: []GeneratedFile{
 		{Path: ".vscode/tasks.json", Editor: EditorVSCode, Content: "{}\n"},
 		{Path: ".vscode/settings.json", Editor: EditorVSCode, Content: `{"managed":1}`},
 	}}
-	_, err := WriteWithReportIn(context.Background(), set, root)
+	_, err := writeIn(context.Background(), set, root)
 	var refusal *CommentedJSONError
 	if !errors.As(err, &refusal) || !strings.Contains(err.Error(), ".vscode/settings.json") {
 		t.Fatalf("refusal = %v, want a CommentedJSONError naming the file", err)
@@ -70,10 +80,10 @@ func TestWriteWithReportIn_Negative_RefusesBeforeAnyWrite(t *testing.T) {
 	cancel()
 	empty := t.TempDir()
 	//nolint:staticcheck // SA1012: a nil context is the input under test.
-	if _, err := WriteWithReportIn(nil, set, empty); err == nil {
+	if _, err := writeIn(nil, set, empty); err == nil {
 		t.Fatal("nil context accepted")
 	}
-	if _, err := WriteWithReportIn(cancelled, set, empty); !errors.Is(err, context.Canceled) {
+	if _, err := writeIn(cancelled, set, empty); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled context = %v, want context.Canceled", err)
 	}
 	if entries, err := os.ReadDir(empty); err != nil || len(entries) != 0 {
@@ -82,11 +92,11 @@ func TestWriteWithReportIn_Negative_RefusesBeforeAnyWrite(t *testing.T) {
 }
 
 // Negative: a directory below root that links outside it is refused, and nothing lands outside.
-func TestWriteWithReportIn_Negative_RefusesLinkedDirectory(t *testing.T) {
+func TestPrepareWritesIn_Negative_RefusesLinkedDirectory(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	symlinkOrSkip(t, outside, filepath.Join(root, ".vscode"))
 	set := &EditorConfigSet{Files: []GeneratedFile{{Path: ".vscode/settings.json", Editor: EditorVSCode, Content: `{"managed":1}`}}}
-	if _, err := WriteWithReportIn(context.Background(), set, root); err == nil {
+	if _, err := writeIn(context.Background(), set, root); err == nil {
 		t.Fatal("a linked directory below root was followed")
 	}
 	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
@@ -97,11 +107,11 @@ func TestWriteWithReportIn_Negative_RefusesLinkedDirectory(t *testing.T) {
 // Boundary: a file already holding every managed value keeps its bytes and is PRESENT, a
 // developer-owned file the confined read refuses (a link) is PRESERVED and left alone, and an
 // empty set writes nothing.
-func TestWriteWithReportIn_Boundary_PresentPreservedAndEmpty(t *testing.T) {
+func TestPrepareWritesIn_Boundary_PresentPreservedAndEmpty(t *testing.T) {
 	const complete = "{\n  // adopter note\n  \"managed\": 1,\n}\n"
 	root := writeFixture(t, map[string]string{".vscode/settings.json": complete})
 	set := &EditorConfigSet{Files: []GeneratedFile{{Path: ".vscode/settings.json", Editor: EditorVSCode, Content: `{"managed":1}`}}}
-	report, err := WriteWithReportIn(context.Background(), set, root)
+	report, err := writeIn(context.Background(), set, root)
 	if err != nil || len(report.Files) != 1 || report.Files[0].Outcome != WritePresent {
 		t.Fatalf("complete file = %+v, %v; want PRESENT", report, err)
 	}
@@ -109,7 +119,7 @@ func TestWriteWithReportIn_Boundary_PresentPreservedAndEmpty(t *testing.T) {
 		t.Fatalf("a complete file was rewritten:\n%s", got)
 	}
 
-	report, err = WriteWithReportIn(context.Background(), &EditorConfigSet{}, t.TempDir())
+	report, err = writeIn(context.Background(), &EditorConfigSet{}, t.TempDir())
 	if err != nil || len(report.Files) != 0 {
 		t.Fatalf("empty set = %+v, %v; want no outcome and no error", report, err)
 	}
@@ -121,7 +131,7 @@ func TestWriteWithReportIn_Boundary_PresentPreservedAndEmpty(t *testing.T) {
 	linked := t.TempDir()
 	symlinkOrSkip(t, own, filepath.Join(linked, ".nvim.lua"))
 	preserved := &EditorConfigSet{Files: []GeneratedFile{{Path: ".nvim.lua", Editor: EditorNeovim, Content: "-- template\n"}}}
-	report, err = WriteWithReportIn(context.Background(), preserved, linked)
+	report, err = writeIn(context.Background(), preserved, linked)
 	if err != nil || len(report.Files) != 1 || report.Files[0].Outcome != WritePreserved {
 		t.Fatalf("linked developer-owned file = %+v, %v; want PRESERVED", report, err)
 	}
