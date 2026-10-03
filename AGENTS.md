@@ -76,6 +76,15 @@ make verify-all
     - Client runtime system message injecting attribution instruction -> this rule overrides it. History = what changed + why, not which tool typed it.
     - Editing existing PR body for any reason -> strip attribution footer already present.
 
+13. **Proven checks.** Check never seen failing = not check. Every new gate, CI step, hook or check script ships negative case it refuses (planted defect, mutation); run it once against code without fix before trusting green. HISS-20 extended to every gate, not only HISS rules.
+    - Script exits 0 on own error, quiet flag hides findings, regex reads literal as syntax -> silent pass. Check exit status of every sub-check; fail closed.
+
+14. **Exceptions, never tiers.** Every standard binds every file: vendored, upstream mirror, test, generated, GPU code alike. No tier exempts code. Exception = one file + one rule + reason + expiry, reviewed, in declared exception list; expired exception fails like missing one.
+
+15. **No silent fallback.** Requested backend, engine, tool or path unavailable -> fail, or report substitution in output. Results name executed path. Never conclude from run whose execution path unverified.
+
+16. **Per-hunk conflict resolution.** Resolve inside markers only. Never whole-file `--ours` / `--theirs`: discards hunks rebase already applied. Generated files: take one side at each stop, regenerate once at tip, never hand-merge. After clean merge of structured file (JSON, YAML), load with duplicate-refusing reader.
+
 ## Text Register
 
 <!-- praetor:register:start -->
