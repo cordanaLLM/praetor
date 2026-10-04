@@ -80,3 +80,47 @@ func TestCompileAgentContext_Boundary(t *testing.T) {
 		t.Fatalf("CLAUDE.md not compiled: %v", statErr)
 	}
 }
+
+// Positive: register.evidence.dir reaches every step of the write. A repository that keeps only
+// .workingdir2/ private and sends evidence there keeps its .gitignore byte for byte, the
+// spliced block names .workingdir2/evidence/, and compile-context --verify accepts the result.
+func TestCompileAgentContext_Positive_ConfiguredEvidenceDir(t *testing.T) {
+	root := newTestRepo(t, "context-write-evidence-dir")
+	const rules = ".workingdir2/**\n"
+	mustWrite(t, filepath.Join(root, ".gitignore"), rules)
+	mustWrite(t, filepath.Join(root, manifestFile), "version: 1\nregister:\n  evidence:\n    dir: .workingdir2/evidence/\n")
+	mustWrite(t, filepath.Join(root, agentsFile), contextWriteAgents)
+	out, err := compileAgentContextIn(t, root)
+	if err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "private-artifact block") || mustRead(t, filepath.Join(root, ".gitignore")) != rules {
+		t.Fatalf("an ignored configured directory must leave .gitignore alone:\n%s", out)
+	}
+	agents := mustRead(t, filepath.Join(root, agentsFile))
+	if !strings.Contains(agents, "file under `.workingdir2/evidence/`;") || strings.Contains(agents, ".workingdir/evidence/") {
+		t.Fatalf("the spliced block must name the configured directory:\n%s", agents)
+	}
+	var verify strings.Builder
+	if err := compiler.VerifyCompiledContext(t.Context(), &verify, compiler.NewTranspiler(), filepath.Join(root, agentsFile), root); err != nil {
+		t.Fatalf("verify after the write: %v\n%s", err, verify.String())
+	}
+}
+
+// Negative: a manifest whose evidence directory is refused compiles nothing and leaves
+// .gitignore alone.
+func TestCompileAgentContext_Negative_InvalidEvidenceDir(t *testing.T) {
+	root := newTestRepo(t, "context-write-evidence-dir-invalid")
+	mustWrite(t, filepath.Join(root, manifestFile), "version: 1\nregister:\n  evidence:\n    dir: ../outside/\n")
+	mustWrite(t, filepath.Join(root, agentsFile), contextWriteAgents)
+	_, err := compileAgentContextIn(t, root)
+	if err == nil || !strings.Contains(err.Error(), "compiled no agent context") || !strings.Contains(err.Error(), "'..'") {
+		t.Fatalf("want the refused directory named, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".gitignore")); !os.IsNotExist(statErr) {
+		t.Fatalf("a refused directory still wrote .gitignore: %v", statErr)
+	}
+	if got := mustRead(t, filepath.Join(root, agentsFile)); got != contextWriteAgents {
+		t.Fatalf("a refused write spliced AGENTS.md: %q", got)
+	}
+}

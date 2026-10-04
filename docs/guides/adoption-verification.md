@@ -453,7 +453,7 @@ name fails adoption and each of those gates.
 
 | Step | Audit with the step declined |
 | :--- | :--- |
-| `git-ignore` | retained: Git must still ignore the agent evidence directory `.workingdir/evidence/`, and with `docs:seo-portal` the documentation gate's private paths, through the repository's own rules |
+| `git-ignore` | retained: Git must still ignore the agent evidence directory (`register.evidence.dir`, default `.workingdir/evidence/`), and with `docs:seo-portal` the documentation gate's private paths, through the repository's own rules |
 | `policy-catalog` | retained: the catalog the lock pins under `.config/archetypes`, which adoption and audit resolve the effective policy from |
 | `agent-harness` | retained: the text register block in `AGENTS.md`, its caveman lint, and the projection of every `agent_clients` target |
 | `dev-container` | skipped: a `.devcontainer/devcontainer.json` the repository keeps is not compared, and adoption leaves the DevContainer rule out of the `.gitattributes` block ([checkout line endings](devcontainer-bootstrap.md#checkout-line-endings)) |

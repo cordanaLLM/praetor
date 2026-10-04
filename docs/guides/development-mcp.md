@@ -154,10 +154,11 @@ pass names its counts (see [the context gate](text-register.md#the-context-gate)
 writing call runs the same lint after it writes and returns an error on a finding. The
 fixture above is terse, so it passes.
 
-The block sends agent evidence to `.workingdir/evidence/`. When the root is a Git work tree
-whose rules do not ignore that directory, the writing call merges the Praetor private-artifact
-block into `.gitignore` first and reports it, and a `verify_only` call fails with
-`git does not ignore .workingdir/evidence/` (see [evidence](text-register.md#evidence)). A
+The block sends agent evidence to `register.evidence.dir`, by default `.workingdir/evidence/`.
+When the root is a Git work tree whose rules do not ignore that directory, the writing call
+merges the Praetor private-artifact block into `.gitignore` first and reports it, and a
+`verify_only` call fails with `git does not ignore <dir>` (see
+[evidence](text-register.md#evidence)). A
 `mktemp -d` root outside any work tree needs neither.
 
 The same manifest selects which vendor files exist. `agent_clients: [claude]` in the
@@ -449,7 +450,7 @@ A tool call and the CLI therefore check and write the same things:
   fails on a persona or plugin skill copy that differs from its source beyond
   leading and trailing whitespace. It runs every check and returns every failure.
 - A write runs the same lint after writing and fails on a finding, and before it
-  compiles it makes Git ignore `.workingdir/evidence/`. Both steps are
+  compiles it makes Git ignore the evidence directory (`register.evidence.dir`). Both steps are
   `adopt.CompileAgentContext`, the write the CLI's `compile-context` and `init` run.
 - More than 50 files in `.agents/agents` fail both modes instead of being
   truncated.

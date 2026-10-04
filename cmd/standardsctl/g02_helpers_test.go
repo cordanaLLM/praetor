@@ -180,18 +180,8 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	}
 	f.writeBaseline(t, nil, "")
 
-	agentsPath := writeFixtureFile(t, dir, "AGENTS.md", fixtureAgentsMD)
-	if _, err := compiler.SyncRegisterBlock(context.Background(), dir, agentsPath, true); err != nil {
-		t.Fatalf("splice fixture text register: %v", err)
-	}
-	tr := compiler.NewTranspiler()
-	res, err := tr.Compile(agentsPath)
-	if err != nil {
-		t.Fatalf("compile fixture AGENTS.md: %v", err)
-	}
-	if err := tr.WriteOutputs(res, dir); err != nil {
-		t.Fatalf("write fixture context: %v", err)
-	}
+	writeFixtureFile(t, dir, "AGENTS.md", fixtureAgentsMD)
+	recompileFixtureContext(t, dir)
 
 	writeFixtureFile(t, dir, ".config/labels.yaml", "version: 1\nlabels: []\n")
 	writeDeclaredRuleset(t, dir, config.DefaultPolicy().BranchProtection)
@@ -205,6 +195,25 @@ func newAuditFixture(t *testing.T) *auditFixture {
 		t.Fatal(err)
 	}
 	return f
+}
+
+// recompileFixtureContext splices the text register block the manifest in dir renders into
+// dir/AGENTS.md and compiles the vendor files from it, without the ignore reconciliation
+// compile-context runs first.
+func recompileFixtureContext(t *testing.T, dir string) {
+	t.Helper()
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if _, err := compiler.SyncRegisterBlock(context.Background(), dir, agentsPath, true); err != nil {
+		t.Fatalf("splice fixture text register: %v", err)
+	}
+	tr := compiler.NewTranspiler()
+	res, err := tr.Compile(agentsPath)
+	if err != nil {
+		t.Fatalf("compile fixture AGENTS.md: %v", err)
+	}
+	if err := tr.WriteOutputs(res, dir); err != nil {
+		t.Fatalf("write fixture context: %v", err)
+	}
 }
 
 // writeDeclaredRuleset writes the ruleset the branch protection audit accepts for dir: the one

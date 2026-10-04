@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -196,7 +197,7 @@ func evidenceIgnoreRepo(t *testing.T, name, existing string, absent bool) (root,
 func TestEnsureEvidenceIgnore_Positive(t *testing.T) {
 	root, path := evidenceIgnoreRepo(t, "evidence-written", "user-output/\n", false)
 	var out strings.Builder
-	if err := ReconcileEvidenceIgnore(t.Context(), &out, root); err != nil {
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, root, config.EvidenceDirDefault); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if got := mustRead(t, path); !strings.HasSuffix(got, ManagedGitIgnoreBlock()) || !strings.Contains(got, "user-output/") {
@@ -209,12 +210,12 @@ func TestEnsureEvidenceIgnore_Positive(t *testing.T) {
 		t.Fatalf("reconciliation created the private directory: %v", err)
 	}
 	effective, effectivePath := evidenceIgnoreRepo(t, "evidence-effective", "/.workingdir/\n", false)
-	outcome, err := EnsureEvidenceIgnore(t.Context(), effective)
+	outcome, err := EnsureEvidenceIgnore(t.Context(), effective, config.EvidenceDirDefault)
 	if err != nil || outcome != PrivateIgnoreEffective {
 		t.Fatalf("outcome = %q, err = %v; want effective", outcome, err)
 	}
 	out.Reset()
-	if err := ReconcileEvidenceIgnore(t.Context(), &out, effective); err != nil || out.Len() != 0 {
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, effective, config.EvidenceDirDefault); err != nil || out.Len() != 0 {
 		t.Fatalf("an effective rule must print nothing: %q %v", out.String(), err)
 	}
 	if got := mustRead(t, effectivePath); got != "/.workingdir/\n" {
@@ -228,7 +229,7 @@ func TestEnsureEvidenceIgnore_Negative(t *testing.T) {
 	root, path := evidenceIgnoreRepo(t, "evidence-declined", "", true)
 	mustWrite(t, filepath.Join(root, manifestFile), "adoption:\n  decline:\n    - git-ignore\n")
 	var out strings.Builder
-	if err := ReconcileEvidenceIgnore(t.Context(), &out, root); err != nil {
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, root, config.EvidenceDirDefault); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -240,14 +241,14 @@ func TestEnsureEvidenceIgnore_Negative(t *testing.T) {
 	}
 	unterminated := gitIgnoreManagedBegin + "\n/.workingdir2/\n"
 	broken, brokenPath := evidenceIgnoreRepo(t, "evidence-unterminated", unterminated, false)
-	if err := ReconcileEvidenceIgnore(t.Context(), &out, broken); err == nil || !strings.Contains(err.Error(), ".workingdir/evidence/") {
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, broken, config.EvidenceDirDefault); err == nil || !strings.Contains(err.Error(), ".workingdir/evidence/") {
 		t.Fatalf("an unterminated block must fail naming the directory, got %v", err)
 	}
 	if got := mustRead(t, brokenPath); got != unterminated {
 		t.Fatalf("refused reconciliation changed .gitignore: %q", got)
 	}
 	var nilContext context.Context
-	if _, err := EnsureEvidenceIgnore(nilContext, root); err == nil {
+	if _, err := EnsureEvidenceIgnore(nilContext, root, config.EvidenceDirDefault); err == nil {
 		t.Fatal("nil context accepted")
 	}
 }
@@ -256,7 +257,7 @@ func TestEnsureEvidenceIgnore_Negative(t *testing.T) {
 // block is merged after it; a directory in no work tree needs nothing and gets no .gitignore.
 func TestEnsureEvidenceIgnore_Boundary(t *testing.T) {
 	root, path := evidenceIgnoreRepo(t, "evidence-reinclude", ".workingdir/*\n!.workingdir/evidence/\n", false)
-	outcome, err := EnsureEvidenceIgnore(t.Context(), root)
+	outcome, err := EnsureEvidenceIgnore(t.Context(), root, config.EvidenceDirDefault)
 	if err != nil || outcome != PrivateIgnoreWritten || !strings.HasSuffix(mustRead(t, path), ManagedGitIgnoreBlock()) {
 		t.Fatalf("outcome = %q, err = %v; want the block written after the negation", outcome, err)
 	}
@@ -264,7 +265,7 @@ func TestEnsureEvidenceIgnore_Boundary(t *testing.T) {
 	if present, err := util.GitWorktreePresent(t.Context(), outside); err != nil || present {
 		t.Skipf("temporary directory sits inside a Git work tree (%v, %v)", present, err)
 	}
-	outcome, err = EnsureEvidenceIgnore(t.Context(), outside)
+	outcome, err = EnsureEvidenceIgnore(t.Context(), outside, config.EvidenceDirDefault)
 	if err != nil || outcome != PrivateIgnoreNoRepository {
 		t.Fatalf("outcome = %q, err = %v; want no-repository", outcome, err)
 	}
@@ -273,5 +274,56 @@ func TestEnsureEvidenceIgnore_Boundary(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(outside, ".gitignore")); !os.IsNotExist(statErr) {
 		t.Fatalf("no-repository call created .gitignore: %v", statErr)
+	}
+}
+
+// Positive: a configured directory under the legacy scratch root is covered by the managed
+// block, and the notice names that root; one the operator's rules already cover is left alone.
+func TestEnsureEvidenceIgnore_Positive_ConfiguredDir(t *testing.T) {
+	root, path := evidenceIgnoreRepo(t, "evidence-dir-written", "", true)
+	var out strings.Builder
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, root, ".workingdir2/evidence/"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got := mustRead(t, path); got != ManagedGitIgnoreBlock() {
+		t.Fatalf(".gitignore = %q; want the managed block", got)
+	}
+	if !strings.Contains(out.String(), "Git now ignores .workingdir2/") {
+		t.Fatalf("notice must name the configured root: %q", out.String())
+	}
+	covered, coveredPath := evidenceIgnoreRepo(t, "evidence-dir-covered", "/scratch/\n", false)
+	outcome, err := EnsureEvidenceIgnore(t.Context(), covered, "scratch/evidence")
+	if err != nil || outcome != PrivateIgnoreEffective || mustRead(t, coveredPath) != "/scratch/\n" {
+		t.Fatalf("outcome = %q, err = %v; want effective and .gitignore untouched", outcome, err)
+	}
+}
+
+// Negative: a configured directory the managed block does not cover fails after the write,
+// naming it; a declined git-ignore step warns about the configured root; a refused value is an
+// error before any write.
+func TestEnsureEvidenceIgnore_Negative_ConfiguredDir(t *testing.T) {
+	root, _ := evidenceIgnoreRepo(t, "evidence-dir-uncovered", "", true)
+	_, err := EnsureEvidenceIgnore(t.Context(), root, "scratch/evidence/")
+	if err == nil || !strings.Contains(err.Error(), "Git still does not exclude scratch/evidence/") {
+		t.Fatalf("an uncovered directory must fail naming it, got %v", err)
+	}
+	declined, declinedPath := evidenceIgnoreRepo(t, "evidence-dir-declined", "", true)
+	mustWrite(t, filepath.Join(declined, manifestFile), "adoption:\n  decline:\n    - git-ignore\n")
+	var out strings.Builder
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, declined, ".workingdir2/evidence/"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if !strings.Contains(out.String(), "Warning: Git does not ignore .workingdir2/") || !strings.Contains(out.String(), "add /.workingdir2/") {
+		t.Fatalf("decline warning must name the configured root: %q", out.String())
+	}
+	if _, statErr := os.Stat(declinedPath); !os.IsNotExist(statErr) {
+		t.Fatalf("declined git-ignore still wrote .gitignore: %v", statErr)
+	}
+	refused, refusedPath := evidenceIgnoreRepo(t, "evidence-dir-refused", "", true)
+	if _, err := EnsureEvidenceIgnore(t.Context(), refused, "/abs/evidence/"); err == nil || !strings.Contains(err.Error(), "not absolute") {
+		t.Fatalf("an absolute directory must be refused, got %v", err)
+	}
+	if _, statErr := os.Stat(refusedPath); !os.IsNotExist(statErr) {
+		t.Fatalf("a refused directory still wrote .gitignore: %v", statErr)
 	}
 }

@@ -130,12 +130,17 @@ type RegisterTask struct {
 	maxTokensSet bool
 }
 
-// EvidenceBounds is the inline evidence ceiling. Zero fields mean the default.
+// EvidenceBounds is the inline evidence ceiling and the directory evidence above it goes to.
+// Zero fields mean the default.
 type EvidenceBounds struct {
 	InlineMaxLines  int `yaml:"inline_max_lines,omitempty"`
 	InlineMaxTokens int `yaml:"inline_max_tokens,omitempty"`
-	// linesSet and tokensSet record explicit keys, for the same reason as maxTokensSet.
-	linesSet, tokensSet bool
+	// Dir is where the rendered evidence rule sends agent evidence (EvidenceDirDefault when
+	// empty): a slash-separated directory relative to the AGENTS.md that carries the block,
+	// which Git must ignore (compiler.CheckEvidenceIgnored). CheckEvidenceDir states the form.
+	Dir string `yaml:"dir,omitempty"`
+	// linesSet, tokensSet and dirSet record explicit keys, for the same reason as maxTokensSet.
+	linesSet, tokensSet, dirSet bool
 }
 
 // RegisterPolicy is the register: section of .standards.yaml. It is repository-only and
@@ -235,16 +240,28 @@ func (t *RegisterTask) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// UnmarshalYAML records which bounds the manifest wrote, so an explicit zero is an error.
+// UnmarshalYAML records which keys the manifest wrote, so an explicit zero bound or an empty
+// directory is an error rather than the default.
 func (e *EvidenceBounds) UnmarshalYAML(node *yaml.Node) error {
 	present, err := registerIntFields(node, "register evidence", map[string]*int{
 		"inline_max_lines":  &e.InlineMaxLines,
 		"inline_max_tokens": &e.InlineMaxTokens,
+		"dir":               nil,
 	})
 	if err != nil {
 		return err
 	}
-	e.linesSet, e.tokensSet = present["inline_max_lines"], present["inline_max_tokens"]
+	e.linesSet, e.tokensSet, e.dirSet = present["inline_max_lines"], present["inline_max_tokens"], present["dir"]
+	for i := 0; i+1 < len(node.Content) && i < 6; i += 2 {
+		if node.Content[i].Value != "dir" {
+			continue
+		}
+		value := node.Content[i+1]
+		if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+			return errors.New("register evidence dir must be a string")
+		}
+		e.Dir = value.Value
+	}
 	return nil
 }
 
@@ -267,13 +284,15 @@ func DefaultRegisterPolicy() RegisterPolicy {
 		Evidence: EvidenceBounds{
 			InlineMaxLines:  EvidenceInlineMaxLinesDefault,
 			InlineMaxTokens: EvidenceInlineMaxTokensDefault,
+			Dir:             EvidenceDirDefault,
 		},
 	}
 }
 
 // EffectiveRegister returns the defaults with every set field of the manifest section
-// applied: surfaces are replaced key-wise, explicit task rows win over default rows, and
-// evidence bounds can only tighten.
+// applied: surfaces are replaced key-wise, explicit task rows win over default rows, evidence
+// bounds can only tighten, and a written evidence directory replaces the default in its
+// canonical form (CheckEvidenceDir).
 func (m *Manifest) EffectiveRegister() RegisterPolicy {
 	policy := DefaultRegisterPolicy()
 	if m == nil || m.Register == nil {
@@ -289,7 +308,24 @@ func (m *Manifest) EffectiveRegister() RegisterPolicy {
 	policy.Conventions = copyConventions(m.Register.Conventions)
 	tightenPositive(&policy.Evidence.InlineMaxLines, m.Register.Evidence.InlineMaxLines)
 	tightenPositive(&policy.Evidence.InlineMaxTokens, m.Register.Evidence.InlineMaxTokens)
+	if written := m.Register.Evidence.Dir; written != "" {
+		policy.Evidence.Dir = written
+		if dir, err := CheckEvidenceDir(written); err == nil {
+			policy.Evidence.Dir = dir
+		}
+	}
 	return policy
+}
+
+// EvidenceDir returns the directory the rendered evidence rule names: the policy's own, or
+// EvidenceDirDefault when the policy leaves it empty. A directory CheckEvidenceDir rejects is
+// returned as it is, never replaced by the default, so the renderer and the ignore check that
+// read it fail on it; LoadManifest already rejects a manifest that writes one.
+func (p RegisterPolicy) EvidenceDir() string {
+	if p.Evidence.Dir == "" {
+		return EvidenceDirDefault
+	}
+	return p.Evidence.Dir
 }
 
 // Resolve returns the register for one surface and task label. The forge and the docs
@@ -454,9 +490,13 @@ func validateConventions(conventions map[TextRegister]string) error {
 	return nil
 }
 
-// validateSections checks the evidence bounds, the conventions and the tracked sources.
+// validateSections checks the evidence bounds and directory, the conventions and the tracked
+// sources.
 func (p RegisterPolicy) validateSections() error {
 	if err := p.Evidence.validate(); err != nil {
+		return err
+	}
+	if err := p.Evidence.validateDir(); err != nil {
 		return err
 	}
 	if err := validateConventions(p.Conventions); err != nil {
@@ -477,6 +517,16 @@ func (t RegisterTask) validate(label string) error {
 		return fmt.Errorf("register max_tokens for %q must be %d..%d", label, RegisterMaxTokensFloor, RegisterMaxTokensCeiling)
 	}
 	return nil
+}
+
+// validateDir checks a written evidence directory (CheckEvidenceDir); an explicit empty value is
+// refused rather than read as the default.
+func (e EvidenceBounds) validateDir() error {
+	if !e.dirSet && e.Dir == "" {
+		return nil
+	}
+	_, err := CheckEvidenceDir(e.Dir)
+	return err
 }
 
 func (e EvidenceBounds) validate() error {

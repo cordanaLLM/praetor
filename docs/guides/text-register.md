@@ -73,6 +73,7 @@ register:
   evidence:
     inline_max_lines: 58
     inline_max_tokens: 1500
+    dir: .workingdir/evidence/  # where evidence above the bounds goes; Git must ignore it
   conventions:
     # Repository-specific clauses, rendered after the register's universal form.
     social: PR template, receipt fence and changelog fragment unchanged
@@ -87,6 +88,7 @@ register:
 | `tasks.<label>.max_tokens` | none | 256..8192 when written | `register max_tokens for "<k>" must be 256..8192` |
 | `evidence.inline_max_lines` | 58 | 1..58, tighten only | `register evidence bound must be 1..58` |
 | `evidence.inline_max_tokens` | 1500 | 1..1500, tighten only | `register evidence bound must be 1..1500` |
+| `evidence.dir` | `.workingdir/evidence/` | 1..255 bytes; slash-separated and relative to the `AGENTS.md` that carries the block; no `..`, empty or `.` segment, no `.git` root; no control character, backslash, `:`, `\|` or backtick; Git must ignore it (see [Evidence](#evidence)) | `register evidence dir must be 1..255 bytes`, `... must be relative to the repository, not absolute`, `... must not leave the repository through '..'`, `... must not hold an empty or '.' segment`, `... must not lie inside .git`, `... must be one line of UTF-8 without control characters, ...` |
 | `conventions.<social\|docs\|internal>` | none; `social` is detected (see [Repository conventions](#repository-conventions)) | one line of UTF-8, at most 160 bytes, no control character, no `\|` | `register conventions: unsupported text register "<k>"`, `register conventions.<k> exceeds 160 bytes`, `register conventions.<k> must be one line of UTF-8 text without control characters or '\|'` |
 | `sources.expected` / `sources.not_applicable` / `sources.sha256` | none | 1..16384 applicable values; 0..16384 explicitly classified exclusions; full lowercase SHA-256 | applicable count, exclusion count, or digest mismatch |
 | `sources.inputs[]` | none | 1..64 tracked shell, Python, Go, JSON, or YAML scopes | strict field, path, parser, selector, surface, and kind errors |
@@ -182,8 +184,9 @@ not, so a repository with its own labels is never failed by rows it did not writ
 ## Evidence
 
 Evidence longer than `inline_max_lines` lines or `inline_max_tokens` estimated tokens never
-travels inline. Write it to a file under `.workingdir/evidence/` (`config.EvidenceDir`) or to
-the ephemeral directory a gate already uses, and return one pointer line:
+travels inline. Write it to a file under the evidence directory, `register.evidence.dir`
+(default `.workingdir/evidence/`, `config.EvidenceDirDefault`; `config.RegisterPolicy.EvidenceDir`
+resolves it), or to the ephemeral directory a gate already uses, and return one pointer line:
 
 ```text
 evidence: <path> sha256:<12 hex> lines:<n>
@@ -191,6 +194,22 @@ evidence: <path> sha256:<12 hex> lines:<n>
 
 The reader fetches the file only when a decision depends on it. Logs, transcripts, full test
 output and fetched web pages are always artifacts, whatever their length.
+
+A repository that keeps its private scratch files elsewhere names that directory, and the
+rendered block, the ignore reconciliation, `compile-context --verify` and `audit` all follow it.
+For a repository whose `.gitignore` already hides `.workingdir2/`:
+
+```yaml
+register:
+  evidence:
+    dir: .workingdir2/evidence/
+```
+
+renders the evidence line with `.workingdir2/evidence/` in place of the default
+(`TestRegisterEvidenceDir_RendersAdopterLine` in
+`internal/config/register_evidence_dir_test.go`). The value is checked when the manifest loads
+(`config.CheckEvidenceDir`); a block is never rendered for a refused value, and the default never
+stands in for one.
 
 Every rendered block names that directory, so the repository has to keep it out of Git:
 
@@ -200,11 +219,15 @@ Every rendered block names that directory, so the repository has to keep it out 
   `praetorctl state init` uses (`adopt.EnsureEvidenceIgnore`). A repository whose rules already exclude it is left byte for
   byte alone. Otherwise the Praetor private-artifact block is merged into `.gitignore` and the
   run prints `Added the Praetor private-artifact block to .gitignore`. With `git-ignore` in
-  `adoption.decline`, it prints the warning `state` prints and leaves `.gitignore` alone.
+  `adoption.decline`, it prints the warning `state` prints, naming the evidence directory's
+  top-level directory, and leaves `.gitignore` alone. The block covers `/.workingdir/` and, unless
+  the repository retired it, `/.workingdir2/`; a configured directory under any other root fails
+  the write with `Git still does not exclude <dir>` until the repository's own rules cover it.
 - `praetorctl compile-context --verify`, `praetorctl audit` and their MCP mirrors fail with
-  `git does not ignore .workingdir/evidence/` while Git does not ignore it, whichever facets
-  the manifest enables and whether or not `git-ignore` is declined
-  (`compiler.CheckEvidenceIgnored`).
+  `git does not ignore <dir>` (for the default, `git does not ignore .workingdir/evidence/`)
+  while Git does not ignore it, whichever facets the manifest enables and whether or not
+  `git-ignore` is declined (`compiler.CheckEvidenceIgnored`, matched by
+  `compiler.ErrEvidenceNotIgnored`). The error names the rule to add: `/<top-level directory>/`.
 
 Only the repository's own ignore rules count; a personal excludes file does not. The probe asks
 about a file inside the directory, so it answers before the directory exists. `.workingdir/*`
@@ -212,8 +235,9 @@ followed by `!.workingdir/evidence/` reads as not ignored. `/.workingdir/` follo
 negation still reads as ignored, because Git cannot re-include anything under an excluded
 directory. A directory outside any Git work tree passes, since no commit can publish it.
 `internal/compiler/evidence_ignore_test.go`, `internal/adopt/private_ignore_test.go`,
-`internal/adopt/context_write_test.go`, `cmd/standardsctl/compile_context_evidence_test.go`
-and `cmd/standardsctl/init_evidence_test.go` cover each case.
+`internal/adopt/context_write_test.go`, `cmd/standardsctl/compile_context_evidence_test.go`,
+`cmd/standardsctl/init_evidence_test.go`, `cmd/standardsctl/audit_cmd_test.go` and
+`cmd/standards-mcp/audit_evidence_test.go` cover each case, a configured directory included.
 `config.EvidencePointer` produces the line, and the SARIF distillation of
 `internal/lockdown` ends its summary with it. The defaults originate there: 58 lines and
 1500 tokens are the distillation cap, and `lockdown.MaxDistillLines` and `MaxDistillTokens`
@@ -241,7 +265,7 @@ splice the block before their first compile for the same reason.
 A brief to another agent states the goal, the inputs (paths, not pasted content), the
 return shape, where evidence goes and the task label. The return carries a verdict, changed
 paths, commands run, evidence pointers and open questions, and nothing else. A research
-fan-out saves each fetched page under `.workingdir/evidence/` and returns pointers with a
+fan-out saves each fetched page under the evidence directory and returns pointers with a
 one-line finding per page; the orchestrator opens a page only when a decision needs it.
 
 The shared checker makes both shapes explicit. Brief fields are `goal`, `inputs`, `return`,

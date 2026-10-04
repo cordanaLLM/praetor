@@ -77,18 +77,29 @@ func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, sou
 // verifyVendorContext checks the text register block, the ignore rule for its evidence directory
 // and the vendor files compiled from source, and returns every failure.
 func verifyVendorContext(ctx context.Context, sw *syncWriter, tr *Transpiler, source, targetDir string) error {
-	dir := filepath.Dir(source)
-	var registerErr error
-	if _, err := SyncRegisterBlock(ctx, dir, source, false); err != nil {
-		registerErr = fmt.Errorf("%s: %w", source, err)
-	}
-	ignoreErr := CheckEvidenceIgnored(ctx, dir)
+	registerErr, ignoreErr := verifyRegisterAndEvidence(ctx, source)
 	res, targetsErr := tr.VerifyCompiled(ctx, source, targetDir)
 	if targetsErr == nil {
 		targetsErr = printNotApplicableTargets(sw.w, res)
 	}
 	const prefix = "context verification failed"
 	return errors.Join(prefixError(prefix, registerErr), prefixError(prefix, ignoreErr), prefixError(prefix, targetsErr))
+}
+
+// verifyRegisterAndEvidence checks the text register block of source against the policy of the
+// repository beside it, and that Git ignores the evidence directory that policy names
+// (config.RegisterPolicy.EvidenceDir). A policy that does not load fails the block check alone:
+// with no policy there is no evidence directory to probe, and the run fails either way.
+func verifyRegisterAndEvidence(ctx context.Context, source string) (registerErr, ignoreErr error) {
+	dir := filepath.Dir(source)
+	authority, block, err := loadRegister(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("%s: %w", source, err), nil
+	}
+	if _, err := syncLoadedRegister(ctx, authority, block, source, false); err != nil {
+		registerErr = fmt.Errorf("%s: %w", source, err)
+	}
+	return registerErr, CheckEvidenceIgnored(ctx, dir, authority.Policy().EvidenceDir())
 }
 
 // lintAgentText runs the caveman gate over the canonical AGENTS.md at source and over every
