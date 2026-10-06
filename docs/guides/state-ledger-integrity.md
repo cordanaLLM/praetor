@@ -368,7 +368,7 @@ The sync is bounded by bytes and time, not by the size of the repository:
 
 | Bound | Value | Reason |
 | :--- | :--- | :--- |
-| index listing | 16 MiB (`syncIndexBytes`) | the cap `util.RefuseGitStatusFilters` already applies when it lists the same tracked paths, so the binding is never the narrower limit |
+| index listing | 16 MiB (`syncIndexBytes`) | the largest cap a bounded command accepts (`util.MaxCommandOutputBytes`), which `util.RefuseGitStatusFilters` also uses for its listings of the same tracked paths |
 | every other Git output | 8 MiB each (`contextopt.MaxTotalBytes`) | these grow with uncommitted changes, not with the repository |
 | each Git probe | 5 seconds (`util.GitProbeTimeout`) | the deadline every state probe shares |
 | records per Git listing | 1,048,576 (`maxSyncRecords`) | the loop bound (HISS-02); an index record is at least 54 bytes, so the 16 MiB cap admits at most 310,689 and is reached first |

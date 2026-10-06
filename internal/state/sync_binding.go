@@ -31,10 +31,10 @@ import (
 const maxSyncRecords = 1 << 20
 
 // syncIndexBytes caps the tracked-index listing the binding reads. It is
-// util.MaxCommandOutputBytes, the cap util.RefuseGitStatusFilters already applies when it lists
-// the same tracked paths before every state inspection, so the binding is never the narrower
-// limit on repository size. The index listing grows with the repository; the other listings
-// grow only with uncommitted changes and keep contextopt.MaxTotalBytes.
+// util.MaxCommandOutputBytes, the largest cap a bounded command accepts and the one
+// util.RefuseGitStatusFilters uses for its own listings of the same tracked paths before every
+// state inspection. The index listing grows with the repository; the other listings grow only
+// with uncommitted changes and keep contextopt.MaxTotalBytes.
 const syncIndexBytes = util.MaxCommandOutputBytes
 
 var syncMarker = regexp.MustCompile(`\n<!-- praetor-state:v1 sha256:([a-f0-9]{64}) -->\n$`)
@@ -225,8 +225,7 @@ func validateSyncIndex(listing string) error {
 		return fmt.Errorf("state synchronization lists %d index entries, over its bound of %d records per Git listing; "+
 			"the bound guards a loop, not the repository's size, so report the count to the Praetor maintainers", count, maxSyncRecords)
 	}
-	rows := strings.Split(strings.TrimSuffix(listing, "\x00"), "\x00")
-	for _, row := range rows {
+	for row := range strings.SplitSeq(strings.TrimSuffix(listing, "\x00"), "\x00") {
 		if row == "" {
 			continue
 		}
