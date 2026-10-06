@@ -414,8 +414,9 @@ func (s *Server) createPlanTool() (mcp.Tool, error) {
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to inspect plan drift: %v", err)), nil
 		}
-		// The plan verdict internal/adopt authors once for this tool and the CLI plan.
-		b.External(adopt.FormatPlanStatus(missing, drift), mcpTextShared)
+		// The plan verdict internal/adopt authors once for this tool and the CLI plan. This tool
+		// never reads the forge, so it says the live branch protection was not compared (#159).
+		b.External(adopt.FormatPlanStatus(missing, drift, false), mcpTextShared)
 
 		return mcpComposedTextResult(b.Text()), nil
 	}

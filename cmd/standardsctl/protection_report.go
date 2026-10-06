@@ -26,18 +26,51 @@ type protectionTarget struct {
 	contexts   []string
 }
 
-// reportLiveProtection reads what GitHub enforces on the target branch through gh, from its
-// rulesets and its legacy protection object alike (forge.GitHubDriver.ReadBranchProtection),
-// prints it against the declared policy under heading, and returns the declared properties the
-// branch does not enforce. driftOnly prints only those, and the mechanisms found.
-func reportLiveProtection(ctx context.Context, gh *forge.GitHubDriver, target protectionTarget, heading string, driftOnly bool) ([]string, error) {
-	live, err := gh.ReadBranchProtection(ctx, target.branch)
+// protectionReader reads what the forge enforces on a branch: forge.GitHubDriver, or a stand-in
+// in tests.
+type protectionReader interface {
+	ReadBranchProtection(ctx context.Context, branch string) (*forge.LiveBranchProtection, error)
+}
+
+// liveProtectionTarget is what the live branch protection of a repository is compared with: its
+// default branch (forge.RepositoryDefaultBranch), the declared policy, and the status checks sync
+// --remote requires there (remoteStatusContexts). plan --remote and the audit compare with it,
+// so neither judges the forge on a different declaration.
+func liveProtectionTarget(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy) (protectionTarget, error) {
+	branch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
 	if err != nil {
-		return nil, fmt.Errorf("read the live branch protection of %s: %w", target.branch, err)
+		return protectionTarget{}, err
+	}
+	repository := manifest.Repository.Owner + "/" + manifest.Repository.Name
+	contexts, _, err := remoteStatusContexts(ctx, rootDir, repository, nil)
+	if err != nil {
+		return protectionTarget{}, err
+	}
+	return protectionTarget{repository: repository, branch: branch, policy: policy, contexts: contexts}, nil
+}
+
+// compareLiveProtection reads what the forge enforces on the target branch through reader, from
+// its rulesets and its legacy protection object alike (forge.GitHubDriver.ReadBranchProtection),
+// and compares it with the declared policy property by property (forge.EvaluateBranchProtection).
+func compareLiveProtection(ctx context.Context, reader protectionReader, target protectionTarget) (*forge.LiveBranchProtection, []forge.ProtectionFinding, error) {
+	live, err := reader.ReadBranchProtection(ctx, target.branch)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read the live branch protection of %s: %w", target.branch, err)
 	}
 	findings, err := forge.EvaluateBranchProtection(target.policy, target.contexts, live)
 	if err != nil {
-		return nil, fmt.Errorf("compare the live branch protection of %s: %w", target.branch, err)
+		return nil, nil, fmt.Errorf("compare the live branch protection of %s: %w", target.branch, err)
+	}
+	return live, findings, nil
+}
+
+// reportLiveProtection compares the live branch protection of the target branch with the
+// declared policy (compareLiveProtection), prints it under heading, and returns the declared
+// properties the branch does not enforce. driftOnly prints only those, and the mechanisms found.
+func reportLiveProtection(ctx context.Context, reader protectionReader, target protectionTarget, heading string, driftOnly bool) ([]string, error) {
+	live, findings, err := compareLiveProtection(ctx, reader, target)
+	if err != nil {
+		return nil, err
 	}
 	drifted := forge.ProtectionDrifts(findings)
 	fmt.Printf("  [INFO] Live branch protection of %s on GitHub for %s, %s: %s\n",
@@ -83,7 +116,13 @@ func printLoweredParameters(lowered []forge.LoweredParameter) {
 
 // formatProtectionFinding renders one compared property as a report line.
 func formatProtectionFinding(finding forge.ProtectionFinding) string {
-	line := fmt.Sprintf("%s %s: declared %s, live %s", protectionTags[finding.Verdict], finding.Property, finding.Declared, finding.Live)
+	return protectionTags[finding.Verdict] + " " + describeProtectionFinding(finding)
+}
+
+// describeProtectionFinding renders one compared property without its tag: the property, what
+// is declared, what is live, and the mechanisms that enforce it.
+func describeProtectionFinding(finding forge.ProtectionFinding) string {
+	line := fmt.Sprintf("%s: declared %s, live %s", finding.Property, finding.Declared, finding.Live)
 	if len(finding.EnforcedBy) > 0 {
 		line += " by " + strings.Join(finding.EnforcedBy, ", ")
 	}

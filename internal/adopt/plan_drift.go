@@ -39,7 +39,7 @@ func PlanDrift(ctx context.Context, root string, policy *config.ResolvedPolicy) 
 			missing = append(missing, planBaselineFiles[i])
 		}
 	}
-	if policy.BranchProtection.EnforceLinearHistory || policy.BranchProtection.RequireSignedCommits {
+	if RulesetRequired(policy.BranchProtection) {
 		if !util.FileExists(filepath.Join(root, filepath.FromSlash(rulesetFile))) {
 			drift = append(drift, rulesetFile+" (Branch protection ruleset missing)")
 		}
@@ -56,11 +56,28 @@ func PlanDrift(ctx context.Context, root string, policy *config.ResolvedPolicy) 
 	return missing, drift, nil
 }
 
-// FormatPlanStatus renders the drift verdict of a reconcile plan: the missing baseline
-// files and drift lines PlanDrift reported, or the clean-state line when there are none.
-func FormatPlanStatus(missing, drift []string) string {
+// PlanLiveNotCompared is the line a plan ends its status with when it did not read the branch
+// protection the forge enforces. PlanDrift reads local files only, so such a plan never says that
+// no change is required (#159).
+const PlanLiveNotCompared = "[INFO] Live branch protection not compared with the forge: this plan read local files only. " +
+	"Run 'praetorctl plan --remote' to compare what GitHub enforces with the declared policy."
+
+// FormatPlanStatus renders the drift verdict of a reconcile plan: the missing baseline files and
+// drift lines PlanDrift reported, or that the local files match the declared policy when there
+// are none. Unless liveCompared, it ends with PlanLiveNotCompared; the CLI plan --remote compares
+// the live branch protection after it and reports that verdict itself.
+func FormatPlanStatus(missing, drift []string, liveCompared bool) string {
+	status := formatLocalPlanStatus(missing, drift)
+	if !liveCompared {
+		status += "\n" + PlanLiveNotCompared
+	}
+	return status
+}
+
+// formatLocalPlanStatus renders the verdict of the local files alone.
+func formatLocalPlanStatus(missing, drift []string) string {
 	if len(missing) == 0 && len(drift) == 0 {
-		return "\nStatus: Local state matches declared policy. No changes required."
+		return "\nStatus: Local files match the declared policy."
 	}
 	var b strings.Builder
 	if len(missing) > 0 {

@@ -6,9 +6,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -21,7 +24,7 @@ const (
 	// actionsForgeTimeout bounds every live Actions read of one audit or plan run (HISS-02).
 	actionsForgeTimeout = 3 * time.Minute
 	// offlineFlagUsage is the --offline help text of audit and plan.
-	offlineFlagUsage = "Read nothing from the forge: the live Actions permission and workflow run checks report as not made"
+	offlineFlagUsage = "Read nothing from the forge: the live Actions permission, workflow run and branch protection checks report as not made"
 )
 
 var (
@@ -34,13 +37,15 @@ var (
 	resolveActionsToken = func(ctx context.Context) string { return util.ResolveAuthTokenContext(ctx, "") }
 )
 
-// actionsForge is the live Actions reader of one audit or plan run, or why there is none.
+// actionsForge is the live forge reader of one audit or plan run, or why there is none: the
+// Actions reads and the branch protection read go through the same driver.
 type actionsForge struct {
-	reader  forge.ActionsReader
-	notMade string
+	reader     forge.ActionsReader
+	protection protectionReader
+	notMade    string
 }
 
-// openActionsForge decides whether the live Actions checks may ask the forge: not with
+// openActionsForge decides whether the live forge checks may ask the forge: not with
 // --offline, not without the manifest's repository identity, not unless the origin remote
 // names that repository on github.com (so a read never describes another repository), and
 // not without a token. Each refusal is the reason the report gives for the check not made.
@@ -60,7 +65,7 @@ func openActionsForge(ctx context.Context, rootDir string, repo config.Repositor
 	}
 	driver := forge.NewGitHubDriver(token, actionsForgeEndpoint)
 	driver.SetRepository(repo.Owner, repo.Name)
-	return actionsForge{reader: driver}
+	return actionsForge{reader: driver, protection: driver}
 }
 
 // readActionsPermissions compares declared with the live workflow permissions, or returns why
@@ -76,12 +81,14 @@ func readActionsPermissions(ctx context.Context, declared config.ActionsPolicy, 
 	return forge.EvaluateLiveActionsPermissions(declared, state), ""
 }
 
-// auditLiveActions is the audit gate that reads the forge (#611, #612). The live workflow
+// auditLiveForge is the audit gate that reads the forge (#611, #612, #159). The live workflow
 // permissions are compared with overrides.actions and fail the audit on drift. Each
 // workflow's recent runs on the default branch are reported, and never fail it: the operator
-// chose read-and-report for them. A check the forge did not answer is named as not made, never
-// passed; sync --remote does not reconcile either setting.
-func auditLiveActions(ctx context.Context, manifest *config.Manifest, rootDir string, offline bool) error {
+// chose read-and-report for them. The branch protection the default branch enforces is compared
+// with the declared policy and fails the audit on drift (auditLiveBranchProtection). A check the
+// forge did not answer is named as not made, never passed. sync --remote reconciles the branch
+// protection and neither Actions setting.
+func auditLiveForge(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy, offline bool) error {
 	ctx, cancel := context.WithTimeout(ctx, actionsForgeTimeout)
 	defer cancel()
 	live := openActionsForge(ctx, rootDir, manifest.Repository, offline)
@@ -89,7 +96,75 @@ func auditLiveActions(ctx context.Context, manifest *config.Manifest, rootDir st
 		return err
 	}
 	auditWorkflowRuns(ctx, manifest, rootDir, live)
-	return nil
+	return auditLiveBranchProtection(ctx, manifest, rootDir, policy, live)
+}
+
+// auditLiveBranchProtection compares the branch protection the default branch enforces on the
+// forge, from its rulesets and its legacy protection object alike, with the declared policy and
+// the status checks sync --remote requires there, through the comparison plan --remote prints
+// (liveProtectionTarget, compareLiveProtection). The committed ruleset gate reads only the file
+// (adopt.AuditBranchProtectionWithPolicy), so a ruleset GitHub never applied passed it (#159).
+// Drift fails the audit and names every property that differs; a setting stricter than declared
+// passes. Like the committed ruleset gate, it compares nothing when adoption.decline declines
+// the branch-ruleset step or the policy requires no ruleset.
+func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy, live actionsForge) error {
+	notCompared, err := liveProtectionNotCompared(manifest, policy, live)
+	if err != nil {
+		return err
+	}
+	if notCompared != "" {
+		fmt.Println(notCompared)
+		return nil
+	}
+	target, err := liveProtectionTarget(ctx, rootDir, manifest, policy.BranchProtection)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
+	}
+	protection, findings, err := compareLiveProtection(ctx, live.protection, target)
+	if err != nil {
+		fmt.Printf("[SKIP] Live branch protection not compared with the forge: %v\n", err)
+		return nil
+	}
+	return liveProtectionVerdict(target, protection, findings)
+}
+
+// liveProtectionNotCompared returns the line of a live branch protection check that is not
+// made, and why: the branch-ruleset step declined, a policy that requires no ruleset, or a forge
+// the audit may not ask (openActionsForge). It returns "" when the comparison runs.
+func liveProtectionNotCompared(manifest *config.Manifest, policy *config.ResolvedPolicy, live actionsForge) (string, error) {
+	decline, err := adopt.AuditDecline(manifest, "branch-ruleset")
+	switch {
+	case err != nil:
+		return "", fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
+	case decline.Declined:
+		return "[INFO] Live branch protection not compared with the forge: branch-ruleset declined by adoption.decline.", nil
+	case policy == nil:
+		return "", errors.New("[FAIL] Live branch protection audit failed: policy is required")
+	case !adopt.RulesetRequired(policy.BranchProtection):
+		return "[INFO] Live branch protection not compared with the forge: policy requires neither linear history nor signed commits, so it declares no branch protection ruleset.", nil
+	case live.protection == nil:
+		return "[SKIP] Live branch protection not compared with the forge: " + live.notMade, nil
+	}
+	return "", nil
+}
+
+// liveProtectionVerdict passes a branch that enforces every declared property and fails one that
+// does not, naming each differing property with its declared and live value.
+func liveProtectionVerdict(target protectionTarget, live *forge.LiveBranchProtection, findings []forge.ProtectionFinding) error {
+	var drift []string
+	for _, finding := range findings {
+		if finding.Verdict == forge.ProtectionDrift {
+			drift = append(drift, "  "+describeProtectionFinding(finding))
+		}
+	}
+	if len(drift) == 0 {
+		fmt.Printf("[PASS] Live branch protection of %s compared with the forge: GitHub enforces every declared property (%s).\n",
+			target.branch, describeMechanisms(live))
+		return nil
+	}
+	return fmt.Errorf("[FAIL] Live branch protection of %s on GitHub does not match the declared policy (%s):\n%s\n"+
+		"Run 'praetorctl plan --remote' for the full comparison and 'praetorctl sync --remote' to reconcile it",
+		target.branch, describeMechanisms(live), strings.Join(drift, "\n"))
 }
 
 // auditActionsPermissions prints the permission check and returns the failure of a drifted one.

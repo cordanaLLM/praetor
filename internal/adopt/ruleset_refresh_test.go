@@ -461,7 +461,7 @@ func TestAdopt_Negative_DeclaredBranchWinsAndAnEditedBranchIsKept(t *testing.T) 
 }
 
 // Boundary: audit compares the ruleset only while the policy enforces linear history or signed
-// commits (rulesetRequired), so only then may --force replace a differing one. Under a policy
+// commits (RulesetRequired), so only then may --force replace a differing one. Under a policy
 // requiring neither, --force keeps it byte for byte with the not-audit-verified note; the same
 // ruleset under a policy requiring linear history is replaced.
 func TestReconcileBranchRuleset_Boundary_ForceReplacesOnlyWhilePolicyRequiresIt(t *testing.T) {

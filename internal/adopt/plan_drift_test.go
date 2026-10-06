@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -93,21 +94,40 @@ func TestPlanDriftReportsMissingSBOMAndBaseline(t *testing.T) {
 	}
 }
 
-// Positive, negative and boundary: a clean plan says so; drift lists every line and asks
-// for sync; missing files alone still ask for sync without a drift heading.
+// Positive, negative and boundary: a clean plan says its local files match; drift lists every
+// line and asks for sync; missing files alone still ask for sync without a drift heading. A plan
+// that compared the live branch protection ends there; one that did not says so (#159).
 func TestFormatPlanStatus(t *testing.T) {
-	if got := FormatPlanStatus(nil, nil); got != "\nStatus: Local state matches declared policy. No changes required." {
+	if got := FormatPlanStatus(nil, nil, true); got != "\nStatus: Local files match the declared policy." {
 		t.Errorf("clean plan = %q", got)
 	}
-	got := FormatPlanStatus([]string{"AGENTS.md"}, []string{SBOMWorkflowDrift})
+	got := FormatPlanStatus([]string{"AGENTS.md"}, []string{SBOMWorkflowDrift}, true)
 	want := "\n[DRIFT] Missing baseline files: AGENTS.md\n\n[DRIFT] Policy drift detected:\n  - " + SBOMWorkflowDrift +
 		"\n\nAction: Run 'praetorctl sync' to reconcile repository configuration."
 	if got != want {
 		t.Errorf("drifted plan = %q, want %q", got, want)
 	}
-	onlyMissing := FormatPlanStatus([]string{".standards.lock"}, nil)
+	onlyMissing := FormatPlanStatus([]string{".standards.lock"}, nil, true)
 	if want := "\n[DRIFT] Missing baseline files: .standards.lock\n\nAction: Run 'praetorctl sync' to reconcile repository configuration."; onlyMissing != want {
 		t.Errorf("missing-only plan = %q, want %q", onlyMissing, want)
+	}
+}
+
+// Negative and boundary (#159): a plan that did not read the forge never says that no change
+// is required, clean or drifted; it ends with the line naming the comparison it did not make.
+func TestFormatPlanStatus_LiveNotCompared(t *testing.T) {
+	clean := FormatPlanStatus(nil, nil, false)
+	if want := "\nStatus: Local files match the declared policy.\n" + PlanLiveNotCompared; clean != want {
+		t.Errorf("clean plan without the forge = %q, want %q", clean, want)
+	}
+	drifted := FormatPlanStatus([]string{"AGENTS.md"}, nil, false)
+	if !strings.HasSuffix(drifted, "configuration.\n"+PlanLiveNotCompared) {
+		t.Errorf("drifted plan without the forge = %q", drifted)
+	}
+	for _, status := range []string{clean, drifted} {
+		if strings.Contains(status, "No changes required") {
+			t.Errorf("a plan that did not read the forge claims no change is required: %q", status)
+		}
 	}
 }
 

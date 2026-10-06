@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 // actionsStub is a stand-in forge for the live Actions checks: the workflow permissions of
@@ -40,8 +43,15 @@ func serveActions(t *testing.T, stub *actionsStub) {
 		}
 	}))
 	t.Cleanup(server.Close)
+	pointLiveChecksAt(t, server.URL)
+}
+
+// pointLiveChecksAt points the live forge checks of audit and plan at the forge serving url,
+// with a token, for the rest of the test.
+func pointLiveChecksAt(t *testing.T, url string) {
+	t.Helper()
 	endpoint, token := actionsForgeEndpoint, resolveActionsToken
-	actionsForgeEndpoint = server.URL
+	actionsForgeEndpoint = url
 	resolveActionsToken = func(context.Context) string { return "stub-token" }
 	t.Cleanup(func() { actionsForgeEndpoint, resolveActionsToken = endpoint, token })
 }
@@ -228,4 +238,167 @@ func TestPlanActionsPermissions_ReportsWithoutFailing(t *testing.T) {
 		t.Fatalf("plan --offline failed: %v\n%s", err, out)
 	}
 	mustContain(t, out, "  - not compared: --offline")
+}
+
+// ciWorkflow is a workflow whose job CI reports on every pull request, so the declared policy
+// requires the status check CI.
+const ciWorkflow = "on:\n  pull_request:\njobs:\n  ci:\n    name: CI\n    runs-on: ubuntu-latest\n    steps:\n      - run: make\n"
+
+// declaredProtection is the branch protection the fixture manifest declares, signed commits
+// included when signed.
+func declaredProtection(signed bool) config.BranchProtectionPolicy {
+	policy := config.DefaultPolicy().BranchProtection
+	policy.RequireSignedCommits = signed
+	return policy
+}
+
+// protectedFixture is an audit fixture for acme/widgets whose manifest declares signed commits
+// when signed and declines decline, with an origin on github.com, the workflow CI and the
+// committed ruleset for both; the live forge checks read stub.
+func protectedFixture(t *testing.T, signed bool, decline string, stub *forgeStub) *auditFixture {
+	t.Helper()
+	f := newAuditFixture(t)
+	manifest := fixtureManifest("acme", "widgets", signed)
+	if decline != "" {
+		manifest = strings.Replace(manifest, "register:\n", "adoption:\n  decline:\n    - "+decline+"\nregister:\n", 1)
+	}
+	writeFixtureFile(t, f.dir, ".standards.yaml", manifest)
+	writeFixtureFile(t, f.dir, ".github/workflows/ci.yml", ciWorkflow)
+	writeDeclaredRuleset(t, f.dir, declaredProtection(signed))
+	f.addGitHubOrigin(t)
+	gitCommitAll(t, f.dir, f.gitEnv, "declare the CI check")
+	server := httptest.NewServer(stub.handler())
+	t.Cleanup(server.Close)
+	pointLiveChecksAt(t, server.URL)
+	return f
+}
+
+// liveRuleset is the praetor ruleset for policy and contexts as GitHub stores it under id 1, in
+// enforcement.
+func liveRuleset(t *testing.T, policy config.BranchProtectionPolicy, contexts []string, enforcement string) map[int]map[string]any {
+	t.Helper()
+	raw, err := forge.RenderRepositoryRuleset("main", policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["id"], doc["enforcement"] = 1, enforcement
+	return map[int]map[string]any{1: doc}
+}
+
+// classicProtection is a legacy protection object that enforces the default declared policy and
+// requires checks.
+func classicProtection(checks ...string) map[string]any {
+	return map[string]any{
+		"required_pull_request_reviews": map[string]any{"required_approving_review_count": 1, "dismiss_stale_reviews": true, "require_code_owner_reviews": true},
+		"required_linear_history":       map[string]any{"enabled": true},
+		"required_status_checks":        map[string]any{"contexts": checks},
+	}
+}
+
+// Positive (#159): the live branch protection is compared with the declared policy, through a
+// ruleset or the legacy protection object alone, and a branch that enforces every declared
+// property passes, naming its mechanism; nothing is written.
+func TestAuditLiveBranchProtection_Positive_MatchingProtectionPasses(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("matching live protection failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, `[PASS] Live branch protection of main compared with the forge: GitHub enforces every declared property (protected by ruleset "praetor-main-protection" #1).`,
+		"Audit Summary: configured governance gates passed")
+
+	classic := &forgeStub{legacy: classicProtection("CI")}
+	f = protectedFixture(t, false, "", classic)
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("matching classic protection failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] Live branch protection of main compared with the forge: GitHub enforces every declared property (protected by branch protection).")
+	if writes := append(stub.recorded(), classic.recorded()...); len(writes) != 0 {
+		t.Fatalf("the audit wrote to the forge: %v", writes)
+	}
+}
+
+// Negative (#159): a declared status check the branch does not require, signed commits or
+// approving reviews the branch does not enforce, a classic-only protection missing a check, and
+// the praetor ruleset left in evaluate enforcement each fail the audit naming the property.
+func TestAuditLiveBranchProtection_Negative_DriftFailsNamingEachProperty(t *testing.T) {
+	for name, tc := range map[string]struct {
+		signed bool
+		stub   *forgeStub
+		want   []string
+	}{
+		"missing context": {stub: &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), nil, "active")},
+			want: []string{"  Required status checks: declared 1, live 0 of 1 required; missing: CI"}},
+		"signatures": {signed: true, stub: &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")},
+			want: []string{"  Signed commits: declared required, live not enforced"}},
+		"review count": {stub: &forgeStub{rulesets: liveRuleset(t, config.BranchProtectionPolicy{
+			EnforceLinearHistory: true, DismissStaleReviews: true, ReviewMode: config.BranchReviewModeSingleMaintainer}, []string{"CI"}, "active")},
+			want: []string{"  Approving reviews: declared 1, live 0", "  Code owner review: declared required, live not enforced"}},
+		"classic only": {stub: &forgeStub{legacy: classicProtection("Lint")},
+			want: []string{"(protected by branch protection)", "missing: CI"}},
+		"enforcement": {stub: &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "evaluate")},
+			want: []string{`  Ruleset enforcement: declared active, live evaluate (ruleset "praetor-main-protection" #1)`,
+				"  Pull requests: declared required, live not enforced"}},
+	} {
+		f := protectedFixture(t, tc.signed, "", tc.stub)
+		out, err := f.audit(t)
+		mustErrContain(t, err, "[FAIL] Live branch protection of main on GitHub does not match the declared policy")
+		for _, want := range tc.want {
+			mustErrContain(t, err, want)
+		}
+		mustErrContain(t, err, "'praetorctl sync --remote' to reconcile it")
+		if strings.Contains(out, "Audit Summary: configured governance gates passed") {
+			t.Fatalf("%s: drifted live protection reported a passing audit:\n%s", name, out)
+		}
+	}
+}
+
+// Boundary (#159): --offline, a missing token and a forge that refuses the read report the
+// comparison as not made with the reason, never as a pass, and the audit passes; a declined
+// branch-ruleset step keeps its decline line and asks the forge nothing about it.
+func TestAuditLiveBranchProtection_Boundary_NotComparedIsNamed(t *testing.T) {
+	var reports []string
+	audit := func(f *auditFixture, args ...string) string {
+		t.Helper()
+		out, err := f.audit(t, args...)
+		if err != nil {
+			t.Fatalf("a comparison not made failed the audit: %v\n%s", err, out)
+		}
+		reports = append(reports, out)
+		return out
+	}
+	unprotected := &forgeStub{}
+	f := protectedFixture(t, false, "", unprotected)
+	mustContain(t, audit(f, "--offline"), "[SKIP] Live branch protection not compared with the forge: --offline")
+	if n := unprotected.requestCount(); n != 0 {
+		t.Fatalf("--offline asked the forge %d times", n)
+	}
+	resolveActionsToken = func(context.Context) string { return "" }
+	mustContain(t, audit(f), "[SKIP] Live branch protection not compared with the forge: no forge token")
+
+	refused := &forgeStub{legacyStatus: http.StatusForbidden}
+	mustContain(t, audit(protectedFixture(t, false, "", refused)),
+		"[SKIP] Live branch protection not compared with the forge: read the live branch protection of main: "+
+			"read the legacy branch protection of main: unexpected status 403")
+
+	declined := &forgeStub{}
+	mustContain(t, audit(protectedFixture(t, false, "branch-ruleset", declined)),
+		"[PASS] Branch protection ruleset declined by adoption.decline.",
+		"[INFO] Live branch protection not compared with the forge: branch-ruleset declined by adoption.decline.")
+	for _, path := range declined.readPaths() {
+		if strings.Contains(path, "/rules/branches/") || strings.HasSuffix(path, "/protection") || strings.HasSuffix(path, "/rulesets") {
+			t.Fatalf("a declined branch ruleset read %s from the forge", path)
+		}
+	}
+	for _, report := range reports {
+		if strings.Contains(report, "[PASS] Live branch protection") {
+			t.Fatalf("a comparison not made was reported as a pass:\n%s", report)
+		}
+	}
 }
