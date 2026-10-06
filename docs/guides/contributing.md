@@ -49,6 +49,11 @@ make verify-all
    - Commit first, then run `standardsctl gate run --path=.` to verify the ephemeral worktree and generate an Ed25519 Exit-0 receipt. The gate refuses a tree with uncommitted or untracked changes ([details](adoption-verification.md#a-receipt-certifies-only-a-working-tree-that-matches-head)).
 4. **Pull Request Submission**:
    - Submit PR via GitHub. Direct pushes to `main` are declined by repository rules.
+   - The receipt certifies the commit it was minted on, so every push stales the one in the PR
+     body. `forge validate-pr` then refuses it and names the recovery (`receiptRecovery` in
+     `internal/forge/pr.go`): run `praetorctl gate run --path=.` on a clean checkout of the
+     pushed head, then replace the fenced `receipt` block with the new `.standards-receipt.json`.
+     Editing the body re-runs the gate, since `.github/workflows/ci.yml` triggers on `edited`.
    - All 9 required status checks in `.github/rulesets/main.json` must pass before merge:
      `Release & Bot Configuration Validation`, `Documentation Preset Builds`,
      `Standards & Invariant Verification Gate`, `DCO 1.1 & REUSE Compliance Gate`,
