@@ -60,10 +60,12 @@ func repositoryFacts(plan *VerificationPlan, exceptions hisscatalog.Exception) h
 // alone (#321). Every renderer of HISS rows reads the policy through it: the AGENTS.md harness
 // (hissFacts), the Paperclip harness adoption writes (paperclipFacts), and the one
 // `praetorctl paperclip harness` writes and `praetorctl audit` compares (RepositoryHISSFacts).
-// A zero complexity is an unresolved policy and leaves facts as they were.
+// A zero complexity is an unresolved policy and leaves facts as they were. The limits come from
+// ComplexityPolicy.ScanOptions, the one mapping of a policy onto the HISS-04 limits the audit's
+// scan measures against, so the rows state exactly what the scan reads.
 func withPolicy(facts hisscatalog.Facts, complexity config.ComplexityPolicy) hisscatalog.Facts {
-	facts.MaxFuncLOC = complexity.MaxFuncLOC
-	facts.Complexity = complexity.Limits()
+	limits := complexity.ScanOptions(hiss.ScanOptions{})
+	facts.MaxFuncLOC, facts.Complexity = limits.MaxFuncLOC, limits.Complexity
 	return facts
 }
 
