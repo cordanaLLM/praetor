@@ -481,6 +481,13 @@ func TestAudit_Positive_PreCommitFrameworkRunner(t *testing.T) {
 		t.Fatalf("pre-commit framework runner: %v\n%s", err, out)
 	}
 	mustContain(t, out, "via the pre-commit framework, .pre-commit-config.yaml) verified active")
+	t.Setenv("CI", "true")
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("pre-commit framework runner in CI: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] CI environment detected: the pre-commit framework configuration .pre-commit-config.yaml verified")
+	t.Setenv("CI", "")
 
 	writeFixtureFile(t, f.dir, ".pre-commit-config.yaml", local)
 	_, err = f.audit(t)
