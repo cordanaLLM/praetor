@@ -1,4 +1,4 @@
 type: fixed
-title: "Adoption no longer stops with \"makefile may define target docs-lint outside the Praetor-managed block\" when the Makefile's rule targets are computed from variables bound once to literal paths, such as $(OUT_DIR): after OUT_DIR := $(SRC_ROOT)/out; a computed name now counts with the value the file fixes for it, and editor generation offers Verify All for one that expands to verify-all"
+title: "Adoption no longer refuses the documentation gate with \"makefile may define target docs-lint\" when rule targets are computed from variables bound once to literal paths"
 issue: "#537"
 breaking: false

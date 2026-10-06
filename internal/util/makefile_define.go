@@ -22,11 +22,11 @@ import (
 // golangci-lint is missing.
 
 // makefileDirectiveWords are the first words, besides makefileConditionalWords, that make a line a
-// directive rather than a rule, an assignment or a bare expansion. Include forms are listed for
-// completeness; makefileLineIsAmbiguous reports them before this list is consulted.
+// directive rather than a rule, an assignment or a bare expansion. Include and load forms are
+// listed for completeness; makefileLineIsAmbiguous reports them before this list is consulted.
 var makefileDirectiveWords = map[string]bool{
 	"define": true, "endef": true, "undefine": true, "vpath": true,
-	"include": true, "-include": true, "sinclude": true,
+	"include": true, "-include": true, "sinclude": true, "load": true, "-load": true,
 }
 
 // makefileLeavesOwnershipToMake reads one logical line, the one at index, advancing scanner, and
@@ -53,8 +53,8 @@ func makefileLeavesOwnershipToMake(scanner *makefileScanner, line string, index 
 
 // makefileParsesComputedText reports whether a trimmed syntax line makes Make parse text the file
 // does not show as makefile syntax, which may declare any rule or bind any variable: an include
-// directive, a call that evaluates text (makefileCallsEval) or a "!=" binding
-// (makefileBindsCommandOutput). makefileLineIsAmbiguous and makefileEvaluatesText read every
+// or load directive (makefileReadsFile), a call that evaluates text (makefileCallsEval) or a "!="
+// binding (makefileBindsCommandOutput). makefileLineIsAmbiguous and makefileEvaluatesText read every
 // syntax line with it, and makefileLeavesOwnershipToMake reads a tab-prefixed line with it that
 // Make reads as a recipe line or as makefile syntax, depending on a branch it takes: measured
 // against GNU Make 4.4.1, after "ifdef UNSET", "foo:" and "endif" a tab-indented "X := $(eval
@@ -62,7 +62,7 @@ func makefileLeavesOwnershipToMake(scanner *makefileScanner, line string, index 
 // Make with "recipe commences before first target", so neither counts, and a recipe line such as
 // "@printf '%s: done'" stays readable.
 func makefileParsesComputedText(line string) bool {
-	return makefileIncludes(strings.Fields(line)) || makefileCallsEval(line) || makefileBindsCommandOutput(line)
+	return makefileReadsFile(strings.Fields(line)) || makefileCallsEval(line) || makefileBindsCommandOutput(line)
 }
 
 // makefileDefineParsesText reports whether a trimmed line of a define, the opening line or one of

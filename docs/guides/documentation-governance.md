@@ -547,9 +547,10 @@ same answer (`keepsLegacyScratch` in `internal/adopt/legacy_scratch.go`, read
 through `HasManagedGitIgnoreTail` and `PrivateScratchRoots`).
 
 Existing unambiguous custom Makefile recipes stay intact. Adoption appends one
-marked block when `docs-lint` is provably available; includes, generated target
-names the file does not fix to plain paths, `eval`, pattern rules, an
-operator-owned target collision, or an edited managed block fail for review.
+marked block when `docs-lint` is provably available; includes, `load`
+directives, generated target names the file does not fix to plain paths, `eval`,
+pattern rules, an operator-owned target collision, or an edited managed block
+fail for review.
 `praetorctl adopt --force --lock-source-root=<praetor checkout>` repairs an edited
 managed block while the facet remains enabled and refreshes the content-locked
 assets, but still refuses symbolic links; the report lists that repair as a

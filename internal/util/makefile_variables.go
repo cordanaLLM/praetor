@@ -16,11 +16,12 @@ import (
 // target, bound inside a conditional or by a computed name that may be it; a value holding a
 // function call, $(shell ...) included, or a pattern, glob, comment-escape or rule character; and
 // a variable bound nowhere in the file or only after the rule, whose value Make then takes from
-// the environment. A file holding an include, an eval call, a "!=" binding (a "define X !="
-// included) or a bare expansion other than silent calls, each of which may rebind any variable,
-// resolves no name (makefileEvaluatesText); such a line leaves the file to Make anyway
+// the environment. A file holding an include, a load, an eval call, a "!=" binding (a "define X
+// !=" included) or a bare expansion other than silent calls, each of which may rebind any
+// variable, resolves no name (makefileEvaluatesText); such a line leaves the file to Make anyway
 // (makefileLeavesOwnershipToMake), and resolving nothing keeps MakefileHasTarget from claiming a
-// computed name there.
+// computed name there. Neither does a file whose computed binding names hold more than
+// MaxMakefileComputedRuns literal runs.
 //
 // The answer holds for the invocation Praetor's gates run, "make verify-all" or "make docs-lint"
 // with no variable definitions and no options (verifyCommand in internal/adopt/harness.go). A
@@ -37,6 +38,13 @@ import (
 // computed target name (HISS-02): "OUT := $(ROOT)/out" after "ROOT := lib" is two deep. A deeper
 // chain leaves the name to Make.
 const MaxMakefileVariableDepth = 16
+
+// MaxMakefileComputedRuns bounds the literal runs (makefileLiteralRuns) the computed binding names
+// of one Makefile may hold while the reader still fixes variables (HISS-02). Each computed binding
+// name is split once, and makefileBindings.fixed compares a variable it may fix with every run, so
+// the bound holds that work to MaxMakefileLines times this many comparisons. A file whose computed
+// binding names hold more resolves no computed name.
+const MaxMakefileComputedRuns = 256
 
 // makefileHarmlessFlags are the MAKEFLAGS words measured against GNU Make 4.4.1 to leave every
 // variable's value alone, bound before or after the variable: none defines a variable, and none
@@ -58,9 +66,11 @@ type makefileValue struct {
 	line, depth int
 }
 
-// makefileVariables are the values the reader fixes for one Makefile (makefileReadVariables).
+// makefileVariables are the values the reader fixes for one Makefile (makefileReadVariables) and
+// the work it took to collect the bindings and fix them (makefileBindings.steps).
 type makefileVariables struct {
 	values map[string]makefileValue
+	steps  int
 }
 
 // makefileBinding is a top-level binding the reader may fix: one plain name, its operator, the
@@ -71,15 +81,19 @@ type makefileBinding struct {
 }
 
 // makefileBindings records how a Makefile binds variables: how often each literal name is bound,
-// in any form; the computed names that may bind any variable they can expand to; the bindings the
-// reader may fix; whether a binding of MAKEFLAGS may change values (flags); and whether a line
-// makes Make parse text it computes or reads, which may bind any variable (evaluates).
+// in any form; the computed names that may bind any variable they can expand to, each split once,
+// and how many literal runs they hold (runs); the bindings the reader may fix; whether a binding
+// of MAKEFLAGS may change values (flags); and whether a line makes Make parse text it computes or
+// reads, which may bind any variable (evaluates). steps counts the work: the bytes of every bound
+// name split into literal runs and the runs fixed compares a variable's name with.
 type makefileBindings struct {
 	count     map[string]int
-	computed  []string
+	computed  []makefileName
+	runs      int
 	plain     []makefileBinding
 	flags     bool
 	evaluates bool
+	steps     int
 }
 
 // makefileReadVariables returns the values the reader fixes for lines, the logical lines of a
@@ -87,7 +101,8 @@ type makefileBindings struct {
 func makefileReadVariables(lines []string) makefileVariables {
 	bindings := makefileCollectBindings(lines)
 	variables := makefileVariables{values: make(map[string]makefileValue)}
-	if bindings.flags || bindings.evaluates {
+	if bindings.flags || bindings.evaluates || bindings.runs > MaxMakefileComputedRuns {
+		variables.steps = bindings.steps
 		return variables
 	}
 	for _, binding := range bindings.plain {
@@ -98,6 +113,7 @@ func makefileReadVariables(lines []string) makefileVariables {
 			variables.values[binding.name] = value
 		}
 	}
+	variables.steps = bindings.steps
 	return variables
 }
 
@@ -194,28 +210,37 @@ func (b *makefileBindings) addAll(names []string, harmless bool) {
 	}
 }
 
-// add records one binding of name. A name holding a reference may bind any variable it can expand
-// to (makefileNameMayBe). A binding whose name may be MAKEFLAGS may change values unless the name is
-// MAKEFLAGS itself and the value is harmless (makefileHarmlessFlagsValue).
+// add records one binding of name, split once into its literal runs (makefileSplitName). A name
+// holding a reference may bind any variable it can expand to (makefileName.mayBe). A binding whose
+// name may be MAKEFLAGS may change values unless the name is MAKEFLAGS itself and the value is
+// harmless (makefileHarmlessFlagsValue).
 func (b *makefileBindings) add(name string, harmless bool) {
-	switch {
-	case name == "":
+	if name == "" {
 		return
-	case strings.Contains(name, "$"):
-		b.computed = append(b.computed, name)
-	default:
+	}
+	split := makefileSplitName(name)
+	b.steps += len(name)
+	if split.computed {
+		b.computed = append(b.computed, split)
+		b.runs += len(split.runs)
+	} else {
 		b.count[name]++
 	}
-	if makefileNameMayBe(name, makefileFlagsVariable) && (name != makefileFlagsVariable || !harmless) {
+	if split.mayBe(makefileFlagsVariable) && (name != makefileFlagsVariable || !harmless) {
 		b.flags = true
 	}
 }
 
 // fixed reports whether the file binds name exactly once, under a plain name, and no computed
-// binding name may be it.
+// binding name may be it. Each computed name was split when it was recorded, so the test compares
+// name with literal runs only, and counts each run it may compare in steps.
 func (b *makefileBindings) fixed(name string) bool {
-	return b.count[name] == 1 && makefilePlainName(name) && !slices.ContainsFunc(b.computed, func(computed string) bool {
-		return makefileNameMayBe(computed, name)
+	if b.count[name] != 1 || !makefilePlainName(name) {
+		return false
+	}
+	return !slices.ContainsFunc(b.computed, func(computed makefileName) bool {
+		b.steps += len(computed.runs)
+		return computed.mayBe(name)
 	})
 }
 

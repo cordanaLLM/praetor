@@ -7,11 +7,12 @@ import (
 )
 
 // This file, makefile_define.go, makefile_scanner.go and makefile_variables.go hold the one
-// Makefile reader Praetor decides target ownership with. Adoption asks it whether a project owns verify-all or docs-lint before appending a rule
-// (internal/adopt/governance.go, internal/adopt/verification_makefile.go), and editor generation
-// asks it whether to offer a "make verify-all" task (internal/editor/capabilities.go). A second
-// line test beside it once read eight assignment forms as rules (issue #304), so a caller never
-// decides rule versus assignment on its own.
+// Makefile reader Praetor decides target ownership with. Adoption asks it whether a project owns
+// verify-all or docs-lint before appending a rule (internal/adopt/governance.go,
+// internal/adopt/verification_makefile.go), and editor generation asks it whether to offer a
+// "make verify-all" task (internal/editor/capabilities.go). A second line test beside it once read
+// eight assignment forms as rules (issue #304), so a caller never decides rule versus assignment
+// on its own.
 //
 // The reader works on logical lines, as Make does: a line ending in an odd run of backslashes
 // continues on the next one (makefileLogicalLines). It reads a Makefile up to the first point it
@@ -241,15 +242,34 @@ func makefileBoundName(line string) (string, bool) {
 }
 
 // makefileNameMayBe reports whether name, a variable or function name that may hold references,
-// can expand to want: it equals want, or it holds a reference and every literal run around its
-// references occurs in want. So "$(P)PREFIX" may be .RECIPEPREFIX and "e$(S)" may be eval, while
-// "$(PKG)_SRCS" can be neither.
+// can expand to want (makefileName.mayBe). So "$(P)PREFIX" may be .RECIPEPREFIX and "e$(S)" may
+// be eval, while "$(PKG)_SRCS" can be neither.
 func makefileNameMayBe(name, want string) bool {
+	return makefileSplitName(name).mayBe(want)
+}
+
+// makefileName is a variable or function name split once into the literal runs around its
+// references (makefileLiteralRuns), so a caller that tests one name against many can split it
+// once: text is the name, and computed reports whether it holds a reference.
+type makefileName struct {
+	text     string
+	runs     []string
+	computed bool
+}
+
+// makefileSplitName returns name split into the literal runs around its references.
+func makefileSplitName(name string) makefileName {
 	runs, computed := makefileLiteralRuns(name)
-	if !computed {
-		return name == want
+	return makefileName{text: name, runs: runs, computed: computed}
+}
+
+// mayBe reports whether the name can expand to want: it equals want, or it holds a reference and
+// every literal run around its references occurs in want.
+func (n makefileName) mayBe(want string) bool {
+	if !n.computed {
+		return n.text == want
 	}
-	for _, run := range runs {
+	for _, run := range n.runs {
 		if !strings.Contains(want, run) {
 			return false
 		}
@@ -500,20 +520,26 @@ func makefileDirectiveIndex(fields []string) int {
 	return len(fields)
 }
 
-// makefileIncludes reports whether fields, the words of a line, open an include directive.
-func makefileIncludes(fields []string) bool {
+// makefileReadsFile reports whether fields, the words of a line, open a directive that makes Make
+// read a file the reader does not see: an include, whose makefile may hold any line, or a load,
+// whose object's setup may evaluate any text as makefile syntax through gmk_eval. Measured against
+// GNU Make 4.4.1, "load ./rule.so" or "-load ./rule.so" with an object whose setup evaluates
+// "verify-all: ; @echo custom" declares verify-all, and "load ./rebind.so" whose setup evaluates
+// "NAME := build" between "NAME := verify-all" and "$(NAME):" declares build and no verify-all.
+func makefileReadsFile(fields []string) bool {
 	switch makefileDirective(fields) {
-	case "include", "-include", "sinclude":
+	case "include", "-include", "sinclude", "load", "-load":
 		return true
 	}
 	return false
 }
 
 // makefileLineIsAmbiguous reports whether a line may define targets only Make can resolve: an
-// include, a call that evaluates text (makefileCallsEval), a "!=" binding, whose command output
-// Make expands as makefile text (makefileBindsCommandOutput), a computed target name whose value
-// the file does not fix (makefileVariables.targets) for the logical line at index, a pattern
-// target name, or a rule whose prerequisites hold an assignment operator behind two or more words.
+// include or a load (makefileReadsFile), a call that evaluates text (makefileCallsEval), a "!="
+// binding, whose command output Make expands as makefile text (makefileBindsCommandOutput), a
+// computed target name whose value the file does not fix (makefileVariables.targets) for the
+// logical line at index, a pattern target name, or a rule whose prerequisites hold an assignment
+// operator behind two or more words.
 // Measured against GNU Make 4.4.1, Make reads "docs-lint: A B = x" as a rule with the
 // prerequisites "A B = x" and stops at "docs-lint: A B := x" with "multiple target patterns", so
 // the reader claims neither.
@@ -541,8 +567,8 @@ func makefileLineIsAmbiguous(line string, index int, variables makefileVariables
 
 // MakefileMayDefineTarget reports whether data, the text of a Makefile with "\n" line endings,
 // may already own target: a rule for it (MakefileHasTarget), a line only Make can resolve (an
-// include, an eval call, a "!=" binding, a computed target name whose value the file does not fix,
-// a pattern target name), a top-level bare expansion other than silent calls
+// include, a load, an eval call, a "!=" binding, a computed target name whose value the file does
+// not fix, a pattern target name), a top-level bare expansion other than silent calls
 // (makefileBareExpansion, makefileSilentCalls), a tab-prefixed line Make parses as one of these
 // because no recipe is open or may parse so in a branch it takes (makefileScanner), a mention of
 // .RECIPEPREFIX, a define that is never closed, or a point the reader cannot resolve
