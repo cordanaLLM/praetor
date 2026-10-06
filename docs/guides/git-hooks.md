@@ -719,7 +719,10 @@ the observed Git state, clean flag and dirty count. `state status` reports an
 inspection time, never a fabricated last-sync timestamp.
 
 Only these canonical ledgers are read inside `.workingdir`; evidence, memories
-and caches are excluded. Git-ignored public paths are also outside the binding.
+and caches are excluded. Git-ignored public paths are also outside the binding, and
+so is the gate's untracked Exit-0 receipt `.standards-receipt.json` at the root, so a
+`praetorctl gate run` after the sync leaves the ledger current
+([why](state-ledger-integrity.md)).
 The sync is bounded by bytes and time, not by repository size: 1 MiB per canonical
 ledger, 16 MiB for the index listing, 8 MiB for every other Git output stream,
 five-second Git probe deadlines, and at most 1,048,576 records per Git listing.

@@ -165,15 +165,15 @@ func stateGitProbes(gitState string) []syncGitProbe {
 	return []syncGitProbe{
 		{label: "HEAD", limit: contextopt.MaxTotalBytes, args: head},
 		{label: "index listing", limit: syncIndexBytes, listing: true, remedy: syncReportIndex,
-			args: []string{"ls-files", "-v", "--stage", "-z", "--", ".", ":(top,exclude).workingdir"}},
+			args: []string{"ls-files", "-v", "--stage", "-z", "--", ".", ":(top,exclude).workingdir", gateReceiptExclude}},
 		{label: "status", limit: contextopt.MaxTotalBytes, listing: true, remedy: syncShrinkChanges,
-			args: []string{"status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir"}},
+			args: []string{"status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir", gateReceiptExclude}},
 		{label: "staged diff", limit: contextopt.MaxTotalBytes, remedy: syncShrinkChanges,
-			args: []string{"diff", "--no-ext-diff", "--no-textconv", "--binary", "--ignore-submodules=all", "--cached", "--", ".", ":(top,exclude).workingdir"}},
+			args: []string{"diff", "--no-ext-diff", "--no-textconv", "--binary", "--ignore-submodules=all", "--cached", "--", ".", ":(top,exclude).workingdir", gateReceiptExclude}},
 		{label: "unstaged diff", limit: contextopt.MaxTotalBytes, remedy: syncShrinkChanges,
-			args: []string{"diff", "--no-ext-diff", "--no-textconv", "--binary", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir"}},
+			args: []string{"diff", "--no-ext-diff", "--no-textconv", "--binary", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir", gateReceiptExclude}},
 		{label: "untracked listing", limit: contextopt.MaxTotalBytes, listing: true, remedy: syncShrinkChanges,
-			args: []string{"ls-files", "--others", "--exclude-standard", "-z", "--", ".", ":(top,exclude).workingdir"}},
+			args: []string{"ls-files", "--others", "--exclude-standard", "-z", "--", ".", ":(top,exclude).workingdir", gateReceiptExclude}},
 	}
 }
 
