@@ -1,7 +1,7 @@
 package supplychain
 
 // THIRD-PARTY-NOTICES.md names every third-party component the release archives and the
-// container image carry, and the archives and the image carry the file. Its six component
+// container image carry, and the archives and the image carry the file. Its seven component
 // tables are generated: RenderNotices writes one row for each component the sources ship
 // (notices_sources.go), taking the name, the version and, for an npm package, the license
 // from the source. The cells no source records -- the copyright line, the name cell as
@@ -33,10 +33,12 @@ const (
 	noticesNPM          = "npm packages of the Markdown gate"
 	noticesFigureEngine = "Vendored figure engine"
 	noticesFigureNPM    = "npm packages of the figure player"
+	// noticesDevContainerNPM lists the packages the embedded devcontainer CLI lock installs.
+	noticesDevContainerNPM = "npm packages of the devcontainer CLI"
 )
 
 // noticeSections are the generated sections, in the order the render reports on them.
-var noticeSections = [...]string{noticesGoToolchain, noticesGoModules, noticesBaseImage, noticesNPM, noticesFigureEngine, noticesFigureNPM}
+var noticeSections = [...]string{noticesGoToolchain, noticesGoModules, noticesBaseImage, noticesNPM, noticesFigureEngine, noticesFigureNPM, noticesDevContainerNPM}
 
 // goToolchainLicense is the license of the Go standard library and runtime.
 const goToolchainLicense = "BSD-3-Clause"
@@ -45,7 +47,7 @@ const goToolchainLicense = "BSD-3-Clause"
 // record each package's license, and the toolchain's is goToolchainLicense. go.mod, a
 // Dockerfile and vendor.json record none, so a Go module, the base image or the vendored
 // interfig source keeps the license its row states.
-var licenseFromSource = map[string]bool{noticesGoToolchain: true, noticesNPM: true, noticesFigureNPM: true}
+var licenseFromSource = map[string]bool{noticesGoToolchain: true, noticesNPM: true, noticesFigureNPM: true, noticesDevContainerNPM: true}
 
 // noticeColumns is the cell count of a generated table row: name, version, license, copyright.
 const noticeColumns = 4
@@ -75,13 +77,26 @@ type noticeCells struct {
 	copyright string
 }
 
-// noticeTable is the table under one generated heading: its data rows in file order and the
-// line span [first, end) they occupy. first is 0 until the delimiter row has been read.
-type noticeTable struct {
+// markdownTable is the one table under a generated "## " heading: the index of its header line,
+// the line span [first, end) of its data rows, and those rows. first is 0 until the delimiter
+// row has been read. RenderNotices and RenderCreditsPage both locate their tables this way.
+type markdownTable struct {
 	heading     string
-	first, end  int
-	rows        []noticeCells
 	headerIndex int
+	first, end  int
+	rows        []tableLine
+}
+
+// tableLine is one data row of a table and its 0-based line index.
+type tableLine struct {
+	index int
+	text  string
+}
+
+// tableSpan is a line span [start, end) of a document and the rows that replace it.
+type tableSpan struct {
+	start, end int
+	rows       []string
 }
 
 // RenderNotices returns notices with the data rows of each generated table replaced by one
@@ -94,7 +109,7 @@ func RenderNotices(notices string, sources NoticeSources) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("parse %s: %w", NoticesFile, err)
 	}
-	tables, err := locateNoticeTables(lines)
+	tables, err := locateTables(NoticesFile, lines, noticeSections[:])
 	if err != nil {
 		return "", err
 	}
@@ -102,15 +117,32 @@ func RenderNotices(notices string, sources NoticeSources) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rendered := make(map[string][]string, len(tables))
+	spans := make([]tableSpan, 0, len(tables))
 	for _, heading := range noticeSections {
-		rows, err := renderNoticeRows(heading, shipped[heading], tables[heading].rows)
+		listed, err := parseNoticeTable(tables[heading])
 		if err != nil {
 			return "", err
 		}
-		rendered[heading] = rows
+		rows, err := renderNoticeRows(heading, shipped[heading], listed)
+		if err != nil {
+			return "", err
+		}
+		spans = append(spans, tableSpan{start: tables[heading].first, end: tables[heading].end, rows: rows})
 	}
-	return spliceNoticeTables(lines, tables, rendered), nil
+	return spliceTables(lines, spans), nil
+}
+
+// parseNoticeTable reads the data rows of one generated notices table.
+func parseNoticeTable(table *markdownTable) ([]noticeCells, error) {
+	listed := make([]noticeCells, 0, len(table.rows))
+	for _, row := range table.rows {
+		cells, err := parseNoticeCells(row.text)
+		if err != nil {
+			return nil, fmt.Errorf("%s line %d: %w", NoticesFile, row.index+1, err)
+		}
+		listed = append(listed, cells)
+	}
+	return listed, nil
 }
 
 // CheckNotices fails when notices differ from what RenderNotices writes for sources, naming
@@ -147,34 +179,36 @@ func noticeChanges(current, rendered string) []string {
 	return changes
 }
 
-// tableScanner walks the notices lines once and records the table under each generated
+// tableScanner walks a document's lines once and records the table under each generated
 // heading. Lines inside a fenced code block are neither headings nor table rows.
 type tableScanner struct {
-	tables    map[string]*noticeTable
+	file      string
+	sections  []string
+	tables    map[string]*markdownTable
 	heading   string
 	fenced    bool
 	tableLine int
-	current   *noticeTable
+	current   *markdownTable
 }
 
-// locateNoticeTables finds the one table under each generated heading. A heading that is
-// missing or holds no table, a second table under one heading, a table without a delimiter
-// row and a data row without exactly four cells are errors: the render would otherwise drop,
-// duplicate or misplace that section's rows.
-func locateNoticeTables(lines []string) (map[string]*noticeTable, error) {
-	scanner := &tableScanner{tables: make(map[string]*noticeTable, len(noticeSections))}
+// locateTables finds the one table under each heading of sections in the lines of file. A
+// heading that is missing or holds no table, a second table under one heading and a table
+// without a delimiter row are errors: the render would otherwise drop, duplicate or misplace that
+// section's rows.
+func locateTables(file string, lines, sections []string) (map[string]*markdownTable, error) {
+	scanner := &tableScanner{file: file, sections: sections, tables: make(map[string]*markdownTable, len(sections))}
 	for index, line := range lines {
 		if err := scanner.step(index, line); err != nil {
 			return nil, err
 		}
 	}
-	for _, heading := range noticeSections {
+	for _, heading := range sections {
 		table, found := scanner.tables[heading]
 		if !found {
-			return nil, fmt.Errorf("%s has no table under a %q heading; the render has nowhere to write that section's rows", NoticesFile, "## "+heading)
+			return nil, fmt.Errorf("%s has no table under a %q heading; the render has nowhere to write that section's rows", file, "## "+heading)
 		}
 		if table.first == 0 {
-			return nil, fmt.Errorf("%s line %d: the %q table has no delimiter row", NoticesFile, table.headerIndex+1, heading)
+			return nil, fmt.Errorf("%s line %d: the %q table has no delimiter row", file, table.headerIndex+1, heading)
 		}
 	}
 	return scanner.tables, nil
@@ -209,7 +243,7 @@ func (s *tableScanner) endTable() {
 }
 
 // tableRow reads one line of a table: the header opens it, the delimiter row fixes where the
-// data rows start, and each data row of a generated table is parsed.
+// data rows start, and each data row of a generated table is recorded.
 func (s *tableScanner) tableRow(index int, line string) error {
 	s.tableLine++
 	switch {
@@ -219,16 +253,12 @@ func (s *tableScanner) tableRow(index int, line string) error {
 		return nil
 	case s.tableLine == 2:
 		if !isDelimiterRow(line) {
-			return fmt.Errorf("%s line %d: the %q table has no delimiter row", NoticesFile, index+1, s.heading)
+			return fmt.Errorf("%s line %d: the %q table has no delimiter row", s.file, index+1, s.heading)
 		}
 		s.current.first, s.current.end = index+1, index+1
 		return nil
 	}
-	cells, err := parseNoticeCells(line)
-	if err != nil {
-		return fmt.Errorf("%s line %d: %w", NoticesFile, index+1, err)
-	}
-	s.current.rows = append(s.current.rows, cells)
+	s.current.rows = append(s.current.rows, tableLine{index: index, text: line})
 	s.current.end = index + 1
 	return nil
 }
@@ -236,13 +266,13 @@ func (s *tableScanner) tableRow(index int, line string) error {
 // openTable starts reading a table whose header is at index when it sits under a generated
 // heading, and refuses a second table there.
 func (s *tableScanner) openTable(index int) error {
-	if !slices.Contains(noticeSections[:], s.heading) {
+	if !slices.Contains(s.sections, s.heading) {
 		return nil
 	}
 	if _, twice := s.tables[s.heading]; twice {
-		return fmt.Errorf("%s line %d: the %q section holds a second table; the render writes exactly one", NoticesFile, index+1, s.heading)
+		return fmt.Errorf("%s line %d: the %q section holds a second table; the render writes exactly one", s.file, index+1, s.heading)
 	}
-	s.current = &noticeTable{heading: s.heading, headerIndex: index}
+	s.current = &markdownTable{heading: s.heading, headerIndex: index}
 	s.tables[s.heading] = s.current
 	return nil
 }
@@ -362,20 +392,17 @@ func licenseTerms(expression string) []string {
 	return slices.DeleteFunc(fields, func(term string) bool { return licenseOperators[term] })
 }
 
-// spliceNoticeTables returns lines with the data rows of each table replaced by its rendered
-// rows, joined with LF.
-func spliceNoticeTables(lines []string, tables map[string]*noticeTable, rendered map[string][]string) string {
-	ordered := make([]*noticeTable, 0, len(tables))
-	for _, table := range tables {
-		ordered = append(ordered, table)
-	}
-	slices.SortFunc(ordered, func(a, b *noticeTable) int { return a.first - b.first })
+// spliceTables returns lines with each span replaced by its rows, joined with LF. Spans do not
+// overlap.
+func spliceTables(lines []string, spans []tableSpan) string {
+	ordered := slices.Clone(spans)
+	slices.SortFunc(ordered, func(a, b tableSpan) int { return a.start - b.start })
 	out := make([]string, 0, len(lines))
 	next := 0
-	for _, table := range ordered {
-		out = append(out, lines[next:table.first]...)
-		out = append(out, rendered[table.heading]...)
-		next = table.end
+	for _, span := range ordered {
+		out = append(out, lines[next:span.start]...)
+		out = append(out, span.rows...)
+		next = span.end
 	}
 	return strings.Join(append(out, lines[next:]...), "\n")
 }

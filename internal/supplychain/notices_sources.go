@@ -1,8 +1,9 @@
 package supplychain
 
 // The files that decide what the release ships -- go.mod, the root Dockerfile, the npm lock
-// the binaries embed and write out for the Markdown gate, and the figure engine the binaries
-// embed (the interfig pin and the committed player, with the lock it is built from) -- and the
+// the binaries embed and write out for the Markdown gate, the figure engine the binaries
+// embed (the interfig pin and the committed player, with the lock it is built from), and the
+// npm lock of the devcontainer CLI the binaries embed and install -- and the
 // readers that derive the shipped components from them. RenderNotices lists exactly these
 // components in THIRD-PARTY-NOTICES.md.
 
@@ -31,6 +32,11 @@ const maxLockPackages = 4096
 // noticesLockFile is the repository-relative npm lock of the Markdown gate: the file the
 // binaries embed (tools/markdownlint) and write into an adopting repository.
 const noticesLockFile = markdownassets.Directory + "/package-lock.json"
+
+// devcontainerLockFile is the repository-relative npm lock of the pinned devcontainer CLI: the
+// file the binaries embed (internal/devcontainer/cli.go) and install the CLI from into the tool
+// cache before a devcontainer build.
+const devcontainerLockFile = "internal/devcontainer/cli/package-lock.json"
 
 // The figure engine the binaries embed (tools/figures/assets.go): the npm lock the committed
 // player is built from, the player's license file, which names every package the bundle holds
@@ -64,13 +70,15 @@ type NoticeSources struct {
 	FigureLicenses []byte
 	// InterfigVendor is the vendor.json that pins the interfig source the binaries embed.
 	InterfigVendor []byte
+	// DevContainerLock is the devcontainer CLI's package-lock.json the binaries embed.
+	DevContainerLock []byte
 }
 
-// ReadNoticeSources reads go.mod, the root Dockerfile, the Markdown gate's npm lock and the
-// figure engine's lock, player license file and interfig pin from the top of the Praetor
-// checkout at root.
+// ReadNoticeSources reads go.mod, the root Dockerfile, the Markdown gate's npm lock, the
+// figure engine's lock, player license file and interfig pin, and the devcontainer CLI's npm
+// lock from the top of the Praetor checkout at root.
 func ReadNoticeSources(ctx context.Context, root string) (NoticeSources, error) {
-	rels := [...]string{"go.mod", "Dockerfile", noticesLockFile, figureLockFile, figureLicensesFile, interfigVendorFile}
+	rels := [...]string{"go.mod", "Dockerfile", noticesLockFile, figureLockFile, figureLicensesFile, interfigVendorFile, devcontainerLockFile}
 	var data [len(rels)][]byte
 	for index, rel := range rels {
 		read, err := readNoticeSource(ctx, root, rel)
@@ -81,7 +89,7 @@ func ReadNoticeSources(ctx context.Context, root string) (NoticeSources, error) 
 	}
 	return NoticeSources{
 		GoMod: data[0], Dockerfile: string(data[1]), NPMLock: data[2],
-		FigureLock: data[3], FigureLicenses: data[4], InterfigVendor: data[5],
+		FigureLock: data[3], FigureLicenses: data[4], InterfigVendor: data[5], DevContainerLock: data[6],
 	}, nil
 }
 
@@ -351,11 +359,15 @@ func shippedNoticeRows(sources NoticeSources) (map[string][]noticeRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	devcontainerCLI, err := lockRuntimePackages(sources.DevContainerLock)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", devcontainerLockFile, err)
+	}
 	shipped, err := figureNoticeRows(sources)
 	if err != nil {
 		return nil, err
 	}
-	shipped[noticesGoModules], shipped[noticesNPM] = modules, packages
+	shipped[noticesGoModules], shipped[noticesNPM], shipped[noticesDevContainerNPM] = modules, packages, devcontainerCLI
 	if version, declared := gomanifest.GoDirective(sources.GoMod); declared {
 		shipped[noticesGoToolchain] = []noticeRow{{name: noticesGoToolchain, version: version, license: goToolchainLicense}}
 	}

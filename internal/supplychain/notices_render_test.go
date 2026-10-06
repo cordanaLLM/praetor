@@ -27,6 +27,8 @@ const renderFixture = "# Third-party notices\n\nIntro prose stays as written.\n\
 	"| `interfig` | abc123 | MIT | `Copyright (c) Engine` |\n\n" +
 	"## npm packages of the figure player\n\n| Package | Version | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
 	"| `react` | 19.0.0 | MIT | `Copyright (c) React` |\n\n" +
+	"## npm packages of the devcontainer CLI\n\n| Package | Version | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
+	"| `@devcontainers/cli` | 0.89.0 | MIT | `Copyright (c) Microsoft Corporation.` |\n\n" +
 	"<!-- REUSE-IgnoreEnd -->\n"
 
 // The fixture's rows, as the render writes them.
@@ -64,14 +66,20 @@ const fixtureFigureLock = `{"lockfileVersion":3,"packages":{"":{"name":"figures"
 // fixtureInterfigVendor is renderFixtureSources' interfig pin.
 const fixtureInterfigVendor = `{"repo":"https://example.com","commit":"abc123"}`
 
+// fixtureDevContainerLock is renderFixtureSources' devcontainer CLI lock: the root project and
+// the one bundled CLI package.
+const fixtureDevContainerLock = `{"lockfileVersion":3,"packages":{"":{"name":"cli-pin","version":"1.0.0"},` +
+	`"node_modules/@devcontainers/cli":{"version":"0.89.0","license":"MIT"}}}`
+
 func renderFixtureSources() NoticeSources {
 	return NoticeSources{
-		GoMod:          []byte("module example.com/app\n\ngo 1.27\n\nrequire example.com/lib v1.2.3\n"),
-		NPMLock:        []byte(fixtureLock),
-		Dockerfile:     "FROM gcr.io/distroless/static-debian13:nonroot@sha256:" + strings.Repeat("a", 64) + "\n",
-		FigureLock:     []byte(fixtureFigureLock),
-		FigureLicenses: []byte(fixtureFigureLicenses),
-		InterfigVendor: []byte(fixtureInterfigVendor),
+		GoMod:            []byte("module example.com/app\n\ngo 1.27\n\nrequire example.com/lib v1.2.3\n"),
+		NPMLock:          []byte(fixtureLock),
+		Dockerfile:       "FROM gcr.io/distroless/static-debian13:nonroot@sha256:" + strings.Repeat("a", 64) + "\n",
+		FigureLock:       []byte(fixtureFigureLock),
+		FigureLicenses:   []byte(fixtureFigureLicenses),
+		InterfigVendor:   []byte(fixtureInterfigVendor),
+		DevContainerLock: []byte(fixtureDevContainerLock),
 	}
 }
 
@@ -357,12 +365,13 @@ func TestUnknownLicenseTerms(t *testing.T) {
 	}
 }
 
-// ReadNoticeSources reads the six files from the checkout root and names the one missing.
+// ReadNoticeSources reads the seven files from the checkout root and names the one missing.
 func TestReadNoticeSources(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
 		"go.mod": "module m\n\ngo 1.27\n", "Dockerfile": "FROM scratch\n", noticesLockFile: fixtureLock,
 		figureLockFile: fixtureFigureLock, figureLicensesFile: fixtureFigureLicenses, interfigVendorFile: fixtureInterfigVendor,
+		devcontainerLockFile: fixtureDevContainerLock,
 	}
 	for rel, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(rel))
@@ -375,10 +384,11 @@ func TestReadNoticeSources(t *testing.T) {
 	}
 	sources, err := ReadNoticeSources(context.Background(), root)
 	if err != nil || string(sources.GoMod) != files["go.mod"] || sources.Dockerfile != files["Dockerfile"] || string(sources.NPMLock) != fixtureLock ||
-		string(sources.FigureLock) != fixtureFigureLock || string(sources.FigureLicenses) != fixtureFigureLicenses || string(sources.InterfigVendor) != fixtureInterfigVendor {
+		string(sources.FigureLock) != fixtureFigureLock || string(sources.FigureLicenses) != fixtureFigureLicenses || string(sources.InterfigVendor) != fixtureInterfigVendor ||
+		string(sources.DevContainerLock) != fixtureDevContainerLock {
 		t.Fatalf("ReadNoticeSources = %+v, %v", sources, err)
 	}
-	for _, rel := range []string{figureLicensesFile, noticesLockFile} {
+	for _, rel := range []string{devcontainerLockFile, figureLicensesFile, noticesLockFile} {
 		if err := os.Remove(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
 			t.Fatal(err)
 		}
