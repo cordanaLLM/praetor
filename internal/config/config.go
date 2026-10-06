@@ -286,6 +286,10 @@ type Manifest struct {
 	// ClangTidy declares the lanes that run clang-tidy, which the translation-unit coverage
 	// gate (internal/tidycoverage) checks every tracked C/C++ translation unit against.
 	ClangTidy *ClangTidyPolicy `yaml:"clang_tidy,omitempty"`
+	// Security holds the settings of the security gates: the OpenVEX document the Go
+	// vulnerability gate reads (security.go_vex, internal/govuln). It is repository-only, like
+	// Documentation.
+	Security *SecurityPolicy `yaml:"security,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -334,37 +338,33 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
 	}
-	if err := validateManifestReviewPolicy(m); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	for i := 0; i < len(manifestValidators); i++ {
+		if err := manifestValidators[i](m); err != nil {
+			return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+		}
 	}
-	if err := validateManifestRegister(m); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-	}
-	if err := validateManifestRepository(m); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-	}
-	if err := m.HISS.validate(); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-	}
-	if err := validateManifestDocumentation(m); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-	}
-	if err := ValidateDocsSurfaces(m.DocsSurfaces); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-	}
-	if err := validateManifestActions(m); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-	}
-	if err := validateManifestDevContainer(m); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-	}
-	// The repository-only sections no other one refers to are checked together.
-	if err := errors.Join(ValidateGenerated(m.Generated), ValidateExceptions(m.Exceptions, time.Now()),
-		ValidateClangTidy(m.ClangTidy)); err != nil {
-		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
-	}
-
 	return m, nil
+}
+
+// manifestValidators are the policy checks parseManifest applies to a decoded manifest, in order;
+// the first that fails names the manifest's error. A table keeps parseManifest at constant
+// complexity however many sections the manifest gains (HISS-04).
+var manifestValidators = [...]func(*Manifest) error{
+	validateManifestReviewPolicy,
+	validateManifestRegister,
+	validateManifestRepository,
+	func(m *Manifest) error { return m.HISS.validate() },
+	validateManifestDocumentation,
+	func(m *Manifest) error { return ValidateDocsSurfaces(m.DocsSurfaces) },
+	validateManifestActions,
+	validateManifestDevContainer,
+	// The repository-only sections no other one refers to are checked together, so one
+	// manifest reports all of their errors at once.
+	func(m *Manifest) error {
+		return errors.Join(ValidateGenerated(m.Generated), ValidateExceptions(m.Exceptions, time.Now()),
+			ValidateClangTidy(m.ClangTidy))
+	},
+	validateManifestSecurity,
 }
 
 // DecodeManifest parses the manifest with no unknown fields, so a misspelled key is an
