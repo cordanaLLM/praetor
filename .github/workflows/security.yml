@@ -56,8 +56,11 @@ jobs:
       - name: Install Toolchains
         run: go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
 
+      # The Go vulnerability gate (internal/govuln) runs the pinned govulncheck above at symbol
+      # level and judges each uncalled advisory against security/vex/go.openvex.json, the check
+      # gate run's security stage makes; exit 2 means the scan gave no verdict.
       - name: Run Vulnerability Scan (govulncheck)
-        run: govulncheck ./...
+        run: go run ./cmd/standardsctl security govuln
 
       - name: Run AST Security Scan (gosec)
         run: python3 -B .config/lefthook/scripts/security_scope.py -- gosec -conf .gosec.json

@@ -120,8 +120,10 @@ GO_SECURITY_TOOL := go tool -modfile=tools/go/go.mod
 secrets:
 	$(GO_SECURITY_TOOL) gitleaks detect --no-banner --redact --config .gitleaks.toml
 
+# The Go vulnerability gate (internal/govuln) runs the pinned govulncheck at symbol level and judges
+# each uncalled advisory against security/vex/go.openvex.json, as gate run and CI do.
 vuln:
-	$(GO_SECURITY_TOOL) govulncheck ./...
+	go run ./cmd/standardsctl security govuln -- $(GO_SECURITY_TOOL) govulncheck
 
 # gosec runs with ZERO exclusions: .gosec.json carries an empty exclude list and every
 # finding is fixed or carries a per-line "#nosec Gxxx -- <reason>" justification.

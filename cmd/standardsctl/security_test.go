@@ -105,3 +105,38 @@ func TestSecurityGovuln_Boundary_NoVerdictExitsTwoAndUsage(t *testing.T) {
 		}
 	}
 }
+
+// The lines this repository's own entry points run the gate with: the security workflow's step
+// and the make vuln recipe, which hands it the scanner tools/go/go.mod pins.
+const (
+	workflowGovulnStep = "        run: go run ./cmd/standardsctl security govuln\n"
+	makeVulnRecipe     = "\tgo run ./cmd/standardsctl security govuln -- $(GO_SECURITY_TOOL) govulncheck\n"
+)
+
+// runsGovulnGate reports whether text runs the gate through line and no longer runs govulncheck
+// directly over the module.
+func runsGovulnGate(text, line string) bool {
+	return strings.Contains(text, line) && !strings.Contains(text, "govulncheck ./...")
+}
+
+// Negative: the security workflow and make vuln run the Go vulnerability gate; the text each ran
+// before, plain govulncheck ./..., is refused, so neither can go back to it unnoticed.
+func TestSecurityGovuln_Negative_RepositoryEntryPointsRunTheGate(t *testing.T) {
+	for path, line := range map[string]string{
+		filepath.Join("..", "..", ".github", "workflows", "security.yml"): workflowGovulnStep,
+		filepath.Join("..", "..", "Makefile"):                             makeVulnRecipe,
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !runsGovulnGate(strings.ReplaceAll(string(data), "\r\n", "\n"), line) {
+			t.Errorf("%s does not run the gate with %q", path, line)
+		}
+	}
+	for _, prior := range []string{"        run: govulncheck ./...\n", "\t$(GO_SECURITY_TOOL) govulncheck ./...\n"} {
+		if runsGovulnGate(workflowGovulnStep+makeVulnRecipe+prior, workflowGovulnStep) {
+			t.Errorf("the prior entry point %q passed", prior)
+		}
+	}
+}
