@@ -19,9 +19,14 @@ import (
 // clang-tidy lane reads.
 const ExceptionRuleClangTidyCoverage = "clang-tidy-coverage"
 
+// ExceptionRuleCredits is the rule of the credits gate (internal/supplychain,
+// CheckUpstreamCredits): an entry excuses a docs/credits.yaml entry whose license could not be
+// verified upstream and is written unknown, when the entry names the excused path.
+const ExceptionRuleCredits = "credits"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
-var exceptionRules = []string{ExceptionRuleClangTidyCoverage}
+var exceptionRules = []string{ExceptionRuleClangTidyCoverage, ExceptionRuleCredits}
 
 // Bounds of the exceptions list (HISS-02).
 const (
