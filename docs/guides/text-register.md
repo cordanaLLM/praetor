@@ -421,8 +421,9 @@ other input gets `--kind=message`. The file list is `agentcontext.ContextFiles`,
 the targets compile-context writes; workstation discovery reads the same list. Each path is
 resolved against `--root` (default `.`) and compared exactly, so the rule has these edges:
 
-- `nested/AGENTS.md`, `.agents/agents/<name>/AGENTS.md` and `docs/claude.md` are not
-  context files and get `message`;
+- an `AGENTS.md` in a subdirectory (`nested/AGENTS.md`), a persona directory entry
+  (`.agents/agents/<name>/AGENTS.md`) and a `claude.md` in `docs/` are not context files
+  and get `message`;
 - a context file outside `--root` gets `message`; pass `--root` to check another
   repository's files;
 - names are case-sensitive on every platform: on a case-insensitive file system
