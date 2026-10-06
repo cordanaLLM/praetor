@@ -638,9 +638,9 @@ lines as `compile-context --verify`. `TestMCPVerifyLintsPersonasAndSkills` and
 `TestMCPVerifyFailsOnPersonaDrift` in `cmd/standards-mcp/server_projection_test.go` pin it.
 
 `praetorctl audit` and `standards_audit` run one function for this lint,
-`compiler.AuditAgentSources`, so both give the same verdict: a
-`[PASS] Caveman lint verified (...)` line with the counts above, or a
-`[FAIL] Agent source caveman lint:` error that joins every failed surface. Projections are a
+`compiler.AuditAgentSources`, so both give the same verdict: the pass line above prefixed
+`[PASS]`, or a `[FAIL] Agent source caveman lint:` error that joins every failed surface.
+Projections are a
 different matter: `standards_audit` still verifies no persona or skill projection, so use
 `praetorctl audit` or `standards_compile_context` with `verify_only` for those.
 
