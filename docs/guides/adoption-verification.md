@@ -878,6 +878,44 @@ that is not RFC 3339 or lies in the future, and another OpenVEX version are each
 scan does not start. A `not_affected` statement no finding matches is printed as a note to remove
 it; it does not fail.
 
+**Standard-library advisories.** govulncheck v1.8.0 adds the standard library to the module graph
+as the module `stdlib`, at the version of the Go toolchain that runs the scan (`NewPackageGraph` in
+`golang.org/x/vuln/internal/vulncheck/packages.go`). An advisory against that toolchain is therefore
+at least a module-level finding, even when the build imports none of its packages, and it fails
+like any other advisory no statement covers. Scanned with Go 1.26.3, for example:
+
+```text
+govuln: GO-2026-5037: module stdlib@v1.26.3 is required but not called, and security/vex/go.openvex.json does not exist to hold a not_affected statement for it
+```
+
+After a Go security release, every run of the gate (on a workstation, in the pre-push job, in CI)
+fails this way until the toolchain that scans is upgraded:
+
+- Upgrade Go to the patch release that fixes the advisory and re-run the gate; nothing else is
+  needed. `go version` names the toolchain, and the advisory (for the one above,
+  <https://pkg.go.dev/vuln/GO-2026-5037>) names the fixed release. This repository's CI sets
+  `check-latest: true` on the `actions/setup-go` step of each job that runs the gate
+  ([`.github/workflows/ci.yml`](https://github.com/cordanaLLM/praetor/blob/main/.github/workflows/ci.yml),
+  [`.github/workflows/security.yml`](https://github.com/cordanaLLM/praetor/blob/main/.github/workflows/security.yml)),
+  so it takes a patch release as soon as the runner can download it, not when the runner image
+  next updates.
+- Until you can upgrade, a `not_affected` statement for the advisory is the stopgap:
+  `vulnerable_code_not_present`, with an impact statement naming the affected packages the build
+  does not import. After the upgrade the gate prints the statement as unused; remove it then.
+- The security workflow the `go-service` flavor writes
+  ([`templates/go/security-go.yml.tmpl`](https://github.com/cordanaLLM/praetor/blob/main/templates/go/security-go.yml.tmpl))
+  does not run the gate yet: it still runs `govulncheck ./...`, which fails on a called symbol
+  only. In an adopter repository these findings surface through `gate run` and the pre-push job.
+
+A toolchain whose version carries a suffix, such as `go1.27.1-X:nodwarf5` from a `GOEXPERIMENT`
+build, gives govulncheck no version it can read (`GoTagToSemver` in
+`golang.org/x/vuln/internal/semver`), so no standard-library advisory reaches the gate on it. A
+release toolchain from go.dev, which `actions/setup-go` installs, reports its version.
+
+`TestCheck_Boundary_StandardLibraryAdvisoryIsAModuleFinding` in
+[`internal/govuln/vex_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/govuln/vex_test.go)
+replays such a finding, without and with a statement.
+
 In `gate run` the document is a subtractive input, like the debt baseline: it must be a tracked,
 regular file ([A receipt certifies only a working tree that matches HEAD](#a-receipt-certifies-only-a-working-tree-that-matches-head)).
 A clean scan leaves the stage reason empty; advisories a statement covers are named in it, so the
@@ -899,7 +937,12 @@ run the stage and the command on the same output.
 on a called symbol. A Go repository whose build holds a vulnerable package or module it does not
 call now fails until the document holds a `not_affected` statement for each such advisory, or the
 dependency is updated past the fix. Run `praetorctl security govuln` to list them, and re-run
-`praetorctl adopt` to move an unedited `lefthook.yml` to the new job.
+`praetorctl adopt` to move an unedited `lefthook.yml` to the new job. The standard library counts
+too: after a Go security release the gate fails on every run until the Go toolchain that scans is
+upgraded to the fixed patch release, with a `not_affected` statement as the stopgap
+([Standard-library advisories](#go-vulnerabilities-and-the-openvex-document) above). In CI, let
+`actions/setup-go` resolve the newest patch release (`check-latest: true`) on the jobs that run the
+gate.
 
 ### No receipt when no toolchain stage ran
 

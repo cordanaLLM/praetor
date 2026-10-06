@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 )
 
@@ -158,5 +159,60 @@ func TestSecurityGovuln_Negative_RepositoryEntryPointsRunTheGate(t *testing.T) {
 		if runsGovulnGate(workflowGovulnStep+makeVulnRecipe+prior, workflowGovulnStep) {
 			t.Errorf("the prior entry point %q passed", prior)
 		}
+	}
+}
+
+// gateCommands are the run: texts that start the Go vulnerability gate in a workflow job: the
+// command itself, make vuln, and make verify-all, which runs make vuln.
+var gateCommands = []string{"standardsctl security govuln", "make vuln", "make verify-all"}
+
+// runsGovulnGateStep reports whether one workflow step starts the gate.
+func runsGovulnGateStep(step ghworkflow.Step) bool {
+	return slices.ContainsFunc(gateCommands, func(command string) bool { return strings.Contains(step.Run, command) })
+}
+
+// cachedGoGateJobs parses one workflow and returns how many of its jobs run the gate and which of
+// those set Go up without check-latest: true. Such a job scans with the Go patch release the
+// runner image has cached, so after a Go security release its standard-library advisories fail
+// the gate until the image moves.
+func cachedGoGateJobs(t *testing.T, data []byte) (int, []string) {
+	t.Helper()
+	spec, err := ghworkflow.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateJobs, cached := 0, []string{}
+	for _, id := range ghworkflow.SortedJobIDs(spec.Jobs) {
+		steps := spec.Jobs[id].Steps
+		if !slices.ContainsFunc(steps, runsGovulnGateStep) {
+			continue
+		}
+		gateJobs++
+		if slices.ContainsFunc(steps, func(step ghworkflow.Step) bool {
+			return strings.HasPrefix(step.Uses, "actions/setup-go@") && step.With["check-latest"] != true
+		}) {
+			cached = append(cached, id)
+		}
+	}
+	return gateJobs, cached
+}
+
+// Negative: every job of the CI and security workflows that runs the gate resolves the newest Go
+// patch release (setup-go check-latest: true). A job that sets Go up without it is reported.
+func TestSecurityGovuln_Negative_GateJobsResolveTheLatestGoPatch(t *testing.T) {
+	for _, name := range []string{"ci.yml", "security.yml"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gateJobs, cached := cachedGoGateJobs(t, data); gateJobs == 0 || len(cached) != 0 {
+			t.Errorf("%s: %d jobs run the gate; these set Go up without check-latest: %q", name, gateJobs, cached)
+		}
+	}
+	planted := "jobs:\n  scan:\n    runs-on: ubuntu-26.04\n    steps:\n" +
+		"      - uses: actions/setup-go@v7\n        with:\n          go-version: '1.27'\n          cache: false\n" +
+		"      - run: go run ./cmd/standardsctl security govuln\n"
+	if gateJobs, cached := cachedGoGateJobs(t, []byte(planted)); gateJobs != 1 || !slices.Equal(cached, []string{"scan"}) {
+		t.Fatalf("planted job: %d gate jobs, cached %q; want the scan job reported", gateJobs, cached)
 	}
 }
