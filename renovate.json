@@ -150,6 +150,13 @@
       "groupName": "gate devcontainer cli"
     },
     {
+      "description": "Markdown gate lock: tools/markdownlint/package.json pins every dependency exactly and overrides katex, because micromark-extension-math 3.1.0, which markdownlint pins, asks for katex ^0.16.0 and no release in that range is free of GHSA-238p-pmpm-9mq7 (#793). The npm manager reads the override as depType overrides, so katex releases arrive in this group with the direct pins. Audit locks the manifest and lock byte for byte in every adopted repository, so the takeover records the outgoing package.json and package-lock.json in priorDigests and internal/managedasset/testdata/shipped (docs/guides/documentation-governance.md). Drop the override once micromark-extension-math accepts a fixed katex.",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["tools/markdownlint/package.json"],
+      "rangeStrategy": "pin",
+      "groupName": "markdown gate lock"
+    },
+    {
       "description": "tools/figures React cluster: keep React and its typings together.",
       "matchManagers": ["npm"],
       "matchFileNames": ["tools/figures/**"],

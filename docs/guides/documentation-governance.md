@@ -108,7 +108,18 @@ which `micromatch` and `markdownlint-cli2` pulled in (#736).
 `TestPackageLockInstallsNoBraces` in `tools/markdownlint/assets_test.go` keeps
 all three out. `TestMarkdownGateLockClearsFixedAdvisories` in
 `internal/supplychain/npm_advisories_test.go` keeps `smol-toml` and `js-yaml` at
-or above the versions that fixed their advisories (#643).
+or above the versions that fixed their advisories (#643), and `katex` at or
+above 0.18.2 (GHSA-238p-pmpm-9mq7, #793). That advisory is low severity, so the
+audit script passes it, but OpenSSF Scorecard's Vulnerabilities check reports
+every severity in an adopter's copy of the lock. `markdownlint` pins
+`micromark-extension-math` 3.1.0, which asks for `katex` `^0.16.0`, a range with
+no fixed release, so `tools/markdownlint/package.json` sets
+`"overrides": { "katex": "0.19.0" }`. Renovate's npm manager reads the override
+and moves it in the `markdown gate lock` group (`renovate.json`). The
+`markdownlint` library loads `katex` through the math extension, and
+`mathSelfTest` in
+`tools/markdownlint/verify.mjs` lints a fixture of inline and block math and
+renders it through the overridden `katex` (`make docs-lint-test`).
 Because audit locks the lock byte for byte, an adopter cannot patch it: a fix
 ships as a new Praetor text, and a plain `praetorctl adopt` replaces an
 unedited earlier lock, `package.json` and `verify.mjs` without `--force`

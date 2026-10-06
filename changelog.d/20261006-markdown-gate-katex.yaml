@@ -1,0 +1,4 @@
+type: fixed
+title: "The Markdown gate lock no longer pins katex 0.16.47 (GHSA-238p-pmpm-9mq7), which failed Scorecard Vulnerabilities in adopting repositories"
+issue: "#793"
+breaking: false

@@ -223,7 +223,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `character-entities` | 2.0.2 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
 | `character-entities-legacy` | 3.0.0 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
 | `character-reference-invalid` | 2.0.1 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
-| `commander` | 8.3.0 | MIT | `Copyright (c) 2011 TJ Holowaychuk <tj@vision-media.ca>` |
+| `commander` | 15.0.0 | MIT | `Copyright (c) 2011 TJ Holowaychuk <tj@vision-media.ca>` |
 | `debug` | 4.4.3 | MIT | `Copyright (c) 2014-2017 TJ Holowaychuk <tj@vision-media.ca>`, `Copyright (c) 2018-2021 Josh Junon` |
 | `decode-named-character-reference` | 1.3.0 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `dequal` | 2.0.3 | MIT | `Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)` |
@@ -238,7 +238,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `is-hexadecimal` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `js-yaml` | 5.4.2 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
 | `jsonc-parser` | 3.3.1 | MIT | `Copyright (c) Microsoft` |
-| `katex` | 0.16.47 | MIT | `Copyright (c) 2013-2020 Khan Academy and other contributors` |
+| `katex` | 0.19.0 | MIT | `Copyright (c) 2013-2020 Khan Academy and other contributors` |
 | `markdownlint` | 0.41.1 | MIT | `Copyright (c) David Anson` |
 | `micromark` | 4.0.2 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark` | 4.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |

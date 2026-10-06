@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -104,11 +105,19 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	}
 	var manifest struct {
 		Dependencies map[string]string `json:"dependencies"`
+		Overrides    map[string]string `json:"overrides"`
 	}
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatalf("decode package manifest: %v", err)
 	}
 	assertDirectDependencies(t, manifest.Dependencies, wantDirect)
+	// micromark-extension-math, which markdownlint pins, asks for katex ^0.16.0, and every
+	// release in that range carries GHSA-238p-pmpm-9mq7 (fixed in 0.18.2), so the manifest
+	// overrides katex to one exact release (#793).
+	wantOverrides := map[string]string{"katex": "0.19.0"}
+	if !maps.Equal(manifest.Overrides, wantOverrides) {
+		t.Fatalf("overrides = %v, want %v", manifest.Overrides, wantOverrides)
+	}
 
 	data, err := Read("package-lock.json")
 	if err != nil {
@@ -152,6 +161,11 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	}
 	if lock.Packages["node_modules/parse5"].Version != "8.0.1" {
 		t.Fatal("parse5 is not pinned to 8.0.1")
+	}
+	for name, version := range wantOverrides {
+		if got := lock.Packages["node_modules/"+name].Version; got != version {
+			t.Fatalf("the lock installs %s %q, not the overridden %s", name, got, version)
+		}
 	}
 	// verify.mjs loads js-yaml (the .standards.yaml documentation block and the lint
 	// configuration), markdownlint (the style rules), and jsonc-parser and smol-toml (inline
@@ -280,6 +294,7 @@ func TestRunnerLintsThroughTheLibrary(t *testing.T) {
 		"command(file, [...leading, ...all[index]], {\n      cwd: root,",
 		"hermeticConfigSelfTest(temporary);",
 		"lintOutputSelfTest(temporary);",
+		"mathSelfTest(temporary);",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("runner does not lint hermetically through the library: missing %q", required)
