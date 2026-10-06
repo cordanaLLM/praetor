@@ -5,7 +5,7 @@
   "description": "Locked Markdown governance gate emitted by Praetor",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "js-yaml": "5.4.2",

@@ -1,4 +1,4 @@
 type: fixed
-title: "The Markdown gate lock no longer pins katex 0.16.47 (GHSA-238p-pmpm-9mq7), which failed Scorecard Vulnerabilities in adopting repositories"
+title: "The Markdown gate lock no longer pins katex 0.16.47 (GHSA-238p-pmpm-9mq7), which failed Scorecard Vulnerabilities in adopting repositories; its package.json now declares Node 22.12.0 or later, the engine floor of katex's commander dependency"
 issue: "#793"
 breaking: false

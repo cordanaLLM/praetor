@@ -252,8 +252,8 @@ func familyManifestPins(t *testing.T, rules []renovatePackageRule, family Family
 // Positive: every family package.json a Renovate pin rule reaches keeps exact pins in every
 // section the npm manager reads except the range sections. The Markdown gate's dependencies and
 // its katex override move in the markdown gate lock group, and its engines.node stays the range
-// >=22 rather than becoming one Node release that npm ci in an adopter on another Node major
-// reports as EBADENGINE (#793).
+// >=22.12 rather than becoming one Node release that npm ci in an adopter on another Node
+// release reports as EBADENGINE (#793).
 func TestRenovatePinsFamilyManifestsExceptRanges(t *testing.T) {
 	config := readRenovateConfig(t)
 	if outside := unevaluablePinPatterns(config.PackageRules); len(outside) != 0 {
