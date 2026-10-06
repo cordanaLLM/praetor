@@ -126,16 +126,19 @@ func (s *CadenceStatus) decide(limits CadenceLimits) {
 // measureGrowth counts the Go production lines and files added between the recorded sweep
 // commit and HEAD.
 //
-// The recorded commit is read from a local state file, so it is resolved with
-// --end-of-options before any diff sees it: a value shaped like an option is refused as a
-// revision instead of being parsed as one, and only the resolved object ID reaches the diff.
+// The recorded commit is read from a local state file, so it is resolved through the one
+// commit resolver (util.ResolveGitCommit) before any diff sees it: a value git cannot be
+// handed, such as one shaped like an option, or one that names no commit leaves the growth
+// unmeasured, and only the resolved object ID reaches the diff. A read git did not answer
+// is an error, never "unmeasured".
 func measureGrowth(ctx context.Context, repoPath, sinceSHA string, status *CadenceStatus) error {
 	since := ""
-	if sinceSHA != "" {
-		resolved, err := util.RunGit(ctx, repoPath, "rev-parse", "--verify", "--quiet", "--end-of-options", sinceSHA+"^{commit}")
-		if err == nil {
-			since = resolved
+	if util.ValidateExecArg(sinceSHA) == nil {
+		resolved, err := util.ResolveGitCommit(ctx, repoPath, sinceSHA)
+		if err != nil {
+			return err
 		}
+		since = resolved
 	}
 	if since == "" {
 		status.Unmeasured = true

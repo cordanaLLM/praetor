@@ -187,13 +187,12 @@ func InstallLag(ctx context.Context, checkout, installed string) (behind int, an
 	if !objectNamePattern.MatchString(installed) {
 		return 0, false, nil
 	}
-	_, status, err := util.RunGitProbeStatus(ctx, checkout, refreshProbeBytes,
-		"rev-parse", "--verify", "--quiet", installed+"^{commit}")
-	if err != nil || status != 0 {
+	commit, err := util.ResolveGitCommit(ctx, checkout, installed)
+	if err != nil || commit == "" {
 		return 0, false, wrapLagErr(err)
 	}
-	if _, status, err = util.RunGitProbeStatus(ctx, checkout, refreshProbeBytes,
-		"merge-base", "--is-ancestor", installed, "HEAD"); err != nil || status != 0 {
+	_, status, err := util.RunGitProbeStatus(ctx, checkout, refreshProbeBytes, "merge-base", "--is-ancestor", installed, "HEAD")
+	if err != nil || status != 0 {
 		return 0, false, wrapLagErr(err)
 	}
 	counted, err := util.RunGitProbe(ctx, checkout, refreshProbeBytes, "rev-list", "--count", installed+"..HEAD")

@@ -34,16 +34,17 @@ func openRepository(ctx context.Context, dir string) (repository, error) {
 	return repository{root: filepath.Clean(strings.TrimSpace(string(result.Stdout)))}, nil
 }
 
-// commit resolves rev to the full object name of the commit it names.
+// commit resolves rev to the full object name of the commit it names (util.ResolveGitCommit).
+// A revision that names no commit and a read git did not answer are errors that say which.
 func (r repository) commit(ctx context.Context, rev string) (string, error) {
-	if err := util.ValidateExecArg(rev); err != nil {
-		return "", fmt.Errorf("revision %q: %w", rev, err)
-	}
-	result, err := util.RunGitProbe(ctx, r.root, maxRevisionBytes, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	commit, err := util.ResolveGitCommit(ctx, r.root, rev)
 	if err != nil {
-		return "", fmt.Errorf("revision %q names no commit in %s: %w", rev, r.root, err)
+		return "", fmt.Errorf("revision %q in %s: %w", rev, r.root, err)
 	}
-	return strings.TrimSpace(string(result.Stdout)), nil
+	if commit == "" {
+		return "", fmt.Errorf("revision %q names no commit in %s", rev, r.root)
+	}
+	return commit, nil
 }
 
 // mergeBase returns the best common ancestor of base and head, the state a pull request is
