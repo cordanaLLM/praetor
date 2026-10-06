@@ -18,20 +18,21 @@ import (
 )
 
 const (
-	// actionsForgeHost is the only forge the live Actions checks read: the origin remote must
-	// name the manifest's repository on it.
+	// actionsForgeHost is the only forge the live Actions and branch protection checks read:
+	// the origin remote must name the manifest's repository on it.
 	actionsForgeHost = "github.com"
-	// actionsForgeTimeout bounds every live Actions read of one audit or plan run (HISS-02).
+	// actionsForgeTimeout bounds every live forge read of one audit or plan run, the Actions
+	// reads and the branch protection read together (HISS-02).
 	actionsForgeTimeout = 3 * time.Minute
 	// offlineFlagUsage is the --offline help text of audit and plan.
 	offlineFlagUsage = "Read nothing from the forge: the live Actions permission, workflow run and branch protection checks report as not made"
 )
 
 var (
-	// actionsForgeEndpoint is the GitHub REST API the live Actions checks read. Tests point it
+	// actionsForgeEndpoint is the GitHub REST API the live forge checks read. Tests point it
 	// at a stand-in forge; nothing else changes it.
 	actionsForgeEndpoint = util.DefaultGitHubAPIBase
-	// resolveActionsToken finds the token the live Actions checks read with: GITHUB_TOKEN,
+	// resolveActionsToken finds the token the live forge checks read with: GITHUB_TOKEN,
 	// GH_TOKEN, then the gh CLI session. TestMain replaces it, so no test reads the operator's
 	// credential or asks the real forge.
 	resolveActionsToken = func(ctx context.Context) string { return util.ResolveAuthTokenContext(ctx, "") }
