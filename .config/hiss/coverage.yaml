@@ -756,9 +756,14 @@ rules:
           positive/level3-claimed-direct-attestation.yml attests in its build job, which measures
           Level 2, and positive/cosign-installed-never-signs.yml installs cosign and only verifies;
           both fail. negative/level3-slsa-generator.yml calls the SLSA generator's reusable
-          workflow by tag and signs with cosign, and passes. The measurement reads which steps run,
-          never what they cover or what a release published: gap/attests-a-file-never-released.yml
-          attests and signs README.md, uploads its archives unattested, and passes.
+          workflow by tag and signs with cosign, and passes. A reusable workflow of the repository
+          reaches Level 3 only when its attesting job builds first and downloads no artefact before
+          the attestation (internal/forge
+          TestMeasureProvenanceCreditsLevel3OnlyWhenTheReusableWorkflowBuilds; a fixture here is one
+          workflow file and cannot hold the caller and the called workflow). The measurement reads
+          which steps run, never what they cover or what a release published:
+          gap/attests-a-file-never-released.yml attests and signs README.md, uploads its archives
+          unattested, and passes.
   - id: HISS-12
     coverage:
       - language: go

@@ -33,6 +33,12 @@ const (
 	attestAction = "actions/attest"
 	// slsaProvenancePredicate prefixes every SLSA provenance predicate type URI.
 	slsaProvenancePredicate = "https://slsa.dev/provenance/"
+	// downloadArtifactAction brings into a job an artefact another job of the workflow run
+	// uploaded. A called reusable workflow runs in its caller's run, so the artefact may be the
+	// caller's build.
+	downloadArtifactAction = "actions/download-artifact"
+	// dockerBuildPushAction builds a container image with Buildx.
+	dockerBuildPushAction = "docker/build-push-action"
 	// slsaGeneratorWorkflows is where the SLSA GitHub generator keeps the reusable workflows
 	// that build or generate Level 3 provenance (generator_generic_slsa3.yml,
 	// builder_go_slsa3.yml, ...); each name ends in slsaGeneratorSuffix.
@@ -64,6 +70,20 @@ var cosignSigningCommands = map[string]bool{"sign": true, "sign-blob": true, "at
 // cosignProvenanceTypes are the cosign --type shorthands for an SLSA provenance predicate.
 var cosignProvenanceTypes = map[string]bool{"slsaprovenance": true, "slsaprovenance02": true, "slsaprovenance1": true}
 
+// buildCommands are the run: commands read as a build step: a compiler, an image build, a
+// GoReleaser release or build, or a build tool running a target. Each is the program by its base
+// name and then its arguments as written. A reusable workflow's attestation counts as Level 3
+// only when one of them ran before it in the same job (MeasureProvenance).
+var buildCommands = [...][]string{
+	{"go", "build"}, {"cargo", "build"}, {"goreleaser", "release"}, {"goreleaser", "build"},
+	{"docker", "build"}, {"docker", "buildx", "build"}, {"make"},
+	{"npm", "run", "build"}, {"pnpm", "build"}, {"pnpm", "run", "build"}, {"yarn", "build"}, {"yarn", "run", "build"},
+}
+
+// importCommands are the run: commands that download an artefact another job of the workflow
+// run uploaded, as downloadArtifactAction does.
+var importCommands = [...][]string{{"gh", "run", "download"}}
+
 // ProvenanceMeasurement is what a repository's workflow files show about the provenance and
 // signatures its releases carry. It is read from the files alone: no published attestation,
 // signature or forge record is consulted.
@@ -86,8 +106,13 @@ type ProvenanceMeasurement struct {
 //     provenance type, or a cosign attestation of the statement this tool's provenance command
 //     wrote earlier in the job: provenance signed on the hosted runner that ran the build.
 //   - Level 3: a job that calls the SLSA GitHub generator's reusable workflow by a vX.Y.Z tag,
-//     or a reusable workflow of this repository whose job runs GitHub's attestation action, which
-//     GitHub documents as Build Level 3 because the reusable workflow is isolated from its caller.
+//     or a reusable workflow of this repository whose job builds the artefacts and then runs
+//     GitHub's attestation action. GitHub documents Build Level 3 for that shape only when the
+//     reusable workflow that builds the software also attests it: a build step (buildCommands,
+//     docker/build-push-action, a GoReleaser action release or build) must come before the
+//     attestation in its job, and no artefact downloaded from another job of the run may, since
+//     that artefact may be the caller's build. Such an attestation is Level 2 and is named in
+//     Uncredited with the reason.
 //
 // A workflow whose only trigger is workflow_call is measured through the jobs that call it. A
 // reusable workflow in another repository cannot be read here and is listed in Uncredited. An
@@ -193,7 +218,10 @@ func (r provenanceReader) measureReusableWorkflows(workflows []namedWorkflow) er
 		if _, reusable := eventTrigger(&workflows[i].spec.On, workflowCallEvent); !reusable {
 			continue
 		}
-		evidence, err := r.joinJobs(&workflows[i].spec, r.calledJob)
+		uses := localWorkflowPrefix + workflows[i].name
+		evidence, err := r.joinJobs(&workflows[i].spec, func(job *workflowJob) (workflowEvidence, error) {
+			return r.calledJob(uses, job)
+		})
 		if err != nil {
 			return fmt.Errorf("workflow %s: %w", workflows[i].name, err)
 		}
@@ -222,7 +250,8 @@ func (r provenanceReader) joinJobs(spec *workflowSpec, measure func(*workflowJob
 func (r provenanceReader) job(job *workflowJob) (workflowEvidence, error) {
 	uses := strings.TrimSpace(job.Uses)
 	if uses == "" {
-		return r.steps(job.Steps)
+		steps, err := r.steps(job.Steps)
+		return steps.evidence(), err
 	}
 	name, local := strings.CutPrefix(uses, localWorkflowPrefix)
 	if !local {
@@ -235,11 +264,15 @@ func (r provenanceReader) job(job *workflowJob) (workflowEvidence, error) {
 	return called, nil
 }
 
-// calledJob measures one job of a reusable workflow of this repository. GitHub's attestation
-// action running there signs with the reusable workflow's identity, isolated from the caller,
-// which GitHub documents as Build Level 3. A reusable workflow it calls in turn is credited only
-// when it is the SLSA generator; another one is not followed.
-func (r provenanceReader) calledJob(job *workflowJob) (workflowEvidence, error) {
+// calledJob measures one job of workflow, a reusable workflow of this repository. GitHub's
+// attestation action signs there with the reusable workflow's identity, isolated from the
+// caller, and GitHub documents Build Level 3 when that reusable workflow also builds what it
+// attests ("The reusable workflow you use to build your software must also generate artifact
+// attestations"). The job is Level 3 only when a build step ran before the attestation and no
+// artefact came in from another job of the run; otherwise the attestation stays Level 2 and is
+// named with the reason. A reusable workflow it calls in turn is credited only when it is the
+// SLSA generator; another one is not followed.
+func (r provenanceReader) calledJob(workflow string, job *workflowJob) (workflowEvidence, error) {
 	uses := strings.TrimSpace(job.Uses)
 	if strings.HasPrefix(uses, localWorkflowPrefix) {
 		return workflowEvidence{uncredited: []string{uses + ": a reusable workflow called from a reusable workflow is not followed"}}, nil
@@ -247,11 +280,19 @@ func (r provenanceReader) calledJob(job *workflowJob) (workflowEvidence, error) 
 	if uses != "" {
 		return remoteReusableWorkflow(uses), nil
 	}
-	evidence, err := r.steps(job.Steps)
-	if evidence.githubAttested {
-		evidence.level = SLSABuildL3
+	steps, err := r.steps(job.Steps)
+	if err != nil {
+		return workflowEvidence{}, err
 	}
-	return evidence, err
+	evidence := steps.evidence()
+	switch {
+	case steps.buildAttested:
+		evidence.level = SLSABuildL3
+	case steps.attestGap != "":
+		evidence.uncredited = append(evidence.uncredited, workflow+": its attestation is Level 2, because "+steps.attestGap+
+			"; Level 3 needs the reusable workflow to build what it attests")
+	}
+	return evidence, nil
 }
 
 // remoteReusableWorkflow credits a call to a reusable workflow in another repository: Level 3
@@ -268,23 +309,38 @@ func remoteReusableWorkflow(uses string) workflowEvidence {
 	return workflowEvidence{level: SLSABuildL3}
 }
 
-// steps measures the steps of one job.
-func (r provenanceReader) steps(steps []workflowStep) (workflowEvidence, error) {
+// steps reads the steps of one job.
+func (r provenanceReader) steps(steps []workflowStep) (jobProvenance, error) {
 	if len(steps) > maxStepsPerJob {
-		return workflowEvidence{}, fmt.Errorf("job exceeds %d steps", maxStepsPerJob)
+		return jobProvenance{}, fmt.Errorf("job exceeds %d steps", maxStepsPerJob)
 	}
 	var job jobProvenance
 	for i := 0; i < len(steps) && i < maxStepsPerJob; i++ {
 		if err := job.read(r.ctx, r.repoPath, &steps[i]); err != nil {
-			return workflowEvidence{}, fmt.Errorf("step %d: %w", i+1, err)
+			return jobProvenance{}, fmt.Errorf("step %d: %w", i+1, err)
 		}
 	}
-	return job.evidence(), nil
+	return job, nil
 }
+
+// unbuiltAttestation and importedAttestation say why an attestation does not cover a build of
+// its own job.
+const (
+	unbuiltAttestation = "no build step (go build, cargo build, docker build, GoReleaser, make, or an npm, pnpm or " +
+		"yarn build) runs before it in its job"
+	importedAttestation = "an artefact downloaded from another job of the run, which may be the caller's build, " +
+		"comes before it in its job"
+)
 
 // jobProvenance accumulates what the steps of one job do, in file order.
 type jobProvenance struct {
 	githubAttested bool
+	// buildAttested: GitHub's attestation action ran after a build step of this job and before
+	// any artefact came in from another job; attestGap says why an attestation did not.
+	buildAttested bool
+	attestGap     string
+	// built: a build step ran; imported: an artefact another job uploaded was downloaded.
+	built, imported bool
 	// signedProvenance: a cosign attestation of an SLSA provenance type, or of a statement this
 	// tool's provenance command wrote earlier in the job.
 	signedProvenance bool
@@ -306,22 +362,26 @@ func (j *jobProvenance) evidence() workflowEvidence {
 	return evidence
 }
 
-// read records one step: GitHub's attestation actions, a GoReleaser release, or a run script.
+// read records one step: GitHub's attestation actions, an artefact download, an image build, a
+// GoReleaser release, or a run script.
 func (j *jobProvenance) read(ctx context.Context, repoPath string, step *workflowStep) error {
 	switch actionPath(step.Uses) {
 	case attestBuildProvenanceAction:
-		j.githubAttested = true
+		j.attest()
 		return nil
 	case attestAction:
-		j.githubAttested = j.githubAttested || attestsProvenance(*step)
+		if attestsProvenance(*step) {
+			j.attest()
+		}
+		return nil
+	case downloadArtifactAction:
+		j.imported = true
+		return nil
+	case dockerBuildPushAction:
+		j.built = true
 		return nil
 	case goreleaserActionPath:
-		// Without args the action names no command, so it is not read as a release.
-		args, ok := step.With["args"].(string)
-		if !ok {
-			return nil
-		}
-		return j.readGoreleaser(ctx, repoPath, strings.Fields(args))
+		return j.readGoreleaserAction(ctx, repoPath, step)
 	}
 	fields, err := scriptFields(step.Run)
 	if err != nil {
@@ -332,6 +392,45 @@ func (j *jobProvenance) read(ctx context.Context, repoPath string, step *workflo
 		return j.readGoreleaser(ctx, repoPath, fields[at+1:])
 	}
 	return nil
+}
+
+// attest records GitHub's attestation action writing provenance, and whether it covers a build
+// of this job: a build step came first and no artefact came in from another job.
+func (j *jobProvenance) attest() {
+	j.githubAttested = true
+	switch {
+	case j.built && !j.imported:
+		j.buildAttested = true
+	case j.imported:
+		j.attestGap = importedAttestation
+	default:
+		j.attestGap = unbuiltAttestation
+	}
+}
+
+// readGoreleaserAction records a goreleaser-action step. Without args the action names no
+// command, so it is read as neither a build nor a release.
+func (j *jobProvenance) readGoreleaserAction(ctx context.Context, repoPath string, step *workflowStep) error {
+	args, ok := step.With["args"].(string)
+	if !ok {
+		return nil
+	}
+	fields := strings.Fields(args)
+	j.built = j.built || runsCommand(slices.Concat([]string{"goreleaser"}, fields), buildCommands[:])
+	return j.readGoreleaser(ctx, repoPath, fields)
+}
+
+// runsCommand reports whether fields start with one of commands: its program by base name
+// (commandName), then each of its arguments as written.
+func runsCommand(fields []string, commands [][]string) bool {
+	for i := 0; i < len(commands); i++ {
+		command := commands[i]
+		if len(command) > 0 && len(fields) >= len(command) && commandName(fields[0]) == command[0] &&
+			slices.Equal(fields[1:len(command)], command[1:]) {
+			return true
+		}
+	}
+	return false
 }
 
 // attestsProvenance reports whether an actions/attest step runs in provenance mode: without
@@ -358,6 +457,10 @@ func (j *jobProvenance) readScript(fields []string) {
 			if out := provenanceOutput(commandSegment(fields[i+2:])); out != "" {
 				j.outputs = append(j.outputs, out)
 			}
+		case runsCommand(fields[i:], buildCommands[:]):
+			j.built = true
+		case runsCommand(fields[i:], importCommands[:]):
+			j.imported = true
 		}
 	}
 }

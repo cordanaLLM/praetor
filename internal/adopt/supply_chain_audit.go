@@ -88,8 +88,8 @@ func slsaLevelRemedy(declared int) string {
 	case declared >= forge.SLSABuildL3:
 		return "Level 3 needs the build and its provenance in an isolated reusable workflow: the SLSA GitHub generator " +
 			"(slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@<vX.Y.Z>), or a reusable " +
-			"workflow of this repository that runs actions/attest-build-provenance; an attestation signed in the job that " +
-			"ran the build is Level 2."
+			"workflow of this repository whose job builds the artefacts and then runs actions/attest-build-provenance; an " +
+			"attestation signed in the caller's build job, or over an artefact downloaded from another job, is Level 2."
 	case declared == forge.SLSABuildL2:
 		return "Level 2 needs provenance signed on the hosted runner, such as actions/attest-build-provenance in the release job."
 	default:

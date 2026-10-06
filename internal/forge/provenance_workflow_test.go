@@ -1,6 +1,7 @@
 package forge
 
 import (
+	"cmp"
 	"context"
 	"strings"
 	"testing"
@@ -96,6 +97,62 @@ func TestMeasureProvenanceLevels(t *testing.T) {
 			}
 			if tc.level > 0 && got.LevelWorkflow != "release.yml" {
 				t.Fatalf("LevelWorkflow = %q; want release.yml", got.LevelWorkflow)
+			}
+		})
+	}
+}
+
+// attestStep is GitHub's attestation action over the release archives.
+const attestStep = "      - uses: actions/attest-build-provenance@v4\n        with:\n          subject-path: dist/*.tar.gz\n"
+
+// buildsInTheCallerRelease builds and uploads the archives in its own job, then has the
+// reusable workflow attest.yml attest them.
+const buildsInTheCallerRelease = "on:\n  push:\n    tags: ['v*']\njobs:\n" +
+	"  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make dist\n" +
+	"      - uses: actions/upload-artifact@v7\n        with:\n          name: dist\n          path: dist\n" +
+	"  attest:\n    needs: [build]\n    uses: ./.github/workflows/attest.yml\n"
+
+// A reusable workflow of this repository is Level 3 only when the job that attests also built
+// what it attests (GitHub: "The reusable workflow you use to build your software must also
+// generate artifact attestations"). Positive: a build step before the attestation, and a
+// download after it, are Level 3. Negative: a reusable workflow that attests what the caller
+// built and uploaded, or that builds nothing, or builds only after attesting, is Level 2 and is
+// named with the reason (review of #330).
+func TestMeasureProvenanceCreditsLevel3OnlyWhenTheReusableWorkflowBuilds(t *testing.T) {
+	download := "      - uses: actions/download-artifact@v8\n        with:\n          name: dist\n"
+	cases := map[string]struct {
+		caller, steps string
+		level         int
+		reason        string
+	}{
+		"go build, then the attestation":                                 {"", "      - run: GOOS=linux go build -o dist/app ./cmd/app\n" + attestStep, SLSABuildL3, ""},
+		"GoReleaser action release, then the attestation":                {"", goreleaserStep + attestStep, SLSABuildL3, ""},
+		"an image build, then actions/attest":                            {"", "      - uses: docker/build-push-action@v7\n      - uses: actions/attest@v4\n        with:\n          subject-name: ghcr.io/acme/app\n          subject-digest: sha256:abc\n", SLSABuildL3, ""},
+		"a download after the attestation does not undo it":              {"", "      - run: make dist\n" + attestStep + download, SLSABuildL3, ""},
+		"the caller builds, the reusable workflow downloads and attests": {buildsInTheCallerRelease, download + attestStep, SLSABuildL2, importedAttestation},
+		"a download before the build still taints the attestation":       {"", download + "      - run: make dist\n" + attestStep, SLSABuildL2, importedAttestation},
+		"gh run download before the attestation":                         {"", "      - run: |\n          make dist\n          gh run download \"$RUN_ID\" -n dist\n" + attestStep, SLSABuildL2, importedAttestation},
+		"no build step at all":                                           {"", "      - uses: actions/checkout@v7\n" + attestStep, SLSABuildL2, unbuiltAttestation},
+		"the build after the attestation":                                {"", attestStep + "      - run: make dist\n", SLSABuildL2, unbuiltAttestation},
+		"GoReleaser check is no build":                                   {"", "      - uses: goreleaser/goreleaser-action@v7\n        with:\n          args: check\n" + attestStep, SLSABuildL2, unbuiltAttestation},
+		"a build named only in a comment":                                {"", "      - run: echo ok # go build ./...\n" + attestStep, SLSABuildL2, unbuiltAttestation},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := measure(t, map[string]string{
+				releaseWorkflow:                cmp.Or(tc.caller, reusableJob("./.github/workflows/attest.yml")),
+				".github/workflows/attest.yml": calledWorkflow(tc.steps),
+			})
+			uncredited := strings.Join(got.Uncredited, "\n")
+			if got.Level != tc.level || got.LevelWorkflow != "release.yml" {
+				t.Fatalf("MeasureProvenance = %+v; want Level %d from release.yml", got, tc.level)
+			}
+			if tc.reason == "" && uncredited != "" {
+				t.Fatalf("Uncredited = %q; want none at Level 3", uncredited)
+			}
+			want := "release.yml: ./.github/workflows/attest.yml: its attestation is Level 2, because " + tc.reason
+			if tc.reason != "" && !strings.Contains(uncredited, want) {
+				t.Fatalf("Uncredited = %q; want it to contain %q", uncredited, want)
 			}
 		})
 	}

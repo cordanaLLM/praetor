@@ -199,12 +199,25 @@ The measured level is the highest one any job reaches, following the
 | :--- | :--- |
 | 1 | `praetorctl provenance` writes a statement and nothing signs it |
 | 2 | `actions/attest-build-provenance`, or `actions/attest` without `sbom-path` and without a non-SLSA predicate, in the job; `cosign attest` or `attest-blob` with an SLSA provenance `--type`; or `cosign attest-blob --statement` over the file `praetorctl provenance -out` (or a `>` redirect) wrote earlier in the job |
-| 3 | The job calls a reusable workflow of `slsa-framework/slsa-github-generator` whose name ends in `_slsa3.yml`, by a `vX.Y.Z` tag; or it calls a reusable workflow of this repository (`./.github/workflows/<file>`, `on: workflow_call`) whose own job runs GitHub's attestation action, which GitHub documents as [Build Level 3](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating) |
+| 3 | The job calls a reusable workflow of `slsa-framework/slsa-github-generator` whose name ends in `_slsa3.yml`, by a `vX.Y.Z` tag; or it calls a reusable workflow of this repository (`./.github/workflows/<file>`, `on: workflow_call`) whose own job builds the artefacts and then runs GitHub's attestation action. GitHub documents [Build Level 3](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating) only when the reusable workflow that builds the software also generates the attestation |
+
+For a reusable workflow of this repository, a build step must come before the attestation in the
+same job: `go build`, `cargo build`, `docker build` or `docker buildx build`, `goreleaser release`
+or `build` (as a command or through `goreleaser/goreleaser-action`), `docker/build-push-action`,
+`make`, or an `npm run build`, `pnpm build` or `yarn build`. An `actions/download-artifact` or
+`gh run download` before the attestation makes it Level 2: a called workflow runs in its caller's
+workflow run, with the caller's
+[`github` context](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations),
+so the downloaded artefact may be the caller's build. The build step is recognised by its command,
+not by what it produces
+(`TestMeasureProvenanceCreditsLevel3OnlyWhenTheReusableWorkflowBuilds` in
+`internal/forge/provenance_workflow_test.go`).
 
 A workflow whose only trigger is `workflow_call` counts through the jobs that call it. Not
 credited, and named on the failure line: a reusable workflow in another repository, which a static
 read cannot open; the SLSA generator called by a branch or digest, since `slsa-verifier` accepts
-its provenance only from a tag; and a reusable workflow called from a reusable workflow.
+its provenance only from a tag; a reusable workflow called from a reusable workflow; and a
+reusable workflow of this repository whose attestation does not follow a build of its own job.
 
 `enforce_cosign` needs a `cosign sign`, `sign-blob`, `attest` or `attest-blob` step, or a
 GoReleaser release whose `signs`, `binary_signs` or `docker_signs` block runs cosign over some
