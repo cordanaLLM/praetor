@@ -1,0 +1,4 @@
+type: fixed
+title: The checkpoint no longer reports a pull request as failed after a re-run of the failed check passes on the same head
+issue: "#786"
+breaking: false
