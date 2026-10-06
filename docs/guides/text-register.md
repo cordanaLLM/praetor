@@ -496,8 +496,9 @@ briefs, summaries and provider instructions.
 
 `praetorctl compile-context`, `praetorctl compile-context --verify` and `praetorctl audit` run
 the lint over the canonical AGENTS.md, and so do their MCP mirrors (`standards_compile_context`
-with and without `verify_only`, `standards_audit`). Any finding fails the gate; the error quotes
-the first five findings and names the fix. A pass prints the counts behind it:
+with and without `verify_only`, `standards_audit`). Each tracked nested AGENTS.md goes through
+the same lint ([nested AGENTS.md files](#nested-agentsmd-files)). Any finding fails the gate;
+the error quotes the first five findings and names the fix. A pass prints the counts behind it:
 
 ```text
 AGENTS.md: caveman lint passed: 918 prose words, 0.3 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
@@ -508,7 +509,8 @@ the text register block is left out: `compile-context` renders it, nobody edits 
 and its wording belongs to its renderer (`compiler.MaskRegisterBlock`).
 
 Compiling without `--verify`, and `praetorctl init`, write every target first and lint
-afterwards, AGENTS.md and every canonical persona and skill: a prose edit still compiles, and
+afterwards, AGENTS.md, every tracked nested AGENTS.md and every canonical persona and skill: a
+prose edit still compiles, and
 the run then exits non-zero with `context written, but compile-context --verify will fail:`
 and the findings instead of printing success. `--verify` runs every check, register block, evidence ignore rule, vendor
 files, lint and projections, and reports every failure together, so a missing register block no
@@ -572,6 +574,45 @@ link or a number disappears. The fixture changes only with a deliberate correcti
 AGENTS.md, such as the HISS-04 function length that #539 set to 60. The lint and gate code
 live in `internal/compiler/caveman_lint.go`.
 
+### Nested AGENTS.md files
+
+An `AGENTS.md` below the repository root is agent context as much as the root file, so the
+same gate judges it the same way: kind context, register block masked, harness tail judged
+alone, no word ceiling (`compiler.CheckContextText`). To reproduce a verdict, run:
+
+```bash
+praetorctl caveman check --kind=context path/to/AGENTS.md
+```
+
+`compiler.ListNestedContextFiles` in `internal/compiler/caveman_gate.go` is the one place that
+finds these files. It reads only what Git tracks:
+
+- It lists the index with `git ls-files` (`util.RunGitProbe`, bounded by the probe deadline).
+  An ignored or untracked file is never read, and Git enters neither a nested repository nor
+  a submodule. Outside a Git work tree there are no nested files.
+- More than 1024 files (`compiler.MaxNestedContextFiles`) fails with the count and the cap.
+- A tracked file missing from the working tree, as a sparse checkout or an unstaged deletion
+  leaves it, is skipped and not counted. A symlinked one is refused.
+- The canonical AGENTS.md the context gate already lints (`--source`, `--agents`) is skipped,
+  so every file is linted once.
+
+`compile-context`, `compile-context --verify`, `audit`, `standards_compile_context` and
+`standards_audit` all run it. Every nested file is read before the verdict, so one run names
+each failure: the error starts `nested AGENTS.md fails the caveman lint: <failed> of <linted>
+files`, quotes the findings of the first five failing files and counts the rest.
+
+Adoption never rewrites a nested AGENTS.md. When one fails after the chain, adoption records
+a warning and the run still applies (`internal/adopt/context_verify.go`).
+
+An adopted repository whose nested files are prose fails `compile-context --verify` and
+`audit` after the upgrade. To list them, run `git ls-files '**/AGENTS.md'`. Then rewrite each
+in caveman, or wrap prose that must stay in `<!-- caveman:off -->` and `<!-- caveman:on -->`.
+
+Tests: `internal/compiler/caveman_nested_test.go` (enumerator bounds), the nested cases in
+`cmd/standardsctl/caveman_gate_test.go` (CLI gates),
+`cmd/standards-mcp/audit_nested_context_test.go` (MCP tools) and
+`TestAdopt_Boundary_NestedContextProseIsWarned` in `internal/adopt/context_verify_test.go`.
+
 ### The persona and skill gate
 
 `SurfaceContext` covers more than AGENTS.md by its own doc comment: "AGENTS.md, the
@@ -581,10 +622,11 @@ lint, plus a 600-prose-word ceiling (`compiler.AgentTextCeiling`), over every fi
 `.agents/agents/*.md` and every `.agents/skills/*/SKILL.md` (`compiler.LintAgentText`,
 `internal/compiler/caveman_gate.go`). No opt-out, same as AGENTS.md itself: personas and
 skills are agent-only text under `SurfaceContext`, not an emission surface a manifest can
-turn off. A pass prints:
+turn off. The gate shares one run with the nested AGENTS.md lint above, and a pass prints
+both counts:
 
 ```text
-6 personas and 13 skills passed the caveman lint (<= 600 prose words each).
+0 nested AGENTS.md, 6 personas and 13 skills passed the caveman lint (personas and skills <= 600 prose words each).
 ```
 
 The MCP `standards_compile_context` tool runs the same code as the CLI: `verify_only` calls
@@ -595,11 +637,12 @@ The MCP `standards_compile_context` tool runs the same code as the CLI: `verify_
 lines as `compile-context --verify`. `TestMCPVerifyLintsPersonasAndSkills` and
 `TestMCPVerifyFailsOnPersonaDrift` in `cmd/standards-mcp/server_projection_test.go` pin it.
 
-`standards_audit` has not caught up. Its context gate (`auditContextSync` in
-`cmd/standards-mcp/audit_tools.go`) runs `VerifyContext` over the vendor files and
-`compiler.LintContext` over AGENTS.md only: it neither verifies persona or skill projections
-nor calls `LintAgentText`. Use `praetorctl audit` or `standards_compile_context` with
-`verify_only` for the persona and skill gate until it does.
+`praetorctl audit` and `standards_audit` run one function for this lint,
+`compiler.AuditAgentSources`, so both give the same verdict: a
+`[PASS] Caveman lint verified (...)` line with the counts above, or a
+`[FAIL] Agent source caveman lint:` error that joins every failed surface. Projections are a
+different matter: `standards_audit` still verifies no persona or skill projection, so use
+`praetorctl audit` or `standards_compile_context` with `verify_only` for those.
 
 600 words was chosen when the persona/skill gate was introduced: at the time it sat between
 two skills failing the lint at 532-561 prose words (`caveman`, `social-text`, since pared

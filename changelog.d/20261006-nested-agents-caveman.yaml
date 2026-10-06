@@ -1,0 +1,4 @@
+type: fixed
+title: 'A nested AGENTS.md written in prose no longer passes compile-context --verify and audit: every tracked nested AGENTS.md is caveman-linted as context, and the MCP standards_audit now runs the nested, persona and skill lint the CLI audit runs; adopters may see new findings'
+issue: "#311"
+breaking: true

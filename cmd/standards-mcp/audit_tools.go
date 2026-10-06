@@ -57,6 +57,8 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective)
 		},
 		func(ctx context.Context) (string, error) { return auditContextSync(ctx, manifest, p.agents, s.rootDir) },
+		// The CLI audit's caveman gate over nested AGENTS.md, personas and skills (#311).
+		func(ctx context.Context) (string, error) { return compiler.AuditAgentSources(ctx, s.rootDir, p.agents) },
 		func(ctx context.Context) (string, error) {
 			return auditBranchProtection(ctx, manifest, s.rootDir, &effective.Policy)
 		},
@@ -80,7 +82,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		passed++
 	}
 
-	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, branch protection, labels, hooks. "+
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, hooks. "+
 		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
 	return mcpComposedTextResult(report.Text())
