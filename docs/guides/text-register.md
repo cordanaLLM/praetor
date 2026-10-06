@@ -100,8 +100,9 @@ class actually spends.
 ### Repository conventions
 
 The Form column holds two parts. The engine renders the universal form of each register,
-the same in every repository: for `social`, the `social-text` skill, BLUF, full sentences,
-and a conventional commit subject left unchanged. A clause about how one repository
+the same in every repository: for `social`, the `social-text` skill where the repository
+carries it ([register skills](#register-skills)), BLUF, full sentences, and a conventional
+commit subject left unchanged. A clause about how one repository
 publishes (its pull-request template, a receipt fence, a changelog fragment lane) follows
 it only when that repository states it, because an adopter without that lane would
 otherwise be told to keep it, and `compile-context` would restore the claim on every run
@@ -242,6 +243,32 @@ kept across a harness refresh already hold a section (because `compile-context` 
 one earlier), the merge keeps a single copy. `praetorctl init` and harvester onboarding
 splice the block before their first compile for the same reason.
 
+### Register skills
+
+Adoption ships the skills the block names. With `--lock-source-root`, the agent-harness step
+installs `social-text`, `caveman` and `adhd-format`, which `social-text` inherits from, into
+`.agents/skills/` from that checkout (`config.RegisterSkillBundle`). Each carries its REUSE
+header, and `caveman` its `metadata.derived_from` credit ([credits](../credits.md)). The
+bundle is one unit: a source that lacks one skill installs none. An edited skill is kept and
+reported, `--force` included; an unedited earlier Praetor text is refreshed
+(`priorSkillDigests` in `internal/adopt/register_skills.go`,
+`TestAdopt_Negative_EditedSkillIsKeptAndReported`).
+
+Codex, Gemini CLI, Cursor, Copilot and Windsurf read `.agents/skills/`; Claude Code reads
+`.claude/skills/` only (`agentcontext.SkillDirs`). When `agent_clients` selects Claude Code,
+`compile-context` copies each of the three skills the repository carries into
+`.claude/skills/`, and `--verify` and the audit's projection gate refuse a missing or edited
+copy (`compiler.VerifyClientSkills`, `internal/compiler/client_skills_test.go`). A
+repository's own skills are not copied, and `.claude/skills/` may hold skills of its own.
+
+The block names a skill only where the repository carries `.agents/skills/<name>/SKILL.md`
+(`compiler.LoadRegisterBlock`). Without it, the row states the form alone and the brief rule
+reads "internal register with `task:` = routing label". A declined agent-harness step, or a
+run without `--lock-source-root`, installs nothing, and the block then names no skill
+(`TestAdopt_Boundary_DeclinedSelectedAndPreviewed`,
+`internal/compiler/register_skills_test.go`). Prompt directives (`config.RegisterDirective`)
+name the skill in every repository.
+
 ## Internal briefs and returns
 
 A brief to another agent states the goal, the inputs (paths, not pasted content), the
@@ -286,8 +313,9 @@ returns through their own rows, so an operator registers it deliberately
 Operators call the internal register "caveman", and the `caveman` skill
 (`.agents/skills/caveman/SKILL.md`) makes that form concrete. The
 configuration value stays `internal`, so no manifest changes; the internal row of the
-rendered block names the skill, and so does the one register sentence that repair jobs and
-the Paperclip harness receive (`config.RegisterDirective`).
+rendered block names the skill where the repository carries it
+([register skills](#register-skills)), and so does the one register sentence that repair jobs
+and the Paperclip harness receive (`config.RegisterDirective`).
 
 The skill replaces an adjective ("telegraphic") with rules an agent can apply line by line:
 drop articles, pronouns, copulas, hedges and framing; write fragments, one fact per line;
