@@ -1,4 +1,7 @@
 ---
+# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
 name: social-text
 description: "Write forge-facing text (issues, pull-request bodies, review comments, commit bodies, changelog titles): scannable human prose derived from adhd-format; keeps PR template, receipt fence, conventional commits, Keep-a-Changelog intact."
 metadata:
