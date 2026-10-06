@@ -35,6 +35,10 @@ type RepositoryMetadata struct {
 	// needs the declaration when the default branch is not main. ValidBranchName decides what
 	// a declared name may be.
 	DefaultBranch string `yaml:"default_branch,omitempty"`
+	// Forge declares the kind of forge hosting the repository: github, forgejo or gitlab
+	// (Forge). The Paperclip harness prescribes that forge's review push. Empty is GitHub on a
+	// github.com origin remote; any other host requires it (RepositoryForge).
+	Forge Forge `yaml:"forge,omitempty"`
 }
 
 // ComplexityPolicy defines bounds on code complexity and function size.

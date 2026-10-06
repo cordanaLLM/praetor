@@ -119,15 +119,22 @@ func notRepositoryDirError(repo string) error {
 // manifestIdentity reads repository.owner and repository.name from .standards.yaml. A
 // repository without a manifest has neither.
 func manifestIdentity(repo string) (owner, name string, err error) {
-	path := filepath.Join(repo, ".standards.yaml")
+	metadata, err := manifestRepository(repo)
+	return metadata.Owner, metadata.Name, err
+}
+
+// manifestRepository reads the repository block of repo's .standards.yaml through the strict
+// manifest loader. A repository without a manifest declares nothing.
+func manifestRepository(repo string) (RepositoryMetadata, error) {
+	path := filepath.Join(repo, ManifestFileName)
 	if !util.FileExists(path) {
-		return "", "", nil
+		return RepositoryMetadata{}, nil
 	}
 	manifest, err := LoadManifest(path)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve repository identity: %w", err)
+		return RepositoryMetadata{}, fmt.Errorf("resolve repository identity: %w", err)
 	}
-	return manifest.Repository.Owner, manifest.Repository.Name, nil
+	return manifest.Repository, nil
 }
 
 // fillFromRemote fills whichever of owner and name is still empty from the origin remote. A
