@@ -24,7 +24,8 @@ Stage order = `gate run` order. Verdict per stage: `passed`, `failed`, `skipped`
    - New infraction -> reject naming `[rule] file:line - message`.
 
 3. **Security & SCA Scan**:
-   - `govulncheck ./...` + `gosec -conf .gosec.json`; missing scanner or missing `.gosec.json` -> fail, never pass.
+   - Go vulnerability gate (`internal/govuln`; same check as `praetorctl security govuln`): `govulncheck -scan symbol` judged vs OpenVEX document `security.go_vex`. Called symbol -> fail. Uncalled package or module -> fail unless current `not_affected` statement covers it. Stdlib advisory vs scanning toolchain counts -> upgrade Go patch release.
+   - Then `gosec -conf .gosec.json`. Missing scanner or missing `.gosec.json` -> fail, never pass.
    - `Cargo.lock` present -> `cargo audit`; no `cargo-audit` -> not run, install hint, stage skipped, never pass.
 
 4. **Flavor Conformance**:
