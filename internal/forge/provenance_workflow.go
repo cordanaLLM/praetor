@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	slashpath "path"
 	"regexp"
 	"slices"
 	"strings"
@@ -39,6 +40,11 @@ const (
 	downloadArtifactAction = "actions/download-artifact"
 	// dockerBuildPushAction builds a container image with Buildx.
 	dockerBuildPushAction = "docker/build-push-action"
+	// cacheAction and cacheRestoreAction restore files an earlier run saved, which may be the
+	// artefacts an attestation then names.
+	cacheAction        = "actions/cache"
+	cacheRestoreAction = "actions/cache/restore"
+	makeBinary         = "make"
 	// slsaGeneratorWorkflows is where the SLSA GitHub generator keeps the reusable workflows
 	// that build or generate Level 3 provenance (generator_generic_slsa3.yml,
 	// builder_go_slsa3.yml, ...); each name ends in slsaGeneratorSuffix.
@@ -71,13 +77,30 @@ var cosignSigningCommands = map[string]bool{"sign": true, "sign-blob": true, "at
 var cosignProvenanceTypes = map[string]bool{"slsaprovenance": true, "slsaprovenance02": true, "slsaprovenance1": true}
 
 // buildCommands are the run: commands read as a build step: a compiler, an image build, a
-// GoReleaser release or build, or a build tool running a target. Each is the program by its base
-// name and then its arguments as written. A reusable workflow's attestation counts as Level 3
-// only when one of them ran before it in the same job (MeasureProvenance).
+// GoReleaser release or build, or a package script named build. Each is the program by its base
+// name and then its arguments as written. make running a target counts too (runsMakeTarget). A
+// reusable workflow's attestation counts as Level 3 only when one of them ran before it in the
+// same job (MeasureProvenance).
 var buildCommands = [...][]string{
 	{"go", "build"}, {"cargo", "build"}, {"goreleaser", "release"}, {"goreleaser", "build"},
-	{"docker", "build"}, {"docker", "buildx", "build"}, {"make"},
+	{"docker", "build"}, {"docker", "buildx", "build"},
 	{"npm", "run", "build"}, {"pnpm", "build"}, {"pnpm", "run", "build"}, {"yarn", "build"}, {"yarn", "run", "build"},
+}
+
+// makeValueOptions are the GNU make options whose value is the next field, so that field names
+// no target.
+var makeValueOptions = map[string]bool{
+	"-C": true, "--directory": true, "-f": true, "--file": true, "--makefile": true, "-I": true, "--include-dir": true,
+	"-o": true, "--old-file": true, "--assume-old": true, "-W": true, "--what-if": true, "--new-file": true, "--assume-new": true,
+}
+
+// makeCountOptions take an optional number as the next field.
+var makeCountOptions = map[string]bool{"-j": true, "--jobs": true, "-l": true, "--load-average": true, "--max-load": true}
+
+// makeNoBuildOptions make make print, check or describe instead of running a recipe.
+var makeNoBuildOptions = map[string]bool{
+	"-n": true, "--just-print": true, "--dry-run": true, "--recon": true, "-q": true, "--question": true,
+	"-p": true, "--print-data-base": true, "-v": true, "--version": true, "-h": true, "--help": true,
 }
 
 // importCommands are the run: commands that download an artefact another job of the workflow
@@ -230,12 +253,16 @@ func (r provenanceReader) measureReusableWorkflows(workflows []namedWorkflow) er
 	return nil
 }
 
-// joinJobs joins what measure finds in each job of spec, in job ID order.
+// joinJobs joins what measure finds in each job of spec, in job ID order. A job whose if: is the
+// literal false never runs and shows nothing (ghworkflow.NeverRuns).
 func (r provenanceReader) joinJobs(spec *workflowSpec, measure func(*workflowJob) (workflowEvidence, error)) (workflowEvidence, error) {
 	ids := ghworkflow.SortedJobIDs(spec.Jobs)
 	var evidence workflowEvidence
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
+		if ghworkflow.NeverRuns(job.If) {
+			continue
+		}
 		found, err := measure(&job)
 		if err != nil {
 			return workflowEvidence{}, fmt.Errorf("job %s: %w", ids[i], err)
@@ -309,13 +336,16 @@ func remoteReusableWorkflow(uses string) workflowEvidence {
 	return workflowEvidence{level: SLSABuildL3}
 }
 
-// steps reads the steps of one job.
+// steps reads the steps of one job, leaving out a step whose if: is the literal false.
 func (r provenanceReader) steps(steps []workflowStep) (jobProvenance, error) {
 	if len(steps) > maxStepsPerJob {
 		return jobProvenance{}, fmt.Errorf("job exceeds %d steps", maxStepsPerJob)
 	}
 	var job jobProvenance
 	for i := 0; i < len(steps) && i < maxStepsPerJob; i++ {
+		if ghworkflow.NeverRuns(steps[i].If) {
+			continue
+		}
 		if err := job.read(r.ctx, r.repoPath, &steps[i]); err != nil {
 			return jobProvenance{}, fmt.Errorf("step %d: %w", i+1, err)
 		}
@@ -329,7 +359,7 @@ const (
 	unbuiltAttestation = "no build step (go build, cargo build, docker build, GoReleaser, make, or an npm, pnpm or " +
 		"yarn build) runs before it in its job"
 	importedAttestation = "an artefact downloaded from another job of the run, which may be the caller's build, " +
-		"comes before it in its job"
+		"or restored from a cache over the attested files, comes before it in its job"
 )
 
 // jobProvenance accumulates what the steps of one job do, in file order.
@@ -341,6 +371,9 @@ type jobProvenance struct {
 	attestGap     string
 	// built: a build step ran; imported: an artefact another job uploaded was downloaded.
 	built, imported bool
+	// cached holds the paths an actions/cache restore brought in, which import the attested
+	// files when they overlap (cacheImports).
+	cached []string
 	// signedProvenance: a cosign attestation of an SLSA provenance type, or of a statement this
 	// tool's provenance command wrote earlier in the job.
 	signedProvenance bool
@@ -362,50 +395,112 @@ func (j *jobProvenance) evidence() workflowEvidence {
 	return evidence
 }
 
-// read records one step: GitHub's attestation actions, an artefact download, an image build, a
-// GoReleaser release, or a run script.
+// read records one step: an action (readAction), or a run script command by command, each
+// GoReleaser command of it read on its own (invocations).
 func (j *jobProvenance) read(ctx context.Context, repoPath string, step *workflowStep) error {
-	switch actionPath(step.Uses) {
-	case attestBuildProvenanceAction:
-		j.attest()
-		return nil
-	case attestAction:
-		if attestsProvenance(*step) {
-			j.attest()
-		}
-		return nil
-	case downloadArtifactAction:
-		j.imported = true
-		return nil
-	case dockerBuildPushAction:
-		j.built = true
-		return nil
-	case goreleaserActionPath:
-		return j.readGoreleaserAction(ctx, repoPath, step)
+	if action := actionPath(step.Uses); action != "" {
+		return j.readAction(ctx, repoPath, step, action)
 	}
 	fields, err := scriptFields(step.Run)
 	if err != nil {
 		return err
 	}
 	j.readScript(fields)
-	if at := fieldIndex(fields, "goreleaser"); at >= 0 {
-		return j.readGoreleaser(ctx, repoPath, fields[at+1:])
+	calls := invocations(fields, goreleaserBinary)
+	for i := 0; i < len(calls) && i < maxRunScriptFields; i++ {
+		if err := j.readGoreleaser(ctx, repoPath, calls[i]); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// attest records GitHub's attestation action writing provenance, and whether it covers a build
-// of this job: a build step came first and no artefact came in from another job.
-func (j *jobProvenance) attest() {
-	j.githubAttested = true
+// readAction records one uses: step: GitHub's attestation actions, an artefact download, a cache
+// restore, an image build, or a GoReleaser release. Any other action is no evidence.
+func (j *jobProvenance) readAction(ctx context.Context, repoPath string, step *workflowStep, action string) error {
 	switch {
-	case j.built && !j.imported:
+	case action == attestBuildProvenanceAction, action == attestAction && attestsProvenance(*step):
+		j.attest(stepInputList(*step, "subject-path"))
+	case action == downloadArtifactAction:
+		j.imported = true
+	case action == cacheAction, action == cacheRestoreAction:
+		j.cached = append(j.cached, stepInputList(*step, "path")...)
+	case action == dockerBuildPushAction:
+		j.built = true
+	case action == goreleaserActionPath:
+		return j.readGoreleaserAction(ctx, repoPath, step)
+	}
+	return nil
+}
+
+// attest records GitHub's attestation action writing provenance over subjects (its
+// subject-path), and whether it covers a build of this job: a build step came first and no
+// artefact came in from another job or a cache.
+func (j *jobProvenance) attest(subjects []string) {
+	j.githubAttested = true
+	imported := j.imported || cacheImports(j.cached, subjects)
+	switch {
+	case j.built && !imported:
 		j.buildAttested = true
-	case j.imported:
+	case imported:
 		j.attestGap = importedAttestation
 	default:
 		j.attestGap = unbuiltAttestation
 	}
+}
+
+// stepInputList splits a with: input that lists paths, one per line or comma-separated.
+func stepInputList(step workflowStep, key string) []string {
+	return strings.FieldsFunc(stepInput(step, key), func(r rune) bool { return r == '\n' || r == ',' })
+}
+
+// cacheImports reports whether a cache restore brought in files an attestation names: a cached
+// path and a subject path overlap when the literal directory before the first glob character of
+// one contains the other. An attestation naming no subject path (subject-digest,
+// subject-checksums) cannot be told apart, so any restore counts. A cached path outside the
+// workspace (~ or /) never holds a relative subject.
+func cacheImports(cached, subjects []string) bool {
+	if len(cached) > 0 && len(subjects) == 0 {
+		return true
+	}
+	for i := 0; i < len(cached) && i < maxRunScriptFields; i++ {
+		for k := 0; k < len(subjects) && k < maxRunScriptFields; k++ {
+			if pathsOverlap(literalPrefix(cached[i]), literalPrefix(subjects[k])) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// literalPrefix returns the cleaned directory of a path pattern before its first glob
+// character, "" for one that starts with a pattern; a negated (!) pattern excludes files and
+// returns "~" so it overlaps nothing.
+func literalPrefix(pattern string) string {
+	pattern = strings.TrimSpace(pattern)
+	if strings.HasPrefix(pattern, "!") {
+		return "~"
+	}
+	if at := strings.IndexAny(pattern, "*?[{"); at >= 0 {
+		pattern = slashpath.Dir(pattern[:at] + "x")
+	}
+	if pattern = slashpath.Clean(strings.TrimPrefix(pattern, "./")); pattern == "." {
+		return ""
+	}
+	return pattern
+}
+
+// pathsOverlap reports whether two literal directories (literalPrefix) can hold a common file:
+// one is the other or below it, or one is the workspace root "" and the other is relative.
+func pathsOverlap(a, b string) bool {
+	outside := func(p string) bool { return strings.HasPrefix(p, "~") || strings.HasPrefix(p, "/") }
+	switch {
+	case a == "" || b == "":
+		return !outside(a) && !outside(b)
+	case a == b:
+		return true
+	}
+	return strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
 // readGoreleaserAction records a goreleaser-action step. Without args the action names no
@@ -416,7 +511,7 @@ func (j *jobProvenance) readGoreleaserAction(ctx context.Context, repoPath strin
 		return nil
 	}
 	fields := strings.Fields(args)
-	j.built = j.built || runsCommand(slices.Concat([]string{"goreleaser"}, fields), buildCommands[:])
+	j.built = j.built || runsCommand(slices.Concat([]string{goreleaserBinary}, fields), buildCommands[:])
 	return j.readGoreleaser(ctx, repoPath, fields)
 }
 
@@ -445,10 +540,14 @@ func attestsProvenance(step workflowStep) bool {
 	return stepInput(step, "predicate") == "" && stepInput(step, "predicate-path") == ""
 }
 
-// readScript records the commands of one run: script, command by command.
+// readScript records the commands of one run: script, command by command. What an echo or
+// printf prints is not run (printedFields).
 func (j *jobProvenance) readScript(fields []string) {
+	printed := printedFields(fields)
 	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
 		switch {
+		case printed[i]:
+			continue
 		case invokesCosignSigning(fields[i:]):
 			j.cosign = true
 			j.readCosign(fields[i+1], commandSegment(fields[i+2:]))
@@ -457,12 +556,47 @@ func (j *jobProvenance) readScript(fields []string) {
 			if out := provenanceOutput(commandSegment(fields[i+2:])); out != "" {
 				j.outputs = append(j.outputs, out)
 			}
-		case runsCommand(fields[i:], buildCommands[:]):
+		case runsCommand(fields[i:], buildCommands[:]), runsMakeTarget(fields[i:]):
 			j.built = true
 		case runsCommand(fields[i:], importCommands[:]):
 			j.imported = true
 		}
 	}
+}
+
+// runsMakeTarget reports whether fields start with make running a target: a bare make, or one
+// that only prints, checks or describes (makeNoBuildOptions), builds nothing a step can be
+// sure of.
+func runsMakeTarget(fields []string) bool {
+	if len(fields) == 0 || commandName(fields[0]) != makeBinary {
+		return false
+	}
+	args := commandSegment(fields[1:])
+	value, target := false, false
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		switch arg := args[i]; {
+		case value:
+			value = false
+		case makeNoBuildOptions[arg]:
+			return false
+		case makeOptionTakesValue(args, i):
+			value = true
+		case !strings.HasPrefix(arg, "-") && !strings.Contains(arg, "="):
+			target = true
+		}
+	}
+	return target
+}
+
+// makeOptionTakesValue reports whether args[i] is a make option whose value is args[i+1]:
+// always for makeValueOptions, and for makeCountOptions when a count follows.
+func makeOptionTakesValue(args []string, i int) bool {
+	return makeValueOptions[args[i]] || makeCountOptions[args[i]] && i+1 < len(args) && isCount(args[i+1])
+}
+
+// isCount reports whether field is a decimal count, such as the value of make -j.
+func isCount(field string) bool {
+	return field != "" && strings.Trim(field, "0123456789") == ""
 }
 
 // invokesCosignSigning reports whether fields start with cosign running a signing subcommand.

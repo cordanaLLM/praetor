@@ -204,14 +204,29 @@ The measured level is the highest one any job reaches, following the
 For a reusable workflow of this repository, a build step must come before the attestation in the
 same job: `go build`, `cargo build`, `docker build` or `docker buildx build`, `goreleaser release`
 or `build` (as a command or through `goreleaser/goreleaser-action`), `docker/build-push-action`,
-`make`, or an `npm run build`, `pnpm build` or `yarn build`. An `actions/download-artifact` or
+`make` running a target, or an `npm run build`, `pnpm build` or `yarn build`. A bare `make`, and
+`make` with `--version`, `-n` or another option that only prints or checks, builds nothing the
+audit can rely on (`TestMeasureProvenanceNeedsAMakeTarget`). An `actions/download-artifact` or
 `gh run download` before the attestation makes it Level 2: a called workflow runs in its caller's
 workflow run, with the caller's
 [`github` context](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations),
-so the downloaded artefact may be the caller's build. The build step is recognised by its command,
-not by what it produces
+so the downloaded artefact may be the caller's build. So does an `actions/cache` or
+`actions/cache/restore` step whose `path` overlaps the attestation's `subject-path`, or any cache
+restore before an attestation that names its subject by digest, since the restored files may come
+from an earlier run (`TestMeasureProvenanceCountsACacheRestoreOfTheAttestedFiles`). The build
+step is recognised by its command, not by what it produces, so `make lint` counts as a build
 (`TestMeasureProvenanceCreditsLevel3OnlyWhenTheReusableWorkflowBuilds` in
 `internal/forge/provenance_workflow_test.go`).
+
+The SLSA generator's `generator_generic_slsa3.yml` is credited Level 3 although the caller's job
+builds the artefacts and hands the generator their digests (`base64-subjects`), the shape that
+leaves a reusable workflow of this repository at Level 2. The audit follows each tool's own
+documentation: the [SLSA v1.0 Build L3 requirements](https://slsa.dev/spec/v1.0/requirements)
+let the tenant generate the subject names and digests of unforgeable provenance, and the
+generator signs that provenance in its own isolated reusable workflow, which `slsa-verifier`
+checks; GitHub documents Level 3 for its attestation action only when the reusable workflow that
+attests also builds. The generator's repository states that it is no longer actively maintained
+and suggests GitHub artifact attestations instead.
 
 A workflow whose only trigger is `workflow_call` counts through the jobs that call it. Not
 credited, and named on the failure line: a reusable workflow in another repository, which a static
@@ -219,11 +234,19 @@ read cannot open; the SLSA generator called by a branch or digest, since `slsa-v
 its provenance only from a tag; a reusable workflow called from a reusable workflow; and a
 reusable workflow of this repository whose attestation does not follow a build of its own job.
 
+A job or step whose `if:` is the literal `false` (or `${{ false }}`) never runs and counts for
+nothing; any other condition is read as running. A command an `echo` or `printf` prints does not
+run, so `echo cosign sign is todo` signs nothing (`TestMeasureProvenanceSkipsWhatNeverRuns`).
+Every workflow is measured, not only the ones a tag push starts, and the failure line names the
+one it read.
+
 `enforce_cosign` needs a `cosign sign`, `sign-blob`, `attest` or `attest-blob` step, or a
 GoReleaser release whose `signs`, `binary_signs` or `docker_signs` block runs cosign over some
 artifacts with GoReleaser's own defaults (`signs` signs nothing unless `artifacts` is set;
 `docker_signs` runs cosign by default). Installing cosign, verifying with it, or
-`goreleaser release --skip=sign` signs nothing. `require_sbom` uses the SBOM rule `praetorctl plan`
+`goreleaser release --skip=sign` signs nothing. Each GoReleaser command of a `run:` script is read
+up to the end of that command, so `goreleaser check` followed by `gh release create` is no release
+(`TestGoreleaserCommandsAreReadOneAtATime`). `require_sbom` uses the SBOM rule `praetorctl plan`
 reports drift from (`forge.SBOMWorkflow`).
 
 The gate fails when the declared level exceeds the measured one, naming both and the workflow it

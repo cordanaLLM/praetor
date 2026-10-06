@@ -1,0 +1,4 @@
+type: fixed
+title: "The supply-chain reader counted goreleaser check followed by another command as a signing release, a bare make as a build, a cache restore of the attested files as none, and commands an echo prints or a step with if: false as run"
+issue: "#330"
+breaking: false

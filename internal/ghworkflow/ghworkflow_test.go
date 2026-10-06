@@ -129,3 +129,24 @@ func TestIsWorkflowPath(t *testing.T) {
 		}
 	}
 }
+
+// NeverRuns is true only for the literal false, bare or as an expression (positive), false for a
+// condition that may hold or one that merely mentions false (negative), and tolerant of the
+// spacing GitHub accepts around the expression (boundary).
+func TestNeverRuns(t *testing.T) {
+	for condition, want := range map[string]bool{
+		"false":                        true,
+		"${{ false }}":                 true,
+		"  ${{false}}  ":               true,
+		"":                             false,
+		"true":                         false,
+		"${{ github.ref == 'false' }}": false,
+		"github.event_name == 'push'":  false,
+		"${{ false }} && always()":     false,
+		"${{ false":                    false,
+	} {
+		if got := NeverRuns(condition); got != want {
+			t.Errorf("NeverRuns(%q) = %t, want %t", condition, got, want)
+		}
+	}
+}

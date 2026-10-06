@@ -260,3 +260,135 @@ func TestMeasureProvenanceBoundaries(t *testing.T) {
 		t.Fatal("MeasureProvenance(nil context) succeeded; want an error")
 	}
 }
+
+// Each GoReleaser command of a run: script is read on its own (review of #330). Positive: a
+// release after a check in the same script signs with cosign and generates the SBOM its
+// configuration declares. Negative: goreleaser check followed by another command that names
+// release is no release, so the configuration's cosign signing and SBOM do not count. Boundary: a
+// release an echo prints runs nothing.
+func TestGoreleaserCommandsAreReadOneAtATime(t *testing.T) {
+	config := "signs:\n  - cmd: cosign\n    artifacts: checksum\nsboms:\n  - artifacts: archive\n"
+	cases := map[string]struct {
+		run      string
+		releases bool
+	}{
+		"check, then a release":             {"      - run: |\n          goreleaser check\n          ./bin/goreleaser release --clean\n", true},
+		"check, then gh release create":     {"      - run: |\n          goreleaser check\n          gh release create \"$TAG\" dist/*\n", false},
+		"check && a command naming release": {"      - run: goreleaser check && gh release create v1\n", false},
+		"check; a command naming release":   {"      - run: goreleaser check; gh release create v1\n", false},
+		"a find -exec escape ends nothing":  {"      - run: find dist -name '*.tgz' -exec ls {} \\; ; goreleaser release --clean\n", true},
+		"a release an echo prints":          {"      - run: echo goreleaser release --clean\n", false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			files := map[string]string{releaseWorkflow: sbomJob(tc.run), ".goreleaser.yaml": config}
+			if got := measure(t, files); (got.CosignWorkflow != "") != tc.releases {
+				t.Fatalf("CosignWorkflow = %q; want a release that signs: %t", got.CosignWorkflow, tc.releases)
+			}
+			sbom, err := SBOMWorkflow(context.Background(), sbomRepo(t, files))
+			if err != nil || (sbom != "") != tc.releases {
+				t.Fatalf("SBOMWorkflow = %q, %v; want a release that generates an SBOM: %t", sbom, err, tc.releases)
+			}
+		})
+	}
+}
+
+// make is the build of a reusable workflow only when it runs a target (review of #330).
+// Positive: a target, after options with values, a job count and a variable assignment.
+// Negative: a bare make, one that prints its version, one in dry-run mode. Boundary: options
+// and assignments alone name no target.
+func TestMeasureProvenanceNeedsAMakeTarget(t *testing.T) {
+	cases := map[string]struct {
+		run   string
+		level int
+	}{
+		"a target":                            {"make dist", SLSABuildL3},
+		"options, a count, then a target":     {"make -C build -j 4 VERSION=1.2.3 dist", SLSABuildL3},
+		"a bare make":                         {"make", SLSABuildL2},
+		"make printing its version":           {"make --version", SLSABuildL2},
+		"make in dry-run mode":                {"make -n dist", SLSABuildL2},
+		"options and assignments, no target":  {"make -C build -j 4 VERSION=1.2.3", SLSABuildL2},
+		"a target an echo prints is no build": {"echo make dist", SLSABuildL2},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := measure(t, map[string]string{
+				releaseWorkflow:                reusableJob("./.github/workflows/attest.yml"),
+				".github/workflows/attest.yml": calledWorkflow("      - run: " + tc.run + "\n" + attestStep),
+			})
+			if got.Level != tc.level {
+				t.Fatalf("MeasureProvenance = %+v; want Level %d", got, tc.level)
+			}
+		})
+	}
+}
+
+// A cache restore of the files a reusable workflow attests brings in what an earlier run built,
+// like a download (review of #330). Positive: a cache outside the workspace or of another
+// directory leaves the attestation Level 3. Negative: a cache of the attested directory, or of a
+// file below the attested pattern, makes it Level 2 and names the reason. Boundary: an
+// attestation by digest, or of a workspace-wide pattern, cannot be told apart from the cache, so
+// any restore makes it Level 2.
+func TestMeasureProvenanceCountsACacheRestoreOfTheAttestedFiles(t *testing.T) {
+	cache := func(action, path string) string {
+		return "      - uses: " + action + "\n        with:\n          key: k\n          path: " + path + "\n"
+	}
+	build := "      - run: make dist\n"
+	attestDigest := "      - uses: actions/attest@v4\n        with:\n          subject-name: ghcr.io/acme/app\n          subject-digest: sha256:abc\n"
+	attestAll := "      - uses: actions/attest-build-provenance@v4\n        with:\n          subject-path: '*.tar.gz'\n"
+	cases := map[string]struct {
+		steps string
+		level int
+	}{
+		"a module cache outside the workspace":      {cache("actions/cache@v5", "~/go/pkg/mod") + build + attestStep, SLSABuildL3},
+		"a cache of another directory":              {cache("actions/cache/restore@v5", "node_modules") + build + attestStep, SLSABuildL3},
+		"a cache of the attested directory":         {cache("actions/cache/restore@v5", "dist") + build + attestStep, SLSABuildL2},
+		"a cache of a file below the pattern":       {cache("actions/cache@v5", "./dist/app.tar.gz") + build + attestStep, SLSABuildL2},
+		"an attestation by digest after a cache":    {cache("actions/cache@v5", "node_modules") + build + attestDigest, SLSABuildL2},
+		"a workspace-wide pattern after a cache":    {cache("actions/cache@v5", "vendor") + build + attestAll, SLSABuildL2},
+		"a cache restore after the attestation":     {build + attestStep + cache("actions/cache/restore@v5", "dist"), SLSABuildL3},
+		"a negated cache path excludes the subject": {cache("actions/cache@v5", "'!dist'") + build + attestStep, SLSABuildL3},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := measure(t, map[string]string{
+				releaseWorkflow:                reusableJob("./.github/workflows/attest.yml"),
+				".github/workflows/attest.yml": calledWorkflow(tc.steps),
+			})
+			if got.Level != tc.level {
+				t.Fatalf("MeasureProvenance = %+v; want Level %d", got, tc.level)
+			}
+			if tc.level == SLSABuildL2 && !strings.Contains(strings.Join(got.Uncredited, "\n"), importedAttestation) {
+				t.Fatalf("Uncredited = %q; want the import named", got.Uncredited)
+			}
+		})
+	}
+}
+
+// What never runs signs and attests nothing (review of #330). Negative: an attestation in a step
+// or job whose if: is the literal false, and cosign named only in an echo or printf, count for
+// nothing. Positive: a condition that may hold is read as running, and a command after an echo
+// in the same script runs.
+func TestMeasureProvenanceSkipsWhatNeverRuns(t *testing.T) {
+	attest := "uses: actions/attest-build-provenance@v4\n"
+	cases := map[string]struct {
+		workflow string
+		level    int
+		signed   bool
+	}{
+		"a step with if: false":       {sbomJob("      - if: false\n        " + attest), 0, false},
+		"a job with if: ${{ false }}": {"on: push\njobs:\n  release:\n    if: ${{ false }}\n    runs-on: ubuntu-latest\n    steps:\n      - " + attest, 0, false},
+		"a condition that may hold":   {sbomJob("      - if: startsWith(github.ref, 'refs/tags/')\n        " + attest), SLSABuildL2, false},
+		"cosign an echo prints":       {sbomJob("      - run: echo cosign sign is todo\n"), 0, false},
+		"cosign a printf prints":      {sbomJob("      - run: printf 'cosign sign-blob a.tgz'\n"), 0, false},
+		"cosign after an echo":        {sbomJob("      - run: echo signing && cosign sign-blob --yes a.tgz\n"), 0, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := measure(t, map[string]string{releaseWorkflow: tc.workflow})
+			if got.Level != tc.level || (got.CosignWorkflow != "") != tc.signed {
+				t.Fatalf("MeasureProvenance = %+v; want Level %d and signed=%t", got, tc.level, tc.signed)
+			}
+		})
+	}
+}

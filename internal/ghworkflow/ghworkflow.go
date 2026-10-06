@@ -165,6 +165,19 @@ func IsWorkflowPath(rel string) bool {
 	return dir == Dir+"/" && IsYAMLName(name)
 }
 
+// NeverRuns reports whether an if: condition of a job or step is the literal false, bare or as
+// the expression ${{ false }}: GitHub then skips it on every run. Any other condition may hold,
+// so it is read as running.
+func NeverRuns(condition string) bool {
+	condition = strings.TrimSpace(condition)
+	if inner, ok := strings.CutPrefix(condition, "${{"); ok {
+		if inner, ok = strings.CutSuffix(inner, "}}"); ok {
+			condition = strings.TrimSpace(inner)
+		}
+	}
+	return condition == "false"
+}
+
 // RunStep is one run: step of a workflow, with the job it runs in.
 type RunStep struct {
 	// JobID is the job's key under jobs:.

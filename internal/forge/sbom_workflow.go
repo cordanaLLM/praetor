@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
 const (
 	goreleaserActionPath = "goreleaser/goreleaser-action"
+	goreleaserBinary     = "goreleaser"
 	maxRunScriptFields   = 4096
 	// praetorNoticesSubcommand is the sbom subcommand that renders THIRD-PARTY-NOTICES.md
 	// tables and writes no SBOM document. runSBOM in cmd/standardsctl/supplychain.go
@@ -33,6 +35,13 @@ var sbomGeneratorActions = map[string]bool{
 
 // goreleaserConfigNames are the files GoReleaser loads when no --config is given, in its
 // own search order (cmd/config.go loadConfigCheck in goreleaser/goreleaser).
+// commandSeparators are the fields that end one command of a run: script: a ";" (which
+// scriptFields also writes for a newline), a pipe, a list operator and a background "&".
+var commandSeparators = map[string]bool{";": true, "|": true, "&&": true, "||": true, "&": true}
+
+// printPrograms print their arguments rather than run them, so "echo cosign sign" signs nothing.
+var printPrograms = map[string]bool{"echo": true, "printf": true}
+
 var goreleaserConfigNames = [...]string{
 	".config/goreleaser.yml",
 	".config/goreleaser.yaml",
@@ -81,7 +90,13 @@ func workflowGeneratesSBOM(ctx context.Context, repoPath string, data []byte) (b
 		return false, fmt.Errorf("workflow exceeds %d jobs", maxJobsPerFile)
 	}
 	for _, job := range spec.Jobs {
+		if ghworkflow.NeverRuns(job.If) {
+			continue
+		}
 		for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
+			if ghworkflow.NeverRuns(job.Steps[i].If) {
+				continue
+			}
 			generates, err := stepGeneratesSBOM(ctx, repoPath, job.Steps[i])
 			if err != nil || generates {
 				return generates, err
@@ -92,7 +107,9 @@ func workflowGeneratesSBOM(ctx context.Context, repoPath string, data []byte) (b
 }
 
 // stepGeneratesSBOM reports whether one step writes an SBOM: an SBOM action, a run script
-// invoking a generator, or a GoReleaser release whose configuration declares sboms.
+// invoking a generator, or a GoReleaser release whose configuration declares sboms. Each
+// GoReleaser command of a script is read on its own (invocations), so "goreleaser check"
+// followed by another command is no release.
 func stepGeneratesSBOM(ctx context.Context, repoPath string, step workflowStep) (bool, error) {
 	action := actionPath(step.Uses)
 	if sbomGeneratorActions[action] {
@@ -113,8 +130,11 @@ func stepGeneratesSBOM(ctx context.Context, repoPath string, step workflowStep) 
 	if runInvokesSBOMGenerator(fields) {
 		return true, nil
 	}
-	if at := fieldIndex(fields, "goreleaser"); at >= 0 {
-		return goreleaserReleaseGeneratesSBOM(ctx, repoPath, fields[at+1:])
+	calls := invocations(fields, goreleaserBinary)
+	for i := 0; i < len(calls) && i < maxRunScriptFields; i++ {
+		if generates, err := goreleaserReleaseGeneratesSBOM(ctx, repoPath, calls[i]); err != nil || generates {
+			return generates, err
+		}
 	}
 	return false, nil
 }
@@ -129,14 +149,27 @@ func actionPath(uses string) string {
 // scriptFields splits a run: script into its whitespace-separated fields. A command named only
 // in a comment does not run, so comments are dropped first. A backslash-newline continues one
 // command and any other newline ends it, so a newline becomes a ";" field, where the command
-// readers stop (commandSegment).
+// readers stop (commandSegment); so does a ";" that ends a word ("goreleaser check;"), except
+// find's escaped "\;".
 func scriptFields(run string) ([]string, error) {
 	script, err := util.StripHashComments(strings.ReplaceAll(run, "\r\n", "\n"))
 	if err != nil {
 		return nil, fmt.Errorf("run script: %w", err)
 	}
 	script = strings.ReplaceAll(strings.ReplaceAll(script, "\\\n", " "), "\n", " ; ")
-	fields := strings.Fields(script)
+	words := strings.Fields(script)
+	if len(words) > maxRunScriptFields {
+		return nil, fmt.Errorf("run script exceeds %d fields", maxRunScriptFields)
+	}
+	fields := make([]string, 0, len(words))
+	for i := 0; i < len(words); i++ {
+		word, ends := strings.CutSuffix(words[i], ";")
+		if !ends || word == "" || strings.HasSuffix(word, "\\") {
+			fields = append(fields, words[i])
+			continue
+		}
+		fields = append(fields, word, ";")
+	}
 	if len(fields) > maxRunScriptFields {
 		return nil, fmt.Errorf("run script exceeds %d fields", maxRunScriptFields)
 	}
@@ -147,8 +180,11 @@ func scriptFields(run string) ([]string, error) {
 // writes an SBOM document: Syft with an output format, cyclonedx-gomod, cdxgen, or this
 // tool's own sbom command.
 func runInvokesSBOMGenerator(fields []string) bool {
+	printed := printedFields(fields)
 	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
 		switch {
+		case printed[i]:
+			continue
 		case fields[i] == "cyclonedx-gomod", fields[i] == "cdxgen":
 			return true
 		case fields[i] == "syft" && hasOutputFlag(fields[i+1:]):
@@ -188,16 +224,46 @@ func hasOutputFlag(fields []string) bool {
 	return false
 }
 
-// commandSegment returns fields up to the first one that ends the command: a ";" (which
-// scriptFields also writes for a newline), a pipe, a list operator or a background "&".
+// commandSegment returns fields up to the first one that ends the command (commandSeparators).
 func commandSegment(fields []string) []string {
 	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
-		switch fields[i] {
-		case ";", "|", "&&", "||", "&":
+		if commandSeparators[fields[i]] {
 			return fields[:i]
 		}
 	}
 	return fields
+}
+
+// printedFields marks, for each field of a run: script, whether an echo or printf prints it:
+// the program and every argument up to the end of its command. A command named there does not
+// run.
+func printedFields(fields []string) []bool {
+	printed := make([]bool, len(fields))
+	printing := false
+	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
+		switch {
+		case commandSeparators[fields[i]]:
+			printing = false
+		case !printing:
+			printing = printPrograms[commandName(fields[i])]
+		}
+		printed[i] = printing
+	}
+	return printed
+}
+
+// invocations returns the arguments of every command of a run: script that runs program, named
+// by its base name (commandName), each cut at the end of its command (commandSegment). A
+// program an echo or printf prints is not run (printedFields).
+func invocations(fields []string, program string) [][]string {
+	printed := printedFields(fields)
+	var calls [][]string
+	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
+		if !printed[i] && commandName(fields[i]) == program {
+			calls = append(calls, commandSegment(fields[i+1:]))
+		}
+	}
+	return calls
 }
 
 // flagValues returns every value fields give one of names, in order; "--name value" and
