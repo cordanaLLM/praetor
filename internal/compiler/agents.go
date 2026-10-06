@@ -30,6 +30,17 @@ func SelectPersonaDirs(ctx context.Context, root string) (selected, excluded []s
 	return agentcontext.PersonaDirs(clients)
 }
 
+// SelectSkillDirs returns the skill directories agent_clients in the manifest at root keeps
+// besides the canonical .agents/skills, and the ones it leaves out (agentcontext.SkillDirs),
+// under the same selection rules as SelectPersonaDirs.
+func SelectSkillDirs(ctx context.Context, root string) (selected, excluded []string, err error) {
+	clients, err := declaredAgentClients(ctx, root)
+	if err != nil {
+		return nil, nil, err
+	}
+	return agentcontext.SkillDirs(clients)
+}
+
 func projectionPath(root, relative string) (string, error) {
 	// Vendor targets are declared as slash paths (".cursor/rules/hiss-invariants.mdc"),
 	// so cleanliness is a slash-path property. filepath.Clean returns backslashes on

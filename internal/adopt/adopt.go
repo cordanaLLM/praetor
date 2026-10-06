@@ -547,8 +547,9 @@ func preflightSteps(ctx context.Context, s *adoptSession, declined map[string]bo
 
 // preflightAgentSurfaces refuses, before the first step writes anything, an agent file the
 // agent-harness, agent-definitions or agent-hooks step would refuse to write: a vendor file,
-// canonical persona or persona copy behind a symlinked directory such as .agents or .github, a
-// native hook file, or the backup root a merge copies it to, that is a symlink or sits behind
+// canonical persona or skill, or persona or skill copy, behind a symlinked directory such as
+// .agents or .github (preflightRegisterSkills for the skills), a native hook file, or the backup
+// root a merge copies it to, that is a symlink or sits behind
 // one, or an existing one that is not a regular text file or, for a hook file, cannot be
 // merged. Those steps write through the root-pinned writer, which refuses the same files at
 // write time; checked only there, the refusal came after the manifest, the vendor files, the
@@ -574,6 +575,9 @@ func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[s
 		if err := preflightAgentHooks(ctx, s.repoPath); err != nil {
 			return fmt.Errorf("agent-hooks preflight: %w", err)
 		}
+	}
+	if err := preflightRegisterSkills(ctx, s, declined); err != nil {
+		return fmt.Errorf("register skill preflight: %w", err)
 	}
 	return preflightForceBackupRoot(ctx, s)
 }

@@ -40,9 +40,51 @@ var registerOrder = []TextRegister{TextRegisterSocial, TextRegisterDocs, TextReg
 // repository's register.conventions or from what compile-context detects there
 // (RegisterPolicy.form, WithDetectedConventions), never from here (#328).
 var registerForms = map[TextRegister]string{
-	TextRegisterSocial:   "`social-text` skill: BLUF, full sentences, scannable, enough and no more; conventional commit subject unchanged",
+	TextRegisterSocial:   "BLUF, full sentences, scannable, enough and no more; conventional commit subject unchanged",
 	TextRegisterDocs:     "complete without bloat: newcomer path first, expert reference after; every claim points at a file, command or test; no restated code",
-	TextRegisterInternal: "`caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict",
+	TextRegisterInternal: "fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict",
+}
+
+// registerSkills names the skill that states a register's form at length, for the registers
+// that have one. The block names a skill only where the repository carries its
+// .agents/skills/<name>/SKILL.md (RegisterPolicy.WithAbsentSkills): a name with no skill behind
+// it points every agent at instructions the repository does not hold (#235).
+var registerSkills = map[TextRegister]string{
+	TextRegisterSocial:   "social-text",
+	TextRegisterInternal: "caveman",
+}
+
+// RegisterSkills returns the skills the rendered block can name, in register order.
+func RegisterSkills() []string {
+	names := make([]string, 0, len(registerSkills))
+	for _, register := range registerOrder {
+		if name := registerSkills[register]; name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// registerSkillInheritance names the skills a register skill inherits from by reference:
+// social-text takes three principles from adhd-format, so the social register is incomplete
+// without it (#235).
+var registerSkillInheritance = []string{"adhd-format"}
+
+// RegisterSkillBundle returns the skills Praetor ships for the text register: the register skills
+// (RegisterSkills), then the skills they inherit from. Adoption installs them, and
+// compile-context copies each one a repository carries into the skill directory of every agent
+// client that does not read .agents/skills.
+func RegisterSkillBundle() []string {
+	return append(RegisterSkills(), registerSkillInheritance...)
+}
+
+// namedForm returns the form of register r, led by the skill that states it at length when r
+// has one and named is set.
+func namedForm(r TextRegister, named bool) string {
+	if skill := registerSkills[r]; skill != "" && named {
+		return "`" + skill + "` skill: " + registerForms[r]
+	}
+	return registerForms[r]
 }
 
 // surfaceAudiences describes who reads each surface, in rendering order.
@@ -59,11 +101,10 @@ var surfaceAudiences = []struct {
 // register: its engine-universal form, without a repository convention. An unknown or empty
 // register yields "", so a caller that appends the result leaves its prompt byte-identical.
 func RegisterDirective(r TextRegister) string {
-	form, ok := registerForms[r]
-	if !ok {
+	if _, ok := registerForms[r]; !ok {
 		return ""
 	}
-	return fmt.Sprintf("Text register %s: %s.", r, form)
+	return fmt.Sprintf("Text register %s: %s.", r, namedForm(r, true))
 }
 
 // RenderRegisterBlock renders the marker-delimited block that compile-context splices
@@ -113,10 +154,10 @@ func renderRegisterTable(p RegisterPolicy) []string {
 }
 
 // form returns what register r demands in this repository: the engine-universal form
-// (registerForms), then the repository's own convention for r when it states one
-// (RegisterPolicy.Conventions).
+// (registerForms), led by its skill unless the repository lacks that skill (WithAbsentSkills),
+// then the repository's own convention for r when it states one (RegisterPolicy.Conventions).
 func (p RegisterPolicy) form(r TextRegister) string {
-	form := registerForms[r]
+	form := namedForm(r, !p.absentSkills[registerSkills[r]])
 	if convention := strings.TrimSpace(p.Conventions[r]); convention != "" {
 		form += "; " + convention
 	}
@@ -141,21 +182,27 @@ func renderRegisterTaskRows(p RegisterPolicy, dispatchGated bool) string {
 		}
 	}
 	parts = append(parts, fmt.Sprintf("every other label and any unlabeled text = %s.", fallback))
-	rule := subagentBriefRule + "."
+	brief := subagentBriefRule
+	if p.absentSkills[registerSkills[TextRegisterInternal]] {
+		brief = subagentBriefPlain
+	}
+	rule := brief + "."
 	if dispatchGated {
-		rule = subagentBriefRule + subagentBriefGate
+		rule = brief + subagentBriefGate
 	}
 	return "Task rows: " + strings.Join(parts, "; ") + " " + rule
 }
 
-// subagentBriefRule states what a subagent launch brief needs. subagentBriefGate adds what the
+// subagentBriefRule states what a subagent launch brief needs, and subagentBriefPlain states it
+// without the `caveman` skill, for a repository that lacks it. subagentBriefGate adds what the
 // native dispatch hook (`praetorctl hook <client> pre-dispatch`, internal/agenthook) does where
 // the repository registers it: it resolves the brief's register from its `task:` label and
 // denies a brief without one, so the fallback above never applies to a launch brief. Without the
 // registration nothing denies such a brief, and the block does not say anything does.
 const (
-	subagentBriefRule = "Subagent launch brief: `caveman` brief shape with `task:` = routing label"
-	subagentBriefGate = "; registered dispatch hook denies brief missing `task:`."
+	subagentBriefRule  = "Subagent launch brief: `caveman` brief shape with `task:` = routing label"
+	subagentBriefPlain = "Subagent launch brief: internal register with `task:` = routing label"
+	subagentBriefGate  = "; registered dispatch hook denies brief missing `task:`."
 )
 
 func renderEvidenceRule(e EvidenceBounds) string {
