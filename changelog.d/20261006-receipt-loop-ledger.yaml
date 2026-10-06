@@ -1,0 +1,4 @@
+type: fixed
+title: "A gate run no longer stales the state ledger or blocks operational sync, and a missing or stale PR receipt names its recovery"
+issue: "#136"
+breaking: false
