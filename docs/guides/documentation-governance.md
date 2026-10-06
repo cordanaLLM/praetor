@@ -68,8 +68,9 @@ files, `node tools/markdownlint/verify.mjs --lint <install> <file>...` from the
 repository root (`runMarkdownlint` and `lintChild` in
 `tools/markdownlint/verify.mjs`). Each batch gets a fresh heap, a time budget
 (120 s unless `lint_timeout_seconds` says otherwise,
-[Lint time budget](#lint-time-budget)) and a bounded output capture. Before it
-starts the first child, the runner checks that
+[Lint time budget](#lint-time-budget)) cut to the time left before the gate
+deadline ([Gate deadline](#gate-deadline)), and a bounded output capture.
+Before it starts the first child, the runner checks that
 the installed `markdownlint` is the version the lock pins and exposes the
 synchronous entry the children import (`markdownlintLibrary`). A mismatch fails
 the gate with status 2, also when no file is selected for styling
@@ -334,7 +335,7 @@ The gate reads the block at run time, so a declaration changes no locked asset.
 `TestDocumentationSettingsMirrorConfig` in `tools/markdownlint/assets_test.go`
 keeps the gate's constants equal to audit's, and `make docs-lint-test` replays
 the settings, raised-bound, style-exclusion, glob-grammar, glob-character,
-lint-entry, lint-output, lint-memory, lint-budget, `--only`, and
+lint-entry, lint-output, lint-memory, lint-budget, gate-deadline, `--only`, and
 hermetic-configuration fixtures.
 
 ### Lint time budget
@@ -372,19 +373,44 @@ to repair the paragraph: pair the backtick runs and close the bracket. Raising
 the budget only buys time.
 
 `node tools/markdownlint/verify.mjs --only <file>...` lints the named files
-alone, in one child under the same budget, and prints how long it took. Each
-name is resolved from the current directory and must be a file the gate styles;
-any other name, an excluded or missing file included, is refused before
-linting (`namedStyleFiles`).
+alone, in one child under the same budget and gate deadline, and prints how
+long it took. Each name is resolved from the current directory and must be a
+file the gate styles; any other name, an excluded or missing file included, is
+refused before linting (`namedStyleFiles`).
 
-The ceiling keeps the budget inside the hosted job. `.github/workflows/praetor-docs.yml`
-stops the job after 10 minutes, and 480 s leaves 2 of them for checkout, Node
-setup, the locked install and the other steps. A child therefore runs out of
-its budget while the job still runs, and the gate names the batch instead of the
-runner cancelling the job without one. `TestLintBudgetCeilingFitsHostedJob` in
-`tools/markdownlint/assets_test.go` keeps the ceiling and the job limit in step.
 `lintBudgetSelfTest` replays a planted child that sleeps past a 1 s budget and
 passes under a 10 s one, and `onlyModeSelfTest` covers `--only`.
+
+### Gate deadline
+
+Lint children run one after another, one per batch of at most 24,000 bytes of
+paths, so their budgets alone do not bound the gate. Before them, the locked
+install may take up to 300 s and the private-link rule up to 120 s. The gate
+therefore ends every run, `--only` included, within 480 s of its start
+(`GATE_DEADLINE_SECONDS` in `tools/markdownlint/verify.mjs`). Every command of
+the run, the install, the private-link rule and each lint child, gets the
+smaller of its own limit and the time left before that deadline
+(`commandLimit`). `.github/workflows/praetor-docs.yml` stops the job after 10
+minutes, so 2 minutes stay for checkout, Node setup and the figure checks, and
+a slow run fails with a report while the job still runs instead of the runner
+cancelling it without one.
+
+A lint child stopped by the deadline gets the batch report above, with the
+deadline in place of the setting, since a larger budget cannot move it:
+
+```text
+markdown-governance: lint batch 2 of 3 (377 files, 3145728 bytes) ran past the gate's 480 s deadline before its 300 s budget ran out; the deadline keeps the gate inside the hosted job's 10-minute limit, and no setting moves it
+```
+
+The suspects and the `--only` line follow as for a budget. Any other command
+stopped by the deadline names itself and the deadline. The 480 s ceiling of
+`lint_timeout_seconds` equals the deadline, since no larger budget could run
+out first. The deadline does not cover checkout and Node setup: when those and
+the figure checks take more than 2 minutes, the runner can still cancel the job
+first. `TestGateDeadlineFitsHostedJob` in `tools/markdownlint/assets_test.go`
+keeps the deadline, the job limit and the ceiling in step, and
+`gateDeadlineSelfTest` replays two batches, each within its budget, whose second
+runs into a deadline that the first left too little of.
 
 ## Private scratch links
 

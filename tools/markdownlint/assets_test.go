@@ -328,8 +328,9 @@ func TestDocumentationSettingsMirrorConfig(t *testing.T) {
 	}
 }
 
-// hostedJobMargin is the part of the hosted job's time limit a lint child may never take: checkout,
-// Node setup, the locked install, the private-link rule and the figure checks run in it.
+// hostedJobMargin is the part of the hosted job's time limit outside the gate deadline: checkout
+// and Node setup before the gate, the figure checks after it. The locked install, the private-link
+// rule and every lint child run inside the deadline.
 const hostedJobMargin = 2 * time.Minute
 
 // jobTimeout reads the one timeout-minutes line of a workflow text.
@@ -345,38 +346,63 @@ func jobTimeout(workflow string) (time.Duration, error) {
 	return time.Duration(minutes) * time.Minute, nil
 }
 
-// A lint child past its budget must fail inside the hosted job, so the gate names the batch and
-// its suspects before the runner cancels the job without a word (#784). Positive: the ceiling of
-// documentation.lint_timeout_seconds plus the margin fits the shipped workflow's job limit, and
-// the self-test replays the planted slow child. Negative: a job limit the ceiling would outlast,
-// a workflow without a limit and one with two are refused. Boundary: a limit exactly at the
-// ceiling plus the margin fits.
-func TestLintBudgetCeilingFitsHostedJob(t *testing.T) {
+// deadlineFits refuses a gate deadline that, with the margin, outlasts the hosted job's limit, and
+// a lint budget ceiling past the deadline, which no lint child could ever reach.
+func deadlineFits(limit, deadline, ceiling time.Duration) error {
+	if deadline+hostedJobMargin > limit {
+		return fmt.Errorf("gate deadline %s plus %s exceeds the hosted job limit %s", deadline, hostedJobMargin, limit)
+	}
+	if ceiling > deadline {
+		return fmt.Errorf("lint budget ceiling %s outlasts the gate deadline %s", ceiling, deadline)
+	}
+	return nil
+}
+
+// Lint children run one after another, so their budgets alone do not keep the gate inside the
+// hosted job: the gate deadline does, and a run past it fails with a report before the runner
+// cancels the job without one (#784). Positive: the shipped deadline plus the margin fits the
+// shipped job limit, verify.mjs names that limit, its main run starts the deadline, every command
+// takes the time left, and the self-test replays a batch stopped by the deadline. Negative: a
+// 9-minute job limit, a budget ceiling one second past the deadline, and a workflow without a
+// limit or with two are refused. Boundary: a limit exactly at the deadline plus the margin, and a
+// ceiling equal to the deadline, fit.
+func TestGateDeadlineFitsHostedJob(t *testing.T) {
+	constants := scriptConstants(t, "verify.mjs")
+	deadlineSeconds, ok := constants["GATE_DEADLINE_SECONDS"]
+	if !ok {
+		t.Fatal("verify.mjs declares no GATE_DEADLINE_SECONDS")
+	}
+	deadline := time.Duration(deadlineSeconds) * time.Second
 	ceiling := time.Duration(config.DocumentationLintTimeoutSecondsCeiling) * time.Second
 	limit, err := jobTimeout(Workflow)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ceiling+hostedJobMargin > limit {
-		t.Fatalf("lint budget ceiling %s plus %s exceeds the hosted job limit %s", ceiling, hostedJobMargin, limit)
+	if named := time.Duration(constants["HOSTED_JOB_MINUTES"]) * time.Minute; named != limit {
+		t.Fatalf("verify.mjs names a %s job limit; Workflow declares %s", named, limit)
+	}
+	if err := deadlineFits(limit, deadline, ceiling); err != nil {
+		t.Fatal(err)
 	}
 	data, err := Read("verify.mjs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"lintBudgetSelfTest(temporary);", "onlyModeSelfTest(temporary);",
-		"timeoutReport: () => lintBudgetReport("} {
+	for _, required := range []string{"withGateDeadline(GATE_DEADLINE_SECONDS * 1_000, () => {",
+		"const limit = commandLimit(options.timeout ?? DEFAULT_COMMAND_TIMEOUT_MS);", "timeout: limit.ms,",
+		"timeoutReport: (deadline) => lintBudgetReport(", "lintBudgetSelfTest(temporary);",
+		"gateDeadlineSelfTest(temporary);", "onlyModeSelfTest(temporary);"} {
 		if !strings.Contains(string(data), required) {
 			t.Fatalf("verify.mjs lacks %q", required)
 		}
 	}
-	boundary, err := jobTimeout("jobs:\n  documentation:\n    timeout-minutes: 10\n")
-	if err != nil || ceiling+hostedJobMargin != boundary {
-		t.Fatalf("boundary job limit = %s, %v; want %s", boundary, err, ceiling+hostedJobMargin)
+	if err := deadlineFits(deadline+hostedJobMargin, deadline, deadline); err != nil {
+		t.Fatalf("boundary: %v", err)
 	}
-	short, err := jobTimeout("    timeout-minutes: 9\n")
-	if err != nil || ceiling+hostedJobMargin <= short {
-		t.Fatalf("a 9-minute job limit fits the ceiling: %s, %v", short, err)
+	for _, refused := range [][3]time.Duration{{9 * time.Minute, deadline, ceiling}, {limit, deadline, deadline + time.Second}} {
+		if err := deadlineFits(refused[0], refused[1], refused[2]); err == nil {
+			t.Fatalf("deadlineFits(%s, %s, %s) accepted", refused[0], refused[1], refused[2])
+		}
 	}
 	for _, text := range []string{"jobs: {}\n", "    timeout-minutes: 10\n    timeout-minutes: 20\n"} {
 		if _, err := jobTimeout(text); err == nil {

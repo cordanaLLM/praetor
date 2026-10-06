@@ -27,11 +27,11 @@ const (
 	// lint_timeout_seconds is unset.
 	DefaultDocumentationLintTimeoutSeconds = 120
 	// DocumentationLintTimeoutSecondsCeiling is the largest lint_timeout_seconds a repository may
-	// declare. The hosted gate job (.github/workflows/praetor-docs.yml) stops after 10 minutes; a
-	// child budget of at most 8 minutes runs out while the job still runs, so the gate, not the
-	// runner, ends the run and names the batch and its suspects, and 2 minutes stay for checkout,
-	// Node setup, the locked install and the other steps. TestLintBudgetCeilingFitsHostedJob in
-	// tools/markdownlint keeps the two in step.
+	// declare: the gate deadline (GATE_DEADLINE_SECONDS in tools/markdownlint/verify.mjs). Every
+	// lint child gets the smaller of its budget and the time left before that deadline, which ends
+	// a whole gate run within 8 of the 10 minutes the hosted job (.github/workflows/praetor-docs.yml)
+	// allows, so a larger budget could never run out first. TestGateDeadlineFitsHostedJob in
+	// tools/markdownlint keeps the ceiling, the deadline and the job limit in step.
 	DocumentationLintTimeoutSecondsCeiling = 480
 	// MaxDocumentationStyleExclusions bounds the style_exclude list.
 	MaxDocumentationStyleExclusions = 64

@@ -9,6 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Inventory bounds. documentation.max_files and documentation.max_file_bytes in .standards.yaml
@@ -27,12 +28,24 @@ const MAX_FILE_BYTES_CEILING = 4_194_304;
 const MAX_TOTAL_BYTES = 67_108_864;
 // The time budget of one style-lint child. documentation.lint_timeout_seconds in .standards.yaml
 // sets it from 1 s up to the ceiling; internal/config/documentation.go validates the same range
-// for audit. The ceiling stays below the 10-minute limit of the hosted gate job (Workflow in
-// tools/markdownlint/assets.go, TestLintBudgetCeilingFitsHostedJob): a child runs out of its
-// budget while the job still runs, so the gate ends the run and names the batch and its suspects
-// (lintBudgetReport). Nothing is re-run.
+// for audit. A child past its budget fails the gate with a report naming the batch and its
+// suspects (lintBudgetReport); nothing is re-run. The ceiling is the gate deadline below: no
+// child runs past that deadline, so a larger budget could never run out first.
 const DEFAULT_LINT_TIMEOUT_SECONDS = 120;
 const LINT_TIMEOUT_SECONDS_CEILING = 480;
+// The deadline of one whole gate or --only run, counted from its start. The hosted job (Workflow
+// in tools/markdownlint/assets.go) stops after HOSTED_JOB_MINUTES; the gate ends within 8 of them
+// and leaves 2 for checkout, Node setup and the figure checks. Every command of the run, the
+// locked install, the private-link rule and each lint child included, gets the smaller of its own
+// limit and the time left before the deadline (commandLimit). Lint children run one after another,
+// so their budgets alone do not bound the run: without the deadline, a slow second batch after a
+// slow first one would outlast the job, and the runner would cancel it without a report (#784).
+// TestGateDeadlineFitsHostedJob keeps the deadline, the job limit and the budget ceiling in step.
+// The self-test runs without a deadline.
+const GATE_DEADLINE_SECONDS = 480;
+const HOSTED_JOB_MINUTES = 10;
+const DEADLINE_NOTE = `; the deadline keeps the gate inside the hosted job's ${HOSTED_JOB_MINUTES}-minute ` +
+  "limit, and no setting moves it";
 const MAX_BUDGET_SUSPECTS = 5;
 const MANIFEST_FILE = ".standards.yaml";
 const MAX_MANIFEST_BYTES = 1_048_576;
@@ -131,6 +144,35 @@ function fail(message, status = 2) {
   throw new GateFailure(message, status);
 }
 
+// gateDeadline is the performance.now() reading by which the running gate must end: Infinity
+// outside withGateDeadline, so the self-test and its fixtures run without one.
+let gateDeadline = Infinity;
+
+// withGateDeadline runs one gate or --only run under a deadline the given milliseconds from now,
+// and lifts the deadline when the run ends or fails.
+function withGateDeadline(milliseconds, run) {
+  gateDeadline = performance.now() + milliseconds;
+  try {
+    return run();
+  } finally {
+    gateDeadline = Infinity;
+  }
+}
+
+// commandLimit is the time one command may take, in ms: its own limit, or the time left before
+// the gate deadline when that is shorter (deadline: true). A command started at or past the
+// deadline gets 1 ms and fails at once, naming the deadline.
+function commandLimit(own) {
+  const left = Math.floor(gateDeadline - performance.now());
+  return left < own ? { ms: Math.max(left, 1), deadline: true } : { ms: own, deadline: false };
+}
+
+// timeoutMessage names the limit a stopped command ran into.
+function timeoutMessage(commandName, limit) {
+  return limit.deadline ? `${commandName} ran past the gate's ${GATE_DEADLINE_SECONDS} s deadline${DEADLINE_NOTE}` :
+    `${commandName} exceeded ${limit.ms} ms`;
+}
+
 function boundedOutput(value, maxBytes, maxLines) {
   let cursor = 0;
   let bytes = 0;
@@ -178,8 +220,11 @@ function emitBounded(value, stream, budget, label) {
   return selected.truncated;
 }
 
+// command runs one child process under the smaller of its own timeout and the time left before the
+// gate deadline. A child stopped by either fails the gate with status 2: timeoutReport, when given,
+// receives whether the deadline was the limit and writes the message.
 function command(commandName, args, options = {}) {
-  const timeout = options.timeout ?? DEFAULT_COMMAND_TIMEOUT_MS;
+  const limit = commandLimit(options.timeout ?? DEFAULT_COMMAND_TIMEOUT_MS);
   const result = spawnSync(commandName, args, {
     cwd: options.cwd,
     encoding: options.binary ? null : "utf8",
@@ -187,12 +232,12 @@ function command(commandName, args, options = {}) {
     input: options.input,
     maxBuffer: options.maxBuffer ?? MAX_CAPTURE_BYTES,
     stdio: "pipe",
-    timeout,
+    timeout: limit.ms,
     windowsHide: true,
   });
   if (result.error) {
     if (result.error.code === "ETIMEDOUT") {
-      fail(options.timeoutReport?.() ?? `${commandName} exceeded ${timeout} ms`);
+      fail(options.timeoutReport?.(limit.deadline) ?? timeoutMessage(commandName, limit));
     }
     fail(`${commandName} failed to start or exceeded ${options.maxBuffer ?? MAX_CAPTURE_BYTES} captured bytes: ${result.error.message}`);
   }
@@ -1763,6 +1808,14 @@ function raisedBoundSelfTest(temporary) {
 // The planted lint child sleeps this long, past a 1 s budget and well inside a 10 s one, and
 // ignores the paths it is given.
 const PLANTED_CHILD_MS = 2_500;
+const PLANTED_CHILD = Object.freeze([process.execPath, "-e",
+  `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${PLANTED_CHILD_MS});`]);
+// A gate deadline this far ahead outlasts one planted child, startup included, and runs out
+// during the second: it is below twice the sleep.
+const PLANTED_DEADLINE_MS = 4_900;
+// Each of this many paths of this many bytes, plus its separator, fills one lint batch exactly.
+const FULL_BATCH_PATHS = 100;
+const FULL_BATCH_PATH_BYTES = 239;
 
 function budgetFailure(expected) {
   return (error) => {
@@ -1783,15 +1836,13 @@ function lintBudgetSelfTest(temporary) {
   const files = Array.from({ length: 7 }, (_, index) => `docs/page-${index}.md`);
   writeFixtureFiles(fixture,
     Object.fromEntries(files.map((file, index) => [file, `# Page\n\n${"a".repeat(index * 100)}\n`])));
-  const planted = [process.execPath, "-e",
-    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${PLANTED_CHILD_MS});`];
   const budget = (seconds) => settingsFrom(yaml, `documentation:\n  lint_timeout_seconds: ${seconds}\n`);
   const suspects = [6, 5, 4, 3, 2].map((index) => `  docs/page-${index}.md (${9 + index * 100} bytes)`);
-  assert.throws(() => runMarkdownlint(fixture, temporary, files, false, budget(1), planted), budgetFailure(
+  assert.throws(() => runMarkdownlint(fixture, temporary, files, false, budget(1), PLANTED_CHILD), budgetFailure(
     "lint batch 1 of 1 (7 files, 2163 bytes) exceeded its 1 s budget; documentation.lint_timeout_seconds in " +
     ".standards.yaml raises it up to 480\nsuspects, the batch's largest files (size is no proof):\n" +
     `${suspects.join("\n")}\nlint a suspect alone to time it: node tools/markdownlint/verify.mjs --only docs/page-6.md`));
-  assert.equal(runMarkdownlint(fixture, temporary, files, false, budget(10), planted), 0);
+  assert.equal(runMarkdownlint(fixture, temporary, files, false, budget(10), PLANTED_CHILD), 0);
   assert.equal(budget(LINT_TIMEOUT_SECONDS_CEILING).lintTimeoutSeconds, LINT_TIMEOUT_SECONDS_CEILING);
   assert.equal(budget(1).lintTimeoutSeconds, 1);
   assert.equal(settingsFrom(yaml, "documentation:\n  max_files: 8192\n").lintTimeoutSeconds,
@@ -1805,6 +1856,38 @@ function lintBudgetSelfTest(temporary) {
     "suspects, the batch's largest files (size is no proof):\n  docs/page-1.md (109 bytes)");
   process.stdout.write("lint budget fixtures: a child past its budget names the batch and its suspects, " +
     "the setting raises the budget, a budget outside 1 to 480 s is refused\n");
+}
+
+// Negative: a lint child that keeps within its 10 s budget still fails the gate with status 2 once
+// the gate deadline runs out: two batches of one planted child each, under a deadline that outlasts
+// the first child but not the second, stop in batch 2 of 2, and the report names the deadline and
+// no setting. Positive: the same two batches pass under a deadline that outlasts both. Boundary: a
+// command started past the deadline fails at once, naming it, and every run lifts its deadline.
+// The fixture deadlines compress the gate's 480 s one, which the reports still name.
+function gateDeadlineSelfTest(temporary) {
+  const fixture = path.join(temporary, "gate-deadline-fixture");
+  writeFixtureFiles(fixture, { "docs/last.md": "# Last\n" });
+  const full = Array.from({ length: FULL_BATCH_PATHS },
+    (_, index) => `docs/${String(index).padStart(2, "0")}-${"n".repeat(FULL_BATCH_PATH_BYTES - 11)}.md`);
+  assert.equal(Buffer.byteLength(full[0]), FULL_BATCH_PATH_BYTES);
+  const files = [...full, "docs/last.md"];
+  assert.deepEqual(batches(files), [full, ["docs/last.md"]]);
+  const settings = { ...DEFAULT_SETTINGS, lintTimeoutSeconds: 10 };
+  const lint = () => runMarkdownlint(fixture, temporary, files, false, settings, PLANTED_CHILD);
+  assert.throws(() => withGateDeadline(PLANTED_DEADLINE_MS, lint), budgetFailure(
+    "lint batch 2 of 2 (1 file, 7 bytes) ran past the gate's 480 s deadline before its 10 s budget ran out; " +
+    "the deadline keeps the gate inside the hosted job's 10-minute limit, and no setting moves it\n" +
+    "suspects, the batch's largest files (size is no proof):\n  docs/last.md (7 bytes)"));
+  assert.equal(gateDeadline, Infinity);
+  assert.equal(withGateDeadline(4 * PLANTED_DEADLINE_MS, lint), 0);
+  const started = performance.now();
+  assert.throws(() => withGateDeadline(0, () => command(PLANTED_CHILD[0], PLANTED_CHILD.slice(1))),
+    budgetFailure(`${process.execPath} ran past the gate's 480 s deadline; the deadline keeps the gate ` +
+      "inside the hosted job's 10-minute limit, and no setting moves it"));
+  assert.ok(performance.now() - started < PLANTED_CHILD_MS, "a command past the deadline was not stopped at once");
+  assert.equal(gateDeadline, Infinity);
+  process.stdout.write("gate deadline fixtures: a batch within its budget stops at the gate deadline and names it, " +
+    "a run inside the deadline passes, a command past it fails at once\n");
 }
 
 // Positive: --only lints a named style-selected file, named from the repository root or from a
@@ -2054,12 +2137,14 @@ function counted(count, noun) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-// lintBudgetReport describes a lint batch whose child ran past its budget: its position, file
-// count and bytes, its largest files as suspects, the setting that raises the budget while it is
-// below its ceiling, and the command that lints a suspect alone. Size is no proof: in one adopter
+// lintBudgetReport describes a lint batch whose child was stopped: its position, file count and
+// bytes, the limit it ran into, its largest files as suspects, and the command that lints a
+// suspect alone. For its own budget the report names the setting that raises it while it is below
+// its ceiling; for the gate deadline (deadline true) it says that no setting moves it, since the
+// earlier steps and batches took the rest of the run's time. Size is no proof: in one adopter
 // repository the markdownlint library's GFM autolink-literal extension took minutes over one long
 // paragraph holding an unbalanced `[` (#784), and a smaller file can hold such a paragraph too.
-function lintBudgetReport(root, batch, position, seconds) {
+function lintBudgetReport(root, batch, position, seconds, deadline = false) {
   const sized = [];
   let total = 0;
   for (let index = 0; index < batch.length && index < MAX_FILES_CEILING; index += 1) {
@@ -2071,16 +2156,19 @@ function lintBudgetReport(root, batch, position, seconds) {
   const suspects = sized.slice(0, MAX_BUDGET_SUSPECTS);
   const alone = batch.length > 1 ?
     `\nlint a suspect alone to time it: node tools/markdownlint/verify.mjs ${ONLY_MODE} ${suspects[0].file}` : "";
-  return `lint batch ${position} (${counted(batch.length, "file")}, ${total} bytes) exceeded its ` +
-    `${seconds} s budget${boundHint("lint_timeout_seconds", seconds, LINT_TIMEOUT_SECONDS_CEILING)}\n` +
+  const limit = deadline ?
+    `ran past the gate's ${GATE_DEADLINE_SECONDS} s deadline before its ${seconds} s budget ran out${DEADLINE_NOTE}` :
+    `exceeded its ${seconds} s budget${boundHint("lint_timeout_seconds", seconds, LINT_TIMEOUT_SECONDS_CEILING)}`;
+  return `lint batch ${position} (${counted(batch.length, "file")}, ${total} bytes) ${limit}\n` +
     "suspects, the batch's largest files (size is no proof):\n" +
     suspects.map(({ file, size }) => `  ${file} (${size} bytes)`).join("\n") + alone;
 }
 
 // runMarkdownlint lints the style-selected files in child processes of this script (lintChild),
 // one batch of paths each, as the gate ran markdownlint-cli2 before: every batch gets a fresh
-// heap, the declared lint budget and a bounded capture, and its diagnostics share one output
-// budget. A child past the budget fails the gate with status 2 and lintBudgetReport. It checks the
+// heap, the declared lint budget cut to the time left before the gate deadline, and a bounded
+// capture, and its diagnostics share one output budget. A child stopped by either limit fails the
+// gate with status 2 and lintBudgetReport. It checks the
 // installed library against the lock before the first child, even with no file to lint, so a
 // mismatch fails the gate with status 2 instead of reading as findings. child replaces the
 // command and leading arguments of every lint child; only lintBudgetSelfTest passes it.
@@ -2097,8 +2185,8 @@ function runMarkdownlint(root, temporary, files, emitDiagnostics = true, setting
       cwd: root,
       allowFailure: true,
       timeout: settings.lintTimeoutSeconds * 1_000,
-      timeoutReport: () => lintBudgetReport(root, all[index], `${index + 1} of ${all.length}`,
-        settings.lintTimeoutSeconds),
+      timeoutReport: (deadline) => lintBudgetReport(root, all[index], `${index + 1} of ${all.length}`,
+        settings.lintTimeoutSeconds, deadline),
     });
     failed ||= result.status !== 0;
     if (emitDiagnostics && result.status !== 0) {
@@ -2156,7 +2244,8 @@ function runOnly(root, temporary, settings, named) {
   const started = Date.now();
   const status = runMarkdownlint(root, temporary, files, true, settings);
   process.stdout.write(`markdown-governance: styled ${counted(files.length, "named Markdown file")} in ` +
-    `${Date.now() - started} ms (budget ${settings.lintTimeoutSeconds} s per lint child)\n`);
+    `${Date.now() - started} ms (budget ${settings.lintTimeoutSeconds} s per lint child, ` +
+    `${GATE_DEADLINE_SECONDS} s for the run)\n`);
   return status;
 }
 
@@ -2175,6 +2264,7 @@ function runSelfTest(toolDir, temporary) {
   styleExclusionSelfTest(temporary);
   raisedBoundSelfTest(temporary);
   lintBudgetSelfTest(temporary);
+  gateDeadlineSelfTest(temporary);
   onlyModeSelfTest(temporary);
   return runScratchRule(process.cwd(), temporary, [], true);
 }
@@ -2188,11 +2278,13 @@ function main() {
       process.exitCode = runSelfTest(toolDir, temporary);
       return;
     }
-    install(toolDir, temporary);
-    const root = repositoryRoot();
-    const settings = repositorySettings(root, loadDependency(temporary, "js-yaml"));
-    process.exitCode = mode.name === ONLY_MODE ? runOnly(root, temporary, settings, mode.files) :
-      runGate(root, temporary, settings);
+    process.exitCode = withGateDeadline(GATE_DEADLINE_SECONDS * 1_000, () => {
+      install(toolDir, temporary);
+      const root = repositoryRoot();
+      const settings = repositorySettings(root, loadDependency(temporary, "js-yaml"));
+      return mode.name === ONLY_MODE ? runOnly(root, temporary, settings, mode.files) :
+        runGate(root, temporary, settings);
+    });
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
