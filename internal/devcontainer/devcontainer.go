@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -149,7 +150,7 @@ func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string
 	features := make(map[string]interface{})
 	if selected != nil {
 		for i := 0; i < len(selected) && i < MaxLoopLimit; i++ {
-			features[selected[i].Ref] = selected[i].Options
+			features[selected[i].Ref] = selectedFeatureOptions(selected[i])
 		}
 		return features
 	}
@@ -165,14 +166,37 @@ func synthesizeFeatures(selected []config.DevContainerFeature, profiles []string
 	for i := 0; i < len(facets) && i < MaxLoopLimit; i++ {
 		f := strings.ToLower(strings.TrimSpace(facets[i]))
 		if f == "security:high" {
-			features[CommonUtilsFeature] = map[string]interface{}{
-				"installZsh":      false,
-				"upgradePackages": true,
-			}
+			features[CommonUtilsFeature] = commonUtilsDefaults()
 		}
 	}
 
 	return features
+}
+
+// commonUtilsDefaults returns the options Praetor gives the common-utils feature wherever it
+// appears: no zsh, and the OS packages of the base image upgraded, so the container does not
+// keep fixable vulnerabilities its digest-pinned base shipped with (#334).
+func commonUtilsDefaults() map[string]interface{} {
+	return map[string]interface{}{
+		"installZsh":      false,
+		"upgradePackages": true,
+	}
+}
+
+// selectedFeatureOptions returns the options synthesis writes for one feature a pinned catalog
+// selected. For common-utils the selected options are merged over commonUtilsDefaults key by
+// key: a key the catalog sets wins, and every default it leaves unset is kept. A catalog that
+// selects the feature with no options, as the shipped archetypes do, therefore keeps
+// upgradePackages true, and only an explicit upgradePackages: false turns the upgrade off
+// (#334). Any other feature receives its selected options as given. The catalog's map is never
+// modified.
+func selectedFeatureOptions(feature config.DevContainerFeature) map[string]interface{} {
+	if !isFeature(feature, "common-utils") {
+		return feature.Options
+	}
+	merged := commonUtilsDefaults()
+	maps.Copy(merged, feature.Options)
+	return merged
 }
 
 // hasNativeGPUProfile reports whether the declared profiles select the native
@@ -231,7 +255,11 @@ func synthesizeSettings(profiles []string, facets []string, selected []config.De
 		settings["clangd.path"] = "clangd"
 		settings["clangd.arguments"] = util.ClangdArguments()
 	} else if containerHasGoToolchain(profiles, selected) {
-		settings["go.toolsManagement.autoUpdate"] = true
+		// The Go extension updates its tools without asking only when this is true; false is the
+		// extension's own default (golang/vscode-go docs/settings.md). A container whose Go
+		// feature and golangci-lint are pinned keeps them pinned, so tools never move after
+		// creation behind the recorded configuration (#332).
+		settings["go.toolsManagement.autoUpdate"] = false
 		settings["go.useLanguageServer"] = true
 		settings["go.lintTool"] = "golangci-lint"
 		settings["go.lintOnSave"] = "package"
@@ -249,11 +277,17 @@ func synthesizeSettings(profiles []string, facets []string, selected []config.De
 
 func hasGoFeature(selected []config.DevContainerFeature) bool {
 	for i := 0; i < len(selected) && i < MaxLoopLimit; i++ {
-		if strings.HasSuffix(selected[i].Identity(), "/go") {
+		if isFeature(selected[i], "go") {
 			return true
 		}
 	}
 	return false
+}
+
+// isFeature reports whether feature is the Dev Container feature called name, under any
+// registry, mirror, tag or digest: the last segment of its identity is name.
+func isFeature(feature config.DevContainerFeature, name string) bool {
+	return strings.HasSuffix(feature.Identity(), "/"+name)
 }
 
 // containerHasGoToolchain reports whether the container this synthesis produces
