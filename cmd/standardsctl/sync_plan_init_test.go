@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -125,8 +126,12 @@ func TestPlan_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v\n%s", err, out)
 	}
-	mustContain(t, out, "Repository: acme/widgets", "Local state matches declared policy",
+	mustContain(t, out, "Repository: acme/widgets", "Status: Local files match the declared policy.\n"+adopt.PlanLiveNotCompared,
 		"Approving Reviewers:       0", "Configured Reviewer Minimum: 1", "Review Mode:               single_maintainer")
+	// A plan that read local files only never says no change is required (#159).
+	if strings.Contains(out, "No changes required") {
+		t.Fatalf("plan without --remote claims no change is required:\n%s", out)
+	}
 
 	// Negative: companions resolve against the manifest directory, not the cwd.
 	if err := os.Remove(filepath.Join(f.dir, ".standards.lock")); err != nil {
@@ -262,6 +267,7 @@ func TestSync_Positive_LocalReconciliation(t *testing.T) {
 type forgeStub struct {
 	mu              sync.Mutex
 	writes          []string
+	reads           []string
 	requests        int
 	writeStatus     int
 	rulesets        map[int]map[string]any
@@ -280,6 +286,9 @@ func (s *forgeStub) handler() http.HandlerFunc {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		s.requests++
+		if r.Method == http.MethodGet {
+			s.reads = append(s.reads, r.URL.Path)
+		}
 		if s.rulesets == nil {
 			s.rulesets = map[int]map[string]any{}
 		}
@@ -406,7 +415,7 @@ func (s *forgeStub) serveRuleset(w http.ResponseWriter, method, rest string, bod
 	case method == http.MethodGet && id == 0:
 		list := make([]map[string]any, 0, len(s.rulesets))
 		for rid, doc := range s.rulesets {
-			list = append(list, map[string]any{"id": rid, "name": doc["name"]})
+			list = append(list, map[string]any{"id": rid, "name": doc["name"], "enforcement": doc["enforcement"]})
 		}
 		stubRespond(w, http.StatusOK, list)
 	case method == http.MethodGet:
@@ -477,6 +486,13 @@ func (s *forgeStub) requestCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.requests
+}
+
+// readPaths returns the path of every GET the stub answered, in order.
+func (s *forgeStub) readPaths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string{}, s.reads...)
 }
 
 // storedLabels returns the labels written to the stub, by name.

@@ -126,10 +126,11 @@ func runPlan(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(adopt.FormatPlanStatus(missing, drift))
+	// Without --remote the status says the live branch protection was not compared, never that
+	// no change is required (#159).
+	fmt.Println(adopt.FormatPlanStatus(missing, drift, flags.remote))
 	printPlanActionsPermissions(ctx, manifest, filepath.Dir(flags.configPath), flags.offline)
 	if !flags.remote {
-		fmt.Println("[INFO] Live branch protection not read: pass --remote to compare what GitHub enforces with the declared policy")
 		return nil
 	}
 	return planRemoteProtection(ctx, filepath.Dir(flags.configPath), manifest, policy.BranchProtection, flags.remoteOpts)
@@ -149,18 +150,12 @@ func planRemoteProtection(ctx context.Context, rootDir string, manifest *config.
 	if err := verifyRemoteRepository(ctx, rootDir, manifest.Repository, remote.host); err != nil {
 		return err
 	}
-	branch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
-	if err != nil {
-		return err
-	}
-	repository := manifest.Repository.Owner + "/" + manifest.Repository.Name
-	contexts, _, err := remoteStatusContexts(ctx, rootDir, repository, nil)
+	target, err := liveProtectionTarget(ctx, rootDir, manifest, policy)
 	if err != nil {
 		return err
 	}
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
 	gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
-	target := protectionTarget{repository: repository, branch: branch, policy: policy, contexts: contexts}
 	drifted, err := reportLiveProtection(ctx, gh, target, "compared with the declared policy", false)
 	if err != nil {
 		return err
@@ -169,7 +164,7 @@ func planRemoteProtection(ctx context.Context, rootDir string, manifest *config.
 		fmt.Println("\nStatus: GitHub enforces every declared branch protection property.")
 		return nil
 	}
-	fmt.Printf("\n[DRIFT] GitHub does not enforce the declared %s on %s.\n", strings.Join(drifted, ", "), branch)
+	fmt.Printf("\n[DRIFT] GitHub does not enforce the declared %s on %s.\n", strings.Join(drifted, ", "), target.branch)
 	fmt.Println("Action: Run 'praetorctl sync --remote' to reconcile branch protection on GitHub.")
 	return nil
 }

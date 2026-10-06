@@ -53,7 +53,7 @@ type auditOptions struct {
 	effective       *config.EffectivePolicy
 	baseline        *baseline.Baseline
 	baselineKnown   bool
-	// offline skips every forge read; the live Actions checks report as not made.
+	// offline skips every forge read; the live forge checks report as not made.
 	offline bool
 
 	// allViolations lists every violation of a ratchet rejection instead of a bounded few (#598).
@@ -174,7 +174,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, manifest, rootDir) },
-		func() error { return auditLiveActions(ctx, manifest, rootDir, opts.offline) },
+		func() error { return auditLiveForge(ctx, manifest, rootDir, &opts.effective.Policy, opts.offline) },
 	}
 
 	for i := 0; i < len(gates) && i < maxAuditGates; i++ {

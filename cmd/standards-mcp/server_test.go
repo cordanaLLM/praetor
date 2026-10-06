@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -523,7 +524,12 @@ func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
 	srv, root := newFixtureServer(t)
 
 	plan := callTool(t, srv, "standards_plan", nil)
-	expectText(t, "plan", plan, "No changes required")
+	// The tool never reads the forge, so a clean plan says the live branch protection was not
+	// compared instead of that no change is required (#159).
+	expectText(t, "plan", plan, "Status: Local files match the declared policy.\n"+adopt.PlanLiveNotCompared)
+	if strings.Contains(plan.Content[0].Text, "No changes required") {
+		t.Errorf("a plan that never reads the forge claims no change is required:\n%s", plan.Content[0].Text)
+	}
 	expectText(t, "plan default effective reviews", plan, "- approving_reviewers: 1.")
 	expectText(t, "plan default configured reviews", plan, "- configured_reviewer_minimum: 1.")
 	expectText(t, "plan default review mode", plan, "- review_mode: independent.")
@@ -651,7 +657,8 @@ func TestServer_Positive_PlanShowsThePinnedProfilePolicy(t *testing.T) {
 	} {
 		expectText(t, "joined plan", plan, want)
 	}
-	if strings.Contains(plan.Content[0].Text, "[INFO]") {
+	// The live branch protection line is the plan's only [INFO] line besides the no-lock notice.
+	if text := strings.ReplaceAll(plan.Content[0].Text, adopt.PlanLiveNotCompared, ""); strings.Contains(text, "[INFO]") {
 		t.Errorf("a locked repository must not print the no-lock notice:\n%s", plan.Content[0].Text)
 	}
 

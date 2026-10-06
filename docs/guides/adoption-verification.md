@@ -405,6 +405,10 @@ stand-in; every shipped archetype requires signed commits, which the defaults do
   asks for them (`internal/adopt/ruleset_audit_test.go`).
 - An unknown decline item, malformed decline entry, or unreadable `.standards.yaml`
   fails closed, ensuring invalid configuration cannot produce a false pass.
+- The committed file says nothing about what GitHub enforces. When the audit can reach the
+  forge, it also compares the live branch protection of the default branch with the declared
+  policy and fails on drift; a declined `branch-ruleset` step skips that comparison too
+  ([Branch protection](actions-live-checks.md#branch-protection)).
 
 ### Agent definitions and adoption decline
 
@@ -592,7 +596,9 @@ standardsctl sync --remote --forge-host=ghe.example.com \
 
 `standardsctl plan` previews the effective policy, the local files and the live Actions checks
 ([Live Actions checks](actions-live-checks.md)); `--offline` skips every forge read. Without
-`--remote` it does not read branch protection and says so on its last line. `--remote` adds a
+`--remote` it does not read branch protection, so its status ends with `[INFO] Live branch
+protection not compared with the forge` instead of saying that no change is required
+(`adopt.FormatPlanStatus`, `TestPlan_3D`). `--remote` adds a
 read-only comparison of the default branch's live protection with the declared policy, the same
 readback `sync --remote` prints after its write, against the status checks `sync --remote` would
 require there. Plan refuses `--offline` together with `--remote`, since the two contradict:

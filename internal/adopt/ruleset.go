@@ -51,7 +51,7 @@ func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchPr
 // forge.PriorRulesetDigests), such as the one flavor apply wrote under the built-in policy before
 // adoption pinned one, is refreshed without --force. Any other one that differs, a rendering with
 // one value edited included, is the repository's: kept and warned about. --force replaces it only
-// while audit compares the ruleset, that is while the policy requires one (rulesetRequired);
+// while audit compares the ruleset, that is while the policy requires one (RulesetRequired);
 // under any other policy audit never reads it, so --force keeps it too.
 //
 // A dry run writes nothing and previews the file instead (AdoptReport.Previews): the create,
@@ -76,7 +76,7 @@ func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 		rel:         rulesetFile,
 		perm:        filePerm,
 		content:     content,
-		auditLocked: rulesetRequired(policy),
+		auditLocked: RulesetRequired(policy),
 		created:     fmt.Sprintf("Scaffolded declarative branch protection ruleset (%d required status checks derived from workflows)", checks),
 		verified:    "Existing branch protection ruleset verified present",
 		prior:       s.priorRulesetDigests(content),

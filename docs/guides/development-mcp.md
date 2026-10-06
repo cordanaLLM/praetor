@@ -292,6 +292,11 @@ the `Repository: <owner>/<name>` line from the manifest's `repository` block
   `sboms`; a file named `sbom.yml` that runs no generator does not, and neither does a step
   that runs only `praetorctl sbom notices`, which rewrites `THIRD-PARTY-NOTICES.md` and writes
   no SBOM (`internal/forge/sbom_workflow_test.go`).
+- The tool reads local files only, so its status never says that no change is required: a
+  clean plan reads `Status: Local files match the declared policy.`, and every plan ends with
+  `[INFO] Live branch protection not compared with the forge` (`adopt.PlanLiveNotCompared`,
+  `TestServer_Positive_PlanAndAuditOnSyncedRepo`). `praetorctl plan --remote` makes that
+  comparison.
 - A manifest without `.standards.lock` shows the built-in defaults plus the
   overrides and opens with `[INFO] no .standards.lock: built-in defaults and
   repository overrides only`
