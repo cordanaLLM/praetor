@@ -60,7 +60,7 @@ func TestLintNestedContexts_Positive(t *testing.T) {
 		t.Fatalf("lintNestedContexts = %d, %v; want 1, nil", n, err)
 	}
 	line, err := AuditAgentSources(t.Context(), root, filepath.Join(root, "AGENTS.md"))
-	if err != nil || !strings.Contains(line, "[PASS] Caveman lint verified (1 nested AGENTS.md, 0 personas and 0 skills") {
+	if err != nil || !strings.Contains(line, "[PASS] 1 nested AGENTS.md, 0 personas and 0 skills passed the caveman lint") {
 		t.Fatalf("AuditAgentSources = %q, %v", line, err)
 	}
 }

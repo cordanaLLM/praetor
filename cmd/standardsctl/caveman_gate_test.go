@@ -134,7 +134,7 @@ func TestCavemanGateNestedContextPositive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit gate: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[PASS] Caveman lint verified (1 nested AGENTS.md")
+	mustContain(t, out, "[PASS] 1 nested AGENTS.md, 1 personas and 0 skills passed the caveman lint")
 }
 
 // TestCavemanGateNestedContextNegative is the #311 sentinel pair: a tracked nested AGENTS.md

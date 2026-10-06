@@ -26,7 +26,7 @@ func TestMCPAuditNestedContext_Positive(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	trackNested(t, root, "service/AGENTS.md", fixtureSkill)
 	audit := callTool(t, srv, "standards_audit", nil)
-	expectText(t, "clean nested audit", audit, "[PASS] Caveman lint verified (1 nested AGENTS.md, 0 personas and 0 skills")
+	expectText(t, "clean nested audit", audit, "[PASS] 1 nested AGENTS.md, 0 personas and 0 skills passed the caveman lint")
 	expectText(t, "clean nested audit count", audit, "passed: 8/8")
 	expectText(t, "clean nested verify", verifyInPlace(t, srv), "1 nested AGENTS.md, 0 personas and 0 skills passed")
 }
@@ -60,6 +60,6 @@ func TestMCPAuditNestedContext_Boundary(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	writePathFixture(t, filepath.Join(root, "untracked", "AGENTS.md"), nestedProse)
 	audit := callTool(t, srv, "standards_audit", nil)
-	expectText(t, "untracked nested audit", audit, "(0 nested AGENTS.md, 0 personas and 0 skills")
+	expectText(t, "untracked nested audit", audit, "[PASS] 0 nested AGENTS.md, 0 personas and 0 skills passed the caveman lint")
 	expectText(t, "untracked nested audit count", audit, "passed: 8/8")
 }

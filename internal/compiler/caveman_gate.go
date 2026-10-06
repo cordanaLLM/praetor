@@ -267,5 +267,5 @@ func AuditAgentSources(ctx context.Context, rootDir, source string) (string, err
 	if len(failures) > 0 {
 		return "", fmt.Errorf("[FAIL] Agent source caveman lint: %w", errors.Join(failures...))
 	}
-	return "[PASS] Caveman lint verified (" + lint.summary() + ").", nil
+	return "[PASS] " + lint.summary() + ".", nil
 }
