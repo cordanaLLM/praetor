@@ -816,9 +816,10 @@ finding:
 `praetorctl security govuln` exits 0 when every advisory passes, 1 when one fails, and 2 when it
 reached no verdict: govulncheck exited non-zero (a package that does not compile, no network for
 the vulnerability database), printed nothing, or did not open its output with a protocol v1
-configuration of a symbol scan of source; or the document or `.standards.yaml` does not load. Exit 2
-is never a pass, and in `gate run` it fails the stage like a finding. Covered advisories and
-unused statements print on stdout, failures on stderr:
+configuration of a symbol scan of source; the document or `.standards.yaml` does not load; or the
+command line does not parse (a misspelled flag, a missing subcommand), which also prints the
+synopsis. Exit 2 is never a pass, and in `gate run` it fails the stage like a finding. Covered
+advisories and unused statements print on stdout, failures on stderr:
 
 ```text
 govuln: GO-2022-1059: golang.org/x/text/language.ParseAcceptLanguage is called (fixed in v0.3.8); no VEX statement covers a called symbol: update golang.org/x/text or stop calling it

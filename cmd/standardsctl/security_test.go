@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"os"
 	"path/filepath"
 	"slices"
@@ -93,17 +94,35 @@ func TestSecurityGovuln_Positive_CoveredAdvisoryPasses(t *testing.T) {
 	}
 }
 
-// Boundary: a scan that failed exits 2, not 1 and never 0, and a missing or unknown subcommand is
-// a usage error.
-func TestSecurityGovuln_Boundary_NoVerdictExitsTwoAndUsage(t *testing.T) {
+// Boundary: a scan that failed exits 2, not 1 and never 0.
+func TestSecurityGovuln_Boundary_NoVerdictExitsTwo(t *testing.T) {
 	_, stderr, _, err := govulnCLI(t, govulnStream(t, "incomplete"), errors.New("exit status 1"), "--path", t.TempDir())
 	if exitCode(err) != govulnIncompleteExit || !strings.Contains(stderr, "govuln: no verdict: the govulncheck scan did not complete") {
 		t.Fatalf("exit %d, stderr %q", exitCode(err), stderr)
 	}
-	for _, args := range [][]string{nil, {"gosec"}} {
-		if err := runSecurity(args); err == nil || !strings.Contains(err.Error(), securityUsage) {
-			t.Errorf("security %q: err %v, want the usage", args, err)
+}
+
+// Negative (planted defect): a command line the gate cannot run -- a misspelled flag, a missing or
+// unknown subcommand -- exits 2 with the synopsis and runs no scan; exit 1 would read as a failing
+// advisory. --help is no error: main exits 0 on flag.ErrHelp.
+func TestSecurityGovuln_Negative_UsageErrorExitsTwo(t *testing.T) {
+	cases := map[string][]string{
+		"misspelled flag":    {"govuln", "--pth=."},
+		"missing subcommand": nil,
+		"unknown subcommand": {"gosec"},
+	}
+	for name, args := range cases {
+		var scans int
+		run := func(context.Context, string, string, ...string) (string, error) { scans++; return "", nil }
+		var stdout, stderr bytes.Buffer
+		err := dispatchSecurity(args, run, &stdout, &stderr)
+		if exitCode(err) != govulnIncompleteExit || !strings.Contains(stderr.String(), securityUsage) || scans != 0 {
+			t.Errorf("%s: exit %d, %d scans, stderr %q; want exit 2 with the usage and no scan", name, exitCode(err), scans, stderr.String())
 		}
+	}
+	var stderr bytes.Buffer
+	if err := dispatchSecurity([]string{"govuln", "--help"}, nil, &bytes.Buffer{}, &stderr); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("--help: err %v, want flag.ErrHelp", err)
 	}
 }
 

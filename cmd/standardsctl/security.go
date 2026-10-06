@@ -22,8 +22,8 @@ const (
 	securityUsage = "usage: praetorctl security govuln [--path=.] [-- scanner command...]"
 	// govulnFindingExit is the exit status of a scan with an advisory that fails the gate.
 	govulnFindingExit = 1
-	// govulnIncompleteExit is the exit status of a scan or an OpenVEX document that gave no
-	// verdict: never 0, and distinct from a finding.
+	// govulnIncompleteExit is the exit status of a scan, an OpenVEX document or a command line
+	// that gave no verdict: never 0, and distinct from a finding.
 	govulnIncompleteExit = 2
 )
 
@@ -32,22 +32,40 @@ const (
 // this repository's security workflow run; the CLI exists so the hook and the workflow call the
 // same code the gate stage calls instead of a second script.
 func runSecurity(args []string) error {
+	return dispatchSecurity(args, util.RunCommand, os.Stdout, os.Stderr)
+}
+
+// dispatchSecurity runs the security subcommand args name. A missing or unknown one is a usage
+// error, which exits 2 like every command line the gate cannot run (securityUsageError).
+func dispatchSecurity(args []string, run govuln.Runner, stdout, stderr io.Writer) error {
 	if len(args) == 0 || args[0] != "govuln" {
-		return errors.New(securityUsage)
+		return securityUsageError(stderr, errors.New("the security command runs one subcommand, govuln"))
 	}
-	return runSecurityGovuln(args[1:], util.RunCommand, os.Stdout, os.Stderr)
+	return runSecurityGovuln(args[1:], run, stdout, stderr)
+}
+
+// securityUsageError reports a command line the gate cannot run on stderr, with the synopsis, and
+// returns exit status 2: no verdict, never 1, which a caller reads as a failing advisory, so a
+// misspelled flag in a CI step cannot pass for a vulnerability. flag.ErrHelp is returned as it is:
+// the flag set already printed the help, and main exits 0 on it.
+func securityUsageError(stderr io.Writer, err error) error {
+	if errors.Is(err, flag.ErrHelp) {
+		return err
+	}
+	return writeWithStatus(stderr, "govuln: no verdict: "+err.Error()+"\n"+securityUsage+"\n", govulnIncompleteExit)
 }
 
 // runSecurityGovuln scans the module at --path with the scanner command after "--" (govulncheck
 // from PATH when none is given) through run, and reports the verdicts: covered advisories and
 // unused statements on stdout, failing advisories on stderr. It exits 1 on a failing advisory and
-// 2 when the scan or the OpenVEX document gave no verdict.
+// 2 when the scan or the OpenVEX document gave no verdict or the command line does not parse.
 func runSecurityGovuln(args []string, run govuln.Runner, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("security govuln", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	repoPath := fs.String("path", ".", "Root of the Go module to scan; its .standards.yaml names the OpenVEX document (security.go_vex)")
 	scanner, err := parseInterspersed(fs, args)
 	if err != nil {
-		return err
+		return securityUsageError(stderr, err)
 	}
 	// The scan bounds itself by govuln.ScanTimeout; the margin covers reading the document.
 	ctx, cancel := commandContext(govuln.ScanTimeout + time.Minute)
