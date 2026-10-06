@@ -171,8 +171,9 @@ are the ones `praetorctl plan --remote` prints (`compareLiveProtection` in
 - Each declared property is compared (`EvaluateBranchProtection` in
   `internal/forge/branch_protection_eval.go`): pull requests, the approving review count,
   code-owner review, stale review dismissal, signed commits, linear history, deletion and force
-  pushes blocked, and the status checks `sync --remote` requires there, the jobs that report on
-  every pull request in that repository (`forge.RequiredStatusContextsIn`).
+  pushes blocked, and the required status checks: the jobs that report on every pull request in
+  that repository, read from the workflows of `origin/<default branch>` as the checkout last
+  fetched it (`forge.RequiredStatusContextsAt`, `auditProtectionTarget`).
 - When the repository has the ruleset praetor writes, `praetor-main-protection`, its enforcement
   must be `active`. GitHub applies no rule of a ruleset in `evaluate` or `disabled` mode and
   leaves its rules out of the branch's rule list, so the audit reads the mode from the ruleset
@@ -201,10 +202,24 @@ Nothing is compared, and the audit says why, in three cases:
 | The policy requires neither linear history nor signed commits | `[INFO]`; the policy declares no ruleset (`adopt.RulesetRequired`). |
 | `--offline`, no token, no matching `origin`, or a read the forge refused | `[SKIP]` with the reason. Reading the legacy protection object needs read access to the repository's Administration permission, which a workflow's `GITHUB_TOKEN` cannot be granted. |
 
-A branch that adds a job reporting on every pull request declares a status check the live
-protection cannot require until the job is on the default branch. The online audit of that
-branch fails on the missing check until `praetorctl sync --remote` requires it, so plan that
-write with the change; `audit --offline` is not affected.
+The status checks come from the default branch, not from the checkout under audit. GitHub can
+require a job only once it runs on the default branch, and requiring it earlier blocks every open
+pull request that lacks the job. So a job a branch adds is listed and not compared:
+
+```text
+[INFO] Live branch protection of main: status checks compared with the ones origin/main (1a2b3c4d) reports.
+[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: Lint. Once they are on main, 'praetorctl sync --remote' requires them.
+```
+
+A job on the default branch that the live protection does not require fails the audit on every
+branch, a branch cut before the job landed included, until `praetorctl sync --remote` requires it.
+Run that sync from an up-to-date default branch once the job has landed: `sync --remote` and
+`plan --remote` use the workflows of the checkout they run in, because they write and preview what
+that checkout declares. A checkout without `origin/<default branch>`, such as a single-branch
+clone of another branch, compares the live protection with its own workflows and says so
+(`TestAuditLiveBranchProtection_Positive_CheckAddedOffTheDefaultBranchIsNotCompared`,
+`TestAuditLiveBranchProtection_Negative_DefaultBranchCheckNotRequiredDrifts`,
+`TestAuditLiveBranchProtection_Boundary_DefaultBranchNotFetched`).
 
 `praetorctl plan` reads local files only unless `--remote` is passed. Its status then ends with
 `[INFO] Live branch protection not compared with the forge: this plan read local files only.`

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -102,8 +103,8 @@ func auditLiveForge(ctx context.Context, manifest *config.Manifest, rootDir stri
 
 // auditLiveBranchProtection compares the branch protection the default branch enforces on the
 // forge, from its rulesets and its legacy protection object alike, with the declared policy and
-// the status checks sync --remote requires there, through the comparison plan --remote prints
-// (liveProtectionTarget, compareLiveProtection). The committed ruleset gate reads only the file
+// the status checks the default branch's workflows report (auditProtectionTarget), through the
+// comparison plan --remote prints (compareLiveProtection). The committed ruleset gate reads only the file
 // (adopt.AuditBranchProtectionWithPolicy), so a ruleset GitHub never applied passed it (#159).
 // Drift fails the audit and names every property that differs; a setting stricter than declared
 // passes. Like the committed ruleset gate, it compares nothing when adoption.decline declines
@@ -117,7 +118,7 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 		fmt.Println(notCompared)
 		return nil
 	}
-	target, err := liveProtectionTarget(ctx, rootDir, manifest, policy.BranchProtection)
+	target, notes, err := auditProtectionTarget(ctx, rootDir, manifest, policy.BranchProtection)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
 	}
@@ -126,7 +127,45 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 		fmt.Printf("[SKIP] Live branch protection not compared with the forge: %v\n", err)
 		return nil
 	}
+	printLines(notes)
 	return liveProtectionVerdict(target, protection, findings)
+}
+
+// auditProtectionTarget is what the audit compares the live branch protection with: the
+// liveProtectionTarget plan --remote compares with, except for the status checks. Those are the
+// checks the workflows of origin's default branch report as this checkout last fetched it
+// (forge.RequiredStatusContextsAt), not this checkout's: the branch can require a job only once
+// the job is on it, and requiring it earlier blocks every open pull request that lacks it. A
+// check this checkout adds is named as not compared yet, and a check the default branch gained
+// since this checkout branched off is compared. Without origin's default branch in the checkout
+// the checks are this checkout's, and a note says so. The notes are printed with the verdict.
+func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy) (protectionTarget, []string, error) {
+	target, err := liveProtectionTarget(ctx, rootDir, manifest, policy)
+	if err != nil {
+		return protectionTarget{}, nil, err
+	}
+	ref := "origin/" + target.branch
+	commit, err := util.ResolveGitCommit(ctx, rootDir, "refs/remotes/"+ref)
+	if err != nil {
+		return protectionTarget{}, nil, err
+	}
+	if commit == "" {
+		return target, []string{fmt.Sprintf("[INFO] Live branch protection of %s: %s is not in this checkout, so the status checks "+
+			"are compared with the ones this checkout's workflows report.", target.branch, ref)}, nil
+	}
+	committed, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository)
+	if err != nil {
+		return protectionTarget{}, nil, fmt.Errorf("discover the required status checks of %s: %w", ref, err)
+	}
+	notes := []string{fmt.Sprintf("[INFO] Live branch protection of %s: status checks compared with the ones %s (%s) reports.",
+		target.branch, ref, shortHead(commit))}
+	added := slices.DeleteFunc(slices.Clone(target.contexts), func(check string) bool { return slices.Contains(committed, check) })
+	if len(added) > 0 {
+		notes = append(notes, fmt.Sprintf("[INFO] Live branch protection of %s: not compared yet, as %s does not report them: %s. "+
+			"Once they are on %s, 'praetorctl sync --remote' requires them.", target.branch, ref, strings.Join(added, ", "), target.branch))
+	}
+	target.contexts = committed
+	return target, notes, nil
 }
 
 // liveProtectionNotCompared returns the line of a live branch protection check that is not
