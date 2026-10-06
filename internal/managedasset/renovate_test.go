@@ -181,15 +181,32 @@ func npmSections(t *testing.T, manifest []byte) []string {
 }
 
 // pinsSection reports whether rule sets rangeStrategy pin for the npm manager's entries of one
-// section of the package.json at rel. Renovate matches "*" against every file.
+// section of the package.json at rel. The file match is Renovate's matchFileNames, through the
+// one implementation adoption also reads it with (util.RenovatePatternsCover);
+// unevaluablePinPatterns keeps every pin rule's patterns inside the subset it evaluates.
 func pinsSection(rule renovatePackageRule, rel, section string) bool {
-	covers := func(pattern string) bool {
-		return pattern == "*" || util.MatchGlobSegments(strings.Split(pattern, "/"), strings.Split(rel, "/"))
-	}
 	return rule.RangeStrategy == "pin" &&
 		(len(rule.MatchManagers) == 0 || slices.Contains(rule.MatchManagers, "npm")) &&
 		(len(rule.MatchDepTypes) == 0 || slices.Contains(rule.MatchDepTypes, section)) &&
-		(len(rule.MatchFileNames) == 0 || slices.ContainsFunc(rule.MatchFileNames, covers))
+		(len(rule.MatchFileNames) == 0 || util.RenovatePatternsCover(rule.MatchFileNames, rel))
+}
+
+// unevaluablePinPatterns returns the matchFileNames patterns of the pin rules in rules that fall
+// outside the glob subset util.RenovatePatternsCover evaluates (util.RenovateGlobSupported): the
+// pin check cannot tell which files such a pattern reaches.
+func unevaluablePinPatterns(rules []renovatePackageRule) []string {
+	var outside []string
+	for _, rule := range rules {
+		if rule.RangeStrategy != "pin" {
+			continue
+		}
+		for _, pattern := range rule.MatchFileNames {
+			if !util.RenovateGlobSupported(pattern) {
+				outside = append(outside, pattern)
+			}
+		}
+	}
+	return outside
 }
 
 // pinnedSections returns the sections of the package.json at rel that some rule pins.
@@ -205,8 +222,8 @@ func pinnedSections(rules []renovatePackageRule, rel string, sections []string) 
 
 // familyManifestPins checks every package.json of family that a pin rule in rules reaches: it
 // is pinned in every section the npm manager reads except the range sections. It returns how
-// many such manifests it checked and how many range sections they declare.
-func familyManifestPins(t *testing.T, rules []renovatePackageRule, family Family) (covered, ranged int) {
+// many such manifests it checked.
+func familyManifestPins(t *testing.T, rules []renovatePackageRule, family Family) (covered int) {
 	t.Helper()
 	for _, name := range family.Names() {
 		if path.Base(name) != "package.json" {
@@ -228,9 +245,8 @@ func familyManifestPins(t *testing.T, rules []renovatePackageRule, family Family
 			t.Errorf("renovate.json pins %v of %s, want %v: scope the pin with matchDepTypes", pinned, rel, want)
 		}
 		covered++
-		ranged += len(sections) - len(want)
 	}
-	return covered, ranged
+	return covered
 }
 
 // Positive: every family package.json a Renovate pin rule reaches keeps exact pins in every
@@ -240,14 +256,15 @@ func familyManifestPins(t *testing.T, rules []renovatePackageRule, family Family
 // reports as EBADENGINE (#793).
 func TestRenovatePinsFamilyManifestsExceptRanges(t *testing.T) {
 	config := readRenovateConfig(t)
-	covered, ranged := 0, 0
-	for _, family := range Families() {
-		manifests, ranges := familyManifestPins(t, config.PackageRules, family)
-		covered, ranged = covered+manifests, ranged+ranges
+	if outside := unevaluablePinPatterns(config.PackageRules); len(outside) != 0 {
+		t.Fatalf("pin rules match files by %q, outside the glob subset util.RenovatePatternsCover evaluates", outside)
 	}
-	if covered == 0 || ranged == 0 {
-		t.Fatalf("pin rules reach %d family package.json files declaring %d range sections; the check would pass vacuously",
-			covered, ranged)
+	covered := 0
+	for _, family := range Families() {
+		covered += familyManifestPins(t, config.PackageRules, family)
+	}
+	if covered == 0 {
+		t.Fatal("no pin rule in renovate.json reaches a family package.json; the check would pass vacuously")
 	}
 }
 
@@ -265,19 +282,30 @@ func TestRenovatePinReachesUnscopedRangeSections(t *testing.T) {
 	if got := pinnedSections([]renovatePackageRule{named}, rel, sections); !slices.Equal(got, []string{"engines"}) {
 		t.Fatalf("a pin rule naming engines pins %v", got)
 	}
+	unevaluable := []renovatePackageRule{
+		{MatchFileNames: []string{"/markdownlint/", "!docs/**", "{tools,docs}/**", rel}, RangeStrategy: "pin"},
+		{MatchFileNames: []string{"/figures/"}, GroupName: "not a pin rule"},
+	}
+	want := []string{"/markdownlint/", "!docs/**", "{tools,docs}/**"}
+	if got := unevaluablePinPatterns(unevaluable); !slices.Equal(got, want) {
+		t.Fatalf("unevaluablePinPatterns = %q, want %q", got, want)
+	}
 }
 
-// Boundary: a rule that does not pin, names another manager or other files, or names only a
-// section the manifest lacks pins nothing; "*", a directory "**" and a "**/" prefix reach the
+// Boundary: a rule that does not pin, names another manager or other files, a glob below the
+// file, or only a section the manifest lacks pins nothing; "*", a directory "**" and a "**/" prefix reach the
 // file. npmSections reads only the members the npm manager extracts.
 func TestRenovatePinSectionsBoundary(t *testing.T) {
 	const rel = "tools/markdownlint/package.json"
 	sections := []string{"dependencies", "engines"}
 	for name, rule := range map[string]renovatePackageRule{
-		"auto":           {MatchFileNames: []string{rel}, RangeStrategy: "auto"},
-		"unset":          {MatchFileNames: []string{rel}},
-		"other manager":  {MatchManagers: []string{"pip-compile"}, RangeStrategy: "pin"},
-		"other files":    {MatchFileNames: []string{"docs/presets/starlight/**", rel + ".bak", "tools/markdownlint"}, RangeStrategy: "pin"},
+		"auto":          {MatchFileNames: []string{rel}, RangeStrategy: "auto"},
+		"unset":         {MatchFileNames: []string{rel}},
+		"other manager": {MatchManagers: []string{"pip-compile"}, RangeStrategy: "pin"},
+		"other files":   {MatchFileNames: []string{"docs/presets/starlight/**", rel + ".bak", "tools/markdownlint"}, RangeStrategy: "pin"},
+		// minimatch, as Renovate calls it, reads a trailing "**" as one or more segments, so a
+		// glob below the file does not reach the file itself.
+		"below the file": {MatchFileNames: []string{rel + "/**"}, RangeStrategy: "pin"},
 		"absent section": {MatchDepTypes: []string{"devDependencies"}, RangeStrategy: "pin"},
 	} {
 		if got := pinnedSections([]renovatePackageRule{rule}, rel, sections); len(got) != 0 {

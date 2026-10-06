@@ -119,7 +119,8 @@ and moves it in the `markdown gate lock` group (`renovate.json`). That rule
 pins only the `dependencies` and `overrides` sections (`matchDepTypes`), so
 `engines.node` stays the range `>=22` instead of one exact Node release
 (`TestRenovatePinsFamilyManifestsExceptRanges` in
-`internal/managedasset/renovate_test.go`). The
+`internal/managedasset/renovate_test.go`, which reads the rule's file patterns
+with `util.RenovatePatternsCover`, the matcher adoption uses). The
 `markdownlint` library loads `katex` through the math extension, and
 `mathSelfTest` in
 `tools/markdownlint/verify.mjs` lints a fixture of inline and block math and
