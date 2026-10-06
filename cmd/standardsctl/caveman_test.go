@@ -676,7 +676,7 @@ func TestCavemanCheckContextKindInference_Positive(t *testing.T) {
 	for _, live := range []string{"AGENTS.md", "CLAUDE.md"} {
 		livePath := filepath.Join("..", "..", live)
 		out, err := runCavemanCLI(t, "", "check", livePath)
-		if err != nil || !strings.Contains(out, livePath+": PASS") || !strings.Contains(out, "contract=context") {
+		if err != nil || !strings.Contains(out, filepath.ToSlash(livePath)+": PASS") || !strings.Contains(out, "contract=context") {
 			t.Errorf("live %s without --kind: err=%v\n%s", live, err, out)
 		}
 	}
@@ -700,7 +700,7 @@ func TestCavemanCheckContextKindInference_Negative(t *testing.T) {
 	// Explicit --kind=message on AGENTS.md still reports C9 grammar findings.
 	liveAgents := filepath.Join("..", "..", "AGENTS.md")
 	out, err := runCavemanCLI(t, "", "check", "--kind=message", liveAgents)
-	if err == nil || !strings.Contains(out, liveAgents+": FAIL") || !strings.Contains(out, "contract=message") ||
+	if err == nil || !strings.Contains(out, filepath.ToSlash(liveAgents)+": FAIL") || !strings.Contains(out, "contract=message") ||
 		!strings.Contains(out, "C9 grammar") {
 		t.Fatalf("explicit --kind=message on AGENTS.md must report message findings: err=%v\n%s", err, out)
 	}
@@ -721,7 +721,7 @@ func TestCavemanCheckContextKindInference_Boundary(t *testing.T) {
 	// Explicit -kind message (single dash) on CLAUDE.md reports message findings.
 	liveClaude := filepath.Join("..", "..", "CLAUDE.md")
 	out, err = runCavemanCLI(t, "", "check", "-kind", "message", liveClaude)
-	if err == nil || !strings.Contains(out, liveClaude+": FAIL") || !strings.Contains(out, "contract=message") {
+	if err == nil || !strings.Contains(out, filepath.ToSlash(liveClaude)+": FAIL") || !strings.Contains(out, "contract=message") {
 		t.Fatalf("explicit -kind message on CLAUDE.md must fail under message contract: err=%v\n%s", err, out)
 	}
 }

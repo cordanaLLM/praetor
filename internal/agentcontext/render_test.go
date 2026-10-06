@@ -375,6 +375,9 @@ func TestIsContextPath_Boundary(t *testing.T) {
 		".cursor\\rules\\hiss-invariants.mdc",
 		"sub\\dir\\AGENTS.md",
 		"sub\\dir\\CLAUDE.md",
+		filepath.Join("sub", "dir", "AGENTS.md"),
+		filepath.Join("sub", "dir", "CLAUDE.md"),
+		filepath.Join("..", "..", "AGENTS.md"),
 	} {
 		if !IsContextPath(path) {
 			t.Errorf("boundary IsContextPath(%q) = false, want true", path)
