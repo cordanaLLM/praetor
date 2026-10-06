@@ -94,8 +94,7 @@ func workflowGeneratesSBOM(ctx context.Context, repoPath string, data []byte) (b
 // stepGeneratesSBOM reports whether one step writes an SBOM: an SBOM action, a run script
 // invoking a generator, or a GoReleaser release whose configuration declares sboms.
 func stepGeneratesSBOM(ctx context.Context, repoPath string, step workflowStep) (bool, error) {
-	// GitHub resolves owner and repository names case-insensitively.
-	action, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(step.Uses)), "@")
+	action := actionPath(step.Uses)
 	if sbomGeneratorActions[action] {
 		return true, nil
 	}
@@ -107,14 +106,9 @@ func stepGeneratesSBOM(ctx context.Context, repoPath string, step workflowStep) 
 		}
 		return goreleaserReleaseGeneratesSBOM(ctx, repoPath, strings.Fields(args))
 	}
-	// A generator named only in a comment does not run.
-	script, err := util.StripHashComments(step.Run)
+	fields, err := scriptFields(step.Run)
 	if err != nil {
-		return false, fmt.Errorf("run script: %w", err)
-	}
-	fields := strings.Fields(script)
-	if len(fields) > maxRunScriptFields {
-		return false, fmt.Errorf("run script exceeds %d fields", maxRunScriptFields)
+		return false, err
 	}
 	if runInvokesSBOMGenerator(fields) {
 		return true, nil
@@ -123,6 +117,30 @@ func stepGeneratesSBOM(ctx context.Context, repoPath string, step workflowStep) 
 		return goreleaserReleaseGeneratesSBOM(ctx, repoPath, fields[at+1:])
 	}
 	return false, nil
+}
+
+// actionPath returns the action a step's uses: names, lower-cased and without its @ref. GitHub
+// resolves owner and repository names case-insensitively.
+func actionPath(uses string) string {
+	action, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(uses)), "@")
+	return action
+}
+
+// scriptFields splits a run: script into its whitespace-separated fields. A command named only
+// in a comment does not run, so comments are dropped first. A backslash-newline continues one
+// command and any other newline ends it, so a newline becomes a ";" field, where the command
+// readers stop (commandSegment).
+func scriptFields(run string) ([]string, error) {
+	script, err := util.StripHashComments(strings.ReplaceAll(run, "\r\n", "\n"))
+	if err != nil {
+		return nil, fmt.Errorf("run script: %w", err)
+	}
+	script = strings.ReplaceAll(strings.ReplaceAll(script, "\\\n", " "), "\n", " ; ")
+	fields := strings.Fields(script)
+	if len(fields) > maxRunScriptFields {
+		return nil, fmt.Errorf("run script exceeds %d fields", maxRunScriptFields)
+	}
+	return fields, nil
 }
 
 // runInvokesSBOMGenerator reports whether a run script's fields invoke a generator that
@@ -146,31 +164,76 @@ func runInvokesSBOMGenerator(fields []string) bool {
 // generating form. sbom notices writes THIRD-PARTY-NOTICES.md, not an SBOM, so a step that
 // runs only it is no evidence for require_sbom.
 func invokesPraetorSBOM(fields []string) bool {
-	if len(fields) < 2 || fields[1] != "sbom" || !isPraetorBinary(fields[0]) {
+	if !invokesPraetor(fields, "sbom") {
 		return false
 	}
 	return len(fields) == 2 || fields[2] != praetorNoticesSubcommand
 }
 
+// invokesPraetor reports whether fields start with this tool's binary running subcommand.
+func invokesPraetor(fields []string, subcommand string) bool {
+	return len(fields) >= 2 && fields[1] == subcommand && isPraetorBinary(fields[0])
+}
+
 // hasOutputFlag reports whether a Syft invocation names an output document; without one
 // Syft prints a table to the terminal and writes no SBOM.
 func hasOutputFlag(fields []string) bool {
-	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
-		f := fields[i]
+	segment := commandSegment(fields)
+	for i := 0; i < len(segment) && i < maxRunScriptFields; i++ {
+		f := segment[i]
 		if f == "-o" || f == "--output" || strings.HasPrefix(f, "-o=") || strings.HasPrefix(f, "--output=") {
 			return true
-		}
-		if f == "&&" || f == ";" || f == "|" {
-			return false
 		}
 	}
 	return false
 }
 
+// commandSegment returns fields up to the first one that ends the command: a ";" (which
+// scriptFields also writes for a newline), a pipe, a list operator or a background "&".
+func commandSegment(fields []string) []string {
+	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
+		switch fields[i] {
+		case ";", "|", "&&", "||", "&":
+			return fields[:i]
+		}
+	}
+	return fields
+}
+
+// flagValues returns every value fields give one of names, in order; "--name value" and
+// "--name=value" both count. Callers pass one command's fields (commandSegment).
+func flagValues(fields []string, names ...string) []string {
+	var values []string
+	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
+		for j := 0; j < len(names); j++ {
+			if value, ok := strings.CutPrefix(fields[i], names[j]+"="); ok {
+				values = append(values, value)
+			} else if fields[i] == names[j] && i+1 < len(fields) {
+				values = append(values, fields[i+1])
+			}
+		}
+	}
+	return values
+}
+
+// flagValue returns the first value fields give one of names (flagValues), or "".
+func flagValue(fields []string, names ...string) string {
+	if values := flagValues(fields, names...); len(values) > 0 {
+		return values[0]
+	}
+	return ""
+}
+
+// commandName returns the program a command field names without its directory, so
+// ./bin/praetorctl and /usr/local/bin/cosign compare by their base names.
+func commandName(field string) string {
+	return filepath.Base(filepath.FromSlash(field))
+}
+
 // isPraetorBinary reports whether a field names this tool's binary under either name,
 // including a path such as ./bin/praetorctl or go run ./cmd/standardsctl.
 func isPraetorBinary(field string) bool {
-	base := filepath.Base(filepath.FromSlash(field))
+	base := commandName(field)
 	return base == "praetorctl" || base == "standardsctl"
 }
 
@@ -187,55 +250,67 @@ func fieldIndex(fields []string, want string) int {
 // goreleaserReleaseGeneratesSBOM reports whether GoReleaser invoked with args runs a release
 // (or snapshot) whose configuration declares at least one sboms entry.
 func goreleaserReleaseGeneratesSBOM(ctx context.Context, repoPath string, args []string) (bool, error) {
+	config, found, err := goreleaserReleaseConfig(ctx, repoPath, args)
+	return found && len(config.SBOMs) > 0, err
+}
+
+// goreleaserConfig is the part of a GoReleaser configuration the supply-chain readers decide
+// on: the sboms block and the three signing blocks (goreleaser.com/customization/sign).
+type goreleaserConfig struct {
+	SBOMs       []yaml.Node      `yaml:"sboms"`
+	Signs       []goreleaserSign `yaml:"signs"`
+	BinarySigns []goreleaserSign `yaml:"binary_signs"`
+	DockerSigns []goreleaserSign `yaml:"docker_signs"`
+}
+
+// goreleaserSign is one entry of a GoReleaser signing block: the program it runs and the
+// artifacts it signs, each empty when the entry keeps its block's default.
+type goreleaserSign struct {
+	Cmd       string `yaml:"cmd"`
+	Artifacts string `yaml:"artifacts"`
+}
+
+// goreleaserReleaseConfig returns the configuration GoReleaser invoked with args loads. found
+// is false when args run no release (or snapshot) or no configuration file exists.
+func goreleaserReleaseConfig(ctx context.Context, repoPath string, args []string) (config goreleaserConfig, found bool, err error) {
 	if fieldIndex(args, "release") < 0 {
-		return false, nil
+		return goreleaserConfig{}, false, nil
 	}
 	candidates := goreleaserConfigNames[:]
 	if explicit := goreleaserConfigArg(args); explicit != "" {
 		candidates = []string{explicit}
 	}
 	for i := 0; i < len(candidates) && i < len(goreleaserConfigNames); i++ {
-		declares, found, err := goreleaserConfigDeclaresSBOMs(ctx, repoPath, candidates[i])
+		config, found, err = readGoreleaserConfig(ctx, repoPath, candidates[i])
 		if err != nil || found {
-			return declares, err
+			return config, found, err
 		}
 	}
-	return false, nil
+	return goreleaserConfig{}, false, nil
 }
 
 // goreleaserConfigArg returns the configuration file GoReleaser args name with --config or
 // -f, or "" when they name none.
 func goreleaserConfigArg(args []string) string {
-	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
-		if value, ok := strings.CutPrefix(args[i], "--config="); ok {
-			return value
-		}
-		if (args[i] == "--config" || args[i] == "-f") && i+1 < len(args) {
-			return args[i+1]
-		}
-	}
-	return ""
+	return flagValue(args, "--config", "-f")
 }
 
-// goreleaserConfigDeclaresSBOMs reads one GoReleaser configuration file under repoPath.
-// found is false when the file does not exist, so the caller can try the next candidate;
-// a path outside the repository is treated as absent rather than read.
-func goreleaserConfigDeclaresSBOMs(ctx context.Context, repoPath, rel string) (declares, found bool, err error) {
+// readGoreleaserConfig reads one GoReleaser configuration file under repoPath. found is false
+// when the file does not exist, so the caller can try the next candidate; a path outside the
+// repository is treated as absent rather than read.
+func readGoreleaserConfig(ctx context.Context, repoPath, rel string) (config goreleaserConfig, found bool, err error) {
 	if !filepath.IsLocal(filepath.FromSlash(rel)) {
-		return false, false, nil
+		return goreleaserConfig{}, false, nil
 	}
 	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(repoPath, filepath.FromSlash(rel)))
 	if errors.Is(err, os.ErrNotExist) {
-		return false, false, nil
+		return goreleaserConfig{}, false, nil
 	}
 	if err != nil {
-		return false, false, fmt.Errorf("read %s: %w", rel, err)
-	}
-	var config struct {
-		SBOMs []yaml.Node `yaml:"sboms"`
+		return goreleaserConfig{}, false, fmt.Errorf("read %s: %w", rel, err)
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
-		return false, true, fmt.Errorf("parse %s: %w", rel, err)
+		return goreleaserConfig{}, true, fmt.Errorf("parse %s: %w", rel, err)
 	}
-	return len(config.SBOMs) > 0, true, nil
+	return config, true, nil
 }

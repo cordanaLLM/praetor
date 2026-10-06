@@ -1,0 +1,205 @@
+package forge
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+// releaseWorkflow is the path every single-workflow case writes.
+const releaseWorkflow = ".github/workflows/release.yml"
+
+// reusableJob wraps one job-level uses: into a workflow document a tag push starts.
+func reusableJob(uses string) string {
+	return "on:\n  push:\n    tags: ['v*']\njobs:\n  provenance:\n    uses: " + uses + "\n"
+}
+
+// calledWorkflow wraps steps into a reusable workflow document (on: workflow_call).
+func calledWorkflow(steps string) string {
+	return "on:\n  workflow_call:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n" + steps
+}
+
+// measure runs MeasureProvenance over a repository holding files.
+func measure(t *testing.T, files map[string]string) ProvenanceMeasurement {
+	t.Helper()
+	got, err := MeasureProvenance(context.Background(), sbomRepo(t, files))
+	if err != nil {
+		t.Fatalf("MeasureProvenance: %v", err)
+	}
+	return got
+}
+
+// Positive: this repository's release generates provenance with this tool and signs it with
+// cosign attest-blob in the job that ran the build, which is Level 2 and no more; the workflow
+// says so itself (#330).
+func TestMeasureProvenanceReadsTheEngineReleaseAsLevel2(t *testing.T) {
+	got, err := MeasureProvenance(context.Background(), engineRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Level != SLSABuildL2 || got.LevelWorkflow != "release-binaries.yml" || got.CosignWorkflow != "release-binaries.yml" {
+		t.Fatalf("MeasureProvenance(engine) = %+v; want Level 2 and cosign, both from release-binaries.yml", got)
+	}
+}
+
+// Positive and negative: each step shape measures the level the SLSA v1.0 Build track and
+// GitHub's attestation documentation give it.
+func TestMeasureProvenanceLevels(t *testing.T) {
+	cases := map[string]struct {
+		files map[string]string
+		level int
+	}{
+		"direct attest-build-provenance is Level 2": {
+			map[string]string{releaseWorkflow: sbomJob("      - uses: actions/attest-build-provenance@v4\n        with:\n          subject-path: dist/*\n")}, SLSABuildL2},
+		"actions/attest in its default provenance mode is Level 2": {
+			map[string]string{releaseWorkflow: sbomJob("      - uses: Actions/Attest@v4\n        with:\n          subject-path: dist/*\n")}, SLSABuildL2},
+		"actions/attest with an SLSA predicate type is Level 2": {
+			map[string]string{releaseWorkflow: sbomJob("      - uses: actions/attest@v4\n        with:\n          predicate-type: https://slsa.dev/provenance/v1\n          predicate-path: p.json\n")}, SLSABuildL2},
+		"actions/attest of an SBOM is no provenance": {
+			map[string]string{releaseWorkflow: sbomJob("      - uses: actions/attest@v4\n        with:\n          sbom-path: sbom.json\n")}, 0},
+		"actions/attest of a custom predicate is no provenance": {
+			map[string]string{releaseWorkflow: sbomJob("      - uses: actions/attest@v4\n        with:\n          predicate-type: https://example.com/test/v1\n          predicate: '{}'\n")}, 0},
+		"SLSA generator called by tag is Level 3": {
+			map[string]string{releaseWorkflow: reusableJob("slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0")}, SLSABuildL3},
+		"local reusable workflow running actions/attest is Level 3": {
+			map[string]string{
+				releaseWorkflow:               reusableJob("./.github/workflows/build.yml"),
+				".github/workflows/build.yml": calledWorkflow("      - run: make dist\n      - uses: actions/attest-build-provenance@v4\n"),
+			}, SLSABuildL3},
+		"local reusable workflow signing with cosign stays Level 2": {
+			map[string]string{
+				releaseWorkflow:               reusableJob("./.github/workflows/build.yml"),
+				".github/workflows/build.yml": calledWorkflow("      - run: cosign attest-blob --yes --type slsaprovenance1 --predicate p.json dist/a.tgz\n"),
+			}, SLSABuildL2},
+		"this tool's provenance signed by cosign is Level 2": {
+			map[string]string{releaseWorkflow: sbomJob("      - run: |\n          go run ./cmd/standardsctl provenance \\\n            -checksums dist/checksums.txt \\\n            -out dist/p.json\n      - run: cosign attest-blob --yes --statement dist/p.json\n")}, SLSABuildL2},
+		"this tool's provenance redirected and signed is Level 2": {
+			map[string]string{releaseWorkflow: sbomJob("      - run: |\n          praetorctl provenance -checksums c.txt > p.json\n          cosign attest-blob --yes --statement=p.json\n")}, SLSABuildL2},
+		"this tool's provenance unsigned is Level 1": {
+			map[string]string{releaseWorkflow: sbomJob("      - run: ./bin/praetorctl provenance -checksums c.txt -out p.json\n")}, SLSABuildL1},
+		"a cosign attestation of another file leaves the provenance unsigned": {
+			map[string]string{releaseWorkflow: sbomJob("      - run: praetorctl provenance -out p.json\n      - run: cosign attest-blob --yes --statement other.json\n")}, SLSABuildL1},
+		"a signature made before the provenance is written does not sign it": {
+			map[string]string{releaseWorkflow: sbomJob("      - run: cosign attest-blob --yes --statement p.json\n      - run: praetorctl provenance -out p.json\n")}, SLSABuildL1},
+		"a type flag on the next command is not the attestation's": {
+			map[string]string{releaseWorkflow: sbomJob("      - run: |\n          cosign attest-blob --yes --predicate sbom.json\n          echo --type slsaprovenance1\n")}, 0},
+		"an attestation step named only in a comment does not run": {
+			map[string]string{releaseWorkflow: sbomJob("      - run: echo ok # cosign attest --type slsaprovenance1\n")}, 0},
+		"a reusable workflow nobody calls is not measured on its own": {
+			map[string]string{".github/workflows/build.yml": calledWorkflow("      - uses: actions/attest-build-provenance@v4\n")}, 0},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := measure(t, tc.files)
+			if got.Level != tc.level {
+				t.Fatalf("Level = %d (%+v); want %d", got.Level, got, tc.level)
+			}
+			if tc.level > 0 && got.LevelWorkflow != "release.yml" {
+				t.Fatalf("LevelWorkflow = %q; want release.yml", got.LevelWorkflow)
+			}
+		})
+	}
+}
+
+// Negative: a reusable workflow that cannot be read, or the SLSA generator called by anything
+// but a vX.Y.Z tag, earns no level and is named with the reason.
+func TestMeasureProvenanceNamesUncreditedCalls(t *testing.T) {
+	cases := map[string]struct {
+		files  map[string]string
+		reason string
+	}{
+		"another repository's reusable workflow": {
+			map[string]string{releaseWorkflow: reusableJob("acme/shared/.github/workflows/build.yml@v1")},
+			"release.yml: acme/shared/.github/workflows/build.yml@v1: a reusable workflow in another repository is not read"},
+		"the SLSA generator called by digest": {
+			map[string]string{releaseWorkflow: reusableJob("slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@0123456789abcdef0123456789abcdef01234567")},
+			"verifies only when it is called by a vX.Y.Z tag"},
+		"a generator-repository workflow that builds nothing": {
+			map[string]string{releaseWorkflow: reusableJob("slsa-framework/slsa-github-generator/.github/workflows/pre-submit.lint.yml@v2.1.0")},
+			"is not read"},
+		"a reusable workflow called from a reusable workflow": {
+			map[string]string{
+				releaseWorkflow:               reusableJob("./.github/workflows/build.yml"),
+				".github/workflows/build.yml": "on: workflow_call\njobs:\n  inner:\n    uses: ./.github/workflows/sign.yml\n",
+				".github/workflows/sign.yml":  calledWorkflow("      - uses: actions/attest-build-provenance@v4\n"),
+			},
+			"./.github/workflows/sign.yml: a reusable workflow called from a reusable workflow is not followed"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := measure(t, tc.files)
+			if got.Level != 0 || !strings.Contains(strings.Join(got.Uncredited, "\n"), tc.reason) {
+				t.Fatalf("MeasureProvenance = %+v; want Level 0 and an uncredited call containing %q", got, tc.reason)
+			}
+		})
+	}
+}
+
+// Positive and negative: a cosign signing step is any cosign sign, sign-blob, attest or
+// attest-blob, or a GoReleaser release whose signing blocks run cosign over some artifacts.
+// Installing cosign, verifying with it, or skipping GoReleaser's signing signs nothing.
+func TestMeasureProvenanceFindsCosignSigning(t *testing.T) {
+	release := "      - uses: goreleaser/goreleaser-action@v7\n        with:\n          args: release --clean\n"
+	cases := map[string]struct {
+		files  map[string]string
+		signed bool
+	}{
+		"cosign sign-blob":                        {map[string]string{releaseWorkflow: sbomJob("      - run: /usr/local/bin/cosign sign-blob --yes --bundle a.sigstore.json a.tgz\n")}, true},
+		"cosign sign of an image":                 {map[string]string{releaseWorkflow: sbomJob("      - run: cosign sign --yes ghcr.io/acme/app@sha256:abc\n")}, true},
+		"goreleaser signs with cosign":            {map[string]string{releaseWorkflow: sbomJob(release), ".goreleaser.yaml": "signs:\n  - cmd: cosign\n    artifacts: checksum\n"}, true},
+		"goreleaser binary_signs with cosign":     {map[string]string{releaseWorkflow: sbomJob(release), ".goreleaser.yaml": "binary_signs:\n  - cmd: cosign\n"}, true},
+		"goreleaser docker_signs default":         {map[string]string{releaseWorkflow: sbomJob(release), ".goreleaser.yaml": "docker_signs:\n  - ids: [app]\n"}, true},
+		"installing cosign only":                  {map[string]string{releaseWorkflow: sbomJob("      - uses: sigstore/cosign-installer@v4.1.2\n")}, false},
+		"verifying only":                          {map[string]string{releaseWorkflow: sbomJob("      - run: cosign verify-blob --bundle a.sigstore.json a.tgz\n")}, false},
+		"goreleaser signs default artifacts none": {map[string]string{releaseWorkflow: sbomJob(release), ".goreleaser.yaml": "signs:\n  - cmd: cosign\n"}, false},
+		"goreleaser signs with gpg":               {map[string]string{releaseWorkflow: sbomJob(release), ".goreleaser.yaml": "signs:\n  - artifacts: all\n"}, false},
+		"goreleaser docker_signs off":             {map[string]string{releaseWorkflow: sbomJob(release), ".goreleaser.yaml": "docker_signs:\n  - artifacts: none\n"}, false},
+		"goreleaser release skipping sign":        {map[string]string{releaseWorkflow: sbomJob("      - run: goreleaser release --clean --skip=sbom,sign\n"), ".goreleaser.yaml": "signs:\n  - cmd: cosign\n    artifacts: checksum\n"}, false},
+		"goreleaser check only":                   {map[string]string{releaseWorkflow: sbomJob("      - run: goreleaser check\n"), ".goreleaser.yaml": "signs:\n  - cmd: cosign\n    artifacts: checksum\n"}, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := measure(t, tc.files)
+			if (got.CosignWorkflow == "release.yml") != tc.signed || (!tc.signed && got.CosignWorkflow != "") {
+				t.Fatalf("CosignWorkflow = %q; want signed=%t", got.CosignWorkflow, tc.signed)
+			}
+		})
+	}
+}
+
+// Boundary: a repository without workflows measures Level 0 without error; an empty, jobless or
+// malformed workflow, or a call to a reusable workflow the repository does not hold, fails
+// closed rather than measuring what it cannot read.
+func TestMeasureProvenanceBoundaries(t *testing.T) {
+	got, err := MeasureProvenance(context.Background(), sbomRepo(t, map[string]string{"README.md": "x\n"}))
+	if err != nil || got.Level != 0 || got.LevelWorkflow != "" || got.CosignWorkflow != "" {
+		t.Fatalf("no workflows: %+v, %v; want Level 0 and no error", got, err)
+	}
+	failures := map[string]struct {
+		files map[string]string
+		want  string
+	}{
+		"empty workflow":     {map[string]string{releaseWorkflow: ""}, "release.yml declares no jobs"},
+		"comment-only file":  {map[string]string{releaseWorkflow: "# release\n"}, "release.yml declares no jobs"},
+		"malformed workflow": {map[string]string{releaseWorkflow: "jobs: [unclosed\n"}, "workflow release.yml"},
+		"scalar document":    {map[string]string{releaseWorkflow: "release\n"}, "workflow release.yml"},
+		"missing reusable workflow": {map[string]string{releaseWorkflow: reusableJob("./.github/workflows/build.yml")},
+			"calls ./.github/workflows/build.yml, which is no reusable workflow"},
+		"unreadable goreleaser config": {map[string]string{
+			releaseWorkflow:    sbomJob("      - run: goreleaser release\n"),
+			".goreleaser.yaml": "signs: {unclosed\n",
+		}, "parse .goreleaser.yaml"},
+	}
+	for name, tc := range failures {
+		t.Run(name, func(t *testing.T) {
+			_, err := MeasureProvenance(context.Background(), sbomRepo(t, tc.files))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("MeasureProvenance error = %v; want one containing %q", err, tc.want)
+			}
+		})
+	}
+	//nolint:staticcheck // SA1012: a nil context is the refused input under test.
+	if _, err := MeasureProvenance(nil, engineRoot); err == nil {
+		t.Fatal("MeasureProvenance(nil context) succeeded; want an error")
+	}
+}
