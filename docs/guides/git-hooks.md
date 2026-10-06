@@ -315,6 +315,13 @@ on the next adoption from a source bundle, and the launcher is installed in the 
 launcher installs no part of the bundle and enables no checkpoint job
 (`TestCheckpointLauncher_Negative_SourceWithoutItInstallsNothing`).
 
+An unedited `checkpoint.py` from an earlier release is refreshed on the next adoption, because
+every text a release shipped is recorded with its digest (`priorCheckpointDigests` in
+`internal/adopt/checkpoint.go`, reproduced by `internal/adopt/testdata/checkpoint`). A change
+to the script records its new digest in the same change. The current script judges a re-run of
+a hosted check by its latest run on the head; [checkpoint cadence](checkpoint-cadence.md)
+states the rule.
+
 ## The make the hooks run
 
 The hooks need GNU Make on every platform. `pre-commit`, `commit-msg`, `pre-push` and the
