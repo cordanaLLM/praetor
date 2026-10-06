@@ -89,24 +89,30 @@ The first binds `HELP` and the second continues the inline recipe of `other`, so
 both `verify-all` and `other`. A comment ending in a backslash continues onto the next line, and a
 continued line inside a `define` body swallows an `endef` right after it, as in Make.
 
-Also preserved are the forms only Make itself can resolve: an `include` directive, a call that
-evaluates text (`$(eval ...)`, `${eval ...}`, `$(guile ...)`, or a `$(call ...)` whose first
-argument may name `eval`, `guile` or `call`, since `call` invokes the built-in function its first
-argument names), a `!=` binding, a target name containing `$` or `%`, a Makefile that names
-`.RECIPEPREFIX` (below), and every top-level bare expansion but one shape. A first argument holding
-a reference may name such a function when every literal run around its references occurs in the
-name: `$(call e$(S),...)` with `S = val` calls `eval`, while `$(call build_$(ARCH),...)` calls a
-variable of the project. A `!=` binding, `X != cmd` or `define X !=`, stores the command's output as
-the value of a recursively expanded variable, so Make expands that output as makefile text wherever
-the variable is expanded: measured against GNU Make 4.4.1, with `rules.txt` holding `$(eval
-docs-lint: ; @echo operator)`, `X != cat rules.txt` declares `docs-lint` from `all: $(X)`, `Y :=
-$(X)`, `ifeq ($(X),)` and `$(info $(X))`. The reader runs no command, so even `verify-all != date
-+%H:%M`, which declares no target, leaves the file to review. A bare expansion is a line that holds a variable reference and is
-no assignment, rule, recipe line, comment or directive (a conditional, `define`, `export`, `vpath`
-or an include). Make expands such a line and parses the result as makefile syntax, so whatever its
-references hold can declare a rule. Measured against GNU Make 4.4.1, every expansion below
-declares `docs-lint`, the `docs$(SUFFIX)` line with `SUFFIX = -lint: ; @echo operator` and the last
-two with that rule in `rules.txt`:
+Also preserved are the forms only Make itself can resolve: an `include` directive, a `load` or
+`-load` directive, a call that evaluates text (`$(eval ...)`, `${eval ...}`, `$(guile ...)`, or a
+`$(call ...)` whose first argument may name `eval`, `guile` or `call`, since `call` invokes the
+built-in function its first argument names), a `!=` binding, a target name containing `%`, a
+computed target name the file does not fix (below), a Makefile that names `.RECIPEPREFIX` (below),
+and every top-level bare expansion but one shape. A first argument holding a reference may name
+such a function when every literal run around its references occurs in the name: `$(call
+e$(S),...)` with `S = val` calls `eval`, while `$(call build_$(ARCH),...)` calls a variable of the
+project. A `!=` binding, `X != cmd` or `define X !=`, stores the command's output as the value of a
+recursively expanded variable, so Make expands that output as makefile text wherever the variable
+is expanded: measured against GNU Make 4.4.1, with `rules.txt` holding `$(eval docs-lint: ; @echo
+operator)`, `X != cat rules.txt` declares `docs-lint` from `all: $(X)`, `Y := $(X)`, `ifeq
+($(X),)` and `$(info $(X))`. The reader runs no command, so even `verify-all != date +%H:%M`, which
+declares no target, leaves the file to review. A loaded object's setup can parse any text as
+makefile syntax through `gmk_eval`: measured against GNU Make 4.4.1, `load ./rule.so` with an object
+whose setup evaluates `docs-lint: ; @echo operator` declares `docs-lint`, so the reader, which
+loads nothing, leaves every `load` and `-load` to review. Those rows (`makefileLoadRows` in
+`internal/util/makefile_target_test.go`) record that measurement and are not replayed, since
+building the object needs a C compiler and `gnumake.h`. A bare expansion is a line that holds a
+variable reference and is no assignment, rule, recipe line, comment or directive (a conditional,
+`define`, `export`, `vpath`, an include or a load). Make expands such a line and parses the result
+as makefile syntax, so whatever its references hold can declare a rule. Measured against GNU Make
+4.4.1, every expansion below declares `docs-lint`, the `docs$(SUFFIX)` line with `SUFFIX = -lint:
+; @echo operator` and the last two with that rule in `rules.txt`:
 
 ```make
 make-rule = $(1): ; @echo operator
@@ -149,13 +155,56 @@ Moving such a call into an assignment (`_ := $(shell mkdir -p build)`) or a reci
 parses its output as makefile syntax, makes the file readable again. A `$(shell ...)` in a rule's
 prerequisites (`all: $(shell echo a.c b.c)`) or in a conditional (`ifeq ($(shell uname),Linux)`) is
 no bare expansion and decides nothing: measured against GNU Make 4.4.1, its output never becomes a
-target. A computed target name such as `$(BUILD_DIR):` fails for review too, even when the variable
-holds a plain directory, and the reader claims no target from a line whose target list holds a
-reference: `$(PREFIX) verify-all: dep` counts as no `verify-all` rule. A `define` alone only binds a
-variable: a rule line inside its body declares nothing, and a helper used only through `$(call ...)`
-in recipes leaves the Makefile readable. A define is left to Make when something can parse its body
-as rules, which is an eval call anywhere in the file, define bodies included, or a bare expansion.
-A define that is never closed is left to Make too, since it
+target.
+
+A computed target name counts with the value the file fixes for it. The reader resolves `$(NAME)`
+or `${NAME}` only when `NAME` is bound exactly once in the file: by a top-level `NAME := value`,
+`NAME ::= value` or `NAME = value`, outside every conditional, without `override`, `export`,
+`unexport` or `private`, on a line before the rule. The value may hold only plain path text
+(letters, digits, `._-/+@,` and blanks) and, after `:=` or `::=`, references resolved the same way,
+at most 16 bindings deep (`MaxMakefileVariableDepth`). It keeps the blanks Make keeps, so
+`NAME := docs-lint # gate` makes `$(NAME)x:` declare both `docs-lint` and `x`. Measured against GNU
+Make 4.4.1, these lines declare `engine/out` and no `docs-lint`, and the Makefile stays appendable:
+
+```make
+TOOLS_DIR := .tools
+LINTER := $(TOOLS_DIR)/bin/ruff
+SRC_ROOT := engine
+OUT_DIR := $(SRC_ROOT)/out
+$(OUT_DIR): $(LINTER)
+```
+
+Anything else leaves the name to review, as before: a second binding, `?=`, `+=`, `define`,
+`undefine`, a target-specific binding or a binding whose computed name may be the variable, a
+function call such as `$(shell ...)` or a pattern or glob character in the value, and a variable
+bound nowhere in the file or only after the rule, whose value Make takes from the environment. A
+binding name may be the variable when every literal run around its references occurs in the
+variable's name: `$(P)ME := verify-all` may bind `NAME` (with `P := NA` it does), while
+`$(PKG)_SRCS := a.c` cannot. A file holding an include, a load, an eval call, a bare expansion or
+a `!=` binding (`define X !=` included) resolves no computed name, since each may rebind the
+variable: Make expands a `!=` binding's command output as makefile text wherever the variable is
+used, so `X != cat rebind.txt` with `rebind.txt` holding `$(eval NAME := build)` and a later
+`all: $(X)` renames `$(NAME):` to `build`, and a loaded object's setup can evaluate
+`NAME := build` the same way (`makefileEvaluatesText` in `internal/util/makefile_variables.go`).
+Neither does a file whose computed binding names hold more than 256 literal runs in all
+(`MaxMakefileComputedRuns`): the reader splits each such name once and compares every variable it
+fixes with each run, and the bound keeps that work small on a large Makefile. A line such as
+`$(PREFIX) verify-all: dep` with `PREFIX` bound nowhere counts as no `verify-all` rule.
+
+The answer holds for the invocation the gates run, `make verify-all` or `make docs-lint` with no
+variable definitions and no options. A command-line definition, `-e` with the variable in the
+environment, `--eval`, and `MAKEFLAGS` or `MAKEFILES` in the environment can change any variable or
+declare any rule, literal names included, so whoever passes them decides the rules. Inside the file,
+`MAKEFLAGS` reaches the same switches: measured, `MAKEFLAGS += NAME=docs-lint` after
+`NAME := build` makes `$(NAME):` declare `docs-lint`. A file that binds `MAKEFLAGS` therefore
+resolves no computed name, unless each binding lists only options that change no value, such as
+`--no-print-directory` (`makefileHarmlessFlags` in `internal/util/makefile_variables.go`; the rows
+are `makefileComputedRows` in `internal/util/makefile_target_test.go`).
+
+A `define` alone only binds a variable: a rule line inside its body declares nothing, and a helper
+used only through `$(call ...)` in recipes leaves the Makefile readable. A define is left to Make
+when something can parse its body as rules, which is an eval call anywhere in the file, define
+bodies included, or a bare expansion. A define that is never closed is left to Make too, since it
 would swallow an appended block.
 
 A tab-indented line is a recipe line only while a rule's recipe is open: after a rule line, with
@@ -185,7 +234,7 @@ each file to review:
   `docs-lint: ; @echo operator` rule and an `endef` inside a second `ifeq (a,b)`: `X = 1` closes no
   recipe, so the tab-indented `define X` is a recipe line of `all` and the rule below it counts.
 
-Where the recipe state depends on a branch, a tab-indented include, eval call or `!=` binding
+Where the recipe state depends on a branch, a tab-indented include, load, eval call or `!=` binding
 leaves the file to Make. A tab-indented `define` or conditional there changes how Make reads every
 later line, read either way, so the reader stops at it: it claims no rule at or after it and opens
 no define. It stops the same way inside a conditional whose branches leave different states, since
@@ -222,8 +271,10 @@ each row was measured against GNU Make 4.4.1.
 
 Known gaps, where the reader's answer can still differ from Make's:
 
-- A `load` or `-load` directive, and a variable imported from the environment or the command line
-  whose value evaluates text, can declare a target the reader does not see.
+- A variable imported from the environment or the command line whose value evaluates text can
+  declare a target the reader does not see. A command-line definition of a variable the reader
+  resolves, such as `make NAME=docs-lint verify-all`, renames the rule the file declares; the gates
+  run no such definition.
 - The reader evaluates no condition, so `MakefileHasTarget` claims a rule inside a conditional
   whichever branch Make takes, and editor generation can offer a Verify All task for a rule in a
   branch Make skips. Adoption stays safe: a rule the reader claims also leaves the file to review.
@@ -1589,8 +1640,8 @@ runnable `verify-all` and the Verification Gate reports ready; while the plan st
 `unavailable` the placeholder is current and kept
 (`isPlaceholderVerificationMakefile` in `internal/adopt/verification_makefile.go`,
 `internal/adopt/verification_placeholder_test.go`). Custom or edited Makefiles are
-preserved even with `--force`; includes, generated target names and pattern rules are treated as
-ambiguous ownership. A missing target can be appended to a simple existing
+preserved even with `--force`; includes, generated target names the file does not fix and pattern
+rules are treated as ambiguous ownership. A missing target can be appended to a simple existing
 Makefile without replacing its recipes. Existing AGENTS.md is preserved by default
 with a command-synchronization warning. Review the declared plan; `--force`
 regenerates a recognized harness and keeps its preamble, the repository's own invariant

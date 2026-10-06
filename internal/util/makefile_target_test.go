@@ -107,22 +107,23 @@ func TestMakefileHasTargetIssue304Forms(t *testing.T) {
 // environment as variables and a caller's SRCS, PREFIX or MAKEFLAGS would change what they expand to.
 func clearMakeEnvironment(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"A", "B", "R", "T", "V", "X", "PREFIX", "SRCS", "CFLAGS", "HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
+	for _, name := range []string{"A", "B", "N", "P", "R", "T", "V", "X", "GATE", "NAME", "VAR", "PREFIX", "SRCS", "CFLAGS", "HELP", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
 		t.Setenv(name, "")
 	}
 }
 
 // makeDeclaresVerifyAll writes makefile with a "dep" rule appended, so a rule row fails for no
-// other reason than a missing verify-all, rules.txt holding a verify-all rule and eval.txt an eval
-// call declaring one, for the rows that read them, and reports whether "make -n verify-all" prints
-// the row's recipe.
+// other reason than a missing verify-all, rules.txt holding a verify-all rule, eval.txt an eval
+// call declaring one and rebind.txt an eval call binding NAME to build, for the rows that read
+// them, and reports whether "make -n verify-all" prints the row's recipe.
 func makeDeclaresVerifyAll(t *testing.T, makePath, makefile string) (bool, string) {
 	t.Helper()
 	root := t.TempDir()
 	for name, text := range map[string]string{
-		"Makefile":  makefile + "dep: ;\n",
-		"rules.txt": "verify-all: ; @echo custom\n",
-		"eval.txt":  "$(eval verify-all: ; @echo custom)\n",
+		"Makefile":   makefile + "dep: ;\n",
+		"rules.txt":  "verify-all: ; @echo custom\n",
+		"eval.txt":   "$(eval verify-all: ; @echo custom)\n",
+		"rebind.txt": "$(eval NAME := build)\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
@@ -474,6 +475,126 @@ var makefileBoundRows = map[string]makefileOwnershipRow{
 	"rule-past-joined-byte-bound":   {makefile: joinedRule(util.MaxMakefileLineBytes + 1), mayDefine: true, makeTarget: true},
 }
 
+// computedRuns returns binding lines whose computed names hold runs literal runs in all, runs >= 2:
+// "$(P)q0 := 1" holds two, the empty one before $(P) and "q0", and "$(P)q$(P)r := 1" three. No run
+// occurs in NAME or MAKEFLAGS, so each name may bind neither.
+func computedRuns(runs int) string {
+	var lines strings.Builder
+	for i := range runs/2 - runs%2 {
+		fmt.Fprintf(&lines, "$(P)q%d := 1\n", i)
+	}
+	if runs%2 == 1 {
+		lines.WriteString("$(P)q$(P)r := 1\n")
+	}
+	return lines.String()
+}
+
+// chainTo returns a Makefile in which V1 is bound to value with ":=" and each of V2 to Vn to a
+// reference to the one before, n bindings deep, and a rule names $(Vn).
+func chainTo(n int, value string) string {
+	var chain strings.Builder
+	chain.WriteString("V1 := " + value + "\n")
+	for i := 2; i <= n; i++ {
+		fmt.Fprintf(&chain, "V%d := $(V%d)\n", i, i-1)
+	}
+	fmt.Fprintf(&chain, "$(V%d): dep\n\t@echo custom\nall: ; @echo all\n", n)
+	return chain.String()
+}
+
+// makefileComputedRows hold computed target names (issue #537). The reader resolves a name when
+// every variable in it is bound exactly once in the file with ":=", "::=" or a literal "=", at top
+// level, before the rule, to plain path text and references resolved the same way, at most
+// util.MaxMakefileVariableDepth bindings deep; the resolved name counts like a literal one. The
+// literal-chains row is the five-variable shape the issue's comment reports, rebuilt
+// (testsupport.MakefileLiteralChains). The trailing-blank rows hold the blank Make keeps at the end
+// of a value, which splits a glued name into two targets. Every other shape leaves the name to
+// Make as before, whether Make then declares verify-all or not: a second binding, one after the
+// rule (Make takes the environment's value there), one inside a conditional, "?=", "+=",
+// $(shell ...), a variable bound nowhere, a recursive reference, a modifier, a target-specific or
+// computed-name binding, undefine, a MAKEFLAGS binding that defines a variable, a pattern or glob
+// character, a single-letter or substitution reference, a chain past the depth bound, computed
+// binding names holding more than util.MaxMakefileComputedRuns literal runs, and an eval call, a
+// bare expansion or a "!=" binding anywhere in the file, which may rebind the variable
+// (eval-rebinds, bare-expansion-rebinds and the two command-output rows declare build, so
+// MakefileHasTarget must not claim verify-all there). A MAKEFLAGS binding of options that change
+// no value keeps names resolvable (flags-harmless). computed-binding-name is refused because
+// $(VAR) may name MAKEFLAGS; computed-name-may-rebind holds a computed binding name that cannot be
+// MAKEFLAGS but may be NAME, so only the reader's computed-name test leaves $(NAME) to Make.
+var makefileComputedRows = map[string]makefileOwnershipRow{
+	"literal-chains":          {makefile: testsupport.MakefileLiteralChains},
+	"chain-to-target":         {makefile: "GATE := verify\nNAME := $(GATE)-all\n$(NAME): dep\n\t@echo custom\n", hasTarget: true, mayDefine: true, makeTarget: true},
+	"literal-recursive-value": {makefile: "NAME = verify-all\n$(NAME): dep\n\t@echo custom\n", hasTarget: true, mayDefine: true, makeTarget: true},
+	"posix-brace-reference":   {makefile: "NAME ::= verify-all\n${NAME}: dep\n\t@echo custom\n", hasTarget: true, mayDefine: true, makeTarget: true},
+	"value-in-target-list":    {makefile: "NAME := lint verify-all\n$(NAME) build: dep\n\t@echo custom\n", hasTarget: true, mayDefine: true, makeTarget: true},
+	"crlf-chain":              {makefile: "GATE := verify\r\nNAME := $(GATE)-all\r\n$(NAME): dep\r\n\t@echo custom\r\n", hasTarget: true, mayDefine: true, makeTarget: true},
+	"trailing-blank":          {makefile: "NAME := verify-all \n$(NAME)x: dep\n\t@echo custom\n", hasTarget: true, mayDefine: true, makeTarget: true},
+	"trailing-blank-comment":  {makefile: "NAME := verify-all # gate\n$(NAME)x: dep\n\t@echo custom\n", hasTarget: true, mayDefine: true, makeTarget: true},
+	"trailing-blank-continued": {
+		makefile:  "NAME := verify-all\\\n\n$(NAME)x: dep\n\t@echo custom\n",
+		hasTarget: true, mayDefine: true, makeTarget: true,
+	},
+	"glued-value":          {makefile: "NAME := verify\n$(NAME)x-all: dep\n\t@echo custom\nall: ; @echo all\n"},
+	"flags-harmless":       {makefile: "MAKEFLAGS += --no-print-directory -r\nNAME := build\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n"},
+	"bound-twice":          {makefile: "NAME := build\nNAME := verify-all\n$(NAME): dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"bound-after-rule":     {makefile: "$(NAME): dep\n\t@echo custom\nNAME := verify-all\nall: ; @echo all\n", mayDefine: true},
+	"bound-in-conditional": {makefile: "ifeq (a,a)\nNAME := verify-all\nendif\n$(NAME): dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	// The replay's environment defines NAME, empty (clearMakeEnvironment), so "?=" binds nothing:
+	// the environment decides the name, which is why the reader leaves it to Make.
+	"conditional-assignment": {makefile: "NAME ?= verify-all\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n", mayDefine: true},
+	"appended-value":         {makefile: "NAME += verify-all\n$(NAME): dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"shell-value": {
+		makefile:  "NAME := $(shell echo verify-all)\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, makeTarget: true, shell: true,
+	},
+	"unbound-reference":       {makefile: "NAME := $(GATE)-all\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n", mayDefine: true},
+	"recursive-reference":     {makefile: "GATE = verify\nNAME = $(GATE)-all\n$(NAME): dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"override-binding":        {makefile: "override NAME := verify-all\n$(NAME): dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"exported-binding":        {makefile: "export NAME := verify-all\n$(NAME): dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"target-specific-binding": {makefile: "NAME := build\nall: NAME := verify-all\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n", mayDefine: true},
+	"computed-binding-name": {
+		makefile:  "VAR := NAME\nNAME := build\n$(VAR) := verify-all\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"computed-name-may-rebind": {
+		makefile:  "P := NA\nNAME := build\n$(P)ME := verify-all\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"computed-runs-at-bound": {
+		makefile:  computedRuns(util.MaxMakefileComputedRuns) + "NAME := verify-all\n$(NAME): dep\n\t@echo custom\n",
+		hasTarget: true, mayDefine: true, makeTarget: true,
+	},
+	"computed-runs-past-bound": {
+		makefile:  computedRuns(util.MaxMakefileComputedRuns+1) + "NAME := verify-all\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"undefined-by-undefine": {makefile: "NAME := build\nundefine NAME\n$(NAME)verify-all: dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"flags-define-variable": {
+		makefile:  "NAME := build\nMAKEFLAGS += NAME=verify-all\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, makeTarget: true,
+	},
+	"pattern-in-name":         {makefile: "GATE := verify\n$(GATE)-%: dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"glob-in-value":           {makefile: "NAME := verify-a*\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n", mayDefine: true},
+	"single-letter-reference": {makefile: "N := verify-all\n$N: dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"substitution-reference":  {makefile: "NAME := verify-x\n$(NAME:-x=-all): dep\n\t@echo custom\n", mayDefine: true, makeTarget: true},
+	"chain-at-depth-bound":    {makefile: chainTo(util.MaxMakefileVariableDepth, "verify-all"), hasTarget: true, mayDefine: true, makeTarget: true},
+	"chain-past-depth-bound":  {makefile: chainTo(util.MaxMakefileVariableDepth+1, "verify-all"), mayDefine: true, makeTarget: true},
+	"other-at-depth-bound":    {makefile: chainTo(util.MaxMakefileVariableDepth, "build")},
+	"other-past-depth-bound":  {makefile: chainTo(util.MaxMakefileVariableDepth+1, "build"), mayDefine: true},
+	"eval-rebinds":            {makefile: "NAME := verify-all\n$(eval NAME := build)\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n", mayDefine: true},
+	"bare-expansion-rebinds": {
+		makefile:  "R = NAME := build\nNAME := verify-all\n$(R)\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n",
+		mayDefine: true,
+	},
+	"command-output-rebinds": {
+		makefile:  "NAME := verify-all\nX != cat rebind.txt\nall: $(X)\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, shell: true,
+	},
+	"command-output-define-rebinds": {
+		makefile:  "NAME := verify-all\ndefine X !=\ncat rebind.txt\nendef\nall: $(X)\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, shell: true,
+	},
+}
+
 func assertOwnershipRows(t *testing.T, rows map[string]makefileOwnershipRow) {
 	t.Helper()
 	for name, tc := range rows {
@@ -523,6 +644,89 @@ func TestMakefileCommandOutputLeavesOwnershipToMake(t *testing.T) {
 	assertOwnershipRows(t, makefileCommandOutputRows)
 }
 
+// makefileLoadRows hold load directives. A loaded object's setup may call gmk_eval, which parses
+// any text as makefile syntax, so it may declare a rule or rebind a variable a computed target
+// name expands. Measured once against GNU Make 4.4.1 on Linux, with objects built by cc against
+// gnumake.h whose setup evaluates "verify-all: ; @echo custom" (rule.so) or "NAME := build"
+// (rebind.so): load-declares, optional-load and tab-load-unsure (foo: sits in a skipped branch, so
+// no recipe is open) declare verify-all, load-rebinds declares build and no verify-all, and a load
+// in a recipe or a rule named load declares none. makeTarget records that measurement; the rows
+// are not replayed because building the object needs a C compiler and gnumake.h, which the replay
+// cannot count on wherever it runs (HISS-21), and an object built outside the test is not one the
+// test can show.
+var makefileLoadRows = map[string]makefileOwnershipRow{
+	"load-declares":   {makefile: "load ./rule.so\nall: ; @echo all\n", mayDefine: true, makeTarget: true},
+	"optional-load":   {makefile: "-load ./rule.so\nall: ; @echo all\n", mayDefine: true, makeTarget: true},
+	"tab-load-unsure": {makefile: "ifdef UNSET\nfoo:\nendif\n\tload ./rule.so\nall: ; @echo all\n", mayDefine: true, makeTarget: true},
+	"load-rebinds": {
+		makefile:  "NAME := verify-all\nload ./rebind.so\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n",
+		mayDefine: true,
+	},
+	"load-in-recipe": {makefile: "all:\n\tload ./rule.so\n"},
+	"load-rule-name": {makefile: "load: dep\n\t@echo custom\nall: ; @echo all\n"},
+}
+
+func TestMakefileLoadLeavesOwnershipToMake(t *testing.T) {
+	assertOwnershipRows(t, makefileLoadRows)
+}
+
+func TestMakefileComputedTargetNamesTheFileFixes(t *testing.T) {
+	assertOwnershipRows(t, makefileComputedRows)
+}
+
+// The issue #537 shape declares none of the targets the documentation gate and the verification
+// block append, and the reader resolves each of its five computed names to the path Make declares:
+// every name counts as a rule of its own, and a name the file does not declare counts as none.
+func TestMakefileLiteralChainsResolveToTheirPaths(t *testing.T) {
+	makefile := testsupport.MakefileLiteralChains
+	for _, target := range []string{"docs-lint", "docs-figures", "verify-all"} {
+		if util.MakefileHasTarget(makefile, target) || util.MakefileMayDefineTarget(makefile, target) {
+			t.Fatalf("the literal chains were read as declaring %s", target)
+		}
+	}
+	for _, path := range []string{".tools/bin/python", ".tools/bin/ruff", ".tools/bin/black", "engine/out", "engine/trace"} {
+		if !util.MakefileHasTarget(makefile, path) {
+			t.Fatalf("the computed name for %s was not resolved", path)
+		}
+	}
+	if util.MakefileHasTarget(makefile, "$(OUT_DIR)") || util.MakefileHasTarget(makefile, "engine") {
+		t.Fatal("an unexpanded name or a part of a value was read as a target")
+	}
+	if recipe, found := util.MakefileTargetRecipe(makefile, "engine/out"); !found || recipe != "\tmkdir -p $@\n" {
+		t.Fatalf("MakefileTargetRecipe(engine/out) = %q, %v", recipe, found)
+	}
+}
+
+// Negative: one more binding of a chain variable, anywhere in the file, leaves every name that
+// references it to Make, so the gate targets are refused again, as before the resolver; a chain
+// that does not reference it stays resolved. A MAKEFLAGS binding that may define a variable
+// leaves every computed name to Make.
+func TestMakefileLiteralChainsRebindingLeavesNamesToMake(t *testing.T) {
+	for _, binding := range []string{"SRC_ROOT := docs-lint\n", "SRC_ROOT += x\n", "SRC_ROOT ?= x\n", "override SRC_ROOT := x\n", "all: SRC_ROOT := x\n", "undefine SRC_ROOT\n", "define SRC_ROOT\nx\nendef\n"} {
+		makefile := testsupport.MakefileLiteralChains + binding
+		if !util.MakefileMayDefineTarget(makefile, "docs-lint") || util.MakefileHasTarget(makefile, "engine/out") {
+			t.Fatalf("%q after the chains left $(OUT_DIR) resolvable", binding)
+		}
+		if !util.MakefileHasTarget(makefile, ".tools/bin/ruff") {
+			t.Fatalf("%q after the chains unresolved a chain that does not reference SRC_ROOT", binding)
+		}
+	}
+	for _, prefix := range []string{
+		"MAKEFLAGS += SRC_ROOT=x\n", "MAKEFLAGS += -e\n", "MAKEFLAGS = $(OPTIONS)\n", "$(M)FLAGS += -s\n",
+		"-include extra.mk\n", "$(eval X := 1)\n", "define T\n$(eval X := 1)\nendef\n", "$(R)\n",
+		"X != cat rebind.txt\n", "define X !=\ncat rebind.txt\nendef\n", "load ./rebind.so\n", "-load ./rebind.so\n",
+	} {
+		makefile := prefix + testsupport.MakefileLiteralChains
+		if !util.MakefileMayDefineTarget(makefile, "docs-lint") || util.MakefileHasTarget(makefile, ".tools/bin/ruff") {
+			t.Fatalf("%q before the chains left a computed name resolvable", prefix)
+		}
+	}
+	// Boundary: a line of silent calls parses no text, so the names stay resolved.
+	if !util.MakefileHasTarget("$(info building)\n"+testsupport.MakefileLiteralChains, ".tools/bin/ruff") {
+		t.Fatal("a silent $(info ...) line unresolved the computed names")
+	}
+}
+
 // Replayed against the installed GNU Make: Make's answer must be the row's, and the reader's live
 // answers must not fail open against it -- Make declaring verify-all implies MakefileMayDefineTarget,
 // and MakefileHasTarget implies Make declaring it.
@@ -531,7 +735,7 @@ func TestMakefileOwnershipRowsGNUReplay(t *testing.T) {
 	clearMakeEnvironment(t)
 	for _, rows := range []map[string]makefileOwnershipRow{
 		makefileIssue554Rows, makefileBoundRows, makefileSilentRows, makefileNameRows, makefileRecipeRows,
-		makefileBranchRows, makefileCallRows, makefileCommandOutputRows,
+		makefileBranchRows, makefileCallRows, makefileCommandOutputRows, makefileComputedRows,
 	} {
 		for name, tc := range rows {
 			t.Run(name, func(t *testing.T) {
@@ -722,6 +926,8 @@ func TestMakefileTargetRecipe(t *testing.T) {
 		{"rule-past-line-bound", bound + "V := c\nV := d\ntest:\n\techo t\n", "", false},
 		{"continued-recipe-line", "test:\n\tgo test \\\n  ./...\n\techo b\nbuild:\n", "\tgo test \\\n  ./...\n\techo b\n", true},
 		{"continued-rule-line", "test: \\\n  build\n\techo t\n", "\techo t\n", true},
+		{"computed-name", "T := test\n$(T):\n\techo t\n", "\techo t\n", true},
+		{"computed-name-unbound", "$(T):\n\techo t\n", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, found := util.MakefileTargetRecipe(tc.data, "test")

@@ -1,0 +1,4 @@
+type: fixed
+title: "Adoption no longer refuses the documentation gate with \"makefile may define target docs-lint\" when rule targets are computed from variables bound once to literal paths"
+issue: "#537"
+breaking: false

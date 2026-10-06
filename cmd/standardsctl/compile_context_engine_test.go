@@ -60,6 +60,63 @@ func useEngineBuild(t *testing.T, revision string) {
 	}
 }
 
+// addRenderWorktree mirrors ci generated render (internal/generated/render.go): it ignores bin/
+// and .standards/worktrees/ as the engine's own .gitignore does, commits that, and checks the new
+// HEAD out into a worktree below .standards/worktrees. It returns HEAD and the worktree.
+func addRenderWorktree(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	writeFixtureFile(t, dir, ".gitignore", "/bin/\n/.standards/worktrees/\n")
+	head := commitFixture(t, dir)
+	render := filepath.Join(dir, ".standards", "worktrees", "render")
+	if out, err := runFixtureGit(t, dir, testsupport.HermeticGitEnv(t), "worktree", "add", "-q", "--detach", render, head); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	return head, render
+}
+
+// useCheckoutBuild makes compile-context see the checkout's own bin/praetorctl, built at
+// revision from a modified tree after every change in it.
+func useCheckoutBuild(t *testing.T, checkout, revision string) {
+	t.Helper()
+	previous := engineBuild
+	t.Cleanup(func() { engineBuild = previous })
+	engineBuild = func() workstation.Build {
+		return workstation.Build{Module: fixtureEngineModule, Revision: revision, Modified: true,
+			Executable: filepath.Join(checkout, "bin", "praetorctl"), ModTime: time.Now().Add(time.Hour)}
+	}
+}
+
+// Positive (#760): ci generated render runs compile-context in a worktree of HEAD below the
+// checkout. The checkout's own engine, marked modified only by the untracked gate receipt, writes
+// the context there.
+func TestCompileContextEngineBuild_Positive_RenderWorktreeOfReceiptCheckout(t *testing.T) {
+	dir, _ := newEngineContextFixture(t)
+	head, render := addRenderWorktree(t, dir)
+	writeFixtureFile(t, dir, ".standards-receipt.json", "{}\n")
+	useCheckoutBuild(t, dir, head)
+	if out, err := runCompileContextCmd(t, render); err != nil {
+		t.Fatalf("compile-context in the render worktree: %v\n%s", err, out)
+	}
+	if !util.FileExists(filepath.Join(render, "CLAUDE.md")) {
+		t.Fatal("the checkout's own engine must write the render worktree's vendor files")
+	}
+}
+
+// Negative (#760): the same engine built with an uncommitted Go edit writes nothing in the render
+// worktree, which renders HEAD without that edit.
+func TestCompileContextEngineBuild_Negative_RenderWorktreeOfEditedCheckout(t *testing.T) {
+	dir, _ := newEngineContextFixture(t)
+	head, render := addRenderWorktree(t, dir)
+	writeFixtureFile(t, dir, "cmd/engine/main.go", "package main\n\nfunc main() { println() }\n")
+	useCheckoutBuild(t, dir, head)
+	if _, err := runCompileContextCmd(t, render); !errors.Is(err, workstation.ErrStaleEngine) {
+		t.Fatalf("an engine carrying a Go edit: want ErrStaleEngine, got %v", err)
+	}
+	if util.FileExists(filepath.Join(render, "CLAUDE.md")) {
+		t.Fatal("an engine carrying a Go edit must not write the render worktree's vendor files")
+	}
+}
+
 // Positive: an install built from the checkout's own revision writes the context as before.
 func TestCompileContextEngineBuild_Positive_CurrentInstallWrites(t *testing.T) {
 	dir, head := newEngineContextFixture(t)

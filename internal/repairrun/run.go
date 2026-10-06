@@ -89,7 +89,7 @@ func StatusWithinRoot(ctx context.Context, configPath, reportPath, inputRoot str
 		return a.report, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	lock, busy, err := lockState(root, false)
+	release, busy, err := lockState(root, false)
 	if errors.Is(err, os.ErrNotExist) {
 		return a.report, errors.New("existing repair state lacks its lock")
 	}
@@ -100,7 +100,7 @@ func StatusWithinRoot(ctx context.Context, configPath, reportPath, inputRoot str
 		a.report.Status = "busy"
 		return a.report, nil
 	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
+	defer func() { err = errors.Join(err, release()) }()
 	return a.report, a.selectJob(ctx, root)
 }
 
@@ -116,7 +116,7 @@ func run(ctx context.Context, configPath, reportPath string, generate generator,
 		return a.report, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	lock, busy, err := lockState(root, true)
+	release, busy, err := lockState(root, true)
 	if err != nil {
 		return a.report, err
 	}
@@ -124,7 +124,7 @@ func run(ctx context.Context, configPath, reportPath string, generate generator,
 		a.report.Status = "busy"
 		return a.report, nil
 	}
-	defer func() { err = errors.Join(err, lock.Close()) }()
+	defer func() { err = errors.Join(err, release()) }()
 	if err := a.selectJob(ctx, root); err != nil {
 		return a.report, err
 	}

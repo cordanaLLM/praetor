@@ -82,26 +82,26 @@ func scheduleTickWithinRoot(ctx context.Context, path, inputRoot string, execute
 		return report, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	lock, busy, err := lockSchedule(root, execute)
+	release, busy, err := lockSchedule(root, execute)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return report, err
 	}
-	if lock != nil {
-		defer func() { err = errors.Join(err, lock.Close()) }()
+	if release != nil {
+		defer func() { err = errors.Join(err, release()) }()
 	}
 	if busy {
 		report.Status = "busy"
 		return report, nil
 	}
-	return report, inspectScheduleSession(ctx, snapshot, report, root, lock, execute, now, runner)
+	return report, inspectScheduleSession(ctx, snapshot, report, root, release != nil, execute, now, runner)
 }
 
-func inspectScheduleSession(ctx context.Context, snapshot *scheduleSnapshot, report *ScheduleReport, root *os.Root, lock *os.File, execute bool, now func() time.Time, runner scheduleRunner) error {
+func inspectScheduleSession(ctx context.Context, snapshot *scheduleSnapshot, report *ScheduleReport, root *os.Root, locked, execute bool, now func() time.Time, runner scheduleRunner) error {
 	state, err := readScheduleState(ctx, root)
 	if err != nil {
 		return err
 	}
-	if lock == nil && state.Attempts > 0 {
+	if !locked && state.Attempts > 0 {
 		return errors.New("persisted schedule is missing its lock file")
 	}
 	session := scheduleSession{snapshot: snapshot, state: state, report: report, root: root, now: now, runner: runner}

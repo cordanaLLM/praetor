@@ -22,44 +22,54 @@ import (
 // golangci-lint is missing.
 
 // makefileDirectiveWords are the first words, besides makefileConditionalWords, that make a line a
-// directive rather than a rule, an assignment or a bare expansion. Include forms are listed for
-// completeness; makefileLineIsAmbiguous reports them before this list is consulted.
+// directive rather than a rule, an assignment or a bare expansion. Include and load forms are
+// listed for completeness; makefileLineIsAmbiguous reports them before this list is consulted.
 var makefileDirectiveWords = map[string]bool{
 	"define": true, "endef": true, "undefine": true, "vpath": true,
-	"include": true, "-include": true, "sinclude": true,
+	"include": true, "-include": true, "sinclude": true, "load": true, "-load": true,
 }
 
-// makefileLeavesOwnershipToMake reads one logical line, advancing scanner, and reports whether it
-// alone leaves ownership to Make: a define line that calls eval or binds a command's output, a
-// line makefileLineIsAmbiguous reports, a bare expansion other than silent calls, an unsure line
-// that makefileUnsureLineMayDefine reports, or a line the scanner cannot resolve. A recipe line is
-// the shell's text and decides nothing; a tab-prefixed line outside a recipe is makefile syntax and
-// is read as one.
-func makefileLeavesOwnershipToMake(scanner *makefileScanner, line string) bool {
+// makefileLeavesOwnershipToMake reads one logical line, the one at index, advancing scanner, and
+// reports whether it alone leaves ownership to Make: a define line makefileDefineParsesText
+// reports, a line makefileLineIsAmbiguous reports with the values variables fixes, a bare
+// expansion other than silent calls, an unsure line that makefileParsesComputedText reports, or a
+// line the scanner cannot resolve. A recipe line is the shell's text and decides nothing; a
+// tab-prefixed line outside a recipe is makefile syntax and is read as one.
+func makefileLeavesOwnershipToMake(scanner *makefileScanner, line string, index int, variables makefileVariables) bool {
 	trimmed := strings.TrimSpace(line)
 	kind := scanner.next(line)
 	switch {
 	case scanner.lost:
 		return true
 	case kind == makefileDefineLine:
-		return makefileCallsEval(line) || makefileDefinesCommandOutput(trimmed)
+		return makefileDefineParsesText(trimmed)
 	case kind == makefileRecipeLine:
 		return false
 	case kind == makefileUnsureLine:
-		return makefileUnsureLineMayDefine(trimmed)
+		return makefileParsesComputedText(trimmed)
 	}
-	return makefileLineIsAmbiguous(trimmed) || makefileBareExpansion(trimmed) && !makefileSilentCalls(trimmed)
+	return makefileLineIsAmbiguous(trimmed, index, variables) || makefileBareExpansion(trimmed) && !makefileSilentCalls(trimmed)
 }
 
-// makefileUnsureLineMayDefine reports whether a trimmed tab-prefixed line that Make reads as a
-// recipe line or as makefile syntax, depending on a branch it takes, leaves ownership to Make when
-// read as syntax: an include directive, a call that evaluates text or a "!=" binding. Measured
+// makefileParsesComputedText reports whether a trimmed syntax line makes Make parse text the file
+// does not show as makefile syntax, which may declare any rule or bind any variable: an include
+// or load directive (makefileReadsFile), a call that evaluates text (makefileCallsEval) or a "!="
+// binding (makefileBindsCommandOutput). makefileLineIsAmbiguous and makefileEvaluatesText read every
+// syntax line with it, and makefileLeavesOwnershipToMake reads a tab-prefixed line with it that
+// Make reads as a recipe line or as makefile syntax, depending on a branch it takes: measured
 // against GNU Make 4.4.1, after "ifdef UNSET", "foo:" and "endif" a tab-indented "X := $(eval
-// docs-lint: ; @echo x)" declares docs-lint. A rule or a bare expansion read as syntax stops Make
-// with "recipe commences before first target", so neither counts, and a recipe line such as
+// docs-lint: ; @echo x)" declares docs-lint. A rule or a bare expansion read as syntax there stops
+// Make with "recipe commences before first target", so neither counts, and a recipe line such as
 // "@printf '%s: done'" stays readable.
-func makefileUnsureLineMayDefine(line string) bool {
-	return makefileIncludes(strings.Fields(line)) || makefileCallsEval(line) || makefileBindsCommandOutput(line)
+func makefileParsesComputedText(line string) bool {
+	return makefileReadsFile(strings.Fields(line)) || makefileCallsEval(line) || makefileBindsCommandOutput(line)
+}
+
+// makefileDefineParsesText reports whether a trimmed line of a define, the opening line or one of
+// the body, makes Make parse text as makefile syntax: a call that evaluates text, or the opening
+// of a define that binds a command's output (makefileDefinesCommandOutput).
+func makefileDefineParsesText(line string) bool {
+	return makefileCallsEval(line) || makefileDefinesCommandOutput(line)
 }
 
 // makefileBindsCommandOutput reports whether a trimmed line binds a variable with "!=". Make runs

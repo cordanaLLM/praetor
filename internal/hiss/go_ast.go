@@ -167,6 +167,26 @@ func ReceiverTypeName(expr ast.Expr) (string, bool) {
 	return "", false
 }
 
+// maxTypeArgUnwrap bounds unwrapping nested parentheses and index expressions (HISS-02).
+const maxTypeArgUnwrap = 16
+
+// stripTypeArgs unwraps enclosing parentheses and any explicit type arguments
+// (an IndexExpr or IndexListExpr) to return the underlying callee expression.
+func stripTypeArgs(fun ast.Expr) ast.Expr {
+	for i := 0; i < maxTypeArgUnwrap && fun != nil; i++ {
+		fun = ast.Unparen(fun)
+		switch indexed := fun.(type) {
+		case *ast.IndexExpr:
+			fun = indexed.X
+		case *ast.IndexListExpr:
+			fun = indexed.X
+		default:
+			return fun
+		}
+	}
+	return ast.Unparen(fun)
+}
+
 // CallTargetsEnclosing reports whether a call targets the enclosing function itself: a bare
 // identifier for a plain function, or recv.method for a method. A same-named method on any
 // other value -- the delegation idiom `return x.inner.Close()` -- is not recursion.
@@ -176,20 +196,14 @@ func CallTargetsEnclosing(fun ast.Expr, fnName, recv string) bool {
 	// explicitly instantiated self-call was invisible while the inferred Count(k) form was
 	// reported -- the same recursion, detected or not according to whether the author
 	// wrote the type argument.
-	switch indexed := fun.(type) {
-	case *ast.IndexExpr:
-		fun = indexed.X
-	case *ast.IndexListExpr:
-		fun = indexed.X
-	}
-	switch expr := fun.(type) {
+	switch expr := stripTypeArgs(fun).(type) {
 	case *ast.Ident:
 		return recv == "" && expr.Name == fnName
 	case *ast.SelectorExpr:
 		if recv == "" || expr.Sel.Name != fnName {
 			return false
 		}
-		x, isIdent := expr.X.(*ast.Ident)
+		x, isIdent := ast.Unparen(expr.X).(*ast.Ident)
 		return isIdent && x.Name == recv
 	default:
 		return false

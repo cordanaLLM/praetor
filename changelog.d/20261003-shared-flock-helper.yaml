@@ -1,0 +1,4 @@
+type: fixed
+title: "Bug ledger, dogfood schedule and repair run locks no longer report busy after release while a subprocess starts"
+breaking: false
+issue: "#740"

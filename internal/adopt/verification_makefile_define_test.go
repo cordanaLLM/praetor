@@ -154,6 +154,26 @@ func TestMakefileBareExpansionRuleText(t *testing.T) {
 	assertDocsLintOwnership(t, makefileBareExpansionRows)
 }
 
+// A computed target name counts with the value the file fixes for it (issue #537): each variable
+// bound once with ":=" to literal text and references bound the same way above it, as in the
+// five-variable shape an adopter repository reported (testsupport.MakefileLiteralChains). Such a
+// file declares no docs-lint and gains the documentation gate; a chain that expands to docs-lint
+// declares it and is refused. A second binding, a MAKEFLAGS binding that defines the variable, and
+// a variable bound nowhere, whose value comes from the environment, leave the name to Make as
+// before: the first two declare docs-lint, the last declares nothing in the replay's environment
+// and is refused all the same.
+var makefileComputedTargetRows = map[string]docsLintOwnershipRow{
+	"literal-chains":         {testsupport.MakefileLiteralChains, false},
+	"chain-to-docs-lint":     {"GATE := docs\nNAME := $(GATE)-lint\n$(NAME): ; @echo operator\n", true},
+	"chain-bound-twice":      {"NAME := build\nNAME := docs-lint\n$(NAME): ; @echo operator\n", true},
+	"chain-through-flags":    {"NAME := build\nMAKEFLAGS += NAME=docs-lint\n$(NAME): ; @echo operator\n", true},
+	"bound-from-environment": {"$(NAME): ; @echo operator\nall: ; @echo all\n", true},
+}
+
+func TestMakefileComputedTargetsFollowFixedValues(t *testing.T) {
+	assertDocsLintOwnership(t, makefileComputedTargetRows)
+}
+
 // makeDeclaresDocsLint names the rows GNU Make 4.4.1 expands into a docs-lint rule; every other
 // row declares none.
 var makeDeclaresDocsLint = []string{
@@ -165,6 +185,7 @@ var makeDeclaresDocsLint = []string{
 	"single-letter-reference", "value-function", "computed-variable-name", "computed-call-name",
 	"file-function", "shell-function", "shell-stderr-silenced", "shell-assignment",
 	"simple-shell-assignment", "variable-chain", "prefixed-expansion", "silent-call-then-reference",
+	"chain-to-docs-lint", "chain-bound-twice", "chain-through-flags",
 }
 
 // Replayed against the installed GNU Make for every row of both tables. Make's answer must be the
@@ -175,10 +196,10 @@ func TestMakefileDefineOwnershipGNUReplay(t *testing.T) {
 	makePath := testsupport.GNUMake(t)
 	// Make imports the environment as variables, so a caller's P, A or MAKEFLAGS would change
 	// what the rows that reference $(P) and $(A) expand to.
-	for _, name := range []string{"P", "A", "B", "C", "N", "R", "T", "X", "V", "TOOLS", "SRCS", "CC", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
+	for _, name := range []string{"P", "A", "B", "C", "N", "R", "T", "X", "V", "GATE", "NAME", "TOOLS", "SRCS", "CC", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS", "MAKEFILES"} {
 		t.Setenv(name, "")
 	}
-	for _, rows := range []map[string]docsLintOwnershipRow{makefileDefineOwnershipRows, makefileBareExpansionRows} {
+	for _, rows := range []map[string]docsLintOwnershipRow{makefileDefineOwnershipRows, makefileBareExpansionRows, makefileComputedTargetRows} {
 		for name, tc := range rows {
 			t.Run(name, func(t *testing.T) { replayDocsLintRow(t, makePath, name, tc.makefile) })
 		}
@@ -249,6 +270,23 @@ func TestAdoptionDocumentationGateAcceptsCalledDefine(t *testing.T) {
 	}
 }
 
+// End to end: a project whose Makefile names its rule targets through ":=" chains of literals
+// (issue #537) gains the documentation gate beside its own verify-all instead of failing adoption
+// with "makefile may define target docs-lint outside the Praetor-managed block".
+func TestAdoptionDocumentationGateAcceptsLiteralChainTargets(t *testing.T) {
+	root := newTestRepo(t, "documentation-literal-chains")
+	makefile := testsupport.MakefileLiteralChains + "\n.PHONY: verify-all\nverify-all: all\n"
+	mustWrite(t, filepath.Join(root, makefileName), makefile)
+	opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	got := mustRead(t, filepath.Join(root, makefileName))
+	if !strings.HasPrefix(got, makefile) || strings.Count(got, DocumentationMakefileBlock()) != 1 {
+		t.Fatalf("the Makefile did not gain exactly one documentation block:\n%s", got)
+	}
+}
+
 // End to end: a project whose Makefile declares docs-lint through a bare expansion of a
 // single-line template (issue #554) keeps its rule: adoption stops with the collision instead of
 // appending a block whose docs-lint recipe would override the operator's, and the Makefile is
@@ -260,6 +298,8 @@ func TestAdoptionDocumentationGateRefusesBareExpansion(t *testing.T) {
 		// command's output as makefile text wherever the variable is expanded, and the reader runs
 		// no command (makefileCommandOutputRows in internal/util/makefile_target_test.go).
 		"command-output-binding": "verify-all != date +%H:%M\nall:\n\t@echo original\n",
+		// A computed name the file fixes counts like a literal one (issue #537).
+		"computed-chain-to-docs-lint": "GATE := docs\nNAME := $(GATE)-lint\n$(NAME):\n\t@echo operator\n\n.PHONY: verify-all\nverify-all: $(NAME)\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := newTestRepo(t, "documentation-"+name)

@@ -4,27 +4,18 @@ package state
 
 import (
 	"errors"
-	"fmt"
 	"os"
-	"syscall"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // The lock inode is persistent: unlinking it would split concurrent writers
-// across different locks. Closing the descriptor releases the process lock.
+// across different locks. The release unlocks before it closes, so a
+// subprocess holding a copy of the descriptor cannot keep the lock alive.
 func lockBugLedger(root *os.Root) (func() error, error) {
-	file, err := root.OpenFile(bugLockName, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
-	if err != nil {
-		return nil, err
+	release, busy, err := util.LockPrivateFile(root, bugLockName, os.O_RDWR|os.O_CREATE, "bug ledger")
+	if busy {
+		return nil, errors.Join(errors.New("bug ledger is busy: another writer holds its lock"), err)
 	}
-	info, err := file.Stat()
-	if err == nil && (!info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0) {
-		err = fmt.Errorf("bug lock must be a private regular file")
-	}
-	if err != nil {
-		return nil, errors.Join(err, file.Close())
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return nil, errors.Join(fmt.Errorf("bug ledger is busy or cannot be locked: %w", err), file.Close())
-	}
-	return file.Close, nil
+	return release, err
 }

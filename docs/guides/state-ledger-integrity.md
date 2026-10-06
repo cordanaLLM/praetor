@@ -482,7 +482,9 @@ symlink to defeat anything here.
 
 On Unix, cooperating writers hold a persistent `.workingdir/.bugs.lock` inode
 through read, validation, ID allocation and replacement. Contention returns a
-bounded busy error; callers decide whether to retry. The inode must not be removed
+bounded busy error; callers decide whether to retry. A writer unlocks before it
+closes the descriptor, so a subprocess started meanwhile cannot keep the lock held
+(`LockExclusive` in `internal/util/file_lock_unix.go`). The inode must not be removed
 while writers may exist. Other platforms use an exclusive claim file; an
 interrupted writer can leave a claim requiring inspection. Those platforms have
 not received the Unix process-contention acceptance.
