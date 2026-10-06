@@ -301,3 +301,83 @@ func TestVendorTargetsFollowsClientSelection(t *testing.T) {
 		t.Fatalf("unknown client accepted: %v", err)
 	}
 }
+
+// TestContextFiles_Positive_MatchesCanonicalAndVendorTargets tests that ContextFiles returns
+// the canonical file followed by every vendor target path in compile order (HISS-19).
+func TestContextFiles_Positive_MatchesCanonicalAndVendorTargets(t *testing.T) {
+	files := ContextFiles()
+	vendor := VendorTargetPaths()
+	if len(files) != len(vendor)+1 {
+		t.Fatalf("ContextFiles length %d, want %d", len(files), len(vendor)+1)
+	}
+	if files[0] != CanonicalFile {
+		t.Errorf("ContextFiles[0] = %q, want %q", files[0], CanonicalFile)
+	}
+	for i, path := range vendor {
+		if files[i+1] != path {
+			t.Errorf("ContextFiles[%d] = %q, want %q", i+1, files[i+1], path)
+		}
+	}
+}
+
+// TestIsContextPath_Positive verifies that canonical AGENTS.md and compiled vendor projections
+// are recognized with direct, relative, and nested paths.
+func TestIsContextPath_Positive(t *testing.T) {
+	for _, path := range []string{
+		"AGENTS.md",
+		"./AGENTS.md",
+		"sub/dir/AGENTS.md",
+		"CLAUDE.md",
+		"./CLAUDE.md",
+		"sub/dir/CLAUDE.md",
+		".cursor/rules/hiss-invariants.mdc",
+		"sub/.cursor/rules/hiss-invariants.mdc",
+		".github/copilot-instructions.md",
+		".windsurfrules",
+		".gemini/GEMINI.md",
+		".codex/rules.md",
+	} {
+		if !IsContextPath(path) {
+			t.Errorf("IsContextPath(%q) = false, want true", path)
+		}
+	}
+}
+
+// TestIsContextPath_Negative verifies that non-context paths, notes, and commit messages
+// are not classified as context paths.
+func TestIsContextPath_Negative(t *testing.T) {
+	for _, path := range []string{
+		"",
+		"-",
+		"candidate-note.md",
+		"NOT_AGENTS.md",
+		"sub/NOT_AGENTS.md",
+		"my-AGENTS.md",
+		"not_CLAUDE.md",
+		"COMMIT_EDITMSG",
+		".git/COMMIT_EDITMSG",
+		"scripts/check.sh",
+		"main.go",
+	} {
+		if IsContextPath(path) {
+			t.Errorf("IsContextPath(%q) = true, want false", path)
+		}
+	}
+}
+
+// TestIsContextPath_Boundary verifies case-insensitivity and platform path separator normalization (HISS-21).
+func TestIsContextPath_Boundary(t *testing.T) {
+	for _, path := range []string{
+		"agents.md",
+		"Agents.md",
+		"claude.md",
+		".WINDSURFRULES",
+		".cursor\\rules\\hiss-invariants.mdc",
+		"sub\\dir\\AGENTS.md",
+		"sub\\dir\\CLAUDE.md",
+	} {
+		if !IsContextPath(path) {
+			t.Errorf("boundary IsContextPath(%q) = false, want true", path)
+		}
+	}
+}

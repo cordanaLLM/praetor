@@ -12,11 +12,20 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const MaxLineBudget = agentcontext.MaxLineBudget
+const (
+	MaxLineBudget        = agentcontext.MaxLineBudget
+	CanonicalContextFile = agentcontext.CanonicalFile
+)
 
 type TargetFile = agentcontext.TargetFile
 type CompileResult = agentcontext.CompileResult
 type Transpiler agentcontext.Transpiler
+
+// ContextFiles returns the canonical AGENTS.md and every compiled vendor projection path.
+func ContextFiles() []string { return agentcontext.ContextFiles() }
+
+// IsContextPath reports whether p names the canonical AGENTS.md or one of its compiled projections.
+func IsContextPath(p string) bool { return agentcontext.IsContextPath(p) }
 
 func NewTranspiler() *Transpiler { return &Transpiler{MaxLines: MaxLineBudget} }
 

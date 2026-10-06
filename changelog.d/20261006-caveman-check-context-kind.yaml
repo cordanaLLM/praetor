@@ -1,0 +1,4 @@
+type: fixed
+title: caveman check reports grammar failure on AGENTS.md and compiled context projections when kind is omitted
+issue: "#777"
+breaking: false

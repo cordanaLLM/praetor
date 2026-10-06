@@ -408,8 +408,11 @@ praetorctl caveman estimate --base=origin/main AGENTS.md .agents/
 
 `check` prints one summary line per input, then its findings as `<path>:<line> <rule>:
 <excerpt>`, and exits non-zero when any input fails. Line 0 means the whole text. A
-directory expands to the Markdown files below it; `-` reads standard input. The text
-register block is blanked before the lint, exactly as the context gate does it, and the
+directory expands to the Markdown files below it; `-` reads standard input. When `--kind`
+is omitted, `check` infers `context` for the canonical `AGENTS.md` and compiled vendor
+projections (`CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, etc.); every other input
+defaults to runtime `message`. An explicit `--kind` always overrides the inferred default.
+The text register block is blanked before the lint, exactly as the context gate does it, and the
 summary line counts its lines; `front_matter_lines` counts the lines of YAML front matter
 left out of the prose rules (see "Not prose" below). It also prints the selected contract plus mechanically
 checked and advisory Caveman skill-rule numbers; `PASS` covers only the mechanical rows.

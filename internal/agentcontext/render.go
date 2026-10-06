@@ -2,13 +2,18 @@ package agentcontext
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/clientid"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const MaxLineBudget = 300
+const (
+	MaxLineBudget = 300
+	// CanonicalFile names the single canonical context file (HISS-16) every vendor target is compiled from.
+	CanonicalFile = "AGENTS.md"
+)
 
 // maxCanonicalLines bounds the ownership scan (HISS-02). A canonical file larger than the
 // shared body plus one full-budget section per target cannot compile within the budget.
@@ -175,6 +180,30 @@ func knownClient(name string) bool {
 // classification) read this list instead of keeping their own copy of it.
 func VendorTargetPaths() []string {
 	return targetPaths(vendorTargets[:])
+}
+
+// ContextFiles returns the canonical context file and every compiled vendor projection path,
+// in compile order: exactly the set compile-context knows (HISS-19).
+func ContextFiles() []string {
+	paths := make([]string, 0, len(vendorTargets)+1)
+	paths = append(paths, CanonicalFile)
+	paths = append(paths, VendorTargetPaths()...)
+	return paths
+}
+
+// IsContextPath reports whether p names the canonical context file or one of the compiled
+// vendor projections compile-context knows (ContextFiles). Path comparison is slash-clean and
+// case-insensitive across platform path separators (HISS-21).
+func IsContextPath(p string) bool {
+	clean := filepath.ToSlash(filepath.Clean(strings.ReplaceAll(p, "\\", "/")))
+	lower := strings.ToLower(clean)
+	for _, target := range ContextFiles() {
+		targetLower := strings.ToLower(target)
+		if lower == targetLower || strings.HasSuffix(lower, "/"+targetLower) {
+			return true
+		}
+	}
+	return false
 }
 
 // TargetPaths resolves a client selection to the vendor file paths it writes and the ones it

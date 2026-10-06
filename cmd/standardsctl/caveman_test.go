@@ -648,3 +648,80 @@ func TestCavemanCheckFreeStandingQuote(t *testing.T) {
 		})
 	}
 }
+
+// TestCavemanCheckContextKindInference_Positive pins #777: canonical AGENTS.md and compiled
+// vendor projections infer --kind=context when --kind is omitted, passing without C9 grammar findings.
+func TestCavemanCheckContextKindInference_Positive(t *testing.T) {
+	dir := t.TempDir()
+	contextText := "# Operating Harness\n\nIt is verified. All pass -> Ed25519 receipt.\n"
+	for _, rel := range []string{
+		"AGENTS.md",
+		"CLAUDE.md",
+		".windsurfrules",
+		".cursor/rules/hiss-invariants.mdc",
+		".github/copilot-instructions.md",
+		".gemini/GEMINI.md",
+		".codex/rules.md",
+		"nested/AGENTS.md",
+		"nested/CLAUDE.md",
+	} {
+		file := writeFixtureFile(t, dir, rel, contextText)
+		out, err := runCavemanCLI(t, "", "check", file)
+		if err != nil || !strings.Contains(out, ": PASS") || !strings.Contains(out, "contract=context") {
+			t.Errorf("%s without --kind: want pass under context contract, got err=%v\n%s", rel, err, out)
+		}
+	}
+
+	// Live AGENTS.md and CLAUDE.md pass without --kind just like with --kind=context.
+	for _, live := range []string{"AGENTS.md", "CLAUDE.md"} {
+		livePath := filepath.Join("..", "..", live)
+		out, err := runCavemanCLI(t, "", "check", livePath)
+		if err != nil || !strings.Contains(out, livePath+": PASS") || !strings.Contains(out, "contract=context") {
+			t.Errorf("live %s without --kind: err=%v\n%s", live, err, out)
+		}
+	}
+}
+
+// TestCavemanCheckContextKindInference_Negative pins #777: non-context inputs (such as commit
+// message files and notes) default to message, and explicit --kind=message on AGENTS.md reports findings.
+func TestCavemanCheckContextKindInference_Negative(t *testing.T) {
+	dir := t.TempDir()
+	messageProse := "feat: implement feature\n\nIt is complete and we are ready.\n"
+
+	for _, rel := range []string{"COMMIT_EDITMSG", "commit.md", "candidate-note.md", "NOT_AGENTS.md"} {
+		file := writeFixtureFile(t, dir, rel, messageProse)
+		out, err := runCavemanCLI(t, "", "check", file)
+		if err == nil || !strings.Contains(out, ": FAIL") || !strings.Contains(out, "contract=message") ||
+			!strings.Contains(out, "C9 grammar") {
+			t.Errorf("%s without --kind must fail under message contract: err=%v\n%s", rel, err, out)
+		}
+	}
+
+	// Explicit --kind=message on AGENTS.md still reports C9 grammar findings.
+	liveAgents := filepath.Join("..", "..", "AGENTS.md")
+	out, err := runCavemanCLI(t, "", "check", "--kind=message", liveAgents)
+	if err == nil || !strings.Contains(out, liveAgents+": FAIL") || !strings.Contains(out, "contract=message") ||
+		!strings.Contains(out, "C9 grammar") {
+		t.Fatalf("explicit --kind=message on AGENTS.md must report message findings: err=%v\n%s", err, out)
+	}
+}
+
+// TestCavemanCheckContextKindInference_Boundary tests that an explicit --kind flag always wins over inferred kind.
+func TestCavemanCheckContextKindInference_Boundary(t *testing.T) {
+	dir := t.TempDir()
+	messageProse := "feat: test message\n\nIt is complete and we are ready.\n"
+	commitFile := writeFixtureFile(t, dir, "COMMIT_EDITMSG", messageProse)
+
+	// Explicit --kind=context allows copulas/pronouns on a commit message file.
+	out, err := runCavemanCLI(t, "", "check", "--kind=context", commitFile)
+	if err != nil || !strings.Contains(out, ": PASS") || !strings.Contains(out, "contract=context") {
+		t.Fatalf("explicit --kind=context on commit file must pass: err=%v\n%s", err, out)
+	}
+
+	// Explicit -kind message (single dash) on CLAUDE.md reports message findings.
+	liveClaude := filepath.Join("..", "..", "CLAUDE.md")
+	out, err = runCavemanCLI(t, "", "check", "-kind", "message", liveClaude)
+	if err == nil || !strings.Contains(out, liveClaude+": FAIL") || !strings.Contains(out, "contract=message") {
+		t.Fatalf("explicit -kind message on CLAUDE.md must fail under message contract: err=%v\n%s", err, out)
+	}
+}

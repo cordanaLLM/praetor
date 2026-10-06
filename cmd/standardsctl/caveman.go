@@ -69,8 +69,9 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 }
 
 // cavemanCheck prints one summary line per input and its findings, and fails when any
-// input breaks a rule. --kind defaults to runtime message grammar; brief and return add
-// schemas, while context selects the policy-document profile. With --surface it first
+// input breaks a rule. --kind defaults to runtime message grammar, except for the canonical
+// context file and compiled vendor projections where context is inferred; brief and return
+// add schemas, while context selects the policy-document profile. With --surface it first
 // resolves the register from --root and errors when the surface is not internal. --max-words
 // and --max-tokens are opt-in ceilings (0 means none; a negative value is refused).
 func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
@@ -150,7 +151,13 @@ func prepareCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cav
 	}
 	if !request.configured {
 		for index := range inputs {
-			inputs[index].kind = request.kind
+			if request.explicit["kind"] {
+				inputs[index].kind = request.kind
+			} else if compiler.IsContextPath(inputs[index].name) {
+				inputs[index].kind = caveman.KindContext
+			} else {
+				inputs[index].kind = caveman.KindMessage
+			}
 		}
 	}
 	if request.surface != "" {
@@ -315,15 +322,16 @@ func readCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavema
 	return append(markdown, extracted...), nil
 }
 
-// partitionCavemanPaths reads Markdown files and stdin directly and turns every other path
-// into ad-hoc source declarations for the extractor.
+// partitionCavemanPaths reads Markdown files, compiled context files, commit message files
+// and stdin directly and turns every other path into ad-hoc source declarations for the
+// extractor.
 func partitionCavemanPaths(ctx context.Context, stdin io.Reader, request cavemanCheckRequest,
 	paths []string,
 ) ([]cavemanInput, []config.RegisterSourceInput, error) {
 	markdown := make([]cavemanInput, 0, len(paths))
 	sources := []config.RegisterSourceInput{}
 	for _, path := range paths {
-		if path == "-" || strings.EqualFold(filepath.Ext(path), ".md") {
+		if isDirectProseInput(path) {
 			input, err := readCavemanInput(ctx, path, stdin)
 			if err != nil {
 				return nil, nil, err
@@ -338,6 +346,19 @@ func partitionCavemanPaths(ctx context.Context, stdin io.Reader, request caveman
 		sources = append(sources, declared...)
 	}
 	return markdown, sources, nil
+}
+
+// isDirectProseInput reports whether path is read directly as prose without source extraction:
+// Markdown files, standard input, Git commit message files, and compiled context projections.
+func isDirectProseInput(path string) bool {
+	if path == "-" || strings.EqualFold(filepath.Ext(path), ".md") {
+		return true
+	}
+	base := filepath.Base(path)
+	if strings.EqualFold(base, "COMMIT_EDITMSG") || strings.EqualFold(base, "MERGE_MSG") || strings.EqualFold(base, "TAG_EDITMSG") {
+		return true
+	}
+	return compiler.IsContextPath(path)
 }
 
 func adHocSourceInputs(request cavemanCheckRequest, sourcePath string) ([]config.RegisterSourceInput, error) {
