@@ -1,0 +1,4 @@
+type: added
+title: "The audit fails on a tracked C, C++, CUDA, HIP or Objective-C++ translation unit that no declared clang-tidy lane reads (clang_tidy.lanes) when the profile declares clang-tidy, praetorctl ci tidy-coverage runs the same gate on its own, and .standards.yaml gains a top-level exceptions list (rule, path or glob, reason, expiry at most 90 days ahead) that excuses one"
+issue: "#778"
+breaking: true

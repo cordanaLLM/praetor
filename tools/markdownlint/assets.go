@@ -154,6 +154,9 @@ var priorDigests = map[string]string{
 	"1c9f14af6a030dc78bce47b521711a44d5c37af67dadd5d77358f104f4059cba": Directory + "/package.json",
 	"2a11b6947b2513b654772a53c9249e0ed1322e9344666f0a42aaa1f72670d266": Directory + "/package-lock.json",
 	"a3080c17ab3bb62974b1347950a1dc3feac795f758abfb416edf22854dcff45f": Directory + "/verify.mjs",
+	// verify.mjs with a fixed 120 s budget per lint child, whose timeout named only the node
+	// executable, before documentation.lint_timeout_seconds and the suspects report (#784).
+	"5dfc7a8138b5020526fa481b315f4888789f831b11f054f4b6cddfd6572d1f16": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{

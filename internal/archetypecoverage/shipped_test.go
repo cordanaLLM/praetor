@@ -38,17 +38,20 @@ func TestShippedManifestMatchesTheSource(t *testing.T) {
 	}
 }
 
-// linters is the key #353 names: the manifest must keep saying nothing runs it until a
-// consumer exists, and the test above then fails until the entry changes state.
-func TestShippedManifestRecordsLintersUnconsumed(t *testing.T) {
+// linters is the key #353 named as read by nothing. Its one consumer is the audit's clang-tidy
+// translation-unit coverage gate (#778), which runs when the list names clang-tidy; the
+// manifest must record exactly that consumer acting on it, so a second reader, or the gate
+// dropping its read, fails the test above until the entry changes with it.
+func TestShippedManifestRecordsLintersConsumedByTheTidyCoverageGate(t *testing.T) {
 	manifest, err := archetypecoverage.Load(t.Context(), repositoryRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range manifest.Fields {
 		if field.Key == "linters" {
-			if field.State != archetypecoverage.StateUnconsumed || field.Reason == "" {
-				t.Fatalf("linters entry = %+v, want unconsumed with a reason", field)
+			if field.State != archetypecoverage.StateConsumed || len(field.Consumers) != 1 ||
+				field.Consumers[0].Func != "cmd/standardsctl.auditTidyCoverage" {
+				t.Fatalf("linters entry = %+v, want consumed by cmd/standardsctl.auditTidyCoverage alone", field)
 			}
 			return
 		}

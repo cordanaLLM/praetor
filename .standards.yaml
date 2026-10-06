@@ -269,6 +269,16 @@ docs_surfaces:
       - "internal/docsref/*_test.go"
     docs:
       - "docs/guides/documentation-drift.md"
+  - name: "clang-tidy coverage gate and exceptions list"
+    paths:
+      - "internal/tidycoverage/*.go"
+      - "internal/config/exceptions.go"
+      - "internal/config/clang_tidy.go"
+      - "cmd/standardsctl/tidy_coverage.go"
+    exclude:
+      - "internal/tidycoverage/*_test.go"
+    docs:
+      - "docs/guides/clang-tidy-coverage.md"
   - name: "generated artefacts"
     paths:
       - "internal/generated/*.go"

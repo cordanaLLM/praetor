@@ -328,7 +328,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: astro
-      version: 7.3.5
+      version: 7.3.6
       language: typescript
       ecosystem: npm
       capability: ui.external.astro
@@ -480,4 +480,4 @@ readiness:
     total_third_party_deps: 57
     covered_deps: 0
     gap_deps: 57
-updated_at: 2026-10-06T14:21:08.066161563Z
+updated_at: 2026-10-06T16:42:00.50908745Z

@@ -111,6 +111,7 @@ nav:
           - Adoption Verification: guides/adoption-verification.md
           - Archetype & Facet Authoring: guides/archetype-authoring.md
           - Go API Compatibility Gate: guides/api-compatibility.md
+          - clang-tidy Coverage Gate: guides/clang-tidy-coverage.md
           - Effective Audit Policy: guides/effective-policy.md
           - Generated Artefacts: guides/generated-artefacts.md
           - Review Policy: guides/review-policy.md

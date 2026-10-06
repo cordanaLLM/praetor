@@ -423,6 +423,42 @@ class CheckpointTests(unittest.TestCase):
         self.assertTrue(result["due"])
         self.assertEqual(result["check_counts"]["failed"], 1)
 
+    def rerun(self, conclusion, started, workflow="CI", status="COMPLETED"):
+        return {"__typename": "CheckRun", "name": "gate", "workflowName": workflow,
+                "status": status, "conclusion": conclusion, "startedAt": started}
+
+    def test_review_rerun_supersedes_earlier_run_of_same_job(self):
+        head, base = self.review_fixture()
+        early, late = "2026-10-06T15:14:18Z", "2026-10-06T15:24:47Z"
+        cases = (
+            ("passing rerun after failure", [self.rerun("FAILURE", early), self.rerun("SUCCESS", late)], "passed"),
+            ("failing rerun after pass", [self.rerun("SUCCESS", early), self.rerun("FAILURE", late)], "failed"),
+            ("running rerun after failure",
+             [self.rerun("FAILURE", early), self.rerun("", late, status="IN_PROGRESS")], "pending"),
+            ("listed newest first", [self.rerun("SUCCESS", late), self.rerun("FAILURE", early)], "passed"),
+        )
+        for label, checks, status in cases:
+            with self.subTest(label):
+                result = self.observe_review(head, base, checks)
+                self.assertEqual(result["review_status"], status, result)
+                self.assertEqual(result["due"], status != "passed")
+
+    def test_review_rerun_never_hides_another_workflow_or_untimed_run(self):
+        head, base = self.review_fixture()
+        early, late = "2026-10-06T15:14:18Z", "2026-10-06T15:24:47Z"
+        cases = (
+            ("other workflow", [self.rerun("FAILURE", early, workflow="Other"), self.rerun("SUCCESS", late)]),
+            ("no workflow name", [self.rerun("FAILURE", early, workflow=""), self.rerun("SUCCESS", late)]),
+            ("not started", [self.rerun("FAILURE", "0001-01-01T00:00:00Z"), self.rerun("SUCCESS", late)]),
+            ("malformed start", [self.rerun("FAILURE", "yesterday"), self.rerun("SUCCESS", late)]),
+            ("same start", [self.rerun("FAILURE", late), self.rerun("SUCCESS", late)]),
+        )
+        for label, checks in cases:
+            with self.subTest(label):
+                result = self.observe_review(head, base, checks)
+                self.assertEqual(result["review_status"], "failed", result)
+                self.assertTrue(result["due"])
+
     def test_review_bounds_and_malformed_responses_fail_closed(self):
         head, base = self.review_fixture()
         passed = {"__typename": "StatusContext", "context": "gate", "state": "SUCCESS"}

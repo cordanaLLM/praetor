@@ -35,6 +35,8 @@ func runCI(args []string) error {
 		// Renderings run far longer than a diff classification; the subcommand carries its own
 		// deadline (generatedCommandTimeout).
 		return runCIGenerated(subArgs)
+	case "tidy-coverage":
+		return runCITidyCoverage(ctx, subArgs)
 	default:
 		return fmt.Errorf("unknown ci subcommand: %s", sub)
 	}
@@ -45,6 +47,7 @@ func printCIUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  filter [--dir=.] [--config=<dir>/.standards.yaml] [--base=ref] [--head=ref] [--json] [--env] [--force]  Analyze diff and filter CI gates")
 	fmt.Println("  generated list|check|render [flags]  List, check in a pull request, or render the declared generated artefacts")
+	fmt.Println("  tidy-coverage [--dir=.]  Fail on a tracked C/C++/CUDA/HIP/Objective-C++ unit no declared clang-tidy lane reads")
 }
 
 func runCIFilter(ctx context.Context, args []string) error {

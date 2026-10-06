@@ -462,11 +462,15 @@ fields:
           (the facet effects the policy reports)
   - key: linters
     go: [ArchetypeControls.Linters, ResolvedPolicy.Linters]
-    state: unconsumed
-    reason: >-
-      Joined into a deduplicated union, bounded by validate and recorded in
-      the effective-policy digest, and never run: no gate, emitted workflow
-      or editor configuration reads the list (#353).
+    state: consumed
+    consumers:
+      - func: cmd/standardsctl.auditTidyCoverage
+        kind: acts
+        effect: >-
+          runs the clang-tidy translation-unit coverage gate in the audit
+          when the list names clang-tidy, as native-gpu-systems does (#778);
+          no gate, emitted workflow or editor configuration reads any other
+          name (#353)
   - key: devcontainer_features
     go: [ArchetypeControls.DevFeatures, ResolvedPolicy.DevFeatures]
     state: consumed

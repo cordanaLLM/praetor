@@ -502,7 +502,8 @@ declared, removes once it is not, and audit locks: `docs:seo-portal` the documen
 require something of the repository (`Applies`): the API compatibility gate is written only where
 git tracks a `go.mod`. The latter's description names that workflow, the condition and the
 `Migration:` footer check and nothing else; its `linters`
-entries are names in the resolved policy, not commands any adopted repository runs.
+entries are names in the resolved policy, not commands any adopted repository runs. The one
+linter name a gate reads is `clang-tidy` ([below](#every-key-names-its-consumer)).
 
 ---
 
@@ -573,7 +574,10 @@ acts on the value (renders, gates, selects) or only reports it, or marks the key
 `refused` with the reason. That file is the reference for what a key does. Two consequences for
 authors:
 
-- `linters`, `error_unwraps`, both `memory` keys, `name`, `description` and `runtime` are
+- `linters` is read for one name: `clang-tidy`, which `native-gpu-systems` declares, enables
+  the audit's [clang-tidy translation-unit coverage gate](clang-tidy-coverage.md). Every other
+  linter name changes no gate, emitted file or report.
+- `error_unwraps`, both `memory` keys, `name`, `description` and `runtime` are
   unconsumed: declaring them changes no gate, emitted file or report. A capability that
   `description` names is enforced only where a consumed key enforces it.
 - `supply_chain.slsa_level`, `supply_chain.enforce_cosign` and `complexity.max_cognitive` are

@@ -37,7 +37,11 @@ remains `due`. The agent must resolve the failures or retain an explicit blocker
 the existence of a draft cannot close that work. `passed` requires at least one
 successful check, no failed or pending checks, and success for every configured
 `required_checks` name. Optional skipped/neutral jobs are reported separately;
-they cannot satisfy a required name. Duplicate names never hide a failure.
+they cannot satisfy a required name. A re-run of a job supersedes its earlier run on the
+same head, as GitHub judges it: within one workflow, only the run of a job with the latest
+`startedAt` counts (`_latest_runs` in `.config/lefthook/scripts/checkpoint.py`). Otherwise
+duplicate names never hide a failure: two workflows sharing a job name, status contexts, and
+runs without a workflow name or start time are all judged.
 
 The check observer uses `gh pr list --json statusCheckRollup`, verified against
 GitHub CLI 2.100.0. It rejects 100 or more contexts as incomplete because that
