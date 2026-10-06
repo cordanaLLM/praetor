@@ -589,7 +589,8 @@ authors:
   fails when the release workflows measure less than the profile declares
   ([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level)).
   Declare the level the adopters' releases can reach, and 0 for a repository that releases
-  nothing.
+  nothing. A fresh adoption whose workflows fall short gets a HISS-11 exceptions entry that
+  expires in 90 days ([Declaring a gap](releasing.md#declaring-a-gap)).
 
 `TestShippedManifestMatchesTheSource` (`internal/archetypecoverage/shipped_test.go`) type-checks
 the module's Go source and fails when a key has no entry, when an entry names a key the schema

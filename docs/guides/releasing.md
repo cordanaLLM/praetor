@@ -290,6 +290,16 @@ the one the measurement read, or one with no gap left to excuse, is stale and fa
 removed (`TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries` in
 `internal/adopt/supply_chain_audit_test.go`).
 
+`praetorctl adopt` records such an entry in the `.standards.yaml` it creates when the policy
+declares more than the repository's workflows reach, which is the case for a fresh repository
+under the default facet `security:high`: its reason names the shortfalls and this guide, it
+expires 90 days after the adoption, and the adoption report says so on the `.standards.yaml`
+line. A first audit then passes with the gap printed instead of failing
+(`TestAdoptThenAuditDeclaresTheSupplyChainGap` in
+`cmd/standardsctl/audit_supply_chain_test.go`). Close the gap before the entry expires: raise
+the release workflow as this section describes, or select facets that declare less with
+`praetorctl profile set --facets`.
+
 ## Verifying a published release
 
 Every signature this repository publishes is a **Sigstore bundle**: one `.sigstore.json`

@@ -288,3 +288,35 @@ func TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries(t *testing.T) {
 		})
 	}
 }
+
+// The entry adoption records for a gap (supplyChainException) is one the validator accepts and
+// the gate reads as declaring that gap: its path is the workflow the measurement read, its reason
+// one line naming the shortfalls and the guide, and its expiry the latest the list allows.
+func TestNewSupplyChainExceptionDeclaresTheGap(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"a Level 2 release":      {".github/workflows/publish.yml": releaseSteps(directAttestation)},
+		"no provenance workflow": {"README.md": "x\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := supplyChainRepo(t, files)
+			declared := supplyChainPolicy(3, true, true)
+			gap, err := measureSupplyChainGap(context.Background(), root, declared.SupplyChain)
+			if err != nil || len(gap.Shortfalls) != 3 {
+				t.Fatalf("measureSupplyChainGap = %+v, %v; want three shortfalls", gap, err)
+			}
+			entry := newSupplyChainException(gap, supplyChainToday)
+			if err := config.ValidateExceptions([]config.Exception{entry}, supplyChainToday); err != nil {
+				t.Fatalf("adoption's entry %+v refused: %v", entry, err)
+			}
+			if entry.Expires != "2027-01-04" || !strings.Contains(entry.Reason, "SLSA Build Level 3 declared") ||
+				!strings.Contains(entry.Reason, supplyChainGuide) {
+				t.Fatalf("entry = %+v; want the latest expiry and a reason naming the gap and the guide", entry)
+			}
+			out, err := AuditSupplyChain(context.Background(), SupplyChainOptions{Root: root, Policy: declared,
+				Exceptions: []config.Exception{entry}, Today: supplyChainToday})
+			if err != nil || !strings.Contains(out, "declared gap") {
+				t.Fatalf("the gate did not read adoption's entry as declaring the gap: %q, %v", out, err)
+			}
+		})
+	}
+}

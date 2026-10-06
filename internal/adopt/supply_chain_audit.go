@@ -94,8 +94,9 @@ type supplyChainShortfall struct {
 	summary, detail string
 }
 
-// measureSupplyChainGap measures the workflow files under root against declared, for the audit
-// to judge.
+// measureSupplyChainGap measures the workflow files under root against declared: the audit
+// judges the result, and adoption records an exception for the gap a fresh repository has
+// (supplyChainException), so both read one measurement (HISS-19).
 func measureSupplyChainGap(ctx context.Context, root string, declared config.SupplyChainPolicy) (supplyChainGap, error) {
 	measured, err := forge.MeasureProvenance(ctx, root)
 	if err != nil {
@@ -126,6 +127,15 @@ func (g supplyChainGap) releaseWorkflow() string {
 // inside .github/workflows, declares the gap.
 func (g supplyChainGap) excuses(entry config.Exception) bool {
 	return g.Measured.LevelWorkflow == "" || entry.Matches(g.releaseWorkflow())
+}
+
+// summary names every shortfall in a few words, for an exceptions entry's reason.
+func (g supplyChainGap) summary() string {
+	parts := make([]string, 0, len(g.Shortfalls))
+	for index := 0; index < len(g.Shortfalls); index++ {
+		parts = append(parts, g.Shortfalls[index].summary)
+	}
+	return strings.Join(parts, "; ")
 }
 
 // supplyChainShortfalls lists each declaration the measurement falls short of.

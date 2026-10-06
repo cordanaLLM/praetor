@@ -21,6 +21,9 @@ Read [Fast adoption](../../adoption.md) first for the one-step path, then
 - [clang-tidy coverage gate](../clang-tidy-coverage.md): the audit check the `clang-tidy` linter
   of `native-gpu-systems` enables, which names every tracked C/C++ translation unit no declared
   clang-tidy lane reads, and the top-level `exceptions` list that excuses one.
+- [Supply-chain gate](../releasing.md#how-the-audit-measures-the-slsa-level): how the audit
+  measures the SLSA level, cosign signing and SBOM generation the release workflows reach, and
+  the HISS-11 `exceptions` entry adoption records when the declared supply chain exceeds them.
 - [Generated artefacts](../generated-artefacts.md): declaring the files a repository renders
   from other files, why a pull request leaves them alone, and the one regeneration change per
   batch that renders them.
