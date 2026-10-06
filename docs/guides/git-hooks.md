@@ -453,10 +453,81 @@ have drifted from `overrides.actions` is refused until the setting the verdict n
 on the token they provide. Tests: `TestLefthookAudit_Positive_PreCommitOfflinePrePushOnline`
 in `internal/adopt/lefthook_audit_offline_test.go`.
 
+## The hook runner the audit accepts
+
+Unless `.standards.yaml` lists `git-hooks` in `adoption.decline`, `praetorctl audit` requires
+two things in a Git checkout: a hook runner's configuration, and a `pre-commit` hook that this
+runner installed. Both checks live in `internal/adopt/hook_runner_audit.go`:
+
+- `AuditGitHookConfig` checks the configuration. `praetorctl audit` and `standards_audit` both
+  run it. It accepts `lefthook.yml`. Without `lefthook.yml`, it accepts a
+  `.pre-commit-config.yaml` that runs both praetor commands (see below).
+- `AuditInstalledGitHook` checks the installed hook. Only `praetorctl audit` runs it, and not in
+  CI, which installs no hooks. In CI the audit prints the runner and the configuration file it
+  verified instead.
+
+Adoption writes `lefthook.yml` and never a pre-commit framework configuration. The hook is the one
+in the directory `git rev-parse --git-path hooks` names, so `core.hooksPath` and linked
+worktrees count. The audit recognises a hook by the marker its runner uses to recognise its own
+file:
+
+| Runner | Marker | Configuration the runner reads |
+| --- | --- | --- |
+| Lefthook | the `LEFTHOOK` fingerprint Lefthook 2.1.14 checks for (`isLefthookFile`), together with its template's last line, `call_lefthook run "pre-commit"` | `lefthook.yml` |
+| Praetor's fallback hook, which adoption writes when lefthook cannot install | `# praetor-managed pre-commit hook` (`fallbackPreCommitMarker` in `internal/adopt/hooks.go`) | `lefthook.yml` |
+| The pre-commit framework | an ID the framework counts as its own hook's: the `# ID:` line pre-commit 4.6.2 writes, or an earlier template's (`is_our_script` in `pre_commit/commands/install_uninstall.py`) | `.pre-commit-config.yaml`, which must be the file the hook passes as `--config` |
+
+The hook must also be runnable by git's own rule (`is_executable` in git's `run-command.c`).
+On Linux and macOS, that means the owner execute bit is set. Windows has no execute bit, so the
+file must start with `#!` there. Any other file fails the audit, and the failure names the path,
+the file's size and its first line. A hand-written hook that runs the praetor commands also
+fails: install the hook with a runner (`lefthook install`, `praetorctl adopt` or
+`pre-commit install`).
+
+When both configurations exist, the installed hook decides which one is checked. Lefthook's hook
+and the fallback hook are checked against `lefthook.yml`, and `.pre-commit-config.yaml` is not
+read. The framework's hook is checked against `.pre-commit-config.yaml`, even though
+`lefthook.yml` exists. `standards_audit` and CI read no hook, so for them `lefthook.yml` alone
+satisfies the gate.
+
+A `.pre-commit-config.yaml` counts when its `repo: local` hooks run
+`praetorctl compile-context --verify` and `praetorctl audit` at the `pre-commit` stage. Either
+binary name counts, bare or by path, and `args` are appended to `entry`. If a hook sets no
+`stages`, it takes `default_stages`, and if that is unset too, the hook runs at every stage.
+`commit` is the old name for `pre-commit`. The file is read through `config.ReadYAMLDocument`,
+which refuses a second document and duplicate keys. A configuration that passes:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: praetor-compile-context
+        name: praetorctl compile-context --verify
+        entry: praetorctl compile-context --verify
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: praetor-audit
+        name: praetorctl audit --offline
+        entry: praetorctl audit --offline
+        language: system
+        pass_filenames: false
+        always_run: true
+```
+
+Tests: `internal/adopt/hook_runner_audit_test.go` covers each runner's hook (positive), the
+placeholder and the other hooks the audit refuses (negative), and both configurations together,
+`core.hooksPath` and the Windows rule (boundary). `internal/adopt/precommit_config_audit_test.go`
+covers the configuration rules. It also checks the hooks that `lefthook install` and
+`pre-commit install` write, wherever those tools are on `PATH`.
+`TestAudit_Boundary_HooksGate` and `TestAudit_Positive_PreCommitFrameworkRunner` in
+`cmd/standardsctl/audit_cmd_test.go` and `TestServerAuditHookRunner_PreCommitFramework` in
+`cmd/standards-mcp/audit_decline_test.go` run the same rules through both audits.
+
 ## Hook files adoption keeps
 
-The audit reads none of the hook files below, so `praetorctl adopt --force` does not overwrite
-them. A file that still holds a text an earlier release wrote is refreshed on a plain run,
+The audit compares none of the hook files below with a rendering, so `praetorctl adopt --force`
+does not overwrite them. A file that still holds a text an earlier release wrote is refreshed on a plain run,
 in its own line endings. An edited one is kept, `--force` included, with a warning reading
 `not audit-verified; kept`. To regenerate it, delete it and re-run adopt.
 
@@ -464,7 +535,7 @@ in its own line endings. An edited one is kept, `--force` included, with a warni
 | --- | --- | --- | --- |
 | `.config/agent/hooks/block_evasion.py` | refreshed to the current rendering (`priorEvasionHookDigests`, `testdata/evasion`) | kept | `TestAdopt_Positive_PriorEvasionHookRefreshedOnPlainRun`, `TestAdopt_Negative_EditedEvasionHookKeptUnderForce` |
 | `.config/lefthook/scripts/checkpoint.py` and `common.py`, and `.config/lefthook/python.sh` | refreshed to the `--lock-source-root` bundle (`priorCheckpointDigests`, `testdata/checkpoint`) | kept; the checkpoint lifecycle is unavailable and no other bundle file is written | `TestReconcileCheckpointBundle_Positive_PriorScriptRefreshedOnPlainRun`, `TestReconcileCheckpointBundle_Negative_NoHalfRefreshBesideAKeptFile`, `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable` |
-| the `pre-commit` hook in the directory git reports, written only when lefthook cannot install | not applicable | a hook praetor did not write is kept: the audit requires only that one exists | `TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce` |
+| the `pre-commit` hook in the directory git reports, written only when lefthook cannot install | not applicable | a hook praetor did not write is kept; the audit accepts it only when lefthook or the pre-commit framework wrote it ([the hook runner the audit accepts](#the-hook-runner-the-audit-accepts)) | `TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce` |
 
 Beside a `lefthook.yml` that extends the canonical policy, the interceptor and the checkpoint
 scripts belong to that vendored bundle and are never refreshed

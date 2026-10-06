@@ -57,6 +57,7 @@ register:
     forge: social      # issues, PR bodies, review comments, commit bodies
     docs: docs         # docs/, README, ADR bodies, notebook documents
     agent: internal    # briefs, fan-out prompts, workflow returns; also the fallback
+    operator: docs     # chat replies to the operator; fixed, no other value
     # Emission surfaces: unset means internal, whatever agent says. See "Caveman lint" below.
     # context: internal  # AGENTS.md, compiled vendor files, personas, skills; fixed, no other value
     # mcp: internal      # MCP tool and property descriptions, MCP text results
@@ -81,6 +82,7 @@ register:
 | Key | Default | Bound | Error when violated |
 | :--- | :--- | :--- | :--- |
 | `surfaces.<forge\|docs\|agent>` | `social`, `docs`, `internal` | one of the three registers; closed key set | `unsupported text register "<v>"`, `unknown register surface "<k>"` |
+| `surfaces.operator` | `docs`, whatever `surfaces.agent` says | `docs` only: a reply to the operator is never caveman (`internal/config/register.go`) | `register surface "operator" is fixed to docs: ...` |
 | `surfaces.context` | `internal`, whatever `surfaces.agent` says | `internal` only: the caveman gate on AGENTS.md has no opt-out | `register surface "context" is fixed to internal: ...` |
 | `surfaces.<mcp\|hooks\|prompts\|ledger>` | unset, resolves as `internal` (`surfaces.agent` does not reach it) | one of the three registers; closed key set | same as the first row |
 | `tasks.<label>` | the four rows above, register only | at most 64 rows; label must be a `target_tasks` label | `register tasks exceed 64 rows`, `invalid register task label "<k>"`, `register task "<k>" is not a declared target_tasks label` |
@@ -138,16 +140,20 @@ covers the release render and the clone), `internal/changelog/fragment_dir_test.
 
 ### Resolution
 
-`RegisterPolicy.Resolve(surface, task)` decides in this order:
+`RegisterPolicy.Resolve(surface, task)` decides in this order (`internal/config/register.go`):
 
-1. The `forge` and `docs` surfaces own their audience. The task never changes who reads the
-   forge or the documentation, and no budget applies. The `context` surface is always
-   `internal`. Any other emission surface (`mcp`, `hooks`, `prompts`, `ledger`) resolves to
-   its own key when the manifest writes it and to `internal` otherwise; neither the task nor
-   `surfaces.agent` changes it.
-2. On the `agent` surface, or when no surface is named, the task row wins; without a row
+1. The `context` surface is always `internal` (`ContextRegister`), with source `surfaces.context`.
+   The `operator` surface is always `docs` (`OperatorRegister`), with source `surfaces.operator`;
+   the task never changes it, and no budget applies (`TestOperatorSurfaceIsFixed` in
+   `internal/config/register_test.go`).
+2. The `forge` and `docs` surfaces own their audience (`p.surfaceRegister(surface)`). The task
+   never changes who reads the forge or the documentation, and no budget applies. Any other
+   emission surface (`mcp`, `hooks`, `prompts`, `ledger`) resolves to its own key when the
+   manifest writes it and to `internal` (`EmissionDefaultRegister`) otherwise; neither the task
+   nor `surfaces.agent` changes it.
+3. On the `agent` surface, or when no surface is named, the task row wins; without a row
    the register is `surfaces.agent`.
-3. The result names the winning row (`surfaces.forge`, `tasks.ci_debugging`,
+4. The result names the winning row (`surfaces.operator`, `surfaces.forge`, `tasks.ci_debugging`,
    `surfaces.agent`) for reports.
 
 A `ci_debugging` run therefore writes an internal return and a social pull-request body
@@ -382,13 +388,18 @@ surfaces verified.
 
 ## Surfaces without a register row
 
-Two audiences the schema does not (yet) name a `RegisterSurface` for:
+Two interactive surfaces do not carry a row in the rendered register block:
 
-- **Chat replies to the operator.** Always full prose, never `caveman`, per this guide and
-  per operator direction recorded outside this repository. Not a `RegisterPolicy` surface:
-  adding one is `internal/config/register.go` schema growth, and Q-059's decision covered
-  the four emission surfaces only. There is nothing to configure and nothing to opt out of.
-- **Popup question text (`AskUserQuestion` and equivalent).** AGENTS.md rule 4 mandates the
+- **Chat replies to the operator.** Governed by `SurfaceOperator` (`"operator"` in
+  `internal/config/register.go`), which resolves strictly to `OperatorRegister` (`docs`).
+  It has no opt-out: writing `internal` or `social` in `.standards.yaml` is rejected by
+  `validate` with `register surface "operator" is fixed to docs: a reply to the operator is never caveman`
+  (`TestOperatorSurfaceIsFixed` in `internal/config/register_test.go`). Replies to a person
+  are always full prose, never `caveman`. The Caveman lint does not apply to it: `LintEnforced` is true only
+  where a surface resolves to `internal`, and `operator` resolves to `docs`
+  (`internal/config/register.go`).
+- **Popup question text (`AskUserQuestion` and equivalent).** Outside `RegisterSurface`:
+  the schema defines no surface for interactive popups. AGENTS.md rule 4 mandates the
   mechanism (a structured popup, never options embedded in prose); the text inside that
   popup follows caveman's own clarity-floor discipline (drop filler and hedges, never
   compress past the point where an option or its consequence needs a follow-up to
@@ -465,8 +476,21 @@ number of `<before>`, or carries fewer MUST-type directives, prohibitions or num
 (the "Clarity floor" table below). Findings
 name their line in `<before>` (line 0 for a count). Either input can be `-`, not both. A
 rewrite into the internal register is acceptable when `check` passes on it and `floor`
-passes from the original to it. Runtime message, brief and return profiles run on demand;
-the repository gates call the context profile.
+passes from the original to it. The clarity `floor` command (`praetorctl caveman floor`,
+`internal/caveman/floor.go`) runs on demand during rewrites. Repository gates actively
+exercise the `context` profile: `praetorctl compile-context --verify`
+(`cmd/standardsctl/compile_context.go`) and `praetorctl audit` (`cmd/standardsctl/audit.go`)
+gate `AGENTS.md` via `compiler.LintContext` (`internal/compiler/caveman_lint.go`), plus
+canonical personas and skills via `compiler.LintAgentText` (`internal/compiler/caveman_gate.go`,
+`internal/compiler/projection.go`). In addition, `audit` gates the `message`, `brief` and
+`return` profiles on declared non-Markdown sources via `auditCavemanConfiguredSources`
+(`cmd/standardsctl/audit.go`, `cavemanSourceInputs` in `cmd/standardsctl/caveman.go`), where
+`register.sources` inputs are restricted to `message|brief|return`
+(`internal/config/register_sources.go`). At runtime, the `brief` and `return` profiles apply
+automatically rather than on demand: the native pre-dispatch hook enforces them on subagent
+traffic (`internal/agenthook/agent_traffic.go`), while automated repair planning
+(`internal/dogfood/repair.go`) and execution (`internal/repairrun/run_execute.go`) validate
+briefs, summaries and provider instructions.
 
 ### The context gate
 
@@ -785,7 +809,9 @@ The implementation is `cavemanEstimateBase` in `cmd/standardsctl/caveman_baselin
 a missing or oversized input is an error whichever surface is named. When the surface
 resolves to `docs` or `social`, the command then returns an error naming the deciding row
 and stating that the input was not checked
-(`surfaces.docs = docs has no Caveman verdict; input NOT checked`); a surface without a
+(`surfaces.docs = docs has no Caveman verdict; input NOT checked`,
+`surfaces.operator = docs has no Caveman verdict; input NOT checked`;
+`TestCavemanCheckSurfaceWithoutLint` in `cmd/standardsctl/caveman_test.go`); a surface without a
 Caveman verdict never produces a green skip:
 
 ```bash

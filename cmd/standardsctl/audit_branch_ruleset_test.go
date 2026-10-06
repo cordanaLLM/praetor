@@ -32,7 +32,7 @@ adoption:
 `
 	writeFixtureFile(t, f.dir, ".standards.yaml", declinedManifest)
 	initGitFixture(t, f.dir)
-	writeFixtureFile(t, f.dir, ".git/hooks/pre-commit", "#!/bin/sh\nexit 0\n")
+	writeFixtureHook(t, f.dir, ".git/hooks/pre-commit", fixtureLefthookHook)
 
 	// Remove ruleset to simulate clean adoption run
 	rulesetPath := filepath.Join(f.dir, ".github", "rulesets", "main.json")

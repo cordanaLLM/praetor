@@ -61,7 +61,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 			return auditBranchProtection(ctx, manifest, s.rootDir, &effective.Policy)
 		},
 		func(context.Context) (string, error) { return adopt.AuditLabelTaxonomy(manifest, s.rootDir) },
-		func(context.Context) (string, error) { return auditHookConfig(manifest, s.rootDir) },
+		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}
 
 	passed := 0
@@ -180,13 +180,14 @@ func auditBranchProtection(ctx context.Context, manifest *config.Manifest, root 
 	return adopt.AuditBranchProtectionWithPolicy(ctx, manifest, root, policy)
 }
 
-// auditHookConfig requires lefthook.yml in git repositories unless adoption.decline lists
-// git-hooks (adopt.AuditGitHookConfig, the gate the CLI audit shares); hook activation itself is
-// a workstation concern verified by the CLI audit.
-func auditHookConfig(manifest *config.Manifest, root string) (string, error) {
+// auditHookConfig requires a hook runner configuration in git repositories, lefthook.yml or a
+// .pre-commit-config.yaml that runs the praetor commands, unless adoption.decline lists git-hooks
+// (adopt.AuditGitHookConfig, the gate the CLI audit shares); hook activation itself is a
+// workstation concern verified by the CLI audit.
+func auditHookConfig(ctx context.Context, manifest *config.Manifest, root string) (string, error) {
 	if !util.PathExists(filepath.Join(root, ".git")) {
 		return "[PASS] Not a git checkout: hook configuration gate skipped.", nil
 	}
-	line, _, err := adopt.AuditGitHookConfig(manifest, root)
-	return line, err
+	hooks, err := adopt.AuditGitHookConfig(ctx, manifest, root)
+	return hooks.Line, err
 }

@@ -200,11 +200,24 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	// ignores it (compiler.CheckEvidenceIgnored).
 	writeFixtureFile(t, dir, ".gitignore", "/.workingdir/\n")
 	f.gitEnv = initGitFixture(t, dir)
-	hook := writeFixtureFile(t, dir, ".git/hooks/pre-commit", "#!/bin/sh\nexit 0\n")
+	writeFixtureHook(t, dir, ".git/hooks/pre-commit", fixtureLefthookHook)
+	return f
+}
+
+// fixtureLefthookHook is the part of the pre-commit hook Lefthook 2.1.14 installs that the audit
+// recognises (adopt.AuditInstalledGitHook): the LEFTHOOK fingerprint and the dispatch line of
+// its hook template. call_lefthook is stubbed to succeed, so a fixture commit runs no lefthook.
+const fixtureLefthookHook = "#!/bin/sh\n\nif [ \"$LEFTHOOK\" = \"0\" ]; then\n  exit 0\nfi\n\n" +
+	"call_lefthook()\n{\n  exit 0\n}\n\ncall_lefthook run \"pre-commit\" \"$@\"\n"
+
+// writeFixtureHook writes an executable hook at rel under dir, which the audit's hook gate runs.
+func writeFixtureHook(t *testing.T, dir, rel, content string) string {
+	t.Helper()
+	hook := writeFixtureFile(t, dir, rel, content)
 	if err := os.Chmod(hook, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return f
+	return hook
 }
 
 // writeDeclaredRuleset writes the ruleset the branch protection audit accepts for dir: the one
