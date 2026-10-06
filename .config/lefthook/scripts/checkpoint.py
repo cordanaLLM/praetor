@@ -17,6 +17,8 @@ MAX_OUTPUT = 1024 * 1024
 MAX_PATHS = 10000
 # gh 2.100.0 requests the first 100 contexts for pr list; equality is incomplete.
 MAX_CHECKS = 100
+# GitHub reports check-run start times in UTC with second precision.
+START_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 TIMEOUT = 5
 PUBLIC_ACTIONS = [
     "Review the owned public paths and run the required verification gates.",
@@ -563,6 +565,42 @@ def _check_observation(check):
     return name, state
 
 
+def _rerun_key(check):
+    """Return (workflow, job, start) for a check run a later run of the same job can supersede.
+
+    GitHub judges a job by its latest run on a head, so a re-run in the same workflow replaces
+    an earlier run of the same job; two workflows that share a job name never hide each other.
+    A status context, or a run without a workflow name or a valid start time, has no key and is
+    always judged.
+    """
+    workflow, started = check.get("workflowName"), check.get("startedAt")
+    if (
+        check.get("__typename") != "CheckRun"
+        or not isinstance(workflow, str)
+        or not workflow
+        or not isinstance(started, str)
+        or not START_TIME.fullmatch(started)
+        or started.startswith("0001-")
+    ):
+        return None
+    return workflow, check.get("name"), started
+
+
+def _latest_runs(checks):
+    """Drop each check run that a later run of the same job in the same workflow supersedes."""
+    latest = {}
+    for check in checks[:MAX_CHECKS]:
+        key = _rerun_key(check) if isinstance(check, dict) else None
+        if key is not None:
+            latest[key[:2]] = max(latest.get(key[:2], key[2]), key[2])
+    kept = []
+    for check in checks[:MAX_CHECKS]:
+        key = _rerun_key(check) if isinstance(check, dict) else None
+        if key is None or key[2] == latest[key[:2]]:
+            kept.append(check)
+    return kept
+
+
 def _review_state(checks, required):
     if not isinstance(checks, list) or len(checks) >= MAX_CHECKS:
         raise CheckpointError(
@@ -570,7 +608,7 @@ def _review_state(checks, required):
         )
     counts = {name: 0 for name in ("passed", "failed", "pending", "skipped")}
     passed = set()
-    for check in checks[:MAX_CHECKS]:
+    for check in _latest_runs(checks):
         name, state = _check_observation(check)
         counts[state] += 1
         if state == "passed":
