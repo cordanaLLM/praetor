@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // goJobRun returns the run line of one pre-commit or pre-push job of the generated
@@ -29,20 +31,23 @@ func goJobRun(t *testing.T, hook, job string) string {
 	return run
 }
 
-// Positive: with a root go.mod, go vet and govulncheck run and their failures still block.
+// Positive: with a root go.mod, go vet and the Go vulnerability gate run and their failures still
+// block. The security job runs `praetorctl security govuln` (govulnGateArgs), the gate run's own
+// check, where govulncheck is installed, not govulncheck itself (#778).
 func TestGoModuleJobs_Positive_RunWhereTheRootHoldsAModule(t *testing.T) {
 	stubs, work := t.TempDir(), t.TempDir()
 	mustWrite(t, filepath.Join(work, "go.mod"), "module example.com/demo\n")
 	log := filepath.Join(work, "calls.log")
 	recordingStub(t, stubs, "go", log, 3)
-	recordingStub(t, stubs, "govulncheck", log, 4)
+	recordingStub(t, stubs, "govulncheck", log, 5)
+	recordingStub(t, stubs, util.PraetorCLI, log, 4)
 	if _, code := runHookLine(t, "sh", goJobRun(t, "pre-commit", "govet"), stubs, work); code != 3 {
 		t.Errorf("go vet failure exited %d, want 3", code)
 	}
 	if _, code := runHookLine(t, "sh", goJobRun(t, "pre-push", "security"), stubs, work); code != 4 {
-		t.Errorf("govulncheck failure exited %d, want 4", code)
+		t.Errorf("vulnerability gate failure exited %d, want 4", code)
 	}
-	if got := mustRead(t, log); got != "go vet ./...\ngovulncheck ./...\n" {
+	if got := mustRead(t, log); got != "go vet ./...\n"+util.PraetorCLI+" "+govulnGateArgs+"\n" {
 		t.Errorf("calls = %q", got)
 	}
 }
@@ -54,6 +59,7 @@ func TestGoModuleJobs_Negative_SkipWithoutARootModule(t *testing.T) {
 	log := filepath.Join(work, "calls.log")
 	recordingStub(t, stubs, "go", log, 3)
 	recordingStub(t, stubs, "govulncheck", log, 4)
+	recordingStub(t, stubs, util.PraetorCLI, log, 4)
 	for _, job := range [][2]string{{"pre-commit", "govet"}, {"pre-push", "security"}} {
 		out, code := runHookLine(t, "sh", goJobRun(t, job[0], job[1]), stubs, work)
 		if code != 0 || !strings.Contains(out, "no go.mod at the repository root, skipping") {
@@ -124,9 +130,12 @@ func TestCargoJobs_Boundary_NestedManifestAndRustGlob(t *testing.T) {
 }
 
 // Boundary: a go.mod in a subdirectory is not a root module, and a root module without
-// govulncheck installed still skips the scan rather than failing the push.
+// govulncheck installed still skips the scan rather than failing the push, without starting the
+// gate; with govulncheck installed and no praetorctl the job fails closed like every governed job.
 func TestGoModuleJobs_Boundary_NestedModuleAndMissingScanner(t *testing.T) {
 	stubs, work := t.TempDir(), t.TempDir()
+	log := filepath.Join(work, "calls.log")
+	recordingStub(t, stubs, util.PraetorCLI, log, 0)
 	mustWrite(t, filepath.Join(work, "tooling", "go.mod"), "module example.com/tooling\n")
 	if out, code := runHookLine(t, "sh", goJobRun(t, "pre-push", "security"), stubs, work); code != 0 || !strings.Contains(out, "no go.mod") {
 		t.Errorf("nested module: exit %d, output %q", code, out)
@@ -134,5 +143,13 @@ func TestGoModuleJobs_Boundary_NestedModuleAndMissingScanner(t *testing.T) {
 	mustWrite(t, filepath.Join(work, "go.mod"), "module example.com/demo\n")
 	if out, code := runHookLine(t, "sh", goJobRun(t, "pre-push", "security"), stubs, work); code != 0 || !strings.Contains(out, "govulncheck is not installed") {
 		t.Errorf("missing scanner: exit %d, output %q", code, out)
+	}
+	if fileExists(log) {
+		t.Errorf("the gate ran without govulncheck: %s", mustRead(t, log))
+	}
+	scannerOnly := t.TempDir()
+	recordingStub(t, scannerOnly, "govulncheck", log, 0)
+	if out, code := runHookLine(t, "sh", goJobRun(t, "pre-push", "security"), scannerOnly, work); code != 1 || !strings.Contains(out, "neither praetorctl nor standardsctl") {
+		t.Errorf("missing praetorctl: exit %d, output %q", code, out)
 	}
 }

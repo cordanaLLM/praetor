@@ -8,18 +8,6 @@
 # gets no receipt: the job names the languages it could not verify and
 # admits the push; a root with either fails when its stages did not run.
 ---
-agent-checkpoint-tool:
-  commands:
-    checkpoint:
-      run: >-
-        sh .config/lefthook/python.sh -B .config/lefthook/scripts/checkpoint.py
-        --event tool --json --marker
-agent-checkpoint-stop:
-  commands:
-    checkpoint:
-      run: >-
-        sh .config/lefthook/python.sh -B .config/lefthook/scripts/checkpoint.py
-        --event stop --json --marker
 pre-commit:
   parallel: true
   commands:
@@ -77,12 +65,9 @@ pre-push:
     security:
       run: >-
         if [ -f go.mod ]; then if command -v govulncheck >/dev/null 2>&1; then
-        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
-        standardsctl 2>/dev/null); then "$praetor_cli" security govuln; else
-        echo HISS governance hook cannot run because neither praetorctl nor
-        standardsctl is installed >&2; exit 1; fi; else echo govulncheck is not
-        installed, skipping >&2; fi; else echo no go.mod at the repository root,
-        skipping govulncheck >&2; fi
+        govulncheck ./...; else echo govulncheck is not installed, skipping >&2;
+        fi; else echo no go.mod at the repository root, skipping govulncheck
+        >&2; fi
     flavor-audit:
       run: >-
         if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
