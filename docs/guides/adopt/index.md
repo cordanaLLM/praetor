@@ -18,6 +18,9 @@ Read [Fast adoption](../../adoption.md) first for the one-step path, then
 - [Go API compatibility gate](../api-compatibility.md): the hosted check the
   `api:public-contract` facet adds where git tracks a `go.mod`, which compares every Go module's
   exported API with a base.
+- [clang-tidy coverage gate](../clang-tidy-coverage.md): the audit check the `clang-tidy` linter
+  of `native-gpu-systems` enables, which names every tracked C/C++ translation unit no declared
+  clang-tidy lane reads, and the top-level `exceptions` list that excuses one.
 - [Generated artefacts](../generated-artefacts.md): declaring the files a repository renders
   from other files, why a pull request leaves them alone, and the one regeneration change per
   batch that renders them.
