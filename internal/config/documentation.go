@@ -41,8 +41,8 @@ const (
 
 // DocumentationPolicy tunes the locked documentation gate for one repository, within bounds:
 // MaxFiles and MaxFileBytes raise the Markdown inventory's file-count and per-file bounds from
-// their defaults up to their ceilings, LintTimeoutSeconds sets the time budget of each
-// style-lint child from 1 s up to its ceiling (a nil field keeps the default), and StyleExclude lists
+// their defaults up to their ceilings, LintTimeoutSeconds sets the time budget of each style-lint
+// child from 1 s up to its ceiling (a nil field keeps the default), and StyleExclude lists
 // repository-relative globs of partial, generated or fixture Markdown the style rules skip. The
 // private-link rule still reads every file, and the gate fails when the globs leave no file to
 // style. The gate reads this block from .standards.yaml at run time, so a declaration changes

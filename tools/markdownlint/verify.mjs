@@ -2049,6 +2049,11 @@ function batches(files) {
   return result;
 }
 
+// counted names a count of a noun: "1 file", "2 files".
+function counted(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 // lintBudgetReport describes a lint batch whose child ran past its budget: its position, file
 // count and bytes, its largest files as suspects, the setting that raises the budget while it is
 // below its ceiling, and the command that lints a suspect alone. Size is no proof: in one adopter
@@ -2066,9 +2071,8 @@ function lintBudgetReport(root, batch, position, seconds) {
   const suspects = sized.slice(0, MAX_BUDGET_SUSPECTS);
   const alone = batch.length > 1 ?
     `\nlint a suspect alone to time it: node tools/markdownlint/verify.mjs ${ONLY_MODE} ${suspects[0].file}` : "";
-  const count = `${batch.length} ${batch.length === 1 ? "file" : "files"}`;
-  return `lint batch ${position} (${count}, ${total} bytes) exceeded its ${seconds} s budget` +
-    `${boundHint("lint_timeout_seconds", seconds, LINT_TIMEOUT_SECONDS_CEILING)}\n` +
+  return `lint batch ${position} (${counted(batch.length, "file")}, ${total} bytes) exceeded its ` +
+    `${seconds} s budget${boundHint("lint_timeout_seconds", seconds, LINT_TIMEOUT_SECONDS_CEILING)}\n` +
     "suspects, the batch's largest files (size is no proof):\n" +
     suspects.map(({ file, size }) => `  ${file} (${size} bytes)`).join("\n") + alone;
 }
@@ -2151,7 +2155,7 @@ function runOnly(root, temporary, settings, named) {
   const files = namedStyleFiles(root, settings, named, process.cwd());
   const started = Date.now();
   const status = runMarkdownlint(root, temporary, files, true, settings);
-  process.stdout.write(`markdown-governance: styled ${files.length} named Markdown files in ` +
+  process.stdout.write(`markdown-governance: styled ${counted(files.length, "named Markdown file")} in ` +
     `${Date.now() - started} ms (budget ${settings.lintTimeoutSeconds} s per lint child)\n`);
   return status;
 }
