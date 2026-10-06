@@ -223,6 +223,43 @@ func TestCheck_Boundary_SkipAndEdges(t *testing.T) {
 	}
 }
 
+// Boundary (review of #778): under SkipUnbuilt, as the audit runs it in hooks before any
+// build, a compile database that does not exist skips the run with every such lane named,
+// even over a unit no lane reads, while the other lanes are still read and fail closed. The
+// skip covers only absence: a written database is judged, a malformed one fails, and a files
+// list, which is tracked rather than built, fails when missing. Without SkipUnbuilt, as
+// ci tidy-coverage runs it, the absent database fails.
+func TestCheck_Boundary_SkipUnbuiltCompileDatabase(t *testing.T) {
+	root := fixtureRepo(t, map[string]string{"src/a.c": "int a;\n", "src/planted.cc": "int p;\n", "lanes/gpu.txt": "src/a.c\n"})
+	gpuLane := config.ClangTidyLane{Name: "gpu", Files: "lanes/gpu.txt"}
+	hipLane := config.ClangTidyLane{Name: "hip", CompileDatabase: "build-hip/compile_commands.json"}
+	run := func(skipUnbuilt bool, lanes ...config.ClangTidyLane) (Report, error) {
+		return Check(t.Context(), Options{Root: root, Policy: &config.ClangTidyPolicy{Lanes: lanes}, Today: today, SkipUnbuilt: skipUnbuilt})
+	}
+	report, err := run(true, cpuLane, gpuLane, hipLane)
+	want := "no compile database written in this checkout for lane cpu (build/compile_commands.json), hip (build-hip/compile_commands.json); " +
+		"praetorctl ci tidy-coverage judges coverage where a build writes it"
+	if err != nil || report.Skipped != want || !report.Passed() || report.Units != 0 {
+		t.Fatalf("unbuilt lanes must skip, naming each: %+v, %v", report, err)
+	}
+	if _, err := run(false, cpuLane, gpuLane); err == nil || !strings.Contains(err.Error(), "clang-tidy lane cpu: compile database build/compile_commands.json cannot be read") {
+		t.Fatalf("without SkipUnbuilt an absent compile database must fail closed, got %v", err)
+	}
+	missingList := config.ClangTidyLane{Name: "metal", Files: "lanes/metal.txt"}
+	if _, err := run(true, cpuLane, missingList); err == nil || !strings.Contains(err.Error(), "clang-tidy lane metal: file list lanes/metal.txt cannot be read") {
+		t.Fatalf("a missing files list must fail closed beside an unbuilt lane, got %v", err)
+	}
+	writeFile(t, root, "build/compile_commands.json", "{")
+	if _, err := run(true, cpuLane); err == nil || !strings.Contains(err.Error(), "is not a JSON compilation database") {
+		t.Fatalf("a written but malformed compile database must fail closed, got %v", err)
+	}
+	writeCompileDatabase(t, root, "src/a.c")
+	report, err = run(true, cpuLane, gpuLane)
+	if err != nil || report.Skipped != "" || findingsText(report) != "src/planted.cc: read by no clang-tidy lane and named by no exceptions entry" {
+		t.Fatalf("a written compile database must be judged: %+v, %v", report, err)
+	}
+}
+
 func jsonString(t *testing.T, value string) string {
 	t.Helper()
 	data, err := json.Marshal(value)

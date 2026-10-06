@@ -137,3 +137,32 @@ func TestAuditTidyCoverage_Boundary_EnablementAndSkips(t *testing.T) {
 		t.Fatalf("declared lanes must enable the gate without the linter = %v\n%s", err, out)
 	}
 }
+
+// Boundary (review of #778): the audit, which the hooks run before any build, skips the gate
+// with the lane named while a compile database lane's database is not written, where
+// ci tidy-coverage fails closed; once the build writes it, the audit judges coverage and fails
+// on a planted unit.
+func TestAuditTidyCoverage_Boundary_UnbuiltCompileDatabaseSkips(t *testing.T) {
+	root := tidyCoverageRepo(t, map[string]string{
+		"src/a.c": "int a;\n", "src/planted.cpp": "int p;\n", ".standards.yaml": tidyCoverageManifest(""),
+	})
+	manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := &config.ResolvedPolicy{Linters: []string{"clang-tidy"}}
+	out, err := captureStdout(t, func() error { return auditTidyCoverage(t.Context(), manifest, root, native) })
+	if err != nil || !strings.Contains(out, "[SKIP] clang-tidy translation-unit coverage not checked: no compile database written in this checkout "+
+		"for lane cpu (build/compile_commands.json); praetorctl ci tidy-coverage judges coverage where a build writes it.") {
+		t.Fatalf("audit before a build = %v\n%s", err, out)
+	}
+	_, err = captureStdout(t, func() error { return runCITidyCoverage(t.Context(), []string{"--dir=" + root}) })
+	if err == nil || !strings.Contains(err.Error(), "compile database build/compile_commands.json cannot be read") {
+		t.Fatalf("ci tidy-coverage before a build must fail closed, got %v", err)
+	}
+	writeTidyCoverageDatabase(t, root, "src/a.c")
+	out, err = captureStdout(t, func() error { return auditTidyCoverage(t.Context(), manifest, root, native) })
+	if err == nil || !strings.Contains(out, "  - src/planted.cpp: read by no clang-tidy lane") {
+		t.Fatalf("audit after a build must judge coverage = %v\n%s", err, out)
+	}
+}

@@ -7,7 +7,9 @@ package tidycoverage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path"
 	"path/filepath"
 	"strings"
@@ -36,35 +38,59 @@ type compileCommand struct {
 	File      string `json:"file"`
 }
 
-// readLanes reads every declared lane and returns what each read and the union of the
-// repository paths they read. A lane whose input is missing, unreadable, malformed or empty is
-// an error: the gate fails closed rather than counting the lane as reading nothing.
-func readLanes(ctx context.Context, root string, policy *config.ClangTidyPolicy, units []string) ([]Lane, map[string]bool, error) {
-	read := make(map[string]bool)
-	if policy == nil {
-		return nil, read, nil
+// laneReading is what readLanes found: what each lane read, the union of the repository paths
+// the lanes read, and the lanes skipped because their compile database is not written yet.
+type laneReading struct {
+	lanes   []Lane
+	read    map[string]bool
+	unbuilt []string
+}
+
+// readLanes reads every declared lane. A lane whose input is missing, unreadable, malformed or
+// empty is an error: the gate fails closed rather than counting the lane as reading nothing.
+// The one exception is opts.SkipUnbuilt, under which a compile database that does not exist
+// is recorded in unbuilt, as "name (path)", and the remaining lanes are still read.
+func readLanes(ctx context.Context, opts Options, units []string) (laneReading, error) {
+	reading := laneReading{read: make(map[string]bool)}
+	if opts.Policy == nil {
+		return reading, nil
 	}
-	bases := rootForms(root)
-	lanes := make([]Lane, 0, len(policy.Lanes))
-	for index := 0; index < len(policy.Lanes) && index < config.MaxClangTidyLanes; index++ {
+	bases := rootForms(opts.Root)
+	for index := 0; index < len(opts.Policy.Lanes) && index < config.MaxClangTidyLanes; index++ {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+			return laneReading{}, err
 		}
-		declared := policy.Lanes[index]
-		paths, err := readLane(root, bases, declared)
+		declared := opts.Policy.Lanes[index]
+		paths, err := readLane(opts.Root, bases, declared)
+		if err != nil && opts.SkipUnbuilt && isUnbuilt(declared, err) {
+			reading.unbuilt = append(reading.unbuilt, fmt.Sprintf("%s (%s)", declared.Name, declared.CompileDatabase))
+			continue
+		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("clang-tidy lane %s: %w", declared.Name, err)
+			return laneReading{}, fmt.Errorf("clang-tidy lane %s: %w", declared.Name, err)
 		}
-		lane := Lane{Name: declared.Name, Source: declared.Source()}
-		for unit := 0; unit < len(units); unit++ {
-			if paths[units[unit]] {
-				lane.Units++
-				read[units[unit]] = true
-			}
-		}
-		lanes = append(lanes, lane)
+		reading.lanes = append(reading.lanes, countLane(declared, paths, units, reading.read))
 	}
-	return lanes, read, nil
+	return reading, nil
+}
+
+// countLane returns what declared read of units, given the repository paths it reads, and
+// marks each such unit in read.
+func countLane(declared config.ClangTidyLane, paths map[string]bool, units []string, read map[string]bool) Lane {
+	lane := Lane{Name: declared.Name, Source: declared.Source()}
+	for unit := 0; unit < len(units); unit++ {
+		if paths[units[unit]] {
+			lane.Units++
+			read[units[unit]] = true
+		}
+	}
+	return lane
+}
+
+// isUnbuilt reports whether err, from reading lane, says the lane's compile database does not
+// exist. A files list is tracked, not built, so its absence is never unbuilt.
+func isUnbuilt(lane config.ClangTidyLane, err error) bool {
+	return lane.CompileDatabase != "" && errors.Is(err, fs.ErrNotExist)
 }
 
 // readLane returns the repository paths one lane reads.

@@ -30,19 +30,24 @@ exceptions:
     expires: "2026-12-31"
 ```
 
-Then run the gate where the lanes' inputs exist, for example in the CI job that has just
-configured the build:
+The audit runs the gate in the pre-commit and pre-push hooks. A `compile_database` lane is a
+build output, so the audit judges coverage only where every lane's database is written and
+otherwise skips with the lane named ([below](#lanes)). Run the gate that fails closed in the CI
+job that has just configured the build:
 
 ```bash
 praetorctl ci tidy-coverage --dir=.
 ```
 
+Without that job, a repository with a `compile_database` lane has no run that fails when the
+database is missing.
+
 ## When it runs
 
-| Where | Runs when | Otherwise |
-| :--- | :--- | :--- |
-| `praetorctl audit` | the resolved policy's `linters` name `clang-tidy`, as the `native-gpu-systems` profile does, or `.standards.yaml` declares `clang_tidy` | prints `[SKIP] clang-tidy translation-unit coverage not checked:` with the reason, neither a pass nor a failure |
-| `praetorctl ci tidy-coverage [--dir=.]` | always | — |
+| Where | Runs when | Otherwise | A `compile_database` lane's database is not written |
+| :--- | :--- | :--- | :--- |
+| `praetorctl audit` | the resolved policy's `linters` name `clang-tidy`, as the `native-gpu-systems` profile does, or `.standards.yaml` declares `clang_tidy` | prints `[SKIP] clang-tidy translation-unit coverage not checked:` with the reason, neither a pass nor a failure | skips with that `[SKIP]` line, naming each such lane |
+| `praetorctl ci tidy-coverage [--dir=.]` | always | — | fails closed |
 
 `auditTidyCoverage` in `cmd/standardsctl/tidy_coverage.go` makes the choice
 (`TestAuditTidyCoverage_Boundary_EnablementAndSkips`). The audit runs in the pre-commit and
@@ -75,10 +80,24 @@ repository-relative path:
 
 A lane whose source is missing, unreadable, not a compilation database, empty, or holds an entry
 without a `file` fails the gate closed, with the lane named. It never counts as a lane that reads
-nothing (`TestCheck_Negative_UnreadableLaneFailsClosed`). A compile database is a build output,
-so the audit fails in a checkout where it has not been written. For hooks that run before a
-build, track a `files` list, such as the units a clang-tidy run last measured, and keep the
-compile database lane for the CI job that builds.
+nothing (`TestCheck_Negative_UnreadableLaneFailsClosed`).
+
+One case differs between the two runs. A compile database is a build output, and the hooks run
+the audit in checkouts that have not been built. So when a `compile_database` lane's database
+does not exist, the audit skips the gate rather than judge coverage without that lane:
+
+```text
+[SKIP] clang-tidy translation-unit coverage not checked: no compile database written in this checkout for lane cpu (build/compile_commands.json); praetorctl ci tidy-coverage judges coverage where a build writes it.
+```
+
+The audit still reads the other lanes first and fails on any of their inputs that is unreadable,
+and it fails on a compile database that exists but is malformed or empty. A `files` list is
+tracked, not built, so a missing one fails the audit too. `praetorctl ci tidy-coverage` fails
+closed on a missing compile database as on every other unreadable input
+(`tidycoverage.Options.SkipUnbuilt`, `TestCheck_Boundary_SkipUnbuiltCompileDatabase`,
+`TestAuditTidyCoverage_Boundary_UnbuiltCompileDatabaseSkips`). A developer who has built a lane
+locally gets the full gate from the audit. To judge coverage in the hooks without a build, use a
+tracked `files` lane, such as the units a clang-tidy run last measured.
 
 ## Exceptions
 

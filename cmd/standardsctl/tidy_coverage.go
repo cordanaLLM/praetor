@@ -23,18 +23,21 @@ const clangTidyLinter = "clang-tidy"
 
 // auditTidyCoverage runs the clang-tidy translation-unit coverage gate (#778) when the resolved
 // policy's linters name clang-tidy or the manifest declares clang_tidy lanes, and otherwise
-// prints that it did not run and why.
+// prints that it did not run and why. The audit runs in the pre-commit and pre-push hooks,
+// before any build, so a lane whose compile database is not written yet skips the gate with
+// the lane named; `ci tidy-coverage` is the run that fails closed on it.
 func auditTidyCoverage(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy) error {
 	if manifest.ClangTidy == nil && !slices.Contains(policy.Linters, clangTidyLinter) {
 		fmt.Println("[SKIP] clang-tidy translation-unit coverage not checked: the resolved policy's linters do not name " +
 			"clang-tidy and .standards.yaml declares no clang_tidy lanes.")
 		return nil
 	}
-	return checkTidyCoverage(ctx, manifest, rootDir, time.Now())
+	return checkTidyCoverage(ctx, manifest, rootDir, time.Now(), true)
 }
 
 // runCITidyCoverage is `praetorctl ci tidy-coverage`: the gate on its own, for the CI job that
-// has just written the lanes' compile databases. It runs whatever the profile declares.
+// has just written the lanes' compile databases. It runs whatever the profile declares, and a
+// compile database that is not written fails it.
 func runCITidyCoverage(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("ci tidy-coverage", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "Repository root: the top of its git work tree, holding .standards.yaml")
@@ -48,15 +51,16 @@ func runCITidyCoverage(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return checkTidyCoverage(ctx, manifest, *dir, time.Now())
+	return checkTidyCoverage(ctx, manifest, *dir, time.Now(), false)
 }
 
 // checkTidyCoverage runs the gate over the repository at rootDir and prints its verdict: a
 // skip with its reason, a pass with what each lane read, or every finding before the failure.
-// A gate that cannot run, such as one whose lane input is missing, fails.
-func checkTidyCoverage(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
+// A gate that cannot run, such as one whose lane input is missing, fails; with skipUnbuilt, a
+// compile database that does not exist skips it instead (tidycoverage.Options.SkipUnbuilt).
+func checkTidyCoverage(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time, skipUnbuilt bool) error {
 	report, err := tidycoverage.Check(ctx, tidycoverage.Options{
-		Root: rootDir, Policy: manifest.ClangTidy, Exceptions: manifest.Exceptions, Today: today,
+		Root: rootDir, Policy: manifest.ClangTidy, Exceptions: manifest.Exceptions, Today: today, SkipUnbuilt: skipUnbuilt,
 	})
 	if err != nil {
 		return fmt.Errorf("[FAIL] clang-tidy translation-unit coverage could not run: %w", err)

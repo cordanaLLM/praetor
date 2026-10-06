@@ -55,6 +55,12 @@ type Options struct {
 	Exceptions []config.Exception
 	// Today is the day expiry is judged against.
 	Today time.Time
+	// SkipUnbuilt makes a compile_database lane whose database does not exist skip the run,
+	// with the lane named, instead of failing it. A compile database is a build output, and
+	// the audit runs in hooks before any build; coverage is judged only with every lane read.
+	// Every other unreadable lane input still fails. `praetorctl ci tidy-coverage` leaves it
+	// false and fails closed.
+	SkipUnbuilt bool
 }
 
 // Lane is what one declared lane read.
@@ -86,7 +92,8 @@ func (r Report) Passed() bool {
 
 // Check runs the gate. An error means the gate could not run: a declaration that is invalid,
 // a git listing that failed, or a lane whose input cannot be read. A skipped run returns a
-// Report whose Skipped names the reason. Findings are in the Report.
+// Report whose Skipped names the reason: no unit is tracked, or, with SkipUnbuilt, a lane's
+// compile database is not written yet. Findings are in the Report.
 func Check(ctx context.Context, opts Options) (Report, error) {
 	if err := errors.Join(config.ValidateClangTidy(opts.Policy), config.ValidateExceptions(opts.Exceptions, opts.Today)); err != nil {
 		return Report{}, fmt.Errorf("clang-tidy coverage declarations: %w", err)
@@ -99,12 +106,16 @@ func Check(ctx context.Context, opts Options) (Report, error) {
 		return Report{Skipped: fmt.Sprintf("the repository tracks no %s translation unit (%s)",
 			unitLanguages, strings.Join(unitSuffixes, " "))}, nil
 	}
-	lanes, read, err := readLanes(ctx, opts.Root, opts.Policy, units)
+	reading, err := readLanes(ctx, opts, units)
 	if err != nil {
 		return Report{}, err
 	}
-	report := Report{Units: len(units), Lanes: lanes}
-	judge(&report, units, read, config.ExceptionsFor(opts.Exceptions, Rule), opts.Today)
+	if len(reading.unbuilt) > 0 {
+		return Report{Skipped: fmt.Sprintf("no compile database written in this checkout for lane %s; "+
+			"praetorctl ci tidy-coverage judges coverage where a build writes it", strings.Join(reading.unbuilt, ", "))}, nil
+	}
+	report := Report{Units: len(units), Lanes: reading.lanes}
+	judge(&report, units, reading.read, config.ExceptionsFor(opts.Exceptions, Rule), opts.Today)
 	return report, nil
 }
 
