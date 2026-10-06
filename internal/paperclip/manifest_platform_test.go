@@ -35,7 +35,7 @@ func writePlatformManifest(t *testing.T, dir, body string) {
 // which governs only the git lookup.
 func TestSynthesizeHarness_Positive_ManifestNamesPlatform(t *testing.T) {
 	dir := platformRepo(t, "repo")
-	writePlatformManifest(t, dir, "version: 1\nrepository:\n  owner: acme\n  name: widgets\nreceipt: {}\n")
+	writePlatformManifest(t, dir, "version: 1\nrepository:\n  owner: acme\n  name: widgets\n  forge: forgejo\nreceipt: {}\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	h, err := SynthesizeHarness(ctx, dir, unknownFacts)

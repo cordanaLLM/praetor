@@ -16,7 +16,7 @@ import (
 
 // widgetManifest declares acme/widget; pinnedReceipt pins a well-formed receipt key.
 const (
-	widgetManifest = "repository:\n  owner: acme\n  name: widget\n"
+	widgetManifest = "repository:\n  owner: acme\n  name: widget\n  forge: forgejo\n"
 	pinnedReceipt  = "receipt:\n  public_key: \"" + "abababababababababababababababababababababababababababababababab" + "\"\n"
 )
 
@@ -180,7 +180,7 @@ func TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves(t *testing.T) {
 }
 
 // TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination: Boundary. Every value the
-// synthesis distinguishes (every released receipt row times every language set up to AllLanguages,
+// synthesis distinguishes (every released push row pair and receipt row times every language set up to AllLanguages,
 // every exception set up to AllExceptions and each function-length statement limitFacts accepts
 // for the limit the current harness states) is earlier output for the unpinned, unknown-fact synthesis except text
 // equal to that synthesis. The combinations are matched against one enumeration (renderedPrior),
@@ -197,8 +197,8 @@ func TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination(t *testing
 		t.Fatal(err)
 	}
 	combinations := (int(hisscatalog.AllLanguages) + 1) * (int(hisscatalog.AllExceptions) + 1) * len(limitFacts(limits))
-	if len(released) != len(releasedReceiptRows())*combinations {
-		t.Fatalf("fact combinations = %d, want every released receipt row x %d HISS fact combinations", len(released), combinations)
+	if len(released) != len(releasedPushRows())*len(releasedReceiptRows())*combinations {
+		t.Fatalf("fact combinations = %d, want every released push row pair x receipt row x %d HISS fact combinations", len(released), combinations)
 	}
 	self := 0
 	for index := range released {

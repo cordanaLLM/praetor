@@ -13,15 +13,11 @@
 - Text register internal: `caveman` skill: fragments, no filler, verbatim
   code/paths/errors; facts, paths, commands, verdict.
 
-## AGit Push Protocol
-
-<!-- markdownlint-disable MD013 -->
+## Push Protocol
 
 ```bash
-git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>
+git push origin HEAD:refs/heads/paperclip/<issue-id>
 ```
-
-<!-- markdownlint-enable MD013 -->
 
 ## High-Integrity Invariants
 

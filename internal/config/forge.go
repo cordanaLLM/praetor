@@ -52,6 +52,12 @@ func forgeChoices() string {
 	return strings.Join(names, ", ")
 }
 
+// Forges returns every value repository.forge accepts, so a caller that renders per forge
+// (the Paperclip refresh key) enumerates exactly that set.
+func Forges() []Forge {
+	return slices.Clone(forges[:])
+}
+
 // validForge reports whether forge is one repository.forge accepts.
 func validForge(forge Forge) bool {
 	return slices.Contains(forges[:], forge)

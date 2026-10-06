@@ -78,9 +78,13 @@ type harnessPlan struct {
 	rules bool
 	// onDisk reports whether a harness file exists before this run writes one.
 	onDisk bool
-	// unresolved reports a run without a repository identity: the harness platform names the
-	// repository, so none is synthesized and an existing harness stays as it is (BUG-852).
+	// unresolved reports a run without a repository identity, whose harness platform names the
+	// repository (BUG-852), or without the forge its push rows follow (#321): none is
+	// synthesized and an existing harness stays as it is.
 	unresolved bool
+	// cause is the synthesis refusal behind unresolved: util.ErrRepoIdentityUnresolved or
+	// config.ErrForgeUndeclared (forgeUndeclared), whose text names repository.forge.
+	cause error
 	// neverWrites reports a plan that writes no harness whatever is on disk: the paperclip step
 	// is declined or the repository identity is unresolved (keptHarnessPlan). Deleting the
 	// harness then regenerates nothing, so no remedy may suggest it.
@@ -129,11 +133,11 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	}
 	exists := fileExists(path)
 	if s.declines("paperclip") {
-		return keptHarnessPlan(ctx, path, exists, false)
+		return keptHarnessPlan(ctx, path, exists, nil)
 	}
 	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath, s.paperclipFacts(ctx))
-	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
-		return keptHarnessPlan(ctx, path, exists, true)
+	if errors.Is(err, util.ErrRepoIdentityUnresolved) || errors.Is(err, config.ErrForgeUndeclared) {
+		return keptHarnessPlan(ctx, path, exists, err)
 	}
 	if err != nil {
 		return harnessPlan{}, err
@@ -185,19 +189,27 @@ func planOwnedHarness(plan harnessPlan, platform string, force bool) harnessPlan
 	return plan
 }
 
-// keptHarnessPlan never plans a write. A declined paperclip step does not run, and a run
-// without a repository identity has no platform to synthesize (BUG-852), so a planned
-// harness would bind the manifest to a file nothing produces. An existing harness stays
-// byte for byte; with none on disk the plan is absent.
-func keptHarnessPlan(ctx context.Context, path string, exists, unresolved bool) (harnessPlan, error) {
+// keptHarnessPlan never plans a write. A declined paperclip step (cause nil) does not run, a
+// run without a repository identity has no platform to synthesize (BUG-852), and one whose
+// forge needs repository.forge has no push rows (#321), so a planned harness would bind the
+// manifest to a file nothing produces. An existing harness stays byte for byte; with none on
+// disk the plan is absent.
+func keptHarnessPlan(ctx context.Context, path string, exists bool, cause error) (harnessPlan, error) {
+	plan := harnessPlan{unresolved: cause != nil, cause: cause, neverWrites: true}
 	if !exists {
-		return harnessPlan{unresolved: unresolved, neverWrites: true}, nil
+		return plan, nil
 	}
 	existing, err := existingHarness(ctx, path)
 	if err != nil {
 		return harnessPlan{}, err
 	}
-	return harnessPlan{data: existing, onDisk: true, unresolved: unresolved, neverWrites: true}, nil
+	plan.data, plan.onDisk = existing, true
+	return plan, nil
+}
+
+// forgeUndeclared reports a plan left unresolved because the forge needs repository.forge.
+func (p harnessPlan) forgeUndeclared() bool {
+	return errors.Is(p.cause, config.ErrForgeUndeclared)
 }
 
 // synthesizeHarness renders the Paperclip harness for the repository's HISS facts

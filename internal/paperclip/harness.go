@@ -39,24 +39,58 @@ const (
 	markdownLineLimit = 80
 )
 
-// agitPushFormat is the push protocol every synthesized harness prescribes. The AGit push opens
-// the review; it updates no local ref, so the second push of the same commit to a review branch
-// records a remote-tracking ref that VerifyRun reads as local proof HEAD left the machine. The
+// reviewBranchPush is the push every synthesized harness prescribes, on every forge. It records
+// a remote-tracking ref that VerifyRun reads as local proof HEAD left the machine, and its
 // explicit destination never pushes a local main to the remote main, whatever branch is checked
-// out. It is prescribed whatever forge origin names: the AGit refs/for push opens a review only
-// on a forge that implements AGit (Forgejo, Gitea), the manifest declares no forge kind, and a
-// form chosen from the remote's host name would be a guess of the kind BUG-852 removed from
-// identity resolution. That residual of BUG-804 is stated in docs/guides/adoption-verification.md.
-const agitPushFormat = "git push origin HEAD:refs/for/main -o topic=<issue-id> && " +
-	"git push origin HEAD:refs/heads/paperclip/<issue-id>"
+// out. On GitHub and GitLab it is the whole protocol: the review opens there as a pull or merge
+// request from that branch (the operating contract's open-PR row).
+const reviewBranchPush = "git push origin HEAD:refs/heads/paperclip/<issue-id>"
 
-// Harness represents the Paperclip agent runtime configuration.
+// agitPushFormat is the push protocol of a Forgejo harness (config.ForgeForgejo). The AGit
+// refs/for push opens the review; it updates no local ref, so reviewBranchPush follows it with
+// the same commit. Of the forges repository.forge names only Forgejo implements AGit, so no
+// other forge's harness carries it: a GitHub repository used to be told to run it because the
+// manifest declared no forge kind (#321).
+const agitPushFormat = "git push origin HEAD:refs/for/main -o topic=<issue-id> && " + reviewBranchPush
+
+// Harness represents the Paperclip agent runtime configuration. Exactly one push member is set:
+// agit_push_format on a Forgejo repository, push_format on every other forge (forgePush).
 type Harness struct {
 	Version           int      `json:"version"`
 	Platform          string   `json:"platform"`
 	OperatingContract []string `json:"operating_contract"`
-	AGitPushFormat    string   `json:"agit_push_format"`
+	AGitPushFormat    string   `json:"agit_push_format,omitempty"`
+	PushFormat        string   `json:"push_format,omitempty"`
 	Invariants        []string `json:"invariants"`
+}
+
+// pushRows is the push member pair of one harness: AGit on Forgejo, the review branch elsewhere.
+type pushRows struct {
+	agit, push string
+}
+
+// forgePush is the push rows a harness for forge carries: only Forgejo's carries the AGit push.
+func forgePush(forge config.Forge) pushRows {
+	if forge == config.ForgeForgejo {
+		return pushRows{agit: agitPushFormat}
+	}
+	return pushRows{push: reviewBranchPush}
+}
+
+// releasedPushRows is every push row pair the refresh key accepts beside this release's other
+// rows: the AGit pair every release before repository.forge wrote on every forge, kept as the
+// literal priorAGitPushFormats holds, then each distinct pair forgePush writes for a forge
+// (config.Forges). A GitHub harness an earlier release wrote with the AGit push is therefore
+// unmodified earlier output that adopt refreshes, and so is one written before the repository
+// declared another forge.
+func releasedPushRows() []pushRows {
+	rows := []pushRows{{agit: priorAGitPushFormats[len(priorAGitPushFormats)-1]}}
+	for _, forge := range config.Forges() {
+		if row := forgePush(forge); !slices.Contains(rows, row) {
+			rows = append(rows, row)
+		}
+	}
+	return rows
 }
 
 // harnessInvariants are the HISS rules a Paperclip run carries, in catalog order.
@@ -72,7 +106,9 @@ var harnessInvariants = [...]string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", 
 // Go one Rust's unwrap; the exceptions it declares and documents; and the function length its
 // audit enforces, or, while that is unresolved, the audit ceiling a stricter policy tightens. A
 // zero facts.CeilingFuncLOC is completed from config.AuditMaxFuncLOC, the ceiling every audit
-// applies, so HISS-04 always states a number the refresh key can enumerate.
+// applies, so HISS-04 always states a number the refresh key can enumerate. The push rows are
+// those of the forge config.ResolveRepositoryForge resolves (forgePush); a repository whose
+// forge needs repository.forge and declares none is refused with config.ErrForgeUndeclared.
 func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.Facts) (*Harness, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("paperclip: context cannot be nil")
@@ -81,6 +117,10 @@ func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.F
 	if err != nil {
 		return nil, err
 	}
+	forge, err := config.ResolveRepositoryForge(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("paperclip: harness push protocol: %w", err)
+	}
 	if facts.CeilingFuncLOC == 0 {
 		facts.CeilingFuncLOC = config.AuditMaxFuncLOC
 	}
@@ -88,15 +128,16 @@ func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.F
 	if err != nil {
 		return nil, err
 	}
-	harness := releaseHarness(platform, receiptContract(receiptKeyPinned(ctx, repoPath)), invariants)
+	harness := releaseHarness(platform, forgePush(forge), receiptContract(receiptKeyPinned(ctx, repoPath)), invariants)
 	return &harness, nil
 }
 
 // releaseHarness is this release's synthesis for platform under one set of repository facts:
-// the receipt row (receiptContract of whether .standards.yaml pins a receipt key), and the
-// invariants rendered for the HISS facts. SynthesizeHarness and currentReleaseHarnesses both
-// build from it, so the refresh key enumerates exactly the text the synthesis writes.
-func releaseHarness(platform, receiptRow string, invariants []string) Harness {
+// the forge's push rows (forgePush), the receipt row (receiptContract of whether .standards.yaml
+// pins a receipt key), and the invariants rendered for the HISS facts. SynthesizeHarness and
+// currentReleaseHarnesses both build from it, so the refresh key enumerates exactly the text the
+// synthesis writes.
+func releaseHarness(platform string, push pushRows, receiptRow string, invariants []string) Harness {
 	return Harness{
 		Version:  1,
 		Platform: platform,
@@ -109,7 +150,8 @@ func releaseHarness(platform, receiptRow string, invariants []string) Harness {
 			// A Paperclip run reports to an orchestrating agent, so its product is internal text.
 			config.RegisterDirective(config.TextRegisterInternal),
 		},
-		AGitPushFormat: agitPushFormat,
+		AGitPushFormat: push.agit,
+		PushFormat:     push.push,
 		Invariants:     invariants,
 	}
 }
@@ -272,7 +314,8 @@ func renderedPrior(harnessText string, onDisk *Harness, priors []Harness) (*Harn
 // sameHarness reports whether a and b hold the same values.
 func sameHarness(a, b *Harness) bool {
 	return a.Version == b.Version && a.Platform == b.Platform && a.AGitPushFormat == b.AGitPushFormat &&
-		slices.Equal(a.OperatingContract, b.OperatingContract) && slices.Equal(a.Invariants, b.Invariants)
+		a.PushFormat == b.PushFormat && slices.Equal(a.OperatingContract, b.OperatingContract) &&
+		slices.Equal(a.Invariants, b.Invariants)
 }
 
 // priorRules reports whether rules is a rendering of prior some release wrote: the current
@@ -353,29 +396,33 @@ func releasedReceiptRows() []string {
 }
 
 // currentReleaseHarnesses renders this release for platform under every combination of the
-// repository facts SynthesizeHarness reads: each receipt row (releasedReceiptRows), times every
-// HISS fact combination releaseFacts builds from limits. A harness adoption wrote is still
-// unmodified output after the operator pins receipt.public_key, as the unpinned row advises, the
-// repository's languages or declared exceptions change, its policy resolves the function length
-// the harness stated as the audit ceiling, or the release moved only its pinned receipt row;
+// repository facts SynthesizeHarness reads: each push row pair (releasedPushRows), times each
+// receipt row (releasedReceiptRows), times every HISS fact combination releaseFacts builds from
+// limits. A harness adoption wrote is still unmodified output after the operator pins
+// receipt.public_key, as the unpinned row advises, declares repository.forge, the repository's
+// languages or declared exceptions change, its policy resolves the function length the harness
+// stated as the audit ceiling, or the release moved only its pinned receipt row or its push row;
 // recognising it is what lets adopt refresh it, since --force keeps any harness it does not
 // recognise, as operator-owned (#502). The set is enumerated rather than the fact-dependent rows
-// normalised away, so recognition stays byte for byte: an edit to the receipt row or to one
-// invariant, its function length included, still makes the harness operator-owned
-// (limitFacts). It is bounded: len(releasedReceiptRows()) x len(releaseFacts(limits)) values.
-// These are calls, so a later change to this text must first capture the rows as they stand as
-// literals, as cavemanOperatingContract captured #487's and priorPinnedReceiptRows #523's.
+// normalised away, so recognition stays byte for byte: an edit to the receipt row, the push row
+// or one invariant, its function length included, still makes the harness operator-owned
+// (limitFacts). It is bounded: len(releasedPushRows()) x len(releasedReceiptRows()) x
+// len(releaseFacts(limits)) values. These are calls, so a later change to this text must first
+// capture the rows as they stand as literals, as cavemanOperatingContract captured #487's and
+// priorPinnedReceiptRows #523's.
 func currentReleaseHarnesses(platform string, limits []int) ([]Harness, error) {
 	combinations := releaseFacts(limits)
-	rows := releasedReceiptRows()
-	released := make([]Harness, 0, len(rows)*len(combinations))
+	rows, pushes := releasedReceiptRows(), releasedPushRows()
+	released := make([]Harness, 0, len(pushes)*len(rows)*len(combinations))
 	for _, facts := range combinations {
 		invariants, err := catalogInvariants(facts)
 		if err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
-			released = append(released, releaseHarness(platform, row, invariants))
+			for _, push := range pushes {
+				released = append(released, releaseHarness(platform, push, row, invariants))
+			}
 		}
 	}
 	return released, nil
@@ -422,22 +469,25 @@ func limitFacts(stated []int) []hisscatalog.Facts {
 }
 
 // cavemanHarness is the Caveman release's synthesis for current's identity: its contract with
-// the unconditional receipt row, under the review-branch push protocol it shipped with.
+// the unconditional receipt row, under the review-branch push protocol it shipped with. That
+// release wrote the AGit push on every forge and no push_format member.
 func cavemanHarness(current *Harness) Harness {
 	prior := *current
 	prior.OperatingContract = append([]string(nil), cavemanOperatingContract...)
-	prior.AGitPushFormat = priorAGitPushFormats[len(priorAGitPushFormats)-1]
+	prior.AGitPushFormat, prior.PushFormat = priorAGitPushFormats[len(priorAGitPushFormats)-1], ""
 	prior.Invariants = cavemanInvariants
 	return prior
 }
 
+// priorHarness is a release before the Caveman contract for current's identity, with directive
+// and the AGit push it wrote on every forge; none wrote a push_format member.
 func priorHarness(current *Harness, directive, push string) Harness {
 	prior := *current
 	prior.OperatingContract = append([]string(nil), priorOperatingContract...)
 	if directive != "" {
 		prior.OperatingContract = append(prior.OperatingContract, directive)
 	}
-	prior.AGitPushFormat = push
+	prior.AGitPushFormat, prior.PushFormat = push, ""
 	prior.Invariants = priorInvariants
 	return prior
 }
@@ -626,13 +676,21 @@ func platformMember(object clientjson.Object) (clientjson.Member, error) {
 // default configuration: every heading, list and fence stands between blank lines (MD022,
 // MD031, MD032), and list items are wrapped within markdownLineLimit (MD013) instead of
 // running to the full length a contract line may have. A push command too long to wrap
-// gets a disable scoped to its fence, never one covering the file (BUG-806).
+// gets a disable scoped to its fence, never one covering the file (BUG-806). The push section
+// is the one of the member the harness sets: "AGit Push Protocol" for agit_push_format, "Push
+// Protocol" for push_format, so a GitHub or GitLab harness names no AGit push (#321).
 func renderRules(h *Harness) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Paperclip Operating Rules (%s)\n\n## Operating Contract\n\n", h.Platform)
 	writeListItems(&b, h.OperatingContract)
-	b.WriteString("\n## AGit Push Protocol\n\n")
-	writeCommandFence(&b, h.AGitPushFormat)
+	if h.AGitPushFormat != "" {
+		b.WriteString("\n## AGit Push Protocol\n\n")
+		writeCommandFence(&b, h.AGitPushFormat)
+	}
+	if h.PushFormat != "" {
+		b.WriteString("\n## Push Protocol\n\n")
+		writeCommandFence(&b, h.PushFormat)
+	}
 	b.WriteString("\n## High-Integrity Invariants\n\n")
 	writeListItems(&b, h.Invariants)
 	return b.String()
@@ -732,7 +790,11 @@ func LoadHarnessContext(ctx context.Context, path string) (*Harness, error) {
 	if h.Version != 1 {
 		return nil, fmt.Errorf("invalid harness: expected version 1")
 	}
-	if err := validateHarnessValues([]string{h.Platform, h.AGitPushFormat}); err != nil {
+	push, err := h.pushFormat()
+	if err != nil {
+		return nil, err
+	}
+	if err := validateHarnessValues([]string{h.Platform, push}); err != nil {
 		return nil, fmt.Errorf("invalid harness identity or push format: %w", err)
 	}
 	for _, values := range [][]string{h.OperatingContract, h.Invariants} {
@@ -742,6 +804,19 @@ func LoadHarnessContext(ctx context.Context, path string) (*Harness, error) {
 	}
 
 	return &h, nil
+}
+
+// pushFormat returns the one push member h sets: agit_push_format, which every release before
+// repository.forge wrote and a Forgejo harness still writes, or push_format. A harness setting
+// both, or neither, prescribes no single push protocol and is refused.
+func (h *Harness) pushFormat() (string, error) {
+	switch {
+	case h.AGitPushFormat != "" && h.PushFormat != "":
+		return "", errors.New("invalid harness push format: set agit_push_format or push_format, not both")
+	case h.PushFormat != "":
+		return h.PushFormat, nil
+	}
+	return h.AGitPushFormat, nil
 }
 
 func validateHarnessValues(values []string) error {

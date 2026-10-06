@@ -23,7 +23,7 @@ func priorFixture(t *testing.T, name string) string {
 func priorRepo(t *testing.T, harness, rules string) (string, *Harness) {
 	t.Helper()
 	repo := t.TempDir()
-	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: legacy\n")
+	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: legacy\n  forge: forgejo\n")
 	writeRepoFile(t, repo, ".paperclip/harness.json", harness)
 	if rules != "" {
 		writeRepoFile(t, repo, ".paperclip/rules.md", rules)
@@ -67,7 +67,7 @@ func TestPriorGeneratedRecognisesEveryReleaseEra(t *testing.T) {
 		t.Fatal(err)
 	}
 	earlier := len(priorRegisterDirectives)*len(priorAGitPushFormats) + 1
-	if len(eras) != earlier+len(releasedReceiptRows())*len(releaseFacts(limits)) {
+	if len(eras) != earlier+len(releasedPushRows())*len(releasedReceiptRows())*len(releaseFacts(limits)) {
 		t.Fatalf("release eras = %d, want every directive under every push protocol, the Caveman release and every fact combination", len(eras))
 	}
 	for index := range eras[:earlier] {

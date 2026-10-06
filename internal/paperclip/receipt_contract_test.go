@@ -35,7 +35,7 @@ func receiptRow(t *testing.T, receiptSection string) (string, *Harness) {
 // receiptRowIn is receiptRow for repo, which may already hold other files such as a go.mod.
 func receiptRowIn(t *testing.T, repo, receiptSection string) (string, *Harness) {
 	t.Helper()
-	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n"+receiptSection)
+	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: forgejo\n"+receiptSection)
 	h, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)

@@ -112,13 +112,18 @@ func unboundSourcesNote(harness harnessPlan) string {
 }
 
 // unboundSourcesReason says why a manifest has no register.sources: no harness exists and
-// this run writes none, because the paperclip step is declined or the repository identity is
-// unresolved, so adoption has no managed text to bind and the audit stays red until the
-// operator resolves the identity and re-runs, or declares the repository's own sources, or
+// this run writes none, because the paperclip step is declined, the repository identity is
+// unresolved or repository.forge is undeclared, so adoption has no managed text to bind and the
+// audit stays red until the operator resolves the identity or declares the forge and re-runs, or
+// declares the repository's own sources, or
 // declares that it has none (config.RegisterSources.DeclaresNone, #601).
 func unboundSourcesReason(harness harnessPlan) string {
 	reason, remedy := "paperclip is declined", ""
-	if harness.unresolved {
+	switch {
+	case harness.forgeUndeclared():
+		reason = config.ForgeKey + " is undeclared"
+		remedy = "declare " + config.ForgeKey + " (github, forgejo or gitlab) in " + manifestFile + " and re-run, or "
+	case harness.unresolved:
 		reason = "repository identity is unresolved"
 		remedy = "set repository.owner and repository.name or add an origin remote and re-run, or "
 	}
@@ -156,6 +161,9 @@ func declaredSourcesRemedy(harness harnessPlan) string {
 
 // neverWritesReason says why a kept harness plan writes nothing (keptHarnessPlan).
 func neverWritesReason(harness harnessPlan) string {
+	if harness.forgeUndeclared() {
+		return config.ForgeKey + " is undeclared"
+	}
 	if harness.unresolved {
 		return "the repository identity is unresolved"
 	}
