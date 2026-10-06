@@ -30,15 +30,16 @@ const (
 	StatusAdmitted GatingStatus = "ADMITTED"
 	StatusRejected GatingStatus = "REJECTED"
 
-	// ReceiptFileName is the Exit-0 receipt written at the repository root.
-	ReceiptFileName = ".standards-receipt.json"
+	// ReceiptFileName is the Exit-0 receipt written at the repository root, named once in
+	// util.GateReceiptFile for the readers that cannot import this package.
+	ReceiptFileName = util.GateReceiptFile
 	// ReceiptCommand is the canonical command string recorded in every gate receipt.
-	ReceiptCommand = "praetorctl gate run"
+	ReceiptCommand = util.GateReceiptCommand
 	// RepoRunCommand is the `gate run` invocation praetor writes into generated personas and
 	// task bodies: ReceiptCommand aimed at the repository in the working directory. Every
 	// generated copy derives from it, so a flag rename breaks one test instead of shipping an
 	// undefined flag to every adopted repository.
-	RepoRunCommand = ReceiptCommand + " --path=."
+	RepoRunCommand = util.GateRepoRunCommand
 	// GosecConfigFile is the gosec configuration the security stage must use. It carries
 	// an empty exclusion list: every finding is fixed or annotated per line.
 	GosecConfigFile = ".gosec.json"
