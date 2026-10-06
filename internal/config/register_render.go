@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -98,13 +99,24 @@ var surfaceAudiences = []struct {
 }
 
 // RegisterDirective returns the one-sentence instruction a prompt builder appends for a
-// register: its engine-universal form, without a repository convention. An unknown or empty
-// register yields "", so a caller that appends the result leaves its prompt byte-identical.
+// register: its engine-universal form, led by the register's skill, without a repository
+// convention. An unknown or empty register yields "", so a caller that appends the result leaves
+// its prompt byte-identical. Repair jobs, prompts for a provider kept as a private review
+// artifact (dogfood.SaveRepairPlan) and never as repository content, use it; a directive written
+// into a repository, which may lack the skill, uses RegisterDirectiveWithout.
 func RegisterDirective(r TextRegister) string {
+	return RegisterDirectiveWithout(r, nil)
+}
+
+// RegisterDirectiveWithout is RegisterDirective for a repository that lacks the register skills
+// in absent (compiler.AbsentRegisterSkills): when r's skill is among them, the sentence states
+// the form without naming it, as the block does (RegisterPolicy.WithAbsentSkills). The Paperclip
+// harness, which adoption writes into the repository, uses it (#235).
+func RegisterDirectiveWithout(r TextRegister, absent []string) string {
 	if _, ok := registerForms[r]; !ok {
 		return ""
 	}
-	return fmt.Sprintf("Text register %s: %s.", r, namedForm(r, true))
+	return fmt.Sprintf("Text register %s: %s.", r, namedForm(r, !slices.Contains(absent, registerSkills[r])))
 }
 
 // RenderRegisterBlock renders the marker-delimited block that compile-context splices

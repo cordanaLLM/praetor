@@ -26,13 +26,13 @@ const priorSkillFixtures = "testdata/skills"
 
 // claudeSkillRel is the copy of skill name in the skill directory Claude Code reads.
 func claudeSkillRel(name string) string {
-	return ".claude/skills/" + name + "/" + compiler.SkillEntryName
+	return compiler.SkillEntryRel(".claude/skills", name)
 }
 
 // sourceSkillText is the SKILL.md of skill name this repository ships.
 func sourceSkillText(t *testing.T, name string) string {
 	t.Helper()
-	return mustRead(t, filepath.Join(sourceCheckout, filepath.FromSlash(canonicalSkillRel(name))))
+	return mustRead(t, filepath.Join(sourceCheckout, filepath.FromSlash(compiler.CanonicalSkillRel(name))))
 }
 
 // repoText reads the slash path rel below repoPath.
@@ -49,6 +49,30 @@ func assertAbsent(t *testing.T, repoPath, rel string) {
 	}
 }
 
+// verifyAdoptedContext runs compile-context --verify over repoPath, which adoption skips when an
+// agent step is declined (verifyAgentContext).
+func verifyAdoptedContext(t *testing.T, repoPath string) {
+	t.Helper()
+	source := filepath.Join(repoPath, agentsFile)
+	if err := compiler.VerifyCompiledContext(t.Context(), io.Discard, compiler.NewTranspiler(), source, repoPath); err != nil {
+		t.Fatalf("compile-context --verify after adoption: %v", err)
+	}
+}
+
+// assertHarnessDirective fails unless the Paperclip harness adoption wrote carries the internal
+// register directive naming the caveman skill (named) or stating the form alone.
+func assertHarnessDirective(t *testing.T, repoPath string, named bool) {
+	t.Helper()
+	harness := repoText(t, repoPath, paperclipFile)
+	want := config.RegisterDirectiveWithout(config.TextRegisterInternal, config.RegisterSkills())
+	if named {
+		want = config.RegisterDirective(config.TextRegisterInternal)
+	}
+	if !strings.Contains(harness, want) || named != strings.Contains(harness, "`caveman`") {
+		t.Errorf("%s does not carry %q alone:\n%s", paperclipFile, want, harness)
+	}
+}
+
 // warningNaming returns the first warning of rep that names text, or "".
 func warningNaming(rep *AdoptReport, text string) string {
 	for _, warning := range rep.Warnings {
@@ -62,7 +86,7 @@ func warningNaming(rep *AdoptReport, text string) string {
 // Each skill's digest set is replayable in both directions against its fixtures.
 func TestPriorSkillDigests_Positive_ReproducedByFixtures(t *testing.T) {
 	for _, name := range config.RegisterSkillBundle() {
-		assertPriorDigestsReproduced(t, filepath.Join(priorSkillFixtures, name), priorSkillDigests[canonicalSkillRel(name)])
+		assertPriorDigestsReproduced(t, filepath.Join(priorSkillFixtures, name), priorSkillDigests[compiler.CanonicalSkillRel(name)])
 	}
 }
 
@@ -76,7 +100,7 @@ func TestPriorSkillDigests_Boundary_CurrentSourcesRecorded(t *testing.T) {
 	}
 	for _, name := range bundle {
 		data := []byte(sourceSkillText(t, name))
-		if !isPriorRendering(data, priorSkillDigests[canonicalSkillRel(name)]) {
+		if !isPriorRendering(data, priorSkillDigests[compiler.CanonicalSkillRel(name)]) {
 			t.Errorf("the shipped %s (%s) is not in priorSkillDigests", name, fixtureDigest(t, name, data))
 		}
 	}
@@ -90,8 +114,8 @@ func TestAdopt_Positive_FreshAdoptionShipsTheRegisterSkills(t *testing.T) {
 	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
 	for _, name := range config.RegisterSkillBundle() {
 		want := sourceSkillText(t, name)
-		if got := repoText(t, repoPath, canonicalSkillRel(name)); got != want {
-			t.Errorf("%s differs from the shipped skill", canonicalSkillRel(name))
+		if got := repoText(t, repoPath, compiler.CanonicalSkillRel(name)); got != want {
+			t.Errorf("%s differs from the shipped skill", compiler.CanonicalSkillRel(name))
 		}
 		if got := repoText(t, repoPath, claudeSkillRel(name)); got != want {
 			t.Errorf("%s differs from the shipped skill", claudeSkillRel(name))
@@ -99,11 +123,11 @@ func TestAdopt_Positive_FreshAdoptionShipsTheRegisterSkills(t *testing.T) {
 		if !strings.Contains(want, "SPDX-License-Identifier: EUPL-1.2") {
 			t.Errorf("%s ships without its REUSE licence header", name)
 		}
-		if !contains(rep.CreatedFiles, canonicalSkillRel(name)) || !contains(rep.CreatedFiles, claudeSkillRel(name)) {
+		if !contains(rep.CreatedFiles, compiler.CanonicalSkillRel(name)) || !contains(rep.CreatedFiles, claudeSkillRel(name)) {
 			t.Errorf("%s and its client copy not reported created: %v", name, rep.CreatedFiles)
 		}
 	}
-	if !strings.Contains(repoText(t, repoPath, canonicalSkillRel("caveman")), "derived_from: \"https://github.com/JuliusBrussee/caveman (MIT)\"") {
+	if !strings.Contains(repoText(t, repoPath, compiler.CanonicalSkillRel("caveman")), "derived_from: \"https://github.com/JuliusBrussee/caveman (MIT)\"") {
 		t.Error("caveman ships without its upstream credit")
 	}
 	agents := repoText(t, repoPath, agentsFile)
@@ -112,10 +136,8 @@ func TestAdopt_Positive_FreshAdoptionShipsTheRegisterSkills(t *testing.T) {
 			t.Errorf("AGENTS.md does not name %q", named)
 		}
 	}
-	source := filepath.Join(repoPath, agentsFile)
-	if err := compiler.VerifyCompiledContext(t.Context(), io.Discard, compiler.NewTranspiler(), source, repoPath); err != nil {
-		t.Fatalf("compile-context --verify after adoption: %v", err)
-	}
+	assertHarnessDirective(t, repoPath, true)
+	verifyAdoptedContext(t, repoPath)
 }
 
 // Negative: an edited skill is the repository's: a forced run keeps it and reports it, and its
@@ -124,13 +146,13 @@ func TestAdopt_Positive_FreshAdoptionShipsTheRegisterSkills(t *testing.T) {
 func TestAdopt_Negative_EditedSkillIsKeptAndReported(t *testing.T) {
 	repoPath := newTestRepo(t, "register-skills-edited")
 	edited := sourceSkillText(t, "caveman") + "\n## Local\n\n- keep repository terms\n"
-	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(canonicalSkillRel("caveman"))), edited)
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.CanonicalSkillRel("caveman"))), edited)
 	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(claudeSkillRel("social-text"))), "# hand copy\n")
 	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), true)
-	if got := repoText(t, repoPath, canonicalSkillRel("caveman")); got != edited {
+	if got := repoText(t, repoPath, compiler.CanonicalSkillRel("caveman")); got != edited {
 		t.Fatal("--force replaced an edited caveman skill")
 	}
-	if warningNaming(rep, canonicalSkillRel("caveman")) == "" {
+	if warningNaming(rep, compiler.CanonicalSkillRel("caveman")) == "" {
 		t.Errorf("the kept caveman skill is not reported: %v", rep.Warnings)
 	}
 	if got := repoText(t, repoPath, claudeSkillRel("caveman")); got != edited {
@@ -144,17 +166,17 @@ func TestAdopt_Negative_EditedSkillIsKeptAndReported(t *testing.T) {
 	}
 }
 
-// Boundary: a declined agent-harness step installs no skill, and the register block then names
-// none; a selection without Claude Code gets the canonical skills and no client copy, with
-// .claude/skills reported not applicable; a dry run lists the skills and copies it would write
-// and writes none.
+// Boundary: a declined agent-harness step installs no skill, and neither the register block nor
+// the Paperclip harness then names one; a selection without Claude Code gets the canonical skills
+// and no client copy, with .claude/skills reported not applicable; a dry run lists the skills and
+// copies it would write and writes none.
 func TestAdopt_Boundary_DeclinedSelectedAndPreviewed(t *testing.T) {
 	t.Run("declined agent-harness", func(t *testing.T) {
 		repoPath := newTestRepo(t, "register-skills-declined")
 		mustWrite(t, filepath.Join(repoPath, manifestFile), "version: 1\nadoption:\n  decline: [agent-harness]\n")
 		adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
 		for _, name := range config.RegisterSkillBundle() {
-			assertAbsent(t, repoPath, canonicalSkillRel(name))
+			assertAbsent(t, repoPath, compiler.CanonicalSkillRel(name))
 			assertAbsent(t, repoPath, claudeSkillRel(name))
 		}
 		_, block, err := compiler.LoadRegisterBlock(t.Context(), repoPath)
@@ -164,12 +186,13 @@ func TestAdopt_Boundary_DeclinedSelectedAndPreviewed(t *testing.T) {
 		if strings.Contains(block, "`social-text`") || strings.Contains(block, "`caveman`") {
 			t.Fatalf("the block names a skill the declined step never installed:\n%s", block)
 		}
+		assertHarnessDirective(t, repoPath, false)
 	})
 	t.Run("agent_clients without Claude Code", func(t *testing.T) {
 		repoPath := newTestRepo(t, "register-skills-codex")
 		mustWrite(t, filepath.Join(repoPath, manifestFile), "version: 1\nagent_clients: [codex]\n")
 		rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
-		if got := repoText(t, repoPath, canonicalSkillRel("caveman")); got != sourceSkillText(t, "caveman") {
+		if got := repoText(t, repoPath, compiler.CanonicalSkillRel("caveman")); got != sourceSkillText(t, "caveman") {
 			t.Error("caveman not installed for Codex, which reads .agents/skills")
 		}
 		assertAbsent(t, repoPath, ".claude/skills")
@@ -184,12 +207,49 @@ func TestAdopt_Boundary_DeclinedSelectedAndPreviewed(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, name := range config.RegisterSkillBundle() {
-			if !contains(rep.CreatedFiles, canonicalSkillRel(name)) || !contains(rep.CreatedFiles, claudeSkillRel(name)) {
+			if !contains(rep.CreatedFiles, compiler.CanonicalSkillRel(name)) || !contains(rep.CreatedFiles, claudeSkillRel(name)) {
 				t.Errorf("the preview does not list %s and its client copy: %v", name, rep.CreatedFiles)
 			}
-			assertAbsent(t, repoPath, canonicalSkillRel(name))
+			assertAbsent(t, repoPath, compiler.CanonicalSkillRel(name))
 		}
 		assertAbsent(t, repoPath, ".claude")
+	})
+}
+
+// Negative: agent-definitions alone writes the .claude/skills copies compile-context --verify
+// requires of an installed skill, so with that step declined and Claude Code selected the
+// agent-harness step installs no skill, warns why, and leaves a repository that verifies, with a
+// block and a Paperclip harness naming no skill. Boundary: a selection without a client skill
+// directory needs no copy, so the skills are installed and the repository still verifies.
+func TestAdopt_DeclinedAgentDefinitionsLeavesAVerifiedRepository(t *testing.T) {
+	t.Run("Claude Code selected", func(t *testing.T) {
+		repoPath := newTestRepo(t, "register-skills-no-definitions")
+		mustWrite(t, filepath.Join(repoPath, manifestFile), "version: 1\nadoption:\n  decline: [agent-definitions]\n")
+		rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+		for _, name := range config.RegisterSkillBundle() {
+			assertAbsent(t, repoPath, compiler.CanonicalSkillRel(name))
+		}
+		assertAbsent(t, repoPath, ".claude/skills")
+		if warning := warningNaming(rep, "agent-definitions is declined"); !strings.Contains(warning, ".claude/skills") {
+			t.Errorf("no warning names the declined step and the copies it writes: %v", rep.Warnings)
+		}
+		if strings.Contains(repoText(t, repoPath, agentsFile), "`caveman`") {
+			t.Error("AGENTS.md names the caveman skill the run did not install")
+		}
+		assertHarnessDirective(t, repoPath, false)
+		verifyAdoptedContext(t, repoPath)
+	})
+	t.Run("no client skill directory", func(t *testing.T) {
+		repoPath := newTestRepo(t, "register-skills-codex-no-definitions")
+		mustWrite(t, filepath.Join(repoPath, manifestFile), "version: 1\nagent_clients: [codex]\nadoption:\n  decline: [agent-definitions]\n")
+		adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+		for _, name := range config.RegisterSkillBundle() {
+			if got := repoText(t, repoPath, compiler.CanonicalSkillRel(name)); got != sourceSkillText(t, name) {
+				t.Errorf("%s not installed for a selection without a client skill directory", name)
+			}
+		}
+		assertHarnessDirective(t, repoPath, true)
+		verifyAdoptedContext(t, repoPath)
 	})
 }
 
@@ -202,7 +262,7 @@ func TestInstallRegisterSkills_SourceBundle(t *testing.T) {
 	}
 	partial := t.TempDir()
 	writeRegisterSkillSources(t, partial)
-	if err := os.Remove(filepath.Join(partial, filepath.FromSlash(canonicalSkillRel("adhd-format")))); err != nil {
+	if err := os.Remove(filepath.Join(partial, filepath.FromSlash(compiler.CanonicalSkillRel("adhd-format")))); err != nil {
 		t.Fatal(err)
 	}
 	for name, source := range map[string]string{"no source bundle": "", "source without adhd-format": partial} {

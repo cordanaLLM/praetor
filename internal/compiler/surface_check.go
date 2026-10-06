@@ -64,7 +64,7 @@ func CheckSkillTargets(ctx context.Context, root string, added []string) error {
 	files := make([]projectionFile, 0, len(added))
 	for i := 0; i < len(added) && i < maxSkillProjections; i++ {
 		pending[added[i]] = nil
-		files = append(files, projectionFile{rel: skillEntryRel(CanonicalSkillsRel, added[i])})
+		files = append(files, projectionFile{rel: CanonicalSkillRel(added[i])})
 	}
 	copies, err := clientSkillProjections(ctx, root, dirs, pending)
 	if err != nil {

@@ -27,7 +27,7 @@ const (
 
 func writeRegisterSkill(t *testing.T, root, name string) {
 	t.Helper()
-	writeRegisterFixture(t, root, skillEntryRel(CanonicalSkillsRel, name), "---\nname: "+name+"\ndescription: fixture\n---\n\n# Fixture\n")
+	writeRegisterFixture(t, root, CanonicalSkillRel(name), "---\nname: "+name+"\ndescription: fixture\n---\n\n# Fixture\n")
 }
 
 // Positive: a root carrying both register skills renders the block every earlier release
@@ -79,7 +79,7 @@ func TestLoadRegisterBlock_Negative_NoDanglingSkillName(t *testing.T) {
 	if _, err := SyncRegisterBlock(ctx, root, agents, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(root, filepath.FromSlash(skillEntryRel(CanonicalSkillsRel, "caveman")))); err != nil {
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(CanonicalSkillRel("caveman")))); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := SyncRegisterBlock(ctx, root, agents, false); !errors.Is(err, ErrRegisterBlockOutOfSync) {
@@ -118,5 +118,58 @@ func TestLoadRegisterBlock_Boundary_EachSkillOnItsOwn(t *testing.T) {
 	}
 	if _, _, err := LoadRegisterBlock(ctx, linked); err == nil || !strings.Contains(err.Error(), "text register: read") {
 		t.Fatalf("a symlinked skills directory: err = %v", err)
+	}
+}
+
+// Positive: ReadCanonicalSkill, the one reader of a canonical skill, returns a carried skill's
+// bytes, and AbsentRegisterSkills, which the block, the Paperclip harness and adoption share,
+// then leaves it out.
+func TestAbsentRegisterSkills_Positive_CarriedSkillIsRead(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	writeRegisterSkill(t, root, "caveman")
+	data, exists, err := ReadCanonicalSkill(ctx, root, "caveman")
+	if err != nil || !exists || !strings.Contains(string(data), "name: caveman") {
+		t.Fatalf("ReadCanonicalSkill = %q, %v, %v", data, exists, err)
+	}
+	absent, err := AbsentRegisterSkills(ctx, root, nil)
+	if err != nil || len(absent) != 1 || absent[0] != "social-text" {
+		t.Fatalf("AbsentRegisterSkills = %v, %v; want only social-text", absent, err)
+	}
+}
+
+// Negative: a directory where SKILL.md belongs is refused by both, never read as absent or
+// carried.
+func TestAbsentRegisterSkills_Negative_UnreadableSkillIsAnError(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(CanonicalSkillRel("social-text"))), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadCanonicalSkill(ctx, root, "social-text"); err == nil || !strings.Contains(err.Error(), "read canonical skill social-text") {
+		t.Fatalf("ReadCanonicalSkill of a directory: %v", err)
+	}
+	if absent, err := AbsentRegisterSkills(ctx, root, nil); err == nil {
+		t.Fatalf("AbsentRegisterSkills of a directory = %v, want an error", absent)
+	}
+}
+
+// Boundary: a root without .agents reads every skill as absent without an error, a pending name
+// counts as carried, and the path helpers agree on the canonical location.
+func TestAbsentRegisterSkills_Boundary_NoSkillsDirectoryAndPending(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	if _, exists, err := ReadCanonicalSkill(ctx, root, "caveman"); err != nil || exists {
+		t.Fatalf("ReadCanonicalSkill without .agents = %v, %v", exists, err)
+	}
+	absent, err := AbsentRegisterSkills(ctx, root, nil)
+	if err != nil || strings.Join(absent, ",") != "social-text,caveman" {
+		t.Fatalf("AbsentRegisterSkills without .agents = %v, %v", absent, err)
+	}
+	if absent, err := AbsentRegisterSkills(ctx, root, config.RegisterSkills()); err != nil || len(absent) != 0 {
+		t.Fatalf("AbsentRegisterSkills with every skill pending = %v, %v", absent, err)
+	}
+	if got := CanonicalSkillRel("caveman"); got != ".agents/skills/caveman/SKILL.md" || got != SkillEntryRel(CanonicalSkillsRel, "caveman") {
+		t.Fatalf("CanonicalSkillRel = %q", got)
 	}
 }

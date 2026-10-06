@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"gopkg.in/yaml.v3"
 )
@@ -66,7 +67,7 @@ var sourceCheckout = func() string {
 func writeRegisterSkillSources(t *testing.T, root string) {
 	t.Helper()
 	for _, name := range config.RegisterSkillBundle() {
-		rel := filepath.FromSlash(canonicalSkillRel(name))
+		rel := filepath.FromSlash(compiler.CanonicalSkillRel(name))
 		mustWrite(t, filepath.Join(root, rel), mustRead(t, filepath.Join(sourceCheckout, rel)))
 	}
 }

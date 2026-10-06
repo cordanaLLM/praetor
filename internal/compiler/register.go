@@ -47,7 +47,7 @@ func (e *registerBlockDrift) Unwrap() error { return ErrRegisterBlockOutOfSync }
 // (changelog.FragmentDirPresent, config.RegisterPolicy.WithDetectedConventions, #328). The
 // returned policy is the manifest's; what root's files add is a rendering fact, as the hook is.
 // The block names a register skill (config.RegisterSkills) only where root carries its
-// .agents/skills/<name>/SKILL.md (absentRegisterSkills, #235).
+// .agents/skills/<name>/SKILL.md (AbsentRegisterSkills, #235).
 func LoadRegisterBlock(ctx context.Context, root string) (config.RegisterPolicy, string, error) {
 	return LoadRegisterBlockOver(ctx, root, nil)
 }
@@ -63,16 +63,18 @@ func LoadRegisterBlockOver(ctx context.Context, root string, pending []string) (
 	return authority.Policy(), block, nil
 }
 
-// absentRegisterSkills returns the register skills root does not carry as
-// .agents/skills/<name>/SKILL.md (canonicalSkillText), leaving out those named in pending. A skill
-// path that cannot be read is an error.
-func absentRegisterSkills(ctx context.Context, root string, pending []string) ([]string, error) {
+// AbsentRegisterSkills returns the register skills (config.RegisterSkills) root does not carry
+// as .agents/skills/<name>/SKILL.md (ReadCanonicalSkill), leaving out those named in pending,
+// which a caller writes before its output lands. A skill path that cannot be read is an error.
+// The register block, the Paperclip harness directive and adoption's warning about skills it
+// could not install all decide what a repository carries here, so they never disagree.
+func AbsentRegisterSkills(ctx context.Context, root string, pending []string) ([]string, error) {
 	var absent []string
 	for _, name := range config.RegisterSkills() {
 		if slices.Contains(pending, name) {
 			continue
 		}
-		_, exists, err := canonicalSkillText(ctx, root, name)
+		_, exists, err := ReadCanonicalSkill(ctx, root, name)
 		if err != nil {
 			return nil, fmt.Errorf("text register: %w", err)
 		}
@@ -98,7 +100,7 @@ func loadRegister(ctx context.Context, root string, pending []string) (config.Re
 	if err != nil {
 		return config.RegisterAuthority{}, "", fmt.Errorf("text register: %w", err)
 	}
-	absent, err := absentRegisterSkills(ctx, root, pending)
+	absent, err := AbsentRegisterSkills(ctx, root, pending)
 	if err != nil {
 		return config.RegisterAuthority{}, "", err
 	}
