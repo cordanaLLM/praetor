@@ -539,6 +539,15 @@ func withCommandDiagnostic(err error, stderr []byte) error {
 	return fmt.Errorf("%w: %s", err, TruncateExcerpt(diagnostic, maxCommandDiagnosticBytes))
 }
 
+// CommandDiagnostic appends a failed command's trimmed standard error, at most
+// maxCommandDiagnosticBytes of it, to err, as RunCommand and the git probes in this package do.
+// A caller outside util that runs RunGitProbe or RunCommandBytes itself uses it so its errors
+// carry the command's own reason, such as the path git could not read. Blank stderr returns err
+// unchanged; errors.Is and errors.As still see err.
+func CommandDiagnostic(err error, stderr []byte) error {
+	return withCommandDiagnostic(err, stderr)
+}
+
 // ensureDeadline returns a context guaranteed to carry a deadline. A nil context or one
 // without a deadline (context.Background/TODO) is given fallback; an existing deadline is
 // preserved. The returned cancel func is always non-nil and must be called.

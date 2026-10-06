@@ -166,7 +166,10 @@ func TestVerifyStateSyncRejectsAbsentCancelledAndMovedRoots(t *testing.T) {
 	}
 }
 
-func TestStateSyncUntrackedByteAndPathBounds(t *testing.T) {
+// TestStateSyncUntrackedByteBound: an untracked file at the per-file bound is bound by its
+// bytes, and one byte more is bound by its metadata instead of failing the sync (#776). The
+// count bound and the other metadata cases are in sync_bounds_test.go.
+func TestStateSyncUntrackedByteBound(t *testing.T) {
 	root := syncFixture(t)
 	path := filepath.Join(root, "binary.bin")
 	writeIntegrityFile(t, path, strings.Repeat("\x00", contextopt.MaxSourceBytes))
@@ -174,11 +177,11 @@ func TestStateSyncUntrackedByteAndPathBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeIntegrityFile(t, path, strings.Repeat("\x00", contextopt.MaxSourceBytes+1))
-	if _, err := SyncState(t.Context(), root, "oversized"); err == nil {
-		t.Fatal("oversized untracked file accepted")
+	if _, err := SyncState(t.Context(), root, "oversized"); err != nil {
+		t.Fatalf("an untracked file one byte over the bound failed the sync: %v", err)
 	}
-	if _, err := stateUntrackedBinding(t.Context(), root, strings.Repeat("name\x00", maxSyncPaths+1)); err == nil {
-		t.Fatal("excessive untracked path count accepted")
+	if err := VerifyStateSync(t.Context(), root); err != nil {
+		t.Fatalf("a metadata-bound untracked file does not verify: %v", err)
 	}
 }
 

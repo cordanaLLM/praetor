@@ -207,7 +207,7 @@ func runSyncProbe(ctx context.Context, root string, probe syncGitProbe) (string,
 		return string(result.Stdout), nil
 	}
 	if len(result.Stdout) < probe.limit {
-		return "", fmt.Errorf("bind state Git %s: %w", probe.label, err)
+		return "", fmt.Errorf("bind state Git %s: %w", probe.label, util.CommandDiagnostic(err, result.Stderr))
 	}
 	read := ""
 	if probe.listing {
@@ -417,6 +417,3 @@ func stateGitHead(ctx context.Context, root string) (string, error) {
 	}
 	return "", errors.Join(fmt.Errorf("missing HEAD has an invalid branch reference"), err)
 }
-
-// maxSyncPaths keeps the previous name compiling for its test until that test is rewritten.
-const maxSyncPaths = maxSyncRecords

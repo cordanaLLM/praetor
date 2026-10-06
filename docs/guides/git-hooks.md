@@ -632,19 +632,25 @@ resolve any reported refresh failure before continuing.
 binding in the final STATE entry covering its complete preceding history, the
 absolute worktree root, branch and full HEAD (or explicitly verified unborn
 branch), index entries, staged and unstaged binary Git diffs, visible Git status,
-untracked file bytes, and OPEN, BACKLOG, BUGS and QUESTIONS bytes. STATE records
+untracked files, and OPEN, BACKLOG, BUGS and QUESTIONS bytes. STATE records
 the observed Git state, clean flag and dirty count. `state status` reports an
 inspection time, never a fabricated last-sync timestamp.
 
 Only these canonical ledgers are read inside `.workingdir`; evidence, memories
 and caches are excluded. Git-ignored public paths are also outside the binding.
-Limits are 1 MiB per canonical ledger or untracked file, 8 MiB total untracked
-bytes, 10,000 index entries/untracked paths and 8 MiB per Git output stream.
-Git probes have five-second deadlines. Missing or oversized inputs, unsupported
-submodules, assume-unchanged/skip-worktree entries, and configured Git clean or
-process filters fail explicitly. Symlinked untracked files are rejected. These
-checks establish synchronized bytes; they cannot establish that an agent recorded
-every relevant task or explanation.
+The sync is bounded by bytes and time, not by repository size: 1 MiB per canonical
+ledger, 16 MiB for the index listing, 8 MiB for every other Git output stream,
+five-second Git probe deadlines, and at most 1,048,576 records per Git listing.
+An untracked regular file of at most 1 MiB is bound by its bytes while 8 MiB of
+untracked content remains; any other untracked path (a symlink, named pipe,
+nested repository, larger file, or one past that budget) is bound by its type,
+size and modification time instead of failing the sync. Missing or oversized
+ledgers, irregular tracked files, unsupported submodules,
+assume-unchanged/skip-worktree entries, and configured Git clean or process
+filters fail explicitly and name the path. The
+[state ledger integrity guide](state-ledger-integrity.md#what-the-sync-marker-binds)
+lists every binding input and bound. These checks establish synchronized bytes;
+they cannot establish that an agent recorded every relevant task or explanation.
 
 This repository's native Stop/AfterAgent bridge calls the shared `agent-state-stop`
 job and requires its unique success marker. Missing, stale or invalid state blocks

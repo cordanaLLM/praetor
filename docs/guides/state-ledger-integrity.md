@@ -321,10 +321,66 @@ its own entry. That entry names the archive, for example
 
 The behaviour is covered by `internal/state/state_rotate_test.go`.
 
+### What the sync marker binds
+
 The marker binds the Git state, the repository's own path, and the other ledgers
 (`OPEN.md`, `BACKLOG.md`, `BUGS.md`, `QUESTIONS.md`, and `bugs.meta.json` and
 `questions.meta.json` once each exists), so editing any of them stales it. Sync removes the previous marker before it
 appends its own.
+
+The binding is the SHA-256 of one JSON array that `stateBinding` in
+`internal/state/sync_binding.go` builds in a fixed order:
+
+1. the label `praetor-state:v1`, the canonical root, the Git state, branch and HEAD;
+2. each ledger name with the SHA-256 of its bytes, then each sidecar that exists;
+3. the output of six Git probes (`stateGitProbes`): HEAD, the index listing
+   (`ls-files -v --stage -z`), status, the staged and the unstaged binary diff, and the
+   untracked listing (`ls-files --others --exclude-standard -z`);
+4. one record per untracked path, in the order git lists them.
+
+The marker is the SHA-256 of that binding, a NUL byte and the `STATE.md` bytes before the
+marker (`stateLogHash`). The same inputs always give the same marker. Each untracked
+path's record is one of two kinds:
+
+| Untracked path | Record |
+| :--- | :--- |
+| a regular file of at most 1 MiB, while 8 MiB of untracked content remains | the 64-hex SHA-256 of its bytes |
+| any other path: a symlink, named pipe, socket or device, a nested repository, a larger file, or a file past the 8 MiB budget | `metadata <type> <size> <modification time in ns>` |
+
+A metadata record changes when the path's type, size or modification time does, so
+touching or resizing such a file stales the marker; an edit that keeps all three does
+not. Such paths are rarely state inputs, and one stray file, such as a large decoded
+video left in a source directory, must not stop the ledger from being written (#776).
+Git does not list named pipes or sockets as untracked; one listed anyway is bound by
+metadata. `TestStateUntrackedMetadataBinding_3D`, `TestStateSyncStrayUntrackedFiles_3D`,
+`TestStateSyncNamedPipeUntracked_3D` and `TestStateSyncUntrackedSymlink` in
+`internal/state/sync_bounds_test.go` replay these cases.
+
+State inputs fail closed instead. A ledger that is not a regular file, or is over
+1 MiB, fails the sync with its path and the reason, for example
+`bind state ledger .workingdir/BACKLOG.md: 1048577 bytes, over the 1048576-byte limit,
+and ledger inputs fail closed`. A tracked file git cannot read, such as one replaced by
+a named pipe, fails with git's own diagnostic, which names the path
+(`TestStateSyncIrregularStateInputFailsClosed_3D`). Binding metadata in their place would
+let an edit that keeps the size and modification time pass as synchronized.
+
+The sync is bounded by bytes and time, not by the size of the repository:
+
+| Bound | Value | Reason |
+| :--- | :--- | :--- |
+| index listing | 16 MiB (`syncIndexBytes`) | the cap `util.RefuseGitStatusFilters` already applies when it lists the same tracked paths, so the binding is never the narrower limit |
+| every other Git output | 8 MiB each (`contextopt.MaxTotalBytes`) | these grow with uncommitted changes, not with the repository |
+| each Git probe | 5 seconds (`util.GitProbeTimeout`) | the deadline every state probe shares |
+| records per Git listing | 1,048,576 (`maxSyncRecords`) | the loop bound (HISS-02); an index record is at least 54 bytes, so the 16 MiB cap admits at most 310,689 and is reached first |
+| untracked content | 1 MiB per file, 8 MiB in total | beyond either, a path is bound by metadata |
+
+There is no tracked-file count limit. A repository is refused only when its index
+listing outgrows 16 MiB, about 148,000 files with 60-byte paths, and that error names
+the cap, the records read before it and what to do (`TestRunSyncProbeByteBound_3D`).
+The earlier cap of 10,000 index entries refused an adopter repository once it tracked
+10,115 files (#775); `TestStateSyncLargeIndex_3D` syncs a repository tracking 10,052.
+These bounds change no input a ledger could already bind, so existing ledgers keep
+verifying without a new sync.
 
 Git state is observed with `core.autocrlf=input`. The fixed input normalization keeps
 one logical text state across platforms without rewriting the worktree, while a path

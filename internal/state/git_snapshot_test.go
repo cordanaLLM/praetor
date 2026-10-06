@@ -75,13 +75,29 @@ func TestInspectStateTracksGitWorkingTree(t *testing.T) {
 	}
 }
 
-func stateFixtureGit(t *testing.T, dir string, args ...string) {
+// stateFixtureGit runs one hermetic fixture git command in dir and returns its trimmed standard
+// output, failing the test when git fails.
+func stateFixtureGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	return stateFixtureGitInput(t, dir, nil, args...)
+}
+
+// stateFixtureGitInput is stateFixtureGit with input on git's standard input, for plumbing such
+// as update-index --index-info; nil input leaves standard input empty.
+func stateFixtureGitInput(t *testing.T, dir string, input []byte, args ...string) string {
 	t.Helper()
 	envCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if output, err := util.RunGit(envCtx, dir, args...); err != nil {
+	if input != nil {
+		if envCtx, err = util.WithCommandStdin(envCtx, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	output, err := util.RunGit(envCtx, dir, args...)
+	if err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
 	}
+	return output
 }
