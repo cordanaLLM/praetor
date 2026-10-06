@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -490,8 +491,8 @@ func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoSecurity)
 }
 
-// runGoSecurity runs govulncheck and gosec. A missing scanner fails the stage: a security
-// gate that certifies a run in which nothing executed is worse than no gate.
+// runGoSecurity runs the Go vulnerability gate and gosec. A missing scanner fails the stage: a
+// security gate that certifies a run in which nothing executed is worse than no gate.
 func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
 		return "", notApplicable("no go.mod: Go security scanners skipped")
@@ -500,13 +501,12 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", skipped("dry run: govulncheck and gosec not run")
 	}
 
-	if err := requireScanner(cfg, "govulncheck", "go install golang.org/x/vuln/cmd/govulncheck@latest"); err != nil {
+	if err := requireScanner(cfg, govuln.DefaultScanner, "go install golang.org/x/vuln/cmd/govulncheck@latest"); err != nil {
 		return "", err
 	}
-	if out, err := cfg.run(ctx, cfg.repoDir, "govulncheck", "./..."); err != nil {
-		// The findings are on standard output; why govulncheck could not scan at all is on
-		// standard error, which the runner carries in err.
-		return "", fmt.Errorf("govulncheck found vulnerabilities: %w: %s", err, out)
+	msg, err := runGoVulnerabilityGate(ctx, cfg)
+	if err != nil {
+		return "", err
 	}
 
 	if err := requireScanner(cfg, "gosec", "go install github.com/securego/gosec/v2/cmd/gosec@latest"); err != nil {
@@ -527,7 +527,28 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if out, err := cfg.run(ctx, cfg.repoDir, "gosec", append([]string{"-conf", GosecConfigFile}, packages...)...); err != nil {
 		return "", fmt.Errorf("gosec found security infractions: %w: %s", err, out)
 	}
-	return "", nil
+	return msg, nil
+}
+
+// runGoVulnerabilityGate runs the Go vulnerability gate (internal/govuln), the implementation
+// `praetorctl security govuln` and the generated pre-push job run too: govulncheck at symbol
+// level, its uncalled advisories judged against the repository's OpenVEX document. A failing
+// advisory and a scan or document that gave no verdict both fail the stage. A clean scan leaves
+// the stage message empty, as before the gate judged findings; advisories a statement covers are
+// named, so the signed stage output records each waiver.
+func runGoVulnerabilityGate(ctx context.Context, cfg *stageConfig) (string, error) {
+	report, err := govuln.Check(ctx, govuln.Options{Dir: cfg.repoDir, Run: govuln.Runner(cfg.run)})
+	if err != nil {
+		return "", fmt.Errorf("go vulnerability gate: %w", err)
+	}
+	if report.Failed() {
+		return "", fmt.Errorf("govulncheck found vulnerabilities: %s", report.FailureSummary())
+	}
+	covered := report.Lines(true)
+	if len(covered) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("%s; %s", report.Summary(), strings.Join(covered, "; ")), nil
 }
 
 // requireScanner fails closed when a mandatory scanner is not on PATH.

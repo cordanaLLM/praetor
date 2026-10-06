@@ -165,6 +165,11 @@ esac
 
 const stubScanner = "#!/bin/sh\nexit 0\n"
 
+// stubGovulncheck prints the configuration govulncheck v1.8.0 opens a clean symbol scan with: the
+// security stage reads its JSON stream (internal/govuln), and output without it is no verdict.
+const stubGovulncheck = "#!/bin/sh\necho '{\"config\": {\"protocol_version\": \"v1.0.0\", \"scanner_name\": \"govulncheck\", " +
+	"\"scanner_version\": \"v1.8.0\", \"scan_level\": \"symbol\", \"scan_mode\": \"source\"}}'\n"
+
 // newHermeticGateRepo creates an isolated git repository with valid lockfiles, manifest,
 // module definition and gosec config, committed to the main branch so describeTree finds it clean.
 func newHermeticGateRepo(t *testing.T) string {
@@ -214,7 +219,7 @@ func startGateRunHelper(t *testing.T, ignoreHangup bool, extraEnv ...string) *ga
 	t.Helper()
 	stubs := t.TempDir()
 	for name, script := range map[string]string{
-		"go": stubGo, "govulncheck": stubScanner, "gosec": stubScanner, "cc": stubScanner, "gcc": stubScanner,
+		"go": stubGo, "govulncheck": stubGovulncheck, "gosec": stubScanner, "cc": stubScanner, "gcc": stubScanner,
 	} {
 		if err := os.WriteFile(filepath.Join(stubs, name), []byte(script), 0o700); err != nil {
 			t.Fatal(err)

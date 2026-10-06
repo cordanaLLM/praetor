@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -25,11 +26,19 @@ const (
 // and the scan stages read the working tree, so the two must be the same content.
 var ErrUncleanTree = errors.New("the gate certifies only a working tree that matches HEAD")
 
-// subtractiveInputs are the files that relax what the gate enforces: the debt baseline raises
-// the HISS limit and the gosec configuration selects the scanner's rules. git status does not
-// list an ignored file, so each must also be tracked in the index, and it does not look behind
-// a symbolic link, so each must be a regular file.
-var subtractiveInputs = [...]string{BaselineFile, GosecConfigFile}
+// subtractiveInputs returns the files that relax what the gate enforces in repoDir: the debt
+// baseline raises the HISS limit, the gosec configuration selects the scanner's rules, and the
+// OpenVEX document the manifest names (config.RepositoryGoVEXPath) covers advisories the Go
+// vulnerability gate would fail. git status does not list an ignored file, so each must also be
+// tracked in the index, and it does not look behind a symbolic link, so each must be a regular
+// file. A manifest that does not load names no document here; the security stage fails on it.
+func subtractiveInputs(repoDir string) []string {
+	inputs := []string{BaselineFile, GosecConfigFile}
+	if vex, err := config.RepositoryGoVEXPath(repoDir); err == nil {
+		inputs = append(inputs, vex)
+	}
+	return inputs
+}
 
 // treeState is what one inspection saw of the tree the scan stages read.
 type treeState struct {
@@ -85,10 +94,11 @@ func untrackedInputProblem(ctx context.Context, repoDir string) string {
 // unignored link could hand them an ignored file or one outside the repository. The link is
 // refused rather than resolved, whatever it points at.
 func presentSubtractiveInputs(repoDir string) ([]string, string) {
-	present := make([]string, 0, len(subtractiveInputs))
-	for i := 0; i < len(subtractiveInputs); i++ {
-		name := subtractiveInputs[i]
-		info, err := os.Lstat(filepath.Join(repoDir, name))
+	inputs := subtractiveInputs(repoDir)
+	present := make([]string, 0, len(inputs))
+	for i := 0; i < len(inputs); i++ {
+		name := inputs[i]
+		info, err := os.Lstat(filepath.Join(repoDir, filepath.FromSlash(name)))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
