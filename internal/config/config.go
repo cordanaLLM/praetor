@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -277,6 +278,14 @@ type Manifest struct {
 	// allowed to edit them (ADR-0017). Praetor's own artefacts are built in; this section
 	// declines one of them or adds the repository's own. It is repository-only, like Register.
 	Generated *GeneratedPolicy `yaml:"generated,omitempty"`
+	// Exceptions is the repository's declared per-file exception list (AGENTS.md rule 14): one
+	// rule waived for one path or glob, with a reason and an expiry at most MaxExceptionDays
+	// ahead. The gate owning an entry's rule reads it and fails on the files of an expired one.
+	// It is repository-only, like Register.
+	Exceptions []Exception `yaml:"exceptions,omitempty"`
+	// ClangTidy declares the lanes that run clang-tidy, which the translation-unit coverage
+	// gate (internal/tidycoverage) checks every tracked C/C++ translation unit against.
+	ClangTidy *ClangTidyPolicy `yaml:"clang_tidy,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -349,7 +358,9 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 	if err := validateManifestDevContainer(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
-	if err := ValidateGenerated(m.Generated); err != nil {
+	// The repository-only sections no other one refers to are checked together.
+	if err := errors.Join(ValidateGenerated(m.Generated), ValidateExceptions(m.Exceptions, time.Now()),
+		ValidateClangTidy(m.ClangTidy)); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 
