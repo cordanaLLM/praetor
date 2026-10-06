@@ -173,6 +173,12 @@ func (s RegisterSourceInput) validateParser() error {
 // manifest spells one: a clean forward-slash path of at most maxRepositoryPath bytes, never
 // absolute or escaping. register.sources inputs and the hiss.exceptions documents share it.
 func validRepositoryPath(value string) bool {
+	return ValidRepositoryPath(value)
+}
+
+// ValidRepositoryPath is validRepositoryPath for the readers of other repository files that
+// name paths the same way, such as docs/credits.yaml (internal/supplychain).
+func ValidRepositoryPath(value string) bool {
 	return value != "" && len(value) <= maxRepositoryPath && !strings.ContainsAny(value, "\\\x00\r\n") &&
 		!strings.HasPrefix(value, "/") && path.Clean(value) == value && value != "." &&
 		value != ".." && !strings.HasPrefix(value, "../")

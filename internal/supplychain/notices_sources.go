@@ -85,6 +85,36 @@ func ReadNoticeSources(ctx context.Context, root string) (NoticeSources, error) 
 	}, nil
 }
 
+// ReadCreditInventory lists every third-party item the manifests of the repository at root name,
+// in walk order: the direct requirements and tool directives of each go.mod (tools/go/go.mod
+// holds the tool block), the direct dependencies of each package.json, the requirements of each
+// requirements.in, the remote actions of the workflows, composite actions and CI templates, the
+// image of each Dockerfile FROM, and the image and features of each devcontainer.json. The walk
+// skips installed packages, test fixtures and hidden directories other than .config,
+// .devcontainer and .github (credits_inventory.go). The downloads docs/credits.yaml declares
+// complete it in CheckUpstreamCredits.
+func ReadCreditInventory(ctx context.Context, root string) ([]InventoryItem, error) {
+	walker := &inventoryWalker{ctx: ctx, root: root}
+	if err := filepath.WalkDir(root, walker.visit); err != nil {
+		return nil, fmt.Errorf("walk %s for the credit inventory: %w", root, err)
+	}
+	var items []InventoryItem
+	for _, rel := range walker.files {
+		data, err := readNoticeSource(ctx, root, rel)
+		if err != nil {
+			return nil, err
+		}
+		for _, read := range inventoryReaders(rel) {
+			found, err := read(rel, string(data))
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, found...)
+		}
+	}
+	return items, nil
+}
+
 // readNoticeSource reads one repository-relative file below root through the bounded,
 // symlink-resistant snapshot reader (HISS-02).
 func readNoticeSource(ctx context.Context, root, rel string) ([]byte, error) {

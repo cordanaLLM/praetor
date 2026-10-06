@@ -48,6 +48,36 @@ func TestCanonicalAssetUpstreamsPositive(t *testing.T) {
 	}
 }
 
+// CanonicalAssets returns every persona and skill, declaring or not, in the same order
+// (positive); a malformed front matter fails it as it fails CanonicalAssetUpstreams (negative);
+// and a repository without .agents holds none (boundary).
+func TestCanonicalAssets(t *testing.T) {
+	root := provenanceFixture(t, map[string]string{
+		"agents/plain.md":         "# Plain persona without front matter\n",
+		"skills/shout/SKILL.md":   derivedSkill,
+		"skills/whisper/SKILL.md": "---\nname: whisper\ndescription: quiet\n---\n",
+	})
+	got, err := CanonicalAssets(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []AssetUpstream{
+		{Rel: ".agents/agents/plain.md"},
+		{Rel: ".agents/skills/shout/SKILL.md", DerivedFrom: "https://example.test/upstream (MIT)"},
+		{Rel: ".agents/skills/whisper/SKILL.md"},
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("assets = %+v, want %+v", got, want)
+	}
+	broken := provenanceFixture(t, map[string]string{"skills/s/SKILL.md": "---\nname: s\nderived_from: x\n---\n"})
+	if _, err := CanonicalAssets(context.Background(), broken); !errors.Is(err, errTopLevelDerivedFrom) {
+		t.Fatalf("top-level declaration: %v", err)
+	}
+	if got, err := CanonicalAssets(context.Background(), t.TempDir()); err != nil || len(got) != 0 {
+		t.Fatalf("no .agents: %v, %v", got, err)
+	}
+}
+
 // Negative: front matter that is not YAML, never closes, names derived_from at its top level
 // or holds a non-string declaration fails, naming the file.
 func TestCanonicalAssetUpstreamsNegative(t *testing.T) {

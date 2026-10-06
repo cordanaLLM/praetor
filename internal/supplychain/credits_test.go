@@ -6,14 +6,9 @@ package supplychain
 
 import (
 	"context"
-	"encoding/json"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
-
-	"github.com/cordanaLLM/praetor/internal/util"
-	"github.com/cordanaLLM/praetor/templates"
 )
 
 // playerCreditsRow is a credits row naming the player packages the checkout's lock installs.
@@ -85,77 +80,6 @@ func TestCreditsPackageTermBoundary(t *testing.T) {
 	}
 }
 
-// checkoutCreditsSection returns the section of the committed credits page that heading opens,
-// lower-cased and joined, and fails the test when the page has no such section.
-func checkoutCreditsSection(t *testing.T, heading string) string {
-	t.Helper()
-	section, _, err := creditsSection(string(readRepoFile(t, AcknowledgementsFile)), heading)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(section) == 0 {
-		t.Fatalf("%s has no %q section", AcknowledgementsFile, heading)
-	}
-	return strings.ToLower(strings.Join(section, "\n"))
-}
-
-// workflowActionFiles are the globs, relative to the checkout, of the files whose uses: lines
-// the GitHub Actions section answers: the workflows, the composite actions, and the CI templates
-// adoption writes.
-var workflowActionFiles = []string{
-	".github/workflows/*.yml", ".github/workflows/*.yaml",
-	".github/actions/*/action.yml", ".github/actions/*/action.yaml",
-	templates.Directory + "/" + templates.Pattern,
-}
-
-// remoteActionRepository returns the owner/repository a uses: value runs, lower-cased, or
-// false for a local action or a Docker reference.
-func remoteActionRepository(ref string) (string, bool) {
-	action, _, _ := strings.Cut(ref, "@")
-	parts := strings.Split(action, "/")
-	if strings.HasPrefix(action, "./") || strings.HasPrefix(action, "docker://") || len(parts) < 2 {
-		return "", false
-	}
-	return strings.ToLower(parts[0] + "/" + parts[1]), true
-}
-
-// Every remote action a workflow, a composite action or a CI template uses has a row in the
-// GitHub Actions section that links its repository.
-func TestCreditsNameEveryWorkflowAction(t *testing.T) {
-	section := checkoutCreditsSection(t, "## GitHub Actions")
-	root := filepath.Join("..", "..")
-	used := map[string]string{}
-	for _, pattern := range workflowActionFiles {
-		paths, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(pattern)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, path := range paths {
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, uses, err := util.ScanActionUses(string(readRepoFile(t, filepath.ToSlash(rel))), maxNoticeLines)
-			if err != nil {
-				t.Fatalf("%s: %v", rel, err)
-			}
-			for _, use := range uses {
-				if repository, remote := remoteActionRepository(use.Ref); remote {
-					used[repository] = filepath.ToSlash(rel)
-				}
-			}
-		}
-	}
-	if len(used) < 10 {
-		t.Fatalf("found %d remote actions, fewer than the workflows use; the scan read too little: %v", len(used), used)
-	}
-	for repository, rel := range used {
-		if !strings.Contains(section, "](https://github.com/"+repository+")") {
-			t.Errorf("%s uses %s, and the GitHub Actions section of %s links no https://github.com/%s", rel, repository, AcknowledgementsFile, repository)
-		}
-	}
-}
-
 // remoteActionRepository: a remote action with or without a path, a local action, a Docker
 // reference and a bare name.
 func TestRemoteActionRepository(t *testing.T) {
@@ -170,43 +94,6 @@ func TestRemoteActionRepository(t *testing.T) {
 		got, remote := remoteActionRepository(ref)
 		if got != want || remote != (want != "") {
 			t.Errorf("remoteActionRepository(%q) = %q, %v; want %q", ref, got, remote, want)
-		}
-	}
-}
-
-// Every package a documentation preset installs directly, from its requirements.in or its
-// package.json, is named in a code span in the Documentation presets section.
-func TestCreditsNameEveryPresetPackage(t *testing.T) {
-	section := checkoutCreditsSection(t, "## Documentation presets")
-	var names []string
-	for _, line := range strings.Split(string(readRepoFile(t, "docs/presets/mkdocs/requirements.in")), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		name, _, _ := strings.Cut(line, "==")
-		names = append(names, strings.TrimSpace(name))
-	}
-	var manifest struct {
-		Dependencies    map[string]string `json:"dependencies"`
-		DevDependencies map[string]string `json:"devDependencies"`
-	}
-	if err := json.Unmarshal(readRepoFile(t, "docs/presets/starlight/package.json"), &manifest); err != nil {
-		t.Fatal(err)
-	}
-	for name := range manifest.Dependencies {
-		names = append(names, name)
-	}
-	for name := range manifest.DevDependencies {
-		names = append(names, name)
-	}
-	if len(names) < 6 {
-		t.Fatalf("read %d preset packages, fewer than the presets pin: %v", len(names), names)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		if !strings.Contains(section, "`"+strings.ToLower(name)+"`") {
-			t.Errorf("a documentation preset installs %s, and the Documentation presets section of %s names no `%s`", name, AcknowledgementsFile, name)
 		}
 	}
 }

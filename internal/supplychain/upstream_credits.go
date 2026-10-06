@@ -8,60 +8,63 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
-// A persona or skill taken from an upstream project names it in its front matter as
-// metadata.derived_from: "<url> (<SPDX license>)" (compiler.CanonicalAssetUpstreams;
-// docs/adr/0014-operator-neutral-defaults.md, section 8). The "Adapted work" table of the
-// credits page answers each declaration with a row that links the same URL, names the declaring
-// file, says how much was taken and states the same license. Upstream text or code that is
-// copied must also carry its license: REUSE.toml labels the file with it and LICENSES/ holds its
-// text. CheckUpstreamCredits holds the declarations, the rows and the license files together.
+// CheckUpstreamCredits is the credits gate. It holds docs/credits.yaml (CreditsFile) to the
+// repository:
+//
+//   - every item the dependency inventory lists (ReadCreditInventory) and every download the
+//     list declares has an entry whose packages name it;
+//   - every path an entry, an original or a download names is a file that still names the item;
+//   - a persona or skill taken from an upstream names it in its front matter as
+//     metadata.derived_from: "<url> (<SPDX license>)" (compiler.CanonicalAssetUpstreams;
+//     docs/adr/0014-operator-neutral-defaults.md, section 8), and an entry of a derivation
+//     relation answers it with the same URL, the declaring file among its paths and the same
+//     license. Upstream text that is vendored must also carry its license: REUSE.toml labels the
+//     file with it and LICENSES/ holds its text. Every other canonical persona and skill is
+//     listed under originals;
+//   - an entry whose license could not be verified is written unknown and excused by an
+//     unexpired entry of the declared exceptions list under config.ExceptionRuleCredits that
+//     names one of its paths; an expired or a stale exception fails.
 
-const (
-	// adaptedWorkHeading opens the section of AcknowledgementsFile whose table answers each
-	// declared upstream.
-	adaptedWorkHeading = "## Adapted work"
-	// adaptedWorkColumns are the cells of one row: project, artifact, relation, what changed and
-	// license.
-	adaptedWorkColumns = 5
-	// licensesDir holds the full text of every license REUSE names, one <id>.txt each.
-	licensesDir = "LICENSES"
-)
+// licensesDir holds the full text of every license REUSE names, one <id>.txt each.
+const licensesDir = "LICENSES"
 
-// The relation column: copied reproduces upstream text or code, adapted rewrites upstream rules
-// or structure in praetor's own words, inspired takes only the idea.
-const (
-	relationCopied   = "copied"
-	relationAdapted  = "adapted"
-	relationInspired = "inspired"
-)
-
-var (
-	// derivedFromValue is the declaration form: an https URL, one space and a parenthesised SPDX
-	// license expression.
-	derivedFromValue = regexp.MustCompile(`^(https://[^\s()]+) \((.+)\)$`)
-	// codeSpan captures the text of one inline code span, the form a row names an artifact in.
-	codeSpan = regexp.MustCompile("`([^`]+)`")
-)
+// derivedFromValue is the declaration form: an https URL, one space and a parenthesised SPDX
+// license expression.
+var derivedFromValue = regexp.MustCompile(`^(https://[^\s()]+) \((.+)\)$`)
 
 // UpstreamCreditSources are what CheckUpstreamCredits compares.
 type UpstreamCreditSources struct {
-	// Credits is AcknowledgementsFile.
-	Credits string
+	// Credits is the decoded CreditsFile.
+	Credits Credits
 	// Reuse is ReuseFile, empty when the repository has none.
 	Reuse string
-	// Upstreams are the canonical personas and skills that declare metadata.derived_from.
-	Upstreams []compiler.AssetUpstream
+	// Assets are every canonical persona and skill, with the upstream each declares.
+	Assets []compiler.AssetUpstream
 	// LicenseTexts reports, for each license identifier a declaration names, whether
 	// LICENSES/<id>.txt exists.
 	LicenseTexts map[string]bool
+	// Inventory is what the repository's manifests use (ReadCreditInventory).
+	Inventory []InventoryItem
+	// Exceptions are the entries of the declared exceptions list under
+	// config.ExceptionRuleCredits.
+	Exceptions []config.Exception
+	// PathTexts holds, lower-cased, the text of every file the credits list names; a named path
+	// that is no file in the repository is absent.
+	PathTexts map[string]string
+	// Today is the day exceptions expire against.
+	Today time.Time
 }
 
 // derivation is one parsed metadata.derived_from declaration.
@@ -69,18 +72,12 @@ type derivation struct {
 	rel, url, license string
 }
 
-// adaptedRow is one data row of the "Adapted work" table.
-type adaptedRow struct {
-	line                   int
-	url, relation, license string
-	artifacts              []string
-}
-
-// ReadUpstreamCreditSources reads the credits page, REUSE.toml, the upstream every canonical
-// persona and skill declares, and whether LICENSES/ holds the text of each license they name,
-// from the repository at root.
+// ReadUpstreamCreditSources reads, from the repository at root, the credits list, REUSE.toml,
+// every canonical persona and skill, whether LICENSES/ holds the text of each license they
+// declare, the dependency inventory, the credits exceptions of .standards.yaml and the text of
+// every file the list names.
 func ReadUpstreamCreditSources(ctx context.Context, root string) (UpstreamCreditSources, error) {
-	credits, err := readNoticeSource(ctx, root, AcknowledgementsFile)
+	credits, err := ReadCredits(ctx, root)
 	if err != nil {
 		return UpstreamCreditSources{}, err
 	}
@@ -88,25 +85,40 @@ func ReadUpstreamCreditSources(ctx context.Context, root string) (UpstreamCredit
 	if err != nil {
 		return UpstreamCreditSources{}, fmt.Errorf("read %s: %w", ReuseFile, err)
 	}
-	upstreams, err := compiler.CanonicalAssetUpstreams(ctx, root)
+	assets, err := compiler.CanonicalAssets(ctx, root)
 	if err != nil {
 		return UpstreamCreditSources{}, err
 	}
-	texts, err := readLicenseTexts(ctx, root, upstreams)
+	texts, err := readLicenseTexts(ctx, root, assets)
 	if err != nil {
 		return UpstreamCreditSources{}, err
 	}
-	return UpstreamCreditSources{Credits: string(credits), Reuse: string(reuse), Upstreams: upstreams, LicenseTexts: texts}, nil
+	inventory, err := ReadCreditInventory(ctx, root)
+	if err != nil {
+		return UpstreamCreditSources{}, err
+	}
+	exceptions, err := readCreditExceptions(root)
+	if err != nil {
+		return UpstreamCreditSources{}, err
+	}
+	paths, err := readCreditPathTexts(ctx, root, credits)
+	if err != nil {
+		return UpstreamCreditSources{}, err
+	}
+	return UpstreamCreditSources{
+		Credits: credits, Reuse: string(reuse), Assets: assets, LicenseTexts: texts,
+		Inventory: inventory, Exceptions: exceptions, PathTexts: paths, Today: time.Now(),
+	}, nil
 }
 
-// readLicenseTexts reports, for each license identifier upstreams declare, whether
+// readLicenseTexts reports, for each license identifier the assets declare, whether
 // LICENSES/<id>.txt exists below root. A declaration that does not parse names none here;
 // CheckUpstreamCredits reports it.
-func readLicenseTexts(ctx context.Context, root string, upstreams []compiler.AssetUpstream) (map[string]bool, error) {
+func readLicenseTexts(ctx context.Context, root string, assets []compiler.AssetUpstream) (map[string]bool, error) {
 	texts := map[string]bool{}
-	for _, upstream := range upstreams {
-		parsed, err := parseDerivation(upstream)
-		if err != nil {
+	for _, asset := range assets {
+		parsed, err := parseDerivation(asset)
+		if asset.DerivedFrom == "" || err != nil {
 			continue
 		}
 		for _, id := range licenseTerms(parsed.license) {
@@ -123,33 +135,84 @@ func readLicenseTexts(ctx context.Context, root string, upstreams []compiler.Ass
 	return texts, nil
 }
 
-// CheckUpstreamCredits fails when a declared upstream and the credits page disagree: a
-// declaration that does not parse; one the "Adapted work" table answers with no row linking its
-// URL and naming the declaring file; a row stating another license or a relation outside
-// copied, adapted and inspired; a copied upstream whose license REUSE.toml does not put on the
-// file or whose text LICENSES/ lacks; and a row naming a canonical persona or skill that
-// declares no upstream or another one. Every finding is returned, joined.
-func CheckUpstreamCredits(sources UpstreamCreditSources) error {
-	rows, err := adaptedWorkRows(sources.Credits)
-	if err != nil {
-		return err
+// readCreditExceptions returns the entries of the manifest's declared exceptions list under
+// config.ExceptionRuleCredits, read and validated by config.LoadManifest. A repository without a
+// manifest declares none.
+func readCreditExceptions(root string) ([]config.Exception, error) {
+	manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	return config.ExceptionsFor(manifest.Exceptions, config.ExceptionRuleCredits), nil
+}
+
+// readCreditPathTexts reads every path the credits list names below root and returns each
+// file's text lower-cased; a path that is no file is left out.
+func readCreditPathTexts(ctx context.Context, root string, credits Credits) (map[string]string, error) {
+	texts := map[string]string{}
+	for _, rel := range creditPaths(credits) {
+		data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, rel)
+		if err != nil {
+			return nil, fmt.Errorf("read %s, which %s names: %w", rel, CreditsFile, err)
+		}
+		if exists {
+			texts[rel] = strings.ToLower(string(data))
+		}
+	}
+	return texts, nil
+}
+
+// creditPaths lists, sorted and once each, the paths of every entry, original and download.
+func creditPaths(credits Credits) []string {
+	paths := slices.Clone(credits.Originals)
+	for _, entry := range credits.Entries {
+		paths = append(paths, entry.Paths...)
+	}
+	for _, download := range credits.Downloads {
+		paths = append(paths, download.Path)
+	}
+	slices.Sort(paths)
+	return slices.Compact(paths)
+}
+
+// CheckUpstreamCredits fails when the credits list and the repository disagree, returning every
+// finding joined: see the comment at the top of this file.
+func CheckUpstreamCredits(sources UpstreamCreditSources) error {
 	tables, err := ReuseAnnotationTables(sources.Reuse)
 	if err != nil {
 		return err
 	}
+	declared, findings := checkDerivations(sources, tables)
+	findings = append(findings, checkCreditedAssets(sources.Credits.Entries, declared)...)
+	findings = append(findings, checkAssetMarkers(sources.Assets, sources.Credits.Originals, sources.PathTexts)...)
+	findings = append(findings, checkInventoryCredited(sources.Inventory, sources.Credits)...)
+	findings = append(findings, checkEntryPaths(sources.Credits.Entries, sources.PathTexts)...)
+	findings = append(findings, checkDownloadPaths(sources.Credits.Downloads, sources.PathTexts)...)
+	findings = append(findings, checkCreditExceptions(sources.Credits.Entries, sources.Exceptions, sources.Today)...)
+	return errors.Join(findings...)
+}
+
+// checkDerivations parses every declared upstream and returns the declarations by file, with a
+// finding for each that does not parse or that no entry answers.
+func checkDerivations(sources UpstreamCreditSources, tables []ReuseAnnotation) (map[string]derivation, []error) {
 	declared := map[string]derivation{}
 	var findings []error
-	for _, upstream := range sources.Upstreams {
-		parsed, err := parseDerivation(upstream)
+	for _, asset := range sources.Assets {
+		if asset.DerivedFrom == "" {
+			continue
+		}
+		parsed, err := parseDerivation(asset)
 		if err != nil {
 			findings = append(findings, err)
 			continue
 		}
 		declared[parsed.rel] = parsed
-		findings = append(findings, checkDerivationCredit(parsed, rows, tables, sources.LicenseTexts))
+		findings = append(findings, checkDerivationCredit(parsed, sources.Credits.Entries, tables, sources.LicenseTexts))
 	}
-	return errors.Join(append(findings, checkCreditedAssets(rows, declared)...)...)
+	return declared, findings
 }
 
 // parseDerivation splits one declaration into its URL and license expression.
@@ -162,31 +225,32 @@ func parseDerivation(upstream compiler.AssetUpstream) (derivation, error) {
 	return derivation{rel: upstream.Rel, url: match[1], license: match[2]}, nil
 }
 
-// checkDerivationCredit returns the finding for one declaration, or nil when its row answers it.
-func checkDerivationCredit(parsed derivation, rows []adaptedRow, tables []ReuseAnnotation, texts map[string]bool) error {
-	index := slices.IndexFunc(rows, func(row adaptedRow) bool {
-		return row.url == parsed.url && slices.Contains(row.artifacts, parsed.rel)
+// checkDerivationCredit returns the finding for one declaration, or nil when an entry answers
+// it: the entry with the same URL that names the declaring file.
+func checkDerivationCredit(parsed derivation, entries []CreditEntry, tables []ReuseAnnotation, texts map[string]bool) error {
+	index := slices.IndexFunc(entries, func(entry CreditEntry) bool {
+		return entry.URL == parsed.url && slices.Contains(entry.Paths, parsed.rel)
 	})
 	if index < 0 {
-		return fmt.Errorf("%s declares metadata.%s %s, and the %q table of %s has no row linking %s and naming `%s`",
-			parsed.rel, compiler.DerivedFromKey, parsed.url, strings.TrimPrefix(adaptedWorkHeading, "## "), AcknowledgementsFile, parsed.url, parsed.rel)
+		return fmt.Errorf("%s declares metadata.%s %s, and %s has no entry with that url naming %s among its paths",
+			parsed.rel, compiler.DerivedFromKey, parsed.url, CreditsFile, parsed.rel)
 	}
-	row := rows[index]
-	if row.license != parsed.license {
-		return fmt.Errorf("%s:%d credits `%s` under %q, and the file declares %q; state the license the upstream names, first in the license cell",
-			AcknowledgementsFile, row.line, parsed.rel, row.license, parsed.license)
+	entry := entries[index]
+	if entry.License != parsed.license {
+		return fmt.Errorf("%s credits %s under %q, and the file declares %q; state the license the upstream names",
+			entry.label(index), parsed.rel, entry.License, parsed.license)
 	}
-	switch row.relation {
+	switch entry.Relation {
 	case relationAdapted, relationInspired:
 		return nil
-	case relationCopied:
+	case relationVendored:
 		return checkCopiedLicense(parsed, tables, texts)
 	}
-	return fmt.Errorf("%s:%d gives `%s` the relation %q; write %s, %s or %s",
-		AcknowledgementsFile, row.line, parsed.rel, row.relation, relationCopied, relationAdapted, relationInspired)
+	return fmt.Errorf("%s gives %s the relation %q; a derivation is %s",
+		entry.label(index), parsed.rel, entry.Relation, strings.Join(derivationRelations, ", "))
 }
 
-// checkCopiedLicense returns the finding for a copied upstream whose license is not carried:
+// checkCopiedLicense returns the finding for a vendored upstream whose license is not carried:
 // REUSE.toml must label the file with every license term, and LICENSES/ must hold each text.
 func checkCopiedLicense(parsed derivation, tables []ReuseAnnotation, texts map[string]bool) error {
 	var findings []error
@@ -203,98 +267,160 @@ func checkCopiedLicense(parsed derivation, tables []ReuseAnnotation, texts map[s
 	return errors.Join(findings...)
 }
 
-// checkCreditedAssets returns a finding for every row that names a canonical persona or skill
-// which declares no upstream, or another one than the row links.
-func checkCreditedAssets(rows []adaptedRow, declared map[string]derivation) []error {
+// checkCreditedAssets returns a finding for every entry of a derivation relation that names a
+// canonical persona or skill which declares no upstream, or another one than the entry links.
+func checkCreditedAssets(entries []CreditEntry, declared map[string]derivation) []error {
 	var findings []error
-	for _, row := range rows {
-		for _, artifact := range row.artifacts {
-			if !isCanonicalAsset(artifact) {
+	for index, entry := range entries {
+		if !slices.Contains(derivationRelations, entry.Relation) {
+			continue
+		}
+		for _, rel := range entry.Paths {
+			if !isCanonicalAsset(rel) {
 				continue
 			}
-			parsed, ok := declared[artifact]
+			parsed, ok := declared[rel]
 			switch {
 			case !ok:
-				findings = append(findings, fmt.Errorf("%s:%d credits `%s` to %s, and that file declares no metadata.%s; add \"%s (%s)\" to its front matter",
-					AcknowledgementsFile, row.line, artifact, row.url, compiler.DerivedFromKey, row.url, row.license))
-			case parsed.url != row.url:
-				findings = append(findings, fmt.Errorf("%s:%d credits `%s` to %s, and that file declares %s",
-					AcknowledgementsFile, row.line, artifact, row.url, parsed.url))
+				findings = append(findings, fmt.Errorf("%s credits %s to %s, and that file declares no metadata.%s; add \"%s (%s)\" to its front matter",
+					entry.label(index), rel, entry.URL, compiler.DerivedFromKey, entry.URL, entry.License))
+			case parsed.url != entry.URL:
+				findings = append(findings, fmt.Errorf("%s credits %s to %s, and that file declares %s",
+					entry.label(index), rel, entry.URL, parsed.url))
 			}
 		}
 	}
 	return findings
 }
 
-// isCanonicalAsset reports whether artifact names a file below the canonical persona or skill
-// directory, the files CanonicalAssetUpstreams reads.
-func isCanonicalAsset(artifact string) bool {
-	return strings.HasPrefix(artifact, compiler.CanonicalAgentsRel+"/") || strings.HasPrefix(artifact, compiler.CanonicalSkillsRel+"/")
-}
-
-// adaptedWorkRows returns the data rows of the table in the "Adapted work" section of credits:
-// every table row after the section heading and before the next level-two heading, less the
-// header and delimiter rows. A data row without exactly adaptedWorkColumns cells is an error.
-func adaptedWorkRows(credits string) ([]adaptedRow, error) {
-	section, first, err := creditsSection(credits, adaptedWorkHeading)
-	if err != nil {
-		return nil, err
-	}
-	var rows []adaptedRow
-	header := true
-	for index, text := range section {
-		line := strings.TrimSpace(text)
+// checkAssetMarkers returns a finding for every canonical persona or skill that neither
+// declares an upstream nor is listed under originals, for every listed one that declares an
+// upstream as well, and for every original that names no canonical persona or skill.
+func checkAssetMarkers(assets []compiler.AssetUpstream, originals []string, texts map[string]string) []error {
+	var findings []error
+	for _, asset := range assets {
+		original := slices.Contains(originals, asset.Rel)
 		switch {
-		case !strings.HasPrefix(line, "|"):
-			header = true
-		case isDelimiterRow(line):
-			header = false
-		case !header:
-			row, err := parseAdaptedRow(first+index, line)
-			if err != nil {
-				return nil, err
-			}
-			rows = append(rows, row)
+		case asset.DerivedFrom == "" && !original:
+			findings = append(findings, fmt.Errorf("%s declares no metadata.%s and %s does not list it under originals; credit its upstream or mark it original",
+				asset.Rel, compiler.DerivedFromKey, CreditsFile))
+		case asset.DerivedFrom != "" && original:
+			findings = append(findings, fmt.Errorf("%s lists %s under originals, and that file declares metadata.%s %q",
+				CreditsFile, asset.Rel, compiler.DerivedFromKey, asset.DerivedFrom))
 		}
 	}
-	return rows, nil
+	for _, original := range originals {
+		_, exists := texts[original]
+		if !exists || !slices.ContainsFunc(assets, func(asset compiler.AssetUpstream) bool { return asset.Rel == original }) {
+			findings = append(findings, fmt.Errorf("%s lists %s under originals, which is no canonical persona or skill", CreditsFile, original))
+		}
+	}
+	return findings
 }
 
-// creditsSection returns the lines of the credits page section that heading, a level-two
-// heading line, opens: from the line after it to the next level-two heading or the end. first
-// is the 1-based line number of the first returned line. A page without the heading has an empty
-// section.
-func creditsSection(credits, heading string) (section []string, first int, err error) {
-	lines, err := splitNoticeLines(credits)
-	if err != nil {
-		return nil, 0, fmt.Errorf("parse %s: %w", AcknowledgementsFile, err)
-	}
-	start := slices.IndexFunc(lines, func(line string) bool { return strings.TrimSpace(line) == heading })
-	if start < 0 {
-		return nil, 0, nil
-	}
-	end := start + 1
-	for end < len(lines) && !strings.HasPrefix(lines[end], "## ") {
-		end++
-	}
-	return lines[start+1 : end], start + 2, nil
+// isCanonicalAsset reports whether rel names a file below the canonical persona or skill
+// directory, the files CanonicalAssets reads.
+func isCanonicalAsset(rel string) bool {
+	return strings.HasPrefix(rel, compiler.CanonicalAgentsRel+"/") || strings.HasPrefix(rel, compiler.CanonicalSkillsRel+"/")
 }
 
-// parseAdaptedRow reads one data row, line its 1-based line number.
-func parseAdaptedRow(line int, text string) (adaptedRow, error) {
-	cells := tableCells(text)
-	if len(cells) != adaptedWorkColumns {
-		return adaptedRow{}, fmt.Errorf("%s:%d: an %q row holds %d cells, want %d (project, artifact, relation, what changed, license)",
-			AcknowledgementsFile, line, strings.TrimPrefix(adaptedWorkHeading, "## "), len(cells), adaptedWorkColumns)
+// checkInventoryCredited returns a finding for every identifier the inventory or the declared
+// downloads list that no entry answers, naming each file that uses it.
+func checkInventoryCredited(inventory []InventoryItem, credits Credits) []error {
+	items := slices.Clone(inventory)
+	for _, download := range credits.Downloads {
+		items = append(items, InventoryItem{Kind: inventoryDownload, ID: download.ID, Path: download.Path})
 	}
-	row := adaptedRow{line: line, relation: strings.TrimSpace(cells[2])}
-	if link := creditsLink.FindStringSubmatch(cells[0]); link != nil {
-		row.url = link[2]
+	missing := map[string][]string{}
+	var order []string
+	for _, item := range items {
+		answered := slices.ContainsFunc(credits.Entries, func(entry CreditEntry) bool { return entry.answers(item.ID) })
+		if answered {
+			continue
+		}
+		key := item.Kind + " " + item.ID
+		if _, seen := missing[key]; !seen {
+			order = append(order, key)
+		}
+		missing[key] = append(missing[key], item.Path)
 	}
-	for _, span := range codeSpan.FindAllStringSubmatch(cells[1], -1) {
-		row.artifacts = append(row.artifacts, span[1])
+	findings := make([]error, 0, len(order))
+	for _, key := range order {
+		findings = append(findings, fmt.Errorf("%s uses %s, and no entry of %s names it among its packages; add an entry with its upstream and license",
+			strings.Join(missing[key], ", "), key, CreditsFile))
 	}
-	license, _, _ := strings.Cut(cells[4], ",")
-	row.license = strings.TrimSpace(license)
-	return row, nil
+	return findings
+}
+
+// checkEntryPaths returns a finding for every path an entry names that is no file in the
+// repository or no longer names the item by any of its terms, and for every package of an entry
+// that none of its paths names.
+func checkEntryPaths(entries []CreditEntry, texts map[string]string) []error {
+	var findings []error
+	for index, entry := range entries {
+		terms := entry.terms()
+		for _, rel := range entry.Paths {
+			text, exists := texts[rel]
+			switch {
+			case !exists:
+				findings = append(findings, fmt.Errorf("%s names %s, which is not a file in the repository", entry.label(index), rel))
+			case !containsAnyTerm(text, terms):
+				findings = append(findings, fmt.Errorf("%s names %s, which no longer uses it: the file names none of %q", entry.label(index), rel, terms))
+			}
+		}
+		for _, pkg := range entry.Packages {
+			named := slices.ContainsFunc(entry.Paths, func(rel string) bool { return strings.Contains(texts[rel], strings.ToLower(pkg)) })
+			if !named {
+				findings = append(findings, fmt.Errorf("%s answers package %s, which none of its paths names", entry.label(index), pkg))
+			}
+		}
+	}
+	return findings
+}
+
+// checkDownloadPaths returns a finding for every declared download whose file no longer names it.
+func checkDownloadPaths(downloads []CreditDownload, texts map[string]string) []error {
+	var findings []error
+	for index, download := range downloads {
+		if !strings.Contains(texts[download.Path], strings.ToLower(download.ID)) {
+			findings = append(findings, fmt.Errorf("%s downloads[%d] says %s fetches %s, and that file does not name it",
+				CreditsFile, index, download.Path, download.ID))
+		}
+	}
+	return findings
+}
+
+// containsAnyTerm reports whether text holds one of terms.
+func containsAnyTerm(text string, terms []string) bool {
+	return slices.ContainsFunc(terms, func(term string) bool { return strings.Contains(text, term) })
+}
+
+// checkCreditExceptions returns a finding for every entry written license unknown that no
+// unexpired credits exception excuses, for every expired credits exception, and for every
+// unexpired one that excuses no such entry.
+func checkCreditExceptions(entries []CreditEntry, exceptions []config.Exception, today time.Time) []error {
+	var findings []error
+	excuses := func(exception config.Exception, entry CreditEntry) bool {
+		return entry.License == licenseUnknown && slices.ContainsFunc(entry.Paths, exception.Matches)
+	}
+	for index, entry := range entries {
+		excused := slices.ContainsFunc(exceptions, func(exception config.Exception) bool {
+			return !exception.Expired(today) && excuses(exception, entry)
+		})
+		if entry.License == licenseUnknown && !excused {
+			findings = append(findings, fmt.Errorf("%s states license %s, and no unexpired exceptions entry with rule %s names one of its paths; verify the license upstream, or declare the exception in %s",
+				entry.label(index), licenseUnknown, config.ExceptionRuleCredits, config.ManifestFileName))
+		}
+	}
+	for _, exception := range exceptions {
+		switch {
+		case exception.Expired(today):
+			findings = append(findings, fmt.Errorf("exceptions entry %s (%s) expired on %s; verify the license upstream or renew the entry",
+				exception.Target(), config.ExceptionRuleCredits, exception.Expires))
+		case !slices.ContainsFunc(entries, func(entry CreditEntry) bool { return excuses(exception, entry) }):
+			findings = append(findings, fmt.Errorf("exceptions entry %s (%s) excuses no entry of %s that states license %s; remove the entry",
+				exception.Target(), config.ExceptionRuleCredits, CreditsFile, licenseUnknown))
+		}
+	}
+	return findings
 }

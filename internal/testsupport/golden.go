@@ -27,9 +27,17 @@ const maxGoldenLines = 1 << 16
 // writes it escaped. With GoldenUpdateEnv set to 1 the file is rewritten with got instead.
 func AssertGolden(t testing.TB, path, got string) {
 	t.Helper()
-	root, err := os.OpenRoot(".")
+	AssertGoldenIn(t, ".", path, got)
+}
+
+// AssertGoldenIn is AssertGolden for a golden file below dir, a directory relative to the
+// test's package directory, such as "../.." for a committed file the test renders at the top
+// of the repository. Access is confined to dir through os.Root the same way.
+func AssertGoldenIn(t testing.TB, dir, path, got string) {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
 	if err != nil {
-		t.Fatalf("testsupport: open package directory for golden %s: %v", path, err)
+		t.Fatalf("testsupport: open directory %s for golden %s: %v", dir, path, err)
 		return
 	}
 	defer closeGoldenRoot(t, root)

@@ -114,3 +114,31 @@ func TestParseRequirement_Boundary_MissingTokens(t *testing.T) {
 		}
 	}
 }
+
+// ToolLine: a single-line directive and a block both identify each tool path (positive); a
+// require line, a toolchain directive and a nil state identify none (negative); and a block
+// that closes leaves later lines outside it (boundary).
+func TestToolLineTransitions(t *testing.T) {
+	if line, ok := ToolLine("tool example.com/cmd/x", nil); ok || line != "" {
+		t.Fatal("nil state accepted")
+	}
+	cases := []struct {
+		line, want    string
+		tool, inBlock bool
+	}{
+		{"tool example.com/cmd/a", "example.com/cmd/a", true, false},
+		{"toolchain go1.27.0", "toolchain go1.27.0", false, false},
+		{"require example.com/a v1.0.0", "require example.com/a v1.0.0", false, false},
+		{"tool (", "", false, true},
+		{"\texample.com/cmd/b // the linter", "example.com/cmd/b // the linter", true, true},
+		{")", "", false, false},
+		{"example.com/cmd/c", "example.com/cmd/c", false, false},
+	}
+	inBlock := false
+	for _, tc := range cases {
+		line, tool := ToolLine(tc.line, &inBlock)
+		if line != tc.want || tool != tc.tool || inBlock != tc.inBlock {
+			t.Fatalf("%q: line=%q tool=%v block=%v", tc.line, line, tool, inBlock)
+		}
+	}
+}
