@@ -344,17 +344,26 @@ func rejectOrphanProjections(ctx context.Context, rootDir string, dirs, names []
 	return nil
 }
 
-// verifyProjection compares one projection with the canonical content, ignoring leading and
-// trailing whitespace as VerifyCompiled does for the vendor files. rel is the declared slash
-// path, which the error names the same way on every platform; readConfinedText maps it to the
-// host path and follows no symlink below rootDir, as the writer does not.
+// projectionMatches is the one comparison of a checked-out projection with the text it must
+// hold, for the vendor files (VerifyCompiled) and the persona and skill copies
+// (verifyProjection): leading and trailing whitespace is ignored, and line endings compare
+// under util.CheckoutTextEqual, so a uniformly CRLF checkout matches its LF source while a copy
+// with mixed endings compares byte for byte and strict says why.
+func projectionMatches(got, want []byte) (equal bool, strict string) {
+	return util.CheckoutTextEqual(bytes.TrimSpace(got), bytes.TrimSpace(want))
+}
+
+// verifyProjection compares one projection with the canonical content (projectionMatches). rel
+// is the declared slash path, which the error names the same way on every platform;
+// readConfinedText maps it to the host path and follows no symlink below rootDir, as the writer
+// does not.
 func verifyProjection(ctx context.Context, rootDir, rel string, want []byte) error {
 	got, err := readConfinedText(ctx, rootDir, rel)
 	if err != nil {
 		return fmt.Errorf("projection %s missing or unreadable (run 'praetorctl compile-context'): %w", rel, err)
 	}
-	if !bytes.Equal(bytes.TrimSpace(got), bytes.TrimSpace(want)) {
-		return fmt.Errorf("%w: %s (run 'praetorctl compile-context' to regenerate it)", ErrAgentProjectionDrift, rel)
+	if equal, strict := projectionMatches(got, want); !equal {
+		return fmt.Errorf("%w: %s%s (run 'praetorctl compile-context' to regenerate it)", ErrAgentProjectionDrift, rel, util.ByteExactNote(strict))
 	}
 	return nil
 }

@@ -1,7 +1,6 @@
 package compiler
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const MaxLineBudget = agentcontext.MaxLineBudget
@@ -161,8 +161,9 @@ func (t *Transpiler) VerifyCompiled(ctx context.Context, agentsMdPath, targetDir
 		if err != nil {
 			return nil, fmt.Errorf("target %s missing or unreadable: %w", f.RelativePath, err)
 		}
-		if !bytes.Equal(bytes.TrimSpace(existing), bytes.TrimSpace([]byte(f.Content))) {
-			return nil, fmt.Errorf("target %s is out of sync with %s; run 'praetorctl compile-context' to reconcile", f.RelativePath, agentsMdPath)
+		if equal, strict := projectionMatches(existing, []byte(f.Content)); !equal {
+			return nil, fmt.Errorf("target %s is out of sync with %s%s; run 'praetorctl compile-context' to reconcile",
+				f.RelativePath, agentsMdPath, util.ByteExactNote(strict))
 		}
 	}
 	return res, nil
