@@ -156,11 +156,12 @@ var priorDigests = map[string]string{
 	"a3080c17ab3bb62974b1347950a1dc3feac795f758abfb416edf22854dcff45f": Directory + "/verify.mjs",
 	// verify.mjs with a fixed 120 s budget per lint child, whose timeout named only the node
 	// executable, before documentation.lint_timeout_seconds and the suspects report (#784).
+	"5dfc7a8138b5020526fa481b315f4888789f831b11f054f4b6cddfd6572d1f16": Directory + "/verify.mjs",
 	// package.json, package-lock.json and verify.mjs before the katex override, whose lock
 	// installed katex 0.16.47 (GHSA-238p-pmpm-9mq7) through micromark-extension-math (#793).
 	"5d769f012c60688714ef40fe3498174559d5e9eec7c527e5b6605a75b2571d24": Directory + "/package.json",
 	"d94aec74aec5ae8fedb118122b74aaa3ba347ec7cf413cc3cee975f1e2eacd2a": Directory + "/package-lock.json",
-	"5dfc7a8138b5020526fa481b315f4888789f831b11f054f4b6cddfd6572d1f16": Directory + "/verify.mjs",
+	"b5da2d1072959fe473d2866919ae756f2ab81484175f583475118d490a81ef13": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{

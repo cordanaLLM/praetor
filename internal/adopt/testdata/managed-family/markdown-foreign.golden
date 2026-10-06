@@ -8,8 +8,8 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action reconcile .github/workflows/praetor-docs.yml :: Existing file differs from the scaffold adoption writes; preserved, not verified (praetorctl adopt --force --lock-source-root=<lock source> regenerates it)
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:106fdb43a27f5375606b88d4aa64ad98e6d36d2efb59715f359722851adc4aa1
-file tools/markdownlint/package.json sha256:5d769f012c60688714ef40fe3498174559d5e9eec7c527e5b6605a75b2571d24
-file tools/markdownlint/package-lock.json sha256:d94aec74aec5ae8fedb118122b74aaa3ba347ec7cf413cc3cee975f1e2eacd2a
+file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
+file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:f018e2ac86d3ba934ac84d617a26431a7cd3fcfc0f74e8c72f165610ea0d1ad8
 file tools/markdownlint/no-private-scratch-links.mjs sha256:3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0
@@ -20,15 +20,15 @@ action create .gitignore :: Created ignore rules for build artifacts, private wo
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
-action replace tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+2305 lines, removed "// operator runner"); backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/verify.mjs
+action replace tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+2338 lines, removed "// operator runner"); backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/verify.mjs
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action replace .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow; replaced existing content (-1/+34 lines, removed "name: Operator"); backup: .workingdir/adopt-backups/<stamp>/.github/workflows/praetor-docs.yml
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
-file tools/markdownlint/package.json sha256:5d769f012c60688714ef40fe3498174559d5e9eec7c527e5b6605a75b2571d24
-file tools/markdownlint/package-lock.json sha256:d94aec74aec5ae8fedb118122b74aaa3ba347ec7cf413cc3cee975f1e2eacd2a
+file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
+file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:b5da2d1072959fe473d2866919ae756f2ab81484175f583475118d490a81ef13
+file tools/markdownlint/verify.mjs sha256:8e14d51b230823345ff9b480e762219197819c6ad373ffa6782d4cdabb493e26
 file tools/markdownlint/no-private-scratch-links.mjs sha256:3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore absent
