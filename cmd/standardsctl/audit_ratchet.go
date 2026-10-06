@@ -129,8 +129,12 @@ func gitChangedFiles(ctx context.Context, dir, baseRef string) ([]string, error)
 		if err := util.ValidateExecArg(baseRef); err != nil {
 			return nil, fmt.Errorf("[FAIL] invalid --base value: %w", err)
 		}
-		if _, err := util.RunGit(ctx, dir, "rev-parse", "--verify", "--quiet", baseRef+"^{commit}"); err != nil {
-			return nil, fmt.Errorf("[FAIL] base ref %q does not resolve to a commit in %s: %w", baseRef, dir, err)
+		commit, err := util.ResolveGitCommit(ctx, dir, baseRef)
+		if err != nil {
+			return nil, fmt.Errorf("[FAIL] base ref %q in %s: %w", baseRef, dir, err)
+		}
+		if commit == "" {
+			return nil, fmt.Errorf("[FAIL] base ref %q does not resolve to a commit in %s", baseRef, dir)
 		}
 		diffs = append(diffs, []string{"diff", "--name-only", baseRef + "...HEAD"})
 	}

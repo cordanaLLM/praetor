@@ -38,25 +38,21 @@ func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool, error
 	return resolveRefCommit(ctx, dir, ref)
 }
 
-// resolveRefCommit resolves one concrete ref to the commit it points at. ok is false when
-// the ref is not a usable git argument or names no commit (git rev-parse exits 1 with a
-// live context). A failed git read returns an error naming the ref and the cause (#671).
-// git itself answers 1 for a loose ref with unreadable contents or one naming a missing
-// object, so such a ref reads as naming no commit.
+// resolveRefCommit resolves one concrete ref to the commit it points at, through the one
+// commit resolver (util.ResolveGitCommit), which dereferences an annotated tag to its
+// commit, so a tag object and a branch head both yield a commit SHA that can be compared
+// for equality. ok is false when the ref is not a usable git argument or names no commit.
+// A failed git read returns an error naming the ref and the cause (#671). git itself
+// answers "no such commit" for a loose ref with unreadable contents or one naming a
+// missing object, so such a ref reads as naming no commit.
 func resolveRefCommit(ctx context.Context, dir, ref string) (string, bool, error) {
 	if util.ValidateExecArg(ref) != nil {
 		return "", false, nil //nolint:nilerr // an invalid ref argument is never passed to git; it names no commit
 	}
-	// "^{commit}" dereferences annotated tags, so a tag object and a branch head both
-	// yield a commit SHA that can be compared for equality.
-	out, err := util.RunGit(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	commit, err := util.ResolveGitCommit(ctx, dir, ref)
 	if err != nil {
-		if util.GitAnsweredUnset(ctx, err) {
-			return "", false, nil
-		}
 		return "", false, fmt.Errorf("failed to resolve ref %q: %w", ref, err)
 	}
-	commit := firstOutputLine(out)
 	return commit, commit != "", nil
 }
 

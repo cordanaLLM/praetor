@@ -17,7 +17,10 @@ const maxCommitNameBytes = 1024
 // such as a branch, a remote-tracking ref or an abbreviated object name, or "" when git answers
 // that the checkout holds no such commit (rev-parse --verify --quiet exits 1, which it also does
 // for an object that is no commit). It runs through RunGitProbeStatus, so nothing is fetched. A
-// name ValidateExecArg refuses and a read git did not answer are errors, never "none".
+// name ValidateExecArg refuses and a read git did not answer are errors, never "none". It is the
+// one commit resolver (HISS-19): the ratchet attribution, the audit's --base and live branch
+// protection checks, flavor refs, the generated-artefact check, the dedupe cadence and the
+// workstation install lag all resolve through it.
 func ResolveGitCommit(ctx context.Context, dir, name string) (string, error) {
 	if err := ValidateExecArg(name); err != nil {
 		return "", fmt.Errorf("resolve commit %q: %w", name, err)
