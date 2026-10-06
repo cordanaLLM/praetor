@@ -28,11 +28,13 @@ func TestLoadManifestDocumentationPositive(t *testing.T) {
 		t.Fatal(err)
 	}
 	if m.Documentation != nil || m.Documentation.EffectiveMaxFiles() != DefaultDocumentationMaxFiles ||
-		m.Documentation.EffectiveMaxFileBytes() != DefaultDocumentationMaxFileBytes {
+		m.Documentation.EffectiveMaxFileBytes() != DefaultDocumentationMaxFileBytes ||
+		m.Documentation.EffectiveLintTimeoutSeconds() != DefaultDocumentationLintTimeoutSeconds {
 		t.Fatalf("absent documentation block = %+v, want the defaults", m.Documentation)
 	}
 	m, err = loadDocumentationManifest(t, `documentation:
   max_files: 8192
+  lint_timeout_seconds: 300
   style_exclude:
     - "changelog.d/**"
     - "docs/adr/_index_fragments/*.md"
@@ -42,6 +44,7 @@ func TestLoadManifestDocumentationPositive(t *testing.T) {
 	}
 	policy := m.Documentation
 	if policy.EffectiveMaxFiles() != 8192 || policy.EffectiveMaxFileBytes() != DefaultDocumentationMaxFileBytes ||
+		policy.EffectiveLintTimeoutSeconds() != 300 ||
 		strings.Join(policy.StyleExclude, ",") != "changelog.d/**,docs/adr/_index_fragments/*.md" {
 		t.Fatalf("declared documentation block = %+v", policy)
 	}
@@ -54,7 +57,7 @@ func TestLoadManifestDocumentationPositive(t *testing.T) {
 		t.Fatalf("rendered manifest does not reload: %v\n%s", err, rendered)
 	}
 	if again.Documentation.EffectiveMaxFiles() != 8192 || again.Documentation.MaxFileBytes != nil ||
-		len(again.Documentation.StyleExclude) != 2 {
+		again.Documentation.EffectiveLintTimeoutSeconds() != 300 || len(again.Documentation.StyleExclude) != 2 {
 		t.Fatalf("documentation block lost in the render round trip: %+v", again.Documentation)
 	}
 }
@@ -67,6 +70,11 @@ func TestLoadManifestDocumentationNegative(t *testing.T) {
 		"files under default":    {"documentation: {max_files: 4095}\n", "got 4095"},
 		"bytes over ceiling":     {"documentation: {max_file_bytes: 4194305}\n", "documentation.max_file_bytes must be an integer from 1048576 to 4194304; got 4194305"},
 		"bytes under default":    {"documentation: {max_file_bytes: 1048575}\n", "got 1048575"},
+		"budget over ceiling":    {"documentation: {lint_timeout_seconds: 481}\n", "documentation.lint_timeout_seconds must be an integer from 1 to 480; got 481"},
+		"budget below one":       {"documentation: {lint_timeout_seconds: 0}\n", "documentation.lint_timeout_seconds must be an integer from 1 to 480; got 0"},
+		"negative budget":        {"documentation: {lint_timeout_seconds: -120}\n", "documentation.lint_timeout_seconds must be an integer from 1 to 480; got -120"},
+		"quoted budget":          {"documentation: {lint_timeout_seconds: \"300\"}\n", "documentation lint_timeout_seconds must be an integer"},
+		"fractional budget":      {"documentation: {lint_timeout_seconds: 1.5}\n", "documentation lint_timeout_seconds must be an integer"},
 		"quoted bound":           {"documentation: {max_files: \"8192\"}\n", "documentation max_files must be an integer"},
 		"fractional bound":       {"documentation: {max_files: 8192.5}\n", "documentation max_files must be an integer"},
 		"null bound":             {"documentation: {max_files: null}\n", "documentation max_files must be an integer"},
@@ -94,9 +102,16 @@ func TestLoadManifestDocumentationNegative(t *testing.T) {
 	}
 }
 
-// Boundary: both bounds at their default and exactly at their ceiling, 64 globs, and one glob of
-// exactly 256 bytes load; an empty glob list and an empty block declare nothing past defaults.
+// Boundary: both bounds at their default and exactly at their ceiling, the lint budget at 1 s and
+// at its ceiling, 64 globs, and one glob of exactly 256 bytes load; an empty glob list and an
+// empty block declare nothing past defaults.
 func TestLoadManifestDocumentationBoundary(t *testing.T) {
+	for _, seconds := range []int{1, DefaultDocumentationLintTimeoutSeconds, DocumentationLintTimeoutSecondsCeiling} {
+		m, err := loadDocumentationManifest(t, fmt.Sprintf("documentation:\n  lint_timeout_seconds: %d\n", seconds))
+		if err != nil || m.Documentation.EffectiveLintTimeoutSeconds() != seconds {
+			t.Fatalf("lint_timeout_seconds %d loaded as %+v: %v", seconds, m, err)
+		}
+	}
 	for _, bounds := range [][2]int{
 		{DefaultDocumentationMaxFiles, DefaultDocumentationMaxFileBytes},
 		{DocumentationMaxFilesCeiling, DocumentationMaxFileBytesCeiling},

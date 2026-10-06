@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -252,7 +253,7 @@ func TestRunnerUsesLockedInstallWithoutNpx(t *testing.T) {
 		"const selection = styleSelection(scratchFiles, settings, ",
 		"const styleFiles = selection.styled",
 		"runScratchRule(root, temporary, scratchFiles, false)",
-		"runMarkdownlint(root, temporary, styleFiles)",
+		"runMarkdownlint(root, temporary, styleFiles, true, settings)",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("runner does not keep privacy scanning broader than style lint: missing %q", required)
@@ -275,7 +276,8 @@ func TestRunnerLintsThroughTheLibrary(t *testing.T) {
 	for _, required := range []string{
 		`const MARKDOWNLINT_ENTRY = "./lib/exports-sync.mjs";`,
 		"const results = lint({ ...options, strings: { [files[index]]: readLintSource(files[index]) } });",
-		"[script, LINT_MODE, temporary, ...batch], {\n      cwd: root,",
+		"child ?? [process.execPath, script, LINT_MODE, temporary];",
+		"command(file, [...leading, ...all[index]], {\n      cwd: root,",
 		"hermeticConfigSelfTest(temporary);",
 		"lintOutputSelfTest(temporary);",
 	} {
@@ -303,6 +305,9 @@ func TestDocumentationSettingsMirrorConfig(t *testing.T) {
 			"MAX_STYLE_EXCLUSIONS":      config.MaxDocumentationStyleExclusions,
 			"MAX_STYLE_EXCLUSION_BYTES": config.MaxDocumentationStyleExclusionBytes,
 			"MAX_MANIFEST_BYTES":        contextopt.MaxSourceBytes,
+			// The lint budget in seconds; verify.mjs refuses a value below 1 as config does.
+			"DEFAULT_LINT_TIMEOUT_SECONDS": config.DefaultDocumentationLintTimeoutSeconds,
+			"LINT_TIMEOUT_SECONDS_CEILING": config.DocumentationLintTimeoutSecondsCeiling,
 		},
 		"no-private-scratch-links.mjs": {
 			"MAX_FILES":      config.DocumentationMaxFilesCeiling,
@@ -320,6 +325,63 @@ func TestDocumentationSettingsMirrorConfig(t *testing.T) {
 	}
 	if _, found := scriptConstants(t, "verify.mjs")["MAX_FILES"]; found {
 		t.Error("verify.mjs still declares a fixed MAX_FILES beside the declared bounds")
+	}
+}
+
+// hostedJobMargin is the part of the hosted job's time limit a lint child may never take: checkout,
+// Node setup, the locked install, the private-link rule and the figure checks run in it.
+const hostedJobMargin = 2 * time.Minute
+
+// jobTimeout reads the one timeout-minutes line of a workflow text.
+func jobTimeout(workflow string) (time.Duration, error) {
+	matches := regexp.MustCompile(`(?m)^    timeout-minutes: ([0-9]+)$`).FindAllStringSubmatch(workflow, 2)
+	if len(matches) != 1 {
+		return 0, fmt.Errorf("workflow declares %d job timeouts, want 1", len(matches))
+	}
+	minutes, err := strconv.Atoi(matches[0][1])
+	if err != nil {
+		return 0, fmt.Errorf("timeout-minutes %q: %w", matches[0][1], err)
+	}
+	return time.Duration(minutes) * time.Minute, nil
+}
+
+// A lint child past its budget must fail inside the hosted job, so the gate names the batch and
+// its suspects before the runner cancels the job without a word (#784). Positive: the ceiling of
+// documentation.lint_timeout_seconds plus the margin fits the shipped workflow's job limit, and
+// the self-test replays the planted slow child. Negative: a job limit the ceiling would outlast,
+// a workflow without a limit and one with two are refused. Boundary: a limit exactly at the
+// ceiling plus the margin fits.
+func TestLintBudgetCeilingFitsHostedJob(t *testing.T) {
+	ceiling := time.Duration(config.DocumentationLintTimeoutSecondsCeiling) * time.Second
+	limit, err := jobTimeout(Workflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ceiling+hostedJobMargin > limit {
+		t.Fatalf("lint budget ceiling %s plus %s exceeds the hosted job limit %s", ceiling, hostedJobMargin, limit)
+	}
+	data, err := Read("verify.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"lintBudgetSelfTest(temporary);", "onlyModeSelfTest(temporary);",
+		"timeoutReport: () => lintBudgetReport("} {
+		if !strings.Contains(string(data), required) {
+			t.Fatalf("verify.mjs lacks %q", required)
+		}
+	}
+	boundary, err := jobTimeout("jobs:\n  documentation:\n    timeout-minutes: 10\n")
+	if err != nil || ceiling+hostedJobMargin != boundary {
+		t.Fatalf("boundary job limit = %s, %v; want %s", boundary, err, ceiling+hostedJobMargin)
+	}
+	short, err := jobTimeout("    timeout-minutes: 9\n")
+	if err != nil || ceiling+hostedJobMargin <= short {
+		t.Fatalf("a 9-minute job limit fits the ceiling: %s, %v", short, err)
+	}
+	for _, text := range []string{"jobs: {}\n", "    timeout-minutes: 10\n    timeout-minutes: 20\n"} {
+		if _, err := jobTimeout(text); err == nil {
+			t.Fatalf("jobTimeout(%q) accepted", text)
+		}
 	}
 }
 

@@ -25,13 +25,22 @@ const MAX_FILES_CEILING = 16_384;
 const DEFAULT_MAX_FILE_BYTES = 1_048_576;
 const MAX_FILE_BYTES_CEILING = 4_194_304;
 const MAX_TOTAL_BYTES = 67_108_864;
+// The time budget of one style-lint child. documentation.lint_timeout_seconds in .standards.yaml
+// sets it from 1 s up to the ceiling; internal/config/documentation.go validates the same range
+// for audit. The ceiling stays below the 10-minute limit of the hosted gate job (Workflow in
+// tools/markdownlint/assets.go, TestLintBudgetCeilingFitsHostedJob): a child runs out of its
+// budget while the job still runs, so the gate ends the run and names the batch and its suspects
+// (lintBudgetReport). Nothing is re-run.
+const DEFAULT_LINT_TIMEOUT_SECONDS = 120;
+const LINT_TIMEOUT_SECONDS_CEILING = 480;
+const MAX_BUDGET_SUSPECTS = 5;
 const MANIFEST_FILE = ".standards.yaml";
 const MAX_MANIFEST_BYTES = 1_048_576;
 const MAX_MANIFEST_DEPTH = 64;
 const MAX_MANIFEST_ALIASES = 1_024;
 const MAX_STYLE_EXCLUSIONS = 64;
 const MAX_STYLE_EXCLUSION_BYTES = 256;
-const DOCUMENTATION_KEYS = new Set(["max_files", "max_file_bytes", "style_exclude"]);
+const DOCUMENTATION_KEYS = new Set(["max_files", "max_file_bytes", "lint_timeout_seconds", "style_exclude"]);
 // Brace lists in one path segment of a declared exclusion expand to at most this many
 // alternatives; a list past it is refused rather than expanded (HISS-02).
 const MAX_BRACE_ALTERNATIVES = 64;
@@ -40,6 +49,7 @@ const DEFAULT_SETTINGS = Object.freeze({
   declared: false,
   maxFiles: DEFAULT_MAX_FILES,
   maxFileBytes: DEFAULT_MAX_FILE_BYTES,
+  lintTimeoutSeconds: DEFAULT_LINT_TIMEOUT_SECONDS,
   styleExclude: Object.freeze([]),
 });
 const MAX_GIT_OUTPUT_BYTES = 16_777_216;
@@ -58,11 +68,13 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 300_000;
 const NPM_CI_ARGS = Object.freeze(["ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
 // The gate lints in a child process of its own script: `node verify.mjs --lint <install> <file>...`
-// from the repository root. The child imports the markdownlint library's synchronous entry from
-// the locked install and reads its rules from the config mapping of markdownlint-cli2.yaml; the
-// file keeps the name and the noProgress key markdownlint-cli2 read, so adopted copies need no
-// change, and every other key is refused.
+// from the repository root; `node verify.mjs --only <file>...` lints the named style-selected
+// files alone in one such child, the way to time a suspect. The child imports the markdownlint
+// library's synchronous entry from the locked install and reads its rules from the config mapping
+// of markdownlint-cli2.yaml; the file keeps the name and the noProgress key markdownlint-cli2 read,
+// so adopted copies need no change, and every other key is refused.
 const LINT_MODE = "--lint";
+const ONLY_MODE = "--only";
 const MARKDOWNLINT_ENTRY = "./lib/exports-sync.mjs";
 const LINT_CONFIG_FILE = "markdownlint-cli2.yaml";
 const LINT_CONFIG_KEYS = new Set(["config", "noProgress"]);
@@ -180,7 +192,7 @@ function command(commandName, args, options = {}) {
   });
   if (result.error) {
     if (result.error.code === "ETIMEDOUT") {
-      fail(`${commandName} exceeded ${timeout} ms`);
+      fail(options.timeoutReport?.() ?? `${commandName} exceeded ${timeout} ms`);
     }
     fail(`${commandName} failed to start or exceeded ${options.maxBuffer ?? MAX_CAPTURE_BYTES} captured bytes: ${result.error.message}`);
   }
@@ -259,13 +271,16 @@ function documentationBlock(yaml, text) {
   return Object.hasOwn(manifest, "documentation") ? manifest.documentation : null;
 }
 
-function boundedSetting(value, key, defaultValue, ceiling) {
+// boundedSetting reads one integer setting: an absent key keeps defaultValue, and a value outside
+// minimum..ceiling is refused. The inventory bounds take their default as the minimum, so they can
+// be raised but not lowered.
+function boundedSetting(value, key, defaultValue, ceiling, minimum = defaultValue) {
   if (value === undefined) {
     return defaultValue;
   }
-  if (!Number.isSafeInteger(value) || value < defaultValue || value > ceiling) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > ceiling) {
     const got = typeof value === "number" || value === null ? String(value) : `a ${typeof value}`;
-    fail(`${MANIFEST_FILE} documentation.${key} must be an integer from ${defaultValue} to ${ceiling}; got ${got}`);
+    fail(`${MANIFEST_FILE} documentation.${key} must be an integer from ${minimum} to ${ceiling}; got ${got}`);
   }
   return value;
 }
@@ -761,6 +776,8 @@ function documentationSettings(block) {
     maxFiles: boundedSetting(block.max_files, "max_files", DEFAULT_MAX_FILES, MAX_FILES_CEILING),
     maxFileBytes: boundedSetting(block.max_file_bytes, "max_file_bytes", DEFAULT_MAX_FILE_BYTES,
       MAX_FILE_BYTES_CEILING),
+    lintTimeoutSeconds: boundedSetting(block.lint_timeout_seconds, "lint_timeout_seconds",
+      DEFAULT_LINT_TIMEOUT_SECONDS, LINT_TIMEOUT_SECONDS_CEILING, 1),
     styleExclude: Object.freeze(styleExclusions(block.style_exclude)),
   });
 }
@@ -846,8 +863,9 @@ function reportSettings(settings, selection) {
     return;
   }
   process.stdout.write(`markdown-governance: ${MANIFEST_FILE} documentation bounds ${settings.maxFiles} files, ` +
-    `${settings.maxFileBytes} bytes per file (defaults ${DEFAULT_MAX_FILES}, ${DEFAULT_MAX_FILE_BYTES}; ` +
-    `ceilings ${MAX_FILES_CEILING}, ${MAX_FILE_BYTES_CEILING})\n`);
+    `${settings.maxFileBytes} bytes per file, ${settings.lintTimeoutSeconds} s per lint child (defaults ` +
+    `${DEFAULT_MAX_FILES}, ${DEFAULT_MAX_FILE_BYTES}, ${DEFAULT_LINT_TIMEOUT_SECONDS}; ceilings ` +
+    `${MAX_FILES_CEILING}, ${MAX_FILE_BYTES_CEILING}, ${LINT_TIMEOUT_SECONDS_CEILING})\n`);
   for (let index = 0; index < settings.styleExclude.length && index < MAX_STYLE_EXCLUSIONS; index += 1) {
     process.stdout.write(`markdown-governance: style exclusion ${JSON.stringify(settings.styleExclude[index])} ` +
       `matched ${selection.counts[index]} files\n`);
@@ -1230,7 +1248,8 @@ function settingsSelfTest(temporary) {
     assert.equal(settingsFrom(yaml, text), DEFAULT_SETTINGS, JSON.stringify(text));
   }
   assert.deepEqual(settingsFrom(yaml, "documentation:\n  max_files: 8192\n  style_exclude:\n    - changelog.d/**\n"),
-    { declared: true, maxFiles: 8_192, maxFileBytes: DEFAULT_MAX_FILE_BYTES, styleExclude: ["changelog.d/**"] });
+    { declared: true, maxFiles: 8_192, maxFileBytes: DEFAULT_MAX_FILE_BYTES,
+      lintTimeoutSeconds: DEFAULT_LINT_TIMEOUT_SECONDS, styleExclude: ["changelog.d/**"] });
   for (const [files, bytes] of [[DEFAULT_MAX_FILES, DEFAULT_MAX_FILE_BYTES], [MAX_FILES_CEILING, MAX_FILE_BYTES_CEILING]]) {
     const settings = settingsFrom(yaml, `documentation:\n  max_files: ${files}\n  max_file_bytes: ${bytes}\n`);
     assert.deepEqual([settings.maxFiles, settings.maxFileBytes], [files, bytes]);
@@ -1741,6 +1760,89 @@ function raisedBoundSelfTest(temporary) {
   process.stdout.write("raised bound fixtures: exactly at a raised cap passes, one past fails\n");
 }
 
+// The planted lint child sleeps this long, past a 1 s budget and well inside a 10 s one, and
+// ignores the paths it is given.
+const PLANTED_CHILD_MS = 2_500;
+
+function budgetFailure(expected) {
+  return (error) => {
+    assert.ok(error instanceof GateFailure, error.stack);
+    assert.deepEqual([error.status, error.message], [2, expected]);
+    return true;
+  };
+}
+
+// Negative: a planted lint child sleeping past a 1 s budget fails the gate with status 2, naming the
+// batch, its bytes, its five largest files as suspects, largest first, the setting that raises the
+// budget and the command that lints a suspect alone. Positive: the setting raises the budget to
+// 10 s and the same batch passes. Boundary: 1 s and the ceiling are accepted, one past either end
+// is refused naming the key, and at the ceiling a one-file batch report offers no further step.
+function lintBudgetSelfTest(temporary) {
+  const yaml = loadDependency(temporary, "js-yaml");
+  const fixture = path.join(temporary, "lint-budget-fixture");
+  const files = Array.from({ length: 7 }, (_, index) => `docs/page-${index}.md`);
+  writeFixtureFiles(fixture,
+    Object.fromEntries(files.map((file, index) => [file, `# Page\n\n${"a".repeat(index * 100)}\n`])));
+  const planted = [process.execPath, "-e",
+    `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${PLANTED_CHILD_MS});`];
+  const budget = (seconds) => settingsFrom(yaml, `documentation:\n  lint_timeout_seconds: ${seconds}\n`);
+  const suspects = [6, 5, 4, 3, 2].map((index) => `  docs/page-${index}.md (${9 + index * 100} bytes)`);
+  assert.throws(() => runMarkdownlint(fixture, temporary, files, false, budget(1), planted), budgetFailure(
+    "lint batch 1 of 1 (7 files, 2163 bytes) exceeded its 1 s budget; documentation.lint_timeout_seconds in " +
+    ".standards.yaml raises it up to 480\nsuspects, the batch's largest files (size is no proof):\n" +
+    `${suspects.join("\n")}\nlint a suspect alone to time it: node tools/markdownlint/verify.mjs --only docs/page-6.md`));
+  assert.equal(runMarkdownlint(fixture, temporary, files, false, budget(10), planted), 0);
+  assert.equal(budget(LINT_TIMEOUT_SECONDS_CEILING).lintTimeoutSeconds, LINT_TIMEOUT_SECONDS_CEILING);
+  assert.equal(budget(1).lintTimeoutSeconds, 1);
+  assert.equal(settingsFrom(yaml, "documentation:\n  max_files: 8192\n").lintTimeoutSeconds,
+    DEFAULT_LINT_TIMEOUT_SECONDS);
+  for (const seconds of [0, -1, LINT_TIMEOUT_SECONDS_CEILING + 1, "\"300\"", "1.5"]) {
+    assert.throws(() => budget(seconds),
+      /^Error: \.standards\.yaml documentation\.lint_timeout_seconds must be an integer from 1 to 480; got /u);
+  }
+  assert.equal(lintBudgetReport(fixture, ["docs/page-1.md"], "3 of 3", LINT_TIMEOUT_SECONDS_CEILING),
+    "lint batch 3 of 3 (1 file, 109 bytes) exceeded its 480 s budget\n" +
+    "suspects, the batch's largest files (size is no proof):\n  docs/page-1.md (109 bytes)");
+  process.stdout.write("lint budget fixtures: a child past its budget names the batch and its suspects, " +
+    "the setting raises the budget, a budget outside 1 to 480 s is refused\n");
+}
+
+// Positive: --only lints a named style-selected file, named from the repository root or from a
+// subdirectory, and a name given twice once. Negative: a file the style rules skip, a missing file,
+// a path outside the repository and a declared exclusion are refused before any lint child, and a
+// command line of another shape is refused. Boundary: one name past the file-count ceiling fails.
+function onlyModeSelfTest(temporary) {
+  const fixture = path.join(temporary, "only-mode-fixture");
+  writeFixtureFiles(fixture,
+    { "AGENTS.md": "#Generated surface\n", "docs/guide.md": "# Guide\n", "docs/bad.md": "#Bad\n" });
+  command("git", ["init", "--quiet"], { cwd: fixture });
+  const root = fs.realpathSync(fixture);
+  assert.deepEqual(namedStyleFiles(root, DEFAULT_SETTINGS, ["docs/guide.md", "./docs/guide.md"], root),
+    ["docs/guide.md"]);
+  const named = namedStyleFiles(root, DEFAULT_SETTINGS, ["guide.md", "bad.md"], path.join(root, "docs"));
+  assert.deepEqual(named, ["docs/guide.md", "docs/bad.md"]);
+  assert.equal(runMarkdownlint(root, temporary, named.slice(0, 1), false), 0);
+  assert.equal(runMarkdownlint(root, temporary, named, false), 1);
+  for (const name of ["AGENTS.md", "docs/missing.md", "../outside.md", path.join(root, "AGENTS.md")]) {
+    assert.throws(() => namedStyleFiles(root, DEFAULT_SETTINGS, [name], root),
+      (error) => error.message === `${name} is not a style-selected Markdown file of the inventory`);
+  }
+  const excluded = { ...DEFAULT_SETTINGS, declared: true, styleExclude: ["docs/bad.md"] };
+  assert.throws(() => namedStyleFiles(root, excluded, ["docs/bad.md"], root),
+    /^Error: docs\/bad\.md is not a style-selected/u);
+  const tooMany = new Array(MAX_FILES_CEILING + 1).fill("x.md");
+  assert.throws(() => namedStyleFiles(root, DEFAULT_SETTINGS, tooMany, root),
+    /--only names 16385 files; maximum is 16384/u);
+  assert.deepEqual(gateMode([]), { name: "gate", files: [] });
+  assert.deepEqual(gateMode(["--self-test"]), { name: "--self-test", files: [] });
+  assert.deepEqual(gateMode([ONLY_MODE, "docs/guide.md"]), { name: ONLY_MODE, files: ["docs/guide.md"] });
+  for (const args of [[ONLY_MODE], ["--self-test", "x"], ["docs/guide.md"]]) {
+    assert.throws(() => gateMode(args),
+      /usage: node tools\/markdownlint\/verify\.mjs \[--self-test \| --only <file>\.\.\.\]/u);
+  }
+  process.stdout.write("--only fixtures: named style-selected files lint alone, every other name refused\n");
+}
+
 function runScratchRule(root, temporary, files, selfTest, emitDiagnostics = true) {
   const rule = path.join(temporary, "no-private-scratch-links.mjs");
   const args = selfTest ? [rule, "--self-test"] : [rule, root, path.join(temporary, "inventory.json")];
@@ -1947,21 +2049,52 @@ function batches(files) {
   return result;
 }
 
+// lintBudgetReport describes a lint batch whose child ran past its budget: its position, file
+// count and bytes, its largest files as suspects, the setting that raises the budget while it is
+// below its ceiling, and the command that lints a suspect alone. Size is no proof: in one adopter
+// repository the markdownlint library's GFM autolink-literal extension took minutes over one long
+// paragraph holding an unbalanced `[` (#784), and a smaller file can hold such a paragraph too.
+function lintBudgetReport(root, batch, position, seconds) {
+  const sized = [];
+  let total = 0;
+  for (let index = 0; index < batch.length && index < MAX_FILES_CEILING; index += 1) {
+    const size = fs.lstatSync(path.join(root, batch[index]), { throwIfNoEntry: false })?.size ?? 0;
+    sized.push({ file: batch[index], size });
+    total += size;
+  }
+  sized.sort((left, right) => right.size - left.size || left.file.localeCompare(right.file));
+  const suspects = sized.slice(0, MAX_BUDGET_SUSPECTS);
+  const alone = batch.length > 1 ?
+    `\nlint a suspect alone to time it: node tools/markdownlint/verify.mjs ${ONLY_MODE} ${suspects[0].file}` : "";
+  const count = `${batch.length} ${batch.length === 1 ? "file" : "files"}`;
+  return `lint batch ${position} (${count}, ${total} bytes) exceeded its ${seconds} s budget` +
+    `${boundHint("lint_timeout_seconds", seconds, LINT_TIMEOUT_SECONDS_CEILING)}\n` +
+    "suspects, the batch's largest files (size is no proof):\n" +
+    suspects.map(({ file, size }) => `  ${file} (${size} bytes)`).join("\n") + alone;
+}
+
 // runMarkdownlint lints the style-selected files in child processes of this script (lintChild),
 // one batch of paths each, as the gate ran markdownlint-cli2 before: every batch gets a fresh
-// heap, the command timeout and a bounded capture, and its diagnostics share one output budget.
-// It checks the installed library against the lock before the first child, even with no file to
-// lint, so a mismatch fails the gate with status 2 instead of reading as findings.
-function runMarkdownlint(root, temporary, files, emitDiagnostics = true) {
+// heap, the declared lint budget and a bounded capture, and its diagnostics share one output
+// budget. A child past the budget fails the gate with status 2 and lintBudgetReport. It checks the
+// installed library against the lock before the first child, even with no file to lint, so a
+// mismatch fails the gate with status 2 instead of reading as findings. child replaces the
+// command and leading arguments of every lint child; only lintBudgetSelfTest passes it.
+function runMarkdownlint(root, temporary, files, emitDiagnostics = true, settings = DEFAULT_SETTINGS, child = null) {
   markdownlintEntry(temporary);
   const script = fileURLToPath(import.meta.url);
+  const [file, ...leading] = child ?? [process.execPath, script, LINT_MODE, temporary];
+  const all = batches(files);
   let failed = false;
   let overflow = false;
   const budget = outputBudget();
-  for (const batch of batches(files)) {
-    const result = command(process.execPath, [script, LINT_MODE, temporary, ...batch], {
+  for (let index = 0; index < all.length && index < MAX_FILES_CEILING; index += 1) {
+    const result = command(file, [...leading, ...all[index]], {
       cwd: root,
       allowFailure: true,
+      timeout: settings.lintTimeoutSeconds * 1_000,
+      timeoutReport: () => lintBudgetReport(root, all[index], `${index + 1} of ${all.length}`,
+        settings.lintTimeoutSeconds),
     });
     failed ||= result.status !== 0;
     if (emitDiagnostics && result.status !== 0) {
@@ -1972,44 +2105,90 @@ function runMarkdownlint(root, temporary, files, emitDiagnostics = true) {
   return overflow ? 2 : failed ? 1 : 0;
 }
 
-function main() {
-  const selfTest = process.argv.length === 3 && process.argv[2] === "--self-test";
-  if (!selfTest && process.argv.length !== 2) {
-    fail("usage: node tools/markdownlint/verify.mjs [--self-test]");
+// namedStyleFiles resolves the files `--only` names, relative to cwd, to repository paths. Each
+// must be a style-selected file of the inventory, so --only lints nothing the gate would not; a
+// name given twice is linted once.
+function namedStyleFiles(root, settings, named, cwd) {
+  if (named.length > MAX_FILES_CEILING) {
+    fail(`${ONLY_MODE} names ${named.length} files; maximum is ${MAX_FILES_CEILING}`);
   }
+  const styled = new Set(styleSelection(inventory(root, settings), settings, process.platform).styled);
+  const files = new Set();
+  for (let index = 0; index < named.length && index < MAX_FILES_CEILING; index += 1) {
+    const relative = path.relative(root, path.resolve(cwd, named[index])).split(path.sep).join("/");
+    if (!styled.has(relative)) {
+      fail(`${named[index]} is not a style-selected Markdown file of the inventory`);
+    }
+    files.add(relative);
+  }
+  return [...files];
+}
+
+// gateMode reads the command line: no argument runs the gate, --self-test replays its fixtures,
+// and --only <file>... lints the named files alone.
+function gateMode(args) {
+  if (args.length === 0 || (args.length === 1 && args[0] === "--self-test")) {
+    return { name: args[0] ?? "gate", files: [] };
+  }
+  if (args.length > 1 && args[0] === ONLY_MODE) {
+    return { name: ONLY_MODE, files: args.slice(1) };
+  }
+  return fail(`usage: node tools/markdownlint/verify.mjs [--self-test | ${ONLY_MODE} <file>...]`);
+}
+
+function runGate(root, temporary, settings) {
+  const scratchFiles = inventory(root, settings);
+  const selection = styleSelection(scratchFiles, settings, process.platform);
+  const styleFiles = selection.styled;
+  reportSettings(settings, selection);
+  const scratchStatus = runScratchRule(root, temporary, scratchFiles, false);
+  const lintStatus = runMarkdownlint(root, temporary, styleFiles, true, settings);
+  process.stdout.write(summaryLine(settings, selection, scratchFiles.length));
+  return scratchStatus === 0 && lintStatus === 0 ? 0 : scratchStatus > 1 || lintStatus > 1 ? 2 : 1;
+}
+
+function runOnly(root, temporary, settings, named) {
+  const files = namedStyleFiles(root, settings, named, process.cwd());
+  const started = Date.now();
+  const status = runMarkdownlint(root, temporary, files, true, settings);
+  process.stdout.write(`markdown-governance: styled ${files.length} named Markdown files in ` +
+    `${Date.now() - started} ms (budget ${settings.lintTimeoutSeconds} s per lint child)\n`);
+  return status;
+}
+
+function runSelfTest(toolDir, temporary) {
+  npmInvocationSelfTest(temporary);
+  markdownlintLibrarySelfTest();
+  styleExclusionGrammarSelfTest();
+  install(toolDir, temporary);
+  inventorySelfTest(temporary);
+  settingsSelfTest(temporary);
+  lintConfigurationSelfTest(temporary);
+  lintEntrySelfTest(temporary);
+  hermeticConfigSelfTest(temporary);
+  lintOutputSelfTest(temporary);
+  lintMemorySelfTest(temporary);
+  styleExclusionSelfTest(temporary);
+  raisedBoundSelfTest(temporary);
+  lintBudgetSelfTest(temporary);
+  onlyModeSelfTest(temporary);
+  return runScratchRule(process.cwd(), temporary, [], true);
+}
+
+function main() {
+  const mode = gateMode(process.argv.slice(2));
   const toolDir = path.dirname(fileURLToPath(import.meta.url));
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "praetor-markdownlint-"));
   try {
-    if (selfTest) {
-      npmInvocationSelfTest(temporary);
-      markdownlintLibrarySelfTest();
-      styleExclusionGrammarSelfTest();
-    }
-    install(toolDir, temporary);
-    if (selfTest) {
-      inventorySelfTest(temporary);
-      settingsSelfTest(temporary);
-      lintConfigurationSelfTest(temporary);
-      lintEntrySelfTest(temporary);
-      hermeticConfigSelfTest(temporary);
-      lintOutputSelfTest(temporary);
-      lintMemorySelfTest(temporary);
-      styleExclusionSelfTest(temporary);
-      raisedBoundSelfTest(temporary);
-      process.exitCode = runScratchRule(process.cwd(), temporary, [], true);
+    if (mode.name === "--self-test") {
+      process.exitCode = runSelfTest(toolDir, temporary);
       return;
     }
+    install(toolDir, temporary);
     const root = repositoryRoot();
     const settings = repositorySettings(root, loadDependency(temporary, "js-yaml"));
-    const scratchFiles = inventory(root, settings);
-    const selection = styleSelection(scratchFiles, settings, process.platform);
-    const styleFiles = selection.styled;
-    reportSettings(settings, selection);
-    const scratchStatus = runScratchRule(root, temporary, scratchFiles, false);
-    const lintStatus = runMarkdownlint(root, temporary, styleFiles);
-    process.stdout.write(summaryLine(settings, selection, scratchFiles.length));
-    process.exitCode = scratchStatus === 0 && lintStatus === 0 ? 0 :
-      scratchStatus > 1 || lintStatus > 1 ? 2 : 1;
+    process.exitCode = mode.name === ONLY_MODE ? runOnly(root, temporary, settings, mode.files) :
+      runGate(root, temporary, settings);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }

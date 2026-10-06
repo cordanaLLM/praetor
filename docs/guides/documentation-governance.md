@@ -66,8 +66,10 @@ runner calls itself rather than through the `markdownlint-cli2` command it ran
 before (#736). It starts one child process of its own script per batch of
 files, `node tools/markdownlint/verify.mjs --lint <install> <file>...` from the
 repository root (`runMarkdownlint` and `lintChild` in
-`tools/markdownlint/verify.mjs`). Each batch gets a fresh heap, a timeout and a
-bounded output capture. Before it starts the first child, the runner checks that
+`tools/markdownlint/verify.mjs`). Each batch gets a fresh heap, a time budget
+(120 s unless `lint_timeout_seconds` says otherwise,
+[Lint time budget](#lint-time-budget)) and a bounded output capture. Before it
+starts the first child, the runner checks that
 the installed `markdownlint` is the version the lock pins and exposes the
 synchronous entry the children import (`markdownlintLibrary`). A mismatch fails
 the gate with status 2, also when no file is selected for styling
@@ -211,6 +213,7 @@ Every key is optional, and an absent block keeps the defaults.
 documentation:
   max_files: 8192
   max_file_bytes: 4194304
+  lint_timeout_seconds: 300
   style_exclude:
     - "changelog.d/**"
     - "docs/adr/_index_fragments/*.md"
@@ -221,6 +224,7 @@ documentation:
 | :--- | ---: | :--- | :--- |
 | `max_files` | 4,096 | 4,096 to 16,384 | Markdown inventory file-count bound |
 | `max_file_bytes` | 1,048,576 | 1,048,576 to 4,194,304 | Per-file size bound |
+| `lint_timeout_seconds` | 120 | 1 to 480 | Time budget of each style-lint child, in seconds ([Lint time budget](#lint-time-budget)) |
 | `style_exclude` | none | Up to 64 globs of at most 256 bytes | Files the style rules skip |
 
 The bounds can be raised but not removed: HISS-02 requires one, and the
@@ -310,7 +314,7 @@ built-in selection styles, the gate fails instead of styling nothing.
 A declared block is reported before linting, with the count each glob removed:
 
 ```text
-markdown-governance: .standards.yaml documentation bounds 8192 files, 4194304 bytes per file (defaults 4096, 1048576; ceilings 16384, 4194304)
+markdown-governance: .standards.yaml documentation bounds 8192 files, 4194304 bytes per file, 300 s per lint child (defaults 4096, 1048576, 120; ceilings 16384, 4194304, 480)
 markdown-governance: style exclusion "changelog.d/**" matched 17 files
 markdown-governance: style exclusion "docs/adr/_index_fragments/*.md" matched 212 files
 markdown-governance: style exclusion "**/testdata/**" matched 30 files
@@ -323,14 +327,64 @@ repository-relative glob rules, and records the effective values on their own
 line. The unsupported-shape refusals above run in the gate only:
 
 ```text
-[PASS] Documentation gate settings from .standards.yaml: max_files 8192, max_file_bytes 4194304, 3 style exclusions (changelog.d/**, docs/adr/_index_fragments/*.md, **/testdata/**).
+[PASS] Documentation gate settings from .standards.yaml: max_files 8192, max_file_bytes 4194304, lint_timeout_seconds 300, 3 style exclusions (changelog.d/**, docs/adr/_index_fragments/*.md, **/testdata/**).
 ```
 
 The gate reads the block at run time, so a declaration changes no locked asset.
 `TestDocumentationSettingsMirrorConfig` in `tools/markdownlint/assets_test.go`
 keeps the gate's constants equal to audit's, and `make docs-lint-test` replays
 the settings, raised-bound, style-exclusion, glob-grammar, glob-character,
-lint-entry, lint-output, lint-memory, and hermetic-configuration fixtures.
+lint-entry, lint-output, lint-memory, lint-budget, `--only`, and
+hermetic-configuration fixtures.
+
+### Lint time budget
+
+Each style-lint child, one batch of paths, must finish within
+`lint_timeout_seconds`: 120 s by default, accepted from 1 to 480. A child past
+its budget is stopped, and the gate fails with status 2 at once and re-runs
+nothing. The report names the batch, its file count and bytes, and its five
+largest files as suspects, then the setting that raises the budget (while it is
+below the ceiling) and the command that lints the largest suspect alone
+(`lintBudgetReport` in `tools/markdownlint/verify.mjs`):
+
+<!-- praetor:docs-references:off the report shows an illustrative adopter batch; no repository here carries these paths -->
+
+```text
+markdown-governance: lint batch 2 of 3 (377 files, 3145728 bytes) exceeded its 120 s budget; documentation.lint_timeout_seconds in .standards.yaml raises it up to 480
+suspects, the batch's largest files (size is no proof):
+  docs/state.md (2894011 bytes)
+  docs/guide.md (61440 bytes)
+  docs/reference.md (40960 bytes)
+  README.md (20480 bytes)
+  docs/install.md (10240 bytes)
+lint a suspect alone to time it: node tools/markdownlint/verify.mjs --only docs/state.md
+```
+
+<!-- praetor:docs-references:on -->
+
+Size is a heuristic, not proof. The slow shape seen so far is a long paragraph
+holding an unbalanced `[`: the markdownlint library's GFM autolink-literal
+extension then walks back over the paragraph for every later `www.`, `http` or
+`@` candidate, so the time grows with the square of the paragraph's length. In
+an adopter repository one 2.8 MB file took 140 to 196 s alone and 3.9 s once
+the row that broke its backtick pairing was repaired (#784). The lasting fix is
+to repair the paragraph: pair the backtick runs and close the bracket. Raising
+the budget only buys time.
+
+`node tools/markdownlint/verify.mjs --only <file>...` lints the named files
+alone, in one child under the same budget, and prints how long it took. Each
+name is resolved from the current directory and must be a file the gate styles;
+any other name, an excluded or missing file included, is refused before
+linting (`namedStyleFiles`).
+
+The ceiling keeps the budget inside the hosted job. `.github/workflows/praetor-docs.yml`
+stops the job after 10 minutes, and 480 s leaves 2 of them for checkout, Node
+setup, the locked install and the other steps. A child therefore runs out of
+its budget while the job still runs, and the gate names the batch instead of the
+runner cancelling the job without one. `TestLintBudgetCeilingFitsHostedJob` in
+`tools/markdownlint/assets_test.go` keeps the ceiling and the job limit in step.
+`lintBudgetSelfTest` replays a planted child that sleeps past a 1 s budget and
+passes under a 10 s one, and `onlyModeSelfTest` covers `--only`.
 
 ## Private scratch links
 

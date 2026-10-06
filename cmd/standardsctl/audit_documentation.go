@@ -140,15 +140,17 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	return nil
 }
 
-// documentationSettingsSummary records the bounds and style exclusions a repository declares
-// for the gate, which reads them from .standards.yaml at run time (#532, #534). LoadManifest has
+// documentationSettingsSummary records the bounds, the lint budget and the style exclusions a
+// repository declares for the gate, which reads them from .standards.yaml at run time (#532,
+// #534, #784). LoadManifest has
 // validated them against the gate's ranges and glob rules.
 func documentationSettingsSummary(policy *config.DocumentationPolicy) string {
 	exclusions := "no style exclusions"
 	if len(policy.StyleExclude) > 0 {
 		exclusions = fmt.Sprintf("%d style exclusions (%s)", len(policy.StyleExclude), strings.Join(policy.StyleExclude, ", "))
 	}
-	return fmt.Sprintf("max_files %d, max_file_bytes %d, %s", policy.EffectiveMaxFiles(), policy.EffectiveMaxFileBytes(), exclusions)
+	return fmt.Sprintf("max_files %d, max_file_bytes %d, lint_timeout_seconds %d, %s", policy.EffectiveMaxFiles(),
+		policy.EffectiveMaxFileBytes(), policy.EffectiveLintTimeoutSeconds(), exclusions)
 }
 
 func auditDocumentationGateDisabled(

@@ -23,6 +23,16 @@ const (
 	// It is a memory bound for the gate's Markdown parsers; tools/markdownlint/verify.mjs records
 	// the measurement.
 	DocumentationMaxFileBytesCeiling = 4 << 20
+	// DefaultDocumentationLintTimeoutSeconds is the budget of one style-lint child when
+	// lint_timeout_seconds is unset.
+	DefaultDocumentationLintTimeoutSeconds = 120
+	// DocumentationLintTimeoutSecondsCeiling is the largest lint_timeout_seconds a repository may
+	// declare. The hosted gate job (.github/workflows/praetor-docs.yml) stops after 10 minutes; a
+	// child budget of at most 8 minutes runs out while the job still runs, so the gate, not the
+	// runner, ends the run and names the batch and its suspects, and 2 minutes stay for checkout,
+	// Node setup, the locked install and the other steps. TestLintBudgetCeilingFitsHostedJob in
+	// tools/markdownlint keeps the two in step.
+	DocumentationLintTimeoutSecondsCeiling = 480
 	// MaxDocumentationStyleExclusions bounds the style_exclude list.
 	MaxDocumentationStyleExclusions = 64
 	// MaxDocumentationStyleExclusionBytes bounds one style_exclude glob.
@@ -31,24 +41,27 @@ const (
 
 // DocumentationPolicy tunes the locked documentation gate for one repository, within bounds:
 // MaxFiles and MaxFileBytes raise the Markdown inventory's file-count and per-file bounds from
-// their defaults up to their ceilings (a nil field keeps the default), and StyleExclude lists
+// their defaults up to their ceilings, LintTimeoutSeconds sets the time budget of each
+// style-lint child from 1 s up to its ceiling (a nil field keeps the default), and StyleExclude lists
 // repository-relative globs of partial, generated or fixture Markdown the style rules skip. The
 // private-link rule still reads every file, and the gate fails when the globs leave no file to
 // style. The gate reads this block from .standards.yaml at run time, so a declaration changes
 // no locked asset.
 type DocumentationPolicy struct {
-	MaxFiles     *int     `yaml:"max_files,omitempty"`
-	MaxFileBytes *int     `yaml:"max_file_bytes,omitempty"`
-	StyleExclude []string `yaml:"style_exclude,omitempty"`
+	MaxFiles           *int     `yaml:"max_files,omitempty"`
+	MaxFileBytes       *int     `yaml:"max_file_bytes,omitempty"`
+	LintTimeoutSeconds *int     `yaml:"lint_timeout_seconds,omitempty"`
+	StyleExclude       []string `yaml:"style_exclude,omitempty"`
 }
 
 // UnmarshalYAML decodes the block strictly, as the gate reads it: known keys once each, integer
 // bounds written as integers, and globs written as strings. A custom unmarshaler receives the raw
 // node, where the decoder's KnownFields and its lenient scalar conversions do not apply.
 func (p *DocumentationPolicy) UnmarshalYAML(node *yaml.Node) error {
-	var maxFiles, maxFileBytes int
+	var maxFiles, maxFileBytes, lintTimeoutSeconds int
 	present, err := registerIntFields(node, "documentation", map[string]*int{
-		"max_files": &maxFiles, "max_file_bytes": &maxFileBytes, "style_exclude": nil,
+		"max_files": &maxFiles, "max_file_bytes": &maxFileBytes, "lint_timeout_seconds": &lintTimeoutSeconds,
+		"style_exclude": nil,
 	})
 	if err != nil {
 		return err
@@ -59,6 +72,9 @@ func (p *DocumentationPolicy) UnmarshalYAML(node *yaml.Node) error {
 	}
 	if present["max_file_bytes"] {
 		policy.MaxFileBytes = &maxFileBytes
+	}
+	if present["lint_timeout_seconds"] {
+		policy.LintTimeoutSeconds = &lintTimeoutSeconds
 	}
 	if present["style_exclude"] {
 		if policy.StyleExclude, err = styleExcludeGlobs(policyMember(node, "style_exclude")); err != nil {
@@ -103,6 +119,15 @@ func (p *DocumentationPolicy) EffectiveMaxFileBytes() int {
 	return *p.MaxFileBytes
 }
 
+// EffectiveLintTimeoutSeconds returns the declared budget of one style-lint child in seconds, or
+// the default when none is declared.
+func (p *DocumentationPolicy) EffectiveLintTimeoutSeconds() int {
+	if p == nil || p.LintTimeoutSeconds == nil {
+		return DefaultDocumentationLintTimeoutSeconds
+	}
+	return *p.LintTimeoutSeconds
+}
+
 func validateManifestDocumentation(m *Manifest) error {
 	if m == nil || m.Documentation == nil {
 		return nil
@@ -117,14 +142,20 @@ func (p *DocumentationPolicy) validate() error {
 	if err := validateDocumentationBound("max_file_bytes", p.MaxFileBytes, DefaultDocumentationMaxFileBytes, DocumentationMaxFileBytesCeiling); err != nil {
 		return err
 	}
+	if err := validateDocumentationBound("lint_timeout_seconds", p.LintTimeoutSeconds, 1, DocumentationLintTimeoutSecondsCeiling); err != nil {
+		return err
+	}
 	return validateStyleExclusions(p.StyleExclude)
 }
 
-func validateDocumentationBound(key string, value *int, defaultValue, ceiling int) error {
-	if value == nil || (*value >= defaultValue && *value <= ceiling) {
+// validateDocumentationBound refuses a declared value outside minimum..ceiling. The inventory
+// bounds take their default as the minimum, so they can be raised but not lowered; the lint
+// budget may be lowered to one second.
+func validateDocumentationBound(key string, value *int, minimum, ceiling int) error {
+	if value == nil || (*value >= minimum && *value <= ceiling) {
 		return nil
 	}
-	return fmt.Errorf("documentation.%s must be an integer from %d to %d; got %d", key, defaultValue, ceiling, *value)
+	return fmt.Errorf("documentation.%s must be an integer from %d to %d; got %d", key, minimum, ceiling, *value)
 }
 
 func validateStyleExclusions(globs []string) error {

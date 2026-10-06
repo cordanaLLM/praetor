@@ -1,0 +1,4 @@
+type: fixed
+title: "A Markdown lint batch past its time budget names its five largest files as suspects instead of only the node executable, documentation.lint_timeout_seconds in .standards.yaml sets the budget of each lint child from 1 to 480 s (default 120), and node tools/markdownlint/verify.mjs --only <file> lints a suspect alone; a plain praetorctl adopt refreshes an unedited earlier verify.mjs"
+issue: "#784"
+breaking: false

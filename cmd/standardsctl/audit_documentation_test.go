@@ -160,25 +160,29 @@ func TestAuditDocumentationGatePriorText(t *testing.T) {
 }
 
 // Positive: a declared documentation block is recorded on its own audit line with the effective
-// bounds and every glob. Negative: a manifest without the block records nothing past the gate
-// line. Boundary: a bound exactly at its ceiling is recorded as declared, and an empty block
-// records the defaults and no exclusions.
+// bounds, the lint budget and every glob. Negative: a manifest without the block records nothing
+// past the gate line. Boundary: a bound and the lint budget exactly at their ceilings are recorded
+// as declared, and an empty block records the defaults and no exclusions.
 func TestAuditDocumentationGateRecordsDeclaredSettings(t *testing.T) {
 	root := documentationAuditFixture(t)
 	maxFiles := config.DocumentationMaxFilesCeiling
+	budget := config.DocumentationLintTimeoutSecondsCeiling
 	facets := []string{"docs:seo-portal"}
 	for name, tc := range map[string]struct {
 		policy *config.DocumentationPolicy
 		want   string
 	}{
 		"declared": {
-			&config.DocumentationPolicy{MaxFiles: &maxFiles, StyleExclude: []string{"changelog.d/**", "docs/generated/*.md"}},
+			&config.DocumentationPolicy{
+				MaxFiles: &maxFiles, LintTimeoutSeconds: &budget, StyleExclude: []string{"changelog.d/**", "docs/generated/*.md"},
+			},
 			"[PASS] Documentation gate settings from .standards.yaml: max_files 16384, max_file_bytes 1048576, " +
-				"2 style exclusions (changelog.d/**, docs/generated/*.md).\n",
+				"lint_timeout_seconds 480, 2 style exclusions (changelog.d/**, docs/generated/*.md).\n",
 		},
 		"empty block": {
 			&config.DocumentationPolicy{},
-			"[PASS] Documentation gate settings from .standards.yaml: max_files 4096, max_file_bytes 1048576, no style exclusions.\n",
+			"[PASS] Documentation gate settings from .standards.yaml: max_files 4096, max_file_bytes 1048576, " +
+				"lint_timeout_seconds 120, no style exclusions.\n",
 		},
 		"absent block": {nil, ""},
 	} {
