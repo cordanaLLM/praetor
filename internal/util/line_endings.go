@@ -76,6 +76,44 @@ func CanonicalTextDigest(data []byte) (digest string, crlf bool, err error) {
 	return hex.EncodeToString(sum[:]), crlf, nil
 }
 
+// CheckoutTextDigest returns the lowercase hexadecimal SHA-256 one text shares with each
+// checkout of it, for an input a digest pins across platforms, such as an archetype source or
+// a policy source. A text in one consistent line-ending style hashes as its LF form
+// (CanonicalTextDigest): an LF text keeps the digest of its bytes, and its CRLF checkout
+// (core.eol=crlf under "* text=auto", git's default on Windows) hashes alike. A text with
+// mixed endings or a lone carriage return hashes byte for byte, and strict says why, so a
+// caller reporting a mismatch can say that no line ending was folded (ByteExactNote).
+func CheckoutTextDigest(data []byte) (digest, strict string) {
+	digest, _, err := CanonicalTextDigest(data)
+	if err == nil {
+		return digest, ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), err.Error()
+}
+
+// CheckoutTextEqual compares a checked-out text with the text it must hold under
+// CheckoutTextDigest's rule. When both are UTF-8 in one consistent line-ending style each, they
+// compare as LF text (CanonicalTextEquivalent), so a CRLF checkout equals its LF source and an
+// edit still differs. Otherwise they compare byte for byte, and strict says why.
+func CheckoutTextEqual(actual, expected []byte) (equal bool, strict string) {
+	equivalent, err := CanonicalTextEquivalent(actual, expected)
+	if err != nil {
+		return bytes.Equal(actual, expected), err.Error()
+	}
+	return equivalent, ""
+}
+
+// ByteExactNote is the clause a mismatch report appends for the strict reason
+// CheckoutTextDigest or CheckoutTextEqual returned: empty when line endings were folded, and
+// otherwise a parenthesised statement that the bytes were compared exactly and why.
+func ByteExactNote(strict string) string {
+	if strict == "" {
+		return ""
+	}
+	return " (compared byte for byte: " + strict + ")"
+}
+
 // LookupCanonicalText returns the value recorded maps data's CanonicalTextDigest to, whether
 // there is one, and whether data used CRLF. It is the one lookup for a set of recorded texts
 // keyed by the SHA-256 of their LF text, such as the earlier texts Praetor once wrote at a path:
