@@ -698,6 +698,13 @@ the same scope and process runner as pre-push. `make verify-all` retains the ful
 repository checks. Independent checks run with at most three workers; command
 failures are collected and propagated.
 
+A scoped run that takes the vulnerability check (`make check-changed` when no governance audit
+runs, or `python3 .config/lefthook/scripts/hooks.py changed vuln <base>`) starts the
+[Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document)
+with `go run ./cmd/standardsctl security govuln -- govulncheck`, over the whole module: a
+module-level finding has no package to scope by. When the full gate runs, `gate run` makes the
+same check.
+
 CI sets `TEST_COVERPROFILE` to an explicit temporary file and obtains coverage
 from the race run inside `make verify-all`. The same run must meet the 65%
 statement-coverage floor; CI does not execute a second full race suite.

@@ -47,6 +47,10 @@ SEMGREP_SUFFIXES = frozenset().union(*SEMGREP_LANGUAGE_EXTENSIONS.values())
 GATE_LAUNCH_MARGIN = 120
 # Bounds `gate deadline --json`: a build of the CLI and one environment read.
 GATE_QUERY_TIMEOUT = 300
+# The repository's own CLI, built from the checked snapshot.
+CLI = ["go", "run", "./cmd/standardsctl"]
+# The scanner `praetorctl security govuln` starts, by the name PATH resolves (toolchain.BY_NAME).
+GOVULN_SCANNER = ["govulncheck"]
 
 
 def context_changed(names):
@@ -207,7 +211,7 @@ def file_checks(directory, names):
            or name.startswith((".config/lefthook/", ".config/agent/")) for name in files):
         commands.extend(self_test_commands(directory))
     if context_changed(names):
-        commands.append(["go", "run", "./cmd/standardsctl", "compile-context", "--verify"])
+        commands.append([*CLI, "compile-context", "--verify"])
     parallel(commands, directory)
 
 
@@ -331,7 +335,10 @@ def source_checks(directory, names, gate="all", base=None):
                 "lint": ["go", "run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
                          "run", *local],
                 "sec": ["gosec", "-conf", ".gosec.json", *local],
-                "vuln": ["govulncheck", *packages]}
+                # The Go vulnerability gate (internal/govuln), the one implementation gate run's
+                # security stage and make vuln run. It judges the build of the whole module, so
+                # it scans every package: a module-level finding has no package to scope by.
+                "vuln": [*CLI, "security", "govuln", "--path=.", "--", *GOVULN_SCANNER]}
     selected = list(commands.values()) if gate == "all" else [commands[gate]]
     if full_gate:
         # gate run already enforces full race tests, gosec and vulnerability checks.
@@ -358,7 +365,7 @@ def gate_timeout(report):
 
 
 def run_full_gate(directory):
-    command = ["go", "run", "./cmd/standardsctl", "gate"]
+    command = [*CLI, "gate"]
     report = run([*command, "deadline", "--json"], cwd=directory, env=clean_env(),
                  timeout=GATE_QUERY_TIMEOUT)
     timeout = gate_timeout(report)
@@ -388,16 +395,15 @@ def semgrep_commands(directory, names):
 def governance_commands(directory, names, source, base=None):
     """Retain governance, flavor and ledger controls where changes affect them."""
     commands = []
-    cli = ["go", "run", "./cmd/standardsctl"]
     config = context_changed(names) or any(
         name.startswith((".standards", ".config/", ".agents/", ".claude/", ".codex/",
                          ".gemini/", ".cursor/", ".devcontainer/", ".github/", "templates/"))
         or name in {"lefthook.yml", "README.md"} for name in names)
     if (directory / ".standards.yaml").exists() and (source or config):
         scope = audit_scope(directory, names, base)
-        commands.extend([[*cli, "audit", *scope], [*cli, "flavor", "audit", "."]])
+        commands.extend([[*CLI, "audit", *scope], [*CLI, "flavor", "audit", "."]])
     if (directory / ".workingdir").exists() and any(name.startswith(".workingdir/") for name in names):
-        commands.append([*cli, "state", "audit", "."])
+        commands.append([*CLI, "state", "audit", "."])
     return commands
 
 

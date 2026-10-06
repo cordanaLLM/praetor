@@ -2080,6 +2080,28 @@ class ScopeAndGuard(unittest.TestCase):
             with self.assertRaisesRegex(HookError, "G401|G501"):
                 source_checks(root, ["core/core.go"], "sec")
 
+    def test_scoped_vuln_runs_the_go_vulnerability_gate(self):
+        """The vuln job runs praetorctl security govuln, the gate's one implementation (HISS-19).
+
+        Plain govulncheck over the affected packages failed only on a called symbol and judged
+        no OpenVEX statement, a second vulnerability check that could drift from the gate.
+        """
+        root = Path(tempfile.gettempdir())
+        gate = ["go", "run", "./cmd/standardsctl", "security", "govuln", "--path=.", "--",
+                "govulncheck"]
+        for gate_name, governance in (("vuln", []), ("all", [["go", "run", "./cmd/standardsctl",
+                                                                "flavor", "audit", "."]])):
+            with self.subTest(gate=gate_name), \
+                    mock.patch("checks.go_packages", return_value=["example.test/core"]), \
+                    mock.patch("checks.governance_commands", return_value=governance), \
+                    mock.patch("checks.semgrep_commands", return_value=[]), \
+                    mock.patch("checks.local_package_patterns", return_value=["./core"]), \
+                    mock.patch("checks.parallel") as jobs:
+                self.assertFalse(source_checks(root, ["core/core.go"], gate_name))
+                commands = jobs.call_args_list[-1].args[0]
+                self.assertIn(gate, commands)
+                self.assertFalse([command for command in commands if command[0] == "govulncheck"])
+
     def test_local_package_patterns_confine_actual_go_metadata(self):
         with tempfile.TemporaryDirectory(prefix="praetor-package-dirs-") as temp:
             root = Path(temp)
