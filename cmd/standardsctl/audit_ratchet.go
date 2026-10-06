@@ -126,15 +126,8 @@ func gitChangedFiles(ctx context.Context, dir, baseRef string) ([]string, error)
 
 	diffs := [][]string{{"diff", "--name-only", "HEAD"}}
 	if baseRef != "" {
-		if err := util.ValidateExecArg(baseRef); err != nil {
-			return nil, fmt.Errorf("[FAIL] invalid --base value: %w", err)
-		}
-		commit, err := util.ResolveGitCommit(ctx, dir, baseRef)
-		if err != nil {
-			return nil, fmt.Errorf("[FAIL] base ref %q in %s: %w", baseRef, dir, err)
-		}
-		if commit == "" {
-			return nil, fmt.Errorf("[FAIL] base ref %q does not resolve to a commit in %s", baseRef, dir)
+		if err := requireBaseCommit(ctx, dir, baseRef); err != nil {
+			return nil, err
 		}
 		diffs = append(diffs, []string{"diff", "--name-only", baseRef + "...HEAD"})
 	}
@@ -155,6 +148,22 @@ func gitChangedFiles(ctx context.Context, dir, baseRef string) ([]string, error)
 		}
 	}
 	return files, nil
+}
+
+// requireBaseCommit refuses a --base value that is not a safe argument or does not resolve to a
+// commit in dir, naming the value and the reason.
+func requireBaseCommit(ctx context.Context, dir, baseRef string) error {
+	if err := util.ValidateExecArg(baseRef); err != nil {
+		return fmt.Errorf("[FAIL] invalid --base value: %w", err)
+	}
+	commit, err := util.ResolveGitCommit(ctx, dir, baseRef)
+	if err != nil {
+		return fmt.Errorf("[FAIL] base ref %q in %s: %w", baseRef, dir, err)
+	}
+	if commit == "" {
+		return fmt.Errorf("[FAIL] base ref %q does not resolve to a commit in %s", baseRef, dir)
+	}
+	return nil
 }
 
 // relativizeTouched converts git-root-relative paths into paths relative to the audited
