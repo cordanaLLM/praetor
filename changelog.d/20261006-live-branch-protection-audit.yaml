@@ -1,0 +1,4 @@
+type: fixed
+title: "The audit passed branch protection on the committed ruleset file alone while GitHub enforced something else or nothing; when it can reach the forge it now compares the live rulesets and legacy protection of the default branch with the declared policy and fails naming each drifted property, and plan without --remote and standards_plan no longer say that no change is required"
+issue: "#159"
+breaking: true
