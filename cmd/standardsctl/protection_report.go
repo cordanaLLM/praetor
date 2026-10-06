@@ -34,8 +34,9 @@ type protectionReader interface {
 
 // liveProtectionTarget is what the live branch protection of a repository is compared with: its
 // default branch (forge.RepositoryDefaultBranch), the declared policy, and the status checks sync
-// --remote requires there (remoteStatusContexts). plan --remote and the audit compare with it,
-// so neither judges the forge on a different declaration.
+// --remote requires there (remoteStatusContexts). plan --remote and sync --remote compare with it,
+// so the preview judges the forge on the declaration the write applies; the audit takes the status
+// checks from the default branch's workflows instead (auditProtectionTarget).
 func liveProtectionTarget(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy) (protectionTarget, error) {
 	branch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
 	if err != nil {

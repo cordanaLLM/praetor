@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -401,4 +403,97 @@ func TestAuditLiveBranchProtection_Boundary_NotComparedIsNamed(t *testing.T) {
 			t.Fatalf("a comparison not made was reported as a pass:\n%s", report)
 		}
 	}
+}
+
+// prJobWorkflow is a workflow whose one job, named name, reports on every pull request.
+func prJobWorkflow(name string) string {
+	return strings.Replace(ciWorkflow, "name: CI", "name: "+name, 1)
+}
+
+// recordOriginMain points refs/remotes/origin/main at the fixture's HEAD, as a fetch records the
+// default branch of origin.
+func (f *auditFixture) recordOriginMain(t *testing.T) {
+	t.Helper()
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "update-ref", "refs/remotes/origin/main", "HEAD"); err != nil {
+		t.Fatalf("record origin/main: %v (%s)", err, out)
+	}
+}
+
+// commitWorkflows writes each of workflows, a file name under .github/workflows mapped to its
+// content or to "" to remove it, renders the committed ruleset for the result and commits it.
+func (f *auditFixture) commitWorkflows(t *testing.T, workflows map[string]string) {
+	t.Helper()
+	for name, content := range workflows {
+		if content == "" {
+			if err := os.Remove(filepath.Join(f.dir, ".github", "workflows", name)); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		writeFixtureFile(t, f.dir, ".github/workflows/"+name, content)
+	}
+	writeDeclaredRuleset(t, f.dir, declaredProtection(false))
+	gitCommitAll(t, f.dir, f.gitEnv, "change the workflows")
+}
+
+// Positive (#159 review): a job this checkout adds is not on origin/main yet, so the live
+// protection cannot require it: the audit compares the checks origin/main reports, names the added
+// one as not compared yet, and passes. A protection that requires only the default branch's checks
+// is no drift.
+func TestAuditLiveBranchProtection_Positive_CheckAddedOffTheDefaultBranchIsNotCompared(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"lint.yml": prJobWorkflow("Lint")})
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("a check this branch adds failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[INFO] Live branch protection of main: status checks compared with the ones origin/main (",
+		"[INFO] Live branch protection of main: not compared yet, as origin/main does not report them: Lint. "+
+			"Once they are on main, 'praetorctl sync --remote' requires them.",
+		"[PASS] Live branch protection of main compared with the forge")
+}
+
+// Negative (#159 review): a check origin/main reports that the live protection does not require
+// fails the audit, even when this checkout no longer has the job: the branch GitHub protects is the
+// default branch, not this checkout.
+func TestAuditLiveBranchProtection_Negative_DefaultBranchCheckNotRequiredDrifts(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	f.commitWorkflows(t, map[string]string{"api.yml": prJobWorkflow("API")})
+	f.recordOriginMain(t)
+	f.commitWorkflows(t, map[string]string{"api.yml": ""})
+	out, err := f.audit(t)
+	mustErrContain(t, err, "[FAIL] Live branch protection of main on GitHub does not match the declared policy")
+	mustErrContain(t, err, "  Required status checks: declared 2, live 1 of 2 required; missing: API")
+	if strings.Contains(out, "not compared yet") {
+		t.Fatalf("a check this checkout removed was reported as one it adds:\n%s", out)
+	}
+}
+
+// Boundary (#159 review): without origin/main in the checkout the checks are this checkout's and a
+// note names that substitution; a workflow on origin/main that does not parse fails the audit rather
+// than comparing no checks.
+func TestAuditLiveBranchProtection_Boundary_DefaultBranchNotFetched(t *testing.T) {
+	stub := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("a checkout without origin/main failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[INFO] Live branch protection of main: origin/main is not in this checkout, so the status checks "+
+		"are compared with the ones this checkout's workflows report.",
+		"[PASS] Live branch protection of main compared with the forge")
+
+	broken := protectedFixture(t, false, "", &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")})
+	writeFixtureFile(t, broken.dir, ".github/workflows/broken.yml", "on: [pull_request\n")
+	gitCommitAll(t, broken.dir, broken.gitEnv, "break a workflow")
+	broken.recordOriginMain(t)
+	if err := os.Remove(filepath.Join(broken.dir, ".github", "workflows", "broken.yml")); err != nil {
+		t.Fatal(err)
+	}
+	gitCommitAll(t, broken.dir, broken.gitEnv, "repair the workflow")
+	_, err = broken.audit(t)
+	mustErrContain(t, err, "[FAIL] Live branch protection audit failed: discover the required status checks of origin/main: workflow broken.yml")
 }
