@@ -56,8 +56,8 @@ type auditOptions struct {
 	// offline skips every forge read; the live forge checks report as not made.
 	offline bool
 	// verification is the --verification-max-* discovery bounds the Paperclip gate reads the
-	// repository's languages under, as adopt and `praetorctl paperclip harness` do; nil keeps the
-	// defaults.
+	// repository's languages under, as adopt and `praetorctl paperclip harness` do; nil raises
+	// none, which keeps the manifest's verification section or the defaults.
 	verification *adopt.VerificationLimits
 
 	// allViolations lists every violation of a ratchet rejection instead of a bounded few (#598).

@@ -120,3 +120,35 @@ func TestAuditPaperclip_Boundary_OwnedAbsentRulesAndUndeclaredForge(t *testing.T
 		t.Fatalf("the refused audit wrote rules.md: %v", statErr)
 	}
 }
+
+// withVerification rewrites the audit fixture's manifest to declare the verification section.
+func withVerification(t *testing.T, f *auditFixture, section string) {
+	t.Helper()
+	writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"verification:\n"+section)
+}
+
+// TestAuditPaperclip_VerificationBoundFromManifest (#321): the hooks and CI jobs adoption writes
+// run the audit with no --verification-max-* flag, so the Paperclip gate's facts walk reads the
+// bound the manifest's verification section declares. Negative: a declared bound the checkout
+// exceeds fails the gate naming the key, the remedy those runs can take. Positive: a raised
+// declaration passes with no flag, and a flag still raises a declared bound for its own run.
+// Boundary: a declaration past the ceiling fails the manifest audit naming the key and range.
+func TestAuditPaperclip_VerificationBoundFromManifest(t *testing.T) {
+	f := newAuditFixture(t)
+	withVerification(t, f, "  max_entries: 1\n")
+	_, err := f.audit(t)
+	mustErrContain(t, err, "[FAIL] Paperclip harness facts: detect repository languages: verification discovery exceeds 1 entries")
+	mustErrContain(t, err, "or declare verification.max_entries in .standards.yaml so every run, the audit's hooks and CI included, reads it")
+	if out, err := f.audit(t, "--verification-max-entries=4096"); err != nil {
+		t.Fatalf("a flag raising the declared bound is ignored: %v\n%s", err, out)
+	}
+	withVerification(t, f, "  max_entries: 4096\n")
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("audit under the declared bound: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] Paperclip agent runtime harness verified (acme/widgets")
+	withVerification(t, f, "  max_entries: 200001\n")
+	_, err = f.audit(t)
+	mustErrContain(t, err, "verification.max_entries must be an integer from 1 to 200000; got 200001")
+}

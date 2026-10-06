@@ -86,7 +86,9 @@ type AdoptOptions struct {
 	SkipHookActivation bool `json:"skip_hook_activation,omitempty"`
 	// LockSourceRoot selects the verified Praetor bundle used for new lock pins.
 	LockSourceRoot string `json:"lock_source_root,omitempty"`
-	// VerificationLimits overrides bounded metadata discovery for explicit adopters.
+	// VerificationLimits raises the bounds of metadata discovery for this run: a non-zero field
+	// overrides the bound the manifest's verification section declares, or the default
+	// (ResolveVerificationLimits).
 	VerificationLimits *VerificationLimits `json:"verification_limits,omitempty"`
 }
 
@@ -237,7 +239,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	report := newAdoptionReport(normPath, opts, decision)
 	report.Facets, report.FacetOrigin = adoptionFacets(declared, unreadable, opts.Facets)
 	warnIgnoredFacets(report, opts, declared)
-	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, opts.VerificationLimits)
+	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, ResolveVerificationLimits(declared.DeclaredVerification(), opts.VerificationLimits))
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
 		return report, fmt.Errorf("resolve project verification: %w", err)

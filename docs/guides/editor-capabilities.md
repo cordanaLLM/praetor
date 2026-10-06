@@ -113,7 +113,8 @@ repository gets no C/C++ tooling (`internal/editor/native_languages_test.go`).
 that the unexamined part of the repository has no relevant languages. The scan
 walks at most 65536 files by default (`Options.MaxWorkspaceFiles`, zero selects the
 default, `util.DefaultDiscoveryEntries`). `praetorctl adopt` passes the entry bound its verification walk resolved,
-so `--verification-max-entries` raises this scan too, up to the same 200000 ceiling.
+so `--verification-max-entries`, or `verification.max_entries` in `.standards.yaml`, raises
+this scan too, up to the same 200000 ceiling.
 A bound past the ceiling is refused, and adoption names the flag when the scan
 stops at the bound ([large repositories](../adoption.md#large-repositories);
 `internal/editor/workspace_bound_test.go`,

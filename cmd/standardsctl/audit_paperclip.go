@@ -19,11 +19,13 @@ import (
 const paperclipRulesRel = ".paperclip/rules.md"
 
 // auditPaperclipSynthesis compares the harness under rootDir, loaded as audit loads it, with this
-// release's synthesis for the repository's facts: the ones `praetorctl paperclip harness` reads
-// (adopt.RepositoryHISSFacts, the discovery walk under limits), so its output is what the gate
-// expects (#321). Unmodified earlier output fails with the adopt remedy, since it states a policy
-// the repository no longer has; a rules.md that is not the rendering of harness.json fails with
-// the regenerate remedy; rules.md then passes the caveman lint personas and skills pass
+// release's synthesis for the repository's facts: the ones `praetorctl paperclip harness` reads,
+// so its output is what the gate expects (#321). adopt.RepositoryHISSFacts walks the repository
+// under limits, the run's flags, over the manifest's verification section, which the hooks and CI
+// jobs that pass no flag read, so they walk a large repository as far as adoption does.
+// Unmodified earlier output fails with the adopt remedy, since it states a policy the repository
+// no longer has; a rules.md that is not the rendering of harness.json fails with the regenerate
+// remedy; rules.md then passes the caveman lint personas and skills pass
 // (compiler.LintAgentText). An edited harness.json is operator-owned, which adoption keeps byte
 // for byte (#502), and passes as such. It returns what the pass line states.
 func auditPaperclipSynthesis(ctx context.Context, rootDir string, limits *adopt.VerificationLimits, loaded *paperclip.Harness) (string, error) {

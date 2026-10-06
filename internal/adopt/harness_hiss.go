@@ -99,17 +99,19 @@ func harnessExceptions(cleanupGoto hiss.CleanupGoto) hisscatalog.Exception {
 // states the audit ceiling and the HISS-04 defaults instead; each returned warning names a
 // declaration or policy that was not read.
 //
-// The language walk runs under limits exactly as adoption's does: nil selects the defaults, and
-// a caller passes the operator's --verification-max-* overrides so a large repository is read
-// as far as adoption reads it (issue #535).
+// The language walk runs under the bounds adoption's does (ResolveVerificationLimits): limits,
+// the caller's --verification-max-* overrides (nil raises none), over the manifest's
+// verification section, over the defaults. A run without flags, such as the audit in the hooks
+// and CI jobs adoption writes, thus reads a large repository as far as adoption reads it
+// (issues #535, #321).
 func RepositoryHISSFacts(ctx context.Context, root string, limits *VerificationLimits) (hisscatalog.Facts, []string, error) {
-	plan, err := ObserveVerificationPlanWithLimits(ctx, root, limits)
-	if err != nil {
-		return hisscatalog.Facts{}, nil, fmt.Errorf("detect repository languages: %w", err)
-	}
 	manifest, err := loadDeclaredManifest(ctx, root)
 	if err != nil {
 		return hisscatalog.Facts{}, nil, err
+	}
+	plan, err := ObserveVerificationPlanWithLimits(ctx, root, ResolveVerificationLimits(manifest.DeclaredVerification(), limits))
+	if err != nil {
+		return hisscatalog.Facts{}, nil, fmt.Errorf("detect repository languages: %w", err)
 	}
 	var warnings []string
 	cleanupGoto, warning := manifest.CleanupGotoException(root)

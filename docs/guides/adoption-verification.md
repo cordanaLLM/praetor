@@ -1779,7 +1779,8 @@ bounded to 65,536 entries (`util.DefaultDiscoveryEntries` in
 `src`/test project layouts), 128 metadata files, 64 KiB per metadata file and
 2 MiB in aggregate. Generated dependency/build trees are omitted.
 Exceeding a bound is an error, never a truncated successful plan, and the error names
-the `--verification-max-*` flag that raises the entry, depth or file bound
+the `--verification-max-*` flag that raises the entry, depth or file bound for one run and the
+`verification` key of `.standards.yaml` that raises it for every run
 ([large repositories](../adoption.md#large-repositories)). Selected metadata
 uses bounded reads that refuse symlinks. Command paths with line breaks are
 rejected; shell arguments are quoted and Make dollar signs escaped.
@@ -2151,8 +2152,10 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     `TestAdoptHarness_Boundary_EarlierAGitHarnessRefreshed`).
 
 `praetorctl audit` compares the harness with this release's synthesis for the repository's facts,
-the ones `praetorctl paperclip harness` reads, under the same `--verification-max-*` bounds
-(`auditPaperclipSynthesis` in
+the ones `praetorctl paperclip harness` reads, under the same discovery bounds: the
+`verification` section of `.standards.yaml`, which the hooks and CI jobs that pass no flag read,
+and any `--verification-max-*` flag over it (`TestAuditPaperclip_VerificationBoundFromManifest`;
+`auditPaperclipSynthesis` in
 [`cmd/standardsctl/audit_paperclip.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/audit_paperclip.go),
 `paperclip.CompareGenerated`):
 

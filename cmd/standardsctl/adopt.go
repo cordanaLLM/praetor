@@ -148,41 +148,32 @@ type verificationLimitFlags struct {
 }
 
 // registerVerificationLimitFlags adds the discovery bound flags to fs. Each defaults to 0, which
-// keeps adoption's default for that bound. The names are literals, not adopt.Verification*Flag:
-// `praetorctl docs references` reads a flag name only from a string literal, so a constant would
-// hide these flags from it. TestRegisterVerificationLimitFlags_NamesMatchAdopt keeps both equal.
+// keeps the bound the manifest's verification section declares, or adoption's default. The names
+// are literals, not adopt.Verification*Flag: `praetorctl docs references` reads a flag name only
+// from a string literal, so a constant would hide these flags from it. TestRegisterVerificationLimitFlags_NamesMatchAdopt keeps both equal.
 func registerVerificationLimitFlags(fs *flag.FlagSet) verificationLimitFlags {
 	defaults := adopt.DefaultVerificationLimits()
 	return verificationLimitFlags{
-		entries: fs.Int("verification-max-entries", 0, fmt.Sprintf("Directory entries verification discovery and the editor language scan may walk (default %d, ceiling %d)", defaults.MaxEntries, adopt.VerificationEntriesCeiling)),
-		files:   fs.Int("verification-max-files", 0, fmt.Sprintf("Verification input files discovery may read (default %d, ceiling %d)", defaults.MaxFiles, adopt.VerificationFilesCeiling)),
-		depth:   fs.Int("verification-max-depth", 0, fmt.Sprintf("Directory depth verification discovery may descend (default %d, ceiling %d)", defaults.MaxDepth, adopt.VerificationDepthCeiling)),
+		entries: fs.Int("verification-max-entries", 0, fmt.Sprintf("Directory entries verification discovery and the editor language scan may walk (default verification.max_entries in .standards.yaml, else %d; ceiling %d)", defaults.MaxEntries, adopt.VerificationEntriesCeiling)),
+		files:   fs.Int("verification-max-files", 0, fmt.Sprintf("Verification input files discovery may read (default verification.max_files in .standards.yaml, else %d; ceiling %d)", defaults.MaxFiles, adopt.VerificationFilesCeiling)),
+		depth:   fs.Int("verification-max-depth", 0, fmt.Sprintf("Directory depth verification discovery may descend (default verification.max_depth in .standards.yaml, else %d; ceiling %d)", defaults.MaxDepth, adopt.VerificationDepthCeiling)),
 	}
 }
 
-// limits returns the parsed flags as adoption limits, nil when none was raised.
+// limits returns the parsed flags as the bounds this run raises, nil when none was raised.
 func (f verificationLimitFlags) limits() *adopt.VerificationLimits {
 	return verificationLimitsFromFlags(*f.entries, *f.files, *f.depth)
 }
 
-// verificationLimitsFromFlags returns nil when no discovery bound was raised so adoption
-// keeps its defaults. A raised bound leaves the others at their defaults; adoption itself
-// validates every value against its ceilings, nothing is widened here.
+// verificationLimitsFromFlags returns the bounds the flags raise, nil when none was raised. A
+// bound no flag raises stays zero, so adopt.ResolveVerificationLimits keeps the value the
+// manifest's verification section declares for it, or the default; adoption validates every
+// resolved value against its ceilings, nothing is widened here.
 func verificationLimitsFromFlags(entries, files, depth int) *adopt.VerificationLimits {
 	if entries == 0 && files == 0 && depth == 0 {
 		return nil
 	}
-	limits := adopt.DefaultVerificationLimits()
-	if entries != 0 {
-		limits.MaxEntries = entries
-	}
-	if files != 0 {
-		limits.MaxFiles = files
-	}
-	if depth != 0 {
-		limits.MaxDepth = depth
-	}
-	return &limits
+	return &adopt.VerificationLimits{MaxEntries: entries, MaxFiles: files, MaxDepth: depth}
 }
 
 // batchAdoptMissing adopts every unmanaged repository under devDir with shared, the options that

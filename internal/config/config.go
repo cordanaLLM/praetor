@@ -266,6 +266,10 @@ type Manifest struct {
 	// inventory bounds and style exclusions for partial, generated and fixture Markdown. The
 	// gate reads it from this file at run time (#532, #534).
 	Documentation *DocumentationPolicy `yaml:"documentation,omitempty"`
+	// Verification raises the bounds of the discovery walk that reads the repository's languages
+	// and build markers (VerificationPolicy), for every run that walks it: adoption, `praetorctl
+	// paperclip harness` and the audit's Paperclip gate. It is repository-only, like Documentation.
+	Verification *VerificationPolicy `yaml:"verification,omitempty"`
 	// DocsSurfaces maps the repository's user-facing surfaces to the documentation that
 	// describes them; `praetorctl docs references --base=<rev>` fails a change that touches a
 	// surface without its documentation (#608). It is repository-only, like Register and HISS.
