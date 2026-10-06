@@ -208,9 +208,9 @@ func TestCheck_Boundary_SkipAndEdges(t *testing.T) {
 		t.Fatalf("report = %+v", report)
 	}
 	upper := fixtureRepo(t, map[string]string{"src/Engine.CPP": "int e;\n", "src/view.mm": "int v;\n", "src/k.hip": "int k;\n"})
-	units, err := TrackedUnits(t.Context(), upper)
+	units, err := trackedUnits(t.Context(), upper)
 	if err != nil || strings.Join(units, ",") != "src/Engine.CPP,src/k.hip,src/view.mm" {
-		t.Fatalf("TrackedUnits = %v, %v", units, err)
+		t.Fatalf("trackedUnits = %v, %v", units, err)
 	}
 	onExpiryDay := check(t, upper, nil, exception("src/**", "2026-10-06"))
 	if !onExpiryDay.Passed() || len(onExpiryDay.Excepted) != 3 {

@@ -42,8 +42,8 @@ const (
 // and Objective-C++ (.mm). Headers are read through the units that include them.
 var unitSuffixes = []string{".c", ".cc", ".cpp", ".cxx", ".c++", ".cppm", ".cu", ".hip", ".mm"}
 
-// UnitLanguages names the languages unitSuffixes cover, for the skip reason.
-const UnitLanguages = "C, C++, CUDA, HIP or Objective-C++"
+// unitLanguages names the languages unitSuffixes cover, for the skip reason.
+const unitLanguages = "C, C++, CUDA, HIP or Objective-C++"
 
 // Options are the inputs of one gate run.
 type Options struct {
@@ -91,13 +91,13 @@ func Check(ctx context.Context, opts Options) (Report, error) {
 	if err := errors.Join(config.ValidateClangTidy(opts.Policy), config.ValidateExceptions(opts.Exceptions, opts.Today)); err != nil {
 		return Report{}, fmt.Errorf("clang-tidy coverage declarations: %w", err)
 	}
-	units, err := TrackedUnits(ctx, opts.Root)
+	units, err := trackedUnits(ctx, opts.Root)
 	if err != nil {
 		return Report{}, err
 	}
 	if len(units) == 0 {
 		return Report{Skipped: fmt.Sprintf("the repository tracks no %s translation unit (%s)",
-			UnitLanguages, strings.Join(unitSuffixes, " "))}, nil
+			unitLanguages, strings.Join(unitSuffixes, " "))}, nil
 	}
 	lanes, read, err := readLanes(ctx, opts.Root, opts.Policy, units)
 	if err != nil {
@@ -108,8 +108,8 @@ func Check(ctx context.Context, opts Options) (Report, error) {
 	return report, nil
 }
 
-// TrackedUnits lists the translation units git tracks below root, sorted.
-func TrackedUnits(ctx context.Context, root string) ([]string, error) {
+// trackedUnits lists the translation units git tracks below root, sorted.
+func trackedUnits(ctx context.Context, root string) ([]string, error) {
 	result, err := util.RunGitProbeWithin(ctx, root, maxTrackedListingBytes, listingTimeout, "ls-files", "-z", "--cached", "--", ".")
 	if err != nil {
 		return nil, fmt.Errorf("list the tracked files of %s: %w", root, err)
@@ -120,7 +120,7 @@ func TrackedUnits(ctx context.Context, root string) ([]string, error) {
 	}
 	units := make([]string, 0)
 	for index := 0; index < len(entries); index++ {
-		if rel := string(entries[index]); IsUnit(rel) {
+		if rel := string(entries[index]); isUnit(rel) {
 			units = append(units, rel)
 		}
 	}
@@ -128,8 +128,8 @@ func TrackedUnits(ctx context.Context, root string) ([]string, error) {
 	return slices.Compact(units), nil
 }
 
-// IsUnit reports whether the repository path rel names a translation unit by its suffix.
-func IsUnit(rel string) bool {
+// isUnit reports whether the repository path rel names a translation unit by its suffix.
+func isUnit(rel string) bool {
 	return slices.Contains(unitSuffixes, strings.ToLower(path.Ext(rel)))
 }
 
