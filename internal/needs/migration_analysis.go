@@ -61,24 +61,25 @@ type migrationAnalysis struct {
 }
 
 func analyzeMigration(ctx context.Context, repoPath string, selected FrameworkSource, registry *AnalyzerRegistry) (*migrationAnalysis, error) {
-	return analyzeMigrationWith(ctx, selected, registry, func(framework *FrameworkIndex) (*RepoNeeds, error) {
-		if err := refuseSelfTarget(repoPath, selected, framework); err != nil {
-			return nil, err
-		}
+	return analyzeMigrationWith(ctx, repoPath, selected, registry, func(framework *FrameworkIndex) (*RepoNeeds, error) {
 		return ScanRepoWithFramework(ctx, repoPath, framework, registry)
 	})
 }
 
-// analyzeMigrationWith inspects the selected framework and scores a repository against it
+// analyzeMigrationWith inspects the selected framework, refuses a target at repoPath that is
+// that framework's own module (SelfTargetMigrationError), and scores the target against it
 // with scan. Fleet epic regeneration passes the fleet walk's repository, a
 // single-repository epic or migration plan scans the path it was given. The analysis names
 // the framework the row was scored against (RowFramework), so a host that configures only a
 // non-go target plans against that target rather than against no framework.
-func analyzeMigrationWith(ctx context.Context, selected FrameworkSource, registry *AnalyzerRegistry,
+func analyzeMigrationWith(ctx context.Context, repoPath string, selected FrameworkSource, registry *AnalyzerRegistry,
 	scan func(framework *FrameworkIndex) (*RepoNeeds, error)) (*migrationAnalysis, error) {
 	framework, err := inspectMigrationFramework(ctx, selected)
 	if err != nil {
 		return nil, fmt.Errorf("inspect migration framework: %w", err)
+	}
+	if err := refuseSelfTarget(repoPath, selected, framework); err != nil {
+		return nil, err
 	}
 	report, err := scan(framework)
 	if err != nil {

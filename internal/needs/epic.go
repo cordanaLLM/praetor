@@ -710,6 +710,11 @@ const noAnalyzerReason = "no language analyzer recognises a project in this chec
 // submodule checked out in one.
 const duplicateReasonPrefix = "linked-worktree checkout of "
 
+// selfTargetReason is the skip reason for the selected framework's own checkout, or for a
+// checkout declaring the framework's module (SelfTargetMigrationError): a framework is not
+// migrated onto itself.
+const selfTargetReason = "the selected framework's own module: a framework is not migrated onto itself"
+
 // RegenerateFleetEpics discovers all prepared repositories in fleetRoot and regenerates
 // their pre-migration epics.
 //
@@ -720,8 +725,8 @@ const duplicateReasonPrefix = "linked-worktree checkout of "
 // success. A repository that declares needs (.standards.yaml or .needs.yaml) but in which
 // no analyzer recognises a project is such a failure. Returned as skips, each with its
 // reason, are: discovered directories that are not prepared repositories, undeclared
-// checkouts no analyzer recognises, and linked worktrees (and the submodules checked out
-// in them) collapsed onto their repository.
+// checkouts no analyzer recognises, the selected framework's own module, and linked
+// worktrees (and the submodules checked out in them) collapsed onto their repository.
 func RegenerateFleetEpics(ctx context.Context, fleetRoot string, opts FleetEpicOptions) ([]*PreMigrationEpic, []FleetEpicSkip, error) {
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()
@@ -765,6 +770,8 @@ func (r *fleetEpicRun) regenerate(ctx context.Context, repo *fleetRepo) {
 		r.skips = append(r.skips, FleetEpicSkip{RepoDir: repo.root, Reason: notPreparedReason})
 	case errors.Is(err, ErrNoAnalyzer) && !repo.declared:
 		r.skips = append(r.skips, FleetEpicSkip{RepoDir: repo.root, Reason: noAnalyzerReason})
+	case errors.Is(err, ErrSelfTargetMigration):
+		r.skips = append(r.skips, FleetEpicSkip{RepoDir: repo.root, Reason: selfTargetReason})
 	default:
 		r.failures = append(r.failures, err)
 	}
@@ -777,7 +784,7 @@ func regenerateRepoEpic(ctx context.Context, repo *fleetRepo, opts FleetEpicOpti
 		return nil, errRepoNotPrepared
 	}
 
-	analysis, err := analyzeMigrationWith(ctx, opts.Framework, opts.Registry, func(framework *FrameworkIndex) (*RepoNeeds, error) {
+	analysis, err := analyzeMigrationWith(ctx, repoDir, opts.Framework, opts.Registry, func(framework *FrameworkIndex) (*RepoNeeds, error) {
 		return scanRepositoryWithFramework(ctx, repo, framework, opts.Registry)
 	})
 	if err != nil {
