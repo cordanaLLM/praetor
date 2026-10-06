@@ -260,14 +260,31 @@ Codex, Gemini CLI, Cursor, Copilot and Windsurf read `.agents/skills/`; Claude C
 `.claude/skills/`, and `--verify` and the audit's projection gate refuse a missing or edited
 copy (`compiler.VerifyClientSkills`, `internal/compiler/client_skills_test.go`). A
 repository's own skills are not copied, and `.claude/skills/` may hold skills of its own.
+Adoption writes the copies in its agent-definitions step. With that step declined and Claude
+Code selected, the agent-harness step installs no skill and warns why, because no step would
+write the copies `--verify` then requires
+(`TestAdopt_DeclinedAgentDefinitionsLeavesAVerifiedRepository`).
+
+The copies are written through the same symlink-refusing writer as the persona copies, so a
+`.claude/skills` that is a symlink, such as `.claude/skills -> ../.agents/skills`, is refused:
+`compile-context` fails in a repository that carries one of the three skills, and adoption with
+`--lock-source-root` fails before its first write, naming the copy and
+`path component must be a directory, never a symlink` (`compiler.CheckSkillTargets`,
+`TestVerifyClientSkills_Negative_MissingOrEditedCopy`). Replace
+the symlink with a real directory, which `compile-context` then fills, or leave `claude` out of
+`agent_clients`.
 
 The block names a skill only where the repository carries `.agents/skills/<name>/SKILL.md`
-(`compiler.LoadRegisterBlock`). Without it, the row states the form alone and the brief rule
+(`compiler.AbsentRegisterSkills`). Without it, the row states the form alone and the brief rule
 reads "internal register with `task:` = routing label". A declined agent-harness step, or a
 run without `--lock-source-root`, installs nothing, and the block then names no skill
 (`TestAdopt_Boundary_DeclinedSelectedAndPreviewed`,
-`internal/compiler/register_skills_test.go`). Prompt directives (`config.RegisterDirective`)
-name the skill in every repository.
+`internal/compiler/register_skills_test.go`). The Paperclip harness adoption writes follows the
+same rule: its register sentence names `caveman` only where the repository carries it, or the
+run installs it (`paperclip.SynthesizeHarnessOver`, `config.RegisterDirectiveWithout`,
+`internal/paperclip/register_test.go`). Repair jobs (`config.RegisterDirective`) name the skill
+in every repository: they are prompts for a provider, kept as a private review artifact
+(`dogfood.SaveRepairPlan`), never repository content.
 
 ## Internal briefs and returns
 
@@ -314,8 +331,9 @@ Operators call the internal register "caveman", and the `caveman` skill
 (`.agents/skills/caveman/SKILL.md`) makes that form concrete. The
 configuration value stays `internal`, so no manifest changes; the internal row of the
 rendered block names the skill where the repository carries it
-([register skills](#register-skills)), and so does the one register sentence that repair jobs
-and the Paperclip harness receive (`config.RegisterDirective`).
+([register skills](#register-skills)), and so does the one register sentence the Paperclip
+harness receives (`config.RegisterDirectiveWithout`). Repair jobs always name it
+(`config.RegisterDirective`).
 
 The skill replaces an adjective ("telegraphic") with rules an agent can apply line by line:
 drop articles, pronouns, copulas, hedges and framing; write fragments, one fact per line;
