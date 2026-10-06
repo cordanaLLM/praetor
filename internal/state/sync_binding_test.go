@@ -166,7 +166,10 @@ func TestVerifyStateSyncRejectsAbsentCancelledAndMovedRoots(t *testing.T) {
 	}
 }
 
-func TestStateSyncUntrackedByteAndPathBounds(t *testing.T) {
+// TestStateSyncUntrackedByteBound: an untracked file at the per-file bound is bound by its
+// bytes, and one byte more is bound by its metadata instead of failing the sync (#776). The
+// count bound and the other metadata cases are in sync_bounds_test.go.
+func TestStateSyncUntrackedByteBound(t *testing.T) {
 	root := syncFixture(t)
 	path := filepath.Join(root, "binary.bin")
 	writeIntegrityFile(t, path, strings.Repeat("\x00", contextopt.MaxSourceBytes))
@@ -174,11 +177,11 @@ func TestStateSyncUntrackedByteAndPathBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeIntegrityFile(t, path, strings.Repeat("\x00", contextopt.MaxSourceBytes+1))
-	if _, err := SyncState(t.Context(), root, "oversized"); err == nil {
-		t.Fatal("oversized untracked file accepted")
+	if _, err := SyncState(t.Context(), root, "oversized"); err != nil {
+		t.Fatalf("an untracked file one byte over the bound failed the sync: %v", err)
 	}
-	if _, err := stateUntrackedBinding(t.Context(), root, strings.Repeat("name\x00", maxSyncPaths+1)); err == nil {
-		t.Fatal("excessive untracked path count accepted")
+	if err := VerifyStateSync(t.Context(), root); err != nil {
+		t.Fatalf("a metadata-bound untracked file does not verify: %v", err)
 	}
 }
 
@@ -263,9 +266,8 @@ func TestStateSyncRejectsHiddenIndexFlagsAndSubmodules(t *testing.T) {
 			if err := VerifyStateSync(t.Context(), root); err == nil {
 				t.Fatal("hidden index modification accepted")
 			}
-			if _, err := SyncState(t.Context(), root, "cannot observe fully"); err == nil {
-				t.Fatal("sync certified unsupported hidden index entry")
-			}
+			_, err := SyncState(t.Context(), root, "cannot observe fully")
+			requireErrorContains(t, err, `index entry "tracked.txt"`)
 		})
 	}
 	root := syncFixture(t)
@@ -274,7 +276,6 @@ func TestStateSyncRejectsHiddenIndexFlagsAndSubmodules(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateFixtureGit(t, root, "update-index", "--add", "--cacheinfo", "160000,"+head+",module")
-	if _, err := SyncState(t.Context(), root, "nested worktree unsupported"); err == nil {
-		t.Fatal("sync certified unobserved submodule")
-	}
+	_, err = SyncState(t.Context(), root, "nested worktree unsupported")
+	requireErrorContains(t, err, `submodule worktree "module"`)
 }

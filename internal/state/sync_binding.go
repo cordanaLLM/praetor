@@ -1,11 +1,14 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -15,7 +18,24 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const maxSyncPaths = 10000
+// maxSyncRecords bounds the records state sync reads from one Git listing, the tracked index or
+// the untracked names (HISS-02). It guards the binding's loops; it is not a repository-size
+// limit. The work is bounded by bytes and time, as every other binding input is: each listing
+// arrives through a probe capped in bytes (syncIndexBytes for the index, contextopt.MaxTotalBytes
+// for the rest) within util.GitProbeTimeout, and untracked content is read within
+// contextopt.MaxTotalBytes. 1<<20 lies above every count the index cap admits: an index record
+// is at least 54 bytes ("H 100644 <40-hex id> 0", a tab, a one-byte path and the NUL), so
+// 16 MiB holds at most 310,689 of them, and a growing repository reaches the byte or time bound,
+// which reports its own size, long before this count. An untracked name can take two bytes, so
+// for that listing the count is reachable and caps the per-path inspection.
+const maxSyncRecords = 1 << 20
+
+// syncIndexBytes caps the tracked-index listing the binding reads. It is
+// util.MaxCommandOutputBytes, the largest cap a bounded command accepts and the one
+// util.RefuseGitStatusFilters uses for its own listings of the same tracked paths before every
+// state inspection. The index listing grows with the repository; the other listings grow only
+// with uncommitted changes and keep contextopt.MaxTotalBytes.
+const syncIndexBytes = util.MaxCommandOutputBytes
 
 var syncMarker = regexp.MustCompile(`\n<!-- praetor-state:v1 sha256:([a-f0-9]{64}) -->\n$`)
 
@@ -79,7 +99,7 @@ func stateBinding(ctx context.Context, rootPath string, snap *StateSnapshot) (st
 	for _, name := range []string{"OPEN.md", "BACKLOG.md", "BUGS.md", "QUESTIONS.md"} {
 		content, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, WorkingDirName, name))
 		if err != nil {
-			return "", fmt.Errorf("bind state ledger %s: %w", name, err)
+			return "", ledgerInputError(root, name, err)
 		}
 		parts = append(parts, name, fmt.Sprintf("%x", sha256.Sum256(content)))
 	}
@@ -109,7 +129,7 @@ func stateBinding(ctx context.Context, rootPath string, snap *StateSnapshot) (st
 func bindSidecar(ctx context.Context, root, name string) ([]string, error) {
 	content, present, err := contextopt.ObserveSnapshot(ctx, filepath.Join(root, WorkingDirName, name))
 	if err != nil {
-		return nil, fmt.Errorf("bind state ledger %s: %w", name, err)
+		return nil, ledgerInputError(root, name, err)
 	}
 	if !present {
 		return nil, nil
@@ -117,25 +137,55 @@ func bindSidecar(ctx context.Context, root, name string) ([]string, error) {
 	return []string{name, fmt.Sprintf("%x", sha256.Sum256(content))}, nil
 }
 
-func stateGitBinding(ctx context.Context, root, gitState string) ([]string, error) {
-	commands := [][]string{
-		{"rev-parse", "--verify", "HEAD"},
-		{"ls-files", "-v", "--stage", "-z", "--", ".", ":(top,exclude).workingdir"},
-		{"status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir"},
-		{"diff", "--no-ext-diff", "--no-textconv", "--binary", "--ignore-submodules=all", "--cached", "--", ".", ":(top,exclude).workingdir"},
-		{"diff", "--no-ext-diff", "--no-textconv", "--binary", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir"},
-		{"ls-files", "--others", "--exclude-standard", "-z", "--", ".", ":(top,exclude).workingdir"},
-	}
+// syncGitProbe is one Git observation the state binding hashes: the name its errors use, the
+// byte cap on its output, whether the output is a NUL-terminated listing whose records an
+// overflow can count, what an operator does when the output outgrows the cap, and its argv.
+type syncGitProbe struct {
+	label   string
+	limit   int
+	listing bool
+	remedy  string
+	args    []string
+}
+
+const (
+	// syncShrinkChanges is the remedy for a probe whose output grows with uncommitted changes.
+	syncShrinkChanges = "commit, stash, ignore or remove working-tree changes, then sync again"
+	// syncReportIndex is the remedy for an index listing over its cap, which only growth reaches.
+	syncReportIndex = "the cap holds the listing in memory, so report the repository's tracked-file count to the Praetor maintainers"
+)
+
+// stateGitProbes lists the Git observations the binding hashes, in binding order. Order and
+// argv are part of the binding: changing either reports every existing ledger stale once.
+func stateGitProbes(gitState string) []syncGitProbe {
+	head := []string{"rev-parse", "--verify", "HEAD"}
 	if gitState == "unborn" {
-		commands[0] = []string{"symbolic-ref", "--quiet", "HEAD"}
+		head = []string{"symbolic-ref", "--quiet", "HEAD"}
 	}
-	parts := make([]string, 0, len(commands))
-	for _, args := range commands {
-		result, err := util.RunGitTreeProbe(ctx, root, contextopt.MaxTotalBytes, util.GitProbeTimeout, args...)
+	return []syncGitProbe{
+		{label: "HEAD", limit: contextopt.MaxTotalBytes, args: head},
+		{label: "index listing", limit: syncIndexBytes, listing: true, remedy: syncReportIndex,
+			args: []string{"ls-files", "-v", "--stage", "-z", "--", ".", ":(top,exclude).workingdir"}},
+		{label: "status", limit: contextopt.MaxTotalBytes, listing: true, remedy: syncShrinkChanges,
+			args: []string{"status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir"}},
+		{label: "staged diff", limit: contextopt.MaxTotalBytes, remedy: syncShrinkChanges,
+			args: []string{"diff", "--no-ext-diff", "--no-textconv", "--binary", "--ignore-submodules=all", "--cached", "--", ".", ":(top,exclude).workingdir"}},
+		{label: "unstaged diff", limit: contextopt.MaxTotalBytes, remedy: syncShrinkChanges,
+			args: []string{"diff", "--no-ext-diff", "--no-textconv", "--binary", "--ignore-submodules=all", "--", ".", ":(top,exclude).workingdir"}},
+		{label: "untracked listing", limit: contextopt.MaxTotalBytes, listing: true, remedy: syncShrinkChanges,
+			args: []string{"ls-files", "--others", "--exclude-standard", "-z", "--", ".", ":(top,exclude).workingdir"}},
+	}
+}
+
+func stateGitBinding(ctx context.Context, root, gitState string) ([]string, error) {
+	probes := stateGitProbes(gitState)
+	parts := make([]string, 0, len(probes))
+	for _, probe := range probes {
+		output, err := runSyncProbe(ctx, root, probe)
 		if err != nil {
-			return nil, fmt.Errorf("bind state Git %s: %w", args[0], err)
+			return nil, err
 		}
-		parts = append(parts, string(result.Stdout))
+		parts = append(parts, output)
 	}
 	if err := validateSyncIndex(parts[1]); err != nil {
 		return nil, err
@@ -147,52 +197,152 @@ func stateGitBinding(ctx context.Context, root, gitState string) ([]string, erro
 	return append(parts, untracked...), nil
 }
 
-func validateSyncIndex(listing string) error {
-	rows := strings.Split(strings.TrimSuffix(listing, "\x00"), "\x00")
-	if len(rows) > maxSyncPaths {
-		return fmt.Errorf("state synchronization exceeds %d index entries", maxSyncPaths)
+// runSyncProbe runs one binding probe within util.GitProbeTimeout. Output that outgrows the
+// probe's cap fails with the cap, for a listing the records read before it, and the remedy. Any
+// other failure carries git's own diagnostic, which names the path git could not read, such as a
+// tracked file replaced by a named pipe: a tracked path is a state input and fails closed.
+func runSyncProbe(ctx context.Context, root string, probe syncGitProbe) (string, error) {
+	result, err := util.RunGitTreeProbe(ctx, root, probe.limit, util.GitProbeTimeout, probe.args...)
+	if err == nil {
+		return string(result.Stdout), nil
 	}
-	for _, row := range rows {
+	if len(result.Stdout) < probe.limit {
+		return "", fmt.Errorf("bind state Git %s: %w", probe.label, util.CommandDiagnostic(err, result.Stderr))
+	}
+	read := ""
+	if probe.listing {
+		read = fmt.Sprintf(" after %d records", bytes.Count(result.Stdout, []byte{0}))
+	}
+	return "", fmt.Errorf("state synchronization cannot bind the Git %s: it exceeds %d bytes%s; %s: %w",
+		probe.label, probe.limit, read, probe.remedy, err)
+}
+
+// validateSyncIndex refuses an index the binding cannot vouch for: more records than
+// maxSyncRecords, a malformed record, a hidden (assume-unchanged or skip-worktree) entry, or a
+// submodule.
+func validateSyncIndex(listing string) error {
+	if count := listingRecords(listing); count > maxSyncRecords {
+		return fmt.Errorf("state synchronization lists %d index entries, over its bound of %d records per Git listing; "+
+			"the bound guards a loop, not the repository's size, so report the count to the Praetor maintainers", count, maxSyncRecords)
+	}
+	for row := range strings.SplitSeq(strings.TrimSuffix(listing, "\x00"), "\x00") {
 		if row == "" {
 			continue
 		}
 		if len(row) < 2 || row[1] != ' ' {
 			return fmt.Errorf("state synchronization index record is malformed")
 		}
+		_, name, _ := strings.Cut(row, "\t")
 		if util.GitHiddenIndexReason(row[0]) != "" {
-			return fmt.Errorf("state synchronization refuses assume-unchanged or skip-worktree index entries")
+			return fmt.Errorf("state synchronization refuses assume-unchanged or skip-worktree index entry %q", name)
 		}
 		if strings.HasPrefix(row[2:], "160000 ") {
-			return fmt.Errorf("state synchronization cannot verify nested submodule worktrees")
+			return fmt.Errorf("state synchronization cannot verify nested submodule worktree %q", name)
 		}
 	}
 	return nil
 }
 
+// listingRecords counts the records of one NUL-terminated (-z) Git listing; a final record
+// left unterminated still counts.
+func listingRecords(listing string) int {
+	count := strings.Count(listing, "\x00")
+	if listing != "" && !strings.HasSuffix(listing, "\x00") {
+		count++
+	}
+	return count
+}
+
+// stateUntrackedBinding binds each untracked path git lists, in git's sorted order, so the
+// records are deterministic. A regular file of at most contextopt.MaxSourceBytes is bound by the
+// SHA-256 of its bytes while the content budget of contextopt.MaxTotalBytes lasts. Every other
+// path -- a symlink, a named pipe, socket or device, an untracked nested repository (git lists
+// it as a directory), a file over the per-file bound, or one past the budget -- is bound by its
+// metadata: type, size and modification time. Such a path is rarely a state input, and one stray
+// file must not stop the ledger from being written. A name that is not local, or a path that
+// cannot be inspected, still fails and names the path. The ledgers and tracked files are state
+// inputs and fail closed instead (ledgerInputError, runSyncProbe).
 func stateUntrackedBinding(ctx context.Context, root, listing string) ([]string, error) {
 	if listing == "" {
 		return nil, nil
 	}
-	names := strings.Split(strings.TrimSuffix(listing, "\x00"), "\x00")
-	if len(names) > maxSyncPaths {
-		return nil, fmt.Errorf("state synchronization exceeds %d untracked files", maxSyncPaths)
+	if count := listingRecords(listing); count > maxSyncRecords {
+		return nil, fmt.Errorf("state synchronization lists %d untracked paths, over its bound of %d records per Git listing; "+
+			"add generated paths to .gitignore or remove them, then sync again", count, maxSyncRecords)
 	}
-	parts, total := make([]string, 0, len(names)), 0
+	names := strings.Split(strings.TrimSuffix(listing, "\x00"), "\x00")
+	parts, budget := make([]string, 0, len(names)), int64(contextopt.MaxTotalBytes)
 	for _, name := range names {
-		if !filepath.IsLocal(name) || name == "." {
-			return nil, fmt.Errorf("state synchronization untracked path is not local")
-		}
-		content, err := contextopt.ReadBinarySnapshot(ctx, filepath.Join(root, name))
+		record, spent, err := untrackedRecord(ctx, root, name, budget)
 		if err != nil {
-			return nil, fmt.Errorf("bind untracked state input: %w", err)
+			return nil, err
 		}
-		total += len(content)
-		if total > contextopt.MaxTotalBytes {
-			return nil, fmt.Errorf("state synchronization exceeds %d untracked bytes", contextopt.MaxTotalBytes)
-		}
-		parts = append(parts, fmt.Sprintf("%x", sha256.Sum256(content)))
+		parts, budget = append(parts, record), budget-spent
 	}
 	return parts, nil
+}
+
+// untrackedRecord binds one untracked path and returns its record and the content bytes it
+// spent from budget. A content record is the 64-hex SHA-256 of the bytes; a metadata record
+// starts with "metadata", so the two can never be mistaken for each other.
+func untrackedRecord(ctx context.Context, root, name string, budget int64) (string, int64, error) {
+	if err := ctx.Err(); err != nil {
+		return "", 0, err
+	}
+	if !filepath.IsLocal(name) || name == "." {
+		return "", 0, fmt.Errorf("state synchronization untracked path %q is not local", name)
+	}
+	info, err := lstatUntracked(ctx, root, name)
+	if err != nil {
+		return "", 0, fmt.Errorf("bind untracked path %q: %w", name, err)
+	}
+	if contentRefusal(info, min(contextopt.MaxSourceBytes, budget)) != "" {
+		return fmt.Sprintf("metadata %s %d %d", info.Mode().Type(), info.Size(), info.ModTime().UnixNano()), 0, nil
+	}
+	digest, size, err := contextopt.DigestBinarySnapshot(ctx, filepath.Join(root, name), contextopt.MaxSourceBytes)
+	if err != nil {
+		return "", 0, fmt.Errorf("bind untracked path %q: %w", name, err)
+	}
+	return digest, size, nil
+}
+
+// lstatUntracked inspects one untracked path without following a symlink at any component
+// below root, through the confinement contextopt reads with. git lists an untracked nested
+// repository with a trailing slash; cleaning the name inspects the directory itself.
+func lstatUntracked(ctx context.Context, root, name string) (_ fs.FileInfo, err error) {
+	clean := filepath.Clean(filepath.FromSlash(name))
+	dir, err := contextopt.OpenDirectoryIn(ctx, root, filepath.Dir(clean))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	return dir.Lstat(filepath.Base(clean))
+}
+
+// ledgerInputError names a ledger input that failed to bind by its repository-relative path,
+// with the reason when it is not a regular file or is over the per-file bound. Ledger inputs
+// fail closed: the binding covers their bytes, and metadata in their place would let an edit
+// that keeps size and modification time pass as synchronized.
+func ledgerInputError(root, name string, err error) error {
+	rel := filepath.ToSlash(filepath.Join(WorkingDirName, name))
+	if info, statErr := os.Lstat(filepath.Join(root, WorkingDirName, name)); statErr == nil {
+		if reason := contentRefusal(info, contextopt.MaxSourceBytes); reason != "" {
+			return fmt.Errorf("bind state ledger %s: %s, and ledger inputs fail closed: %w", rel, reason, err)
+		}
+	}
+	return fmt.Errorf("bind state ledger %s: %w", rel, err)
+}
+
+// contentRefusal says why a path cannot be bound by its bytes, or "" when it can: a regular
+// file of at most limit bytes.
+func contentRefusal(info fs.FileInfo, limit int64) string {
+	if !info.Mode().IsRegular() {
+		return fmt.Sprintf("not a regular file (mode %s)", info.Mode().Type())
+	}
+	if info.Size() > limit {
+		return fmt.Sprintf("%d bytes, over the %d-byte limit", info.Size(), limit)
+	}
+	return ""
 }
 
 func stateLogHash(binding string, content []byte) string {

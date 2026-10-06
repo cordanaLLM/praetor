@@ -1,0 +1,4 @@
+type: fixed
+title: State sync no longer fails on repositories with more than 10,000 tracked files or on one stray untracked file, and its errors name the path
+issue: "#775, #776"
+breaking: false
