@@ -103,17 +103,8 @@ func MeasureProvenance(ctx context.Context, repoPath string) (ProvenanceMeasurem
 		return ProvenanceMeasurement{}, err
 	}
 	reader := provenanceReader{ctx: ctx, repoPath: repoPath, called: make(map[string]workflowEvidence, len(workflows))}
-	// The reusable workflows are measured first, so a calling job reads their evidence instead
-	// of walking into them: the walk never re-enters itself (HISS-01).
-	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
-		if _, reusable := eventTrigger(&workflows[i].spec.On, workflowCallEvent); !reusable {
-			continue
-		}
-		evidence, err := reader.joinJobs(&workflows[i].spec, reader.calledJob)
-		if err != nil {
-			return ProvenanceMeasurement{}, fmt.Errorf("workflow %s: %w", workflows[i].name, err)
-		}
-		reader.called[workflows[i].name] = evidence
+	if err := reader.measureReusableWorkflows(workflows); err != nil {
+		return ProvenanceMeasurement{}, err
 	}
 	var measured ProvenanceMeasurement
 	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
@@ -192,6 +183,23 @@ type provenanceReader struct {
 	ctx      context.Context
 	repoPath string
 	called   map[string]workflowEvidence
+}
+
+// measureReusableWorkflows records the evidence of every reusable workflow (on: workflow_call)
+// before any caller is read, so a calling job reads that evidence instead of walking into the
+// workflow: the walk never re-enters itself (HISS-01).
+func (r provenanceReader) measureReusableWorkflows(workflows []namedWorkflow) error {
+	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
+		if _, reusable := eventTrigger(&workflows[i].spec.On, workflowCallEvent); !reusable {
+			continue
+		}
+		evidence, err := r.joinJobs(&workflows[i].spec, r.calledJob)
+		if err != nil {
+			return fmt.Errorf("workflow %s: %w", workflows[i].name, err)
+		}
+		r.called[workflows[i].name] = evidence
+	}
+	return nil
 }
 
 // joinJobs joins what measure finds in each job of spec, in job ID order.
