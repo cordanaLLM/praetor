@@ -526,7 +526,7 @@ func makefileLineIsAmbiguous(line string, index int, variables makefileVariables
 	if strings.HasPrefix(line, "#") {
 		return false
 	}
-	if makefileIncludes(strings.Fields(line)) || makefileCallsEval(line) || makefileBindsCommandOutput(line) {
+	if makefileParsesComputedText(line) {
 		return true
 	}
 	targets, prerequisites := makefileRule(line)

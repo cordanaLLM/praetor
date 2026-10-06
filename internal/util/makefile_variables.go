@@ -16,10 +16,11 @@ import (
 // target, bound inside a conditional or by a computed name that may be it; a value holding a
 // function call, $(shell ...) included, or a pattern, glob, comment-escape or rule character; and
 // a variable bound nowhere in the file or only after the rule, whose value Make then takes from
-// the environment. A file holding an include, an eval call or a bare expansion other than silent
-// calls, each of which may rebind any variable, resolves no name (makefileEvaluatesText); such a
-// line leaves the file to Make anyway (makefileLeavesOwnershipToMake), and resolving nothing keeps
-// MakefileHasTarget from claiming a computed name there.
+// the environment. A file holding an include, an eval call, a "!=" binding (a "define X !="
+// included) or a bare expansion other than silent calls, each of which may rebind any variable,
+// resolves no name (makefileEvaluatesText); such a line leaves the file to Make anyway
+// (makefileLeavesOwnershipToMake), and resolving nothing keeps MakefileHasTarget from claiming a
+// computed name there.
 //
 // The answer holds for the invocation Praetor's gates run, "make verify-all" or "make docs-lint"
 // with no variable definitions and no options (verifyCommand in internal/adopt/harness.go). A
@@ -126,19 +127,21 @@ func makefileCollectBindings(lines []string) makefileBindings {
 }
 
 // makefileEvaluatesText reports whether a trimmed syntax line makes Make parse text it computes or
-// reads, which may bind any variable before a rule names it: an include, a call that evaluates
-// text, or a bare expansion other than silent calls. Measured against GNU Make 4.4.1, "$(eval NAME
-// := build)" or a bare "$(R)" with "R = NAME := build" between "NAME := verify-all" and "$(NAME):"
-// declares build. makefileLeavesOwnershipToMake reports each of these lines as well.
+// reads, which may bind any variable before a rule names it: a line makefileParsesComputedText
+// reports, an include, a call that evaluates text or a "!=" binding, or a bare expansion other
+// than silent calls. Measured against GNU Make 4.4.1, "$(eval NAME := build)", a bare "$(R)" with
+// "R = NAME := build", or "X != cat rebind.txt" with rebind.txt holding "$(eval NAME := build)"
+// and a later "all: $(X)", between "NAME := verify-all" and "$(NAME):" declares build.
+// makefileLeavesOwnershipToMake reports each of these lines as well.
 func makefileEvaluatesText(line string) bool {
-	return makefileIncludes(strings.Fields(line)) || makefileCallsEval(line) ||
-		makefileBareExpansion(line) && !makefileSilentCalls(line)
+	return makefileParsesComputedText(line) || makefileBareExpansion(line) && !makefileSilentCalls(line)
 }
 
 // define records a line of a define, trimmed: the opening line binds the variable it names, and a
-// line that calls eval, the body's included, may bind any variable.
+// line makefileDefineParsesText reports, a body line calling eval or a "define X !=" opening, may
+// bind any variable.
 func (b *makefileBindings) define(opening bool, line string) {
-	b.evaluates = b.evaluates || makefileCallsEval(line)
+	b.evaluates = b.evaluates || makefileDefineParsesText(line)
 	if opening {
 		name, _ := makefileBoundName(line)
 		b.add(name, false)

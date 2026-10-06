@@ -172,9 +172,12 @@ Anything else leaves the name to review, as before: a second binding, `?=`, `+=`
 `undefine`, a target-specific binding or a binding whose computed name may be the variable, a
 function call such as `$(shell ...)` or a pattern or glob character in the value, and a variable
 bound nowhere in the file or only after the rule, whose value Make takes from the environment. A
-file holding an include, an eval call or a bare expansion resolves no computed name, since each may
-rebind the variable. `$(PREFIX) verify-all: dep` with `PREFIX` bound nowhere counts as no
-`verify-all` rule.
+file holding an include, an eval call, a bare expansion or a `!=` binding (`define X !=` included)
+resolves no computed name, since each may rebind the variable: Make expands a `!=` binding's command
+output as makefile text wherever the variable is used, so `X != cat rebind.txt` with `rebind.txt`
+holding `$(eval NAME := build)` and a later `all: $(X)` renames `$(NAME):` to `build`
+(`makefileEvaluatesText` in `internal/util/makefile_variables.go`). `$(PREFIX) verify-all: dep`
+with `PREFIX` bound nowhere counts as no `verify-all` rule.
 
 The answer holds for the invocation the gates run, `make verify-all` or `make docs-lint` with no
 variable definitions and no options. A command-line definition, `-e` with the variable in the

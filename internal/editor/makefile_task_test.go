@@ -98,10 +98,12 @@ func TestWorkspaceCommands_Boundary_UnreadRuleIsNoVerifyAllTask(t *testing.T) {
 		t.Fatalf("a rule past line %d was read", util.MaxMakefileLines)
 	}
 	// A computed name whose variable is bound twice or bound nowhere is no rule the reader observed,
+	// nor one in a file whose "!=" binding may rebind the variable when Make expands its output,
 	// and the issue #537 shape resolves to paths, none of them verify-all.
 	for _, unresolved := range []string{
 		"include shared.mk\n", "verify-%:\n\t@true\n", "$(eval verify-all: dep)\n",
 		"NAME := build\nNAME := verify-all\n$(NAME):\n\t@true\n", "$(NAME):\n\t@true\n", testsupport.MakefileLiteralChains,
+		"NAME := verify-all\nX != cat rebind.txt\nall: $(X)\n$(NAME):\n\t@true\n",
 	} {
 		if verifyAllOffered(t, unresolved) {
 			t.Fatalf("a Makefile only Make can resolve got a Verify All task: %q", unresolved)

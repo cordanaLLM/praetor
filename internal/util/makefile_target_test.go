@@ -113,16 +113,17 @@ func clearMakeEnvironment(t *testing.T) {
 }
 
 // makeDeclaresVerifyAll writes makefile with a "dep" rule appended, so a rule row fails for no
-// other reason than a missing verify-all, rules.txt holding a verify-all rule and eval.txt an eval
-// call declaring one, for the rows that read them, and reports whether "make -n verify-all" prints
-// the row's recipe.
+// other reason than a missing verify-all, rules.txt holding a verify-all rule, eval.txt an eval
+// call declaring one and rebind.txt an eval call binding NAME to build, for the rows that read
+// them, and reports whether "make -n verify-all" prints the row's recipe.
 func makeDeclaresVerifyAll(t *testing.T, makePath, makefile string) (bool, string) {
 	t.Helper()
 	root := t.TempDir()
 	for name, text := range map[string]string{
-		"Makefile":  makefile + "dep: ;\n",
-		"rules.txt": "verify-all: ; @echo custom\n",
-		"eval.txt":  "$(eval verify-all: ; @echo custom)\n",
+		"Makefile":   makefile + "dep: ;\n",
+		"rules.txt":  "verify-all: ; @echo custom\n",
+		"eval.txt":   "$(eval verify-all: ; @echo custom)\n",
+		"rebind.txt": "$(eval NAME := build)\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
@@ -498,8 +499,9 @@ func chainTo(n int, value string) string {
 // $(shell ...), a variable bound nowhere, a recursive reference, a modifier, a target-specific or
 // computed-name binding, undefine, a MAKEFLAGS binding that defines a variable, a pattern or glob
 // character, a single-letter or substitution reference, a chain past the depth bound, and an eval
-// call or bare expansion anywhere in the file, which may rebind the variable (eval-rebinds and
-// bare-expansion-rebinds declare build, so MakefileHasTarget must not claim verify-all there). A
+// call, a bare expansion or a "!=" binding anywhere in the file, which may rebind the variable
+// (eval-rebinds, bare-expansion-rebinds and the two command-output rows declare build, so
+// MakefileHasTarget must not claim verify-all there). A
 // MAKEFLAGS binding of options that change no value keeps names resolvable (flags-harmless).
 var makefileComputedRows = map[string]makefileOwnershipRow{
 	"literal-chains":          {makefile: testsupport.MakefileLiteralChains},
@@ -553,6 +555,14 @@ var makefileComputedRows = map[string]makefileOwnershipRow{
 	"bare-expansion-rebinds": {
 		makefile:  "R = NAME := build\nNAME := verify-all\n$(R)\n$(NAME): dep\n\t@echo custom\nall: ; @echo all\n",
 		mayDefine: true,
+	},
+	"command-output-rebinds": {
+		makefile:  "NAME := verify-all\nX != cat rebind.txt\nall: $(X)\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, shell: true,
+	},
+	"command-output-define-rebinds": {
+		makefile:  "NAME := verify-all\ndefine X !=\ncat rebind.txt\nendef\nall: $(X)\n$(NAME): dep\n\t@echo custom\n",
+		mayDefine: true, shell: true,
 	},
 }
 
@@ -649,6 +659,7 @@ func TestMakefileLiteralChainsRebindingLeavesNamesToMake(t *testing.T) {
 	for _, prefix := range []string{
 		"MAKEFLAGS += SRC_ROOT=x\n", "MAKEFLAGS += -e\n", "MAKEFLAGS = $(OPTIONS)\n", "$(M)FLAGS += -s\n",
 		"-include extra.mk\n", "$(eval X := 1)\n", "define T\n$(eval X := 1)\nendef\n", "$(R)\n",
+		"X != cat rebind.txt\n", "define X !=\ncat rebind.txt\nendef\n",
 	} {
 		makefile := prefix + testsupport.MakefileLiteralChains
 		if !util.MakefileMayDefineTarget(makefile, "docs-lint") || util.MakefileHasTarget(makefile, ".tools/bin/ruff") {
