@@ -60,8 +60,12 @@ type RunDefaults struct {
 // RunsOn is a raw node because the key has three shapes: one label, a list of labels, and a
 // mapping of a runner group and its labels (RunnerLabels). Container is raw because it is an
 // image name or a mapping; only its presence changes the default shell (StepShell).
+//
+// Uses is the reusable workflow a job calls instead of running steps: a path under Dir of this
+// repository ("./.github/workflows/<file>") or "<owner>/<repo>/.github/workflows/<file>@<ref>".
 type Job struct {
 	Name            string    `yaml:"name"`
+	Uses            string    `yaml:"uses"`
 	If              string    `yaml:"if"`
 	ContinueOnError string    `yaml:"continue-on-error"`
 	Permissions     yaml.Node `yaml:"permissions"`
