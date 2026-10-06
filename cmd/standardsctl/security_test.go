@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/govuln"
 )
@@ -41,16 +42,13 @@ func govulnCLI(t *testing.T, out string, runErr error, args ...string) (string, 
 	return stdout.String(), stderr.String(), commands, err
 }
 
-// exitCode is the status main would exit with for err.
+// exitCode is the status main would exit with for err: 0 for nil, else what commandExitCode
+// gives it.
 func exitCode(err error) int {
-	var status exitStatusError
-	if errors.As(err, &status) {
-		return status.code
+	if err == nil {
+		return 0
 	}
-	if err != nil {
-		return 1
-	}
-	return 0
+	return commandExitCode(&bytes.Buffer{}, err)
 }
 
 // Negative: a called vulnerable symbol exits 1 and names the call on stderr, and the scanner
@@ -69,11 +67,14 @@ func TestSecurityGovuln_Negative_CalledSymbolExitsOne(t *testing.T) {
 }
 
 // Positive: a module-level advisory with a current not_affected statement passes, the covered
-// advisory reported on stdout, and govulncheck from PATH runs when no scanner is named.
+// advisory reported on stdout, and govulncheck from PATH runs when no scanner is named. The
+// command judges against the real clock, so the document is issued a day before it runs: a fixed
+// date would expire after govuln.MaxStatementAge and fail the test with no code change.
 func TestSecurityGovuln_Positive_CoveredAdvisoryPasses(t *testing.T) {
 	dir := t.TempDir()
+	yesterday := time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339)
 	vex := `{"@context": "https://openvex.dev/ns/v0.2.0", "@id": "https://example.com/vex", "author": "Example", ` +
-		`"timestamp": "` + "2026-10-05T12:00:00Z" + `", "version": 1, "statements": [{"vulnerability": {"name": "GO-2022-1059"}, ` +
+		`"timestamp": "` + yesterday + `", "version": 1, "statements": [{"vulnerability": {"name": "GO-2022-1059"}, ` +
 		`"status": "not_affected", "justification": "vulnerable_code_not_present", "impact_statement": "No package of it is built."}]}`
 	path := filepath.Join(dir, "security", "vex", "go.openvex.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
