@@ -54,7 +54,7 @@ func TestServerAuditDecline_Boundary(t *testing.T) {
 	expectText(t, "synced agent-harness", callTool(t, srv, "standards_audit", nil),
 		"[INFO] Agent harness declined by adoption.decline; audit still requires the text register block")
 	bare := t.TempDir()
-	if line, err := auditHookConfig(nil, bare); err != nil || !strings.Contains(line, "Not a git checkout") {
+	if line, err := auditHookConfig(t.Context(), nil, bare); err != nil || !strings.Contains(line, "Not a git checkout") {
 		t.Fatalf("hook gate outside a checkout: %q, %v", line, err)
 	}
 }

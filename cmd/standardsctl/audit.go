@@ -674,39 +674,36 @@ func resolvePreMigrationEpic(rootDir string) string {
 	return ""
 }
 
-// auditGitHooks requires lefthook.yml and an active pre-commit hook in a Git checkout. With
-// git-hooks in adoption.decline the repository owns its hooks, so neither is required; the
-// configuration check is the one standards_audit runs too (adopt.AuditGitHookConfig, #600).
+// auditGitHooks requires a hook runner configuration and an active pre-commit hook that runner
+// wrote, in a Git checkout. With git-hooks in adoption.decline the repository owns its hooks, so
+// neither is required. The configuration check is the one standards_audit runs too
+// (adopt.AuditGitHookConfig, #600); the installed hook is checked by adopt.AuditInstalledGitHook
+// (#175), except in CI, which installs no hooks.
 func auditGitHooks(ctx context.Context, manifest *config.Manifest, rootDir string) error {
 	gitDir := filepath.Join(rootDir, ".git")
 	if !util.DirExists(gitDir) && !util.FileExists(gitDir) {
 		return nil
 	}
 
-	line, declined, err := adopt.AuditGitHookConfig(manifest, rootDir)
+	hooks, err := adopt.AuditGitHookConfig(ctx, manifest, rootDir)
 	if err != nil {
 		return err
 	}
-	if declined {
-		fmt.Println(line)
+	if hooks.Declined {
+		fmt.Println(hooks.Line)
 		return nil
 	}
 
 	if os.Getenv("CI") == "true" || os.Getenv("GITHUB_ACTIONS") == "true" {
-		fmt.Println("[PASS] CI environment detected: lefthook.yml verified (local hook installation skipped).")
+		fmt.Printf("[PASS] CI environment detected: %s configuration %s verified (local hook installation skipped).\n", hooks.Runner, hooks.File)
 		return nil
 	}
 
-	hooksDir, err := adopt.ResolveGitHooksDir(ctx, rootDir)
+	line, err := adopt.AuditInstalledGitHook(ctx, rootDir)
 	if err != nil {
-		return fmt.Errorf("[FAIL] Resolve git hooks directory: %w", err)
+		return err
 	}
-	preCommitPath := filepath.Join(hooksDir, "pre-commit")
-	if !util.FileExists(preCommitPath) {
-		return fmt.Errorf("[FAIL] Pre-commit hook %s is missing or inactive; run 'lefthook install' or 'praetorctl adopt' to activate", preCommitPath)
-	}
-
-	fmt.Printf("[PASS] Local Git hooks (%s via lefthook) verified active.\n", preCommitPath)
+	fmt.Println(line)
 	return nil
 }
 

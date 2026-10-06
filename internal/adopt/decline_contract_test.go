@@ -171,14 +171,14 @@ func TestAuditSharedDeclineGates_3D(t *testing.T) {
 	if line, err := AuditLabelTaxonomy(declineManifest("labels"), root); err != nil || !strings.Contains(line, "declined by adoption.decline") {
 		t.Fatalf("declined labels: %q, %v", line, err)
 	}
-	if line, declined, err := AuditGitHookConfig(declineManifest("git-hooks"), root); err != nil || !declined ||
-		!strings.Contains(line, "Git hooks (lefthook.yml and its activation) declined by adoption.decline") {
-		t.Fatalf("declined git-hooks: %q, %v, %v", line, declined, err)
+	if hooks, err := AuditGitHookConfig(t.Context(), declineManifest("git-hooks"), root); err != nil || !hooks.Declined ||
+		!strings.Contains(hooks.Line, "Git hooks (lefthook.yml and its activation) declined by adoption.decline") {
+		t.Fatalf("declined git-hooks: %+v, %v", hooks, err)
 	}
 	if _, err := AuditLabelTaxonomy(nil, root); err == nil || !strings.Contains(err.Error(), "labels.yaml is missing") {
 		t.Fatalf("missing labels passed: %v", err)
 	}
-	if _, _, err := AuditGitHookConfig(declineManifest("labels"), root); err == nil || !strings.Contains(err.Error(), "lefthook.yml configuration is missing") {
+	if _, err := AuditGitHookConfig(t.Context(), declineManifest("labels"), root); err == nil || !strings.Contains(err.Error(), "lefthook.yml configuration is missing") {
 		t.Fatalf("missing lefthook.yml passed: %v", err)
 	}
 	mustWrite(t, filepath.Join(root, ".config", "labels.yaml"), "version: 1\nlabels: []\n")
@@ -186,8 +186,8 @@ func TestAuditSharedDeclineGates_3D(t *testing.T) {
 	if line, err := AuditLabelTaxonomy(nil, root); err != nil || !strings.HasPrefix(line, "[PASS] Repository label taxonomy") {
 		t.Fatalf("present labels: %q, %v", line, err)
 	}
-	if line, declined, err := AuditGitHookConfig(nil, root); err != nil || declined || !strings.HasPrefix(line, "[PASS] Git hook configuration") {
-		t.Fatalf("present lefthook.yml: %q, %v, %v", line, declined, err)
+	if hooks, err := AuditGitHookConfig(t.Context(), nil, root); err != nil || hooks.Declined || !strings.HasPrefix(hooks.Line, "[PASS] Git hook configuration") {
+		t.Fatalf("present lefthook.yml: %+v, %v", hooks, err)
 	}
 	if _, err := AuditLabelTaxonomy(declineManifest("lables"), root); err == nil {
 		t.Fatal("invalid decline list passed the labels gate")

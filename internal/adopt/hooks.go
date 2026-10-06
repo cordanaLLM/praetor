@@ -717,12 +717,12 @@ func (s *adoptSession) resolveHooksDirForInstall(ctx context.Context) (string, e
 // foreignPreCommitNote says why adoption kept a pre-commit hook it did not write and what the
 // operator can do about it.
 const foreignPreCommitNote = "existing pre-commit hook was not written by praetor; kept, --force included, " +
-	"because audit requires only that a pre-commit hook exists. Have it run '" + util.PraetorCLI +
-	" compile-context --verify' and '" + util.PraetorCLI + " " + preCommitAuditArgs + "', or remove it and re-run adopt to install the praetor hook"
+	"because it is the repository's. Audit accepts it only when lefthook or the pre-commit framework wrote it " +
+	"(AuditInstalledGitHook); otherwise remove it and re-run adopt to install the praetor hook"
 
 // installFallbackHook writes the praetor pre-commit hook. An existing hook that praetor did
-// not write is kept, --force included: audit checks only that a pre-commit hook exists, so
-// the hook is the repository's, and adoption neither replaces nor moves it. An existing
+// not write is kept, --force included: the hook is the repository's, and adoption neither
+// replaces nor moves it; audit decides whether a known runner wrote it. An existing
 // praetor hook is rewritten, which restores its mode, and listed as reconciled, never as
 // created. A pre-commit.bak an earlier adoption left under --force is reported, never removed.
 // A dry run records the same entry and writes nothing.
@@ -738,7 +738,7 @@ func (s *adoptSession) installFallbackHook(hookPath string) error {
 		if err != nil {
 			return fmt.Errorf("read existing hook %s: %w", hookPath, err)
 		}
-		if !bytes.Contains(data, []byte(fallbackPreCommitMarker)) {
+		if !isFallbackPreCommitHook(data) {
 			s.report.recordSkipped(display, foreignPreCommitNote)
 			return nil
 		}

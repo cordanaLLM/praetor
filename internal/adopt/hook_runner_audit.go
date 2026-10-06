@@ -85,7 +85,7 @@ type GitHookConfig struct {
 // praetorctl audit as local pre-commit hooks passes for the pre-commit framework. Which of the two
 // the checkout runs is decided by the installed hook (AuditInstalledGitHook), which this gate
 // does not read: with both files present lefthook.yml satisfies it.
-func AuditGitHookRunnerConfig(ctx context.Context, manifest *config.Manifest, rootDir string) (GitHookConfig, error) {
+func AuditGitHookConfig(ctx context.Context, manifest *config.Manifest, rootDir string) (GitHookConfig, error) {
 	verdict, err := AuditDecline(manifest, "git-hooks")
 	if err != nil {
 		return GitHookConfig{}, fmt.Errorf("[FAIL] Git hook audit failed: %w", err)
