@@ -44,8 +44,10 @@ var (
 	absentJustifications = []string{"component_not_present", "vulnerable_code_not_present"}
 )
 
-// vexDocument is an OpenVEX v0.2.0 document: every field the specification defines, so the strict
-// decode refuses a misspelled one instead of dropping it.
+// vexDocument is an OpenVEX v0.2.0 document: every field the specification defines, and the
+// supplier go-vex (github.com/openvex/go-vex, pkg/vex Metadata and Component) writes on the
+// document and on a product or subcomponent, so a document vexctl writes decodes and the strict
+// decode refuses a misspelled field instead of dropping it.
 type vexDocument struct {
 	Context     string          `json:"@context"`
 	ID          string          `json:"@id"`
@@ -55,6 +57,7 @@ type vexDocument struct {
 	LastUpdated string          `json:"last_updated,omitempty"`
 	Version     int             `json:"version"`
 	Tooling     string          `json:"tooling,omitempty"`
+	Supplier    string          `json:"supplier,omitempty"`
 	Statements  *[]vexStatement `json:"statements"`
 }
 
@@ -85,6 +88,7 @@ type vexComponent struct {
 	ID          string            `json:"@id,omitempty"`
 	Identifiers map[string]string `json:"identifiers,omitempty"`
 	Hashes      map[string]string `json:"hashes,omitempty"`
+	Supplier    string            `json:"supplier,omitempty"`
 }
 
 type vexProduct struct {
@@ -132,13 +136,13 @@ func parseVEX(rel string, data []byte, now time.Time) (*vexIndex, error) {
 	if err := strictjson.Decode(data, &doc, strictjson.Options{MaxBytes: maxVEXBytes, MaxDepth: maxVEXDepth, RejectNull: true}); err != nil {
 		return nil, err
 	}
-	reviewed, err := doc.validate(now)
+	issued, err := doc.validate(now)
 	if err != nil {
 		return nil, err
 	}
 	index := &vexIndex{path: rel, found: true, statements: make([]statement, 0, len(*doc.Statements))}
 	for i := 0; i < len(*doc.Statements) && i < maxStatements; i++ {
-		st, err := (*doc.Statements)[i].parse(i, reviewed, now)
+		st, err := (*doc.Statements)[i].parse(i, issued, now)
 		if err != nil {
 			return nil, err
 		}
@@ -147,8 +151,11 @@ func parseVEX(rel string, data []byte, now time.Time) (*vexIndex, error) {
 	return index, nil
 }
 
-// validate checks the document fields OpenVEX requires and returns the document's review time:
-// last_updated when set, else timestamp.
+// validate checks the document fields OpenVEX requires and returns the document's timestamp, the
+// time it was issued, which a statement without a time of its own inherits. The document's
+// last_updated is checked but never inherited: every edit of the document moves it, so a
+// statement inheriting it would be renewed for MaxStatementAge without a review. OpenVEX cascades
+// the document's timestamp too ("Inheritance Flow" in the specification).
 func (d *vexDocument) validate(now time.Time) (time.Time, error) {
 	switch {
 	case d.Context != OpenVEXContext:
@@ -166,23 +173,25 @@ func (d *vexDocument) validate(now time.Time) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	updated, err := vexTime("last_updated", d.LastUpdated, false, now)
-	if err != nil || updated.IsZero() {
-		return issued, err
+	if _, err := vexTime("last_updated", d.LastUpdated, false, now); err != nil {
+		return time.Time{}, err
 	}
-	return updated, nil
+	return issued, nil
 }
 
 // parse validates statement i and resolves its review time: its own last_updated, else its own
-// timestamp, else the document's (inherited) review time. OpenVEX lets a not_affected statement
-// carry a justification or an impact statement; the gate requires both, a label it can check
-// against the finding and the reason a reviewer reads.
-func (s *vexStatement) parse(i int, inherited, now time.Time) (statement, error) {
+// timestamp, else the document's timestamp (issued, inherited). OpenVEX lets a not_affected
+// statement carry a justification or an impact statement; the gate requires both, a label it can
+// check against the finding and the reason a reviewer reads.
+func (s *vexStatement) parse(i int, issued, now time.Time) (statement, error) {
 	label := fmt.Sprintf("statements[%d] (%s)", i, s.Vulnerability.Name)
-	if err := s.validateFields(); err != nil {
+	if err := s.validateLabels(); err != nil {
 		return statement{}, fmt.Errorf("%s: %w", label, err)
 	}
-	reviewed, err := s.reviewTime(inherited, now)
+	if err := s.validateNotAffected(); err != nil {
+		return statement{}, fmt.Errorf("%s: %w", label, err)
+	}
+	reviewed, err := s.reviewTime(issued, now)
 	if err != nil {
 		return statement{}, fmt.Errorf("%s: %w", label, err)
 	}
@@ -190,8 +199,9 @@ func (s *vexStatement) parse(i int, inherited, now time.Time) (statement, error)
 	return statement{index: i, names: names, status: s.Status, justification: s.Justification, reviewed: reviewed}, nil
 }
 
-// validateFields checks the statement's labels, names and bounds.
-func (s *vexStatement) validateFields() error {
+// validateLabels checks the statement's names, bounds and labels: the ones OpenVEX defines for
+// every status.
+func (s *vexStatement) validateLabels() error {
 	switch {
 	case s.Vulnerability.Name == "":
 		return errors.New("vulnerability.name is required")
@@ -203,18 +213,26 @@ func (s *vexStatement) validateFields() error {
 		return fmt.Errorf("status %q is not one of %v", s.Status, vexStatuses)
 	case s.Justification != "" && !slices.Contains(vexJustifications, s.Justification):
 		return fmt.Errorf("justification %q is not one of %v", s.Justification, vexJustifications)
-	case s.Status == statusNotAffect && (s.Justification == "" || s.ImpactStatement == ""):
+	}
+	return nil
+}
+
+// validateNotAffected checks what the gate needs of a not_affected statement: a justification and
+// an impact statement.
+func (s *vexStatement) validateNotAffected() error {
+	if s.Status == statusNotAffect && (s.Justification == "" || s.ImpactStatement == "") {
 		return errors.New("a not_affected statement needs a justification and an impact_statement")
 	}
 	return nil
 }
 
-// reviewTime checks the statement's timestamps and returns the one its review is dated by.
-func (s *vexStatement) reviewTime(inherited, now time.Time) (time.Time, error) {
+// reviewTime checks the statement's timestamps and returns the one its review is dated by:
+// last_updated, else timestamp, else issued, the document's timestamp.
+func (s *vexStatement) reviewTime(issued, now time.Time) (time.Time, error) {
 	if _, err := vexTime("action_statement_timestamp", s.ActionStatementTimestamp, false, now); err != nil {
 		return time.Time{}, err
 	}
-	issued, err := vexTime("timestamp", s.Timestamp, false, now)
+	own, err := vexTime("timestamp", s.Timestamp, false, now)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -224,10 +242,10 @@ func (s *vexStatement) reviewTime(inherited, now time.Time) (time.Time, error) {
 		return time.Time{}, err
 	case !updated.IsZero():
 		return updated, nil
-	case !issued.IsZero():
-		return issued, nil
+	case !own.IsZero():
+		return own, nil
 	}
-	return inherited, nil
+	return issued, nil
 }
 
 // vexTime parses one RFC 3339 timestamp. An absent optional one is the zero time; a timestamp

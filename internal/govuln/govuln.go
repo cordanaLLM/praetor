@@ -44,8 +44,9 @@ const (
 	ScanTimeout = 15 * time.Minute
 	// MaxStatementAge is how long a not_affected statement covers an advisory after its last
 	// review: the review date is the statement's last_updated, else its timestamp, else the
-	// document's. It is the 90-day cap the npm audit exceptions carry (scripts/npm_audit_gate.py),
-	// so every waiver in the repository is reviewed on the same cadence.
+	// document's timestamp, never the document's last_updated. It is the 90-day cap the npm
+	// audit exceptions carry (scripts/npm_audit_gate.py), so every waiver in the repository is
+	// reviewed on the same cadence.
 	MaxStatementAge = 90 * 24 * time.Hour
 	// maxScannerWords bounds the scanner command a caller passes (HISS-02).
 	maxScannerWords = 32

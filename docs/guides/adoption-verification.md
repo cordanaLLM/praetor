@@ -856,15 +856,21 @@ A statement covers an advisory when all of these hold (`assess` in
 - `vulnerability.name` or one of its `aliases` is the advisory's Go identifier or an alias
   govulncheck's OSV entry lists, such as its CVE;
 - it is the latest statement naming the advisory. Its review time is its own `last_updated`, else
-  its `timestamp`, else the document's `last_updated`, else the document's `timestamp`; two
-  statements sharing the latest review time fail the advisory;
+  its `timestamp`, else the document's `timestamp`, the time the document was issued; two
+  statements sharing the latest review time fail the advisory. The document's `last_updated` is
+  never inherited: every edit of the document moves it, and a statement inheriting it would be
+  renewed without a review. `vexctl add` writes a `timestamp` on the statement it adds. Before you
+  move the document's `timestamp`, give the statements without a time of their own the previous
+  one, as "Updating Statements with Inherited Data" in the OpenVEX specification shows;
 - its `status` is `not_affected` with a `justification` label and an `impact_statement`. OpenVEX
   asks for either; the gate requires both, the label it checks against the finding and the reason a
   reviewer reads;
 - it was reviewed within the last 90 days (`govuln.MaxStatementAge`, the cap the npm audit
   exceptions carry). To extend it, review it and set a new `last_updated`.
 
-The document is decoded strictly (`internal/strictjson`). An unknown or duplicate field, a null, a
+The document is decoded strictly (`internal/strictjson`). It may hold every field OpenVEX v0.2.0
+defines and the `supplier` that [go-vex](https://github.com/openvex/go-vex) and `vexctl` write on
+the document, a product and a subcomponent. An unknown or duplicate field, a null, a
 missing required field (`@context`, `@id`, `author`, `timestamp`, `version`, `statements`,
 `vulnerability.name`, `status`), a status or justification outside the specification, a timestamp
 that is not RFC 3339 or lies in the future, and another OpenVEX version are each exit 2, and the
