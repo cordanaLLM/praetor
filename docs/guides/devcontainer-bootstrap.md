@@ -77,6 +77,22 @@ carries `praetorctl` only, not the other binaries a
 [Tribunus router](../tribunus/data-sync.md), which an adopter DevContainer does
 not run (`renderBootstrapDockerfile` in `internal/devcontainer/bootstrap.go`).
 
+No `RUN` line of `Dockerfile.praetor` holds a pipe. A pipeline's status is its
+last command's, so `cat ... | base64 -d` would hide a failed `cat`: the archive
+frames are joined into a file, decoded from it, and checked against a digest
+file, so every command's status counts and Hadolint's
+[DL4006](https://github.com/hadolint/hadolint/wiki/DL4006) has nothing to
+report. The Dockerfile sets no pipefail `SHELL` instead, because the builder
+image is selectable (`--builder-image`) and the two shells Hadolint accepts for
+pipefail, `/bin/ash` and `/bin/bash`, each exist in only one image family:
+Alpine has no bash, the Debian `golang` images no ash (`bootstrapArchiveSteps`
+in `internal/devcontainer/bootstrap.go`).
+`TestBootstrapDockerfilePipesFollowPipefailShell` requires any piped `RUN` to
+follow a pipefail `SHELL` in its stage, and
+`TestRenderedBootstrapDockerfilePassesHadolintDL4006` runs hadolint on the
+rendering where it is installed and skips, saying so, where it is not
+(`internal/devcontainer/bootstrap_pipefail_test.go`).
+
 To exercise the prepared Dockerfile independently of an IDE:
 
 ```bash
@@ -180,6 +196,27 @@ Dry-run lists planned companion paths without writing them. Existing custom
 DevContainers are preserved and reported as execution-unverified. Forced
 adoption keeps recorded images by the same rule and lists each note as a
 warning.
+
+## Feature options and editor settings
+
+The selected catalog entries decide which DevContainer features a bundle
+installs ([archetype authoring](archetype-authoring.md)). Two values are
+Praetor's own:
+
+- `common-utils` receives `installZsh: false` and `upgradePackages: true`, so
+  the image upgrades the OS packages of its digest-pinned base instead of
+  keeping their fixable vulnerabilities. Options a catalog sets for
+  `common-utils` merge over these defaults key by key: a key the catalog sets
+  wins, and every default it leaves unset is kept. The shipped archetypes
+  select `common-utils` with no options and keep both defaults; only an
+  explicit `upgradePackages: false` turns the upgrade off. The rule matches the
+  feature under any registry, mirror, tag or digest (`selectedFeatureOptions`
+  in `internal/devcontainer/devcontainer.go`).
+- A container with Go tooling sets `go.toolsManagement.autoUpdate` to `false`,
+  the Go extension's own default, so the extension does not update its tools
+  after creation behind a pinned Go feature and golangci-lint version.
+
+Tests: `internal/devcontainer/feature_defaults_test.go`.
 
 ## Moving a reviewed default image
 
@@ -566,6 +603,21 @@ current usage of each bound:
 ```bash
 go test -v -run TestRepositoryBootstrapSourceKeepsHeadroom ./internal/devcontainer
 ```
+
+### Pinned Go tools, common-utils defaults and an unpiped Dockerfile
+
+A bundle generated before this change reports drift in
+`praetorctl devcontainer verify` and `praetorctl audit`: its
+`devcontainer.json` sets `go.toolsManagement.autoUpdate` to `true` and passes
+`common-utils` without the merged defaults, and its recorded `dockerfileSHA256`
+names the piped Dockerfile rendering, reported as `bootstrap Dockerfile
+identity differs from its recorded inputs`
+([feature options](#feature-options-and-editor-settings)). Regenerate it with
+the generation command above and `--force`. Regeneration still reads what the
+earlier bundle records: an adopter's base or builder image is kept, and
+`--force` without a source root still refuses to replace the ready bootstrap
+(`decodeRecordedBootstrap` in `internal/devcontainer/bootstrap_io.go`, tests in
+`internal/devcontainer/bootstrap_rendering_test.go`).
 
 ## Infrastructure test environments
 

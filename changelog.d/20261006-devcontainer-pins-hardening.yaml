@@ -1,0 +1,4 @@
+type: fixed
+title: "Generated DevContainers auto-updated pinned Go tools, dropped the common-utils package upgrade and hid failed bootstrap steps behind pipes (Hadolint DL4006); regenerate each bundle with devcontainer generate --force"
+issue: "332, #334, #351"
+breaking: true
