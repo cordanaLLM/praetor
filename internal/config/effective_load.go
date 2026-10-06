@@ -157,7 +157,7 @@ func (l *effectiveLoader) document(path, id string) (*yaml.Node, PolicyLayer, er
 	if err != nil {
 		return nil, PolicyLayer{}, fmt.Errorf("policy source %s: %w", id, err)
 	}
-	return node, PolicyLayer{Source: PolicySource{ID: id, Path: path, SHA256: policyDigest(data)}}, nil
+	return node, PolicyLayer{Source: PolicySource{ID: id, Path: path, SHA256: sourceDigest(data)}}, nil
 }
 
 func (l *effectiveLoader) manifest(path string) (*Manifest, PolicyLayer, error) {

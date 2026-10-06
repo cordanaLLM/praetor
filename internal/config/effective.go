@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -31,8 +32,9 @@ type ComplexityOverride struct {
 	MaxStatements *int `yaml:"max_statements,omitempty" json:"max_statements,omitempty"`
 }
 
-// PolicySource identifies exact input bytes. Path is diagnostic, excluded from the
-// effective digest so mounting identical configuration elsewhere retains its identity.
+// PolicySource identifies an input text by sourceDigest, so a CRLF checkout of a source keeps
+// the identity of its LF form. Path is diagnostic, excluded from the effective digest so
+// mounting identical configuration elsewhere retains its identity.
 type PolicySource struct {
 	ID     string `json:"id"`
 	Path   string `json:"path,omitempty"`
@@ -266,4 +268,13 @@ func (p *EffectivePolicy) seal() error {
 func policyDigest(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// sourceDigest is the identity of a policy source read from a checkout: the digest an LF text
+// and each checkout of it in one consistent line-ending style share (util.CheckoutTextDigest),
+// so a Windows clone reports the source lines and the effective digest of an LF clone. A source
+// with mixed line endings keeps the digest of its exact bytes.
+func sourceDigest(data []byte) string {
+	digest, _ := util.CheckoutTextDigest(data)
+	return digest
 }

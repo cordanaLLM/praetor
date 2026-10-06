@@ -18,7 +18,7 @@ const mismatchFacetBody = "id: security:high\ncomplexity:\n  max_cognitive: 12\n
 // and the digest the source hashes to.
 func assertMismatchReport(t *testing.T, root, kind, id, pinned, path, actual string) {
 	t.Helper()
-	want := entryDigestMismatch(kind, id, pinned, path, actual).Error()
+	want := entryDigestMismatch(kind, id, pinned, path, actual, "").Error()
 	for _, word := range []string{kind, id, digestPrefix + pinned, path, digestPrefix + actual} {
 		if !strings.Contains(want, word) {
 			t.Fatalf("the report omits %q: %s", word, want)

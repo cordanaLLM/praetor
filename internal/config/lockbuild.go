@@ -158,7 +158,8 @@ func hashLockCatalog(ctx context.Context, root string) (profiles, facets map[str
 	return profiles, facets, nil
 }
 
-// catalogDigests maps each id of sources, an archetype index, to its file's sha256:<hex>.
+// catalogDigests maps each id of sources, an archetype index, to its file's sha256:<hex>, the
+// line-ending neutral digest verification compares (fileDigest).
 func catalogDigests(ctx context.Context, sources map[string]string) (map[string]string, error) {
 	if len(sources) > maxLockEntries {
 		return nil, fmt.Errorf("lock source catalog exceeds %d entries per kind", maxLockEntries)
@@ -166,7 +167,7 @@ func catalogDigests(ctx context.Context, sources map[string]string) (map[string]
 	ids := slices.Sorted(maps.Keys(sources))
 	digests := make(map[string]string, len(ids))
 	for i := 0; i < len(ids) && i < maxLockEntries; i++ {
-		digest, err := fileDigest(ctx, sources[ids[i]])
+		digest, _, err := fileDigest(ctx, sources[ids[i]])
 		if err != nil {
 			return nil, err
 		}

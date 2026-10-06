@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func (l *effectiveLoader) pinnedLayers(opts EffectiveOptions, manifest *Manifest) ([]PolicyLayer, error) {
@@ -22,7 +24,7 @@ func (l *effectiveLoader) pinnedLayers(opts EffectiveOptions, manifest *Manifest
 	if err := validateEffectivePins(lock, manifest); err != nil {
 		return nil, err
 	}
-	layers := []PolicyLayer{{Source: PolicySource{ID: "lock", Path: path, SHA256: policyDigest(data)}}}
+	layers := []PolicyLayer{{Source: PolicySource{ID: "lock", Path: path, SHA256: sourceDigest(data)}}}
 	if len(manifest.Profiles)+len(manifest.Facets) == 0 {
 		return layers, nil
 	}
@@ -75,13 +77,16 @@ func (l *effectiveLoader) pinnedLayer(path, kind string, pin lockEntry) (PolicyL
 	if err != nil {
 		return PolicyLayer{}, err
 	}
-	layer := PolicyLayer{Source: PolicySource{ID: kind + ":" + pin.ID, Path: path, SHA256: policyDigest(data)}}
+	// The pin compares with the digest lock validation computes (fileDigest), so a CRLF
+	// checkout of an unmodified archetype resolves; the retained snapshot keeps its exact bytes.
+	actual, strict := util.CheckoutTextDigest(data)
+	layer := PolicyLayer{Source: PolicySource{ID: kind + ":" + pin.ID, Path: path, SHA256: actual}}
 	digest, err := normalizeDigest(pin.Digest)
 	if err != nil {
 		return layer, err
 	}
-	if layer.Source.SHA256 != digest {
-		return layer, entryDigestMismatch(kind, pin.ID, digest, path, layer.Source.SHA256)
+	if actual != digest {
+		return layer, entryDigestMismatch(kind, pin.ID, digest, path, actual, strict)
 	}
 	archetype, err := decodeArchetype(l.ctx, path, data)
 	if err != nil {
@@ -92,7 +97,7 @@ func (l *effectiveLoader) pinnedLayer(path, kind string, pin lockEntry) (PolicyL
 	}
 	layer.Complexity = archetype.Complexity
 	layer.Controls = archetype.Controls
-	l.retainArtifact(path, kind, data, layer.Source.SHA256)
+	l.retainArtifact(path, kind, data, policyDigest(data))
 	return layer, nil
 }
 

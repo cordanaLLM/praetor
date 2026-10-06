@@ -108,14 +108,17 @@ func isPlaceholderDigest(value string) bool {
 	return value == strings.Repeat(value[:16], 4)
 }
 
-// fileDigest returns the lowercase sha256 of a file's contents.
-func fileDigest(ctx context.Context, path string) (string, error) {
+// fileDigest returns the lowercase sha256 a file's contents share with every checkout of them
+// (util.CheckoutTextDigest): a file in one consistent line-ending style hashes as its LF form,
+// so an archetype checked out with CRLF on Windows verifies against a pin made from the LF
+// blob. A file with mixed endings hashes byte for byte, and strict says why.
+func fileDigest(ctx context.Context, path string) (digest, strict string, err error) {
 	data, err := readLockSource(ctx, path)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+		return "", "", fmt.Errorf("read %s: %w", path, err)
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	digest, strict = util.CheckoutTextDigest(data)
+	return digest, strict, nil
 }
 
 func confinedArchetypePath(root, dir, name string) (string, error) {
@@ -210,23 +213,24 @@ func verifyLockEntries(ctx context.Context, declared []string, entries []lockEnt
 			unverified++
 			continue
 		}
-		actual, err := fileDigest(ctx, entry.path)
+		actual, strict, err := fileDigest(ctx, entry.path)
 		if err != nil {
 			return 0, err
 		}
 		if actual != digest {
-			return 0, entryDigestMismatch(kind, entry.id, digest, entry.path, actual)
+			return 0, entryDigestMismatch(kind, entry.id, digest, entry.path, actual, strict)
 		}
 	}
 	return unverified, nil
 }
 
 // entryDigestMismatch reports a pinned entry whose catalog source hashes to another digest,
-// naming both digests so the lock can be re-pinned from the message alone. Lock validation
-// and effective policy share this one report.
-func entryDigestMismatch(kind, id, pinned, path, actual string) error {
-	return fmt.Errorf("%w: %s %q pins %s%s but %s hashes to %s%s",
-		ErrLockDigestMismatch, kind, id, digestPrefix, pinned, path, digestPrefix, actual)
+// naming both digests so the lock can be re-pinned from the message alone, and, when strict
+// is set, that the source was hashed byte for byte and why (util.ByteExactNote). Lock
+// validation and effective policy share this one report.
+func entryDigestMismatch(kind, id, pinned, path, actual, strict string) error {
+	return fmt.Errorf("%w: %s %q pins %s%s but %s hashes to %s%s%s",
+		ErrLockDigestMismatch, kind, id, digestPrefix, pinned, path, digestPrefix, actual, util.ByteExactNote(strict))
 }
 
 // archetypeSources indexes a catalog's archetype and facet definitions. Both indexes
