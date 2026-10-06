@@ -696,7 +696,10 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
 - **Register skills.** With `--lock-source-root`, the agent-harness step installs the skills
   the text register block names, `social-text` and `caveman`, and `adhd-format`, which
   `social-text` inherits from, into `.agents/skills/`. A declined agent-harness step, or a run
-  without `--lock-source-root`, installs none, and the block then names none
+  without `--lock-source-root`, installs none, and neither the block nor the Paperclip harness
+  then names one. A declined agent-definitions step installs none either while `agent_clients`
+  selects Claude Code, since no step would write the `.claude/skills/` copies. A symlinked
+  `.claude/skills` fails adoption before its first write
   ([register skills](guides/text-register.md#register-skills),
   `internal/adopt/register_skills.go`).
 - **Agent context verification.** The agent-definitions step projects the canonical personas
