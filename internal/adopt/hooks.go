@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -38,6 +39,11 @@ const (
 	// npm, Python) is admitted without a receipt, its unverified languages named, instead of every
 	// push being refused (#648); a Go or Cargo root is refused as before when its stages did not run.
 	prePushGateArgs = "gate run --path=. --" + gating.AdmitUnsupportedFlag
+	// govulnGateArgs is the Go vulnerability gate the generated pre-push security job runs where
+	// govulncheck is installed: govulncheck at symbol level, judged against the repository's
+	// OpenVEX document (internal/govuln), the check the gate run's security stage makes. The job
+	// ran `govulncheck ./...` before, which failed on a called symbol only (#778).
+	govulnGateArgs = "security govuln"
 )
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
@@ -93,7 +99,13 @@ func lefthookPythonCommand(args string) string {
 // optionalToolCommand renders a lefthook run line for a third-party tool that is skipped
 // when absent but blocks when it fails.
 func optionalToolCommand(tool, args string) string {
-	return "if command -v " + tool + " >/dev/null 2>&1; then " + tool + " " + args +
+	return optionalToolGuard(tool, tool+" "+args)
+}
+
+// optionalToolGuard renders a lefthook run line that runs command only where the third-party
+// tool it needs is installed, and otherwise skips with the reason. A failing command blocks.
+func optionalToolGuard(tool, command string) string {
+	return "if command -v " + tool + " >/dev/null 2>&1; then " + command +
 		"; else echo " + tool + " is not installed, skipping >&2; fi"
 }
 
@@ -164,13 +176,14 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 	return jobs
 }
 
-// lefthookPrePushJobs renders the pre-push jobs of languages: govulncheck for Go. The gate job
-// runs cargo audit for a Cargo.lock itself.
+// lefthookPrePushJobs renders the pre-push jobs of languages: the Go vulnerability gate for Go
+// (govulnGateArgs). The gate job runs cargo audit for a Cargo.lock itself.
 func lefthookPrePushJobs(languages hisscatalog.Language) string {
 	if languages&hisscatalog.LanguageGo == 0 {
 		return ""
 	}
-	return "    security:\n" + lefthookRun(goModuleCommand("govulncheck", optionalToolCommand("govulncheck", "./...")))
+	return "    security:\n" + lefthookRun(goModuleCommand(govuln.DefaultScanner,
+		optionalToolGuard(govuln.DefaultScanner, lefthookGovernedCommand(govulnGateArgs))))
 }
 
 // lefthookHeader is the rendering's leading comment, naming the languages it carries jobs for.

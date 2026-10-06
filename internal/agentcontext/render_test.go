@@ -301,3 +301,78 @@ func TestVendorTargetsFollowsClientSelection(t *testing.T) {
 		t.Fatalf("unknown client accepted: %v", err)
 	}
 }
+
+// TestContextFiles_Positive_MatchesCanonicalAndVendorTargets tests that ContextFiles returns
+// the canonical file followed by every vendor target path in compile order (HISS-19).
+func TestContextFiles_Positive_MatchesCanonicalAndVendorTargets(t *testing.T) {
+	files := ContextFiles()
+	vendor := VendorTargetPaths()
+	if len(files) != len(vendor)+1 {
+		t.Fatalf("ContextFiles length %d, want %d", len(files), len(vendor)+1)
+	}
+	if files[0] != CanonicalFile {
+		t.Errorf("ContextFiles[0] = %q, want %q", files[0], CanonicalFile)
+	}
+	for i, path := range vendor {
+		if files[i+1] != path {
+			t.Errorf("ContextFiles[%d] = %q, want %q", i+1, files[i+1], path)
+		}
+	}
+}
+
+// TestIsContextPath_Positive: every file compile-context knows matches at its place in the
+// repository, the canonical file and each compiled vendor file alike.
+func TestIsContextPath_Positive(t *testing.T) {
+	for _, rel := range append([]string{"AGENTS.md"}, testPaths...) {
+		if !IsContextPath(rel) {
+			t.Errorf("IsContextPath(%q) = false, want true", rel)
+		}
+	}
+}
+
+// TestIsContextPath_Negative: a file that only shares a context file's name, nested or in
+// another directory, is not that file; lookalikes and other inputs are not context either.
+func TestIsContextPath_Negative(t *testing.T) {
+	for _, rel := range []string{
+		"",
+		"-",
+		"nested/AGENTS.md",
+		"nested/CLAUDE.md",
+		".agents/agents/reviewer/AGENTS.md",
+		"docs/claude.md",
+		"sub/.cursor/rules/hiss-invariants.mdc",
+		".cursor/rules/other.mdc",
+		"NOT_AGENTS.md",
+		"my-AGENTS.md",
+		"candidate-note.md",
+		"COMMIT_EDITMSG",
+		"main.go",
+	} {
+		if IsContextPath(rel) {
+			t.Errorf("IsContextPath(%q) = true, want false", rel)
+		}
+	}
+}
+
+// TestIsContextPath_Boundary: the comparison is exact. Case variants do not match on any
+// platform, and the input must already be clean, slash-separated and root-relative, as the
+// caller's filepath.Rel plus filepath.ToSlash returns it (HISS-21).
+func TestIsContextPath_Boundary(t *testing.T) {
+	for _, rel := range []string{
+		"agents.md",
+		"Agents.md",
+		"claude.md",
+		".WINDSURFRULES",
+		".gemini/gemini.md",
+		"./AGENTS.md",
+		"/AGENTS.md",
+		"AGENTS.md/",
+		"../AGENTS.md",
+		".cursor\\rules\\hiss-invariants.mdc",
+		" AGENTS.md",
+	} {
+		if IsContextPath(rel) {
+			t.Errorf("boundary IsContextPath(%q) = true, want false", rel)
+		}
+	}
+}

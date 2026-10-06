@@ -527,6 +527,21 @@ come from the same reconciled inputs. An observed fork uses its root module name
 a header-only replacement package produces no replacement candidate. Epic
 creation propagates inspection/planning errors instead of generating a fallback.
 
+A target that is the selected framework's own module is refused before it is
+scanned. That covers the framework's own directory, a symlink to it, another
+checkout whose `go.mod` declares the framework's module, and a module-path
+selection of that module (`--framework=example.org/fork` on the checkout that
+declares it). Scored against itself, a framework would be offered its own packages
+as replacements for its own dependencies: self-import cycles, and package paths
+nothing declares. The error is `needs.SelfTargetMigrationError`
+(`errors.Is(err, needs.ErrSelfTargetMigration)`) and names both the target and the
+framework. A nested module that only shares the framework's path prefix, such as
+`example.org/fork/tools` or `example.org/fork/v2`, is a different module and is
+analysed. `needs epic --dev-dir` lists the framework's own checkout under
+`[SKIP]` instead of failing the run (`TestMigrationRefusesSelfTarget_3D` and
+`TestRegenerateFleetEpics_SkipsSelectedFramework` in
+`internal/needs/migration_self_target_test.go`).
+
 The candidate also names the branch an admitted migration would create:
 `framework.migration_branch`, else `refactor/framework-adoption`. An operator with an
 open branch under the former built-in name configures that name, because the migration

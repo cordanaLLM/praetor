@@ -77,9 +77,12 @@ pre-push:
     security:
       run: >-
         if [ -f go.mod ]; then if command -v govulncheck >/dev/null 2>&1; then
-        govulncheck ./...; else echo govulncheck is not installed, skipping >&2;
-        fi; else echo no go.mod at the repository root, skipping govulncheck
-        >&2; fi
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" security govuln; else
+        echo HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi; else echo govulncheck is not
+        installed, skipping >&2; fi; else echo no go.mod at the repository root,
+        skipping govulncheck >&2; fi
     flavor-audit:
       run: >-
         if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v

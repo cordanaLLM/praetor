@@ -65,6 +65,9 @@ in `catalogValuesChangedSinceBUG782`. It re-pins `.standards.lock` and regenerat
 only when a file Praetor's own `.standards.yaml` declares moved: `praetorctl audit --offline`
 and `praetorctl devcontainer verify` say so, and both passed unchanged for the
 `docker-in-docker:4` move, because Praetor declares neither `app-service` nor `container-image`.
+Options a catalog gives `common-utils` merge over Praetor's hardening defaults, so a selection
+with no options keeps them
+([feature options](devcontainer-bootstrap.md#feature-options-and-editor-settings)).
 
 A major bump is first read against the feature's own definition in
 [devcontainers/features](https://github.com/devcontainers/features) (`devcontainer-feature.json`,

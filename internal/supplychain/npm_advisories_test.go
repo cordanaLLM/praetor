@@ -22,10 +22,13 @@ import (
 // installed both affected versions through markdownlint-cli2 0.23.2, beside markdown-it 14.3.0
 // (GHSA-253c-mchw-3w2r) (#643). markdown-it left the lock with markdownlint-cli2 (#736): the
 // markdownlint library needs it only for custom rules on the markdown-it parser, and the gate
-// passes none, so it has no floor here.
+// passes none, so it has no floor here. katex GHSA-238p-pmpm-9mq7 (0.11.0 to 0.18.1) came in
+// through micromark-extension-math, whose ^0.16.0 range reaches no fixed release, so
+// tools/markdownlint/package.json overrides katex (#793).
 var npmAdvisoryFloors = map[string]string{
 	"smol-toml": "1.7.1",
 	"js-yaml":   "5.4.1",
+	"katex":     "0.18.2",
 }
 
 // advisoryFloorViolations lists every installed name@version of a floor package that orders
@@ -74,21 +77,25 @@ func TestMarkdownGateLockClearsFixedAdvisories(t *testing.T) {
 	}
 }
 
-// Negative: the lock shipped before #643 fails on each affected package that still has a floor.
+// Negative: the lock shipped before #643 fails on each affected package that still has a floor,
+// and the lock shipped before #793 fails on katex alone.
 func TestMarkdownGateLockAdvisoryFloorsRejectPriorLock(t *testing.T) {
-	prior := filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior",
-		"package-lock.markdownlint-cli2-0.23.2.json")
-	lock, err := os.ReadFile(prior)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"js-yaml 5.2.2 is below 5.4.1",
-		"smol-toml 1.7.0 is below 1.7.1",
-	}
-	got := advisoryFloorViolations(mustLockRuntimePackages(t, lock), npmAdvisoryFloors)
-	if !slices.Equal(got, want) {
-		t.Fatalf("violations = %v, want %v", got, want)
+	for name, want := range map[string][]string{
+		"package-lock.markdownlint-cli2-0.23.2.json": {
+			"js-yaml 5.2.2 is below 5.4.1",
+			"katex 0.16.47 is below 0.18.2",
+			"smol-toml 1.7.0 is below 1.7.1",
+		},
+		"package-lock.katex-0.16.47.json": {"katex 0.16.47 is below 0.18.2"},
+	} {
+		lock, err := os.ReadFile(filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := advisoryFloorViolations(mustLockRuntimePackages(t, lock), npmAdvisoryFloors)
+		if !slices.Equal(got, want) {
+			t.Fatalf("%s: violations = %v, want %v", name, got, want)
+		}
 	}
 }
 

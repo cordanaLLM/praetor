@@ -313,7 +313,9 @@ persona under `.agents/agents/` and every canonical skill under `.agents/skills/
 the caveman lint (see "The context gate" below); a configured `max_tokens` bounds the
 provider request of a repair run; `praetorctl caveman check --max-words`/`--max-tokens`
 makes a per-surface ceiling enforceable on any text a check can read as a file (see
-"Ceilings" below). `check` defaults to the strict runtime-message grammar; `--kind=brief`
+"Ceilings" below). Without `--kind`, `check` judges AGENTS.md and the compiled vendor
+files under the context gate's profile and every other input under the strict
+runtime-message grammar (see "Caveman lint and token estimate" below); `--kind=brief`
 and `--kind=return` add their documented schema, while `--kind=context` selects the context
 gate's compatibility profile. Every result identifies which numbered skill rules remained
 advisory.
@@ -408,8 +410,34 @@ praetorctl caveman estimate --base=origin/main AGENTS.md .agents/
 
 `check` prints one summary line per input, then its findings as `<path>:<line> <rule>:
 <excerpt>`, and exits non-zero when any input fails. Line 0 means the whole text. A
-directory expands to the Markdown files below it; `-` reads standard input. The text
-register block is blanked before the lint, exactly as the context gate does it, and the
+directory expands to the Markdown files below it; `-` reads standard input.
+
+Without `--kind`, `check` judges a context file the way the context gate does: the
+canonical `AGENTS.md` and each vendor file compile-context writes (`CLAUDE.md`,
+`.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`,
+`.gemini/GEMINI.md`, `.codex/rules.md`) get `--kind=context`, so `praetorctl caveman check
+AGENTS.md`, the command the compiled harness names, reproduces the gate's verdict. Every
+other input gets `--kind=message`. The file list is `agentcontext.ContextFiles`, built from
+the targets compile-context writes; workstation discovery reads the same list. Each path is
+resolved against `--root` (default `.`) and compared exactly, so the rule has these edges:
+
+- an `AGENTS.md` in a subdirectory (`nested/AGENTS.md`), a persona directory entry
+  (`.agents/agents/<name>/AGENTS.md`) and a `claude.md` in `docs/` are not context files
+  and get `message`;
+- a context file outside `--root` gets `message`; pass `--root` to check another
+  repository's files;
+- names are case-sensitive on every platform: on a case-insensitive file system
+  `agents.md` opens `AGENTS.md` but gets `message`; type the name as compile-context
+  writes it;
+- an explicit `--kind` always wins.
+
+`.windsurfrules` and `.cursor/rules/hiss-invariants.mdc` are read as prose at their place
+below `--root` although they are not Markdown; elsewhere a file without the `.md` extension
+is a tracked runtime source and needs `--surface` (see "Tracked runtime sources" below).
+The tests are `TestCavemanCheckContextKindInference_*` in `cmd/standardsctl/caveman_test.go`
+and `TestIsContextPath_*` in `internal/agentcontext/render_test.go`.
+
+The text register block is blanked before the lint, exactly as the context gate does it, and the
 summary line counts its lines; `front_matter_lines` counts the lines of YAML front matter
 left out of the prose rules (see "Not prose" below). It also prints the selected contract plus mechanically
 checked and advisory Caveman skill-rule numbers; `PASS` covers only the mechanical rows.
@@ -585,7 +613,8 @@ property of one surface (600 prose words for a persona or a skill; the evidence 
 1500 tokens, for anything checked against it), not of caveman prose everywhere, so
 `AgentTextCeiling` is passed explicitly by the persona/skill gate rather than living in
 `Check`'s defaults. `Options.Kind` has a zero-value `context` profile for source
-compatibility; the CLI explicitly defaults to `message`.
+compatibility; the CLI defaults to `message` for every input but the context files it
+judges as `context` (see "Caveman lint and token estimate" above).
 
 The summary's rule numbers refer to the eight numbered rules in the Caveman skill, not the
 `C1`-`C13` finding identifiers. Classification is intentionally conservative:

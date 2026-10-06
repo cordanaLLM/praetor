@@ -793,6 +793,157 @@ stand-in `cargo` with `testsupport.BuildExecutable`, puts it first on `PATH`, an
 through the production runner: all commands passing mints a receipt that verifies and leaves the
 build output in the shared directory after the worktree is gone, and a clippy failure mints none.
 
+### Go vulnerabilities and the OpenVEX document
+
+The security stage runs the Go vulnerability gate before gosec
+([`internal/govuln`](https://github.com/cordanaLLM/praetor/tree/main/internal/govuln)). Run the
+same check on its own:
+
+```bash
+praetorctl security govuln                      # govulncheck from PATH, module at the working directory
+praetorctl security govuln --path=svc -- go tool -modfile=tools/go/go.mod govulncheck   # a pinned scanner
+```
+
+The gate runs `govulncheck -scan symbol -format json ./...` and judges each advisory by its deepest
+finding:
+
+| govulncheck reports | Verdict |
+| :--- | :--- |
+| a vulnerable symbol the module calls | fails; no statement can cover a call |
+| a vulnerable package the module imports, nothing called | fails unless a `not_affected` statement covers it; `component_not_present` and `vulnerable_code_not_present` do not, since the package is in the build |
+| a module of the advisory, none of its vulnerable packages imported | fails unless a `not_affected` statement covers it |
+
+`praetorctl security govuln` exits 0 when every advisory passes, 1 when one fails, and 2 when it
+reached no verdict: govulncheck exited non-zero (a package that does not compile, no network for
+the vulnerability database), printed nothing, or did not open its output with a protocol v1
+configuration of a symbol scan of source; the document or `.standards.yaml` does not load; or the
+command line does not parse (a misspelled flag, a missing subcommand), which also prints the
+synopsis. Exit 2 is never a pass, and in `gate run` it fails the stage like a finding. Covered
+advisories and unused statements print on stdout, failures on stderr:
+
+```text
+govuln: GO-2022-1059: golang.org/x/text/language.ParseAcceptLanguage is called (fixed in v0.3.8); no VEX statement covers a called symbol: update golang.org/x/text or stop calling it
+govuln: FAIL: govulncheck v1.8.0, symbol scan: 1 advisories present, 1 failing, 0 covered by security/vex/go.openvex.json
+```
+
+The document lives at `security.go_vex` in `.standards.yaml`, `security/vex/go.openvex.json` by
+default (`config.RepositoryGoVEXPath` in
+[`internal/config/security_policy.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/config/security_policy.go)).
+A repository whose scan reports no advisory needs no document. Without one, every advisory present
+in the build fails. The gate reads [OpenVEX v0.2.0](https://github.com/openvex/spec/blob/main/OPENVEX-SPEC.md):
+
+```json
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://example.com/vex/go.openvex.json",
+  "author": "Example maintainers",
+  "timestamp": "2026-10-05T12:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {"name": "GO-2022-1059", "aliases": ["CVE-2022-32149"]},
+      "last_updated": "2026-10-05T12:00:00Z",
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_present",
+      "impact_statement": "No package of golang.org/x/text/language is built: go list -deps ./... names none."
+    }
+  ]
+}
+```
+
+A statement covers an advisory when all of these hold (`assess` in
+[`internal/govuln/judge.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/govuln/judge.go)):
+
+- `vulnerability.name` or one of its `aliases` is the advisory's Go identifier or an alias
+  govulncheck's OSV entry lists, such as its CVE;
+- it is the latest statement naming the advisory. Its review time is its own `last_updated`, else
+  its `timestamp`, else the document's `timestamp`, the time the document was issued; two
+  statements sharing the latest review time fail the advisory. The document's `last_updated` is
+  never inherited: every edit of the document moves it, and a statement inheriting it would be
+  renewed without a review. `vexctl add` writes a `timestamp` on the statement it adds. Before you
+  move the document's `timestamp`, give the statements without a time of their own the previous
+  one, as "Updating Statements with Inherited Data" in the OpenVEX specification shows;
+- its `status` is `not_affected` with a `justification` label and an `impact_statement`. OpenVEX
+  asks for either; the gate requires both, the label it checks against the finding and the reason a
+  reviewer reads;
+- it was reviewed within the last 90 days (`govuln.MaxStatementAge`, the cap the npm audit
+  exceptions carry). To extend it, review it and set a new `last_updated`.
+
+The document is decoded strictly (`internal/strictjson`). It may hold every field OpenVEX v0.2.0
+defines and the `supplier` that [go-vex](https://github.com/openvex/go-vex) and `vexctl` write on
+the document, a product and a subcomponent. An unknown or duplicate field, a null, a
+missing required field (`@context`, `@id`, `author`, `timestamp`, `version`, `statements`,
+`vulnerability.name`, `status`), a status or justification outside the specification, a timestamp
+that is not RFC 3339 or lies in the future, and another OpenVEX version are each exit 2, and the
+scan does not start. A `not_affected` statement no finding matches is printed as a note to remove
+it; it does not fail.
+
+**Standard-library advisories.** govulncheck v1.8.0 adds the standard library to the module graph
+as the module `stdlib`, at the version of the Go toolchain that runs the scan (`NewPackageGraph` in
+`golang.org/x/vuln/internal/vulncheck/packages.go`). An advisory against that toolchain is therefore
+at least a module-level finding, even when the build imports none of its packages, and it fails
+like any other advisory no statement covers. Scanned with Go 1.26.3, for example:
+
+```text
+govuln: GO-2026-5037: module stdlib@v1.26.3 is required but not called, and security/vex/go.openvex.json does not exist to hold a not_affected statement for it
+```
+
+After a Go security release, every run of the gate (on a workstation, in the pre-push job, in CI)
+fails this way until the toolchain that scans is upgraded:
+
+- Upgrade Go to the patch release that fixes the advisory and re-run the gate; nothing else is
+  needed. `go version` names the toolchain, and the advisory (for the one above,
+  <https://pkg.go.dev/vuln/GO-2026-5037>) names the fixed release. This repository's CI sets
+  `check-latest: true` on the `actions/setup-go` step of each job that runs the gate
+  ([`.github/workflows/ci.yml`](https://github.com/cordanaLLM/praetor/blob/main/.github/workflows/ci.yml),
+  [`.github/workflows/security.yml`](https://github.com/cordanaLLM/praetor/blob/main/.github/workflows/security.yml)),
+  so it takes a patch release as soon as the runner can download it, not when the runner image
+  next updates.
+- Until you can upgrade, a `not_affected` statement for the advisory is the stopgap:
+  `vulnerable_code_not_present`, with an impact statement naming the affected packages the build
+  does not import. After the upgrade the gate prints the statement as unused; remove it then.
+- The security workflow the `go-service` flavor writes
+  ([`templates/go/security-go.yml.tmpl`](https://github.com/cordanaLLM/praetor/blob/main/templates/go/security-go.yml.tmpl))
+  does not run the gate yet: it still runs `govulncheck ./...`, which fails on a called symbol
+  only. In an adopter repository these findings surface through `gate run` and the pre-push job.
+
+A toolchain whose version carries a suffix, such as `go1.27.1-X:nodwarf5` from a `GOEXPERIMENT`
+build, gives govulncheck no version it can read (`GoTagToSemver` in
+`golang.org/x/vuln/internal/semver`), so no standard-library advisory reaches the gate on it. A
+release toolchain from go.dev, which `actions/setup-go` installs, reports its version.
+
+`TestCheck_Boundary_StandardLibraryAdvisoryIsAModuleFinding` in
+[`internal/govuln/vex_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/govuln/vex_test.go)
+replays such a finding, without and with a statement.
+
+In `gate run` the document is a subtractive input, like the debt baseline: it must be a tracked,
+regular file ([A receipt certifies only a working tree that matches HEAD](#a-receipt-certifies-only-a-working-tree-that-matches-head)).
+A clean scan leaves the stage reason empty; advisories a statement covers are named in it, so the
+signed stage output records each waiver. The same check runs in the pre-push `security` job of the
+`lefthook.yml` adoption writes (`govulnGateArgs` in
+[`internal/adopt/hooks.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/hooks.go))
+and in this repository's security workflow and `make vuln`.
+
+Tests: [`internal/govuln`](https://github.com/cordanaLLM/praetor/tree/main/internal/govuln)
+replays govulncheck v1.8.0's own output for a called symbol, an imported package, a required module
+and a failed scan (`testdata/scan`), and its integration test runs the real scanner from `PATH`
+against a scratch module calling `language.ParseAcceptLanguage` of `golang.org/x/text` v0.3.7,
+skipping with the reason where govulncheck or that module is unavailable.
+[`internal/gating/security_vex_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/security_vex_test.go)
+and [`cmd/standardsctl/security_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/security_test.go)
+run the stage and the command on the same output.
+
+**Migration.** `gate run` and the generated pre-push job ran `govulncheck ./...`, which failed only
+on a called symbol. A Go repository whose build holds a vulnerable package or module it does not
+call now fails until the document holds a `not_affected` statement for each such advisory, or the
+dependency is updated past the fix. Run `praetorctl security govuln` to list them, and re-run
+`praetorctl adopt` to move an unedited `lefthook.yml` to the new job. The standard library counts
+too: after a Go security release the gate fails on every run until the Go toolchain that scans is
+upgraded to the fixed patch release, with a `not_affected` statement as the stopgap
+([Standard-library advisories](#go-vulnerabilities-and-the-openvex-document) above). In CI, let
+`actions/setup-go` resolve the newest patch release (`check-latest: true`) on the jobs that run the
+gate.
+
 ### No receipt when no toolchain stage ran
 
 The receipt stage signs only after at least one toolchain stage ran and passed for some language
@@ -946,13 +1097,17 @@ differs from HEAD:
   your global excludes file (`core.excludesFile`, else `~/.config/git/ignore`) all apply, so
   editor and OS files you ignore globally do not block the gate;
 - an index entry flagged assume-unchanged or skip-worktree, which `git status` never compares;
-- an untracked `.standards-baseline.json` or `.gosec.json`, hidden from `git status` by any
-  ignore rule, your global excludes file included. Both relax what the gate enforces -- the
-  baseline raises the HISS limit, the gosec configuration selects the rules -- and `git status`
-  does not list an ignored file, so each present one must be tracked in the index
-  (`util.GitUntrackedPaths` in [`internal/util/git_ignore.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/git_ignore.go));
+- an untracked `.standards-baseline.json`, `.gosec.json` or OpenVEX document (`security.go_vex`,
+  default `security/vex/go.openvex.json`), hidden from `git status` by any ignore rule, your
+  global excludes file included. All three relax what the gate enforces -- the baseline raises
+  the HISS limit, the gosec configuration selects the rules, the OpenVEX document covers
+  vulnerable code that is present but not called
+  ([Go vulnerabilities and the OpenVEX document](#go-vulnerabilities-and-the-openvex-document))
+  -- and `git status` does not list an ignored file, so each present one must be tracked in the
+  index (`subtractiveInputs` in [`internal/gating/tree.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/tree.go),
+  `util.GitUntrackedPaths` in [`internal/util/git_ignore.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/git_ignore.go));
   a committed one stays trusted even when an ignore pattern also matches it;
-- a `.standards-baseline.json` or `.gosec.json` that is a symbolic link or any other non-regular
+- any of them that is a symbolic link or any other non-regular
   file. `git status` compares a tracked link by its target path, not the content behind it, while
   the stages follow the link, so a committed link to an ignored file or to one outside the
   repository would read as clean. Replace the link with the file itself.

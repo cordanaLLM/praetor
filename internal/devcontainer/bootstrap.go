@@ -208,7 +208,36 @@ func validateBootstrapImages(images ...string) error {
 	return nil
 }
 
+// dockerfileRendering selects one rendering of Dockerfile.praetor. A ready bundle records the
+// digest of the rendering it was generated with (dockerfileSHA256), so a change to the
+// rendering leaves every bundle recorded before it with a digest the current renderer no longer
+// produces. Verification requires dockerfileCurrent; reading what a bundle records
+// (decodeRecordedBootstrap) also accepts every earlier rendering listed here, so regenerating
+// such a bundle still keeps its recorded images and its ready-bootstrap guard.
+type dockerfileRendering int
+
+const (
+	// dockerfilePiped joined the archive frames and checked the archive digest through pipes.
+	// A pipeline's status is its last command's, so a failed cat or echo went unnoticed, and
+	// Hadolint reported DL4006 on both lines (#351).
+	dockerfilePiped dockerfileRendering = iota
+	// dockerfileUnpiped writes each intermediate to a file, so every command's status counts.
+	dockerfileUnpiped
+	// dockerfileCurrent is the rendering generation writes and verification requires.
+	dockerfileCurrent = dockerfileUnpiped
+	// oldestDockerfileRendering is the earliest rendering a recorded specification may carry.
+	oldestDockerfileRendering = dockerfilePiped
+)
+
+// validateBootstrapSpec validates spec as generation writes it and verification requires it:
+// a ready specification must record the current Dockerfile rendering.
 func validateBootstrapSpec(spec *BootstrapSpec) error {
+	return validateBootstrapSpecFrom(spec, dockerfileCurrent)
+}
+
+// validateBootstrapSpecFrom validates spec, accepting a recorded Dockerfile digest of any
+// rendering from oldest through dockerfileCurrent.
+func validateBootstrapSpecFrom(spec *BootstrapSpec, oldest dockerfileRendering) error {
 	if spec == nil || spec.Version != bootstrapVersion {
 		return errors.New("unsupported or absent bootstrap specification")
 	}
@@ -221,10 +250,10 @@ func validateBootstrapSpec(spec *BootstrapSpec) error {
 	if spec.State != BootstrapReady || spec.Reason != "" {
 		return errors.New("invalid bootstrap state")
 	}
-	return validateReadyBootstrap(spec)
+	return validateReadyBootstrap(spec, oldest)
 }
 
-func validateReadyBootstrap(spec *BootstrapSpec) error {
+func validateReadyBootstrap(spec *BootstrapSpec, oldest dockerfileRendering) error {
 	if err := validateBootstrapImages(spec.BuilderImage); err != nil {
 		return err
 	}
@@ -236,10 +265,21 @@ func validateReadyBootstrap(spec *BootstrapSpec) error {
 			return errors.New("bootstrap digest must be lowercase sha256")
 		}
 	}
-	if bootstrapDigest([]byte(renderBootstrapDockerfile(spec))) != spec.DockerfileSHA256 {
+	if !recordsDockerfileRendering(spec, oldest) {
 		return errors.New("bootstrap Dockerfile identity differs from its recorded inputs; " + bundleRepair)
 	}
 	return nil
+}
+
+// recordsDockerfileRendering reports whether spec's dockerfileSHA256 is the digest of its
+// Dockerfile at one of the renderings from oldest through dockerfileCurrent.
+func recordsDockerfileRendering(spec *BootstrapSpec, oldest dockerfileRendering) bool {
+	for rendering := dockerfileCurrent; rendering >= oldest && rendering >= 0; rendering-- {
+		if bootstrapDigest([]byte(renderBootstrapDockerfileAs(spec, rendering))) == spec.DockerfileSHA256 {
+			return true
+		}
+	}
+	return false
 }
 
 // renderBootstrapDockerfile builds praetorctl alone (bootstrapBuildPackage) and installs it
@@ -249,16 +289,38 @@ func validateReadyBootstrap(spec *BootstrapSpec) error {
 // the image on purpose, because it syncs the operator's model data for the Tribunus router
 // and an adopter DevContainer never runs that sync (#377).
 func renderBootstrapDockerfile(spec *BootstrapSpec) string {
+	return renderBootstrapDockerfileAs(spec, dockerfileCurrent)
+}
+
+// renderBootstrapDockerfileAs renders spec's Dockerfile at one rendering.
+func renderBootstrapDockerfileAs(spec *BootstrapSpec, rendering dockerfileRendering) string {
 	var s strings.Builder
 	fmt.Fprintf(&s, "# Praetor bootstrap v1; selected source digest %s\nFROM %s AS praetor_build\nWORKDIR /praetor-source\n", spec.SourceSHA256, spec.BuilderImage)
 	for i := 0; i < spec.ArchiveParts && i < maxBootstrapParts; i++ {
 		fmt.Fprintf(&s, "COPY [\"%s\", \"/tmp/praetor-source/%03d.b64\"]\n", bootstrapPartName(i), i)
 	}
-	fmt.Fprintf(&s, "RUN cat /tmp/praetor-source/*.b64 | base64 -d > /tmp/praetor-source.tar.gz\nRUN echo '%s  /tmp/praetor-source.tar.gz' | sha256sum -c - && tar -xzf /tmp/praetor-source.tar.gz -C /praetor-source\n", strings.TrimPrefix(spec.ArchiveSHA256, "sha256:"))
+	s.WriteString(bootstrapArchiveSteps(strings.TrimPrefix(spec.ArchiveSHA256, "sha256:"), rendering))
 	s.WriteString("ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org\nRUN sha256sum go.mod go.sum > /tmp/praetor-modules.sha256 && /usr/local/go/bin/go mod download && /usr/local/go/bin/go mod verify && sha256sum -c /tmp/praetor-modules.sha256\n")
 	s.WriteString("RUN /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -o /out/praetorctl ./" + bootstrapBuildPackage + "\n")
 	fmt.Fprintf(&s, "FROM %s\nCOPY --from=praetor_build --chmod=0444 /praetor-source/LICENSE /usr/local/share/praetor/LICENSE\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/praetorctl\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/standardsctl\nUSER vscode\n", spec.BaseImage)
 	return s.String()
+}
+
+// bootstrapArchiveSteps renders the RUN lines that join the archive frames, check the archive
+// against sum and unpack it. The current rendering has no pipe, so no step can hide a failure
+// behind a later command's success (#351). It sets no pipefail SHELL instead, because the
+// builder image is the adopter's choice (--builder-image, kept on regeneration) and the
+// pipefail shells Hadolint DL4006 accepts, /bin/ash and /bin/bash, are each missing from one
+// image family: Alpine ships no bash, Debian no ash. Writing each intermediate to a file works
+// in any POSIX shell. TestBootstrapDockerfilePipesFollowPipefailShell holds any later pipe in
+// the rendering to a preceding pipefail SHELL.
+func bootstrapArchiveSteps(sum string, rendering dockerfileRendering) string {
+	if rendering == dockerfilePiped {
+		return fmt.Sprintf("RUN cat /tmp/praetor-source/*.b64 | base64 -d > /tmp/praetor-source.tar.gz\n"+
+			"RUN echo '%s  /tmp/praetor-source.tar.gz' | sha256sum -c - && tar -xzf /tmp/praetor-source.tar.gz -C /praetor-source\n", sum)
+	}
+	return fmt.Sprintf("RUN cat /tmp/praetor-source/*.b64 > /tmp/praetor-source.b64 && base64 -d /tmp/praetor-source.b64 > /tmp/praetor-source.tar.gz\n"+
+		"RUN echo '%s  /tmp/praetor-source.tar.gz' > /tmp/praetor-source.sha256 && sha256sum -c /tmp/praetor-source.sha256 && tar -xzf /tmp/praetor-source.tar.gz -C /praetor-source\n", sum)
 }
 
 func validateUnavailableBootstrap(spec *BootstrapSpec) error {

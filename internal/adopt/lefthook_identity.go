@@ -37,7 +37,10 @@ const (
 // name" entries, one per language set, are the renderings whose checkpoint jobs named the
 // interpreter python3 instead of starting it through the launcher adoption writes
 // (lefthookPythonCommand, #339). A rendering without checkpoint jobs starts no interpreter and
-// did not change.
+// did not change. The "plain govulncheck" entries, one per language set holding Go with and
+// without checkpoint jobs, are the renderings whose pre-push security job ran govulncheck ./...
+// instead of the Go vulnerability gate (govulnGateArgs, #778); a rendering without Go jobs has no
+// security job and did not change.
 var priorLefthookDigests = map[string]string{
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
@@ -69,6 +72,10 @@ var priorLefthookDigests = map[string]string{
 	"42cf6d9aa761700aa453b9fa4a19364f508db89828ef8d493b31836a8bc47c55": "python3 by name, Go jobs, checkpoint jobs",
 	"7c7e9329b33038eaca07e3216d56d21dafd178b3445026af6be3326384f5a93c": "python3 by name, Rust jobs, checkpoint jobs",
 	"80b28343df274a2fd174931c219cf883fe94a1338a9ce0169bdad979d4f407a4": "python3 by name, Go and Rust jobs, checkpoint jobs",
+	"3cc9e2e22f4e98c249ce513a176d165aebd661921b589937da7e3781e6ee39ff": "plain govulncheck, Go jobs",
+	"aa95033d2df0024b2b67d1408175027c39b05524a57e89ba84019b9abc9fd9d5": "plain govulncheck, Go jobs, checkpoint jobs",
+	"56adc7c4a9aa1c73cf2d919853acb8a6c8dce1c7350f8c61362bdf63fcd902e8": "plain govulncheck, Go and Rust jobs",
+	"b8be208e7174c611714c17664ac172ae7f1a95032afa4bfdca4dfb818939ca8c": "plain govulncheck, Go and Rust jobs, checkpoint jobs",
 }
 
 // lefthookIdentity is what adoption concluded about an existing lefthook.yml.

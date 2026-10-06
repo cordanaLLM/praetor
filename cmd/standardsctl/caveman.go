@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -69,13 +70,16 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 }
 
 // cavemanCheck prints one summary line per input and its findings, and fails when any
-// input breaks a rule. --kind defaults to runtime message grammar; brief and return add
-// schemas, while context selects the policy-document profile. With --surface it first
+// input breaks a rule. Without --kind an input is judged under runtime message grammar,
+// unless it is AGENTS.md or a compiled vendor file at its place below --root, which takes
+// the context profile the gate applies (checkInputKind, #777); brief and return add schemas,
+// while context selects the policy-document profile. With --surface it first
 // resolves the register from --root and errors when the surface is not internal. --max-words
 // and --max-tokens are opt-in ceilings (0 means none; a negative value is refused).
 func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
 	fset := flag.NewFlagSet("caveman check", flag.ContinueOnError)
-	kindName := fset.String("kind", string(caveman.KindMessage), "Caveman contract: message, brief, return, or context")
+	kindName := fset.String("kind", "", "Caveman contract: message, brief, return, or context. "+
+		"Omitted: context for AGENTS.md and the compiled vendor files at their place below --root, message for every other input")
 	surface := fset.String("surface", "", "Register surface whose manifest setting decides whether the lint applies")
 	root := fset.String("root", ".", "Repository root for register resolution and source confinement")
 	extensions := fset.String("ext", ".md", "Comma-separated extensions included below directory inputs")
@@ -93,9 +97,9 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 		// contract. Ordinary directory checks retain the historical Markdown-only default.
 		*extensions = ".sh,.py"
 	}
-	kind := caveman.MessageKind(*kindName)
-	if !kind.Valid() {
-		return fmt.Errorf("caveman check: unsupported kind %q (want message, brief, return, or context)", *kindName)
+	kind, err := cavemanCheckKind(*kindName, explicit["kind"])
+	if err != nil {
+		return err
 	}
 	if err := validateCavemanCeilings(*maxWords, *maxTokens); err != nil {
 		return err
@@ -115,6 +119,19 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 		return fmt.Errorf("caveman check: %d of %d input(s) failed", failed, len(inputs))
 	}
 	return nil
+}
+
+// cavemanCheckKind returns the contract --kind names. Omitted, it is message; checkInputKind
+// still judges a context file under the context profile then.
+func cavemanCheckKind(name string, explicit bool) (caveman.MessageKind, error) {
+	if !explicit {
+		return caveman.KindMessage, nil
+	}
+	kind := caveman.MessageKind(name)
+	if !kind.Valid() {
+		return "", fmt.Errorf("caveman check: unsupported kind %q (want message, brief, return, or context)", name)
+	}
+	return kind, nil
 }
 
 // validateCavemanCeilings refuses a negative --max-words or --max-tokens before any input is
@@ -150,7 +167,7 @@ func prepareCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cav
 	}
 	if !request.configured {
 		for index := range inputs {
-			inputs[index].kind = request.kind
+			inputs[index].kind = checkInputKind(request, inputs[index])
 		}
 	}
 	if request.surface != "" {
@@ -159,6 +176,31 @@ func prepareCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cav
 		}
 	}
 	return inputs, note, nil
+}
+
+// checkInputKind returns the contract one positional input is judged under. An explicit --kind
+// wins. Otherwise a file read as prose that is a context file compile-context knows
+// (isContextInput) takes the context profile the gate lints it under, so `caveman check
+// AGENTS.md`, as the compiled harness prescribes, reproduces the gate's verdict (#777). Every
+// other input, extracted source values included, takes request.kind.
+func checkInputKind(request cavemanCheckRequest, input cavemanInput) caveman.MessageKind {
+	if !request.explicit["kind"] && input.maskRegister && isContextInput(request.root, input.name) {
+		return caveman.KindContext
+	}
+	return request.kind
+}
+
+// isContextInput reports whether path, resolved against root as an ad-hoc source is
+// (rootRelativeSource), is AGENTS.md or a compiled vendor file at its place in the repository
+// (agentcontext.IsContextPath: exact and case-sensitive). A path outside root is no context
+// file of that repository, so it keeps the default contract; that is a classification, not
+// an error.
+func isContextInput(root, path string) bool {
+	if path == "-" {
+		return false
+	}
+	rel, err := rootRelativeSource(root, path)
+	return err == nil && agentcontext.IsContextPath(rel)
 }
 
 // renderCavemanChecks lints every input and returns the report and the failure count. With
@@ -315,15 +357,15 @@ func readCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavema
 	return append(markdown, extracted...), nil
 }
 
-// partitionCavemanPaths reads Markdown files and stdin directly and turns every other path
-// into ad-hoc source declarations for the extractor.
+// partitionCavemanPaths reads Markdown files, compiled context files and stdin directly and
+// turns every other path into ad-hoc source declarations for the extractor.
 func partitionCavemanPaths(ctx context.Context, stdin io.Reader, request cavemanCheckRequest,
 	paths []string,
 ) ([]cavemanInput, []config.RegisterSourceInput, error) {
 	markdown := make([]cavemanInput, 0, len(paths))
 	sources := []config.RegisterSourceInput{}
 	for _, path := range paths {
-		if path == "-" || strings.EqualFold(filepath.Ext(path), ".md") {
+		if isDirectProseInput(request.root, path) {
 			input, err := readCavemanInput(ctx, path, stdin)
 			if err != nil {
 				return nil, nil, err
@@ -338,6 +380,13 @@ func partitionCavemanPaths(ctx context.Context, stdin io.Reader, request caveman
 		sources = append(sources, declared...)
 	}
 	return markdown, sources, nil
+}
+
+// isDirectProseInput reports whether path is read directly as prose without source extraction:
+// standard input, a Markdown file, or a compiled context file below root that has another
+// extension (.windsurfrules, .cursor/rules/hiss-invariants.mdc; isContextInput).
+func isDirectProseInput(root, path string) bool {
+	return path == "-" || strings.EqualFold(filepath.Ext(path), ".md") || isContextInput(root, path)
 }
 
 func adHocSourceInputs(request cavemanCheckRequest, sourcePath string) ([]config.RegisterSourceInput, error) {

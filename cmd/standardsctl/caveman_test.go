@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -646,5 +647,96 @@ func TestCavemanCheckFreeStandingQuote(t *testing.T) {
 				t.Fatalf("empty pair under --kind=%s must pass: err=%v\n%s", kind, err, out)
 			}
 		})
+	}
+}
+
+// cavemanContextOnly passes the context profile and fails runtime message grammar (C9).
+const cavemanContextOnly = "# Operating Harness\n\nIt is verified. All pass -> Ed25519 receipt.\n"
+
+// wantCavemanVerdict fails the test unless the check of file ended with verdict ("PASS" or
+// "FAIL") under contract; a FAIL must also carry a C9 grammar finding.
+func wantCavemanVerdict(t *testing.T, file, verdict, contract string, args ...string) {
+	t.Helper()
+	out, err := runCavemanCLI(t, "", append(append([]string{"check"}, args...), file)...)
+	ok := strings.Contains(out, filepath.ToSlash(file)+": "+verdict) && strings.Contains(out, "contract="+contract)
+	if verdict == "PASS" {
+		ok = ok && err == nil
+	} else {
+		ok = ok && err != nil && strings.Contains(out, "C9 grammar")
+	}
+	if !ok {
+		t.Errorf("check %v %s: want %s under contract=%s, got err=%v\n%s", args, file, verdict, contract, err, out)
+	}
+}
+
+// TestCavemanCheckContextKindInference_Positive pins #777: without --kind, AGENTS.md and every
+// compiled vendor file at its place below --root take the context profile the gate lints them
+// under, so text the gate accepts passes, the live AGENTS.md and CLAUDE.md included. Run from
+// the repository root with the default --root, the command the harness prescribes passes too.
+func TestCavemanCheckContextKindInference_Positive(t *testing.T) {
+	dir := t.TempDir()
+	for _, rel := range agentcontext.ContextFiles() {
+		file := writeFixtureFile(t, dir, rel, cavemanContextOnly)
+		wantCavemanVerdict(t, file, "PASS", "context", "--root", dir)
+	}
+	repoRoot := filepath.Join("..", "..")
+	for _, live := range []string{"AGENTS.md", "CLAUDE.md"} {
+		wantCavemanVerdict(t, filepath.Join(repoRoot, live), "PASS", "context", "--root", repoRoot)
+	}
+	t.Chdir(dir)
+	for _, rel := range []string{"AGENTS.md", ".windsurfrules"} {
+		wantCavemanVerdict(t, rel, "PASS", "context")
+	}
+}
+
+// TestCavemanCheckContextKindInference_Negative: without --kind, a file that only shares a
+// context file's name (nested, a persona directory entry, another directory, another case)
+// and every other note keep the message contract; nested AGENTS.md files get their own gate
+// (#311). An explicit --kind=message on the live AGENTS.md reports message findings, and a
+// Git commit message file is still not read as prose: it needs --surface as before.
+func TestCavemanCheckContextKindInference_Negative(t *testing.T) {
+	dir := t.TempDir()
+	for _, rel := range []string{
+		"nested/AGENTS.md",
+		"nested/CLAUDE.md",
+		".agents/agents/reviewer/AGENTS.md",
+		"docs/claude.md",
+		"agents.md",
+		"NOT_AGENTS.md",
+		"candidate-note.md",
+	} {
+		file := writeFixtureFile(t, dir, rel, cavemanContextOnly)
+		wantCavemanVerdict(t, file, "FAIL", "message", "--root", dir)
+	}
+	repoRoot := filepath.Join("..", "..")
+	wantCavemanVerdict(t, filepath.Join(repoRoot, "AGENTS.md"), "FAIL", "message", "--root", repoRoot, "--kind=message")
+
+	commit := writeFixtureFile(t, dir, "COMMIT_EDITMSG", cavemanContextOnly)
+	if out, err := runCavemanCLI(t, "", "check", "--root", dir, commit); err == nil || !strings.Contains(err.Error(), "requires --surface") {
+		t.Errorf("COMMIT_EDITMSG without --surface: want the non-Markdown source error, got err=%v\n%s", err, out)
+	}
+}
+
+// TestCavemanCheckContextKindInference_Boundary: an explicit --kind wins in both directions,
+// and the inference resolves each path against --root. A non-clean path to the canonical file
+// is that file; the same file outside --root is no context file of that repository, so it
+// keeps message, and a compiled file without a Markdown extension there is not read as prose.
+func TestCavemanCheckContextKindInference_Boundary(t *testing.T) {
+	dir := t.TempDir()
+	note := writeFixtureFile(t, dir, "candidate-note.md", cavemanContextOnly)
+	wantCavemanVerdict(t, note, "PASS", "context", "--root", dir, "--kind=context")
+	repoRoot := filepath.Join("..", "..")
+	wantCavemanVerdict(t, filepath.Join(repoRoot, "CLAUDE.md"), "FAIL", "message", "--root", repoRoot, "-kind", "message")
+
+	agents := writeFixtureFile(t, dir, "AGENTS.md", cavemanContextOnly)
+	writeFixtureFile(t, dir, "nested/candidate-note.md", cavemanContextOnly)
+	// filepath.Join would clean the path, so the separators are written out.
+	sep := string(filepath.Separator)
+	wantCavemanVerdict(t, dir+sep+"nested"+sep+".."+sep+"AGENTS.md", "PASS", "context", "--root", dir)
+	outside := filepath.Join(dir, "sub")
+	wantCavemanVerdict(t, agents, "FAIL", "message", "--root", outside)
+	windsurf := writeFixtureFile(t, dir, ".windsurfrules", cavemanContextOnly)
+	if out, err := runCavemanCLI(t, "", "check", "--root", outside, windsurf); err == nil || !strings.Contains(err.Error(), "requires --surface") {
+		t.Errorf(".windsurfrules outside --root: want the non-Markdown source error, got err=%v\n%s", err, out)
 	}
 }

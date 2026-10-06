@@ -12,7 +12,9 @@ or older than its floor ([linter version floors](#linter-version-floors)).
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
 from source using the existing repository `@latest` policy. `tools/go/go.mod` pins `gosec`,
 `govulncheck` and `gitleaks` as tool directives, which Renovate keeps current: `make sec`,
-`make vuln` and `make secrets` run exactly those versions through `go tool -modfile`, and
+`make vuln` and `make secrets` run exactly those versions through `go tool -modfile` (`make vuln`
+hands govulncheck to `praetorctl security govuln`, the
+[Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document)), and
 `go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec`
 puts the same versions on `PATH` for the hooks.
 
@@ -368,7 +370,7 @@ the set the harness rows are rendered for (`lefthookLanguages`, `planLanguages` 
 
 | Detected | Pre-commit jobs | Pre-push jobs | Each runs only where |
 | --- | --- | --- | --- |
-| Go (`go.mod`) | `gofmt` (`gofmt -w` on staged files), `govet` (`go vet ./...`) | `security` (`govulncheck ./...`, skipped when not installed) | Go files are staged, and the root holds `go.mod` for `go vet` and `govulncheck` |
+| Go (`go.mod`) | `gofmt` (`gofmt -w` on staged files), `govet` (`go vet ./...`) | `security` (`praetorctl security govuln`, the [Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document); skipped when `govulncheck` is not installed) | Go files are staged, and the root holds `go.mod` for `go vet` and the gate |
 | Rust (`Cargo.toml`) | `rustfmt` (`cargo fmt --all --check`), `clippy` (the gate's own `cargo clippy --workspace --all-targets -- -D warnings`, `gating.CargoClippyArgs`) | none: `gate run` runs `cargo audit` for a `Cargo.lock` | Rust files are staged and the root holds `Cargo.toml` |
 | none detected | every language's jobs above, as the harness then keeps every HISS clause | as above | as above |
 
@@ -412,7 +414,9 @@ An existing `lefthook.yml` is classified before anything is installed (`classify
   checkpoint jobs, so those adopters get `audit --offline` before a commit on a plain run
   (`TestAdopt_Boundary_OnlinePreCommitAuditMigratesWithoutForce`), and the renderings whose `gate`
   job ran without `--admit-unsupported`, so a Meson repository's pushes stop being refused on a
-  plain run (`TestAdopt_Boundary_StrictPrePushGateMigratesWithoutForce`).
+  plain run (`TestAdopt_Boundary_StrictPrePushGateMigratesWithoutForce`), and the Go renderings
+  whose `security` job ran `govulncheck ./...`, so a Go repository gets the vulnerability gate on a
+  plain run (`TestAdopt_Boundary_PlainGovulncheckMigratesWithoutForce`).
 - **Any other file** is the repository's. It is kept byte for byte, `--force` included, and not
   activated: the audit checks only that `lefthook.yml` exists, so `--force` has nothing to restore.
   The skip names the generated jobs the file lacks and the jobs it adds, or says the file does not
@@ -693,6 +697,13 @@ The `*-changed` targets compare committed `HEAD` against `BASE` and use exactly
 the same scope and process runner as pre-push. `make verify-all` retains the full
 repository checks. Independent checks run with at most three workers; command
 failures are collected and propagated.
+
+A scoped run that takes the vulnerability check (`make check-changed` when no governance audit
+runs, or `python3 .config/lefthook/scripts/hooks.py changed vuln <base>`) starts the
+[Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document)
+with `go run ./cmd/standardsctl security govuln -- govulncheck`, over the whole module: a
+module-level finding has no package to scope by. When the full gate runs, `gate run` makes the
+same check.
 
 CI sets `TEST_COVERPROFILE` to an explicit temporary file and obtains coverage
 from the race run inside `make verify-all`. The same run must meet the 65%

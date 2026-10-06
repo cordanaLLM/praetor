@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/govuln"
 )
 
 func TestSecurityPackageScope(t *testing.T) {
@@ -47,6 +49,9 @@ func TestSecurityPackageListingFailurePreventsScanner(t *testing.T) {
 		cfg.run = func(_ context.Context, _, name string, _ ...string) (string, error) {
 			if name == "go" {
 				return "", failure
+			}
+			if name == govuln.DefaultScanner {
+				return cleanGovulnStream, nil
 			}
 			if name == "gosec" {
 				scanned = true

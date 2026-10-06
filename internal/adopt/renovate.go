@@ -10,7 +10,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -73,9 +72,6 @@ const (
 	// maxRenovatePatterns bounds the matchFileNames patterns read from one adopter rule when
 	// checking whether it covers the managed paths (HISS-02); a longer list is not counted.
 	maxRenovatePatterns = 256
-	// renovateGlobUnsupported are the characters that take a pattern outside the glob subset
-	// adoption reads: classes, braces, extglob groups and escapes.
-	renovateGlobUnsupported = "[]{}()\\"
 )
 
 // renovateEquivalentMembers are the members an adopter rule may hold and still count as having
@@ -470,7 +466,7 @@ func uncoveredRenovatePaths(rules []jsontext.Value, paths []string) []string {
 			continue
 		}
 		for item := 0; item < len(paths); item++ {
-			covered[item] = covered[item] || renovatePatternsCover(patterns, paths[item])
+			covered[item] = covered[item] || util.RenovatePatternsCover(patterns, paths[item])
 		}
 	}
 	uncovered := make([]string, 0, len(paths))
@@ -520,52 +516,18 @@ func disablingRenovatePatterns(rule jsontext.Value) ([]string, bool) {
 
 // supportedRenovatePatterns returns the patterns of a matchFileNames value when it is a
 // non-empty array of at most maxRenovatePatterns strings, each in the glob subset adoption
-// reads (renovateGlobSupported).
+// reads (util.RenovateGlobSupported).
 func supportedRenovatePatterns(raw jsontext.Value) ([]string, bool) {
 	var patterns []string
 	if raw.Kind() != '[' || json.Unmarshal(raw, &patterns) != nil || len(patterns) == 0 || len(patterns) > maxRenovatePatterns {
 		return nil, false
 	}
 	for index := 0; index < len(patterns); index++ {
-		if !renovateGlobSupported(patterns[index]) {
+		if !util.RenovateGlobSupported(patterns[index]) {
 			return nil, false
 		}
 	}
 	return patterns, true
-}
-
-// renovateGlobSupported reports whether pattern is in the glob subset adoption reads: literal
-// text, "*", "?" and "**" in non-empty segments other than "." and "..". A leading "!"
-// (negation), "#" (a minimatch comment) or "/" (a regular expression, or an absolute path) and
-// any character of renovateGlobUnsupported take it outside.
-func renovateGlobSupported(pattern string) bool {
-	if pattern == "" || strings.ContainsAny(pattern[:1], "!#/") || strings.ContainsAny(pattern, renovateGlobUnsupported) {
-		return false
-	}
-	segments := strings.Split(pattern, "/")
-	for index := 0; index < len(segments); index++ {
-		if segments[index] == "" || segments[index] == "." || segments[index] == ".." {
-			return false
-		}
-	}
-	return true
-}
-
-// renovatePatternsCover reports whether one of patterns matches file as Renovate would:
-// Renovate matches "*" against every file, and a trailing "**" spans one or more segments,
-// as in minimatch, so a file path with "/**" appended does not cover the file itself.
-func renovatePatternsCover(patterns []string, file string) bool {
-	segments := strings.Split(file, "/")
-	for index := 0; index < len(patterns); index++ {
-		glob := strings.Split(patterns[index], "/")
-		if last := len(glob) - 1; glob[last] == "**" {
-			glob = append(glob[:last:last], "*", "**")
-		}
-		if patterns[index] == "*" || util.MatchGlobSegments(glob, segments) {
-			return true
-		}
-	}
-	return false
 }
 
 // sameJSON reports whether a and b hold the same JSON value, member order and formatting

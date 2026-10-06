@@ -65,8 +65,9 @@ register; reply to human operator -> full prose.
 
 ## Static checker
 
-`praetorctl caveman check` defaults to runtime message form. Structured traffic selects
-kind explicitly:
+`praetorctl caveman check` defaults to runtime message form. Exception: AGENTS.md + compiled
+vendor files at own path below `--root` (exact, case-sensitive) default to `--kind=context`,
+same verdict as gate. Explicit `--kind` wins. Structured traffic selects kind explicitly:
 
 - brief: `--kind=brief`; fields = `goal`, `inputs`, `return`, `evidence`, `task`; goal first;
 - return: `--kind=return`; fields = `verdict`, `changed`, `ran`, `evidence`, `open`; verdict first;

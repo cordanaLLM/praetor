@@ -123,7 +123,7 @@ func TestRunGatedPipeline_Negative_UncleanTreeIsRefusedBeforeAnyStage(t *testing
 // TestRunGatedPipeline_Negative_IgnoredSubtractiveInputIsRefused: git status never lists an
 // ignored file, so an ignored debt baseline or gosec configuration is refused on its own check.
 func TestRunGatedPipeline_Negative_IgnoredSubtractiveInputIsRefused(t *testing.T) {
-	for _, input := range subtractiveInputs {
+	for _, input := range subtractiveInputs(t.TempDir()) {
 		t.Run(input, func(t *testing.T) {
 			dir := newHermeticGitRepo(t)
 			commitFile(t, dir, ".gitignore", input+"\n")
@@ -138,7 +138,7 @@ func TestRunGatedPipeline_Negative_IgnoredSubtractiveInputIsRefused(t *testing.T
 // git status as well; it is still refused, because the check asks whether HEAD's index holds
 // the input rather than which ignore rules the sealed probe happens to read.
 func TestRunGatedPipeline_Negative_GloballyIgnoredSubtractiveInputIsRefused(t *testing.T) {
-	for _, input := range subtractiveInputs {
+	for _, input := range subtractiveInputs(t.TempDir()) {
 		t.Run(input, func(t *testing.T) {
 			dir := newHermeticGitRepo(t)
 			withGlobalIgnore(t, input+"\n")
@@ -184,15 +184,26 @@ func withGlobalIgnore(t *testing.T, patterns string) {
 // clean and not ignored, yet the stages follow it to content HEAD does not carry -- an ignored
 // file or one outside the repository -- so a subtractive input must be a regular file (BUG-788).
 func TestRunGatedPipeline_Negative_SymlinkedSubtractiveInputIsRefused(t *testing.T) {
-	for _, input := range subtractiveInputs {
+	for _, input := range subtractiveInputs(t.TempDir()) {
 		t.Run(input+" to an ignored target", func(t *testing.T) {
 			dir := newHermeticGitRepo(t)
 			commitFile(t, dir, ".gitignore", "local/\n")
 			if err := os.Mkdir(filepath.Join(dir, "local"), 0o750); err != nil {
 				t.Fatal(err)
 			}
-			writeFile(t, filepath.Join(dir, "local", "relaxed.json"), `{"total_infractions": 999}`+"\n")
-			commitSymlink(t, dir, input, filepath.Join("local", "relaxed.json"))
+			relaxed := `{"total_infractions": 999}` + "\n"
+			writeFile(t, filepath.Join(dir, "local", "relaxed.json"), relaxed)
+			// A relative link resolves from its own directory: a nested input such as the OpenVEX
+			// document climbs back to the root first, or the link dangles and the case is not run.
+			link := filepath.Join(dir, filepath.FromSlash(input))
+			target, err := filepath.Rel(filepath.Dir(link), filepath.Join(dir, "local", "relaxed.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			commitSymlink(t, dir, input, target)
+			if data, err := os.ReadFile(link); err != nil || string(data) != relaxed {
+				t.Fatalf("the link at %s must reach the ignored file: %q, %v", input, data, err)
+			}
 			if tree := inspectTree(t.Context(), dir); !strings.Contains(tree.problem, input+" is a symbolic link") {
 				t.Fatalf("a tracked symlink to an ignored target must be refused, problem = %q", tree.problem)
 			}
@@ -231,6 +242,9 @@ func TestPresentSubtractiveInputs_Boundary_OnlyRegularFilesCount(t *testing.T) {
 // account cannot create one (Windows without developer mode).
 func commitSymlink(t *testing.T, dir, rel, target string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o750); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(target, filepath.Join(dir, rel)); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}

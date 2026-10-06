@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
@@ -45,9 +46,21 @@ func fakeRunner(recorded *[]recordedCommand, out string, err error) commandRunne
 				return "gcc\n", nil
 			}
 		}
+		// The security stage parses govulncheck's JSON stream (internal/govuln), and output
+		// without its configuration is no verdict. Unless the case fails every command,
+		// govulncheck answers as a clean symbol scan does; the gate's own verdicts are
+		// covered in internal/govuln and security_vex_test.go.
+		if name == govuln.DefaultScanner && err == nil {
+			return cleanGovulnStream, nil
+		}
 		return out, err
 	}
 }
+
+// cleanGovulnStream is the stream govulncheck v1.8.0 prints for a symbol scan that finds nothing:
+// its configuration alone.
+const cleanGovulnStream = `{"config": {"protocol_version": "v1.0.0", "scanner_name": "govulncheck", ` +
+	`"scanner_version": "v1.8.0", "scan_level": "symbol", "scan_mode": "source"}}`
 
 // testInvocations returns only the race-detector runs, filtering out the toolchain
 // capability probe the stage performs first. The probe is part of the stage, not a
@@ -341,6 +354,9 @@ func TestVerifyLockfiles_3D(t *testing.T) {
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("create the directory of %s: %v", path, err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
@@ -437,8 +453,11 @@ func TestRunSecurityStage_3D(t *testing.T) {
 	cfg, recorded := newTestConfig(t, goDir, false)
 	cfg.run = func(ctx context.Context, dir, name string, args ...string) (string, error) {
 		*recorded = append(*recorded, recordedCommand{dir: dir, name: name, args: args})
-		if name == "go" {
+		switch name {
+		case "go":
 			return goDir + "\n", nil
+		case govuln.DefaultScanner:
+			return cleanGovulnStream, nil
 		}
 		return "", nil
 	}

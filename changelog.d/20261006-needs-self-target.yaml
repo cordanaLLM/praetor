@@ -1,0 +1,4 @@
+type: fixed
+title: "needs migrate and needs epic refuse a target that is the selected framework instead of proposing self-import cycles"
+issue: "#299"
+breaking: false

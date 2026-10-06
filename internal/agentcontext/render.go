@@ -2,13 +2,18 @@ package agentcontext
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/clientid"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const MaxLineBudget = 300
+const (
+	MaxLineBudget = 300
+	// CanonicalFile names the single canonical context file (HISS-16) every vendor target is compiled from.
+	CanonicalFile = "AGENTS.md"
+)
 
 // maxCanonicalLines bounds the ownership scan (HISS-02). A canonical file larger than the
 // shared body plus one full-budget section per target cannot compile within the budget.
@@ -177,6 +182,26 @@ func VendorTargetPaths() []string {
 	return targetPaths(vendorTargets[:])
 }
 
+// ContextFiles returns the canonical context file followed by every vendor file compile-context
+// can write, in compile order, whatever a repository's agent_clients selects. It is the one
+// list of agent instruction files: workstation discovery (harvester) and the kind inference of
+// `caveman check` both read it (HISS-19; the hand-kept list it replaced missed files, BUG-840).
+func ContextFiles() []string {
+	paths := make([]string, 0, len(vendorTargets)+1)
+	paths = append(paths, CanonicalFile)
+	paths = append(paths, VendorTargetPaths()...)
+	return paths
+}
+
+// IsContextPath reports whether rel is one of ContextFiles at its place in the repository. rel
+// must be clean, slash-separated and relative to the repository root, as filepath.Rel followed
+// by filepath.ToSlash returns it on every platform (HISS-21). The comparison is exact and
+// case-sensitive on every file system: nested/AGENTS.md or docs/claude.md is not the canonical
+// file, and on a case-insensitive file system agents.md opens AGENTS.md but does not match it.
+func IsContextPath(rel string) bool {
+	return slices.Contains(ContextFiles(), rel)
+}
+
 // TargetPaths resolves a client selection to the vendor file paths it writes and the ones it
 // leaves out, both in registry order, under the rules CompileContent applies: nil selects every
 // file, an empty list none, and an unknown id fails. A caller that checks the targets before
@@ -264,7 +289,7 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	}
 
 	return &CompileResult{
-		SourcePath:    "AGENTS.md",
+		SourcePath:    CanonicalFile,
 		Files:         files,
 		NotApplicable: excluded,
 	}, nil
