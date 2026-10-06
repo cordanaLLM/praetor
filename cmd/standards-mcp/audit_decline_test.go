@@ -28,6 +28,33 @@ func TestServerAuditDecline_Positive(t *testing.T) {
 	expectText(t, "declined git-hooks", result, "[PASS] Git hooks (lefthook.yml and its activation) declined by adoption.decline.")
 }
 
+// TestServerAuditHookRunner_PreCommitFramework (#175): standards_audit runs the CLI's hook
+// configuration gate. Without lefthook.yml, a .pre-commit-config.yaml whose local hooks run both
+// praetor commands passes and is named (Positive); one that omits the audit fails (Negative).
+func TestServerAuditHookRunner_PreCommitFramework(t *testing.T) {
+	contextHook := "repos:\n  - repo: local\n    hooks:\n" +
+		"      - {id: context, name: context, entry: praetorctl compile-context --verify, language: system}\n"
+	for _, tc := range []struct {
+		config, want string
+		pass         bool
+	}{
+		{contextHook + "      - {id: audit, name: audit, entry: praetorctl audit, language: system}\n",
+			"[PASS] Git hook configuration .pre-commit-config.yaml (the pre-commit framework) verified.", true},
+		{contextHook, "does not run 'praetorctl audit' as a repo: local hook at the pre-commit stage", false},
+	} {
+		srv, root := newFixtureServer(t)
+		if err := os.Remove(filepath.Join(root, "lefthook.yml")); err != nil {
+			t.Fatal(err)
+		}
+		writeFixtureFile(t, root, ".pre-commit-config.yaml", tc.config)
+		if tc.pass {
+			expectText(t, "pre-commit framework configuration", callTool(t, srv, "standards_audit", nil), tc.want)
+		} else {
+			expectError(t, "pre-commit framework configuration without audit", callTool(t, srv, "standards_audit", nil), tc.want)
+		}
+	}
+}
+
 // TestServerAuditDecline_Negative (#600): without the decline the missing label taxonomy still
 // fails, and an agent-harness decline does not cover the register block: the failure says so.
 func TestServerAuditDecline_Negative(t *testing.T) {
