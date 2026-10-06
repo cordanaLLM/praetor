@@ -210,6 +210,39 @@ func (op *operation) verifyWorktree(ctx context.Context) error {
 	return verifyInputsUnchanged(ctx, op)
 }
 
+// gateReceiptRecord is the `status --porcelain=v1 -z` record of the gate's Exit-0 receipt left
+// untracked at the checkout root. .gitignore deliberately keeps it visible evidence and the
+// normal flow never commits it, so every owner checkout `praetorctl gate run` ran in carries
+// it, and refusing it made the operator move it aside by hand before each run (#136).
+const gateReceiptRecord = "?? " + util.GateReceiptFile
+
+// withoutGateReceipt returns one `status --porcelain=v1 -z` listing of root without the gate
+// receipt's record, and every other record unchanged. Exactly one record is dropped, and only
+// while root holds the receipt as a regular file: a link or a directory at that path, the same
+// name anywhere else, and a staged or tracked receipt all remain changes. Nothing reads the
+// receipt, so tolerating it cannot change what any stage transforms.
+func withoutGateReceipt(root, status string) string {
+	var kept strings.Builder
+	dropped := false
+	for _, record := range strings.Split(status, "\x00") {
+		if record == "" {
+			continue
+		}
+		if !dropped && record == gateReceiptRecord && regularGateReceipt(root) {
+			dropped = true
+			continue
+		}
+		kept.WriteString(record)
+		kept.WriteString("\x00")
+	}
+	return kept.String()
+}
+
+func regularGateReceipt(root string) bool {
+	info, err := os.Lstat(filepath.Join(root, util.GateReceiptFile))
+	return err == nil && info.Mode().IsRegular()
+}
+
 func verifyInputsUnchanged(ctx context.Context, op *operation) error {
 	head, err := op.git.text(ctx, op.opts.OwnerPath, "rev-parse", "HEAD")
 	if err != nil {
@@ -218,11 +251,11 @@ func verifyInputsUnchanged(ctx context.Context, op *operation) error {
 	if head != op.opts.OwnerSHA {
 		return errors.New("owner HEAD differs from the reviewed owner commit")
 	}
-	status, err := op.git.text(ctx, op.opts.OwnerPath, "status", "--porcelain=v1", "--untracked-files=all")
+	status, err := op.git.run(ctx, op.opts.OwnerPath, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return err
 	}
-	if status != "" {
+	if withoutGateReceipt(op.opts.OwnerPath, string(status)) != "" {
 		return errors.New("owner checkout has uncommitted or untracked changes")
 	}
 	// Preserve evidence on every failure; only the caller may remove this owned candidate.

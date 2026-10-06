@@ -89,7 +89,7 @@ func (op *operation) applyInit(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return checkInitStatus(string(out))
+	return checkInitStatus(withoutGateReceipt(dir, string(out)))
 }
 
 // checkInitStatus reads `status --porcelain=v1 -z`: every record must be an unstaged modification
