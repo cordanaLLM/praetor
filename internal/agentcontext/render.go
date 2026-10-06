@@ -2,7 +2,7 @@ package agentcontext
 
 import (
 	"fmt"
-	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/clientid"
@@ -182,8 +182,10 @@ func VendorTargetPaths() []string {
 	return targetPaths(vendorTargets[:])
 }
 
-// ContextFiles returns the canonical context file and every compiled vendor projection path,
-// in compile order: exactly the set compile-context knows (HISS-19).
+// ContextFiles returns the canonical context file followed by every vendor file compile-context
+// can write, in compile order, whatever a repository's agent_clients selects. It is the one
+// list of agent instruction files: workstation discovery (harvester) and the kind inference of
+// `caveman check` both read it (HISS-19; the hand-kept list it replaced missed files, BUG-840).
 func ContextFiles() []string {
 	paths := make([]string, 0, len(vendorTargets)+1)
 	paths = append(paths, CanonicalFile)
@@ -191,19 +193,13 @@ func ContextFiles() []string {
 	return paths
 }
 
-// IsContextPath reports whether p names the canonical context file or one of the compiled
-// vendor projections compile-context knows (ContextFiles). Path comparison is slash-clean and
-// case-insensitive across platform path separators (HISS-21).
-func IsContextPath(p string) bool {
-	clean := filepath.ToSlash(filepath.Clean(strings.ReplaceAll(p, "\\", "/")))
-	lower := strings.ToLower(clean)
-	for _, target := range ContextFiles() {
-		targetLower := strings.ToLower(target)
-		if lower == targetLower || strings.HasSuffix(lower, "/"+targetLower) {
-			return true
-		}
-	}
-	return false
+// IsContextPath reports whether rel is one of ContextFiles at its place in the repository. rel
+// must be clean, slash-separated and relative to the repository root, as filepath.Rel followed
+// by filepath.ToSlash returns it on every platform (HISS-21). The comparison is exact and
+// case-sensitive on every file system: nested/AGENTS.md or docs/claude.md is not the canonical
+// file, and on a case-insensitive file system agents.md opens AGENTS.md but does not match it.
+func IsContextPath(rel string) bool {
+	return slices.Contains(ContextFiles(), rel)
 }
 
 // TargetPaths resolves a client selection to the vendor file paths it writes and the ones it
@@ -293,7 +289,7 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	}
 
 	return &CompileResult{
-		SourcePath:    "AGENTS.md",
+		SourcePath:    CanonicalFile,
 		Files:         files,
 		NotApplicable: excluded,
 	}, nil

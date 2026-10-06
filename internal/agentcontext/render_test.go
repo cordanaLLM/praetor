@@ -320,67 +320,59 @@ func TestContextFiles_Positive_MatchesCanonicalAndVendorTargets(t *testing.T) {
 	}
 }
 
-// TestIsContextPath_Positive verifies that canonical AGENTS.md and compiled vendor projections
-// are recognized with direct, relative, and nested paths.
+// TestIsContextPath_Positive: every file compile-context knows matches at its place in the
+// repository, the canonical file and each compiled vendor file alike.
 func TestIsContextPath_Positive(t *testing.T) {
-	for _, path := range []string{
-		"AGENTS.md",
-		"./AGENTS.md",
-		"sub/dir/AGENTS.md",
-		"CLAUDE.md",
-		"./CLAUDE.md",
-		"sub/dir/CLAUDE.md",
-		".cursor/rules/hiss-invariants.mdc",
-		"sub/.cursor/rules/hiss-invariants.mdc",
-		".github/copilot-instructions.md",
-		".windsurfrules",
-		".gemini/GEMINI.md",
-		".codex/rules.md",
-	} {
-		if !IsContextPath(path) {
-			t.Errorf("IsContextPath(%q) = false, want true", path)
+	for _, rel := range append([]string{"AGENTS.md"}, testPaths...) {
+		if !IsContextPath(rel) {
+			t.Errorf("IsContextPath(%q) = false, want true", rel)
 		}
 	}
 }
 
-// TestIsContextPath_Negative verifies that non-context paths, notes, and commit messages
-// are not classified as context paths.
+// TestIsContextPath_Negative: a file that only shares a context file's name, nested or in
+// another directory, is not that file; lookalikes and other inputs are not context either.
 func TestIsContextPath_Negative(t *testing.T) {
-	for _, path := range []string{
+	for _, rel := range []string{
 		"",
 		"-",
-		"candidate-note.md",
+		"nested/AGENTS.md",
+		"nested/CLAUDE.md",
+		".agents/agents/reviewer/AGENTS.md",
+		"docs/claude.md",
+		"sub/.cursor/rules/hiss-invariants.mdc",
+		".cursor/rules/other.mdc",
 		"NOT_AGENTS.md",
-		"sub/NOT_AGENTS.md",
 		"my-AGENTS.md",
-		"not_CLAUDE.md",
+		"candidate-note.md",
 		"COMMIT_EDITMSG",
-		".git/COMMIT_EDITMSG",
-		"scripts/check.sh",
 		"main.go",
 	} {
-		if IsContextPath(path) {
-			t.Errorf("IsContextPath(%q) = true, want false", path)
+		if IsContextPath(rel) {
+			t.Errorf("IsContextPath(%q) = true, want false", rel)
 		}
 	}
 }
 
-// TestIsContextPath_Boundary verifies case-insensitivity and platform path separator normalization (HISS-21).
+// TestIsContextPath_Boundary: the comparison is exact. Case variants do not match on any
+// platform, and the input must already be clean, slash-separated and root-relative, as the
+// caller's filepath.Rel plus filepath.ToSlash returns it (HISS-21).
 func TestIsContextPath_Boundary(t *testing.T) {
-	for _, path := range []string{
+	for _, rel := range []string{
 		"agents.md",
 		"Agents.md",
 		"claude.md",
 		".WINDSURFRULES",
+		".gemini/gemini.md",
+		"./AGENTS.md",
+		"/AGENTS.md",
+		"AGENTS.md/",
+		"../AGENTS.md",
 		".cursor\\rules\\hiss-invariants.mdc",
-		"sub\\dir\\AGENTS.md",
-		"sub\\dir\\CLAUDE.md",
-		filepath.Join("sub", "dir", "AGENTS.md"),
-		filepath.Join("sub", "dir", "CLAUDE.md"),
-		filepath.Join("..", "..", "AGENTS.md"),
+		" AGENTS.md",
 	} {
-		if !IsContextPath(path) {
-			t.Errorf("boundary IsContextPath(%q) = false, want true", path)
+		if IsContextPath(rel) {
+			t.Errorf("boundary IsContextPath(%q) = true, want false", rel)
 		}
 	}
 }

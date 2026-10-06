@@ -53,11 +53,16 @@ func TestScanIgnoresLookalikeRuleFiles(t *testing.T) {
 }
 
 // TestScanListsEveryRuleFileInRegistryOrder: with AGENTS.md and every vendor file present,
-// discovery reports all of them once, canonical file first, then compile order.
+// discovery reports all of them once, canonical file first, then compile order. Discovery
+// reads agentcontext.ContextFiles, the list compile-context writes, and keeps no copy (HISS-19).
 func TestScanListsEveryRuleFileInRegistryOrder(t *testing.T) {
-	files := agentRuleFiles()
-	if len(files) != len(agentcontext.AllVendorTargets())+1 || files[0] != "AGENTS.md" {
-		t.Fatalf("agentRuleFiles = %v", files)
+	files := agentcontext.ContextFiles()
+	vendor := make([]string, 0, len(files))
+	for _, target := range agentcontext.AllVendorTargets() {
+		vendor = append(vendor, target.Path)
+	}
+	if len(files) == 0 || files[0] != "AGENTS.md" || !slices.Equal(files[1:], vendor) {
+		t.Fatalf("ContextFiles = %v, want AGENTS.md then %v", files, vendor)
 	}
 	rep := scanOneRepo(t, files...)
 	want := make([]string, 0, len(files))

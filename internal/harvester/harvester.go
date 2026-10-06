@@ -542,7 +542,9 @@ func inspectRepoGovernance(path, name string, report *WorkstationReport) {
 		return
 	}
 	found := 0
-	for _, rel := range agentRuleFiles() {
+	// Discovery recognizes the canonical AGENTS.md and each vendor file compile-context can
+	// write, whatever the scanned repository's agent_clients selects (BUG-840).
+	for _, rel := range agentcontext.ContextFiles() {
 		if !fileExists(filepath.Join(path, filepath.FromSlash(rel))) {
 			continue
 		}
@@ -552,20 +554,6 @@ func inspectRepoGovernance(path, name string, report *WorkstationReport) {
 	if found == 0 {
 		report.MissingRulesRepos = append(report.MissingRulesRepos, name)
 	}
-}
-
-// agentRuleFiles lists every agent instruction file discovery recognizes: the canonical
-// AGENTS.md and each vendor file compile-context can write (agentcontext.AllVendorTargets),
-// whatever a scanned repository's agent_clients selects. The hand-kept list this replaced
-// skipped Cursor and Copilot and reported only three of the files it counted (BUG-840).
-func agentRuleFiles() []string {
-	targets := agentcontext.AllVendorTargets()
-	files := make([]string, 0, len(targets)+1)
-	files = append(files, "AGENTS.md")
-	for _, target := range targets {
-		files = append(files, target.Path)
-	}
-	return files
 }
 
 func fileExists(path string) bool {
