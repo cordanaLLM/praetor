@@ -718,11 +718,14 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   (`TestAdoptMigratesACRLFEarlierManifestInItsOwnStyle`,
   `TestReconcileLabels_Positive_RefreshesCRLFPriorInItsOwnStyle`,
   `TestReconcileAgentDefinitions_Boundary_CRLFPriorKeepsCRLFAndSymlinkNotWrittenThrough`). The catalog
-  follows the same rule: `.standards.lock` pins the LF text of each file, so a uniformly CRLF
-  checkout of a pinned file passes lock verification without an `eol=lf` rule, while a file with
-  mixed line endings is hashed byte for byte (`fileDigest` in `internal/config/lockdigest.go`,
+  differs in one respect. Lock verification judges a uniformly CRLF checkout of a pinned file
+  as its LF text, so it passes without an `eol=lf` rule, while a file with mixed line endings is
+  hashed byte for byte (`fileDigest` in `internal/config/lockdigest.go`,
   `TestCheckoutLineEndings_Positive_CRLFCheckoutAuditsAsLFClone` in
-  `cmd/standardsctl/checkout_line_endings_test.go`). An edited copy of any of them, or one with
+  `cmd/standardsctl/checkout_line_endings_test.go`). The adoption refresh still compares catalog
+  files byte for byte (`mayReplaceCatalogText` in `internal/adopt/policy_catalog.go`), so a CRLF
+  copy is left as it is rather than refreshed; keep `.config/archetypes` at `eol=lf` in
+  `.gitattributes` when adoption should refresh it. An edited copy of any of them, or one with
   mixed line endings, is left as it is and keeps the contract above
   (`TestAdoptDoesNotRepinAnEditedOrForeignCatalog`).
 - **Files the repository ignores.** Once every step has run, adoption asks git whether the
