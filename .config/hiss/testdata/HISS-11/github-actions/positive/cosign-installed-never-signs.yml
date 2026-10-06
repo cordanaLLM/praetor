@@ -1,0 +1,33 @@
+# HISS-11 positive: cosign is installed and used to verify, but nothing is signed. A policy
+# that sets enforce_cosign fails the supply-chain audit (internal/adopt.AuditSupplyChain).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: make dist
+      - uses: sigstore/cosign-installer@v4.1.2
+      - run: cosign verify-blob --bundle vendor.sigstore.json vendor.tgz
+      - id: hash
+        run: echo "hashes=$(sha256sum dist/*.tar.gz | base64 -w0)" >> "$GITHUB_OUTPUT"
+  provenance:
+    needs: [build]
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.build.outputs.hashes }}

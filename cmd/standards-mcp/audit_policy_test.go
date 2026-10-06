@@ -139,3 +139,20 @@ func policyEvidenceLine(t *testing.T, text string) string {
 	t.Fatal("audit omitted effective policy evidence")
 	return ""
 }
+
+// TestServerAuditRunsTheSupplyChainGate (#330): standards_audit runs the HISS-11 gate the CLI
+// audit runs. Negative: an override declaring SLSA Build Level 2 fails while no workflow writes
+// provenance. Positive: a release job that attests its build meets it, and the gate's pass line
+// names the measurement.
+func TestServerAuditRunsTheSupplyChainGate(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n"+
+		"facets: []\noverrides:\n  supply_chain:\n    slsa_level: 2\n")
+	expectError(t, "declared level above the workflows", callTool(t, srv, "standards_audit", nil),
+		"[FAIL] Supply chain (HISS-11): policy declares SLSA Build Level 2 but the workflows reach Level 0")
+	writeFixtureFile(t, root, ".github/workflows/release.yml", "on:\n  push:\n    tags: ['v*']\njobs:\n  release:\n"+
+		"    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/attest-build-provenance@v4\n")
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "declared level met", audit, "[PASS] Supply chain (HISS-11): SLSA Build Level 2 declared, Level 2 measured from release.yml.")
+	expectText(t, "declared level met", audit, "passed: 8/8")
+}

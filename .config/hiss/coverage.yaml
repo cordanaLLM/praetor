@@ -743,6 +743,22 @@ rules:
           language at all, so 0 rules even attempt these files. gitleaks: no leaks. Both gap fixtures
           pull unpinned third-party code into the browser at run time (a CDN script tag without
           subresource integrity, and a floating dynamic import) and neither
+      - language: github-actions
+        state: partial
+        runner: audit
+        mechanism: >-
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditSupplyChain
+          over internal/forge.MeasureProvenance and forge.SBOMWorkflow. NOT internal/hiss, which
+          has no HISS-11 rule.
+        rationale: >-
+          internal/adopt TestAuditSupplyChainReplaysTheHISS11Fixtures stages each fixture as the
+          release workflow under a policy declaring SLSA Build Level 3 and enforce_cosign.
+          positive/level3-claimed-direct-attestation.yml attests in its build job, which measures
+          Level 2, and positive/cosign-installed-never-signs.yml installs cosign and only verifies;
+          both fail. negative/level3-slsa-generator.yml calls the SLSA generator's reusable
+          workflow by tag and signs with cosign, and passes. The measurement reads which steps run,
+          never what they cover or what a release published: gap/attests-a-file-never-released.yml
+          attests and signs README.md, uploads its archives unattested, and passes.
   - id: HISS-12
     coverage:
       - language: go
