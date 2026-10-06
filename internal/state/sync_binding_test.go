@@ -266,9 +266,8 @@ func TestStateSyncRejectsHiddenIndexFlagsAndSubmodules(t *testing.T) {
 			if err := VerifyStateSync(t.Context(), root); err == nil {
 				t.Fatal("hidden index modification accepted")
 			}
-			if _, err := SyncState(t.Context(), root, "cannot observe fully"); err == nil {
-				t.Fatal("sync certified unsupported hidden index entry")
-			}
+			_, err := SyncState(t.Context(), root, "cannot observe fully")
+			requireErrorContains(t, err, `index entry "tracked.txt"`)
 		})
 	}
 	root := syncFixture(t)
@@ -277,7 +276,6 @@ func TestStateSyncRejectsHiddenIndexFlagsAndSubmodules(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateFixtureGit(t, root, "update-index", "--add", "--cacheinfo", "160000,"+head+",module")
-	if _, err := SyncState(t.Context(), root, "nested worktree unsupported"); err == nil {
-		t.Fatal("sync certified unobserved submodule")
-	}
+	_, err = SyncState(t.Context(), root, "nested worktree unsupported")
+	requireErrorContains(t, err, `submodule worktree "module"`)
 }

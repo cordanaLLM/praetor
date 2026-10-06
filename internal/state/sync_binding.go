@@ -232,11 +232,12 @@ func validateSyncIndex(listing string) error {
 		if len(row) < 2 || row[1] != ' ' {
 			return fmt.Errorf("state synchronization index record is malformed")
 		}
+		_, name, _ := strings.Cut(row, "\t")
 		if util.GitHiddenIndexReason(row[0]) != "" {
-			return fmt.Errorf("state synchronization refuses assume-unchanged or skip-worktree index entries")
+			return fmt.Errorf("state synchronization refuses assume-unchanged or skip-worktree index entry %q", name)
 		}
 		if strings.HasPrefix(row[2:], "160000 ") {
-			return fmt.Errorf("state synchronization cannot verify nested submodule worktrees")
+			return fmt.Errorf("state synchronization cannot verify nested submodule worktree %q", name)
 		}
 	}
 	return nil
@@ -293,14 +294,14 @@ func untrackedRecord(ctx context.Context, root, name string, budget int64) (stri
 	}
 	info, err := lstatUntracked(ctx, root, name)
 	if err != nil {
-		return "", 0, fmt.Errorf("bind untracked path %s: %w", name, err)
+		return "", 0, fmt.Errorf("bind untracked path %q: %w", name, err)
 	}
 	if contentRefusal(info, min(contextopt.MaxSourceBytes, budget)) != "" {
 		return fmt.Sprintf("metadata %s %d %d", info.Mode().Type(), info.Size(), info.ModTime().UnixNano()), 0, nil
 	}
 	digest, size, err := contextopt.DigestBinarySnapshot(ctx, filepath.Join(root, name), contextopt.MaxSourceBytes)
 	if err != nil {
-		return "", 0, fmt.Errorf("bind untracked path %s: %w", name, err)
+		return "", 0, fmt.Errorf("bind untracked path %q: %w", name, err)
 	}
 	return digest, size, nil
 }

@@ -92,7 +92,7 @@ func TestStateUntrackedRecordBound_3D(t *testing.T) {
 		t.Fatalf("a small untracked file is not bound by its bytes: %q, %v", records, err)
 	}
 	_, err = stateUntrackedBinding(t.Context(), root, strings.Repeat("gone\x00", maxSyncRecords))
-	requireErrorContains(t, err, "bind untracked path gone")
+	requireErrorContains(t, err, `bind untracked path "gone"`)
 	_, err = stateUntrackedBinding(t.Context(), root, strings.Repeat("gone\x00", maxSyncRecords+1))
 	requireErrorContains(t, err,
 		fmt.Sprintf("lists %d untracked paths, over its bound of %d records", maxSyncRecords+1, maxSyncRecords), ".gitignore")
