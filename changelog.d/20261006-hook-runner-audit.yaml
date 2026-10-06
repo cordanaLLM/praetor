@@ -1,0 +1,4 @@
+type: fixed
+title: "The audit passed any file at .git/hooks/pre-commit, a placeholder included, and reported it as lefthook's; it now requires a hook that lefthook, the praetor fallback or the pre-commit framework installed, runnable as git decides, and names the runner it found. The audit and standards_audit also accept a .pre-commit-config.yaml that runs praetorctl compile-context --verify and praetorctl audit as local hooks. Migration: replace a hand-written pre-commit hook with lefthook install, praetorctl adopt or pre-commit install"
+issue: "#175"
+breaking: true
