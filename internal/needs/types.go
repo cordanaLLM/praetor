@@ -29,6 +29,9 @@ const (
 	StatusAdapterAvailable CapabilityStatus = "adapter_available"
 	StatusGap              CapabilityStatus = "gap"
 	StatusNative           CapabilityStatus = "native"
+	// StatusNonGoal marks a demand whose capability the framework it is scored against
+	// declares a non-goal (NonGoal): resolved by the declared alternative, never a gap.
+	StatusNonGoal CapabilityStatus = "non_goal"
 )
 
 // LibraryRelationshipKind distinguishes retained libraries from migration candidates.
@@ -73,6 +76,16 @@ type CapabilityDeclaration struct {
 	Optional []CapabilityKey `json:"optional,omitempty" yaml:"optional,omitempty"`
 }
 
+// NonGoal declares a capability a repository deliberately does not provide or use, why,
+// and what a repository uses instead. A framework's declared non-goals resolve the demands
+// of that capability in every repository scored against it (StatusNonGoal); a repository
+// whose own code still uses a capability it declares a non-goal fails `needs scan --check`.
+type NonGoal struct {
+	Capability  CapabilityKey `json:"capability" yaml:"capability"`
+	Rationale   string        `json:"rationale" yaml:"rationale"`
+	Alternative string        `json:"alternative" yaml:"alternative"`
+}
+
 // ReadinessMetrics summarizes dependency mapping availability, not migration safety.
 // Basis distinguishes catalog declarations from observed source; tests are not run.
 type ReadinessMetrics struct {
@@ -81,6 +94,9 @@ type ReadinessMetrics struct {
 	TotalThirdPartyDeps int     `json:"total_third_party_deps" yaml:"total_third_party_deps"`
 	CoveredDeps         int     `json:"covered_deps" yaml:"covered_deps"`
 	GapDeps             int     `json:"gap_deps" yaml:"gap_deps"`
+	// NonGoalDeps counts the demands resolved as non-goals of the framework (StatusNonGoal).
+	// Score counts them as mapped.
+	NonGoalDeps int `json:"non_goal_deps,omitempty" yaml:"non_goal_deps,omitempty"`
 }
 
 // RepoNeeds is the declarative manifest of a repository's framework needs (.needs.yaml).
@@ -95,7 +111,10 @@ type RepoNeeds struct {
 	Framework    string                `json:"framework,omitempty" yaml:"framework,omitempty"`
 	BuilderKits  []string              `json:"builder_kits,omitempty" yaml:"builder_kits,omitempty"`
 	Capabilities CapabilityDeclaration `json:"capabilities" yaml:"capabilities"`
-	Dependencies []DependencyDemand    `json:"dependencies" yaml:"dependencies"`
+	// NonGoals are the capabilities the repository declares it deliberately does not provide
+	// or use (non_goals.go). A scan carries them over from the committed manifest.
+	NonGoals     []NonGoal          `json:"non_goals,omitempty" yaml:"non_goals,omitempty"`
+	Dependencies []DependencyDemand `json:"dependencies" yaml:"dependencies"`
 	// StandardLibraryImports contains selected catalog imports observed in Go source.
 	// They never contribute to third-party dependency counts or migration candidates.
 	StandardLibraryImports []DependencyDemand `json:"standard_library_imports,omitempty" yaml:"standard_library_imports,omitempty"`
@@ -178,6 +197,9 @@ type FrameworkIndex struct {
 	Tooling  map[string][]string `json:"tooling,omitempty"`
 	// Foundations lists the third-party names the contract retains as foundations.
 	Foundations []string `json:"foundations,omitempty"`
+	// NonGoals are the capabilities the framework checkout's own .needs.yaml declares
+	// non-goals; demands of them are resolved, not gaps (StatusNonGoal).
+	NonGoals []NonGoal `json:"non_goals,omitempty"`
 }
 
 // GapDetail documents an unmet capability demand across the fleet.
@@ -205,7 +227,10 @@ type FleetDemandReport struct {
 	DemandFrequency     map[CapabilityKey]int      `json:"demand_frequency"`
 	CapabilityConsumers map[CapabilityKey][]string `json:"capability_consumers"`
 	Gaps                []GapDetail                `json:"gaps"`
-	Leaderboard         []RepoNeeds                `json:"leaderboard"`
+	// FrameworkNonGoals are the selected framework's declared non-goals. The demands they
+	// resolve are counted per row (ReadinessMetrics.NonGoalDeps), never as gaps.
+	FrameworkNonGoals []NonGoal   `json:"framework_non_goals,omitempty"`
+	Leaderboard       []RepoNeeds `json:"leaderboard"`
 	// CoverageKnown is false when no repository could be scanned, in which case
 	// OverallFleetCoverage carries no meaning and must not be rendered as a result.
 	CoverageKnown        bool    `json:"coverage_known"`
