@@ -338,8 +338,9 @@ func isThirdPartyImport(importPath, modulePath string) bool {
 
 // loadExistingDeclarations merges capabilities declared in an existing .needs.yaml or
 // .standards.yaml into the freshly computed set. Declared entries are additive: replacing
-// the computed set would freeze Capabilities.Required at its first written value. A
-// .needs.yaml read through a deprecated key passes its deprecation on to the new row.
+// the computed set would freeze Capabilities.Required at its first written value. The
+// non_goals of a .needs.yaml carry over the same way (non_goals.go). A .needs.yaml read
+// through a deprecated key passes its deprecation on to the new row.
 func loadExistingDeclarations(ctx context.Context, repoPath string, repoNeeds *RepoNeeds) error {
 	needsPath := filepath.Join(repoPath, ".needs.yaml")
 	if util.FileExists(needsPath) {
@@ -348,6 +349,7 @@ func loadExistingDeclarations(ctx context.Context, repoPath string, repoNeeds *R
 			return err
 		}
 		mergeCapabilities(repoNeeds, existing.Capabilities)
+		repoNeeds.NonGoals = mergeNonGoals(repoNeeds.NonGoals, existing.NonGoals)
 		for _, deprecation := range existing.Deprecations {
 			repoNeeds.Deprecations = appendUniqueStr(repoNeeds.Deprecations, deprecation)
 		}
@@ -492,18 +494,20 @@ func conventionalModuleRoot(importPath string) string {
 	return root
 }
 
-// calculateReadiness computes the framework adoption score and dependency counts. A row
-// that names no framework has the basis not-configured, which renders as n/a
-// (MappingAvailability).
+// calculateReadiness computes the framework adoption score and dependency counts. A demand
+// the framework declares a non-goal (StatusNonGoal) is resolved: the score counts it as
+// mapped, and NonGoalDeps keeps the number visible. A row that names no framework has the
+// basis not-configured, which renders as n/a (MappingAvailability).
 func calculateReadiness(repoNeeds *RepoNeeds) {
 	total := len(repoNeeds.Dependencies)
-	covered := 0
-	gap := 0
+	covered, nonGoal, gap := 0, 0, 0
 
 	for _, d := range repoNeeds.Dependencies {
 		switch d.Status {
 		case StatusCovered, StatusAdapterAvailable, StatusNative:
 			covered++
+		case StatusNonGoal:
+			nonGoal++
 		case StatusGap:
 			gap++
 		}
@@ -511,7 +515,7 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 
 	score := 100.0
 	if total > 0 {
-		score = (float64(covered) / float64(total)) * 100.0
+		score = (float64(covered+nonGoal) / float64(total)) * 100.0
 	}
 
 	basis := FrameworkCatalogDeclared
@@ -524,6 +528,7 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 		TotalThirdPartyDeps: total,
 		CoveredDeps:         covered,
 		GapDeps:             gap,
+		NonGoalDeps:         nonGoal,
 	}
 }
 

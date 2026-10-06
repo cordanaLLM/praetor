@@ -511,8 +511,8 @@ func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *Mi
 	}
 	writeUnanalyzedLanguages(&sb, facts)
 	writeMigrationEvidence(&sb, plan)
-	writef(&sb, "- **Third-Party Dependencies**: `%d` total (%d covered, %d gaps)\n\n",
-		repoNeeds.Readiness.TotalThirdPartyDeps, repoNeeds.Readiness.CoveredDeps, repoNeeds.Readiness.GapDeps)
+	writef(&sb, "- **Third-Party Dependencies**: `%d` total (%s)\n\n",
+		repoNeeds.Readiness.TotalThirdPartyDeps, FormatDependencyCounts(repoNeeds.Readiness))
 
 	writeEpicTaskChecklist(&sb, tasks)
 

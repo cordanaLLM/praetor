@@ -90,6 +90,48 @@ func TestNeedsScanNamesRepositoryFallback_3D(t *testing.T) {
 
 // Boundary: --write and --check together are refused before anything is scanned or
 // written.
+// needs scan --check and --write refuse a declared non-goal the repository still uses,
+// naming the non-goal and the package, and keep one it does not use (#34).
+func TestNeedsScanDeclaredNonGoals_3D(t *testing.T) {
+	scan := func(repo string, flags ...string) (string, error) {
+		return captureStdout(t, func() error { return dispatchCommand("needs", append([]string{"scan", "--path=" + repo}, flags...)) })
+	}
+	nonGoal := func(capability string) string {
+		return "version: 1\nnon_goals:\n  - capability: " + capability +
+			"\n    rationale: Command lines belong to the application\n    alternative: the standard flag package\n"
+	}
+	// Negative: the fixture imports cobra (clikit.cobra), which the manifest declares a non-goal.
+	repo := newNeedsRepo(t)
+	writeFixtureFile(t, repo, needs.NeedsManifestName, nonGoal("clikit.cobra"))
+	for _, flag := range []string{"--check", "--write"} {
+		_, err := scan(repo, flag)
+		if !errors.Is(err, needs.ErrNonGoalContradicted) || !strings.Contains(err.Error(), "non_goals[0] (clikit.cobra) is used by github.com/spf13/cobra") {
+			t.Fatalf("needs scan %s with a contradicted non-goal: %v", flag, err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(repo, needs.NeedsManifestName)); err != nil || string(data) != nonGoal("clikit.cobra") {
+		t.Fatalf("a refused --write changed the manifest: %v\n%s", err, data)
+	}
+	// Positive: a non-goal the code does not use is written and then matches.
+	clean := newNeedsRepo(t)
+	writeFixtureFile(t, clean, needs.NeedsManifestName, nonGoal("clikit.tui"))
+	if _, err := scan(clean, "--write"); err != nil {
+		t.Fatalf("needs scan --write: %v", err)
+	}
+	if out, err := scan(clean, "--check"); err != nil || !strings.Contains(out, "matches a fresh scan") {
+		t.Fatalf("needs scan --check: %v\n%s", err, out)
+	}
+	if data, err := os.ReadFile(filepath.Join(clean, needs.NeedsManifestName)); err != nil || !strings.Contains(string(data), "capability: clikit.tui") {
+		t.Fatalf("written manifest dropped the non-goal: %v\n%s", err, data)
+	}
+	// Boundary: a capability declared both needed and a non-goal fails the scan itself.
+	both := newNeedsRepo(t)
+	writeFixtureFile(t, both, needs.NeedsManifestName, strings.Replace(nonGoal("clikit.tui"), "non_goals:", "capabilities:\n  required: [clikit.tui]\nnon_goals:", 1))
+	if _, err := scan(both); err == nil || !strings.Contains(err.Error(), "non_goals[0] (clikit.tui) is also declared needed under capabilities.required") {
+		t.Fatalf("needed and non-goal: %v", err)
+	}
+}
+
 func TestNeedsScanCheckExcludesWrite(t *testing.T) {
 	repo := newNeedsRepo(t)
 	_, err := captureStdout(t, func() error {
