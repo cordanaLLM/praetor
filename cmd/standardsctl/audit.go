@@ -397,8 +397,9 @@ func auditDevContainer(ctx context.Context, manifest *config.Manifest, opts *aud
 
 // auditAgentProjections fails when any vendor or plugin copy of a persona under
 // .agents/agents differs from its canonical source, so a loosened persona copy can no
-// longer pass the audit unnoticed. Persona directories agent_clients leaves out are not
-// checked, as compile-context --verify does not check them.
+// longer pass the audit unnoticed, and likewise any client copy of a register skill under
+// .agents/skills (compiler.VerifyClientSkills, #235). Persona and skill directories agent_clients
+// leaves out are not checked, as compile-context --verify does not check them.
 func auditAgentProjections(ctx context.Context, rootDir string) error {
 	verified, err := compiler.VerifyAgentProjections(ctx, rootDir)
 	if err != nil {
@@ -406,6 +407,13 @@ func auditAgentProjections(ctx context.Context, rootDir string) error {
 	}
 	if verified > 0 {
 		fmt.Printf("[PASS] Agent persona projections verified (%d copies identical to .agents/agents).\n", verified)
+	}
+	skills, err := compiler.VerifyClientSkills(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Register skill projections out of sync: %w", err)
+	}
+	if skills > 0 {
+		fmt.Printf("[PASS] Register skill projections verified (%d client copies identical to %s).\n", skills, compiler.CanonicalSkillsRel)
 	}
 	return nil
 }

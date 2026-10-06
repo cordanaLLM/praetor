@@ -148,7 +148,7 @@ func TestPlanAgentSurfaces_Boundary_NoPersonasPlansNothing(t *testing.T) {
 func TestPlanAgentSurfacesOver_Positive_PlansPendingPersonas(t *testing.T) {
 	root := planPersonaRoot(t, "# Planner, on disk\n")
 	pending := map[string][]byte{"planner.md": []byte("# Planner, pending\n"), "reviewer.md": []byte("# Reviewer\n")}
-	planned, err := PlanAgentSurfacesOver(t.Context(), root, pending)
+	planned, err := PlanAgentSurfacesOver(t.Context(), root, PendingSources{Personas: pending})
 	if err != nil {
 		t.Fatalf("PlanAgentSurfacesOver: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestPlanAgentSurfacesOver_Positive_PlansPendingPersonas(t *testing.T) {
 func TestPlanAgentSurfacesOver_Negative_RefusesNonPersonaNames(t *testing.T) {
 	root := planPersonaRoot(t, "# Planner\n")
 	for _, name := range []string{"notes.txt", "../escape.md", "nested/persona.md", `nested\persona.md`, ""} {
-		if _, err := PlanAgentSurfacesOver(t.Context(), root, map[string][]byte{name: []byte("# x\n")}); err == nil {
+		if _, err := PlanAgentSurfacesOver(t.Context(), root, PendingSources{Personas: map[string][]byte{name: []byte("# x\n")}}); err == nil {
 			t.Errorf("pending name %q accepted", name)
 		}
 	}
@@ -193,7 +193,7 @@ func TestPlanAgentSurfacesOver_Boundary_EmptyAndAboveCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	over, err := PlanAgentSurfacesOver(t.Context(), root, map[string][]byte{})
+	over, err := PlanAgentSurfacesOver(t.Context(), root, PendingSources{Personas: map[string][]byte{}})
 	if err != nil || len(over) != len(plain) {
 		t.Fatalf("an empty pending set planned %+v (err %v), want %+v", over, err, plain)
 	}
@@ -201,7 +201,7 @@ func TestPlanAgentSurfacesOver_Boundary_EmptyAndAboveCap(t *testing.T) {
 	for i := 0; i <= maxAgentProjections; i++ {
 		tooMany[fmt.Sprintf("persona-%03d.md", i)] = []byte("# x\n")
 	}
-	if _, err := PlanAgentSurfacesOver(t.Context(), root, tooMany); err == nil {
+	if _, err := PlanAgentSurfacesOver(t.Context(), root, PendingSources{Personas: tooMany}); err == nil {
 		t.Fatal("a pending set above the cap was accepted")
 	}
 }

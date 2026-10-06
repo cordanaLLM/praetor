@@ -416,6 +416,10 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
 	}
+	// Before the harness renders the register block, which names the skills the run leaves (#235).
+	if err := s.installRegisterSkills(ctx); err != nil {
+		return err
+	}
 	facts, err := s.harnessFacts(ctx, declared.AgentClients)
 	if err != nil {
 		return err
@@ -461,9 +465,9 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	if err != nil {
 		return harnessFacts{}, err
 	}
-	_, register, err := compiler.LoadRegisterBlock(ctx, s.repoPath)
+	register, err := s.registerBlock(ctx)
 	if err != nil {
-		return harnessFacts{}, fmt.Errorf("resolve the text register block for the harness: %w", err)
+		return harnessFacts{}, err
 	}
 	owner, name := s.harnessIdentity()
 	return harnessFacts{owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
@@ -533,9 +537,9 @@ func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, exis
 // report lists AGENTS.md as replaced with its line delta, and the write lands only over the
 // bytes this run read (ReplaceSnapshotIn with Expected).
 func keepAgentHarness(ctx context.Context, s *adoptSession, existing, harness string) (string, error) {
-	_, block, err := compiler.LoadRegisterBlock(ctx, s.repoPath)
+	block, err := s.registerBlock(ctx)
 	if err != nil {
-		return "", fmt.Errorf("resolve the text register block for the harness: %w", err)
+		return "", err
 	}
 	kept, spliced, err := splicedKeptHarness(existing, block)
 	if err != nil {

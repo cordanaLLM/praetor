@@ -5,6 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 const (
@@ -143,4 +149,82 @@ func rejectOrphanSkills(ctx context.Context, rootDir string, names []string) err
 		}
 	}
 	return nil
+}
+
+// Praetor ships the text register skills (config.RegisterSkillBundle): adoption installs them into
+// .agents/skills, and the block compile-context renders names them (LoadRegisterBlock, #235).
+// Codex, Gemini CLI, Cursor, Copilot and Windsurf read .agents/skills; an agent client that reads
+// skills elsewhere (agentcontext.SkillDirs, .claude/skills for Claude Code) gets a copy of each
+// bundle skill the repository carries, projected like a persona copy. A repository's own skills
+// are not projected, and a skill directory may hold skills of its own: the projection names no
+// orphan there.
+
+// canonicalSkillText reads the SKILL.md of skill name under .agents/skills below root without
+// following a symlink (contextopt.ObserveSnapshotIn), and reports whether it exists. A path that
+// cannot be read is an error: guessing either way would name, or copy, a skill nobody can open.
+func canonicalSkillText(ctx context.Context, root, name string) ([]byte, bool, error) {
+	rel := skillEntryRel(CanonicalSkillsRel, name)
+	data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, filepath.FromSlash(rel))
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s: %w", rel, err)
+	}
+	return data, exists, nil
+}
+
+// clientSkillProjections returns the copy of every bundle skill in each of dirs: the bundle skills
+// the repository carries, and those in pending, the bundle skills a caller writes before it
+// projects, with their pending bytes (PlanAgentSurfacesOver). A pending name that is no bundle
+// skill is refused. It writes nothing.
+func clientSkillProjections(ctx context.Context, rootDir string, dirs []string, pending map[string][]byte) ([]projectionFile, error) {
+	names := config.RegisterSkillBundle()
+	for name := range pending {
+		if !slices.Contains(names, name) {
+			return nil, fmt.Errorf("pending skill %q is not one Praetor ships (%s)", name, strings.Join(names, ", "))
+		}
+	}
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	var files []projectionFile
+	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
+		data, present, err := bundleSkillText(ctx, rootDir, names[i], pending)
+		if err != nil {
+			return nil, err
+		}
+		for j := 0; present && j < len(dirs); j++ {
+			files = append(files, projectionFile{rel: skillEntryRel(dirs[j], names[i]), data: data})
+		}
+	}
+	return files, nil
+}
+
+// bundleSkillText returns the SKILL.md of the bundle skill name as the caller leaves the
+// repository: its bytes in pending when it is there, otherwise what .agents/skills holds
+// (canonicalSkillText), and whether either has it.
+func bundleSkillText(ctx context.Context, rootDir, name string, pending map[string][]byte) ([]byte, bool, error) {
+	if data, ok := pending[name]; ok {
+		return data, true, nil
+	}
+	return canonicalSkillText(ctx, rootDir, name)
+}
+
+// VerifyClientSkills checks that every bundle skill the repository carries has its copy in the
+// skill directory of each agent client agent_clients selects (SelectSkillDirs), matching its
+// canonical SKILL.md (verifyProjection). It returns the number of copies verified. A directory
+// the selection leaves out is neither required nor read.
+func VerifyClientSkills(ctx context.Context, rootDir string) (int, error) {
+	dirs, _, err := SelectSkillDirs(ctx, rootDir)
+	if err != nil {
+		return 0, err
+	}
+	files, err := clientSkillProjections(ctx, rootDir, dirs, nil)
+	if err != nil {
+		return 0, err
+	}
+	for i := range files {
+		if err := verifyProjection(ctx, rootDir, files[i].rel, files[i].data); err != nil {
+			return i, err
+		}
+	}
+	return len(files), nil
 }

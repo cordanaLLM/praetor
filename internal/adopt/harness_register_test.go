@@ -17,7 +17,8 @@ func registerTestPlan() *VerificationPlan {
 }
 
 // The harness carries the default block, and that block is byte-for-byte what the
-// adoptee's own compile-context renders without a manifest: a fresh adoption verifies.
+// adoptee's own compile-context renders without a manifest once it carries the register skills
+// adoption installs (#235): a fresh adoption verifies.
 func TestHarnessCarriesTheDefaultRegisterSection(t *testing.T) {
 	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", registerTestPlan()))
 	if err != nil {
@@ -33,6 +34,7 @@ func TestHarnessCarriesTheDefaultRegisterSection(t *testing.T) {
 	}
 
 	repo := t.TempDir()
+	writeRegisterSkillSources(t, repo)
 	agents := filepath.Join(repo, agentsFile)
 	if err := os.WriteFile(agents, []byte(harness), filePerm); err != nil {
 		t.Fatal(err)
@@ -88,6 +90,7 @@ func TestHarnessRefreshKeepsOneRegisterSection(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			repo := newTestRepo(t, "harness-register")
+			writeRegisterSkillSources(t, repo)
 			path := filepath.Join(repo, agentsFile)
 			if err := os.WriteFile(path, []byte(tc.initial), filePerm); err != nil {
 				t.Fatal(err)

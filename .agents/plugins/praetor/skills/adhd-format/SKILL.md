@@ -45,15 +45,15 @@ Forge-facing prose (issues, PR bodies, review comments, commit bodies) uses soci
 
 ### ✅ ADHD-Optimized Pattern
 > ### 🚨 HISS-04 Complexity Infraction
-> 
+>
 > | Function | Cyclomatic | Limit | Func LOC | Limit | Status |
 > | :--- | :--- | :--- | :--- | :--- | :--- |
 > | `compiler.compileAstNode` | **14** | $\le 10$ | **92** | $\le 60$ | ❌ Blocked |
-> 
+>
 > **Immediate Action Required**:
 > - **Extract node visit logic** into `visitExpression()` and `visitStatement()`.
 > - **Target reduction**: Reduce cyclomatic complexity from 14 to $\le 8$.
-> 
+>
 > ```mermaid
 > flowchart LR
 >     NODE["compileAstNode (LOC 92)"] --> EXPR["visitExpression (LOC 35)"]

@@ -47,3 +47,28 @@ func CheckPersonaTargets(ctx context.Context, root string, added []string) error
 	}
 	return checkProjectionFiles(ctx, root, append(files, skills...))
 }
+
+// CheckSkillTargets runs the writer's refusals over the skill files a caller and
+// CompileAgentSurfaces write once the skills Praetor ships named in added are installed, writing
+// nothing: the SKILL.md under .agents/skills of each skill in added, and the copy of every such
+// skill the repository carries or added names in the skill directory of each agent client
+// agent_clients selects (clientSkillProjections). Adoption runs it before its first write, so a
+// symlinked .claude/skills fails adoption with nothing written. A name in added that is not a
+// skill Praetor ships is refused.
+func CheckSkillTargets(ctx context.Context, root string, added []string) error {
+	dirs, _, err := SelectSkillDirs(ctx, root)
+	if err != nil {
+		return err
+	}
+	pending := make(map[string][]byte, len(added))
+	files := make([]projectionFile, 0, len(added))
+	for i := 0; i < len(added) && i < maxSkillProjections; i++ {
+		pending[added[i]] = nil
+		files = append(files, projectionFile{rel: skillEntryRel(CanonicalSkillsRel, added[i])})
+	}
+	copies, err := clientSkillProjections(ctx, root, dirs, pending)
+	if err != nil {
+		return err
+	}
+	return checkProjectionFiles(ctx, root, append(files, copies...))
+}

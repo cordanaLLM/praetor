@@ -341,8 +341,9 @@ var priorPersonaDigests = map[string]map[string]string{
 }
 
 // reconcileAgentDefinitions writes the canonical personas and projects them into the persona
-// directory of every agent client agent_clients selects; the directories it leaves out are
-// reported not applicable and never written. A dry run writes nothing and records every copy
+// directory of every agent client agent_clients selects, and the register skills the repository
+// carries into its skill directory (#235); the directories it leaves out are reported not
+// applicable and never written. A dry run writes nothing and records every copy
 // the real run projects (projectAgentSurfaces); it used to stop before the copies, so the
 // preview never named them nor the hand-edited ones a forced run replaces (#366).
 func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
@@ -362,6 +363,11 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
 	}
+	_, excludedSkills, err := compiler.SelectSkillDirs(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
+	}
+	excluded = append(excluded, excludedSkills...)
 	for i := 0; i < len(excluded) && i < maxTranspileTargets; i++ {
 		s.report.recordNotApplicable(excluded[i], "Not selected by agent_clients in "+manifestFile)
 	}
