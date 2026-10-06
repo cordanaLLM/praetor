@@ -407,8 +407,14 @@ configuration remains a separate integration step.
 ## Provenance and migration
 
 Resolution reads bounded regular-file snapshots, rejects symlinks, and hashes the
-exact bytes decoded. Unsupported YAML aliases, duplicate keys and multiple
-documents fail. Pinned sources must exist locally in the selected catalog;
+text decoded. A source in one consistent line-ending style hashes as its LF form,
+so a Windows checkout (CRLF under `* text=auto`) reports the source hashes and the
+effective digest of an LF clone, and its archetypes match the lock pins; a source
+with mixed line endings hashes byte for byte, and a pin mismatch says so
+(`util.CheckoutTextDigest` in `internal/util/line_endings.go`, tests in
+`internal/config/checkout_line_endings_test.go` and
+`cmd/standardsctl/checkout_line_endings_test.go`). Unsupported YAML aliases,
+duplicate keys and multiple documents fail. Pinned sources must exist locally in the selected catalog;
 lock metadata alone cannot establish the policy that was applied.
 
 The effective digest includes ordered source identities and hashes, effective

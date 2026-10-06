@@ -1,0 +1,4 @@
+type: fixed
+title: "A Windows (CRLF) checkout of an unmodified adopter no longer fails the archetype lockfile digest, compile-context --verify or the persona projections, and reports the effective-policy digest of an LF clone; files with mixed line endings are still compared byte for byte"
+issue: "#781"
+breaking: true

@@ -235,9 +235,15 @@ func exportTargets(selected []vendorTarget) []VendorTarget {
 // CompileContent synthesizes vendor-specific files directly from in-memory markdown content.
 // Each target keeps the shared body and its own `## <Vendor>` section in place; every other
 // vendor's section is removed, so guidance written for one agent never reaches another.
+// A source in one consistent line-ending style compiles as its LF form, so a CRLF checkout of
+// AGENTS.md yields the projections of its LF blob rather than LF headers above CRLF lines; a
+// source with mixed endings compiles as it is.
 func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	if strings.TrimSpace(content) == "" {
 		return nil, fmt.Errorf("canonical AGENTS.md content is empty")
+	}
+	if lf, _, err := util.NormalizeLineEndingsStrict(content); err == nil {
+		content = lf
 	}
 	targets, excluded, err := selectTargets(t.Clients)
 	if err != nil {

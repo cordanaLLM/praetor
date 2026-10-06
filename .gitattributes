@@ -11,16 +11,13 @@
 # nobody edited. The blobs are already LF; this only pins how they are written out.
 *.go text eol=lf
 
-# internal/config/lockdigest.go hashes archetype and facet sources byte-for-byte and
-# compares the result against the sha256 .standards.lock pins. .standards.lock is
-# generated against the LF blobs committed here, so a Windows checkout that converts
-# them to CRLF (the windows-latest runner's git default) makes every profile and facet
-# fail with "lockfile digest does not match the archetype source" before the file's
-# content is ever examined -- confirmed on framework.yaml, whose LF sha256 matches the
-# pinned digest exactly and whose CRLF-converted sha256 does not. This was most of the
-# Windows leg's failures across cmd/standardsctl, internal/config and internal/devcontainer
-# (#135). Pinning LF here is the same fix as *.go, for the same reason: the hash a
-# checkout produces must not depend on which platform did the checking out.
+# .standards.lock pins the sha256 of the LF archetype and facet sources committed here.
+# Before #781, internal/config/lockdigest.go hashed them byte for byte, so a Windows
+# checkout that converts them to CRLF failed every profile and facet with "lockfile digest
+# does not match the archetype source" (#135). The digest now judges a uniformly CRLF file
+# as its LF text, but the adoption catalog refresh still compares bytes exactly
+# (internal/adopt/policy_catalog.go), and a mixed-ending file is still hashed byte for byte,
+# so the LF pin stays: a checkout must not depend on which platform did the checking out.
 .config/archetypes/**/*.yaml text eol=lf
 
 # HISS-16's canonical AGENTS.md and every vendor target standardsctl compile-context
