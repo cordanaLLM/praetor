@@ -44,7 +44,7 @@ func TestVerificationLimitsFromFlags_Negative(t *testing.T) {
 func largeHarnessRepo(t *testing.T, entries int) string {
 	t.Helper()
 	root := t.TempDir()
-	writeFixtureFile(t, root, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
+	writeFixtureFile(t, root, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: github\n")
 	writeFixtureFile(t, root, "go.mod", "module example.com/widget\n\ngo 1.27\n")
 	for i := 0; i < entries-3; i++ {
 		writeFixtureFile(t, root, "src/f"+strconv.Itoa(i), "")

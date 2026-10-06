@@ -138,9 +138,10 @@ func fixtureManifest(owner, name string, signed bool) string {
 	return fixtureProfileManifest(owner, name, "framework", signed)
 }
 
-// fixtureProfileManifest is fixtureManifest declaring profile instead of framework.
+// fixtureProfileManifest is fixtureManifest declaring profile instead of framework. The fixture
+// has no github.com origin remote, so it declares its forge (repository.forge).
 func fixtureProfileManifest(owner, name, profile string, signed bool) string {
-	m := "version: 1\nrepository:\n  owner: \"" + owner + "\"\n  name: \"" + name + "\"\n  visibility: \"public\"\n" +
+	m := "version: 1\nrepository:\n  owner: \"" + owner + "\"\n  name: \"" + name + "\"\n  forge: \"github\"\n  visibility: \"public\"\n" +
 		"profiles:\n  - \"" + profile + "\"\nfacets:\n  - \"security:high\"\n"
 	if signed {
 		m += "overrides:\n  branch_protection:\n    require_signed_commits: true\n"
