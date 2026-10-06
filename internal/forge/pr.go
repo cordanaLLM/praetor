@@ -196,9 +196,22 @@ func verifyReceiptEnvelope(rf *lockdown.ReceiptFile, policy ReceiptPolicy) error
 		return err
 	}
 	if policy.HeadSHA != "" && !strings.EqualFold(strings.TrimSpace(rf.CommitSHA), strings.TrimSpace(policy.HeadSHA)) {
-		return fmt.Errorf("receipt certifies commit %q but the pull request head is %q", rf.CommitSHA, policy.HeadSHA)
+		return fmt.Errorf("receipt certifies commit %q but the pull request head is %q; %s",
+			rf.CommitSHA, policy.HeadSHA, receiptRecovery("replace the", policy.HeadSHA))
 	}
 	return nil
+}
+
+// receiptRecovery names the steps that produce an acceptable receipt. A receipt certifies one
+// commit, so every push stales the one in the body; without the steps the refusal left the
+// contributor to work out the loop from the source (#136).
+func receiptRecovery(verb, head string) string {
+	target := "the pushed head"
+	if strings.TrimSpace(head) != "" {
+		target += " " + strings.TrimSpace(head)
+	}
+	return fmt.Sprintf("run `%s` on a clean checkout of %s, then %s fenced ```%s block in the pull request body with the contents of the %s it writes",
+		util.GateRepoRunCommand, target, verb, ReceiptFenceToken, util.GateReceiptFile)
 }
 
 // applyReceiptVerification parses and verifies the receipt block, recording a precise
@@ -206,7 +219,8 @@ func verifyReceiptEnvelope(rf *lockdown.ReceiptFile, policy ReceiptPolicy) error
 func applyReceiptVerification(res *PRChecklistResult, raw string, policy ReceiptPolicy) {
 	if raw == "" {
 		res.Errors = append(res.Errors,
-			"missing mandatory Ed25519 Exit-0 receipt: expected a fenced ```receipt block containing the signed receipt JSON")
+			"missing mandatory Ed25519 Exit-0 receipt: expected a fenced ```receipt block containing the signed receipt JSON; "+
+				receiptRecovery("fill a", policy.HeadSHA))
 		return
 	}
 	var rf lockdown.ReceiptFile
