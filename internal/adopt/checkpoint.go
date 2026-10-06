@@ -48,6 +48,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"df7029ac02521544a9d32b4e75105512cdc047e28746d476b98f291e87c71a34": "Windows suite (#149)",
 		"57aa9d7a711627bf64b74d23d12e8725e0980bb96d140a289c8ee376b77f9498": "register-sourced hook text (#487)",
 		"8ca7e7926028b518902006ced9f59cce952eee5e056cd690c39a43455c2d0278": "neutrality sweep (#509)",
+		"00bb0ecb2e3c257d23cb2719c7c5513461e0386c3e9795d259f273283bc6f8cd": "re-run supersedes its earlier run (#786)",
 	},
 	checkpointCommon: {
 		"61ccf1481d43073ca29aab6c6e6b78cc6f5cb4a86bf1e7603b8b0e01d02f71a9": "platform promotion (#14)",
