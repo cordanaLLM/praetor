@@ -50,13 +50,23 @@ func liveProtectionTarget(ctx context.Context, rootDir string, manifest *config.
 	return protectionTarget{repository: repository, branch: branch, policy: policy, contexts: contexts}, nil
 }
 
+// forgeReadError marks a compareLiveProtection failure in which the forge did not answer the read,
+// apart from a comparison that could not be evaluated: the audit reports the first as a check not
+// made and fails on the second. Its text is the wrapped error's.
+type forgeReadError struct{ err error }
+
+func (e *forgeReadError) Error() string { return e.err.Error() }
+
+func (e *forgeReadError) Unwrap() error { return e.err }
+
 // compareLiveProtection reads what the forge enforces on the target branch through reader, from
 // its rulesets and its legacy protection object alike (forge.GitHubDriver.ReadBranchProtection),
 // and compares it with the declared policy property by property (forge.EvaluateBranchProtection).
+// A failed read is a *forgeReadError; a failed comparison is not.
 func compareLiveProtection(ctx context.Context, reader protectionReader, target protectionTarget) (*forge.LiveBranchProtection, []forge.ProtectionFinding, error) {
 	live, err := reader.ReadBranchProtection(ctx, target.branch)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read the live branch protection of %s: %w", target.branch, err)
+		return nil, nil, &forgeReadError{err: fmt.Errorf("read the live branch protection of %s: %w", target.branch, err)}
 	}
 	findings, err := forge.EvaluateBranchProtection(target.policy, target.contexts, live)
 	if err != nil {

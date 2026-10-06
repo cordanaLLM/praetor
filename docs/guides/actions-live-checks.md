@@ -187,20 +187,35 @@ declared one, and no signed commits, reads:
 [FAIL] Live branch protection of main on GitHub does not match the declared policy (protected by branch protection):
   Signed commits: declared required, live not enforced
   Required status checks: declared 1, live 0 of 1 required; missing: CI Gate
-Run 'praetorctl plan --remote' for the full comparison and 'praetorctl sync --remote' to reconcile it
+To reconcile it, run 'praetorctl plan --remote' and then 'praetorctl sync --remote' from an up-to-date checkout of main, not from another branch:
+  both require the status checks of the workflows of the checkout they run in, and sync keeps every check it finds required, so a sync from another branch requires its jobs that main does not run, and they block every pull request until removed by hand.
+  sync --remote also writes the labels in .config/labels.yaml and the repository description, homepage and topics; plan --remote previews only the branch protection, so review those first.
+  Both read the token from --token, GITHUB_TOKEN or GH_TOKEN, never from the gh session.
 ```
+
+The remedy names the default branch because `sync --remote` merges the checks it requires into
+the live ruleset and never drops one (`unionStatusChecks` in `internal/forge/ruleset_merge.go`):
+a check only a feature branch runs, once required, blocks every pull request that lacks it.
 
 A live setting stricter than declared passes; `plan --remote` lists it as `[STRICTER]`
 (`TestAuditLiveBranchProtection_Positive_MatchingProtectionPasses`,
 `TestAuditLiveBranchProtection_Negative_DriftFailsNamingEachProperty`).
 
-Nothing is compared, and the audit says why, in three cases:
+Every live check runs whatever an earlier one found: drifted workflow permissions and drifted
+branch protection fail one audit together, each with its own `[FAIL]`
+(`TestAuditLiveForge_Negative_EveryDriftIsReported`). A comparison that cannot be evaluated,
+such as a negative approving review count or more required checks than a ruleset holds, is a
+local defect and fails the audit too; only a read the forge did not answer is reported as not made
+(`TestAuditLiveBranchProtection_Negative_UnevaluableComparisonFails`).
+
+Nothing is compared, and the audit says why, in four cases:
 
 | Case | Line |
 | :--- | :--- |
 | `adoption.decline` lists `branch-ruleset` | `[INFO] ... not compared with the forge: branch-ruleset declined by adoption.decline.` The committed ruleset gate keeps its own decline line. |
-| The policy requires neither linear history nor signed commits | `[INFO]`; the policy declares no ruleset (`adopt.RulesetRequired`). |
+| The policy requires neither linear history nor signed commits | `[INFO]`; the policy declares no ruleset (`adopt.RulesetRequired`, `TestAuditLiveBranchProtection_Boundary_PolicyWithoutRulesetIsNotCompared`). |
 | `--offline`, no token, no matching `origin`, or a read the forge refused | `[SKIP]` with the reason. Reading the legacy protection object needs read access to the repository's Administration permission, which a workflow's `GITHUB_TOKEN` cannot be granted. |
+| The default branch does not exist on GitHub yet | `[SKIP] Live branch protection of main not compared with the forge: main does not exist on GitHub yet, so nothing is enforced on it.` The first push of the branch is not refused; the audit compares it once it is pushed (`TestAuditLiveBranchProtection_Boundary_UnpushedDefaultBranchIsNotCompared`). |
 
 The status checks come from the default branch, not from the checkout under audit. GitHub can
 require a job only once it runs on the default branch, and requiring it earlier blocks every open
@@ -220,6 +235,17 @@ clone of another branch, compares the live protection with its own workflows and
 (`TestAuditLiveBranchProtection_Positive_CheckAddedOffTheDefaultBranchIsNotCompared`,
 `TestAuditLiveBranchProtection_Negative_DefaultBranchCheckNotRequiredDrifts`,
 `TestAuditLiveBranchProtection_Boundary_DefaultBranchNotFetched`).
+
+The workflows of `origin/<default branch>` are read from the checkout's object store, and nothing
+is fetched. A blobless partial clone (`git clone --filter=blob:none`) may lack a workflow that
+changed there since the checkout's own commit. The audit then compares with the checkout's own
+workflows too, and names the workflow it could not read
+(`forge.ErrCommittedWorkflowAbsent`,
+`TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed`):
+
+```text
+[INFO] Live branch protection of main: the workflows of origin/main (1a2b3c4d) are not all in this checkout, as in a partial clone (workflow api.yml at commit 1a2b3c4d...: its object is not in this checkout, and nothing is fetched to read it), so the status checks are compared with the ones this checkout's workflows report.
+```
 
 `praetorctl plan` reads local files only unless `--remote` is passed. Its status then ends with
 `[INFO] Live branch protection not compared with the forge: this plan read local files only.`

@@ -6,6 +6,7 @@ package forge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -115,5 +116,40 @@ func TestRequiredStatusContextsAt_Boundary_InventoryBounds(t *testing.T) {
 		[]string{"commit", "--quiet", "-m", "one more"}, []string{"rev-parse", "HEAD"}))
 	if got, err := RequiredStatusContextsAt(t.Context(), dir, over, "acme/widgets"); err == nil || got != nil {
 		t.Fatalf("%d entries: got %v, %v; want a refusal", maxWorkflowFiles+1, got, err)
+	}
+}
+
+// removeLooseObject deletes the loose object of the blob rel holds at commit from the checkout at
+// dir, as a blobless partial clone lacks a blob it never fetched.
+func removeLooseObject(t *testing.T, dir, commit, rel string) {
+	t.Helper()
+	object := strings.TrimSpace(testsupport.RunFixtureGit(t, dir, []string{"rev-parse", commit + ":" + rel}))
+	path := filepath.Join(dir, ".git", "objects", object[:2], object[2:])
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Boundary: a workflow document the commit records but the checkout does not hold, as in a
+// blobless partial clone, is ErrCommittedWorkflowAbsent naming the file, never fetched and never
+// read as a commit that reports fewer checks; the documents it does hold are not enough.
+func TestRequiredStatusContextsAt_Boundary_AbsentObjectIsNamed(t *testing.T) {
+	dir, commit := committedWorkflowRepo(t, map[string]string{
+		".github/workflows/ci.yml":  prWorkflow("CI"),
+		".github/workflows/api.yml": prWorkflow("API"),
+	})
+	if got, err := RequiredStatusContextsAt(t.Context(), dir, commit, "acme/widgets"); err != nil || !slices.Equal(got, []string{"API", "CI"}) {
+		t.Fatalf("every object present: got %v, %v; want [API CI]", got, err)
+	}
+	removeLooseObject(t, dir, commit, ".github/workflows/api.yml")
+	got, err := RequiredStatusContextsAt(t.Context(), dir, commit, "acme/widgets")
+	if !errors.Is(err, ErrCommittedWorkflowAbsent) || got != nil {
+		t.Fatalf("an absent object: got %v, %v; want ErrCommittedWorkflowAbsent", got, err)
+	}
+	if want := "workflow api.yml at commit " + commit; !strings.Contains(err.Error(), want) {
+		t.Fatalf("error %q does not name %q", err, want)
 	}
 }

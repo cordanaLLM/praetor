@@ -87,18 +87,17 @@ func readActionsPermissions(ctx context.Context, declared config.ActionsPolicy, 
 // permissions are compared with overrides.actions and fail the audit on drift. Each
 // workflow's recent runs on the default branch are reported, and never fail it: the operator
 // chose read-and-report for them. The branch protection the default branch enforces is compared
-// with the declared policy and fails the audit on drift (auditLiveBranchProtection). A check the
-// forge did not answer is named as not made, never passed. sync --remote reconciles the branch
-// protection and neither Actions setting.
+// with the declared policy and fails the audit on drift (auditLiveBranchProtection). Every check
+// runs whatever an earlier one found, and the failures are joined, so one drift never hides
+// another. A check the forge did not answer is named as not made, never passed. sync --remote
+// reconciles the branch protection and neither Actions setting.
 func auditLiveForge(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy, offline bool) error {
 	ctx, cancel := context.WithTimeout(ctx, actionsForgeTimeout)
 	defer cancel()
 	live := openActionsForge(ctx, rootDir, manifest.Repository, offline)
-	if err := auditActionsPermissions(ctx, manifest.Overrides.Actions, live); err != nil {
-		return err
-	}
+	permissions := auditActionsPermissions(ctx, manifest.Overrides.Actions, live)
 	auditWorkflowRuns(ctx, manifest, rootDir, live)
-	return auditLiveBranchProtection(ctx, manifest, rootDir, policy, live)
+	return errors.Join(permissions, auditLiveBranchProtection(ctx, manifest, rootDir, policy, live))
 }
 
 // auditLiveBranchProtection compares the branch protection the default branch enforces on the
@@ -108,7 +107,9 @@ func auditLiveForge(ctx context.Context, manifest *config.Manifest, rootDir stri
 // (adopt.AuditBranchProtectionWithPolicy), so a ruleset GitHub never applied passed it (#159).
 // Drift fails the audit and names every property that differs; a setting stricter than declared
 // passes. Like the committed ruleset gate, it compares nothing when adoption.decline declines
-// the branch-ruleset step or the policy requires no ruleset.
+// the branch-ruleset step or the policy requires no ruleset. A read the forge did not answer is a
+// check not made ([SKIP]); a comparison that cannot be evaluated, such as an invalid review
+// requirement or more required checks than a ruleset holds, is a local defect and fails.
 func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy, live actionsForge) error {
 	notCompared, err := liveProtectionNotCompared(manifest, policy, live)
 	if err != nil {
@@ -123,9 +124,13 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 		return fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
 	}
 	protection, findings, err := compareLiveProtection(ctx, live.protection, target)
-	if err != nil {
+	var unread *forgeReadError
+	switch {
+	case errors.As(err, &unread):
 		fmt.Printf("[SKIP] Live branch protection not compared with the forge: %v\n", err)
 		return nil
+	case err != nil:
+		return fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
 	}
 	printLines(notes)
 	return liveProtectionVerdict(target, protection, findings)
@@ -137,8 +142,10 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 // (forge.RequiredStatusContextsAt), not this checkout's: the branch can require a job only once
 // the job is on it, and requiring it earlier blocks every open pull request that lacks it. A
 // check this checkout adds is named as not compared yet, and a check the default branch gained
-// since this checkout branched off is compared. Without origin's default branch in the checkout
-// the checks are this checkout's, and a note says so. The notes are printed with the verdict.
+// since this checkout branched off is compared. Without origin's default branch in the checkout,
+// or with a workflow of it the checkout does not hold (forge.ErrCommittedWorkflowAbsent), the
+// checks are this checkout's, and a note names that substitution (workingTreeChecksNote). The
+// notes are printed with the verdict.
 func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy) (protectionTarget, []string, error) {
 	target, err := liveProtectionTarget(ctx, rootDir, manifest, policy)
 	if err != nil {
@@ -150,10 +157,13 @@ func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config
 		return protectionTarget{}, nil, err
 	}
 	if commit == "" {
-		return target, []string{fmt.Sprintf("[INFO] Live branch protection of %s: %s is not in this checkout, so the status checks "+
-			"are compared with the ones this checkout's workflows report.", target.branch, ref)}, nil
+		return target, []string{workingTreeChecksNote(target.branch, ref+" is not in this checkout")}, nil
 	}
 	committed, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository)
+	if errors.Is(err, forge.ErrCommittedWorkflowAbsent) {
+		return target, []string{workingTreeChecksNote(target.branch, fmt.Sprintf(
+			"the workflows of %s (%s) are not all in this checkout, as in a partial clone (%v)", ref, shortHead(commit), err))}, nil
+	}
 	if err != nil {
 		return protectionTarget{}, nil, fmt.Errorf("discover the required status checks of %s: %w", ref, err)
 	}
@@ -166,6 +176,13 @@ func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config
 	}
 	target.contexts = committed
 	return target, notes, nil
+}
+
+// workingTreeChecksNote is the line that names the substitution auditProtectionTarget makes when
+// it cannot read the status checks of the default branch, and why.
+func workingTreeChecksNote(branch, why string) string {
+	return fmt.Sprintf("[INFO] Live branch protection of %s: %s, so the status checks are compared with the ones "+
+		"this checkout's workflows report.", branch, why)
 }
 
 // liveProtectionNotCompared returns the line of a live branch protection check that is not
@@ -188,9 +205,30 @@ func liveProtectionNotCompared(manifest *config.Manifest, policy *config.Resolve
 	return "", nil
 }
 
+// liveProtectionReconcileHint is the remedy a drift failure names. plan --remote and sync --remote
+// require the checks of the workflows of the checkout they run in, not the default branch's, and a
+// sync keeps every check it finds required, so only a sync from an up-to-date default branch
+// requires what that branch runs. sync --remote also writes the labels and repository metadata,
+// which plan --remote does not preview.
+const liveProtectionReconcileHint = "To reconcile it, run 'praetorctl plan --remote' and then 'praetorctl sync --remote' " +
+	"from an up-to-date checkout of %[1]s, not from another branch:\n" +
+	"  both require the status checks of the workflows of the checkout they run in, and sync keeps every check it finds " +
+	"required, so a sync from another branch requires its jobs that %[1]s does not run, and they block every pull request until removed by hand.\n" +
+	"  sync --remote also writes the labels in .config/labels.yaml and the repository description, homepage and topics; " +
+	"plan --remote previews only the branch protection, so review those first.\n" +
+	"  Both read the token from --token, GITHUB_TOKEN or GH_TOKEN, never from the gh session."
+
 // liveProtectionVerdict passes a branch that enforces every declared property and fails one that
-// does not, naming each differing property with its declared and live value.
+// does not, naming each differing property with its declared and live value and the remedy
+// (liveProtectionReconcileHint). A default branch GitHub does not have yet enforces nothing, so
+// it is reported as not compared, in one line, until it is pushed.
 func liveProtectionVerdict(target protectionTarget, live *forge.LiveBranchProtection, findings []forge.ProtectionFinding) error {
+	if live.Missing {
+		fmt.Printf("[SKIP] Live branch protection of %[1]s not compared with the forge: %[1]s does not exist on GitHub yet, "+
+			"so nothing is enforced on it. The audit compares it once it is pushed; 'praetorctl plan --remote' shows what "+
+			"the rulesets that target it require.\n", target.branch)
+		return nil
+	}
 	var drift []string
 	for _, finding := range findings {
 		if finding.Verdict == forge.ProtectionDrift {
@@ -202,9 +240,8 @@ func liveProtectionVerdict(target protectionTarget, live *forge.LiveBranchProtec
 			target.branch, describeMechanisms(live))
 		return nil
 	}
-	return fmt.Errorf("[FAIL] Live branch protection of %s on GitHub does not match the declared policy (%s):\n%s\n"+
-		"Run 'praetorctl plan --remote' for the full comparison and 'praetorctl sync --remote' to reconcile it",
-		target.branch, describeMechanisms(live), strings.Join(drift, "\n"))
+	return fmt.Errorf("[FAIL] Live branch protection of %s on GitHub does not match the declared policy (%s):\n%s\n%s",
+		target.branch, describeMechanisms(live), strings.Join(drift, "\n"), fmt.Sprintf(liveProtectionReconcileHint, target.branch))
 }
 
 // auditActionsPermissions prints the permission check and returns the failure of a drifted one.
