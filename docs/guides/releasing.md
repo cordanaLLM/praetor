@@ -177,7 +177,48 @@ token, so `--skip=sign` is required outside CI; `--skip=sbom` drops the Syft dep
 
 Build Level 3 is not claimed. The provenance is generated and signed in the same job as
 the build steps, and SLSA Build Level 3 requires signing that the build steps cannot reach.
-Measuring the declared `supply_chain.slsa_level` against the workflow is tracked in #330.
+`praetorctl audit` measures this workflow at Level 2
+(`TestMeasureProvenanceReadsTheEngineReleaseAsLevel2` in
+`internal/forge/provenance_workflow_test.go`), below the Level 3 this repository's `framework`
+profile and `security:high` facet declare, so the repository's own audit reports that gap.
+
+## How the audit measures the SLSA level
+
+`praetorctl audit` and the MCP `standards_audit` compare `supply_chain` in the effective policy
+with what the workflow files under `.github/workflows` can produce
+(`internal/adopt.AuditSupplyChain` over `internal/forge.MeasureProvenance`). Nothing is fetched:
+the gate reads the files, and its pass line says that published attestations and signatures were
+not checked. A workflow can attest without a release ever carrying a valid attestation, so verify
+a release with the commands under [Verifying a published release](#verifying-a-published-release).
+
+The measured level is the highest one any job reaches, following the
+[SLSA v1.0 Build track](https://slsa.dev/spec/v1.0/levels) and GitHub's
+[SLSA levels for artifact attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations#slsa-levels-for-artifact-attestations):
+
+| Level | What a job shows |
+| :--- | :--- |
+| 1 | `praetorctl provenance` writes a statement and nothing signs it |
+| 2 | `actions/attest-build-provenance`, or `actions/attest` without `sbom-path` and without a non-SLSA predicate, in the job; `cosign attest` or `attest-blob` with an SLSA provenance `--type`; or `cosign attest-blob --statement` over the file `praetorctl provenance -out` (or a `>` redirect) wrote earlier in the job |
+| 3 | The job calls a reusable workflow of `slsa-framework/slsa-github-generator` whose name ends in `_slsa3.yml`, by a `vX.Y.Z` tag; or it calls a reusable workflow of this repository (`./.github/workflows/<file>`, `on: workflow_call`) whose own job runs GitHub's attestation action, which GitHub documents as [Build Level 3](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating) |
+
+A workflow whose only trigger is `workflow_call` counts through the jobs that call it. Not
+credited, and named on the failure line: a reusable workflow in another repository, which a static
+read cannot open; the SLSA generator called by a branch or digest, since `slsa-verifier` accepts
+its provenance only from a tag; and a reusable workflow called from a reusable workflow.
+
+`enforce_cosign` needs a `cosign sign`, `sign-blob`, `attest` or `attest-blob` step, or a
+GoReleaser release whose `signs`, `binary_signs` or `docker_signs` block runs cosign over some
+artifacts with GoReleaser's own defaults (`signs` signs nothing unless `artifacts` is set;
+`docker_signs` runs cosign by default). Installing cosign, verifying with it, or
+`goreleaser release --skip=sign` signs nothing. `require_sbom` uses the SBOM rule `praetorctl plan`
+reports drift from (`forge.SBOMWorkflow`).
+
+The gate fails when the declared level exceeds the measured one, naming both and the workflow it
+read, and closed when a workflow is empty, malformed or calls a reusable workflow the repository
+does not hold. A policy that declares Level 0 and neither control reads no workflow. The built-in
+default is Level 0, so `org-health` and `upstream-fork`, which release nothing, resolve to the 0
+they declare. `TestAuditSupplyChainReplaysTheHISS11Fixtures` replays the HISS-11 fixtures under
+`.config/hiss/testdata/HISS-11/github-actions` in both directions.
 
 ## Verifying a published release
 

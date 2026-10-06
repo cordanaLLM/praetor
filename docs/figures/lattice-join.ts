@@ -80,7 +80,7 @@ export default {
             show: {
               defaults: [
                 { tag: 'complexity', tone: 'gray', text: '15 / 20 / 60 / 75', meta: 'cyc / cog / loc / stmt' },
-                { tag: 'supply_chain', tone: 'gray', text: 'slsa_level: 1' },
+                { tag: 'supply_chain', tone: 'gray', text: 'slsa_level: 0' },
                 { tag: 'branch', tone: 'gray', text: 'review_mode: independent' },
               ],
             },

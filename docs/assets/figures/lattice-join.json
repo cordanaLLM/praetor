@@ -43,13 +43,13 @@
     "cmd/standardsctl/devcontainer.go:runDevContainer",
     "cmd/standardsctl/workstation.go:loadInstallSettings"
   ],
-  "spec_sha256": "e5b7107feb2b63634b1a6cbea9114ef99ba49f703d6f69bdbdcabd41fcf1798b",
+  "spec_sha256": "c8e9bf32506f19beca2e9552fba8ee66ae5ac5019291579a93381c6a641647b9",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "6a70b89b2d53c73fa79cb881a89e709622b2cfd2e8568b8e9797a328993dd0fc"
   },
-  "svg_sha256": "97a5b2f0a1180cb6db70e89442ccd0c9c7cce16444503ed9d299aeb883d37668",
-  "static_sha256": "daf8038ddea683a47b1feba6b40afda59f7c2f7f54dd351092171564ece74b1a",
+  "svg_sha256": "b523dd924d56c6109ccce54b7fa12f0de5d602548d34129bf5ad4fc9eb505d69",
+  "static_sha256": "cef0e4a7e45edba13e31c75b12e801373ba914d180456f0cb71bacd6da0c743a",
   "width": 947,
   "height": 1104,
   "static_width": 947,

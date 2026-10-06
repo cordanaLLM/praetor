@@ -375,6 +375,12 @@ block, the projections and the caveman lint, and a failure says so
 ([declined steps](adoption-verification.md#what-audit-does-with-a-declined-step),
 `cmd/standards-mcp/audit_decline_test.go`).
 
+The HISS-11 supply-chain gate is the CLI's own too (`adopt.AuditSupplyChain`, run with the
+effective policy): it fails when the declared SLSA level, `enforce_cosign` or `require_sbom`
+exceeds what the workflow files measure
+([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level),
+`TestServerAuditRunsTheSupplyChainGate` in `cmd/standards-mcp/audit_policy_test.go`).
+
 The lock digest gate inside `standards_audit` resolves its catalog from the same
 `catalog_root` tool argument the effective-policy gate uses
 (`p.policy.CatalogRoot` in `cmd/standards-mcp/audit_tools.go`), not the repository

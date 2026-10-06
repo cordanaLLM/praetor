@@ -1,0 +1,4 @@
+type: fixed
+title: "A declared SLSA Build Level 3 passed audit with Level 2 or no provenance, and enforce_cosign was never checked"
+issue: "#330"
+breaking: true
