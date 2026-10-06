@@ -183,7 +183,8 @@ fields:
         kind: acts
         effect: >-
           sets the function length the HISS scanner fails on in audit, the
-          gate and the MCP audit
+          gate and the MCP audit, and the limit the generated agent and
+          Paperclip harness rows state (internal/adopt.withPolicy)
       - func: cmd/standards-lsp.Server.checkHISS04Complexity
         kind: acts
         effect: publishes a language-server diagnostic for a longer function
@@ -195,13 +196,6 @@ fields:
       - func: internal/adopt.adoptionScanLimit
         kind: acts
         effect: bounds adoption's legacy-debt scan
-      - func: internal/adopt.RepositoryHISSFacts
-        kind: acts
-        effect: states the limit in the generated agent harness's HISS facts
-      - func: internal/adopt.adoptSession.harnessFuncLOC
-        kind: acts
-        effect: >-
-          states the limit in the generated Paperclip harness's HISS facts
       - func: internal/dogfood.validatePublicPolicy
         kind: acts
         effect: >-

@@ -136,7 +136,7 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 		return keptHarnessPlan(ctx, path, exists, nil)
 	}
 	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath, s.paperclipFacts(ctx))
-	if errors.Is(err, util.ErrRepoIdentityUnresolved) || errors.Is(err, config.ErrForgeUndeclared) {
+	if unresolvedHarnessInputs(err) {
 		return keptHarnessPlan(ctx, path, exists, err)
 	}
 	if err != nil {
@@ -154,6 +154,13 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 		return plan, err
 	}
 	return planOwnedHarness(plan, synthesized.Platform, s.opts.Force), nil
+}
+
+// unresolvedHarnessInputs reports whether synthesis stopped because an input the harness
+// renders is not known yet: the repository identity, or a forge the manifest does not
+// declare. The existing harness is then kept and the reason reported, not refused.
+func unresolvedHarnessInputs(err error) bool {
+	return errors.Is(err, util.ErrRepoIdentityUnresolved) || errors.Is(err, config.ErrForgeUndeclared)
 }
 
 // newHarnessPlan plans the first harness of a repository that has none. A rules.md without a

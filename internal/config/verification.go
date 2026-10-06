@@ -17,7 +17,9 @@ import (
 // adoption run does (#321, #535). A run's --verification-max-* flag still overrides the bound it
 // names. A zero field is a bound the section does not declare, which keeps the default; a
 // declared value must lie in 1..its ceiling (util.DiscoveryEntriesCeiling, DiscoveryFilesCeiling
-// and DiscoveryDepthCeiling), the range the flags accept.
+// and DiscoveryDepthCeiling), the range the flags accept. A declared value below the default
+// lowers the bound the way the flag does: the walk then stops earlier and fails naming the
+// bound and the value reached, never silently.
 type VerificationPolicy struct {
 	MaxEntries int `yaml:"max_entries,omitempty"`
 	MaxFiles   int `yaml:"max_files,omitempty"`

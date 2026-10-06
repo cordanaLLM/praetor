@@ -1,4 +1,4 @@
 type: fixed
-title: "The Paperclip harness told GitHub repositories to run the Forgejo AGit push, hid stricter complexity overrides, and passed the audit stale or with a hand-edited rules.md; repository.forge now selects its push rows, and a verification section in .standards.yaml (max_entries, max_files, max_depth) raises the discovery bounds for every run, so the audit in the hooks and CI walks a large repository as far as adoption does"
+title: "The Paperclip harness renders only the declared forge's push rows and every complexity override, and the audit fails a stale or hand-edited rules.md"
 issue: "#321"
 breaking: true
