@@ -115,7 +115,11 @@ every severity in an adopter's copy of the lock. `markdownlint` pins
 `micromark-extension-math` 3.1.0, which asks for `katex` `^0.16.0`, a range with
 no fixed release, so `tools/markdownlint/package.json` sets
 `"overrides": { "katex": "0.19.0" }`. Renovate's npm manager reads the override
-and moves it in the `markdown gate lock` group (`renovate.json`). The
+and moves it in the `markdown gate lock` group (`renovate.json`). That rule
+pins only the `dependencies` and `overrides` sections (`matchDepTypes`), so
+`engines.node` stays the range `>=22` instead of one exact Node release
+(`TestRenovatePinsFamilyManifestsExceptRanges` in
+`internal/managedasset/renovate_test.go`). The
 `markdownlint` library loads `katex` through the math extension, and
 `mathSelfTest` in
 `tools/markdownlint/verify.mjs` lints a fixture of inline and block math and

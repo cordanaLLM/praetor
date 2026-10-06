@@ -16,19 +16,26 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/strictjson"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// renovateConfig is the part of renovate.json that keeps a hosted workflow's SHA pins current.
+// renovateConfig is the part of renovate.json that keeps a hosted workflow's SHA pins and a
+// family package.json's exact pins current.
 type renovateConfig struct {
 	GitHubActions struct {
 		ManagerFilePatterns []string `json:"managerFilePatterns"`
 	} `json:"github-actions"`
-	PackageRules []struct {
-		MatchManagers  []string `json:"matchManagers"`
-		MatchFileNames []string `json:"matchFileNames"`
-		PinDigests     bool     `json:"pinDigests"`
-		GroupName      string   `json:"groupName"`
-	} `json:"packageRules"`
+	PackageRules []renovatePackageRule `json:"packageRules"`
+}
+
+// renovatePackageRule is the part of one packageRules entry these tests read.
+type renovatePackageRule struct {
+	MatchManagers  []string `json:"matchManagers"`
+	MatchFileNames []string `json:"matchFileNames"`
+	MatchDepTypes  []string `json:"matchDepTypes"`
+	PinDigests     bool     `json:"pinDigests"`
+	RangeStrategy  string   `json:"rangeStrategy"`
+	GroupName      string   `json:"groupName"`
 }
 
 func readRenovateConfig(t *testing.T) renovateConfig {
@@ -141,5 +148,150 @@ func TestRenovateTemplatePatternIsExact(t *testing.T) {
 				t.Fatalf("renovate.json github-actions.managerFilePatterns also matches %s", rel)
 			}
 		}
+	}
+}
+
+// renovateNpmSections are the package.json members Renovate's npm manager extracts, each as
+// the depType of its entries (lib/modules/manager/npm/extract/common/package-file.ts).
+var renovateNpmSections = []string{
+	"dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "engines",
+	"volta", "resolutions", "packageManager", "overrides", "pnpm",
+}
+
+// renovateRangeSections hold ranges by design: engines states which runtimes a consumer may
+// use, peerDependencies what a host must provide. Renovate's npm manager returns an explicit
+// rangeStrategy unchanged for every depType (lib/modules/manager/npm/range.ts), and its lookup
+// proposes a pin for any value that is not one version, so a pin rule reaching either section
+// rewrites the range into one exact release. Renovate's :pinAllExceptPeerDependencies preset
+// resets both to auto for that reason; a rule here scopes its pin with matchDepTypes instead.
+var renovateRangeSections = []string{"engines", "peerDependencies"}
+
+// npmSections returns the members of a package.json that Renovate's npm manager extracts, in
+// renovateNpmSections order.
+func npmSections(t *testing.T, manifest []byte) []string {
+	t.Helper()
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(manifest, &members); err != nil {
+		t.Fatalf("decode package.json: %v", err)
+	}
+	return slices.DeleteFunc(slices.Clone(renovateNpmSections), func(section string) bool {
+		_, declared := members[section]
+		return !declared
+	})
+}
+
+// pinsSection reports whether rule sets rangeStrategy pin for the npm manager's entries of one
+// section of the package.json at rel. Renovate matches "*" against every file.
+func pinsSection(rule renovatePackageRule, rel, section string) bool {
+	covers := func(pattern string) bool {
+		return pattern == "*" || util.MatchGlobSegments(strings.Split(pattern, "/"), strings.Split(rel, "/"))
+	}
+	return rule.RangeStrategy == "pin" &&
+		(len(rule.MatchManagers) == 0 || slices.Contains(rule.MatchManagers, "npm")) &&
+		(len(rule.MatchDepTypes) == 0 || slices.Contains(rule.MatchDepTypes, section)) &&
+		(len(rule.MatchFileNames) == 0 || slices.ContainsFunc(rule.MatchFileNames, covers))
+}
+
+// pinnedSections returns the sections of the package.json at rel that some rule pins.
+func pinnedSections(rules []renovatePackageRule, rel string, sections []string) []string {
+	var pinned []string
+	for _, section := range sections {
+		if slices.ContainsFunc(rules, func(rule renovatePackageRule) bool { return pinsSection(rule, rel, section) }) {
+			pinned = append(pinned, section)
+		}
+	}
+	return pinned
+}
+
+// familyManifestPins checks every package.json of family that a pin rule in rules reaches: it
+// is pinned in every section the npm manager reads except the range sections. It returns how
+// many such manifests it checked and how many range sections they declare.
+func familyManifestPins(t *testing.T, rules []renovatePackageRule, family Family) (covered, ranged int) {
+	t.Helper()
+	for _, name := range family.Names() {
+		if path.Base(name) != "package.json" {
+			continue
+		}
+		data, err := family.Read(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, sections := family.AssetPath(name), npmSections(t, data)
+		pinned := pinnedSections(rules, rel, sections)
+		if len(pinned) == 0 {
+			continue
+		}
+		want := slices.DeleteFunc(slices.Clone(sections), func(section string) bool {
+			return slices.Contains(renovateRangeSections, section)
+		})
+		if !slices.Equal(pinned, want) {
+			t.Errorf("renovate.json pins %v of %s, want %v: scope the pin with matchDepTypes", pinned, rel, want)
+		}
+		covered++
+		ranged += len(sections) - len(want)
+	}
+	return covered, ranged
+}
+
+// Positive: every family package.json a Renovate pin rule reaches keeps exact pins in every
+// section the npm manager reads except the range sections. The Markdown gate's dependencies and
+// its katex override move in the markdown gate lock group, and its engines.node stays the range
+// >=22 rather than becoming one Node release that npm ci in an adopter on another Node major
+// reports as EBADENGINE (#793).
+func TestRenovatePinsFamilyManifestsExceptRanges(t *testing.T) {
+	config := readRenovateConfig(t)
+	covered, ranged := 0, 0
+	for _, family := range Families() {
+		manifests, ranges := familyManifestPins(t, config.PackageRules, family)
+		covered, ranged = covered+manifests, ranged+ranges
+	}
+	if covered == 0 || ranged == 0 {
+		t.Fatalf("pin rules reach %d family package.json files declaring %d range sections; the check would pass vacuously",
+			covered, ranged)
+	}
+}
+
+// Negative: a pin rule over the manifest without matchDepTypes, the shape the markdown gate
+// lock rule first had, reaches engines and peerDependencies, and a pin rule naming engines
+// reaches it through a directory glob.
+func TestRenovatePinReachesUnscopedRangeSections(t *testing.T) {
+	const rel = "tools/markdownlint/package.json"
+	sections := []string{"dependencies", "peerDependencies", "engines", "overrides"}
+	unscoped := renovatePackageRule{MatchManagers: []string{"npm"}, MatchFileNames: []string{rel}, RangeStrategy: "pin"}
+	if got := pinnedSections([]renovatePackageRule{unscoped}, rel, sections); !slices.Equal(got, sections) {
+		t.Fatalf("an unscoped pin rule pins %v, want %v", got, sections)
+	}
+	named := renovatePackageRule{MatchFileNames: []string{"tools/**"}, MatchDepTypes: []string{"engines"}, RangeStrategy: "pin"}
+	if got := pinnedSections([]renovatePackageRule{named}, rel, sections); !slices.Equal(got, []string{"engines"}) {
+		t.Fatalf("a pin rule naming engines pins %v", got)
+	}
+}
+
+// Boundary: a rule that does not pin, names another manager or other files, or names only a
+// section the manifest lacks pins nothing; "*", a directory "**" and a "**/" prefix reach the
+// file. npmSections reads only the members the npm manager extracts.
+func TestRenovatePinSectionsBoundary(t *testing.T) {
+	const rel = "tools/markdownlint/package.json"
+	sections := []string{"dependencies", "engines"}
+	for name, rule := range map[string]renovatePackageRule{
+		"auto":           {MatchFileNames: []string{rel}, RangeStrategy: "auto"},
+		"unset":          {MatchFileNames: []string{rel}},
+		"other manager":  {MatchManagers: []string{"pip-compile"}, RangeStrategy: "pin"},
+		"other files":    {MatchFileNames: []string{"docs/presets/starlight/**", rel + ".bak", "tools/markdownlint"}, RangeStrategy: "pin"},
+		"absent section": {MatchDepTypes: []string{"devDependencies"}, RangeStrategy: "pin"},
+	} {
+		if got := pinnedSections([]renovatePackageRule{rule}, rel, sections); len(got) != 0 {
+			t.Errorf("%s: pins %v", name, got)
+		}
+	}
+	for _, pattern := range []string{"*", "tools/markdownlint/**", "**/package.json"} {
+		rule := renovatePackageRule{MatchFileNames: []string{pattern}, MatchDepTypes: []string{"dependencies"}, RangeStrategy: "pin"}
+		if got := pinnedSections([]renovatePackageRule{rule}, rel, sections); !slices.Equal(got, []string{"dependencies"}) {
+			t.Errorf("pattern %q pins %v", pattern, got)
+		}
+	}
+	manifest := []byte(`{"name": "x", "scripts": {}, "overrides": {"a": "1.0.0"}, "engines": {"node": ">=22"}}`)
+	if got := npmSections(t, manifest); !slices.Equal(got, []string{"engines", "overrides"}) {
+		t.Fatalf("npmSections = %v", got)
 	}
 }
