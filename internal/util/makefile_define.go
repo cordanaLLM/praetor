@@ -29,13 +29,13 @@ var makefileDirectiveWords = map[string]bool{
 	"include": true, "-include": true, "sinclude": true,
 }
 
-// makefileLeavesOwnershipToMake reads one logical line, advancing scanner, and reports whether it
-// alone leaves ownership to Make: a define line that calls eval or binds a command's output, a
-// line makefileLineIsAmbiguous reports, a bare expansion other than silent calls, an unsure line
-// that makefileUnsureLineMayDefine reports, or a line the scanner cannot resolve. A recipe line is
-// the shell's text and decides nothing; a tab-prefixed line outside a recipe is makefile syntax and
-// is read as one.
-func makefileLeavesOwnershipToMake(scanner *makefileScanner, line string) bool {
+// makefileLeavesOwnershipToMake reads one logical line, the one at index, advancing scanner, and
+// reports whether it alone leaves ownership to Make: a define line that calls eval or binds a
+// command's output, a line makefileLineIsAmbiguous reports with the values variables fixes, a bare
+// expansion other than silent calls, an unsure line that makefileUnsureLineMayDefine reports, or a
+// line the scanner cannot resolve. A recipe line is the shell's text and decides nothing; a
+// tab-prefixed line outside a recipe is makefile syntax and is read as one.
+func makefileLeavesOwnershipToMake(scanner *makefileScanner, line string, index int, variables makefileVariables) bool {
 	trimmed := strings.TrimSpace(line)
 	kind := scanner.next(line)
 	switch {
@@ -48,7 +48,7 @@ func makefileLeavesOwnershipToMake(scanner *makefileScanner, line string) bool {
 	case kind == makefileUnsureLine:
 		return makefileUnsureLineMayDefine(trimmed)
 	}
-	return makefileLineIsAmbiguous(trimmed) || makefileBareExpansion(trimmed) && !makefileSilentCalls(trimmed)
+	return makefileLineIsAmbiguous(trimmed, index, variables) || makefileBareExpansion(trimmed) && !makefileSilentCalls(trimmed)
 }
 
 // makefileUnsureLineMayDefine reports whether a trimmed tab-prefixed line that Make reads as a

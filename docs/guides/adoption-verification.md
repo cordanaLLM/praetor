@@ -149,9 +149,44 @@ Moving such a call into an assignment (`_ := $(shell mkdir -p build)`) or a reci
 parses its output as makefile syntax, makes the file readable again. A `$(shell ...)` in a rule's
 prerequisites (`all: $(shell echo a.c b.c)`) or in a conditional (`ifeq ($(shell uname),Linux)`) is
 no bare expansion and decides nothing: measured against GNU Make 4.4.1, its output never becomes a
-target. A computed target name such as `$(BUILD_DIR):` fails for review too, even when the variable
-holds a plain directory, and the reader claims no target from a line whose target list holds a
-reference: `$(PREFIX) verify-all: dep` counts as no `verify-all` rule. A `define` alone only binds a
+target.
+
+A computed target name counts with the value the file fixes for it. The reader resolves `$(NAME)`
+or `${NAME}` only when `NAME` is bound exactly once in the file: by a top-level `NAME := value`,
+`NAME ::= value` or `NAME = value`, outside every conditional, without `override`, `export`,
+`unexport` or `private`, on a line before the rule. The value may hold only plain path text
+(letters, digits, `._-/+@,` and blanks) and, after `:=` or `::=`, references resolved the same way,
+at most 16 bindings deep (`MaxMakefileVariableDepth`). It keeps the blanks Make keeps, so
+`NAME := docs-lint # gate` makes `$(NAME)x:` declare both `docs-lint` and `x`. Measured against GNU
+Make 4.4.1, these lines declare `engine/out` and no `docs-lint`, and the Makefile stays appendable:
+
+```make
+TOOLS_DIR := .tools
+LINTER := $(TOOLS_DIR)/bin/ruff
+SRC_ROOT := engine
+OUT_DIR := $(SRC_ROOT)/out
+$(OUT_DIR): $(LINTER)
+```
+
+Anything else leaves the name to review, as before: a second binding, `?=`, `+=`, `define`,
+`undefine`, a target-specific binding or a binding whose computed name may be the variable, a
+function call such as `$(shell ...)` or a pattern or glob character in the value, and a variable
+bound nowhere in the file or only after the rule, whose value Make takes from the environment. A
+file holding an include, an eval call or a bare expansion resolves no computed name, since each may
+rebind the variable. `$(PREFIX) verify-all: dep` with `PREFIX` bound nowhere counts as no
+`verify-all` rule.
+
+The answer holds for the invocation the gates run, `make verify-all` or `make docs-lint` with no
+variable definitions and no options. A command-line definition, `-e` with the variable in the
+environment, `--eval`, and `MAKEFLAGS` or `MAKEFILES` in the environment can change any variable or
+declare any rule, literal names included, so whoever passes them decides the rules. Inside the file,
+`MAKEFLAGS` reaches the same switches: measured, `MAKEFLAGS += NAME=docs-lint` after
+`NAME := build` makes `$(NAME):` declare `docs-lint`. A file that binds `MAKEFLAGS` therefore
+resolves no computed name, unless each binding lists only options that change no value, such as
+`--no-print-directory` (`makefileHarmlessFlags` in `internal/util/makefile_variables.go`; the rows
+are `makefileComputedRows` in `internal/util/makefile_target_test.go`).
+
+A `define` alone only binds a
 variable: a rule line inside its body declares nothing, and a helper used only through `$(call ...)`
 in recipes leaves the Makefile readable. A define is left to Make when something can parse its body
 as rules, which is an eval call anywhere in the file, define bodies included, or a bare expansion.
@@ -223,7 +258,9 @@ each row was measured against GNU Make 4.4.1.
 Known gaps, where the reader's answer can still differ from Make's:
 
 - A `load` or `-load` directive, and a variable imported from the environment or the command line
-  whose value evaluates text, can declare a target the reader does not see.
+  whose value evaluates text, can declare a target the reader does not see. A command-line
+  definition of a variable the reader resolves, such as `make NAME=docs-lint verify-all`, renames
+  the rule the file declares; the gates run no such definition.
 - The reader evaluates no condition, so `MakefileHasTarget` claims a rule inside a conditional
   whichever branch Make takes, and editor generation can offer a Verify All task for a rule in a
   branch Make skips. Adoption stays safe: a rule the reader claims also leaves the file to review.
@@ -1589,8 +1626,8 @@ runnable `verify-all` and the Verification Gate reports ready; while the plan st
 `unavailable` the placeholder is current and kept
 (`isPlaceholderVerificationMakefile` in `internal/adopt/verification_makefile.go`,
 `internal/adopt/verification_placeholder_test.go`). Custom or edited Makefiles are
-preserved even with `--force`; includes, generated target names and pattern rules are treated as
-ambiguous ownership. A missing target can be appended to a simple existing
+preserved even with `--force`; includes, generated target names the file does not fix and pattern
+rules are treated as ambiguous ownership. A missing target can be appended to a simple existing
 Makefile without replacing its recipes. Existing AGENTS.md is preserved by default
 with a command-synchronization warning. Review the declared plan; `--force`
 regenerates a recognized harness and keeps its preamble, the repository's own invariant

@@ -143,10 +143,15 @@ not asserted anyway:
     other: dep
   ```
 
+  A computed target name counts once the file fixes its value, so `$(NAME):` after
+  `GATE := verify` and `NAME := $(GATE)-all` offers the command; the adoption guide
+  lists the bindings the reader resolves.
+
   A line the reader claims no rule from offers no command either, although adoption
   preserves such a file as possibly owning the target: an `include`, an `$(eval ...)`
-  call, a pattern target such as `verify-%`, a target list holding a reference such
-  as `$(PREFIX) verify-all: dep`, every rule of a Makefile that names `.RECIPEPREFIX`
+  call, a pattern target such as `verify-%`, a target list holding a reference the
+  file does not fix, such as `$(PREFIX) verify-all: dep` with `PREFIX` bound nowhere,
+  every rule of a Makefile that names `.RECIPEPREFIX`
   (assigning it changes which lines are recipe lines), and every rule at or after the
   first point the reader cannot resolve: line 4097, a logical line longer than 8192
   bytes, a chain of more than 256 continuation lines (257 physical lines), a

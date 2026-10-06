@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -68,6 +69,8 @@ func TestWorkspaceCommands_Positive_RuleIsAVerifyAllTask(t *testing.T) {
 		"substitution-prerequisite": "verify-all: $(SRCS:.c=.o)\n\t@true\n",
 		"help-comment-assignment":   "verify-all: lint ## run gates (FAST=1)\n\t@true\n",
 		"rule-after-define":         "define gates\nverify-all: lint\nendef\nverify-all:\n\t@true\n",
+		// A computed name the file fixes counts like a literal one (issue #537).
+		"computed-literal-chain": "GATE := verify\nNAME := $(GATE)-all\n$(NAME):\n\t@true\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if !verifyAllOffered(t, makefile) {
@@ -94,7 +97,12 @@ func TestWorkspaceCommands_Boundary_UnreadRuleIsNoVerifyAllTask(t *testing.T) {
 	if verifyAllOffered(t, "V := a:b\n"+inside) {
 		t.Fatalf("a rule past line %d was read", util.MaxMakefileLines)
 	}
-	for _, unresolved := range []string{"include shared.mk\n", "verify-%:\n\t@true\n", "$(eval verify-all: dep)\n"} {
+	// A computed name whose variable is bound twice or bound nowhere is no rule the reader observed,
+	// and the issue #537 shape resolves to paths, none of them verify-all.
+	for _, unresolved := range []string{
+		"include shared.mk\n", "verify-%:\n\t@true\n", "$(eval verify-all: dep)\n",
+		"NAME := build\nNAME := verify-all\n$(NAME):\n\t@true\n", "$(NAME):\n\t@true\n", testsupport.MakefileLiteralChains,
+	} {
 		if verifyAllOffered(t, unresolved) {
 			t.Fatalf("a Makefile only Make can resolve got a Verify All task: %q", unresolved)
 		}

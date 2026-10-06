@@ -1,12 +1,13 @@
 package util
 
 import (
+	"bytes"
 	"slices"
 	"strings"
 )
 
-// This file and makefile_define.go hold the one Makefile reader Praetor decides target ownership
-// with. Adoption asks it whether a project owns verify-all or docs-lint before appending a rule
+// This file, makefile_define.go, makefile_scanner.go and makefile_variables.go hold the one
+// Makefile reader Praetor decides target ownership with. Adoption asks it whether a project owns verify-all or docs-lint before appending a rule
 // (internal/adopt/governance.go, internal/adopt/verification_makefile.go), and editor generation
 // asks it whether to offer a "make verify-all" task (internal/editor/capabilities.go). A second
 // line test beside it once read eight assignment forms as rules (issue #304), so a caller never
@@ -367,7 +368,11 @@ func makefileJoin(physical []string, start int) (string, int, bool) {
 
 // makefileJoinText joins the physical lines of one logical line. A recipe line keeps them as they
 // are, joined by "\n", so MakefileTargetRecipe returns the lines the file holds. Any other line
-// joins as Make reads it: each backslash-newline and the blanks around it become one space.
+// joins as Make reads it: each backslash-newline and the blanks around it become one space, a run
+// of them included and even when no text follows, and the blanks that end the last line stay.
+// Measured against GNU Make 4.4.1, "X := docs-lint \" or "X := docs-lint\" followed by an empty
+// line binds "docs-lint " with its blank, so "$(X)foo:" declares docs-lint and foo: the blanks
+// decide the target names wherever a value is glued to text (makefileVariables).
 func makefileJoinText(parts []string) string {
 	if len(parts) == 1 {
 		return parts[0]
@@ -375,30 +380,32 @@ func makefileJoinText(parts []string) string {
 	if strings.HasPrefix(parts[0], "\t") {
 		return strings.Join(parts, "\n")
 	}
-	words := make([]string, 0, len(parts))
-	for _, part := range parts {
+	joined := make([]byte, 0, len(parts[0]))
+	for index, part := range parts {
 		part = strings.TrimSuffix(part, "\r")
 		if makefileContinues(part) {
 			part = part[:len(part)-1]
 		}
-		if part = strings.Trim(part, " \t"); part != "" {
-			words = append(words, part)
+		if index > 0 && len(joined) > 0 {
+			joined = append(bytes.TrimRight(joined, " \t"), ' ')
 		}
+		joined = append(joined, strings.TrimLeft(part, " \t")...)
 	}
-	return strings.Join(words, " ")
+	return string(joined)
 }
 
 // MakefileHasTarget reports whether data, the text of a Makefile, declares a rule for target on a
 // line this reader resolves without Make: makefileTargetNames decides rule versus assignment, a
-// define body is variable text, not rules, so a "target:" line inside one declares nothing, and a
-// line makefileLineIsAmbiguous reports, such as "$(PREFIX) verify-all: dep", declares nothing the
-// reader can claim. A Makefile that names .RECIPEPREFIX declares nothing the reader can claim
-// either (makefileNamesRecipePrefix). MakefileMayDefineTarget reports the files where Make may
-// still declare the target some other way. Lines may end in "\n" or "\r\n"; the reading stops
-// where makefileLogicalLines does.
+// define body is variable text, not rules, so a "target:" line inside one declares nothing, a
+// computed name counts once the file fixes its value ("$(GATE):" after "GATE := verify-all",
+// makefileVariables), and a line makefileLineIsAmbiguous reports, such as "$(PREFIX) verify-all:
+// dep" with PREFIX bound nowhere, declares nothing the reader can claim. A Makefile that names
+// .RECIPEPREFIX declares nothing the reader can claim either (makefileNamesRecipePrefix).
+// MakefileMayDefineTarget reports the files where Make may still declare the target some other
+// way. Lines may end in "\n" or "\r\n"; the reading stops where makefileLogicalLines does.
 func MakefileHasTarget(data, target string) bool {
 	lines, _ := makefileLogicalLines(data)
-	return makefileTargetLine(lines, target) >= 0
+	return makefileTargetLine(lines, makefileReadVariables(lines), target) >= 0
 }
 
 // makefileNamesRecipePrefix reports whether line, unless it is a comment line, names .RECIPEPREFIX.
@@ -426,8 +433,9 @@ func makefileMayBindRecipePrefix(line string) bool {
 // or -1 when none does or the Makefile names .RECIPEPREFIX. A tab-prefixed line outside a recipe
 // declares nothing: Make stops at it with "recipe commences before first target". The reading
 // stops at a line the scanner cannot resolve, such as a tab-indented "define X" whose recipe state
-// depends on a branch Make takes: a rule after it may be define body text.
-func makefileTargetLine(lines []string, target string) int {
+// depends on a branch Make takes: a rule after it may be define body text. A computed target name
+// counts with the value variables fixes for it (makefileVariables.targets).
+func makefileTargetLine(lines []string, variables makefileVariables, target string) int {
 	if slices.ContainsFunc(lines, makefileNamesRecipePrefix) {
 		return -1
 	}
@@ -440,8 +448,9 @@ func makefileTargetLine(lines []string, target string) int {
 		if kind != makefileSyntaxLine {
 			continue
 		}
-		if slices.Contains(makefileTargetNames(lines[index]), target) &&
-			!makefileLineIsAmbiguous(strings.TrimSpace(lines[index])) {
+		names, resolved := variables.targets(makefileTargetNames(lines[index]), index)
+		if resolved && slices.Contains(names, target) &&
+			!makefileLineIsAmbiguous(strings.TrimSpace(lines[index]), index, variables) {
 			return index
 		}
 	}
@@ -455,7 +464,7 @@ func makefileTargetLine(lines []string, target string) int {
 // data holds "\n" line endings: a caller normalizes a CRLF file first.
 func MakefileTargetRecipe(data, target string) (string, bool) {
 	lines, _ := makefileLogicalLines(data)
-	index := makefileTargetLine(lines, target)
+	index := makefileTargetLine(lines, makefileReadVariables(lines), target)
 	if index < 0 {
 		return "", false
 	}
@@ -502,17 +511,18 @@ func makefileIncludes(fields []string) bool {
 
 // makefileLineIsAmbiguous reports whether a line may define targets only Make can resolve: an
 // include, a call that evaluates text (makefileCallsEval), a "!=" binding, whose command output
-// Make expands as makefile text (makefileBindsCommandOutput), a computed or pattern target name,
-// or a rule whose prerequisites hold an assignment operator behind two or more words. Measured
-// against GNU Make 4.4.1, Make reads "docs-lint: A B = x" as a rule with the prerequisites "A B =
-// x" and stops at "docs-lint: A B := x" with "multiple target patterns", so the reader claims
-// neither.
+// Make expands as makefile text (makefileBindsCommandOutput), a computed target name whose value
+// the file does not fix (makefileVariables.targets) for the logical line at index, a pattern
+// target name, or a rule whose prerequisites hold an assignment operator behind two or more words.
+// Measured against GNU Make 4.4.1, Make reads "docs-lint: A B = x" as a rule with the
+// prerequisites "A B = x" and stops at "docs-lint: A B := x" with "multiple target patterns", so
+// the reader claims neither.
 // The line is already trimmed and is neither a recipe line nor part of a define body. A define
 // alone is not ambiguous: it only binds a variable, and makefileBareExpansion reports the lines
 // that may expand it into rules. A bare modifier is not ambiguous either: measured against GNU
 // Make 4.4.1, a Makefile holding "override verify-all := x" or "override CFLAGS += -Wall" beside an
 // "all:" rule answers "make verify-all" with "No rule to make target".
-func makefileLineIsAmbiguous(line string) bool {
+func makefileLineIsAmbiguous(line string, index int, variables makefileVariables) bool {
 	if strings.HasPrefix(line, "#") {
 		return false
 	}
@@ -523,31 +533,36 @@ func makefileLineIsAmbiguous(line string) bool {
 	if _, unnamed := makefileAssignment(prerequisites); unnamed && targets != nil {
 		return true
 	}
-	for _, name := range targets {
-		if strings.ContainsAny(name, "$%") {
-			return true
-		}
-	}
-	return false
+	names, resolved := variables.targets(targets, index)
+	return !resolved || slices.ContainsFunc(names, func(name string) bool {
+		return strings.Contains(name, "%")
+	})
 }
 
 // MakefileMayDefineTarget reports whether data, the text of a Makefile with "\n" line endings,
 // may already own target: a rule for it (MakefileHasTarget), a line only Make can resolve (an
-// include, an eval call, a "!=" binding, a computed or pattern target name), a top-level bare
-// expansion other than silent calls (makefileBareExpansion, makefileSilentCalls), a tab-prefixed
-// line Make parses as one of these because no recipe is open or may parse so in a branch it takes
-// (makefileScanner), a mention of .RECIPEPREFIX, a define that is never closed, or a point the
-// reader cannot resolve (makefileLogicalLines, makefileScanner), past which an unread line may
-// hold any of these (HISS-02). A caller about to append a rule for target must not when this
-// reports true: Make would override one of the two recipes.
+// include, an eval call, a "!=" binding, a computed target name whose value the file does not fix,
+// a pattern target name), a top-level bare expansion other than silent calls
+// (makefileBareExpansion, makefileSilentCalls), a tab-prefixed line Make parses as one of these
+// because no recipe is open or may parse so in a branch it takes (makefileScanner), a mention of
+// .RECIPEPREFIX, a define that is never closed, or a point the reader cannot resolve
+// (makefileLogicalLines, makefileScanner), past which an unread line may hold any of these
+// (HISS-02). A computed name the file fixes counts with its value: "$(OUT_DIR):" after "ROOT :=
+// engine" and "OUT_DIR := $(ROOT)/out" declares engine/out and no docs-lint (makefileVariables). A
+// caller about to append a rule for target must not when this reports true: Make would override
+// one of the two recipes.
 func MakefileMayDefineTarget(data, target string) bool {
 	lines, whole := makefileLogicalLines(data)
-	if !whole || slices.ContainsFunc(lines, makefileNamesRecipePrefix) || makefileTargetLine(lines, target) >= 0 {
+	if !whole || slices.ContainsFunc(lines, makefileNamesRecipePrefix) {
+		return true
+	}
+	variables := makefileReadVariables(lines)
+	if makefileTargetLine(lines, variables, target) >= 0 {
 		return true
 	}
 	var scanner makefileScanner
 	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
-		if makefileLeavesOwnershipToMake(&scanner, lines[index]) {
+		if makefileLeavesOwnershipToMake(&scanner, lines[index], index, variables) {
 			return true
 		}
 	}
