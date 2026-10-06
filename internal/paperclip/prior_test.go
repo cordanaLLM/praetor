@@ -61,13 +61,13 @@ func TestPriorGeneratedRecognisesReleasedHarness(t *testing.T) {
 // renderings under other repository facts follow them (TestPriorGeneratedRecognisesThisRelease*).
 func TestPriorGeneratedRecognisesEveryReleaseEra(t *testing.T) {
 	_, probe := priorRepo(t, "{}", "")
-	limits := statedFuncLOCs(probe.Invariants)
-	eras, err := priorHarnesses(probe, limits)
+	stated := statedPolicyOf(probe.Invariants)
+	eras, err := priorHarnesses(probe, stated)
 	if err != nil {
 		t.Fatal(err)
 	}
 	earlier := len(priorRegisterDirectives)*len(priorAGitPushFormats) + 1
-	if len(eras) != earlier+len(releasedPushRows())*len(releasedReceiptRows())*len(releaseFacts(limits)) {
+	if len(eras) != earlier+len(releasedPushRows())*len(releasedReceiptRows())*len(releaseFacts(stated)) {
 		t.Fatalf("release eras = %d, want every directive under every push protocol, the Caveman release and every fact combination", len(eras))
 	}
 	for index := range eras[:earlier] {

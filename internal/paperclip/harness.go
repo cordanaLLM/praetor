@@ -17,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -278,7 +279,7 @@ func matchPrior(harnessText string, current *Harness) (*Harness, error) {
 	if !decoded {
 		return nil, nil
 	}
-	priors, err := priorHarnesses(current, statedFuncLOCs(current.Invariants))
+	priors, err := priorHarnesses(current, statedPolicyOf(current.Invariants))
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +355,42 @@ func releaseText(harness, rules []byte) (string, string, bool) {
 // statedFuncLOC matches the function length a HISS-04 invariant states (hisscatalog funcLOCLimit).
 var statedFuncLOC = regexp.MustCompile(`func LOC <= ([1-9][0-9]{0,5})\b`)
 
+// statedComplexity matches the cyclomatic, cognitive and statement limits a HISS-04 invariant
+// states (hisscatalog complexityLimits).
+var statedComplexity = regexp.MustCompile(
+	`McCabe cyclomatic <= ([1-9][0-9]{0,5}), cognitive <= ([1-9][0-9]{0,5}), statements <= ([1-9][0-9]{0,5})\b`)
+
+// statedPolicy is the HISS-04 policy a current synthesis states: each function length and each
+// set of cyclomatic, cognitive and statement limits, read from its own invariants
+// (statedPolicyOf), never from the harness on disk.
+type statedPolicy struct {
+	funcLOCs   []int
+	complexity []hiss.ComplexityLimits
+}
+
+// statedPolicyOf reads the HISS-04 policy invariants state (statedFuncLOCs, statedComplexities).
+func statedPolicyOf(invariants []string) statedPolicy {
+	return statedPolicy{funcLOCs: statedFuncLOCs(invariants), complexity: statedComplexities(invariants)}
+}
+
+// statedComplexities returns each set of cyclomatic, cognitive and statement limits invariants
+// state, once, in order, read as statedFuncLOCs reads function lengths: from the current
+// synthesis only, and from at most maxHarnessValues invariants.
+func statedComplexities(invariants []string) []hiss.ComplexityLimits {
+	var stated []hiss.ComplexityLimits
+	text := strings.Join(invariants[:min(len(invariants), maxHarnessValues)], "\n")
+	for _, match := range statedComplexity.FindAllStringSubmatch(text, maxHarnessValues) {
+		cyclomatic, errCyclomatic := strconv.Atoi(match[1])
+		cognitive, errCognitive := strconv.Atoi(match[2])
+		statements, errStatements := strconv.Atoi(match[3])
+		limits := hiss.ComplexityLimits{MaxCyclomatic: cyclomatic, MaxCognitive: cognitive, MaxStatements: statements}
+		if errors.Join(errCyclomatic, errCognitive, errStatements) == nil && !slices.Contains(stated, limits) {
+			stated = append(stated, limits)
+		}
+	}
+	return stated
+}
+
 // statedFuncLOCs returns each function length invariants state, once, in order. matchPrior
 // reads it from the current synthesis only, never from the harness on disk: a number read
 // from the file on disk would make any hand-edited length a candidate, and so earlier output.
@@ -371,10 +408,10 @@ func statedFuncLOCs(invariants []string) []int {
 
 // priorHarnesses is every earlier synthesis for current's identity: each register directive
 // form under each push protocol, the Caveman release (cavemanHarness), then this release under
-// every repository fact combination, with the function-length statements limitFacts accepts
-// for limits, the lengths the current synthesis states (currentReleaseHarnesses).
-func priorHarnesses(current *Harness, limits []int) ([]Harness, error) {
-	released, err := currentReleaseHarnesses(current.Platform, limits)
+// every repository fact combination, with the HISS-04 statements policyFacts accepts for
+// stated, the policy the current synthesis states (currentReleaseHarnesses).
+func priorHarnesses(current *Harness, stated statedPolicy) ([]Harness, error) {
+	released, err := currentReleaseHarnesses(current.Platform, stated)
 	if err != nil {
 		return nil, err
 	}
@@ -398,20 +435,22 @@ func releasedReceiptRows() []string {
 // currentReleaseHarnesses renders this release for platform under every combination of the
 // repository facts SynthesizeHarness reads: each push row pair (releasedPushRows), times each
 // receipt row (releasedReceiptRows), times every HISS fact combination releaseFacts builds from
-// limits. A harness adoption wrote is still unmodified output after the operator pins
+// stated. A harness adoption wrote is still unmodified output after the operator pins
 // receipt.public_key, as the unpinned row advises, declares repository.forge, the repository's
 // languages or declared exceptions change, its policy resolves the function length the harness
-// stated as the audit ceiling, or the release moved only its pinned receipt row or its push row;
+// stated as the audit ceiling or the complexity limits it stated as the HISS-04 defaults, or the
+// release moved only its pinned receipt row or its push row;
 // recognising it is what lets adopt refresh it, since --force keeps any harness it does not
 // recognise, as operator-owned (#502). The set is enumerated rather than the fact-dependent rows
 // normalised away, so recognition stays byte for byte: an edit to the receipt row, the push row
 // or one invariant, its function length included, still makes the harness operator-owned
-// (limitFacts). It is bounded: len(releasedPushRows()) x len(releasedReceiptRows()) x
-// len(releaseFacts(limits)) values. These are calls, so a later change to this text must first
+// (limitFacts, complexityFacts). It is bounded: len(releasedPushRows()) x
+// len(releasedReceiptRows()) x len(releaseFacts(stated)) values. These are calls, so a later
+// change to this text must first
 // capture the rows as they stand as literals, as cavemanOperatingContract captured #487's and
 // priorPinnedReceiptRows #523's.
-func currentReleaseHarnesses(platform string, limits []int) ([]Harness, error) {
-	combinations := releaseFacts(limits)
+func currentReleaseHarnesses(platform string, stated statedPolicy) ([]Harness, error) {
+	combinations := releaseFacts(stated)
 	rows, pushes := releasedReceiptRows(), releasedPushRows()
 	released := make([]Harness, 0, len(pushes)*len(rows)*len(combinations))
 	for _, facts := range combinations {
@@ -429,10 +468,10 @@ func currentReleaseHarnesses(platform string, limits []int) ([]Harness, error) {
 }
 
 // releaseFacts is every HISS fact combination the refresh key accepts when the current
-// synthesis states limits: every language set (hisscatalog.AllLanguages) times every exception
-// set (hisscatalog.AllExceptions) times each function-length statement of limitFacts.
-func releaseFacts(limits []int) []hisscatalog.Facts {
-	statements := limitFacts(limits)
+// synthesis states stated: every language set (hisscatalog.AllLanguages) times every exception
+// set (hisscatalog.AllExceptions) times each HISS-04 statement of policyFacts.
+func releaseFacts(stated statedPolicy) []hisscatalog.Facts {
+	statements := policyFacts(stated)
 	combinations := make([]hisscatalog.Facts, 0,
 		(int(hisscatalog.AllLanguages)+1)*(int(hisscatalog.AllExceptions)+1)*len(statements))
 	for languages := range hisscatalog.AllLanguages + 1 {
@@ -466,6 +505,39 @@ func limitFacts(stated []int) []hisscatalog.Facts {
 		}
 	}
 	return statements
+}
+
+// policyFacts is every HISS-04 statement the refresh key accepts for a current synthesis stating
+// stated: each function-length statement of limitFacts times each complexity statement of
+// complexityFacts.
+func policyFacts(stated statedPolicy) []hisscatalog.Facts {
+	lengths, limits := limitFacts(stated.funcLOCs), complexityFacts(stated.complexity)
+	statements := make([]hisscatalog.Facts, 0, len(lengths)*len(limits))
+	for _, length := range lengths {
+		for _, complexity := range limits {
+			length.Complexity = complexity
+			statements = append(statements, length)
+		}
+	}
+	return statements
+}
+
+// complexityFacts is every set of cyclomatic, cognitive and statement limits the refresh key
+// accepts as earlier output, for a current synthesis stating stated. The unresolved set (zero),
+// which states the HISS-04 defaults every release before #321 stated whatever the policy said,
+// is always accepted; a resolved set only when the current synthesis states it and it differs
+// from the defaults. Any other set is indistinguishable from an operator's edit, as limitFacts
+// holds for function lengths.
+func complexityFacts(stated []hiss.ComplexityLimits) []hiss.ComplexityLimits {
+	defaults := hiss.ComplexityLimits{}.WithDefaults()
+	limits := make([]hiss.ComplexityLimits, 0, 1+len(stated))
+	limits = append(limits, hiss.ComplexityLimits{})
+	for _, set := range stated {
+		if set != defaults && !slices.Contains(limits, set) {
+			limits = append(limits, set)
+		}
+	}
+	return limits
 }
 
 // cavemanHarness is the Caveman release's synthesis for current's identity: its contract with

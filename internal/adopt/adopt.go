@@ -175,11 +175,11 @@ type adoptSession struct {
 	// (harnessExceptions).
 	cleanupGoto hiss.CleanupGoto
 	exceptions  hisscatalog.Exception
-	// paperclipLimit is the function length the Paperclip harness states, resolved once per run
-	// (harnessFuncLOC) so every step renders the harness the manifest step bound.
-	paperclipLimit struct {
-		resolved bool
-		limit    int
+	// paperclipPolicy is the HISS-04 limits the Paperclip harness states, resolved once per run
+	// (harnessComplexity) so every step renders the harness the manifest step bound.
+	paperclipPolicy struct {
+		resolved   bool
+		complexity config.ComplexityPolicy
 	}
 	// dryRunWrites holds, in a dry run only, what each file the run would scaffold or remove
 	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree

@@ -102,7 +102,7 @@ var catalog = []Rule{
 		FailureAction: "Build sweep blocker.",
 		Scope:         "complexity",
 		Directive: []Clause{
-			{Text: "McCabe cyclomatic <= 10, cognitive <= 15, statements <= 50"},
+			{Text: "McCabe cyclomatic <= %d, cognitive <= %d, statements <= %d", Complexity: true},
 			{Text: "func LOC <=", FuncLOC: true},
 		},
 		Adoption: auditCheck(scannedLanguages, "function length only; other caps need repository linter"),

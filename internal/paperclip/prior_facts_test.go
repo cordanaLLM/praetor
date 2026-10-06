@@ -181,22 +181,22 @@ func TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves(t *testing.T) {
 
 // TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination: Boundary. Every value the
 // synthesis distinguishes (every released push row pair and receipt row times every language set up to AllLanguages,
-// every exception set up to AllExceptions and each function-length statement limitFacts accepts
-// for the limit the current harness states) is earlier output for the unpinned, unknown-fact synthesis except text
+// every exception set up to AllExceptions and each HISS-04 statement policyFacts accepts
+// for the policy the current harness states) is earlier output for the unpinned, unknown-fact synthesis except text
 // equal to that synthesis. The combinations are matched against one enumeration (renderedPrior),
 // then a sample end to end through PriorGenerated. A language or exception bit above its bound
 // renders as the set without it and adds no new text.
 func TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination(t *testing.T) {
 	current := synthesizeWidget(t, t.TempDir(), "", unknownFacts)
-	limits := statedFuncLOCs(current.Invariants)
-	if len(limits) != 1 || limits[0] != config.AuditMaxFuncLOC {
-		t.Fatalf("unknown-fact synthesis states limits %v, want the audit ceiling %d", limits, config.AuditMaxFuncLOC)
+	stated := statedPolicyOf(current.Invariants)
+	if len(stated.funcLOCs) != 1 || stated.funcLOCs[0] != config.AuditMaxFuncLOC || len(stated.complexity) != 1 {
+		t.Fatalf("unknown-fact synthesis states %+v, want the audit ceiling %d and the HISS-04 defaults", stated, config.AuditMaxFuncLOC)
 	}
-	released, err := currentReleaseHarnesses(current.Platform, limits)
+	released, err := currentReleaseHarnesses(current.Platform, stated)
 	if err != nil {
 		t.Fatal(err)
 	}
-	combinations := (int(hisscatalog.AllLanguages) + 1) * (int(hisscatalog.AllExceptions) + 1) * len(limitFacts(limits))
+	combinations := (int(hisscatalog.AllLanguages) + 1) * (int(hisscatalog.AllExceptions) + 1) * len(policyFacts(stated))
 	if len(released) != len(releasedPushRows())*len(releasedReceiptRows())*combinations {
 		t.Fatalf("fact combinations = %d, want every released push row pair x receipt row x %d HISS fact combinations", len(released), combinations)
 	}

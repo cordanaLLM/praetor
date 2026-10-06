@@ -323,34 +323,32 @@ func resolvePlannedPolicy(ctx context.Context, s *adoptSession, catalogRoot stri
 }
 
 // paperclipFacts is what the Paperclip harness's HISS invariants depend on: repositoryFacts and
-// the function length the audit enforces once this run's policy resolves (harnessFuncLOC).
+// the HISS-04 limits the audit enforces once this run's policy resolves (harnessComplexity).
 func (s *adoptSession) paperclipFacts(ctx context.Context) hisscatalog.Facts {
-	facts := repositoryFacts(s.verification, s.exceptions)
-	facts.MaxFuncLOC = s.harnessFuncLOC(ctx)
-	return facts
+	return withPolicy(repositoryFacts(s.verification, s.exceptions), s.harnessComplexity(ctx))
 }
 
-// harnessFuncLOC is the function length the audit enforces after this run, for the Paperclip
-// harness. The manifest step binds that harness in register.sources before the policy-catalog
-// step resolves the policy, so the limit is read from the policy the planned manifest and lock
-// resolve to (prospectivePolicy), the one the policy-catalog step then materializes. It is
-// resolved once and kept, so every step of the run renders the bytes the manifest bound. A
-// policy that does not resolve yet, such as a first adoption without --lock-source-root, leaves
-// it zero: the harness then states the audit ceiling, and the policy-catalog step reports the
-// cause.
-func (s *adoptSession) harnessFuncLOC(ctx context.Context) int {
-	if s.paperclipLimit.resolved {
-		return s.paperclipLimit.limit
+// harnessComplexity is the HISS-04 limits the audit enforces after this run, for the Paperclip
+// harness: function length, cyclomatic, cognitive and statements. The manifest step binds that
+// harness in register.sources before the policy-catalog step resolves the policy, so the limits
+// are read from the policy the planned manifest and lock resolve to (prospectivePolicy), the one
+// the policy-catalog step then materializes. They are resolved once and kept, so every step of
+// the run renders the bytes the manifest bound. A policy that does not resolve yet, such as a
+// first adoption without --lock-source-root, leaves them zero: the harness then states the audit
+// ceiling and the HISS-04 defaults, and the policy-catalog step reports the cause.
+func (s *adoptSession) harnessComplexity(ctx context.Context) config.ComplexityPolicy {
+	if s.paperclipPolicy.resolved {
+		return s.paperclipPolicy.complexity
 	}
-	s.paperclipLimit.resolved = true
+	s.paperclipPolicy.resolved = true
 	if s.policy != nil {
-		s.paperclipLimit.limit = adoptionScanLimit(s)
-		return s.paperclipLimit.limit
+		s.paperclipPolicy.complexity = s.policy.Policy.Complexity
+		return s.paperclipPolicy.complexity
 	}
 	if policy, err := prospectivePolicy(ctx, s, s.opts.LockSourceRoot); err == nil {
-		s.paperclipLimit.limit = policy.Policy.Complexity.MaxFuncLOC
+		s.paperclipPolicy.complexity = policy.Policy.Complexity
 	}
-	return s.paperclipLimit.limit
+	return s.paperclipPolicy.complexity
 }
 
 // prospectivePolicy resolves the policy this run leaves the repository under from the manifest
