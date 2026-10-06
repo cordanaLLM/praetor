@@ -139,7 +139,7 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	if s.declines("paperclip") {
 		return keptHarnessPlan(ctx, path, exists, nil)
 	}
-	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath, s.paperclipFacts(ctx))
+	synthesized, fresh, err := s.synthesizeHarness(ctx)
 	if unresolvedHarnessInputs(err) {
 		return keptHarnessPlan(ctx, path, exists, err)
 	}
@@ -224,11 +224,17 @@ func (p harnessPlan) forgeUndeclared() bool {
 }
 
 // synthesizeHarness renders the Paperclip harness for the repository's HISS facts
-// (paperclipFacts). Every fact is fixed before or at the run's first harness plan, so the
-// manifest step, which binds register.sources to these bytes, and the paperclip step, which
-// writes them, render the same harness.
-func synthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.Facts) (*paperclip.Harness, []byte, error) {
-	synthesized, err := paperclip.SynthesizeHarness(ctx, repoPath, facts)
+// (paperclipFacts), with the register skills the agent-harness step installs counted as carried
+// (plannedRegisterSkills, paperclip.SynthesizeHarnessOver). Every fact is fixed before or at the
+// run's first harness plan, so the manifest step, which binds register.sources to these bytes
+// before the agent-harness step installs a skill, and the paperclip step, which writes them
+// after, render the same harness.
+func (s *adoptSession) synthesizeHarness(ctx context.Context) (*paperclip.Harness, []byte, error) {
+	skills, err := s.plannedRegisterSkills(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	synthesized, err := paperclip.SynthesizeHarnessOver(ctx, s.repoPath, s.paperclipFacts(ctx), skills)
 	if err != nil {
 		return nil, nil, fmt.Errorf("synthesize paperclip harness: %w", err)
 	}

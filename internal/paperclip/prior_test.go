@@ -67,7 +67,7 @@ func TestPriorGeneratedRecognisesEveryReleaseEra(t *testing.T) {
 		t.Fatal(err)
 	}
 	earlier := len(priorRegisterDirectives)*len(priorAGitPushFormats) + 1
-	if len(eras) != earlier+len(releasedPushRows())*len(releasedReceiptRows())*len(releaseFacts(stated)) {
+	if len(eras) != earlier+len(releasedPushRows())*len(releasedReceiptRows())*len(releaseFacts(stated))*len(releasedRegisterDirectives()) {
 		t.Fatalf("release eras = %d, want every directive under every push protocol, the Caveman release and every fact combination", len(eras))
 	}
 	for index := range eras[:earlier] {

@@ -82,3 +82,27 @@ func TestWithAbsentSkills_Boundary(t *testing.T) {
 		t.Error("WithAbsentSkills changed its receiver")
 	}
 }
+
+// Positive: RegisterDirectiveWithout with no absent skill is RegisterDirective, naming the skill.
+// Negative: with the register's skill absent it states the form alone. Boundary: a skill of
+// another register, an unknown name, and a register without a skill change nothing, and an
+// unknown register yields "".
+func TestRegisterDirectiveWithout(t *testing.T) {
+	named := RegisterDirective(TextRegisterInternal)
+	if got := RegisterDirectiveWithout(TextRegisterInternal, nil); got != named || !strings.Contains(got, "`caveman` skill:") {
+		t.Fatalf("no absent skill: %q", got)
+	}
+	plain := "Text register internal: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict."
+	if got := RegisterDirectiveWithout(TextRegisterInternal, []string{"caveman"}); got != plain {
+		t.Fatalf("caveman absent: %q", got)
+	}
+	if got := RegisterDirectiveWithout(TextRegisterInternal, []string{"social-text", "unknown"}); got != named {
+		t.Fatalf("another register's skill absent: %q", got)
+	}
+	if got := RegisterDirectiveWithout(TextRegisterDocs, RegisterSkills()); got != RegisterDirective(TextRegisterDocs) {
+		t.Fatalf("docs, which has no skill: %q", got)
+	}
+	if got := RegisterDirectiveWithout(TextRegister("unknown"), nil); got != "" {
+		t.Fatalf("unknown register: %q", got)
+	}
+}

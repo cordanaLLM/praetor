@@ -190,6 +190,10 @@ type adoptSession struct {
 		resolved bool
 		entry    *config.Exception
 	}
+	// registerSkills is what the agent-harness step installs, resolved once per run
+	// (registerSkillSources) so the preflight, the Paperclip harness the manifest step binds, the
+	// register block and the install agree on it (#235).
+	registerSkills registerSkillPlan
 	// dryRunWrites holds, in a dry run only, what each file the run would scaffold or remove
 	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
 	// the run leaves rather than the one on disk.

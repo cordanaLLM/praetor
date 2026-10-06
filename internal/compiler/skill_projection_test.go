@@ -94,7 +94,7 @@ func TestRegisterBlockSkills_Boundary_DeclaredAndProjected(t *testing.T) {
 		if !regexp.MustCompile(`(?m)^name: ` + regexp.QuoteMeta(name) + `\r?$`).Match(data) {
 			t.Errorf("%s/%s/%s frontmatter must name %s", CanonicalSkillsRel, name, SkillEntryName, name)
 		}
-		if err := verifyProjection(context.Background(), root, skillEntryRel(PluginSkillsRel, name), data); err != nil {
+		if err := verifyProjection(context.Background(), root, SkillEntryRel(PluginSkillsRel, name), data); err != nil {
 			t.Errorf("plugin must ship %s: %v", name, err)
 		}
 	}

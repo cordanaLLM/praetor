@@ -61,7 +61,7 @@ func TestCompileAgentSurfaces_Positive_ProjectsTheRegisterSkills(t *testing.T) {
 	}
 	for _, rel := range want {
 		name := filepath.Base(filepath.Dir(rel))
-		canonical := readRegisterFixture(t, filepath.Join(root, filepath.FromSlash(skillEntryRel(CanonicalSkillsRel, name))))
+		canonical := readRegisterFixture(t, filepath.Join(root, filepath.FromSlash(CanonicalSkillRel(name))))
 		if got := readRegisterFixture(t, filepath.Join(root, filepath.FromSlash(rel))); got != canonical {
 			t.Errorf("%s = %q, want the canonical text %q", rel, got, canonical)
 		}

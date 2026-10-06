@@ -29,8 +29,8 @@ func planPersonaRoot(t *testing.T, content string) string {
 func shipPluginWithSkill(t *testing.T, root, skill string) {
 	t.Helper()
 	for rel, content := range map[string]string{
-		PluginManifestRel:                         "{\"name\": \"praetor\"}\n",
-		skillEntryRel(CanonicalSkillsRel, "lint"): skill,
+		PluginManifestRel:         "{\"name\": \"praetor\"}\n",
+		CanonicalSkillRel("lint"): skill,
 	} {
 		full := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -56,7 +56,7 @@ func TestPlanAgentSurfaces_Positive_ListsCopiesWithoutWriting(t *testing.T) {
 	if len(planned) != 6 {
 		t.Fatalf("planned %d copies, want 4 persona copies, the plugin persona and the plugin skill: %+v", len(planned), planned)
 	}
-	want := map[string]string{PluginAgentsRel + "/planner.md": content, skillEntryRel(PluginSkillsRel, "lint"): skill}
+	want := map[string]string{PluginAgentsRel + "/planner.md": content, SkillEntryRel(PluginSkillsRel, "lint"): skill}
 	for _, file := range planned {
 		if expected, ok := want[file.RelativePath]; ok && file.Content != expected || !ok && file.Content != content {
 			t.Errorf("%s content = %q", file.RelativePath, file.Content)

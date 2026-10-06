@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gating"
@@ -109,8 +110,21 @@ var harnessInvariants = [...]string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", 
 // zero facts.CeilingFuncLOC is completed from config.AuditMaxFuncLOC, the ceiling every audit
 // applies, so HISS-04 always states a number the refresh key can enumerate. The push rows are
 // those of the forge config.ResolveRepositoryForge resolves (forgePush); a repository whose
-// forge needs repository.forge and declares none is refused with config.ErrForgeUndeclared.
+// forge needs repository.forge and declares none is refused with config.ErrForgeUndeclared. The
+// register directive names the `caveman` skill only where the repository carries it
+// (SynthesizeHarnessOver).
 func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.Facts) (*Harness, error) {
+	return SynthesizeHarnessOver(ctx, repoPath, facts, nil)
+}
+
+// SynthesizeHarnessOver is SynthesizeHarness for a caller that installs the register skills
+// named in pending before the harness lands, such as adoption, whose manifest step binds the
+// harness before its agent-harness step installs them: each counts as carried. The contract's
+// register directive names the `caveman` skill only where the repository carries
+// .agents/skills/caveman/SKILL.md or pending names it (compiler.AbsentRegisterSkills,
+// config.RegisterDirectiveWithout), so a harness never points a run at a skill the repository
+// does not hold (#235).
+func SynthesizeHarnessOver(ctx context.Context, repoPath string, facts hisscatalog.Facts, pending []string) (*Harness, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("paperclip: context cannot be nil")
 	}
@@ -122,6 +136,7 @@ func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.F
 	if err != nil {
 		return nil, fmt.Errorf("paperclip: harness push protocol: %w", err)
 	}
+	absent := harnessAbsentSkills(ctx, repoPath, pending)
 	if facts.CeilingFuncLOC == 0 {
 		facts.CeilingFuncLOC = config.AuditMaxFuncLOC
 	}
@@ -129,16 +144,34 @@ func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.F
 	if err != nil {
 		return nil, err
 	}
-	harness := releaseHarness(platform, forgePush(forge), receiptContract(receiptKeyPinned(ctx, repoPath)), invariants)
+	directive := config.RegisterDirectiveWithout(config.TextRegisterInternal, absent)
+	harness := releaseHarness(platform, forgePush(forge), receiptContract(receiptKeyPinned(ctx, repoPath)), invariants, directive)
 	return &harness, nil
+}
+
+// harnessAbsentSkills returns the register skills the repository at repoPath does not carry,
+// pending counted as carried (compiler.AbsentRegisterSkills). A skill path the confined read
+// refuses, such as one behind a symlinked .agents, which compile-context refuses to project too,
+// counts as absent: the directive then states the form alone, which points a run at nothing,
+// rather than failing a harness whose other rows do not depend on it. The context governs the git
+// lookup alone, as it does for the manifest reads; the skill read keeps its own bound
+// (contextopt.MaxDuration).
+func harnessAbsentSkills(ctx context.Context, repoPath string, pending []string) []string {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), contextopt.MaxDuration)
+	defer cancel()
+	absent, err := compiler.AbsentRegisterSkills(ctx, repoPath, pending)
+	if err != nil {
+		return config.RegisterSkills()
+	}
+	return absent
 }
 
 // releaseHarness is this release's synthesis for platform under one set of repository facts:
 // the forge's push rows (forgePush), the receipt row (receiptContract of whether .standards.yaml
-// pins a receipt key), and the invariants rendered for the HISS facts. SynthesizeHarness and
-// currentReleaseHarnesses both build from it, so the refresh key enumerates exactly the text the
-// synthesis writes.
-func releaseHarness(platform string, push pushRows, receiptRow string, invariants []string) Harness {
+// pins a receipt key), the invariants rendered for the HISS facts, and the register directive
+// (releasedRegisterDirectives). SynthesizeHarness and currentReleaseHarnesses both build from
+// it, so the refresh key enumerates exactly the text the synthesis writes.
+func releaseHarness(platform string, push pushRows, receiptRow string, invariants []string, directive string) Harness {
 	return Harness{
 		Version:  1,
 		Platform: platform,
@@ -149,7 +182,7 @@ func releaseHarness(platform string, push pushRows, receiptRow string, invariant
 			receiptRow,
 			"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
 			// A Paperclip run reports to an orchestrating agent, so its product is internal text.
-			config.RegisterDirective(config.TextRegisterInternal),
+			directive,
 		},
 		AGitPushFormat: push.agit,
 		PushFormat:     push.push,
@@ -450,15 +483,17 @@ func releasedReceiptRows() []string {
 // recognise, as operator-owned (#502). The set is enumerated rather than the fact-dependent rows
 // normalised away, so recognition stays byte for byte: an edit to the receipt row, the push row
 // or one invariant, its function length included, still makes the harness operator-owned
-// (limitFacts, complexityFacts). It is bounded: len(releasedPushRows()) x
-// len(releasedReceiptRows()) x len(releaseFacts(stated)) values. These are calls, so a later
-// change to this text must first
-// capture the rows as they stand as literals, as cavemanOperatingContract captured #487's and
-// priorPinnedReceiptRows #523's.
+// (limitFacts, complexityFacts). Each combination is taken with both register directives
+// (releasedRegisterDirectives), so a harness stays earlier output after the repository gains or
+// loses the `caveman` skill. It is bounded: len(releasedPushRows()) x
+// len(releasedReceiptRows()) x len(releaseFacts(stated)) x len(releasedRegisterDirectives())
+// values. These are calls, so a later change to this text must first capture the rows as they
+// stand as literals, as cavemanOperatingContract captured #487's and priorPinnedReceiptRows
+// #523's.
 func currentReleaseHarnesses(platform string, stated statedPolicy) ([]Harness, error) {
 	combinations := releaseFacts(stated)
-	rows, pushes := releasedReceiptRows(), releasedPushRows()
-	released := make([]Harness, 0, len(pushes)*len(rows)*len(combinations))
+	rows, pushes, directives := releasedReceiptRows(), releasedPushRows(), releasedRegisterDirectives()
+	released := make([]Harness, 0, len(pushes)*len(rows)*len(combinations)*len(directives))
 	for _, facts := range combinations {
 		invariants, err := catalogInvariants(facts)
 		if err != nil {
@@ -466,11 +501,21 @@ func currentReleaseHarnesses(platform string, stated statedPolicy) ([]Harness, e
 		}
 		for _, row := range rows {
 			for _, push := range pushes {
-				released = append(released, releaseHarness(platform, push, row, invariants))
+				for _, directive := range directives {
+					released = append(released, releaseHarness(platform, push, row, invariants, directive))
+				}
 			}
 		}
 	}
 	return released, nil
+}
+
+// releasedRegisterDirectives is every register directive this release writes: the one naming
+// the `caveman` skill, for a repository that carries it, then the one stating the internal form
+// alone, for a repository that does not (SynthesizeHarnessOver, #235).
+func releasedRegisterDirectives() []string {
+	return []string{config.RegisterDirective(config.TextRegisterInternal),
+		config.RegisterDirectiveWithout(config.TextRegisterInternal, config.RegisterSkills())}
 }
 
 // releaseFacts is every HISS fact combination the refresh key accepts when the current
