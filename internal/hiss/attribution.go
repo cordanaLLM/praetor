@@ -29,7 +29,7 @@ const (
 	maxAttributedBlobs = 1000
 	// maxTreeListingBytes bounds the tree listing one attribution reads.
 	maxTreeListingBytes = 8 << 20
-	// maxRevParseBytes bounds the commit resolution output.
+	// maxRevParseBytes bounds the output of the history walk and the shallow-clone probe.
 	maxRevParseBytes = 1024
 	// baselineHistoryTimeout bounds the history walk that finds the commit which last changed the
 	// baseline file; it grows with the history, so it gets more than util.GitProbeTimeout.
@@ -86,7 +86,7 @@ func baselineCommits(ctx context.Context, root, baselinePath, recorded string) (
 	if err := util.ValidateExecArg(recorded); err != nil {
 		return nil, fmt.Errorf("the baseline commit %q is not a commit name: %w", recorded, err)
 	}
-	named, err := resolveCommit(ctx, root, recorded)
+	named, err := util.ResolveGitCommit(ctx, root, recorded)
 	if err != nil {
 		return nil, err
 	}
@@ -104,19 +104,6 @@ func baselineCommits(ctx context.Context, root, baselinePath, recorded string) (
 		return nil, fmt.Errorf("commit %s is not in this clone, and no commit on HEAD's history changed the baseline file", recorded)
 	}
 	return commits, nil
-}
-
-// resolveCommit returns the full name of the commit name names in the clone at root, or "" when
-// the clone holds no such commit. Any other answer from git is an error.
-func resolveCommit(ctx context.Context, root, name string) (string, error) {
-	out, status, err := util.RunGitProbeStatus(ctx, root, maxRevParseBytes, "rev-parse", "--verify", "--quiet", name+"^{commit}")
-	if err != nil {
-		return "", fmt.Errorf("resolve commit %s: %w", name, err)
-	}
-	if status != 0 {
-		return "", nil
-	}
-	return strings.TrimSpace(string(out.Stdout)), nil
 }
 
 // lastBaselineCommit returns the last commit on HEAD's history that changed baselinePath, or ""
