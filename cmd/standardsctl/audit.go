@@ -165,7 +165,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditTidyCoverage(ctx, manifest, rootDir, &opts.effective.Policy) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(ctx, rootDir) },
-		func() error { return auditCavemanAgentSurfaces(ctx, rootDir) },
+		func() error { return auditCavemanAgentSurfaces(ctx, rootDir, opts.agentsPath) },
 		func() error {
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
@@ -404,24 +404,18 @@ func auditAgentProjections(ctx context.Context, rootDir string) error {
 	return nil
 }
 
-// auditCavemanAgentSurfaces fails when a canonical persona or skill breaks the caveman
-// lint or the AgentTextCeiling word budget. Personas and skills sit under
-// config.SurfaceContext by its own doc comment, so this gate has no opt-out, the same as
-// the AGENTS.md caveman gate in auditAgentContextAndDevcontainer (ADR-0010 decision 11,
-// amended for personas and skills; Q-059).
-func auditCavemanAgentSurfaces(ctx context.Context, rootDir string) error {
-	personas, err := compiler.LintCanonicalPersonas(ctx, rootDir)
+// auditCavemanAgentSurfaces fails when a tracked nested AGENTS.md, a canonical persona or a
+// skill breaks the caveman lint, or a persona or skill the AgentTextCeiling word budget
+// (compiler.AuditAgentSources, the gate standards_audit runs too). They sit under
+// config.SurfaceContext by its own doc comment, so this gate has no opt-out, the same as the
+// AGENTS.md caveman gate in auditAgentContextAndDevcontainer (ADR-0010 decision 11, amended for
+// personas and skills; Q-059; #311).
+func auditCavemanAgentSurfaces(ctx context.Context, rootDir, agentsPath string) error {
+	line, err := compiler.AuditAgentSources(ctx, rootDir, agentsPath)
 	if err != nil {
-		return fmt.Errorf("[FAIL] Persona caveman lint: %w", err)
+		return err
 	}
-	skills, err := compiler.LintCanonicalSkillFiles(ctx, rootDir)
-	if err != nil {
-		return fmt.Errorf("[FAIL] Skill caveman lint: %w", err)
-	}
-	if personas > 0 || skills > 0 {
-		fmt.Printf("[PASS] Caveman lint verified (%d personas, %d skills, <= %d prose words each).\n",
-			personas, skills, compiler.AgentTextCeiling)
-	}
+	fmt.Println(line)
 	return nil
 }
 

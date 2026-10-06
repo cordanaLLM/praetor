@@ -17,7 +17,7 @@ import (
 const contextVerifyTimeout = 2 * time.Minute
 
 // maxVerifyFailures bounds the failures one verification lists (HISS-02). VerifyCompiledContext
-// joins at most eight checks (register block, evidence ignore rule, vendor files, three lints,
+// joins at most nine checks (register block, evidence ignore rule, vendor files, four lints,
 // persona and plugin skill projections), so the bound is never reached by a real run.
 const maxVerifyFailures = 64
 
@@ -34,7 +34,8 @@ const verifyRejection = "compile-context --verify rejects the repository's agent
 // it rejects (verifyOwner), so the run is incomplete and the CLI exits non-zero. A caveman
 // finding on text adoption keeps as written is a warning instead, as the agent-harness step
 // already treats AGENTS.md (compiler.ErrContextProse, warned there, not repeated): a persona or
-// skill the repository wrote (compiler.ErrAgentTextProse) is warned here. A dry run wrote nothing
+// skill the repository wrote (compiler.ErrAgentTextProse) and a nested AGENTS.md
+// (compiler.ErrNestedContextProse) are warned here. A dry run wrote nothing
 // and verifies nothing, and neither does a run that declines agent-harness or agent-definitions:
 // adoption then leaves part of the agent context to the repository.
 func verifyAgentContext(ctx context.Context, s *adoptSession, declined map[string]bool) {
@@ -52,7 +53,7 @@ func verifyAgentContext(ctx context.Context, s *adoptSession, declined map[strin
 		step := s.report.stepNamed(verifyOwner(failure))
 		switch {
 		case errors.Is(failure, compiler.ErrContextProse):
-		case errors.Is(failure, compiler.ErrAgentTextProse):
+		case errors.Is(failure, compiler.ErrAgentTextProse), errors.Is(failure, compiler.ErrNestedContextProse):
 			s.report.addStepWarning(step, fmt.Sprintf("%v; adoption keeps the repository's text as written", failure))
 		default:
 			s.report.addStepError(step, fmt.Sprintf("%s: %v", verifyRejection, failure))

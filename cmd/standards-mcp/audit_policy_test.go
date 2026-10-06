@@ -97,7 +97,7 @@ func TestServerAuditExternalManifestPreservesExplicitAuthorization(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 7/7")
+	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 8/8")
 }
 
 func TestServerAuditUsesSelectedCatalog(t *testing.T) {
@@ -107,7 +107,7 @@ func TestServerAuditUsesSelectedCatalog(t *testing.T) {
 	relocateCatalog(t, root, "catalog")
 	expectError(t, "missing default catalog", callTool(t, srv, "standards_audit", nil), "materialized profile")
 	after := callTool(t, srv, "standards_audit", map[string]any{"catalog_root": "catalog"})
-	expectText(t, "selected catalog", after, "passed: 7/7")
+	expectText(t, "selected catalog", after, "passed: 8/8")
 	// Mounting identical catalog bytes at another path retains policy identity.
 	beforeLine := strings.Split(before.Content[0].Text, "\n")[2]
 	afterLine := strings.Split(after.Content[0].Text, "\n")[2]
