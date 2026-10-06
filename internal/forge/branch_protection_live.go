@@ -92,6 +92,10 @@ type LiveBranchProtection struct {
 	Rules []LiveBranchRule
 	// RulesetNames maps a ruleset id to its name, to name the mechanism of a rule.
 	RulesetNames map[int]string
+	// RulesetEnforcement maps a ruleset id to its enforcement as the listing reports it: active,
+	// evaluate or disabled. GitHub lists no rule of a ruleset that is not active, so this tells a
+	// ruleset that exists and does not apply from one that does not exist.
+	RulesetEnforcement map[int]string
 	// Legacy is the legacy protection object, or nil when GitHub reports the branch has none.
 	Legacy *LegacyBranchProtection
 	// Missing reports that the repository on GitHub has no such branch yet. Its rulesets are
@@ -112,6 +116,18 @@ func (l *LiveBranchProtection) RulesetLabel(rule LiveBranchRule) string {
 	return label
 }
 
+// managedRuleset returns the id and the enforcement of the ruleset praetor writes
+// (RepositoryRulesetName) as the listing reports them, and whether the listing has it. Of two
+// rulesets of that name, such as the repository's and its organisation's, the lowest id is taken.
+func (l *LiveBranchProtection) managedRuleset() (id int, enforcement string, found bool) {
+	for rulesetID, name := range l.RulesetNames {
+		if name == RepositoryRulesetName && (!found || rulesetID < id) {
+			id, found = rulesetID, true
+		}
+	}
+	return id, l.RulesetEnforcement[id], found
+}
+
 // Mechanisms names every mechanism that protects the branch: each ruleset with an active rule
 // on it, in the order GitHub listed them, then the legacy protection object when it has one.
 // An empty list means nothing protects the branch.
@@ -130,8 +146,9 @@ func (l *LiveBranchProtection) Mechanisms() []string {
 // rules of every ruleset that targets it (GET .../rules/branches/{branch}), named from the
 // ruleset listing, and the legacy protection object (GET .../branches/{branch}/protection),
 // where GitHub's "Branch not protected" answer means the branch has none and its "Branch not
-// found" answer means the branch does not exist yet, so it has none either (Missing). It only
-// reads.
+// found" answer means the branch does not exist yet, so it has none either (Missing). The
+// listing is read even when no rule applies: it is the only place a ruleset in evaluate or
+// disabled enforcement shows (RulesetEnforcement). It only reads.
 func (g *GitHubDriver) ReadBranchProtection(ctx context.Context, branch string) (*LiveBranchProtection, error) {
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, err
@@ -143,17 +160,16 @@ func (g *GitHubDriver) ReadBranchProtection(ctx context.Context, branch string) 
 	if err != nil {
 		return nil, fmt.Errorf("read the active rules of %s: %w", branch, err)
 	}
-	names := map[int]string{}
-	if len(rules) > 0 {
-		if names, err = g.rulesetNames(ctx); err != nil {
-			return nil, fmt.Errorf("name the rulesets of %s: %w", branch, err)
-		}
+	names, enforcement, err := g.rulesetListing(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("name the rulesets of %s: %w", branch, err)
 	}
 	legacy, missing, err := g.legacyProtection(ctx, branch)
 	if err != nil {
 		return nil, fmt.Errorf("read the legacy branch protection of %s: %w", branch, err)
 	}
-	return &LiveBranchProtection{Branch: branch, Rules: rules, RulesetNames: names, Legacy: legacy, Missing: missing}, nil
+	return &LiveBranchProtection{Branch: branch, Rules: rules, RulesetNames: names, RulesetEnforcement: enforcement,
+		Legacy: legacy, Missing: missing}, nil
 }
 
 // branchRules lists every active rule GitHub enforces on branch, page by page.
@@ -180,21 +196,23 @@ func (g *GitHubDriver) branchRules(ctx context.Context, branch string) ([]LiveBr
 	return rules, nil
 }
 
-// rulesetNames maps the id of every ruleset the repository listing returns to its name.
-func (g *GitHubDriver) rulesetNames(ctx context.Context) (map[int]string, error) {
+// rulesetListing maps the id of every ruleset the repository listing returns to its name and to
+// its enforcement.
+func (g *GitHubDriver) rulesetListing(ctx context.Context) (names, enforcement map[int]string, err error) {
 	listPath, err := g.repoPath("rulesets")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	names := map[int]string{}
+	names, enforcement = map[int]string{}, map[int]string{}
 	err = g.walkRulesets(ctx, listPath, func(ruleset ghRulesetRaw) bool {
 		names[ruleset.ID] = ruleset.Name
+		enforcement[ruleset.ID] = ruleset.Enforcement
 		return false
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return names, nil
+	return names, enforcement, nil
 }
 
 // legacyProtection reads the legacy protection object of branch. It returns nil when GitHub
