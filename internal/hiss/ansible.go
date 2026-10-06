@@ -51,9 +51,6 @@ var ansibleCommandModules = map[string]bool{"command": true, "shell": true, "raw
 // ansibleJinja is a Jinja expression, statement or comment, whose filters use the pipe.
 var ansibleJinja = regexp.MustCompile(`\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}`)
 
-// ansibleQuoted is a quoted string inside a shell command, whose pipes are text.
-var ansibleQuoted = regexp.MustCompile(`'[^']*'|"(?:[^"\\]|\\.)*"`)
-
 // ansibleLanguage reads Ansible playbooks and role task files.
 type ansibleLanguage struct{}
 
@@ -304,7 +301,5 @@ func pipesWithoutPipefail(task, args *yaml.Node) bool {
 	if strings.Contains(command, "pipefail") {
 		return false
 	}
-	command = ansibleQuoted.ReplaceAllString(ansibleJinja.ReplaceAllString(command, ""), "")
-	command = strings.ReplaceAll(command, "||", "")
-	return strings.Contains(command, "|")
+	return util.ShellPipes(ansibleJinja.ReplaceAllString(command, ""))
 }

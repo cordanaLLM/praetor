@@ -185,14 +185,17 @@ func recordedBootstrap(write bootstrapWrite) *BootstrapSpec {
 
 // decodeRecordedBootstrap returns the valid bootstrap specification recorded in the
 // config bytes data read from path, or nil when data is not a managed config carrying a
-// valid specification.
+// valid specification. A specification recording an earlier Dockerfile rendering
+// (oldestDockerfileRendering) is valid here, though verification refuses it: the images it
+// records stay the adopter's choice on regeneration, and a ready one keeps the guard against
+// replacing it with an unavailable placeholder.
 func decodeRecordedBootstrap(data []byte, path string) *BootstrapSpec {
 	dc, err := decodeManagedConfig(data, path)
 	if err != nil {
 		return nil
 	}
 	spec := (&Bundle{Config: dc}).Spec()
-	if validateBootstrapSpec(spec) != nil {
+	if validateBootstrapSpecFrom(spec, oldestDockerfileRendering) != nil {
 		return nil
 	}
 	return spec
