@@ -55,17 +55,17 @@ pathspec==1.1.1 \
     # via
     #   black
     #   yamllint
-platformdirs==4.12.2 \
-    --hash=sha256:29dbf06d96c500bc6bdbce75fb0a14d63279c93b1842f97e72a135b33e856983 \
-    --hash=sha256:eab5f70271a490ef74618bb314fbb86e3c7e82fa3b9c922c2ea0e0a1a155d329
+platformdirs==4.12.3 \
+    --hash=sha256:080f3b39423b5abfca9a23d84c4e9795f54d395cd8459867a8ded44084fcd5f8 \
+    --hash=sha256:427fc0bb321ae0c5b037fa03238ca74820437be162e78b4848c4d4055b9b766c
     # via black
 pycodestyle==2.15.0 \
     --hash=sha256:12fd2f73c7b8ee8845a0431111df8faf4c1a07d6e64e2ee7f0c74014dab14181 \
     --hash=sha256:318f5db083869b4c4dad922d0b11124fb27ab181b6730b93371da671e31bd50e
     # via flake8
-pyflakes==4.0.1 \
-    --hash=sha256:1559b701962c803eadeb9c215dbac279585367b73ac12e1f0c42868785e6caad \
-    --hash=sha256:cb4e721195b96e1792f3dfaefa02fb36a4f6253e899bbe0793f8aef6ed0065ef
+pyflakes==4.0.2 \
+    --hash=sha256:01faee1160feadfd9d58c9631a895126ba2032c2e8748e32a96ab51cbd084c6d \
+    --hash=sha256:dcf9cfcece3d9dacc66b7dd2fa217c1a1b79e3075bf488909c15e0857203fd24
     # via flake8
 pytokens==0.4.1 \
     --hash=sha256:0fc71786e629cef478cbf29d7ea1923299181d0699dbe7c3c0f4a583811d9fc1 \
