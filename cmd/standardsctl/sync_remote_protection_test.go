@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/adopt"
 )
 
 // remoteProtectionFixture is a sync fixture for acme/widgets with its origin on
@@ -149,7 +151,7 @@ func TestPlan_Remote_ComparesLiveBranchProtection_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[INFO] Live branch protection not read: pass --remote")
+	mustContain(t, out, adopt.PlanLiveNotCompared)
 	if n := stub.requestCount(); n != 0 {
 		t.Fatalf("plan without --remote sent %d requests", n)
 	}
@@ -162,7 +164,11 @@ func TestPlan_Remote_ComparesLiveBranchProtection_Positive(t *testing.T) {
 		t.Fatalf("plan --remote: %v\n%s", err, out)
 	}
 	mustContain(t, out, "compared with the declared policy: protected by ruleset \"praetor-main-protection\" #1",
+		"[OK] Ruleset enforcement: declared active, live active by ruleset \"praetor-main-protection\" #1",
 		"Status: GitHub enforces every declared branch protection property.")
+	if strings.Contains(out, adopt.PlanLiveNotCompared) {
+		t.Fatalf("plan --remote says it did not compare the live branch protection:\n%s", out)
+	}
 	if got := len(stub.recorded()); got != writes {
 		t.Fatalf("plan --remote wrote to the forge: %v", stub.recorded()[writes:])
 	}

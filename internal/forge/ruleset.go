@@ -85,6 +85,10 @@ func statusChecksContain(checks []struct {
 // live ruleset is matched by, and it stays the same whatever the default branch is.
 const RepositoryRulesetName = "praetor-main-protection"
 
+// rulesetEnforcementActive is the enforcement praetor renders its ruleset with, the only one
+// under which GitHub applies the ruleset's rules.
+const rulesetEnforcementActive = "active"
+
 // RepositoryRulesetRefs returns the refs the praetor ruleset protects for a repository whose
 // default branch (RepositoryDefaultBranch) is branch: that branch and every lts-* branch, the
 // release line .config/flavors.yaml tracks. The local file and a remote sync share it, so neither
@@ -284,7 +288,7 @@ func protectionRuleset(name string, refs []string, policy config.BranchProtectio
 		}})
 	}
 	return map[string]any{
-		"name": name, "target": "branch", "enforcement": "active",
+		"name": name, "target": "branch", "enforcement": rulesetEnforcementActive,
 		"conditions": map[string]any{"ref_name": map[string]any{"include": refs, "exclude": []string{}}},
 		"rules":      rules,
 	}, nil

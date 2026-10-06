@@ -197,3 +197,81 @@ func TestEvaluateBranchProtection_Negative_InvalidInputs(t *testing.T) {
 		t.Error("an oversized check list must be an error")
 	}
 }
+
+// Positive (#159): the ruleset praetor writes, listed in active enforcement, is compared and
+// enforced by itself.
+func TestEvaluateBranchProtection_Positive_ActiveManagedRulesetIsEnforced(t *testing.T) {
+	live := matchingRuleset(t)
+	live.RulesetEnforcement = map[int]string{7: "active"}
+	findings, err := EvaluateBranchProtection(declaredHighSecurity(), []string{"CI"}, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finding := findingOf(t, findings, "Ruleset enforcement")
+	want := `ruleset "praetor-main-protection" #7`
+	if finding.Verdict != ProtectionEnforced || finding.Declared != "active" || finding.Live != "active" ||
+		!slices.Equal(finding.EnforcedBy, []string{want}) {
+		t.Fatalf("ruleset enforcement finding = %+v", finding)
+	}
+}
+
+// Negative (#159): the ruleset praetor writes, listed in evaluate or disabled enforcement, applies
+// no rule; the drift names the enforcement and the ruleset beside every property it would carry.
+func TestEvaluateBranchProtection_Negative_InactiveManagedRulesetDrifts(t *testing.T) {
+	for _, enforcement := range []string{"evaluate", "disabled"} {
+		live := &LiveBranchProtection{Branch: "main", RulesetNames: map[int]string{7: RepositoryRulesetName},
+			RulesetEnforcement: map[int]string{7: enforcement}}
+		findings, err := EvaluateBranchProtection(declaredHighSecurity(), []string{"CI"}, live)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finding := findingOf(t, findings, "Ruleset enforcement")
+		if finding.Verdict != ProtectionDrift || finding.Live != enforcement+` (ruleset "praetor-main-protection" #7)` ||
+			len(finding.EnforcedBy) != 0 {
+			t.Errorf("%s: ruleset enforcement finding = %+v", enforcement, finding)
+		}
+		drifted := ProtectionDrifts(findings)
+		if !slices.Contains(drifted, "Ruleset enforcement") || !slices.Contains(drifted, "Signed commits") {
+			t.Errorf("%s: drifted = %v", enforcement, drifted)
+		}
+	}
+}
+
+// Boundary (#159): a branch protected by the legacy protection object alone, with no ruleset of
+// praetor's name, is compared on what that object enforces and not on a ruleset; a listing that
+// does not report the enforcement is not judged on it; of two rulesets of that name the lowest id
+// is compared.
+func TestEvaluateBranchProtection_Boundary_ManagedRulesetAbsentOrUnreported(t *testing.T) {
+	classic := &LiveBranchProtection{Branch: "main", RulesetNames: map[int]string{3: "operator-ruleset"},
+		RulesetEnforcement: map[int]string{3: "disabled"}, Legacy: &LegacyBranchProtection{
+			RequiredPullRequestReviews: &LegacyPullRequestReviews{RequiredApprovingReviewCount: 1, RequireCodeOwnerReviews: true},
+			RequiredStatusChecks:       &LegacyStatusChecks{Checks: []StatusCheckRef{{Context: "CI"}}},
+		}}
+	policy := config.BranchProtectionPolicy{RequiredApprovingReviewers: 1}
+	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drifted := ProtectionDrifts(findings); len(drifted) != 0 {
+		t.Fatalf("classic protection matching the policy drifts on %v: %+v", drifted, findings)
+	}
+	for _, finding := range findings {
+		if finding.Property == "Ruleset enforcement" {
+			t.Fatalf("a repository without praetor's ruleset was judged on it: %+v", finding)
+		}
+	}
+
+	unreported := &LiveBranchProtection{Branch: "main", RulesetNames: map[int]string{7: RepositoryRulesetName}}
+	if findings, err = EvaluateBranchProtection(policy, nil, unreported); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(ProtectionDrifts(findings), "Ruleset enforcement") {
+		t.Fatalf("an unreported enforcement was judged: %+v", findings)
+	}
+
+	twice := &LiveBranchProtection{Branch: "main", RulesetNames: map[int]string{9: RepositoryRulesetName, 4: RepositoryRulesetName},
+		RulesetEnforcement: map[int]string{9: "active", 4: "evaluate"}}
+	if id, enforcement, found := twice.managedRuleset(); !found || id != 4 || enforcement != "evaluate" {
+		t.Fatalf("managed ruleset = %d %q %t, want the lowest id 4", id, enforcement, found)
+	}
+}

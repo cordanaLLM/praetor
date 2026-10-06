@@ -290,12 +290,11 @@ fields:
       - func: internal/forge.protectionRules
         kind: acts
         effect: renders the required_linear_history rule into the ruleset
-      - func: internal/adopt.rulesetRequired
+      - func: internal/adopt.RulesetRequired
         kind: acts
-        effect: makes the branch protection audit require a ruleset
-      - func: internal/adopt.PlanDrift
-        kind: acts
-        effect: reports drift when the ruleset file is missing
+        effect: >-
+          makes the branch protection audit require a ruleset, and plan report
+          drift when the ruleset file is missing
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the setting in praetorctl plan
@@ -319,12 +318,11 @@ fields:
       - func: internal/forge.protectionRules
         kind: acts
         effect: renders the required_signatures rule into the ruleset
-      - func: internal/adopt.rulesetRequired
+      - func: internal/adopt.RulesetRequired
         kind: acts
-        effect: makes the branch protection audit require a ruleset
-      - func: internal/adopt.PlanDrift
-        kind: acts
-        effect: reports drift when the ruleset file is missing
+        effect: >-
+          makes the branch protection audit require a ruleset, and plan report
+          drift when the ruleset file is missing
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the setting in praetorctl plan

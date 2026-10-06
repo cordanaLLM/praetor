@@ -218,6 +218,9 @@ func (g *GitHubDriver) rulesetName(branch string) string {
 type ghRulesetRaw struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
+	// Enforcement is active, evaluate or disabled; GitHub applies the rules of an active
+	// ruleset only.
+	Enforcement string `json:"enforcement"`
 }
 
 // pageVisitor consumes one page of a GitHub REST listing. It returns the number of raw
