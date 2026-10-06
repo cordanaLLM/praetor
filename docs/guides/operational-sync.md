@@ -29,7 +29,14 @@ praetorctl operational sync init \
 - `--owner-path` names a checkout root with no grafts, no submodule entries and
   no clean or process filter that a tracked path selects: the same input checks
   as `plan`.
-- The checkout is clean: no modified, staged or untracked files.
+- The checkout is clean: no modified, staged or untracked files. The one exception is
+  the Exit-0 receipt `praetorctl gate run` leaves untracked at the checkout root,
+  `.standards-receipt.json`, which `.gitignore` deliberately keeps visible. It is
+  tolerated only as a regular file at that exact path: a link or a directory there,
+  the same name in a subdirectory, or a staged receipt is still a change
+  (`withoutGateReceipt` in
+  [`internal/operationalsync/prepare.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/operationalsync/prepare.go),
+  replayed in `internal/operationalsync/receipt_tolerance_test.go`).
 - `.standards.yaml` at HEAD still carries the public source identity:
   `repository.visibility` is `public` and `repository.owner` differs from
   `--owner`.
@@ -64,7 +71,8 @@ the manifest no longer carries the public identity.
 
 Fetch and review source changes separately. Supply full lowercase 40-character
 commit SHAs already present in the local repositories. The owner checkout must be
-clean and its HEAD must equal `--owner-sha`. The previous public commit must be an
+clean, the gate's untracked receipt excepted as for `init`, and its HEAD must equal
+`--owner-sha`. The previous public commit must be an
 ancestor of both the owner and the new source. Missing objects, unrelated history,
 and a changed reviewed owner HEAD are errors.
 
