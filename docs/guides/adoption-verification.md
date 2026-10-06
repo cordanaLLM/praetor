@@ -525,7 +525,7 @@ name fails adoption and each of those gates.
 | `working-dir-and-flavor` | none |
 | `branch-ruleset` | skipped, in both audits |
 | `labels` | skipped, in both audits: `.config/labels.yaml` is not required |
-| `paperclip` | skipped: an absent `.paperclip/harness.json` passes; one the repository keeps is still validated |
+| `paperclip` | skipped: an absent `.paperclip/harness.json` passes; one the repository keeps is still loaded and its platform checked, never compared with a synthesis |
 | `agent-definitions` | skipped: `.agents/agents` is reported, not required |
 | `git-hooks` | skipped, in both audits: neither `lefthook.yml` nor an active pre-commit hook is required |
 | `agent-hooks` | none |
@@ -2007,6 +2007,14 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     ([effective policy](effective-policy.md#consequence-of-the-60-line-default)). The ceiling
     comes from `config.AuditMaxFuncLOC`; the catalog keeps no copy of it
     (`TestAdoptHarnessesStateTheAuditFunctionLength`, `TestFuncLOCLimit`).
+  - HISS-04 states the cyclomatic, cognitive and statement limits of the same resolved policy,
+    so an `overrides.complexity` stricter than the profile reaches the row
+    (`TestAdoptHarnessesStateEveryComplexityOverride`, `TestComplexityLimits`). The audit does
+    not cap these three, so a profile looser than the HISS-04 defaults (10, 15, 50) is stated
+    as the editor projections and the language server state it. Before the policy resolves, the
+    row states those defaults. One helper, `withPolicy` in
+    [`internal/adopt/harness_hiss.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness_hiss.go),
+    feeds every HISS-04 limit to both harnesses and to `praetorctl paperclip harness`.
   - A C or C++ repository that declares `hiss.exceptions.c_goto_cleanup` and carries the
     document it names reads that exception in HISS-01 instead of the zero-`goto` clause: the
     exact rule the audit's native scan applies, rendered from the scan's own text
@@ -2073,11 +2081,13 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     resolves the policy the planned manifest and lock produce, with the loader and audit layer
     `praetorctl audit` uses (`resolvePlannedPolicy` in
     [`internal/adopt/policy_dryrun.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/policy_dryrun.go)),
-    and HISS-04 states the same function length as `AGENTS.md`. `praetorctl paperclip harness`
-    reads the same facts through `adopt.RepositoryHISSFacts`, which resolves the length with
-    `config.ResolveRepositoryPolicy`, and writes the same bytes. Only where no policy resolves
-    yet, such as a first adoption without `--lock-source-root` or a manifest without a lock,
-    does HISS-04 state the 60-line ceiling and that a stricter repository policy wins.
+    and HISS-04 states the same function length, cyclomatic, cognitive and statement limits as
+    `AGENTS.md` (`TestSynthesizeHarness_Positive_ComplexityOverrideReachesRules`).
+    `praetorctl paperclip harness` reads the same facts through `adopt.RepositoryHISSFacts`, which
+    resolves the policy with `config.ResolveRepositoryPolicy`, and writes the same bytes. Only
+    where no policy resolves yet, such as a first adoption without `--lock-source-root` or a
+    manifest without a lock, does HISS-04 state the 60-line ceiling, that a stricter repository
+    policy wins, and the HISS-04 defaults for the other three limits.
   - The receipt row prescribes attaching receipts only when `.standards.yaml` pins a well-formed
     `receipt.public_key`. Without one, every attached receipt is refused, so the row says to
     attach none and names `praetorctl gate keygen`
@@ -2101,30 +2111,67 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     `TestAdoptRefreshesUnconditionalReceiptRows`).
   - The same holds for this release's own harness after a repository fact it reads changes.
     Pinning `receipt.public_key`, as the unpinned row advises, adding or removing a language,
-    declaring or withdrawing an exception, or a policy that resolves the function length the
-    harness stated as the unresolved ceiling leaves the harness unmodified output, and the next
+    declaring or withdrawing an exception, declaring `repository.forge`, or a policy that
+    resolves the function length the harness stated as the unresolved ceiling, or the complexity
+    limits it stated as the HISS-04 defaults, leaves the harness unmodified output, and the next
     plain `praetorctl adopt` refreshes it. The refresh key compares the harness byte for byte
     with this release rendered under both receipt rows and each earlier pinned receipt row
-    (`priorPinnedReceiptRows`), every language set
+    (`priorPinnedReceiptRows`), every forge's push rows and the AGit pair earlier releases wrote
+    on every forge (`releasedPushRows`), every language set
     (`hisscatalog.AllLanguages`), every exception set (`hisscatalog.AllExceptions`) and the
     HISS-04 statements it accepts: the 60-line ceiling unresolved, the ceiling resolved, and
-    the plain number this run states, if any. So an edit to the receipt row or an invariant
+    the plain number this run states, if any, each with the default complexity limits and the
+    ones this run states (`policyFacts`). So an edit to the receipt row or an invariant
     still keeps it operator-owned (`TestAdoptRefreshesHarnessAfterFactsChange`,
     `TestAdoptKeepsHandEditedHarnessAfterFactsChange`, `TestAdoptHarnessRefreshFactBoundary`,
-    `TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination`).
-  - The function length is never read from the harness on disk, since any number found there
-    could be an operator's edit (`TestPriorGeneratedKeepsEditedFactRows`, `TestLimitFacts`).
+    `TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination`,
+    `TestPriorGenerated_Positive_ComplexityResolvesIsEarlierOutput`).
+  - No limit is read from the harness on disk, since any number found there could be an
+    operator's edit (`TestPriorGeneratedKeepsEditedFactRows`, `TestLimitFacts`,
+    `TestPriorGenerated_Negative_EditedComplexityStaysOwned`).
     The cost: once a policy has resolved the length, a later move of it (50 to 45, 50 up to
     the ceiling, or back to unresolved) leaves a harness stating the old plain number
     operator-owned, under `--force` too. Delete `.paperclip/harness.json` and rerun
     `praetorctl adopt` to regenerate it
     (`TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves`).
-  - Still open: the `## AGit Push Protocol` section (`agit_push_format`) prescribes
-    `git push origin HEAD:refs/for/main -o topic=<issue-id>` whatever forge `origin` names. That
-    push opens a review only on a forge that implements AGit, such as Forgejo or Gitea. The
-    manifest declares no forge kind, and choosing a push form from the remote's host name would
-    be a guess, so the harness does not choose one. On any other forge, push the review branch
-    (the second half of the command) and open the pull request there.
+  - The push rows follow the forge `repository.forge` declares (`config.ResolveRepositoryForge`
+    in [`internal/config/forge.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/config/forge.go)).
+    A Forgejo harness carries `agit_push_format` under `## AGit Push Protocol`: the AGit
+    `git push origin HEAD:refs/for/main -o topic=<issue-id>` that opens the review, then the
+    review-branch push that records a remote-tracking ref for `praetorctl paperclip verify`. A
+    GitHub or GitLab harness carries only `push_format`, the review-branch push
+    `git push origin HEAD:refs/heads/paperclip/<issue-id>`, under `## Push Protocol`; the pull or
+    merge request opens from that branch. An undeclared forge is GitHub when the `origin` remote
+    names `github.com`. Any other host, or no network remote, names no forge kind by itself, so
+    adoption writes no harness and names the key, `praetorctl paperclip harness` refuses, and the
+    audit fails until `.standards.yaml` declares it
+    (`TestForge_Boundary_DefaultOnlyForGitHubHost`, `TestSynthesizeHarness_Positive_ForgeSelectsPushRows`,
+    `TestSynthesizeHarness_Negative_UndeclaredForgeRefused`,
+    `TestAdoptHarness_Negative_UndeclaredForgeWritesNoHarness`,
+    `TestAdoptHarness_Boundary_EarlierAGitHarnessRefreshed`).
+
+`praetorctl audit` compares the harness with this release's synthesis for the repository's facts,
+the ones `praetorctl paperclip harness` reads, under the same `--verification-max-*` bounds
+(`auditPaperclipSynthesis` in
+[`cmd/standardsctl/audit_paperclip.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/audit_paperclip.go),
+`paperclip.CompareGenerated`):
+
+| `.paperclip/harness.json` | Audit |
+| :--- | :--- |
+| the synthesis, LF or one consistent CRLF checkout | passes: `synthesis for repository facts` |
+| unmodified earlier output (the refresh key above) | fails: `Paperclip harness out of date`; `praetorctl adopt` refreshes it |
+| anything else | passes: `operator-owned harness.json`, the harness adoption keeps |
+
+`.paperclip/rules.md`, when present, must be the rendering of `harness.json` byte for byte, one
+consistent checkout line-ending style folded; a hand edit fails `Paperclip rules out of sync`
+naming the first line it lacks, and `praetorctl paperclip harness` or deleting `rules.md`
+clears it. It then passes the caveman lint personas and skills pass
+(`praetorctl caveman check --kind=context .paperclip/rules.md`). A repository that declines
+`paperclip` keeps its harness as its own: the audit loads it and checks its platform only
+(`TestAuditPaperclip_Positive_AdoptedSynthesisVerified`,
+`TestAuditPaperclip_Negative_HandEditedRulesFails`,
+`TestAuditPaperclip_Boundary_OwnedAbsentRulesAndUndeclaredForge`,
+`TestCompareGenerated_Negative_EditedRulesAndStaleHarness`).
 
 An existing harness that is neither the current synthesis nor unmodified earlier output is
 operator-owned and keeps its text, under `--force` too

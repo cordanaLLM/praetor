@@ -1,0 +1,4 @@
+type: fixed
+title: "The Paperclip harness told GitHub repositories to run the Forgejo AGit push, hid stricter complexity overrides, and passed the audit stale or with a hand-edited rules.md; repository.forge now selects its push rows"
+issue: "#321"
+breaking: true

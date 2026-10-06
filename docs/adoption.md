@@ -280,10 +280,12 @@ at its ceiling reports that instead of naming the flag. The flags apply to
 single-repository adoption; batch `--all-missing` keeps the defaults.
 
 `praetorctl paperclip harness` detects the repository's languages with the same walk and
-takes the same three flags:
+takes the same three flags, and so does `praetorctl audit`, whose Paperclip gate compares the
+harness with the synthesis for those languages:
 
 ```bash
 praetorctl paperclip harness --path /path/to/large-repo --verification-max-entries=131072
+praetorctl audit --config=/path/to/large-repo/.standards.yaml --verification-max-entries=131072
 ```
 
 Tests: `internal/adopt/large_repo_bounds_test.go` and
@@ -479,6 +481,23 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   set. A re-run that finds the remote while the manifest still names no identity
   installs the checkpoint lifecycle and the harness but leaves the manifest and the
   README as they are (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
+- **Hosting forge.** `repository.forge` in `.standards.yaml` names the forge that hosts the
+  repository: `github`, `forgejo` or `gitlab`; the strict manifest decoder refuses any other
+  value with the key named (`internal/config/forge.go`). It selects the push rows of the
+  Paperclip harness: only Forgejo's harness carries the AGit `refs/for` push. Without the key, a
+  repository whose `origin` remote names `github.com` is GitHub. Any other host, or no network
+  remote, names no forge kind, since Forgejo and GitLab instances run under any host name, so
+  adoption writes no Paperclip harness and its report names the key, `praetorctl paperclip
+  harness` refuses, and `praetorctl audit` fails until the key is declared
+  (`TestForge_Boundary_DefaultOnlyForGitHubHost`,
+  `TestAdoptHarness_Negative_UndeclaredForgeWritesNoHarness`,
+  `TestAuditPaperclip_Boundary_OwnedAbsentRulesAndUndeclaredForge`).
+
+  ```yaml
+  repository:
+    forge: forgejo
+  ```
+
 - **Profile.** The profile an existing `.standards.yaml` declares outranks `--profile`,
   which outranks file markers. A conflicting `--profile` is reported as ignored
   (`TestAdopt_DeclaredProfileGovernsAdoption`). Adoption never rewrites a declared profile;
@@ -1177,6 +1196,25 @@ Tests: `TestAdoptEditedHarnessFailsBeforeWritingWithRemedy` in `internal/adopt/a
 `TestAdoptForceEditedHarnessNeedsRecomputedPins` in
 `cmd/standardsctl/audit_paperclip_force_test.go`. The harness rules in full:
 [text register](guides/text-register.md#upgrading-an-adopted-repository).
+
+## Migration: `repository.forge` and the audited Paperclip harness
+
+The Paperclip harness prescribes the push protocol of the forge `repository.forge` declares
+(#321). A GitHub or GitLab harness carries `push_format`, the review-branch push alone, in place of
+`agit_push_format`; a consumer of `.paperclip/harness.json` there reads the new member. A
+repository whose `origin` remote is not on `github.com` declares the key and reruns adoption:
+
+```yaml
+repository:
+  forge: forgejo # or github, gitlab
+```
+
+`praetorctl adopt` then refreshes a harness an earlier release wrote, with or without `--force`.
+The audit no longer accepts that harness as it stands: it fails on unmodified earlier output,
+with `praetorctl adopt` as the remedy, and on a `rules.md` that is not the rendering of
+`harness.json`, with `praetorctl paperclip harness` or deleting `rules.md` as the remedy. An
+edited `harness.json` stays operator-owned and passes
+([what the generated harness claims](guides/adoption-verification.md#what-the-generated-harness-claims)).
 
 ## Lock verification outcomes
 
