@@ -763,7 +763,9 @@ rules:
           workflow file and cannot hold the caller and the called workflow). The measurement reads
           which steps run, never what they cover or what a release published:
           gap/attests-a-file-never-released.yml attests and signs README.md, uploads its archives
-          unattested, and passes.
+          unattested, and passes. A live HISS-11 entry of the manifest's exceptions list that names
+          the measured workflow turns a failing gap into a printed pass until it expires (internal/adopt
+          TestAuditSupplyChainPassesADeclaredGap, TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries).
   - id: HISS-12
     coverage:
       - language: go

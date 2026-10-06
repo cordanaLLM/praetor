@@ -161,6 +161,41 @@ func TestValidateExceptionsBoundary(t *testing.T) {
 	}
 }
 
+// A HISS-11 entry names the release workflow the supply-chain gate measured (#330). Positive: a
+// .yml or .yaml file directly in .github/workflows is accepted and selected by its rule.
+// Negative: a glob, a file outside .github/workflows or below it, and a file that is no YAML
+// document are refused with the rule named. Boundary: the target check binds only HISS-11, so a
+// clang-tidy-coverage entry for a C file stays valid beside it.
+func TestValidateExceptionsSupplyChainTarget(t *testing.T) {
+	entry := func(target string) Exception {
+		return Exception{Rule: ExceptionRuleSupplyChain, Path: target, Reason: "release provenance below the declared level",
+			Expires: "2026-12-31"}
+	}
+	for _, target := range []string{".github/workflows/release.yml", ".github/workflows/release-binaries.yaml"} {
+		if err := ValidateExceptions([]Exception{validException(), entry(target)}, exceptionsToday); err != nil {
+			t.Fatalf("HISS-11 entry for %s refused: %v", target, err)
+		}
+	}
+	if got := ExceptionsFor([]Exception{validException(), entry(".github/workflows/release.yml")}, ExceptionRuleSupplyChain); len(got) != 1 ||
+		got[0].Path != ".github/workflows/release.yml" {
+		t.Fatalf("ExceptionsFor(HISS-11) = %+v", got)
+	}
+	globbed := entry("")
+	globbed.Glob = ".github/workflows/*.yml"
+	for name, refused := range map[string]Exception{
+		"glob":                  globbed,
+		"outside the workflows": entry("release.yml"),
+		"below the workflows":   entry(".github/workflows/nested/release.yml"),
+		"not a YAML document":   entry(".github/workflows/release.sh"),
+		"another directory":     entry(".github/actions/release.yml"),
+	} {
+		err := ValidateExceptions([]Exception{refused}, exceptionsToday)
+		if err == nil || !strings.Contains(err.Error(), "rule HISS-11 must name one workflow file directly in .github/workflows") {
+			t.Errorf("%s: ValidateExceptions = %v; want the HISS-11 target refused", name, err)
+		}
+	}
+}
+
 // Boundary: Matches compares a path entry exactly and a glob entry segment by segment, where
 // "*" stays inside one segment and "**" spans any number, zero included.
 func TestExceptionMatchesBoundary(t *testing.T) {

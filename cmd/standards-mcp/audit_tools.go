@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
@@ -64,7 +65,9 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		},
 		func(context.Context) (string, error) { return adopt.AuditLabelTaxonomy(manifest, s.rootDir) },
 		func(ctx context.Context) (string, error) {
-			return adopt.AuditSupplyChain(ctx, s.rootDir, &effective.Policy)
+			return adopt.AuditSupplyChain(ctx, adopt.SupplyChainOptions{
+				Root: s.rootDir, Policy: &effective.Policy, Exceptions: manifest.Exceptions, Today: time.Now(),
+			})
 		},
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}

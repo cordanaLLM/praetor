@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -22,6 +23,11 @@ func supplyChainRepo(t *testing.T, files map[string]string) string {
 		mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), content)
 	}
 	return root
+}
+
+// auditSupplyChainAt runs the gate over root under policy with no exceptions entry, today.
+func auditSupplyChainAt(ctx context.Context, root string, policy *config.ResolvedPolicy) (string, error) {
+	return AuditSupplyChain(ctx, SupplyChainOptions{Root: root, Policy: policy, Today: time.Now()})
 }
 
 // supplyChainPolicy is the default policy with supply_chain replaced.
@@ -70,7 +76,7 @@ func TestAuditSupplyChainPassesWhatTheWorkflowsMeasure(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			line, err := AuditSupplyChain(context.Background(), supplyChainRepo(t, tc.files), tc.policy)
+			line, err := auditSupplyChainAt(context.Background(), supplyChainRepo(t, tc.files), tc.policy)
 			if err != nil {
 				t.Fatalf("AuditSupplyChain: %v", err)
 			}
@@ -113,7 +119,7 @@ func TestAuditSupplyChainFailsDeclarationsAboveTheMeasurement(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := AuditSupplyChain(context.Background(), supplyChainRepo(t, tc.files), tc.policy)
+			_, err := auditSupplyChainAt(context.Background(), supplyChainRepo(t, tc.files), tc.policy)
 			if err == nil {
 				t.Fatal("AuditSupplyChain passed; want a failure")
 			}
@@ -130,11 +136,11 @@ func TestAuditSupplyChainFailsDeclarationsAboveTheMeasurement(t *testing.T) {
 // malformed workflow fails closed; a policy that declares nothing reads no workflow at all.
 func TestAuditSupplyChainBoundaries(t *testing.T) {
 	bare := map[string]string{"README.md": "x\n"}
-	if line, err := AuditSupplyChain(context.Background(), supplyChainRepo(t, bare), supplyChainPolicy(0, false, false)); err != nil ||
+	if line, err := auditSupplyChainAt(context.Background(), supplyChainRepo(t, bare), supplyChainPolicy(0, false, false)); err != nil ||
 		!strings.Contains(line, "declares SLSA Build Level 0, no cosign signing and no SBOM") {
 		t.Fatalf("Level 0 without a workflow = %q, %v; want a pass", line, err)
 	}
-	if _, err := AuditSupplyChain(context.Background(), supplyChainRepo(t, bare), supplyChainPolicy(1, false, false)); err == nil ||
+	if _, err := auditSupplyChainAt(context.Background(), supplyChainRepo(t, bare), supplyChainPolicy(1, false, false)); err == nil ||
 		!strings.Contains(err.Error(), "declares SLSA Build Level 1 but the workflows reach Level 0. Level 1 needs") {
 		t.Fatalf("Level 1 without a workflow = %v; want a failure", err)
 	}
@@ -145,20 +151,20 @@ func TestAuditSupplyChainBoundaries(t *testing.T) {
 	for name, content := range malformed {
 		t.Run(name, func(t *testing.T) {
 			root := supplyChainRepo(t, map[string]string{".github/workflows/release.yml": content})
-			_, err := AuditSupplyChain(context.Background(), root, supplyChainPolicy(1, false, false))
+			_, err := auditSupplyChainAt(context.Background(), root, supplyChainPolicy(1, false, false))
 			if err == nil || !strings.Contains(err.Error(), "cannot measure the workflows: workflow release.yml") {
 				t.Fatalf("AuditSupplyChain(%s workflow) = %v; want a closed failure naming the workflow", name, err)
 			}
-			if _, err := AuditSupplyChain(context.Background(), root, supplyChainPolicy(0, false, false)); err != nil {
+			if _, err := auditSupplyChainAt(context.Background(), root, supplyChainPolicy(0, false, false)); err != nil {
 				t.Fatalf("a policy declaring nothing read the %s workflow: %v", name, err)
 			}
 		})
 	}
 	//nolint:staticcheck // SA1012: a nil context is the refused input under test.
-	if _, err := AuditSupplyChain(nil, t.TempDir(), supplyChainPolicy(0, false, false)); err == nil {
+	if _, err := auditSupplyChainAt(nil, t.TempDir(), supplyChainPolicy(0, false, false)); err == nil {
 		t.Fatal("AuditSupplyChain(nil context) passed; want a failure")
 	}
-	if _, err := AuditSupplyChain(context.Background(), t.TempDir(), nil); err == nil {
+	if _, err := auditSupplyChainAt(context.Background(), t.TempDir(), nil); err == nil {
 		t.Fatal("AuditSupplyChain(nil policy) passed; want a failure")
 	}
 }
@@ -180,10 +186,105 @@ func TestAuditSupplyChainReplaysTheHISS11Fixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			root := supplyChainRepo(t, map[string]string{".github/workflows/release.yml": string(data)})
-			_, err = AuditSupplyChain(context.Background(), root, supplyChainPolicy(3, true, false))
+			_, err = auditSupplyChainAt(context.Background(), root, supplyChainPolicy(3, true, false))
 			if (err != nil) != wantFail {
 				t.Errorf("%s/%s: AuditSupplyChain error = %v; want failure %t", bucket, entries[i].Name(), err, wantFail)
 			}
 		}
+	}
+}
+
+// supplyChainToday is the day the exception cases judge expiry against.
+var supplyChainToday = time.Date(2026, time.October, 6, 12, 0, 0, 0, time.UTC)
+
+// supplyChainEntry is a HISS-11 exceptions entry for the workflow path, expiring on expires.
+func supplyChainEntry(path, expires string) config.Exception {
+	return config.Exception{Rule: config.ExceptionRuleSupplyChain, Path: path,
+		Reason: "release provenance not yet built by an isolated Level 3 builder", Expires: expires}
+}
+
+// auditWithEntries runs the gate over files under policy with the exceptions list entries.
+func auditWithEntries(t *testing.T, files map[string]string, policy *config.ResolvedPolicy, entries ...config.Exception) (string, error) {
+	t.Helper()
+	return AuditSupplyChain(context.Background(), SupplyChainOptions{
+		Root: supplyChainRepo(t, files), Policy: policy, Exceptions: entries, Today: supplyChainToday,
+	})
+}
+
+// A HISS-11 entry of the exceptions list declares the gap the measurement finds (#330).
+// Positive: a live entry naming the workflow the measurement read passes, printing the entry's
+// expiry and reason with the declared and measured level; with no workflow writing provenance,
+// an entry for the release workflow still to be added declares the gap, cosign and SBOM
+// shortfalls included. Boundary: the entry still holds on its expires day.
+func TestAuditSupplyChainPassesADeclaredGap(t *testing.T) {
+	release := map[string]string{".github/workflows/release.yml": releaseSteps(directAttestation)}
+	cases := map[string]struct {
+		files  map[string]string
+		policy *config.ResolvedPolicy
+		entry  config.Exception
+		want   []string
+	}{
+		"Level 2 measured, Level 3 declared": {release, supplyChainPolicy(3, false, false),
+			supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
+			[]string{"declared gap, excepted until 2026-12-31 by the exceptions entry (rule HISS-11, .github/workflows/release.yml): " +
+				"release provenance not yet built", "policy declares SLSA Build Level 3 but the workflows reach Level 2 (.github/workflows/release.yml)"}},
+		"no provenance workflow yet": {map[string]string{"README.md": "x\n"}, supplyChainPolicy(3, true, true),
+			supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
+			[]string{"reach Level 0", "enforce_cosign", "require_sbom"}},
+		"an entry on its expires day": {release, supplyChainPolicy(3, false, false),
+			supplyChainEntry(".github/workflows/release.yml", "2026-10-06"), []string{"excepted until 2026-10-06"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := auditWithEntries(t, tc.files, tc.policy, tc.entry)
+			if err != nil {
+				t.Fatalf("AuditSupplyChain: %v", err)
+			}
+			if !strings.HasPrefix(out, "[PASS] Supply chain (HISS-11): declared gap") || !strings.HasSuffix(out, supplyChainScope) {
+				t.Fatalf("output = %q; want the declared-gap pass line and the measurement's scope", out)
+			}
+			for i := 0; i < len(tc.want); i++ {
+				if !strings.Contains(out, tc.want[i]) {
+					t.Fatalf("output = %q; want it to contain %q", out, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// Negative: an expired entry fails like a missing one, naming its expiry; an entry naming
+// another workflow than the one the measurement read, or one with no gap to excuse, is stale and
+// fails; a malformed entry fails the gate before anything is measured.
+func TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries(t *testing.T) {
+	release := map[string]string{".github/workflows/release.yml": releaseSteps(directAttestation)}
+	cases := map[string]struct {
+		policy *config.ResolvedPolicy
+		entry  config.Exception
+		want   []string
+	}{
+		"an expired entry": {supplyChainPolicy(3, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-10-05"),
+			[]string{"reach Level 2", "the exceptions entry (rule HISS-11, .github/workflows/release.yml) expired on 2026-10-05"}},
+		"an entry for another workflow": {supplyChainPolicy(3, false, false), supplyChainEntry(".github/workflows/publish.yml", "2026-12-31"),
+			[]string{"for .github/workflows/publish.yml excuse no gap, because the measurement read .github/workflows/release.yml",
+				"no exceptions entry declares the gap above"}},
+		"an entry with no gap to excuse": {supplyChainPolicy(2, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
+			[]string{"excuse no gap, because the workflows meet every declaration; remove them"}},
+		"an entry under a policy declaring nothing": {supplyChainPolicy(0, false, false), supplyChainEntry(".github/workflows/release.yml", "2026-12-31"),
+			[]string{"because the policy declares no supply-chain control"}},
+		"a malformed entry": {supplyChainPolicy(3, false, false), supplyChainEntry("release.yml", "2026-12-31"),
+			[]string{"rule HISS-11 must name one workflow file directly in .github/workflows"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := auditWithEntries(t, release, tc.policy, tc.entry)
+			if err == nil {
+				t.Fatalf("AuditSupplyChain passed:\n%s", out)
+			}
+			for i := 0; i < len(tc.want); i++ {
+				if !strings.Contains(err.Error(), tc.want[i]) {
+					t.Fatalf("failure = %q; want it to contain %q", err, tc.want[i])
+				}
+			}
+		})
 	}
 }

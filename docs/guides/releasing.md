@@ -180,7 +180,11 @@ the build steps, and SLSA Build Level 3 requires signing that the build steps ca
 `praetorctl audit` measures this workflow at Level 2
 (`TestMeasureProvenanceReadsTheEngineReleaseAsLevel2` in
 `internal/forge/provenance_workflow_test.go`), below the Level 3 this repository's `framework`
-profile and `security:high` facet declare, so the repository's own audit reports that gap.
+profile and `security:high` facet declare. `.standards.yaml` declares that gap as a HISS-11
+entry of its exceptions list for `.github/workflows/release-binaries.yml`, so the audit prints
+the gap with the entry's reason and expiry and passes until the entry expires
+([Declaring a gap](#declaring-a-gap)). Moving the release provenance to an isolated Level 3
+builder is tracked in #799.
 
 ## How the audit measures the SLSA level
 
@@ -255,6 +259,36 @@ does not hold. A policy that declares Level 0 and neither control reads no workf
 default is Level 0, so `org-health` and `upstream-fork`, which release nothing, resolve to the 0
 they declare. `TestAuditSupplyChainReplaysTheHISS11Fixtures` replays the HISS-11 fixtures under
 `.config/hiss/testdata/HISS-11/github-actions` in both directions.
+
+### Declaring a gap
+
+A repository whose release workflows cannot reach the declared supply chain yet declares the gap
+in the exceptions list of `.standards.yaml`, the one per-file exception list
+([clang-tidy coverage exceptions](clang-tidy-coverage.md#exceptions) uses it too):
+
+```yaml
+exceptions:
+  - rule: "HISS-11"
+    path: ".github/workflows/release-binaries.yml"
+    reason: "release provenance not yet built by an isolated Level 3 builder; the release job reaches Level 2 (#799)"
+    expires: "2027-01-04"
+```
+
+`path` names the workflow the measurement read, the one the failure line names; with no workflow
+writing provenance, it names the release workflow still to be added. The entry is validated like
+every exceptions entry (`config.ValidateExceptions`): one workflow file directly in
+`.github/workflows`, a one-line reason, and an expiry at most 90 days ahead. While it holds, the
+gate prints the declared and measured values with the entry's reason and expiry and passes:
+
+```text
+[PASS] Supply chain (HISS-11): declared gap, excepted until 2027-01-04 by the exceptions entry (rule HISS-11, .github/workflows/release-binaries.yml): release provenance not yet built by an isolated Level 3 builder; the release job reaches Level 2 (#799)
+  - policy declares SLSA Build Level 3 but the workflows reach Level 2 (.github/workflows/release-binaries.yml). Level 3 needs ...
+```
+
+An expired entry fails like a missing one, naming its expiry. An entry for another workflow than
+the one the measurement read, or one with no gap left to excuse, is stale and fails until it is
+removed (`TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries` in
+`internal/adopt/supply_chain_audit_test.go`).
 
 ## Verifying a published release
 

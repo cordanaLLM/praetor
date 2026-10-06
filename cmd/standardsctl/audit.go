@@ -482,8 +482,10 @@ func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.M
 	}
 	fmt.Println(labels)
 
-	// The supply-chain gate standards_audit runs too.
-	supplyChain, err := adopt.AuditSupplyChain(ctx, rootDir, policy)
+	// The supply-chain gate standards_audit runs too, with the manifest's HISS-11 exceptions.
+	supplyChain, err := adopt.AuditSupplyChain(ctx, adopt.SupplyChainOptions{
+		Root: rootDir, Policy: policy, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
 	if err != nil {
 		return err
 	}

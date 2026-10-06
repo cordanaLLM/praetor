@@ -402,16 +402,17 @@ fields:
     go: [SupplyChainPolicy.SLSALevel]
     state: consumed
     consumers:
-      - func: internal/adopt.AuditSupplyChain
+      - func: internal/adopt.declaresSupplyChain
         kind: acts
         effect: >-
           reads no workflow when policy declares Level 0 and nothing else
           (the CLI and MCP audits)
-      - func: internal/adopt.supplyChainFailures
+      - func: internal/adopt.supplyChainShortfalls
         kind: acts
         effect: >-
           fails the audit when the level exceeds the one the workflow files
-          measure (forge.MeasureProvenance)
+          measure (forge.MeasureProvenance), unless a live HISS-11 exceptions
+          entry declares the gap
       - func: internal/adopt.supplyChainPass
         kind: reports
         effect: prints the declared and the measured level on the audit pass line
@@ -430,12 +431,14 @@ fields:
     go: [SupplyChainPolicy.EnforceCosign]
     state: consumed
     consumers:
-      - func: internal/adopt.AuditSupplyChain
+      - func: internal/adopt.declaresSupplyChain
         kind: acts
         effect: measures the workflow files when set (the CLI and MCP audits)
-      - func: internal/adopt.supplyChainFailures
+      - func: internal/adopt.supplyChainShortfalls
         kind: acts
-        effect: fails the audit when no workflow signs with cosign
+        effect: >-
+          fails the audit when no workflow signs with cosign, unless a live
+          HISS-11 exceptions entry declares the gap
       - func: internal/adopt.supplyChainPass
         kind: reports
         effect: names the workflow that signs on the audit pass line
@@ -457,12 +460,17 @@ fields:
       - func: internal/adopt.PlanDrift
         kind: acts
         effect: reports drift when no workflow generates an SBOM
-      - func: internal/adopt.AuditSupplyChain
+      - func: internal/adopt.declaresSupplyChain
+        kind: acts
+        effect: measures the workflow files when set (the CLI and MCP audits)
+      - func: internal/adopt.measureSupplyChainGap
         kind: acts
         effect: looks for an SBOM workflow when set (the CLI and MCP audits)
-      - func: internal/adopt.supplyChainFailures
+      - func: internal/adopt.supplyChainShortfalls
         kind: acts
-        effect: fails the audit when no workflow generates an SBOM
+        effect: >-
+          fails the audit when no workflow generates an SBOM, unless a live
+          HISS-11 exceptions entry declares the gap
       - func: internal/adopt.supplyChainPass
         kind: reports
         effect: names the workflow that generates the SBOM on the audit pass line
