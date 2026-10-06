@@ -254,6 +254,12 @@ func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (Pri
 	if err != nil {
 		return PriorState{}, err
 	}
+	return priorState(harnessData, rulesData, rulesExist, current)
+}
+
+// priorState is PriorGenerated over harness files already read: harnessData, and rulesData when
+// rulesExist.
+func priorState(harnessData, rulesData []byte, rulesExist bool, current *Harness) (PriorState, error) {
 	state := PriorState{Rules: rulesExist}
 	harnessText, rulesText, ok := releaseText(harnessData, rulesData)
 	if !ok {

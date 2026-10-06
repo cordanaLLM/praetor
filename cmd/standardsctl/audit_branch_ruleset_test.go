@@ -21,6 +21,7 @@ func TestAuditBranchRuleset_TDD_Reproduction(t *testing.T) {
 repository:
   owner: acme
   name: widgets
+  forge: github
 profiles:
   - framework
 facets:

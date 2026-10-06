@@ -13,42 +13,79 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// ErrHarnessDrift marks a harness file that is not the synthesis for the repository's facts:
-// harness.json differs from the harness SynthesizeHarness renders, or rules.md from its rendering.
-var ErrHarnessDrift = errors.New("paperclip harness differs from its synthesis")
+// ErrHarnessStale marks a harness.json that is unmodified earlier Praetor output (PriorGenerated)
+// rather than this release's synthesis for the repository's facts; a plain adopt refreshes it.
+var ErrHarnessStale = errors.New("paperclip harness is earlier Praetor output, not this release's synthesis")
 
-// CompareGenerated compares .paperclip/harness.json and .paperclip/rules.md under repoPath with
-// expected's rendering (MarshalHarness, renderRules) byte for byte, one consistent checkout
-// line-ending style folded, as the audit compares every generated text (util.CheckoutTextEqual).
-// A rules.md that does not exist passes: adoption keeps a removed one removed (PriorState.Rules).
-// It returns the rules.md text it read, "" when absent, for the caller's register gate. A file
-// that differs wraps ErrHarnessDrift, naming the file and the first line the synthesis lacks.
-func CompareGenerated(ctx context.Context, repoPath string, expected *Harness) (string, error) {
-	if ctx == nil || expected == nil {
-		return "", errors.New("paperclip: harness comparison requires context and expected harness")
+// ErrRulesDrift marks a rules.md that is not the rendering of the harness.json beside it.
+var ErrRulesDrift = errors.New("paperclip rules.md is not the rendering of harness.json")
+
+// Comparison is how the harness under a repository compares with this release's synthesis.
+type Comparison struct {
+	// Owned: harness.json is neither the synthesis nor unmodified earlier output. It is the
+	// operator's, which adoption keeps byte for byte under --force too (PriorState).
+	Owned bool
+	// RulesExist: rules.md exists, and Rules holds its text, the rendering of harness.json.
+	RulesExist bool
+	Rules      string
+}
+
+// CompareGenerated judges the harness under repoPath against expected, this release's synthesis
+// for the repository's facts, the way the audit does (#321). harness.json passes as expected's
+// rendering (MarshalHarness) or as operator-owned, neither that rendering nor unmodified earlier
+// output; earlier output wraps ErrHarnessStale, since adoption refreshes it and the audit must
+// not accept the stale policy it states. rules.md, when it exists, must be the rendering of
+// onDisk, the harness.json as LoadHarnessContext loaded it, so a hand edit wraps ErrRulesDrift
+// naming the first rendered line it lacks. Every comparison folds one consistent checkout
+// line-ending style, as the audit compares every generated text (util.CheckoutTextEqual); mixed
+// endings compare byte for byte. An absent rules.md passes: adoption keeps a removed one removed
+// (PriorState.Rules).
+func CompareGenerated(ctx context.Context, repoPath string, onDisk, expected *Harness) (Comparison, error) {
+	if ctx == nil || onDisk == nil || expected == nil {
+		return Comparison{}, errors.New("paperclip: harness comparison requires context, loaded and expected harness")
 	}
 	harnessData, rulesData, rulesExist, err := readHarnessFiles(ctx, repoPath)
 	if err != nil {
-		return "", err
+		return Comparison{}, err
 	}
-	want, err := MarshalHarness(expected)
+	owned, err := compareHarnessJSON(harnessData, rulesData, rulesExist, expected)
 	if err != nil {
-		return "", err
+		return Comparison{}, err
 	}
-	if err := compareFile(harnessFile, harnessData, want); err != nil {
-		return "", err
-	}
+	result := Comparison{Owned: owned, RulesExist: rulesExist}
 	if !rulesExist {
-		return "", nil
+		return result, nil
 	}
-	if err := compareFile(rulesFile, rulesData, []byte(renderRules(expected))); err != nil {
-		return "", err
+	if err := compareFile(ErrRulesDrift, rulesFile, rulesData, []byte(renderRules(onDisk))); err != nil {
+		return Comparison{}, err
 	}
-	return string(rulesData), nil
+	result.Rules = string(rulesData)
+	return result, nil
 }
 
-// compareFile reports how the harness file name, holding actual, differs from expected.
-func compareFile(name string, actual, expected []byte) error {
+// compareHarnessJSON reports whether harnessData, harness.json, is operator-owned: neither
+// expected's rendering nor unmodified earlier output (priorState), which wraps ErrHarnessStale.
+func compareHarnessJSON(harnessData, rulesData []byte, rulesExist bool, expected *Harness) (bool, error) {
+	want, err := MarshalHarness(expected)
+	if err != nil {
+		return false, err
+	}
+	if equal, _ := util.CheckoutTextEqual(harnessData, want); equal {
+		return false, nil
+	}
+	prior, err := priorState(harnessData, rulesData, rulesExist, expected)
+	if err != nil {
+		return false, err
+	}
+	if !prior.Generated {
+		return true, nil
+	}
+	return false, compareFile(ErrHarnessStale, harnessFile, harnessData, want)
+}
+
+// compareFile reports how the harness file name, holding actual, differs from expected, wrapped
+// in sentinel; nil when they are equal.
+func compareFile(sentinel error, name string, actual, expected []byte) error {
 	equal, strict := util.CheckoutTextEqual(actual, expected)
 	if equal {
 		return nil
@@ -56,8 +93,8 @@ func compareFile(name string, actual, expected []byte) error {
 	delta := util.LineDeltaOf(string(expected), string(actual), 1)
 	first := ""
 	if len(delta.RemovedLines) > 0 {
-		first = fmt.Sprintf("; first synthesized line it lacks: %q", delta.RemovedLines[0])
+		first = fmt.Sprintf("; first expected line it lacks: %q", delta.RemovedLines[0])
 	}
-	return fmt.Errorf("%w: %s: %d synthesized line(s) missing, %d line(s) not synthesized%s%s",
-		ErrHarnessDrift, path.Join(paperclipDir, name), delta.Removed, delta.Added, first, util.ByteExactNote(strict))
+	return fmt.Errorf("%w: %s: %d expected line(s) missing, %d line(s) not expected%s%s",
+		sentinel, path.Join(paperclipDir, name), delta.Removed, delta.Added, first, util.ByteExactNote(strict))
 }

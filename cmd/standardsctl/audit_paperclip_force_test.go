@@ -73,7 +73,8 @@ func TestAdoptForceKeepsEditedHarnessAuditGreen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit after adopt --force: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[PASS] Paperclip agent runtime harness verified (acme/widgets, 1 rules).")
+	mustContain(t, out, "[PASS] Paperclip agent runtime harness verified (acme/widgets, 1 rules; "+
+		"operator-owned harness.json, not this release's synthesis; adopt keeps it; rules.md absent).")
 }
 
 // TestAdoptForceEditedHarnessNeedsRecomputedPins (#502 U9) Negative, then Positive, end to end:
