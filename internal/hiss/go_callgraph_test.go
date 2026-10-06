@@ -9,12 +9,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // scanSources writes each named source into one package directory and returns the HISS-01
@@ -244,34 +242,30 @@ func TestCallGraphScopesALiteralsBindingsToTheLiteral(t *testing.T) {
 	}
 }
 
-const (
-	// addCallsSample is the shortest timing sample. On Windows time.Now reads INTERRUPT_TIME
-	// (runtime/time_windows_amd64.s), which advances once per clock interrupt, every 15.6 ms
-	// unless a process asks for a finer one. One call-graph build takes well under a
-	// millisecond, so timing a single build reads one clock step or zero. Repeating the build
-	// until a sample spans four of the coarsest steps keeps the step under a quarter of it.
-	addCallsSample = 64 * time.Millisecond
-	// addCallsMaxRuns bounds the builds in one sample (HISS-02): over 60 seconds of the small
-	// case, so a sample short of addCallsSample at the bound means a clock that did not move.
-	addCallsMaxRuns = 1 << 20
-)
-
 // Boundary: a function of 10001 calls costs one walk. Checking every call by walking the whole
-// body again made the cost calls times nodes, so eight times the calls took about 64 times as
-// long; linear cost takes about 8 times. The bound sits between the two. The two sizes are
-// sampled in alternation, three rounds, and each keeps its fastest sample, so a load change
-// between samples reaches both sizes rather than deciding the ratio.
+// body again made the cost calls times nodes. The scope walk counts the nodes it visits
+// (goScope.steps), so the test holds the build to a bounded number of visits per node instead
+// of timing it: a wall-clock ratio flaked on a loaded host (45x against a 24x bound) with no
+// defect present, while the visit count is the same on every machine.
 func TestCallGraphScansCallsInLinearTime(t *testing.T) {
-	smallFile, largeFile := parseCallsFile(t, 1250), parseCallsFile(t, 10001)
-	small, large := time.Duration(math.MaxInt64), time.Duration(math.MaxInt64)
-	for range 3 {
-		small = min(small, addCallsSampleTime(t, smallFile, 1250))
-		large = min(large, addCallsSampleTime(t, largeFile, 10001))
-	}
-	t.Logf("1250 calls: %v; 10001 calls: %v per build", small, large)
-	if large > 24*small {
-		t.Fatalf("8x the calls took %v against %v (%.0fx); one walk per function is linear",
-			large, small, float64(large)/float64(small))
+	for _, calls := range []int{1250, 10001} {
+		file := parseCallsFile(t, calls)
+		nodes := 0
+		ast.Inspect(file, func(n ast.Node) bool {
+			if n != nil {
+				nodes++
+			}
+			return true
+		})
+		graph := newCallGraph()
+		graph.addFile(file, "big.go")
+		if _, edge := graph.edges["big"]["leaf"]; !edge || graph.count != 1 {
+			t.Fatalf("one function calling leaf %d times is one edge, got %d", calls, graph.count)
+		}
+		if graph.steps == 0 || graph.steps > nodes {
+			t.Fatalf("%d calls: the scope walk visited %d nodes of a %d-node file; one walk per function visits each node at most once",
+				calls, graph.steps, nodes)
+		}
 	}
 }
 
@@ -284,23 +278,4 @@ func parseCallsFile(t *testing.T, calls int) *ast.File {
 		t.Fatal(err)
 	}
 	return file
-}
-
-// addCallsSampleTime builds file's call graph repeatedly for at least addCallsSample and
-// returns the time of one build.
-func addCallsSampleTime(t *testing.T, file *ast.File, calls int) time.Duration {
-	t.Helper()
-	runs, start, elapsed := 0, time.Now(), time.Duration(0)
-	for ; elapsed < addCallsSample && runs < addCallsMaxRuns; elapsed = time.Since(start) {
-		graph := newCallGraph()
-		graph.addFile(file, "big.go")
-		if _, edge := graph.edges["big"]["leaf"]; !edge || graph.count != 1 {
-			t.Fatalf("one function calling leaf %d times is one edge, got %d", calls, graph.count)
-		}
-		runs++
-	}
-	if elapsed < addCallsSample {
-		t.Fatalf("the clock moved %v in %d builds; a sample needs %v", elapsed, runs, addCallsSample)
-	}
-	return elapsed / time.Duration(runs)
 }
