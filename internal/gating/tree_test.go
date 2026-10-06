@@ -191,8 +191,19 @@ func TestRunGatedPipeline_Negative_SymlinkedSubtractiveInputIsRefused(t *testing
 			if err := os.Mkdir(filepath.Join(dir, "local"), 0o750); err != nil {
 				t.Fatal(err)
 			}
-			writeFile(t, filepath.Join(dir, "local", "relaxed.json"), `{"total_infractions": 999}`+"\n")
-			commitSymlink(t, dir, input, filepath.Join("local", "relaxed.json"))
+			relaxed := `{"total_infractions": 999}` + "\n"
+			writeFile(t, filepath.Join(dir, "local", "relaxed.json"), relaxed)
+			// A relative link resolves from its own directory: a nested input such as the OpenVEX
+			// document climbs back to the root first, or the link dangles and the case is not run.
+			link := filepath.Join(dir, filepath.FromSlash(input))
+			target, err := filepath.Rel(filepath.Dir(link), filepath.Join(dir, "local", "relaxed.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			commitSymlink(t, dir, input, target)
+			if data, err := os.ReadFile(link); err != nil || string(data) != relaxed {
+				t.Fatalf("the link at %s must reach the ignored file: %q, %v", input, data, err)
+			}
 			if tree := inspectTree(t.Context(), dir); !strings.Contains(tree.problem, input+" is a symbolic link") {
 				t.Fatalf("a tracked symlink to an ignored target must be refused, problem = %q", tree.problem)
 			}
