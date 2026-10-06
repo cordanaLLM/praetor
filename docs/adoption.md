@@ -717,11 +717,13 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   persona (`core.autocrlf` on Windows) is refreshed too and keeps CRLF
   (`TestAdoptMigratesACRLFEarlierManifestInItsOwnStyle`,
   `TestReconcileLabels_Positive_RefreshesCRLFPriorInItsOwnStyle`,
-  `TestReconcileAgentDefinitions_Boundary_CRLFPriorKeepsCRLFAndSymlinkNotWrittenThrough`). The catalog is the
-  exception: `.standards.lock` pins the exact LF bytes of each file, so a CRLF checkout of it
-  fails lock verification before and after this refresh; keep `.config/archetypes` at
-  `eol=lf` in `.gitattributes`. An edited copy of any of them, or one with mixed line endings,
-  is left as it is and keeps the contract above
+  `TestReconcileAgentDefinitions_Boundary_CRLFPriorKeepsCRLFAndSymlinkNotWrittenThrough`). The catalog
+  follows the same rule: `.standards.lock` pins the LF text of each file, so a uniformly CRLF
+  checkout of a pinned file passes lock verification without an `eol=lf` rule, while a file with
+  mixed line endings is hashed byte for byte (`fileDigest` in `internal/config/lockdigest.go`,
+  `TestCheckoutLineEndings_Positive_CRLFCheckoutAuditsAsLFClone` in
+  `cmd/standardsctl/checkout_line_endings_test.go`). An edited copy of any of them, or one with
+  mixed line endings, is left as it is and keeps the contract above
   (`TestAdoptDoesNotRepinAnEditedOrForeignCatalog`).
 - **Files the repository ignores.** Once every step has run, adoption asks git whether the
   repository's own ignore rules exclude any file it created, verified, merged or replaced

@@ -448,6 +448,11 @@ A tool call and the CLI therefore check and write the same things:
 - `verify_only` also runs the caveman lint over every persona and skill and
   fails on a persona or plugin skill copy that differs from its source beyond
   leading and trailing whitespace. It runs every check and returns every failure.
+  A vendor file or copy in one consistent line-ending style compares as its LF
+  form, so a Windows checkout (CRLF under `* text=auto`) verifies; one with mixed
+  line endings compares byte for byte and the failure says so (`projectionMatches`
+  in `internal/compiler/agent_projection.go`, tests in
+  `internal/compiler/checkout_line_endings_test.go`).
 - A write runs the same lint after writing and fails on a finding, and before it
   compiles it makes Git ignore `.workingdir/evidence/`. Both steps are
   `adopt.CompileAgentContext`, the write the CLI's `compile-context` and `init` run.
