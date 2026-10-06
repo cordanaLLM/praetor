@@ -729,7 +729,10 @@ func TestCavemanCheckContextKindInference_Boundary(t *testing.T) {
 	wantCavemanVerdict(t, filepath.Join(repoRoot, "CLAUDE.md"), "FAIL", "message", "--root", repoRoot, "-kind", "message")
 
 	agents := writeFixtureFile(t, dir, "AGENTS.md", cavemanContextOnly)
-	wantCavemanVerdict(t, filepath.Join(dir, "nested", "..", "AGENTS.md"), "PASS", "context", "--root", dir)
+	writeFixtureFile(t, dir, "nested/candidate-note.md", cavemanContextOnly)
+	// filepath.Join would clean the path, so the separators are written out.
+	sep := string(filepath.Separator)
+	wantCavemanVerdict(t, dir+sep+"nested"+sep+".."+sep+"AGENTS.md", "PASS", "context", "--root", dir)
 	outside := filepath.Join(dir, "sub")
 	wantCavemanVerdict(t, agents, "FAIL", "message", "--root", outside)
 	windsurf := writeFixtureFile(t, dir, ".windsurfrules", cavemanContextOnly)
