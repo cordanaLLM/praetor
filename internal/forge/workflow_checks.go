@@ -310,7 +310,7 @@ func workflowPullRequestContexts(data []byte) ([]string, error) {
 
 // workflowContextsIn is workflowPullRequestContexts inside the repository named identity
 // ("<owner>/<name>", or "" when unknown). Only a job that reports on every pull request there
-// (reportsOnEveryPullRequest) is a required check.
+// (requiredJob) and that no proven aggregate covers (aggregateCoveredJobs) is a required check.
 func workflowContextsIn(data []byte, identity string) ([]string, error) {
 	var spec workflowSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
@@ -323,17 +323,11 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 		return nil, fmt.Errorf("workflow exceeds %d jobs", maxJobsPerFile)
 	}
 	ids := sortedJobIDs(spec.Jobs)
+	covered := aggregateCoveredJobs(spec.Jobs, ids)
 	var contexts []string
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
-		if !reportsOnEveryPullRequest(job.If, identity) {
-			continue
-		}
-		// An advisory leg is reported to the forge as successful whether or not it passed,
-		// so requiring it would install a check that can never fail. That is the same
-		// unfalsifiable green this invariant exists to forbid, arrived at from the other
-		// side. Advisory legs stay advisory; they do not become required checks.
-		if advisoryJob(job.ContinueOnError) {
+		if covered[ids[i]] || !requiredJob(&job, identity) {
 			continue
 		}
 		names, err := jobCheckContexts(ids[i], job)
@@ -343,6 +337,17 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 		contexts = append(contexts, names...)
 	}
 	return contexts, nil
+}
+
+// requiredJob reports whether job's check is required on its own merits: it reports on every pull
+// request inside the repository named identity (reportsOnEveryPullRequest) and is not advisory.
+//
+// An advisory leg is reported to the forge as successful whether or not it passed, so requiring it
+// would install a check that can never fail. That is the same unfalsifiable green this invariant
+// exists to forbid, arrived at from the other side. Advisory legs stay advisory; they do not
+// become required checks.
+func requiredJob(job *workflowJob, identity string) bool {
+	return reportsOnEveryPullRequest(job.If, identity) && !advisoryJob(job.ContinueOnError)
 }
 
 // everyRunConditions are the job conditions, whitespace removed, that consist of status
