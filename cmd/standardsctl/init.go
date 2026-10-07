@@ -54,7 +54,7 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := createInitialManifest(*outputPath, *profile, splitCSV(*facets), identity); err != nil {
+	if err := createInitialManifest(*outputPath, *profile, util.SplitCSV(*facets), identity); err != nil {
 		return err
 	}
 	if err := initBaselineAndLockfile(rootDir); err != nil {
