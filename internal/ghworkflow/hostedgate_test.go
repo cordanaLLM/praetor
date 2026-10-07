@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // gateJob is a hosted gate's job header at the indentation the shape's step texts assume.
@@ -120,12 +122,14 @@ func TestHostedGateDraftMarker_Boundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout under core.autocrlf holds the script in CRLF.
+	text, _ := util.NormalizeLineEndings(string(planner))
 	for _, lines := range []string{
 		"DRAFT_GATE_TITLE = " + strconv.Quote(HostedGateDraftTitle),
 		"DRAFT_GATE_MESSAGE = (\n    " + strconv.Quote(hostedGateDraftReason) + "\n    " +
 			strconv.Quote(" "+hostedGateDraftReady) + "\n)",
 	} {
-		if !strings.Contains(string(planner), "\n"+lines+"\n") {
+		if !strings.Contains(text, "\n"+lines+"\n") {
 			t.Errorf("checkpoint.py lacks the lines\n%s", lines)
 		}
 	}
