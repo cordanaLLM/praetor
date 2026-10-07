@@ -174,19 +174,22 @@ The Platform Neutrality matrix is the case in point
 
 Path-filtered CI therefore gets its protection from an aggregate job. GitHub skips every job
 whose `needs` include a skipped job, and a skipped matrix job reports none of its per-leg checks,
-so a lane the planner skips can leave a required leaf check unreported forever. When the workflow
-file proves the aggregate fails on every failed or cancelled job it needs, the ruleset requires
-the aggregate alone, and the jobs it needs directly are not required checks of their own
-(`internal/forge/workflow_aggregate.go`). A proven aggregate:
+so a lane the planner skips can leave a required leaf check unreported forever. The ruleset
+requires the aggregate, and a job the aggregate needs directly is not a required check of its
+own when the workflow file proves that the aggregate fails whenever that job failed or was
+cancelled (`internal/forge/workflow_aggregate.go`). A proven aggregate:
 
 - `needs` at least one job and runs on every run: `always()`, `success() || failure()` or
   `!cancelled()`, as above;
 - is not advisory;
-- has a `run:` step whose last command is `exit` with a status from 1 to 255, with no other `exit`
-  and no `continue-on-error`, and whose `if:` is a disjunction, bare or as one `${{ }}`
-  expression, of `contains(needs.*.result, '<result>')`, `needs.<id>.result == '<result>'` and
-  `needs.<id>.result != '<result>'` terms. That condition must hold when any one needed job
-  failed or was cancelled, and must not hold when all of them succeeded.
+- passes when every job it needs succeeded;
+- fails through one of two step shapes. Every other step is taken to pass.
+
+The first shape is a `run:` step whose last command is `exit` with a status from 1 to 255, with
+no other `exit`, no trailing comment and no `continue-on-error`. Its `if:` is a disjunction, bare
+or as one `${{ }}` expression, of `contains(needs.*.result, '<result>')`,
+`needs.<id>.result == '<result>'` and `needs.<id>.result != '<result>'` terms. The aggregate
+covers each job whose failure, and whose cancellation, makes that condition hold.
 
 ```yaml
 merge-gate:
@@ -199,15 +202,33 @@ merge-gate:
       run: exit 1
 ```
 
+The second shape is a [`re-actors/alls-green`](https://github.com/re-actors/alls-green) step
+pinned by full commit SHA, with `jobs: ${{ toJSON(needs) }}`, no `continue-on-error` and no
+input the action does not declare. Its `if:`, when present, follows the first shape's rule. `allowed-failures` and `allowed-skips` must be absent
+or literal lists, comma-separated or JSON. The action rejects a failed or cancelled job unless
+`allowed-failures` names it, so the aggregate covers every job it needs except those
+(`internal/forge/workflow_allsgreen.go`). It also rejects a skipped job that `allowed-skips` does
+not name, so name the path-filtered lanes there:
+
+```yaml
+    steps:
+      - uses: re-actors/alls-green@<40-hex commit SHA> # <release>
+        with:
+          allowed-skips: go, test
+          jobs: ${{ toJSON(needs) }}
+```
+
 A job the aggregate reaches only through another job stays required: when it fails, the job
 between is skipped, and a skipped need does not fail the aggregate. Put the planner in the
-aggregate's `needs` to cover it. An aggregate whose steps the file cannot read this way, such as
-a third-party action or a script that inspects `toJSON(needs)`, is required beside every
-unconditional job, as before. Tests: `TestRequiredStatusContexts_Positive_ProvenAggregateIsTheOnlyRequiredCheck`,
+aggregate's `needs` to cover it. A job the aggregate does not cover, and an aggregate whose steps
+the file cannot read this way (an action referenced by tag or branch, a step that checks
+`failure()`, or a script that inspects `toJSON(needs)`), leave the jobs it needs required beside
+it, as before. Tests: `TestRequiredStatusContexts_Positive_ProvenAggregateIsTheOnlyRequiredCheck`,
 `TestProvenAggregate_SkippedLaneMergesAndFailedLeafBlocks`,
 `TestRequiredStatusContexts_Negative_UnprovenAggregateKeepsTheLeaves` and
 `TestRequiredStatusContexts_Boundary_AggregateSpellingsAndReach` in
-`internal/forge/workflow_aggregate_proof_test.go`.
+`internal/forge/workflow_aggregate_proof_test.go`, and the `TestAllsGreenAggregate_*` tests in
+`internal/forge/workflow_allsgreen_test.go`.
 
 A ruleset rendered before the aggregate was proven requires the leaf checks. The audit reports it
 as drift; delete `.github/rulesets/main.json` and run `praetorctl sync` to regenerate it.
