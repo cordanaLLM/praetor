@@ -94,8 +94,6 @@ plumbing:
     role: applies a repository branch protection override
   - func: internal/config.newEffectivePolicy
     role: digests the built-in defaults as the first policy source
-  - func: internal/config.decodeBacklogCap
-    role: decodes one backlog.caps category
   - func: internal/config.BacklogCaps.validate
     role: bounds a layer's backlog caps
   - func: internal/config.BacklogCaps.validateResolved

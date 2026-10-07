@@ -89,7 +89,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 	}
 
 	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, hooks. "+
-		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation.",
+		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation, backlog caps.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
 	return mcpComposedTextResult(report.Text())
 }

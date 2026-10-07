@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -26,6 +27,7 @@ var stateCommands = map[string]func([]string) error{
 	"status":       runStateStatus,
 	"audit":        runStateAudit,
 	"compact":      runStateCompact,
+	"batch":        runStateBatch,
 	"migrate-bugs": runStateMigrateBugs,
 	"task":         runStateTask,
 	"bug":          runStateBug,
@@ -49,12 +51,13 @@ func printStateUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  init [dir|--dir=.] [--if-absent] Initialize private state; --if-absent creates or seeds, never repairs a ledger")
 	fmt.Println("  sync [dir|--dir=.] [--log=\"message\"] [--verify] Synchronize state, or verify its freshness without writes")
-	fmt.Println("  status [dir|--dir=.]           Inspect active session state (read-only; never writes)")
+	fmt.Println("  status [dir|--dir=.]           Inspect active session state and backlog caps (read-only; never writes)")
+	fmt.Println("  batch [dir|--dir=.] [--date=YYYY-MM-DD] Write a batch file per category over its backlog cap")
 	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
 	fmt.Println("  compact [dir|--dir=.]          One-time: rewrite old STATE.md entries compact, drop old markers, resync")
 	fmt.Println("  migrate-bugs [dir|--dir=.]     One-time: move BUGS.md inline metadata to bugs.meta.json, verify, resync")
 	fmt.Println("  task [add|complete|list|archive] Manage active tasks in OPEN.md & BACKLOG.md")
-	fmt.Println("  bug [add|list|resolve] [args]  Manage bugs ledger (BUGS.md)")
+	fmt.Println("  bug [add|list|resolve|kind] [args] Manage bugs ledger (BUGS.md)")
 	fmt.Println("  question [add|list|decide]     Manage user questions and decisions (QUESTIONS.md)")
 }
 
@@ -297,7 +300,10 @@ func runStateSync(args []string) error {
 }
 
 func runStateStatus(args []string) error {
-	dirFlag, rest, err := stateArgs("state status", args, nil)
+	var policy config.EffectiveOptions
+	dirFlag, rest, err := stateArgs("state status", args, func(fs *flag.FlagSet) {
+		registerPolicySourceFlags(fs, &policy, "repository root")
+	})
 	if err != nil {
 		return err
 	}
@@ -325,6 +331,7 @@ func runStateStatus(args []string) error {
 	fmt.Printf("  Open Bugs:         %d\n", snap.OpenBugs)
 	fmt.Printf("  Pending Questions: %d\n", snap.PendingQs)
 	fmt.Printf("  Inspected At:      %s\n", snap.LastUpdated.Format(time.RFC3339))
+	printStateBacklogCaps(ctx, dir, policy)
 	return nil
 }
 
@@ -422,6 +429,8 @@ func runStateBug(args []string) error {
 		return runStateBugList(stateDir(dirFlag, rest, 0))
 	case "resolve":
 		return runStateBugResolve(args[1:])
+	case "kind":
+		return runStateBugKind(args[1:])
 	default:
 		return fmt.Errorf("unknown bug action: %s", args[0])
 	}
@@ -433,6 +442,7 @@ func runStateBugAdd(args []string) error {
 	sev := fs.String("severity", "p2", "Severity (p0, p1, p2, p3)")
 	loc := fs.String("location", "core", "File or component location")
 	ctxStr := fs.String("context", "", "Additional context")
+	kind := fs.String("kind", state.BugKindDefect, "Row kind: defect, or scope for tracked work that is not a defect")
 	dir := fs.String("dir", ".", "Repository directory")
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
@@ -453,11 +463,12 @@ func runStateBugAdd(args []string) error {
 			Location: *loc,
 			Context:  *ctxStr,
 			Status:   "open",
+			Kind:     *kind,
 		})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Added bug [%s] %s (%s, %s)\n", entry.ID, entry.Title, entry.Severity, entry.Location)
+		fmt.Printf("Added bug [%s] %s (%s, %s, %s)\n", entry.ID, entry.Title, entry.Severity, entry.Location, entry.Kind)
 		return nil
 	})
 }

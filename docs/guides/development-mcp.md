@@ -338,7 +338,11 @@ with the production extractor. The form rules are in the
 
 ### Shared audit authority and parity
 
-The `standards_audit` tool executes the same gates as CLI `standardsctl audit`.
+The `standards_audit` tool executes the same gates as CLI `standardsctl audit`,
+except the ones its summary line names as CLI-only: the Paperclip harness, the runner
+matrix, hook activation and the backlog cap gate, which reads the private
+`.workingdir` ledgers ([Backlog caps](effective-policy.md#backlog-caps);
+`cmd/standards-mcp/audit_tools.go`).
 A failing HISS ratchet reports `[FAIL]` followed by `baseline.RatchetResult.Summary`, the
 rejection text `praetorctl audit` and the gate print: up to three violations per class by rule,
 file and line with a count of the hidden rest, or both totals when only the count rose. Like

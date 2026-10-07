@@ -184,19 +184,38 @@ func decodeBacklogCap(path string, node *yaml.Node) (BacklogCap, error) {
 	if limit == nil && action == nil {
 		return result, fmt.Errorf("%s declares neither max nor action", path)
 	}
-	if limit != nil {
-		if limit.Kind != yaml.ScalarNode || limit.Tag != "!!int" || limit.Decode(&result.Max) != nil ||
-			result.Max <= 0 || result.Max > maxBacklogCap {
-			return BacklogCap{}, fmt.Errorf("%s.max must be an integer from 1 to %d", path, maxBacklogCap)
-		}
+	var err error
+	if result.Max, err = decodeBacklogMax(path, limit); err != nil {
+		return BacklogCap{}, err
 	}
-	if action != nil {
-		result.Action = BacklogAction(action.Value)
-		if action.Kind != yaml.ScalarNode || action.Tag != "!!str" || result.Action.rank() <= 0 {
-			return BacklogCap{}, fmt.Errorf("%s.action %q must be report, batch or gate", path, action.Value)
-		}
+	if result.Action, err = decodeBacklogAction(path, action); err != nil {
+		return BacklogCap{}, err
 	}
 	return result, nil
+}
+
+// decodeBacklogMax reads a declared max; an omitted one is zero, no bound.
+func decodeBacklogMax(path string, node *yaml.Node) (int, error) {
+	if node == nil {
+		return 0, nil
+	}
+	var limit int
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!int" || node.Decode(&limit) != nil || limit <= 0 || limit > maxBacklogCap {
+		return 0, fmt.Errorf("%s.max must be an integer from 1 to %d", path, maxBacklogCap)
+	}
+	return limit, nil
+}
+
+// decodeBacklogAction reads a declared action; an omitted one is empty, undeclared.
+func decodeBacklogAction(path string, node *yaml.Node) (BacklogAction, error) {
+	if node == nil {
+		return "", nil
+	}
+	action := BacklogAction(node.Value)
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" || action.rank() <= 0 {
+		return "", fmt.Errorf("%s.action %q must be report, batch or gate", path, node.Value)
+	}
+	return action, nil
 }
 
 // validate holds a layer's caps, decoded or built by a ResolvePolicy caller, to the decoder's
@@ -306,13 +325,11 @@ func verifyBacklogFields(caps BacklogCaps, fields map[string][]string, seen map[
 		want[backlogField(names[i], "action")] = entry.Action != ""
 	}
 	for key, contributors := range fields {
-		if !want[key] || len(contributors) == 0 || len(contributors) > len(seen) {
-			return errors.New("effective backlog cap contributors do not match the resolved caps")
+		if !want[key] {
+			return errors.New("effective backlog cap contributors name a value the resolved caps lack")
 		}
-		for i := 0; i < len(contributors) && i <= maxPolicyLayers; i++ {
-			if !seen[contributors[i]] {
-				return errors.New("effective backlog cap contributor has no source")
-			}
+		if err := verifyBacklogContributors(contributors, seen); err != nil {
+			return err
 		}
 	}
 	for key, declared := range want {
@@ -321,6 +338,20 @@ func verifyBacklogFields(caps BacklogCaps, fields map[string][]string, seen map[
 		}
 	}
 	return caps.validateResolved(fields)
+}
+
+// verifyBacklogContributors checks one value's contributor list: bounded, non-empty, and every
+// entry a retained source.
+func verifyBacklogContributors(contributors []string, seen map[string]bool) error {
+	if len(contributors) == 0 || len(contributors) > len(seen) {
+		return errors.New("effective backlog cap contributors exceed their bounds")
+	}
+	for i := 0; i < len(contributors) && i <= maxPolicyLayers; i++ {
+		if !seen[contributors[i]] {
+			return errors.New("effective backlog cap contributor has no source")
+		}
+	}
+	return nil
 }
 
 // backlogEvidence is the evidence line of every declared cap, empty when none is declared.
@@ -338,11 +369,11 @@ func (p *EffectivePolicy) backlogEvidence() string {
 	return evidence.String()
 }
 
-// BacklogOrigin names the layers that set a cap value, or says the value is the default (an
-// action no layer declared is report).
+// BacklogOrigin names the layers that set a cap value, or says the value is the built-in
+// default (an action no layer declared is report).
 func BacklogOrigin(layers []string) string {
 	if len(layers) == 0 {
-		return "default"
+		return "builtin default"
 	}
 	return evidenceContributors(layers)
 }

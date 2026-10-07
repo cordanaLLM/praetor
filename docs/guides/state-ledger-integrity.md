@@ -119,6 +119,25 @@ duplicate and case-alias fields are rejected, and so are a wrong version, a
 noncanonical ID and a v2 row whose ID has no sidecar record. A sidecar record no
 row refers to is ignored; it is what an interrupted write leaves behind (see below).
 
+### Row kinds
+
+A record may carry one optional metadata member, `kind`: `defect` for a defect, `scope` for
+tracked work that is not a defect. The [backlog caps](effective-policy.md#backlog-caps)
+count a row as a defect unless it is `scope`; a row without a kind still counts, and is
+reported as a finding until it is labelled, so leaving rows unlabelled cannot hide them from a
+cap.
+
+| Command | Kind written |
+| :--- | :--- |
+| `praetorctl state bug add` | `defect`, or `scope` with `--kind=scope` |
+| `praetorctl state bug kind <id> <defect\|scope>` | labels one existing row; a legacy row moves to the v2 form, the only forms that hold metadata |
+| `state bug resolve`, `migrate-bugs` | keep the kind the row has |
+
+A record without a kind omits the member, so its bytes are the ones it had before the member
+existed. An empty, null or unknown kind is an error, and the questions sidecar refuses the
+member (`internal/state/bugs_kind_test.go`). A `praetorctl` built before kinds existed refuses a
+ledger whose metadata carries one; refresh every local binary, as below, before labelling.
+
 The parser requires one complete ledger table. Fenced examples and unrelated
 Markdown are preserved. An unterminated code fence is a ledger error naming the
 line it was opened on, so rows after it are never hidden and bug additions never
@@ -179,6 +198,11 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 | unterminated fence | a fence opened and never closed is a ledger error naming the line it was opened on; `list`, `complete`, `archive`, `add` and `state sync` all refuse the file rather than silently dropping the rows after it, and `add` refuses rather than appending a row inside the open fence |
 
 A refused selector writes nothing, so `OPEN.md` stays byte-identical.
+
+Each task also records the text of the nearest Markdown heading above it (`TaskItem.Section`);
+a heading inside a fence, or a `#` not followed by a space, is not one. The `tasks`
+[backlog cap](effective-policy.md#backlog-caps) counts the pending rows and groups its batch by
+that heading (`TestListTasks_SectionIsTheNearestHeading`).
 
 `praetorctl state task archive` moves completed rows to `BACKLOG.md` under a header
 naming the commit they were discharged at. The commit comes from
