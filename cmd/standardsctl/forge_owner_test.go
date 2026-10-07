@@ -162,8 +162,8 @@ func TestResolveForgeRepository_3D(t *testing.T) {
 	}
 }
 
-// issueListingServer answers every issue listing with an empty page and records the paths it
-// was asked for.
+// issueListingServer answers every issue and milestone listing with an empty page and records
+// the paths it was asked for.
 func issueListingServer(t *testing.T) (*httptest.Server, func() []string) {
 	t.Helper()
 	var mu sync.Mutex
@@ -199,12 +199,13 @@ func TestIssueReconcile_Positive_ScopeChain(t *testing.T) {
 		want []string
 	}{
 		{"bare --repos with forge.default_owner", anonymousRepo(t),
-			[]string{"--repos=kit", forgeWorkstation(t, "  default_owner: acme\n")}, []string{"/repos/acme/kit/issues"}},
+			[]string{"--repos=kit", forgeWorkstation(t, "  default_owner: acme\n")}, []string{"/repos/acme/kit/issues", "/repos/acme/kit/milestones"}},
 		{"forge.reconcile_repos", anonymousRepo(t),
 			[]string{forgeWorkstation(t, "  reconcile_repos: [acme/kit, acme-labs/app]\n")},
-			[]string{"/repos/acme/kit/issues", "/repos/acme-labs/app/issues"}},
-		{"current repository", identityRepo(t, "acme", "kit"), nil, []string{"/repos/acme/kit/issues"}},
-		{"current repository from the remote", remoteRepo(t, "acme", "app"), nil, []string{"/repos/acme/app/issues"}},
+			// Every issue listing comes first, then every milestone listing (#837).
+			[]string{"/repos/acme/kit/issues", "/repos/acme-labs/app/issues", "/repos/acme/kit/milestones", "/repos/acme-labs/app/milestones"}},
+		{"current repository", identityRepo(t, "acme", "kit"), nil, []string{"/repos/acme/kit/issues", "/repos/acme/kit/milestones"}},
+		{"current repository from the remote", remoteRepo(t, "acme", "app"), nil, []string{"/repos/acme/app/issues", "/repos/acme/app/milestones"}},
 	}
 	for _, tc := range cases {
 		srv, paths := issueListingServer(t)
@@ -245,7 +246,7 @@ func TestIssueReconcile_Boundary_ExplicitReposWinAndOwnerLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := paths(); !slices.Equal(got, []string{"/repos/acme-labs/one/issues"}) {
+	if got := paths(); !slices.Equal(got, []string{"/repos/acme-labs/one/issues", "/repos/acme-labs/one/milestones"}) {
 		t.Errorf("explicit --repos read %v, want only acme-labs/one", got)
 	}
 	mustContain(t, out, "Reconciliation: 1 repositories", "Owner of bare repository names: acme")
