@@ -90,3 +90,37 @@ func TestNeedsLibraryRelationshipsUseSharedFormatter(t *testing.T) {
 		t.Fatalf("library roles became replacement claims or changed dependency counts: %s", output)
 	}
 }
+
+// acmeUmbrellaContract declares the acme kit with an umbrella package grouping two
+// subsystems. No real framework.
+const acmeUmbrellaContract = "version: 1\nframework: example.com/acme/kit\npackages:\n" +
+	"  - import: example.com/acme/kit/config\n    capabilities: [config.loader]\n" +
+	"  - import: example.com/acme/kit/httpx\n    capabilities: [http.router]\n" +
+	"umbrellas:\n  - import: example.com/acme/kit\n    groupings:\n" +
+	"      - name: Core\n        packages: [example.com/acme/kit/config]\n" +
+	"      - name: HTTP\n        packages: [example.com/acme/kit/httpx]\n"
+
+// needs report names the sub-package import that replaces an umbrella import wiring one of
+// two groupings, and says the switch was not measured without the module graph; a repository
+// importing only the sub-package gets no umbrella section.
+func TestNeedsReportRecommendsUmbrellaSubPackages(t *testing.T) {
+	repo := newNeedsRepo(t)
+	writeFixtureFile(t, repo, "go.mod", "module example.com/consumer\n\ngo 1.27\n\nrequire example.com/acme/kit v1.0.0\n")
+	writeFixtureFile(t, repo, "main.go", "package main\n\nimport \"example.com/acme/kit\"\n\nvar app = []any{kit.Core}\n\nfunc main() { _ = app }\n")
+	t.Setenv(config.WorkstationConfigEnv, acmeWorkstationWith(t, acmeUmbrellaContract))
+	t.Setenv("GOMODCACHE", t.TempDir())
+	run := func() string {
+		output, err := captureStdout(t, func() error { return dispatchCommand("needs", []string{"report", "--path=" + repo}) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return output
+	}
+	mustContain(t, run(), "Umbrella imports (recommendations, not a gate):", "example.com/acme/kit imported in main.go",
+		"wires 1 of 2 groupings (Core); import instead:", "-> example.com/acme/kit/config (grouping Core): config.loader",
+		"switch effect: not measured (module graph unavailable offline")
+	writeFixtureFile(t, repo, "main.go", "package main\n\nimport \"example.com/acme/kit/config\"\n\nvar app = []any{config.Module}\n\nfunc main() { _ = app }\n")
+	if output := run(); strings.Contains(output, "Umbrella imports") {
+		t.Fatalf("a sub-package import was reported as an umbrella import:\n%s", output)
+	}
+}

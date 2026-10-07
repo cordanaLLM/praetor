@@ -99,3 +99,27 @@ func TestNeedsMCPLibraryRelationshipsUseSharedFormatter(t *testing.T) {
 		t.Fatalf("library roles became replacement claims or changed dependency counts: %s", output)
 	}
 }
+
+// The MCP report renders the umbrella-import recommendations the CLI report prints: one of
+// two groupings wired names its sub-package; a repository without the umbrella import gets
+// no umbrella section.
+func TestNeedsMCPReportRecommendsUmbrellaSubPackages(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	selectAcmeContract(t, "version: 1\nframework: example.com/acme/kit\npackages:\n"+
+		"  - import: example.com/acme/kit/config\n    capabilities: [config.loader]\n"+
+		"  - import: example.com/acme/kit/httpx\n    capabilities: [http.router]\n"+
+		"umbrellas:\n  - import: example.com/acme/kit\n    groupings:\n"+
+		"      - name: Core\n        packages: [example.com/acme/kit/config]\n"+
+		"      - name: HTTP\n        packages: [example.com/acme/kit/httpx]\n")
+	t.Setenv("GOMODCACHE", t.TempDir())
+	before := callTool(t, srv, "standards_needs_report", nil)
+	if strings.Contains(before.Content[0].Text, "Umbrella imports") {
+		t.Fatalf("a repository without the umbrella import got an umbrella section:\n%s", before.Content[0].Text)
+	}
+	writeFixtureFile(t, root, "wiring.go", "package main\n\nimport \"example.com/acme/kit\"\n\nvar wiring = []any{kit.HTTP}\n")
+	result := callTool(t, srv, "standards_needs_report", nil)
+	for _, want := range []string{"Umbrella imports (recommendations, not a gate):", "example.com/acme/kit imported in wiring.go",
+		"wires 1 of 2 groupings (HTTP)", "-> example.com/acme/kit/httpx (grouping HTTP): http.router", "switch effect: not measured ("} {
+		expectText(t, "umbrella recommendation", result, want)
+	}
+}
