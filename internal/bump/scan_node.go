@@ -23,12 +23,6 @@ type pnpmOutdatedItem struct {
 	Wanted  string `json:"wanted"`
 }
 
-type packageJSONFormat struct {
-	Name            string            `json:"name"`
-	Dependencies    map[string]string `json:"dependencies"`
-	DevDependencies map[string]string `json:"devDependencies"`
-}
-
 // DiscoverNodePackages finds all directories containing package.json: the root
 // plus every workspace member.
 //
@@ -165,8 +159,8 @@ func scanPackageJSONStatic(ctx context.Context, repoPath, dirRel string) ([]Upgr
 	if err != nil {
 		return nil, err
 	}
-	var pj packageJSONFormat
-	if err := json.Unmarshal(data, &pj); err != nil {
+	pj, err := nodemanifest.ParseManifest(data)
+	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", name, err)
 	}
 	seen := make(map[string]bool)

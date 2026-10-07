@@ -1,6 +1,8 @@
 ---
 name: adr-scaffold
 description: Scaffold and manage Architectural Decision Records (ADRs) adhering to immutable numbering, status lifecycle, context, decision lattice, and consequences.
+metadata:
+  derived_from: "https://www.cognitect.com/blog/2011/11/15/documenting-architecture-decisions (CC0-1.0)"
 ---
 
 # Architectural Decision Record Scaffolder (`adr-scaffold`)

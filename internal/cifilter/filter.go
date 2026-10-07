@@ -285,13 +285,17 @@ func makeTargetedDecision(cs *ChangeSet) *FilterDecision {
 		reason = "unclassified file kind modified; failing closed to tests, linters and security in the targeted CI matrix"
 	}
 
+	// Agent text is Markdown the documentation gates read: the private-link rule of the Markdown
+	// gate reads every Markdown path, and the credits gate (internal/supplychain) reads every
+	// canonical persona and skill. An agent-only change set therefore selects them as well as
+	// context sync, so a light run never skips a gate one of its files feeds.
 	return &FilterDecision{
 		RunTests:       needsTests,
 		RunLinters:     needsLinters,
 		RunSecurity:    needsSecurity,
 		RunAudit:       true,
 		RunContextSync: needsContextSync,
-		RunDocs:        cs.DocsChanged || needsTests,
+		RunDocs:        cs.DocsChanged || cs.AgentChanged || needsTests,
 		RunDocsOnly:    false,
 		SkipHeavyGates: !needsTests,
 		Reason:         reason,
@@ -328,7 +332,7 @@ func (d *FilterDecision) ToJSON() ([]byte, error) {
 }
 
 func isDocumentation(p string) bool {
-	if isBuildManifestText(p) {
+	if isBuildManifest(p) {
 		return false
 	}
 	base := filepath.Base(p)
@@ -382,29 +386,32 @@ func isTest(p string) bool {
 		})
 }
 
-// isBuildManifestText reports whether a .txt path is a dependency or build manifest
-// (requirements*.txt, constraints*.txt, CMakeLists.txt). It changes what CI installs or
-// builds, so it is configuration even under docs/, never documentation (BUG-562).
-func isBuildManifestText(p string) bool {
+// buildManifestNames are the dependency and build manifests by lower-cased base name.
+var buildManifestNames = []string{
+	"makefile", "go.mod", "go.sum", "cargo.toml", "cargo.lock", "package.json", "package-lock.json", "pnpm-lock.yaml", "pom.xml",
+	"cmakelists.txt",
+}
+
+// isBuildManifest reports whether p is a dependency or build manifest: one of
+// buildManifestNames, a tsconfig*.json, or a pip requirements or constraints file, either the
+// locked .txt or the .in that pip-compile reads. It changes what CI installs or builds, and the
+// credits gate reads its dependencies (internal/supplychain), so it is configuration even under
+// docs/, never documentation (BUG-562).
+func isBuildManifest(p string) bool {
 	base := strings.ToLower(filepath.Base(p))
-	if !strings.HasSuffix(base, ".txt") {
-		return false
+	if slices.Contains(buildManifestNames, base) {
+		return true
 	}
-	return strings.HasPrefix(base, "requirements") || strings.HasPrefix(base, "constraints") ||
-		base == "cmakelists.txt"
+	if strings.HasPrefix(base, "tsconfig") && strings.HasSuffix(base, ".json") {
+		return true
+	}
+	pip := strings.HasPrefix(base, "requirements") || strings.HasPrefix(base, "constraints")
+	return pip && (strings.HasSuffix(base, ".txt") || strings.HasSuffix(base, ".in"))
 }
 
 func isConfig(p string) bool {
-	base := filepath.Base(p)
-	if isBuildManifestText(p) || strings.HasPrefix(p, ".github/") ||
-		strings.HasSuffix(p, ".yaml") ||
-		strings.HasSuffix(p, ".yml") ||
-		slices.Contains([]string{
-			"makefile", "lefthook.yml", "go.mod", "go.sum", "cargo.toml", "cargo.lock", "package.json", "package-lock.json", "pnpm-lock.yaml", "pom.xml",
-		}, strings.ToLower(base)) {
-		return true
-	}
-	return strings.HasPrefix(strings.ToLower(base), "tsconfig") && strings.HasSuffix(strings.ToLower(base), ".json")
+	return isBuildManifest(p) || strings.HasPrefix(p, ".github/") ||
+		strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml")
 }
 
 // compiledAgentPaths is every file compile-context writes, read from its own target list

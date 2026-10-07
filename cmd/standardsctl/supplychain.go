@@ -73,7 +73,7 @@ func runSBOM(args []string) error {
 	return nil
 }
 
-// sbomNoticesTimeout bounds one notices render: seven small file reads and one write (HISS-02).
+// sbomNoticesTimeout bounds one notices render: eight small file reads and one write (HISS-02).
 const sbomNoticesTimeout = 30 * time.Second
 
 // runSBOMNotices regenerates THIRD-PARTY-NOTICES.md at the top of a Praetor checkout from its

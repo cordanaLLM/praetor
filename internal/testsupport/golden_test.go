@@ -80,6 +80,42 @@ func TestAssertGolden_Negative(t *testing.T) {
 	}
 }
 
+// AssertGoldenIn compares and rewrites a golden below another directory (positive), refuses a
+// directory that does not exist and a path escaping it (negative), and with dir "." is
+// AssertGolden (boundary).
+func TestAssertGoldenIn(t *testing.T) {
+	dir := goldenPackageDir(t)
+	if err := os.MkdirAll(filepath.Join(dir, "top", "docs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "top", "docs", "page.md"), []byte("page\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recorder := &recordingTB{TB: t}
+	AssertGoldenIn(recorder, "top", "docs/page.md", "page\n")
+	if recorder.fatal != "" {
+		t.Fatalf("equal text below another directory failed: %s", recorder.fatal)
+	}
+	AssertGoldenIn(recorder, "absent", "page.md", "page\n")
+	if !strings.Contains(recorder.fatal, "open directory absent") {
+		t.Fatalf("a missing directory was accepted: %q", recorder.fatal)
+	}
+	recorder = &recordingTB{TB: t}
+	t.Setenv(GoldenUpdateEnv, "1")
+	AssertGoldenIn(recorder, "top", "../escape.md", "x\n")
+	if recorder.fatal == "" {
+		t.Fatal("a golden path escaping the directory was written")
+	}
+	recorder = &recordingTB{TB: t}
+	AssertGoldenIn(recorder, "top", "docs/page.md", "new\n")
+	AssertGoldenIn(recorder, ".", "local.golden", "local\n")
+	page, pageErr := os.ReadFile(filepath.Join(dir, "top", "docs", "page.md"))
+	local, localErr := os.ReadFile(filepath.Join(dir, "local.golden"))
+	if pageErr != nil || localErr != nil || string(page) != "new\n" || string(local) != "local\n" || recorder.fatal != "" {
+		t.Fatalf("update wrote %q and %q (%v, %v), failure %q", page, local, pageErr, localErr, recorder.fatal)
+	}
+}
+
 // Boundary: a CRLF checkout of the golden compares equal, while a missing final newline is a
 // difference on the line past the last one.
 func TestAssertGolden_Boundary(t *testing.T) {

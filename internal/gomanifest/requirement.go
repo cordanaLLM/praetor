@@ -13,11 +13,18 @@ func RequirementLine(raw string, inBlock *bool) (string, bool) {
 	return blockDirectiveLine(raw, "require", inBlock)
 }
 
+// ToolLine advances tool-block state and identifies a tool directive line, the package path
+// of one tool the module runs with go tool. Block delimiters are consumed; a single-line tool
+// directive has its keyword removed. A trailing comment stays on the line.
+func ToolLine(raw string, inBlock *bool) (string, bool) {
+	return blockDirectiveLine(raw, "tool", inBlock)
+}
+
 // blockDirectiveLine advances the block state of one go.mod directive that may be written
 // on one line ("keyword arg") or as a block ("keyword (" ... ")"), and identifies a line
 // carrying that directive's arguments. Block delimiters, blank lines and comment lines are
 // consumed; a single-line directive has its keyword removed. A nil state identifies
-// nothing. RequirementLine, ReplaceLine and IgnoreLine share it.
+// nothing. RequirementLine, ToolLine, ReplaceLine and IgnoreLine share it.
 func blockDirectiveLine(raw, keyword string, inBlock *bool) (string, bool) {
 	if inBlock == nil {
 		return "", false

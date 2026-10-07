@@ -22,10 +22,13 @@ const sbomNoticesFixture = "# Third-party notices\n\n" +
 	"## Vendored figure engine\n\n| Component | Commit | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
 	"| `interfig` | abc123 | MIT | `Copyright (c) Engine` |\n\n" +
 	"## npm packages of the figure player\n\n| Package | Version | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
-	"| `react` | 19.0.0 | MIT | `Copyright (c) React` |\n"
+	"| `react` | 19.0.0 | MIT | `Copyright (c) React` |\n\n" +
+	"## npm packages of the devcontainer CLI\n\n| Package | Version | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
+	"| `@devcontainers/cli` | 0.89.0 | MIT | `Copyright (c) Microsoft Corporation.` |\n"
 
 // sbomNoticesRepo writes a checkout whose npm lock pins left-pad at version under license, with
-// a figure engine whose player bundles react and whose interfig pin is abc123, beside
+// a figure engine whose player bundles react and whose interfig pin is abc123 and a devcontainer
+// CLI lock that pins @devcontainers/cli, beside
 // sbomNoticesFixture, and returns its root.
 func sbomNoticesRepo(t *testing.T, version, license string) string {
 	t.Helper()
@@ -40,6 +43,8 @@ func sbomNoticesRepo(t *testing.T, version, license string) string {
 	writeFixtureFile(t, dir, "tools/figures/dist/THIRD-PARTY-LICENSES.txt",
 		rule+"\ninterfig https://example.com/tree/abc123\nLicense: MIT\n\nterms\n\n"+rule+"\nreact 19.0.0\nLicense: MIT\n\nterms\n")
 	writeFixtureFile(t, dir, "tools/figures/third_party/interfig/vendor.json", `{"commit":"abc123"}`)
+	writeFixtureFile(t, dir, "internal/devcontainer/cli/package-lock.json",
+		`{"lockfileVersion":3,"packages":{"node_modules/@devcontainers/cli":{"version":"0.89.0","license":"MIT"}}}`)
 	writeFixtureFile(t, dir, supplychain.NoticesFile, sbomNoticesFixture)
 	return dir
 }

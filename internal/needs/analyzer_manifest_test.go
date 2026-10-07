@@ -45,8 +45,11 @@ func TestPythonReqLineDecorations3D(t *testing.T) {
 	parsePythonReqLine(`requests[security]>=2.31 ; python_version<"3.12"  # pinned`, deps)
 	// Boundary: a bare, capitalised name with no version at all.
 	parsePythonReqLine("Click", deps)
-	// Negative: an empty specifier contributes nothing.
+	// Boundary: a direct reference names its distribution and pins no version.
+	parsePythonReqLine("Pkg @ https://example.com/pkg-1.0.whl", deps)
+	// Negative: an empty specifier and an option line contribute nothing.
 	parsePythonReqLine("", deps)
+	parsePythonReqLine("-r base.in", deps)
 
 	if deps["requests"] != "2.31" {
 		t.Errorf("expected extras and markers to be stripped, got %v", deps)
@@ -54,8 +57,11 @@ func TestPythonReqLineDecorations3D(t *testing.T) {
 	if _, ok := deps["click"]; !ok {
 		t.Errorf("expected a bare, case-folded requirement, got %v", deps)
 	}
-	if len(deps) != 2 {
-		t.Errorf("expected exactly 2 requirements, got %v", deps)
+	if version, ok := deps["pkg"]; !ok || version != "" {
+		t.Errorf("expected a direct reference to record its name only, got %v", deps)
+	}
+	if len(deps) != 3 {
+		t.Errorf("expected exactly 3 requirements, got %v", deps)
 	}
 }
 

@@ -54,6 +54,14 @@ clang_tidy:
 	if got := ExceptionsFor(m.Exceptions, ExceptionRuleClangTidyCoverage); len(got) != 2 {
 		t.Fatalf("ExceptionsFor selected %d entries, want 2", len(got))
 	}
+	credits := validException()
+	credits.Rule = ExceptionRuleCredits
+	if err := ValidateExceptions([]Exception{validException(), credits}, exceptionsToday); err != nil {
+		t.Fatalf("an entry of the credits gate's rule was refused: %v", err)
+	}
+	if got := ExceptionsFor([]Exception{validException(), credits}, ExceptionRuleCredits); len(got) != 1 || got[0].Rule != ExceptionRuleCredits {
+		t.Fatalf("ExceptionsFor(credits) = %+v", got)
+	}
 	if got := ExceptionsFor(m.Exceptions, "other-rule"); len(got) != 0 {
 		t.Fatalf("ExceptionsFor selected %+v for a rule no entry names", got)
 	}

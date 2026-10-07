@@ -169,3 +169,19 @@ func TestRegisterSourcesDeclaresNone_Boundary(t *testing.T) {
 		t.Fatalf("pinned contract: err=%v none=%v", err, pinned.DeclaresNone())
 	}
 }
+
+// ValidRepositoryPath accepts a clean forward-slash path inside the repository (positive),
+// refuses an absolute, escaping, unclean, backslash or line-break path (negative), and accepts a
+// path of exactly maxRepositoryPath bytes but not one byte more (boundary).
+func TestValidRepositoryPath(t *testing.T) {
+	for value, want := range map[string]bool{
+		"docs/credits.yaml": true, ".agents/skills/x/SKILL.md": true, "go.mod": true,
+		"": false, "/etc/passwd": false, "../x": false, "a/../b": false, "a//b": false, "a\\b": false,
+		"a\nb": false, ".": false, "..": false,
+		strings.Repeat("a", maxRepositoryPath): true, strings.Repeat("a", maxRepositoryPath+1): false,
+	} {
+		if got := ValidRepositoryPath(value); got != want {
+			t.Errorf("ValidRepositoryPath(%q) = %v, want %v", value, got, want)
+		}
+	}
+}

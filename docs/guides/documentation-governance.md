@@ -865,13 +865,22 @@ workflow also selects the gate on documentation-only changes while skipping the
 race and security suites; state-only changes under the ignored private ledgers
 select no documentation work. Source/configuration changes reach the same gate
 through `make verify-all`. Only Markdown, images, plain-text documents and the
-files under `docs/` count as documentation: a dependency manifest ending in
-`.txt` (`requirements*.txt`, `CMakeLists.txt`) is configuration even under
-`docs/`, and a file kind the filter does not recognise runs the full targeted
-matrix rather than the documentation-only path (`internal/cifilter/filter.go`,
-`TestBuildManifestTextIsConfiguration` and
+files under `docs/` count as documentation: a dependency or build manifest
+(`package.json` and its lock, `go.mod`, a `Makefile`, `tsconfig*.json`,
+`CMakeLists.txt`, the pip `requirements*` and `constraints*` files ending in
+`.txt` or `.in`) is configuration even under `docs/`, and a file kind the filter
+does not recognise runs the full targeted matrix rather than the
+documentation-only path (`internal/cifilter/filter.go`,
+`TestBuildManifestTextIsConfiguration`,
+`TestDependencyManifestUnderDocsIsConfiguration` and
 `TestUnclassifiedFileKindsRunHeavyGates` in
-`internal/cifilter/cifilter_test.go`). `.tsx` and `.jsx` are code extensions,
+`internal/cifilter/cifilter_test.go`). `docs/credits.yaml`, `docs/credits.md` and
+`THIRD-PARTY-NOTICES.md` stay documentation, but the tests of
+`internal/supplychain` read them, so the light documentation run also runs
+`make credits-check`. Agent text (`AGENTS.md`, the compiled vendor files and
+everything under `.agents/`) selects the same documentation gates beside the
+context check: the Markdown gate and the credits gate read the personas and
+skills (`TestCreditsGateInputsSelectTheCreditsGate`). `.tsx` and `.jsx` are code extensions,
 so a change to a vendored React source file (for example
 `tools/figures/third_party/interfig/upstream/src/index.tsx`) is classified as code and runs
 the targeted test matrix. Before, such a file fell through as unclassified,

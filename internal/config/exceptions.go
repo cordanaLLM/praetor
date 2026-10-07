@@ -19,9 +19,14 @@ import (
 // clang-tidy lane reads.
 const ExceptionRuleClangTidyCoverage = "clang-tidy-coverage"
 
+// ExceptionRuleCredits is the rule of the credits gate (internal/supplychain,
+// CheckUpstreamCredits): an entry excuses a docs/credits.yaml entry whose license could not be
+// verified upstream and is written unknown, when the entry names the excused path.
+const ExceptionRuleCredits = "credits"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
-var exceptionRules = []string{ExceptionRuleClangTidyCoverage}
+var exceptionRules = []string{ExceptionRuleClangTidyCoverage, ExceptionRuleCredits}
 
 // Bounds of the exceptions list (HISS-02).
 const (
@@ -150,7 +155,7 @@ func (e Exception) targetProblem() string {
 	switch {
 	case (e.Path == "") == (e.Glob == ""):
 		return "must name exactly one of path and glob"
-	case e.Path != "" && (!validRepositoryPath(e.Path) || strings.ContainsAny(e.Path, globCharacters)):
+	case e.Path != "" && (!ValidRepositoryPath(e.Path) || strings.ContainsAny(e.Path, globCharacters)):
 		return fmt.Sprintf("path %q must be one clean repository-relative file path of at most %d bytes, without glob characters",
 			e.Path, maxRepositoryPath)
 	case e.Glob != "":

@@ -33,12 +33,12 @@ func (p *SecurityPolicy) GoVEXPath() string {
 }
 
 // validateManifestSecurity holds a declared security.go_vex to the repository path shape every
-// other manifest path takes (validRepositoryPath).
+// other manifest path takes (ValidRepositoryPath).
 func validateManifestSecurity(m *Manifest) error {
 	if m == nil || m.Security == nil || m.Security.GoVEX == "" {
 		return nil
 	}
-	if !validRepositoryPath(m.Security.GoVEX) {
+	if !ValidRepositoryPath(m.Security.GoVEX) {
 		return fmt.Errorf("security.go_vex %q must be a clean local forward-slash path of at most %d bytes",
 			m.Security.GoVEX, maxRepositoryPath)
 	}

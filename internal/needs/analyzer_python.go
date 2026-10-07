@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/pymanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -147,54 +148,17 @@ func scanBoundedLines(scanner *bufio.Scanner, visit func(string)) error {
 
 func parseRequirementsFile(path string, deps map[string]string) error {
 	return scanManifestLines(path, func(line string) {
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") {
-			return
-		}
 		parsePythonReqLine(line, deps)
 	})
 }
 
-// parsePythonReqLine records one PEP 508 requirement, discarding extras, environment
-// markers and trailing comments before the name/version split.
+// parsePythonReqLine records one PEP 508 requirement through the one requirement reader
+// (pymanifest.ParseRequirement), which discards extras, environment markers and trailing
+// comments and skips blank, comment and option lines.
 func parsePythonReqLine(line string, deps map[string]string) {
-	spec := stripRequirementDecorations(line)
-	if spec == "" {
-		return
+	if requirement, ok := pymanifest.ParseRequirement(line); ok {
+		deps[requirement.Name] = requirement.Version
 	}
-
-	separators := []string{"===", "==", ">=", "<=", "~=", "!=", ">", "<", "="}
-	pkg := spec
-	ver := ""
-	for _, sep := range separators {
-		idx := strings.Index(spec, sep)
-		if idx == -1 {
-			continue
-		}
-		pkg = strings.TrimSpace(spec[:idx])
-		ver = strings.TrimSpace(spec[idx+len(sep):])
-		break
-	}
-	if pkg != "" {
-		deps[strings.ToLower(pkg)] = ver
-	}
-}
-
-// stripRequirementDecorations removes comments, environment markers and extras from a
-// requirement specifier: `requests[security]>=2 ; python_version<"3.8"  # note`.
-func stripRequirementDecorations(line string) string {
-	spec := strings.TrimSpace(line)
-	if idx := strings.Index(spec, "#"); idx >= 0 {
-		spec = strings.TrimSpace(spec[:idx])
-	}
-	if idx := strings.Index(spec, ";"); idx >= 0 {
-		spec = strings.TrimSpace(spec[:idx])
-	}
-	if open := strings.Index(spec, "["); open >= 0 {
-		if closing := strings.Index(spec[open:], "]"); closing >= 0 {
-			spec = spec[:open] + spec[open+closing+1:]
-		}
-	}
-	return strings.TrimSpace(strings.Trim(spec, `"',`))
 }
 
 // pyprojectState tracks which pyproject.toml construct the scanner is inside.

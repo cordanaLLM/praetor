@@ -143,7 +143,7 @@ func (s RegisterSourceInput) Validate() error {
 }
 
 func (s RegisterSourceInput) validateIdentity() error {
-	if !validRepositoryPath(s.Path) {
+	if !ValidRepositoryPath(s.Path) {
 		return errors.New("path must be a clean local forward-slash path of at most 256 bytes")
 	}
 	if s.Surface != SurfaceMCP && s.Surface != SurfaceHooks && s.Surface != SurfacePrompts {
@@ -169,10 +169,12 @@ func (s RegisterSourceInput) validateParser() error {
 	return nil
 }
 
-// validRepositoryPath reports whether value names a file inside the repository the way the
+// ValidRepositoryPath reports whether value names a file inside the repository the way the
 // manifest spells one: a clean forward-slash path of at most maxRepositoryPath bytes, never
-// absolute or escaping. register.sources inputs and the hiss.exceptions documents share it.
-func validRepositoryPath(value string) bool {
+// absolute or escaping. register.sources inputs, the hiss.exceptions documents, the declared
+// exceptions list and the readers of other repository files that name paths the same way, such
+// as docs/credits.yaml (internal/supplychain), share it.
+func ValidRepositoryPath(value string) bool {
 	return value != "" && len(value) <= maxRepositoryPath && !strings.ContainsAny(value, "\\\x00\r\n") &&
 		!strings.HasPrefix(value, "/") && path.Clean(value) == value && value != "." &&
 		value != ".." && !strings.HasPrefix(value, "../")

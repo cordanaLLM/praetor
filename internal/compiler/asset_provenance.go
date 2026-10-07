@@ -31,11 +31,12 @@ var errTopLevelDerivedFrom = errors.New("declares derived_from at the top level 
 // declaration inside it is not mistaken for body text and skipped.
 var errUnclosedFrontMatter = errors.New("opens a front matter block that does not close")
 
-// AssetUpstream is one canonical persona or skill that declares an upstream.
+// AssetUpstream is one canonical persona or skill and the upstream it declares.
 type AssetUpstream struct {
 	// Rel is the slash path of the declaring file below the repository root.
 	Rel string
-	// DerivedFrom is the metadata.derived_from value, trimmed.
+	// DerivedFrom is the metadata.derived_from value, trimmed; empty when the file declares
+	// none (CanonicalAssets alone returns such files).
 	DerivedFrom string
 }
 
@@ -54,6 +55,24 @@ type assetFrontMatter struct {
 // declaration is the one a credit answers for. A front matter that is not YAML, does not close,
 // or names derived_from outside metadata is an error naming the file.
 func CanonicalAssetUpstreams(ctx context.Context, rootDir string) ([]AssetUpstream, error) {
+	assets, err := CanonicalAssets(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	upstreams := make([]AssetUpstream, 0, len(assets))
+	for _, asset := range assets {
+		if asset.DerivedFrom != "" {
+			upstreams = append(upstreams, asset)
+		}
+	}
+	return upstreams, nil
+}
+
+// CanonicalAssets returns every canonical persona and skill below rootDir, in the order and
+// under the rules of CanonicalAssetUpstreams, each with the upstream it declares or an empty
+// DerivedFrom when it declares none: the files the credits gate requires to declare an upstream
+// or to be marked original.
+func CanonicalAssets(ctx context.Context, rootDir string) ([]AssetUpstream, error) {
 	personas, err := listCanonicalAgents(ctx, rootDir)
 	if err != nil {
 		return nil, err
@@ -62,49 +81,37 @@ func CanonicalAssetUpstreams(ctx context.Context, rootDir string) ([]AssetUpstre
 	if err != nil {
 		return nil, err
 	}
-	upstreams, err := assetUpstreams(ctx, rootDir, personas, readCanonicalAgent,
+	assets, err := readAssets(ctx, rootDir, personas, readCanonicalAgent,
 		func(name string) string { return CanonicalAgentsRel + "/" + name })
 	if err != nil {
 		return nil, err
 	}
-	skillUpstreams, err := assetUpstreams(ctx, rootDir, skills, readCanonicalSkill,
+	skillAssets, err := readAssets(ctx, rootDir, skills, readCanonicalSkill,
 		func(name string) string { return skillEntryRel(CanonicalSkillsRel, name) })
 	if err != nil {
 		return nil, err
 	}
-	return append(upstreams, skillUpstreams...), nil
+	return append(assets, skillAssets...), nil
 }
 
-// assetUpstreams reads each of names below rootDir with read and returns the upstreams they
-// declare, each under the slash path rel gives its name.
-func assetUpstreams(ctx context.Context, rootDir string, names []string,
+// readAssets reads each of names below rootDir with read and returns one asset per name, under
+// the slash path rel gives it, with the upstream it declares.
+func readAssets(ctx context.Context, rootDir string, names []string,
 	read func(context.Context, string, string) ([]byte, error), rel func(string) string,
 ) ([]AssetUpstream, error) {
-	var upstreams []AssetUpstream
+	assets := make([]AssetUpstream, 0, len(names))
 	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
 		data, err := read(ctx, rootDir, names[i])
 		if err != nil {
 			return nil, err
 		}
-		upstreams, err = appendAssetUpstream(upstreams, rel(names[i]), data)
+		derivedFrom, err := AssetDerivedFrom(data)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", rel(names[i]), err)
 		}
+		assets = append(assets, AssetUpstream{Rel: rel(names[i]), DerivedFrom: derivedFrom})
 	}
-	return upstreams, nil
-}
-
-// appendAssetUpstream appends the upstream the file rel declares to upstreams, or returns
-// upstreams unchanged when it declares none.
-func appendAssetUpstream(upstreams []AssetUpstream, rel string, data []byte) ([]AssetUpstream, error) {
-	derivedFrom, err := AssetDerivedFrom(data)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", rel, err)
-	}
-	if derivedFrom == "" {
-		return upstreams, nil
-	}
-	return append(upstreams, AssetUpstream{Rel: rel, DerivedFrom: derivedFrom}), nil
+	return assets, nil
 }
 
 // AssetDerivedFrom returns the trimmed metadata.derived_from value of the YAML front matter

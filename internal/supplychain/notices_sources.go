@@ -1,8 +1,9 @@
 package supplychain
 
 // The files that decide what the release ships -- go.mod, the root Dockerfile, the npm lock
-// the binaries embed and write out for the Markdown gate, and the figure engine the binaries
-// embed (the interfig pin and the committed player, with the lock it is built from) -- and the
+// the binaries embed and write out for the Markdown gate, the figure engine the binaries
+// embed (the interfig pin and the committed player, with the lock it is built from), and the
+// npm lock of the devcontainer CLI the binaries embed and install -- and the
 // readers that derive the shipped components from them. RenderNotices lists exactly these
 // components in THIRD-PARTY-NOTICES.md.
 
@@ -15,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/generated"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -31,6 +33,11 @@ const maxLockPackages = 4096
 // noticesLockFile is the repository-relative npm lock of the Markdown gate: the file the
 // binaries embed (tools/markdownlint) and write into an adopting repository.
 const noticesLockFile = markdownassets.Directory + "/package-lock.json"
+
+// devcontainerLockFile is the repository-relative npm lock of the pinned devcontainer CLI: the
+// file the binaries embed (internal/devcontainer/cli.go) and install the CLI from into the tool
+// cache before a devcontainer build.
+const devcontainerLockFile = "internal/devcontainer/cli/package-lock.json"
 
 // The figure engine the binaries embed (tools/figures/assets.go): the npm lock the committed
 // player is built from, the player's license file, which names every package the bundle holds
@@ -64,13 +71,15 @@ type NoticeSources struct {
 	FigureLicenses []byte
 	// InterfigVendor is the vendor.json that pins the interfig source the binaries embed.
 	InterfigVendor []byte
+	// DevContainerLock is the devcontainer CLI's package-lock.json the binaries embed.
+	DevContainerLock []byte
 }
 
-// ReadNoticeSources reads go.mod, the root Dockerfile, the Markdown gate's npm lock and the
-// figure engine's lock, player license file and interfig pin from the top of the Praetor
-// checkout at root.
+// ReadNoticeSources reads go.mod, the root Dockerfile, the Markdown gate's npm lock, the
+// figure engine's lock, player license file and interfig pin, and the devcontainer CLI's npm
+// lock from the top of the Praetor checkout at root.
 func ReadNoticeSources(ctx context.Context, root string) (NoticeSources, error) {
-	rels := [...]string{"go.mod", "Dockerfile", noticesLockFile, figureLockFile, figureLicensesFile, interfigVendorFile}
+	rels := [...]string{"go.mod", "Dockerfile", noticesLockFile, figureLockFile, figureLicensesFile, interfigVendorFile, devcontainerLockFile}
 	var data [len(rels)][]byte
 	for index, rel := range rels {
 		read, err := readNoticeSource(ctx, root, rel)
@@ -81,8 +90,48 @@ func ReadNoticeSources(ctx context.Context, root string) (NoticeSources, error) 
 	}
 	return NoticeSources{
 		GoMod: data[0], Dockerfile: string(data[1]), NPMLock: data[2],
-		FigureLock: data[3], FigureLicenses: data[4], InterfigVendor: data[5],
+		FigureLock: data[3], FigureLicenses: data[4], InterfigVendor: data[5], DevContainerLock: data[6],
 	}, nil
+}
+
+// ReadCreditInventory lists every third-party item the manifests of the repository at root name,
+// in path order: the direct requirements and tool directives of each go.mod (tools/go/go.mod
+// holds the tool block), the direct dependencies of each package.json, the requirements of each
+// pip requirements file that is no pip-compile lock (pipRequirementsFile), the remote actions of
+// the workflows, composite actions and CI templates, the image of each Dockerfile FROM, and the
+// image and features of each devcontainer.json. The files
+// are the checkout's own, as git lists them (generated.DirTree: tracked files that exist and
+// untracked ones git does not ignore), so root must be a git work tree; files below installed
+// packages, test fixtures and hidden directories other than .config, .devcontainer and .github
+// are not read (inventoryFile). The downloads docs/credits.yaml declares complete it in
+// CheckUpstreamCredits.
+func ReadCreditInventory(ctx context.Context, root string) ([]InventoryItem, error) {
+	files, err := generated.DirTree(root).Files(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list %s for the credit inventory: %w", root, err)
+	}
+	listed := make(map[string]bool, len(files))
+	for _, rel := range files {
+		listed[rel] = true
+	}
+	var items []InventoryItem
+	for _, rel := range files {
+		if !inventoryFile(rel, listed) {
+			continue
+		}
+		data, err := readNoticeSource(ctx, root, rel)
+		if err != nil {
+			return nil, err
+		}
+		for _, read := range inventoryReaders(rel, listed) {
+			found, err := read(rel, string(data))
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, found...)
+		}
+	}
+	return items, nil
 }
 
 // readNoticeSource reads one repository-relative file below root through the bounded,
@@ -285,8 +334,8 @@ func finalBaseImage(dockerfile string) (noticeRow, bool, error) {
 	}
 	ref := ""
 	for _, line := range lines {
-		if fields := strings.Fields(line); len(fields) > 1 && strings.EqualFold(fields[0], "FROM") {
-			ref = firstNonFlag(fields[1:])
+		if from, ok := util.ParseDockerFrom(line); ok {
+			ref = from.Image
 		}
 	}
 	name, tag, _ := util.SplitImageReference(ref)
@@ -297,16 +346,6 @@ func finalBaseImage(dockerfile string) (noticeRow, bool, error) {
 		tag = "latest"
 	}
 	return noticeRow{name: name, version: tag}, true, nil
-}
-
-// firstNonFlag returns the first field that is not a "--flag", or "" when every one is.
-func firstNonFlag(fields []string) string {
-	for _, field := range fields {
-		if !strings.HasPrefix(field, "--") {
-			return field
-		}
-	}
-	return ""
 }
 
 // shippedNoticeRows derives every shipped component from sources, keyed by the notices
@@ -321,11 +360,15 @@ func shippedNoticeRows(sources NoticeSources) (map[string][]noticeRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	devcontainerCLI, err := lockRuntimePackages(sources.DevContainerLock)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", devcontainerLockFile, err)
+	}
 	shipped, err := figureNoticeRows(sources)
 	if err != nil {
 		return nil, err
 	}
-	shipped[noticesGoModules], shipped[noticesNPM] = modules, packages
+	shipped[noticesGoModules], shipped[noticesNPM], shipped[noticesDevContainerNPM] = modules, packages, devcontainerCLI
 	if version, declared := gomanifest.GoDirective(sources.GoMod); declared {
 		shipped[noticesGoToolchain] = []noticeRow{{name: noticesGoToolchain, version: version, license: goToolchainLicense}}
 	}

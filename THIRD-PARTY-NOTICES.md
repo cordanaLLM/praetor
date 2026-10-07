@@ -16,7 +16,8 @@ rewrites their rows from `go.mod`, the root `Dockerfile`, the embedded npm lock
 `tools/markdownlint/package-lock.json`, the interfig pin
 `tools/figures/third_party/interfig/vendor.json`, and the embedded figure player's
 `tools/figures/dist/THIRD-PARTY-LICENSES.txt` with the lock the player is built from,
-`tools/figures/package-lock.json`. It keeps the copyright line each row already states
+`tools/figures/package-lock.json`, and the embedded devcontainer CLI lock
+`internal/devcontainer/cli/package-lock.json`. It keeps the copyright line each row already states
 (`internal/supplychain/notices.go`). A component with no row yet, or a license outside the
 reviewed set, stops the command until its row is written from the upstream license file.
 `internal/supplychain/notices_test.go` fails when this file is not what the command writes,
@@ -25,8 +26,9 @@ is missing here verbatim.
 
 The binaries also embed the documentation figure engine (`tools/figures/assets.go`): the
 vendored interfig render source and the committed figure player, whose `player.js` bundles
-interfig with React, react-dom and scheduler. The last two tables list them, and
-[Credits & Acknowledgements](docs/credits.md) credits them.
+interfig with React, react-dom and scheduler. Two tables list them, and
+[Credits & Acknowledgements](docs/credits.md) credits them, as it credits every other project
+praetor builds with, runs in CI or integrates with, from the curated list `docs/credits.yaml`.
 
 <!-- REUSE-IgnoreStart -->
 
@@ -381,3 +383,22 @@ SOFTWARE.
 ```
 
 <!-- SPDX-SnippetEnd -->
+
+<!-- REUSE-IgnoreStart -->
+
+## npm packages of the devcontainer CLI
+
+The binaries embed `internal/devcontainer/cli/package.json` and its `package-lock.json`
+(`internal/devcontainer/cli.go`). Before a devcontainer build, praetorctl downloads the Node.js
+release `internal/devcontainer/cli/node.json` pins from nodejs.org, refuses it unless its
+SHA-256 is the pinned one, and runs that release's npm with `npm ci` to install the package
+below from the npm registry into its tool cache. The binaries contain the manifest, the lock and
+the pins, not the code of the CLI or of Node.js; the installed package and the Node.js archive
+each bring their own license files. The table covers every runtime entry of the lock; licenses
+are as the lock records them, copyright lines as each package's license file states them.
+
+| Package | Version | License | Copyright |
+| :-- | :-- | :-- | :-- |
+| `@devcontainers/cli` | 0.89.0 | MIT | `Copyright (c) Microsoft Corporation.` |
+
+<!-- REUSE-IgnoreEnd -->

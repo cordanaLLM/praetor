@@ -1,6 +1,8 @@
 ---
 name: social-text
 description: "Write forge-facing text (issues, pull-request bodies, review comments, commit bodies, changelog titles): scannable human prose derived from adhd-format; keeps PR template, receipt fence, conventional commits, Keep-a-Changelog intact."
+metadata:
+  derived_from: "https://github.com/ayghri/i-have-adhd (MIT)"
 ---
 
 # Social register for the forge (`social-text`)

@@ -26,3 +26,31 @@ func TestSplitImageReference(t *testing.T) {
 		})
 	}
 }
+
+func TestParseDockerFrom(t *testing.T) {
+	for _, tc := range []struct {
+		name, line string
+		want       DockerFrom
+		ok         bool
+	}{
+		// Positive: an image, flags before it, a stage name and a lower-case keyword.
+		{"image", "FROM golang:1.27", DockerFrom{Image: "golang:1.27"}, true},
+		{"platform flag and stage", "FROM --platform=$BUILDPLATFORM golang:1.27 AS Build", DockerFrom{Image: "golang:1.27", Stage: "build"}, true},
+		{"lower-case keywords", "  from scratch as final", DockerFrom{Image: "scratch", Stage: "final"}, true},
+		// Negative: another instruction, a comment and a parser directive name no FROM.
+		{"run", "RUN go build ./...", DockerFrom{}, false},
+		{"comment", "# FROM golang", DockerFrom{}, false},
+		{"directive", "# syntax=docker/dockerfile:1", DockerFrom{}, false},
+		// Boundary: FROM alone, flags only, and an AS without a name.
+		{"bare FROM", "FROM", DockerFrom{}, false},
+		{"flags only", "FROM --platform=linux/amd64", DockerFrom{}, true},
+		{"dangling AS", "FROM golang AS", DockerFrom{Image: "golang"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ParseDockerFrom(tc.line)
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("ParseDockerFrom(%q) = %+v, %v; want %+v, %v", tc.line, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
