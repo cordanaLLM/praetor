@@ -527,7 +527,8 @@ cmd.exe does not, so there a `;` chain passes the read-only command's words to G
 
 The exemption sources are `ReadOnlyWords` and `ReadOnlyVeto` in
 `internal/agenthook/policy.go`; both are linear in RE2 and Python's `re`, and
-`TestEmittedInterceptorScanBounds` holds the costliest shapes to a CPU budget. The corpus
+`TestEmittedInterceptorScanBounds` holds the costliest shapes to a work budget counted in
+passes over the scan bound. The corpus
 holds the allow cases and the escaped, quoted, substituted, stop-parsing, line-continued and
 exported shapes the rules keep refusing.
 
@@ -653,22 +654,31 @@ cover each case.
 
 Both Python scripts, the adopted interceptor and praetor's own guard, refuse a command over
 the scan bounds instead of scanning it: more than 65,536 characters in all, or one line over
-2,048 characters (`agenthook.MaxScanChars`, `agenthook.MaxScanLineChars`). Python's `re`
-backtracks: a 16 KiB line held the find rule for 16 s, long enough to outlive a client's hook
-timeout. The find and `sed -i` rules used to cost cubic time in the length of one line,
-because `re` retried them at every `find`, `sed` or `perl` word; they now start at the first
-such word of a line (`lineThroughFirstWord` in `internal/agenthook/policy.go`), which keeps
-what they refuse (`TestAnchoredRulesKeepTheirLanguage` and
-`TestAnchoredRulesKeepTheirLanguageInPython` replay both forms in RE2 and in `re`) and leaves
-them quadratic. A
-command is refused, never truncated, because a truncated scan allows what lies past the cut;
-split it, or write the long content to a file first. Within both bounds the slowest rule
-needs under a second of child CPU time on an idle host, and the tests hold it under 5 s
-(`TestEmittedInterceptorScanBounds`,
+2,048 characters (`agenthook.MaxScanChars`, `agenthook.MaxScanLineChars`). A command is
+refused, never truncated, because a truncated scan allows what lies past the cut; split it,
+or write the long content to a file first. Python's `re` backtracks: a 16 KiB line held the
+find rule for 16 s, long enough to outlive a client's hook timeout. The find and `sed -i`
+rules used to cost cubic time in the length of one line, because `re` retried them at every
+`find`, `sed` or `perl` word. They now start at the first such word of a line
+(`lineThroughFirstWord` in `internal/agenthook/policy.go`), which keeps what they refuse and
+leaves them quadratic; `TestAnchoredRulesKeepTheirLanguage` and
+`TestAnchoredRulesKeepTheirLanguageInPython` replay both forms in RE2 and in `re`. Within
+both bounds the slowest command needs under a second of CPU time on a workstation: Git global
+options repeated to the line bound, which the commit rule reads again from every `git` word
+of the chain, quadratic in the line.
+
+`TestEmittedInterceptorScanBounds` (`internal/adopt/evasion_hook_test.go`) bounds the adopted
+interceptor's work, not its seconds. It runs the matcher in its own process and holds each
+shape it sends under `scanPassBudget`, 50 passes, where a pass is what the matcher spends on
+a benign command at the bound, timed in the same run; the costliest shape costs about 10. A
+slower or loaded runner raises both costs alike, so it does not fail the test. The Git option
+chain, about 300 passes, is left to the guard's test.
+`TestScanPassBudgetRefusesPlantedSuperlinearMatchers` plants a nested quantifier over `$`
+runs and the earlier cubic find rule; each costs over 200 passes and fails the budget.
 `test_guard_answers_the_slowest_admitted_commands_inside_the_bound` in
-`.config/lefthook/scripts/test_hooks.py`). The Python test measures CPU time, so host load
-does not fail it; on Windows, which reports no child CPU time, it measures wall clock against
-8 s instead. The Go policy uses RE2, which is linear, and has
+`.config/lefthook/scripts/test_hooks.py` holds praetor's guard under 5 s of child CPU time per
+shape, the option chain included; on Windows, which reports no child CPU time, it measures
+wall clock against 8 s instead. The Go policy uses RE2, which is linear, and has
 no such bound; `TestPythonGuardCarriesTheScanBounds` keeps praetor's guard on the same
 numbers.
 
