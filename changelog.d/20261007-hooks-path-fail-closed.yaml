@@ -1,4 +1,4 @@
 type: fixed
-title: "The hook audit passed while core.hooksPath pointed hooks away from the repository, and nothing after a commit proved its hooks ran: praetorctl audit now fails when core.hooksPath, at any scope git reads, names anything but <git-common-dir>/hooks, and CI re-runs the commit message policy (forge check-commits, shared with the commit-msg hook through the new forge check-message) and the whitespace, conflict-marker and private-state checks (hooks.py commits) over every pull request commit. Migration: unset such a core.hooksPath with the git config --unset-all command the failure prints and reinstall the hooks; forge check-commits now also fails a commit whose subject is not type(scope): description with type build, chore, ci, docs, feat, fix, perf, refactor, revert, style or test"
+title: "The hook audit passed while core.hooksPath sent Git's hooks elsewhere, and CI never re-checked commits made with hooks skipped"
 issue: "#61"
 breaking: true
