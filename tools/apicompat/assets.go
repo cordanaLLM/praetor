@@ -136,6 +136,9 @@ var priorDigests = map[string]string{
 	// The gate before it excused a module that cannot be built on an api-compatibility exception
 	// of the manifest (#849).
 	"c785a3669ba9e88b2f6306ff0733f109fef2fad27c426759eb63936fd82c666b": Directory + "/" + GateFile,
+	// The gate whose draft step ran under the runner's default shell, which is pwsh on a Windows
+	// runner and cannot read the step's script.
+	"e4306dbb7b164e9ca3040668b4a2b63b9092b8f35645b348252fb6d55f062f29": WorkflowFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

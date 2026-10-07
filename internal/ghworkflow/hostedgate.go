@@ -29,6 +29,15 @@ import (
 // exits 1; every other step carries HostedGateNotDraft. The red check blocks a merge until the
 // ready_for_review run reports the same context on the same head commit; its result, the newest
 // check of that name, replaces the failure.
+//
+// The draft step names its shell (HostedGateDraftShell) instead of taking the default StepShell
+// resolves: pwsh on a Windows runner, or whatever a job's or workflow's defaults.run.shell names.
+// PowerShell refuses the script before running a line of it, because it reads "$TITLE:" in a
+// double-quoted string as a scope qualifier (about_Quoting_Rules), and $TITLE is no environment
+// variable there in any case. The step would still exit non-zero, but without the annotation, so
+// the checkpoint planner would read the check as failed instead of draft pending. GitHub runs
+// shell: bash on a Windows runner with the bash of Git for Windows, so the step prints the same
+// annotation on every hosted runner.
 const (
 	// HostedGateDefaultBranch is the default branch the emitted gate texts name; adoption renders
 	// them for the repository's own (managedasset.Family.ForBranch).
@@ -62,6 +71,9 @@ const (
 	HostedGateStepIf = "\n        if: " + HostedGateNotDraft
 	// HostedGateDraftStepName names the draft step.
 	HostedGateDraftStepName = "Stop on a draft pull request"
+	// HostedGateDraftShell is the shell the draft step names, so neither the runner's default
+	// shell nor a defaults.run.shell of its job or workflow decides how its script is read.
+	HostedGateDraftShell = "bash"
 	// HostedGateDraftTitle is the title of the error annotation the draft step prints. A
 	// workflow command property cannot carry ':' or ',' unescaped, and this one carries neither.
 	HostedGateDraftTitle = "Gate not run on a draft"
@@ -82,6 +94,7 @@ const (
 	// HostedGateDraftStep is a gate job's first step, at step indentation.
 	HostedGateDraftStep = "      - name: " + HostedGateDraftStepName + "\n" +
 		"        if: " + HostedGateDraft + "\n" +
+		"        shell: " + HostedGateDraftShell + "\n" +
 		"        env:\n" +
 		"          TITLE: " + HostedGateDraftTitle + "\n" +
 		"          MESSAGE: >-\n" +
@@ -202,8 +215,8 @@ func hostedGateStepsFault(jobID string, steps []Step) error {
 }
 
 // DraftStepFault reports how step departs from HostedGateDraftStep, or nil when it is that step:
-// it runs on a draft alone, runs exactly the draft step's script under the default shell without
-// continue-on-error, and carries the annotation's title and message. A job whose first step
+// it runs on a draft alone, runs exactly the draft step's script under HostedGateDraftShell
+// without continue-on-error, and carries the annotation's title and message. A job whose first step
 // passes stops on a draft pull request with a failed check. A nil step is no draft step.
 func DraftStepFault(step *Step) error {
 	if step == nil {
@@ -211,6 +224,10 @@ func DraftStepFault(step *Step) error {
 	}
 	if condition, closed := UnwrapExpression(step.If); !closed || condition != HostedGateDraft {
 		return fmt.Errorf("the first step does not run on a draft alone (%s)", HostedGateDraft)
+	}
+	if strings.TrimSpace(step.Shell) != HostedGateDraftShell {
+		return fmt.Errorf("the first step does not name the shell %s: a step without one runs under pwsh on a Windows runner "+
+			"or under the job's defaults.run.shell, which cannot read the draft step's script", HostedGateDraftShell)
 	}
 	if !runsDraftScript(step) {
 		return errors.New("the first step does not run the draft step's script")
@@ -221,10 +238,10 @@ func DraftStepFault(step *Step) error {
 	return nil
 }
 
-// runsDraftScript reports whether step is the named draft step running exactly its script under
-// the default shell, without continue-on-error, which would let the refused job pass.
+// runsDraftScript reports whether step is the named draft step running exactly its script,
+// without continue-on-error, which would let the refused job pass.
 func runsDraftScript(step *Step) bool {
-	return step.Name == HostedGateDraftStepName && step.Uses == "" && step.Shell == "" &&
+	return step.Name == HostedGateDraftStepName && step.Uses == "" &&
 		step.Run == hostedGateDraftScript && strings.TrimSpace(step.ContinueOnError) == ""
 }
 

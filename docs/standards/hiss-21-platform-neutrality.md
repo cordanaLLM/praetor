@@ -67,7 +67,10 @@ On a draft pull request no leg runs: the workflow follows the hosted gate shape
 ([workflows Praetor writes and runs](../guides/workflow-triggers.md#workflows-praetor-writes-and-runs)).
 Each leg, and the skip job below, begins with the draft step, which fails the draft with the
 annotation the checkpoint planner reads as draft pending, and marking the pull request ready
-(`ready_for_review`) starts the run that replaces the failure. The steps that keep running after
+(`ready_for_review`) starts the run that replaces the failure. The draft step names
+`shell: bash` (`ghworkflow.HostedGateDraftShell`): the Windows leg's default shell is PowerShell,
+which refuses the step's script, so that leg would fail without the annotation. The leg's other
+steps keep the shell they had. The steps that keep running after
 an earlier failure (`!cancelled()`) also carry `github.event.pull_request.draft != true`, so the
 draft runs none of them. That term reads the event every leg shares, never the leg, so such a
 step still counts as running on every leg (`runsOnEveryLeg` in

@@ -37,7 +37,10 @@ The accepted shape is the one the hosted gates Praetor ships already use, define
 `internal/ghworkflow/hostedgate.go` ([When the workflow runs](api-compatibility.md#when-the-workflow-runs)):
 `push` filtered to the default branch, `pull_request` on `opened`, `synchronize`, `reopened` and
 `ready_for_review`, and a job whose first step, `Stop on a draft pull request`, fails a draft
-with an error annotation. The check reads that step through `ghworkflow.DraftStepFault`, the
+with an error annotation. The step names `shell: bash`, because a step without a shell runs
+under PowerShell on a Windows runner, or under a `defaults.run.shell`, which cannot read its
+script and so prints no annotation; a draft step without it is reported like a missing one.
+The check reads that step through `ghworkflow.DraftStepFault`, the
 function the hosted gate check uses, so the audit and the emitter cannot disagree
 (`TestAuditWorkflowTriggers_EngineWorkflowsPass`, `TestDraftStepFault`).
 

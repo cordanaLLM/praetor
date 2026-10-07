@@ -80,6 +80,8 @@ func TestHostedGateFault_Negative(t *testing.T) {
 		"draft step missing":    {mutate(t, HostedGateDraftStep, "") + gateStep, "first step does not run on a draft"},
 		"draft step reworded":   {mutate(t, "exit 1\n", "exit 0\n"), "draft step's script"},
 		"draft step tolerated":  {mutate(t, "        run: |\n", "        continue-on-error: true\n        run: |\n"), "draft step's script"},
+		"draft step unshelled":  {mutate(t, "        shell: bash\n", ""), "does not name the shell bash"},
+		"draft step pwsh":       {mutate(t, "        shell: bash\n", "        shell: pwsh\n"), "does not name the shell bash"},
 		"draft marker edited":   {mutate(t, "TITLE: "+HostedGateDraftTitle, "TITLE: Draft"), "title and message"},
 		"draft marker extended": {mutate(t, "        env:\n", "        env:\n          EXTRA: x\n"), "title and message"},
 		"gate step unguarded":   {mutate(t, HostedGateStepIf, ""), "step 2 (Run the gate)"},
@@ -137,8 +139,10 @@ func TestHostedGateDraftMarker_Boundary(t *testing.T) {
 }
 
 // DraftStepFault, which the HISS-18 trigger audit reads (#817). Positive: the rendered draft step
-// passes. Negative: a gate step, a reworded draft step and no step at all are refused. Boundary:
-// the draft condition as one ${{ }} expression is the same step.
+// passes. Negative: a gate step, a reworded draft step, no step at all, and the draft step under
+// the default shell, PowerShell or a bash template are refused: without shell: bash a Windows
+// runner or a defaults.run.shell reads the script as something else and prints no annotation.
+// Boundary: the draft condition as one ${{ }} expression is the same step.
 func TestDraftStepFault(t *testing.T) {
 	spec, err := Parse([]byte(hostedGateFixture))
 	if err != nil {
@@ -155,13 +159,21 @@ func TestDraftStepFault(t *testing.T) {
 	}
 	reworded := steps[0]
 	reworded.Run = strings.Replace(reworded.Run, "exit 1", "exit 0", 1)
+	shelled := func(shell string) *Step {
+		step := steps[0]
+		step.Shell = shell
+		return &step
+	}
 	for name, test := range map[string]struct {
 		step  *Step
 		fault string
 	}{
-		"gate step": {&steps[1], "does not run on a draft alone"},
-		"reworded":  {&reworded, "draft step's script"},
-		"no step":   {nil, "no first step"},
+		"gate step":     {&steps[1], "does not run on a draft alone"},
+		"reworded":      {&reworded, "draft step's script"},
+		"no step":       {nil, "no first step"},
+		"default shell": {shelled(""), "does not name the shell bash"},
+		"pwsh":          {shelled("pwsh"), "does not name the shell bash"},
+		"bash template": {shelled("bash -e {0}"), "does not name the shell bash"},
 	} {
 		if err := DraftStepFault(test.step); err == nil || !strings.Contains(err.Error(), test.fault) {
 			t.Errorf("%s: fault = %v, want one naming %q", name, err, test.fault)
