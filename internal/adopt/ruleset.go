@@ -123,7 +123,7 @@ func (s *adoptSession) resolveDefaultBranch(ctx context.Context, declared *confi
 	}
 	if branch != "" {
 		s.report.addWarning("%s declares no repository.default_branch: this checkout's origin HEAD names %s, so the "+
-			"ruleset renders for %s here, but a checkout without it (CI usually has none) renders %s and the audit "+
+			"ruleset and the hosted gate workflows render for %s here, but a checkout without it (CI usually has none) renders %s and the audit "+
 			"reports drift. Declare repository.default_branch: %s in %s; adoption never rewrites an existing manifest",
 			manifestFile, branch, branch, forge.FallbackDefaultBranch, branch, manifestFile)
 	}

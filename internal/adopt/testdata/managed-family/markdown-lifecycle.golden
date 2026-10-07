@@ -7,7 +7,7 @@ action create tools/markdownlint/verify.mjs :: Scaffolded locked Markdown govern
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
+file .github/workflows/praetor-docs.yml sha256:c92de8b420873f694142a111bef8e80e3bb66c88e51e74571ed19d67bf214ef8
 file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
 file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -24,7 +24,7 @@ action reconcile tools/markdownlint/verify.mjs :: Existing Markdown governance a
 action reconcile tools/markdownlint/no-private-scratch-links.mjs :: Existing Markdown governance asset preserved; audit verifies canonical text
 action reconcile .github/workflows/praetor-docs.yml :: Existing documentation governance workflow preserved; audit verifies canonical text
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
+file .github/workflows/praetor-docs.yml sha256:c92de8b420873f694142a111bef8e80e3bb66c88e51e74571ed19d67bf214ef8
 file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
 file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -41,7 +41,7 @@ action reconcile tools/markdownlint/verify.mjs :: Existing Markdown governance a
 action reconcile tools/markdownlint/no-private-scratch-links.mjs :: Existing Markdown governance asset preserved; audit verifies canonical text
 action reconcile .github/workflows/praetor-docs.yml :: Existing documentation governance workflow preserved; audit verifies canonical text
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
+file .github/workflows/praetor-docs.yml sha256:c92de8b420873f694142a111bef8e80e3bb66c88e51e74571ed19d67bf214ef8
 file tools/markdownlint/package.json sha256:ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356
 file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -58,7 +58,7 @@ action reconcile tools/markdownlint/verify.mjs :: Existing Markdown governance a
 action reconcile tools/markdownlint/no-private-scratch-links.mjs :: Existing Markdown governance asset preserved; audit verifies canonical text
 action reconcile .github/workflows/praetor-docs.yml :: Existing documentation governance workflow preserved; audit verifies canonical text
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
+file .github/workflows/praetor-docs.yml sha256:c92de8b420873f694142a111bef8e80e3bb66c88e51e74571ed19d67bf214ef8
 file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
 file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -69,7 +69,7 @@ file .prettierignore absent
 == disable without force
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 error disabling documentation removes hosted context "Documentation Governance"; rerun praetorctl adopt --force --lock-source-root=<lock source>
-file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
+file .github/workflows/praetor-docs.yml sha256:c92de8b420873f694142a111bef8e80e3bb66c88e51e74571ed19d67bf214ef8
 file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
 file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -114,7 +114,7 @@ action create tools/markdownlint/verify.mjs :: Scaffolded locked Markdown govern
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
+file .github/workflows/praetor-docs.yml sha256:c92de8b420873f694142a111bef8e80e3bb66c88e51e74571ed19d67bf214ef8
 file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
 file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3

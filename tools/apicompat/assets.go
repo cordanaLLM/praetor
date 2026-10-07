@@ -39,9 +39,13 @@ const (
 	MaxAssets = 1
 )
 
-// Workflow is the hosted gate adoption writes to WorkflowFile. Its one job, named
-// StatusContext, runs on every pull request and push without a condition, so the branch ruleset
-// adoption renders from the workflows requires it.
+// Workflow is the hosted gate adoption writes to WorkflowFile, rendered for a repository whose
+// default branch is main; adoption and audit render it for the repository's own default branch
+// (managedasset.Family.ForBranch), which names the one branch a push runs it on. Its one job,
+// named StatusContext, runs on every pull request that is not a draft, and again when a draft is
+// marked ready (ready_for_review), so the branch ruleset adoption renders from the workflows
+// requires it (the draft skip in internal/forge/workflow_guard.go). A push to another branch or
+// a tag, and a draft, start no API comparison (#815).
 //
 // A pull request compares its base commit with the merge commit the checkout action checks
 // out; a push compares HEAD with the newest root release tag, and passes saying so while there
@@ -61,7 +65,9 @@ name: Praetor API Compatibility
 
 'on':
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
+    branches: ['main']
 
 permissions:
   contents: read
@@ -69,6 +75,8 @@ permissions:
 jobs:
   api-compatibility:
     name: Go API Compatibility
+    # A draft skips the job; marking it ready runs it (ready_for_review).
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
@@ -108,10 +116,15 @@ jobs:
 
 // priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the family's
 // managed paths, taken with LF line endings, to that path: the family's Prior
-// (internal/managedasset). internal/managedasset/testdata/shipped/api-compatibility.sha256
-// records every text ever shipped, and TestShippedTextLedger fails until each outgoing text is
-// listed here.
-var priorDigests = map[string]string{}
+// (internal/managedasset). Adoption refreshes a file holding exactly one of these texts without
+// --force. testdata/prior holds each text, and TestPriorDigests recomputes every digest from it.
+// internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
+// shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
+var priorDigests = map[string]string{
+	// The first gate, which ran on every push to every branch and tag and on every draft pull
+	// request (#815).
+	"a123aa00616a9ee913dda943e288a64f8f3e3518b7777a4f8ed866c10c47f37e": WorkflowFile,
+}
 
 var assetNames = [...]string{GateFile}
 
