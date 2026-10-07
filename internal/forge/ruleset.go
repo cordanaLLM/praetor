@@ -283,13 +283,17 @@ func protectionRuleset(name string, refs []string, policy config.BranchProtectio
 }
 
 // repositoryAdminRoleID is the actor_id of the repository admin role in a ruleset's
-// bypass_actors entry of actor_type RepositoryRole.
+// bypass_actors entry of actor_type RepositoryRole. The REST reference does not list the role ids;
+// 5 for admin is the value GitHub writes for that role, as github/rest-api-description#4406 and
+// #7111 record (read 2026-10-07).
 const repositoryAdminRoleID = 5
 
 // rulesetBypassActors returns the bypass_actors of a ruleset rendered under policy. Under review
-// mode single_maintainer it is the repository admin role in bypass mode pull_request: the one
-// maintainer can merge a pull request whose rules cannot be met, such as a required check no run
-// reports, and still cannot push to the branch past them (#76). Every other mode renders none, so
+// mode single_maintainer it is the repository admin role in bypass mode pull_request, the
+// narrowest of the three modes the REST reference defines (always, pull_request: "an actor can
+// only bypass rules on pull requests", exempt: rules are not run and no audit entry is written;
+// read 2026-10-07): the one maintainer can merge a pull request whose rules cannot be met, such as
+// a required check no run reports, and still cannot push to the branch past them (#76). Every other mode renders none, so
 // every rule binds every actor. A live ruleset keeps its own bypass actors (mergeRuleset), so this
 // entry reaches GitHub only in a ruleset sync --remote creates.
 func rulesetBypassActors(policy config.BranchProtectionPolicy) []map[string]any {

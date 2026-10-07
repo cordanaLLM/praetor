@@ -177,17 +177,32 @@ whose `needs` include a skipped job, and a skipped matrix job reports none of it
 so a lane the planner skips can leave a required leaf check unreported forever. The ruleset
 requires the aggregate, and a job the aggregate needs directly is not a required check of its
 own when the workflow file proves that the aggregate fails whenever that job failed or was
-cancelled (`internal/forge/workflow_aggregate.go`). A proven aggregate:
+cancelled (`internal/forge/workflow_aggregate.go`).
 
-- `needs` at least one job and runs on every run: `always()`, `success() || failure()` or
-  `!cancelled()`, as above;
-- is not advisory;
-- passes when every job it needs succeeded;
-- fails through one of two step shapes. Every other step is taken to pass.
+The proof reads an allow-list of aggregate shapes and refuses every other one, so an aggregate it
+cannot read keeps the jobs it needs required beside it, as before. A proven aggregate:
 
-The first shape is a `run:` step whose last command is `exit` with a status from 1 to 255, with
-no other `exit`, no trailing comment and no `continue-on-error`. Its `if:` is a disjunction, bare
-or as one `${{ }}` expression, of `contains(needs.*.result, '<result>')`,
+- `needs` at least one job;
+- runs under `if: always()` alone, bare or as one `${{ }}` expression. A gate with no condition,
+  with `success()` or with any other condition is skipped when a need failed, and a skipped gate
+  passes a required check. `!cancelled()` and `success() || failure()` make the gate required but
+  cover no job: on a cancelled run such a gate does not run, and whether GitHub then reports it
+  as skipped or cancelled is not verified;
+- may lead its condition with the Renovate skip above. That gate is skipped on a Renovate pull
+  request, so it covers only the jobs that carry the same skip; a job it needs without the skip
+  stays required;
+- is not advisory and passes when every job it needs succeeded;
+- has only steps of the two shapes below. Any other step, such as a checkout, is refused: a step
+  can change what a later one runs.
+
+The first shape is an exit step: a `run:` step with no `continue-on-error` and no `env:`, under the
+runner's default shell or `shell:` `bash`, `sh`, `pwsh`, `powershell` or `cmd` (a custom template
+such as `bash {0}` is refused, whether the step, the job's or the workflow's `defaults.run` names
+it). Its script is lines of `echo`, `printf`, `Write-Host` or `Write-Output`, then
+`exit <1..255>`, then only blank and comment lines. Every line holds only ASCII letters, digits,
+spaces and `.,:_'"=/+-#`, and closes each quote it opens, so no line continues onto the next,
+opens a here-document, expands a variable, sets a trap or joins a second command. Its `if:` is a
+disjunction, bare or as one `${{ }}` expression, of `contains(needs.*.result, '<result>')`,
 `needs.<id>.result == '<result>'` and `needs.<id>.result != '<result>'` terms. The aggregate
 covers each job whose failure, and whose cancellation, makes that condition hold.
 
@@ -198,35 +213,52 @@ merge-gate:
   if: always()
   runs-on: ubuntu-latest
   steps:
-    - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
-      run: exit 1
+    - name: Fail when a needed job failed or was cancelled
+      if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      run: |
+        echo "::error::a needed job failed or was cancelled"
+        exit 1
 ```
 
 The second shape is a [`re-actors/alls-green`](https://github.com/re-actors/alls-green) step
-pinned by full commit SHA, with `jobs: ${{ toJSON(needs) }}`, no `continue-on-error` and no
-input the action does not declare. Its `if:`, when present, follows the first shape's rule. `allowed-failures` and `allowed-skips` must be absent
-or literal lists, comma-separated or JSON. The action rejects a failed or cancelled job unless
-`allowed-failures` names it, so the aggregate covers every job it needs except those
-(`internal/forge/workflow_allsgreen.go`). It also rejects a skipped job that `allowed-skips` does
-not name, so name the path-filtered lanes there:
+pinned by the full commit SHA of a release whose decision code praetor has read: v1.1.0 to
+v1.3.0, listed in `allsGreenReleases` in `internal/forge/workflow_allsgreen.go`. A tag, a branch
+or any other commit is refused, v1.0.x included, which declares no `allowed-skips`. The step has
+`jobs: ${{ toJSON(needs) }}`, no `continue-on-error` and no input the action does not declare.
+Its `if:`, when present, follows the first shape's rule. `allowed-failures` and `allowed-skips`
+must be absent or literal lists of job ids, comma-separated or JSON. The action rejects a failed
+or cancelled job unless `allowed-failures` names it, so the aggregate covers every job it needs
+except those. It also rejects a skipped job that `allowed-skips` does not name, so name the
+path-filtered lanes there:
 
 ```yaml
-    steps:
-      - uses: re-actors/alls-green@<40-hex commit SHA> # <release>
-        with:
-          allowed-skips: go, test
-          jobs: ${{ toJSON(needs) }}
+merge-gate:
+  name: Merge gate
+  needs: [impact-plan, go, test]
+  if: always()
+  runs-on: ubuntu-latest
+  steps:
+    - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+      with:
+        allowed-skips: go, test
+        jobs: ${{ toJSON(needs) }}
 ```
+
+The proof assumes that a listed commit runs the code read at that release: a commit cannot
+change, so a moved tag does not affect it. A later release proves nothing until its decision code
+is read and its commit added to the list.
 
 A job the aggregate reaches only through another job stays required: when it fails, the job
 between is skipped, and a skipped need does not fail the aggregate. Put the planner in the
-aggregate's `needs` to cover it. A job the aggregate does not cover, and an aggregate whose steps
-the file cannot read this way (an action referenced by tag or branch, a step that checks
-`failure()`, or a script that inspects `toJSON(needs)`), leave the jobs it needs required beside
-it, as before. Tests: `TestRequiredStatusContexts_Positive_ProvenAggregateIsTheOnlyRequiredCheck`,
+aggregate's `needs` to cover it. Both examples above are tested as written
+(`TestRequiredStatusContexts_Positive_DocumentedAggregatesNarrowToTheGate`). The other tests are
+`TestRequiredStatusContexts_Positive_ProvenAggregateIsTheOnlyRequiredCheck`,
 `TestProvenAggregate_SkippedLaneMergesAndFailedLeafBlocks`,
-`TestRequiredStatusContexts_Negative_UnprovenAggregateKeepsTheLeaves` and
-`TestRequiredStatusContexts_Boundary_AggregateSpellingsAndReach` in
+`TestRequiredStatusContexts_Negative_UnprovenAggregateKeepsTheLeaves`,
+`TestRequiredStatusContexts_Negative_GateConditionMustBeAlways`,
+`TestRequiredStatusContexts_RenovateSkippedGateCoversOnlySkippedNeeds`,
+`TestRequiredStatusContexts_Boundary_AggregateSpellings`,
+`TestRequiredStatusContexts_Boundary_AggregateReach` and `TestGateScript` in
 `internal/forge/workflow_aggregate_proof_test.go`, and the `TestAllsGreenAggregate_*` tests in
 `internal/forge/workflow_allsgreen_test.go`.
 
