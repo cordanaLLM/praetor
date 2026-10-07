@@ -99,8 +99,10 @@ type Coverage struct {
 }
 
 // Rule is one invariant's declared evidence across languages. Its name is the HISS catalog's
-// (hisscatalog.Rule.Title, CatalogTitle): Title is optional and, when declared, must repeat
-// that title exactly, so coverage.yaml cannot carry a second, drifting list of rule names.
+// (hisscatalog.Rule.Title, CatalogTitle), which owns every rule title: Title is optional, and
+// one that differs from the catalog's is a warning (StaleTitles), never a failure, so a
+// retitle in the catalog cannot break a coverage file that repeats the earlier text (#844).
+// SyncTitles rewrites such a title to the catalog's.
 type Rule struct {
 	ID       string     `yaml:"id" json:"id"`
 	Title    string     `yaml:"title,omitempty" json:"title,omitempty"`
@@ -120,6 +122,36 @@ func (r Rule) CatalogTitle() string {
 type Catalog struct {
 	Version int    `yaml:"version" json:"version"`
 	Rules   []Rule `yaml:"rules" json:"rules"`
+}
+
+// StaleTitle is a declared rule title that differs from the HISS catalog's title.
+type StaleTitle struct {
+	ID       string
+	Declared string
+	Catalog  string
+}
+
+// String renders the warning, naming the catalog's current text.
+func (s StaleTitle) String() string {
+	return fmt.Sprintf("rule %s title %q differs from the HISS catalog title %q", s.ID, s.Declared, s.Catalog)
+}
+
+// StaleTitles returns, in declaration order, every declared title that differs from the HISS
+// catalog's. The comparison is exact: a difference in case or surrounding white space is a
+// second spelling too. A rule the catalog does not define is left out; Validate refuses it.
+func (c *Catalog) StaleTitles() []StaleTitle {
+	if c == nil {
+		return nil
+	}
+	var stale []StaleTitle
+	for i := 0; i < len(c.Rules); i++ {
+		rule := &c.Rules[i]
+		registered, known := hisscatalog.LookupRule(rule.ID)
+		if known && rule.Title != "" && rule.Title != registered.Title {
+			stale = append(stale, StaleTitle{ID: rule.ID, Declared: rule.Title, Catalog: registered.Title})
+		}
+	}
+	return stale
 }
 
 // Validate refuses a catalog that could misreport enforcement.
@@ -152,13 +184,10 @@ func validateRule(rule *Rule, seen map[string]struct{}) error {
 	}
 	// The HISS catalog is the one list of invariants; evidence for a rule it does not define
 	// would describe enforcement of nothing any other surface names.
-	registered, known := hisscatalog.LookupRule(rule.ID)
-	if !known {
+	// A declared title is not checked here: the catalog owns it, and StaleTitles reports one
+	// that differs as a warning.
+	if _, known := hisscatalog.LookupRule(rule.ID); !known {
 		return fmt.Errorf("%w: rule %s is not a registered invariant", ErrInvalidCatalog, rule.ID)
-	}
-	if rule.Title != "" && rule.Title != registered.Title {
-		return fmt.Errorf("%w: rule %s title %q differs from the HISS catalog title %q; drop it or repeat the catalog's",
-			ErrInvalidCatalog, rule.ID, rule.Title, registered.Title)
 	}
 	seen[rule.ID] = struct{}{}
 	if len(rule.Coverage) == 0 {
