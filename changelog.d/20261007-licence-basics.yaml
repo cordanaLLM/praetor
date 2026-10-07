@@ -1,3 +1,4 @@
 type: added
 title: "Licensing gates (docs/guides/licensing-gates.md): adoption writes a pinned reuse lint pre-commit job and a REUSE workflow on the default branch where the root declares REUSE, and audit fails a REUSE.toml override a later annotation shadows, a REUSE.toml it cannot read in full, and a root LICENSE that differs from the declared licence text or has a second licence-named file beside it"
+issue: "#823"
 breaking: true
