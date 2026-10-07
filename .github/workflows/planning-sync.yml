@@ -1,0 +1,80 @@
+name: Planning Sync
+
+# Reconciles this repository's planning state on the forge (#837): `praetorctl issue
+# reconcile --apply` ticks a parent's box when a child closes, closes an epic or tracking
+# parent once every child is closed and a milestone once it holds no open issue, and logs
+# every write in the run summary. It never unticks or reopens anything; drift it cannot
+# repair is printed as [DRIFT] lines. A manual dispatch is a dry run unless `apply` is set.
+# Adopter repositories get this workflow through adoption in a later slice.
+'on':
+  issues:
+    types: [closed]
+  schedule:
+    - cron: '17 4 * * *' # Daily at 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Make the writes; unset, the run prints the dry-run listing only
+        type: boolean
+        default: false
+
+# One run at a time: two runs ticking the same parent would race on its body.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+# issues: write covers editing and closing issues and closing milestones.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  planning-sync:
+    # Engine-only: skipped outside the canonical repository (#189). The literal is the
+    # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
+    name: Reconcile Issues, Epics and Milestones (canonical repository only)
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Source Code
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go Toolchain
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Restore Go Module And Build Caches
+        uses: ./.github/actions/go-cache
+        with:
+          job: planning-sync
+          go-version: '1.27'
+
+      - name: Reconcile Planning State
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MODE: ${{ (github.event_name == 'workflow_dispatch' && !inputs.apply) && '--dry-run' || '--apply' }}
+        run: >-
+          go run ./cmd/standardsctl issue reconcile
+          --repos="$GITHUB_REPOSITORY" "$MODE"
+          | tee "$RUNNER_TEMP/planning-sync.txt"
+
+      - name: Write Run Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Planning sync'
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/planning-sync.txt" 2>/dev/null || echo 'The reconcile step printed nothing.'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

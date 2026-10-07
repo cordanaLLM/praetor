@@ -1,6 +1,7 @@
 // The forge drivers and their callers, drawn from the code at the evidence anchors: the three
 // praetorctl commands that write to a forge build the GitHub driver directly
-// (reconcileRemoteForge, loadFleetIssues with transitionUnblocked, publishEpicToForge);
+// (reconcileRemoteForge, loadFleetIssues with transitionUnblocked and planningForgeFor,
+// publishEpicToForge);
 // forge.NewForge, the only constructor of the GitLab and Gitea drivers, is called from tests
 // alone, and those drivers check locally that a token is set and fail every enforcement method
 // with ErrNotImplemented.
@@ -13,10 +14,15 @@ export default {
     'cmd/standardsctl/sync.go:reconcileRemoteForge',
     'cmd/standardsctl/issue.go:loadFleetIssues',
     'cmd/standardsctl/issue.go:transitionUnblocked',
+    'cmd/standardsctl/issue_planning.go:planningForgeFor',
+    'internal/forge/reconciler.go:ApplyPlanning',
     'cmd/standardsctl/needs.go:publishEpicToForge',
     'internal/needs/epic.go:PublishPreMigrationEpic',
     'internal/forge/issues.go:PrepareIssueBatch',
     'internal/forge/issues.go:Ensure',
+    'internal/needs/epic.go:linkEpicChildren',
+    'internal/forge/github.go:GetIssue',
+    'internal/forge/github.go:EditIssueBody',
     'internal/forge/github.go:NewGitHubDriver',
     'internal/forge/github.go:ReconcileProtection',
     'internal/forge/github.go:ReconcileLabels',
@@ -31,7 +37,8 @@ export default {
     'internal/forge/gitea.go:GiteaDriver',
   ],
   describe: [
-    'The GitHub driver also implements PostStatusCheck, CreatePullRequest and UpdateIssue; no praetorctl command calls them.',
+    'The GitHub driver also implements PostStatusCheck and CreatePullRequest; no praetorctl command calls them.',
+    'issue reconcile reads and closes milestones through the milestone package, which has its own GitHub client.',
     'forge.NewForge also returns the GitHub driver for provider github; only tests call it.',
   ],
   props: {
@@ -82,8 +89,8 @@ export default {
     },
     edges: [
       { from: 'sync', to: 'github', label: 'ruleset, labels, metadata' },
-      { from: 'issue', to: 'github', label: 'list, relabel' },
-      { from: 'epic', to: 'github', label: 'list, create' },
+      { from: 'issue', to: 'github', label: 'list, relabel, tick, close' },
+      { from: 'epic', to: 'github', label: 'list, create, link' },
       { from: 'tests', to: 'factory', label: 'NewForge' },
       { from: 'factory', to: 'gitlab', label: 'gitlab' },
       { from: 'factory', to: 'gitea', label: 'gitea, forgejo' },
@@ -129,7 +136,7 @@ export default {
       },
       {
         label: 'issue reconcile',
-        caption: 'issue reconcile lists the issues of each selected repository and relabels the unblocked ones.',
+        caption: 'issue reconcile lists the issues of each selected repository, relabels the unblocked ones and runs the planning sync.',
         flow: [
           {
             edges: 'issue->github',
@@ -140,7 +147,7 @@ export default {
           },
           {
             edges: 'issue->github',
-            say: 'With --dry-run=false, transitionUnblocked calls AddLabels, then RemoveLabel.',
+            say: 'With --apply, transitionUnblocked calls AddLabels, then RemoveLabel.',
             show: {
               github: [
                 { tag: 'call', tone: 'blue', text: 'ListIssues("all")', meta: 'issue.go', mono: true },
@@ -148,11 +155,22 @@ export default {
               ],
             },
           },
+          {
+            edges: 'issue->github',
+            say: 'With --apply, ApplyPlanning re-reads each parent, ticks closed children with EditIssueBody and closes a finished epic with UpdateIssue.',
+            show: {
+              github: [
+                { tag: 'call', tone: 'blue', text: 'ListIssues("all")', meta: 'issue.go', mono: true },
+                { tag: 'call', tone: 'blue', text: 'AddLabels, RemoveLabel', meta: 'issue.go', mono: true },
+                { tag: 'call', tone: 'blue', text: 'GetIssue, EditIssueBody, UpdateIssue', meta: 'issue_planning.go', mono: true },
+              ],
+            },
+          },
         ],
       },
       {
         label: 'needs epic --publish',
-        caption: 'needs epic --publish creates the missing epic issues through the GitHub driver.',
+        caption: 'needs epic --publish creates the missing epic issues through the GitHub driver and names each child in the parent.',
         flow: [
           {
             edges: 'epic->github',
@@ -172,6 +190,17 @@ export default {
               github: [
                 { tag: 'call', tone: 'blue', text: 'ListIssues("all")', meta: 'issues.go', mono: true },
                 { tag: 'call', tone: 'blue', text: 'CreateIssue', meta: 'issues.go', mono: true },
+              ],
+            },
+          },
+          {
+            edges: 'epic->github',
+            say: 'Once every child exists, linkEpicChildren writes a task-list line per child into the parent with EditIssueBody.',
+            show: {
+              github: [
+                { tag: 'call', tone: 'blue', text: 'ListIssues("all")', meta: 'issues.go', mono: true },
+                { tag: 'call', tone: 'blue', text: 'CreateIssue', meta: 'issues.go', mono: true },
+                { tag: 'call', tone: 'blue', text: 'EditIssueBody', meta: 'epic.go', mono: true },
               ],
             },
           },

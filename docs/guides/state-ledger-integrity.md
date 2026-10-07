@@ -269,6 +269,16 @@ delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
   earlier title-keyed sync, are repaired: the row carrying the remote's current title
   keeps the binding, the other is unbound, kept as a local-only milestone and reported
   with a `[WARN]` line.
+- **A milestone with open issues stays open unless forced.** `milestone close` refuses
+  with `milestone.ErrOpenIssues` while the milestone's cached counts, from the last
+  `milestone sync`, report open issues. With `--publish` it first reads the bound forge
+  milestone and checks the forge's counts instead, before anything is written; a refusal
+  leaves both the store and the forge as they were. `--force` closes anyway. Progress is the
+  closed share of the milestone's issues, the computation `milestone sync` uses, so a forced
+  close records the real partial progress and a milestone holding no issue records 0%
+  (`internal/milestone/close_guard_test.go`, `cmd/standardsctl/milestone_close_test.go`).
+  `praetorctl issue reconcile --apply` closes a forge milestone once it holds closed issues
+  and no open one ([planning sync](issue-sync-integrity.md#planning-sync-parents-epics-and-milestones)).
 - **A local close is never reverted.** `milestone close` flags an open milestone
   `pending_remote_close`. While the forge still reports it open, `milestone sync`
   keeps it closed and prints a `[WARN]` line naming it. `milestone close <n> --publish`
