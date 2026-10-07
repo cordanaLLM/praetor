@@ -1,6 +1,7 @@
 package forge
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -61,17 +62,47 @@ func TestAnalyzeCommit_Boundary_SubjectAndFooterTogether(t *testing.T) {
 func TestCleanCommitMessage_Boundary(t *testing.T) {
 	raw := "# Use type(scope): description\nfix: subject #12\n\nbody\n# Please enter the commit message\n" +
 		commitScissors + "\ndiff --git a/x b/x\n+BREAKING CHANGE: not part of the message\n"
-	if got, want := CleanCommitMessage(raw), "fix: subject #12\n\nbody"; got != want {
-		t.Fatalf("got %q, want %q", got, want)
+	cleaned, err := CleanCommitMessage(raw)
+	if want := "fix: subject #12\n\nbody"; err != nil || cleaned != want {
+		t.Fatalf("got %q, %v, want %q", cleaned, err, want)
 	}
-	if got := CleanCommitMessage(""); got != "" {
-		t.Fatalf("empty message: %q", got)
+	if got, err := CleanCommitMessage(""); err != nil || got != "" {
+		t.Fatalf("empty message: %q, %v", got, err)
 	}
-	analysis, err := AnalyzeCommit(CleanCommitMessage(raw))
+	analysis, err := AnalyzeCommit(cleaned)
 	if err != nil || !analysis.Valid || analysis.IsBreaking {
 		t.Fatalf("cleaned message: %+v, %v", analysis, err)
 	}
-	if _, err := AnalyzeCommit(CleanCommitMessage("# only a comment\n")); err == nil {
+	comments, err := CleanCommitMessage("# only a comment\n")
+	if err != nil {
+		t.Fatalf("comments only: %v", err)
+	}
+	if _, err := AnalyzeCommit(comments); err == nil {
 		t.Fatal("a message of comments only must be refused as empty")
+	}
+}
+
+// TestCleanCommitMessage_Boundary_LineBound (#61): a message of exactly maxCommitMessageLines
+// lines is cleaned whole, its final newline included, and so is one whose lines past the bound
+// follow the scissors line, which cuts them anyway. One line more is refused with an error naming
+// the bound, rather than cleaned without the lines past it: there they held a BREAKING CHANGE:
+// footer the policy then never read.
+func TestCleanCommitMessage_Boundary_LineBound(t *testing.T) {
+	subject := "fix: at the bound"
+	exact := subject + strings.Repeat("\nb", maxCommitMessageLines-1)
+	for name, message := range map[string]string{
+		"exactly the bound":                exact,
+		"exactly the bound, final newline": exact + "\n",
+		"cut lines past the bound":         exact + "\n" + commitScissors + strings.Repeat("\nd", 10),
+	} {
+		cleaned, err := CleanCommitMessage(message)
+		if err != nil || strings.Count(cleaned, "\n") != maxCommitMessageLines-1 {
+			t.Fatalf("%s: %d lines, %v", name, strings.Count(cleaned, "\n")+1, err)
+		}
+	}
+	over := exact + "\nBREAKING CHANGE: the footer past the bound"
+	cleaned, err := CleanCommitMessage(over)
+	if err == nil || !strings.Contains(err.Error(), strconv.Itoa(maxCommitMessageLines)) || cleaned != "" {
+		t.Fatalf("one line past the bound: %d bytes cleaned, %v", len(cleaned), err)
 	}
 }

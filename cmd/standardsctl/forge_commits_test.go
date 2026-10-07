@@ -185,4 +185,12 @@ func TestForgeCheckMessage_Boundary_EmptyAndOversizedMessages(t *testing.T) {
 	if err := dispatchCommand("forge", []string{"check-message", oversized}); err == nil {
 		t.Fatal("a message past the read bound must fail")
 	}
+	// Within the byte bound but past the line bound of forge.CleanCommitMessage: the message is
+	// refused, so the BREAKING CHANGE: footer after the bound cannot pass unread without its
+	// Migration: footer.
+	manyLines := writeFixtureFile(t, dir, "many-lines", subject+strings.Repeat("b\n", 200000)+"BREAKING CHANGE: past the line bound\n")
+	if err := dispatchCommand("forge", []string{"check-message", manyLines}); err == nil ||
+		!strings.Contains(err.Error(), "lines before the scissors line") {
+		t.Fatalf("a message past the line bound: %v", err)
+	}
 }
