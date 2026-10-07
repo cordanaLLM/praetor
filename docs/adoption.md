@@ -239,8 +239,13 @@ ruleset a local run writes. The manifest writers record it for you (`forge.Defau
 `.standards.yaml` they create when it is not `main`
 (`TestAdopt_Positive_MasterRepositoryRulesetProtectsMaster`, `TestInit_3D_DefaultBranch`,
 `TestEnsureOnboardingManifest_Positive_DeclaresAMasterOriginHead`). Adoption never rewrites an
-existing manifest: when one declares no branch and the origin HEAD is not `main`, it warns and
-names the line to add (`TestAdopt_Negative_UndeclaredBranchInAnExistingManifestIsWarned`).
+existing manifest: when one declares no branch and the origin HEAD is not `main`, it warns, names
+every file it renders for the branch and the line to add
+(`TestAdopt_Negative_UndeclaredBranchInAnExistingManifestIsWarned`). The hosted gate workflows
+render for the branch too ([When the workflow runs](guides/api-compatibility.md#when-the-workflow-runs)),
+so a manifest that declines `branch-ruleset` is still warned while a hosted gate is enabled
+(`TestAdoptWarnsAnUndeclaredBranchTheHostedGatesRenderFor` in
+`internal/adopt/workflow_branch_test.go`).
 
 A declaration outside `config.ValidBranchName` (1 to 128 letters, digits, `.`, `_`, `/` or `-`,
 no `..`) fails the manifest load. An origin HEAD outside it fails the resolution instead of
