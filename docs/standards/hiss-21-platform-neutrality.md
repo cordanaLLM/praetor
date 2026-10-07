@@ -153,9 +153,10 @@ itself.
 A child process that a signal ends is started once more, and the crash is still reported. A
 macOS leg once failed `scripts/test_checkpoint_hooks.py` because the Python launcher of one
 scope-bridge call died by SIGSEGV with no output, and the same suite then passed on every
-rerun (#809). That suite starts every child through `run_child` in
+rerun (#809). That suite starts every child it launches directly through `run_child` in
 `scripts/portability_selftest.py`, and `ChildSuites` in `scripts/test_portability_selftest.py`
-fails when it starts one any other way. The rules are:
+fails when it starts one any other way. Git calls made in process by the checkpoint scope
+module it imports are not covered. The rules are:
 
 - A child that exits is returned at once, whatever its exit code. Only a signal exit is retried.
 - After a signal exit, the helper prints a report between two marker lines. The report names
