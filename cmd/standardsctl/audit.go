@@ -138,7 +138,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		baselinePath:    resolveCompanion(rootDir, *baselinePath, ".standards-baseline.json"),
 		agentsPath:      resolveCompanion(rootDir, *agentsPath, "AGENTS.md"),
 		baseRef:         *baseRef,
-		touched:         splitCSV(*touched),
+		touched:         util.SplitCSV(*touched),
 		debtDeltaReason: resolveDebtDeltaReason(*debtDelta),
 		allViolations:   *allViolations,
 		offline:         *offline,

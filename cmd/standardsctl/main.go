@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/buildid"
@@ -68,9 +67,6 @@ func formatDevLockVersion(revision string, modified bool) string {
 // unidentifiedLockVersion is written only when the build can prove nothing about itself. It is
 // deliberately the zero version rather than a plausible release number.
 const unidentifiedLockVersion = config.UnidentifiedLockVersion
-
-// maxCSVFields bounds the comma-separated list parser (HISS-02).
-const maxCSVFields = 1024
 
 func printUsage() {
 	fmt.Println("praetorctl (formerly standardsctl) - Autonomous Fleet Governance & Workstation Sentinel (" + buildVersion() + ")")
@@ -373,19 +369,4 @@ func runHelp(_ []string) error {
 // sharing it keeps their help-token spellings from drifting apart (HISS-19).
 func isHelpToken(tok string) bool {
 	return tok == "-h" || tok == "--help" || tok == "help"
-}
-
-// splitCSV splits a comma-separated flag value into trimmed, non-empty fields.
-func splitCSV(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	parts := strings.Split(raw, ",")
-	fields := make([]string, 0, len(parts))
-	for i := 0; i < len(parts) && i < maxCSVFields; i++ {
-		if trimmed := strings.TrimSpace(parts[i]); trimmed != "" {
-			fields = append(fields, trimmed)
-		}
-	}
-	return fields
 }
