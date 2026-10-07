@@ -654,8 +654,13 @@ cover each case.
 Both Python scripts, the adopted interceptor and praetor's own guard, refuse a command over
 the scan bounds instead of scanning it: more than 65,536 characters in all, or one line over
 2,048 characters (`agenthook.MaxScanChars`, `agenthook.MaxScanLineChars`). Python's `re`
-backtracks, so the find and `sed -i` rules cost cubic time in the length of one line and a
-16 KiB line held the find rule for 16 s, long enough to outlive a client's hook timeout. A
+backtracks: a 16 KiB line held the find rule for 16 s, long enough to outlive a client's hook
+timeout. The find and `sed -i` rules used to cost cubic time in the length of one line,
+because `re` retried them at every `find`, `sed` or `perl` word; they now start at the first
+such word of a line (`lineThroughFirstWord` in `internal/agenthook/policy.go`), which keeps
+what they refuse (`TestAnchoredRulesKeepTheirLanguage` and
+`TestAnchoredRulesKeepTheirLanguageInPython` replay both forms in RE2 and in `re`) and leaves
+them quadratic. A
 command is refused, never truncated, because a truncated scan allows what lies past the cut;
 split it, or write the long content to a file first. Within both bounds the slowest rule
 needs under a second of child CPU time on an idle host, and the tests hold it under 5 s
