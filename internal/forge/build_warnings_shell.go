@@ -36,22 +36,13 @@ type wrapperSpec struct {
 // documents it: sudo(8), env(1), nice(1), time(1), exec (bash(1)) and timeout(1), whose one
 // operand is the duration.
 var commandWrappers = map[string]wrapperSpec{
-	"sudo": {valueOptions: optionSet("-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host",
-		"-p", "--prompt", "-R", "--chroot", "-T", "--command-timeout", "-U", "--other-user", "-u", "--user")},
-	"env":     {valueOptions: optionSet("-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-a", "--argv0")},
-	"nice":    {valueOptions: optionSet("-n", "--adjustment")},
-	"time":    {valueOptions: optionSet("-f", "--format", "-o", "--output")},
-	"exec":    {valueOptions: optionSet("-a")},
-	"timeout": {valueOptions: optionSet("-s", "--signal", "-k", "--kill-after"), operands: 1},
-}
-
-// optionSet is the set of options names.
-func optionSet(names ...string) map[string]bool {
-	set := make(map[string]bool, len(names))
-	for i := 0; i < len(names); i++ {
-		set[names[i]] = true
-	}
-	return set
+	"sudo": {valueOptions: addNames(nil, []string{"-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host",
+		"-p", "--prompt", "-R", "--chroot", "-T", "--command-timeout", "-U", "--other-user", "-u", "--user"})},
+	"env":     {valueOptions: addNames(nil, []string{"-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-a", "--argv0"})},
+	"nice":    {valueOptions: addNames(nil, []string{"-n", "--adjustment"})},
+	"time":    {valueOptions: addNames(nil, []string{"-f", "--format", "-o", "--output"})},
+	"exec":    {valueOptions: addNames(nil, []string{"-a"})},
+	"timeout": {valueOptions: addNames(nil, []string{"-s", "--signal", "-k", "--kill-after"}), operands: 1},
 }
 
 var (
