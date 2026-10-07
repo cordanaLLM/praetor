@@ -150,11 +150,17 @@ func fixtureProfileManifest(owner, name, profile string, signed bool) string {
 }
 
 func fixtureRegisterSources() string {
+	return fixtureRegisterSourcesOver([]byte(fixtureHarnessJSON))
+}
+
+// fixtureRegisterSourcesOver is the register.sources section binding the Paperclip harness rows
+// of harness, the harness.json bytes an adoption wrote.
+func fixtureRegisterSourcesOver(harness []byte) string {
 	inputs := []config.RegisterSourceInput{
 		{Path: ".paperclip/harness.json", Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "operating_contract.*"},
 		{Path: ".paperclip/harness.json", Surface: config.SurfacePrompts, Kind: "message", Format: config.SourceFormatJSON, Selector: "invariants.*"},
 	}
-	coverage, err := cavemansource.CoverageFromDocuments(context.Background(), inputs, map[string][]byte{".paperclip/harness.json": []byte(fixtureHarnessJSON)})
+	coverage, err := cavemansource.CoverageFromDocuments(context.Background(), inputs, map[string][]byte{".paperclip/harness.json": harness})
 	if err != nil {
 		panic(err)
 	}
