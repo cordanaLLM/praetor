@@ -331,7 +331,7 @@ func runFlavors(args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to load flavors config: %w", err)
 	}
-	selected := splitCSV(*selection)
+	selected := util.SplitCSV(*selection)
 	if unknown := flavors.UnknownFlavors(cfg, selected); len(unknown) > 0 {
 		return fmt.Errorf("--flavor names undeclared flavor(s): %s", strings.Join(unknown, ", "))
 	}
