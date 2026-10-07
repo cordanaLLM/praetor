@@ -321,8 +321,9 @@ An unedited `checkpoint.py` from an earlier release is refreshed on the next ado
 every text a release shipped is recorded with its digest (`priorCheckpointDigests` in
 `internal/adopt/checkpoint.go`, reproduced by `internal/adopt/testdata/checkpoint`). A change
 to the script records its new digest in the same change. The current script judges a re-run of
-a hosted check by its latest run on the head; [checkpoint cadence](checkpoint-cadence.md)
-states the rule.
+a hosted check by its latest run on the head, and on a draft reads a hosted gate's failure that
+carries exactly the draft annotation as `draft_pending` rather than `failed`;
+[checkpoint cadence](checkpoint-cadence.md) states both rules.
 
 ## The make the hooks run
 
