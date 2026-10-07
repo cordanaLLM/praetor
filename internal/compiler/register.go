@@ -53,7 +53,7 @@ func LoadRegisterBlock(ctx context.Context, root string) (config.RegisterPolicy,
 }
 
 // LoadRegisterBlockOver is LoadRegisterBlock for a caller that writes the register skills named in
-// pending before the block lands, such as an adoption dry run that installs them only in its
+// pending before the block lands, such as adoption, whose dry run installs them only in its
 // preview: each counts as present whether or not root holds it yet.
 func LoadRegisterBlockOver(ctx context.Context, root string, pending []string) (config.RegisterPolicy, string, error) {
 	authority, block, err := loadRegister(ctx, root, pending)
