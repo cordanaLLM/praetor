@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -172,9 +173,10 @@ func TestAnchoredRulesKeepTheirLanguage(t *testing.T) {
 }
 
 // pythonDisagreements is the program that replays the texts in Python's re: it prints, per
-// pattern pair, how many texts the two disagree on and how many the first matches.
+// pattern pair, how many texts the two disagree on and how many the first matches, and the
+// characters it read, so a decoding other than UTF-8 shows as a different count.
 const pythonDisagreements = `import json, re, sys
-data = json.load(sys.stdin)
+data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 result = []
 for oracle, candidate in data["pairs"]:
     first, second = re.compile(oracle), re.compile(candidate)
@@ -184,7 +186,7 @@ for oracle, candidate in data["pairs"]:
         matches += want
         differ += want != (second.search(text) is not None)
     result.append([differ, matches])
-print(json.dumps(result))
+print(json.dumps({"counts": result, "characters": sum(len(text) for text in data["texts"])}))
 `
 
 // TestAnchoredRulesKeepTheirLanguageInPython replays the same texts in Python's re, whose \w
@@ -196,7 +198,12 @@ func TestAnchoredRulesKeepTheirLanguageInPython(t *testing.T) {
 	for _, rule := range anchoredRules {
 		pairs = append(pairs, [2]string{rule.unanchored(), rule.anchored()}, [2]string{rule.unanchored(), rule.lineStartOnly()})
 	}
-	input, err := json.Marshal(map[string]any{"pairs": pairs, "texts": firstWordTexts()})
+	texts := firstWordTexts()
+	characters := 0
+	for _, text := range texts {
+		characters += utf8.RuneCountInString(text)
+	}
+	input, err := json.Marshal(map[string]any{"pairs": pairs, "texts": texts})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,12 +216,15 @@ func TestAnchoredRulesKeepTheirLanguageInPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("python replay: %v: %s", err, result.Stderr)
 	}
-	var counts [][2]int
-	if err := json.Unmarshal(result.Stdout, &counts); err != nil || len(counts) != len(pairs) {
-		t.Fatalf("python replay output %q: %v", result.Stdout, err)
+	var replay struct {
+		Counts     [][2]int `json:"counts"`
+		Characters int      `json:"characters"`
+	}
+	if err := json.Unmarshal(result.Stdout, &replay); err != nil || len(replay.Counts) != len(pairs) || replay.Characters != characters {
+		t.Fatalf("python replay output %q (sent %d characters): %v", result.Stdout, characters, err)
 	}
 	for index, rule := range anchoredRules {
-		anchored, planted := counts[2*index], counts[2*index+1]
+		anchored, planted := replay.Counts[2*index], replay.Counts[2*index+1]
 		t.Logf("%s: %d match, anchored disagrees on %d, line-start anchor on %d", rule.name, anchored[1], anchored[0], planted[0])
 		if anchored[0] != 0 || anchored[1] < 1000 || planted[0] < 100 {
 			t.Errorf("%s: anchored disagrees on %d texts (%d match), line-start anchor on %d", rule.name, anchored[0], anchored[1], planted[0])

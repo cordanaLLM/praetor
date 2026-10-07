@@ -229,7 +229,7 @@ const scanCostProbe = `import json, runpy, sys, time
 
 module = runpy.run_path(sys.argv[1])
 check, blocked = module["check_command"], module["Blocked"]
-request = json.load(sys.stdin)
+request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 
 
 def timed(command):
