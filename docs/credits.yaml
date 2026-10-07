@@ -1,0 +1,1503 @@
+# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
+#
+# The curated credits list: one entry per third-party project, tool, image, action,
+# specification, integration, font or icon praetor takes something from, with the upstream URL,
+# the kind, how much of it reaches praetor (relation), the license the upstream states and the
+# repository paths that use it. docs/credits.md renders its tables from this file
+# (RenderCreditsPage, internal/supplychain/credits_page.go), and CheckUpstreamCredits
+# (internal/supplychain/upstream_credits.go) fails when an item the dependency inventory lists
+# has no entry, when a named path no longer uses its item, when a persona or skill is neither
+# derived (metadata.derived_from) nor listed under originals, and when a license written
+# unknown has no unexpired credits exception in .standards.yaml. After an edit, regenerate the
+# page: PRAETOR_UPDATE_GOLDEN=1 go test ./internal/supplychain -run TestCreditsPageIsRendered.
+#
+# Entry keys: name, url (https), detail (after the link), section (the page table: adapted,
+# shipped, images, presets, actions, integrations, specifications, fonts, tooling,
+# development), kind (dependency, tool, action, image, vendored file, adapted code,
+# inspiration, specification, integration, font or icon), relation (shipped, vendored,
+# adapted, inspired, used by CI, integrated), license (an SPDX expression, or unknown,
+# proprietary or none), notice (after the license), artifact (adapted section only), use,
+# paths, packages (inventory identifiers it answers) and match (further terms a path names it
+# by). Licenses are as the upstream LICENSE file or registry entry states them.
+---
+originals:
+  - ".agents/agents/praetor-auditor.md"
+  - ".agents/agents/praetor-dogfooder.md"
+  - ".agents/agents/praetor-fuzzer.md"
+  - ".agents/agents/praetor-gatekeeper.md"
+  - ".agents/agents/praetor-needs-miner.md"
+  - ".agents/agents/praetor-packager.md"
+  - ".agents/skills/breaking-change-checker/SKILL.md"
+  - ".agents/skills/hiss-audit/SKILL.md"
+  - ".agents/skills/infocard-generate/SKILL.md"
+  - ".agents/skills/paperclip-operate/SKILL.md"
+  - ".agents/skills/prerelease-bump/SKILL.md"
+  - ".agents/skills/repo-adopt/SKILL.md"
+  - ".agents/skills/seo-audit/SKILL.md"
+  - ".agents/skills/standards-sync/SKILL.md"
+  - ".agents/skills/understand-codebase/SKILL.md"
+downloads:
+  - id: "github.com/koalaman/shellcheck"
+    path: ".github/workflows/portability.yml"
+  - id: "renovate"
+    path: ".github/workflows/ci.yml"
+  - id: "chromium"
+    path: ".github/workflows/ci.yml"
+  - id: "github.com/golangci/golangci-lint"
+    path: "Makefile"
+  - id: "github.com/evilmartians/lefthook"
+    path: ".github/workflows/ci.yml"
+  - id: "helm"
+    path: ".github/workflows/release-binaries.yml"
+  - id: "nodejs.org"
+    path: "internal/devcontainer/cli.go"
+entries:
+  - name: "Caveman"
+    url: "https://github.com/JuliusBrussee/caveman"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Julius Brussee and [contributors](https://github.com/JuliusBrussee/caveman/graphs/contributors): the
+      terms of the upstream skill when this skill was adapted from it (2026-09-18). Upstream commit 921eab8a8
+      relicensed the repository to Apache-2.0 on 2026-09-24, released as Caveman 3.0.0 on 2026-09-30; releases before
+      3.0.0 keep the terms they shipped with
+    artifact: "`caveman` skill, `.agents/skills/caveman/SKILL.md`"
+    use: >-
+      The name and the rules (drop articles, filler and hedges; write fragments; keep code and error text verbatim;
+      invent no abbreviations; keep negations; fall back to plain wording when compression makes a line ambiguous) are
+      rewritten for agent-to-agent traffic only, and the skill adds connective symbols, the brief and return shapes
+      and the evidence bound. No upstream text is copied.
+    paths:
+      - ".agents/skills/caveman/SKILL.md"
+      - "docs/guides/text-register.md"
+  - name: "Caveman"
+    url: "https://github.com/JuliusBrussee/caveman"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: "© 2026 Julius Brussee and contributors, as above"
+    artifact: "prose linter, `internal/caveman` (`praetorctl caveman check`)"
+    use: >-
+      The same rules checked mechanically: article density, filler and hedge words, sentence length, and the brief and
+      return contracts. The Go code is praetor's own.
+    paths:
+      - "internal/caveman/check.go"
+  - name: "i-have-adhd"
+    url: "https://github.com/ayghri/i-have-adhd"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: "© 2026 Ayoub Ghriss and [contributors](https://github.com/ayghri/i-have-adhd/graphs/contributors)"
+    artifact: >-
+      `adhd-format` skill, `.agents/skills/adhd-format/SKILL.md`; `social-text` skill,
+      `.agents/skills/social-text/SKILL.md`, which inherits from it
+    use: >-
+      The purpose: shape output for a reader with ADHD by leading with the next action, numbering steps, chunking and
+      suppressing tangents. The rules are rewritten in praetor's own words for technical reports (bottom line first,
+      bolded anchors, alert callouts, small diagrams), and no upstream word sequence is reused. `social-text` inherits
+      the credit through the principles it takes from `adhd-format`.
+    paths:
+      - ".agents/skills/adhd-format/SKILL.md"
+      - ".agents/skills/social-text/SKILL.md"
+    match:
+      - "adhd"
+  - name: "Documenting Architecture Decisions"
+    url: "https://www.cognitect.com/blog/2011/11/15/documenting-architecture-decisions"
+    detail: "by Michael Nygard (2011), and [MADR](https://adr.github.io/madr/)"
+    section: "adapted"
+    kind: "inspiration"
+    relation: "inspired"
+    license: "CC0-1.0"
+    notice: "waived by Cognitect; MADR is MIT OR CC0-1.0"
+    artifact: "`adr-scaffold` skill, `.agents/skills/adr-scaffold/SKILL.md`, and the records in `docs/adr/`"
+    use: >-
+      The practice of one short, immutable record per decision and its shape: status, context, decision and
+      consequences. Numbering, the lifecycle rules and the HISS framing are praetor's own.
+    paths:
+      - ".agents/skills/adr-scaffold/SKILL.md"
+      - "docs/adr/README.md"
+    match:
+      - "decision record"
+  - name: "Go"
+    url: "https://go.dev"
+    detail: "standard library and runtime"
+    section: "shipped"
+    kind: "dependency"
+    relation: "shipped"
+    license: "BSD-3-Clause"
+    notice: "© 2009 The Go Authors"
+    use: "Statically linked into every binary"
+    paths:
+      - "go.mod"
+  - name: "go-yaml v3"
+    url: "https://github.com/go-yaml/yaml"
+    detail: "(`gopkg.in/yaml.v3` v3.0.1)"
+    section: "shipped"
+    kind: "dependency"
+    relation: "shipped"
+    license: "MIT AND Apache-2.0"
+    notice: >-
+      MIT for the files ported from libyaml, © 2006–2011 Kirill Simonov; Apache-2.0 for the rest, © 2011–2019
+      Canonical Ltd
+    use: "YAML decoding and encoding; the only Go module the binaries link"
+    paths:
+      - "go.mod"
+    packages:
+      - "gopkg.in/yaml.v3"
+  - name: "markdownlint"
+    url: "https://github.com/DavidAnson/markdownlint"
+    detail: "0.41.1"
+    section: "shipped"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© David Anson"
+    use: >-
+      Markdown linting; the Markdown gate's manifest and lock are embedded and installed, and `verify.mjs` calls the
+      library. Its configuration file keeps the name and the output format of
+      [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2), which the gate ran before
+    paths:
+      - "tools/markdownlint/package.json"
+      - "tools/markdownlint/verify.mjs"
+    packages:
+      - "markdownlint"
+  - name: "jsonc-parser"
+    url: "https://github.com/microsoft/node-jsonc-parser"
+    detail: "3.3.1"
+    section: "shipped"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© Microsoft"
+    use: "Parses inline `markdownlint-configure-file` comments written as JSONC, pinned in the same lock"
+    paths:
+      - "tools/markdownlint/package.json"
+    packages:
+      - "jsonc-parser"
+  - name: "smol-toml"
+    url: "https://github.com/squirrelchat/smol-toml"
+    detail: "1.9.0"
+    section: "shipped"
+    kind: "dependency"
+    relation: "integrated"
+    license: "BSD-3-Clause"
+    notice: "© Squirrel Chat et al."
+    use: "Parses inline `markdownlint-configure-file` comments written as TOML, pinned in the same lock"
+    paths:
+      - "tools/markdownlint/package.json"
+    packages:
+      - "smol-toml"
+  - name: "js-yaml"
+    url: "https://github.com/nodeca/js-yaml"
+    detail: "5.4.2"
+    section: "shipped"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2011–2015 Vitaly Puzrin"
+    use: "Parses YAML for the Markdown gate, pinned in the same lock"
+    paths:
+      - "tools/markdownlint/package.json"
+    packages:
+      - "js-yaml"
+  - name: "micromark"
+    url: "https://github.com/micromark/micromark"
+    detail: "4.0.3"
+    section: "shipped"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© Titus Wormer"
+    use: "Markdown parsing, pinned in the same lock"
+    paths:
+      - "tools/markdownlint/package.json"
+    packages:
+      - "micromark"
+  - name: "micromark-extension-mdxjs"
+    url: "https://github.com/micromark/micromark-extension-mdxjs"
+    detail: "3.0.0"
+    section: "shipped"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2020 Titus Wormer"
+    use: "MDX syntax for the same parser, pinned in the same lock"
+    paths:
+      - "tools/markdownlint/package.json"
+    packages:
+      - "micromark-extension-mdxjs"
+  - name: "parse5"
+    url: "https://github.com/inikulin/parse5"
+    detail: "8.0.1"
+    section: "shipped"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2013–2019 Ivan Nikulin"
+    use: "HTML parsing, pinned in the same lock"
+    paths:
+      - "tools/markdownlint/package.json"
+    packages:
+      - "parse5"
+  - name: "Dev Container CLI"
+    url: "https://github.com/devcontainers/cli"
+    detail: "(`@devcontainers/cli` 0.89.0)"
+    section: "shipped"
+    kind: "tool"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© Microsoft Corporation"
+    use: >-
+      Builds a repository's devcontainer for the gate; the binaries embed its manifest and lock
+      (`internal/devcontainer/cli.go`) and install it into the tool cache
+    paths:
+      - "internal/devcontainer/cli/package.json"
+      - "internal/devcontainer/cli.go"
+    packages:
+      - "@devcontainers/cli"
+  - name: "interfig"
+    url: "https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig"
+    detail: "(`hindsight-interfig/` in vectorize-io/hindsight)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "MIT"
+    notice: "© 2025 Vectorize AI, Inc."
+    use: >-
+      Draws the interactive figures on this site; vendored byte-identical at commit
+      `ccfe85b4851957ac2adf88b4a9ddf9668b2882f1` in `tools/figures/third_party/interfig/`. The binaries embed its
+      render source and the figure player that bundles it (`tools/figures/assets.go`)
+    paths:
+      - "tools/figures/third_party/interfig/vendor.json"
+      - "tools/figures/assets.go"
+  - name: "React"
+    url: "https://github.com/facebook/react"
+    detail: "19.3.0, with react-dom 19.3.0 and scheduler 0.28.0"
+    section: "shipped"
+    kind: "dependency"
+    relation: "shipped"
+    license: "MIT"
+    notice: "© Meta Platforms, Inc. and affiliates"
+    use: >-
+      Bundled with interfig into the figure player (`tools/figures/dist/player.js`) that the binaries embed and this
+      site loads
+    paths:
+      - "tools/figures/package.json"
+      - "tools/figures/dist/THIRD-PARTY-LICENSES.txt"
+      - "tools/figures/third_party/interfig/upstream/package.json"
+    packages:
+      - "react"
+      - "react-dom"
+      - "scheduler"
+  - name: "Distroless"
+    url: "https://github.com/GoogleContainerTools/distroless"
+    section: "images"
+    kind: "image"
+    relation: "shipped"
+    license: "Apache-2.0"
+    use: >-
+      Runtime base of the published container image (`Dockerfile`) and of the Go Dockerfile template
+      (`templates/go/Dockerfile.distroless.tmpl`)
+    paths:
+      - "Dockerfile"
+      - "templates/go/Dockerfile.distroless.tmpl"
+    packages:
+      - "gcr.io/distroless"
+  - name: "golang Docker Official Image"
+    url: "https://github.com/docker-library/golang"
+    section: "images"
+    kind: "image"
+    relation: "integrated"
+    license: "BSD-3-Clause"
+    use: >-
+      Build stage of the devcontainer bootstrap (`.devcontainer/Dockerfile.praetor`), of the Go Dockerfile template,
+      and base of the development image (`docker/dev/Dockerfile`)
+    paths:
+      - ".devcontainer/Dockerfile.praetor"
+      - "templates/go/Dockerfile.distroless.tmpl"
+      - "docker/dev/Dockerfile"
+    packages:
+      - "golang"
+      - "docker.io/library/golang"
+  - name: "Dev Container images"
+    url: "https://github.com/devcontainers/images"
+    section: "images"
+    kind: "image"
+    relation: "integrated"
+    license: "MIT"
+    use: >-
+      `mcr.microsoft.com/devcontainers/base`, the base of this repository's devcontainer and of the one adoption
+      writes (`internal/devcontainer/bootstrap.go`)
+    paths:
+      - ".devcontainer/Dockerfile.praetor"
+      - "internal/devcontainer/bootstrap.go"
+    packages:
+      - "mcr.microsoft.com/devcontainers/base"
+  - name: "Dev Container Features"
+    url: "https://github.com/devcontainers/features"
+    section: "images"
+    kind: "image"
+    relation: "integrated"
+    license: "MIT"
+    use: >-
+      The `common-utils`, `go` and `node` features the devcontainers install (`.devcontainer/devcontainer.json`,
+      `internal/devcontainer/devcontainer.go`)
+    paths:
+      - ".devcontainer/devcontainer.json"
+      - "internal/devcontainer/devcontainer.go"
+    packages:
+      - "ghcr.io/devcontainers/features"
+  - name: "MkDocs"
+    url: "https://github.com/mkdocs/mkdocs"
+    detail: "(`mkdocs`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "BSD-2-Clause"
+    use: "`docs/presets/mkdocs`: the site generator; it builds this site too"
+    paths:
+      - "docs/presets/mkdocs/requirements.in"
+      - "mkdocs.yml"
+    packages:
+      - "mkdocs"
+  - name: "Material for MkDocs"
+    url: "https://github.com/squidfunk/mkdocs-material"
+    detail: "(`mkdocs-material`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    use: >-
+      `docs/presets/mkdocs`: the theme, whose `base.html` the preset's `overrides/main.html` extends; this site uses
+      it too. It bundles the icons and loads the fonts listed under Fonts and icons
+    paths:
+      - "docs/presets/mkdocs/requirements.in"
+      - "mkdocs.yml"
+    packages:
+      - "mkdocs-material"
+    match:
+      - "name: material"
+  - name: "mkdocs-minify-plugin"
+    url: "https://github.com/byrnereese/mkdocs-minify-plugin"
+    detail: "(`mkdocs-minify-plugin`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    use: "`docs/presets/mkdocs`: HTML, CSS and JavaScript minification"
+    paths:
+      - "docs/presets/mkdocs/requirements.in"
+    packages:
+      - "mkdocs-minify-plugin"
+  - name: "PyMdown Extensions"
+    url: "https://github.com/facelessuser/pymdown-extensions"
+    detail: "(`pymdown-extensions`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    use: "`docs/presets/mkdocs`: the `pymdownx` Markdown extensions"
+    paths:
+      - "docs/presets/mkdocs/requirements.in"
+    packages:
+      - "pymdown-extensions"
+  - name: "Astro"
+    url: "https://github.com/withastro/astro"
+    detail: "(`astro`, `@astrojs/sitemap`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    use: "`docs/presets/starlight`: the site framework and its sitemap integration"
+    paths:
+      - "docs/presets/starlight/package.json"
+    packages:
+      - "astro"
+      - "@astrojs/sitemap"
+  - name: "Starlight"
+    url: "https://github.com/withastro/starlight"
+    detail: "(`@astrojs/starlight`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    use: >-
+      `docs/presets/starlight`: the documentation theme, whose head the preset's `src/components/SEOHead.astro`
+      overrides
+    paths:
+      - "docs/presets/starlight/package.json"
+    packages:
+      - "@astrojs/starlight"
+  - name: "sharp"
+    url: "https://github.com/lovell/sharp"
+    detail: "(`sharp`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "Apache-2.0 AND LGPL-3.0-or-later"
+    notice: >-
+      sharp itself is Apache-2.0; the prebuilt platform package npm installs beside it carries libvips and its
+      dependencies under LGPL-3.0-or-later (`@img/sharp-libvips-*`, and inside `@img/sharp-win32-*` and
+      `@img/sharp-wasm32`), so an adopter who copies the preset receives that LGPL binary with its license
+    use: "`docs/presets/starlight`: image processing for Astro's image service"
+    paths:
+      - "docs/presets/starlight/package.json"
+      - "docs/presets/starlight/package-lock.json"
+    packages:
+      - "sharp"
+      - "@img/sharp-libvips"
+  - name: "Lightning CSS"
+    url: "https://github.com/parcel-bundler/lightningcss"
+    detail: "(`lightningcss`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MPL-2.0"
+    notice: "with its platform binaries `lightningcss-*`; Vite requires it, so the Starlight preset lock installs it"
+    use: "`docs/presets/starlight`: CSS processing in the site build"
+    paths:
+      - "docs/presets/starlight/package-lock.json"
+    packages:
+      - "lightningcss"
+  - name: "TypeScript"
+    url: "https://github.com/microsoft/TypeScript"
+    detail: "(`typescript`)"
+    section: "presets"
+    kind: "dependency"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: >-
+      `docs/presets/starlight`: type checking, a development dependency; it also checks the figure tooling and builds
+      the VS Code extension
+    paths:
+      - "docs/presets/starlight/package.json"
+      - "tools/figures/package.json"
+      - "editors/vscode/package.json"
+    packages:
+      - "typescript"
+  - name: "actions/cache"
+    url: "https://github.com/actions/cache"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows; Go CI templates"
+    paths:
+      - ".github/workflows/ci.yml"
+      - "templates/go/ci-go.yml.tmpl"
+    packages:
+      - "actions/cache"
+  - name: "actions/checkout"
+    url: "https://github.com/actions/checkout"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows; every CI template"
+    paths:
+      - ".github/workflows/ci.yml"
+      - "templates/go/ci-go.yml.tmpl"
+    packages:
+      - "actions/checkout"
+  - name: "actions/deploy-pages"
+    url: "https://github.com/actions/deploy-pages"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows"
+    paths:
+      - ".github/workflows/pages.yml"
+    packages:
+      - "actions/deploy-pages"
+  - name: "actions/setup-go"
+    url: "https://github.com/actions/setup-go"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows; Go CI templates"
+    paths:
+      - ".github/workflows/ci.yml"
+      - "templates/go/ci-go.yml.tmpl"
+    packages:
+      - "actions/setup-go"
+  - name: "actions/setup-java"
+    url: "https://github.com/actions/setup-java"
+    section: "actions"
+    kind: "action"
+    relation: "integrated"
+    license: "MIT"
+    use: "JVM CI template"
+    paths:
+      - "templates/jvm/ci-jvm.yml.tmpl"
+    packages:
+      - "actions/setup-java"
+  - name: "actions/setup-node"
+    url: "https://github.com/actions/setup-node"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows; Node CI template"
+    paths:
+      - ".github/workflows/ci.yml"
+      - "templates/node/ci-node.yml.tmpl"
+    packages:
+      - "actions/setup-node"
+  - name: "actions/setup-python"
+    url: "https://github.com/actions/setup-python"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows"
+    paths:
+      - ".github/workflows/ci.yml"
+    packages:
+      - "actions/setup-python"
+  - name: "actions/upload-pages-artifact"
+    url: "https://github.com/actions/upload-pages-artifact"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows"
+    paths:
+      - ".github/workflows/pages.yml"
+    packages:
+      - "actions/upload-pages-artifact"
+  - name: "anchore/sbom-action"
+    url: "https://github.com/anchore/sbom-action"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "Workflows: installs Syft"
+    paths:
+      - ".github/workflows/release-binaries.yml"
+    packages:
+      - "anchore/sbom-action"
+  - name: "Azure/setup-helm"
+    url: "https://github.com/Azure/setup-helm"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows: installs Helm"
+    paths:
+      - ".github/workflows/release-binaries.yml"
+    packages:
+      - "azure/setup-helm"
+  - name: "docker/login-action"
+    url: "https://github.com/docker/login-action"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "Workflows"
+    paths:
+      - ".github/workflows/release-binaries.yml"
+    packages:
+      - "docker/login-action"
+  - name: "docker/setup-buildx-action"
+    url: "https://github.com/docker/setup-buildx-action"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "Workflows"
+    paths:
+      - ".github/workflows/release-binaries.yml"
+    packages:
+      - "docker/setup-buildx-action"
+  - name: "fsfe/reuse-action"
+    url: "https://github.com/fsfe/reuse-action"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "GPL-3.0-or-later"
+    use: "Workflows: runs the REUSE check"
+    paths:
+      - ".github/workflows/compliance.yml"
+    packages:
+      - "fsfe/reuse-action"
+  - name: "goreleaser/goreleaser-action"
+    url: "https://github.com/goreleaser/goreleaser-action"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows"
+    paths:
+      - ".github/workflows/release-binaries.yml"
+    packages:
+      - "goreleaser/goreleaser-action"
+  - name: "oven-sh/setup-bun"
+    url: "https://github.com/oven-sh/setup-bun"
+    section: "actions"
+    kind: "action"
+    relation: "integrated"
+    license: "MIT"
+    use: "Node CI template"
+    paths:
+      - "templates/node/ci-node.yml.tmpl"
+    packages:
+      - "oven-sh/setup-bun"
+  - name: "sigstore/cosign-installer"
+    url: "https://github.com/sigstore/cosign-installer"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "Workflows: installs Cosign"
+    paths:
+      - ".github/workflows/release-binaries.yml"
+    packages:
+      - "sigstore/cosign-installer"
+  - name: "subosito/flutter-action"
+    url: "https://github.com/subosito/flutter-action"
+    section: "actions"
+    kind: "action"
+    relation: "integrated"
+    license: "MIT"
+    use: "Flutter CI template"
+    paths:
+      - "templates/flutter/ci-flutter.yml.tmpl"
+    packages:
+      - "subosito/flutter-action"
+  - name: "GitHub"
+    url: "https://github.com"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "a hosted service used under GitHub's terms"
+    use: >-
+      The forge praetor's issue, pull-request, ruleset, project and Actions commands drive through the GitHub REST and
+      GraphQL APIs (`internal/forge/github.go`)
+    paths:
+      - "internal/forge/github.go"
+  - name: "Gitea"
+    url: "https://github.com/go-gitea/gitea"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    use: "Forge provider: the forge commands against a Gitea API (`internal/forge/gitea.go`)"
+    paths:
+      - "internal/forge/gitea.go"
+  - name: "Forgejo"
+    url: "https://codeberg.org/forgejo/forgejo"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "GPL-3.0-or-later"
+    notice: "from Forgejo 9.0; earlier releases are MIT"
+    use: "Forge provider through the Gitea-compatible API (`internal/forge/gitea.go`)"
+    paths:
+      - "internal/forge/gitea.go"
+  - name: "GitLab"
+    url: "https://gitlab.com/gitlab-org/gitlab"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    notice: "outside `ee/` and `jh/`, which carry their own licenses; `doc/` is CC BY-SA 4.0"
+    use: "Forge provider: the forge commands against the GitLab API (`internal/forge/gitlab.go`)"
+    paths:
+      - "internal/forge/gitlab.go"
+  - name: "Hindsight"
+    url: "https://github.com/vectorize-io/hindsight"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2025 Vectorize AI, Inc."
+    use: >-
+      Memory server the `hindsight` commands and MCP tools read and write (`internal/hindsight`); interfig, above,
+      comes from the same repository
+    paths:
+      - "internal/hindsight/client.go"
+      - "cmd/standardsctl/hindsight.go"
+      - "cmd/standards-mcp/tools_hindsight.go"
+  - name: "LiteLLM"
+    url: "https://github.com/BerriAI/litellm"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2023 Berri AI; `enterprise/` carries its own license"
+    use: "Model gateway whose catalog the model router syncs and whose response-cost header repair runs read"
+    paths:
+      - "internal/router/sync.go"
+      - "internal/repairrun/provider_http.go"
+  - name: "Ollama"
+    url: "https://github.com/ollama/ollama"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    use: "Local model server whose installed models the router discovers (`internal/router/discovery.go`)"
+    paths:
+      - "internal/router/discovery.go"
+      - "cmd/standardsctl/models.go"
+  - name: "vLLM"
+    url: "https://github.com/vllm-project/vllm"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: "OpenAI-compatible model server whose models the router discovers (`internal/router/discovery.go`)"
+    paths:
+      - "internal/router/discovery.go"
+      - "cmd/standardsctl/models.go"
+  - name: "OpenVINO"
+    url: "https://github.com/openvinotoolkit/openvino"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: >-
+      Named by the Python ML flavor, which audits PyTorch and OpenVINO pipelines (`internal/flavor/definitions.go`)
+    paths:
+      - "internal/flavor/definitions.go"
+  - name: "Paperclip"
+    url: "https://github.com/paperclipai/paperclip"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    use: >-
+      Agent control plane the adoption policy, the harness (`internal/paperclip`) and the `paperclip-operate` skill
+      integrate with; the skill's rules are praetor's own
+    paths:
+      - "internal/paperclip/harness.go"
+      - "cmd/standardsctl/paperclip.go"
+      - ".agents/skills/paperclip-operate/SKILL.md"
+  - name: "NotebookLM"
+    url: "https://notebooklm.google"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "a Google service used under Google's terms"
+    use: >-
+      Planning notebooks: praetor prepares source snapshots for it (`internal/notebook`) and exports to it
+      (`scripts/notebooklm_export.py`)
+    paths:
+      - "internal/notebook/notebook.go"
+      - "scripts/notebooklm_export.py"
+  - name: "Zig"
+    url: "https://github.com/ziglang/zig"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    use: "The needs analyzer reads Zig builds (`build.zig`) and their package manifests (`build.zig.zon`)"
+    paths:
+      - "internal/needs/analyzer_native.go"
+      - "internal/needs/zon.go"
+  - name: "Trivy"
+    url: "https://github.com/aquasecurity/trivy"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: >-
+      Vulnerability scanner the container, OS-image and infrastructure archetypes name; the generated devcontainers
+      install its editor extension
+    paths:
+      - ".config/archetypes/container-image.yaml"
+      - "internal/devcontainer/devcontainer.go"
+  - name: "Node.js"
+    url: "https://github.com/nodejs/node"
+    section: "integrations"
+    kind: "tool"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© Node.js contributors; each release archive carries the licenses of the dependencies it bundles"
+    use: >-
+      Runs the Markdown gate, the figure build and the devcontainer CLI; praetorctl downloads the release
+      `internal/devcontainer/cli/node.json` pins from nodejs.org
+    paths:
+      - "internal/devcontainer/cli.go"
+    packages:
+      - "nodejs.org"
+  - name: "Git"
+    url: "https://git-scm.com"
+    section: "integrations"
+    kind: "tool"
+    relation: "integrated"
+    license: "GPL-2.0-only"
+    use: "praetorctl runs git for every repository read and write"
+    paths:
+      - "internal/util/git_tree.go"
+  - name: "Visual Studio Code"
+    url: "https://github.com/microsoft/vscode"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    notice: "the Code - OSS source; Microsoft's Visual Studio Code builds ship under the Microsoft product license"
+    use: "The praetor extension in `editors/vscode` runs in it, and adoption writes its workspace settings"
+    paths:
+      - "editors/vscode/package.json"
+      - "internal/editor/editor.go"
+    match:
+      - "vscode"
+  - name: "Claude Code"
+    url: "https://github.com/anthropics/claude-code"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "© Anthropic PBC; used under Anthropic's Commercial Terms of Service"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/clientid/clientid.go"
+    match:
+      - "claude"
+  - name: "Codex CLI"
+    url: "https://github.com/openai/codex"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/clientid/clientid.go"
+    match:
+      - "codex"
+  - name: "Gemini CLI"
+    url: "https://github.com/google-gemini/gemini-cli"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/clientid/clientid.go"
+    match:
+      - "gemini"
+  - name: "Antigravity"
+    url: "https://antigravity.google"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "a Google product used under Google's terms"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/clientid/clientid.go"
+      - "internal/editor/editor.go"
+    match:
+      - "agy"
+      - "antigravity"
+  - name: "Cline"
+    url: "https://github.com/cline/cline"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/clientid/clientid.go"
+  - name: "Continue"
+    url: "https://github.com/continuedev/continue"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/clientid/clientid.go"
+  - name: "Kilo Code"
+    url: "https://github.com/Kilo-Org/kilocode"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/clientid/clientid.go"
+    match:
+      - "kilo"
+  - name: "OpenCode"
+    url: "https://github.com/anomalyco/opencode"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MIT"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/clientid/clientid.go"
+  - name: "Cursor"
+    url: "https://cursor.com"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "a product of Anysphere used under its terms"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/agentcontext/render.go"
+  - name: "Windsurf"
+    url: "https://windsurf.com"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "used under its provider's terms"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/agentcontext/render.go"
+  - name: "GitHub Copilot"
+    url: "https://github.com/features/copilot"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "a GitHub service used under GitHub's terms"
+    use: "Agent client praetor compiles agent context for and configures"
+    paths:
+      - "internal/agentcontext/render.go"
+    match:
+      - "copilot"
+  - name: "The Power of 10 rules"
+    url: "https://spinroot.com/gerard/pdf/P10.pdf"
+    detail: >-
+      (Gerard J. Holzmann, NASA JPL; IEEE Computer 39(6):95–97, 2006,
+      [doi:10.1109/MC.2006.212](https://doi.org/10.1109/MC.2006.212))
+    section: "specifications"
+    kind: "specification"
+    relation: "inspired"
+    license: "none"
+    use: "The basis of the HISS invariants"
+    paths:
+      - "internal/hiss/hiss.go"
+    match:
+      - "power-of-10"
+  - name: "Semantic Versioning 2.0.0"
+    url: "https://semver.org"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "CC-BY-3.0"
+    use: "Version comparison and release tags"
+    paths:
+      - "internal/semver/semver.go"
+    match:
+      - "semver"
+  - name: "Conventional Commits 1.0.0"
+    url: "https://www.conventionalcommits.org"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2018 Conventional Changelog"
+    use: "Commit subjects and the commit check"
+    paths:
+      - "internal/forge/pr.go"
+      - "internal/adopt/governance.go"
+    match:
+      - "conventional commit"
+  - name: "Keep a Changelog 1.1.0"
+    url: "https://keepachangelog.com"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2014 Olivier Lacan"
+    use: "Changelog sections"
+    paths:
+      - "internal/changelog/changelog.go"
+    match:
+      - "keep a changelog"
+  - name: "Developer Certificate of Origin 1.1"
+    url: "https://developercertificate.org"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "none"
+    notice: "© 2004, 2006 The Linux Foundation and its contributors; everyone may copy it verbatim"
+    use: "The `Signed-off-by` requirement"
+    paths:
+      - "docs/guides/contributing.md"
+    match:
+      - "developer certificate of origin"
+  - name: "SLSA v1.0"
+    url: "https://slsa.dev"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "Community-Spec-1.0"
+    use: "Release provenance"
+    paths:
+      - "internal/supplychain/slsa.go"
+    match:
+      - "slsa"
+  - name: "in-toto Attestation Framework v1"
+    url: "https://github.com/in-toto/attestation"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: "The provenance statement format"
+    paths:
+      - "internal/supplychain/intoto.go"
+    match:
+      - "in-toto"
+  - name: "CycloneDX"
+    url: "https://cyclonedx.org"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: "The SBOM format `praetorctl sbom` writes"
+    paths:
+      - "internal/supplychain/sbom.go"
+  - name: "SPDX"
+    url: "https://spdx.org"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "Community-Spec-1.0"
+    notice: "older portions CC BY 3.0"
+    use: "License identifiers and the SBOM format Syft writes during a release"
+    paths:
+      - "REUSE.toml"
+      - ".goreleaser.yaml"
+  - name: "Model Context Protocol"
+    url: "https://modelcontextprotocol.io"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "Apache-2.0"
+    notice: "moving from MIT; parts not yet relicensed stay MIT"
+    use: "The MCP servers"
+    paths:
+      - "cmd/standards-mcp/server.go"
+    match:
+      - "mcp"
+  - name: "Schema.org"
+    url: "https://schema.org"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "CC-BY-SA-3.0"
+    use: "JSON-LD in the documentation presets"
+    paths:
+      - "internal/seo/seo.go"
+  - name: "EditorConfig"
+    url: "https://editorconfig.org"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "BSD-2-Clause"
+    notice: "© 2019 EditorConfig Team"
+    use: "Editor settings the adoption writes"
+    paths:
+      - "internal/editor/editor.go"
+      - ".editorconfig"
+  - name: "AGENTS.md"
+    url: "https://agents.md/"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "MIT"
+    notice: "© 2025 OpenAI"
+    use: "The canonical agent instruction file"
+    paths:
+      - "AGENTS.md"
+  - name: "SARIF 2.1.0"
+    url: "https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "LicenseRef-OASIS-IPR-Policy"
+    notice: "© OASIS Open; published under the OASIS IPR Policy in its RF on RAND terms mode"
+    use: "The static-analysis result format whose compiler and linter logs praetor distills (`internal/lockdown`)"
+    paths:
+      - "internal/lockdown/distill.go"
+    match:
+      - "sarif"
+  - name: "C4 model"
+    url: "https://c4model.com"
+    section: "specifications"
+    kind: "specification"
+    relation: "inspired"
+    license: "CC-BY-4.0"
+    notice: "Simon Brown"
+    use: "The levels of the architecture views (`docs/architecture/c4-models.md`)"
+    paths:
+      - "docs/architecture/c4-models.md"
+    match:
+      - "c4"
+  - name: "OSV schema"
+    url: "https://github.com/ossf/osv-schema"
+    section: "specifications"
+    kind: "specification"
+    relation: "integrated"
+    license: "Apache-2.0"
+    use: >-
+      The vulnerability entry format the Go vulnerability gate reads from govulncheck's stream (`internal/govuln`)
+    paths:
+      - "internal/govuln/stream.go"
+    match:
+      - "osv"
+  - name: "Material Design Icons"
+    url: "https://pictogrammers.com/library/mdi/"
+    section: "fonts"
+    kind: "font or icon"
+    relation: "integrated"
+    license: "LicenseRef-Pictogrammers-Free-License AND Apache-2.0"
+    notice: "Pictogrammers; some icons are redistributed under Apache-2.0, as the upstream license states"
+    use: >-
+      The theme toggle icons of this site and of the MkDocs preset (`material/` icons in `mkdocs.yml`), bundled by
+      Material for MkDocs
+    paths:
+      - "mkdocs.yml"
+      - "docs/presets/mkdocs/mkdocs.yml"
+    match:
+      - "icon: material/"
+  - name: "Font Awesome Free"
+    url: "https://fontawesome.com"
+    section: "fonts"
+    kind: "font or icon"
+    relation: "integrated"
+    license: "CC-BY-4.0"
+    notice: "for the icons; Font Awesome Free fonts are OFL-1.1 and its code MIT"
+    use: >-
+      The GitHub icon in this site's footer (`fontawesome/brands/github` in `mkdocs.yml`), bundled by Material for
+      MkDocs
+    paths:
+      - "mkdocs.yml"
+    match:
+      - "fontawesome"
+  - name: "Roboto"
+    url: "https://fonts.google.com/specimen/Roboto"
+    section: "fonts"
+    kind: "font or icon"
+    relation: "integrated"
+    license: "OFL-1.1"
+    notice: "Christian Robertson, ParaType, Font Bureau"
+    use: >-
+      Body font of this site and of the MkDocs preset: Material for MkDocs loads it from Google Fonts unless
+      `theme.font` is false
+    paths:
+      - "mkdocs.yml"
+      - "docs/presets/mkdocs/mkdocs.yml"
+    match:
+      - "name: material"
+  - name: "Roboto Mono"
+    url: "https://fonts.google.com/specimen/Roboto+Mono"
+    section: "fonts"
+    kind: "font or icon"
+    relation: "integrated"
+    license: "OFL-1.1"
+    notice: "Christian Robertson"
+    use: "Code font of this site and of the MkDocs preset, loaded the same way"
+    paths:
+      - "mkdocs.yml"
+      - "docs/presets/mkdocs/mkdocs.yml"
+    match:
+      - "name: material"
+  - name: "Lefthook"
+    url: "https://github.com/evilmartians/lefthook"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Git hooks; CI installs it with go install"
+    paths:
+      - "lefthook.yml"
+      - ".github/workflows/ci.yml"
+    packages:
+      - "github.com/evilmartians/lefthook"
+  - name: "GoReleaser"
+    url: "https://goreleaser.com"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Release archives, the container image and checksums"
+    paths:
+      - ".goreleaser.yaml"
+  - name: "golangci-lint"
+    url: "https://golangci-lint.run"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "GPL-3.0"
+    use: "Go linting, run with go run at its latest release"
+    paths:
+      - ".golangci.yml"
+      - "Makefile"
+    packages:
+      - "github.com/golangci/golangci-lint"
+  - name: "gosec"
+    url: "https://github.com/securego/gosec"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "Go security scan, a tool of `tools/go/go.mod`"
+    paths:
+      - "tools/go/go.mod"
+      - "Makefile"
+    packages:
+      - "github.com/securego/gosec"
+  - name: "Gitleaks"
+    url: "https://github.com/gitleaks/gitleaks"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Secret scan, a tool of `tools/go/go.mod`"
+    paths:
+      - "tools/go/go.mod"
+      - "Makefile"
+    packages:
+      - "github.com/zricethezav/gitleaks"
+  - name: "govulncheck"
+    url: "https://go.googlesource.com/vuln"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "BSD-3-Clause"
+    notice: "© The Go Authors"
+    use: "Go vulnerability scan, a tool of `tools/go/go.mod`"
+    paths:
+      - "tools/go/go.mod"
+      - "Makefile"
+    packages:
+      - "golang.org/x/vuln"
+  - name: "Semgrep"
+    url: "https://semgrep.dev"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "LGPL-2.1"
+    use: "Static analysis rules"
+    paths:
+      - ".config/semgrep/requirements.txt"
+      - "Makefile"
+  - name: "Black"
+    url: "https://github.com/psf/black"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Formats the hook sources adoption copies (`.config/hook-lint/requirements.in`)"
+    paths:
+      - ".config/hook-lint/requirements.in"
+    packages:
+      - "black"
+  - name: "Flake8"
+    url: "https://github.com/PyCQA/flake8"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Lints the hook sources adoption copies"
+    paths:
+      - ".config/hook-lint/requirements.in"
+    packages:
+      - "flake8"
+  - name: "yamllint"
+    url: "https://github.com/adrienverge/yamllint"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "GPL-3.0-or-later"
+    use: "Lints the YAML praetor emits and the portability job's YAML"
+    paths:
+      - ".config/hook-lint/requirements.in"
+    packages:
+      - "yamllint"
+  - name: "ShellCheck"
+    url: "https://github.com/koalaman/shellcheck"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "GPL-3.0"
+    use: "Lints the shell hooks; the portability job downloads a pinned release"
+    paths:
+      - ".github/workflows/portability.yml"
+    packages:
+      - "github.com/koalaman/shellcheck"
+  - name: "Cosign"
+    url: "https://github.com/sigstore/cosign"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "Keyless signing and verification"
+    paths:
+      - ".github/workflows/release-binaries.yml"
+      - ".goreleaser.yaml"
+  - name: "Syft"
+    url: "https://github.com/anchore/syft"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "SBOM generation"
+    paths:
+      - ".goreleaser.yaml"
+      - ".github/workflows/release-binaries.yml"
+  - name: "Helm"
+    url: "https://github.com/helm/helm"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "Lints, packages and pushes the chart in `deploy/helm/praetor` during a release"
+    paths:
+      - ".github/workflows/release-binaries.yml"
+    packages:
+      - "helm"
+  - name: "Renovate"
+    url: "https://github.com/renovatebot/renovate"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "AGPL-3.0-only"
+    use: >-
+      Dependency update proposals; `renovate.json` extends its built-in presets `config:recommended`,
+      `:dependencyDashboard`, `:semanticCommits` and `:maintainLockFilesWeekly`, and CI installs it to validate the
+      configuration
+    paths:
+      - "renovate.json"
+      - ".github/workflows/ci.yml"
+    packages:
+      - "renovate"
+  - name: "REUSE"
+    url: "https://reuse.software"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "GPL-3.0-or-later"
+    use: "License compliance check, run by the reuse-action"
+    paths:
+      - "REUSE.toml"
+      - ".github/workflows/compliance.yml"
+  - name: "Chromium"
+    url: "https://www.chromium.org"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "BSD-3-Clause"
+    notice: "© 2015 The Chromium Authors"
+    use: "The browser Playwright downloads in CI to render and check the documentation figures"
+    paths:
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/pages.yml"
+    packages:
+      - "chromium"
+  - name: "esbuild"
+    url: "https://github.com/evanw/esbuild"
+    section: "development"
+    kind: "tool"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Bundles the figure player from `tools/figures/package-lock.json`"
+    paths:
+      - "tools/figures/package.json"
+    packages:
+      - "esbuild"
+  - name: "Playwright"
+    url: "https://github.com/microsoft/playwright"
+    section: "development"
+    kind: "tool"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: "Drives the browser of the figure checks; the vendored interfig manifest names it as well"
+    paths:
+      - "tools/figures/package.json"
+      - "tools/figures/third_party/interfig/upstream/package.json"
+    packages:
+      - "playwright"
+  - name: "Sätteri"
+    url: "https://github.com/bruits/satteri"
+    detail: "(`satteri`)"
+    section: "development"
+    kind: "dependency"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Markdown and MDX processing of the figures' Astro integration (`tools/figures/astro.mjs`) and its tests"
+    paths:
+      - "tools/figures/package.json"
+      - "tools/figures/astro.mjs"
+    packages:
+      - "satteri"
+  - name: "DefinitelyTyped"
+    url: "https://github.com/DefinitelyTyped/DefinitelyTyped"
+    section: "development"
+    kind: "dependency"
+    relation: "used by CI"
+    license: "MIT"
+    use: >-
+      Type declarations (`@types/react`, `@types/react-dom`, `@types/node`, `@types/vscode`) for the figure tooling
+      and the VS Code extension
+    paths:
+      - "tools/figures/package.json"
+      - "editors/vscode/package.json"
+      - "tools/figures/third_party/interfig/upstream/package.json"
+    packages:
+      - "@types"
+  - name: "vscode-languageclient"
+    url: "https://github.com/microsoft/vscode-languageserver-node"
+    section: "development"
+    kind: "dependency"
+    relation: "integrated"
+    license: "MIT"
+    use: "The language client of the praetor VS Code extension (`editors/vscode`)"
+    paths:
+      - "editors/vscode/package.json"
+      - "editors/vscode/src/extension.ts"
+    packages:
+      - "vscode-languageclient"
+  - name: "Vite"
+    url: "https://github.com/vitejs/vite"
+    section: "development"
+    kind: "dependency"
+    relation: "vendored"
+    license: "MIT"
+    use: >-
+      Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it
+    paths:
+      - "tools/figures/third_party/interfig/upstream/package.json"
+    packages:
+      - "vite"
+  - name: "@vitejs/plugin-react"
+    url: "https://github.com/vitejs/vite-plugin-react"
+    section: "development"
+    kind: "dependency"
+    relation: "vendored"
+    license: "MIT"
+    use: >-
+      Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it
+    paths:
+      - "tools/figures/third_party/interfig/upstream/package.json"
+    packages:
+      - "@vitejs/plugin-react"
+  - name: "Prettier"
+    url: "https://github.com/prettier/prettier"
+    section: "development"
+    kind: "dependency"
+    relation: "vendored"
+    license: "MIT"
+    use: >-
+      Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it
+    paths:
+      - "tools/figures/third_party/interfig/upstream/package.json"
+    packages:
+      - "prettier"
