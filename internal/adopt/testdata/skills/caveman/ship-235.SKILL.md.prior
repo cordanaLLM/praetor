@@ -10,6 +10,8 @@ metadata:
 
 # Caveman: internal register (`caveman`)
 
+Adapted from [Caveman](https://github.com/JuliusBrussee/caveman) by Julius Brussee and [contributors](https://github.com/JuliusBrussee/caveman/graphs/contributors); MIT terms at adaptation. Credit: `docs/credits.md`.
+
 Caveman = `internal` register of text-register policy (`register:` in `.standards.yaml`;
 "Text Register" section of AGENTS.md). Config value stays `internal`; this skill = its
 form. Agent traffic pays per token, per hop -> caveman line carries same facts, fewer
