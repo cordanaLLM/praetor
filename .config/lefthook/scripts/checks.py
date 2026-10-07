@@ -19,13 +19,14 @@ GO_EXTENSIONS = {".go", ".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", 
                  ".f", ".F", ".for", ".f90", ".s", ".S", ".sx", ".swig", ".swigcxx", ".syso"}
 # What `compile-context --verify` reads or checks: canonical AGENTS.md and .agents/ (personas,
 # skills, plugin copies), the six vendor files (internal/agentcontext/render.go
-# vendorTargets) and the vendor persona directories (compiler.CompileAgentSurfaces).
+# vendorTargets), the vendor persona directories (compiler.CompileAgentSurfaces) and the
+# client skill directories (vendorTargets skillDir, .claude/skills).
 # test_context_changed_covers_every_compile_context_path runs the real compile-context and
 # fails if it writes a path these do not match.
 CONTEXT = {"AGENTS.md", "CLAUDE.md", ".windsurfrules",
            ".github/copilot-instructions.md", ".gemini/GEMINI.md", ".codex/rules.md"}
-CONTEXT_PREFIXES = (".agents/", ".cursor/rules/", ".claude/agents/", ".codex/agents/",
-                    ".gemini/agents/", ".github/agents/")
+CONTEXT_PREFIXES = (".agents/", ".cursor/rules/", ".claude/agents/", ".claude/skills/",
+                    ".codex/agents/", ".gemini/agents/", ".github/agents/")
 # The extensions semgrep assigns each language a rule can target, from semgrep's language
 # table (semgrep_interfaces/lang.json, "exts", semgrep 1.178.0). Keyed by the names
 # .config/semgrep/hiss-invariants.yml uses; test_semgrep_suffixes_cover_every_rule_language
