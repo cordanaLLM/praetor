@@ -84,7 +84,7 @@ func TestBacklogCap_Positive_UnderTheCapWritesNoBatchAndPasses(t *testing.T) {
 	root := defectLedger(t, 2)
 	report := evaluate(t, root, config.BacklogCaps{Defects: config.BacklogCap{Max: 3, Action: config.BacklogGate}})
 	category := &report.Categories[0]
-	if category.Count() != 2 || category.State() != StateUnder || !category.Present {
+	if category.Count() != 2 || category.State() != StateUnder || len(category.Absent) != 0 {
 		t.Fatalf("category = %+v, state %s", category, category.State())
 	}
 	written, err := WriteBatches(t.Context(), root, report, batchDate)
@@ -230,12 +230,13 @@ func TestBacklogCap_Positive_RecheckAndGrouping(t *testing.T) {
 		t.Fatalf("only tasks are over: %v %v", written, err)
 	}
 	tasks := readBatch(t, root, BatchPath(config.BacklogTasks, batchDate))
-	for _, want := range []string{"## Docs (1)", "## Spikes (1)", "`task 1` one", "`task 3` two", "not re-checked: no resolver for this category"} {
+	for _, want := range []string{"## OPEN.md: Docs (1)", "## OPEN.md: Spikes (1)", "`task 1` one", "`task 3` two",
+		"not re-checked: no resolver for this category"} {
 		if !strings.Contains(tasks, want) {
 			t.Errorf("tasks batch lacks %q:\n%s", want, tasks)
 		}
 	}
-	if strings.Index(tasks, "## Docs") > strings.Index(tasks, "## Spikes") {
+	if strings.Index(tasks, "## OPEN.md: Docs") > strings.Index(tasks, "## OPEN.md: Spikes") {
 		t.Errorf("groups are not sorted:\n%s", tasks)
 	}
 	if verdict := recheckLocation(root, Item{Location: "short.go:40"}); !strings.Contains(verdict, "no longer resolves: line 40 is past the end of a 1-line file") {
@@ -271,7 +272,7 @@ func TestWriteBatches_DateAndDeterminism(t *testing.T) {
 func TestEvaluate_Boundary_AbsentLedgerAndNoPolicy(t *testing.T) {
 	report := evaluate(t, t.TempDir(), config.BacklogCaps{Questions: config.BacklogCap{Max: 2}})
 	category := &report.Categories[0]
-	if category.Present || category.Count() != 0 || !strings.Contains(category.Line(), ".workingdir/QUESTIONS.md is absent") {
+	if len(category.Absent) != 1 || category.Count() != 0 || !strings.Contains(category.Line(), ".workingdir/QUESTIONS.md is absent") {
 		t.Fatalf("absent ledger = %+v / %q", category, category.Line())
 	}
 	if empty, err := Evaluate(t.Context(), t.TempDir(), nil); err != nil || len(empty.Categories) != 0 {
@@ -283,5 +284,95 @@ func TestEvaluate_Boundary_AbsentLedgerAndNoPolicy(t *testing.T) {
 	//nolint:staticcheck // SA1012: the nil context is the input under test.
 	if _, err := Evaluate(nil, t.TempDir(), nil); err == nil {
 		t.Fatal("nil context accepted")
+	}
+}
+
+// writeTaskLedgers writes OPEN.md and BACKLOG.md; an empty content leaves that ledger absent.
+func writeTaskLedgers(t *testing.T, open, backlog string) string {
+	t.Helper()
+	root := t.TempDir()
+	if open != "" {
+		writeFile(t, root, ".workingdir/OPEN.md", open)
+	}
+	if backlog != "" {
+		writeFile(t, root, ".workingdir/BACKLOG.md", backlog)
+	}
+	return root
+}
+
+// The deferred workstreams of BACKLOG.md are open items of the state ledger: the tasks
+// category counts its pending rows after the OPEN.md rows, names each by its line and groups
+// it under its heading. Completed and fenced rows are not counted.
+func TestBacklogCap_Positive_TasksCountBacklogWorkstreams(t *testing.T) {
+	root := writeTaskLedgers(t, "## In-Flight Tasks\n- [ ] now\n",
+		"# Backlog\n## Future Workstreams\n- [ ] deferred\n- [x] dropped\n```\n- [ ] example\n```\n## Later\n- [ ] later\n")
+	tasks := config.BacklogCap{Max: 2, Action: config.BacklogBatch}
+	report := evaluate(t, root, config.BacklogCaps{Tasks: tasks})
+	category := &report.Categories[0]
+	if category.Count() != 3 || category.State() != StateOver || len(category.Findings) != 0 || len(category.Absent) != 0 {
+		t.Fatalf("tasks = %+v, state %s", category, category.State())
+	}
+	if got := []string{category.Items[0].ID, category.Items[1].ID, category.Items[2].ID}; strings.Join(got, ",") != "task 1,BACKLOG.md:3,BACKLOG.md:9" {
+		t.Fatalf("task ids = %v", got)
+	}
+	written, err := WriteBatches(t.Context(), root, report, batchDate)
+	if err != nil || len(written) != 1 {
+		t.Fatalf("written = %v, %v", written, err)
+	}
+	batch := readBatch(t, root, written[0])
+	for _, want := range []string{"holds 3 items in `.workingdir/OPEN.md` and `.workingdir/BACKLOG.md`",
+		"## BACKLOG.md: Future Workstreams (1)", "## BACKLOG.md: Later (1)", "## OPEN.md: In-Flight Tasks (1)",
+		"`BACKLOG.md:3` deferred", "`BACKLOG.md:9` later"} {
+		if !strings.Contains(batch, want) {
+			t.Errorf("batch lacks %q:\n%s", want, batch)
+		}
+	}
+	for _, unwanted := range []string{"dropped", "example"} {
+		if strings.Contains(batch, unwanted) {
+			t.Errorf("batch lists %q:\n%s", unwanted, batch)
+		}
+	}
+}
+
+// Negative, the planted ledger: OPEN.md is empty and BACKLOG.md alone holds the open items, so
+// a gate over them fails instead of passing on a silent zero. A pending row under a discharged
+// heading is counted and reported as a finding.
+func TestBacklogCap_Negative_BacklogRowsAloneTripTheGate(t *testing.T) {
+	root := writeTaskLedgers(t, "## In-Flight Tasks\n",
+		"## Future Workstreams\n- [ ] one\n- [ ] two\n### Discharged Tasks [2026-10-07, commit `local`]\n- [x] done\n- [ ] appended\n")
+	report := evaluate(t, root, config.BacklogCaps{Tasks: config.BacklogCap{Max: 2, Action: config.BacklogGate}})
+	category := &report.Categories[0]
+	if category.Count() != 3 || category.State() != StateOver {
+		t.Fatalf("tasks = %+v, state %s", category, category.State())
+	}
+	if err := report.Gate(); err == nil || !strings.Contains(err.Error(), "backlog cap tasks: 3 items, over the cap of 2") {
+		t.Fatalf("gate error = %v", err)
+	}
+	if len(category.Findings) != 1 || !strings.Contains(category.Findings[0], "BACKLOG.md:6 is pending under the discharged heading") {
+		t.Fatalf("findings = %v", category.Findings)
+	}
+}
+
+// Boundary: rows split across both ledgers that reach max exactly are at the cap and pass; an
+// absent ledger is named, both absent are named together; an unterminated fence in BACKLOG.md
+// fails the count rather than dropping its rows.
+func TestBacklogCap_Boundary_TasksAcrossBothLedgers(t *testing.T) {
+	gate := config.BacklogCaps{Tasks: config.BacklogCap{Max: 2, Action: config.BacklogGate}}
+	report := evaluate(t, writeTaskLedgers(t, "- [ ] open\n", "- [ ] deferred\n"), gate)
+	if category := &report.Categories[0]; category.State() != StateAt || report.Gate() != nil {
+		t.Fatalf("at the cap = %s, gate %v", category.State(), report.Gate())
+	}
+	report = evaluate(t, writeTaskLedgers(t, "- [ ] open\n", ""), gate)
+	if line := report.Categories[0].Line(); !strings.Contains(line, "; .workingdir/BACKLOG.md is absent, so it holds no item") {
+		t.Fatalf("absent backlog line = %q", line)
+	}
+	report = evaluate(t, t.TempDir(), gate)
+	if line := report.Categories[0].Line(); !strings.Contains(line, "tasks: 0 of 2") ||
+		!strings.Contains(line, ".workingdir/OPEN.md and .workingdir/BACKLOG.md are absent, so they hold no item") {
+		t.Fatalf("absent ledgers line = %q", line)
+	}
+	root := writeTaskLedgers(t, "- [ ] open\n", "```\n- [ ] swallowed\n")
+	if _, err := Evaluate(t.Context(), root, capPolicy(t, gate)); err == nil || !strings.Contains(err.Error(), "BACKLOG.md has an unterminated code fence") {
+		t.Fatalf("unterminated backlog fence = %v", err)
 	}
 }
