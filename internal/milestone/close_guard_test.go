@@ -77,6 +77,30 @@ func TestCloseMilestoneWith_Boundary_ForgeCountsAndEmpty(t *testing.T) {
 	}
 }
 
+// SelectMilestone resolves a selector by CloseMilestone's rules and changes nothing:
+// positive by number and by title, negative for an unknown, ambiguous or empty selector,
+// boundary for a number that never falls through to a title match.
+func TestSelectMilestone_3D(t *testing.T) {
+	ctx := context.Background()
+	dir := setupTestDir(t)
+	before := writeStoreFixture(t, dir, &MilestoneStore{Milestones: []Milestone{
+		{Number: 1, Title: "v1.0", State: StateOpen, RemoteNumber: 9},
+		{Number: 2, Title: "v1.1", State: StateOpen},
+	}})
+	if m, err := SelectMilestone(ctx, dir, "1"); err != nil || m.RemoteNumber != 9 {
+		t.Fatalf("by number: %+v, %v", m, err)
+	}
+	if m, err := SelectMilestone(ctx, dir, "1.1"); err != nil || m.Number != 2 {
+		t.Fatalf("by title: %+v, %v", m, err)
+	}
+	for _, bad := range []string{"", "  ", "v1", "nope", "3"} {
+		if _, err := SelectMilestone(ctx, dir, bad); err == nil {
+			t.Errorf("selector %q accepted", bad)
+		}
+	}
+	assertStoreBytes(t, dir, before)
+}
+
 // Positive: the active milestone is the open, published milestone due first.
 func TestActiveMilestone_Positive_DueFirst(t *testing.T) {
 	dir := setupTestDir(t)
