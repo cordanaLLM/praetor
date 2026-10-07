@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -42,12 +43,16 @@ const maxImplicitSourceEntries = 4096
 // text proves nothing. An unreadable or oversized directory counts as holding one.
 func makefileImplicitSourceNear(root, rel string) bool {
 	dir, base := path.Split(rel)
-	handle, err := os.Open(filepath.Join(root, filepath.FromSlash(dir)))
+	scope, err := os.OpenRoot(root)
 	if err != nil {
 		return true
 	}
+	handle, err := scope.Open(filepath.FromSlash(path.Join(".", dir)))
+	if err != nil {
+		return errors.Join(err, scope.Close()) != nil
+	}
 	entries, err := handle.ReadDir(maxImplicitSourceEntries + 1)
-	if closeErr := handle.Close(); err != nil || closeErr != nil || len(entries) > maxImplicitSourceEntries {
+	if err = errors.Join(err, handle.Close(), scope.Close()); err != nil || len(entries) > maxImplicitSourceEntries {
 		return true
 	}
 	for i := 0; i < len(entries) && i < maxImplicitSourceEntries; i++ {
