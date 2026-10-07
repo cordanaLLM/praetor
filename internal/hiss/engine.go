@@ -235,8 +235,8 @@ func (w *scanWalker) finish() {
 	}
 }
 
-// goLanguage reads Go through go/parser (go_ast.go) and closes call cycles across a package
-// (go_callgraph.go).
+// goLanguage reads Go through go/parser (go_ast.go), closes call cycles across a package
+// (go_callgraph.go) and resolves the HISS-02 findings other files decide (go_io_proof.go).
 type goLanguage struct{}
 
 func (goLanguage) handles(ext string) bool { return ext == ".go" }
@@ -250,6 +250,7 @@ func (goLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bool {
 
 func (goLanguage) finish(ctx context.Context, rep *ScanReport, root string, paths []string) {
 	reportCallCycles(ctx, rep, paths, root)
+	resolveIOProofs(ctx, rep, root, paths)
 }
 
 // nativeLanguage reads C, C++, CUDA and HIP line by line (rules.go scanNativeLines).

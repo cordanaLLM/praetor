@@ -24,6 +24,24 @@ import (
 // the same call and a local of the same name is not. Test files are exempt, as they are
 // from the other Go rules, and so is main.main: the entry point owns the process lifetime,
 // and the root context it builds for a long-running server is that lifetime.
+//
+// Four shapes that hand a deadline-free context to a call are accepted (#841). Each is an
+// exact shape with its evidence, never a guess about what a callee does, and a call beside
+// one that does not match it is reported as before:
+//
+//   - lifecycle-owned: a context.WithCancel context whose cancel function a framework's stop
+//     hook calls, used inside that hook's start function (go_io_lifecycle.go, lifecycleHooks);
+//   - sinks: the log/slog functions and Logger methods that take a context only for its values,
+//     and the context's own methods, which a select over channels reads (contextFuncs,
+//     contextMethods);
+//   - callee-bounded: a function of the same module that derives WithTimeout or WithDeadline
+//     from the context before anything else uses it (go_io_callee.go);
+//   - ignored by a third-party function whose source, at the versions checked, never uses the
+//     context for I/O (go_io_index.go, contextIgnoredBy).
+//
+// The last two need files other than the caller's, so the walk records the finding together
+// with what would discharge it, and the package pass after the walk drops it once that holds
+// (resolveIOProofs in go_io_proof.go).
 
 // goFunc names a package-level function or variable by import path, independent of how a
 // file spells the package.
@@ -49,9 +67,9 @@ const (
 	ctxNeutral
 )
 
-// contextFuncs classifies every function that derives or inspects a context. None of them
-// performs I/O, so passing a deadline-free context to one is not itself a finding; what is
-// derived from it is followed instead.
+// contextFuncs classifies every function that derives, inspects or only reads a context. None
+// of them performs I/O on it, so passing a deadline-free context to one is not itself a finding;
+// what is derived from it is followed instead.
 var contextFuncs = map[goFunc]contextEffect{
 	{"context", "Background"}:        ctxRoot,
 	{"context", "TODO"}:              ctxRoot,
@@ -66,6 +84,85 @@ var contextFuncs = map[goFunc]contextEffect{
 	{"context", "WithoutCancel"}:     ctxStrips,
 	{"context", "AfterFunc"}:         ctxNeutral,
 	{"context", "Cause"}:             ctxNeutral,
+	// log/slog hands the context to its handler for the values it carries: Handler.Handle
+	// documents the context as "present solely to provide Handlers access to the context's
+	// values", and that canceling it should not affect record processing.
+	{"log/slog", "DebugContext"}: ctxNeutral,
+	{"log/slog", "InfoContext"}:  ctxNeutral,
+	{"log/slog", "WarnContext"}:  ctxNeutral,
+	{"log/slog", "ErrorContext"}: ctxNeutral,
+	{"log/slog", "Log"}:          ctxNeutral,
+	{"log/slog", "LogAttrs"}:     ctxNeutral,
+}
+
+// goMethod names a method by the import path and name of its receiver's type.
+type goMethod struct {
+	Path string
+	Type string
+	Name string
+}
+
+// contextMethods classifies the methods that take a context, or are called on one, and perform
+// no I/O on it, as contextFuncs does for functions. The log/slog Logger methods have the
+// package functions' evidence. A context.Context method only reads the context, so a select
+// whose cases receive from ctx.Done() and otherwise only send to or receive from channels
+// performs no I/O on it either; a case whose channel operand is itself a call is a call, and is
+// judged as one.
+var contextMethods = map[goMethod]contextEffect{
+	{"log/slog", "Logger", "DebugContext"}: ctxNeutral,
+	{"log/slog", "Logger", "InfoContext"}:  ctxNeutral,
+	{"log/slog", "Logger", "WarnContext"}:  ctxNeutral,
+	{"log/slog", "Logger", "ErrorContext"}: ctxNeutral,
+	{"log/slog", "Logger", "Log"}:          ctxNeutral,
+	{"log/slog", "Logger", "LogAttrs"}:     ctxNeutral,
+	{"context", "Context", "Deadline"}:     ctxNeutral,
+	{"context", "Context", "Done"}:         ctxNeutral,
+	{"context", "Context", "Err"}:          ctxNeutral,
+	{"context", "Context", "Value"}:        ctxNeutral,
+}
+
+// neutralMethod reports whether contextMethods classifies method name of the type typ in the
+// package path as one that performs no I/O on a context.
+func neutralMethod(path, typ, name string) bool {
+	effect, known := contextMethods[goMethod{Path: path, Type: typ, Name: name}]
+	return known && effect == ctxNeutral
+}
+
+// loggerType is log/slog's Logger, whose pointer receives the sink methods contextMethods lists.
+var loggerType = map[goFunc]struct{}{{"log/slog", "Logger"}: {}}
+
+// loggerSources are the log/slog functions that return a *slog.Logger.
+var loggerSources = map[goFunc]struct{}{
+	{"log/slog", "Default"}: {},
+	{"log/slog", "New"}:     {},
+	{"log/slog", "With"}:    {},
+}
+
+// loggerDerivations are the methods of *slog.Logger that return another *slog.Logger.
+var loggerDerivations = map[string]struct{}{"With": {}, "WithGroup": {}}
+
+// contextType is context.Context, the declared type of a parameter the callee walk follows.
+var contextType = map[goFunc]struct{}{{"context", "Context"}: {}}
+
+// cancelPairs are the derivations whose second result cancels the context they return, the
+// pair a lifecycle hook may own (go_io_lifecycle.go).
+var cancelPairs = map[goFunc]struct{}{
+	{"context", "WithCancel"}:      {},
+	{"context", "WithCancelCause"}: {},
+}
+
+// namesType reports whether expr spells a type of table through the file's imports im. A
+// buildable program cannot shadow an imported package name where a type is spelled, so no
+// scope is consulted.
+func namesType[V any](im GoImports, expr ast.Expr, table map[goFunc]V) bool {
+	_, _, _, ok := resolvePackageCall(im, expr, table)
+	return ok
+}
+
+// isLoggerPointer reports whether expr spells *slog.Logger through the file's imports im.
+func isLoggerPointer(im GoImports, expr ast.Expr) bool {
+	star, ok := expr.(*ast.StarExpr)
+	return ok && namesType(im, star.X, loggerType)
 }
 
 // contextlessIO maps a standard-library call that takes no context to the call that
@@ -158,26 +255,37 @@ func (g *goScanner) ioRuleApplies() bool {
 	return !g.isTest && !g.inEntryPoint()
 }
 
-// deadlineFree reports whether expr evaluates to a context without a deadline, following
-// inheriting derivations inward to their parent. The loop is bounded by maxNodeStack, which
-// already bounds how deeply a file can nest them.
-func (g *goScanner) deadlineFree(expr ast.Expr) bool {
+// contextOrigin follows inheriting derivations inward from expr to the identifier the context
+// comes from. When a call decides the question first it returns nil and whether that call
+// returns a context without a deadline; any other expression is no deadline-free context. The
+// loop is bounded by maxNodeStack, which already bounds how deeply a file can nest them.
+func (g *goScanner) contextOrigin(expr ast.Expr) (*ast.Ident, bool) {
 	for depth := 0; depth < maxNodeStack; depth++ {
 		switch e := ast.Unparen(expr).(type) {
 		case *ast.Ident:
-			end, free := g.freeContexts[e.Name]
-			return free && e.Pos() < end
+			return e, false
 		case *ast.CallExpr:
 			parent, free, decided := g.derivedDeadline(e)
 			if decided {
-				return free
+				return nil, free
 			}
 			expr = parent
 		default:
-			return false
+			return nil, false
 		}
 	}
-	return false
+	return nil, false
+}
+
+// deadlineFree reports whether expr evaluates to a context without a deadline: a deciding call,
+// or an identifier holding one where it is used.
+func (g *goScanner) deadlineFree(expr ast.Expr) bool {
+	ident, free := g.contextOrigin(expr)
+	if ident == nil {
+		return free
+	}
+	end, tracked := g.freeContexts[ident.Name]
+	return tracked && ident.Pos() < end
 }
 
 // derivedDeadline decides whether a call returns a deadline-free context. An inheriting
@@ -200,38 +308,118 @@ func (g *goScanner) derivedDeadline(call *ast.CallExpr) (parent ast.Expr, free, 
 	}
 }
 
-// forgetParams drops a function literal's parameters from the deadline-free set: inside
-// the literal each name is the parameter, not the enclosing variable it may shadow. The
-// enclosing variable stays forgotten after the literal too, which can miss a later use of
-// it but never reports a parameter.
+// enterFunc starts a function declaration with nothing tracked but its *slog.Logger parameters.
+func (g *goScanner) enterFunc(fn *ast.FuncDecl) {
+	clear(g.freeContexts)
+	clear(g.loggers)
+	clear(g.lifecycle)
+	g.bindParams(fn.Type, fn.End())
+}
+
+// forgetParams drops a function literal's parameters from what the walk tracks: inside the
+// literal each name is the parameter, not the enclosing variable it may shadow. The enclosing
+// variable stays forgotten after the literal too, which can miss a later use of it but never
+// reports a parameter; a forgotten logger is reported, never exempted.
 func (g *goScanner) forgetParams(lit *ast.FuncLit) {
-	if lit.Type == nil || lit.Type.Params == nil {
+	g.bindParams(lit.Type, lit.End())
+}
+
+// bindParams rebinds every parameter of ft as a parameter, which holds no deadline-free context
+// the walk knows of and no lifecycle pairing, and holds a logger until end exactly when it is
+// declared *slog.Logger.
+func (g *goScanner) bindParams(ft *ast.FuncType, end token.Pos) {
+	if ft == nil || ft.Params == nil {
 		return
 	}
-	fields := lit.Type.Params.List
+	fields := ft.Params.List
 	for i := 0; i < len(fields); i++ {
+		logger := isLoggerPointer(g.imports, fields[i].Type)
 		for j := 0; j < len(fields[i].Names); j++ {
-			delete(g.freeContexts, fields[i].Names[j].Name)
+			name := fields[i].Names[j].Name
+			delete(g.freeContexts, name)
+			g.forgetLifecycle(name)
+			delete(g.loggers, name)
+			if logger {
+				g.loggers[name] = end
+			}
 		}
 	}
 }
 
-// checkContextSink reports a deadline-free context passed to a call that is not itself a
-// context derivation.
+// checkContextSink reports a deadline-free context passed to a call that is not a context
+// derivation or a sink, unless the context is lifecycle-owned there. When the call may reach a
+// function the package pass can judge, the finding carries the proof that would discharge it.
 func (g *goScanner) checkContextSink(call *ast.CallExpr) {
 	if !g.ioRuleApplies() {
 		return
 	}
-	if _, derivation := g.contextCall(call); derivation {
+	if _, classified := g.contextCall(call); classified || g.loggerSink(call) {
 		return
 	}
+	free := g.freeArgs(call)
+	if len(free) == 0 {
+		return
+	}
+	recorded := len(g.rep.Violations)
+	g.record("HISS-02", call.Args[free[0]].Pos(), "",
+		"Context without a deadline reaches a call; derive it with context.WithTimeout or context.WithDeadline")
+	if len(g.rep.Violations) > recorded {
+		g.deferProof(call, free)
+	}
+}
+
+// freeArgs returns the positions of call's arguments that carry a context without a deadline
+// and are not owned by a lifecycle where the call is.
+func (g *goScanner) freeArgs(call *ast.CallExpr) []int {
+	var free []int
 	for i := 0; i < len(call.Args); i++ {
-		if g.deadlineFree(call.Args[i]) {
-			g.record("HISS-02", call.Args[i].Pos(), "",
-				"Context without a deadline reaches a call; derive it with context.WithTimeout or context.WithDeadline")
-			return
+		if g.deadlineFree(call.Args[i]) && !g.lifecycleBounded(call.Args[i]) {
+			free = append(free, i)
 		}
 	}
+	return free
+}
+
+// loggerSink reports whether call is a sink method of a *slog.Logger the walk can prove: its
+// receiver is a log/slog constructor's result, a With or WithGroup of a logger, or a parameter
+// or local holding one (loggers). A receiver field is proved by the package pass instead.
+func (g *goScanner) loggerSink(call *ast.CallExpr) bool {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	return ok && neutralMethod("log/slog", "Logger", sel.Sel.Name) && g.loggerExpr(sel.X)
+}
+
+// loggerExpr reports whether expr evaluates to a *slog.Logger the walk knows of, following
+// With and WithGroup inward to their receiver. The loop is bounded by maxNodeStack.
+func (g *goScanner) loggerExpr(expr ast.Expr) bool {
+	for depth := 0; depth < maxNodeStack; depth++ {
+		switch e := ast.Unparen(expr).(type) {
+		case *ast.Ident:
+			end, held := g.loggers[e.Name]
+			return held && e.Pos() < end
+		case *ast.CallExpr:
+			if _, _, local, ok := resolvePackageCall(g.imports, e.Fun, loggerSources); ok {
+				return !g.shadowed(local)
+			}
+			parent, derives := loggerDerivation(e)
+			if !derives {
+				return false
+			}
+			expr = parent
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// loggerDerivation returns the receiver of a With or WithGroup method call.
+func loggerDerivation(call *ast.CallExpr) (ast.Expr, bool) {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok {
+		return nil, false
+	}
+	_, derives := loggerDerivations[sel.Sel.Name]
+	return sel.X, derives
 }
 
 // checkContextlessIO reports a standard-library I/O call that takes no context.
@@ -253,53 +441,77 @@ func (g *goScanner) trackContextAssign(assign *ast.AssignStmt) {
 	g.trackContextBinding(assign.Lhs, assign.Rhs, assign.Tok == token.DEFINE)
 }
 
-// trackContextSpec does the same for a var declaration.
+// trackContextSpec does the same for a var declaration. A variable declared *slog.Logger holds
+// a logger whatever its value.
 func (g *goScanner) trackContextSpec(spec *ast.ValueSpec) {
 	lhs := make([]ast.Expr, 0, len(spec.Names))
 	for i := 0; i < len(spec.Names); i++ {
 		lhs = append(lhs, spec.Names[i])
 	}
 	g.trackContextBinding(lhs, spec.Values, true)
+	if spec.Type == nil || !isLoggerPointer(g.imports, spec.Type) {
+		return
+	}
+	for i := 0; i < len(spec.Names); i++ {
+		g.bindTracked(g.loggers, spec.Names[i].Name, true, true)
+	}
 }
 
-// trackContextBinding pairs each bound identifier with the value it receives. A single call
-// on the right of several names is a tuple, and a context derivation returns its context
-// first, so only the first name can receive it.
+// trackContextBinding pairs each bound identifier with the value it receives (boundValue) and
+// records whether it now holds a deadline-free context, a logger, and the lifecycle pairing of
+// the context it inherits from. Every value is read before any name is rebound.
 func (g *goScanner) trackContextBinding(lhs, rhs []ast.Expr, declares bool) {
 	for i := 0; i < len(lhs); i++ {
 		ident, ok := lhs[i].(*ast.Ident)
 		if !ok || ident.Name == "_" {
 			continue
 		}
-		free := false
-		switch {
-		case len(rhs) == len(lhs):
-			free = g.deadlineFree(rhs[i])
-		case len(rhs) == 1 && i == 0:
-			free = g.deadlineFree(rhs[0])
+		value := boundValue(lhs, rhs, i)
+		free := value != nil && g.deadlineFree(value)
+		logger := value != nil && g.loggerExpr(value)
+		cancel, owned := g.lifecycleOwner(value)
+		g.forgetLifecycle(ident.Name)
+		g.bindTracked(g.freeContexts, ident.Name, free, declares)
+		g.bindTracked(g.loggers, ident.Name, logger, declares)
+		if owned && free {
+			g.lifecycle[ident.Name] = cancel
 		}
-		g.bindContext(ident.Name, free, declares)
+	}
+	g.pairCancel(lhs, rhs)
+}
+
+// boundValue returns the expression lhs[i] receives, or nil when it receives one result of a
+// tuple. A single call on the right of several names is a tuple, and a context derivation
+// returns its context first, so only the first name can receive it.
+func boundValue(lhs, rhs []ast.Expr, i int) ast.Expr {
+	switch {
+	case len(rhs) == len(lhs):
+		return rhs[i]
+	case len(rhs) == 1 && i == 0:
+		return rhs[0]
+	default:
+		return nil
 	}
 }
 
-// bindContext records whether name now holds a deadline-free context, and until where. A
-// declaration lives to the end of the innermost enclosing scope. A plain assignment writes
-// a variable declared earlier: one already tracked keeps its scope, and any other is taken
-// to live to the end of the enclosing function, since a same-named variable of a narrower
-// scope would have been shadowed by it. At package level nothing is tracked.
-func (g *goScanner) bindContext(name string, free, declares bool) {
-	if !free {
-		delete(g.freeContexts, name)
+// bindTracked records in tracked whether name is now set, and until where. A declaration lives
+// to the end of the innermost enclosing scope. A plain assignment writes a variable declared
+// earlier: one already tracked keeps its scope, and any other is taken to live to the end of
+// the enclosing function, since a same-named variable of a narrower scope would have been
+// shadowed by it. At package level nothing is tracked.
+func (g *goScanner) bindTracked(tracked map[string]token.Pos, name string, set, declares bool) {
+	if !set {
+		delete(tracked, name)
 		return
 	}
 	end := g.scopeEnd(declares)
-	if prior, tracked := g.freeContexts[name]; tracked && !declares {
+	if prior, ok := tracked[name]; ok && !declares {
 		end = prior
 	}
 	if end == token.NoPos {
 		return
 	}
-	g.freeContexts[name] = end
+	tracked[name] = end
 }
 
 // scopeEnd returns where the scope of a binding made at the current node ends: the

@@ -51,6 +51,13 @@ func (s *goScope) binds(name string) bool {
 	return s.visible[name] > 0
 }
 
+// count returns how many bindings of name are in scope at the node the walk has reached. One
+// means only the outermost binding, such as a method's receiver or a function's parameter, is
+// visible; more mean a nested binding hides it.
+func (s *goScope) count(name string) int {
+	return s.visible[name]
+}
+
 // enter opens the scope n begins and binds what is in scope from its start: a signature's
 // names, a range clause's variables as the walk reaches the body, and a local type's name.
 func (s *goScope) enter(n ast.Node) {

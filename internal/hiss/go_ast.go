@@ -46,6 +46,8 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 		pkg:     file.Name.Name,
 
 		freeContexts: make(map[string]token.Pos),
+		loggers:      make(map[string]token.Pos),
+		lifecycle:    make(map[string]string),
 	}
 	g.walk(file)
 	g.noteFunctions(file)
@@ -101,6 +103,12 @@ type goScanner struct {
 	// without a deadline to the end of the scope that binding lives in (go_io.go). It is
 	// cleared at every function declaration.
 	freeContexts map[string]token.Pos
+	// loggers maps each identifier of the current function that holds a *slog.Logger to the
+	// end of its binding's scope, as freeContexts does for contexts (go_io.go loggerSink).
+	loggers map[string]token.Pos
+	// lifecycle maps each identifier holding a context.WithCancel context, or one inherited from
+	// it, to the identifier of its cancel function (go_io_lifecycle.go).
+	lifecycle map[string]string
 	// scope tracks which names are bound at the node the walk has reached (go_scope.go).
 	scope goScope
 }
@@ -252,7 +260,7 @@ func (g *goScanner) inspect(n ast.Node) {
 	switch node := n.(type) {
 	case *ast.FuncDecl:
 		g.checkFuncLOC(node)
-		clear(g.freeContexts)
+		g.enterFunc(node)
 	case *ast.FuncLit:
 		g.forgetParams(node)
 	case *ast.ForStmt:
