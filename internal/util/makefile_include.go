@@ -1,0 +1,131 @@
+package util
+
+import "strings"
+
+// MaxMakefileIncludeDepth bounds how many levels of nested literal includes MakefileExpandIncludes
+// follows (HISS-01, HISS-02): an include in the Makefile is level 1, an include inside that
+// fragment level 2. An include one level past the bound stays an include line, which the reader
+// treats as ambiguous (makefileReadsFile).
+const MaxMakefileIncludeDepth = 4
+
+// MaxMakefileIncludeFiles bounds how many fragments one expansion reads in all (HISS-02).
+const MaxMakefileIncludeFiles = 64
+
+// MakefileIncludeReader returns the text of the fragment a literal include operand names, relative
+// to the directory Make runs in, and false when the caller will not vouch for it: a path outside
+// the repository, a file that is missing, untracked, generated, a symlink or not a regular file,
+// or one above the byte bound. It decides nothing about Make syntax; MakefileExpandIncludes does.
+type MakefileIncludeReader func(path string) (string, bool)
+
+// MakefileExpandIncludes returns data with each "include" line whose operands are all literal
+// paths replaced by the text of the fragments read returns, level by level up to
+// MaxMakefileIncludeDepth, so MakefileHasTarget and MakefileMayDefineTarget decide from the
+// combined text. Everything else stays as it is and stays ambiguous: "-include", "sinclude" and
+// "load", an operand holding a variable reference, a wildcard, a function, a comment or any other
+// character Make would expand or strip (makefileLiteralPath), an operand read refuses, a fragment
+// whose own structure the splice would misread (makefileSpliceable), and an include past the depth
+// or file bound. The result is for the ownership check only; a caller never writes it.
+func MakefileExpandIncludes(data string, read MakefileIncludeReader) string {
+	if read == nil {
+		return data
+	}
+	files := 0
+	for level := 0; level < MaxMakefileIncludeDepth; level++ {
+		expanded, changed := makefileExpandLevel(data, read, &files)
+		if !changed {
+			return data
+		}
+		data = expanded
+	}
+	return data
+}
+
+// makefileExpandLevel replaces the literal include lines of data once. Nested includes the
+// fragments bring are left for the next level. It stops at the first point the scanner cannot
+// resolve, past which nothing is expanded.
+func makefileExpandLevel(data string, read MakefileIncludeReader, files *int) (string, bool) {
+	lines, whole := makefileLogicalLines(data)
+	if !whole {
+		return data, false
+	}
+	var scanner makefileScanner
+	out := make([]string, 0, len(lines))
+	changed := false
+	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
+		line := lines[index]
+		kind := scanner.next(line)
+		if scanner.lost {
+			return data, false
+		}
+		if kind == makefileSyntaxLine {
+			if text, ok := makefileIncludeText(line, read, files); ok {
+				line, changed = text, true
+			}
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n"), changed
+}
+
+// makefileIncludeText returns the fragment text an include line stands for, and false when line is
+// no include of literal paths all of which read vouches for.
+func makefileIncludeText(line string, read MakefileIncludeReader, files *int) (string, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || fields[0] != "include" || strings.HasPrefix(line, "\t") {
+		return "", false
+	}
+	parts := make([]string, 0, len(fields)-1)
+	for _, operand := range fields[1:] {
+		if !makefileLiteralPath(operand) || *files >= MaxMakefileIncludeFiles {
+			return "", false
+		}
+		*files++
+		text, ok := read(operand)
+		if !ok || !makefileSpliceable(text) {
+			return "", false
+		}
+		parts = append(parts, strings.TrimSuffix(strings.ReplaceAll(text, "\r\n", "\n"), "\n"))
+	}
+	return strings.Join(parts, "\n"), true
+}
+
+// makefileLiteralPath reports whether operand is a path Make uses as written: no variable
+// reference, wildcard, bracket, comment, escape, quote, home shorthand, pattern or assignment
+// character, and no ".." element or leading slash or dash (the caller's reader confines the rest).
+func makefileLiteralPath(operand string) bool {
+	if operand == "" || len(operand) > MaxMakefileLineBytes || strings.ContainsAny(operand, "$*?[]{}()%#\\'\"`~=:;!&|<>") {
+		return false
+	}
+	if strings.HasPrefix(operand, "/") || strings.HasPrefix(operand, "-") {
+		return false
+	}
+	for _, element := range strings.Split(operand, "/") {
+		if element == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// makefileSpliceable reports whether fragment can be spliced into another Makefile without
+// changing how either half reads. Make reads an included file on its own: a continuation, a
+// define, a conditional or a recipe cannot cross its end, and a tab-prefixed line with no recipe
+// open is an error in it. A fragment that breaks one of these is one the reader leaves to Make.
+func makefileSpliceable(fragment string) bool {
+	lines, whole := makefileLogicalLines(fragment)
+	if !whole || strings.Contains(fragment, ".RECIPEPREFIX") {
+		return false
+	}
+	physical := strings.Split(strings.TrimSuffix(fragment, "\n"), "\n")
+	if makefileContinues(physical[len(physical)-1]) {
+		return false
+	}
+	var scanner makefileScanner
+	for _, line := range lines {
+		kind := scanner.next(line)
+		if scanner.lost || (kind == makefileSyntaxLine && strings.HasPrefix(line, "\t") && strings.TrimSpace(line) != "") {
+			return false
+		}
+	}
+	return scanner.depth == 0 && len(scanner.branches) == 0
+}

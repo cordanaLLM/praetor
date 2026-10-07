@@ -83,7 +83,7 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 	if err != nil || handled {
 		return err
 	}
-	replacement, err := verificationMakefileReplacement(s, string(data), exists, generated, documentationEnabled)
+	replacement, err := verificationMakefileReplacement(ctx, s, string(data), exists, generated, documentationEnabled)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func publishVerificationMakefile(
 }
 
 func verificationMakefileReplacement(
-	s *adoptSession, data string, exists, generated, documentationEnabled bool,
+	ctx context.Context, s *adoptSession, data string, exists, generated, documentationEnabled bool,
 ) (string, error) {
 	replacement := buildMakefile(s.verification)
 	switch {
@@ -188,7 +188,7 @@ func verificationMakefileReplacement(
 		}
 	}
 	if documentationEnabled {
-		return s.documentationMakefile(replacement, s.opts.Force)
+		return s.documentationMakefile(ctx, replacement, s.opts.Force)
 	}
 	return replacement, nil
 }

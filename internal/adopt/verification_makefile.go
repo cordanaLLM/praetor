@@ -73,7 +73,8 @@ func documentationMakefileBlockPrior(state documentationMarkerState) bool {
 // inside, the block text it replaces ("" on a first attachment), does not define may already be
 // defined by outside, the rest of the Makefile: Make would then warn "overriding recipe" and run
 // only one of the two recipes.
-func documentationTargetCollision(outside, inside string) error {
+func documentationTargetCollision(outside, inside string, expand makefileExpander) error {
+	outside = expand(outside)
 	for _, target := range documentationMakefileTargets {
 		if !util.MakefileHasTarget(inside, target) && util.MakefileMayDefineTarget(outside, target) {
 			return fmt.Errorf("makefile may define target %s outside the Praetor-managed block", target)
@@ -124,8 +125,8 @@ var errDocumentationBlockEdited = errors.New("makefile Praetor documentation gat
 
 // documentationMakefile is mergeDocumentationMakefile for this session: a refused edited block
 // names the forced re-adoption that restores it (forceCommand).
-func (s *adoptSession) documentationMakefile(existing string, force bool) (string, error) {
-	merged, err := mergeDocumentationMakefile(existing, force)
+func (s *adoptSession) documentationMakefile(ctx context.Context, existing string, force bool) (string, error) {
+	merged, err := mergeDocumentationMakefileWith(existing, force, s.includeExpander(ctx))
 	if errors.Is(err, errDocumentationBlockEdited) {
 		return "", fmt.Errorf("%w; review it and rerun %s", err, s.forceCommand())
 	}
@@ -133,18 +134,24 @@ func (s *adoptSession) documentationMakefile(existing string, force bool) (strin
 }
 
 func mergeDocumentationMakefile(existing string, force bool) (string, error) {
+	return mergeDocumentationMakefileWith(existing, force, noMakefileIncludes)
+}
+
+// mergeDocumentationMakefileWith is mergeDocumentationMakefile where expand resolves the includes
+// the ownership check may follow (makefileExpander); the merged text never carries the expansion.
+func mergeDocumentationMakefileWith(existing string, force bool, expand makefileExpander) (string, error) {
 	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
 	if err != nil {
 		return "", fmt.Errorf("makefile line endings are inconsistent: %w", err)
 	}
-	merged, err := mergeDocumentationMakefileLF(normalized, force)
+	merged, err := mergeDocumentationMakefileLF(normalized, force, expand)
 	if err != nil {
 		return "", err
 	}
 	return util.RestoreLineEndings(merged, crlf), nil
 }
 
-func mergeDocumentationMakefileLF(existing string, force bool) (string, error) {
+func mergeDocumentationMakefileLF(existing string, force bool, expand makefileExpander) (string, error) {
 	block := DocumentationMakefileBlock()
 	state, err := scanDocumentationMakefileMarkers(existing)
 	if err != nil {
@@ -157,9 +164,9 @@ func mergeDocumentationMakefileLF(existing string, force bool) (string, error) {
 		return "", fmt.Errorf("makefile contains duplicate Praetor documentation gate markers")
 	}
 	if state.beginCount == 1 || state.endCount == 1 {
-		return replaceDocumentationMakefileBlock(existing, block, force || documentationMakefileBlockPraetors(state))
+		return replaceDocumentationMakefileBlock(existing, block, force || documentationMakefileBlockPraetors(state), expand)
 	}
-	if err := documentationTargetCollision(existing, ""); err != nil {
+	if err := documentationTargetCollision(existing, "", expand); err != nil {
 		return "", err
 	}
 	base := strings.TrimRight(existing, "\n")
@@ -175,7 +182,7 @@ func documentationMakefileBlockExact(state documentationMarkerState, block strin
 		strings.Join(state.lines[state.begin:state.end+1], "\n") == strings.TrimSuffix(block, "\n")
 }
 
-func replaceDocumentationMakefileBlock(existing, block string, force bool) (string, error) {
+func replaceDocumentationMakefileBlock(existing, block string, force bool, expand makefileExpander) (string, error) {
 	state, err := scanDocumentationMakefileMarkers(existing)
 	if err != nil {
 		return "", err
@@ -188,7 +195,7 @@ func replaceDocumentationMakefileBlock(existing, block string, force bool) (stri
 	}
 	outside := append(append(make([]string, 0, len(state.lines)), state.lines[:state.begin]...), state.lines[state.end+1:]...)
 	if err := documentationTargetCollision(strings.Join(outside, "\n"),
-		strings.Join(state.lines[state.begin:state.end+1], "\n")); err != nil {
+		strings.Join(state.lines[state.begin:state.end+1], "\n"), expand); err != nil {
 		return "", err
 	}
 	replacement := strings.Split(strings.TrimSuffix(block, "\n"), "\n")
@@ -243,7 +250,7 @@ func reconcileDocumentationMakefile(ctx context.Context, s *adoptSession) error 
 	if err != nil {
 		return err
 	}
-	merged, err := s.documentationMakefile(string(data), s.opts.Force)
+	merged, err := s.documentationMakefile(ctx, string(data), s.opts.Force)
 	if err != nil {
 		return err
 	}
