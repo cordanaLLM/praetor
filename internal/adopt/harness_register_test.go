@@ -273,6 +273,49 @@ func TestAdoptKeptHarnessSpliceRefusedBeforeAnyWrite(t *testing.T) {
 	assertDirEmpty(t, shared)
 }
 
+// keptHarnessWithoutSkills adopts a repository with agent-definitions declined while Claude Code is
+// selected, which installs no register skill (planRegisterSkills), so the AGENTS.md it keeps
+// carries a register block naming none, then stops declining the step: the next run installs the
+// skills and splices their names into the kept block.
+func keptHarnessWithoutSkills(t *testing.T) string {
+	t.Helper()
+	repo := newTestRepo(t, "kept-block-without-skills")
+	mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nadoption:\n  decline: [agent-definitions]\n")
+	adoptWithSource(t, repo, newAdoptLockSource(t), false)
+	if strings.Contains(mustRead(t, filepath.Join(repo, agentsFile)), "`caveman`") {
+		t.Fatal("the first run named a register skill it did not install")
+	}
+	mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\n")
+	return repo
+}
+
+// The preflight checks the register block the step splices, rendered with the skills the run
+// installs (s.registerBlock), not the block the disk renders before they are installed. Positive:
+// a kept block naming no skill gets the installed skills' names spliced in, and the repository
+// verifies. Negative: that splice backs AGENTS.md up, so a symlinked backup root fails the run in
+// the agent-harness preflight with the tree unchanged; checked against the disk alone, the
+// preflight saw no splice, and the refusal came from the step after the manifest, the lock and
+// the skills were written.
+func TestAdoptKeptHarnessSpliceOfInstalledSkillsPreflighted(t *testing.T) {
+	repo := keptHarnessWithoutSkills(t)
+	rep := adoptWithSource(t, repo, newAdoptLockSource(t), false)
+	agents := mustRead(t, filepath.Join(repo, agentsFile))
+	if !strings.Contains(agents, "`caveman` skill:") || !hasAction(rep, agentsFile, actionReplace) {
+		t.Fatalf("the installed skills were not spliced into the kept block: %q", findActionDetail(rep.ActionDetails, agentsFile))
+	}
+	verifyAdoptedContext(t, repo)
+
+	repo = keptHarnessWithoutSkills(t)
+	shared := plantBackupRootLink(t, repo)
+	before := snapshotTree(t, repo)
+	_, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo})
+	if err == nil || !strings.Contains(err.Error(), "agent-harness preflight") || !strings.Contains(err.Error(), adoptBackupRoot) {
+		t.Fatalf("want the symlinked backup root refused in the agent-harness preflight, got %v", err)
+	}
+	assertTreeUnchanged(t, before, snapshotTree(t, repo))
+	assertDirEmpty(t, shared)
+}
+
 // TestAdoptRegisterBlockFollowsFragmentDirectory: the adopted harness names a changelog
 // fragment only for a repository that keeps the fragment directory, decided the way
 // compile-context decides it, so the adopted AGENTS.md verifies either way (#328). Positive: a

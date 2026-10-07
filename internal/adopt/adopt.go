@@ -588,12 +588,14 @@ func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[s
 
 // preflightAgentHarness runs the agent-harness step's refusals before the first step writes:
 // a refused vendor file, a refused backup root for a hand-edited one, a text register
-// policy compiler.LoadRegisterBlock rejects, such as a register.tasks entry that is no
+// policy compiler.LoadRegisterBlockOver rejects, such as a register.tasks entry that is no
 // target_tasks label, and the splice into a harness a run without --force keeps
 // (preflightKeptHarness). The step renders the register block from the manifest adoption never
-// rewrites and from a routing configuration it never writes, so the policy it loads mid-run is
-// the one checked here; checked only there, the refusal came after the lock was written and
-// left AGENTS.md unwritten.
+// rewrites, from a routing configuration it never writes and from the register skills the run
+// installs (s.registerBlock), so the block checked here is the one the step splices: one block
+// per run. Rendered from disk instead, a kept block naming no skill looked unchanged here, the
+// step then spliced the installed skill names in, and a refused backup root failed after the
+// manifest and lock were written, which left a half-adopted repository.
 func preflightAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err := compiler.CheckVendorTargets(ctx, s.repoPath); err != nil {
 		return err
@@ -601,9 +603,9 @@ func preflightAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err := preflightVendorBackupRoot(ctx, s); err != nil {
 		return err
 	}
-	_, block, err := compiler.LoadRegisterBlock(ctx, s.repoPath)
+	block, err := s.registerBlock(ctx)
 	if err != nil {
-		return fmt.Errorf("resolve the text register block for the harness: %w", err)
+		return err
 	}
 	return preflightKeptHarness(ctx, s, block)
 }
