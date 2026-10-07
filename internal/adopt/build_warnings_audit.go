@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
@@ -28,7 +29,7 @@ const maxBuildWarningsLanes = 60
 // buildToolchains is the order a verdict counts the lanes of each toolchain in.
 var buildToolchains = [...]string{
 	forge.ToolchainGCCClang, forge.ToolchainMSVC, forge.ToolchainCMake, forge.ToolchainMeson,
-	forge.ToolchainCargo, forge.ToolchainRustc, forge.ToolchainGo,
+	forge.ToolchainCargo, forge.ToolchainRustc, forge.ToolchainGo, forge.ToolchainUnreadCompiler,
 }
 
 // BuildWarningsOptions is what AuditBuildWarnings reads: the repository root, the manifest's
@@ -60,7 +61,9 @@ func AuditBuildWarnings(ctx context.Context, opts BuildWarningsOptions) (string,
 	if err := config.ValidateExceptions(entries, opts.Today); err != nil {
 		return "", fmt.Errorf("[FAIL] %s: %w", buildWarningsGate, err)
 	}
-	measured, err := forge.MeasureBuildWarnings(ctx, opts.Root)
+	measured, err := forge.MeasureBuildWarnings(ctx, opts.Root, forge.BuildWarningsInputs{
+		CargoLints: flavor.CargoWarningsLints(ctx, opts.Root),
+	})
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] %s: cannot read the workflows: %w", buildWarningsGate, err)
 	}

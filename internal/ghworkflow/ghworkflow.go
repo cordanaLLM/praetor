@@ -51,9 +51,11 @@ type Defaults struct {
 	Run RunDefaults `yaml:"run"`
 }
 
-// RunDefaults is defaults.run: the shell every run: step without its own shell: runs under.
+// RunDefaults is defaults.run: the shell every run: step without its own shell: runs under, and
+// the directory it runs in without its own working-directory:.
 type RunDefaults struct {
-	Shell string `yaml:"shell"`
+	Shell            string `yaml:"shell"`
+	WorkingDirectory string `yaml:"working-directory"`
 }
 
 // Job is the subset of one job the audits and the run: block scan decide on.
@@ -96,16 +98,19 @@ type Job struct {
 // else the runner's default (StepShell). ContinueOnError is the step's `continue-on-error:` as
 // written, a literal or an expression, so an aggregate's failing step can be told from one whose
 // failure is forgiven (internal/forge/workflow_aggregate.go).
+// WorkingDirectory is the step's own working-directory:; empty means the job's or the
+// workflow's defaults.run.working-directory, or else the checkout's root.
 type Step struct {
-	Name            string         `yaml:"name"`
-	ID              string         `yaml:"id"`
-	If              string         `yaml:"if"`
-	Uses            string         `yaml:"uses"`
-	Run             string         `yaml:"run"`
-	Shell           string         `yaml:"shell"`
-	ContinueOnError string         `yaml:"continue-on-error"`
-	With            map[string]any `yaml:"with"`
-	Env             yaml.Node      `yaml:"env"`
+	Name             string         `yaml:"name"`
+	ID               string         `yaml:"id"`
+	If               string         `yaml:"if"`
+	Uses             string         `yaml:"uses"`
+	Run              string         `yaml:"run"`
+	Shell            string         `yaml:"shell"`
+	WorkingDirectory string         `yaml:"working-directory"`
+	ContinueOnError  string         `yaml:"continue-on-error"`
+	With             map[string]any `yaml:"with"`
+	Env              yaml.Node      `yaml:"env"`
 	// RunLine is the document line the run: value starts on, its | or > indicator for a block
 	// scalar, and 0 for a step without run:.
 	RunLine int `yaml:"-"`
@@ -222,6 +227,29 @@ func EnvValue(name string, scopes ...*yaml.Node) (value string, set, known bool)
 		}
 	}
 	return "", false, true
+}
+
+// EnvNames returns every variable name scopes declare, in the order EnvValue reads them, each
+// name once. known is false when a scope is one expression, an env: whose variables the file
+// cannot show, so any other name may be set there.
+func EnvNames(scopes ...*yaml.Node) (names []string, known bool) {
+	seen := map[string]bool{}
+	for i := 0; i < len(scopes); i++ {
+		scope := scopes[i]
+		if scope == nil || scope.Kind == 0 || scope.Tag == "!!null" {
+			continue
+		}
+		if scope.Kind != yaml.MappingNode {
+			return names, false
+		}
+		for j := 0; j+1 < len(scope.Content); j += 2 {
+			if name := scope.Content[j].Value; !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	return names, true
 }
 
 // RunStep is one run: step of a workflow, with the job it runs in.

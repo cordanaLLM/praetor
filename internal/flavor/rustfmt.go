@@ -97,19 +97,41 @@ func rootManifestProblem(err error) string {
 }
 
 // workspaceEditions returns the edition of every crate cargo fmt formats in the workspace root
-// describes: the root package's, when it is one, then each member's (workspaceMemberDirs), ""
-// for a crate that declares none.
+// describes (workspaceCrates), "" for a crate that declares none.
 func workspaceEditions(ctx context.Context, repoPath string, root cargoManifest) ([]string, string) {
-	if root.invalid != "" {
-		return nil, root.invalid
+	crates, problem := workspaceCrates(ctx, repoPath, root)
+	if problem != "" {
+		return nil, problem
 	}
-	var editions []string
-	if root.hasPackage {
-		edition, problem := crateEdition(root, root.workspaceEdition, "the root package")
+	editions := make([]string, 0, len(crates))
+	for _, crate := range crates {
+		edition, problem := crateEdition(crate.manifest, root.workspaceEdition, crate.name)
 		if problem != "" {
 			return nil, problem
 		}
 		editions = append(editions, edition)
+	}
+	return editions, ""
+}
+
+// cargoCrate is one crate of a workspace: its name for messages, "the root package" or its
+// manifest's path, and what parseCargoManifest read from that manifest.
+type cargoCrate struct {
+	name     string
+	manifest cargoManifest
+}
+
+// workspaceCrates returns every crate of the workspace root describes: the root package, when it
+// is one, then each member (workspaceMemberDirs), or why they cannot all be read. cargo fmt,
+// rustfmt.toml's edition and the warnings lint level of the build-warnings gate
+// (CargoWarningsLints) read the crates through it.
+func workspaceCrates(ctx context.Context, repoPath string, root cargoManifest) ([]cargoCrate, string) {
+	if root.invalid != "" {
+		return nil, root.invalid
+	}
+	var crates []cargoCrate
+	if root.hasPackage {
+		crates = append(crates, cargoCrate{name: "the root package", manifest: root})
 	}
 	dirs, problem := workspaceMemberDirs(repoPath, root)
 	if problem != "" {
@@ -119,28 +141,28 @@ func workspaceEditions(ctx context.Context, repoPath string, root cargoManifest)
 		if err := ctx.Err(); err != nil {
 			return nil, fmt.Sprintf("reading the workspace members stopped: %v", err)
 		}
-		edition, problem := memberEdition(repoPath, dir, root.workspaceEdition)
+		crate, problem := memberManifest(repoPath, dir)
 		if problem != "" {
 			return nil, problem
 		}
-		editions = append(editions, edition)
+		crates = append(crates, crate)
 	}
-	return editions, ""
+	return crates, ""
 }
 
-// memberEdition returns the edition of the workspace member at dir, slash-separated and
-// relative to repoPath.
-func memberEdition(repoPath, dir, workspaceEdition string) (string, string) {
+// memberManifest reads the manifest of the workspace member at dir, slash-separated and relative
+// to repoPath.
+func memberManifest(repoPath, dir string) (cargoCrate, string) {
 	rel := path.Join(dir, "Cargo.toml")
 	data, err := util.ReadConfinedLimited(repoPath, filepath.FromSlash(rel), maxSettingBytes)
 	if err != nil {
-		return "", fmt.Sprintf("the workspace member %s cannot be read (%v)", rel, err)
+		return cargoCrate{}, fmt.Sprintf("the workspace member %s cannot be read (%v)", rel, err)
 	}
 	manifest := parseCargoManifest(string(data))
 	if !manifest.hasPackage {
-		return "", fmt.Sprintf("the workspace member %s declares no [package]", rel)
+		return cargoCrate{}, fmt.Sprintf("the workspace member %s declares no [package]", rel)
 	}
-	return crateEdition(manifest, workspaceEdition, rel)
+	return cargoCrate{name: rel, manifest: manifest}, ""
 }
 
 // crateEdition returns the edition the crate manifest describes is on: its own, or

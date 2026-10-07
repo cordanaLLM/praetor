@@ -263,3 +263,31 @@ func TestEnvValue(t *testing.T) {
 		t.Errorf("step continue-on-error = %q, want true", got)
 	}
 }
+
+// EnvNames lists each name the scopes declare once, innermost scope first (positive), reports an
+// env: that is one expression as unknown (negative), and reads no scope as no names (boundary).
+// A step's and the defaults' working-directory are read as written.
+func TestEnvNames(t *testing.T) {
+	spec, err := Parse([]byte(envScopes + "defaults:\n  run:\n    working-directory: crates/core\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := spec.Jobs["build"]
+	names, known := EnvNames(&job.Steps[0].Env, &job.Env, &spec.Env)
+	if got := strings.Join(names, " "); got != "RUSTFLAGS CFLAGS" || !known {
+		t.Errorf("EnvNames = %q, known %t; want RUSTFLAGS CFLAGS, known", got, known)
+	}
+	if _, known := EnvNames(&job.Steps[2].Env, &job.Env); known {
+		t.Error("EnvNames over an expression env: is known; want unknown")
+	}
+	if names, known := EnvNames(&job.Steps[3].Env); len(names) != 0 || !known {
+		t.Errorf("EnvNames of an empty env: = %q, known %t; want none, known", names, known)
+	}
+	if got := spec.Defaults.Run.WorkingDirectory; got != "crates/core" {
+		t.Errorf("defaults.run.working-directory = %q, want crates/core", got)
+	}
+	step, err := Parse([]byte("on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - run: make\n        working-directory: sub\n"))
+	if err != nil || step.Jobs["b"].Steps[0].WorkingDirectory != "sub" {
+		t.Errorf("step working-directory = %+v, %v; want sub", step.Jobs["b"].Steps, err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -291,9 +292,12 @@ func flagValue(fields []string, names ...string) string {
 }
 
 // commandName returns the program a command field names without its directory, so
-// ./bin/praetorctl and /usr/local/bin/cosign compare by their base names.
+// ./bin/praetorctl and /usr/local/bin/cosign compare by their base names. A slash and a
+// backslash both end a directory on every host, so C:\msys64\mingw64\bin\gcc.exe names gcc.exe
+// whether the audit runs on Windows, where filepath splits at both, or on Linux and macOS, where
+// it splits at "/" alone (HISS-21).
 func commandName(field string) string {
-	return filepath.Base(filepath.FromSlash(field))
+	return path.Base(strings.ReplaceAll(field, `\`, "/"))
 }
 
 // isPraetorBinary reports whether a field names this tool's binary under either name,

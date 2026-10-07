@@ -316,9 +316,11 @@ func (t *GitVisibleTree) HasFile(rel string) bool {
 	return ok
 }
 
-// hasDir reports whether a directory can contain repository files. The scan root itself is
-// always entered; otherwise a directory git never mentioned holds only ignored material.
-func (t *GitVisibleTree) hasDir(rel string) bool {
+// HasDir reports whether a directory, a slash-separated path relative to the listed directory,
+// can contain repository files. The scan root itself is always entered; otherwise a directory
+// git never mentioned holds only ignored material. Without a git answer every directory can.
+// The HISS scan and the build-warnings source walk (internal/forge) skip a directory by it.
+func (t *GitVisibleTree) HasDir(rel string) bool {
 	if t == nil || rel == "." {
 		return true
 	}
@@ -352,7 +354,7 @@ func (w *scanWalker) visit(path string, info os.FileInfo, err error) error {
 // visitDir skips a directory the scan must not descend into: one the ignore policy
 // excludes, or one git never mentioned, which therefore holds only ignored material.
 func (w *scanWalker) visitDir(rel string, info os.FileInfo) error {
-	if w.isIgnoredDir(info, rel) || !w.visible.hasDir(filepath.ToSlash(rel)) {
+	if w.isIgnoredDir(info, rel) || !w.visible.HasDir(filepath.ToSlash(rel)) {
 		w.rep.recordSkippedDir(rel)
 		return filepath.SkipDir
 	}

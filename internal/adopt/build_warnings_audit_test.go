@@ -101,12 +101,14 @@ func TestAuditBuildWarningsPassesLanesWithTheForm(t *testing.T) {
 	}
 }
 
-// A HISS-10 entry naming the workflow declares its failing lanes until the entry expires.
-// Positive: a live entry passes, printing its expiry and reason over every lane it excuses, while
-// the other lanes are still counted. Boundary: the entry holds on its expires day.
+// A HISS-10 entry naming the workflow declares its failing lanes, C, Rust and Go alike, until
+// the entry expires. Positive: a live entry passes, printing its expiry and reason over every
+// lane it excuses, while the other lanes are still counted. Boundary: the entry holds on its
+// expires day.
 func TestAuditBuildWarningsPassesAnExceptedWorkflow(t *testing.T) {
 	files := map[string]string{
-		".github/workflows/ci.yml":     ciSteps("      - run: cl /W4 /c src\\decoder.c\n      - run: cmake -B build\n"),
+		".github/workflows/ci.yml": ciSteps("      - run: cl /W4 /c src\\decoder.c\n      - run: cmake -B build\n" +
+			"      - run: cargo build --locked\n      - run: go build ./...\n"),
 		".github/workflows/native.yml": ciSteps("      - run: cargo test\n        env:\n          RUSTFLAGS: -Dwarnings\n"),
 	}
 	for _, expires := range []string{"2026-12-31", "2026-10-07"} {
@@ -115,15 +117,46 @@ func TestAuditBuildWarningsPassesAnExceptedWorkflow(t *testing.T) {
 			t.Fatalf("expires %s: AuditBuildWarnings: %v", expires, err)
 		}
 		for _, want := range []string{
-			"1 build lanes fail on a warning (Cargo 1); 2 excepted:",
+			"1 build lanes fail on a warning (Cargo 1); 4 excepted:",
 			"  - .github/workflows/ci.yml, excepted until " + expires + " by the exceptions entry (rule HISS-10, .github/workflows/ci.yml): the vendored decoder",
 			`    - .github/workflows/ci.yml:6: job build, step "cl /W4 /c src\\decoder.c": MSVC cl builds without warnings as errors`,
 			`    - .github/workflows/ci.yml:7: job build, step "cmake -B build": CMake builds`,
+			`    - .github/workflows/ci.yml:8: job build, step "cargo build --locked": Cargo builds without warnings as errors`,
+			`    - .github/workflows/ci.yml:9: job build, step "go build ./...": Go builds without warnings as errors: no binding step`,
 		} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("expires %s: output = %q; want it to contain %q", expires, out, want)
 			}
 		}
+	}
+}
+
+// The cargo lanes take the level the [lints] tables of the root Cargo.toml's workspace give the
+// warnings group (flavor.CargoWarningsLints). Positive: every crate denies them. Negative: a
+// member that does not inherit the workspace's lints. Boundary: a cargo command run in another
+// directory does not take them.
+func TestAuditBuildWarningsReadsTheCargoLints(t *testing.T) {
+	workspace := "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.lints.rust]\nwarnings = \"deny\"\n"
+	member := "[package]\nname = \"a\"\nversion = \"0.1.0\"\n"
+	cases := map[string]struct {
+		files map[string]string
+		want  string
+		pass  bool
+	}{
+		"every crate denies": {map[string]string{"Cargo.toml": workspace, "crates/a/Cargo.toml": member + "\n[lints]\nworkspace = true\n",
+			".github/workflows/ci.yml": ciSteps("      - run: cargo build --locked\n")}, "(Cargo 1)", true},
+		"a member does not inherit": {map[string]string{"Cargo.toml": workspace, "crates/a/Cargo.toml": member,
+			".github/workflows/ci.yml": ciSteps("      - run: cargo build --locked\n")}, "crates/a/Cargo.toml does not deny warnings", false},
+		"another directory": {map[string]string{"Cargo.toml": workspace, "crates/a/Cargo.toml": member + "\n[lints]\nworkspace = true\n",
+			".github/workflows/ci.yml": ciSteps("      - run: cd fuzz && cargo build\n")}, "another directory", false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := auditBuildWarningsIn(t, tc.files)
+			if (err == nil) != tc.pass || !strings.Contains(out+fmt.Sprint(err), tc.want) {
+				t.Fatalf("AuditBuildWarnings = %q, %v; want pass %t naming %q", out, err, tc.pass, tc.want)
+			}
+		})
 	}
 }
 
