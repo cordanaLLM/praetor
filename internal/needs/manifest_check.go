@@ -39,10 +39,16 @@ func marshalNeedsManifest(repoNeeds *RepoNeeds) ([]byte, error) {
 
 // CheckNeedsManifest compares the committed .needs.yaml under repoPath with the manifest a
 // fresh scan would write. It returns "" when they match, a drift report otherwise, and
-// ErrNeedsManifestMissing when no manifest is committed.
+// ErrNeedsManifestMissing when no manifest is committed. A declared non-goal the fresh scan
+// finds the repository still using fails first with ErrNonGoalContradicted, naming the
+// non-goal and the packages (checkDeclaredNonGoals), so neither `needs scan --check` nor
+// `--write` accepts a false declaration.
 func CheckNeedsManifest(ctx context.Context, repoPath string, fresh *RepoNeeds) (string, error) {
 	if ctx == nil {
 		return "", errors.New("needs: checking the manifest requires a context")
+	}
+	if err := checkDeclaredNonGoals(fresh); err != nil {
+		return "", err
 	}
 	committed, err := contextopt.ReadSnapshot(ctx, filepath.Join(repoPath, NeedsManifestName))
 	if errors.Is(err, os.ErrNotExist) {

@@ -246,6 +246,7 @@ func mergeRepoNeeds(dst, src *RepoNeeds) {
 	for _, capKey := range src.Capabilities.Required {
 		dst.Capabilities.Required = appendUniqueCap(dst.Capabilities.Required, capKey)
 	}
+	dst.NonGoals = mergeNonGoals(dst.NonGoals, src.NonGoals)
 	for _, deprecation := range src.Deprecations {
 		dst.Deprecations = appendUniqueStr(dst.Deprecations, deprecation)
 	}

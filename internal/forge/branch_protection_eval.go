@@ -227,7 +227,9 @@ func decodeRuleParameters(raw json.RawMessage, out any) error {
 // code-owner review (config.BranchProtectionPolicy.EffectiveReviewRequirements), stale review
 // dismissal, signed commits, linear history, deletion and force pushes blocked, and the
 // required status checks contexts. Every mechanism counts, since GitHub enforces their union;
-// a branch nothing protects is drift on every declared property, never an error.
+// a branch nothing protects is drift on every declared property, never an error. When the
+// repository has the ruleset praetor writes, its enforcement is compared too
+// (rulesetEnforcementFinding).
 func EvaluateBranchProtection(policy config.BranchProtectionPolicy, contexts []string, live *LiveBranchProtection) ([]ProtectionFinding, error) {
 	if live == nil {
 		return nil, errors.New("evaluate branch protection: no live protection was read")
@@ -247,7 +249,7 @@ func EvaluateBranchProtection(policy config.BranchProtectionPolicy, contexts []s
 	if policy.ReviewMode == config.BranchReviewModeSingleMaintainer {
 		declaredReviews += " (review_mode single_maintainer)"
 	}
-	return []ProtectionFinding{
+	findings := []ProtectionFinding{
 		flagFinding("Pull requests", true, e.pullRequest),
 		countFinding("Approving reviews", reviews, declaredReviews, e.reviews),
 		flagFinding("Code owner review", codeOwner, e.codeOwner),
@@ -257,7 +259,31 @@ func EvaluateBranchProtection(policy config.BranchProtectionPolicy, contexts []s
 		flagFinding("Deletion blocked", true, e.deletionBlocked),
 		flagFinding("Force pushes blocked", true, e.forcePushBlocked),
 		checksFinding(contexts, e.checks),
-	}, nil
+	}
+	if finding, compared := rulesetEnforcementFinding(live); compared {
+		findings = append(findings, finding)
+	}
+	return findings, nil
+}
+
+// rulesetEnforcementFinding compares the enforcement of the ruleset praetor writes
+// (RepositoryRulesetName) with the active enforcement it renders. GitHub applies no rule of a
+// ruleset in evaluate or disabled enforcement, so every property that ruleset carries reads as
+// not enforced, and this finding names why. A repository without that ruleset, protected by
+// other rulesets or the legacy protection object alone, and a listing that does not report the
+// enforcement, are not compared on it.
+func rulesetEnforcementFinding(live *LiveBranchProtection) (ProtectionFinding, bool) {
+	id, enforcement, found := live.managedRuleset()
+	if !found || enforcement == "" {
+		return ProtectionFinding{}, false
+	}
+	label := live.RulesetLabel(LiveBranchRule{RulesetID: id})
+	finding := ProtectionFinding{Property: "Ruleset enforcement", Declared: rulesetEnforcementActive,
+		Live: enforcement + " (" + label + ")", Verdict: ProtectionDrift}
+	if enforcement == rulesetEnforcementActive {
+		finding.Live, finding.EnforcedBy, finding.Verdict = enforcement, []string{label}, ProtectionEnforced
+	}
+	return finding, true
 }
 
 // flagFinding compares an on-or-off requirement.

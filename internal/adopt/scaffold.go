@@ -108,7 +108,7 @@ type scaffold struct {
 	content []byte      // payload written when the file is created
 	// auditLocked marks a file whose bytes praetorctl audit compares with the scaffold: the
 	// managed asset families (managed_family.go) and the branch ruleset while the policy
-	// requires one (rulesetRequired). Audit fails until such a file holds the scaffold, so
+	// requires one (RulesetRequired). Audit fails until such a file holds the scaffold, so
 	// --force may overwrite a drifted copy (replaceExisting). Every other scaffold is generated
 	// but not audit-verified: a drifted copy is the repository's and is kept, --force included,
 	// with a warning; deleting it and re-running adopt regenerates it.

@@ -34,7 +34,8 @@ func MappingAvailability(readiness ReadinessMetrics) string {
 
 // FormatReportHeader renders the header the CLI `needs report` and the MCP
 // standards_needs_report share: the repository, the framework and its mapping availability,
-// the coverage basis, the contract the inventory came from and any deprecated input.
+// the coverage basis, the contract the inventory came from, the dependencies resolved as
+// framework non-goals and any deprecated input.
 func FormatReportHeader(report *RepoNeeds, index *FrameworkIndex) string {
 	if report == nil || index == nil {
 		return "Framework migration report unavailable.\n"
@@ -54,6 +55,9 @@ func FormatReportHeader(report *RepoNeeds, index *FrameworkIndex) string {
 			observation = "declared packages, not source-observed"
 		}
 		writef(&sb, "Capability contract: %s (%s)\n", index.Contract, observation)
+	}
+	if count := report.Readiness.NonGoalDeps; count > 0 {
+		writef(&sb, "Framework non-goals: %d dependencies resolved as declared non-goals, counted as mapped\n", count)
 	}
 	sb.WriteString(FormatDeprecations(report))
 	sb.WriteString("\n")
@@ -154,8 +158,11 @@ func formatSubprojectFailures(failures []SubprojectFailure) string {
 
 func writeLibraryRelationship(output *strings.Builder, dependency DependencyDemand) {
 	marker := "✓"
-	if dependency.Status == StatusGap {
+	switch dependency.Status {
+	case StatusGap:
 		marker = "✗"
+	case StatusNonGoal:
+		marker = "○"
 	}
 	fmt.Fprintf(output, "  %s %-35s -> %s\n", marker, dependency.Package, libraryRelationshipDescription(dependency))
 	if dependency.Notes != "" {
@@ -184,6 +191,9 @@ func libraryRelationshipDescription(dependency DependencyDemand) string {
 	}
 	if dependency.Status == StatusGap {
 		return fmt.Sprintf("UNMAPPED (Gap); capability=%s", dependency.Capability)
+	}
+	if dependency.Status == StatusNonGoal {
+		return fmt.Sprintf("framework non-goal (resolved); capability=%s; no replacement planned", dependency.Capability)
 	}
 	if dependency.Status == StatusNative {
 		return "native; no replacement required"

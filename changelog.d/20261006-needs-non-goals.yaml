@@ -1,0 +1,4 @@
+type: added
+title: Deliberate framework non-goals no longer count as gaps in needs readiness; a framework declares them under non_goals in its .needs.yaml with a rationale and an alternative, reports and the fleet aggregate count them as resolved in their own column, and needs scan --check refuses a non-goal the code still uses
+issue: "#34"
+breaking: false

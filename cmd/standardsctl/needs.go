@@ -98,8 +98,8 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	fmt.Printf("=== Framework Needs Scan: %s ===\n", report.Repository)
 	fmt.Print(needs.FormatRepositoryFallback(report))
 	fmt.Printf("Go Version: %s | Target Framework: %s\n", report.GoVersion, needs.FrameworkDisplay(report.Framework))
-	fmt.Printf("Mapping availability: %s (%d covered, %d gaps, %d total third-party)\n\n",
-		needs.MappingAvailability(report.Readiness), report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
+	fmt.Printf("Mapping availability: %s (%s, %d total third-party)\n\n",
+		needs.MappingAvailability(report.Readiness), needs.FormatDependencyCounts(report.Readiness), report.Readiness.TotalThirdPartyDeps)
 	fmt.Printf("Coverage basis: %s; builds and tests not run\n", report.Readiness.Basis)
 	fmt.Println(needs.FormatDeprecations(report))
 

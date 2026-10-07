@@ -106,6 +106,7 @@ func newFleetAggregation(fleetRoot string, fwIndex *FrameworkIndex, discovered i
 			TotalRepositories:   discovered,
 			DemandFrequency:     make(map[CapabilityKey]int),
 			CapabilityConsumers: make(map[CapabilityKey][]string),
+			FrameworkNonGoals:   slices.Clone(fwIndex.NonGoals),
 		},
 		framework:   fwIndex,
 		gapPackages: make(map[CapabilityKey]map[string]struct{}),
@@ -372,7 +373,8 @@ func reconcileStandardImports(idx *FrameworkIndex, repoNeeds *RepoNeeds) {
 // framework's own modules are native, a declared relationship keeps its retained role, a
 // capability contract maps replacements and adapters, and a demand an earlier framework
 // mapped keeps its package only when the selected framework lists it. Anything else is a
-// gap.
+// gap, unless the selected framework declares its capability a non-goal
+// (markFrameworkNonGoal).
 func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 	if isFrameworkModule(idx, dep.Package) {
 		markFrameworkNative(idx, dep)
@@ -381,7 +383,8 @@ func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 	if reconcileLibraryRelationship(idx, dep) || reconcileContractDemand(idx, dep) {
 		return
 	}
-	if dep.Status == StatusGap {
+	if dep.Status == StatusGap || dep.Status == StatusNonGoal {
+		markFrameworkNonGoal(idx, dep)
 		return
 	}
 	if _, listed := idx.Packages[dep.FrameworkReplacement]; listed {
@@ -389,6 +392,7 @@ func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 	}
 	dep.Status, dep.FrameworkReplacement = StatusGap, ""
 	dep.Notes = undeclaredNote(idx.Name, "package", dep.Capability)
+	markFrameworkNonGoal(idx, dep)
 }
 
 // compileGapsAndLeaderboard sorts leaderboard and formats gap details.
@@ -428,9 +432,10 @@ func compileGapsAndLeaderboard(report *FleetDemandReport, gapPackages map[Capabi
 	calculateFleetCoverage(report)
 }
 
-// calculateFleetCoverage computes the aggregate fleet-wide dependency coverage percentage.
-// Coverage is only defined once at least one repository was scanned; an aggregation that
-// scanned nothing reports CoverageKnown=false rather than a vacuous 100%.
+// calculateFleetCoverage computes the aggregate fleet-wide dependency coverage percentage,
+// counting a demand resolved as a framework non-goal as mapped, the way calculateReadiness
+// scores a row. Coverage is only defined once at least one repository was scanned; an
+// aggregation that scanned nothing reports CoverageKnown=false rather than a vacuous 100%.
 func calculateFleetCoverage(report *FleetDemandReport) {
 	if report.ScannedRepositories == 0 {
 		report.CoverageKnown = false
@@ -442,7 +447,7 @@ func calculateFleetCoverage(report *FleetDemandReport) {
 	coveredDeps := 0
 	for _, repo := range report.Leaderboard {
 		totalDeps += repo.Readiness.TotalThirdPartyDeps
-		coveredDeps += repo.Readiness.CoveredDeps
+		coveredDeps += repo.Readiness.CoveredDeps + repo.Readiness.NonGoalDeps
 	}
 
 	report.CoverageKnown = true
@@ -474,6 +479,7 @@ func RenderFrameworkDemandMarkdown(report *FleetDemandReport) string {
 	sb.WriteString(renderDemandHeader(report))
 	sb.WriteString(renderDemandTopography(report))
 	sb.WriteString(renderDemandGaps(report))
+	sb.WriteString(renderDemandNonGoals(report))
 	sb.WriteString(renderDemandLeaderboard(report))
 	sb.WriteString(renderDemandDiscovery(report))
 	return sb.String()
@@ -620,17 +626,36 @@ func renderDemandGaps(report *FleetDemandReport) string {
 	return sb.String()
 }
 
+// renderDemandNonGoals lists the selected framework's declared non-goals, each with its
+// rationale, its alternative and the repositories whose demands it resolves, or nothing
+// when the framework declares none.
+func renderDemandNonGoals(report *FleetDemandReport) string {
+	if len(report.FrameworkNonGoals) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n## Framework Non-goals\n\n")
+	sb.WriteString("Demands of these capabilities count as resolved, not as gaps.\n\n")
+	for _, goal := range report.FrameworkNonGoals {
+		writef(&sb, "- `%s` (%d consumer repositories): %s Alternative: %s\n", goal.Capability,
+			len(report.CapabilityConsumers[goal.Capability]), oneSentence(goal.Rationale), oneLine(goal.Alternative))
+	}
+	return sb.String()
+}
+
 // renderDemandLeaderboard renders the migration readiness leaderboard. A row scored
-// against no framework shows n/a, never a percentage (MappingAvailability).
+// against no framework shows n/a, never a percentage (MappingAvailability). The Non-goals
+// column counts the demands resolved as framework non-goals, which the score counts as
+// mapped.
 func renderDemandLeaderboard(report *FleetDemandReport) string {
 	var sb strings.Builder
 	sb.WriteString("\n## Migration Readiness Leaderboard\n\n")
-	sb.WriteString("| Rank | Repository | Location | Readiness Score | Covered Deps | Gaps |\n")
-	sb.WriteString("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
+	sb.WriteString("| Rank | Repository | Location | Readiness Score | Covered Deps | Gaps | Non-goals |\n")
+	sb.WriteString("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
 	for i, repo := range report.Leaderboard {
-		writef(&sb, "| #%d | `%s` | `%s` | %s | %d | %d |\n",
+		writef(&sb, "| #%d | `%s` | `%s` | %s | %d | %d | %d |\n",
 			i+1, repo.Repository, rowLocation(report.FleetRoot, repo.Path),
-			MappingAvailability(repo.Readiness), repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
+			MappingAvailability(repo.Readiness), repo.Readiness.CoveredDeps, repo.Readiness.GapDeps, repo.Readiness.NonGoalDeps)
 	}
 	return sb.String()
 }

@@ -62,22 +62,30 @@ func (d *DependencyDemand) adopt(wire demandWire) error {
 // repoNeedsFields is RepoNeeds without its decoding methods; see demandFields.
 type repoNeedsFields RepoNeeds
 
-// UnmarshalYAML decodes a row and records a deprecation when a demand used the alias.
+// UnmarshalYAML decodes a row, refuses an invalid non_goals list (validateNonGoals) and
+// records a deprecation when a demand used the alias.
 func (r *RepoNeeds) UnmarshalYAML(node *yaml.Node) error {
 	var fields repoNeedsFields
 	if err := node.Decode(&fields); err != nil {
 		return fmt.Errorf("decode repository needs: %w", err)
+	}
+	if err := validateNonGoals((*RepoNeeds)(&fields)); err != nil {
+		return err
 	}
 	*r = RepoNeeds(fields)
 	r.recordLegacyKeys()
 	return nil
 }
 
-// UnmarshalJSON decodes a row and records a deprecation when a demand used the alias.
+// UnmarshalJSON decodes a row, refuses an invalid non_goals list (validateNonGoals) and
+// records a deprecation when a demand used the alias.
 func (r *RepoNeeds) UnmarshalJSON(data []byte) error {
 	var fields repoNeedsFields
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return fmt.Errorf("decode repository needs: %w", err)
+	}
+	if err := validateNonGoals((*RepoNeeds)(&fields)); err != nil {
+		return err
 	}
 	*r = RepoNeeds(fields)
 	r.recordLegacyKeys()

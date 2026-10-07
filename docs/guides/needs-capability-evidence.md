@@ -3,7 +3,8 @@
 `praetorctl needs report` and `standards_needs_report` report **dependency mapping
 availability**, not whether a repository is ready to migrate. The retained Go/JSON
 field name `Readiness.Score` remains compatible; its percentage is the dependencies a
-target framework maps divided by scanned dependencies. It does not count tests or
+target framework maps or declares a [non-goal](#non-goals) divided by scanned
+dependencies. It does not count tests or
 prove API compatibility. With a framework configured, a dependency-free repository
 retains the existing 100% empty-denominator convention; that is not verification
 evidence. With none configured it renders as `n/a`, like every other row.
@@ -192,6 +193,59 @@ repository's own `.needs.yaml` therefore names no framework);
 `praetorctl audit` does not run the check, so an adopter's manifest written by an older
 Praetor is not failed by a newer one. Tests:
 `internal/needs/manifest_check_test.go`, `cmd/standardsctl/needs_check_test.go`.
+
+## Non-goals
+
+A framework that has decided not to provide a capability, such as a terminal UI toolkit or
+a hardware SDK that belongs in the application, declares it a non-goal in the
+`non_goals` list of its own `.needs.yaml`. Without the declaration every demand of that
+capability stays a gap and lowers mapping availability on every run.
+
+```yaml
+non_goals:
+  - capability: clikit.tui
+    rationale: Terminal user interfaces belong to the application
+    alternative: github.com/charmbracelet/bubbletea used directly
+```
+
+| Field | Rule |
+| :--- | :--- |
+| `capability` | the capability key a scan reports for the dependency (`needs report` prints `capability=`); each key once |
+| `rationale` | why the capability is a non-goal; must not be empty |
+| `alternative` | what a repository uses instead; must not be empty |
+
+The list holds at most 128 entries. Each entry is decoded strictly: a key it does not
+declare, such as a misspelled `rationale`, fails the read. A capability listed under
+`capabilities.required` or `capabilities.optional` and under `non_goals` is refused,
+because a capability is either needed or a non-goal. Every error names the entry as
+`non_goals[<index>] (<capability>)` (`internal/needs/non_goals.go`;
+`TestNonGoalDeclarationValidation_3D`).
+
+When a report or a fleet aggregation selects a framework checkout, the checkout's
+`.needs.yaml` supplies the framework's non-goals. A demand the framework does not map and
+whose capability it declares a non-goal gets the status `non_goal`, with the rationale and
+the alternative in its note. Mapping availability counts it as mapped; the row's
+`readiness.non_goal_deps` keeps the number visible. `needs report` prints a
+`Framework non-goals:` header line and marks such demands `○`. `needs aggregate` counts
+them as covered in the fleet coverage, leaves them out of the gap table, lists each
+declared non-goal under "Framework Non-goals" and adds a Non-goals column to the
+leaderboard (`TestFrameworkNonGoalLiftsReadiness_3D`,
+`TestAggregateReportsFrameworkNonGoals_3D`). A framework selected by its contract alone,
+without a checkout, declares no non-goals.
+
+A declaration the code contradicts is false and fails:
+
+- `needs scan --check` and `needs scan --write` fail with `ErrNonGoalContradicted` when
+  the scanned repository's own dependencies or selected standard-library imports demand a
+  capability it declares a non-goal, naming the entry and up to eight packages that use
+  it. A framework that imports such a capability fails the check in its own repository
+  (`TestDeclaredNonGoalUsedByCode_3D`, `TestNeedsScanDeclaredNonGoals_3D`).
+- Inspecting a framework checkout fails when it provides a package for a capability its
+  `.needs.yaml` declares a non-goal, naming both (`TestFrameworkNonGoalContradiction_3D`).
+
+`needs scan --write` carries the list over from the committed manifest, the way it
+carries declared capabilities. A manifest without non-goals is written byte for byte as
+before.
 
 ## Selecting the source
 

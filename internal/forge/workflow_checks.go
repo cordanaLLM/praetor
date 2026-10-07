@@ -112,6 +112,26 @@ func requiredStatusContexts(ctx context.Context, repoPath string, planned map[st
 // expands, and none of its per-leg contexts is ever reported (actions/runner#952). Requiring them
 // would leave every pull request of the fork waiting forever.
 func RequiredStatusContextsIn(ctx context.Context, repoPath, repository string) ([]string, error) {
+	return requiredStatusContextsIn(ctx, repository, func(ctx context.Context) ([]workflowFile, error) {
+		return readWorkflowFiles(ctx, repoPath)
+	})
+}
+
+// RequiredStatusContextsAt is RequiredStatusContextsIn over the workflows commit holds, a commit
+// of the checkout at repoPath, instead of the working tree's (readCommittedWorkflowFiles). The
+// live branch protection of a branch can require only the checks of the workflows on that
+// branch, so the audit compares it with the commit the branch points at, not with a change that
+// has not landed there yet.
+func RequiredStatusContextsAt(ctx context.Context, repoPath, commit, repository string) ([]string, error) {
+	return requiredStatusContextsIn(ctx, repository, func(ctx context.Context) ([]workflowFile, error) {
+		return readCommittedWorkflowFiles(ctx, repoPath, commit)
+	})
+}
+
+// requiredStatusContextsIn collects the required check contexts inside the repository named
+// repository of the workflows read returns (filesContextsIn), with every read bounded by one
+// workflowDiscoveryTimeout.
+func requiredStatusContextsIn(ctx context.Context, repository string, read func(context.Context) ([]workflowFile, error)) ([]string, error) {
 	if ctx == nil {
 		return nil, errors.New("workflow context discovery requires a context")
 	}
@@ -120,7 +140,7 @@ func RequiredStatusContextsIn(ctx context.Context, repoPath, repository string) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, workflowDiscoveryTimeout)
 	defer cancel()
-	files, err := readWorkflowFiles(ctx, repoPath)
+	files, err := read(ctx)
 	if err != nil {
 		return nil, err
 	}

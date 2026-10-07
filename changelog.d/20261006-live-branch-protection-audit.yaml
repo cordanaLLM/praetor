@@ -1,0 +1,4 @@
+type: fixed
+title: The audit passed branch protection GitHub did not enforce
+issue: "#159"
+breaking: true

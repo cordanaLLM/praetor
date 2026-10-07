@@ -16,7 +16,7 @@ import (
 // Each clause is a gate of this package, so a change to one of them changes this text too:
 // reconcileLockfile and prepareCatalogWrites rebuild the lock and its catalog; scaffold.auditLocked
 // marks the scaffolds --force may overwrite (the documentation gate's managed files, the branch
-// ruleset while rulesetRequired holds); reconcileDevContainer, reconcileDocumentationMakefile,
+// ruleset while RulesetRequired holds); reconcileDevContainer, reconcileDocumentationMakefile,
 // verificationMakefileReplacement and publishGitAttributes admit their overwrites only under
 // --force; mergeEditorFile merges editor JSON; refreshAgentHarness regenerates the harness and
 // keeps the repository's additions; planOwnedHarness resets only the platform of an

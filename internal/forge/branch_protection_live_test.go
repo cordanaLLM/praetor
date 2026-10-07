@@ -7,8 +7,8 @@ import (
 )
 
 // protectionForge serves the three reads of ReadBranchProtection for acme/widgets: the active
-// rules of the branch, the ruleset listing and the legacy protection object, answered with
-// legacyStatus and legacy.
+// rules of the branch, the ruleset listing, which reports the praetor ruleset in evaluate
+// enforcement, and the legacy protection object, answered with legacyStatus and legacy.
 func protectionForge(t *testing.T, rules []map[string]any, legacyStatus int, legacy any) (*GitHubDriver, *fakeForgeServer) {
 	t.Helper()
 	return newFakeForge(t, func(w http.ResponseWriter, r *http.Request, _ int) {
@@ -16,7 +16,7 @@ func protectionForge(t *testing.T, rules []map[string]any, legacyStatus int, leg
 		case strings.HasPrefix(r.URL.Path, "/repos/acme/widgets/rules/branches/"):
 			writeJSON(t, w, http.StatusOK, rules)
 		case r.URL.Path == "/repos/acme/widgets/rulesets":
-			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 7, "name": RepositoryRulesetName}})
+			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 7, "name": RepositoryRulesetName, "enforcement": "evaluate"}})
 		case strings.HasSuffix(r.URL.Path, "/protection"):
 			writeJSON(t, w, legacyStatus, legacy)
 		default:
@@ -62,8 +62,9 @@ func TestGitHubDriver_ReadBranchProtection_Positive_ReadsRulesetsAndLegacyProtec
 }
 
 // Boundary: GitHub's "Branch not protected" 404 is a branch without a legacy protection object,
-// not an error; with no active rule either, the ruleset listing is not read at all. Its "Branch
-// not found" 404 is a branch that does not exist yet, which has no legacy object either.
+// not an error. With no active rule either, the ruleset listing is still read, since a ruleset
+// in evaluate or disabled enforcement shows nowhere else (#159). Its "Branch not found" 404 is a
+// branch that does not exist yet, which has no legacy object either.
 func TestGitHubDriver_ReadBranchProtection_Boundary_NoProtectionObject(t *testing.T) {
 	gh, fake := protectionForge(t, []map[string]any{}, http.StatusNotFound, map[string]any{"message": legacyProtectionAbsent})
 	live, err := gh.ReadBranchProtection(t.Context(), "main")
@@ -73,8 +74,11 @@ func TestGitHubDriver_ReadBranchProtection_Boundary_NoProtectionObject(t *testin
 	if live.Legacy != nil || len(live.Rules) != 0 || len(live.Mechanisms()) != 0 {
 		t.Fatalf("an unprotected branch read as %+v", live)
 	}
-	if len(fake.requests) != 2 {
-		t.Fatalf("expected the rules and the legacy read only, got %+v", fake.requests)
+	if len(fake.requests) != 3 || fake.requests[1].Path != "/repos/acme/widgets/rulesets" {
+		t.Fatalf("expected the rules, the ruleset listing and the legacy read, got %+v", fake.requests)
+	}
+	if id, enforcement, found := live.managedRuleset(); !found || id != 7 || enforcement != "evaluate" {
+		t.Fatalf("managed ruleset = %d %q %t, want #7 in evaluate enforcement", id, enforcement, found)
 	}
 	if live.Missing {
 		t.Fatal("a branch GitHub reports as not protected exists")

@@ -23,7 +23,8 @@ const (
 )
 
 // InspectFramework builds the index of the framework source selects. A checkout is
-// observed from source, against its own capabilities.yaml or else the configured contract;
+// observed from source, against its own capabilities.yaml or else the configured contract,
+// and its own .needs.yaml supplies the framework's declared non-goals (loadFrameworkNonGoals);
 // a contract alone declares packages without observing them; a module alone names the
 // framework without declaring a package; nothing selected is not configured. It does not
 // run builds or establish tested correctness.
@@ -46,6 +47,9 @@ func InspectFramework(ctx context.Context, source FrameworkSource) (*FrameworkIn
 	case source.Checkout != "":
 		index.Basis, index.Version = FrameworkSourceObserved, "unverified"
 		if err := observeFramework(ctx, index, source.Contract); err != nil {
+			return nil, err
+		}
+		if err := loadFrameworkNonGoals(ctx, index); err != nil {
 			return nil, err
 		}
 	case source.Contract != "":
