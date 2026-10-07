@@ -103,6 +103,13 @@ func (gt *GiteaDriver) UpdateIssue(ctx context.Context, number int, labels []str
 	return gt.unsupported("UpdateIssue")
 }
 
+func (gt *GiteaDriver) EditIssueBody(ctx context.Context, number int, body string) error {
+	if err := gt.Authenticate(ctx); err != nil {
+		return err
+	}
+	return gt.unsupported("EditIssueBody")
+}
+
 func (gt *GiteaDriver) WorkflowPermissions(ctx context.Context) (LiveWorkflowPermissions, error) {
 	if err := gt.Authenticate(ctx); err != nil {
 		return LiveWorkflowPermissions{}, err

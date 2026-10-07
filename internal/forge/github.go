@@ -747,6 +747,8 @@ type ghIssueRaw struct {
 	PullRequest *struct {
 		URL string `json:"url"`
 	} `json:"pull_request"`
+	// SubIssues is GitHub's sub-issue progress of the issue; nil when the forge sent none.
+	SubIssues *SubIssueSummary `json:"sub_issues_summary"`
 }
 
 // parseGitHubIssues decodes one page of the issues endpoint. It returns the converted
@@ -777,7 +779,7 @@ func parseGitHubIssues(body []byte) ([]IssueSpec, int, error) {
 }
 
 // issueSpecFromRaw converts one issue of the REST API into the spec every reader works
-// on: its labels by name and its Depends-On references.
+// on: its labels by name, its Depends-On references and its sub-issue progress.
 func issueSpecFromRaw(r ghIssueRaw) IssueSpec {
 	lbls := make([]string, 0, len(r.Labels))
 	for _, l := range r.Labels {
@@ -795,6 +797,7 @@ func issueSpecFromRaw(r ghIssueRaw) IssueSpec {
 		State:     r.State,
 		Labels:    lbls,
 		DependsOn: depStrs,
+		SubIssues: r.SubIssues,
 	}
 }
 

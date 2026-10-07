@@ -30,6 +30,28 @@ type fakeForge struct {
 	next     int
 	failOn   int // 1-based index of the CreateIssue call that fails; 0 never fails
 	listErr  error
+	edits    []bodyEdit // every EditIssueBody request, applied to the inventory
+	editErr  error
+}
+
+// bodyEdit is one EditIssueBody request the fake received.
+type bodyEdit struct {
+	number int
+	body   string
+}
+
+func (f *fakeForge) EditIssueBody(_ context.Context, number int, body string) error {
+	if f.editErr != nil {
+		return f.editErr
+	}
+	f.edits = append(f.edits, bodyEdit{number: number, body: body})
+	for i := range f.existing {
+		if f.existing[i].ID == number {
+			f.existing[i].Body = body
+			return nil
+		}
+	}
+	return fmt.Errorf("fake forge: issue #%d does not exist", number)
 }
 
 func (f *fakeForge) Name() string                       { return "fake" }
@@ -71,7 +93,7 @@ func (f *fakeForge) CreateIssue(_ context.Context, spec forge.IssueSpec) (*forge
 		return nil, errors.New("fake forge: create refused")
 	}
 	f.next += 100
-	f.existing = append(f.existing, forge.IssueSpec{ID: f.next, Title: spec.Title, State: "open"})
+	f.existing = append(f.existing, forge.IssueSpec{ID: f.next, Title: spec.Title, Body: spec.Body, State: "open"})
 	return &forge.IssueResponse{
 		Number: f.next,
 		URL:    fmt.Sprintf("https://forge.test/issues/%d", f.next),
