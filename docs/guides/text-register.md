@@ -284,12 +284,21 @@ same rule: its register sentence names `caveman` only where the repository carri
 run installs it (`paperclip.SynthesizeHarnessOver`, `config.RegisterDirectiveWithout`,
 `internal/paperclip/register_test.go`). Where the skill path cannot be read, for example behind a
 symlinked `.agents`, the harness states the form alone and the run reports that substitution:
-adoption warns under `.paperclip/harness.json`, and `praetorctl paperclip harness` prints a
-`[WARN]` line (`TestAdopt_Boundary_DeclinedAgentStepsAreNotPreflighted`,
-`TestPaperclipHarness_ReportsRegisterSkillSubstitution`). `compile-context` fails on the same
-read instead. Repair jobs (`config.RegisterDirective`) name the skill
-in every repository: they are prompts for a provider, kept as a private review artifact
-(`dogfood.SaveRepairPlan`), never repository content.
+adoption warns under `.paperclip/harness.json`, and `praetorctl paperclip harness` and the
+audit's Paperclip gate print a `[WARN]` line naming the refused read
+(`TestAdopt_Boundary_DeclinedAgentStepsAreNotPreflighted`,
+`TestPaperclipHarness_ReportsRegisterSkillSubstitution`,
+`TestAuditPaperclip_RegisterSkillSubstitution`). `compile-context` fails on the same
+read instead. The audit compares `.paperclip/harness.json` with this synthesis, so a harness an
+earlier release wrote, which names `caveman` in every repository, is out of date in a
+repository that does not carry the skill: the audit fails it as unmodified earlier output, with
+the `praetorctl adopt` remedy. Adoption then refreshes it to the sentence without the skill
+name (`TestAuditPaperclip_Migration_HarnessNamingAbsentCaveman`), or, with
+`--lock-source-root`, installs the skill the harness names
+(`TestAdopt_Positive_FreshAdoptionShipsTheRegisterSkills`). Repair jobs
+(`config.RegisterDirective`) name the skill in every repository: they are prompts for a
+provider, kept as a private review artifact (`dogfood.SaveRepairPlan`), never repository
+content.
 
 ## Internal briefs and returns
 
