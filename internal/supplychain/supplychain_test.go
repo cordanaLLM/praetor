@@ -9,7 +9,17 @@ import (
 
 func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 	ctx := context.Background()
-	repoRoot := filepath.Join("..", "..")
+	// The generator reads a scratch copy of this repository's go.mod, not the checkout: there
+	// it would also read the tags on the checkout's HEAD, so the result would depend on the
+	// commit the checkout stands on (#755). Version resolution from tags has its own fixtures.
+	goMod, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	if err != nil {
+		t.Fatalf("read this repository's go.mod: %v", err)
+	}
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "go.mod"), goMod, 0o600); err != nil {
+		t.Fatalf("write the scratch go.mod: %v", err)
+	}
 
 	bom, err := GenerateCycloneDX(ctx, repoRoot, SBOMOptions{})
 	if err != nil {

@@ -137,6 +137,10 @@ func TestIssueReconcileRefusesEmptyRepositoryScope(t *testing.T) {
 }
 
 func TestIssueReconcileRepositorySelectionBoundBeforeRead(t *testing.T) {
+	// The owner is explicit and the command runs from a scratch directory: without --owner it
+	// resolves the owner from the origin remote of the working directory, which was this
+	// checkout's, so the result depended on how the checkout was cloned (#755).
+	t.Chdir(t.TempDir())
 	for _, count := range []int{256, 257} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			var reads atomic.Int32
@@ -150,7 +154,7 @@ func TestIssueReconcileRepositorySelectionBoundBeforeRead(t *testing.T) {
 			t.Cleanup(srv.Close)
 			repos := strings.Repeat("example/selected,", count-1) + "example/last"
 			_, err := captureStdout(t, func() error {
-				return dispatchCommand("issue", []string{"reconcile", "--repos=" + repos,
+				return dispatchCommand("issue", []string{"reconcile", "--owner=example", "--repos=" + repos,
 					"--token=fixture", "--endpoint=" + srv.URL})
 			})
 			if count == 256 {
