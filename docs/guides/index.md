@@ -19,7 +19,8 @@ New here? Pick the path that matches your role:
 - [Contributing, hooks and CI](contributor-workflow/index.md): local verification, Git hooks,
   the development MCP server and CI caching.
 - [State ledger and planning](state-and-planning/index.md): the private ledger, planning
-  drafts, wishes, issue sync and resource cleanup.
+  drafts, wishes, issue sync, resource cleanup and the
+  [research and upstream radar](radar.md).
 - [Dogfooding](dogfood/index.md): running Praetor against public repositories and repairing
   what fails.
 - [Workstations, devcontainers and operations](workstations-and-operations/index.md):

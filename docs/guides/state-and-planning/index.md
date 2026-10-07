@@ -1,8 +1,8 @@
 # State ledger and planning
 
 These guides cover the private state Praetor keeps for a repository and the planning built
-on it: the `.workingdir/` ledger, planning drafts, the wishes ledger, issue synchronization
-and the cleanup of released resources.
+on it: the `.workingdir/` ledger, planning drafts, the wishes ledger, issue synchronization,
+the cleanup of released resources and the research and upstream radar.
 
 Read [State ledger integrity](../state-ledger-integrity.md) first to understand the `.workingdir/` ledger, which the planning and wishes tools rely on. The issue synchronization and garbage collection tools operate independently of it.
 
@@ -17,3 +17,5 @@ Read [State ledger integrity](../state-ledger-integrity.md) first to understand 
   sync that ticks parents' boxes and closes finished epics and milestones.
 - [Released-resource garbage collection](../garbage-collection.md): `praetorctl gc` dry-runs
   by default and removes only resources their owner released.
+- [Research and upstream radar](../radar.md): `praetorctl radar` validates a source registry
+  and collects a window of upstream releases and feeds into a neutralised digest.
