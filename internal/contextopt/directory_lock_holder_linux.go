@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -24,6 +25,25 @@ const (
 	maxProcLocksBytes = 4 << 20
 	maxProcLockLines  = 1 << 16
 )
+
+// directoryLockHolder names the process /proc/locks lists as holding the flock lock on root's
+// directory, or says why it names none.
+func directoryLockHolder(root *os.Root) string {
+	info, err := root.Stat(".")
+	if err != nil {
+		return "another process (" + err.Error() + ")"
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "another process (no device and inode to look the lock up by)"
+	}
+	data, err := readProcLocks()
+	if err != nil {
+		return "another process (" + err.Error() + ")"
+	}
+	// The conversion is needed: Stat_t.Dev is uint32 on some Linux architectures.
+	return describeLockHolders(flockHolders(data, uint64(stat.Dev), stat.Ino), procLocksPath+" lists no holder")
+}
 
 // readProcLocks reads at most maxProcLocksBytes of procLocksPath.
 func readProcLocks() ([]byte, error) {
