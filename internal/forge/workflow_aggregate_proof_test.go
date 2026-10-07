@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // provenGateSteps is the step list an aggregate fails with when a job it needs failed or was
@@ -124,8 +125,10 @@ func documentedGateJobs(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout under core.autocrlf holds the document in CRLF.
+	text, _ := util.NormalizeLineEndings(string(data))
 	var jobs []string
-	for _, fence := range strings.Split(string(data), "```yaml\n")[1:] {
+	for _, fence := range strings.Split(text, "```yaml\n")[1:] {
 		body, _, closed := strings.Cut(fence, "```")
 		if closed && strings.HasPrefix(body, "merge-gate:\n") {
 			jobs = append(jobs, "  "+strings.ReplaceAll(strings.TrimSuffix(body, "\n"), "\n", "\n  ")+"\n")
