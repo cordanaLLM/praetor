@@ -166,7 +166,9 @@ func TestAuditReuseRecords_3D(t *testing.T) {
 }
 
 // auditLicensing runs both licensing gates and prints both verdicts. Positive: a root whose
-// LICENSE holds the one LICENSES text passes, and an upstream COPYING the manifest keeps is named.
+// LICENSE holds the one LICENSES text passes, and an upstream COPYING the manifest keeps is named;
+// so does one whose REUSE.toml spells the whole-tree default as a union of globs and writes its
+// copyright as an array of escaped strings and as a multi-line string, which neither gate reads.
 // Negative: the same COPYING without the exception fails the root licence gate while the
 // annotation order gate still prints its verdict. Boundary: a root with neither LICENSES/ nor
 // REUSE.toml skips both, saying why.
@@ -185,6 +187,14 @@ func TestAuditLicensing_3D(t *testing.T) {
 	if err != nil || !strings.Contains(output, "[PASS] root licence: LICENSE holds the text of LICENSES/MIT.txt; kept upstream notices COPYING.") ||
 		!strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") {
 		t.Fatalf("kept COPYING: %v\n%s", err, output)
+	}
+	writeFixtureFile(t, root, supplychain.ReuseFile, "version = 1\n\n[[annotations]]\npath = [\"*\", \".*\", \"*/**\", \".*/**\"]\n"+
+		"SPDX-FileCopyrightText = [\"2024 A \\\"B\\\" C\", \"x\"]\nSPDX-FileCopyrightText = \"\"\"\n2024 A\n2025 B\n\"\"\"\n"+
+		"SPDX-License-Identifier = \"MIT\"\n")
+	output, err = run(kept, root)
+	if err != nil || !strings.Contains(output, "[PASS] REUSE.toml annotation order") ||
+		!strings.Contains(output, "[PASS] root licence: LICENSE holds the text of LICENSES/MIT.txt") {
+		t.Fatalf("a union default with escaped and multi-line copyright values: %v\n%s", err, output)
 	}
 	output, err = run(&config.Manifest{}, root)
 	if err == nil || !strings.Contains(err.Error(), "[FAIL] root licence: 1 problem(s)") ||

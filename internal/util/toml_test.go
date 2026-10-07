@@ -208,3 +208,67 @@ func TestTOMLStringArrayBoundary(t *testing.T) {
 		t.Errorf("closed array = %q, closed %v, ok %v; want [a b] closed", items, closed, ok)
 	}
 }
+
+// feedTOMLValue feeds lines to a fresh scan and returns, per line, whether the value ended on it,
+// stopping at the first line the scan refuses.
+func feedTOMLValue(lines ...string) (ends []bool, ok bool) {
+	var scan util.TOMLValueScan
+	for _, line := range lines {
+		done, good := scan.Feed(line)
+		if !good {
+			return ends, false
+		}
+		ends = append(ends, done)
+	}
+	return ends, true
+}
+
+// Positive: single-line values end on their line whatever they hold (escapes, brackets inside
+// strings, a comment), and an array of escaped strings, a multi-line basic string with an
+// escaped quote and a multi-line literal string holding a table header end on their closing line.
+func TestTOMLValueScanPositive(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"escaped string":       {`"2024 A \"B\" C" # x`},
+		"bracket in string":    {`["a]", 'b[', "c#d"] # ]`},
+		"inline table":         {`{ a = "}", b = [1, 2] }`},
+		"array of escapes":     {`[`, `  "2024 A \"B\" C",`, `  "x", # ]`, `]`},
+		"multi-line basic":     {`"""`, `text with \""" inside`, `and a closing run """"`},
+		"multi-line literal":   {`'''`, `[[annotations]]`, `path = "x"'''`},
+		"bare value":           {`1`},
+		"two-quote empty":      {`""`},
+		"escaped backslash":    {`"C:\\"`},
+		"line-ending escape":   {`"""a \`, `b"""`},
+		"string after closing": {`"""a""" # "`},
+	} {
+		ends, ok := feedTOMLValue(lines...)
+		if !ok || len(ends) != len(lines) || !ends[len(ends)-1] || slices.Contains(ends[:len(ends)-1], true) {
+			t.Errorf("%s: ends %v, ok %v; want the value to end on its last line only", name, ends, ok)
+		}
+	}
+}
+
+// Negative: a single-line string left open and a closing bracket with nothing open are refused.
+func TestTOMLValueScanNegative(t *testing.T) {
+	for _, line := range []string{`"open`, `'open`, `"escaped close\"`, `]`, `[1]]`, `}`} {
+		if ends, ok := feedTOMLValue(line); ok {
+			t.Errorf("Feed(%q) = %v, ok; want refused", line, ends)
+		}
+	}
+}
+
+// Boundary: an empty line ends an empty value, a value left open by an array or a multi-line
+// string does not end, and a comment line inside an open array leaves it open.
+func TestTOMLValueScanBoundary(t *testing.T) {
+	if ends, ok := feedTOMLValue(""); !ok || !ends[0] {
+		t.Errorf("empty value: %v, %v", ends, ok)
+	}
+	for name, lines := range map[string][]string{
+		"open array":            {`[`, `  "a",`},
+		"open multi-line":       {`'''`, `text`},
+		"comment in open array": {`[ "a",`, `# ]`},
+	} {
+		if ends, ok := feedTOMLValue(lines...); !ok || slices.Contains(ends, true) {
+			t.Errorf("%s: ends %v, ok %v; want still open", name, ends, ok)
+		}
+	}
+}

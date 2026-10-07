@@ -13,11 +13,12 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// The REUSE.toml reads: praetorctl audit's vendored license warning (cmd/standardsctl,
-// audit_reuse.go) and the label a copied upstream file must carry (CheckUpstreamCredits). Both
-// read the file's shape, not TOML: the module carries no TOML library (util.TOMLTableName).
-// Only the values of the path and SPDX-License-Identifier keys count; comments and the other
-// keys never match a path.
+// The REUSE.toml reads: praetorctl audit's licensing gates and vendored license warning
+// (cmd/standardsctl, audit_reuse.go) and the label a copied upstream file must carry
+// (CheckUpstreamCredits). They read the file's shape, not TOML: the module carries no TOML
+// library (util.TOMLTableName). Only the values of the path and SPDX-License-Identifier keys of
+// [[annotations]] tables count; comments and the other keys never match a path, and their values
+// are stepped over whatever they hold (util.TOMLValueScan).
 
 const (
 	// ReuseFile is the REUSE configuration a repository may declare its licensing in.
@@ -49,13 +50,20 @@ type reuseScan struct {
 	listOpen  bool
 	listKey   string
 	listItems []string
+	// skipping is whether the value of listKey, a key the read does not keep, continues on the
+	// next line, and skip follows that value.
+	skipping bool
+	skip     util.TOMLValueScan
 }
 
 // ReuseAnnotationTables returns every [[annotations]] table of a REUSE.toml with the values of
 // its path and SPDX-License-Identifier keys, each a single-line string or an array of them that
-// may span lines. A text past MaxReuseLines is an error, and so is one the read cannot follow:
-// a line that is no table header, key or comment, a multi-line string, an array of anything but
-// such strings or one left open, and a path or license value that is not a string or an array.
+// may span lines. The value of any other key, such as a SPDX-FileCopyrightText array of strings
+// with escape sequences or a multi-line string, is stepped over unread. A text past
+// MaxReuseLines is an error, and so is one the read cannot follow: a line that is no table
+// header, key or comment, a value whose end it cannot find, and a path or license value that is
+// a multi-line string, an array of anything but plain single-line strings or one left open, or
+// neither a string nor an array, so the gates reading those keys never judge a file in part.
 func ReuseAnnotationTables(text string) ([]ReuseAnnotation, error) {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	if len(lines) > MaxReuseLines {
@@ -67,8 +75,11 @@ func ReuseAnnotationTables(text string) ([]ReuseAnnotation, error) {
 			return nil, fmt.Errorf("%s:%d: %w", ReuseFile, index+1, err)
 		}
 	}
-	if scan.listOpen {
+	switch {
+	case scan.listOpen:
 		return nil, fmt.Errorf("%s: the %s array is not closed", ReuseFile, scan.listKey)
+	case scan.skipping:
+		return nil, fmt.Errorf("%s: the value of %s is not closed", ReuseFile, scan.listKey)
 	}
 	return scan.tables, nil
 }
@@ -77,6 +88,8 @@ func ReuseAnnotationTables(text string) ([]ReuseAnnotation, error) {
 // key.
 func (s *reuseScan) read(line string) error {
 	switch {
+	case s.skipping:
+		return s.skipValue(line)
 	case s.listOpen:
 		// No element spans lines, so each line of an open array reads as an array of its own.
 		return s.readList("[" + line)
@@ -92,14 +105,18 @@ func (s *reuseScan) read(line string) error {
 	return s.assign(line)
 }
 
-// assign reads the key line assigns and records its strings when it is a key ReuseAnnotation
-// holds.
+// assign reads the key line assigns: it records the strings of a key ReuseAnnotation holds and
+// steps over the value of any other.
 func (s *reuseScan) assign(line string) error {
 	key, value, ok := util.TOMLKeyValue(line)
 	if !ok {
 		return fmt.Errorf("%q is not a table header, a key or a comment", line)
 	}
 	s.listKey, s.listItems = strings.Trim(key, `"'`), nil
+	if !s.inTable || (s.listKey != reusePathKey && s.listKey != reuseLicenseKey) {
+		s.skip = util.TOMLValueScan{}
+		return s.skipValue(value)
+	}
 	if strings.HasPrefix(value, `"""`) || strings.HasPrefix(value, "'''") {
 		return fmt.Errorf("%s holds a multi-line string, which this read does not follow", s.listKey)
 	}
@@ -108,13 +125,21 @@ func (s *reuseScan) assign(line string) error {
 		return s.readList(value)
 	}
 	text, isString := util.TOMLStringValue(value)
-	if isString {
-		s.record([]string{text})
-		return nil
-	}
-	if s.inTable && (s.listKey == reusePathKey || s.listKey == reuseLicenseKey) {
+	if !isString {
 		return fmt.Errorf("%s = %s is not a string without escape sequences or an array of them", s.listKey, value)
 	}
+	s.record([]string{text})
+	return nil
+}
+
+// skipValue reads text, one line of the value of a key the read does not keep, and notes whether
+// the value continues on the next line.
+func (s *reuseScan) skipValue(text string) error {
+	done, ok := s.skip.Feed(text)
+	if !ok {
+		return fmt.Errorf("the value of %s is not one this read can find the end of", s.listKey)
+	}
+	s.skipping = !done
 	return nil
 }
 

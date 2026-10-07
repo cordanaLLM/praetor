@@ -58,11 +58,20 @@ annotation's files, such as `**/*.md` after `docs/**`, leave the rest in effect 
 reported. Paths compare as REUSE globs: `*` stops at `/`, `**` crosses it, and `\` makes the
 next character literal (`ReuseShadowedPaths` and `reuseGlobIncludes` in
 [`internal/supplychain/reuse.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse.go)
-and `reuse_glob.go`). A `REUSE.toml` the audit cannot read, such as one with a multi-line string
-as a path, fails the check rather than passing it unchecked. Tests: `TestReuseGlobIncludes_3D`
-and `TestReuseShadowedPaths_*`, `_Union` among them, in
-`internal/supplychain/reuse_shadow_test.go`, and `TestAuditReuseRecords_3D` in
-`cmd/standardsctl/audit_reuse_test.go`.
+and `reuse_glob.go`). Tests: `TestReuseGlobIncludes_3D` and `TestReuseShadowedPaths_*`,
+`_Union` among them, in `internal/supplychain/reuse_shadow_test.go`, and
+`TestAuditReuseRecords_3D` in `cmd/standardsctl/audit_reuse_test.go`.
+
+Both audit checks read only the `path` and `SPDX-License-Identifier` keys of each
+`[[annotations]]` table, each a string or an array of plain single-line strings. The values of
+every other key, such as a `SPDX-FileCopyrightText` array with escaped quotes or a multi-line
+copyright string, are stepped over unread (`util.TOMLValueScan` in
+[`internal/util/toml.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/toml.go)).
+A `REUSE.toml` whose `path` or `SPDX-License-Identifier` the audit cannot read this way, such as a
+multi-line string as a path, or whose other values it cannot find the end of, fails both checks
+rather than passing them unchecked (`TestReuseAnnotationTablesPositive` and
+`TestReuseAnnotationTablesNegative` in `internal/supplychain/reuse_test.go`, and
+`TestAuditLicensing_3D`).
 
 ## One root licence
 

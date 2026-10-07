@@ -132,3 +132,91 @@ func cutTOMLString(value string) (text, rest string, ok bool) {
 	}
 	return text, rest, true
 }
+
+// TOMLValueScan follows the extent of one TOML value across lines without decoding it, so a
+// reader of a file's shape can step over a value it does not read: it tracks basic and literal
+// strings with their escapes, multi-line strings, and the nesting of arrays and inline tables,
+// and drops comments. The zero value is ready for a value's first line. The REUSE.toml read of
+// internal/supplychain steps over the keys it does not keep with it.
+type TOMLValueScan struct {
+	// depth counts the arrays and inline tables open.
+	depth int
+	// multiline is the delimiter of the multi-line string open, `"""` or "'''", or "".
+	multiline string
+}
+
+// Feed reads one more line of the value, the first being what TOMLKeyValue returns after the
+// equals sign, and reports whether the value ends on it. ok is false for a line the scan cannot
+// follow: a single-line string left open, or a closing bracket or brace with nothing open.
+func (s *TOMLValueScan) Feed(line string) (done, ok bool) {
+	// Every token spans at least one byte, so len(line) passes read the whole line.
+	for index := 0; index < len(line); {
+		width, comment, good := s.next(line[index:])
+		if !good {
+			return false, false
+		}
+		if comment {
+			break
+		}
+		index += width
+	}
+	return s.depth == 0 && s.multiline == "", true
+}
+
+// next reads the token rest opens and returns the bytes it spans; comment is a comment, which
+// runs to the end of the line. rest is not empty.
+func (s *TOMLValueScan) next(rest string) (width int, comment, ok bool) {
+	if s.multiline != "" {
+		return s.inMultiline(rest), false, true
+	}
+	switch rest[0] {
+	case '#':
+		return 0, true, true
+	case '[', '{':
+		s.depth++
+	case ']', '}':
+		if s.depth == 0 {
+			return 0, false, false
+		}
+		s.depth--
+	case '"', '\'':
+		width, ok = s.openString(rest)
+		return width, false, ok
+	}
+	return 1, false, true
+}
+
+// openString reads the string rest opens: a single-line string to its closing quote, or the
+// opening delimiter of a multi-line one, which stays open. A single-line string the line does not
+// close is refused.
+func (s *TOMLValueScan) openString(rest string) (int, bool) {
+	quote := rest[0]
+	if delimiter := strings.Repeat(rest[:1], 3); strings.HasPrefix(rest, delimiter) {
+		s.multiline = delimiter
+		return len(delimiter), true
+	}
+	for index := 1; index < len(rest); index++ {
+		switch {
+		case quote == '"' && rest[index] == '\\':
+			index++
+		case rest[index] == quote:
+			return index + 1, true
+		}
+	}
+	return 0, false
+}
+
+// inMultiline reads one token of the multi-line string open: an escape of a basic one, the run
+// of quotes that closes it (up to two quotes of the text may precede the delimiter), or one byte
+// of its text.
+func (s *TOMLValueScan) inMultiline(rest string) int {
+	switch {
+	case s.multiline == `"""` && rest[0] == '\\':
+		return min(2, len(rest))
+	case strings.HasPrefix(rest, s.multiline):
+		run := len(rest) - len(strings.TrimLeft(rest, s.multiline[:1]))
+		s.multiline = ""
+		return run
+	}
+	return 1
+}

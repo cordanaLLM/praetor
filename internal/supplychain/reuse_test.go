@@ -71,7 +71,9 @@ func TestReuseLabelsNegative(t *testing.T) {
 
 // Positive: the read keeps only the path and license values of each annotations table, from a
 // string or an array spanning lines, and skips comments, other keys, other tables and the lines
-// of a multi-line array of another key.
+// of a multi-line array of another key. It steps over the values of other keys it does not read
+// as strings: an array of strings with escape sequences, a multi-line copyright string, and a
+// multi-line literal string whose lines look like a table and a path.
 func TestReuseAnnotationTablesPositive(t *testing.T) {
 	text := "version = 1\r\n[other]\npath = \"ignored/**\"\n# path = [\"comment/**\"]\n" +
 		"[[annotations]]\npath = 'a/**' # \"**\"\nprecedence = \"override\"\nSPDX-FileCopyrightText = [\n  \"2026 A = B\",\n  # path = \"x\"\n]\n" +
@@ -81,17 +83,40 @@ func TestReuseAnnotationTablesPositive(t *testing.T) {
 		strings.Join(tables[1].Paths, " ") != "b/*.md c" || len(tables[1].Licenses) != 0 {
 		t.Fatalf("tables = %+v", tables)
 	}
+	stepped := `[[annotations]]
+path = "a/**"
+SPDX-FileCopyrightText = ["2024 A \"B\" C", "x"]
+SPDX-FileCopyrightText = """
+2024 A
+2025 B \"C\"
+"""
+note = '''
+[[annotations]]
+path = "ghost/**"
+'''
+SPDX-License-Identifier = "MIT"
+`
+	tables = reuseTables(t, stepped)
+	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "a/**" || strings.Join(tables[0].Licenses, " ") != "MIT" {
+		t.Fatalf("values of other keys stepped over: tables = %+v", tables)
+	}
 }
 
-// Negative: a line the read cannot follow is an error naming its line, not a table read past.
+// Negative: a line the read cannot follow is an error naming its line, not a table read past. A
+// path or license value the read cannot take as plain strings fails, and so does another key's
+// value whose end it cannot find.
 func TestReuseAnnotationTablesNegative(t *testing.T) {
 	for name, test := range map[string]struct{ text, want string }{
-		"not a key":         {"[[annotations]]\npath\n", "REUSE.toml:2: \"path\" is not a table header"},
-		"open array":        {"[[annotations]]\npath = [\n  \"a/**\",\n", "the path array is not closed"},
-		"number in array":   {"[[annotations]]\npath = [\"a\", 1]\n", "the path array holds something other than strings"},
-		"escape sequence":   {"[[annotations]]\npath = \"a\\\\*\"\n", "is not a string without escape sequences"},
-		"multi-line string": {"[[annotations]]\nSPDX-FileCopyrightText = \"\"\"\n2026 A\n\"\"\"\n", "holds a multi-line string"},
-		"path as a number":  {"[[annotations]]\npath = 1\n", "path = 1 is not a string"},
+		"not a key":          {"[[annotations]]\npath\n", "REUSE.toml:2: \"path\" is not a table header"},
+		"open array":         {"[[annotations]]\npath = [\n  \"a/**\",\n", "the path array is not closed"},
+		"number in array":    {"[[annotations]]\npath = [\"a\", 1]\n", "the path array holds something other than strings"},
+		"escape sequence":    {"[[annotations]]\npath = \"a\\\\*\"\n", "is not a string without escape sequences"},
+		"escaped path array": {"[[annotations]]\npath = [\"a\\\"b\", \"c\"]\n", "the path array holds something other than strings"},
+		"multi-line path":    {"[[annotations]]\npath = \"\"\"\na/**\n\"\"\"\n", "path holds a multi-line string"},
+		"multi-line license": {"[[annotations]]\nSPDX-License-Identifier = '''\nMIT\n'''\n", "SPDX-License-Identifier holds a multi-line string"},
+		"path as a number":   {"[[annotations]]\npath = 1\n", "path = 1 is not a string"},
+		"open other value":   {"[[annotations]]\nSPDX-FileCopyrightText = \"\"\"\n2026 A\n", "the value of SPDX-FileCopyrightText is not closed"},
+		"open other string":  {"[[annotations]]\nSPDX-FileCopyrightText = \"2026 A\n", "the value of SPDX-FileCopyrightText is not one this read can find the end of"},
 	} {
 		if _, err := ReuseAnnotationTables(test.text); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%s: err = %v, want %q", name, err, test.want)

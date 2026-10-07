@@ -61,7 +61,7 @@ func auditRootLicense(ctx context.Context, manifest *config.Manifest, rootDir st
 // keep their upstream LICENSE either way.
 
 // auditReuseRecords fails when an annotation of the repository's REUSE.toml never takes effect
-// because a later annotation matches every file it names (supplychain.ReuseShadowedPaths): the
+// because later annotations match every file it names (supplychain.ReuseShadowedPaths): the
 // override reuse lint then accepts is not the record REUSE resolves for its files. A repository
 // without REUSE.toml skips the check, saying so; one whose REUSE.toml cannot be read or followed
 // fails it, since a check that did not run is no pass.
@@ -88,7 +88,7 @@ func auditReuseRecords(ctx context.Context, rootDir string) error {
 		}
 		return fmt.Errorf("[FAIL] %s annotation order: %d path(s) resolve to a later annotation, not their own", supplychain.ReuseFile, len(shadows))
 	}
-	fmt.Printf("[PASS] %s annotation order: no path of its %d annotations is matched whole by a later annotation.\n",
+	fmt.Printf("[PASS] %s annotation order: no path of its %d annotations is matched whole by the annotations after it.\n",
 		supplychain.ReuseFile, len(tables))
 	return nil
 }
