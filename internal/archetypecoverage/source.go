@@ -15,6 +15,7 @@ import (
 	"go/token"
 	"go/types"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -169,48 +170,16 @@ func (p *sourcePackage) add(parsed *ast.File, module string) {
 	}
 }
 
-// dependencyOrder sorts the packages so each follows every module package it imports (Kahn's
-// algorithm, iterative). Ties break by directory, so the order is the same on every run.
+// dependencyOrder sorts the packages so each follows every module package it imports
+// (util.DependencyOrder, Kahn's algorithm). Ties break by directory, so the order is the same on
+// every run.
 func dependencyOrder(packages map[string]*sourcePackage) ([]string, error) {
-	pending, dependents := importEdges(packages)
-	var ready []string
-	for dir := range packages {
-		if pending[dir] == 0 {
-			ready = append(ready, dir)
-		}
-	}
-	slices.Sort(ready)
-	order := make([]string, 0, len(packages))
-	for i := 0; i < len(ready) && i < len(packages); i++ {
-		order = append(order, ready[i])
-		next := dependents[ready[i]]
-		slices.Sort(next)
-		for _, dir := range next {
-			if pending[dir]--; pending[dir] == 0 {
-				ready = append(ready, dir)
-			}
-		}
-	}
-	if len(order) != len(packages) {
+	dirs := slices.Sorted(maps.Keys(packages))
+	order, left := util.DependencyOrder(dirs, func(dir string) []string { return packages[dir].imports })
+	if len(left) > 0 {
 		return nil, errors.New("module packages import each other in a cycle")
 	}
 	return order, nil
-}
-
-// importEdges counts, per package, the module packages it imports, and lists, per package,
-// the packages that import it.
-func importEdges(packages map[string]*sourcePackage) (map[string]int, map[string][]string) {
-	pending := make(map[string]int, len(packages))
-	dependents := map[string][]string{}
-	for dir, pkg := range packages {
-		for _, imported := range pkg.imports {
-			if packages[imported] != nil {
-				pending[dir]++
-				dependents[imported] = append(dependents[imported], dir)
-			}
-		}
-	}
-	return pending, dependents
 }
 
 // moduleImporter resolves a module package to the one this scan already checked, and every
