@@ -51,19 +51,29 @@ func (s *adoptSession) adoptedWorkflowFiles(ctx context.Context, families []mana
 	if err != nil {
 		return nil, err
 	}
-	return append(familyWorkflows(families), planned...), nil
+	hosted, err := familyWorkflows(ctx, s.repoPath, families)
+	if err != nil {
+		return nil, err
+	}
+	return append(hosted, planned...), nil
 }
 
 // familyWorkflows returns the hosted workflow of each of families that has one, in their order,
-// with its locked body: what the family's step writes to its WorkflowFile.
-func familyWorkflows(families []managedasset.Family) []flavor.PlannedTemplate {
+// with its locked body as the family's step writes it to its WorkflowFile: rendered for the
+// default branch of the repository at repoPath (FamilyForRepository).
+func familyWorkflows(ctx context.Context, repoPath string, families []managedasset.Family) ([]flavor.PlannedTemplate, error) {
 	var files []flavor.PlannedTemplate
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
-		if families[index].WorkflowFile != "" {
-			files = append(files, flavor.PlannedTemplate{Path: families[index].WorkflowFile, Content: families[index].Workflow})
+		if families[index].WorkflowFile == "" {
+			continue
 		}
+		rendered, err := FamilyForRepository(ctx, repoPath, families[index])
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, flavor.PlannedTemplate{Path: rendered.WorkflowFile, Content: rendered.Workflow})
 	}
-	return files
+	return files, nil
 }
 
 // plannedFlavorWorkflows lists the workflows the flavor step leaves as the own rendering of the

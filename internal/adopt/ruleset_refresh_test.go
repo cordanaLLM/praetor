@@ -323,16 +323,19 @@ func TestAdopt_Positive_MasterRepositoryRulesetProtectsMaster(t *testing.T) {
 }
 
 // An existing manifest that declares no default branch is never rewritten: in a master checkout
-// adoption renders master and warns that a checkout without the origin HEAD renders main, which
-// the audit there reports as drift. A declared or a declined ruleset draws no warning. An origin
-// HEAD the ruleset cannot carry fails adoption before any step writes.
+// adoption renders master and warns, naming the ruleset, that a checkout without the origin HEAD
+// renders main, which the audit there reports as drift. A declared branch draws no warning, and
+// neither does a declined ruleset while no hosted gate renders for the branch
+// (TestAdoptWarnsAnUndeclaredBranchTheHostedGatesRenderFor covers one that does). An origin HEAD
+// the ruleset cannot carry fails adoption before any step writes.
 func TestAdopt_Negative_UndeclaredBranchInAnExistingManifestIsWarned(t *testing.T) {
 	repo := newTestRepo(t, "existing-undeclared")
 	recordOriginHead(t, repo, "master")
 	mustWrite(t, filepath.Join(repo, config.ManifestFileName), "version: 1\nrepository:\n  owner: acme\n  name: existing-undeclared\n")
 	rep := adoptForRuleset(t, repo, false)
 	warnings := undeclaredBranchWarnings(rep)
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "Declare repository.default_branch: master") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "Declare repository.default_branch: master") ||
+		!strings.Contains(warnings[0], rulesetFile) {
 		t.Fatalf("an existing manifest without the branch must be warned about once, naming master: %v", rep.Warnings)
 	}
 	manifest, err := config.LoadManifest(filepath.Join(repo, config.ManifestFileName))
@@ -345,8 +348,8 @@ func TestAdopt_Negative_UndeclaredBranchInAnExistingManifestIsWarned(t *testing.
 	}
 
 	for name, body := range map[string]string{
-		"declared": "version: 1\nrepository:\n  owner: acme\n  name: quiet\n  default_branch: master\n",
-		"declined": "version: 1\nrepository:\n  owner: acme\n  name: quiet\nadoption:\n  decline: [branch-ruleset]\n",
+		"declared":               "version: 1\nrepository:\n  owner: acme\n  name: quiet\n  default_branch: master\n",
+		"declined-without-gates": "version: 1\nrepository:\n  owner: acme\n  name: quiet\nadoption:\n  decline: [branch-ruleset]\n",
 	} {
 		quiet := newTestRepo(t, "quiet-"+name)
 		recordOriginHead(t, quiet, "master")

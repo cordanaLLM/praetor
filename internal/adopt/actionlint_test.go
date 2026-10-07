@@ -532,7 +532,10 @@ var renderedWorkflowsRoot = filepath.Join("..", "..", templates.Directory, "test
 // every body it renders; any other is rendered as flavor apply renders it.
 func emittedWorkflows(t *testing.T) []flavor.PlannedTemplate {
 	t.Helper()
-	workflows := familyWorkflows(managedasset.Families())
+	workflows, err := familyWorkflows(t.Context(), t.TempDir(), managedasset.Families())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !slices.ContainsFunc(workflows, func(workflow flavor.PlannedTemplate) bool { return workflow.Path == APICompatibilityWorkflowFile }) {
 		t.Fatalf("the managed family workflows %v lack %s", workflows, APICompatibilityWorkflowFile)
 	}

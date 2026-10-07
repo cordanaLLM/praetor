@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
 
@@ -106,12 +108,21 @@ func readRulesetBaseline(ctx context.Context, s *adoptSession) *forge.RulesetBas
 // resolveDefaultBranch reads, before any step writes, the default branch only this checkout
 // records (forge.DefaultBranchToDeclare): an origin HEAD that is not main, which a CI checkout
 // without it would not resolve. Without a manifest, the one the manifest step creates declares it
-// (declaredAdoptionManifest), so every checkout renders and audits the ruleset for the same
-// branch. An existing manifest that declares none is never rewritten and is warned about instead.
-// A manifest that declares the branch, or declines the branch-ruleset step, needs no read.
+// (declaredAdoptionManifest), so every checkout renders and audits the same branch. An existing
+// manifest that declares none is never rewritten and is warned about instead, naming every file
+// this adoption renders for the branch (branchRenderedFiles). A manifest that declares the
+// branch, or one under which adoption renders nothing for it, needs no read.
 func (s *adoptSession) resolveDefaultBranch(ctx context.Context, declared *config.Manifest) error {
-	if declared != nil && (declared.Repository.DefaultBranch != "" || s.declines("branch-ruleset")) {
+	if declared != nil && declared.Repository.DefaultBranch != "" {
 		return nil
+	}
+	var rendered []string
+	if declared != nil {
+		files, err := s.branchRenderedFiles(ctx)
+		if err != nil || len(files) == 0 {
+			return err
+		}
+		rendered = files
 	}
 	branch, err := forge.DefaultBranchToDeclare(ctx, s.repoPath)
 	if err != nil {
@@ -122,12 +133,34 @@ func (s *adoptSession) resolveDefaultBranch(ctx context.Context, declared *confi
 		return nil
 	}
 	if branch != "" {
-		s.report.addWarning("%s declares no repository.default_branch: this checkout's origin HEAD names %s, so the "+
-			"ruleset renders for %s here, but a checkout without it (CI usually has none) renders %s and the audit "+
-			"reports drift. Declare repository.default_branch: %s in %s; adoption never rewrites an existing manifest",
-			manifestFile, branch, branch, forge.FallbackDefaultBranch, branch, manifestFile)
+		s.report.addWarning("%s declares no repository.default_branch: this checkout's origin HEAD names %s, so "+
+			"adoption renders %s for %s here, but a checkout without it (CI usually has none) renders them for %s and "+
+			"the audit reports drift. Declare repository.default_branch: %s in %s; adoption never rewrites an existing manifest",
+			manifestFile, branch, strings.Join(rendered, ", "), branch, forge.FallbackDefaultBranch, branch, manifestFile)
 	}
 	return nil
+}
+
+// branchRenderedFiles names the files this adoption renders for the repository's default branch:
+// the branch ruleset unless the manifest declines it, and the hosted workflow of every enabled
+// managed asset family whose workflow names the branch (FamilyForRepository). The documentation
+// and API compatibility gate steps cannot be declined, so an enabled family's workflow is always
+// written.
+func (s *adoptSession) branchRenderedFiles(ctx context.Context) ([]string, error) {
+	rendered := make([]string, 0, managedasset.MaxFamilies+1)
+	if !s.declines("branch-ruleset") {
+		rendered = append(rendered, rulesetFile)
+	}
+	families, err := enabledManagedFamiliesForSession(ctx, s)
+	if err != nil {
+		return nil, fmt.Errorf("resolve the hosted gate workflows rendered for the default branch: %w", err)
+	}
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		if families[index].BranchDependent() {
+			rendered = append(rendered, families[index].WorkflowFile)
+		}
+	}
+	return rendered, nil
 }
 
 // priorRulesetDigests is the earlier-text set of the ruleset scaffold (scaffold.prior): the

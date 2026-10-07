@@ -100,6 +100,43 @@ else
   unset GIT_ASKPASS
 fi
 
+readonly PROBE_LOG="$RUN_DIR/probe.log"
+
+# GitHub serves <repository>.wiki.git only once the wiki's first page is saved; before that an
+# authenticated request answers HTTP 404, which Git reports as "repository '<url>' not found".
+# That one answer finishes the run with a notice: nothing can be mirrored until a person saves a
+# first page. GitHub answers 404 for a repository the token cannot read as well, which the job
+# token of the repository itself always can. The message is matched in the C locale, and every
+# other failure (authentication, connectivity, a timeout, a local path) fails the run.
+report_missing_wiki() {
+  local message="The wiki repository ${WIKI_REMOTE} does not exist yet, so nothing was mirrored. GitHub creates it when the wiki's first page is saved: open the repository's Wiki tab, save a first page in the web UI, then rerun this workflow."
+  # A workflow command message escapes percent signs; it holds no line break.
+  echo "::notice title=Wiki not mirrored::${message//%/%25}"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    printf '%s\n' "$message" >>"$GITHUB_STEP_SUMMARY"
+  fi
+}
+
+echo "Probing wiki repository..."
+if LC_ALL=C LANGUAGE=C git_bounded -c credential.helper= ls-remote --quiet -- \
+  "$WIKI_REMOTE" >/dev/null 2>"$PROBE_LOG"; then
+  :
+else
+  probe_status=$?
+  if (( probe_status != 124 && probe_status != 137 )) &&
+    grep -Eq "^fatal: repository '.*' not found$" "$PROBE_LOG"; then
+    report_missing_wiki
+    exit 0
+  fi
+  echo "Wiki repository could not be reached. Git reported:" >&2
+  sed -n '1,20p' "$PROBE_LOG" >&2
+  if (( probe_status == 124 || probe_status == 137 )); then
+    echo "Wiki probe exceeded the ${GIT_TIMEOUT_SECONDS}-second Git timeout." >&2
+  fi
+  echo "Check token permissions and connectivity." >&2
+  exit 1
+fi
+
 echo "Cloning wiki repository..."
 if git_bounded -c credential.helper= clone --quiet -- \
   "$WIKI_REMOTE" "$CLONE_DIR" 2>"$CLONE_LOG"; then
@@ -111,9 +148,7 @@ else
   if (( clone_status == 124 || clone_status == 137 )); then
     echo "Wiki clone exceeded the ${GIT_TIMEOUT_SECONDS}-second Git timeout." >&2
   fi
-  printf '%s\n' \
-    "If the GitHub wiki has no pages, create its initial page in the GitHub web UI, then rerun this workflow." \
-    "Otherwise, check token permissions and connectivity." >&2
+  echo "Check token permissions and connectivity." >&2
   exit 1
 fi
 

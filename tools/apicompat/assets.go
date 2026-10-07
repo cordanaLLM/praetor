@@ -19,6 +19,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -39,9 +40,16 @@ const (
 	MaxAssets = 1
 )
 
-// Workflow is the hosted gate adoption writes to WorkflowFile. Its one job, named
-// StatusContext, runs on every pull request and push without a condition, so the branch ruleset
-// adoption renders from the workflows requires it.
+// Workflow is the hosted gate adoption writes to WorkflowFile, rendered for a repository whose
+// default branch is main; adoption and audit render it for the repository's own default branch
+// (managedasset.Family.ForBranch), which names the one branch a push runs it on. Its trigger and
+// draft handling are the hosted gate shape (ghworkflow.HostedGateOn, HostedGateDraftStep,
+// HostedGateStepIf in internal/ghworkflow/hostedgate.go), so a push to another branch or a tag
+// starts no API comparison (#815). Its one job, named StatusContext, has no condition, so it
+// reports on every pull request and the branch ruleset adoption renders from the workflows
+// requires it. On a draft the job fails by design without comparing anything, saying the gate
+// runs when the pull request is marked ready; the ready_for_review run then reports the context
+// on the same head commit.
 //
 // A pull request compares its base commit with the merge commit the checkout action checks
 // out; a push compares HEAD with the newest root release tag, and passes saying so while there
@@ -59,10 +67,7 @@ const (
 const Workflow = `---
 name: Praetor API Compatibility
 
-'on':
-  pull_request:
-  push:
-
+` + ghworkflow.HostedGateOn + `
 permissions:
   contents: read
 
@@ -72,26 +77,26 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
-      - name: Checkout source
+` + ghworkflow.HostedGateDraftStep + `      - name: Checkout source` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-      - name: Setup Go
+      - name: Setup Go` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: stable
           cache: false
       # yamllint disable rule:line-length
-      - name: Restore Go module cache
+      - name: Restore Go module cache` + ghworkflow.HostedGateStepIf + `
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/go/pkg/mod
           key: gomod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             gomod-${{ runner.os }}-${{ runner.arch }}-
-      - name: Restore Go build cache
+      - name: Restore Go build cache` + ghworkflow.HostedGateStepIf + `
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -100,7 +105,7 @@ jobs:
             gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-${{ hashFiles('**/go.sum') }}-
             gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-
       # yamllint enable rule:line-length
-      - name: Compare the API of every Go module
+      - name: Compare the API of every Go module` + ghworkflow.HostedGateStepIf + `
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: go run tools/apicompat/gate/main.go -base="$BASE"
@@ -108,10 +113,15 @@ jobs:
 
 // priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the family's
 // managed paths, taken with LF line endings, to that path: the family's Prior
-// (internal/managedasset). internal/managedasset/testdata/shipped/api-compatibility.sha256
-// records every text ever shipped, and TestShippedTextLedger fails until each outgoing text is
-// listed here.
-var priorDigests = map[string]string{}
+// (internal/managedasset). Adoption refreshes a file holding exactly one of these texts without
+// --force. testdata/prior holds each text, and TestPriorDigests recomputes every digest from it.
+// internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
+// shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
+var priorDigests = map[string]string{
+	// The first gate, which ran on every push to every branch and tag and on every draft pull
+	// request (#815).
+	"a123aa00616a9ee913dda943e288a64f8f3e3518b7777a4f8ed866c10c47f37e": WorkflowFile,
+}
 
 var assetNames = [...]string{GateFile}
 

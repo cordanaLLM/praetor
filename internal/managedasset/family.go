@@ -26,6 +26,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
@@ -45,7 +47,22 @@ const (
 	DocumentationFacet = "docs:seo-portal"
 	// APIContractFacet is the manifest facet that enables the Go API compatibility gate.
 	APIContractFacet = "api:public-contract"
+	// WorkflowBranch is the default branch every family's Workflow text, and every Prior text
+	// that names one, is written for (ghworkflow.HostedGateDefaultBranch): the branch a
+	// repository that declares none and records none resolves (forge.FallbackDefaultBranch).
+	// ForBranch renders the text for another one.
+	WorkflowBranch = ghworkflow.HostedGateDefaultBranch
 )
+
+// pushBranchesPrefix opens the one line of a hosted workflow that names the default branch its
+// push trigger runs on (ghworkflow.HostedGatePushBranchesPrefix). config.ValidBranchName admits
+// no quote, glob character or space that would need escaping inside its single quotes.
+const pushBranchesPrefix = ghworkflow.HostedGatePushBranchesPrefix
+
+// pushBranchesLine is the push trigger's branch line for branch, with the line breaks around it.
+func pushBranchesLine(branch string) string {
+	return pushBranchesPrefix + branch + "']\n"
+}
 
 // Family is one managed asset family.
 type Family struct {
@@ -100,8 +117,11 @@ type Family struct {
 	// endings (util.CanonicalTextDigest). A file holding exactly such a text is Praetor's own unedited output, so
 	// adoption refreshes it without --force and a disabled facet removes it. Audit still
 	// fails on it, naming plain adoption as the repair. An edited file matches no digest and
-	// keeps the --force contract.
+	// keeps the --force contract. The current workflow rendered for another default branch
+	// counts as such a text too (PriorRendering), so a renamed default branch refreshes it.
 	Prior map[string]string
+	// branch is the default branch Workflow is rendered for; empty means WorkflowBranch.
+	branch string
 }
 
 // Families returns the registry in its fixed order: the order adoption emits and audit
@@ -269,8 +289,83 @@ func (f Family) ManagedPaths() []string {
 	return append([]string{f.WorkflowFile}, f.AssetPaths()...)
 }
 
-// Canonical returns the exact bytes the family owns at the repository-relative path rel.
-// owned is false, with no error, when rel is not one of the family's managed paths.
+// Branch returns the default branch the family's workflow is rendered for (ForBranch).
+func (f Family) Branch() string {
+	if f.branch == "" {
+		return WorkflowBranch
+	}
+	return f.branch
+}
+
+// BranchDependent reports whether the family's workflow names its default branch on its push
+// trigger: exactly one push branch line (pushBranchesLine) for Branch, the line ForBranch
+// rewrites. A family without a workflow, or whose workflow runs on every branch, is not.
+func (f Family) BranchDependent() bool {
+	return f.WorkflowFile != "" && strings.Count(f.Workflow, pushBranchesLine(f.Branch())) == 1
+}
+
+// ForBranch returns the family with its workflow rendered for the default branch branch: the
+// push trigger's branch line names it. It is the one rendering adoption writes and audit locks
+// (FamilyForRepository in internal/adopt). A family that is not BranchDependent is returned
+// unchanged, and a branch config.ValidBranchName refuses is an error.
+func (f Family) ForBranch(branch string) (Family, error) {
+	if !f.BranchDependent() {
+		return f, nil
+	}
+	if !config.ValidBranchName(branch) {
+		return Family{}, fmt.Errorf("managed asset family %q workflow cannot be rendered for default branch %q: not a branch name", f.Name, branch)
+	}
+	f.Workflow = strings.Replace(f.Workflow, pushBranchesLine(f.Branch()), pushBranchesLine(branch), 1)
+	f.branch = branch
+	return f, nil
+}
+
+// OtherBranch returns the default branch other than Branch that actual, the family's file at rel,
+// is the workflow rendered for (otherBranchRendering). found is false for any other text, the
+// rendering for Branch included. Audit names that branch, so the repair it suggests says which
+// branch the file was rendered for and which one this checkout resolves.
+func (f Family) OtherBranch(rel string, actual []byte) (branch string, found bool) {
+	branch, _ = f.otherBranchRendering(rel, actual)
+	return branch, branch != ""
+}
+
+// otherBranchRendering returns the default branch other than Branch that actual, in one
+// consistent line-ending style, is the family's workflow at rel rendered for, empty when it is
+// no such rendering, and whether actual is its CRLF checkout. Such a file is Praetor's unedited
+// output for a branch the repository does not resolve here: after a default branch rename, or in
+// a checkout that lacks the origin HEAD it was rendered from.
+func (f Family) otherBranchRendering(rel string, actual []byte) (branch string, crlf bool) {
+	if rel != f.WorkflowFile || !f.BranchDependent() {
+		return "", false
+	}
+	text, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
+	if err != nil {
+		return "", false
+	}
+	branch, found := pushBranch(text)
+	if !found || branch == f.Branch() {
+		return "", false
+	}
+	other, err := f.ForBranch(branch)
+	if err != nil || other.Workflow != text {
+		return "", false
+	}
+	return branch, crlf
+}
+
+// pushBranch returns the branch the first push branch line of text names (pushBranchesLine).
+func pushBranch(text string) (string, bool) {
+	_, rest, found := strings.Cut(text, pushBranchesPrefix)
+	if !found {
+		return "", false
+	}
+	branch, _, closed := strings.Cut(rest, "']\n")
+	return branch, closed
+}
+
+// Canonical returns the exact bytes the family owns at the repository-relative path rel, its
+// workflow rendered for Branch. owned is false, with no error, when rel is not one of the
+// family's managed paths.
 func (f Family) Canonical(rel string) (data []byte, owned bool, err error) {
 	if f.WorkflowFile != "" && rel == f.WorkflowFile {
 		return []byte(f.Workflow), true, nil
@@ -291,13 +386,45 @@ func (f Family) PriorText(rel string, actual []byte) bool {
 }
 
 // PriorRendering reports whether actual is a text the family shipped at rel before its current
-// canonical text (Prior), and whether actual is its CRLF checkout, so a refresh can keep the
+// canonical text (Prior), such a text rendered for another default branch
+// (priorOtherBranchRendering), or its current workflow rendered for another default branch
+// (otherBranchRendering), and whether actual is its CRLF checkout, so a refresh can keep the
 // file's style. Prior is read with util.LookupCanonicalText, the lookup adoption applies to
 // every other earlier-text set: an LF text and its CRLF checkout match, while an edit, mixed
 // line endings or a lone carriage return match nothing.
 func (f Family) PriorRendering(rel string, actual []byte) (known, crlf bool) {
 	owner, known, crlf := util.LookupCanonicalText(actual, f.Prior)
-	return known && owner == rel, crlf
+	if known && owner == rel {
+		return true, crlf
+	}
+	if branch, renderedCRLF := f.otherBranchRendering(rel, actual); branch != "" {
+		return true, renderedCRLF
+	}
+	return f.priorOtherBranchRendering(rel, actual), crlf
+}
+
+// priorOtherBranchRendering reports whether actual, the family's workflow file, is a Prior text
+// rendered for a default branch other than WorkflowBranch. Prior records the WorkflowBranch
+// rendering of each earlier workflow only, so an unedited copy rendered for master would
+// otherwise turn into an edit, refreshed only with --force, as soon as the workflow changes
+// again. actual must name exactly one push branch line (pushBranchesLine), for a branch
+// config.ValidBranchName admits; that line rewritten to WorkflowBranch must then be a Prior text
+// of rel. Any other text, an edited rendering included, is no prior rendering.
+func (f Family) priorOtherBranchRendering(rel string, actual []byte) bool {
+	if f.WorkflowFile == "" || rel != f.WorkflowFile {
+		return false
+	}
+	text, _, err := util.NormalizeLineEndingsStrict(string(actual))
+	if err != nil || strings.Count(text, pushBranchesPrefix) != 1 {
+		return false
+	}
+	branch, found := pushBranch(text)
+	if !found || branch == WorkflowBranch || !config.ValidBranchName(branch) {
+		return false
+	}
+	rendered := strings.Replace(text, pushBranchesLine(branch), pushBranchesLine(WorkflowBranch), 1)
+	owner, known, _ := util.LookupCanonicalText([]byte(rendered), f.Prior)
+	return known && owner == rel
 }
 
 // EmbedDirective returns the exact go:embed line Source must carry: the inventory, in order.
@@ -400,6 +527,9 @@ func (f Family) validateWorkflow() error {
 	}
 	if declared == 4 && (!cleanRelative(f.WorkflowFile) || strings.HasPrefix(f.WorkflowFile, f.Directory+"/")) {
 		return fmt.Errorf("managed asset family %q workflow %q must be a clean relative path outside its asset directory", f.Name, f.WorkflowFile)
+	}
+	if strings.Count(f.Workflow, pushBranchesPrefix) > 1 {
+		return fmt.Errorf("managed asset family %q workflow names its default branch on more than one push branch line", f.Name)
 	}
 	return f.validateWorkflowPins()
 }

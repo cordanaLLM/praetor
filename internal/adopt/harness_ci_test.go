@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/templates"
 )
 
@@ -66,7 +67,7 @@ func TestScaffoldedWorkflowsReadWhatAdoptionWrites(t *testing.T) {
 	if got := workflowPaths(workflows); !slices.Equal(got, want) {
 		t.Fatalf("scaffolded workflows = %q, want %q", got, want)
 	}
-	if !slices.Equal(runLabels(workflows[1].runs), []string{`go run tools/apicompat/gate/main.go -base="$BASE"`}) {
+	if !slices.Equal(runLabels(workflows[1].runs), []string{ghworkflow.HostedGateDraftStepName, `go run tools/apicompat/gate/main.go -base="$BASE"`}) {
 		t.Errorf("%s runs = %+v", APICompatibilityWorkflowFile, workflows[1].runs)
 	}
 	if !slices.Equal(runLabels(workflows[2].runs), []string{"go vet ./...", "go test -race ./..."}) {

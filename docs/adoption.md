@@ -150,6 +150,15 @@ Any other condition makes the job optional, a status function joined with anythi
 that runs only when a planner job selects it would pass as a required check whether or not its
 work ran.
 
+A draft skip, `if: github.event.pull_request.draft != true` on the job, is such a condition too,
+even in a workflow that runs again on `ready_for_review`: the skipped draft reports success, and
+once the draft is marked ready that success satisfies the ruleset until the new run reports
+(`TestDraftConditionsAndRequiredContexts` in `internal/forge/workflow_draft_condition_test.go`).
+The hosted gates adoption writes keep their job unconditional and refuse a draft in a step
+instead: on a draft the job reports a failed check by design, and the `ready_for_review` run
+reports the same check on the same head commit, which replaces the failure
+([When the workflow runs](guides/api-compatibility.md#when-the-workflow-runs)).
+
 A repository guard is judged against the manifest identity. An operational fork resolves that
 identity to its `repository.source`, so the ruleset the fork commits equals the canonical one.
 On the fork's forge the guard is false, and a guarded matrix job is skipped before its legs
@@ -231,8 +240,13 @@ ruleset a local run writes. The manifest writers record it for you (`forge.Defau
 `.standards.yaml` they create when it is not `main`
 (`TestAdopt_Positive_MasterRepositoryRulesetProtectsMaster`, `TestInit_3D_DefaultBranch`,
 `TestEnsureOnboardingManifest_Positive_DeclaresAMasterOriginHead`). Adoption never rewrites an
-existing manifest: when one declares no branch and the origin HEAD is not `main`, it warns and
-names the line to add (`TestAdopt_Negative_UndeclaredBranchInAnExistingManifestIsWarned`).
+existing manifest: when one declares no branch and the origin HEAD is not `main`, it warns, names
+every file it renders for the branch and the line to add
+(`TestAdopt_Negative_UndeclaredBranchInAnExistingManifestIsWarned`). The hosted gate workflows
+render for the branch too ([When the workflow runs](guides/api-compatibility.md#when-the-workflow-runs)),
+so a manifest that declines `branch-ruleset` is still warned while a hosted gate is enabled
+(`TestAdoptWarnsAnUndeclaredBranchTheHostedGatesRenderFor` in
+`internal/adopt/workflow_branch_test.go`).
 
 A declaration outside `config.ValidBranchName` (1 to 128 letters, digits, `.`, `_`, `/` or `-`,
 no `..`) fails the manifest load. An origin HEAD outside it fails the resolution instead of

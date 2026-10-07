@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -22,11 +23,16 @@ import (
 // family is refreshed.
 const refreshedFamilyDetail = "Refreshed an earlier Praetor text to the current locked text"
 
-// reconcileManagedFamily writes every asset of family and then its hosted workflow. An
-// existing file with the canonical text, in one consistent line-ending style, is verified
-// and left alone; one holding an earlier Praetor text of that path (Family.Prior) is
-// refreshed; any other differing file is preserved unless --force regenerates it.
+// reconcileManagedFamily writes every asset of family and then its hosted workflow, rendered for
+// the repository's default branch (FamilyForRepository). An existing file with the canonical
+// text, in one consistent line-ending style, is verified and left alone; one holding an earlier
+// Praetor text of that path (Family.Prior) or the workflow rendered for another default branch
+// is refreshed; any other differing file is preserved unless --force regenerates it.
 func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managedasset.Family) error {
+	family, err := FamilyForRepository(ctx, s.repoPath, family)
+	if err != nil {
+		return err
+	}
 	if family.RefuseForeign {
 		if err := refuseForeignFamilyFiles(ctx, s, family); err != nil {
 			return err
@@ -50,12 +56,29 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 	if family.WorkflowFile == "" {
 		return nil
 	}
-	_, err := reconcileManagedFamilyFile(ctx, s, family, scaffold{
+	_, err = reconcileManagedFamilyFile(ctx, s, family, scaffold{
 		rel: family.WorkflowFile, perm: filePerm, content: []byte(family.Workflow), auditLocked: true,
 		created:  "Scaffolded required " + family.WorkflowNoun,
 		verified: "Existing " + family.WorkflowNoun + " preserved; audit verifies canonical text",
 	})
 	return err
+}
+
+// FamilyForRepository returns family with its hosted workflow rendered for the default branch of
+// the repository at repoPath (managedasset.Family.ForBranch): the branch the branch ruleset
+// protects, resolved as forge.RepositoryDefaultBranch resolves it for the ruleset, from the
+// manifest at repoPath first. Adoption writes this rendering and audit locks a copy to it, so the
+// two resolve one branch. A family whose workflow names no default branch is returned unchanged
+// without reading anything.
+func FamilyForRepository(ctx context.Context, repoPath string, family managedasset.Family) (managedasset.Family, error) {
+	if !family.BranchDependent() {
+		return family, nil
+	}
+	branch, err := forge.RepositoryDefaultBranch(ctx, repoPath, nil)
+	if err != nil {
+		return managedasset.Family{}, fmt.Errorf("render the %s workflow %s: %w", family.Kind, family.WorkflowFile, err)
+	}
+	return family.ForBranch(branch)
 }
 
 func reconcileManagedFamilyFile(ctx context.Context, s *adoptSession, family managedasset.Family, sc scaffold) (scaffoldState, error) {

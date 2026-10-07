@@ -369,6 +369,13 @@ var everyRunConditions = []string{"always()", "!cancelled()", "success()||failur
 // Renovate pull request cannot satisfy the ruleset. Where they are not, such as an operational
 // fork without PRAETOR_FORK_PORTABILITY, every skipped check reports success and the pull request
 // can merge with no Go test or security scan run (docs/guides/operational-sync.md).
+//
+// A draft skip, github.event.pull_request.draft != true, is a condition like any other: the
+// skipped draft reports success, which a required check accepts, and nothing waits for the run
+// that marking the draft ready starts. The hosted gates Praetor emits keep their job
+// unconditional instead and fail on a draft by design (ghworkflow.HostedGateDraftStep); the
+// ready_for_review run then reports the same context on the same head commit and replaces the
+// failure.
 func reportsOnEveryPullRequest(condition, identity string) bool {
 	condition = withoutRenovateBranchSkip(condition)
 	return strings.TrimSpace(condition) == "" || holdsOnEveryRun(condition) ||
@@ -379,15 +386,8 @@ func reportsOnEveryPullRequest(condition, identity string) bool {
 // whole ${{ }} expression. A status function joined with anything else is not: the value of the
 // rest is not knowable from the file.
 func holdsOnEveryRun(condition string) bool {
-	expression := strings.TrimSpace(condition)
-	if inner, wrapped := strings.CutPrefix(expression, "${{"); wrapped {
-		body, closed := strings.CutSuffix(inner, "}}")
-		if !closed {
-			return false
-		}
-		expression = body
-	}
-	return slices.Contains(everyRunConditions, strings.Join(strings.Fields(expression), ""))
+	expression, closed := ghworkflow.UnwrapExpression(condition)
+	return closed && slices.Contains(everyRunConditions, strings.Join(strings.Fields(expression), ""))
 }
 
 // advisoryJob reports whether continue-on-error makes a job's result non-binding. An

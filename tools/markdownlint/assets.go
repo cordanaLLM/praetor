@@ -13,6 +13,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -30,11 +31,20 @@ const (
 )
 
 // Workflow is the dedicated, required hosted documentation gate adoption writes to
-// WorkflowFile. Its job name is StatusContext. After the Markdown check it runs the figure
-// engine's check and sources commands (docs/adr/0016-figures-for-adopters.md, operator decision
-// 4), which the documentation facet writes beside this gate and which skip, saying why, in a
-// repository without a figure; the job stays on Linux, where the Node set up for the Markdown
-// gate runs them.
+// WorkflowFile, rendered for a repository whose default branch is main; adoption and audit
+// render it for the repository's own default branch (managedasset.Family.ForBranch), which names
+// the one branch a push runs it on. Its trigger and draft handling are the hosted gate shape
+// (ghworkflow.HostedGateOn, HostedGateDraftStep, HostedGateStepIf in
+// internal/ghworkflow/hostedgate.go), so a push to another branch or a tag starts no run (#815).
+// Its job name is StatusContext; the job has no condition, so the branch ruleset requires it. On
+// a draft the job fails by design without checking anything, saying the gate runs when the pull
+// request is marked ready; the ready_for_review run then reports the context on the same head
+// commit.
+//
+// After the Markdown check the job runs the figure engine's check and sources commands
+// (docs/adr/0016-figures-for-adopters.md, operator decision 4), which the documentation facet
+// writes beside this gate and which skip, saying why, in a repository without a figure; the job
+// stays on Linux, where the Node set up for the Markdown gate runs them.
 //
 // Audit locks an adopter's copy to these bytes, so the text holds to the policies an adopter
 // may enforce without being able to edit it: every action is pinned by full commit SHA with
@@ -49,10 +59,7 @@ const (
 const Workflow = `---
 name: Praetor Documentation Governance
 
-'on':
-  pull_request:
-  push:
-
+` + ghworkflow.HostedGateOn + `
 permissions:
   contents: read
 
@@ -62,21 +69,21 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - name: Checkout source
+` + ghworkflow.HostedGateDraftStep + `      - name: Checkout source` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-      - name: Setup Node.js
+      - name: Setup Node.js` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: tools/markdownlint/package-lock.json
-      - name: Verify public Markdown
+      - name: Verify public Markdown` + ghworkflow.HostedGateStepIf + `
         run: node tools/markdownlint/verify.mjs
-      - name: Verify figures
+      - name: Verify figures` + ghworkflow.HostedGateStepIf + `
         run: |
           node tools/figures/build.mjs check
           node tools/figures/build.mjs sources
@@ -97,6 +104,9 @@ var priorDigests = map[string]string{
 	"97d1fad8184587e73dfa25af2cc4e30cf9fa278abf5868fdc0dc27c7a222c95e": WorkflowFile,
 	// The SHA-pinned gate before it ran the figure engine's check and sources commands.
 	"938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e": WorkflowFile,
+	// The gate that ran on every push to every branch and tag and on every draft pull request
+	// (#815).
+	"05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked

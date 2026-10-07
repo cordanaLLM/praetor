@@ -77,13 +77,19 @@ markup extension.
   line-based.
 
 GitHub exposes the wiki Git repository only after an initial page has been
-created on GitHub. If a repository has its wiki feature enabled but the workflow
-reports `Repository not found`, create and save the first page through the Wiki
-tab, then rerun the workflow. This prerequisite comes from GitHub's
+created on GitHub. This prerequisite comes from GitHub's
 [wiki editing documentation](https://docs.github.com/en/communities/documenting-your-project-with-wikis/adding-or-editing-wiki-pages#cloning-wikis-to-your-computer).
+Before cloning, the script runs `git ls-remote` on the wiki remote with the job
+token. When Git answers `repository '<url>' not found`, read in the C locale, the
+run mirrors nothing and still succeeds: it prints a `::notice::` and adds a line
+to the step summary saying to save a first page through the Wiki tab and rerun
+the workflow. GitHub gives the same answer for a repository the token cannot
+read, which the repository's own job token always can.
 
-Other clone failures remain errors. Check the Git message for authentication or
-connectivity problems instead of assuming the wiki is empty. The workflow passes
+Every other probe or clone failure remains an error: authentication, connectivity
+and a timeout fail the run with Git's message, as does a local remote path that
+does not exist (`WikiProbeTests` in `scripts/test_sync_github_wiki.py`, whose
+stubbed Git answers for the GitHub remote). The workflow passes
 `github.token` through a temporary askpass helper. The token is not placed in the
 remote URL, command output, or Git configuration, and the helper is deleted when
 the script exits.
