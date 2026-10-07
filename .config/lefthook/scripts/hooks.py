@@ -16,8 +16,6 @@ from checks import (checkpoint_checks, context_changed, file_checks, go_packages
 from privacy import check_private_history, check_private_index
 from toolchain import make_program
 
-SUBJECT = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
-                     r"(\([^()\n]+\))?!?: \S.*$")
 SIGNOFF = re.compile(r"^Signed-off-by: [^<>\n]+ <[^<>\s]+@[^<>\s]+>$", re.MULTILINE)
 OID = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 
@@ -57,13 +55,12 @@ def check_message(filename):
     # Checking freshness here preserves partial commits without certifying the
     # temporary staged-only tree that Lefthook exposes during pre-commit.
     verify_live_state()
+    # The subject and the HISS-14 Migration: footer are the commit message policy, which
+    # forge check-message applies here and forge check-commits applies to every commit of a pull
+    # request in CI (#61). CI checks the DCO trailer below in compliance.yml.
+    run([praetorctl_path(), "forge", "check-message", filename], capture=False, timeout=30)
     message = Path(filename).read_text()
     lines = [line for line in message.splitlines() if not line.startswith("#")]
-    subject = next((line for line in lines if line.strip()), "")
-    # Git-generated merge and revert subjects are valid during integration.
-    generated = subject.startswith(("Merge ", 'Revert "'))
-    if not (SUBJECT.fullmatch(subject) or generated):
-        raise HookError("Commit subject must be 'type(scope): description' (scope optional).")
     if not SIGNOFF.search("\n".join(lines)):
         raise HookError("Commit requires a DCO trailer. Use git commit -s after reviewing your changes.")
 
@@ -187,6 +184,25 @@ def pre_push(remote):
             print(f"WIP checkpoint: {destination}; local file/build/race checks passed. "
                   "Full CI diagnostics remain required; no release receipt issued.")
         print(f"Push: {head[:12]} checked ({len(names)} changed paths)")
+
+
+def check_commits(base):
+    """Re-run the commit checks that need no workstation over every commit of base..HEAD (#61).
+
+    A commit made with its hooks skipped, by a core.hooksPath override or --no-verify, carries
+    no proof that they ran, so CI runs this over every commit of a pull request: the pre-push
+    private-state check (check_private_history, which bounds the range) and git's own whitespace
+    and conflict-marker check, which the pre-commit hook runs on the index, on each commit's diff.
+    `forge check-commits` re-runs the commit message policy. git log diffs no merge commit; a
+    pull request carries none (the linear-history step).
+    """
+    base = git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").decode().strip()
+    head = git("rev-parse", "--verify", "HEAD^{commit}").decode().strip()
+    check_private_history(head, base)
+    git("--no-replace-objects", "log", "--check", "--no-color", "--no-ext-diff", "--no-textconv",
+        "--format=commit %H", f"{base}..{head}", "--")
+    print(f"Commits: {base[:12]}..{head[:12]} carry no private state, whitespace error or "
+          "conflict marker")
 
 
 def check_pushed_snapshot(head, base, mode, names):
@@ -332,6 +348,9 @@ def main(argv):
         pre_push(args[0] if args else "origin")
     elif stage == "state-verify":
         verify_live_state()
+    elif stage == "commits":
+        base, = args
+        check_commits(base)
     elif stage == "fmt-check":
         fmt_check()
     elif stage == "changed":
