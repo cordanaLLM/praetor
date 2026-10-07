@@ -10,9 +10,9 @@ import "strings"
 const MaxCSVFields = 1024
 
 // SplitCSV splits a comma-separated list into its trimmed, non-empty fields, at most
-// MaxCSVFields of them, or nil for a blank list. The standardsctl list flags and the
-// allowed-failures and allowed-skips inputs of an alls-green step (internal/forge) read a list
-// through it.
+// MaxCSVFields of them, or nil for a blank list. The standardsctl list flags, the standards-mcp
+// -allowed-origins flag and the allowed-failures and allowed-skips inputs of an alls-green step
+// (internal/forge) read a list through it.
 func SplitCSV(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
 		return nil
