@@ -32,6 +32,7 @@ func main() {
 	allowRemote := flag.Bool("allow-remote-benchmarks", false, "Permit standards_dogfood to clone the curated public benchmark repositories")
 	authToken := flag.String("auth-token", "", "Bearer token required on every http/sse request (default: $"+authTokenEnv+"); mandatory when -host is not loopback")
 	origins := flag.String("allowed-origins", "", "Comma-separated browser origins accepted on http/sse in addition to loopback (e.g. https://ide.example)")
+	toolsMode := flag.String("tools", toolsModeFull, "What tools/list serves: full (every tool with its schema) or index (discovery tools and the hot tools; tools/call still accepts every tool)")
 	versionFlag := flag.Bool("version", false, "Print server version and exit")
 	flag.Parse()
 
@@ -58,6 +59,7 @@ func main() {
 		AllowRemoteBenchmarks: *allowRemote,
 		AuthToken:             token,
 		AllowedOrigins:        util.SplitCSV(*origins),
+		ToolsMode:             *toolsMode,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize standards-mcp server: %v\n", err)

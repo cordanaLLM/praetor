@@ -336,6 +336,32 @@ callsites with an independent AST oracle
 with the production extractor. The form rules are in the
 [text-register guide](text-register.md#tracked-runtime-sources).
 
+### Tool discovery and output offloading
+
+`tools/list` is byte-stable: tools are sorted by name, each `required` list is
+sorted, the server version stays out of it, and `initialize` declares
+`tools.listChanged: false`. `TestToolsListGoldenFullMode` and
+`TestToolsListGoldenIndexMode` pin the bytes against
+`internal/mcp/testdata/*.golden.json`; a tool or schema edit fails them until the
+reviewer accepts the new bytes with `PRAETOR_UPDATE_GOLDEN=1 go test ./cmd/standards-mcp`.
+
+`standards-mcp -tools=full` (default) lists every tool with its schema, about 20 KB.
+`-tools=index` lists `standards_tools_index`, `standards_tool_describe`,
+`standards_audit` and `standards_compile_context`, about 2.5 KB. The index returns
+one `name | summary | annotations` line per tool; `standards_tool_describe {name}`
+returns the full descriptor. `tools/call` accepts every registered tool in both modes
+(`TestToolsListIndexModeShrinksAndCallStillWorks`).
+
+Text above 16 KiB in one result item is written, after `SanitizeResult` ran, to
+`.standards/cache/mcp-out/<sha256>.txt` (private mode, at most 256 files, oldest
+removed first) and replaced by one line:
+`[offloaded] path=<repo-relative, forward slashes> bytes=<n> sha256=<hex> head=<first 400 bytes, quoted>`.
+Equal bytes give the same file and the same line. `standards_output_read {sha256, offset, limit}`
+reads it back, 12 KiB per call, and answers `next_offset`; only a 64-digit lowercase hex
+digest names a file, so no path argument can leave the directory
+(`internal/mcp/offload_test.go`). The 4 MiB sanitizer cap is unchanged. Add
+`.standards/cache/` to the repository's `.gitignore`.
+
 ### Shared audit authority and parity
 
 The `standards_audit` tool executes the same gates as CLI `standardsctl audit`,

@@ -104,7 +104,9 @@ func (o Offloader) store(text string) (string, error) {
 	switch {
 	case err == nil:
 	case errors.Is(err, os.ErrExist):
-		o.touch(rel)
+		if err := o.touch(rel); err != nil {
+			return "", err
+		}
 	default:
 		return "", fmt.Errorf("mcp: write offloaded output: %w", err)
 	}
@@ -115,13 +117,16 @@ func (o Offloader) store(text string) (string, error) {
 }
 
 // touch refreshes the modification time of an existing file so cleanup keeps recent output.
-func (o Offloader) touch(rel string) {
+func (o Offloader) touch(rel string) error {
 	full, err := util.ConfinePath(o.Root, rel)
 	if err != nil {
-		return
+		return fmt.Errorf("mcp: resolve offloaded output: %w", err)
 	}
 	now := time.Now()
-	_ = os.Chtimes(full, now, now)
+	if err := os.Chtimes(full, now, now); err != nil {
+		return fmt.Errorf("mcp: refresh offloaded output time: %w", err)
+	}
+	return nil
 }
 
 // pointerLine renders the one-line replacement for offloaded text. The path is
@@ -150,22 +155,9 @@ func (o Offloader) prune(keep string) error {
 	if err != nil {
 		return fmt.Errorf("mcp: resolve offload directory: %w", err)
 	}
-	entries, err := os.ReadDir(dir)
+	stored, err := listStored(dir)
 	if err != nil {
-		return fmt.Errorf("mcp: list offload directory: %w", err)
-	}
-	var stored []offloadEntry
-	for i := 0; i < len(entries); i++ {
-		name := entries[i].Name()
-		digest, isStored := strings.CutSuffix(name, offloadExt)
-		if !isStored || !offloadDigestPattern.MatchString(digest) || entries[i].IsDir() {
-			continue
-		}
-		info, err := entries[i].Info()
-		if err != nil {
-			continue
-		}
-		stored = append(stored, offloadEntry{name: name, mod: info.ModTime()})
+		return err
 	}
 	sort.Slice(stored, func(a, b int) bool {
 		if !stored[a].mod.Equal(stored[b].mod) {
@@ -182,6 +174,28 @@ func (o Offloader) prune(keep string) error {
 		}
 	}
 	return nil
+}
+
+// listStored lists the offloaded files in dir; anything else in it is left alone.
+func listStored(dir string) ([]offloadEntry, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("mcp: list offload directory: %w", err)
+	}
+	var stored []offloadEntry
+	for i := 0; i < len(entries); i++ {
+		name := entries[i].Name()
+		digest, isStored := strings.CutSuffix(name, offloadExt)
+		if !isStored || !offloadDigestPattern.MatchString(digest) || entries[i].IsDir() {
+			continue
+		}
+		info, err := entries[i].Info()
+		if err != nil {
+			continue
+		}
+		stored = append(stored, offloadEntry{name: name, mod: info.ModTime()})
+	}
+	return stored, nil
 }
 
 // Read returns up to limit bytes of the offloaded text with the given digest, starting at

@@ -34,7 +34,7 @@ func TestMCPRuntimeDescriptionsMatchSourceCensus(t *testing.T) {
 			got[property.Description]++
 		}
 	}
-	if len(result.Sources) != 95 || !equalTextCensus(want, got) {
+	if len(result.Sources) != 102 || !equalTextCensus(want, got) {
 		t.Fatalf("runtime description census differs: extracted=%d runtime=%d", len(result.Sources), censusSize(got))
 	}
 }
