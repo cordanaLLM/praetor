@@ -497,6 +497,45 @@ func TestDependencyManifestUnderDocsIsConfiguration(t *testing.T) {
 	}
 }
 
+// The credits gate (make credits-check, the internal/supplychain tests) reads docs/credits.yaml,
+// the credits page, THIRD-PARTY-NOTICES.md, every canonical persona and skill with its plugin copy,
+// and the manifests of the dependency inventory. Its light CI step runs on run_docs
+// (.github/workflows/ci.yml), and every heavy run reaches it through verify-all.
+func creditsGateRuns(d *cifilter.FilterDecision) bool {
+	return !d.SkipHeavyGates || d.RunDocs
+}
+
+// Negative: a pull request touching only a persona or skill was classed agent-only, which
+// selected context sync but not the documentation gates, so a skill neither derived nor marked
+// original first failed the credits gate on main. Every agent-only and docs-only change set of a
+// credits input selects the gate; every manifest the inventory reads selects the heavy run.
+func TestCreditsGateInputsSelectTheCreditsGate(t *testing.T) {
+	for _, files := range [][]string{
+		{".agents/skills/new-skill/SKILL.md", ".agents/plugins/praetor/skills/new-skill/SKILL.md"},
+		{".agents/agents/praetor-new.md"}, {".agents/plugins/praetor/agents/praetor-new.md"},
+		{"AGENTS.md"}, {"docs/credits.yaml"}, {"docs/credits.md"}, {"THIRD-PARTY-NOTICES.md"},
+		{"docs/credits.yaml", "docs/credits.md", ".agents/skills/caveman/SKILL.md"},
+	} {
+		decision := cifilter.MakeDecision(cifilter.ClassifyChanges(files), false)
+		if !decision.SkipHeavyGates || !creditsGateRuns(decision) {
+			t.Errorf("%v must take the light run with the credits gate, got %+v", files, decision)
+		}
+	}
+	for _, path := range []string{
+		"go.mod", "tools/go/go.mod", "docs/presets/starlight/package.json", "docs/presets/mkdocs/requirements.in",
+		".config/semgrep/requirements.txt", ".github/workflows/ci.yml", ".devcontainer/devcontainer.json", "docker/dev/Dockerfile",
+	} {
+		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
+		if decision.SkipHeavyGates || !decision.RunTests || !creditsGateRuns(decision) {
+			t.Errorf("%s feeds the dependency inventory and must take the heavy run, got %+v", path, decision)
+		}
+	}
+	// Boundary: private session state alone feeds no gate, so it selects none.
+	if decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{".workingdir/OPEN.md"}), false); decision.RunDocs || decision.RunTests {
+		t.Errorf("state-only change selected gates: %+v", decision)
+	}
+}
+
 // Negative (BUG-242): every file compile-context writes is agent text, so a vendor-only
 // change runs the HISS-16 compile-context --verify gate instead of the docs-only path.
 func TestCompiledVendorFilesRunContextSync(t *testing.T) {

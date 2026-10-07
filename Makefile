@@ -80,10 +80,10 @@ third-party-notices:
 	go run ./cmd/standardsctl sbom notices
 
 # The tests of internal/supplychain hold docs/credits.yaml, the docs/credits.md page rendered from
-# it and THIRD-PARTY-NOTICES.md to the repository, but `ci filter` classes those three files as
-# documentation, and a documentation-only pull request skips verify-all. The light CI run reaches
-# the tests through this target (.github/workflows/ci.yml); heavy runs reach them through
-# `go test ./...` in verify-all, so verify-all does not list it.
+# it, THIRD-PARTY-NOTICES.md and the canonical personas and skills to the repository, but `ci
+# filter` classes those files as documentation or agent text, and such a pull request skips
+# verify-all. The light CI run reaches the tests through this target (.github/workflows/ci.yml);
+# heavy runs reach them through `go test ./...` in verify-all, so verify-all does not list it.
 .PHONY: credits-check
 credits-check:
 	go test -count=1 ./internal/supplychain

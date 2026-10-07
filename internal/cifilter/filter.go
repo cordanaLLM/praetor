@@ -285,13 +285,17 @@ func makeTargetedDecision(cs *ChangeSet) *FilterDecision {
 		reason = "unclassified file kind modified; failing closed to tests, linters and security in the targeted CI matrix"
 	}
 
+	// Agent text is Markdown the documentation gates read: the private-link rule of the Markdown
+	// gate reads every Markdown path, and the credits gate (internal/supplychain) reads every
+	// canonical persona and skill. An agent-only change set therefore selects them as well as
+	// context sync, so a light run never skips a gate one of its files feeds.
 	return &FilterDecision{
 		RunTests:       needsTests,
 		RunLinters:     needsLinters,
 		RunSecurity:    needsSecurity,
 		RunAudit:       true,
 		RunContextSync: needsContextSync,
-		RunDocs:        cs.DocsChanged || needsTests,
+		RunDocs:        cs.DocsChanged || cs.AgentChanged || needsTests,
 		RunDocsOnly:    false,
 		SkipHeavyGates: !needsTests,
 		Reason:         reason,

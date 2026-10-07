@@ -67,9 +67,10 @@ list to the repository; `TestShippedUpstreamsAreCredited`
   [clang-tidy coverage guide](guides/clang-tidy-coverage.md#exceptions).
 
 `make credits-check` runs these tests and the notices tests on their own. `ci filter` classes this
-page, the list and `THIRD-PARTY-NOTICES.md` as documentation, so the light run of a
-documentation-only pull request runs the target (`.github/workflows/ci.yml`); every other run
-reaches the same tests through `make verify-all`.
+page, the list and `THIRD-PARTY-NOTICES.md` as documentation and the personas and skills as agent
+text, and both select the documentation gates, so the light run of a documentation or agent-only
+pull request runs the target (`.github/workflows/ci.yml`); every other run reaches the same tests
+through `make verify-all`.
 
 ## Adapted work
 

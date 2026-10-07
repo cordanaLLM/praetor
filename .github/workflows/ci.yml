@@ -243,11 +243,11 @@ jobs:
         if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
         run: make docs-references
 
-      # docs/credits.yaml, the docs/credits.md page rendered from it and THIRD-PARTY-NOTICES.md
-      # are inputs of the internal/supplychain tests, but the filter classes them as
-      # documentation. Heavy runs reach those tests through verify-all; this step covers the
-      # light documentation runs that skip it, so an edit the credits gate refuses cannot land
-      # through a documentation-only pull request.
+      # docs/credits.yaml, the docs/credits.md page rendered from it, THIRD-PARTY-NOTICES.md and
+      # the canonical personas and skills are inputs of the internal/supplychain tests, but the
+      # filter classes them as documentation or agent text, and both select run_docs. Heavy runs
+      # reach those tests through verify-all; this step covers the light runs that skip it, so an
+      # edit the credits gate refuses cannot land through a documentation or agent-only pull request.
       - name: Credits and Notices Gate (internal/supplychain)
         if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
         run: make credits-check
