@@ -14,14 +14,15 @@ const (
 	needsResultSuccess   = "success"
 	needsResultFailure   = "failure"
 	needsResultCancelled = "cancelled"
+	needsResultSkipped   = "skipped"
 )
 
 // needsResultsPrefix is the object filter that lists the results of every needed job, as the
 // argument of contains() spells it with whitespace removed.
 const needsResultsPrefix = "contains(needs.*.result,"
 
-// aggregateCoveredJobs returns the ids of the jobs a proven aggregate of jobs needs directly
-// (provenAggregate). ids are the job ids in the order the caller walks them.
+// aggregateCoveredJobs returns the ids of the jobs that proven aggregates of jobs cover
+// (provenAggregateNeeds). ids are the job ids in the order the caller walks them.
 //
 // A covered job is not a required check of its own: the aggregate fails whenever it fails or is
 // cancelled, and passes when its condition skipped it, so requiring the aggregate alone keeps the
@@ -33,10 +34,7 @@ func aggregateCoveredJobs(jobs map[string]workflowJob, ids []string) map[string]
 	covered := make(map[string]bool)
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := jobs[ids[i]]
-		needs := job.NeedIDs()
-		if !provenAggregate(&job, needs) {
-			continue
-		}
+		needs := provenAggregateNeeds(&job)
 		for j := 0; j < len(needs) && j < maxJobsPerFile; j++ {
 			covered[needs[j]] = true
 		}
@@ -44,32 +42,38 @@ func aggregateCoveredJobs(jobs map[string]workflowJob, ids []string) map[string]
 	return covered
 }
 
-// provenAggregate reports whether job is an aggregate whose steps prove it fails on every failed
-// or cancelled need: it needs at least one job, it is not advisory, its condition holds on every
-// run (holdsOnEveryRun, after a leading Renovate skip as reportsOnEveryPullRequest reads it), so
-// it reports even when a need failed or was skipped, and its steps fail exactly as
-// failsOnEveryFailedNeed requires. An aggregate the file cannot prove, such as one that only
-// echoes, stays a required check beside the jobs it needs, as before.
-func provenAggregate(job *workflowJob, needs []string) bool {
+// provenAggregateNeeds returns the jobs job needs whose failure or cancellation its steps prove
+// fails it, or nil when job is no proven aggregate. A proven aggregate needs at least one job, is
+// not advisory, holds on every run (holdsOnEveryRun, after a leading Renovate skip as
+// reportsOnEveryPullRequest reads it), so it reports even when a need failed or was skipped, and
+// its steps pass when every need succeeded. A need is covered when its steps fail whenever that
+// need alone failed or was cancelled (failsWhenNeedFails). An aggregate the file cannot prove, such
+// as one that only echoes, covers nothing and stays a required check beside the jobs it needs.
+func provenAggregateNeeds(job *workflowJob) []string {
+	needs := job.NeedIDs()
 	if len(needs) == 0 || advisoryJob(job.ContinueOnError) || !holdsOnEveryRun(withoutRenovateBranchSkip(job.If)) {
-		return false
+		return nil
 	}
-	return failsOnEveryFailedNeed(job.Steps, needs)
+	if fails, known := aggregateFails(job.Steps, needsResults(needs, "", "")); !known || fails {
+		return nil
+	}
+	var covered []string
+	for i := 0; i < len(needs) && i < maxJobsPerFile; i++ {
+		if failsWhenNeedFails(job.Steps, needs, needs[i]) {
+			covered = append(covered, needs[i])
+		}
+	}
+	return covered
 }
 
-// failsOnEveryFailedNeed reports whether steps pass when every need succeeded and fail when any
-// one need failed or was cancelled while the others succeeded (aggregateFails). The recognised
-// step conditions are disjunctions of per-need terms, so a need that fails makes its own terms
-// hold whatever the others reported.
-func failsOnEveryFailedNeed(steps []workflowStep, needs []string) bool {
-	if fails, known := aggregateFails(steps, needsResults(needs, "", "")); !known || fails {
-		return false
-	}
-	for i := 0; i < len(needs) && i < maxJobsPerFile; i++ {
-		for _, result := range [...]string{needsResultFailure, needsResultCancelled} {
-			if fails, known := aggregateFails(steps, needsResults(needs, needs[i], result)); !known || !fails {
-				return false
-			}
+// failsWhenNeedFails reports whether steps fail when need failed, and when it was cancelled, while
+// every other need succeeded (aggregateFails). Both step kinds aggregateFails reads fail on a need
+// whatever the others reported: a recognised step condition is a disjunction of per-need terms,
+// and an alls-green step judges every need on its own, so the result holds on every run.
+func failsWhenNeedFails(steps []workflowStep, needs []string, need string) bool {
+	for _, result := range [...]string{needsResultFailure, needsResultCancelled} {
+		if fails, known := aggregateFails(steps, needsResults(needs, need, result)); !known || !fails {
+			return false
 		}
 	}
 	return true
@@ -88,44 +92,59 @@ func needsResults(needs []string, changed, result string) map[string]string {
 }
 
 // aggregateFails reports whether an aggregate's steps fail the job when its needs report
-// results, and whether the file can tell: a failing step (failingStep) whose condition holds
-// fails it, and a failing step whose condition is not one needsConditionHolds reads makes the
-// outcome unknown. Every other step is taken to pass, which can only make a real run fail more
-// often than this model says.
+// results, and whether the file can tell: the first step that fails it (stepFails) decides, and a
+// step whose outcome stepFails cannot tell makes the outcome unknown.
 func aggregateFails(steps []workflowStep, results map[string]string) (fails, known bool) {
 	for i := 0; i < len(steps) && i < ghworkflow.MaxStepsPerJob; i++ {
-		if !failingStep(&steps[i]) {
-			continue
-		}
-		holds, read := needsConditionHolds(steps[i].If, results)
-		if !read {
-			return false, false
-		}
-		if holds {
-			return true, true
+		if fails, known = stepFails(&steps[i], results); fails || !known {
+			return fails, known
 		}
 	}
 	return false, true
 }
 
+// stepFails reports whether step fails its job when the needs report results, and whether the
+// file can tell. A failing step (failingStep) fails it whenever its condition holds, and an
+// alls-green step (allsGreenStep) when its condition holds and a need reported a result its policy
+// rejects. A step of either kind whose condition needsConditionHolds cannot read makes the outcome
+// unknown. Every other step is taken to pass, which can only make a real run fail more often than
+// this model says.
+func stepFails(step *workflowStep, results map[string]string) (fails, known bool) {
+	policy, judges := allsGreenStep(step)
+	if !judges && !failingStep(step) {
+		return false, true
+	}
+	holds, read := needsConditionHolds(step.If, results)
+	if !holds || !read {
+		return false, read
+	}
+	return !judges || policy.rejects(results), true
+}
+
 // failingStep reports whether step fails its job whenever it runs: a run: script whose last
-// command is exit with a status from 1 to 255, with no other exit before it, and no
-// continue-on-error. exit with such a status ends a bash, sh, pwsh or cmd step with that status,
-// and a shell that cannot read it fails the step on the error instead.
+// command is a failing exit (failingExit), with no other exit before it, and no
+// continue-on-error.
 func failingStep(step *workflowStep) bool {
 	if step.Uses != "" || advisoryJob(step.ContinueOnError) {
 		return false
 	}
-	lines := scriptCommands(step.Run)
-	if len(lines) == 0 {
+	commands := scriptCommands(step.Run)
+	if len(commands) == 0 {
 		return false
 	}
-	for i := 0; i < len(lines)-1 && i < maxScriptCommands; i++ {
-		if slices.Contains(strings.FieldsFunc(lines[i], shellWordBreak), "exit") {
+	for i := 0; i < len(commands)-1 && i < maxScriptCommands; i++ {
+		if slices.Contains(strings.FieldsFunc(commands[i], shellWordBreak), "exit") {
 			return false
 		}
 	}
-	fields := strings.Fields(lines[len(lines)-1])
+	return failingExit(commands[len(commands)-1])
+}
+
+// failingExit reports whether command is exit with a status from 1 to 255 and nothing after it.
+// Such an exit ends a bash, sh, pwsh or cmd step with that status, and a shell that cannot read it
+// fails the step on the error instead.
+func failingExit(command string) bool {
+	fields := strings.Fields(command)
 	if len(fields) != 2 || fields[0] != "exit" {
 		return false
 	}
