@@ -623,7 +623,10 @@ rules:
           golangci-lint v2 run by make lint with the repository's .golangci.yml (govet, staticcheck,
           errcheck, errorlint, nilerr, unused, ineffassign, wastedassign, nolintlint, plus the gofmt
           formatter), go vet ./..., the CI gofmt -l . step and the lefthook pre-commit gofmt check.
-          internal/hiss implements no HISS-10 rule.
+          internal/hiss implements no HISS-10 rule. In an adopter repository, praetorctl audit's
+          build-warnings gate (internal/adopt.AuditBuildWarnings, the github-actions entry below)
+          fails every Go lane of the workflows while no binding step runs go vet or go test
+          -vet=all; it does not read which analyzers a golangci-lint configuration enables.
         rationale: >-
           6/6 positive fixtures reported by the real stack: ineffassign (ineffectual-assignment),
           nolintlint 'should provide explanation' (unexplained-nolint), nolintlint 'is unused for
@@ -659,31 +662,41 @@ rules:
           contradicts the rule's declared 'Exit code 1' failure action; flake8 reports F632, F401
           'json imported but unused' and F841 'local variable scale is as
       - language: rust
-        state: unsupported
+        state: partial
         runner: cargo
         mechanism: >-
-          none. The repository contains zero .rs files and no cargo/rustc/clippy invocation in
-          Makefile, ci.yml or any lefthook hook (grep for 'cargo |rustc |clippy' over those files
-          returns nothing). internal/hiss reads .rs but implements only HISS-02/04/07/09. The
-          rust-systems flavor scaffolds a clippy.toml into adopters containing only
-          'avoid-breaking-exported-api = true' -- no -D warnings.
+          rustc in an adopter repository's cargo lanes, which praetorctl audit's build-warnings gate
+          (internal/adopt.AuditBuildWarnings over internal/forge.MeasureBuildWarnings) requires to
+          run with -D warnings: in CARGO_ENCODED_RUSTFLAGS or RUSTFLAGS, or after cargo clippy's
+          "--". The scaffolded Rust CI workflow (templates/rust/ci-rust.yml.tmpl) sets RUSTFLAGS: -D
+          warnings on its job. This repository holds no .rs file and no cargo lane. internal/hiss
+          reads .rs but implements only HISS-02/04/07/09.
         rationale: >-
-          positive/ is empty because no mechanism reports any Rust warning. All 3 gap fixtures
-          verified as real warnings with the installed toolchain: rustc prints 'warning: unused
-          variable: factor' and 'warning: function helper is never used'; clippy-driver prints those
-          plus 'warning: unneeded return statement'. internal/hiss scanned all 3 and returned total=0.
-          HISS-10's formal specification names -Werror, and rustc is one of
+          Measured with rustc 1.98.1 and clippy-driver from the same toolchain, each run once
+          without and once with -D warnings: without it, all 3 fixtures compile and exit 0. With it,
+          rustc exits 1 on positive/unused-variable.rs (unused_variables) and
+          positive/dead-code-fn.rs (dead_code), lints on by default, so a lane the gate accepts
+          fails on them. gap/clippy-needless-return.rs fails only under clippy-driver -D warnings:
+          the gate accepts a cargo build lane with RUSTFLAGS and does not require a clippy step.
+          internal/hiss scanned all 3 and returned total=0.
       - language: c
-        state: unsupported
+        state: partial
+        runner: compiler
         mechanism: >-
-          none. The repository contains zero .c/.h files and no gcc/clang invocation in any gate.
-          internal/hiss reads native extensions but implements only HISS-01/02/04/08.
+          gcc, clang or MSVC in an adopter repository's C and C++ lanes, which praetorctl audit's
+          build-warnings gate (internal/adopt.AuditBuildWarnings over
+          internal/forge.MeasureBuildWarnings) requires to treat warnings as errors: -Werror, /WX,
+          CMAKE_COMPILE_WARNING_AS_ERROR or meson setup --werror. The gate requires no warning level,
+          so which warnings exist is the lane's own -W options. This repository holds no .c/.h file
+          and no C lane. internal/hiss reads native extensions but implements only HISS-01/02/04/08.
         rationale: >-
-          positive/ is empty because no mechanism reports any C warning. All 3 gap fixtures verified
-          with gcc -std=c17 -Wall -Wextra: [-Wunused-variable], [-Wreturn-type] 'control reaches end
-          of non-void function', [-Wsign-compare]. internal/hiss scanned all 3 and returned total=0.
-          -Wreturn-type in particular is undefined behaviour at runtime, and HISS-10's own
-          specification names -Werror as the enforcement.
+          Measured with gcc 16.2.1 and clang 23.1.1, -std=c17 -c: positive/return-local-address.c
+          warns with no -W option ([-Wreturn-local-addr], [-Wreturn-stack-address]) and exits 0;
+          with -Werror both compilers exit 1, so every lane the gate accepts fails on it. The 3 gap
+          fixtures exit 0 under -Werror alone with gcc ([-Wunused-variable], [-Wsign-compare] and
+          [-Wreturn-type] need -Wall or -Wextra; clang enables -Wreturn-type by default and exits 1
+          on missing-return.c), and exit 1 on both compilers with -Wall -Wextra -Werror. internal/hiss
+          scanned all 4 and returned total=0. -Wreturn-type is undefined behaviour at runtime.
       - language: svelte
         state: unsupported
         mechanism: >-
@@ -697,6 +710,28 @@ rules:
           element_invalid_self_closing_tag. The engine ships no Svelte lint configuration: the
           flat config it scaffolds into adopters (templates/node/eslint.config.mjs.tmpl) lints
           JavaScript only, and nothing here runs it
+      - language: github-actions
+        state: partial
+        runner: audit
+        mechanism: >-
+          praetorctl audit and the MCP standards_audit, through internal/adopt.AuditBuildWarnings
+          over internal/forge.MeasureBuildWarnings: every command of a workflow's run: steps that
+          compiles C, C++, Rust or Go code must carry its toolchain's warnings-as-errors form
+          (docs/guides/build-warnings.md). NOT internal/hiss, which has no HISS-10 rule.
+        rationale: >-
+          internal/adopt TestAuditBuildWarningsReplaysTheHISS10Fixtures stages each fixture as
+          .github/workflows/ci.yml. The positive fixtures fail the gate: a CMake configure with its
+          default, a cargo test with neither RUSTFLAGS nor CARGO_ENCODED_RUSTFLAGS, a Go build with
+          no go vet step, a Meson setup without werror and an MSVC compile without /WX. The negative
+          fixtures pass with CMAKE_COMPILE_WARNING_AS_ERROR, meson setup --werror, /WX in CL,
+          RUSTFLAGS -D warnings, clippy -- -D warnings and a go vet step. The gate reads the flags a
+          run: step passes, not what the script does with the failure or what another file runs:
+          gap/build-failure-caught.yml catches the build's failure with || true and
+          gap/make-hides-the-compiler.yml compiles a vendored tree through make, and both pass.
+          A live HISS-10 entry of the manifest's exceptions list that names the workflow passes its
+          failing lanes until it expires (internal/adopt TestAuditBuildWarningsPassesAnExceptedWorkflow,
+          TestAuditBuildWarningsRefusesExpiredStaleAndMalformedEntries); a repository with no build
+          lane skips with the reason (TestAuditBuildWarningsBoundaries).
   - id: HISS-11
     coverage:
       - language: go
