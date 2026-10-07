@@ -162,13 +162,74 @@ func milestoneRequest(ctx context.Context, client *http.Client, method, url, tok
 	return nil
 }
 
-// remoteProgress computes the completion ratio reported by the forge.
-func remoteProgress(rm RemoteMilestone) float64 {
-	total := rm.OpenIssues + rm.ClosedIssues
-	if total <= 0 {
+// FetchRemoteMilestones lists every milestone of owner/repo on the forge with its issue
+// counts. The planning sync reads it to find open milestones that hold no open issue.
+func FetchRemoteMilestones(ctx context.Context, owner, repo, token, endpoint string) ([]RemoteMilestone, error) {
+	tok, err := forgeCredentials(ctx, owner, repo, token, "listing remote milestones")
+	if err != nil {
+		return nil, err
+	}
+	return fetchRemoteMilestones(ctx, owner, repo, tok, endpoint)
+}
+
+// FetchRemoteMilestone reads one forge milestone, with its current issue counts, by the
+// number the forge assigned to it.
+func FetchRemoteMilestone(ctx context.Context, owner, repo, token, endpoint string, number int) (RemoteMilestone, error) {
+	if number <= 0 {
+		return RemoteMilestone{}, fmt.Errorf("remote milestone number must be positive, got %d", number)
+	}
+	tok, err := forgeCredentials(ctx, owner, repo, token, "reading a remote milestone")
+	if err != nil {
+		return RemoteMilestone{}, err
+	}
+	url := fmt.Sprintf("%s/repos/%s/%s/milestones/%d", util.GitHubAPIBase(endpoint), owner, repo, number)
+	var rm RemoteMilestone
+	client := &http.Client{Timeout: remoteHTTPTimeout}
+	if err := milestoneRequest(ctx, client, http.MethodGet, url, tok, nil, &rm, "read remote milestone"); err != nil {
+		return RemoteMilestone{}, err
+	}
+	if rm.Number != number {
+		return RemoteMilestone{}, fmt.Errorf("remote milestone #%d reads back as #%d", number, rm.Number)
+	}
+	return rm, nil
+}
+
+// CloseRemoteMilestone PATCHes forge milestone number to closed and reads it back. It
+// fails unless the read-back reports that milestone closed, and returns the read-back,
+// whose counts are the forge's after the close. It changes no local state.
+func CloseRemoteMilestone(ctx context.Context, owner, repo, token, endpoint string, number int) (RemoteMilestone, error) {
+	if number <= 0 {
+		return RemoteMilestone{}, fmt.Errorf("remote milestone number must be positive, got %d", number)
+	}
+	tok, err := forgeCredentials(ctx, owner, repo, token, "closing a remote milestone")
+	if err != nil {
+		return RemoteMilestone{}, err
+	}
+	url := fmt.Sprintf("%s/repos/%s/%s/milestones/%d", util.GitHubAPIBase(endpoint), owner, repo, number)
+	client := &http.Client{Timeout: remoteHTTPTimeout}
+	var patched, readBack RemoteMilestone
+	if err := milestoneRequest(ctx, client, http.MethodPatch, url, tok, map[string]string{"state": StateClosed}, &patched, "close remote milestone"); err != nil {
+		return RemoteMilestone{}, err
+	}
+	if err := milestoneRequest(ctx, client, http.MethodGet, url, tok, nil, &readBack, "read back remote milestone"); err != nil {
+		return RemoteMilestone{}, err
+	}
+	if readBack.Number != number || readBack.State != StateClosed {
+		return RemoteMilestone{}, fmt.Errorf("remote milestone #%d reads back as #%d in state %q after the close",
+			number, readBack.Number, readBack.State)
+	}
+	return readBack, nil
+}
+
+// countProgress is a milestone's completion in percent from its issue counts: the closed
+// share of all its issues, 0 when it holds none. Every progress value the store records,
+// from a close or from a sync, comes from it.
+func countProgress(openIssues, closedIssues int) float64 {
+	total := openIssues + closedIssues
+	if total <= 0 || closedIssues <= 0 {
 		return 0.0
 	}
-	return (float64(rm.ClosedIssues) / float64(total)) * 100.0
+	return (float64(closedIssues) / float64(total)) * 100.0
 }
 
 // applyRemote copies the forge's view onto a local milestone. The remote number is stored
@@ -186,7 +247,7 @@ func applyRemote(m *Milestone, rm RemoteMilestone, title string) (pendingClose b
 	m.RemoteNumber = rm.Number
 	if !pendingClose {
 		m.State = rm.State
-		m.Progress = remoteProgress(rm)
+		m.Progress = countProgress(rm.OpenIssues, rm.ClosedIssues)
 		m.PendingRemoteClose = false
 	}
 	m.OpenIssues = rm.OpenIssues
@@ -243,30 +304,19 @@ func PublishClose(ctx context.Context, rootPath, owner, repo, token, endpoint st
 	if m.RemoteNumber <= 0 {
 		return fmt.Errorf("milestone #%d is not published to the forge; there is no remote milestone to close", m.Number)
 	}
-	tok, err := forgeCredentials(ctx, owner, repo, token, "closing a remote milestone")
+	readBack, err := CloseRemoteMilestone(ctx, owner, repo, token, endpoint, m.RemoteNumber)
 	if err != nil {
-		return err
-	}
-
-	url := fmt.Sprintf("%s/repos/%s/%s/milestones/%d", util.GitHubAPIBase(endpoint), owner, repo, m.RemoteNumber)
-	client := &http.Client{Timeout: remoteHTTPTimeout}
-	var patched, readBack RemoteMilestone
-	if err := milestoneRequest(ctx, client, http.MethodPatch, url, tok, map[string]string{"state": StateClosed}, &patched, "close remote milestone"); err != nil {
-		return err
-	}
-	if err := milestoneRequest(ctx, client, http.MethodGet, url, tok, nil, &readBack, "read back remote milestone"); err != nil {
-		return err
-	}
-	if readBack.Number != m.RemoteNumber || readBack.State != StateClosed {
-		return fmt.Errorf("remote milestone #%d reads back as #%d in state %q after the close; the close stays pending",
-			m.RemoteNumber, readBack.Number, readBack.State)
+		return fmt.Errorf("%w; the close stays pending", err)
 	}
 
 	m.PendingRemoteClose = false
+	m.OpenIssues, m.ClosedIssues = readBack.OpenIssues, readBack.ClosedIssues
+	m.Progress = countProgress(readBack.OpenIssues, readBack.ClosedIssues)
 	return persistMilestone(ctx, rootPath, m.Number, func(stored *Milestone) {
 		stored.PendingRemoteClose = false
 		stored.OpenIssues = readBack.OpenIssues
 		stored.ClosedIssues = readBack.ClosedIssues
+		stored.Progress = countProgress(readBack.OpenIssues, readBack.ClosedIssues)
 	})
 }
 
