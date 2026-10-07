@@ -1,0 +1,4 @@
+type: fixed
+title: "Test git fixtures no longer read an enclosing checkout: HermeticGitEnv stops repository discovery above the test's scratch directories"
+issue: "#755"
+breaking: false
