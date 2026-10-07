@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"html"
@@ -112,7 +113,8 @@ func decodeLedgerMetadataJSON(raw []byte) (*ledgerMetadata, error) {
 		Context    *string    `json:"context"`
 		CreatedAt  *time.Time `json:"created_at"`
 		ResolvedAt *time.Time `json:"resolved_at"`
-		Kind       *string    `json:"kind"`
+		// Kind stays raw so an absent member, which is valid, differs from a null one.
+		Kind jsontext.Value `json:"kind"`
 	}
 	if err := json.Unmarshal(raw, &wire, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("invalid ledger metadata: %w", err)
@@ -121,11 +123,11 @@ func decodeLedgerMetadataJSON(raw []byte) (*ledgerMetadata, error) {
 		return nil, fmt.Errorf("ledger metadata requires context, created_at and resolved_at")
 	}
 	metadata := &ledgerMetadata{Context: *wire.Context, CreatedAt: *wire.CreatedAt, ResolvedAt: *wire.ResolvedAt}
-	if wire.Kind != nil {
-		if *wire.Kind == "" {
-			return nil, fmt.Errorf("ledger metadata kind must be omitted rather than empty")
-		}
-		metadata.Kind = *wire.Kind
+	if wire.Kind == nil {
+		return metadata, nil
+	}
+	if wire.Kind.Kind() != '"' || json.Unmarshal(wire.Kind, &metadata.Kind) != nil || metadata.Kind == "" {
+		return nil, fmt.Errorf("ledger metadata kind must be a non-empty string, or omitted")
 	}
 	return metadata, nil
 }

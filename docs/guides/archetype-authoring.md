@@ -536,6 +536,8 @@ tested by `TestLoadEffectivePolicyJoinsEveryProfileDimension` in
 | `error_unwraps` | `strict_ban` wins over `allow_with_comment` | `allow_with_comment` |
 | `linters` | deduplicated union, first occurrence order | `govet` |
 | `devcontainer_features` | deduplicated union by reference, first occurrence order; see the exception below | `common-utils` |
+| `backlog.caps.<category>.max` | lowest declared max; an undeclared category has no bound | none |
+| `backlog.caps.<category>.action` | strictest of `report`, `batch`, `gate` | `report` once a max is declared |
 
 Two archetypes that declare the same value tie on it; the result is that value whichever is
 pinned first (`TestResolvePolicyTiedArchetypesOnMemoryAndErrorUnwraps`).
@@ -553,8 +555,11 @@ selects it the same way" above describes.
 ### The schema is closed
 
 An archetype accepts exactly the keys `id`, `name`, `description`, `runtime`, `complexity`,
-`memory`, `error_unwraps`, `branch_protection`, `supply_chain`, `linters` and
-`devcontainer_features`, and inside each section only its documented keys. A misspelled or
+`memory`, `error_unwraps`, `branch_protection`, `supply_chain`, `linters`,
+`devcontainer_features` and `backlog`, and inside each section only its documented keys. The
+`backlog` section takes `caps.<category>.max` and `.action` for the categories `defects`,
+`tasks`, `questions` and `forge_alerts`, decoded by the reader the repository and the external
+documents share ([Backlog caps](effective-policy.md#backlog-caps)). A misspelled or
 unknown key fails the file instead of contributing nothing. The catalog index decodes every
 file in `.config/archetypes`, selected or not, so one bad file fails lock verification, `plan`,
 `audit`, `sync` and `adopt` until it is fixed
@@ -585,6 +590,10 @@ authors:
   `description` names is enforced only where a consumed key enforces it.
 - `complexity.max_cognitive` is reported: the HISS-04 measurement prints it, and nothing fails
   on it.
+- The `backlog.caps.*` keys are consumed: `praetorctl state status` prints each capped
+  category, `praetorctl state batch` writes a batch for one over its cap, and the audit fails a
+  gated one ([Backlog caps](effective-policy.md#backlog-caps)). `forge_alerts` is declared but
+  not counted: praetor has no forge alert reader yet.
 - `supply_chain.slsa_level`, `enforce_cosign` and `require_sbom` are gated: `praetorctl audit`
   fails when the release workflows measure less than the profile declares
   ([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level)).

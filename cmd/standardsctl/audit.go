@@ -112,11 +112,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	maxStale := fs.Int(maxStaleFlag, 0,
 		"Fail when more than N baseline entries match nothing in the tree; unset, stale entries are reported and the audit passes")
 	var policy config.EffectiveOptions
-	fs.StringVar(&policy.CatalogRoot, "catalog-root", "", "Root containing pinned .config/archetypes (default: audited root)")
-	fs.StringVar(&policy.FleetPath, "fleet-config", "", "Explicit fleet complexity policy file")
-	fs.StringVar(&policy.OrganizationPath, "organization-config", "", "Explicit organization complexity policy file")
-	fs.StringVar(&policy.DeploymentPath, "deployment-config", "", "Explicit deployment complexity policy file")
-	fs.StringVar(&policy.WorkstationPath, "workstation-config", "", "Explicit workstation complexity policy file")
+	registerPolicySourceFlags(fs, &policy, "audited root")
 	limitFlags := registerVerificationLimitFlags(fs)
 
 	if _, err := parseInterspersed(fs, args); err != nil {
@@ -146,6 +142,19 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		maxStale:        staleBound,
 		policy:          policy,
 	}, nil
+}
+
+// registerPolicySourceFlags registers the explicit policy sources the effective policy
+// resolves besides the repository: the catalog of pinned profiles and facets and the external
+// fleet, organization, deployment and workstation documents. The audit, `state status` and
+// `state batch` share them, so each reads the same layers when given the same flags; none of
+// them discovers a document implicitly. root names the default catalog root in the help text.
+func registerPolicySourceFlags(fs *flag.FlagSet, policy *config.EffectiveOptions, root string) {
+	fs.StringVar(&policy.CatalogRoot, "catalog-root", "", "Root containing pinned .config/archetypes (default: "+root+")")
+	fs.StringVar(&policy.FleetPath, "fleet-config", "", "Explicit fleet policy file (complexity, backlog caps, operator settings)")
+	fs.StringVar(&policy.OrganizationPath, "organization-config", "", "Explicit organization policy file")
+	fs.StringVar(&policy.DeploymentPath, "deployment-config", "", "Explicit deployment policy file")
+	fs.StringVar(&policy.WorkstationPath, "workstation-config", "", "Explicit workstation policy file")
 }
 
 // resolveCompanion returns explicit when set, otherwise name joined onto rootDir.
@@ -181,6 +190,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, manifest, rootDir) },
+		func() error { return auditBacklogCaps(ctx, rootDir, opts.effective) },
 		func() error { return auditLiveForge(ctx, manifest, rootDir, &opts.effective.Policy, opts.offline) },
 	}
 

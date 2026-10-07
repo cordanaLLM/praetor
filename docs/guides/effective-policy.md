@@ -118,8 +118,9 @@ so an override of any of the four reaches the row
 ([what the generated harness claims](adoption-verification.md#what-the-generated-harness-claims)).
 
 An explicitly selected external file must contain at least one owned root section:
-`complexity`, or one of the operator sections `clients`, `hooks`, `update`,
-`framework`, `forge` and `topology` described in [Operator settings](#operator-settings).
+`complexity`, `backlog` ([Backlog caps](#backlog-caps)), or one of the operator sections
+`clients`, `hooks`, `update`, `framework`, `forge` and `topology` described in
+[Operator settings](#operator-settings).
 
 ```yaml
 complexity:
@@ -360,6 +361,105 @@ the digest golden and the replay of `testdata/operator/framework.yaml`),
 `internal/config/repository_identity_test.go` (owner resolution) and
 `internal/config/install_manifest_test.go` (manifest and selection order), with
 fixtures under `internal/config/testdata/operator/`.
+
+## Backlog caps
+
+A backlog cap bounds how many open items one backlog category may hold (#792). Declare it in
+`.standards.yaml`, in a profile or facet, or in an external document, all under the same keys:
+
+```yaml
+backlog:
+  caps:
+    defects:
+      max: 80
+      action: gate
+    questions:
+      max: 10
+```
+
+`praetorctl state status` then prints each capped category after the session lines:
+
+```text
+  Backlog Cap:       defects: 81 of 80, OVER the cap (max 80 set by repository, action gate set by repository)
+  Backlog Cap:       questions: 4 of 10, under the cap (max 10 set by repository, action report set by builtin default)
+                     defects: run 'praetorctl state batch' to write its batch
+```
+
+A category no layer caps has no bound, and `state status` prints nothing for it.
+
+### Categories
+
+| Category | What is counted | Re-check before a batch |
+| :-- | :-- | :-- |
+| `defects` | rows of `.workingdir/BUGS.md` whose status is `open` or `investigating` and whose kind is not `scope` ([row kinds](state-ledger-integrity.md#row-kinds)); a row without a kind is counted and reported as a finding | the bug ledger's location re-check (`bugledger.CheckLocation`, the check `praetorctl bugs audit` runs): a Go `file:line` that no longer resolves is marked; any other location is marked not re-checked |
+| `tasks` | pending `- [ ]` rows of `.workingdir/OPEN.md`, the rows `praetorctl state task list` numbers | none; each item is marked not re-checked |
+| `questions` | pending rows of `.workingdir/QUESTIONS.md` | none; each item is marked not re-checked |
+| `forge_alerts` | nothing yet: praetor has no reader for code-scanning, dependency or secret-scanning alerts, so the category prints as `not counted` with that reason, never as 0 | none |
+
+The counts come from the ledger readers `praetorctl state` already uses
+(`internal/backlogcap/backlogcap.go`). An absent ledger holds no items, and the line says the
+file is absent.
+
+### Keys, boundary and actions
+
+| Key | Accepted values |
+| :-- | :-- |
+| `backlog.caps.<category>.max` | an integer from 1 to 1,000,000 |
+| `backlog.caps.<category>.action` | `report` (the default once a max is declared), `batch` or `gate` |
+
+The cap is inclusive, like `max_func_loc`: `max` is the largest count within the cap. A count
+equal to `max` is at the cap and passes; only a count above it is over the cap and triggers the
+action (`TestBacklogCap_Boundary_ExactlyAtTheCapPasses`,
+`TestBacklogCap_Negative_OneOverTheCapBatchesEveryItemAndGateFails` in
+`internal/backlogcap/backlogcap_test.go`).
+
+Each action also does what the weaker ones do:
+
+- **`report`**: `state status` marks the category over its cap.
+- **`batch`**: `praetorctl state batch [dir] [--date=YYYY-MM-DD]` writes
+  `.workingdir/batches/<category>-<date>.md`. It lists every counted item once, grouped by file
+  for `defects`, by the heading above the row for `tasks`, and as one group for `questions`; each
+  item carries its re-check verdict, and the findings follow. The date defaults to today in UTC,
+  and the same input writes the same bytes (`TestWriteBatches_DateAndDeterminism`).
+- **`gate`**: `praetorctl audit` fails, naming the category, its count and its cap:
+  `[FAIL] backlog cap defects: 81 items, over the cap of 80 (action gate, max set by repository)`.
+  A gate on a category praetor cannot count fails too, because a gate that cannot count is not a
+  passing gate (`TestAudit_Negative_BacklogCapGateFailsTheAudit` in
+  `cmd/standardsctl/state_backlog_test.go`).
+
+The audit counts the ledgers of the checkout it audits. A checkout without `.workingdir`, such
+as a CI clone, holds no ledger, so each category counts 0 and its `[INFO] Backlog cap` line says
+the ledger is absent. The MCP `standards_audit` tool does not run this gate and names it among
+the CLI-only gates in its summary.
+
+An unknown category, an unknown key and an unknown action fail the document and name the key,
+for example `backlog.caps: unknown category "bugs"`. An action that no layer gives a `max` to act
+on fails the resolution (`TestBacklogCaps_Negative_ManifestValidationNamesTheKey`,
+`TestBacklogCaps_Negative_ActionWithoutMaxFails` in `internal/config/backlog_caps_test.go`).
+
+### Where a cap comes from
+
+Caps resolve through the [sources](#sources-and-strictness) complexity resolves through, and
+join the same way: a cap only tightens. The lowest declared `max` and the strictest action win
+whichever layer declares them, so a fleet default, a profile override and a repository override
+each win when each is tighter than the one before, and nothing loosens a cap a layer imposed
+(`TestBacklogCaps_Positive_FleetProfileRepositoryEachWinInOrder`,
+`TestBacklogCaps_Negative_LooserLayerNeverLoosens`). `max` and `action` join separately: a fleet
+`gate` with a repository `max` yields the repository's `max` gated.
+
+`EffectivePolicy.BacklogFields` names the layers that set each value, keyed
+`backlog.caps.<category>.max` and `.action`; an equal value from two layers names both. The audit
+evidence line prints it, `backlog.caps.defects: max=30 (repository) action=gate (repository)`, and
+`state status` prints it as `set by`. An undeclared action is `report`, printed as set by the
+`builtin default`. A policy that declares no cap leaves both out of its digest, so its effective
+digest is unchanged.
+
+`state status` and `state batch` take the audit's source flags (`--catalog-root`,
+`--fleet-config`, `--organization-config`, `--deployment-config`, `--workstation-config`) and
+discover nothing implicitly. A repository without `.standards.yaml` has no caps; one without
+`.standards.lock` resolves without pinned profiles and facets, as `plan` does
+(`config.LoadUnadoptedEffectivePolicyContext`). A policy that does not resolve is printed by
+`state status` as `Backlog Cap: unresolved: <error>`, never omitted.
 
 ## Selecting a shared or private configuration
 
