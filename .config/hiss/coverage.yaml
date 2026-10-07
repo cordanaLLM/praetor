@@ -181,14 +181,27 @@ rules:
         state: partial
         mechanism: >-
           internal/hiss go_ast.go checkUnboundedFor for loops; go_io.go checkContextSink and
-          checkContextlessIO for I/O, with package names resolved through go_imports.go
+          checkContextlessIO for I/O, with package names resolved through go_imports.go; the
+          accepted shapes in go_io_lifecycle.go, go_io.go contextFuncs and contextMethods, and
+          the package pass of go_io_proof.go, go_io_index.go and go_io_callee.go
         rationale: >-
           A for statement without a condition is reported. Outside test files and main.main, a
           context without a deadline reaching any call is reported: context.Background or
           context.TODO, directly or through a local variable, a WithCancel, WithValue or
           signal.NotifyContext derivation of one, and context.WithoutCancel of any context. A
           WithTimeout or WithDeadline derivation, the caller's context parameter and a local
-          whose block has closed are not reported. exec.Command, net.Dial, DialTCP, DialUDP,
+          whose block has closed are not reported. Four exact shapes are accepted (#841), each
+          beside a near miss that stays reported: a WithCancel context used in an fx.Hook
+          OnStart whose OnStop calls its cancel (negative/lifecycle-fx-hook-cancel.go;
+          positive/lifecycle-cancel-not-in-onstop.go); the log/slog sinks and a select that only
+          touches channels (negative/slog-and-channel-sinks.go;
+          positive/select-with-blocking-call.go); a same-module callee that derives its own
+          timeout before any other use, followed at most four calls deep
+          (negative/callee-derives-timeout.go, negative/callee-depth-at-bound.go;
+          positive/callee-io-before-timeout.go, positive/callee-depth-over-bound.go); and the OTLP
+          gRPC exporter constructors at the versions their source was read, which the go.mod in
+          an archive fixture states (negative/otel-exporter-checked-version.txtar;
+          positive/otel-exporter-unchecked-version.txtar). exec.Command, net.Dial, DialTCP, DialUDP,
           DialIP, DialUnix and http.Get, Head, Post, PostForm and NewRequest are reported as
           calls that take no context, through an alias or a dot import, unless a local shadows
           the package name; net.DialTimeout is bounded by its own timeout. The language

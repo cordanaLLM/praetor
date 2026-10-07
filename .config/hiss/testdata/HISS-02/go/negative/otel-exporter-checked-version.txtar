@@ -1,0 +1,36 @@
+A module that builds the OTLP gRPC exporters with context.Background() at the
+versions whose source was read: New never uses the context for I/O there.
+
+-- go.mod --
+module example.com/telemetry
+
+go 1.27
+
+require (
+	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.22.0
+	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.46.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.46.0
+)
+-- otel/otel.go --
+package otel
+
+import (
+	"context"
+
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+)
+
+// Exporters builds the three exporters; none of their constructors dials.
+func Exporters() error {
+	ctx := context.Background()
+	if _, err := otlptracegrpc.New(ctx); err != nil {
+		return err
+	}
+	if _, err := otlpmetricgrpc.New(ctx); err != nil {
+		return err
+	}
+	_, err := otlploggrpc.New(ctx)
+	return err
+}

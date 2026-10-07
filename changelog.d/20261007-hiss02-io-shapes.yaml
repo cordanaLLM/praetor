@@ -1,0 +1,4 @@
+type: fixed
+title: HISS-02 accepts a deadline-free Go context in four exact shapes that do no unbounded I/O with it (a context an fx lifecycle cancels on stop, log/slog and channel sinks, a same-module callee that derives its own deadline, and the OTLP gRPC exporter constructors at the versions read), and keeps reporting every call beside them that does not match
+issue: "#841"
+breaking: false

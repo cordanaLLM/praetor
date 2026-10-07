@@ -27,6 +27,24 @@ Every loop construct must possess a compile-time statically verifiable scalar up
 $$\forall \text{loop} \, L, \quad \exists N_{\max} \in \mathbb{N} \quad \text{s.t.} \quad \text{iterations}(L) \le N_{\max}$$
 Unbounded `for {}` or `while (true)` loops without static counter termination are rejected. All network and filesystem I/O operations must accept and enforce explicit `context.Context` deadlines.
 
+A Go context without a deadline is accepted in four exact shapes that perform no unbounded I/O
+with it; the [rule matching reference](hiss-rule-matching.md#go-hiss-02-context-deadlines-and-the-shapes-it-accepts)
+lists the evidence and the near misses each one still reports:
+
+- **Lifecycle-owned:** a `context.WithCancel` context used in the start function of a framework
+  hook whose stop function cancels it (`fx.Hook` `OnStart` and `OnStop`), as `main.main` owns the
+  process lifetime.
+- **Sinks:** the `log/slog` functions and `*slog.Logger` methods that take a context only for its
+  values, and a `select` whose cases only send to or receive from channels.
+- **Callee-bounded:** a function of the same module that derives `WithTimeout` or `WithDeadline`
+  from the context before any other use, followed up to four calls deep.
+- **Ignored by a third-party constructor:** an allow-listed function, such as the OTLP gRPC
+  exporter constructors, at the versions whose source was read, as the module's `go.mod` states.
+
+A new shape is proposed in an issue that names the exact shape, its evidence at a named version,
+and a near miss the rule must keep reporting; it lands as one table entry with a negative and a
+positive fixture.
+
 ### HISS-03: Zero Frame Malloc (Deterministic Memory)
 
 Hot simulation loops and rendering ticks (e.g. 60Hz/120Hz pipelines) must maintain zero dynamic heap allocations:

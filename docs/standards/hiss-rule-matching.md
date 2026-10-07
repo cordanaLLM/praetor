@@ -243,6 +243,55 @@ The check is verified by planting cycles rather than by watching it pass — the
 100% cleanliness having read no files. The approach is backported from
 a downstream adopter, which built the equivalent import-graph check for TypeScript.
 
+### Go: HISS-02 context deadlines and the shapes it accepts
+
+Outside test files and `main.main`, the scanner reports a context without a deadline that reaches
+a call (`checkContextSink` in `internal/hiss/go_io.go`): `context.Background()`, `context.TODO()`,
+an inheriting derivation of one, or `context.WithoutCancel` of any context. A call that hands such
+a context to code doing no unbounded I/O with it is accepted only in one of four exact shapes
+([#841](https://github.com/cordanaLLM/praetor/issues/841)). Each shape is an allow-list entry with
+its evidence, never a guess about what a callee does, so a call beside an accepted one that does
+not match it is reported as before.
+
+| Shape | Accepted | Still reported | Where |
+| :--- | :--- | :--- | :--- |
+| Lifecycle-owned | `ctx, cancel := context.WithCancel(...)` used inside the `OnStart` literal of an `fx.Hook` whose `OnStop` literal calls `cancel()` as a top-level statement (or `defer cancel()`) | the same context in the constructor body or in `OnStop`; `OnStop` that never calls `cancel`, calls it only in a nested block or closure, or rebinds the name | `lifecycleHooks` in `internal/hiss/go_io_lifecycle.go` |
+| Sinks | the `log/slog` functions and `*slog.Logger` methods `DebugContext`, `InfoContext`, `WarnContext`, `ErrorContext`, `Log`, `LogAttrs`; a `select` whose cases only send to or receive from channels, `<-ctx.Done()` among them | a logger method on a receiver not provably `*slog.Logger`; a `select` case that hands the context to a call | `contextFuncs`, `contextMethods` in `internal/hiss/go_io.go` |
+| Callee-bounded | a function of the same module that derives `WithTimeout` or `WithDeadline` from the parameter before any other use, followed up to 4 calls deep | a callee that uses the context first, derives the deadline only on one branch, stores, returns or compares it, or hands it to a function outside the module | `internal/hiss/go_io_callee.go` |
+| Ignored by a third-party constructor | `otlptracegrpc.New` and `otlpmetricgrpc.New` at v1.46.0, `otlploggrpc.New` at v0.22.0, as the calling module's `go.mod` requires them | any other version, a module the `go.mod` replaces, a file without a `go.mod` | `contextIgnoredBy` in `internal/hiss/go_io_index.go` |
+
+The `log/slog` evidence is the standard library's own: `Handler.Handle` documents its context as
+present solely to give handlers access to its values, and says canceling it should not affect
+record processing. A `*slog.Logger` receiver is proved by a `log/slog` constructor (`Default`,
+`New`, `With`), a `With` or `WithGroup` chain on a logger, a parameter, local or `var` declared
+`*slog.Logger`, or a field of the enclosing method's receiver whose struct type declares it so.
+
+The callee walk and the receiver field need files other than the caller's. The walk therefore
+records each finding together with what would discharge it, and the package pass in
+`internal/hiss/go_io_proof.go` drops it once every Go file has been read and the proof holds. A
+callee resolves through a bare call no binding shadows, a method called through the enclosing
+method's receiver, or an import path under the module path of the nearest `go.mod`
+(`gomanifest.ParseManifest`). A name declared twice in a package (two build-tagged files), a
+package directory with two package names or an unparsable file, and a directory owned by a nested
+module resolve to nothing, so the finding stays. A callee bounds its parameter when every mention
+of it is a `WithTimeout` or `WithDeadline` argument, a `log/slog` sink argument, the receiver of a
+`context.Context` method, or the argument of another call the pass resolves; a top-level
+`ctx, cancel := context.WithTimeout(ctx, d)` ends the walk, because every later use is the bounded
+context. An unnamed or blank parameter is never used and bounds trivially; a variadic one is not
+followed. The walk holds no recursion (HISS-01): it explores callees on an explicit stack, at most
+4 calls deep (`maxCalleeDepth`) and 64 callees per proof (`maxCalleeNodes`), and a cycle fails the
+proof.
+
+To propose another shape, open an issue that names the exact code shape, the source it relies on
+at a named version (a framework's stop hook, a function's body), and a near miss the rule must
+keep reporting. An accepted shape lands as one table entry with its evidence, a negative fixture,
+and a positive near miss under `.config/hiss/testdata/HISS-02/go/`.
+
+`TestGoIOLifecycle_*`, `TestGoIOSinks_*`, `TestGoIOCallee_*` and `TestGoIOAllowlist_*` in
+`internal/hiss/` pin each shape and its near misses, including the callee chain exactly at the
+depth bound and one call over it. The fixtures replay through `praetorctl hiss coverage --verify`
+(`HISS-02/go` in `.config/hiss/coverage.yaml`).
+
 ## Rust and Python: a function calling itself
 
 Without a parser, the Rust and Python scanners decide the one HISS-01 shape a single function's
@@ -652,3 +701,11 @@ as one that silently loses it, so the catalog cannot drift in either direction. 
 bucket holds shapes the scanner reports without enforcing them. Each must yield a measurement and
 no violation, and a negative fixture must yield no measurement. So a measurement can neither
 disappear nor start to enforce unnoticed.
+
+A fixture whose rule reads more than one file is a single `*.txtar` file in the
+[txtar format](https://pkg.go.dev/golang.org/x/tools/txtar): each file it holds follows a
+`-- path --` marker line, and the replay stages each one at its path before the scan
+(`internal/hisscoverage/archive.go`). A real `go.mod` committed under the corpus would be read by
+dependency tooling as one of the repository's own manifests; inside an archive it is not. An
+archive with no file, more than 16 files, a repeated name or a path that leaves the fixture root
+fails the replay (`TestParseArchive_*` in `internal/hisscoverage/archive_test.go`).

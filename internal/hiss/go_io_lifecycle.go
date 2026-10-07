@@ -238,7 +238,9 @@ func callsName(stmt ast.Stmt, name string) bool {
 	var call *ast.CallExpr
 	switch s := stmt.(type) {
 	case *ast.ExprStmt:
-		call, _ = s.X.(*ast.CallExpr)
+		if expr, ok := s.X.(*ast.CallExpr); ok {
+			call = expr
+		}
 	case *ast.DeferStmt:
 		call = s.Call
 	}

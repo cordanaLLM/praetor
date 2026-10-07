@@ -210,6 +210,13 @@ func (w *mentionWalk) visit(n ast.Node) bool {
 		w.done = true
 		return false
 	}
+	w.note(n)
+	return !w.failed
+}
+
+// note accounts the uses a call or selector explains, and fails the walk at an identifier of
+// the parameter nothing accounted for.
+func (w *mentionWalk) note(n ast.Node) {
 	switch node := n.(type) {
 	case *ast.CallExpr:
 		w.accountCall(node)
@@ -220,7 +227,6 @@ func (w *mentionWalk) visit(n ast.Node) bool {
 			w.failed = true
 		}
 	}
-	return !w.failed
 }
 
 // signature reports whether n is the function's name, receiver or signature, which declare
@@ -242,14 +248,19 @@ func (w *mentionWalk) rebindsBounded(stmt ast.Stmt) bool {
 	if !ok || len(assign.Lhs) != 2 || len(assign.Rhs) != 1 || !w.isParam() {
 		return false
 	}
-	lhs, lhsOK := assign.Lhs[0].(*ast.Ident)
-	call, callOK := ast.Unparen(assign.Rhs[0]).(*ast.CallExpr)
-	if !lhsOK || !callOK || lhs.Name != w.param || len(call.Args) == 0 {
+	lhs, ok := assign.Lhs[0].(*ast.Ident)
+	return ok && lhs.Name == w.param && w.boundsParam(assign.Rhs[0])
+}
+
+// boundsParam reports whether expr is a WithTimeout or WithDeadline derivation of the parameter.
+func (w *mentionWalk) boundsParam(expr ast.Expr) bool {
+	call, ok := ast.Unparen(expr).(*ast.CallExpr)
+	if !ok || len(call.Args) == 0 {
 		return false
 	}
-	arg, argOK := ast.Unparen(call.Args[0]).(*ast.Ident)
+	arg, ok := ast.Unparen(call.Args[0]).(*ast.Ident)
 	effect, known := w.contextEffect(call)
-	return argOK && arg.Name == w.param && known && effect == ctxBounded
+	return ok && arg.Name == w.param && known && effect == ctxBounded
 }
 
 // contextEffect resolves a call to a contextFuncs entry no binding shadows.
