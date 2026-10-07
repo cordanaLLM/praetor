@@ -180,15 +180,13 @@ func reconcileLabels(ctx context.Context, s *adoptSession) error {
 // none exists or the existing one is unmodified earlier output. An operator-owned harness is
 // kept, under --force too; --force sets only a platform naming another repository. A synthesis
 // that names no register skill because one could not be read is reported as a warning
-// (harnessPlan.substitution).
+// (warnHarnessSubstitution).
 func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	plan, err := planHarness(ctx, s)
 	if err != nil {
 		return err
 	}
-	if plan.substitution != "" {
-		s.report.addWarning("%s: %s", paperclipFile, plan.substitution)
-	}
+	s.warnHarnessSubstitution(plan)
 	if plan.unresolved && (!plan.onDisk || s.opts.Force || plan.forgeUndeclared()) {
 		s.report.recordSkipped(paperclipFile, unresolvedHarnessNote(plan))
 		return nil
@@ -207,6 +205,15 @@ func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	}
 	s.recordHarnessWrite(plan)
 	return nil
+}
+
+// warnHarnessSubstitution reports, once and under .paperclip/harness.json, what the synthesis
+// plan leaves on disk states in place of a register skill it could not read
+// (harnessPlan.substitution); a plan without one reports nothing.
+func (s *adoptSession) warnHarnessSubstitution(plan harnessPlan) {
+	if plan.substitution != "" {
+		s.report.addWarning("%s: %s", paperclipFile, plan.substitution)
+	}
 }
 
 // recordHarnessWrite records the harness a plan writes and, when it writes rules.md too
