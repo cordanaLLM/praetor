@@ -143,7 +143,15 @@ every document as untrusted (`internal/radar/feed.go`, `internal/radar/release.g
 - malformed XML or JSON, a document that is not a feed and the API's error object are failures,
   never an empty source;
 - a draft release is left out; an entry or release without a readable date is counted and named
-  in the digest, because no window can place it.
+  in the digest, because no window can place it;
+- a feed date is read the same way on every host. An RSS date counts only when its zone is a
+  numeric offset or an RFC 822 zone name with a fixed meaning (`UT`, `GMT`, `Z` and the US zones
+  `EST` to `PDT`), read at the offsets RFC 5322 section 4.3 gives them. Any other zone name, such
+  as `CEST` or a military letter other than `Z`, leaves the entry undated, because placing it
+  would rest on a guess or on the host's own zone. A
+  two-digit year takes the RFC 5322 century: `00` to `49` are 20xx, `50` to `99` are 19xx.
+  `TestParseFeed_Positive_RFC822Zones`, `TestParseFeed_Negative_UnresolvedZones` and
+  `TestParseFeed_Boundary_TwoDigitYear` run every case under three local zones.
 
 ## The digest
 

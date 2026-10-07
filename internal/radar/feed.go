@@ -62,17 +62,44 @@ type Entries struct {
 // RSS pubDate, Dublin Core date, then the modification dates.
 var feedDateFields = [...]string{"published", "pubDate", "date", "issued", "updated", "modified"}
 
-// feedDateLayouts are the date spellings feeds use: RFC 3339 (Atom, Dublin Core) and the RFC 822
-// family (RSS), with and without a weekday, a numeric zone and seconds.
-var feedDateLayouts = [...]string{
-	time.RFC3339Nano,
-	"Mon, 2 Jan 2006 15:04:05 -0700",
-	"Mon, 2 Jan 2006 15:04:05 MST",
-	"Mon, 2 Jan 2006 15:04 -0700",
-	"Mon, 2 Jan 2006 15:04 MST",
-	"2 Jan 2006 15:04:05 -0700",
-	"2 Jan 2006 15:04:05 MST",
+// feedDateLayouts are the RFC 822 family of date spellings RSS uses (RFC 822 section 5, with the
+// four-digit year of RFC 1123 section 5.2.14), with and without a weekday and seconds. Every
+// layout ends in a numeric zone, which fixes the instant whatever the host's local zone is;
+// parseRFC822Date rewrites a named zone to its offset first. A layout whose year has two digits
+// is marked, because RFC 5322 section 4.3 reads such years with a different century pivot than
+// time.Parse does.
+var feedDateLayouts = [...]struct {
+	layout       string
+	twoDigitYear bool
+}{
+	{"Mon, 2 Jan 2006 15:04:05 -0700", false},
+	{"Mon, 2 Jan 2006 15:04 -0700", false},
+	{"2 Jan 2006 15:04:05 -0700", false},
+	{"2 Jan 2006 15:04 -0700", false},
+	{"Mon, 2 Jan 06 15:04:05 -0700", true},
+	{"Mon, 2 Jan 06 15:04 -0700", true},
+	{"2 Jan 06 15:04:05 -0700", true},
+	{"2 Jan 06 15:04 -0700", true},
 }
+
+// rfc822Zones are the zone names RFC 822 section 5 defines with a fixed meaning, as the offsets
+// RFC 5322 section 4.3 gives them. The names are matched without regard to case.
+//
+// Any other name is left out on purpose and leaves the entry undated. time.Parse would resolve
+// a name through the host's local zone, or give a name it does not know offset zero, so the same
+// feed would place an entry differently on two hosts. RFC 5322 section 4.3 calls the military
+// letters other than Z unpredictable in meaning, and says a zone of unknown meaning, such as
+// CEST, carries no zone information; placing either in a window would rest on a guess.
+var rfc822Zones = map[string]string{
+	"UT": "+0000", "GMT": "+0000", "Z": "+0000",
+	"EST": "-0500", "EDT": "-0400", "CST": "-0600", "CDT": "-0500",
+	"MST": "-0700", "MDT": "-0600", "PST": "-0800", "PDT": "-0700",
+}
+
+// rfc5322CenturyPivot is the first year a two-digit year must not reach: RFC 5322 section 4.3
+// reads 00 to 49 as 2000 to 2049 and 50 to 99 as 1950 to 1999, where time.Parse reads 50 to 68
+// as 2050 to 2068.
+const rfc5322CenturyPivot = 2050
 
 // feedEntry collects the fields of one entry while it is parsed.
 type feedEntry struct {
@@ -277,15 +304,38 @@ func (e *feedEntry) date() (time.Time, bool, bool) {
 	return time.Time{}, false, false
 }
 
-// parseFeedDate reads one date in a feedDateLayouts spelling, or a calendar date, as UTC.
+// parseFeedDate reads one date as UTC: a calendar date, an RFC 3339 timestamp, or an RFC 822
+// date whose zone is numeric or named in rfc822Zones. Every other spelling, a named zone outside
+// rfc822Zones among them, reports false, so the entry is counted as undated.
 func parseFeedDate(raw string) (time.Time, bool, bool) {
 	if date, err := time.Parse(dateLayout, raw); err == nil {
 		return date.UTC(), true, true
 	}
-	for i := 0; i < len(feedDateLayouts); i++ {
-		if instant, err := time.Parse(feedDateLayouts[i], raw); err == nil {
-			return instant.UTC(), false, true
+	if instant, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return instant.UTC(), false, true
+	}
+	instant, ok := parseRFC822Date(raw)
+	return instant, false, ok
+}
+
+// parseRFC822Date reads raw in a feedDateLayouts spelling after rewriting a named zone in its
+// last field to the offset rfc822Zones gives it. A name outside rfc822Zones stays a name, which
+// no layout accepts, because every layout reads a numeric zone.
+func parseRFC822Date(raw string) (time.Time, bool) {
+	if cut := strings.LastIndexByte(raw, ' '); cut >= 0 {
+		if offset, named := rfc822Zones[strings.ToUpper(raw[cut+1:])]; named {
+			raw = raw[:cut+1] + offset
 		}
 	}
-	return time.Time{}, false, false
+	for i := 0; i < len(feedDateLayouts); i++ {
+		instant, err := time.Parse(feedDateLayouts[i].layout, raw)
+		if err != nil {
+			continue
+		}
+		if feedDateLayouts[i].twoDigitYear && instant.Year() >= rfc5322CenturyPivot {
+			instant = instant.AddDate(-100, 0, 0)
+		}
+		return instant.UTC(), true
+	}
+	return time.Time{}, false
 }

@@ -149,3 +149,105 @@ func TestParseFeed_Boundary_Caps(t *testing.T) {
 		t.Errorf("long title kept %d bytes, %v; want %d", len(got.Items[0].Title), err, maxFieldBytes)
 	}
 }
+
+// hostZones are local zones the RFC 822 date tests run under. Each carries the abbreviation of a
+// zone the tests parse, which is how time.Parse would let the host's zone decide an instant.
+// Fixed zones need no tz database, so the tests run alike on Linux, macOS and Windows.
+var hostZones = []*time.Location{time.UTC, time.FixedZone("EST", -5*3600), time.FixedZone("CEST", 2*3600)}
+
+// underHostZones runs check once with each of hostZones as the local zone. It replaces
+// time.Local, so no test of this package may call t.Parallel.
+func underHostZones(t *testing.T, check func(t *testing.T)) {
+	t.Helper()
+	saved := time.Local
+	t.Cleanup(func() { time.Local = saved })
+	for _, zone := range hostZones {
+		time.Local = zone
+		t.Run("local="+zone.String(), check)
+	}
+	time.Local = saved
+}
+
+// pubDateFeed renders an RSS feed with one entry per pubDate.
+func pubDateFeed(dates ...string) []byte {
+	var b strings.Builder
+	b.WriteString("<rss><channel>")
+	for i, date := range dates {
+		fmt.Fprintf(&b, "<item><title>e%d</title><pubDate>%s</pubDate></item>", i, date)
+	}
+	b.WriteString("</channel></rss>")
+	return []byte(b.String())
+}
+
+// rfc822Dates are RFC 822 dates with the UTC instant each names: every named zone RFC 822
+// section 5 defines, matched without regard to case, numeric zones, and two-digit years.
+var rfc822Dates = []struct {
+	raw  string
+	want time.Time
+}{
+	{"Thu, 01 Oct 2026 09:30:00 EST", time.Date(2026, 10, 1, 14, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 EDT", time.Date(2026, 10, 1, 13, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 CST", time.Date(2026, 10, 1, 15, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 CDT", time.Date(2026, 10, 1, 14, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 MST", time.Date(2026, 10, 1, 16, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 MDT", time.Date(2026, 10, 1, 15, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 PST", time.Date(2026, 10, 1, 17, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30 PDT", time.Date(2026, 10, 1, 16, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 GMT", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
+	{"01 Oct 2026 09:30:00 UT", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
+	{"01 Oct 2026 09:30 Z", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 est", time.Date(2026, 10, 1, 14, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 +0200", time.Date(2026, 10, 1, 7, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 -0000", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 26 09:30:00 EST", time.Date(2026, 10, 1, 14, 30, 0, 0, time.UTC)},
+	{"01 Oct 26 09:30 +0000", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
+}
+
+// Positive: an RFC 822 date with a named or numeric zone, or a two-digit year, is the same
+// instant whatever the host's local zone is.
+func TestParseFeed_Positive_RFC822Zones(t *testing.T) {
+	underHostZones(t, func(t *testing.T) {
+		for _, tc := range rfc822Dates {
+			got, err := ParseFeed(pubDateFeed(tc.raw))
+			if err != nil || len(got.Items) != 1 || !got.Items[0].Published.Equal(tc.want) {
+				t.Errorf("%q: %+v, %v; want %s", tc.raw, got, err, tc.want)
+			}
+		}
+	})
+}
+
+// Negative: a zone name RFC 822 does not define, a military letter other than Z, a date without
+// a zone and a malformed numeric zone leave the entry undated on every host, instead of being
+// placed by the host's local zone or at offset zero.
+func TestParseFeed_Negative_UnresolvedZones(t *testing.T) {
+	unresolved := []string{
+		"Thu, 01 Oct 2026 09:30:00 CEST",
+		"Thu, 01 Oct 2026 09:30:00 BST",
+		"Thu, 01 Oct 2026 09:30:00 A",
+		"Thu, 01 Oct 2026 09:30:00 Y",
+		"Thu, 01 Oct 2026 09:30:00",
+		"Thu, 01 Oct 2026 09:30:00 +02",
+		"Thu, 01 Oct 2026 09:30:00 0200",
+	}
+	underHostZones(t, func(t *testing.T) {
+		got, err := ParseFeed(pubDateFeed(unresolved...))
+		if err != nil || len(got.Items) != 0 || got.Undated != len(unresolved) {
+			t.Errorf("unresolved zones: %+v, %v; want %d undated", got, err, len(unresolved))
+		}
+	})
+}
+
+// Boundary: a two-digit year takes the RFC 5322 section 4.3 century, 49 the last year read as
+// 20xx and 50 the first read as 19xx, on every host.
+func TestParseFeed_Boundary_TwoDigitYear(t *testing.T) {
+	years := map[string]int{"00": 2000, "49": 2049, "50": 1950, "68": 1968, "69": 1969, "99": 1999}
+	underHostZones(t, func(t *testing.T) {
+		for digits, want := range years {
+			raw := "1 Jan " + digits + " 00:00 GMT"
+			got, err := ParseFeed(pubDateFeed(raw))
+			if err != nil || len(got.Items) != 1 || got.Items[0].Published.Year() != want {
+				t.Errorf("%q: %+v, %v; want year %d", raw, got, err, want)
+			}
+		}
+	})
+}
