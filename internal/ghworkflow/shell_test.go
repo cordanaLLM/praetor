@@ -89,6 +89,29 @@ func TestStepShell_EmptyContainerIsTheRunner(t *testing.T) {
 	}
 }
 
+// Positive, negative and boundary: StepShellValue returns the deciding shell: value as written,
+// a custom template whole and an expression unevaluated, by the precedence StepShell applies, and
+// "" when nothing names one, whatever the runner or container would default to.
+func TestStepShellValue(t *testing.T) {
+	cases := map[string]string{
+		"defaults: {run: {shell: sh}}\njobs:\n  j:\n    defaults: {run: {shell: 'perl {0}'}}\n    steps:\n      - {run: x, shell: ' bash '}\n": "bash",
+		"defaults: {run: {shell: sh}}\njobs:\n  j:\n    defaults: {run: {shell: 'sh -c true {0}'}}\n    steps:\n      - run: x\n":              "sh -c true {0}",
+		"defaults: {run: {shell: 'bash {0}'}}\njobs:\n  j:\n    steps:\n      - {run: x, shell: '  '}\n":                                       "bash {0}",
+		"jobs:\n  j:\n    steps:\n      - {run: x, shell: '${{ matrix.shell }}'}\n":                                                            "${{ matrix.shell }}",
+		"jobs:\n  j:\n    runs-on: windows-latest\n    container: node:24\n    steps:\n      - run: x\n":                                       "",
+	}
+	for document, want := range cases {
+		spec, err := Parse([]byte(document))
+		if err != nil {
+			t.Fatal(err)
+		}
+		job := spec.Jobs["j"]
+		if got := StepShellValue(&spec, &job, &job.Steps[0]); got != want {
+			t.Errorf("StepShellValue = %q, want %q for\n%s", got, want, document)
+		}
+	}
+}
+
 // Positive, negative and boundary: RunnerOS reads one operating system from literal labels and
 // none from an expression, a group, a custom label or two systems at once.
 func TestRunnerOS(t *testing.T) {
