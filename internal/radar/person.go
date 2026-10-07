@@ -11,8 +11,9 @@ import "strings"
 const maxPathSegments = MaxURLBytes / 2
 
 // The person refusal is structural, not a judgement of content: it refuses the URL shapes that
-// address one account. A URL that names a person in a shape not listed here passes, which the
-// radar guide states (docs/guides/radar.md#what-the-registry-refuses).
+// address one account. It is a documented tripwire, not a guarantee: a URL that names a person in
+// a shape not listed here passes, which the radar guide states
+// (docs/guides/radar.md#what-the-registry-refuses).
 
 // maxHostLabels bounds the labels matchDomain walks (HISS-02): httpendpoint.CanonicalHost, which
 // every source URL passes first, admits at most 127.
@@ -49,6 +50,20 @@ var forgeHosts = map[string]bool{
 	"bitbucket.org": true, "huggingface.co": true, "hf.co": true,
 }
 
+// accountSubdomainHosts are hosting services that give every account its own subdomain, such as
+// <login>.github.io or <name>.substack.com. A host with at least one label below one of these
+// domains is an account's site; the domain itself is not. An organisation's site cannot be told
+// from a person's offline, so both are refused, as single-segment code host URLs are.
+var accountSubdomainHosts = map[string]string{
+	"github.io":     "a GitHub Pages site belongs to one account",
+	"gitlab.io":     "a GitLab Pages site belongs to one account",
+	"substack.com":  "a Substack publication belongs to one account",
+	"medium.com":    "a Medium subdomain belongs to one account",
+	"wordpress.com": "a WordPress.com site belongs to one account",
+	"blogspot.com":  "a Blogger site belongs to one account",
+	"bsky.social":   "a Bluesky handle names one account",
+}
+
 // accountSegments are first path segments that introduce an account page on any host.
 var accountSegments = map[string]bool{
 	"user": true, "users": true, "u": true, "people": true, "person": true, "profile": true,
@@ -82,6 +97,11 @@ func matchDomain[V any](table map[string]V, host string) (V, bool) {
 func personURL(host string, segments []string) (string, bool) {
 	if reason, ok := matchDomain(personHosts, host); ok {
 		return reason, true
+	}
+	if _, parent, below := strings.Cut(host, "."); below {
+		if reason, ok := matchDomain(accountSubdomainHosts, parent); ok {
+			return reason, true
+		}
 	}
 	if _, forge := matchDomain(forgeHosts, host); forge && len(segments) == 1 {
 		return "a single path segment on a code host is an account page or an account's activity feed", true

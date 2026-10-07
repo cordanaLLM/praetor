@@ -107,6 +107,20 @@ var personURLs = []struct {
 	{KindFeed, "https://hf.co/someone"},
 	{KindFeed, "https://www.arxiv.org/a/someone_1"},
 	{KindFeed, "https://export.arxiv.org/a/someone_1.atom"},
+	// A per-account subdomain of a hosting service is the account's site, at any depth.
+	{KindFeed, "https://someone.github.io/feed.xml"},
+	{KindFeed, "https://someone.gitlab.io/blog/atom.xml"},
+	{KindFeed, "https://someone.substack.com/feed"},
+	{KindFeed, "https://someone.medium.com/feed"},
+	{KindFeed, "https://someone.wordpress.com/feed"},
+	{KindFeed, "https://en.someone.wordpress.com/feed"},
+	{KindFeed, "https://someone.blogspot.com/feeds/posts/default"},
+	{KindFeed, "https://someone.bsky.social/rss"},
+	{KindFeed, "https://example-org.github.io/releases.xml"},
+	// Every subdomain of a listed profile domain is the same service.
+	{KindFeed, "https://m.linkedin.com/in/someone"},
+	{KindFeed, "https://mobile.x.com/someone"},
+	{KindFeed, "https://uk.linkedin.com/company/example"},
 }
 
 // nonPersonURLs are source URLs that share text with a refused domain without being on it, or
@@ -119,6 +133,12 @@ var nonPersonURLs = []string{
 	"https://www.github.com/example-org/example-project/releases.atom",
 	"https://export.arxiv.org/rss/cs.CL",
 	"https://dblp.org/db/conf/example.xml",
+	"https://github.io/feed.xml",
+	"https://medium.com/feed/tag/tokenizers",
+	"https://substack.com/feed.xml",
+	"https://notgithub.io/feed.xml",
+	"https://github.io.example.org/feed.xml",
+	"https://example.org/someone.github.io/feed.xml",
 }
 
 // Negative: a duplicate id, an unknown or planned kind, a non-HTTPS or malformed URL, an account
