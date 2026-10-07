@@ -303,6 +303,10 @@ type Manifest struct {
 	// pinned profiles and facets and of the external documents, and a cap only tightens
 	// (backlog_caps.go, #792).
 	Backlog *BacklogSection `yaml:"backlog,omitempty"`
+	// Radar declares the repository's research and upstream radar: radar.registry names the
+	// source registry `praetorctl radar` reads (internal/radar, #818). It is repository-only,
+	// like Documentation.
+	Radar *RadarPolicy `yaml:"radar,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -381,6 +385,7 @@ var manifestValidators = [...]func(*Manifest) error{
 			ValidateClangTidy(m.ClangTidy))
 	},
 	validateManifestSecurity,
+	validateManifestRadar,
 }
 
 // DecodeManifest parses the manifest with no unknown fields, so a misspelled key is an
