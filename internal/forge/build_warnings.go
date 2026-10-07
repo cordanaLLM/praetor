@@ -73,9 +73,10 @@ type BuildWarningsMeasurement struct {
 //     -Dwarnings, --deny, -F, --forbid) in CARGO_ENCODED_RUSTFLAGS, else in RUSTFLAGS, the
 //     variable cargo reads first, or for clippy and rustc after their "--". rustc directly: on
 //     its command.
-//   - Go: go build, test, install and run (a module@version install or run builds a tool, not
-//     the repository, and is no lane). The Go compiler reports no warnings; go vet does, so every
-//     Go lane is fatal when some step of some workflow runs go vet or go test -vet=all.
+//   - Go: go build, test and install (a module@version install builds a tool, not the
+//     repository, and go run executes a program; neither is a lane). The Go compiler reports no
+//     warnings; go vet does, so every Go lane is fatal when some step of some workflow runs go
+//     vet or go test -vet=all.
 //
 // A variable is read from the command's own assignments, an export earlier in its script, then
 // the step's, job's and workflow's env:. A step whose failure does not bind (continue-on-error on

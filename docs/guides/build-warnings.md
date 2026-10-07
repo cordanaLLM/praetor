@@ -25,7 +25,7 @@ Give every build lane its toolchain's form:
 | Meson | `meson setup` | `--werror` or `-Dwerror=true` ([Meson](https://mesonbuild.com/Builtin-options.html)) |
 | Cargo | `cargo build`, `check`, `test`, `run`, `bench`, `clippy`, `rustc`, `nextest` | `-D warnings` in `CARGO_ENCODED_RUSTFLAGS`, else in `RUSTFLAGS`, the first of the two cargo uses; or after `cargo clippy --` and `cargo rustc --` ([Cargo](https://doc.rust-lang.org/cargo/reference/config.html), [Clippy](https://doc.rust-lang.org/clippy/continuous_integration/index.html)) |
 | rustc | a command that compiles a `.rs` file | `-D warnings` on the command |
-| Go | `go build`, `test`, `install`, `run` of the repository | a step of any workflow that runs `go vet` or `go test -vet=all`: the Go compiler reports no warnings, and `go vet` exits non-zero on a finding ([cmd/vet](https://pkg.go.dev/cmd/vet)) |
+| Go | `go build`, `test` and `install` of the repository | a step of any workflow that runs `go vet` or `go test -vet=all`: the Go compiler reports no warnings, and `go vet` exits non-zero on a finding ([cmd/vet](https://pkg.go.dev/cmd/vet)) |
 
 `-D warnings` may also be written `-Dwarnings`, `--deny warnings`, `--deny=warnings` or with
 `-F`/`--forbid`; a later `-W warnings` or `-A warnings` undoes a deny, never a forbid.
@@ -64,8 +64,9 @@ runs `go vet ./...` (`TestAuditBuildWarningsPassesTheScaffoldedWorkflows`).
   only in a job where no earlier `run:` step configures: what configured that tree cannot be
   read, so the lane fails and says so.
 - **Go.** Every Go lane of every workflow passes once one binding step runs `go vet` or
-  `go test -vet=all`. `go install` and `go run` of a `module@version` build a tool, not the
-  repository, and are no lane.
+  `go test -vet=all`. `go install` of a `module@version` installs a tool, not the repository,
+  and `go run` compiles a program only to execute it, such as the API gate
+  `tools/apicompat/gate/main.go` adoption writes; neither is a lane.
 - **Binding.** A step or job with `continue-on-error` passes whatever its compiler reports, so
   its lane fails, and a `go vet` step with it does not count. A job or step whose `if:` is the
   literal `false` is not read.

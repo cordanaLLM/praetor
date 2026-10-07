@@ -130,12 +130,14 @@ func TestMeasureBuildWarnings_GoLanesFollowTheVetStep(t *testing.T) {
 }
 
 // Boundary: commands that compile nothing of the repository are no lanes: a tool installed at a
-// version, a compiler printing its version, a cmake mode that is no configure run, an echo, a
-// command in a comment, cargo install and doc, and a job or step whose if: is the literal false.
-// A repository without workflows has no lanes; a malformed workflow fails closed.
+// version, a program go run executes (the API gate adoption writes), a compiler printing its
+// version, a cmake mode that is no configure run, an echo, a command in a comment, cargo install
+// and doc, and a job or step whose if: is the literal false. A repository without workflows has
+// no lanes; a malformed workflow fails closed.
 func TestMeasureBuildWarnings_Boundary_NoLanes(t *testing.T) {
 	steps := "      - run: go install golang.org/x/tools/cmd/goimports@v0.40.0\n" +
 		"      - run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.6.0 run\n" +
+		"      - run: go run tools/apicompat/gate/main.go -base=\"$BASE\"\n" +
 		"      - run: gcc --version && clang-format -i src/a.c && clang-tidy src/a.c\n" +
 		"      - run: cmake --version; cmake -E make_directory build\n" +
 		"      - run: echo cargo build\n" +

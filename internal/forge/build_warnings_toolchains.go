@@ -322,7 +322,7 @@ func warningsLevel(flags []string, i int) (string, int) {
 }
 
 // goCommand records a go command: go vet and go test -vet=all are the vet evidence every Go lane
-// is judged by, and go build, test, install and run of the repository are Go lanes.
+// is judged by, and go build, test and install of the repository are Go lanes.
 func (m *buildMeasure) goCommand(site *laneSite, args []string) {
 	if len(args) >= 2 && args[0] == "-C" {
 		args = args[2:]
@@ -344,14 +344,15 @@ func goRunsVet(args []string) bool {
 	return args[0] == "vet" || args[0] == "test" && (slices.Contains(args, "-vet=all") || slices.Contains(args, "--vet=all"))
 }
 
-// goBuildsRepository reports whether a go command's args, from its subcommand, compile the
-// repository's packages: go build and test, and go install and run of anything but a
-// module@version, which builds a tool.
+// goBuildsRepository reports whether a go command's args, from its subcommand, build or test the
+// repository's packages: go build and test, and go install of anything but a module@version,
+// which installs a tool. go run compiles a program only to execute it, such as the API gate
+// tools/apicompat/gate/main.go adoption writes, and is no lane.
 func goBuildsRepository(args []string) bool {
 	switch args[0] {
 	case "build", "test":
 		return true
-	case "install", "run":
+	case "install":
 		return !strings.Contains(firstOperand(args[1:]), "@")
 	}
 	return false
