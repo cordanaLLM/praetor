@@ -207,3 +207,35 @@ func assertRefreshed(t *testing.T, report *AdoptReport, want map[string]string) 
 		}
 	}
 }
+
+// Positive: the harness and the actionlint labels read each hosted gate as the family's step
+// writes it, rendered for the repository's default branch: master for a checkout whose origin
+// HEAD is master. Boundary: a checkout recording no origin HEAD reads the main rendering.
+// Negative: a manifest declaring a branch config.ValidBranchName refuses is an error, not a main
+// rendering read in its place.
+func TestFamilyWorkflowsReadTheDefaultBranchRendering(t *testing.T) {
+	for branch, head := range map[string]string{"master": "master", managedasset.WorkflowBranch: ""} {
+		root := newTestRepo(t, "harness-"+branch)
+		if head != "" {
+			recordOriginHead(t, root, head)
+		}
+		files, err := familyWorkflows(t.Context(), root, managedasset.Families())
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := hostedGateRenderings(t, branch)
+		if len(files) != len(want) {
+			t.Fatalf("%s: familyWorkflows returned %d workflows, want %d", branch, len(files), len(want))
+		}
+		for _, file := range files {
+			if file.Content != want[file.Path] {
+				t.Fatalf("%s: %s is not the %s rendering:\n%s", branch, file.Path, branch, file.Content)
+			}
+		}
+	}
+	root := newTestRepo(t, "harness-invalid")
+	mustWrite(t, filepath.Join(root, config.ManifestFileName), "version: 1\nrepository:\n  owner: acme\n  name: gates\n  default_branch: \"a b\"\n")
+	if files, err := familyWorkflows(t.Context(), root, managedasset.Families()); err == nil {
+		t.Fatalf("an invalid declared default branch rendered %d workflows", len(files))
+	}
+}
