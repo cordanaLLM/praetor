@@ -488,8 +488,9 @@ it, and the command that removes it:
 
 Where `lefthook.yml` exists and a local or global value from its scope's own file is refused,
 the failure also names `lefthook install --reset-hooks-path`. Lefthook 2.1.14 then unsets the
-local and the global value (`unsetHooksPathConfig` in its `internal/command/install.go`) and
-installs the hooks.
+local and the global value (`unsetHooksPathConfig` in its
+[install command](https://github.com/evilmartians/lefthook/blob/v2.1.14/internal/command/install.go))
+and installs the hooks.
 
 The rule is `auditHooksPath` in `internal/adopt/hooks_path_audit.go`. Adoption runs the same
 rule before it installs a hook. On such a value it reports the audit's finding, fix included, as
