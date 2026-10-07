@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -45,7 +46,7 @@ func printMilestoneUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  list [--dir=.] [--state=all|open|closed]   List tracked milestones")
 	fmt.Println("  create --title=\"...\" [--due=YYYY-MM-DD]    Create a new milestone and render in BACKLOG.md")
-	fmt.Println("  close <number|title> [--dir=.] [--publish] Mark a milestone as closed; --publish also closes it on GitHub")
+	fmt.Println("  close <number|title> [--dir=.] [--publish] [--force] Close a milestone without open issues; --publish also closes it on GitHub")
 	fmt.Println("  sync [--owner=...] [--repo=...] [--dir=.]  Synchronize milestones with GitHub")
 	fmt.Println("  status [--dir=.]                           Display progress summary across all milestones")
 }
@@ -157,39 +158,80 @@ func runMilestoneClose(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("milestone close", flag.ContinueOnError)
 	dirFlag := fs.String("dir", ".", "Repository root directory")
 	publish := fs.Bool("publish", false, "Also close the bound milestone on GitHub and read it back")
+	force := fs.Bool("force", false, "Close although the forge or the cached store reports open issues")
 	remote := addMilestoneForgeFlags(fs)
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(positional) < 1 || len(positional) > 2 {
-		return fmt.Errorf("usage: praetorctl milestone close <number|title> [--dir=.] [--publish]")
+		return fmt.Errorf("usage: praetorctl milestone close <number|title> [--dir=.] [--publish] [--force]")
 	}
 	selector := positional[0]
 	// Preserve the legacy second positional directory while parsing --dir correctly.
 	dir := positionalAt(positional, 1, *dirFlag)
 
-	m, err := milestone.CloseMilestone(ctx, dir, selector)
+	opts := milestone.CloseOptions{Force: *force}
+	var owner, repo string
+	if *publish {
+		if owner, repo, opts.Remote, err = forgeMilestoneView(ctx, remote, dir, selector); err != nil {
+			return err
+		}
+	}
+	m, err := milestone.CloseMilestoneWith(ctx, dir, selector, opts)
+	if errors.Is(err, milestone.ErrOpenIssues) {
+		return fmt.Errorf("%w; pass --force to close it anyway", err)
+	}
 	if err != nil {
 		return err
 	}
-	fmt.Printf("[PASS] Milestone #%d closed: %s (Progress: 100%%)\n", m.Number, m.Title)
+	fmt.Printf("[PASS] Milestone #%d closed: %s (Progress: %.0f%%, %d open, %d closed issues)\n",
+		m.Number, m.Title, m.Progress, m.OpenIssues, m.ClosedIssues)
 	if !*publish {
-		if m.PendingRemoteClose && m.RemoteNumber > 0 {
-			fmt.Printf("[INFO] Closed locally only; remote milestone #%d stays open until `milestone close %d --publish`\n",
-				m.RemoteNumber, m.Number)
-		}
+		reportLocalOnlyClose(m)
 		return nil
 	}
-	owner, repo, err := remote.target(ctx, dir)
-	if err != nil {
-		return fmt.Errorf("milestone closed locally, but its GitHub repository is unknown (sync reports it as pending): %w", err)
+	return publishMilestoneClose(ctx, remote, dir, owner, repo, m)
+}
+
+// reportLocalOnlyClose names the forge milestone a close without --publish left open.
+func reportLocalOnlyClose(m *milestone.Milestone) {
+	if m.PendingRemoteClose && m.RemoteNumber > 0 {
+		fmt.Printf("[INFO] Closed locally only; remote milestone #%d stays open until `milestone close %d --publish`\n",
+			m.RemoteNumber, m.Number)
 	}
+}
+
+// publishMilestoneClose carries a local close to the bound forge milestone.
+func publishMilestoneClose(ctx context.Context, remote milestoneForge, dir, owner, repo string, m *milestone.Milestone) error {
 	if err := milestone.PublishClose(ctx, dir, owner, repo, *remote.token, *remote.endpoint, m); err != nil {
 		return fmt.Errorf("milestone closed locally, but the GitHub close failed (sync reports it as pending): %w", err)
 	}
 	fmt.Printf("[PASS] Closed remote milestone #%d on https://github.com/%s/%s\n", m.RemoteNumber, owner, repo)
 	return nil
+}
+
+// forgeMilestoneView resolves the GitHub repository of `milestone close --publish` and,
+// for a milestone bound to the forge, reads the milestone's current issue counts, which
+// the close then checks instead of the cached ones. A local-only milestone has no forge
+// view: its close fails at the publish, as before.
+func forgeMilestoneView(ctx context.Context, remote milestoneForge, dir, selector string) (string, string, *milestone.RemoteMilestone, error) {
+	owner, repo, err := remote.target(ctx, dir)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("milestone close --publish: its GitHub repository is unknown: %w", err)
+	}
+	m, err := milestone.SelectMilestone(ctx, dir, selector)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if m.RemoteNumber <= 0 {
+		return owner, repo, nil, nil
+	}
+	rm, err := milestone.FetchRemoteMilestone(ctx, owner, repo, *remote.token, *remote.endpoint, m.RemoteNumber)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("milestone close --publish: read remote milestone #%d before the close: %w", m.RemoteNumber, err)
+	}
+	return owner, repo, &rm, nil
 }
 
 func runMilestoneSync(ctx context.Context, args []string) error {

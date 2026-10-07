@@ -140,42 +140,133 @@ func CreateMilestone(ctx context.Context, rootPath, title, description string, d
 	return &m, nil
 }
 
-// CloseMilestone marks a milestone as closed by local number or by title substring. The
-// close is local: an open milestone it closes is flagged PendingRemoteClose, so a later
-// remote sync reports the forge's still-open state instead of silently reopening it.
-// PublishClose carries the close to the forge.
+// ErrOpenIssues marks a close refused because the milestone still holds open issues.
+var ErrOpenIssues = errors.New("milestone still holds open issues")
+
+// CloseOptions configures CloseMilestoneWith.
+type CloseOptions struct {
+	// Force closes the milestone although open issues are reported.
+	Force bool
+	// Remote is the forge's view of the milestone read just before the close, or nil when
+	// the forge was not consulted. Its issue counts replace the cached ones.
+	Remote *RemoteMilestone
+}
+
+// CloseMilestone is CloseMilestoneWith without options: the close is refused while the
+// store's cached counts, from the last milestone sync, report open issues.
+func CloseMilestone(ctx context.Context, rootPath, selector string) (*Milestone, error) {
+	return CloseMilestoneWith(ctx, rootPath, selector, CloseOptions{})
+}
+
+// CloseMilestoneWith marks a milestone as closed by local number or by title substring.
+// The close is refused with ErrOpenIssues while opts.Remote or, without it, the store's
+// cached counts report open issues, unless opts.Force is set. Progress is the closed
+// share of the milestone's issues, never a flat 100 (#837). The close is local: an open
+// milestone it closes is flagged PendingRemoteClose, so a later remote sync reports the
+// forge's still-open state instead of silently reopening it. PublishClose carries the
+// close to the forge.
 //
 // A numeric selector is matched against the local number only: it never falls through to
 // a substring match, which would let "1" close a milestone titled "v1.0". A textual
 // selector must match exactly one title, and an empty selector is rejected instead of
 // matching every milestone.
-func CloseMilestone(ctx context.Context, rootPath, selector string) (*Milestone, error) {
-	target := strings.TrimSpace(selector)
-	if target == "" {
-		return nil, fmt.Errorf("milestone selector cannot be empty")
-	}
-
-	store, err := loadStore(ctx, rootPath)
+func CloseMilestoneWith(ctx context.Context, rootPath, selector string, opts CloseOptions) (*Milestone, error) {
+	store, foundIdx, err := loadSelected(ctx, rootPath, selector)
 	if err != nil {
 		return nil, err
 	}
-
-	foundIdx, err := selectMilestone(store.Milestones, target)
-	if err != nil {
+	if err := applyClose(&store.Milestones[foundIdx], opts); err != nil {
 		return nil, err
 	}
-
-	if store.Milestones[foundIdx].State != StateClosed {
-		store.Milestones[foundIdx].PendingRemoteClose = true
-	}
-	store.Milestones[foundIdx].State = StateClosed
-	store.Milestones[foundIdx].Progress = 100.0
-	store.Milestones[foundIdx].UpdatedAt = time.Now().UTC()
 
 	if err := commitStoreAndBacklog(ctx, rootPath, store); err != nil {
 		return nil, err
 	}
 	return &store.Milestones[foundIdx], nil
+}
+
+// applyClose closes m in memory, refusing while open issues are reported and not forced.
+func applyClose(m *Milestone, opts CloseOptions) error {
+	source := "the cached store (refresh it with `milestone sync`)"
+	if opts.Remote != nil {
+		m.OpenIssues, m.ClosedIssues = opts.Remote.OpenIssues, opts.Remote.ClosedIssues
+		source = "the forge"
+	}
+	if m.OpenIssues > 0 && !opts.Force {
+		return fmt.Errorf("%w: milestone #%d %q has %d open issues according to %s; close or move them first, or force the close",
+			ErrOpenIssues, m.Number, m.Title, m.OpenIssues, source)
+	}
+	if m.State != StateClosed {
+		m.PendingRemoteClose = true
+	}
+	m.State = StateClosed
+	m.Progress = countProgress(m.OpenIssues, m.ClosedIssues)
+	m.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+// ActiveMilestone returns the milestone new planning work belongs to: among the open
+// milestones published to the forge, the one due first. A milestone without a due date
+// comes after every dated one, and the lowest local number decides between equals. A
+// local-only milestone is never active, because an issue cannot reference a milestone the
+// forge does not have. found is false when no milestone qualifies.
+func ActiveMilestone(ctx context.Context, rootPath string) (active Milestone, found bool, err error) {
+	store, err := loadStore(ctx, rootPath)
+	if err != nil {
+		return Milestone{}, false, err
+	}
+	for i := 0; i < len(store.Milestones) && i < MaxMilestonesLimit; i++ {
+		m := store.Milestones[i]
+		if m.State != StateOpen || m.RemoteNumber <= 0 {
+			continue
+		}
+		if !found || activeBefore(m, active) {
+			active, found = m, true
+		}
+	}
+	return active, found, nil
+}
+
+// activeBefore orders milestones by due date, undated last, then by local number.
+func activeBefore(a, b Milestone) bool {
+	switch {
+	case a.DueOn != nil && b.DueOn == nil:
+		return true
+	case a.DueOn == nil && b.DueOn != nil:
+		return false
+	case a.DueOn != nil && !a.DueOn.Equal(*b.DueOn):
+		return a.DueOn.Before(*b.DueOn)
+	}
+	return a.Number < b.Number
+}
+
+// SelectMilestone returns the one milestone selector names, by the rules CloseMilestone
+// applies, without changing anything. `milestone close --publish` reads it to find the
+// forge milestone whose counts it checks before the close.
+func SelectMilestone(ctx context.Context, rootPath, selector string) (Milestone, error) {
+	store, index, err := loadSelected(ctx, rootPath, selector)
+	if err != nil {
+		return Milestone{}, err
+	}
+	return store.Milestones[index], nil
+}
+
+// loadSelected loads the store and resolves selector to the index of exactly one of its
+// milestones. An empty selector is rejected instead of matching every milestone.
+func loadSelected(ctx context.Context, rootPath, selector string) (*MilestoneStore, int, error) {
+	target := strings.TrimSpace(selector)
+	if target == "" {
+		return nil, -1, fmt.Errorf("milestone selector cannot be empty")
+	}
+	store, err := loadStore(ctx, rootPath)
+	if err != nil {
+		return nil, -1, err
+	}
+	index, err := selectMilestone(store.Milestones, target)
+	if err != nil {
+		return nil, -1, err
+	}
+	return store, index, nil
 }
 
 // selectMilestone resolves a selector to exactly one milestone index.
