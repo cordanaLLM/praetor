@@ -112,6 +112,7 @@ nav:
           - Archetype & Facet Authoring: guides/archetype-authoring.md
           - Go API Compatibility Gate: guides/api-compatibility.md
           - clang-tidy Coverage Gate: guides/clang-tidy-coverage.md
+          - Workflow Trigger Audit: guides/workflow-triggers.md
           - Effective Audit Policy: guides/effective-policy.md
           - Generated Artefacts: guides/generated-artefacts.md
           - Review Policy: guides/review-policy.md

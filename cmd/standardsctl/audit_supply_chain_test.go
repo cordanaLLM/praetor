@@ -52,13 +52,22 @@ func TestAuditSupplyChain_CLI_MeasuresTheDeclaredLevel(t *testing.T) {
 // the adoption output.
 func adoptedGoRepository(t *testing.T, flags ...string) (string, string) {
 	t.Helper()
+	return adoptedRepository(t, map[string]string{
+		"go.mod": "module example.com/widgets\n\ngo 1.24\n", "main.go": "package main\n\nfunc main() {}\n",
+	}, flags...)
+}
+
+// adoptedRepository is adoptedGoRepository over a fresh repository holding files.
+func adoptedRepository(t *testing.T, files map[string]string, flags ...string) (string, string) {
+	t.Helper()
 	source, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	writeFixtureFile(t, root, "go.mod", "module example.com/widgets\n\ngo 1.24\n")
-	writeFixtureFile(t, root, "main.go", "package main\n\nfunc main() {}\n")
+	for name, body := range files {
+		writeFixtureFile(t, root, name, body)
+	}
 	env := testsupport.HermeticGitEnv(t)
 	for _, args := range [][]string{
 		{"init", "-q", "-b", "main"}, {"remote", "add", "origin", "https://github.com/acme/widgets.git"},

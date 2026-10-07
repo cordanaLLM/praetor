@@ -385,6 +385,12 @@ exceeds what the workflow files measure
 ([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level),
 `TestServerAuditRunsTheSupplyChainGate` in `cmd/standards-mcp/audit_policy_test.go`).
 
+The HISS-18 workflow trigger check is the CLI's own as well (`forge.AuditWorkflowTriggers`, run
+with the manifest's exceptions list). Its findings are `[WARN]` lines and the gate still passes;
+only a workflow it cannot read or a malformed `HISS-18` exceptions entry fails it
+([Workflow trigger audit](workflow-triggers.md),
+`TestServerAuditRunsTheWorkflowTriggerCheck` in `cmd/standards-mcp/audit_policy_test.go`).
+
 The lock digest gate inside `standards_audit` resolves its catalog from the same
 `catalog_root` tool argument the effective-policy gate uses
 (`p.policy.CatalogRoot` in `cmd/standards-mcp/audit_tools.go`), not the repository
