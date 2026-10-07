@@ -181,3 +181,113 @@ func TestHermeticGitEnv_Boundary_EnvironmentContents(t *testing.T) {
 		}
 	}
 }
+
+// withoutCeiling returns env without its GIT_CEILING_DIRECTORIES entry: the environment
+// HermeticGitEnv returned before it bounded repository discovery.
+func withoutCeiling(env []string) []string {
+	kept := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "GIT_CEILING_DIRECTORIES=") {
+			kept = append(kept, entry)
+		}
+	}
+	return kept
+}
+
+// sameDirectory reports whether git's answer names the directory want, compared by file
+// identity, so a resolved symlink, a short name or git's forward slashes on Windows do not
+// make one directory look like two.
+func sameDirectory(got, want string) bool {
+	gotInfo, gotErr := os.Stat(got)
+	wantInfo, wantErr := os.Stat(want)
+	return gotErr == nil && wantErr == nil && os.SameFile(gotInfo, wantInfo)
+}
+
+// commitFixture makes dir a repository with one commit, a stand-in for a real checkout.
+func commitFixture(t *testing.T, dir string) {
+	t.Helper()
+	env := HermeticGitEnv(t)
+	for _, args := range [][]string{{"init", "-q"}, {"commit", "-q", "--allow-empty", "-m", "checkout"}} {
+		if out, err := runGit(t, dir, env, args...); err != nil {
+			t.Fatalf("git %v in %s: %v: %s", args, dir, err, out)
+		}
+	}
+}
+
+// TestHermeticGitEnv_Positive_ScratchRepositoryFoundFromItsSubdirectory checks the ceiling
+// stops discovery above the scratch directories, not inside them: git run from a
+// subdirectory of a scratch repository still finds that repository.
+func TestHermeticGitEnv_Positive_ScratchRepositoryFoundFromItsSubdirectory(t *testing.T) {
+	requireGit(t)
+	scratch := t.TempDir()
+	commitFixture(t, scratch)
+	nested := filepath.Join(scratch, "a", "b")
+	if err := os.MkdirAll(nested, 0o750); err != nil {
+		t.Fatalf("create a subdirectory of the scratch repository: %v", err)
+	}
+	top, err := runGit(t, nested, HermeticGitEnv(t), "rev-parse", "--show-toplevel")
+	if err != nil || !sameDirectory(top, scratch) {
+		t.Fatalf("git from %s found %q (err %v), want the scratch repository %s", nested, top, err, scratch)
+	}
+}
+
+// TestHermeticGitEnv_Negative_ScratchUnderACheckoutDoesNotFindIt is the leak the ceiling
+// closes. t.TempDir reads GOTMPDIR on every platform, so pointing it into a committed
+// repository puts a subtest's scratch directories inside that checkout, as on a runner whose
+// temporary directory lies in its workspace. Without the ceiling, git run from a scratch
+// directory climbs into the checkout and reads it; with HermeticGitEnv it answers that the
+// scratch directory is not a repository.
+func TestHermeticGitEnv_Negative_ScratchUnderACheckoutDoesNotFindIt(t *testing.T) {
+	requireGit(t)
+	checkout := t.TempDir()
+	commitFixture(t, checkout)
+	temporary := filepath.Join(checkout, "tmp")
+	if err := os.Mkdir(temporary, 0o750); err != nil {
+		t.Fatalf("create the temporary directory inside the checkout: %v", err)
+	}
+	t.Setenv("GOTMPDIR", temporary)
+	t.Run("scratch", func(t *testing.T) {
+		scratch := t.TempDir()
+		if !strings.HasPrefix(scratch, temporary+string(filepath.Separator)) {
+			t.Fatalf("scratch directory %s is not inside %s; the fixture proves nothing", scratch, temporary)
+		}
+		env := HermeticGitEnv(t)
+		top, err := runGit(t, scratch, withoutCeiling(env), "rev-parse", "--show-toplevel")
+		if err != nil || !sameDirectory(top, checkout) {
+			t.Fatalf("without the ceiling git found %q (err %v), want the enclosing checkout %s", top, err, checkout)
+		}
+		for _, args := range [][]string{{"rev-parse", "--show-toplevel"}, {"log", "-1", "--format=%H"}} {
+			if out, err := runGit(t, scratch, env, args...); err == nil {
+				t.Errorf("git %v from a scratch directory read the enclosing checkout: %s", args, out)
+			}
+		}
+	})
+}
+
+// TestHermeticGitEnv_Boundary_CeilingIsTheScratchParent pins the ceiling's value: one entry,
+// replacing an inherited one, naming the resolved parent of the calling test's own scratch
+// directories, so a subtest gets the parent of its own and not of its parent test's.
+func TestHermeticGitEnv_Boundary_CeilingIsTheScratchParent(t *testing.T) {
+	requireGit(t)
+	t.Setenv("GIT_CEILING_DIRECTORIES", os.DevNull)
+	ceilingOf := func(t *testing.T) string {
+		t.Helper()
+		var values []string
+		for _, entry := range HermeticGitEnv(t) {
+			if value, ok := strings.CutPrefix(entry, "GIT_CEILING_DIRECTORIES="); ok {
+				values = append(values, value)
+			}
+		}
+		want, err := filepath.EvalSymlinks(filepath.Dir(t.TempDir()))
+		if err != nil || len(values) != 1 || values[0] != want {
+			t.Fatalf("GIT_CEILING_DIRECTORIES entries = %q, want exactly [%q] (err %v)", values, want, err)
+		}
+		return values[0]
+	}
+	parent := ceilingOf(t)
+	t.Run("subtest", func(t *testing.T) {
+		if child := ceilingOf(t); child == parent {
+			t.Fatalf("a subtest shares its parent's ceiling %q", parent)
+		}
+	})
+}
