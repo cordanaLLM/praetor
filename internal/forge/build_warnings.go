@@ -85,8 +85,10 @@ type CargoLints struct {
 //   - MSVC cl: /WX (or -WX) on the command or in the CL or _CL_ variable, not undone by a later
 //     /WX-; clang-cl also takes -Werror and -Wno-error.
 //   - CMake, Meson, Cargo, rustc and Go: as their judges document (build_warnings_toolchains.go).
-//   - A compiler the command gives as a variable is read from the variable's value; one whose
-//     value the workflow does not show is a lane that fails as unread, never a skipped command.
+//   - A program path whose directory alone holds a variable or an expression is read by its base
+//     name. A compiler the command gives as a variable is read from the variable's value; one
+//     whose value the workflow does not show, given a C or C++ source file, is a lane that fails
+//     as unread, never a skipped command.
 //
 // A variable is read from the command's own assignments, an export earlier in its script, then
 // the step's, job's and workflow's env:, as far as sudo and env let it reach the program. A step
@@ -292,10 +294,12 @@ func (m *buildMeasure) result(sources nativeSources) []BuildLane {
 }
 
 // unreadCompiler records a command whose program the workflow gives as a variable or an
-// expression it shows no value for, when the command compiles a source: whether a warning fails
-// it cannot be read, so it is a lane that fails and says so.
+// expression it shows no value for, when its arguments name a C or C++ source file: whether a
+// warning fails it cannot be read, so it is a lane that fails and says so. A bare -c or /c names
+// no source and is the option of many other programs (python -c, sh -c, a tool's -c config
+// file), so it alone records no lane.
 func (m *buildMeasure) unreadCompiler(site *laneSite, word string, args []string) {
-	if !compilesSource(args, "-c", "/c") {
+	if !compilesSource(args) {
 		return
 	}
 	m.record(site, laneVerdict{toolchain: ToolchainUnreadCompiler, detail: word + " names the compiler, and the " +

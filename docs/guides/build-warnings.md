@@ -60,7 +60,10 @@ runs `go vet ./...` (`TestAuditBuildWarningsPassesTheScaffoldedWorkflows`).
   before the program that run nothing of their own (`if`, `then`, `do`, `time`, `nice`,
   `timeout`, `env`, `sudo`, `exec`, `ccache`, `sccache`) are passed over with their options. An
   `echo cargo build` or a command in a comment builds nothing. A program path is cut at `/` or
-  `\` on every host, so `C:\msys64\mingw64\bin\gcc.exe` reads as `gcc` on Linux too.
+  `\` on every host, so `C:\msys64\mingw64\bin\gcc.exe` reads as `gcc` on Linux too. A path
+  whose directory alone holds a variable, an expression or a command substitution
+  (`$HOME/.cargo/bin/cargo`, `${{ github.workspace }}/bin/meson`, `$(go env GOROOT)/bin/go`) is
+  read by its base name the same way.
 - **Variables.** A variable is read from the command's own assignments
   (`RUSTFLAGS="-D warnings" cargo build`), an `export` earlier in the script, then the step's,
   the job's and the workflow's `env:`, in that order. A word that is one whole reference
@@ -71,9 +74,10 @@ runs `go vet ./...` (`TestAuditBuildWarningsPassesTheScaffoldedWorkflows`).
   only with `sudo -E` or `--preserve-env=RUSTFLAGS`; `env -i` empties the environment and
   `env -u NAME` removes one variable.
 - **Compilers given as variables.** `$CC -c a.c` reads `CC` from the environment and judges the
-  compiler it names. A compiler the workflow shows no value for, such as `${{ matrix.cc }}` or an
-  unset `$CC`, is a lane that fails as unread: name the compiler on the command or set the
-  variable in `env:`.
+  compiler it names. A program the workflow shows no value for, such as `${{ matrix.cc }}`, an
+  unset `$CC` or `$(which gcc)`, is a lane that fails as unread when its arguments name a C or C++
+  source file: name the compiler on the command or set the variable in `env:`. A bare `-c` or
+  `/c` names no source, so `"$PYTHON" -c 'print(1)'` or `$SHELL -c 'echo hi'` is no lane.
 - **Configure before build.** `cmake --build` and `meson compile`, `test` or `install` are lanes
   only in a job where no earlier `run:` step configures: what configured that tree cannot be
   read, so the lane fails and says so.

@@ -252,11 +252,73 @@ func TestMeasureBuildWarnings_RepositoryWorkflowsVet(t *testing.T) {
 	}
 }
 
+// A toolchain whose program path starts with a variable or an expression runs the program its
+// base name names, whatever the directory expands to: each lane is that toolchain's, failing
+// without its form and passing with it (review of #816: these were dropped or read as unread).
+func TestMeasureBuildWarnings_VariableDirectoryPrograms(t *testing.T) {
+	cases := map[string]struct {
+		toolchain, without, with string
+	}{
+		"cargo under $HOME":         {ToolchainCargo, "$HOME/.cargo/bin/cargo build", "RUSTFLAGS=-Dwarnings $HOME/.cargo/bin/cargo build"},
+		"cmake under $RUNNER_TEMP":  {ToolchainCMake, "$RUNNER_TEMP/cmake/bin/cmake -B b", "$RUNNER_TEMP/cmake/bin/cmake -B b -DCMAKE_COMPILE_WARNING_AS_ERROR=ON"},
+		"meson under an expression": {ToolchainMeson, "${{ github.workspace }}/bin/meson setup build", "${{ github.workspace }}/bin/meson setup build --werror"},
+		"clang under ${ANDROID_NDK}": {ToolchainGCCClang, "${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang -c a.c",
+			"${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang -Werror -c a.c"},
+		"gcc under a Windows expression": {ToolchainGCCClang, `${{ runner.temp }}\mingw64\bin\gcc.exe -c a.c`, `${{ runner.temp }}\mingw64\bin\gcc.exe -Werror -c a.c`},
+		"go under $GOROOT":               {ToolchainGo, "$GOROOT/bin/go build ./...", "$GOROOT/bin/go build ./... && $GOROOT/bin/go vet ./..."},
+		"go under a substitution":        {ToolchainGo, "$(go env GOROOT)/bin/go build ./...", "$(go env GOROOT)/bin/go build ./... && $(go env GOROOT)/bin/go vet ./..."},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			lane := oneLane(t, buildJob("      - run: |\n          "+tc.without+"\n"))
+			if lane.Fatal || lane.Toolchain != tc.toolchain {
+				t.Fatalf("%q: lane = %+v; want a non-fatal %s lane", tc.without, lane, tc.toolchain)
+			}
+			lane = oneLane(t, buildJob("      - run: |\n          "+tc.with+"\n"))
+			if !lane.Fatal || lane.Toolchain != tc.toolchain {
+				t.Fatalf("%q: lane = %+v; want a fatal %s lane", tc.with, lane, tc.toolchain)
+			}
+		})
+	}
+}
+
+// An unread program is a C or C++ compiler lane only when its arguments name a source file.
+// Negative: a bare -c or /c is the option of many other programs (python -c, sh -c, a tool's -c
+// config file), so none of these is a lane. Positive: an unread program given a .c or .cpp
+// file is, with or without -c, and its detail names the whole program word.
+func TestMeasureBuildWarnings_UnreadProgramsNeedASource(t *testing.T) {
+	script := "      - run: |\n" +
+		"          ${{ steps.py.outputs.python-path }} -c \"import sys\"\n" +
+		"          \"$PYTHON\" -c 'print(1)'\n" +
+		"          $SHELL -c 'echo hi'\n" +
+		"          ./${{ matrix.bin }} -c config.toml\n" +
+		"          $(go env GOPATH)/bin/golangci-lint run -c .golangci.yml\n" +
+		"          ${{ matrix.tool }} /c build\n" +
+		"          `which python3` -c 'print(2)'\n"
+	if lanes := measureLanes(t, map[string]string{"ci.yml": buildJob(script)}); len(lanes) != 0 {
+		t.Fatalf("lanes = %+v; want none", lanes)
+	}
+	cases := map[string]string{
+		"${{ matrix.cc }} a.c -o a":     "${{ matrix.cc }} names the compiler",
+		"$(which gcc) -Werror -c a.c":   "$(which gcc) names the compiler",
+		"`which g++` -c src/main.cpp":   "`which g++` names the compiler",
+		"${{ matrix.cxx }} /c main.cpp": "${{ matrix.cxx }} names the compiler",
+	}
+	for script, detail := range cases {
+		lane := oneLane(t, buildJob("      - run: |\n          "+script+"\n"))
+		if lane.Fatal || lane.Toolchain != ToolchainUnreadCompiler || !strings.Contains(lane.Detail, detail) {
+			t.Errorf("%q: lane = %+v; want an unread compiler lane whose detail names %q", script, lane, detail)
+		}
+	}
+}
+
 // Boundary: shell words rejoin a quoted value split across fields, keep an escaped quote inside
-// the word, and a variable reference to an unset or undecidable variable stays as written.
+// the word, rejoin a $( ) or backtick substitution, and a variable reference to an unset or
+// undecidable variable stays as written.
 func TestShellWords_Boundary(t *testing.T) {
-	got := shellWords([]string{`CFLAGS="-O2`, `-Werror"`, `'a`, `b'`, `x\"y`, "plain"})
-	want := []string{"CFLAGS=-O2 -Werror", "a b", `x\y`, "plain"}
+	got := shellWords([]string{`CFLAGS="-O2`, `-Werror"`, `'a`, `b'`, `x\"y`, "plain", "$(go", "env", "GOPATH)/bin/x",
+		"`which", "gcc`", "$((1+2))", "$(a", "$(b))"})
+	want := []string{"CFLAGS=-O2 -Werror", "a b", `x\y`, "plain", "$(go env GOPATH)/bin/x", "`which gcc`", "$((1+2))", "$(a $(b))"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("shellWords = %q; want %q", got, want)
 	}

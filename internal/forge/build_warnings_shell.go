@@ -11,8 +11,9 @@ import (
 
 // How MeasureBuildWarnings reads one run: script: its fields (scriptFields) are cut into
 // commands at the separators (commandSeparators), each command's fields are joined back into
-// shell words across a quoted value or a ${{ }} expression, the parentheses of a subshell are
-// dropped, and each command is read as its assignments, its program and its arguments. A
+// shell words across a quoted value, a ${{ }} expression or a $( ) or backtick substitution, the
+// parentheses of a subshell are dropped, and each command is read as its assignments, its
+// program and its arguments. A
 // reserved word or a wrapper before the program (commandPrefixes, commandWrappers) starts no
 // program of its own. Only POSIX shell syntax is read: a PowerShell or cmd assignment is not.
 
@@ -92,20 +93,33 @@ func subshellWords(words []string) []string {
 }
 
 // shellWords joins one command's whitespace fields back into its words: a field that opens a
-// quote, or a ${{ }} expression, it does not close is joined, with one space, to the fields up to
-// the one closing it. The quote characters are then removed, so `RUSTFLAGS="-D warnings"` reads
-// as the one word RUSTFLAGS=-D warnings, and ${{ matrix.cc }} as one word.
+// quote, a ${{ }} expression or a command substitution it does not close (openWord) is joined,
+// with one space, to the fields up to the one closing it. The quote characters are then removed,
+// so `RUSTFLAGS="-D warnings"` reads as the one word RUSTFLAGS=-D warnings, ${{ matrix.cc }} as
+// one word, and $(go env GOPATH)/bin/golangci-lint as one program word.
 func shellWords(fields []string) []string {
 	words := make([]string, 0, len(fields))
 	for i := 0; i < len(fields) && i < maxRunScriptFields; i++ {
 		word := fields[i]
-		for (openQuote(word) != 0 || openExpression(word)) && i+1 < len(fields) {
+		for openWord(word) && i+1 < len(fields) {
 			i++
 			word += " " + fields[i]
 		}
 		words = append(words, unquoter.Replace(word))
 	}
 	return words
+}
+
+// openWord reports whether word leaves a quote, a ${{ }} expression, or a $( ) or backtick
+// command substitution open.
+func openWord(word string) bool {
+	return openQuote(word) != 0 || openExpression(word) || openSubstitution(word)
+}
+
+// openSubstitution reports whether word opens a command substitution it does not close: it
+// holds a $( and more ( than ), or an odd number of backticks.
+func openSubstitution(word string) bool {
+	return strings.Contains(word, "$(") && strings.Count(word, "(") > strings.Count(word, ")") || strings.Count(word, "`")%2 == 1
 }
 
 // openQuote returns the quote character word leaves open, or 0. A backslash outside single
@@ -358,13 +372,15 @@ func (e stepEnvironment) expand(args []string) []string {
 	return expanded
 }
 
-// resolveProgram reads a program given as one variable reference ($CC, ${CC}) the way the shell
+// resolveProgram reads the program a command's word names. A word whose base name holds no
+// expansion names its program by that base name (readableProgram), whatever its directory
+// expands to. A word that is one variable reference ($CC, ${CC}) is read the way the shell
 // expands it: the value's words, read again as a command, give the program and lead its
-// arguments. A program word holding any other expansion or a ${{ }} expression, or naming a
-// variable the step does not set or sets through an expression, is unread: resolveProgram
-// reports false and the command stays as written.
+// arguments (valueCommand). Any other word whose base name holds an expansion or a ${{ }}
+// expression, or a variable the step does not set or sets through an expression, is unread:
+// resolveProgram reports false and the command stays as written.
 func (e stepEnvironment) resolveProgram(cmd shellCommand) (shellCommand, bool) {
-	if !strings.ContainsAny(cmd.word, "$`") {
+	if readableProgram(cmd.word) {
 		return cmd, true
 	}
 	match := variableReference.FindStringSubmatch(cmd.word)
@@ -372,16 +388,44 @@ func (e stepEnvironment) resolveProgram(cmd shellCommand) (shellCommand, bool) {
 		return cmd, false
 	}
 	value, set, known := e.value(match[1]+match[2], nil)
-	fields := strings.Fields(value)
-	if !set || !known || len(fields) == 0 || strings.ContainsAny(value, "$`") {
+	if !set || !known {
 		return cmd, false
 	}
-	resolved := parseShellCommand(append(fields, cmd.args...))
-	if resolved.program == "" || strings.ContainsAny(resolved.word, "$`") {
+	resolved, read := valueCommand(value, cmd.args)
+	if !read {
 		return cmd, false
 	}
 	cmd.word, cmd.program, cmd.args = resolved.word, resolved.program, resolved.args
 	return cmd, true
+}
+
+// expansionMarks are the characters of an expansion, a ${{ }} expression or a command
+// substitution. In a program word's base name they mean the expansion, not the directory,
+// decides the program: the $CC of $CC, the gcc} of ${HOME/bin/gcc}, or `which gcc`.
+const expansionMarks = "$`{}()"
+
+// readableProgram reports whether a program word names its program in plain text: it holds no
+// expansion, or only its directory does. $HOME/.cargo/bin/cargo, ${{ github.workspace }}/bin/meson
+// and $(go env GOROOT)/bin/go run cargo, meson and go whatever the directory expands to, so they
+// are read by their base name (programName), as a literal path is.
+func readableProgram(word string) bool {
+	return !strings.ContainsAny(word, "$`") || !strings.ContainsAny(commandName(word), expansionMarks)
+}
+
+// valueCommand reads a program variable's value as the shell runs it: its words, with args after
+// them, read as a command. It reports false when the value names no program, its program word's
+// base name holds an expansion, or another of its words holds one, whose value the step does not
+// show.
+func valueCommand(value string, args []string) (shellCommand, bool) {
+	fields := strings.Fields(value)
+	if len(fields) == 0 {
+		return shellCommand{}, false
+	}
+	resolved := parseShellCommand(append(fields, args...))
+	expands := slices.ContainsFunc(fields, func(field string) bool {
+		return field != resolved.word && strings.ContainsAny(field, "$`")
+	})
+	return resolved, resolved.program != "" && readableProgram(resolved.word) && !expands
 }
 
 // names returns, sorted, the names cmd's program reads a value for (lookup) that start with

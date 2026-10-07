@@ -95,20 +95,29 @@ func TestCommandName_SlashNeutral(t *testing.T) {
 	}
 }
 
-// A program given as a variable is read from its value, wrappers and all; one holding any other
-// expansion, or a variable the step does not set, stays unread.
+// A program given as a variable is read from its value, wrappers and all, and a program path
+// whose directory alone holds an expansion is read by its base name; one whose base name holds
+// an expansion, or a variable the step does not set, stays unread.
 func TestResolveProgram(t *testing.T) {
-	env := stepEnvironment{script: map[string]string{"CC": "ccache clang-18 -std=c17", "CARGO": "$HOME/.cargo/bin/cargo"}}
+	env := stepEnvironment{script: map[string]string{"CC": "ccache clang-18 -std=c17", "CARGO": "$HOME/.cargo/bin/cargo",
+		"CXX": "clang++ $EXTRA"}}
 	cases := map[string]struct {
 		program string
 		read    bool
 	}{
-		"$CC -c a.c":            {"clang-18", true},
-		"${CC} -c a.c":          {"clang-18", true},
-		"$CXX -c a.cpp":         {"$cxx", false},
-		"$CARGO build":          {"$cargo", false},
-		"${{ matrix.cc }} -c x": {"${{ matrix.cc }}", false},
-		"gcc -c a.c":            {"gcc", true},
+		"$CC -c a.c":                   {"clang-18", true},
+		"${CC} -c a.c":                 {"clang-18", true},
+		"$CARGO build":                 {"cargo", true},
+		"$HOME/.cargo/bin/cargo build": {"cargo", true},
+		"${{ github.workspace }}\\bin\\meson.exe setup b": {"meson", true},
+		"$(go env GOROOT)/bin/go vet ./...":               {"go", true},
+		"gcc -c a.c":                                      {"gcc", true},
+		"$CXX -c a.cpp":                                   {"$cxx", false},
+		"$UNSET -c a.c":                                   {"$unset", false},
+		"${{ matrix.cc }} -c x":                           {"${{ matrix.cc }}", false},
+		"${HOME/bin/gcc} -c a.c":                          {"gcc}", false},
+		"$DIR/${TOOL} -c a.c":                             {"${tool}", false},
+		"`which gcc` -c a.c":                              {"`which gcc`", false},
 	}
 	for script, want := range cases {
 		cmd, read := env.resolveProgram(parseShellCommand(commandWords(t, script)[0]))
