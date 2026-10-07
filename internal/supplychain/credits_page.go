@@ -66,7 +66,7 @@ func renderCreditTable(section creditSection, entries []CreditEntry) ([]string, 
 	}
 	if len(rows) == len(header) {
 		return nil, fmt.Errorf("%s lists no entry in section %s; the %q table of %s would be empty",
-			CreditsFile, section.id, section.heading, AcknowledgementsFile)
+			AcknowledgementsList, section.id, section.heading, AcknowledgementsFile)
 	}
 	return rows, nil
 }

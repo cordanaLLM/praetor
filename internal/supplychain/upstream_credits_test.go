@@ -241,7 +241,7 @@ func writeRepoFile(t *testing.T, root, rel, content string) {
 // is left out, and a repository without the list fails naming it.
 func TestReadUpstreamCreditSources(t *testing.T) {
 	root := t.TempDir()
-	writeRepoFile(t, root, CreditsFile, creditsFixture)
+	writeRepoFile(t, root, AcknowledgementsList, creditsFixture)
 	writeRepoFile(t, root, upstreamSkill, "---\nname: shout\nmetadata:\n  derived_from: \""+upstreamURL+" (MIT AND Apache-2.0)\"\n---\n")
 	writeRepoFile(t, root, originalSkill, "---\nname: plain\n---\n")
 	writeRepoFile(t, root, licensesDir+"/MIT.txt", "MIT License\n")
@@ -262,7 +262,7 @@ func TestReadUpstreamCreditSources(t *testing.T) {
 	if err := CheckUpstreamCredits(sources); err == nil || !strings.Contains(err.Error(), "names gone.txt, which is not a file") {
 		t.Fatalf("the missing path is not a finding: %v", err)
 	}
-	if _, err := ReadUpstreamCreditSources(context.Background(), t.TempDir()); err == nil || !strings.Contains(err.Error(), CreditsFile) {
+	if _, err := ReadUpstreamCreditSources(context.Background(), t.TempDir()); err == nil || !strings.Contains(err.Error(), AcknowledgementsList) {
 		t.Fatalf("a repository without the credits list: %v", err)
 	}
 }

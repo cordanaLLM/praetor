@@ -20,7 +20,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
-// CheckUpstreamCredits is the credits gate. It holds docs/credits.yaml (CreditsFile) to the
+// CheckUpstreamCredits is the credits gate. It holds docs/credits.yaml (AcknowledgementsList) to the
 // repository:
 //
 //   - every item the dependency inventory lists (ReadCreditInventory) and every download the
@@ -46,7 +46,7 @@ var derivedFromValue = regexp.MustCompile(`^(https://[^\s()]+) \((.+)\)$`)
 
 // UpstreamCreditSources are what CheckUpstreamCredits compares.
 type UpstreamCreditSources struct {
-	// Credits is the decoded CreditsFile.
+	// Credits is the decoded AcknowledgementsList.
 	Credits Credits
 	// Reuse is ReuseFile, empty when the repository has none.
 	Reuse string
@@ -156,7 +156,7 @@ func readCreditPathTexts(ctx context.Context, root string, credits Credits) (map
 	for _, rel := range creditPaths(credits) {
 		data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, rel)
 		if err != nil {
-			return nil, fmt.Errorf("read %s, which %s names: %w", rel, CreditsFile, err)
+			return nil, fmt.Errorf("read %s, which %s names: %w", rel, AcknowledgementsList, err)
 		}
 		if exists {
 			texts[rel] = strings.ToLower(string(data))
@@ -233,7 +233,7 @@ func checkDerivationCredit(parsed derivation, entries []CreditEntry, tables []Re
 	})
 	if index < 0 {
 		return fmt.Errorf("%s declares metadata.%s %s, and %s has no entry with that url naming %s among its paths",
-			parsed.rel, compiler.DerivedFromKey, parsed.url, CreditsFile, parsed.rel)
+			parsed.rel, compiler.DerivedFromKey, parsed.url, AcknowledgementsList, parsed.rel)
 	}
 	entry := entries[index]
 	if entry.License != parsed.license {
@@ -303,16 +303,16 @@ func checkAssetMarkers(assets []compiler.AssetUpstream, originals []string, text
 		switch {
 		case asset.DerivedFrom == "" && !original:
 			findings = append(findings, fmt.Errorf("%s declares no metadata.%s and %s does not list it under originals; credit its upstream or mark it original",
-				asset.Rel, compiler.DerivedFromKey, CreditsFile))
+				asset.Rel, compiler.DerivedFromKey, AcknowledgementsList))
 		case asset.DerivedFrom != "" && original:
 			findings = append(findings, fmt.Errorf("%s lists %s under originals, and that file declares metadata.%s %q",
-				CreditsFile, asset.Rel, compiler.DerivedFromKey, asset.DerivedFrom))
+				AcknowledgementsList, asset.Rel, compiler.DerivedFromKey, asset.DerivedFrom))
 		}
 	}
 	for _, original := range originals {
 		_, exists := texts[original]
 		if !exists || !slices.ContainsFunc(assets, func(asset compiler.AssetUpstream) bool { return asset.Rel == original }) {
-			findings = append(findings, fmt.Errorf("%s lists %s under originals, which is no canonical persona or skill", CreditsFile, original))
+			findings = append(findings, fmt.Errorf("%s lists %s under originals, which is no canonical persona or skill", AcknowledgementsList, original))
 		}
 	}
 	return findings
@@ -347,7 +347,7 @@ func checkInventoryCredited(inventory []InventoryItem, credits Credits) []error 
 	findings := make([]error, 0, len(order))
 	for _, key := range order {
 		findings = append(findings, fmt.Errorf("%s uses %s, and no entry of %s names it among its packages; add an entry with its upstream and license",
-			strings.Join(missing[key], ", "), key, CreditsFile))
+			strings.Join(missing[key], ", "), key, AcknowledgementsList))
 	}
 	return findings
 }
@@ -384,7 +384,7 @@ func checkDownloadPaths(downloads []CreditDownload, texts map[string]string) []e
 	for index, download := range downloads {
 		if !strings.Contains(texts[download.Path], strings.ToLower(download.ID)) {
 			findings = append(findings, fmt.Errorf("%s downloads[%d] says %s fetches %s, and that file does not name it",
-				CreditsFile, index, download.Path, download.ID))
+				AcknowledgementsList, index, download.Path, download.ID))
 		}
 	}
 	return findings
@@ -419,7 +419,7 @@ func checkCreditExceptions(entries []CreditEntry, exceptions []config.Exception,
 				exception.Target(), config.ExceptionRuleCredits, exception.Expires))
 		case !slices.ContainsFunc(entries, func(entry CreditEntry) bool { return excuses(exception, entry) }):
 			findings = append(findings, fmt.Errorf("exceptions entry %s (%s) excuses no entry of %s that states license %s; remove the entry",
-				exception.Target(), config.ExceptionRuleCredits, CreditsFile, licenseUnknown))
+				exception.Target(), config.ExceptionRuleCredits, AcknowledgementsList, licenseUnknown))
 		}
 	}
 	return findings

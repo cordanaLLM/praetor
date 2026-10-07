@@ -97,16 +97,21 @@ func (w *inventoryWalker) visit(abs string, entry os.DirEntry, walkErr error) er
 		return err
 	}
 	rel = filepath.ToSlash(rel)
-	name := entry.Name()
 	if entry.IsDir() {
-		hidden := strings.HasPrefix(name, ".") && rel != "." && !slices.Contains(inventoryDotDirectories, name)
-		if hidden || slices.Contains(inventorySkippedDirectories, name) {
-			return filepath.SkipDir
-		}
-		return nil
+		return skippedInventoryDirectory(rel, entry.Name())
 	}
 	if entry.Type().IsRegular() && len(inventoryReaders(rel)) > 0 {
 		w.files = append(w.files, rel)
+	}
+	return nil
+}
+
+// skippedInventoryDirectory returns filepath.SkipDir for a directory the inventory does not read
+// and nil for one it enters.
+func skippedInventoryDirectory(rel, name string) error {
+	hidden := strings.HasPrefix(name, ".") && rel != "." && !slices.Contains(inventoryDotDirectories, name)
+	if hidden || slices.Contains(inventorySkippedDirectories, name) {
+		return filepath.SkipDir
 	}
 	return nil
 }
