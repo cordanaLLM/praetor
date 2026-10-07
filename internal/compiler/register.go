@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/changelog"
@@ -45,17 +46,51 @@ func (e *registerBlockDrift) Unwrap() error { return ErrRegisterBlockOutOfSync }
 // where the manifest states it in register.conventions or root keeps a fragment directory
 // (changelog.FragmentDirPresent, config.RegisterPolicy.WithDetectedConventions, #328). The
 // returned policy is the manifest's; what root's files add is a rendering fact, as the hook is.
+// The block names a register skill (config.RegisterSkills) only where root carries its
+// .agents/skills/<name>/SKILL.md (AbsentRegisterSkills, #235).
 func LoadRegisterBlock(ctx context.Context, root string) (config.RegisterPolicy, string, error) {
-	authority, block, err := loadRegister(ctx, root)
+	return LoadRegisterBlockOver(ctx, root, nil)
+}
+
+// LoadRegisterBlockOver is LoadRegisterBlock for a caller that writes the register skills named in
+// pending before the block lands, such as adoption, whose dry run installs them only in its
+// preview: each counts as present whether or not root holds it yet.
+func LoadRegisterBlockOver(ctx context.Context, root string, pending []string) (config.RegisterPolicy, string, error) {
+	authority, block, err := loadRegister(ctx, root, pending)
 	if err != nil {
 		return config.RegisterPolicy{}, "", err
 	}
 	return authority.Policy(), block, nil
 }
 
-// loadRegister is LoadRegisterBlock returning the authority itself, so SyncRegisterBlock can
+// AbsentRegisterSkills returns the register skills (config.RegisterSkills) root does not carry
+// as .agents/skills/<name>/SKILL.md (ReadCanonicalSkill), leaving out those named in pending,
+// which a caller writes before its output lands. A skill path that cannot be read is an error.
+// The register block, the Paperclip harness directive and adoption's warning about skills it
+// could not install all decide what a repository carries here, so over a readable repository
+// they agree. Over a refused read they differ by design: the block and the warning fail, while
+// the Paperclip harness states the register's form without a skill name and reports that
+// substitution (paperclip.SynthesizeHarnessOver).
+func AbsentRegisterSkills(ctx context.Context, root string, pending []string) ([]string, error) {
+	var absent []string
+	for _, name := range config.RegisterSkills() {
+		if slices.Contains(pending, name) {
+			continue
+		}
+		_, exists, err := ReadCanonicalSkill(ctx, root, name)
+		if err != nil {
+			return nil, fmt.Errorf("text register: %w", err)
+		}
+		if !exists {
+			absent = append(absent, name)
+		}
+	}
+	return absent, nil
+}
+
+// loadRegister is LoadRegisterBlockOver returning the authority itself, so SyncRegisterBlock can
 // name the policy's origin in a drift error.
-func loadRegister(ctx context.Context, root string) (config.RegisterAuthority, string, error) {
+func loadRegister(ctx context.Context, root string, pending []string) (config.RegisterAuthority, string, error) {
 	authority, err := config.LoadCheckedRegisterAuthority(ctx, root)
 	if err != nil {
 		return config.RegisterAuthority{}, "", err
@@ -68,7 +103,12 @@ func loadRegister(ctx context.Context, root string) (config.RegisterAuthority, s
 	if err != nil {
 		return config.RegisterAuthority{}, "", fmt.Errorf("text register: %w", err)
 	}
-	block, err := config.RenderRegisterBlock(authority.Policy().WithDetectedConventions(fragments), gated)
+	absent, err := AbsentRegisterSkills(ctx, root, pending)
+	if err != nil {
+		return config.RegisterAuthority{}, "", err
+	}
+	policy := authority.Policy().WithDetectedConventions(fragments).WithAbsentSkills(absent)
+	block, err := config.RenderRegisterBlock(policy, gated)
 	if err != nil {
 		return config.RegisterAuthority{}, "", err
 	}
@@ -81,7 +121,7 @@ func loadRegister(ctx context.Context, root string) (config.RegisterAuthority, s
 // file changed; without write it never touches the file and returns an error matching
 // ErrRegisterBlockOutOfSync on drift.
 func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write bool) (changed bool, err error) {
-	authority, block, err := loadRegister(ctx, root)
+	authority, block, err := loadRegister(ctx, root, nil)
 	if err != nil {
 		return false, err
 	}

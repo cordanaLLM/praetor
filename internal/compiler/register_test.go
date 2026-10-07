@@ -134,7 +134,8 @@ func TestSyncRegisterBlockBoundary(t *testing.T) {
 		if changed, err := SyncRegisterBlock(ctx, root, agents, true); err != nil || !changed {
 			t.Fatalf("append: changed=%v err=%v", changed, err)
 		}
-		block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), false)
+		// The root carries no skill, so the block names none (#235).
+		block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy().WithAbsentSkills(config.RegisterSkills()), false)
 		if err != nil {
 			t.Fatalf("render defaults: %v", err)
 		}

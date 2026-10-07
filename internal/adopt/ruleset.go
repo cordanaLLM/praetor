@@ -178,12 +178,15 @@ func reconcileLabels(ctx context.Context, s *adoptSession) error {
 
 // reconcilePaperclip leaves the harness planHarness planned. It writes a synthesis only where
 // none exists or the existing one is unmodified earlier output. An operator-owned harness is
-// kept, under --force too; --force sets only a platform naming another repository.
+// kept, under --force too; --force sets only a platform naming another repository. A synthesis
+// that names no register skill because one could not be read is reported as a warning
+// (warnHarnessSubstitution).
 func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	plan, err := planHarness(ctx, s)
 	if err != nil {
 		return err
 	}
+	s.warnHarnessSubstitution(plan)
 	if plan.unresolved && (!plan.onDisk || s.opts.Force || plan.forgeUndeclared()) {
 		s.report.recordSkipped(paperclipFile, unresolvedHarnessNote(plan))
 		return nil
@@ -202,6 +205,15 @@ func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	}
 	s.recordHarnessWrite(plan)
 	return nil
+}
+
+// warnHarnessSubstitution reports, once and under .paperclip/harness.json, what the synthesis
+// plan leaves on disk states in place of a register skill it could not read
+// (harnessPlan.substitution); a plan without one reports nothing.
+func (s *adoptSession) warnHarnessSubstitution(plan harnessPlan) {
+	if plan.substitution != "" {
+		s.report.addWarning("%s: %s", paperclipFile, plan.substitution)
+	}
 }
 
 // recordHarnessWrite records the harness a plan writes and, when it writes rules.md too
@@ -341,8 +353,9 @@ var priorPersonaDigests = map[string]map[string]string{
 }
 
 // reconcileAgentDefinitions writes the canonical personas and projects them into the persona
-// directory of every agent client agent_clients selects; the directories it leaves out are
-// reported not applicable and never written. A dry run writes nothing and records every copy
+// directory of every agent client agent_clients selects, and the register skills the repository
+// carries into its skill directory (#235); the directories it leaves out are reported not
+// applicable and never written. A dry run writes nothing and records every copy
 // the real run projects (projectAgentSurfaces); it used to stop before the copies, so the
 // preview never named them nor the hand-edited ones a forced run replaces (#366).
 func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
@@ -362,6 +375,11 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
 	}
+	_, excludedSkills, err := compiler.SelectSkillDirs(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
+	}
+	excluded = append(excluded, excludedSkills...)
 	for i := 0; i < len(excluded) && i < maxTranspileTargets; i++ {
 		s.report.recordNotApplicable(excluded[i], "Not selected by agent_clients in "+manifestFile)
 	}

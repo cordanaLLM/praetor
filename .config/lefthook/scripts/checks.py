@@ -24,8 +24,10 @@ GO_EXTENSIONS = {".go", ".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", 
 # fails if it writes a path these do not match.
 CONTEXT = {"AGENTS.md", "CLAUDE.md", ".windsurfrules",
            ".github/copilot-instructions.md", ".gemini/GEMINI.md", ".codex/rules.md"}
-CONTEXT_PREFIXES = (".agents/", ".cursor/rules/", ".claude/agents/", ".codex/agents/",
-                    ".gemini/agents/", ".github/agents/")
+# .claude/skills/ is the client skill directory compile-context copies register skills to
+# (vendorTargets skillDir, compiler.VerifyClientSkills).
+CONTEXT_PREFIXES = (".agents/", ".cursor/rules/", ".claude/agents/", ".claude/skills/",
+                    ".codex/agents/", ".gemini/agents/", ".github/agents/")
 # The extensions semgrep assigns each language a rule can target, from semgrep's language
 # table (semgrep_interfaces/lang.json, "exts", semgrep 1.178.0). Keyed by the names
 # .config/semgrep/hiss-invariants.yml uses; test_semgrep_suffixes_cover_every_rule_language

@@ -1,0 +1,4 @@
+type: fixed
+title: Agent guard allows a read-only command such as git log -n 5 chained after a commit
+issue: "#46"
+breaking: false

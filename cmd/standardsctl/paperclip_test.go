@@ -28,7 +28,7 @@ func writePaperclipFixtureHarness(t *testing.T, dir string) {
 	// the repository the fixture's receipts attest.
 	identified := t.TempDir()
 	writeFixtureFile(t, identified, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: github\n")
-	harness, err := paperclip.SynthesizeHarness(context.Background(), identified, hisscatalog.Facts{})
+	harness, _, err := paperclip.SynthesizeHarness(context.Background(), identified, hisscatalog.Facts{})
 	if err != nil {
 		t.Fatalf("SynthesizeHarness: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestDogfoodingPaperclipHarness(t *testing.T) {
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("RepositoryHISSFacts(repository root): warnings=%q err=%v", warnings, err)
 	}
-	harness, err := paperclip.SynthesizeHarness(t.Context(), root, facts)
+	harness, _, err := paperclip.SynthesizeHarness(t.Context(), root, facts)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness(repository root): %v", err)
 	}
@@ -321,6 +321,41 @@ func TestPaperclipHarness_WarnsOnUndocumentedException(t *testing.T) {
 		}
 		if !strings.Contains(out, "[OK] Synthesized Paperclip harness") || strings.Index(out, "[OK]") < strings.LastIndex(out, "[WARN]") {
 			t.Errorf("documented=%v: output\n%s\nwant every warning before the [OK] line", documented, out)
+		}
+	}
+}
+
+// TestPaperclipHarness_ReportsRegisterSkillSubstitution pins the CLI output of `praetorctl
+// paperclip harness` when the caveman skill cannot be read. Negative: a directory at its SKILL.md,
+// which the confined read refuses, gives the register directive without a skill name, and one
+// [WARN] line says so before the [OK] line. Positive: a readable skill gives no warning and the
+// directive naming it.
+func TestPaperclipHarness_ReportsRegisterSkillSubstitution(t *testing.T) {
+	const warn = "[WARN] the register directive names no skill, since a register skill could not be read:"
+	for _, readable := range []bool{false, true} {
+		repo := t.TempDir()
+		writeFixtureFile(t, repo, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widget\n  forge: github\n")
+		skill := ".agents/skills/caveman/SKILL.md"
+		if readable {
+			writeFixtureFile(t, repo, skill, "---\nname: caveman\ndescription: fixture\n---\n")
+		} else if err := os.MkdirAll(filepath.Join(repo, filepath.FromSlash(skill)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		out, err := captureStdout(t, func() error {
+			return runPaperclipHarness(t.Context(), []string{"--path=" + repo})
+		})
+		if err != nil {
+			t.Fatalf("readable=%v: %v", readable, err)
+		}
+		if got := strings.Count(out, warn); got != map[bool]int{false: 1, true: 0}[readable] {
+			t.Errorf("readable=%v: output\n%s\nwant the substitution warning only for the unreadable skill", readable, out)
+		}
+		if strings.Index(out, "[OK]") < strings.LastIndex(out, "[WARN]") {
+			t.Errorf("readable=%v: output\n%s\nwant every warning before the [OK] line", readable, out)
+		}
+		named := strings.Contains(readFixtureFile(t, repo, ".paperclip/harness.json"), "`caveman` skill:")
+		if named != readable {
+			t.Errorf("readable=%v: harness names the caveman skill = %v", readable, named)
 		}
 	}
 }

@@ -489,10 +489,55 @@ text. A command is denied when it
 - runs `adopt`, `conform`, `bootstrap` or a `needs` scan, report, migration or epic
   against the workstation dev root instead of a leaf repository (DEV-01).
 
+### Read-only commands chained after a commit
+
+The short skip flag rule and the skip variable rule have one exemption (#46): they judge the
+command without the words of a read-only command chained after it. Every other rule, and
+every operator rule, always judges the whole command. The exemption applies only when all of
+these hold; in every other case both rules judge the whole command and refuse what they
+refused before:
+
+- The read-only command follows a plain separator, `;`, `&&`, `||` or `|`, with nothing but
+  blanks (space, tab) between the separator and the command name.
+- The command is `git log`, `git show`, `git status`, `git diff` or `git rev-parse` (also
+  after `git --no-pager`), `head`, `tail`, `grep`, `wc`, or `sed` with `-n` as its first word.
+- The dropped words are made of letters, digits and `-_./:=@,+~*?` only. The first other
+  character, such as a quote, `%` or `#`, ends them: that argument and every word after it
+  are judged.
+- The whole command is one line of printable ASCII and holds none of `\`, a backtick, `^`,
+  `$`, `(`, `)`, `{`, `}`, `<`, `>`, `!`, PowerShell's stop-parsing token `--%`, a `%` right
+  before a separator, or the words `export`, `declare`, `typeset`, `set`, `setenv`, `alias`,
+  `function`, `hash`, `doskey`, `sal`, `nal`, `Set-Alias` and `New-Alias` in any letter case,
+  inside a quoted commit message too.
+
+So `git commit -m x && git log -n 5`, `git commit -s -F msg; sed -n '1,5p' README.md`,
+`git commit -m x | head -n 3` and `git commit -m x; grep -rn SKIP= .github` pass. Still
+refused: a skip flag the commit itself carries; a chain after a redirection, as in
+`git commit -m x 2>&1 | tail -n 5`; `echo -n`, `[ -n "$v" ]` and every other command outside
+the list; a command over more than one line; a commit message holding one of the listed
+words, such as `-m "set default"`.
+
+Why a dropped word is never a skip: it holds no quote, so it lies wholly inside or wholly
+outside any string still open at the separator. Outside, the separator ends the commit and
+the word belongs to the read-only command; inside, it is part of one quoted argument. The
+listed constructs are the ones that break this reading (escapes, expansions, substitutions,
+line continuations, redefined command names, exported variables). One gap remains by
+design: the exemption reads `;` as a separator, as POSIX shells, fish and PowerShell do;
+cmd.exe does not, so there a `;` chain passes the read-only command's words to Git.
+
+The exemption sources are `ReadOnlyWords` and `ReadOnlyVeto` in
+`internal/agenthook/policy.go`; both are linear in RE2 and Python's `re`, and
+`TestEmittedInterceptorScanBounds` holds the costliest shapes to a CPU budget. The corpus
+holds the allow cases and the escaped, quoted, substituted, stop-parsing, line-continued and
+exported shapes the rules keep refusing.
+
+### Where the rules live
+
 The sources live in `internal/agenthook/policy.go` (`builtinEvasion`, `builtinDevRoot`).
-`.config/agent/hooks/block_evasion.py` carries the evasion list and the dev-root rule byte
-for byte (`TestPythonGuardCarriesTheBuiltinEvasionList`,
-`TestPythonGuardCarriesTheBuiltinDevRootRule`), and `praetorctl adopt` renders the
+`.config/agent/hooks/block_evasion.py` carries the evasion list, the dev-root rule and the
+read-only exemption byte for byte (`TestPythonGuardCarriesTheBuiltinEvasionList`,
+`TestPythonGuardCarriesTheBuiltinDevRootRule`,
+`TestPythonGuardCarriesTheReadOnlyExemption`), and `praetorctl adopt` renders the
 interceptor it writes from `agenthook.BuiltinRules` (see
 [The adopted interceptor](#the-adopted-interceptor)). The allow and deny cases, including
 the false-positive ones, are in `internal/agenthook/testdata/pre-tool/cases.json`.

@@ -100,8 +100,9 @@ class actually spends.
 ### Repository conventions
 
 The Form column holds two parts. The engine renders the universal form of each register,
-the same in every repository: for `social`, the `social-text` skill, BLUF, full sentences,
-and a conventional commit subject left unchanged. A clause about how one repository
+the same in every repository: for `social`, the `social-text` skill where the repository
+carries it ([register skills](#register-skills)), BLUF, full sentences, and a conventional
+commit subject left unchanged. A clause about how one repository
 publishes (its pull-request template, a receipt fence, a changelog fragment lane) follows
 it only when that repository states it, because an adopter without that lane would
 otherwise be told to keep it, and `compile-context` would restore the claim on every run
@@ -242,6 +243,63 @@ kept across a harness refresh already hold a section (because `compile-context` 
 one earlier), the merge keeps a single copy. `praetorctl init` and harvester onboarding
 splice the block before their first compile for the same reason.
 
+### Register skills
+
+Adoption ships the skills the block names. With `--lock-source-root`, the agent-harness step
+installs `social-text`, `caveman` and `adhd-format`, which `social-text` inherits from, into
+`.agents/skills/` from that checkout (`config.RegisterSkillBundle`). Each carries its REUSE
+header, and `caveman` its `metadata.derived_from` credit ([credits](../credits.md)). The
+bundle is one unit: a source that lacks one skill installs none. An edited skill is kept and
+reported, `--force` included; an unedited earlier Praetor text is refreshed
+(`priorSkillDigests` in `internal/adopt/register_skills.go`,
+`TestAdopt_Negative_EditedSkillIsKeptAndReported`).
+
+Codex, Gemini CLI, Cursor, Copilot and Windsurf read `.agents/skills/`; Claude Code reads
+`.claude/skills/` only (`agentcontext.SkillDirs`). When `agent_clients` selects Claude Code,
+`compile-context` copies each of the three skills the repository carries into
+`.claude/skills/`, and `--verify` and the audit's projection gate refuse a missing or edited
+copy (`compiler.VerifyClientSkills`, `internal/compiler/client_skills_test.go`). A
+repository's own skills are not copied, and `.claude/skills/` may hold skills of its own.
+Adoption writes the copies in its agent-definitions step. With that step declined and Claude
+Code selected, the agent-harness step installs no skill and warns why, because no step would
+write the copies `--verify` then requires
+(`TestAdopt_DeclinedAgentDefinitionsLeavesAVerifiedRepository`).
+
+The copies are written through the same symlink-refusing writer as the persona copies, so a
+`.claude/skills` that is a symlink, such as `.claude/skills -> ../.agents/skills`, is refused:
+`compile-context` fails in a repository that carries one of the three skills, and adoption with
+`--lock-source-root` fails before its first write, naming the copy and
+`path component must be a directory, never a symlink` (`compiler.CheckSkillTargets`,
+`TestVerifyClientSkills_Negative_MissingOrEditedCopy`). Replace
+the symlink with a real directory, which `compile-context` then fills, or leave `claude` out of
+`agent_clients`.
+
+The block names a skill only where the repository carries `.agents/skills/<name>/SKILL.md`
+(`compiler.AbsentRegisterSkills`). Without it, the row states the form alone and the brief rule
+reads "internal register with `task:` = routing label". A declined agent-harness step, or a
+run without `--lock-source-root`, installs nothing, and the block then names no skill
+(`TestAdopt_Boundary_DeclinedSelectedAndPreviewed`,
+`internal/compiler/register_skills_test.go`). The Paperclip harness adoption writes follows the
+same rule: its register sentence names `caveman` only where the repository carries it, or the
+run installs it (`paperclip.SynthesizeHarnessOver`, `config.RegisterDirectiveWithout`,
+`internal/paperclip/register_test.go`). Where the skill path cannot be read, for example behind a
+symlinked `.agents`, the harness states the form alone and the run reports that substitution:
+adoption warns under `.paperclip/harness.json`, and `praetorctl paperclip harness` and the
+audit's Paperclip gate print a `[WARN]` line naming the refused read
+(`TestAdopt_Boundary_DeclinedAgentStepsAreNotPreflighted`,
+`TestPaperclipHarness_ReportsRegisterSkillSubstitution`,
+`TestAuditPaperclip_RegisterSkillSubstitution`). `compile-context` fails on the same
+read instead. The audit compares `.paperclip/harness.json` with this synthesis, so a harness an
+earlier release wrote, which names `caveman` in every repository, is out of date in a
+repository that does not carry the skill: the audit fails it as unmodified earlier output, with
+the `praetorctl adopt` remedy. Adoption then refreshes it to the sentence without the skill
+name (`TestAuditPaperclip_Migration_HarnessNamingAbsentCaveman`), or, with
+`--lock-source-root`, installs the skill the harness names
+(`TestAdopt_Positive_FreshAdoptionShipsTheRegisterSkills`). Repair jobs
+(`config.RegisterDirective`) name the skill in every repository: they are prompts for a
+provider, kept as a private review artifact (`dogfood.SaveRepairPlan`), never repository
+content.
+
 ## Internal briefs and returns
 
 A brief to another agent states the goal, the inputs (paths, not pasted content), the
@@ -286,8 +344,10 @@ returns through their own rows, so an operator registers it deliberately
 Operators call the internal register "caveman", and the `caveman` skill
 (`.agents/skills/caveman/SKILL.md`) makes that form concrete. The
 configuration value stays `internal`, so no manifest changes; the internal row of the
-rendered block names the skill, and so does the one register sentence that repair jobs and
-the Paperclip harness receive (`config.RegisterDirective`).
+rendered block names the skill where the repository carries it
+([register skills](#register-skills)), and so does the one register sentence the Paperclip
+harness receives (`config.RegisterDirectiveWithout`). Repair jobs always name it
+(`config.RegisterDirective`).
 
 The skill replaces an adjective ("telegraphic") with rules an agent can apply line by line:
 drop articles, pronouns, copulas, hedges and framing; write fragments, one fact per line;

@@ -57,17 +57,22 @@ func NewTranspiler() *Transpiler {
 // shared by all targets. Client ids reuse internal/clientid where the client is known there;
 // Cursor, Copilot and Windsurf have a projection but no client setup adapter. personaDir is
 // the directory the client reads agent personas from (compiler.CompileAgentSurfaces copies
-// .agents/agents there); Cursor and Windsurf read none.
+// .agents/agents there); Cursor and Windsurf read none. skillDir is the directory the client
+// reads repository skills from when it does not read the canonical .agents/skills: Claude Code
+// reads .claude/skills alone (code.claude.com/docs/en/skills), while Codex, Gemini CLI, Cursor,
+// Copilot and Windsurf each read .agents/skills (their skills documentation, checked
+// 2026-10-06), so their skillDir is empty.
 type vendorTarget struct {
 	client     string
 	path       string
 	section    string
 	prefix     string
 	personaDir string
+	skillDir   string
 }
 
 var vendorTargets = [6]vendorTarget{
-	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code", personaDir: ".claude/agents"},
+	{client: string(clientid.Claude), path: "CLAUDE.md", section: "Claude Code", personaDir: ".claude/agents", skillDir: ".claude/skills"},
 	{client: "cursor", path: ".cursor/rules/hiss-invariants.mdc", section: "Cursor", prefix: cursorFrontmatter},
 	{client: "copilot", path: ".github/copilot-instructions.md", section: "GitHub Copilot", personaDir: ".github/agents"},
 	{client: "windsurf", path: ".windsurfrules", section: "Windsurf"},
@@ -81,6 +86,14 @@ var vendorTargets = [6]vendorTarget{
 // personas appears in neither list.
 func PersonaDirs(clients []string) (selected, excluded []string, err error) {
 	return partitionTargets(clients, func(target vendorTarget) string { return target.personaDir })
+}
+
+// SkillDirs resolves a client selection to the skill directories its clients read besides the
+// canonical .agents/skills, and the ones it leaves out, both in registry order, under the same
+// rules as the context files: nil keeps every directory, an empty list keeps none, and an
+// unknown id fails. A client that reads .agents/skills appears in neither list.
+func SkillDirs(clients []string) (selected, excluded []string, err error) {
+	return partitionTargets(clients, func(target vendorTarget) string { return target.skillDir })
 }
 
 // SelectedClients resolves a client selection to the agent client ids it keeps and the ones it

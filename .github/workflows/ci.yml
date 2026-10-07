@@ -354,7 +354,7 @@ jobs:
       - name: Install The Pinned Renovate Validator
         if: steps.changed.outputs.run == 'true'
         env:
-          RENOVATE_VERSION: '44.142.0'
+          RENOVATE_VERSION: '44.142.1'
         run: |
           if ! npm install --no-audit --no-fund --prefix "$RUNNER_TEMP/renovate" "renovate@${RENOVATE_VERSION}"; then
             tail -n 40 "$HOME"/.npm/_logs/*-debug-0.log

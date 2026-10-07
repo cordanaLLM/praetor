@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -151,6 +152,10 @@ type RegisterPolicy struct {
 	// engine-universal form of that register (RegisterPolicy.form). A written key, an empty
 	// value included, replaces what compile-context would detect (WithDetectedConventions).
 	Conventions map[TextRegister]string `yaml:"conventions,omitempty"`
+	// absentSkills are the register skills (RegisterSkills) the repository does not carry, which
+	// the rendered block does not name (WithAbsentSkills). It is a rendering fact compile-context
+	// detects, never a manifest key.
+	absentSkills map[string]bool
 }
 
 // Resolution is the register a caller must write in, with the row that decided it.
@@ -424,6 +429,24 @@ func (p RegisterPolicy) WithDetectedConventions(fragmentDir bool) RegisterPolicy
 	}
 	conventions[TextRegisterSocial] = FragmentConvention
 	p.Conventions = conventions
+	return p
+}
+
+// WithAbsentSkills returns p rendering without the register skills named in absent, the ones the
+// repository does not carry (#235): the block then states those registers' forms without naming a
+// skill, and the subagent brief rule without the `caveman` brief shape. A name that is no register
+// skill is ignored. p itself is not changed.
+func (p RegisterPolicy) WithAbsentSkills(absent []string) RegisterPolicy {
+	var skills map[string]bool
+	for _, name := range RegisterSkills() {
+		if slices.Contains(absent, name) {
+			if skills == nil {
+				skills = make(map[string]bool, len(registerSkills))
+			}
+			skills[name] = true
+		}
+	}
+	p.absentSkills = skills
 	return p
 }
 

@@ -12,8 +12,9 @@ import (
 
 // Adoption's record of the agent surfaces the agent-definitions step projects from the canonical
 // personas and skills: the persona copy in every persona directory agent_clients selects
-// (.claude/agents/<name>.md and the others) and, when the repository ships the plugin
-// (compiler.PluginManifestRel), the plugin persona and skill copies. The step writes them through
+// (.claude/agents/<name>.md and the others), the copy of every register skill the repository
+// carries in every skill directory it selects (.claude/skills/<name>/SKILL.md, #235) and, when the
+// repository ships the plugin (compiler.PluginManifestRel), the plugin persona and skill copies. The step writes them through
 // compiler.CompileAgentSurfaces, the writer compile-context uses, so adoption projects every copy
 // compile-context --verify checks; it used to write only the client copies, and a forced run left
 // the plugin copies stale (#359). compile-context --verify demands their exact bytes, so every
@@ -37,13 +38,18 @@ type agentSurfaceKind struct {
 }
 
 // agentSurfaceKindOf returns the kind of the copy at rel, a slash path compiler.PlanAgentSurfaces
-// listed: a plugin skill copy, a plugin persona copy, or the persona copy of an agent client.
+// listed: a plugin skill copy, a plugin persona copy, the skill copy of an agent client (a
+// SKILL.md, which no persona copy is), or the persona copy of an agent client.
 func agentSurfaceKindOf(rel string) agentSurfaceKind {
 	switch {
 	case strings.HasPrefix(rel, compiler.PluginSkillsRel+"/"):
 		return agentSurfaceKind{source: compiler.CanonicalSkillsRel,
 			projected:    "Projected canonical skill to the plugin copy",
 			synchronized: "Synchronized plugin copy of the canonical skill"}
+	case path.Base(rel) == compiler.SkillEntryName:
+		return agentSurfaceKind{source: compiler.CanonicalSkillsRel,
+			projected:    "Projected canonical skill to the skill directory its agent client reads",
+			synchronized: "Synchronized client copy of the canonical skill"}
 	case strings.HasPrefix(rel, compiler.PluginAgentsRel+"/"):
 		return agentSurfaceKind{source: compiler.CanonicalAgentsRel,
 			projected:    "Projected canonical agent definition to the plugin copy",
@@ -67,8 +73,8 @@ var agentSurfaceLabels = projectionLabels{
 
 // plannedAgentSurfaces returns the copies compiler.CompileAgentSurfaces writes for the repository
 // as it is now, as the compiled files the projection record reads. pending holds the canonical
-// personas a dry run would have written by then (pendingPersonas), by file name; nil reads disk.
-func plannedAgentSurfaces(ctx context.Context, repoPath string, pending map[string][]byte) ([]compiler.TargetFile, error) {
+// personas and skills a dry run would have written by then (pendingSources); empty reads disk.
+func plannedAgentSurfaces(ctx context.Context, repoPath string, pending compiler.PendingSources) ([]compiler.TargetFile, error) {
 	planned, err := compiler.PlanAgentSurfacesOver(ctx, repoPath, pending)
 	if err != nil {
 		return nil, fmt.Errorf("plan agent definitions: %w", err)
@@ -83,7 +89,7 @@ func plannedAgentSurfaces(ctx context.Context, repoPath string, pending map[stri
 // the run found them, before the agent-definitions step refreshes the personas: the copies an
 // unedited earlier run left, which a write over them synchronizes rather than replaces.
 func priorAgentSurfaces(ctx context.Context, repoPath string) (priorVendorProjections, error) {
-	files, err := plannedAgentSurfaces(ctx, repoPath, nil)
+	files, err := plannedAgentSurfaces(ctx, repoPath, compiler.PendingSources{})
 	if err != nil {
 		return nil, err
 	}
@@ -103,10 +109,12 @@ func agentSurfaceDigests(files []compiler.TargetFile) priorVendorProjections {
 // projectAgentSurfaces writes every copy (compiler.CompileAgentSurfaces) and records each one
 // against prior (priorAgentSurfaces): created, synchronized, or replaced with a backup kept
 // before the write (replaceExistingAll). A dry run writes nothing and records the same entries
-// for the copies of the canonical personas its real run leaves (pendingPersonas), so the preview
-// names every copy the run projects and every hand edit it replaces (#366).
+// for the copies of the canonical personas and skills its real run leaves (pendingPersonas,
+// pendingSkills), so the preview names every copy the run projects and every hand edit it
+// replaces (#366).
 func projectAgentSurfaces(ctx context.Context, s *adoptSession, prior priorVendorProjections) error {
-	files, err := plannedAgentSurfaces(ctx, s.repoPath, s.pendingPersonas())
+	pending := compiler.PendingSources{Personas: s.pendingPersonas(), Skills: s.pendingSkills()}
+	files, err := plannedAgentSurfaces(ctx, s.repoPath, pending)
 	if err != nil {
 		return err
 	}
@@ -155,7 +163,7 @@ func preflightPersonaBackupRoot(ctx context.Context, s *adoptSession) error {
 	if s.opts.Force {
 		return nil
 	}
-	files, err := plannedAgentSurfaces(ctx, s.repoPath, nil)
+	files, err := plannedAgentSurfaces(ctx, s.repoPath, compiler.PendingSources{})
 	if err != nil {
 		return err
 	}

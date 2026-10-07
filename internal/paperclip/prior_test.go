@@ -28,7 +28,7 @@ func priorRepo(t *testing.T, harness, rules string) (string, *Harness) {
 	if rules != "" {
 		writeRepoFile(t, repo, ".paperclip/rules.md", rules)
 	}
-	current, err := SynthesizeHarness(context.Background(), repo, unknownFacts)
+	current, _, err := SynthesizeHarness(context.Background(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestPriorGeneratedRecognisesEveryReleaseEra(t *testing.T) {
 		t.Fatal(err)
 	}
 	earlier := len(priorRegisterDirectives)*len(priorAGitPushFormats) + 1
-	if len(eras) != earlier+len(releasedPushRows())*len(releasedReceiptRows())*len(releaseFacts(stated)) {
+	if len(eras) != earlier+len(releasedPushRows())*len(releasedReceiptRows())*len(releaseFacts(stated))*len(releasedRegisterDirectives()) {
 		t.Fatalf("release eras = %d, want every directive under every push protocol, the Caveman release and every fact combination", len(eras))
 	}
 	for index := range eras[:earlier] {

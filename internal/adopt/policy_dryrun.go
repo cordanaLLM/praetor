@@ -103,6 +103,10 @@ type harnessPlan struct {
 	// unpatched says why the platform of an operator-owned harness could be neither compared
 	// nor set (paperclip.PatchPlatform), in either mode; the harness then stays as written.
 	unpatched string
+	// substitution says what the synthesis this run leaves on disk states in place of a register
+	// skill it could not read (paperclip.SynthesizeHarnessOver); the paperclip step reports it.
+	// An operator-owned harness, which the run keeps, carries none.
+	substitution string
 }
 
 // absent reports a harness that neither exists nor is written by this run: the paperclip
@@ -139,13 +143,27 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	if s.declines("paperclip") {
 		return keptHarnessPlan(ctx, path, exists, nil)
 	}
-	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath, s.paperclipFacts(ctx))
+	synthesized, fresh, substitution, err := s.synthesizeHarness(ctx)
 	if unresolvedHarnessInputs(err) {
 		return keptHarnessPlan(ctx, path, exists, err)
 	}
 	if err != nil {
 		return harnessPlan{}, err
 	}
+	plan, err := planSynthesizedHarness(ctx, s, path, exists, synthesized, fresh)
+	if plan.owned == nil {
+		plan.substitution = substitution
+	}
+	return plan, err
+}
+
+// planSynthesizedHarness plans the harness at path for the current synthesis: written where
+// none exists (newHarnessPlan), verified where the file holds it, refreshed where the file is
+// unmodified earlier output, and otherwise kept as the operator's (planEarlierHarness,
+// planOwnedHarness).
+func planSynthesizedHarness(ctx context.Context, s *adoptSession, path string, exists bool,
+	synthesized *paperclip.Harness, fresh []byte,
+) (harnessPlan, error) {
 	if !exists {
 		return newHarnessPlan(s.repoPath, synthesized, fresh)
 	}
@@ -224,19 +242,25 @@ func (p harnessPlan) forgeUndeclared() bool {
 }
 
 // synthesizeHarness renders the Paperclip harness for the repository's HISS facts
-// (paperclipFacts). Every fact is fixed before or at the run's first harness plan, so the
-// manifest step, which binds register.sources to these bytes, and the paperclip step, which
-// writes them, render the same harness.
-func synthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.Facts) (*paperclip.Harness, []byte, error) {
-	synthesized, err := paperclip.SynthesizeHarness(ctx, repoPath, facts)
+// (paperclipFacts), with the register skills the agent-harness step installs counted as carried
+// (plannedRegisterSkills, paperclip.SynthesizeHarnessOver), and the substitution the synthesis
+// reports. Every fact is fixed before or at the run's first harness plan, so the manifest step,
+// which binds register.sources to these bytes before the agent-harness step installs a skill, and
+// the paperclip step, which writes them after, render the same harness.
+func (s *adoptSession) synthesizeHarness(ctx context.Context) (*paperclip.Harness, []byte, string, error) {
+	skills, err := s.plannedRegisterSkills(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("synthesize paperclip harness: %w", err)
+		return nil, nil, "", err
+	}
+	synthesized, substitution, err := paperclip.SynthesizeHarnessOver(ctx, s.repoPath, s.paperclipFacts(ctx), skills)
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("synthesize paperclip harness: %w", err)
 	}
 	fresh, err := paperclip.MarshalHarness(synthesized)
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal paperclip harness: %w", err)
+		return nil, nil, "", fmt.Errorf("marshal paperclip harness: %w", err)
 	}
-	return synthesized, fresh, nil
+	return synthesized, fresh, substitution, nil
 }
 
 // planEarlierHarness refreshes an existing harness only when it is unmodified output of an

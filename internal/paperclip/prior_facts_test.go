@@ -25,7 +25,7 @@ const (
 func synthesizeWidget(t *testing.T, repo, receiptSection string, facts hisscatalog.Facts) *Harness {
 	t.Helper()
 	writeRepoFile(t, repo, ".standards.yaml", widgetManifest+receiptSection)
-	h, err := SynthesizeHarness(context.Background(), repo, facts)
+	h, _, err := SynthesizeHarness(context.Background(), repo, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +197,9 @@ func TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination(t *testing
 		t.Fatal(err)
 	}
 	combinations := (int(hisscatalog.AllLanguages) + 1) * (int(hisscatalog.AllExceptions) + 1) * len(policyFacts(stated))
-	if len(released) != len(releasedPushRows())*len(releasedReceiptRows())*combinations {
-		t.Fatalf("fact combinations = %d, want every released push row pair x receipt row x %d HISS fact combinations", len(released), combinations)
+	if len(released) != len(releasedPushRows())*len(releasedReceiptRows())*combinations*len(releasedRegisterDirectives()) {
+		t.Fatalf("fact combinations = %d, want every released push row pair x receipt row x %d HISS fact combinations x each register directive",
+			len(released), combinations)
 	}
 	self := 0
 	for index := range released {

@@ -104,7 +104,7 @@ real run records, under the same effective policy (`AdoptReport.EffectivePolicy`
 - the flavor templates, which the flavor layer plans through the decisions an apply makes,
   writing nothing (`flavor.ApplyOptions.DryRun`, `internal/flavor/dry_run_test.go`);
 - each pinned catalog file below `.config/archetypes/`;
-- the persona copies of the canonical personas the run writes
+- the persona and skill copies of the canonical personas and register skills the run writes
   (`compiler.PlanAgentSurfacesOver`);
 - the pre-commit hook that hook activation installs below `.git/hooks`. Only running
   `lefthook install` shows whether it succeeds; a failed one installs the fallback hook at the
@@ -445,14 +445,14 @@ Three rules hold on every run, `--force` or not:
 | | `.github/rulesets/main.json` | kept with a warning; the rendering current before the run is refreshed | replaced while the policy enforces linear history or signed commits, kept under any other policy (`TestReconcileBranchRuleset_Boundary_ForceReplacesOnlyWhilePolicyRequiresIt`) |
 | | the `.devcontainer/` bundle | an existing `devcontainer.json` keeps the bundle as it is, with a warning | regenerated; each image the bundle records is kept or refreshed, and reported (`prepareAdoptDevContainer` in `internal/adopt/devcontainer.go`, `TestReconcileDevContainer_Positive_ForcedEditIsReplacedWithBackup`) |
 | | the documentation gate block in the `Makefile`, the managed block at the end of `.gitattributes` | an edited block fails the run | the block is restored (`TestReconcileDocumentationMakefile_Boundary_DeltaListsOnlyInBlockLines`, `TestReconcileMakefile_Positive_ForceRestoresEditedBlockOnAppendPath`, `TestReconcileGitAttributes_Positive_EditedBlockReplacedUnderForce`) |
-| Audit-locked, recompiled every run | vendor context files such as `CLAUDE.md`, persona copies under `.claude/agents/`, plugin copies | compiled from `AGENTS.md` and the canonical personas and skills; a hand edit is replaced | the same (`TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup`) |
+| Audit-locked, recompiled every run | vendor context files such as `CLAUDE.md`, persona copies under `.claude/agents/`, register skill copies under `.claude/skills/`, plugin copies | compiled from `AGENTS.md` and the canonical personas and skills; a hand edit is replaced | the same (`TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup`) |
 | Managed block, every run | the `.gitignore` and `.prettierignore` tail blocks, the README governance block, the Renovate rule for the managed files, the text register block in `AGENTS.md` | Praetor's block or rule is written; every line outside it is kept | the same |
 | Merged | agent hook settings: `.claude/settings.json`, `.gemini/settings.json`, `.codex/hooks.json` | missing Praetor handlers are merged in; every other entry is kept | the same (`TestReconcileAgentHooks_Positive_MergesPreservingForeignContent`) |
 | | editor JSON: `.vscode/*.json`, `.zed/*.json`, `.fleet/*.json`, `standards.sublime-project` | kept; the warning names the missing managed values | merged, every repository key kept; a file adoption cannot merge is kept with a warning (`TestAdopt_Positive_ForceMergesEditorJSONKeepingAdopterKeys`) |
 | | the `AGENTS.md` harness | kept; only its text register block is spliced from the manifest | regenerated, keeping the preamble, invariant rows under the repository's own IDs and the instructions below the harness; an edited generated line is a `replace` (`TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions`) |
 | | `.paperclip/harness.json` | a harness the repository edited is kept; a `platform` naming another repository is a warning | only that `platform` is reset to this repository's `<owner>/<name>`; `.paperclip/rules.md` stays as it is, a deleted one included (`TestAdoptForcePatchesOnlyHarnessPlatform`) |
 | | `.standards.yaml` | profiles, facets and every other declaration kept (`praetorctl profile set` changes them); `register.sources` added, or re-bound only to a harness the run writes | the same |
-| Generated, not audit-verified | the anti-evasion interceptor, the checkpoint scripts and policy, the personas `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, the label taxonomy, `CONTRIBUTING.md`, the pull request template, `SECURITY.md`, editor files that are not JSON | an edited file is kept with a warning that counts the lines regenerating it would change | the same; delete the file and re-run adopt to regenerate it (`TestAdopt_Negative_EditedEvasionHookKeptUnderForce`) |
+| Generated, not audit-verified | the anti-evasion interceptor, the checkpoint scripts and policy, the personas `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, the register skills under `.agents/skills/`, the label taxonomy, `CONTRIBUTING.md`, the pull request template, `SECURITY.md`, editor files that are not JSON | an edited file is kept with a warning that counts the lines regenerating it would change | the same; delete the file and re-run adopt to regenerate it (`TestAdopt_Negative_EditedEvasionHookKeptUnderForce`) |
 | | `lefthook.yml` | a current or earlier Praetor rendering is written, migrated or verified; any other configuration is kept and not activated | the same, and a CRLF checkout of the current rendering is rewritten with LF bytes (`TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce`) |
 | | the `pre-commit` hook written when lefthook cannot install | a hook Praetor did not write is kept | the same (`TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce`) |
 | Written only when absent | flavor templates such as `rustfmt.toml`, developer-owned editor files such as `.nvim.lua`, the ADR directory | an existing file is kept | the same |
@@ -693,9 +693,19 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   adoption before its first write, a dry run included; a manifest that declines
   `agent-harness` is not checked (`preflightAgentHarness` in `internal/adopt/adopt.go`,
   tests in `internal/adopt/register_preflight_test.go`).
+- **Register skills.** With `--lock-source-root`, the agent-harness step installs the skills
+  the text register block names, `social-text` and `caveman`, and `adhd-format`, which
+  `social-text` inherits from, into `.agents/skills/`. A declined agent-harness step, or a run
+  without `--lock-source-root`, installs none, and neither the block nor the Paperclip harness
+  then names one. A declined agent-definitions step installs none either while `agent_clients`
+  selects Claude Code, since no step would write the `.claude/skills/` copies. A symlinked
+  `.claude/skills` fails adoption before its first write
+  ([register skills](guides/text-register.md#register-skills),
+  `internal/adopt/register_skills.go`).
 - **Agent context verification.** The agent-definitions step projects the canonical personas
   and skills through the writer `compile-context` uses (`compiler.CompileAgentSurfaces`): the
-  persona copy in every persona directory `agent_clients` selects and, when
+  persona copy in every persona directory `agent_clients` selects, the copy of each register
+  skill the repository carries in `.claude/skills/` when Claude Code is selected, and, when
   `.agents/plugins/praetor/plugin.json` exists, the plugin persona and skill copies. A
   hand-edited plugin copy is replaced with its line delta and backup like any persona copy, and
   a symlinked plugin directory fails adoption before its first write. After the last step,
@@ -703,7 +713,7 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   `verifyAgentContext` in `internal/adopt/context_verify.go`). The check reads the whole
   repository, not only the files adoption wrote. Each rejection is an error on the report,
   led by "compile-context --verify rejects the repository's agent context after adoption", and
-  on the step that writes what it rejects: `agent-definitions` for a persona or plugin copy,
+  on the step that writes what it rejects: `agent-definitions` for a persona or skill copy,
   `git-ignore` for the evidence ignore rule, `agent-harness` for `AGENTS.md` and the vendor
   files. The run is then incomplete and `praetorctl adopt` exits non-zero; a caveman finding on
   text adoption keeps as written stays a warning. A dry run, and a manifest that declines

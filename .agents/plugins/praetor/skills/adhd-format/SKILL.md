@@ -1,4 +1,7 @@
 ---
+# SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+#
+# SPDX-License-Identifier: EUPL-1.2
 name: adhd-format
 description: Format complex technical reports, architectural reviews, and diagnostic outputs for high cognitive focus, executive clarity, and ADHD readability using visual hierarchy, bionic bolding, chunked lists, and alert callouts.
 metadata:
@@ -42,15 +45,15 @@ Forge-facing prose (issues, PR bodies, review comments, commit bodies) uses soci
 
 ### ✅ ADHD-Optimized Pattern
 > ### 🚨 HISS-04 Complexity Infraction
-> 
+>
 > | Function | Cyclomatic | Limit | Func LOC | Limit | Status |
 > | :--- | :--- | :--- | :--- | :--- | :--- |
 > | `compiler.compileAstNode` | **14** | $\le 10$ | **92** | $\le 60$ | ❌ Blocked |
-> 
+>
 > **Immediate Action Required**:
 > - **Extract node visit logic** into `visitExpression()` and `visitStatement()`.
 > - **Target reduction**: Reduce cyclomatic complexity from 14 to $\le 8$.
-> 
+>
 > ```mermaid
 > flowchart LR
 >     NODE["compileAstNode (LOC 92)"] --> EXPR["visitExpression (LOC 35)"]

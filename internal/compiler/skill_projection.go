@@ -5,6 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 const (
@@ -63,19 +69,43 @@ func skillDirNames(dir string, entries []os.DirEntry) ([]string, error) {
 	return names, nil
 }
 
-// readCanonicalSkill reads one skill's declaration without following a symlink anywhere below
-// rootDir (readConfinedText).
-func readCanonicalSkill(ctx context.Context, rootDir, name string) ([]byte, error) {
-	data, err := readConfinedText(ctx, rootDir, skillEntryRel(CanonicalSkillsRel, name))
+// ReadCanonicalSkill reads the SKILL.md of skill name under .agents/skills below root without
+// following a symlink at any component (contextopt.ObserveSnapshotIn), and reports whether it
+// exists. A path that cannot be read is an error: guessing either way would name, or copy, a
+// skill nobody can open. It is the one reader of a canonical skill: the plugin and client
+// projections, the register block (AbsentRegisterSkills) and adoption, which reads the skills
+// it installs from a Praetor checkout, all read through it.
+func ReadCanonicalSkill(ctx context.Context, root, name string) ([]byte, bool, error) {
+	rel := CanonicalSkillRel(name)
+	data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, filepath.FromSlash(rel))
 	if err != nil {
-		return nil, fmt.Errorf("read canonical skill %s: %w", name, err)
+		return nil, false, fmt.Errorf("read canonical skill %s: %w", name, err)
+	}
+	return data, exists, nil
+}
+
+// readCanonicalSkill is ReadCanonicalSkill for a skill directory listCanonicalSkills listed: one
+// without its SKILL.md is an error.
+func readCanonicalSkill(ctx context.Context, rootDir, name string) ([]byte, error) {
+	data, exists, err := ReadCanonicalSkill(ctx, rootDir, name)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("read canonical skill %s: %s: %w", name, CanonicalSkillRel(name), os.ErrNotExist)
 	}
 	return data, nil
 }
 
-// skillEntryRel is the declared slash path of one skill's SKILL.md below dir.
-func skillEntryRel(dir, name string) string {
+// SkillEntryRel is the declared slash path of one skill's SKILL.md below dir.
+func SkillEntryRel(dir, name string) string {
 	return dir + "/" + name + "/" + SkillEntryName
+}
+
+// CanonicalSkillRel is the declared slash path of the SKILL.md of skill name under
+// CanonicalSkillsRel.
+func CanonicalSkillRel(name string) string {
+	return SkillEntryRel(CanonicalSkillsRel, name)
 }
 
 // pluginSkillProjections reads every canonical skill once (readCanonicalSkill) and returns its
@@ -94,7 +124,7 @@ func pluginSkillProjections(ctx context.Context, rootDir string) ([]projectionFi
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, projectionFile{rel: skillEntryRel(PluginSkillsRel, names[i]), data: data})
+		files = append(files, projectionFile{rel: SkillEntryRel(PluginSkillsRel, names[i]), data: data})
 	}
 	return files, nil
 }
@@ -117,7 +147,7 @@ func VerifyPluginSkills(ctx context.Context, rootDir string) (int, error) {
 		if err != nil {
 			return verified, err
 		}
-		if err := verifyProjection(ctx, rootDir, skillEntryRel(PluginSkillsRel, names[i]), want); err != nil {
+		if err := verifyProjection(ctx, rootDir, SkillEntryRel(PluginSkillsRel, names[i]), want); err != nil {
 			return verified, err
 		}
 		verified++
@@ -143,4 +173,70 @@ func rejectOrphanSkills(ctx context.Context, rootDir string, names []string) err
 		}
 	}
 	return nil
+}
+
+// Praetor ships the text register skills (config.RegisterSkillBundle): adoption installs them into
+// .agents/skills, and the block compile-context renders names them (LoadRegisterBlock, #235).
+// Codex, Gemini CLI, Cursor, Copilot and Windsurf read .agents/skills; an agent client that reads
+// skills elsewhere (agentcontext.SkillDirs, .claude/skills for Claude Code) gets a copy of each
+// bundle skill the repository carries, projected like a persona copy. A repository's own skills
+// are not projected, and a skill directory may hold skills of its own: the projection names no
+// orphan there.
+
+// clientSkillProjections returns the copy of every bundle skill in each of dirs: the bundle skills
+// the repository carries, and those in pending, the bundle skills a caller writes before it
+// projects, with their pending bytes (PlanAgentSurfacesOver). A pending name that is no bundle
+// skill is refused. It writes nothing.
+func clientSkillProjections(ctx context.Context, rootDir string, dirs []string, pending map[string][]byte) ([]projectionFile, error) {
+	names := config.RegisterSkillBundle()
+	for name := range pending {
+		if !slices.Contains(names, name) {
+			return nil, fmt.Errorf("pending skill %q is not one Praetor ships (%s)", name, strings.Join(names, ", "))
+		}
+	}
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	var files []projectionFile
+	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
+		data, present, err := bundleSkillText(ctx, rootDir, names[i], pending)
+		if err != nil {
+			return nil, err
+		}
+		for j := 0; present && j < len(dirs); j++ {
+			files = append(files, projectionFile{rel: SkillEntryRel(dirs[j], names[i]), data: data})
+		}
+	}
+	return files, nil
+}
+
+// bundleSkillText returns the SKILL.md of the bundle skill name as the caller leaves the
+// repository: its bytes in pending when it is there, otherwise what .agents/skills holds
+// (ReadCanonicalSkill), and whether either has it.
+func bundleSkillText(ctx context.Context, rootDir, name string, pending map[string][]byte) ([]byte, bool, error) {
+	if data, ok := pending[name]; ok {
+		return data, true, nil
+	}
+	return ReadCanonicalSkill(ctx, rootDir, name)
+}
+
+// VerifyClientSkills checks that every bundle skill the repository carries has its copy in the
+// skill directory of each agent client agent_clients selects (SelectSkillDirs), matching its
+// canonical SKILL.md (verifyProjection). It returns the number of copies verified. A directory
+// the selection leaves out is neither required nor read.
+func VerifyClientSkills(ctx context.Context, rootDir string) (int, error) {
+	dirs, _, err := SelectSkillDirs(ctx, rootDir)
+	if err != nil {
+		return 0, err
+	}
+	files, err := clientSkillProjections(ctx, rootDir, dirs, nil)
+	if err != nil {
+		return 0, err
+	}
+	for i := range files {
+		if err := verifyProjection(ctx, rootDir, files[i].rel, files[i].data); err != nil {
+			return i, err
+		}
+	}
+	return len(files), nil
 }

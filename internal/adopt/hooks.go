@@ -283,6 +283,10 @@ BLOCK_EXIT = 2
 RULES = [
 {{RULES}}]
 
+# The RULES judged without the words of read-only commands chained after a commit.
+READ_ONLY_EXEMPT = [
+{{READ_ONLY_EXEMPT}}]
+{{READ_ONLY_WORDS}}{{READ_ONLY_VETO}}
 LEFTHOOK_DISABLED = [
 {{LEFTHOOK_DISABLED}}]
 LEFTHOOK_NARROWING = {{LEFTHOOK_NARROWING}}
@@ -329,6 +333,15 @@ def check_environment(environ):
             raise Blocked(NARROWING_REFUSAL)
 
 
+def without_read_only_words(command):
+    # The words of git log, head, sed -n and the other read-only commands READ_ONLY_WORDS
+    # names, chained after ;, &&, || or |, belong to that command and are dropped, its name
+    # kept. A command holding a construct READ_ONLY_VETO names keeps every word.
+    if re.search(READ_ONLY_VETO, command):
+        return command
+    return re.sub(READ_ONLY_WORDS, r"\1\2", command)
+
+
 def check_command(command):
     # re backtracks, so a longer command or line could stall this script past the harness's
     # hook timeout. Such a command is refused, never truncated.
@@ -336,8 +349,10 @@ def check_command(command):
         raise Blocked(SCAN_BOUND_REFUSAL)
     if max(len(line) for line in command.split("\n")) > MAX_SCAN_LINE_CHARS:
         raise Blocked(SCAN_BOUND_REFUSAL)
+    judged = without_read_only_words(command)
     for pattern, refusal in RULES:
-        if re.search(pattern, command):
+        text = judged if pattern in READ_ONLY_EXEMPT else command
+        if re.search(pattern, text):
             raise Blocked(refusal + pattern)
 
 
@@ -392,17 +407,21 @@ func ruleRefusalName(invariant string) string {
 }
 
 // buildBlockEvasionPY renders the interceptor from the engine's command policy: the built-in
-// rules (agenthook.BuiltinRules), the Lefthook environment checks, the input bound, the
-// scan bounds of the Python adapters (agenthook.MaxScanChars, MaxScanLineChars) and the
+// rules (agenthook.BuiltinRules), the read-only exemption of the rules that carry it
+// (agenthook.ReadOnlyWords, ReadOnlyVeto), the Lefthook environment checks, the input bound,
+// the scan bounds of the Python adapters (agenthook.MaxScanChars, MaxScanLineChars) and the
 // refusal texts. It never includes operator rules; those are repository configuration
 // (ADR-0011).
 func buildBlockEvasionPY() string {
-	var refusals, rules, disabled strings.Builder
+	var refusals, rules, exempt, disabled strings.Builder
 	for _, refusal := range interceptorRefusals() {
 		refusals.WriteString(pythonAssignment(refusal.name, pyToken{refusal.text, pyString}))
 	}
 	for _, rule := range agenthook.BuiltinRules() {
 		rules.WriteString(pythonPairEntry(pyToken{rule.Source, pyRaw}, pyToken{ruleRefusalName(rule.Invariant), pyName}))
+		if rule.ReadOnlyExempt {
+			exempt.WriteString(pythonItemLines("    ", pyToken{rule.Source, pyRaw}, ","))
+		}
 	}
 	for _, value := range agenthook.LefthookDisableValues() {
 		refusal := pyToken{agenthook.LefthookDisabledRefusal(value), pyString}
@@ -414,6 +433,9 @@ func buildBlockEvasionPY() string {
 		"{{MAX_SCAN_LINE_CHARS}}", strconv.Itoa(agenthook.MaxScanLineChars),
 		"{{REFUSALS}}", refusals.String(),
 		"{{RULES}}", rules.String(),
+		"{{READ_ONLY_EXEMPT}}", exempt.String(),
+		"{{READ_ONLY_WORDS}}", pythonAssignment("READ_ONLY_WORDS", pyToken{agenthook.ReadOnlyWords, pyRaw}),
+		"{{READ_ONLY_VETO}}", pythonAssignment("READ_ONLY_VETO", pyToken{agenthook.ReadOnlyVeto, pyRaw}),
 		"{{LEFTHOOK_DISABLED}}", disabled.String(),
 		"{{LEFTHOOK_NARROWING}}", pythonStringTuple(agenthook.LefthookNarrowingVariables()),
 	).Replace(blockEvasionTemplate)
@@ -609,6 +631,7 @@ var priorEvasionHookDigests = map[string]string{
 	"3c0553691766524d3d7c22454e6acb4d6525295aa79f300a783121f329bad800": "engine rules, bounded JSON input",
 	"eb5beb82cfcc85f4f398c504696750d889ffe49171e61956446adbcd0927dbde": "black-clean layout, engine refusal texts",
 	"fed57187eef4b43b8d4810bcad13c1da8339d333ea74b675c0371cf6c93b309b": "abbreviated skip options, Windows hook removal",
+	"93c213517c41de42c3a44b9f950b205a94d43d9c1ea7a202266912c793ae68cb": "read-only chained command exemption",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

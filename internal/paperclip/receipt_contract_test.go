@@ -36,7 +36,7 @@ func receiptRow(t *testing.T, receiptSection string) (string, *Harness) {
 func receiptRowIn(t *testing.T, repo, receiptSection string) (string, *Harness) {
 	t.Helper()
 	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: forgejo\n"+receiptSection)
-	h, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
+	h, _, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"gopkg.in/yaml.v3"
 )
@@ -47,7 +48,28 @@ func newCatalogLockSource(t *testing.T, manifest *config.Manifest, bodies map[st
 	if _, err := config.ValidateLockfile(context.Background(), root, manifest); err != nil {
 		t.Fatalf("independent source fixture must validate: %v", err)
 	}
+	writeRegisterSkillSources(t, root)
 	return root
+}
+
+// sourceCheckout is this repository's root, resolved when the package loads: a test that changes
+// the working directory still finds the files the source bundle copies from it.
+var sourceCheckout = func() string {
+	root := filepath.Join("..", "..")
+	if abs, err := filepath.Abs(root); err == nil {
+		return abs
+	}
+	return root
+}()
+
+// writeRegisterSkillSources copies the register skill bundle this repository ships into the
+// source bundle at root, as a Praetor checkout holds it, so adoption installs it (#235).
+func writeRegisterSkillSources(t *testing.T, root string) {
+	t.Helper()
+	for _, name := range config.RegisterSkillBundle() {
+		rel := filepath.FromSlash(compiler.CanonicalSkillRel(name))
+		mustWrite(t, filepath.Join(root, rel), mustRead(t, filepath.Join(sourceCheckout, rel)))
+	}
 }
 
 func writeAdoptSourceEntries(t *testing.T, root, kind string, ids []string, bodies map[string]string) ([]map[string]string, []string) {

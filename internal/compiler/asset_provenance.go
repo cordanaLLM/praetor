@@ -86,8 +86,7 @@ func CanonicalAssets(ctx context.Context, rootDir string) ([]AssetUpstream, erro
 	if err != nil {
 		return nil, err
 	}
-	skillAssets, err := readAssets(ctx, rootDir, skills, readCanonicalSkill,
-		func(name string) string { return skillEntryRel(CanonicalSkillsRel, name) })
+	skillAssets, err := readAssets(ctx, rootDir, skills, readCanonicalSkill, CanonicalSkillRel)
 	if err != nil {
 		return nil, err
 	}
