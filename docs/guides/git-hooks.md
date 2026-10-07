@@ -953,7 +953,7 @@ real source by a test in `.config/lefthook/scripts/test_hooks.py`:
 
 | Set | Selects | Matches | Held in step by |
 | :--- | :--- | :--- | :--- |
-| `CONTEXT`, `CONTEXT_PREFIXES` | `compile-context --verify` | `AGENTS.md`, `.agents/**`, the six vendor files and the `.claude/`, `.codex/`, `.gemini/`, `.github/` `agents/` persona directories | `test_context_changed_covers_every_compile_context_path` runs the real `compile-context` and requires every file it reads or writes to match |
+| `CONTEXT`, `CONTEXT_PREFIXES` | `compile-context --verify` | `AGENTS.md`, `.agents/**`, the six vendor files, the `.claude/`, `.codex/`, `.gemini/`, `.github/` `agents/` persona directories and the `.claude/skills/` copies of the register skills | `test_context_changed_covers_every_compile_context_path` runs the real `compile-context` and requires every file it reads or writes to match |
 | `GO_EXTENSIONS` | the Go packages to build, test, lint and scan | every suffix `go/build` compiles into a package: `.go`, cgo C/C++/Objective-C sources and headers, assembler (`.s`, `.S`, `.sx`), Fortran, SWIG and `.syso` | `test_go_packages_selects_cgo_and_assembler_inputs` |
 | `SEMGREP_SUFFIXES` | the per-file semgrep scan | the extensions semgrep assigns each language in `.config/semgrep/hiss-invariants.yml`, including `.h`, `.hpp`, `.cc`, `.jsx` and `.tsx` | `test_semgrep_suffixes_cover_every_rule_language` fails when a rule names a language the table lacks |
 
