@@ -27,9 +27,9 @@ type ContractExport struct {
 // ExportFrameworkContract snapshots the framework a language's target resolves to as a
 // version-1 capability contract (`needs contract export`). The go framework is the index
 // source selects (SelectFrameworkSource); another language's framework is its target's
-// contract, else its module alone. The export carries every package, capability and claim
-// the index holds, so it can be configured as framework.targets.<language>.contract, or
-// serve a CI run that has no checkout.
+// contract, else its module alone. The export carries every package, capability, claim and
+// umbrella the index holds, so it can be configured as framework.targets.<language>.contract,
+// or serve a CI run that has no checkout.
 func ExportFrameworkContract(ctx context.Context, language string, source FrameworkSource, targets Targets) (*ContractExport, error) {
 	index, err := exportIndex(ctx, language, source, targets.For(language))
 	if err != nil {
@@ -85,6 +85,7 @@ func contractFromIndex(index *FrameworkIndex, ecosystem string, skipped *[]strin
 		contract.Packages = append(contract.Packages, pkg)
 	}
 	slices.Sort(contract.Modules)
+	contract.Umbrellas = contractUmbrellas(index.Umbrellas, contract.Packages, skipped)
 	return contract
 }
 

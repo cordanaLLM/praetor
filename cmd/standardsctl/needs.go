@@ -171,13 +171,14 @@ func runNeedsReport(ctx context.Context, args []string) error {
 		return fmt.Errorf("failed to inspect framework: %w", err)
 	}
 
-	rep, err := needs.ScanRepoWithFramework(ctx, *path, fwIndex, selection.registry)
+	rep, err := needs.ReportRepoWithFramework(ctx, *path, fwIndex, selection.registry)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository: %w", err)
 	}
 
 	fmt.Print(needs.FormatReportHeader(rep, needs.RowFramework(selection.registry, rep, fwIndex)))
 	fmt.Print(needs.FormatLibraryRelationships(rep))
+	fmt.Print(needs.FormatUmbrellaImports(rep))
 	return nil
 }
 

@@ -32,14 +32,25 @@ var ErrGoModMissing = errors.New("needs: go.mod not found")
 // falling back to a Go manifest would report an unanalysed repository as fully ready.
 // registry supplies the analyzers and the framework targets; nil selects DefaultRegistry.
 func ScanRepo(ctx context.Context, repoPath string, registry *AnalyzerRegistry) (*RepoNeeds, error) {
+	report, _, err := scanRepoLayout(ctx, repoPath, registry)
+	return report, err
+}
+
+// scanRepoLayout is ScanRepo returning the discovered repository beside its row, so a
+// caller can inspect the same projects further without a second discovery walk.
+func scanRepoLayout(ctx context.Context, repoPath string, registry *AnalyzerRegistry) (*RepoNeeds, *fleetRepo, error) {
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 	repo, err := discoverRepository(ctx, repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to discover the projects of repository %q: %w", repoPath, err)
+		return nil, nil, fmt.Errorf("failed to discover the projects of repository %q: %w", repoPath, err)
 	}
-	return scanRepository(ctx, repo, registry)
+	report, err := scanRepository(ctx, repo, registry)
+	if err != nil {
+		return nil, nil, err
+	}
+	return report, repo, nil
 }
 
 // scanProjectDir runs every analyzer of registry that detects a project in dir itself.
@@ -57,15 +68,38 @@ func scanProjectDir(ctx context.Context, dir string, registry *AnalyzerRegistry)
 // ScanRepoWithFramework reconciles catalog demands against the selected framework.
 // It reports available mappings, never runtime compatibility or passing tests.
 func ScanRepoWithFramework(ctx context.Context, repoPath string, framework *FrameworkIndex, registry *AnalyzerRegistry) (*RepoNeeds, error) {
-	if ctx == nil || framework == nil {
-		return nil, errors.New("context and framework index are required")
-	}
-	report, err := ScanRepo(ctx, repoPath, registry)
+	report, _, err := scanRepoWithFramework(ctx, repoPath, framework, registry)
+	return report, err
+}
+
+// ReportRepoWithFramework is ScanRepoWithFramework plus the umbrella imports of the
+// repository's Go projects (inspectUmbrellaImports): which sub-package imports would
+// replace an import of the framework's umbrella package, and what the switch removes from
+// the build. The CLI `needs report` and the MCP standards_needs_report call it; the findings
+// are recommendations and never fail the report.
+func ReportRepoWithFramework(ctx context.Context, repoPath string, framework *FrameworkIndex, registry *AnalyzerRegistry) (*RepoNeeds, error) {
+	report, repo, err := scanRepoWithFramework(ctx, repoPath, framework, registry)
 	if err != nil {
 		return nil, err
 	}
-	applyFrameworkCoverage(framework, report, registry)
+	findings, err := inspectUmbrellaImports(ctx, repo, report.FailedSubprojects, framework)
+	if err != nil {
+		return nil, fmt.Errorf("inspect umbrella imports: %w", err)
+	}
+	report.UmbrellaImports = findings
 	return report, nil
+}
+
+func scanRepoWithFramework(ctx context.Context, repoPath string, framework *FrameworkIndex, registry *AnalyzerRegistry) (*RepoNeeds, *fleetRepo, error) {
+	if ctx == nil || framework == nil {
+		return nil, nil, errors.New("context and framework index are required")
+	}
+	report, repo, err := scanRepoLayout(ctx, repoPath, registry)
+	if err != nil {
+		return nil, nil, err
+	}
+	applyFrameworkCoverage(framework, report, registry)
+	return report, repo, nil
 }
 
 // goModFile is what a Go analysis reads from a module's go.mod.
@@ -159,7 +193,16 @@ func scanASTImports(ctx context.Context, rootDir, modulePath string, ignore goma
 // scanASTImportsBounded is scanASTImports with the entry bound as a parameter, so the
 // bound itself can be exercised without a million-file fixture.
 func scanASTImportsBounded(ctx context.Context, rootDir, modulePath string, ignore gomanifest.IgnoreSet, limit int) (map[string]struct{}, error) {
-	scan := &importScan{
+	scan := newImportScan(ctx, rootDir, modulePath, ignore, limit)
+	if err := scan.walk(); err != nil {
+		return nil, err
+	}
+	return scan.imports, nil
+}
+
+// newImportScan prepares one bounded walk of the module at rootDir.
+func newImportScan(ctx context.Context, rootDir, modulePath string, ignore gomanifest.IgnoreSet, limit int) *importScan {
+	return &importScan{
 		ctx:        ctx,
 		root:       filepath.Clean(rootDir),
 		modulePath: modulePath,
@@ -168,10 +211,14 @@ func scanASTImportsBounded(ctx context.Context, rootDir, modulePath string, igno
 		fset:       token.NewFileSet(),
 		imports:    make(map[string]struct{}),
 	}
-	if err := filepath.Walk(scan.root, scan.visit); err != nil {
-		return nil, fmt.Errorf("failed to walk %q for Go imports: %w", scan.root, err)
+}
+
+// walk visits every Go source of the module the go command would build.
+func (s *importScan) walk() error {
+	if err := filepath.Walk(s.root, s.visit); err != nil {
+		return fmt.Errorf("failed to walk %q for Go imports: %w", s.root, err)
 	}
-	return scan.imports, nil
+	return nil
 }
 
 // importScan is one bounded walk of a module's Go sources, collecting their imports.
@@ -184,6 +231,9 @@ type importScan struct {
 	visited    int
 	fset       *token.FileSet
 	imports    map[string]struct{}
+	// onFile, when set, receives every scannable Go file instead of the import collection:
+	// the umbrella-import inspection (umbrella.go) walks the same sources this way.
+	onFile func(path string)
 }
 
 // visit is the filepath.WalkFunc of an import scan.
@@ -201,9 +251,14 @@ func (s *importScan) visit(path string, info os.FileInfo, walkErr error) error {
 	if s.skipsDir(info, path) {
 		return filepath.SkipDir
 	}
-	if isScannableGoFile(info) {
-		collectFileImports(s.fset, path, s.modulePath, s.imports)
+	if !isScannableGoFile(info) {
+		return nil
 	}
+	if s.onFile != nil {
+		s.onFile(path)
+		return nil
+	}
+	collectFileImports(s.fset, path, s.modulePath, s.imports)
 	return nil
 }
 

@@ -200,3 +200,82 @@ func libraryRelationshipDescription(dependency DependencyDemand) string {
 	}
 	return fmt.Sprintf("replacement candidate: %s; API compatibility unverified", dependency.FrameworkReplacement)
 }
+
+// maxUmbrellaFilesShown bounds the importing files one umbrella finding names.
+const maxUmbrellaFilesShown = 3
+
+// FormatUmbrellaImports renders the umbrella-import findings of a report
+// (ReportRepoWithFramework) the CLI `needs report` and the MCP standards_needs_report share, or
+// nothing when the repository imports no umbrella of the selected framework. The findings are
+// recommendations, never a gate.
+func FormatUmbrellaImports(report *RepoNeeds) string {
+	if report == nil || len(report.UmbrellaImports) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\nUmbrella imports (recommendations, not a gate):\n")
+	for i := range report.UmbrellaImports {
+		writeUmbrellaFinding(&sb, &report.UmbrellaImports[i])
+	}
+	return sb.String()
+}
+
+func writeUmbrellaFinding(sb *strings.Builder, finding *UmbrellaFinding) {
+	writef(sb, "  %s imported in %s\n", finding.Umbrella, umbrellaFiles(finding.Files))
+	switch finding.Status {
+	case UmbrellaUnknown:
+		sb.WriteString("    unknown umbrella: the capability contract describes no groupings for it; not analysed\n")
+	case UmbrellaJustified:
+		writef(sb, "    wires every grouping (%d); the umbrella import is justified\n", finding.TotalGroupings)
+	case UmbrellaUnmapped:
+		writef(sb, "    references no grouping, only %s; nothing to recommend\n", strings.Join(finding.Unmapped, ", "))
+	default:
+		writeUmbrellaRecommendation(sb, finding)
+	}
+}
+
+func writeUmbrellaRecommendation(sb *strings.Builder, finding *UmbrellaFinding) {
+	writef(sb, "    wires %d of %d groupings (%s); import instead:\n",
+		len(finding.Groupings), finding.TotalGroupings, strings.Join(finding.Groupings, ", "))
+	for _, recommendation := range finding.Recommendations {
+		capabilities := "capabilities not observed in the selected framework"
+		if len(recommendation.Capabilities) > 0 {
+			capabilities = joinCapabilities(recommendation.Capabilities)
+		}
+		writef(sb, "    -> %s (grouping %s): %s\n", recommendation.Import, strings.Join(recommendation.Groupings, ", "), capabilities)
+	}
+	if len(finding.Unmapped) > 0 {
+		writef(sb, "    also references %s, which no grouping describes; the umbrella import stays\n", strings.Join(finding.Unmapped, ", "))
+	}
+	writef(sb, "    switch effect: %s\n", formatUmbrellaMeasurement(finding.Measurement))
+}
+
+// formatUmbrellaMeasurement renders what the switch removes, or why it was not measured.
+func formatUmbrellaMeasurement(measurement *UmbrellaMeasurement) string {
+	switch {
+	case measurement == nil:
+		return "not measured"
+	case !measurement.Measured:
+		return "not measured (" + measurement.Reason + ")"
+	default:
+		return fmt.Sprintf("modules %d -> %d (-%d), packages %d -> %d (-%d); go list -deps, offline",
+			measurement.ModulesBefore, measurement.ModulesAfter, measurement.ModulesBefore-measurement.ModulesAfter,
+			measurement.PackagesBefore, measurement.PackagesAfter, measurement.PackagesBefore-measurement.PackagesAfter)
+	}
+}
+
+// umbrellaFiles names at most maxUmbrellaFilesShown importing files and counts the rest.
+func umbrellaFiles(files []string) string {
+	if len(files) <= maxUmbrellaFilesShown {
+		return strings.Join(files, ", ")
+	}
+	return fmt.Sprintf("%s and %d more", strings.Join(files[:maxUmbrellaFilesShown], ", "), len(files)-maxUmbrellaFilesShown)
+}
+
+func joinCapabilities(capabilities []CapabilityKey) string {
+	names := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		names = append(names, string(capability))
+	}
+	return strings.Join(names, ", ")
+}
