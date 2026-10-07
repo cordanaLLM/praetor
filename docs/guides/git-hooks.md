@@ -477,18 +477,25 @@ for the repository (system, global, local, worktree, and the `git -c` values tha
 `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT` hand the audit's own process) to a value that does
 not name the managed hooks directory, even when that
 other directory holds a known runner's hook. A relative value is resolved from the working tree
-root, as git resolves it. The failure names each such value, its scope and the file that sets
-it, and the command that removes it:
+root, as git resolves it. An existing directory is compared by filesystem identity. A directory
+not yet created is compared by its spelling, after the symlinks in its existing parent directories
+are resolved on both sides. A checkout reached through a symlink, such as macOS's
+`/var -> /private/var`, therefore passes with `.git/hooks` before that directory exists. A value
+with a `..` element passes only when it names the existing managed directory, because the
+operating system applies `..` after any symlink before it. The failure names each such value,
+its scope and the file that sets it, and the command that removes it:
 
-- a value in its scope's own file: `git config --unset-all --<scope> core.hooksPath`;
-- a value in a file that an `include.path` or `includeIf.<condition>.path` names: that file,
-  and `git config --file "<file>" --unset-all core.hooksPath`. The `--<scope>` form edits the
-  scope's own file only and cannot remove it;
+- a value in the file that `git config --<scope>` edits:
+  `git config --unset-all --<scope> core.hooksPath`;
+- a value in another file, one that an `include.path` or `includeIf.<condition>.path` names, or
+  `$XDG_CONFIG_HOME/git/config` while `~/.gitconfig` exists: that file, and
+  `git config --file "<file>" --unset-all core.hooksPath`. The `--<scope>` form edits one file
+  only, `~/.gitconfig` for `--global` when it exists, and cannot remove the value;
 - a `git -c` value: the option or the `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT` variable
   that passes it.
 
-Where `lefthook.yml` exists and a local or global value from its scope's own file is refused,
-the failure also names `lefthook install --reset-hooks-path`. Lefthook 2.1.14 then unsets the
+Where `lefthook.yml` exists and a local or global value from the file `git config --<scope>`
+edits is refused, the failure also names `lefthook install --reset-hooks-path`. Lefthook 2.1.14 then unsets the
 local and the global value (`unsetHooksPathConfig` in its
 [install command](https://github.com/evilmartians/lefthook/blob/v2.1.14/internal/command/install.go))
 and installs the hooks.
@@ -496,7 +503,9 @@ and installs the hooks.
 The rule is `auditHooksPath` in `internal/adopt/hooks_path_audit.go`. Adoption runs the same
 rule before it installs a hook. On such a value it reports the audit's finding, fix included, as
 an error, and installs no hook, in a dry run too. It no longer installs the hook in the directory
-`core.hooksPath` names, where the next audit refused it. No supported runner installs anywhere
+`core.hooksPath` names, where the next audit refused it. When git cannot read a value at all, for
+example a `~user` path for a user that does not exist, adoption reports that read failure
+instead, and installs no hook either. No supported runner installs anywhere
 else: Lefthook 2.1.14 refuses to install while `core.hooksPath` is set globally, or locally to
 anything but `.git/hooks`, and the pre-commit framework 4.6.2 refuses while it is set at all.
 
@@ -555,9 +564,10 @@ placeholder and the other hooks the audit refuses (negative), and both configura
 `core.hooksPath` and the Windows rule (boundary). `internal/adopt/hooks_path_audit_test.go`
 covers the `core.hooksPath` rule: `/dev/null`, a directory outside the repository, one inside
 the working tree and one beside the managed directory fail, each holding lefthook's hook, and so
-do global, environment and included values; an unset value and the managed directory pass. It
-also runs the printed fix for an included value, and checks where the `--reset-hooks-path` hint
-appears. The `TestAdopt_Hooks_Negative_*HooksPath*` tests in `internal/adopt/adopt_test.go` check
+do global, environment, included and `$XDG_CONFIG_HOME/git/config` values; an unset value and the
+managed directory pass, under a symlinked checkout path too, before that directory exists. It
+also runs the printed fix for an included value and an XDG one, and checks where the
+`--reset-hooks-path` hint appears. The `TestAdopt_Hooks_Negative_*HooksPath*` tests in `internal/adopt/adopt_test.go` check
 that adoption refuses the same values with the same finding as the audit that follows it.
 `internal/adopt/precommit_config_audit_test.go`
 covers the configuration rules. It also checks the hooks that `lefthook install` and

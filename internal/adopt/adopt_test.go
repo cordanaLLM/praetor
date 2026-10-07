@@ -2203,6 +2203,52 @@ func TestAdopt_Hooks_Negative_AdoptAndAuditAgreeOnHooksPath(t *testing.T) {
 	}
 }
 
+// TestAdopt_Hooks_Boundary_ManagedHooksPathUnderSymlinkedRoot (#61): adopting a checkout through a
+// path that crosses a symlink, as macOS reaches its TMPDIR through /var -> /private/var, with a
+// core.hooksPath naming the managed hooks directory that does not exist yet passes adoption and
+// the audit that follows it. Both used to refuse the value: git reports the common directory
+// symlink resolved, and the relative value was joined to the unresolved path.
+func TestAdopt_Hooks_Boundary_ManagedHooksPathUnderSymlinkedRoot(t *testing.T) {
+	repoPath := newTestRepo(t, "linked-hookspath")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	linked := symlinkedRoot(t, repoPath)
+	if fileExists(filepath.Join(repoPath, ".git", "hooks")) {
+		t.Fatal("the managed hooks directory exists before adoption; the test would not cover a directory not yet created")
+	}
+	setLocalHooksPath(t, repoPath, ".git/hooks")
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: linked})
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+	assertNoIssues(t, rep)
+	if line, err := AuditInstalledGitHook(t.Context(), linked); err != nil || !strings.Contains(line, "verified active") {
+		t.Fatalf("audit after adoption under a symlinked root: %q, %v", line, err)
+	}
+}
+
+// TestAdopt_Hooks_Negative_HooksPathReadFailureClaimsNoValue (#61): when git cannot read every
+// core.hooksPath value, here a global one it cannot expand beside the managed local one git
+// applies, adoption reports the read failure and installs no hook, without the suffix that says a
+// value is set.
+func TestAdopt_Hooks_Negative_HooksPathReadFailureClaimsNoValue(t *testing.T) {
+	repoPath := newTestRepo(t, "unreadable-hookspath")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	setGlobalHooksPath(t, unexpandableHooksPath)
+	setLocalHooksPath(t, repoPath, ".git/hooks")
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+	got := adoptHooksPathError(t, rep)
+	if strings.Contains(got, hooksPathAdoptSuffix) || !strings.Contains(got, "--get-all core.hooksPath") {
+		t.Fatalf("adoption error on an unreadable core.hooksPath: %q", got)
+	}
+	if hook := filepath.Join(repoPath, ".git", "hooks", "pre-commit"); fileExists(hook) {
+		t.Fatalf("adoption installed %s", hook)
+	}
+}
+
 func TestAdopt_Hooks_GitlinkWorktreeUsesCommonHooksDir(t *testing.T) {
 	main := newTestRepo(t, "main-repo")
 	worktree := filepath.Join(t.TempDir(), "wt")

@@ -729,7 +729,8 @@ func (s *adoptSession) lefthookConfigIsPraetor() bool {
 //
 // A core.hooksPath that leaves the managed hooks directory is refused with the audit's own
 // finding (auditHooksPath), fix included: adoption used to install the hook in the directory it
-// names, report success, and leave the next praetorctl audit to fail on it (#61).
+// names, report success, and leave the next praetorctl audit to fail on it (#61). A failure to
+// read the configuration is returned as it is, without the claim that a value is set.
 func (s *adoptSession) resolveHooksDirForInstall(ctx context.Context) (string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		gitDir := filepath.Join(s.repoPath, ".git")
@@ -744,7 +745,11 @@ func (s *adoptSession) resolveHooksDirForInstall(ctx context.Context) (string, e
 		return "", err
 	}
 	if err := auditHooksPath(ctx, s.repoPath); err != nil {
-		return "", fmt.Errorf("%w; adoption installs no hook while it is set", err)
+		var finding *hooksPathFindingError
+		if errors.As(err, &finding) {
+			return "", fmt.Errorf("%w; adoption installs no hook while it is set", err)
+		}
+		return "", err
 	}
 	return hooksDir, nil
 }
