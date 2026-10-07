@@ -10,11 +10,13 @@ import (
 )
 
 // denyRule is one compiled pattern with its source and the refusal a match prints ahead of
-// the source (rulePrefix), which names the invariant the rule enforces.
+// the source (rulePrefix), which names the invariant the rule enforces. A readOnlyExempt rule
+// judges the command without the words of chained read-only commands (withoutReadOnlyWords).
 type denyRule struct {
-	pattern *regexp.Regexp
-	source  string
-	prefix  string
+	pattern        *regexp.Regexp
+	source         string
+	prefix         string
+	readOnlyExempt bool
 }
 
 // pythonSpace is what `\s` matches in Python's `re` on text. RE2's `\s` is ASCII only and
@@ -23,8 +25,13 @@ const pythonSpace = `[\s\v\x1c-\x1f\x{85}\p{Z}]`
 
 // builtinRule compiles a built-in source with Python's whitespace class. The sources use
 // `\s` outside bracket expressions only; a test compiles every rule.
-func builtinRule(source, invariant, message string) denyRule {
-	return denyRule{regexp.MustCompile(strings.ReplaceAll(source, `\s`, pythonSpace)), source, rulePrefix(invariant, message)}
+func builtinRule(rule BuiltinRule, message string) denyRule {
+	return denyRule{
+		pattern:        regexp.MustCompile(strings.ReplaceAll(rule.Source, `\s`, pythonSpace)),
+		source:         rule.Source,
+		prefix:         rulePrefix(rule.Invariant, message),
+		readOnlyExempt: rule.ReadOnlyExempt,
+	}
 }
 
 // Refusal wording, one source for every engine: this policy, praetor's own Python guard
@@ -71,6 +78,12 @@ func LefthookDisabledRefusal(value string) string {
 // case: Windows file systems resolve `.GIT\Hooks` to the same directory.
 const hooksDir = `(?i:\.git[/\\]hooks)`
 
+// shortSkipFlagRule refuses the short skip flag of git commit and git am (builtinEvasion).
+const shortSkipFlagRule = `\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|[ \t]+(--[A-Za-z][-A-Za-z]*|-[ABD-Zabd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+(commit\b[^\n]*\s-[aeiopqsvz]*|am\b[^\n]*\s-[3cikmqsu]*)n`
+
+// skipVariableRule refuses the skip variable ahead of a Git call (builtinEvasion).
+const skipVariableRule = `SKIP=.*git`
+
 // builtinEvasion are the engine's evasion patterns. praetor's own Python guard
 // (`.config/agent/hooks/block_evasion.py`) carries the same list byte for byte
 // (TestPythonGuardCarriesTheBuiltinEvasionList), and adoption renders the interceptor it
@@ -108,11 +121,14 @@ const hooksDir = `(?i:\.git[/\\]hooks)`
 //     its ri alias, move, ren, copy, Set-Content, Out-File, icacls, attrib), matched in any
 //     letter case as both shells do; a `cmd /c` or `powershell -c` wrapper still carries the
 //     inner command in the text.
+//
+// The short skip flag rule and the skip variable rule judge the command without the words of
+// chained read-only commands (readOnlyExemptRules); every other rule judges the whole command.
 var builtinEvasion = []string{
 	`--no-v(e(r(i(f(y)?)?)?)?)?\b`,
-	`\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|[ \t]+(--[A-Za-z][-A-Za-z]*|-[ABD-Zabd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+(commit\b[^\n]*\s-[aeiopqsvz]*|am\b[^\n]*\s-[3cikmqsu]*)n`,
+	shortSkipFlagRule,
 	`LEFTHOOK=[\x22\x27]?(0|false)\b`,
-	`SKIP=.*git`,
+	skipVariableRule,
 	`(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])`,
 	`\b(?i:rm|rmdir|unlink|mv|cp|ln|chmod|chown|chattr|truncate|shred|tee|del|erase|rd|ri|remove-item|move|move-item|ren|rename|rename-item|copy|copy-item|set-content|add-content|out-file|icacls|attrib)\b[^\n]*` + hooksDir,
 	`\b(sed|perl)\b[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*` + hooksDir,
@@ -121,15 +137,85 @@ var builtinEvasion = []string{
 	`\blefthook\s+uninstall\b`,
 }
 
+// readOnlyExemptRules are the built-in rules that judge the command without the words of
+// chained read-only commands (withoutReadOnlyWords): a short skip flag or a skip variable
+// mention that belongs to `git log -n 5` after a commit is no skip (#46). The rule sources
+// stay as they are; only the text they judge loses those words. Every other
+// rule, and every operator rule, judges the whole command.
+var readOnlyExemptRules = []string{shortSkipFlagRule, skipVariableRule}
+
+// ReadOnlyWords matches one read-only command that a plain separator starts, with its words.
+// The separator is `;`, `&&`, `||` or `|`; the command is git log, show, status, diff or
+// rev-parse (with or without --no-pager), head, tail, grep, wc, or sed with -n as its first
+// word. Group 1, or group 2 for sed, holds the separator and the command name;
+// withoutReadOnlyWords keeps it and drops the words after it, so the skip variable rule still
+// sees the Git call. A word is printable ASCII without a quote, escape, expansion,
+// substitution, redirection, comment or separator, so the match stops before any text the
+// shell could read as more than plain words of that command: a quoted argument and every word
+// after it stay in the judged text.
+//
+// Why a dropped word is never a skip: the dropped text holds no quote, so it lies wholly
+// inside or wholly outside any quoted string that is open at the separator. Outside, the
+// separator ends the commit and the word is an argument of the read-only command. Inside, the
+// word is part of one quoted argument and never a flag of its own. ReadOnlyVeto rules out the
+// constructs that break this reading: escapes, expansions, line breaks and redefined names.
+//
+// The pattern is valid in RE2 and Python's re and linear in both: each alternative starts at
+// a separator, and no quantified group can match its own text in two ways (the blank and word
+// classes are disjoint), so Python's backtracking tries every start once.
+const ReadOnlyWords = `((?:;|&&|\|\|?)[ \t]*(?:git[ \t]+(?:--no-pager[ \t]+)?(?:log|show|status|diff|rev-parse)|head|tail|grep|wc))(?:[ \t]+[-A-Za-z0-9_./:=@,+~*?]+)*|((?:;|&&|\|\|?)[ \t]*sed)[ \t]+-n\b(?:[ \t]+[-A-Za-z0-9_./:=@,+~*?]+)*`
+
+// ReadOnlyVeto matches a command the exemption does not apply to: one holding, anywhere, a
+// construct that can move a command boundary, hide a word inside another construct or
+// redefine a command name. Every rule then judges the whole command, exactly as without the
+// exemption. The constructs are
+//
+//   - a character outside printable ASCII and tab, line breaks included: a quoted string can
+//     continue on a later line, and a backslash line continuation joins two lines;
+//   - an escape or command substitution (`\`, a backtick, cmd.exe `^`);
+//   - an expansion, substitution, group or subshell (`$`, `(`, `)`, `{`, `}`), a redirection
+//     or here-document (`<`, `>`), history expansion or negation (`!`);
+//   - PowerShell's stop-parsing token `--%`, after which `;` and `&` are plain text, and a
+//     cmd.exe `%` right before a separator, where an expanded `^` would escape it;
+//   - a word that exports a variable or redefines a command (export, declare, typeset, set,
+//     which covers `set -a`, setenv, alias, function, hash, cmd.exe doskey, PowerShell sal,
+//     nal, Set-Alias, New-Alias), as a whole word anywhere, a quoted message included, in any
+//     letter case.
+//
+// It is linear in both engines: one character class or a fixed word per alternative.
+const ReadOnlyVeto = `[^\t\x20-\x7e]|[\\\x60$(){}<>^!]|--%|%[;&|]|(?i:(?:^|[^-A-Za-z0-9_])(?:export|declare|typeset|set|setenv|alias|function|sal|nal|set-alias|new-alias|doskey|hash)(?:[^-A-Za-z0-9_]|$))`
+
+// ReadOnlyKept names the groups of ReadOnlyWords a replacement keeps, in RE2's replacement
+// syntax; Python's re.sub writes the same groups as \1\2.
+const ReadOnlyKept = "${1}${2}"
+
+var (
+	readOnlyWordsPattern = regexp.MustCompile(ReadOnlyWords)
+	readOnlyVetoPattern  = regexp.MustCompile(ReadOnlyVeto)
+)
+
+// withoutReadOnlyWords returns command without the words of every read-only command
+// ReadOnlyWords matches, separators and command names kept, or command unchanged when
+// ReadOnlyVeto matches anywhere in it.
+func withoutReadOnlyWords(command string) string {
+	if readOnlyVetoPattern.MatchString(command) {
+		return command
+	}
+	return readOnlyWordsPattern.ReplaceAllString(command, ReadOnlyKept)
+}
+
 // builtinDevRoot is the generic half of the topology rule: it names no organisation.
 // Organisation containers are operator data and arrive through the operator deny list.
 const builtinDevRoot = `(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*\bdev/?(\s|$)`
 
 // BuiltinRule is one built-in command rule as source text: the Python-compatible pattern
-// the policy compiles and the invariant a match reports.
+// the policy compiles and the invariant a match reports. A ReadOnlyExempt rule judges the
+// command without the words of chained read-only commands: those ReadOnlyWords matches,
+// unless ReadOnlyVeto matches.
 type BuiltinRule struct {
-	Source    string
-	Invariant string
+	Source         string
+	Invariant      string
+	ReadOnlyExempt bool
 }
 
 // RefusalPrefix is the refusal a match of the rule prints ahead of its Source: the whole
@@ -148,7 +234,7 @@ func (r BuiltinRule) RefusalPrefix() string {
 func BuiltinRules() []BuiltinRule {
 	rules := make([]BuiltinRule, 0, len(builtinEvasion)+1)
 	for _, source := range builtinEvasion {
-		rules = append(rules, BuiltinRule{Source: source, Invariant: "HISS"})
+		rules = append(rules, BuiltinRule{Source: source, Invariant: "HISS", ReadOnlyExempt: slices.Contains(readOnlyExemptRules, source)})
 	}
 	return append(rules, BuiltinRule{Source: builtinDevRoot, Invariant: "DEV-01"})
 }
@@ -172,25 +258,31 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	builtins := BuiltinRules()
 	rules := make([]denyRule, 0, len(builtins)+len(operatorDeny))
 	for _, rule := range builtins {
-		rules = append(rules, builtinRule(rule.Source, rule.Invariant, builtinMessages[rule.Invariant]))
+		rules = append(rules, builtinRule(rule, builtinMessages[rule.Invariant]))
 	}
 	for index, source := range operatorDeny {
 		compiled, err := regexp.Compile(source)
 		if err != nil {
 			return nil, fmt.Errorf("operator deny pattern %d: %w", index, err)
 		}
-		rules = append(rules, denyRule{compiled, source, rulePrefix("operator", operatorMessage)})
+		rules = append(rules, denyRule{pattern: compiled, source: source, prefix: rulePrefix("operator", operatorMessage)})
 	}
 	return &Policy{rules: rules}, nil
 }
 
-// Command judges one proposed command line. The first matching rule denies.
+// Command judges one proposed command line. The first matching rule denies; a
+// readOnlyExempt rule judges the command without the words of chained read-only commands.
 func (p *Policy) Command(command string) Verdict {
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
+	judged := withoutReadOnlyWords(command)
 	for _, rule := range p.rules {
-		if rule.pattern.MatchString(command) {
+		text := command
+		if rule.readOnlyExempt {
+			text = judged
+		}
+		if rule.pattern.MatchString(text) {
 			return Verdict{Outcome: Deny, Reason: rule.prefix + rule.source}
 		}
 	}

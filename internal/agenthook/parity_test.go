@@ -274,6 +274,35 @@ func TestPythonGuardCarriesTheBuiltinDevRootRule(t *testing.T) {
 	}
 }
 
+// pythonRawConstant returns the text of a top-level `NAME = r"..."` line of the Python guard.
+func pythonRawConstant(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`(?m)^` + name + ` = r"([^"\n]*)"\r?$`).FindSubmatch(data)
+	if match == nil {
+		t.Fatalf("%s has no raw string constant %s", pythonGuard, name)
+	}
+	return string(match[1])
+}
+
+// TestPythonGuardCarriesTheReadOnlyExemption holds praetor's own Python guard to the engine's
+// read-only exemption byte for byte: the rules it covers, the read-only command pattern and
+// the veto. The corpus replay checks the behaviour; this keeps a change on one side from
+// passing unseen where the corpus has no case for it.
+func TestPythonGuardCarriesTheReadOnlyExemption(t *testing.T) {
+	if got := pythonPatternList(t, "READ_ONLY_EXEMPT_PATTERNS"); !slices.Equal(got, readOnlyExemptRules) {
+		t.Errorf("READ_ONLY_EXEMPT_PATTERNS in %s differs from readOnlyExemptRules:\npython %q\ngo     %q", pythonGuard, got, readOnlyExemptRules)
+	}
+	for name, want := range map[string]string{"READ_ONLY_WORDS": ReadOnlyWords, "READ_ONLY_VETO": ReadOnlyVeto} {
+		if got := pythonRawConstant(t, name); got != want {
+			t.Errorf("%s in %s differs from agenthook's:\npython %q\ngo     %q", name, pythonGuard, got, want)
+		}
+	}
+}
+
 // pythonIntConstant returns the value of a top-level `NAME = <digits>` line of the Python guard.
 func pythonIntConstant(t *testing.T, name string) string {
 	t.Helper()

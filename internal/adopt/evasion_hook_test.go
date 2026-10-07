@@ -213,38 +213,74 @@ func TestBuildBlockEvasionPY_NoOperatorData(t *testing.T) {
 	}
 }
 
+// scanCPUBudget is the CPU time the emitted interceptor may spend on the costliest command
+// inside the scan bounds: under a third of the 10 s at which the before-tool guards answer
+// for a stalled check (docs/guides/agent-hooks.md), a fifth of the 15 s the pre-tool rows
+// register. The costliest command, the find line, uses about 0.9 s on a workstation, so a
+// runner three times slower still passes.
+const scanCPUBudget = 3 * time.Second
+
+// boundLine is prefix followed by unit repeated, cut to width characters.
+func boundLine(prefix, unit string, width int) string {
+	return (prefix + strings.Repeat(unit, width/len(unit)+1))[:width]
+}
+
+// boundLines fills the scan bound with lines of unit repeated, each one character short of
+// agenthook.MaxScanLineChars so the line break fits.
+func boundLines(unit string) string {
+	line := boundLine("", unit, agenthook.MaxScanLineChars-1) + "\n"
+	return strings.Repeat(line, agenthook.MaxScanChars/agenthook.MaxScanLineChars)
+}
+
 // TestEmittedInterceptorScanBounds pins the scan bounds of the emitted script. Python's re
 // backtracks: one 16 KiB find..hooks line held the find rule for 16 s, past a harness's hook
 // timeout, and a harness that lets a timed-out hook through turns the stall into an evasion.
 // A command over agenthook's bounds is refused at once; the costliest command inside them
 // still gets its verdict in time. The budget is CPU time, so a loaded CI runner does not fail
 // it; the wall-clock ceiling is runInterceptorTimed's context.
+//
+// The commands fill the scan bound with the costliest shapes measured against the rules: the
+// find line, and `$` runs before a brace inside an open double quote after `git am` and after
+// SKIP= (the costliest shapes the reviews of an earlier quote-aware scan measured). A line
+// break turns the read-only exemption off (agenthook.ReadOnlyVeto), so it only ever reads one
+// line; its shapes are single lines at the line bound: a read-only command with a full line
+// of words, separators back to back, a separator before blanks, a Git name before blanks.
 func TestEmittedInterceptorScanBounds(t *testing.T) {
 	python, script := emittedInterceptor(t)
 	lines := agenthook.MaxScanChars / agenthook.MaxScanLineChars
 	full := strings.Repeat(strings.Repeat("x", agenthook.MaxScanLineChars-1)+"\n", lines)
-	findLine := strings.Repeat("find .git/hooks ", agenthook.MaxScanLineChars)[:agenthook.MaxScanLineChars-1] + "\n"
+	width := agenthook.MaxScanLineChars
+	blanks := strings.Repeat(" \t", width)
 	for name, tc := range map[string]struct {
 		command string
 		want    int
 	}{
-		"pathological find line":   {strings.Repeat("find .git/hooks ", 1024), 2},
-		"line at the bound":        {strings.Repeat("x", agenthook.MaxScanLineChars), 0},
-		"line over the bound":      {strings.Repeat("x", agenthook.MaxScanLineChars+1), 2},
-		"command at the bound":     {full, 0},
-		"command over the bound":   {full + "x", 2},
-		"costliest admitted lines": {strings.Repeat(findLine, lines), 0},
+		"pathological find line":      {strings.Repeat("find .git/hooks ", 1024), 2},
+		"line at the bound":           {strings.Repeat("x", agenthook.MaxScanLineChars), 0},
+		"line over the bound":         {strings.Repeat("x", agenthook.MaxScanLineChars+1), 2},
+		"command at the bound":        {full, 0},
+		"command over the bound":      {full + "x", 2},
+		"costliest admitted lines":    {boundLines("find .git/hooks "), 0},
+		"am before odd dollar runs":   {boundLines(`git am "$$$$$$$$$${`), 0},
+		"am before even dollar run":   {boundLines(`git am "$$$${`), 0},
+		"skip variable dollar runs":   {boundLines(`SKIP="$$$$$${`), 0},
+		"read-only words to the end":  {boundLine("git commit -m x; git log", " -n", width), 0},
+		"read-only words on lines":    {boundLines("git commit -m x; git log -n 5 "), 2},
+		"separators back to back":     {boundLine("", "git commit -m x || ", width), 0},
+		"separator before blanks":     {boundLine("git commit -m x;", blanks, width-1) + "x", 0},
+		"read-only name after blanks": {boundLine("git commit -m x;git", blanks, width-1) + "x", 0},
 	} {
 		payload, err := json.Marshal(map[string]any{"tool_input": map[string]string{"command": tc.command}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		got, cpu, _ := runInterceptorTimed(t, python, script, payload, nil)
+		t.Logf("%s: exit %d, %v CPU", name, got, cpu)
 		if got != tc.want {
 			t.Errorf("%s: exit %d, want %d", name, got, tc.want)
 		}
-		if cpu > 5*time.Second {
-			t.Errorf("%s: interceptor used %v of CPU time, over the 5 s bound", name, cpu)
+		if cpu > scanCPUBudget {
+			t.Errorf("%s: interceptor used %v of CPU time, over the %v bound", name, cpu, scanCPUBudget)
 		}
 	}
 }

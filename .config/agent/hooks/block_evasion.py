@@ -30,6 +30,18 @@ BLOCKED_PATTERNS = [
     r"\blefthook\s+uninstall\b",
 ]
 
+# The rules judged without the words of chained read-only commands (internal/agenthook/policy.go,
+# readOnlyExemptRules), byte for byte; TestPythonGuardCarriesTheReadOnlyExemption fails when
+# the lists differ. Every other rule judges the whole command.
+READ_ONLY_EXEMPT_PATTERNS = [
+    r"\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|[ \t]+(--[A-Za-z][-A-Za-z]*|-[ABD-Zabd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+(commit\b[^\n]*\s-[aeiopqsvz]*|am\b[^\n]*\s-[3cikmqsu]*)n",
+    r"SKIP=.*git",
+]
+
+# agenthook.ReadOnlyWords and agenthook.ReadOnlyVeto, byte for byte (same test).
+READ_ONLY_WORDS = r"((?:;|&&|\|\|?)[ \t]*(?:git[ \t]+(?:--no-pager[ \t]+)?(?:log|show|status|diff|rev-parse)|head|tail|grep|wc))(?:[ \t]+[-A-Za-z0-9_./:=@,+~*?]+)*|((?:;|&&|\|\|?)[ \t]*sed)[ \t]+-n\b(?:[ \t]+[-A-Za-z0-9_./:=@,+~*?]+)*"
+READ_ONLY_VETO = r"[^\t\x20-\x7e]|[\\\x60$(){}<>^!]|--%|%[;&|]|(?i:(?:^|[^-A-Za-z0-9_])(?:export|declare|typeset|set|setenv|alias|function|sal|nal|set-alias|new-alias|doskey|hash)(?:[^-A-Za-z0-9_]|$))"
+
 # Lefthook skips every hook for exactly these LEFTHOOK values (lefthook v2.1.14,
 # internal/command/run.go); agenthook's lefthookDisableValues holds the same pair.
 LEFTHOOK_DISABLED = ("0", "false")
@@ -55,11 +67,23 @@ def scannable(command_str: str) -> bool:
     return False
 
 
+def without_read_only_words(command_str: str) -> str:
+    """Drop the words of read-only commands chained after ;, &&, || or |, names kept.
+
+    agenthook's withoutReadOnlyWords: a command READ_ONLY_VETO matches stays whole.
+    """
+    if re.search(READ_ONLY_VETO, command_str):
+        return command_str
+    return re.sub(READ_ONLY_WORDS, r"\1\2", command_str)
+
+
 def audit_command(command_str: str) -> bool:
     if not scannable(command_str):
         return False
+    judged = without_read_only_words(command_str)
     for pattern in BLOCKED_PATTERNS:
-        if re.search(pattern, command_str):
+        text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str
+        if re.search(pattern, text):
             sys.stderr.write(
                 f"[BLOCKED BY HISS] verification evasion prohibited; commits, pushes and tool "
                 f"calls pass verification gates; pattern: {pattern}\n"
