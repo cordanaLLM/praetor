@@ -96,6 +96,29 @@ var personURLs = []struct {
 	{KindFeed, "https://dblp.org/pid/00/0000.xml"},
 	{KindGitHubRepo, "https://github.com/someone/someone"},
 	{KindGitHubRepo, "https://github.com/someone"},
+	// The www., mobile., m. and country spellings of a listed domain are the same service.
+	{KindFeed, "https://www.x.com/someone"},
+	{KindFeed, "https://mobile.twitter.com/someone"},
+	{KindFeed, "https://m.facebook.com/someone"},
+	{KindFeed, "https://de.linkedin.com/in/someone"},
+	{KindFeed, "https://www.orcid.org/0000-0002-1825-0097"},
+	{KindFeed, "https://www.github.com/someone"},
+	{KindFeed, "https://www.github.com/someone.atom"},
+	{KindFeed, "https://hf.co/someone"},
+	{KindFeed, "https://www.arxiv.org/a/someone_1"},
+	{KindFeed, "https://export.arxiv.org/a/someone_1.atom"},
+}
+
+// nonPersonURLs are source URLs that share text with a refused domain without being on it, or
+// sit on a listed domain in a shape that is not an account; each loads.
+var nonPersonURLs = []string{
+	"https://notx.com/someone",
+	"https://x.com.example.org/someone",
+	"https://github.com.example.org/someone",
+	"https://mygithub.com/someone",
+	"https://www.github.com/example-org/example-project/releases.atom",
+	"https://export.arxiv.org/rss/cs.CL",
+	"https://dblp.org/db/conf/example.xml",
 }
 
 // Negative: a duplicate id, an unknown or planned kind, a non-HTTPS or malformed URL, an account
@@ -140,6 +163,29 @@ func TestRegistry_Negative_Refusals(t *testing.T) {
 	var none *Registry
 	if none.Validate() == nil {
 		t.Error("a nil registry validated")
+	}
+}
+
+// Boundary: a domain matches on whole labels only, so a host that merely contains a listed name,
+// or carries it as a leading label, loads; a listed domain loads where the path is no account;
+// every subdomain of a listed domain matches, up to the longest host a DNS name allows.
+func TestRegistry_Boundary_DomainLabels(t *testing.T) {
+	for _, rawURL := range nonPersonURLs {
+		if _, err := ParseRegistry([]byte(registryYAML(sourceYAML("a", KindFeed, rawURL, "why")))); err != nil {
+			t.Errorf("%s: %v, want it to load", rawURL, err)
+		}
+	}
+	// The cost the radar guide names: a single segment on any subdomain of a code host is refused,
+	// a product subdomain included.
+	product := "https://about.gitlab.com/atom.xml"
+	if _, err := ParseRegistry([]byte(registryYAML(sourceYAML("a", KindFeed, product, "why")))); !errors.Is(err, ErrPersonSource) {
+		t.Errorf("%s: %v, want ErrPersonSource", product, err)
+	}
+	// The longest host a DNS name allows, 253 bytes, is 124 one-letter labels above x.com.
+	deep := strings.Repeat("a.", 124) + "x.com"
+	_, err := ParseRegistry([]byte(registryYAML(sourceYAML("a", KindFeed, "https://"+deep+"/feed.xml", "why"))))
+	if len(deep) != 253 || !errors.Is(err, ErrPersonSource) {
+		t.Errorf("a %d-byte subdomain of x.com: %v, want ErrPersonSource", len(deep), err)
 	}
 }
 

@@ -99,16 +99,24 @@ permitted.
 The registry and the digest name sources, never individuals. `radar.ParseRegistry` refuses a
 source whose URL addresses one account (`internal/radar/person.go`):
 
-- any page on a host that serves profiles or person identifiers, such as `linkedin.com`, `x.com`,
+- any page on a domain that serves profiles or person identifiers, such as `linkedin.com`, `x.com`,
   `orcid.org`, `scholar.google.com` and `gist.github.com`;
 - a single path segment on a code host (`github.com`, `gitlab.com`, `codeberg.org`, `gitea.com`,
-  `bitbucket.org`, `huggingface.co`), which is a user or organisation page or an account's
-  activity feed;
+  `bitbucket.org`, `huggingface.co` and its short domain `hf.co`), which is a user or
+  organisation page or an account's activity feed;
 - a first path segment such as `user`, `users`, `u`, `people`, `profile`, `author` or `members`
   on any host, and arXiv author listings and dblp person pages;
 - any path segment starting with `@` or `~`, the shape of fediverse handles and home pages;
 - a `github_repo` whose name equals its owner, which is the owner's profile page;
 - a `why` that contains `@`, which mentions an account or spells an address.
+
+Each listed domain covers its subdomains, matched on whole labels: `www.x.com`,
+`mobile.twitter.com` and `de.linkedin.com` are refused like the domain itself, while
+`notx.com` and `x.com.example.org` are not. A subdomain a service uses for something other than
+accounts is refused with the rest, so a single-segment feed on a code host's product subdomain,
+such as `https://about.gitlab.com/atom.xml`, does not load; the check errs on the side of
+refusing. `TestRegistry_Negative_Refusals` and `TestRegistry_Boundary_DomainLabels` list the
+cases.
 
 These refusals are structural. They catch the URL shapes listed here and nothing else: a page
 about one person at an address of another shape passes. Review the registry like any other
