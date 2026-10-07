@@ -31,7 +31,8 @@ func printForgeUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  sync-wiki [--output=docs/wiki]        Generate git-backed wiki documentation suite")
 	fmt.Println("  validate-pr <pr-body-file>            Verify HISS checklist and the Ed25519 Exit-0 receipt")
-	fmt.Println("  check-commits --base=<ref> [--head=HEAD]  Enforce the HISS-14 Migration: footer on a commit range")
+	fmt.Println("  check-commits --base=<ref> [--head=HEAD]  Enforce the commit message policy on a commit range")
+	fmt.Println("  check-message <commit-message-file>   Enforce the commit message policy on one message (commit-msg hook)")
 }
 
 func runForge(args []string) error {
@@ -55,6 +56,8 @@ func runForge(args []string) error {
 		return runForgeValidatePR(subArgs)
 	case "check-commits":
 		return runForgeCheckCommits(ctx, subArgs)
+	case "check-message":
+		return runForgeCheckMessage(subArgs)
 	default:
 		return fmt.Errorf("unknown forge subcommand: %s", sub)
 	}
@@ -180,8 +183,10 @@ func commitRange(ctx context.Context, repoDir, base, head string) ([]string, err
 	return messages, nil
 }
 
-// runForgeCheckCommits makes HISS-14 executable: every breaking commit in the range must
-// carry a Migration: footer, otherwise the gate exits non-zero.
+// runForgeCheckCommits applies the commit message policy (forge.AnalyzeCommit) to every commit in
+// the range: a Conventional Commits subject, and the HISS-14 Migration: footer on a breaking
+// change. CI runs it over every commit of a pull request, so a commit made with its commit-msg
+// hook skipped still meets the policy the hook enforces (#61).
 func runForgeCheckCommits(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("forge check-commits", flag.ContinueOnError)
 	base := fs.String("base", "", "Base revision of the range to analyze (required)")
@@ -203,7 +208,7 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 		return err
 	}
 
-	violations := 0
+	var failures []string
 	for i := 0; i < len(messages); i++ {
 		sha, message, _ := strings.Cut(messages[i], commitFieldSep)
 		analysis, err := forge.AnalyzeCommit(message)
@@ -213,14 +218,48 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 		if analysis.Valid {
 			continue
 		}
-		violations++
-		fmt.Printf("[FAIL] %s: %s\n", buildid.Short(sha), strings.Join(analysis.Errors, "; "))
+		failure := buildid.Short(sha) + ": " + strings.Join(analysis.Errors, "; ")
+		failures = append(failures, failure)
+		fmt.Printf("[FAIL] %s\n", failure)
 	}
 
-	fmt.Printf("=== HISS-14 Commit Analysis: %d commit(s) in %s..%s ===\n", len(messages), *base, *head)
-	if violations > 0 {
-		return fmt.Errorf("HISS-14 violation: %d commit(s) declare a breaking change without a Migration: footer", violations)
+	fmt.Printf("=== Commit Message Policy: %d commit(s) in %s..%s ===\n", len(messages), *base, *head)
+	if len(failures) > 0 {
+		return fmt.Errorf("commit message policy violation: %d of %d commit(s) fail, first %s", len(failures), len(messages), failures[0])
 	}
-	fmt.Println("[PASS] Every breaking commit carries a mandatory Migration: footer.")
+	fmt.Println("[PASS] Every commit carries a Conventional Commits subject, and every breaking commit a mandatory Migration: footer.")
+	return nil
+}
+
+// maxCommitMessageBytes bounds the commit message file check-message reads.
+const maxCommitMessageBytes = 1 << 20
+
+// runForgeCheckMessage applies the commit message policy to the message file git hands the
+// commit-msg hook, after git's default cleanup (forge.CleanCommitMessage). It is the hook's half
+// of the policy check-commits applies in CI.
+func runForgeCheckMessage(args []string) error {
+	fs := flag.NewFlagSet("forge check-message", flag.ContinueOnError)
+	rest, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) != 1 {
+		return errors.New("usage: standardsctl forge check-message <commit-message-file> (exactly one file required)")
+	}
+	data, err := util.ReadFileLimited(rest[0], maxCommitMessageBytes)
+	if err != nil {
+		return fmt.Errorf("read commit message %s: %w", rest[0], err)
+	}
+	analysis, err := forge.AnalyzeCommit(forge.CleanCommitMessage(string(data)))
+	if err != nil {
+		return fmt.Errorf("commit message %s: %w", rest[0], err)
+	}
+	if !analysis.Valid {
+		for _, reason := range analysis.Errors {
+			fmt.Printf("[FAIL] %s\n", reason)
+		}
+		return fmt.Errorf("commit message policy violation: %s", strings.Join(analysis.Errors, "; "))
+	}
+	fmt.Println("[PASS] The commit message meets the commit message policy.")
 	return nil
 }

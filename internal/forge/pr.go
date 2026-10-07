@@ -380,17 +380,23 @@ func matchFrom(patSegs, pathSegs []string, dirRule bool) bool {
 	return false
 }
 
-// AnalyzeCommit checks conventional commits for breaking indicators and mandatory HISS-14 footers.
+// AnalyzeCommit applies the commit message policy to a cleaned message (CleanCommitMessage): the
+// subject, its first line, must be a Conventional Commits subject or one git generated for a
+// merge or a revert (commitSubjectError), and a breaking change must carry the mandatory HISS-14
+// Migration: footer.
 func AnalyzeCommit(message string) (*CommitAnalysis, error) {
 	trimmed := strings.TrimSpace(message)
 	if trimmed == "" {
 		return nil, errors.New("empty commit message")
 	}
 
-	lines := strings.Split(trimmed, "\n")
-	header := lines[0]
+	header, _, _ := strings.Cut(trimmed, "\n")
+	header = strings.TrimSuffix(header, "\r")
 
 	res := &CommitAnalysis{Valid: true}
+	if reason := commitSubjectError(header); reason != "" {
+		res.Errors = append(res.Errors, reason)
+	}
 	if breakingHeaderRegex.MatchString(header) {
 		res.IsBreaking = true
 		res.HasBreakingIndicator = true
