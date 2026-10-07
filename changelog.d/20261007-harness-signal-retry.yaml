@@ -1,0 +1,4 @@
+type: fixed
+title: Retry a harness self-test child once after a signal (a macOS SIGSEGV flake) and report both attempts with the child's path and version
+issue: "#809"
+breaking: false
