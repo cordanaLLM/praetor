@@ -113,6 +113,7 @@ nav:
           - Go API Compatibility Gate: guides/api-compatibility.md
           - clang-tidy Coverage Gate: guides/clang-tidy-coverage.md
           - Workflow Trigger Audit: guides/workflow-triggers.md
+          - Build-Warnings Gate: guides/build-warnings.md
           - Effective Audit Policy: guides/effective-policy.md
           - Generated Artefacts: guides/generated-artefacts.md
           - Review Policy: guides/review-policy.md

@@ -1,0 +1,4 @@
+type: added
+title: "The audit fails a CI lane that compiles C, C++, Rust or Go without warnings as errors, so a native build can no longer print thousands of warnings and pass; a HISS-10 exceptions entry declares a lane that cannot yet"
+issue: "#816"
+breaking: true

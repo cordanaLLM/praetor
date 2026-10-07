@@ -383,7 +383,11 @@ The HISS-11 supply-chain gate is the CLI's own too (`adopt.AuditSupplyChain`, ru
 effective policy): it fails when the declared SLSA level, `enforce_cosign` or `require_sbom`
 exceeds what the workflow files measure
 ([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level),
-`TestServerAuditRunsTheSupplyChainGate` in `cmd/standards-mcp/audit_policy_test.go`).
+`TestServerAuditRunsTheSupplyChainGate` in `cmd/standards-mcp/audit_policy_test.go`). So is the
+HISS-10 build-warnings gate (`adopt.AuditBuildWarnings`): it fails a workflow lane that compiles
+C, C++, Rust or Go code without its toolchain's warnings-as-errors form, and skips a repository
+with no such lane ([Build-warnings gate](build-warnings.md),
+`TestServerAuditRunsTheBuildWarningsGate`).
 
 The HISS-18 workflow trigger check is the CLI's own as well (`forge.AuditWorkflowTriggers`, run
 with the manifest's exceptions list). Its findings are `[WARN]` lines and the gate still passes;

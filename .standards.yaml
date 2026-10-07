@@ -289,6 +289,15 @@ docs_surfaces:
       - "internal/tidycoverage/*_test.go"
     docs:
       - "docs/guides/clang-tidy-coverage.md"
+  - name: "HISS-10 build-warnings gate"
+    paths:
+      - "internal/forge/build_warnings*.go"
+      - "internal/adopt/build_warnings_audit.go"
+      - "cmd/standardsctl/audit_build_warnings.go"
+    exclude:
+      - "internal/forge/*_test.go"
+    docs:
+      - "docs/guides/build-warnings.md"
   - name: "Go vulnerability gate"
     paths:
       - "internal/govuln/*.go"

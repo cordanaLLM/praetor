@@ -21,6 +21,9 @@ Read [Fast adoption](../../adoption.md) first for the one-step path, then
 - [clang-tidy coverage gate](../clang-tidy-coverage.md): the audit check the `clang-tidy` linter
   of `native-gpu-systems` enables, which names every tracked C/C++ translation unit no declared
   clang-tidy lane reads, and the top-level `exceptions` list that excuses one.
+- [Build-warnings gate](../build-warnings.md): the HISS-10 audit check that fails a workflow
+  lane compiling C, C++, Rust or Go code without its toolchain's warnings-as-errors form, and
+  the `exceptions` entry for a lane that cannot use it yet.
 - [Supply-chain gate](../releasing.md#how-the-audit-measures-the-slsa-level): how the audit
   measures the SLSA level, cosign signing and SBOM generation the release workflows reach, and
   the HISS-11 `exceptions` entry adoption records when the declared supply chain exceeds them.

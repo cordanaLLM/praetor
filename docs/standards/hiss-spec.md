@@ -131,6 +131,16 @@ Warnings are treated as fatal errors across all operational layers:
 4. **CI Layer**: Multi-platform status checks.
 5. **Pre-Apply**: Admission controllers and deployment webhooks.
 
+- `praetorctl audit` and the MCP `standards_audit` read the CI layer's build lanes: every
+  workflow command that compiles C, C++, Rust or Go code must carry its toolchain's
+  warnings-as-errors form (`-Werror`, `/WX`, `CMAKE_COMPILE_WARNING_AS_ERROR`, `meson setup
+  --werror`, `-D warnings`, a `go vet` step), and a lane without it fails the audit
+  ([Build-warnings gate](../guides/build-warnings.md)). The gate reads workflow files; what a
+  make target, script or build file runs is not read.
+- A lane that cannot use the form yet is declared in the manifest's exceptions list (rule
+  `HISS-10`, the workflow, a reason and an expiry at most 90 days ahead); an expired entry fails
+  like a missing one.
+
 ---
 
 ## 3. Supply Chain, Fleet Governance & Testing
