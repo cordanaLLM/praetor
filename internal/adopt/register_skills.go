@@ -38,13 +38,13 @@ import (
 // here (register_skills_test.go).
 var priorSkillDigests = map[string]map[string]string{
 	compiler.CanonicalSkillRel("social-text"): {
-		"7f034f3a4a956d8c93dd661d985d65ce647674a8b248d691a88e271663286cbd": "first shipped, REUSE header (#235)",
+		"a128a86ad170bfaf89012567e1405693006627e260cd18c420f3abb500dd6d9e": "first shipped, REUSE header and upstream credit (#235)",
 	},
 	compiler.CanonicalSkillRel("caveman"): {
-		"9b134e15dd3bf3de620ae8001af85c772c83ef190074a528361ca5bd9fec189b": "first shipped, REUSE header (#235)",
+		"c0ab6d15d42d9dab2640eb53abf7865495ab99979931cd463540646974d59b49": "first shipped, REUSE header and upstream credit (#235)",
 	},
 	compiler.CanonicalSkillRel("adhd-format"): {
-		"312e9934100fe302003588482d633bcba0a93cb963ab2ae9e43604c4b4991179": "first shipped, REUSE header (#235)",
+		"1db3a6e0ec137143cb81002491bab5f5ae6a9331333126423de199a1c66edb44": "first shipped, REUSE header and upstream credit (#235)",
 	},
 }
 
