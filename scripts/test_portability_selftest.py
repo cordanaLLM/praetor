@@ -282,6 +282,21 @@ STUB_CHILD = textwrap.dedent("""
         os.kill(os.getpid(), signal.SIGTERM)
     sys.exit(int(sys.argv[3]))
 """)
+# A child that counts its attempts in the file argv[1] names, echoes its standard input, kills
+# itself with SIGTERM on its first attempt and then exits 0 only when standard input was not
+# empty: the scope bridge, which reads its payload from standard input, behaves this way.
+STDIN_CHILD = textwrap.dedent("""
+    import os, signal, sys
+    from pathlib import Path
+    count = Path(sys.argv[1])
+    attempt = len(count.read_text()) + 1 if count.exists() else 1
+    count.write_text("x" * attempt)
+    data = sys.stdin.read()
+    print(f"read {data!r}", flush=True)
+    if attempt == 1:
+        os.kill(os.getpid(), signal.SIGTERM)
+    sys.exit(0 if data else 2)
+""")
 NO_SIGNAL_EXIT = ("Windows ends no process by a signal: os.kill there leaves the signal number "
                   "as an ordinary exit code, which run_child returns without a retry")
 DRIVER_PATH = Path(driver.__file__)
@@ -361,6 +376,18 @@ class ChildRetry(unittest.TestCase):
         error, count, _ = self.run_stub(crashes=99, code=1, check=True)
         self.assertIsInstance(error, driver.ChildCrashed)
         self.assertEqual(count, 2)
+
+    @unittest.skipIf(os.name == "nt", NO_SIGNAL_EXIT)
+    def test_the_retry_sends_the_same_standard_input_again(self):
+        counter = Path(self.temp) / "attempts-stdin"
+        argv = [sys.executable, "-B", "-c", STDIN_CHILD, str(counter)]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result = driver.run_child(argv, input="payload\n", capture_output=True, text=True,
+                                      timeout=30)
+        self.assertEqual(attempts(counter), 2, stderr.getvalue())
+        self.assertEqual((result.returncode, result.stdout), (0, "read 'payload\\n'\n"),
+                         "the retry must read the same input as the first attempt")
 
     def test_a_nonzero_exit_without_a_signal_is_returned_at_once(self):
         result, count, stderr = self.run_stub(crashes=0, code=1)
