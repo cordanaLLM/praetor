@@ -80,6 +80,7 @@ func TestStubDrivers_Negative_EveryEnforcementMethodIsUnsupported(t *testing.T) 
 			"ReconcileLabels":     f.ReconcileLabels(ctx, []Label{{Name: "governance"}}),
 			"PostStatusCheck":     f.PostStatusCheck(ctx, "abc", CheckRun{Name: "verify"}),
 			"UpdateIssue":         f.UpdateIssue(ctx, 1, []string{"x"}, "open"),
+			"EditIssueBody":       f.EditIssueBody(ctx, 1, "- [ ] #2"),
 		}
 		if _, err := f.CreatePullRequest(ctx, PRRequest{Title: "t", Head: "h", Base: "b"}); true {
 			checks["CreatePullRequest"] = err
@@ -190,6 +191,10 @@ func (r *recordingForge) WorkflowPermissions(context.Context) (LiveWorkflowPermi
 
 func (r *recordingForge) WorkflowRunHistory(context.Context, string, string) (WorkflowRunHistory, error) {
 	return WorkflowRunHistory{}, ErrNotImplemented
+}
+
+func (r *recordingForge) EditIssueBody(context.Context, int, string) error {
+	return ErrNotImplemented
 }
 
 func (r *recordingForge) UpdateIssue(ctx context.Context, number int, labels []string, state string) error {

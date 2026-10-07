@@ -101,6 +101,13 @@ func (gl *GitLabDriver) UpdateIssue(ctx context.Context, number int, labels []st
 	return gl.unsupported("UpdateIssue")
 }
 
+func (gl *GitLabDriver) EditIssueBody(ctx context.Context, number int, body string) error {
+	if err := gl.Authenticate(ctx); err != nil {
+		return err
+	}
+	return gl.unsupported("EditIssueBody")
+}
+
 func (gl *GitLabDriver) WorkflowPermissions(ctx context.Context) (LiveWorkflowPermissions, error) {
 	if err := gl.Authenticate(ctx); err != nil {
 		return LiveWorkflowPermissions{}, err

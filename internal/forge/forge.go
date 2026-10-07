@@ -71,6 +71,9 @@ type Forge interface {
 	CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error)
 	ListIssues(ctx context.Context, state string) ([]IssueSpec, error)
 	UpdateIssue(ctx context.Context, number int, labels []string, state string) error
+	// EditIssueBody replaces the body of an existing issue and changes nothing else. The
+	// pre-migration epic writes its child task-list lines through it (#837).
+	EditIssueBody(ctx context.Context, number int, body string) error
 }
 
 // NewForge returns the appropriate forge implementation based on provider identifier.

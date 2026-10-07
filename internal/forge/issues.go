@@ -26,6 +26,16 @@ type IssueSpec struct {
 	Assignees []string `json:"assignees,omitempty" yaml:"assignees,omitempty"`
 	Milestone string   `json:"milestone,omitempty" yaml:"milestone,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty" yaml:"depends_on,omitempty"`
+	// SubIssues is the forge's sub-issue progress of a listed issue (GitHub's
+	// sub_issues_summary). It is read, never declared, so it has no YAML form.
+	SubIssues *SubIssueSummary `json:"sub_issues_summary,omitempty" yaml:"-"`
+}
+
+// SubIssueSummary counts the sub-issues GitHub attaches to an issue and how many of them
+// are closed. The planning sync reads it and never writes sub-issues.
+type SubIssueSummary struct {
+	Total     int `json:"total"`
+	Completed int `json:"completed"`
 }
 
 // IssueRef represents a parsed cross-repository or local issue reference.
