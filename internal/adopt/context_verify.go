@@ -17,8 +17,9 @@ import (
 const contextVerifyTimeout = 2 * time.Minute
 
 // maxVerifyFailures bounds the failures one verification lists (HISS-02). VerifyCompiledContext
-// joins at most nine checks (register block, evidence ignore rule, vendor files, four lints,
-// persona and plugin skill projections), so the bound is never reached by a real run.
+// joins at most ten checks (register block, evidence ignore rule, vendor files, four lints,
+// persona, plugin skill and client skill projections), so the bound is never reached by a real
+// run.
 const maxVerifyFailures = 64
 
 // verifyRejection leads every error the verification after the chain records. The verification
