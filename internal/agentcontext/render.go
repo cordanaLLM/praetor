@@ -332,7 +332,7 @@ func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section str
 
 // ownVendorLines splits content into lines and labels each one with the vendor section that
 // owns it, or "" when it is shared by every target. A section opens at its `## <Vendor>`
-// heading and closes at the next H1 or H2; a heading inside a fenced block opens nothing.
+// heading and closes at the next H1, H2 or band marker; a heading inside a fenced block opens nothing.
 func ownVendorLines(content string) ([]string, []string, error) {
 	lines := strings.Split(content, "\n")
 	if len(lines) > maxCanonicalLines {
@@ -346,7 +346,10 @@ func ownVendorLines(content string) ([]string, []string, error) {
 	var fence util.MarkdownFence
 	for i := range lines {
 		trimmed := strings.TrimSpace(lines[i])
-		if !fence.Inside(trimmed) && isTopHeading(trimmed) {
+		inside := fence.Inside(trimmed)
+		if _, isMarker := markerBand(trimmed); isMarker && !inside {
+			owner = ""
+		} else if !inside && isTopHeading(trimmed) {
 			owner = vendorFor(trimmed)
 		}
 		owners[i] = owner

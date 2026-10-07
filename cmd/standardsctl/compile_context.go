@@ -22,6 +22,7 @@ var engineBuild = workstation.RunningBuild
 func runCompileContext(args []string) error {
 	fs := flag.NewFlagSet("compile-context", flag.ContinueOnError)
 	verify := fs.Bool("verify", false, "Verify target files match AGENTS.md without modifying them")
+	stable := fs.Bool("verify-stable", false, "Check that AGENTS.md renders to identical bytes under different clocks and visit orders and that its head band holds no volatile text")
 	source := fs.String("source", "AGENTS.md", "Path to canonical AGENTS.md file")
 	targetDir := fs.String("target-dir", ".", "Root directory to write/verify target vendor files")
 
@@ -36,6 +37,9 @@ func runCompileContext(args []string) error {
 	defer cancel()
 
 	tr := compiler.NewTranspiler()
+	if *stable && !*verify {
+		return compiler.VerifyStableContext(ctx, os.Stdout, tr, *source)
+	}
 	if *verify {
 		return compiler.VerifyCompiledContext(ctx, os.Stdout, tr, *source, *targetDir)
 	}

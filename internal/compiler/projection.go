@@ -51,7 +51,8 @@ func markAgentSurface(err error) error {
 }
 
 // VerifyCompiledContext checks the text register block, the ignore rule for the evidence
-// directory the block names (CheckEvidenceIgnored), the six transpiled vendor files, the caveman
+// directory the block names (CheckEvidenceIgnored), the cache stability of the compiled bands
+// (VerifyStableContext), the six transpiled vendor files, the caveman
 // lint over AGENTS.md, every tracked nested AGENTS.md and every canonical persona and skill, and
 // every persona and plugin skill projection, without writing anything. Every check runs and every failure is returned, so one
 // run names each fix instead of hiding the later failures behind the first; each projection
@@ -66,7 +67,8 @@ func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, sou
 		lintErrs[i] = prefixError("context verification failed", lintErrs[i])
 	}
 	verified, surfaceErr := verifyAgentSurfaces(ctx, sw, targetDir)
-	if err := errors.Join(vendorErr, errors.Join(lintErrs...), surfaceErr); err != nil {
+	stableErr := prefixError("context verification failed", VerifyStableContext(ctx, sw.w, tr, source))
+	if err := errors.Join(vendorErr, errors.Join(lintErrs...), surfaceErr, stableErr); err != nil {
 		return err
 	}
 	sw.printf("All agent context targets are 100%% in sync with canonical AGENTS.md (%d persona projections verified).\n", verified)

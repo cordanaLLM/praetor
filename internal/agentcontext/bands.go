@@ -2,8 +2,8 @@ package agentcontext
 
 import (
 	"fmt"
-	"math/rand/v2"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,18 +43,22 @@ type RenderEnv struct {
 }
 
 // order returns the indexes 0..n-1 in the order the render visits them: registry order for a
-// nil env, a Seed-shuffled permutation otherwise.
+// nil env, a Seed-dependent permutation otherwise.
 func (e *RenderEnv) order(n int) []int {
 	idx := make([]int, n)
 	for i := range idx {
 		idx[i] = i
 	}
-	if e == nil {
+	if e == nil || n == 0 {
 		return idx
 	}
-	rng := rand.New(rand.NewPCG(uint64(e.Seed), 0))
-	rng.Shuffle(n, func(i, j int) { idx[i], idx[j] = idx[j], idx[i] })
-	return idx
+	// A rotation by Seed and a reversal for an odd Seed: deterministic, no random source.
+	shift := int(((e.Seed % int64(n)) + int64(n)) % int64(n))
+	rotated := slices.Concat(idx[shift:], idx[:shift])
+	if e.Seed%2 != 0 {
+		slices.Reverse(rotated)
+	}
+	return rotated
 }
 
 // markerBand returns the band a trimmed marker line opens.
