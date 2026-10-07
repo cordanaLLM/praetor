@@ -45,10 +45,15 @@ type nativeSources struct {
 // a toolchain writes (util.IsToolchainTreeDir) are skipped. A Go file counts as the go command
 // builds it: not a test file, not under testdata, and no path element starting with "." or "_"
 // ('go help packages').
-func readNativeSources(ctx context.Context, root string) (nativeSources, error) {
+func readNativeSources(ctx context.Context, root string) (_ nativeSources, err error) {
+	scope, err := os.OpenRoot(root)
+	if err != nil {
+		return nativeSources{}, fmt.Errorf("read the repository's sources: %w", err)
+	}
+	defer func() { err = errors.Join(err, scope.Close()) }()
 	walk := sourceWalk{
-		ctx: ctx, root: filepath.Clean(root), visible: hiss.GitVisiblePaths(ctx, root), fset: token.NewFileSet(),
-		cgoDirs: map[string]bool{}, cxxDirs: map[string]bool{},
+		ctx: ctx, root: filepath.Clean(root), scope: scope, visible: hiss.GitVisiblePaths(ctx, root),
+		fset: token.NewFileSet(), cgoDirs: map[string]bool{}, cxxDirs: map[string]bool{},
 	}
 	if err := filepath.WalkDir(walk.root, walk.visit); err != nil {
 		return nativeSources{}, fmt.Errorf("read the repository's sources: %w", err)
@@ -60,11 +65,12 @@ func readNativeSources(ctx context.Context, root string) (nativeSources, error) 
 	return walk.found, nil
 }
 
-// sourceWalk is one readNativeSources walk: what it found so far, and the directories holding a
-// cgo file or a C++ file.
+// sourceWalk is one readNativeSources walk: the repository it reads files through (scope), what
+// it found so far, and the directories holding a cgo file or a C++ file.
 type sourceWalk struct {
 	ctx              context.Context
 	root             string
+	scope            *os.Root
 	visible          *hiss.GitVisibleTree
 	fset             *token.FileSet
 	visited          int
@@ -92,7 +98,7 @@ func (w *sourceWalk) visit(path string, entry fs.DirEntry, err error) error {
 	case entry.IsDir() && w.skips(entry.Name(), rel):
 		return filepath.SkipDir
 	case entry.Type().IsRegular() && w.visible.HasFile(rel):
-		return w.file(path, rel)
+		return w.file(rel)
 	}
 	return nil
 }
@@ -103,8 +109,8 @@ func (w *sourceWalk) skips(name, rel string) bool {
 	return rel != "." && (name == ".git" || util.IsToolchainTreeDir(name) || !w.visible.HasDir(rel))
 }
 
-// file records what one regular file of the repository is.
-func (w *sourceWalk) file(path, rel string) error {
+// file records what one regular file of the repository, at rel, is.
+func (w *sourceWalk) file(rel string) error {
 	dir := slashpath.Dir(rel)
 	switch ext := strings.ToLower(slashpath.Ext(rel)); {
 	case ext == ".c":
@@ -113,7 +119,7 @@ func (w *sourceWalk) file(path, rel string) error {
 		w.found.cxx = true
 		w.cxxDirs[dir] = true
 	case strings.HasSuffix(rel, ".go") && goBuildsFile(rel):
-		cgo, err := importsC(w.fset, path)
+		cgo, err := importsC(w.fset, w.scope, rel)
 		if cgo {
 			w.cgoDirs[dir] = true
 		}
@@ -133,10 +139,12 @@ func goBuildsFile(rel string) bool {
 	})
 }
 
-// importsC reports whether the Go file at path imports "C", reading its first maxGoHeaderBytes.
-// A file whose imports do not parse is no cgo file: the go command fails on it anyway.
-func importsC(fset *token.FileSet, path string) (cgo bool, err error) {
-	file, err := os.Open(path)
+// importsC reports whether the Go file at rel below scope imports "C", reading its first
+// maxGoHeaderBytes. A file whose imports do not parse is no cgo file: the go command fails on it
+// anyway.
+func importsC(fset *token.FileSet, scope *os.Root, rel string) (cgo bool, err error) {
+	path := filepath.FromSlash(rel)
+	file, err := scope.Open(path)
 	if err != nil {
 		return false, err
 	}
