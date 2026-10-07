@@ -1,0 +1,4 @@
+type: fixed
+title: "The Paperclip harness renders only the declared forge's push rows and every complexity override, and the audit fails a stale or hand-edited rules.md"
+issue: "#321"
+breaking: true

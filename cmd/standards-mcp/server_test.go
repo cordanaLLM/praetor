@@ -149,7 +149,7 @@ func newFixtureRepo(t *testing.T) string {
 
 	files := map[string]string{
 		"AGENTS.md":                         fixtureAgentsMD,
-		".standards.yaml":                   "version: 1\nrepository:\n  owner: \"fixture\"\n  name: \"repo\"\nprofiles:\n  - \"framework\"\nfacets: []\n",
+		".standards.yaml":                   "version: 1\nrepository:\n  owner: \"fixture\"\n  name: \"repo\"\n  forge: \"github\"\nprofiles:\n  - \"framework\"\nfacets: []\n",
 		".standards.lock":                   validAuditLock(t),
 		".config/archetypes/framework.yaml": auditLockSource,
 		".standards-baseline.json":          `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"fixture/repo","commit_sha":"","total_infractions":0,"infractions":[]}` + "\n",

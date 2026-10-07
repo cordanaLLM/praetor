@@ -512,7 +512,7 @@ func TestDispatchCommand_PaperclipAndAdopt(t *testing.T) {
 
 	// Paperclip harness synthesis for a declared identity, outside the audit fixture so its
 	// register.sources contract keeps binding the fixture's own harness.
-	writeFixtureFile(t, paperclipDir, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
+	writeFixtureFile(t, paperclipDir, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: github\n")
 	if err := dispatchCommand("paperclip", []string{"harness", "--path=" + paperclipDir}); err != nil {
 		t.Fatalf("paperclip harness failed: %v", err)
 	}

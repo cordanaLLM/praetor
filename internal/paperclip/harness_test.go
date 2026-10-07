@@ -19,11 +19,13 @@ func TestSynthesizeHarness_Negative_NilContext(t *testing.T) {
 }
 
 // identifiedRepo returns a repository whose .standards.yaml declares acme/widget, the
-// identity every test that is not about identity resolution synthesizes for.
+// identity every test that is not about identity resolution synthesizes for, on Forgejo: it has
+// no origin remote, so its forge needs repository.forge, and Forgejo's harness carries the AGit
+// push the push-protocol tests run (forge_rows_test.go covers the other forges).
 func identifiedRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
-	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
+	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: forgejo\n")
 	return repo
 }
 

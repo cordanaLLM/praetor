@@ -136,26 +136,27 @@ func validateManifestDocumentation(m *Manifest) error {
 }
 
 func (p *DocumentationPolicy) validate() error {
-	if err := validateDocumentationBound("max_files", p.MaxFiles, DefaultDocumentationMaxFiles, DocumentationMaxFilesCeiling); err != nil {
+	// The inventory bounds take their default as the minimum, so they can be raised but not
+	// lowered; the lint budget may be lowered to one second.
+	if err := validateDeclaredBound("documentation", "max_files", p.MaxFiles, DefaultDocumentationMaxFiles, DocumentationMaxFilesCeiling); err != nil {
 		return err
 	}
-	if err := validateDocumentationBound("max_file_bytes", p.MaxFileBytes, DefaultDocumentationMaxFileBytes, DocumentationMaxFileBytesCeiling); err != nil {
+	if err := validateDeclaredBound("documentation", "max_file_bytes", p.MaxFileBytes, DefaultDocumentationMaxFileBytes, DocumentationMaxFileBytesCeiling); err != nil {
 		return err
 	}
-	if err := validateDocumentationBound("lint_timeout_seconds", p.LintTimeoutSeconds, 1, DocumentationLintTimeoutSecondsCeiling); err != nil {
+	if err := validateDeclaredBound("documentation", "lint_timeout_seconds", p.LintTimeoutSeconds, 1, DocumentationLintTimeoutSecondsCeiling); err != nil {
 		return err
 	}
 	return validateStyleExclusions(p.StyleExclude)
 }
 
-// validateDocumentationBound refuses a declared value outside minimum..ceiling. The inventory
-// bounds take their default as the minimum, so they can be raised but not lowered; the lint
-// budget may be lowered to one second.
-func validateDocumentationBound(key string, value *int, minimum, ceiling int) error {
+// validateDeclaredBound refuses a value a manifest section declares for key outside
+// minimum..ceiling, naming the key as section.key; nil is a bound the section does not declare.
+func validateDeclaredBound(section, key string, value *int, minimum, ceiling int) error {
 	if value == nil || (*value >= minimum && *value <= ceiling) {
 		return nil
 	}
-	return fmt.Errorf("documentation.%s must be an integer from %d to %d; got %d", key, minimum, ceiling, *value)
+	return fmt.Errorf("%s.%s must be an integer from %d to %d; got %d", section, key, minimum, ceiling, *value)
 }
 
 func validateStyleExclusions(globs []string) error {

@@ -376,8 +376,13 @@ the declared roots, semantic selectors, full applicable inventory, and full
 classified-exclusion inventory. It does not prove the runtime value substituted
 into a placeholder; that still needs producer validation.
 
+The Paperclip harness is checked twice: `register.sources` lints its `harness.json` rows, and
+`praetorctl audit` requires `.paperclip/rules.md` to be their rendering and lints it with the
+context profile personas and skills pass
+([what the generated harness claims](adoption-verification.md#what-the-generated-harness-claims)).
+
 Still not mechanically checked: runtime values substituted into MCP and hook
-templates; notebook prompts; Paperclip synthesis (#321); `.workingdir` ledger free
+templates; notebook prompts; `.workingdir` ledger free
 text; popup question text; and native-client chats or hooks (#415). No `internal`
 label may imply coverage of those surfaces. A green repository gate proves tracked
 context text. Repair terminal readback additionally

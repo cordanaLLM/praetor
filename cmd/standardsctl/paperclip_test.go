@@ -27,7 +27,7 @@ func writePaperclipFixtureHarness(t *testing.T, dir string) {
 	// (BUG-852), so the harness is synthesized in a scratch checkout declaring acme/widget,
 	// the repository the fixture's receipts attest.
 	identified := t.TempDir()
-	writeFixtureFile(t, identified, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
+	writeFixtureFile(t, identified, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: github\n")
 	harness, err := paperclip.SynthesizeHarness(context.Background(), identified, hisscatalog.Facts{})
 	if err != nil {
 		t.Fatalf("SynthesizeHarness: %v", err)
@@ -304,7 +304,7 @@ func TestDogfoodingAgentsFuncLOC(t *testing.T) {
 func TestPaperclipHarness_WarnsOnUndocumentedException(t *testing.T) {
 	for _, documented := range []bool{false, true} {
 		repo := t.TempDir()
-		writeFixtureFile(t, repo, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widget\n"+
+		writeFixtureFile(t, repo, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widget\n  forge: github\n"+
 			"hiss:\n  exceptions:\n    c_goto_cleanup: cleanup-goto.md\n")
 		if documented {
 			writeFixtureFile(t, repo, "cleanup-goto.md", "# Cleanup goto\n")

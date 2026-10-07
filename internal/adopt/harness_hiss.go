@@ -47,20 +47,34 @@ func planLanguages(plan *VerificationPlan) hisscatalog.Language {
 	return languages
 }
 
-// repositoryFacts is what a repository's HISS rows depend on before its function length is
-// known: the languages its verification plan found, the audit ceiling (config.AuditMaxFuncLOC)
-// and the exceptions it declares and documents.
+// repositoryFacts is what a repository's HISS rows depend on before its policy is known: the
+// languages its verification plan found, the audit ceiling (config.AuditMaxFuncLOC) and the
+// exceptions it declares and documents.
 func repositoryFacts(plan *VerificationPlan, exceptions hisscatalog.Exception) hisscatalog.Facts {
 	return hisscatalog.Facts{Languages: planLanguages(plan), CeilingFuncLOC: config.AuditMaxFuncLOC, Exceptions: exceptions}
 }
 
+// withPolicy completes facts with every HISS-04 limit of complexity, the effective policy the
+// audit resolves: the function length it enforces and the cyclomatic, cognitive and statement
+// limits, so a stricter override of any of them reaches the rows, not the function length
+// alone (#321). Every renderer of HISS rows reads the policy through it: the AGENTS.md harness
+// (hissFacts), the Paperclip harness adoption writes (paperclipFacts), and the one
+// `praetorctl paperclip harness` writes and `praetorctl audit` compares (RepositoryHISSFacts).
+// A zero complexity is an unresolved policy and leaves facts as they were. The limits come from
+// ComplexityPolicy.ScanOptions, the one mapping of a policy onto the HISS-04 limits the audit's
+// scan measures against, so the rows state exactly what the scan reads.
+func withPolicy(facts hisscatalog.Facts, complexity config.ComplexityPolicy) hisscatalog.Facts {
+	limits := complexity.ScanOptions(hiss.ScanOptions{})
+	facts.MaxFuncLOC, facts.Complexity = limits.MaxFuncLOC, limits.Complexity
+	return facts
+}
+
 // hissFacts is what this repository's AGENTS.md rows depend on: repositoryFacts and, once the
-// policy-catalog step resolved the effective policy, the function length its audit enforces
-// (adoptionScanLimit).
+// policy-catalog step resolved the effective policy, its HISS-04 limits (withPolicy).
 func (s *adoptSession) hissFacts() hisscatalog.Facts {
 	facts := repositoryFacts(s.verification, s.exceptions)
 	if s.policy != nil {
-		facts.MaxFuncLOC = adoptionScanLimit(s)
+		facts = withPolicy(facts, s.policy.Policy.Complexity)
 	}
 	return facts
 }
@@ -76,24 +90,28 @@ func harnessExceptions(cleanupGoto hiss.CleanupGoto) hisscatalog.Exception {
 }
 
 // RepositoryHISSFacts reports what the HISS directives of the repository at root depend on, for
-// a caller outside an adoption run (`praetorctl paperclip harness`) that renders them the way
-// adoption does: the languages the verification planner detects from project markers and C/C++
-// sources, the exceptions the manifest declares and documents, and the function length the audit
-// enforces, resolved by config.ResolveRepositoryPolicy as `praetorctl audit` resolves it. A repository
-// whose policy does not resolve (no manifest, no lock, or a resolution error) states the audit
-// ceiling instead; each returned warning names a declaration or policy that was not read.
+// a caller outside an adoption run (`praetorctl paperclip harness`, and `praetorctl audit`, which
+// compares the harness on disk with that synthesis) that renders them the way adoption does: the
+// languages the verification planner detects from project markers and C/C++ sources, the
+// exceptions the manifest declares and documents, and the HISS-04 limits the audit enforces
+// (withPolicy), resolved by config.ResolveRepositoryPolicy as `praetorctl audit` resolves them.
+// A repository whose policy does not resolve (no manifest, no lock, or a resolution error)
+// states the audit ceiling and the HISS-04 defaults instead; each returned warning names a
+// declaration or policy that was not read.
 //
-// The language walk runs under limits exactly as adoption's does: nil selects the defaults, and
-// a caller passes the operator's --verification-max-* overrides so a large repository is read
-// as far as adoption reads it (issue #535).
+// The language walk runs under the bounds adoption's does (ResolveVerificationLimits): limits,
+// the caller's --verification-max-* overrides (nil raises none), over the manifest's
+// verification section, over the defaults. A run without flags, such as the audit in the hooks
+// and CI jobs adoption writes, thus reads a large repository as far as adoption reads it
+// (issues #535, #321).
 func RepositoryHISSFacts(ctx context.Context, root string, limits *VerificationLimits) (hisscatalog.Facts, []string, error) {
-	plan, err := ObserveVerificationPlanWithLimits(ctx, root, limits)
-	if err != nil {
-		return hisscatalog.Facts{}, nil, fmt.Errorf("detect repository languages: %w", err)
-	}
 	manifest, err := loadDeclaredManifest(ctx, root)
 	if err != nil {
 		return hisscatalog.Facts{}, nil, err
+	}
+	plan, err := ObserveVerificationPlanWithLimits(ctx, root, ResolveVerificationLimits(manifest.DeclaredVerification(), limits))
+	if err != nil {
+		return hisscatalog.Facts{}, nil, fmt.Errorf("detect repository languages: %w", err)
 	}
 	var warnings []string
 	cleanupGoto, warning := manifest.CleanupGotoException(root)
@@ -107,9 +125,9 @@ func RepositoryHISSFacts(ctx context.Context, root string, limits *VerificationL
 	policy, notice, err := config.ResolveRepositoryPolicy(ctx, filepath.Join(root, manifestFile), manifest)
 	switch {
 	case err != nil:
-		warnings = append(warnings, "function length not resolved, audit ceiling stated: "+err.Error())
+		warnings = append(warnings, "HISS-04 limits not resolved, audit ceiling stated: "+err.Error())
 	case policy != nil && notice == "":
-		facts.MaxFuncLOC = policy.Complexity.MaxFuncLOC
+		facts = withPolicy(facts, policy.Complexity)
 	}
 	return facts, warnings, nil
 }

@@ -35,6 +35,10 @@ type RepositoryMetadata struct {
 	// needs the declaration when the default branch is not main. ValidBranchName decides what
 	// a declared name may be.
 	DefaultBranch string `yaml:"default_branch,omitempty"`
+	// Forge declares the kind of forge hosting the repository: github, forgejo or gitlab
+	// (Forge). The Paperclip harness prescribes that forge's review push. Empty is GitHub on a
+	// github.com origin remote; any other host requires it (RepositoryForge).
+	Forge Forge `yaml:"forge,omitempty"`
 }
 
 // ComplexityPolicy defines bounds on code complexity and function size.
@@ -262,6 +266,10 @@ type Manifest struct {
 	// inventory bounds and style exclusions for partial, generated and fixture Markdown. The
 	// gate reads it from this file at run time (#532, #534).
 	Documentation *DocumentationPolicy `yaml:"documentation,omitempty"`
+	// Verification raises the bounds of the discovery walk that reads the repository's languages
+	// and build markers (VerificationPolicy), for every run that walks it: adoption, `praetorctl
+	// paperclip harness` and the audit's Paperclip gate. It is repository-only, like Documentation.
+	Verification *VerificationPolicy `yaml:"verification,omitempty"`
 	// DocsSurfaces maps the repository's user-facing surfaces to the documentation that
 	// describes them; `praetorctl docs references --base=<rev>` fails a change that touches a
 	// surface without its documentation (#608). It is repository-only, like Register and HISS.

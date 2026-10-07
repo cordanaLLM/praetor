@@ -5,8 +5,11 @@
 package hisscatalog
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // Language is a set of source languages an adopted repository carries. A directive clause
@@ -78,6 +81,10 @@ type Clause struct {
 	// FuncLOC completes Text with the function-length limit the repository's audit enforces
 	// (Facts.MaxFuncLOC), so HISS-04 states the effective limit rather than a copy of it.
 	FuncLOC bool
+	// Complexity makes Text a format of the cyclomatic, cognitive and statement limits, in that
+	// order, that the repository's policy resolves (Facts.Complexity), so HISS-04 states a
+	// stricter override rather than the defaults (#321).
+	Complexity bool
 	// Waiver is the exception that lifts this language clause, for the languages of the rule's
 	// clause stating that exception, once a repository declares it.
 	Waiver Exception
@@ -97,6 +104,11 @@ type Facts struct {
 	// CeilingFuncLOC is the function length the audit-compatibility layer caps every policy at
 	// (config.AuditMaxFuncLOC). The caller reads it from config; the catalog keeps no copy.
 	CeilingFuncLOC int
+	// Complexity is the cyclomatic, cognitive and statement limits of the effective policy the
+	// audit resolves (config.ComplexityPolicy.Limits). A zero limit is not resolved and states
+	// the HISS-04 default (hiss.ComplexityLimits.WithDefaults), the ceiling the audit caps every
+	// policy at, so a repository without a resolved policy reads the text it always read.
+	Complexity hiss.ComplexityLimits
 	// Exceptions are the exceptions the repository declares and documents.
 	Exceptions Exception
 }
@@ -145,6 +157,9 @@ func (c Clause) render(f Facts, waived Language) (string, bool) {
 		return "", false
 	}
 	text := c.Text
+	if c.Complexity {
+		text = complexityLimits(c.Text, f.Complexity)
+	}
 	if c.FuncLOC {
 		text += funcLOCLimit(f)
 	}
@@ -177,6 +192,13 @@ func funcLOCLimit(f Facts) string {
 	default:
 		return " repository audit limit (`praetorctl audit` prints `max_func_loc`)"
 	}
+}
+
+// complexityLimits renders format, a Complexity clause's text, with the cyclomatic, cognitive
+// and statement limits of limits, each unresolved one at its HISS-04 default.
+func complexityLimits(format string, limits hiss.ComplexityLimits) string {
+	limits = limits.WithDefaults()
+	return fmt.Sprintf(format, limits.MaxCyclomatic, limits.MaxCognitive, limits.MaxStatements)
 }
 
 // languageLabel names the languages of set, in languageNames order.

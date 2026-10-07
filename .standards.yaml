@@ -4,6 +4,8 @@ version: 1
 repository:
   owner: "cordanaLLM"
   name: "praetor"
+  # Forge hosting the repository (github, forgejo or gitlab): selects the Paperclip push rows.
+  forge: "github"
   visibility: "public"
   description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
   homepage: "https://cordanallm.github.io/praetor/"

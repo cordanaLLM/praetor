@@ -55,6 +55,10 @@ type auditOptions struct {
 	baselineKnown   bool
 	// offline skips every forge read; the live forge checks report as not made.
 	offline bool
+	// verification is the --verification-max-* discovery bounds the Paperclip gate reads the
+	// repository's languages under, as adopt and `praetorctl paperclip harness` do; nil raises
+	// none, which keeps the manifest's verification section or the defaults.
+	verification *adopt.VerificationLimits
 
 	// allViolations lists every violation of a ratchet rejection instead of a bounded few (#598).
 	allViolations bool
@@ -113,6 +117,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	fs.StringVar(&policy.OrganizationPath, "organization-config", "", "Explicit organization complexity policy file")
 	fs.StringVar(&policy.DeploymentPath, "deployment-config", "", "Explicit deployment complexity policy file")
 	fs.StringVar(&policy.WorkstationPath, "workstation-config", "", "Explicit workstation complexity policy file")
+	limitFlags := registerVerificationLimitFlags(fs)
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return nil, err
@@ -137,6 +142,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		debtDeltaReason: resolveDebtDeltaReason(*debtDelta),
 		allViolations:   *allViolations,
 		offline:         *offline,
+		verification:    limitFlags.limits(),
 		maxStale:        staleBound,
 		policy:          policy,
 	}, nil
@@ -169,7 +175,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error {
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
-		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
+		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
@@ -557,8 +563,10 @@ const paperclipHarnessRel = ".paperclip/harness.json"
 
 // auditPaperclipHarness validates .paperclip/harness.json. With paperclip in adoption.decline,
 // adoption never writes it, so an absent harness passes with the decline named (#600); one the
-// repository keeps is still validated, since register.sources binds its text.
-func auditPaperclipHarness(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+// repository keeps is still validated, since register.sources binds its text, and stays its own.
+// Otherwise the harness is compared with this release's synthesis (auditPaperclipSynthesis, #321).
+func auditPaperclipHarness(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+	rootDir := opts.rootDir
 	decline, err := adopt.AuditDecline(manifest, "paperclip")
 	if err != nil {
 		return fmt.Errorf("[FAIL] Paperclip harness audit failed: %w", err)
@@ -582,7 +590,13 @@ func auditPaperclipHarness(ctx context.Context, manifest *config.Manifest, rootD
 			"with adoption.decline listing paperclip, adopt never writes the harness, so set platform by hand",
 			h.Platform, expectedPlatform, adopt.ForceCommand(""))
 	}
-	fmt.Printf("[PASS] Paperclip agent runtime harness verified (%s, %d rules).\n", h.Platform, len(h.OperatingContract))
+	verdict := "repository-owned under adoption.decline"
+	if !decline.Declined {
+		if verdict, err = auditPaperclipSynthesis(ctx, rootDir, opts.verification, h); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("[PASS] Paperclip agent runtime harness verified (%s, %d rules; %s).\n", h.Platform, len(h.OperatingContract), verdict)
 	return nil
 }
 

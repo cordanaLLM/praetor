@@ -1,11 +1,11 @@
 ---
 name: paperclip-operate
-description: Operate within Paperclip agent orchestration harness, enforcing Rule 0 terminal disposition, AGit change submission, and verified shipping contracts.
+description: Operate within Paperclip agent orchestration harness, enforcing Rule 0 terminal disposition, forge push protocol, and verified shipping contracts.
 ---
 
 # Paperclip Autonomous Agent Operations (`paperclip-operate`)
 
-Operate within Paperclip orchestration harness (`apps/ai/paperclip*` / `paperclipai/paperclip`), adhering strictly to Rule 0 terminal disposition, AGit change submission, and high-integrity invariant validation.
+Operate within Paperclip orchestration harness (`apps/ai/paperclip*` / `paperclipai/paperclip`), adhering strictly to Rule 0 terminal disposition, forge push protocol, and high-integrity invariant validation.
 
 ## Core Rules & Invariants
 
@@ -15,15 +15,20 @@ Operate within Paperclip orchestration harness (`apps/ai/paperclip*` / `papercli
    - Blocked runs must name human or team recovery owner.
 
 2. **Operating Contract — "Pushing is NOT Shipping"**:
-   - Pushing branch or AGit topic = change submission, not change delivery.
+   - Pushing review branch or AGit topic = change submission, not change delivery.
    - Code shipped only when target branch merged with authoritative Ed25519 Exit-0 receipt attached.
 
-3. **AGit Submission Protocol**:
-   - Changes are pushed to Gerrit/Paperclip review refs, then to review branch `paperclip/<issue-id>`:
+3. **Push Protocol (per forge)**:
+   - Push command = harness push member; `repository.forge` in `.standards.yaml` selects it.
+   - GitHub, GitLab: `push_format` = review branch only; open pull or merge request from it:
+     ```bash
+     git push origin HEAD:refs/heads/paperclip/<issue-id>
+     ```
+   - Forgejo: `agit_push_format` = AGit review ref, then review branch:
      ```bash
      git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>
      ```
-   - AGit push opens review, records no local ref. Second push records `refs/remotes/origin/paperclip/<issue-id>` = local proof for `paperclip verify`. Explicit destination -> never pushes local `main` to remote `main`.
+   - AGit push opens review, records no local ref. Review-branch push records `refs/remotes/origin/paperclip/<issue-id>` = local proof for `paperclip verify`. Explicit destination -> never pushes local `main` to remote `main`.
 
 ---
 
@@ -42,10 +47,10 @@ Implement requested changes and execute local verification gate before change su
 make verify-all
 ```
 
-### Step 3: Submit Changes via AGit
-Push commits using Paperclip AGit topic format plus review branch (`agit_push_format` in `.paperclip/harness.json`):
+### Step 3: Submit Changes via Forge Push Protocol
+Run push command `.paperclip/harness.json` names: `push_format` (GitHub, GitLab) or `agit_push_format` (Forgejo):
 ```bash
-git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>
+jq -r '.push_format // .agit_push_format' .paperclip/harness.json
 ```
 
 ### Step 4: Record Rule 0 Disposition & Verify Contract

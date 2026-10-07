@@ -15,3 +15,12 @@ const (
 	DefaultDiscoveryEntries = 65536
 	DiscoveryEntriesCeiling = 200000
 )
+
+// DiscoveryFilesCeiling and DiscoveryDepthCeiling are the most a caller may raise the verification
+// walk's file and depth bounds to. The flags (internal/adopt.NormalizeVerificationLimits) and the
+// manifest's verification section (internal/config.VerificationPolicy) refuse a value past them,
+// so the two places an operator raises a bound accept the same range.
+const (
+	DiscoveryFilesCeiling = 512
+	DiscoveryDepthCeiling = 64
+)

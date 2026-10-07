@@ -520,7 +520,7 @@ func TestLoadHarness_3D(t *testing.T) {
 	}
 
 	// Positive: Synthesize and load
-	writeRepoFile(t, tmpDir, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
+	writeRepoFile(t, tmpDir, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: forgejo\n")
 	h, err := SynthesizeHarness(context.Background(), tmpDir, unknownFacts)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness failed: %v", err)
@@ -535,7 +535,7 @@ func TestLoadHarness_3D(t *testing.T) {
 
 	// Test with explicit manifest
 	manifestDir := t.TempDir()
-	manifestContent := "repository:\n  owner: test-org\n  name: test-repo\n"
+	manifestContent := "repository:\n  owner: test-org\n  name: test-repo\n  forge: forgejo\n"
 	if err := os.WriteFile(filepath.Join(manifestDir, ".standards.yaml"), []byte(manifestContent), 0644); err != nil {
 		t.Fatal(err)
 	}

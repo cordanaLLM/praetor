@@ -219,3 +219,36 @@ func TestFuncLOCLimit(t *testing.T) {
 		t.Errorf("function-length variants fail the lint: %+v", report.Findings)
 	}
 }
+
+// TestComplexityLimits covers the HISS-04 cyclomatic, cognitive and statement clause (#321).
+// Positive: a stricter policy's limits replace the defaults in the rendered directive. Negative:
+// an unresolved policy states the HISS-04 defaults (hiss.DefaultMaxCyclomatic and the others),
+// the text every earlier release rendered, never a format verb. Boundary: a policy resolving
+// one limit states it beside the defaults of the other two, and a non-positive limit is
+// unresolved. Every variant lints clean.
+func TestComplexityLimits(t *testing.T) {
+	defaults := "McCabe cyclomatic <= 10, cognitive <= 15, statements <= 50; func LOC <= 60"
+	cases := []struct {
+		limits hiss.ComplexityLimits
+		want   string
+	}{
+		{hiss.ComplexityLimits{MaxCyclomatic: 8, MaxCognitive: 12, MaxStatements: 40}, "McCabe cyclomatic <= 8, cognitive <= 12, statements <= 40; func LOC <= 60"},
+		{hiss.ComplexityLimits{}, defaults},
+		{hiss.ComplexityLimits{MaxCognitive: 9}, "McCabe cyclomatic <= 10, cognitive <= 9, statements <= 50; func LOC <= 60"},
+		{hiss.ComplexityLimits{MaxCyclomatic: -1, MaxStatements: 0}, defaults},
+	}
+	if hiss.DefaultMaxCyclomatic != 10 || hiss.DefaultMaxCognitive != 15 || hiss.DefaultMaxStatements != 50 {
+		t.Fatal("fixture precondition: the HISS-04 defaults moved; earlier renderings must be recorded first")
+	}
+	var text strings.Builder
+	for _, tc := range cases {
+		got := directiveOf(t, "HISS-04", Facts{Complexity: tc.limits, MaxFuncLOC: 60, CeilingFuncLOC: 70})
+		if got != tc.want || strings.Contains(got, "%") {
+			t.Errorf("HISS-04 for %+v = %q, want %q", tc.limits, got, tc.want)
+		}
+		text.WriteString(got + ".\n")
+	}
+	if report := caveman.Check(text.String(), caveman.Options{}); !report.Passed() {
+		t.Errorf("complexity variants fail the lint: %+v", report.Findings)
+	}
+}

@@ -78,9 +78,13 @@ type harnessPlan struct {
 	rules bool
 	// onDisk reports whether a harness file exists before this run writes one.
 	onDisk bool
-	// unresolved reports a run without a repository identity: the harness platform names the
-	// repository, so none is synthesized and an existing harness stays as it is (BUG-852).
+	// unresolved reports a run without a repository identity, whose harness platform names the
+	// repository (BUG-852), or without the forge its push rows follow (#321): none is
+	// synthesized and an existing harness stays as it is.
 	unresolved bool
+	// cause is the synthesis refusal behind unresolved: util.ErrRepoIdentityUnresolved or
+	// config.ErrForgeUndeclared (forgeUndeclared), whose text names repository.forge.
+	cause error
 	// neverWrites reports a plan that writes no harness whatever is on disk: the paperclip step
 	// is declined or the repository identity is unresolved (keptHarnessPlan). Deleting the
 	// harness then regenerates nothing, so no remedy may suggest it.
@@ -129,11 +133,11 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	}
 	exists := fileExists(path)
 	if s.declines("paperclip") {
-		return keptHarnessPlan(ctx, path, exists, false)
+		return keptHarnessPlan(ctx, path, exists, nil)
 	}
 	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath, s.paperclipFacts(ctx))
-	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
-		return keptHarnessPlan(ctx, path, exists, true)
+	if unresolvedHarnessInputs(err) {
+		return keptHarnessPlan(ctx, path, exists, err)
 	}
 	if err != nil {
 		return harnessPlan{}, err
@@ -150,6 +154,13 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 		return plan, err
 	}
 	return planOwnedHarness(plan, synthesized.Platform, s.opts.Force), nil
+}
+
+// unresolvedHarnessInputs reports whether synthesis stopped because an input the harness
+// renders is not known yet: the repository identity, or a forge the manifest does not
+// declare. The existing harness is then kept and the reason reported, not refused.
+func unresolvedHarnessInputs(err error) bool {
+	return errors.Is(err, util.ErrRepoIdentityUnresolved) || errors.Is(err, config.ErrForgeUndeclared)
 }
 
 // newHarnessPlan plans the first harness of a repository that has none. A rules.md without a
@@ -185,19 +196,27 @@ func planOwnedHarness(plan harnessPlan, platform string, force bool) harnessPlan
 	return plan
 }
 
-// keptHarnessPlan never plans a write. A declined paperclip step does not run, and a run
-// without a repository identity has no platform to synthesize (BUG-852), so a planned
-// harness would bind the manifest to a file nothing produces. An existing harness stays
-// byte for byte; with none on disk the plan is absent.
-func keptHarnessPlan(ctx context.Context, path string, exists, unresolved bool) (harnessPlan, error) {
+// keptHarnessPlan never plans a write. A declined paperclip step (cause nil) does not run, a
+// run without a repository identity has no platform to synthesize (BUG-852), and one whose
+// forge needs repository.forge has no push rows (#321), so a planned harness would bind the
+// manifest to a file nothing produces. An existing harness stays byte for byte; with none on
+// disk the plan is absent.
+func keptHarnessPlan(ctx context.Context, path string, exists bool, cause error) (harnessPlan, error) {
+	plan := harnessPlan{unresolved: cause != nil, cause: cause, neverWrites: true}
 	if !exists {
-		return harnessPlan{unresolved: unresolved, neverWrites: true}, nil
+		return plan, nil
 	}
 	existing, err := existingHarness(ctx, path)
 	if err != nil {
 		return harnessPlan{}, err
 	}
-	return harnessPlan{data: existing, onDisk: true, unresolved: unresolved, neverWrites: true}, nil
+	plan.data, plan.onDisk = existing, true
+	return plan, nil
+}
+
+// forgeUndeclared reports a plan left unresolved because the forge needs repository.forge.
+func (p harnessPlan) forgeUndeclared() bool {
+	return errors.Is(p.cause, config.ErrForgeUndeclared)
 }
 
 // synthesizeHarness renders the Paperclip harness for the repository's HISS facts
@@ -311,34 +330,32 @@ func resolvePlannedPolicy(ctx context.Context, s *adoptSession, catalogRoot stri
 }
 
 // paperclipFacts is what the Paperclip harness's HISS invariants depend on: repositoryFacts and
-// the function length the audit enforces once this run's policy resolves (harnessFuncLOC).
+// the HISS-04 limits the audit enforces once this run's policy resolves (harnessComplexity).
 func (s *adoptSession) paperclipFacts(ctx context.Context) hisscatalog.Facts {
-	facts := repositoryFacts(s.verification, s.exceptions)
-	facts.MaxFuncLOC = s.harnessFuncLOC(ctx)
-	return facts
+	return withPolicy(repositoryFacts(s.verification, s.exceptions), s.harnessComplexity(ctx))
 }
 
-// harnessFuncLOC is the function length the audit enforces after this run, for the Paperclip
-// harness. The manifest step binds that harness in register.sources before the policy-catalog
-// step resolves the policy, so the limit is read from the policy the planned manifest and lock
-// resolve to (prospectivePolicy), the one the policy-catalog step then materializes. It is
-// resolved once and kept, so every step of the run renders the bytes the manifest bound. A
-// policy that does not resolve yet, such as a first adoption without --lock-source-root, leaves
-// it zero: the harness then states the audit ceiling, and the policy-catalog step reports the
-// cause.
-func (s *adoptSession) harnessFuncLOC(ctx context.Context) int {
-	if s.paperclipLimit.resolved {
-		return s.paperclipLimit.limit
+// harnessComplexity is the HISS-04 limits the audit enforces after this run, for the Paperclip
+// harness: function length, cyclomatic, cognitive and statements. The manifest step binds that
+// harness in register.sources before the policy-catalog step resolves the policy, so the limits
+// are read from the policy the planned manifest and lock resolve to (prospectivePolicy), the one
+// the policy-catalog step then materializes. They are resolved once and kept, so every step of
+// the run renders the bytes the manifest bound. A policy that does not resolve yet, such as a
+// first adoption without --lock-source-root, leaves them zero: the harness then states the audit
+// ceiling and the HISS-04 defaults, and the policy-catalog step reports the cause.
+func (s *adoptSession) harnessComplexity(ctx context.Context) config.ComplexityPolicy {
+	if s.paperclipPolicy.resolved {
+		return s.paperclipPolicy.complexity
 	}
-	s.paperclipLimit.resolved = true
+	s.paperclipPolicy.resolved = true
 	if s.policy != nil {
-		s.paperclipLimit.limit = adoptionScanLimit(s)
-		return s.paperclipLimit.limit
+		s.paperclipPolicy.complexity = s.policy.Policy.Complexity
+		return s.paperclipPolicy.complexity
 	}
 	if policy, err := prospectivePolicy(ctx, s, s.opts.LockSourceRoot); err == nil {
-		s.paperclipLimit.limit = policy.Policy.Complexity.MaxFuncLOC
+		s.paperclipPolicy.complexity = policy.Policy.Complexity
 	}
-	return s.paperclipLimit.limit
+	return s.paperclipPolicy.complexity
 }
 
 // prospectivePolicy resolves the policy this run leaves the repository under from the manifest

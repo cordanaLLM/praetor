@@ -257,13 +257,26 @@ covers every directory the walk enters. Version-control, dependency, build-outpu
 scratch directories are skipped by name (`skipVerificationDirectory` in
 `internal/adopt/verification_inputs.go`); generated output under any other name, such as a
 built documentation site, counts. A repository above those bounds fails with an error that
-names the flag raising the bound:
+names the flag and the manifest key raising the bound:
 
 ```text
-verification discovery exceeds 65536 entries; raise max_entries with --verification-max-entries, up to 200000
+verification discovery exceeds 65536 entries; raise max_entries with --verification-max-entries, up to 200000, or declare verification.max_entries in .standards.yaml so every run, the audit's hooks and CI included, reads it
 ```
 
-Raise a bound explicitly instead of trimming the tree:
+Raise a bound explicitly instead of trimming the tree. Declare it in `.standards.yaml` when the
+repository is large, so every run that walks it reads the same bound. The hooks and CI jobs
+adoption writes run `praetorctl audit` with no flag, and its Paperclip gate walks the tree too:
+
+```yaml
+verification:
+  max_entries: 131072 # also max_files, max_depth
+```
+
+The strict manifest decoder refuses an unknown key, a non-integer value and a value outside
+1..its ceiling, naming the key (`internal/config/verification.go`,
+`TestVerificationPolicy_Negative`). A flag overrides the declared bound it names for its own
+run; every other bound keeps the declared value or the default
+(`adopt.ResolveVerificationLimits` in `internal/adopt/verification_limits.go`):
 
 ```bash
 standardsctl adopt --dry-run --path /path/to/large-repo \
@@ -274,20 +287,26 @@ standardsctl adopt --dry-run --path /path/to/large-repo \
 same tree for the IDE step
 ([editor capabilities](guides/editor-capabilities.md)).
 `--verification-max-files` and `--verification-max-depth` raise the other two bounds.
-Each value is validated against its ceiling (200000 entries, 512 files, 64 levels). A
-value past its ceiling is refused, and an unset flag keeps the default. A bound already
-at its ceiling reports that instead of naming the flag. The flags apply to
-single-repository adoption; batch `--all-missing` keeps the defaults.
+Each value is validated against its ceiling (200000 entries, 512 files, 64 levels;
+`internal/util/discovery_bounds.go`). A value past its ceiling is refused, and an unset flag
+keeps the declared bound or the default. A bound already at its ceiling reports that instead
+of naming the flag. The flags apply to single-repository adoption; batch `--all-missing` takes
+none, so it walks each repository under its declared bounds or the defaults.
 
 `praetorctl paperclip harness` detects the repository's languages with the same walk and
-takes the same three flags:
+takes the same three flags, and so does `praetorctl audit`, whose Paperclip gate compares the
+harness with the synthesis for those languages. Both read the declared bounds first:
 
 ```bash
 praetorctl paperclip harness --path /path/to/large-repo --verification-max-entries=131072
+praetorctl audit --config=/path/to/large-repo/.standards.yaml --verification-max-entries=131072
 ```
 
-Tests: `internal/adopt/large_repo_bounds_test.go` and
-`TestPaperclipHarness_VerificationLimitFlags` in `cmd/standardsctl/adopt_limits_test.go`.
+Tests: `internal/adopt/large_repo_bounds_test.go`,
+`internal/adopt/verification_manifest_test.go`,
+`TestPaperclipHarness_VerificationLimitFlags` in `cmd/standardsctl/adopt_limits_test.go` and
+`TestAuditPaperclip_VerificationBoundFromManifest` in
+`cmd/standardsctl/audit_paperclip_test.go`.
 
 ### What Adoption Scaffolds Automatically
 
@@ -479,6 +498,23 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   set. A re-run that finds the remote while the manifest still names no identity
   installs the checkpoint lifecycle and the harness but leaves the manifest and the
   README as they are (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
+- **Hosting forge.** `repository.forge` in `.standards.yaml` names the forge that hosts the
+  repository: `github`, `forgejo` or `gitlab`; the strict manifest decoder refuses any other
+  value with the key named (`internal/config/forge.go`). It selects the push rows of the
+  Paperclip harness: only Forgejo's harness carries the AGit `refs/for` push. Without the key, a
+  repository whose `origin` remote names `github.com` is GitHub. Any other host, or no network
+  remote, names no forge kind, since Forgejo and GitLab instances run under any host name, so
+  adoption writes no Paperclip harness and its report names the key, `praetorctl paperclip
+  harness` refuses, and `praetorctl audit` fails until the key is declared
+  (`TestForge_Boundary_DefaultOnlyForGitHubHost`,
+  `TestAdoptHarness_Negative_UndeclaredForgeWritesNoHarness`,
+  `TestAuditPaperclip_Boundary_OwnedAbsentRulesAndUndeclaredForge`).
+
+  ```yaml
+  repository:
+    forge: forgejo
+  ```
+
 - **Profile.** The profile an existing `.standards.yaml` declares outranks `--profile`,
   which outranks file markers. A conflicting `--profile` is reported as ignored
   (`TestAdopt_DeclaredProfileGovernsAdoption`). Adoption never rewrites a declared profile;
@@ -1177,6 +1213,34 @@ Tests: `TestAdoptEditedHarnessFailsBeforeWritingWithRemedy` in `internal/adopt/a
 `TestAdoptForceEditedHarnessNeedsRecomputedPins` in
 `cmd/standardsctl/audit_paperclip_force_test.go`. The harness rules in full:
 [text register](guides/text-register.md#upgrading-an-adopted-repository).
+
+## Migration: `repository.forge` and the audited Paperclip harness
+
+The Paperclip harness prescribes the push protocol of the forge `repository.forge` declares
+(#321). A GitHub or GitLab harness carries `push_format`, the review-branch push alone, in place of
+`agit_push_format`; a consumer of `.paperclip/harness.json` there reads the new member. A
+repository whose `origin` remote is not on `github.com` declares the key and reruns adoption:
+
+```yaml
+repository:
+  forge: forgejo # or github, gitlab
+```
+
+`praetorctl adopt` then refreshes a harness an earlier release wrote, with or without `--force`.
+The audit no longer accepts that harness as it stands: it fails on unmodified earlier output,
+with `praetorctl adopt` as the remedy, and on a `rules.md` that is not the rendering of
+`harness.json`, with `praetorctl paperclip harness` or deleting `rules.md` as the remedy. An
+edited `harness.json` stays operator-owned and passes
+([what the generated harness claims](guides/adoption-verification.md#what-the-generated-harness-claims)).
+The comparison detects the repository's languages with adoption's bounded walk. A repository
+that needs `--verification-max-*` to adopt declares the bound once in `.standards.yaml`, so the
+audit in the hooks and CI jobs, which pass no flag, reads it too
+([large repositories](#large-repositories)):
+
+```yaml
+verification:
+  max_entries: 131072
+```
 
 ## Lock verification outcomes
 

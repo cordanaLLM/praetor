@@ -184,8 +184,8 @@ func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	if plan.unresolved && (!plan.onDisk || s.opts.Force) {
-		s.report.recordSkipped(paperclipFile, unresolvedHarnessNote(plan.onDisk))
+	if plan.unresolved && (!plan.onDisk || s.opts.Force || plan.forgeUndeclared()) {
+		s.report.recordSkipped(paperclipFile, unresolvedHarnessNote(plan))
 		return nil
 	}
 	if plan.patched() {
@@ -216,18 +216,23 @@ func (s *adoptSession) recordHarnessWrite(plan harnessPlan) {
 	switch {
 	case !plan.rules:
 	case plan.refresh:
-		s.report.recordReconciled(paperclipRulesFile, "Refreshed the AGit rules rendered from the unmodified earlier Praetor harness")
+		s.report.recordReconciled(paperclipRulesFile, "Refreshed the Paperclip rules rendered from the unmodified earlier Praetor harness")
 	default:
-		s.report.recordCreated(paperclipRulesFile, "Scaffolded AGit rules rendered from the Paperclip harness")
+		s.report.recordCreated(paperclipRulesFile, "Scaffolded Paperclip rules rendered from the Paperclip harness")
 	}
 }
 
 // unresolvedHarnessNote says why the paperclip step wrote nothing: the harness platform names
-// the repository, and adoption found no identity to name.
-func unresolvedHarnessNote(onDisk bool) string {
+// the repository, and adoption found no identity to name, or its push rows follow the forge,
+// and the repository needs repository.forge to name it (#321).
+func unresolvedHarnessNote(plan harnessPlan) string {
 	action := "Paperclip harness not written"
-	if onDisk {
+	if plan.onDisk {
 		action = "Existing Paperclip harness kept as is, not compared with the current contract"
+	}
+	if plan.forgeUndeclared() {
+		return action + ": its push protocol follows the forge, and " + config.ForgeKey + " is undeclared (" +
+			plan.cause.Error() + "); declare it and re-run"
 	}
 	return action + ": its platform needs repository.owner and repository.name in " + manifestFile +
 		" or an origin remote naming <owner>/<repo>; set them, or add the remote, and re-run"

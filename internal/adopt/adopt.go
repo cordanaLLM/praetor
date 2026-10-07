@@ -86,7 +86,9 @@ type AdoptOptions struct {
 	SkipHookActivation bool `json:"skip_hook_activation,omitempty"`
 	// LockSourceRoot selects the verified Praetor bundle used for new lock pins.
 	LockSourceRoot string `json:"lock_source_root,omitempty"`
-	// VerificationLimits overrides bounded metadata discovery for explicit adopters.
+	// VerificationLimits raises the bounds of metadata discovery for this run: a non-zero field
+	// overrides the bound the manifest's verification section declares, or the default
+	// (ResolveVerificationLimits).
 	VerificationLimits *VerificationLimits `json:"verification_limits,omitempty"`
 }
 
@@ -175,11 +177,11 @@ type adoptSession struct {
 	// (harnessExceptions).
 	cleanupGoto hiss.CleanupGoto
 	exceptions  hisscatalog.Exception
-	// paperclipLimit is the function length the Paperclip harness states, resolved once per run
-	// (harnessFuncLOC) so every step renders the harness the manifest step bound.
-	paperclipLimit struct {
-		resolved bool
-		limit    int
+	// paperclipPolicy is the HISS-04 limits the Paperclip harness states, resolved once per run
+	// (harnessComplexity) so every step renders the harness the manifest step bound.
+	paperclipPolicy struct {
+		resolved   bool
+		complexity config.ComplexityPolicy
 	}
 	// dryRunWrites holds, in a dry run only, what each file the run would scaffold or remove
 	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
@@ -237,7 +239,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	report := newAdoptionReport(normPath, opts, decision)
 	report.Facets, report.FacetOrigin = adoptionFacets(declared, unreadable, opts.Facets)
 	warnIgnoredFacets(report, opts, declared)
-	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, opts.VerificationLimits)
+	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, ResolveVerificationLimits(declared.DeclaredVerification(), opts.VerificationLimits))
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
 		return report, fmt.Errorf("resolve project verification: %w", err)
