@@ -110,7 +110,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | --- | --- |
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
-| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then require a conventional subject and DCO sign-off; accept Git merge/revert subjects. |
+| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, and the HISS-14 `Migration:` footer on a breaking change) and require a DCO sign-off. |
 | `pre-push` | Audit and verify live state before inspecting each actual pushed commit. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
@@ -468,9 +468,52 @@ runner installed. Both checks live in `internal/adopt/hook_runner_audit.go`:
   verified instead.
 
 Adoption writes `lefthook.yml` and never a pre-commit framework configuration. The hook is the one
-in the directory `git rev-parse --git-path hooks` names, so `core.hooksPath` and linked
-worktrees count. The audit recognises a hook by the marker its runner uses to recognise its own
-file:
+in the managed hooks directory, `<git-common-dir>/hooks`, which every linked worktree shares.
+
+`core.hooksPath` moves every hook git runs, so a value that leaves this directory skips the
+hooks installed for the repository: `/dev/null` skips them all, and a directory elsewhere runs
+whatever it holds. The audit therefore fails when `core.hooksPath` is set at any scope git reads
+for the repository (system, global, local, worktree, and the `git -c` values that
+`GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT` hand the audit's own process) to a value that does
+not name the managed hooks directory, even when that
+other directory holds a known runner's hook. A relative value is resolved from the working tree
+root, as git resolves it. An existing directory is compared by filesystem identity. A directory
+not yet created is compared by its spelling, after the symlinks in its existing parent directories
+are resolved on both sides. A checkout reached through a symlink, such as macOS's
+`/var -> /private/var`, therefore passes with `.git/hooks` before that directory exists. A value
+with a `..` element passes only when it names the existing managed directory, because the
+operating system applies `..` after any symlink before it. The failure names each such value,
+its scope and the file that sets it, and the command that removes it:
+
+- a value in the file that `git config --<scope>` edits:
+  `git config --unset-all --<scope> core.hooksPath`;
+- a value in another file, one that an `include.path` or `includeIf.<condition>.path` names, or
+  `$XDG_CONFIG_HOME/git/config` while `~/.gitconfig` exists: that file, and
+  `git config --file "<file>" --unset-all core.hooksPath`. The `--<scope>` form edits one file
+  only, `~/.gitconfig` for `--global` when it exists, and cannot remove the value;
+- a `git -c` value: the option or the `GIT_CONFIG_PARAMETERS` or `GIT_CONFIG_COUNT` variable
+  that passes it.
+
+Where `lefthook.yml` exists and a local or global value from the file `git config --<scope>`
+edits is refused, the failure also names `lefthook install --reset-hooks-path`. Lefthook 2.1.14 then unsets the
+local and the global value (`unsetHooksPathConfig` in its
+[install command](https://github.com/evilmartians/lefthook/blob/v2.1.14/internal/command/install.go))
+and installs the hooks.
+
+The rule is `auditHooksPath` in `internal/adopt/hooks_path_audit.go`. Adoption runs the same
+rule before it installs a hook. On such a value it reports the audit's finding, fix included, as
+an error, and installs no hook, in a dry run too. It no longer installs the hook in the directory
+`core.hooksPath` names, where the next audit refused it. When git cannot read a value at all, for
+example a `~user` path for a user that does not exist, adoption reports that read failure
+instead, and installs no hook either. No supported runner installs anywhere
+else: Lefthook 2.1.14 refuses to install while `core.hooksPath` is set globally, or locally to
+anything but `.git/hooks`, and the pre-commit framework 4.6.2 refuses while it is set at all.
+
+The audit reads the configuration that is in effect when it runs. A commit made with a one-off
+`git -c core.hooksPath=...` override leaves no configuration behind, so CI re-runs the commit
+checks over every commit of a pull request ([commit checks CI re-runs](#commit-checks-ci-re-runs)).
+
+The audit recognises a hook by the marker its runner uses to recognise its own file:
 
 | Runner | Marker | Configuration the runner reads |
 | --- | --- | --- |
@@ -518,12 +561,54 @@ repos:
 
 Tests: `internal/adopt/hook_runner_audit_test.go` covers each runner's hook (positive), the
 placeholder and the other hooks the audit refuses (negative), and both configurations together,
-`core.hooksPath` and the Windows rule (boundary). `internal/adopt/precommit_config_audit_test.go`
+`core.hooksPath` and the Windows rule (boundary). `internal/adopt/hooks_path_audit_test.go`
+covers the `core.hooksPath` rule: `/dev/null`, a directory outside the repository, one inside
+the working tree and one beside the managed directory fail, each holding lefthook's hook, and so
+do global, environment, included and `$XDG_CONFIG_HOME/git/config` values; an unset value and the
+managed directory pass, under a symlinked checkout path too, before that directory exists. It
+also runs the printed fix for an included value and an XDG one, and checks where the
+`--reset-hooks-path` hint appears. The `TestAdopt_Hooks_Negative_*HooksPath*` tests in `internal/adopt/adopt_test.go` check
+that adoption refuses the same values with the same finding as the audit that follows it.
+`internal/adopt/precommit_config_audit_test.go`
 covers the configuration rules. It also checks the hooks that `lefthook install` and
 `pre-commit install` write, wherever those tools are on `PATH`.
 `TestAudit_Boundary_HooksGate` and `TestAudit_Positive_PreCommitFrameworkRunner` in
 `cmd/standardsctl/audit_cmd_test.go` and `TestServerAuditHookRunner_PreCommitFramework` in
 `cmd/standards-mcp/audit_decline_test.go` run the same rules through both audits.
+
+## Commit checks CI re-runs
+
+The hooks prove nothing about a commit made without them: a one-off `core.hooksPath` override,
+`--no-verify`, or a configuration the audit only reports afterwards. On every pull request, CI
+therefore re-runs each commit check that needs nothing but the commit, over every commit of the
+pull request (`.github/workflows/ci.yml`, the two steps after the documentation drift check):
+
+| Hook check | Re-run in CI by | Test |
+| --- | --- | --- |
+| `commit-msg`: a conventional subject (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style` or `test`, an optional scope and `!`), or a subject Git wrote for a merge or a revert | `praetorctl forge check-commits --base=origin/<base> --head=HEAD` | `TestForgeCheckCommits_Negative_SubjectBreaksPolicy` |
+| `commit-msg`: the HISS-14 `Migration:` footer on a breaking change | the same command | `TestForgeCheckCommits_EnforcesBreakingMigrationFooter` |
+| `commit-msg`: the DCO sign-off | `scripts/dco_check.sh` in `.github/workflows/compliance.yml` | `scripts/test_dco_check.py` |
+| `pre-commit`: whitespace errors and conflict markers (`git diff --cached --check`) | `python3 -B .config/lefthook/scripts/hooks.py commits origin/<base>`, which runs `git log --check` over the range | `CommitRange` in `.config/lefthook/scripts/test_hooks.py` |
+| `pre-commit` and `pre-push`: private `.workingdir` content | the same stage, through `check_private_history` | `CommitRange` |
+
+The commit-msg hook and CI share one implementation of the message policy, `forge.AnalyzeCommit`
+(`internal/forge/commit_message.go`). The hook runs `praetorctl forge check-message <file>` on the
+message file Git hands it, which first drops what Git removes before it records the message: the
+lines that start with `#`, and the scissors line with everything after it. A message file over
+1 MiB, or of more than 100000 lines before the scissors line, is refused, not checked in part
+(`TestCleanCommitMessage_Boundary_LineBound`).
+
+These checks are not re-run per commit:
+
+- `block_evasion.py --environment` (`pre-commit`, `pre-rebase`) inspects the environment of the
+  process that commits, which is gone once the commit exists.
+- The live-state audit and `state sync --verify` (`pre-commit`, `commit-msg`) read the
+  workstation's private `.workingdir` ledger, which no commit carries.
+- The file checks on the exported index (Python and JSON syntax, the YAML, shell, workflow and
+  Docker linters, gofmt, `go vet`, the agent instructions and the hook self-tests) need each
+  commit's tree exported and scanned, once per commit. `make verify-all` runs gofmt
+  (`fmt-check`), `go vet` (`lint`) and `compile-context --verify` on the pull request's head tree
+  instead, so a defect that a later commit of the same pull request removes is not reported.
 
 ## Hook files adoption keeps
 

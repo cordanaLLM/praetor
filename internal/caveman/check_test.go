@@ -124,6 +124,59 @@ func TestCheckBoundary(t *testing.T) {
 	}
 }
 
+// TestCheckArticleTokens covers the C1 article test (#838): an article is a whole word of
+// exactly a, an or the, bounded by the field edge or by punctuation other than a dash. A
+// token that continues with a letter, digit, mark, dash or symbol is a name, not an article,
+// and still counts as one prose word.
+func TestCheckArticleTokens(t *testing.T) {
+	cases := map[string]struct {
+		text            string
+		articles, words int
+	}{
+		// Positive: real articles, any case, wrapped in brackets, emphasis or sentence marks.
+		"a plan":        {"a plan", 1, 2},
+		"A plan.":       {"A plan.", 1, 2},
+		"(the end)":     {"(the end)", 1, 2},
+		"bracketed":     {"[an] owner", 1, 2},
+		"emphasis":      {"*the* gate", 1, 2},
+		"upper case":    {"THE gate", 1, 2},
+		"comma":         {"an, gate", 1, 2},
+		"ellipsis":      {"the… gate", 1, 2},
+		"issue example": {"A380 A100 a", 1, 3},
+		// Negative: names and literals that merely start or end with an article.
+		"A380":         {"Kernel runs on A380 device", 0, 5},
+		"A100 A770 A2": {"A100 A770 A2", 0, 3},
+		"A-series":     {"A-series gate", 0, 2},
+		"A-team":       {"A-team gate", 0, 2},
+		"a11y":         {"a11y gate", 0, 2},
+		"an8n":         {"an8n gate", 0, 2},
+		"the3":         {"the3 gate", 0, 2},
+		"digit first":  {"3a gate", 0, 2},
+		"flag":         {"-a gate", 0, 2},
+		"html tag":     {"<a> gate", 0, 2},
+		"trailing en":  {"the– gate", 0, 2},
+		"combining":    {"á gate", 0, 2},
+		"model in ()":  {"(A380) gate", 0, 2},
+		// Boundary: the text start and end bound a word like whitespace does.
+		"alone":         {"a", 1, 1},
+		"at start":      {"the gate", 1, 2},
+		"at end":        {"gate the", 1, 2},
+		"end with stop": {"gate an.", 1, 2},
+		"name at start": {"A380", 0, 1},
+		"name at end":   {"gate A380.", 0, 2},
+		"empty":         {"", 0, 0},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			report := Check(tc.text, Options{})
+			if report.Articles != tc.articles || report.ProseWords != tc.words {
+				t.Fatalf("Check(%q): articles %d of %d words, want %d of %d",
+					tc.text, report.Articles, report.ProseWords, tc.articles, tc.words)
+			}
+		})
+	}
+}
+
 // TestCheckUnclosedFence covers C13: a fence still open at the end of the text fires at the
 // line that opened it, a closed fence of any length does not, and only a bare delimiter at
 // least as long as the opener closes it. A backtick in the info string of a backtick fence

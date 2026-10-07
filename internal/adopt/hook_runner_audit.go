@@ -113,15 +113,19 @@ func AuditGitHookConfig(ctx context.Context, manifest *config.Manifest, rootDir 
 }
 
 // AuditInstalledGitHook verifies the pre-commit hook in the directory git consults for rootDir
-// (core.hooksPath and linked worktrees included). The hook must be one a known runner wrote:
-// Lefthook's, Praetor's fallback hook, or the pre-commit framework's. It must be runnable as git
-// decides it (hookRunnable), and the configuration its runner reads must be present: lefthook.yml
-// for Lefthook and the fallback hook, and for the framework a .pre-commit-config.yaml that runs
-// both praetor commands. The verdict line names the runner found.
+// (linked worktrees included). core.hooksPath, set at any scope git reads, must name the managed
+// hooks directory <git-common-dir>/hooks (auditHooksPath, #61). The hook must be one a known
+// runner wrote: Lefthook's, Praetor's fallback hook, or the pre-commit framework's. It must be
+// runnable as git decides it (hookRunnable), and the configuration its runner reads must be
+// present: lefthook.yml for Lefthook and the fallback hook, and for the framework a
+// .pre-commit-config.yaml that runs both praetor commands. The verdict line names the runner found.
 func AuditInstalledGitHook(ctx context.Context, rootDir string) (string, error) {
 	hooksDir, err := ResolveGitHooksDir(ctx, rootDir)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Resolve git hooks directory: %w", err)
+	}
+	if err := auditHooksPath(ctx, rootDir); err != nil {
+		return "", fmt.Errorf("[FAIL] %w", err)
 	}
 	hookPath := filepath.Join(hooksDir, preCommitHook)
 	info, data, err := readInstalledHook(hookPath)

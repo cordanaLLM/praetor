@@ -15,9 +15,12 @@ import importlib.util
 import io
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import unittest
 from pathlib import Path
 
@@ -260,6 +263,291 @@ class PortabilityDriver(unittest.TestCase):
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 0, output)
         self.assertNotIn("failed ", output)
+        # Negative: a suite whose children all exited reports no signal exit.
+        self.assertNotIn("signal exits", output)
+        self.assertNotIn("::warning", output)
+
+
+# A child that counts its attempts in the file argv[1] names, prints one line to each stream,
+# kills itself with SIGTERM on its first argv[2] attempts and then exits with code argv[3].
+STUB_CHILD = textwrap.dedent("""
+    import os, signal, sys
+    from pathlib import Path
+    count = Path(sys.argv[1])
+    attempt = len(count.read_text()) + 1 if count.exists() else 1
+    count.write_text("x" * attempt)
+    print(f"out {attempt}", flush=True)
+    print(f"err {attempt}", file=sys.stderr, flush=True)
+    if attempt <= int(sys.argv[2]):
+        os.kill(os.getpid(), signal.SIGTERM)
+    sys.exit(int(sys.argv[3]))
+""")
+# A child that counts its attempts in the file argv[1] names, echoes its standard input, kills
+# itself with SIGTERM on its first attempt and then exits 0 only when standard input was not
+# empty: the scope bridge, which reads its payload from standard input, behaves this way.
+STDIN_CHILD = textwrap.dedent("""
+    import os, signal, sys
+    from pathlib import Path
+    count = Path(sys.argv[1])
+    attempt = len(count.read_text()) + 1 if count.exists() else 1
+    count.write_text("x" * attempt)
+    data = sys.stdin.read()
+    print(f"read {data!r}", flush=True)
+    if attempt == 1:
+        os.kill(os.getpid(), signal.SIGTERM)
+    sys.exit(0 if data else 2)
+""")
+NO_SIGNAL_EXIT = ("Windows ends no process by a signal: os.kill there leaves the signal number "
+                  "as an ordinary exit code, which run_child returns without a retry")
+DRIVER_PATH = Path(driver.__file__)
+
+
+def stub_argv(directory, crashes, code):
+    """Return the argv of one stub child and the file that counts its attempts."""
+    counter = Path(directory) / f"attempts-{crashes}-{code}"
+    return [sys.executable, "-B", "-c", STUB_CHILD, str(counter), str(crashes), str(code)], counter
+
+
+def attempts(counter):
+    return len(counter.read_text()) if counter.exists() else 0
+
+
+def report_block(outcome):
+    """A child report as run_child prints it, for driver cases that need no real crash."""
+    return "\n".join([driver.CHILD_REPORT_START, f"  outcome: {outcome}",
+                      driver.CHILD_REPORT_END])
+
+
+class ChildRetry(unittest.TestCase):
+    """run_child starts a child again once after a signal and reports both attempts (#809)."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="praetor-child-retry-")
+        self.addCleanup(temp.cleanup)
+        self.temp = temp.name
+        self.python = os.path.realpath(sys.executable)
+
+    def run_stub(self, crashes, code, **options):
+        """Run one stub child; return (result or raised error, attempts, captured stderr)."""
+        argv, counter = stub_argv(self.temp, crashes, code)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            try:
+                outcome = driver.run_child(argv, capture_output=True, text=True, timeout=60,
+                                           **options)
+            except (AssertionError, subprocess.CalledProcessError) as error:
+                outcome = error
+        return outcome, attempts(counter), stderr.getvalue()
+
+    def assert_reports_both_attempts(self, text, second):
+        self.assertIn("attempt 1: killed by SIGTERM (return code -15)", text)
+        self.assertIn(f"attempt 2: {second}", text)
+        for line in ("out 1", "err 1", "out 2", "err 2"):
+            self.assertIn(line, text)
+        self.assertIn(f"child: Python launcher, {self.python}, Python 3.", text)
+        self.assertIn(f"test: {self.id()}", text)
+
+    @unittest.skipIf(os.name == "nt", NO_SIGNAL_EXIT)
+    def test_a_child_a_signal_ends_once_passes_on_the_retry_and_both_attempts_are_reported(self):
+        result, count, stderr = self.run_stub(crashes=1, code=0)
+        self.assertEqual(result.returncode, 0, stderr)
+        self.assertEqual(result.stdout, "out 2\n")
+        self.assertEqual(count, 2)
+        reports = driver.child_reports(stderr)
+        self.assertEqual(len(reports), 1, stderr)
+        self.assertIn("outcome: the retry exited 0", reports[0])
+        self.assert_reports_both_attempts(reports[0], "exited (return code 0)")
+
+    @unittest.skipIf(os.name == "nt", NO_SIGNAL_EXIT)
+    def test_a_child_a_signal_ends_twice_fails_its_test_with_both_attempts(self):
+        error, count, stderr = self.run_stub(crashes=99, code=0)
+        self.assertIsInstance(error, driver.ChildCrashed)
+        self.assertIsInstance(error, AssertionError)
+        self.assertEqual(count, 2, "a crash is retried once, never twice")
+        message = str(error)
+        self.assertIn("a signal ended both attempts (#809)", message)
+        self.assertIn("outcome: a signal ended the retry too", message)
+        self.assert_reports_both_attempts(message, "killed by SIGTERM (return code -15)")
+        # The report reaches the suite's stream once; the failure message carries no markers,
+        # so the driver does not repeat it a second time from the traceback.
+        self.assertEqual(len(driver.child_reports(stderr)), 1, stderr)
+        self.assertEqual(driver.child_reports(message), [])
+        # check=True changes nothing: the crash is the failure, not an exit code.
+        error, count, _ = self.run_stub(crashes=99, code=1, check=True)
+        self.assertIsInstance(error, driver.ChildCrashed)
+        self.assertEqual(count, 2)
+
+    @unittest.skipIf(os.name == "nt", NO_SIGNAL_EXIT)
+    def test_the_retry_sends_the_same_standard_input_again(self):
+        counter = Path(self.temp) / "attempts-stdin"
+        argv = [sys.executable, "-B", "-c", STDIN_CHILD, str(counter)]
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            result = driver.run_child(argv, input="payload\n", capture_output=True, text=True,
+                                      timeout=30)
+        self.assertEqual(attempts(counter), 2, stderr.getvalue())
+        self.assertEqual((result.returncode, result.stdout), (0, "read 'payload\\n'\n"),
+                         "the retry must read the same input as the first attempt")
+
+    def test_a_nonzero_exit_without_a_signal_is_returned_at_once(self):
+        result, count, stderr = self.run_stub(crashes=0, code=1)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "out 1\n")
+        self.assertEqual(count, 1, "an exit is the child's answer and is never retried")
+        self.assertEqual(stderr, "")
+        error, count, stderr = self.run_stub(crashes=0, code=3, check=True)
+        self.assertIsInstance(error, subprocess.CalledProcessError)
+        self.assertEqual((error.returncode, count, stderr), (3, 1, ""))
+        result, count, stderr = self.run_stub(crashes=0, code=0, check=True)
+        self.assertEqual((result.returncode, count, stderr), (0, 1, ""))
+
+    @unittest.skipIf(os.name == "nt", NO_SIGNAL_EXIT)
+    def test_a_retry_that_exits_nonzero_is_the_answer_and_is_still_reported(self):
+        result, count, stderr = self.run_stub(crashes=1, code=2)
+        self.assertEqual((result.returncode, count), (2, 2))
+        reports = driver.child_reports(stderr)
+        self.assertEqual(len(reports), 1, stderr)
+        self.assertIn("outcome: the retry exited 2", reports[0])
+        self.assert_reports_both_attempts(reports[0], "exited (return code 2)")
+        error, count, stderr = self.run_stub(crashes=1, code=4, check=True)
+        self.assertIsInstance(error, subprocess.CalledProcessError)
+        self.assertEqual((error.returncode, count, len(driver.child_reports(stderr))), (4, 2, 1))
+
+    def test_a_child_without_a_timeout_is_refused_before_it_starts(self):
+        argv, counter = stub_argv(self.temp, 0, 0)
+        for options in ({}, {"timeout": None}):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, "HISS-02"):
+                driver.run_child(argv, capture_output=True, **options)
+        self.assertEqual(attempts(counter), 0)
+
+    def test_signal_names_and_exits(self):
+        for code in (None, 0, 1, 255):
+            self.assertIsNone(driver.exit_signal(code))
+        if os.name == "nt":
+            self.assertIsNone(driver.exit_signal(-15))
+            return
+        self.assertEqual(driver.exit_signal(-15), "SIGTERM")
+        self.assertEqual(driver.exit_signal(-11), "SIGSEGV")
+        self.assertEqual(driver.exit_signal(-200), "signal 200")
+
+    def test_the_child_is_named_by_kind_resolved_path_and_version(self):
+        self.assertRegex(driver.child_identity(sys.executable),
+                         rf"^Python launcher, {re.escape(self.python)}, Python 3\.\d+")
+        missing = "praetor-no-such-program"
+        self.assertEqual(driver.child_identity(missing), f"{missing}, {missing} (not on PATH)")
+        shell = shutil.which("sh")
+        if shell is not None:
+            self.assertTrue(driver.child_identity("sh").startswith(
+                f"sh, {os.path.realpath(shell)}, "))
+
+    def test_a_child_started_outside_a_test_is_said_to_be(self):
+        found = []
+        # A thread's stack holds no test frame.
+        worker = threading.Thread(target=lambda: found.append(driver.calling_test()),
+                                  daemon=True)
+        worker.start()
+        worker.join(30)
+        self.assertEqual(found, ["not started by a test"])
+        self.assertEqual(driver.calling_test(), self.id())
+
+    def test_quoted_output_is_bounded_to_its_tail(self):
+        self.assertEqual(driver.quoted(None), " (not captured)")
+        self.assertEqual(driver.quoted(b""), " (empty)")
+        self.assertEqual(driver.quoted(b"a\nb\xff"), "\n      a\n      b�")
+        lines = "".join(f"line {n}\n" for n in range(driver.MAX_CHILD_LINES + 1))
+        quoted = driver.quoted(lines).splitlines()[1:]
+        self.assertEqual(len(quoted), driver.MAX_CHILD_LINES)
+        self.assertEqual(quoted[-1].strip(), f"line {driver.MAX_CHILD_LINES}")
+        self.assertNotIn("line 0", quoted)
+        long = driver.quoted("x" * (driver.MAX_CHILD_OUTPUT + 1))
+        self.assertEqual(len(long.strip()), driver.MAX_CHILD_OUTPUT)
+
+
+class ChildReportsInTheLog(unittest.TestCase):
+    """The driver repeats every child report under the suite that printed it, pass or fail."""
+
+    @unittest.skipIf(os.name == "nt", NO_SIGNAL_EXIT)
+    def test_a_suite_reports_a_pass_after_a_retry_and_a_crash_that_failed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            once, _ = stub_argv(temp, 1, 0)
+            always, _ = stub_argv(temp, 99, 0)
+            body = (f"def child(self, argv):\n"
+                    f"    import importlib.util\n"
+                    f"    spec = importlib.util.spec_from_file_location(\n"
+                    f"        'd', {str(DRIVER_PATH)!r})\n"
+                    f"    module = importlib.util.module_from_spec(spec)\n"
+                    f"    spec.loader.exec_module(module)\n"
+                    f"    return module.run_child(argv, capture_output=True, timeout=60)\n"
+                    f"def test_crash_then_pass(self):\n"
+                    f"    self.assertEqual(self.child({once!r}).returncode, 0)\n"
+                    f"def test_crash_twice(self):\n"
+                    f"    self.child({always!r})\n")
+            suite = write_suite(temp, "children.py", body)
+            code, output = run_driver(temp, [suite], ["--min-executed", "1"])
+        self.assertEqual(code, 1, output)
+        self.assertIn("failed FAIL test_crash_twice", output)
+        self.assertNotIn("failed FAIL test_crash_then_pass", output)
+        self.assertIn("signal exits of a child: 2, the first 2 reported below", output)
+        self.assertIn("outcome: the retry exited 0", output)
+        self.assertIn("outcome: a signal ended the retry too", output)
+        self.assertIn("test: __main__.T.test_crash_then_pass", output)
+        # One line per argv, whatever the arguments hold: the stub's -c script spans lines.
+        self.assertIn("  argv: [", output)
+        self.assertIn("\\nimport os, signal, sys\\n", output)
+        self.assertIn("::warning title=Self-test child ended by a signal::children.py: 2", output)
+
+    def test_a_passing_suite_still_publishes_its_child_reports(self):
+        with tempfile.TemporaryDirectory() as temp:
+            block = report_block("the retry exited 0")
+            body = (f"def test_a(self):\n"
+                    f"    import sys\n"
+                    f"    print({block!r}, file=sys.stderr)\n")
+            suite = write_suite(temp, "retried.py", body)
+            code, output = run_driver(temp, [suite], ["--min-executed", "1"])
+        self.assertEqual(code, 0, output)
+        self.assertIn("[PASS] retried.py", output)
+        self.assertIn(block, output)
+        self.assertIn("::warning title=Self-test child ended by a signal::retried.py: 1", output)
+
+    def test_child_reports_are_bounded(self):
+        """Boundary: at the limit every report is printed, one past it the surplus is not."""
+        for count in (driver.MAX_CHILD_REPORTS, driver.MAX_CHILD_REPORTS + 1):
+            with self.subTest(count=count), tempfile.TemporaryDirectory() as temp:
+                blocks = "\n".join(report_block(f"the retry exited {n}") for n in range(count))
+                body = (f"def test_a(self):\n"
+                        f"    import sys\n"
+                        f"    print({blocks!r}, file=sys.stderr)\n")
+                suite = write_suite(temp, "many.py", body)
+                code, output = run_driver(temp, [suite], ["--min-executed", "1"])
+                self.assertEqual(code, 0, output)
+                shown = driver.MAX_CHILD_REPORTS
+                self.assertIn(f"signal exits of a child: {count}, the first {shown} reported "
+                              "below", output)
+                self.assertEqual(output.count(driver.CHILD_REPORT_START), shown)
+                self.assertIn(f"exited {shown - 1}", output)
+                self.assertNotIn(f"exited {shown}\n", output)
+        # Negative: an unterminated report is not a report.
+        self.assertEqual(driver.child_reports(driver.CHILD_REPORT_START + "\n  outcome: x\n"), [])
+
+
+# The self-test suites that start every child through run_child, never directly (#809).
+CHILD_SUITES = (Path("scripts/test_checkpoint_hooks.py"),)
+DIRECT_START = re.compile(r"\bsubprocess\b|\bos\.(?:system|popen|spawn\w*|exec\w*)\(")
+
+
+class ChildSuites(unittest.TestCase):
+    def test_every_child_of_an_adopting_suite_starts_through_run_child(self):
+        for suite in CHILD_SUITES:
+            with self.subTest(suite=suite.as_posix()):
+                self.assertIn(suite, driver.SUITES)
+                text = (ROOT / suite).read_text(encoding="utf-8")
+                self.assertIsNone(DIRECT_START.search(text), "start the child through run_child")
+                self.assertIn("run_child = DRIVER.run_child", text)
+        # Negative: the pattern finds each way a suite could start a child past the helper.
+        for line in ("import subprocess", "subprocess.run(argv)", "os.system('x')",
+                     "os.execv(path, argv)", "os.spawnlp(0, 'sh')"):
+            self.assertIsNotNone(DIRECT_START.search(line), line)
+        self.assertIsNone(DIRECT_START.search("result = run_child(argv, timeout=20)"))
 
 
 # Rewrites the page's table from its rendering instead of comparing.

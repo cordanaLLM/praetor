@@ -1,0 +1,4 @@
+type: fixed
+title: "The caveman C1 article-density check no longer counts a model name such as A380, A-series or a11y as the article \"a\""
+issue: "#838"
+breaking: false

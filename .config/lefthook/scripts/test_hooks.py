@@ -3064,5 +3064,86 @@ class DeclaredPrograms(unittest.TestCase):
         self.assertEqual(calls, 4)
 
 
+class CommitRange(unittest.TestCase):
+    """hooks.py commits, CI's re-run of the commit checks over every pull request commit (#61).
+
+    The fixture installs no hook, as a commit made with its hooks skipped had none run.
+    """
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="praetor-commit-range-")
+        self.addCleanup(temp.cleanup)
+        self.repo = Path(temp.name) / "repo"
+        self.repo.mkdir()
+        command(self.repo, "git", "init", "-q", "-b", "main")
+        command(self.repo, "git", "config", "user.name", "Range Test")
+        command(self.repo, "git", "config", "user.email", "range@example.test")
+        self.base = self.commit("README.md", "# Fixture\n", "chore: initialize fixture")
+
+    def commit(self, name, data, message):
+        path = self.repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data.encode())
+        command(self.repo, "git", "add", "-f", "--", name)
+        command(self.repo, "git", "commit", "-q", "-s", "-m", message)
+        return command(self.repo, "git", "rev-parse", "HEAD").stdout.decode().strip()
+
+    def check(self, *args):
+        original = Path.cwd()
+        try:
+            os.chdir(self.repo)
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                hooks.main(["commits", *args])
+            return output.getvalue()
+        finally:
+            os.chdir(original)
+
+    def test_clean_commits_pass(self):
+        self.commit("docs/guide.md", "# Guide\n", "docs: add a guide")
+        self.commit("data.json", '{"ok": true}\n', "feat: add data")
+        self.assertIn("carry no private state, whitespace error or conflict marker",
+                      self.check(self.base))
+
+    def test_every_commit_is_checked_not_only_the_head(self):
+        # The head tree is clean: only the commit in the middle introduced each defect, so a check
+        # of the pull request's result alone would pass.
+        for name, data, want in (("notes.md", "trailing  \n", "trailing whitespace"),
+                                 ("merge.txt", "<<<<<<< HEAD\nours\n", "leftover conflict marker")):
+            with self.subTest(defect=want):
+                bad = self.commit(name, data, "docs: introduce a defect")
+                self.commit(name, "fixed\n", "docs: fix the defect")
+                with self.assertRaisesRegex(HookError, f"(?s)commit {bad}.*{want}"):
+                    self.check(self.base)
+                self.base = self.rev("HEAD")
+
+    def test_private_state_in_any_commit_fails(self):
+        self.commit(".workingdir/notes.md", "private\n", "docs: leak private state")
+        command(self.repo, "git", "rm", "-q", "-r", "--cached", ".workingdir")
+        command(self.repo, "git", "commit", "-q", "-s", "-m", "docs: untrack private state")
+        with self.assertRaisesRegex(HookError, "Private .workingdir content must stay untracked"):
+            self.check(self.base)
+
+    def test_range_boundaries(self):
+        # An empty range passes; a defect in the base is outside the range; the private-state
+        # bound refuses a longer range before anything is read; the stage takes one base.
+        self.commit("old.md", "trailing  \n", "docs: defect before the range")
+        self.base = self.rev("HEAD")
+        self.check(self.base)
+        self.commit("new.md", "clean\n", "docs: inside the range")
+        self.check(self.base)
+        self.commit("more.md", "clean\n", "docs: past the bound")
+        with mock.patch("privacy.MAX_PRIVATE_COMMITS", 1), \
+                self.assertRaisesRegex(HookError, "exceeds 1 commits"):
+            self.check(self.base)
+        for args in ((), (self.base, "HEAD")):
+            with self.subTest(args=args), self.assertRaises(ValueError):
+                self.check(*args)
+        with self.assertRaises(HookError):
+            self.check("f" * 40)
+
+    def rev(self, ref):
+        return command(self.repo, "git", "rev-parse", ref).stdout.decode().strip()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

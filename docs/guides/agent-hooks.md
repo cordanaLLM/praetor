@@ -489,6 +489,12 @@ text. A command is denied when it
 - runs `adopt`, `conform`, `bootstrap` or a `needs` scan, report, migration or epic
   against the workstation dev root instead of a leaf repository (DEV-01).
 
+The rules see only the commands that reach the pre-tool hook. A `core.hooksPath` set by any
+other route fails `praetorctl audit`
+([the hook runner the audit accepts](git-hooks.md#the-hook-runner-the-audit-accepts)), and CI
+re-runs the commit checks over every commit of a pull request
+([commit checks CI re-runs](git-hooks.md#commit-checks-ci-re-runs)).
+
 ### Read-only commands chained after a commit
 
 The short skip flag rule and the skip variable rule have one exemption (#46): they judge the

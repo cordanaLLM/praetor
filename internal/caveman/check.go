@@ -292,11 +292,15 @@ func maskQuoted(prose string) string {
 	return singleQuotedRe.ReplaceAllString(masked, "$1 ")
 }
 
-// count adds the prose words and articles of one masked prose line.
+// count adds the prose words and articles of one masked prose line. The article test reads
+// the whole field, not the letters-only word, so A380 is one prose word and no article.
 func (r *Report) count(prose string) {
-	for _, word := range proseWords(prose) {
+	for field := range strings.FieldsSeq(prose) {
+		if proseWord(field) == "" {
+			continue
+		}
 		r.ProseWords++
-		if word == "a" || word == "an" || word == "the" {
+		if articleToken(field) {
 			r.Articles++
 		}
 	}

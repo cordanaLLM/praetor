@@ -931,11 +931,18 @@ rules:
         state: partial
         runner: forge
         mechanism: >-
-          standardsctl forge check-commits --base=<ref> --head=HEAD (internal/forge.AnalyzeCommit,
-          regexes at internal/forge/pr.go:64-68), wired ONLY into the CI step 'Enforce HISS-14
-          Migration Footers (Commit Lint)' at .github/workflows/ci.yml:117-119 under if:
-          github.event_name == 'pull_request'. It is in neither make verify-all nor any lefthook hook.
-          It reads commit messages and never opens a source file. The append-only ha
+          internal/forge.AnalyzeCommit (regexes at internal/forge/pr.go:69-73), applied by two
+          commands: standardsctl forge check-commits --base=<ref> --head=HEAD in the CI step
+          'Enforce HISS-14 Migration Footers (Commit Lint)' at .github/workflows/ci.yml:208-210
+          under if: github.event_name == 'pull_request', over every commit of the pull request;
+          and standardsctl forge check-message on the message file in this repository's commit-msg
+          hook (.config/lefthook/praetor.yml commit-msg, check_message in
+          .config/lefthook/scripts/hooks.py), after git's comment and scissors cleanup. Both also
+          gate the subject: a Conventional Commits type (build, chore, ci, docs, feat, fix, perf,
+          refactor, revert, style, test) or a subject git wrote for a merge or a revert
+          (internal/forge/commit_message.go). Neither runs in make verify-all. It reads commit
+          messages and never opens a source file, so the append-only half of the rule is decided
+          only by the commit's own breaking marker.
         rationale: >-
           Measured in a throwaway git repo: committing positive/removed-exported-func.go as
           'feat(api)!: remove the published symbol' with no Migration: footer exits 1 with the HISS-14
@@ -946,7 +953,8 @@ rules:
         state: partial
         runner: forge
         mechanism: >-
-          standardsctl forge check-commits (commit messages only), PR-CI-only as for Go. No Rust
+          standardsctl forge check-commits and check-message (commit messages only),
+          in PR CI and the commit-msg hook as for Go. No Rust
           API-diff analyzer (cargo-semver-checks or equivalent) exists in the repository.
         rationale: >-
           positive/removed-pub-fn.rs committed as 'feat(api)!: ...' without a footer -> exit 1.
@@ -958,7 +966,8 @@ rules:
         state: partial
         runner: forge
         mechanism: >-
-          standardsctl forge check-commits (commit messages only), PR-CI-only. No Python
+          standardsctl forge check-commits and check-message (commit messages only),
+          in PR CI and the commit-msg hook as for Go. No Python
           public-surface diff analyzer exists in the repository.
         rationale: >-
           positive/removed-public-function.py as 'feat(api)!: ...' -> exit 1;
@@ -970,7 +979,8 @@ rules:
         state: partial
         runner: forge
         mechanism: >-
-          standardsctl forge check-commits (commit messages only), PR-CI-only. No ABI-diff tool
+          standardsctl forge check-commits and check-message (commit messages only),
+          in PR CI and the commit-msg hook as for Go. No ABI-diff tool
           (abi-compliance-checker, abidiff) is wired anywhere.
         rationale: >-
           positive/removed-exported-symbol.c as 'feat(api)!: ...' -> exit 1;
@@ -982,7 +992,8 @@ rules:
         state: partial
         runner: forge
         mechanism: >-
-          standardsctl forge check-commits (commit messages only), PR-CI-only. No .d.ts /
+          standardsctl forge check-commits and check-message (commit messages only),
+          in PR CI and the commit-msg hook as for Go. No .d.ts /
           api-extractor surface diff exists, and internal/hiss, which reads .ts files for other
           rules, has no HISS-14 rule.
         rationale: >-
@@ -995,7 +1006,8 @@ rules:
         state: partial
         runner: forge
         mechanism: >-
-          standardsctl forge check-commits (commit messages only), PR-CI-only. No component-contract
+          standardsctl forge check-commits and check-message (commit messages only),
+          in PR CI and the commit-msg hook as for Go. No component-contract
           analyzer exists, and internal/hiss, which reads .svelte script blocks for other rules, has
           no HISS-14 rule.
         rationale: >-

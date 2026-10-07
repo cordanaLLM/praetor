@@ -735,7 +735,7 @@ comment names for exactly this case.
 
 | Rule | Fires when |
 | :--- | :--- |
-| `C1 article-density` | more than 2.0 `a`/`an`/`the` per 100 prose words, judged once the text holds 40 prose words |
+| `C1 article-density` | more than 2.0 `a`/`an`/`the` per 100 prose words, judged once the text holds 40 prose words. An article is a whole word bounded by whitespace, the text edge or punctuation other than a dash, so `A380`, `A-series`, `a11y` and `<a>` count as prose words but not as articles (`articleToken`, `internal/caveman/scan.go`; `TestCheckArticleTokens`) |
 | `C2 filler` | "based on", "I think", "note that", "it is important", "it looks like", "in order to", "as requested", "let me", "please" |
 | `C3 hedge` | "probably", "seems", "might", "basically", "simply", "just", "really", "actually" |
 | `C4 terminal-noise` | an ANSI escape, unsafe control character other than tab or Unicode default-ignorable anywhere; box drawing (U+2500-257F) or emoji outside code |

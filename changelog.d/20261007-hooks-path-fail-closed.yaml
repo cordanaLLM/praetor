@@ -1,0 +1,4 @@
+type: fixed
+title: "The hook audit passed while core.hooksPath sent Git's hooks elsewhere, and CI never re-checked commits made with hooks skipped"
+issue: "#61"
+breaking: true

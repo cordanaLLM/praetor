@@ -189,17 +189,15 @@ func TestAuditGitHookRunners_Boundary_BothConfigurations(t *testing.T) {
 	}
 }
 
-// TestAuditInstalledGitHook_Boundary_CoreHooksPath: the hook is read from the directory
-// core.hooksPath names, and a hook left in .git/hooks does not count.
+// TestAuditInstalledGitHook_Boundary_CoreHooksPath: a hook in the directory a core.hooksPath
+// inside the working tree names no longer passes (#61), even with lefthook's hook installed
+// there and in .git/hooks; hooks_path_audit_test.go covers the rule.
 func TestAuditInstalledGitHook_Boundary_CoreHooksPath(t *testing.T) {
 	root, defaultHooks := hookRunnerRepo(t, true, "")
 	mustWrite(t, filepath.Join(root, ".git", "config"), "[core]\n\thooksPath = .githooks\n")
 	installTestHook(t, defaultHooks, lefthookHookExcerpt, 0o700)
-	if _, err := AuditInstalledGitHook(t.Context(), root); err == nil || !strings.Contains(err.Error(), filepath.Join(".githooks", preCommitHook)+" is missing") {
-		t.Fatalf("hook outside core.hooksPath: %v", err)
-	}
 	installTestHook(t, filepath.Join(root, ".githooks"), lefthookHookExcerpt, 0o700)
-	if line, err := AuditInstalledGitHook(t.Context(), root); err != nil || !strings.Contains(line, filepath.Join(".githooks", preCommitHook)+" via lefthook") {
-		t.Fatalf("hook in core.hooksPath: %q, %v", line, err)
+	if line, err := AuditInstalledGitHook(t.Context(), root); err == nil || !strings.Contains(err.Error(), `core.hooksPath is set to ".githooks" (local scope`) {
+		t.Fatalf("hook in a core.hooksPath inside the working tree: %q, %v", line, err)
 	}
 }

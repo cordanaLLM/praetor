@@ -15,12 +15,20 @@ So the pass condition is not the suites' exit codes alone. It is: every suite ex
 AND at least --min-executed tests actually ran across them. Every skip is printed with its
 reason and counted, so a platform losing coverage shows up in the log as a number that
 moved rather than as an unchanged green check.
+
+This module also holds run_child, the one helper the self-tests start their children with:
+a child that a signal ends is started once more, and both attempts are reported.
 """
 
 import argparse
+import inspect
+import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
+import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +82,33 @@ TABLE_END = "<!-- praetor:hook-toolchain:end -->"
 REQUIRED = re.compile(r"^ +REQUIRED: ([a-z0-9_.,-]+)$", re.M)
 # What each resolved program must state before the policy runs it.
 PROOFS = {"python": "Python {floor} or newer", "make": "GNU Make"}
+
+# A child a self-test starts is started once more when a signal ends it (#809). A macOS leg
+# lost the Python launcher of one scope-bridge call to SIGSEGV, with no output, and the same
+# suite passed on every rerun. Every signal exit prints a report between the two marker lines
+# below: the test, the child's kind, resolved path and stated version, and each attempt with
+# its signal or exit code and its output. The driver repeats every report under the suite that
+# printed it, so a pass after a retry is never silent. A crash is never a pass: a child that a
+# signal ends twice fails its test with ChildCrashed. A nonzero exit without a signal is the
+# child's answer and is returned at once. Windows ends no process by a signal: os.kill and a
+# crash there each leave an exit code, which is returned like any other.
+CHILD_REPORT_START = "praetor-selftest: child ended by a signal"
+CHILD_REPORT_END = "praetor-selftest: end of child report"
+# The start marker is not anchored to a line start: unittest prints a test's name or its dot
+# without a newline before the test runs, so the first line of a report can follow it.
+CHILD_REPORT = re.compile(
+    rf"{re.escape(CHILD_REPORT_START)}$.*?^{re.escape(CHILD_REPORT_END)}$", re.M | re.S)
+# Reports repeated per suite, and the tail quoted from each stream of an attempt. A crash
+# prints little; the bounds keep a noisy one from burying the log.
+MAX_CHILD_REPORTS = 8
+MAX_CHILD_OUTPUT = 1500
+MAX_CHILD_LINES = 20
+# Children that state their version with another argument than --version.
+VERSION_ARGS = {"go": ("version",)}
+VERSION_LINE = re.compile(r"^[ \t]*(\S[^\r\n]*)", re.M)
+MAX_VERSION_REASON = 240
+# Frames searched upwards for the test that started a child (HISS-02).
+MAX_CALLER_FRAMES = 32
 
 
 def hook_toolchain():
@@ -151,8 +186,126 @@ def failure_blocks(output):
     return blocks
 
 
+class ChildCrashed(AssertionError):
+    """A self-test child that a signal ended on its attempt and on the retry."""
+
+
+def exit_signal(returncode):
+    """Return the name of the signal a return code reports, or None when the child exited."""
+    if os.name == "nt" or returncode is None or returncode >= 0:
+        return None
+    try:
+        return signal.Signals(-returncode).name
+    except ValueError:
+        return f"signal {-returncode}"
+
+
+def child_version(path, name):
+    """Return the first line the program at path states as its version, or why it states none.
+
+    The probe is the hook policy's own (toolchain.stated_version): one bounded process.
+    """
+    toolchain = hook_toolchain()
+    try:
+        return toolchain.stated_version([path, *VERSION_ARGS.get(name, ("--version",))],
+                                        VERSION_LINE) or "states no version"
+    except toolchain.HookError as error:
+        return "version unknown: " + " ".join(str(error).split())[:MAX_VERSION_REASON]
+
+
+def child_identity(program):
+    """Return which program a child runs: its kind, its resolved path and its stated version."""
+    name = Path(str(program)).stem.lower()
+    kind = "Python launcher" if name.startswith("python") or name == "py" else name
+    found = shutil.which(str(program))
+    if found is None:
+        return f"{kind}, {program} (not on PATH)"
+    path = os.path.realpath(found)
+    return f"{kind}, {path}, {child_version(path, name)}"
+
+
+def calling_test():
+    """Return the id of the test whose frame started the child, or a note that none did."""
+    frame = inspect.currentframe()
+    for _ in range(MAX_CALLER_FRAMES):
+        if frame is None:
+            break
+        owner = frame.f_locals.get("self", frame.f_locals.get("cls"))
+        if isinstance(owner, unittest.TestCase):
+            return owner.id()
+        if isinstance(owner, type) and issubclass(owner, unittest.TestCase):
+            return f"{owner.__module__}.{owner.__qualname__} (class setup)"
+        frame = frame.f_back
+    return "not started by a test"
+
+
+def quoted(stream):
+    """Return the tail of one captured stream as indented report lines."""
+    if stream is None:
+        return " (not captured)"
+    text = stream.decode(errors="replace") if isinstance(stream, bytes) else stream
+    if not text:
+        return " (empty)"
+    tail = text[-MAX_CHILD_OUTPUT:].splitlines()[-MAX_CHILD_LINES:]
+    return "".join("\n      " + line for line in tail)
+
+
+def child_report(argv, attempts, outcome):
+    """Print one child report to stderr between the markers and return its body lines."""
+    body = [f"  outcome: {outcome}", f"  test: {calling_test()}",
+            f"  child: {child_identity(argv[0])}",
+            "  argv: " + repr([str(part) for part in argv])[:MAX_CHILD_OUTPUT]]
+    for number, attempt in enumerate(attempts, 1):
+        name = exit_signal(attempt.returncode)
+        ended = f"killed by {name}" if name else "exited"
+        body.append(f"  attempt {number}: {ended} (return code {attempt.returncode})")
+        body.append("    stdout:" + quoted(attempt.stdout))
+        body.append("    stderr:" + quoted(attempt.stderr))
+    print("", CHILD_REPORT_START, *body, CHILD_REPORT_END, sep="\n", file=sys.stderr, flush=True)
+    return body
+
+
+def run_child(argv, **options):
+    """Run one child of a self-test as subprocess.run does; start it once more after a signal.
+
+    Options are subprocess.run's, and ``timeout`` is required: a hung child must fail its
+    test, not hold the suite (HISS-02). Standard input comes from ``input``, which the retry
+    sends again; ``check`` applies to the attempt that counts. A child that exits, with any
+    code, is returned at once. One that a signal ends is started again and a report of both
+    attempts is printed; the retry's result is returned when it exits. When a signal ends the
+    retry too, ChildCrashed fails the calling test with the same report: a crash is never a
+    pass.
+    """
+    if options.get("timeout") is None:
+        raise ValueError("run_child needs a timeout: a hung child must fail its test (HISS-02)")
+    check = options.pop("check", False)
+    first = subprocess.run(argv, check=False, **options)
+    final = first
+    if exit_signal(first.returncode) is not None:
+        try:
+            final = subprocess.run(argv, check=False, **options)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            child_report(argv, [first], f"the retry did not finish: {error}")
+            raise
+        crashed = exit_signal(final.returncode) is not None
+        outcome = "a signal ended the retry too" if crashed else \
+            f"the retry exited {final.returncode}"
+        body = child_report(argv, [first, final], outcome)
+        if crashed:
+            raise ChildCrashed("\n".join([f"{argv[0]}: a signal ended both attempts (#809)",
+                                          *body]))
+    if check and final.returncode:
+        raise subprocess.CalledProcessError(final.returncode, argv, final.stdout, final.stderr)
+    return final
+
+
+def child_reports(output):
+    """Return the child reports a suite printed, in order."""
+    return [match.group(0) for match in CHILD_REPORT.finditer(output)]
+
+
 def run_suite(path):
-    """Execute one suite and return (ok, ran, skipped, reasons, failed, tail)."""
+    """Execute one suite and return (ok, ran, skipped, reasons, failed, tail, children)."""
     try:
         result = subprocess.run(
             [sys.executable, "-B", str(path)],
@@ -160,7 +313,7 @@ def run_suite(path):
             timeout=SUITE_TIMEOUT_SECONDS, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
-        return False, 0, 0, [], [], f"{type(error).__name__}: {error}"
+        return False, 0, 0, [], [], f"{type(error).__name__}: {error}", []
     output = result.stdout + result.stderr
     summaries = list(RAN.finditer(output))
     ran_match = summaries[-1] if summaries else None
@@ -175,15 +328,25 @@ def run_suite(path):
     tail = "\n\n".join(failure_blocks(output)) or "\n".join(output.splitlines()[-25:])
     # No summary line means the suite died before unittest reported: treat as failure even
     # if the exit code says otherwise, because zero tests is not a pass.
-    return (result.returncode == 0 and ran_match is not None), ran, skipped, reasons, failed, tail
+    ok = result.returncode == 0 and ran_match is not None
+    return ok, ran, skipped, reasons, failed, tail, child_reports(output)
 
 
-def report(name, ok, ran, skipped, reasons):
-    """Print one suite's line plus every skip reason it gave."""
+def report(name, ok, ran, skipped, reasons, children=()):
+    """Print one suite's line, every skip reason it gave and every child report it printed."""
     status = "PASS" if ok else "FAIL"
     print(f"[{status}] {name}: {ran - skipped} executed, {skipped} skipped, {ran} collected")
     for test, reason in reasons:
         print(f"         skipped {test}: {reason}")
+    if not children:
+        return
+    shown = min(len(children), MAX_CHILD_REPORTS)
+    print(f"         signal exits of a child: {len(children)}, the first {shown} reported below")
+    for block in children[:MAX_CHILD_REPORTS]:
+        print(block)
+    print(f"::warning title=Self-test child ended by a signal::{name}: {len(children)} child "
+          "process(es) ended by a signal; each report in this step's log names the child and "
+          "both attempts (#809)")
 
 
 def main(argv=None):
@@ -201,8 +364,8 @@ def main(argv=None):
             print(f"[FAIL] {suite.as_posix()}: missing")
             failures.append(suite.as_posix())
             continue
-        ok, ran, skipped, reasons, failed, tail = run_suite(suite)
-        report(suite.as_posix(), ok, ran, skipped, reasons)
+        ok, ran, skipped, reasons, failed, tail, children = run_suite(suite)
+        report(suite.as_posix(), ok, ran, skipped, reasons, children)
         total_executed += ran - skipped
         if not ok:
             failures.append(suite.as_posix())

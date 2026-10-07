@@ -1,0 +1,4 @@
+type: fixed
+title: "Snapshot writes wait for a busy directory lock instead of failing at once"
+issue: "#820"
+breaking: false
