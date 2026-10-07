@@ -44,7 +44,9 @@ blank line.
 `praetorctl compile-context --verify-stable` checks two things:
 
 1. Two renders of `AGENTS.md` under different injected clocks and shuffled target visit orders
-   (`agentcontext.RenderEnv`) produce identical bytes in every vendor file.
+   (`agentcontext.RenderEnv`) produce identical bytes in every vendor file. Today the renderer
+   reads neither the clock nor the order, so this half guards later changes: a render that starts
+   to read `RenderEnv.Now` or the visit order is refused (`TestVerifyRenderTwice_Negative_ClockReadingRenderRefused`).
 2. The head band holds no volatile text: an ISO timestamp, a `sha256:` digest or a 40 to 64 digit
    hex string, an absolute path (`/home/...`, `C:\...`) or a run counter (`run #7`, `count=3`).
 
@@ -58,3 +60,9 @@ identity, and a head edit leaving the bytes before it and after it untouched).
 
 This page covers the compiled context files. The MCP tool list and tool output are not changed by
 cache bands.
+
+## Adopted repositories
+
+`praetorctl adopt` writes the harness with the three markers (`internal/adopt/harness.go`), so a fresh
+adoption compiles layered and a `--force` refresh of the harness region keeps them
+(`TestHarnessCarriesTheCacheBandMarkers`). Only an `AGENTS.md` written by hand needs the markers added.

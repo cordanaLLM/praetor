@@ -76,10 +76,10 @@ func TestVerifyStableContext_Negative_MissingSourceFails(t *testing.T) {
 }
 
 func TestVerifyRenderTwice_Positive_BothRendersMatch(t *testing.T) {
-	if err := verifyRenderTwice(NewTranspiler(), layeredSource); err != nil {
+	if err := verifyRenderTwice(NewTranspiler(), layeredSource, (*Transpiler).CompileContent); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyRenderTwice(NewTranspiler(), ""); err == nil {
+	if err := verifyRenderTwice(NewTranspiler(), "", (*Transpiler).CompileContent); err == nil {
 		t.Fatal("empty source rendered")
 	}
 }
@@ -113,5 +113,34 @@ func TestVerifyStableContext_Positive_RepositoryAgentsMdIsStable(t *testing.T) {
 	path := filepath.Join("..", "..", "AGENTS.md")
 	if err := VerifyStableContext(context.Background(), &out, NewTranspiler(), path); err != nil || out.Len() != 0 {
 		t.Fatalf("repository AGENTS.md: err=%v out=%q", err, out.String())
+	}
+}
+
+// clockReadingCompile stands in for a renderer that reads the injected clock and the visit
+// order, the drift the check exists to catch.
+func clockReadingCompile(tr *Transpiler, content string) (*CompileResult, error) {
+	res, err := tr.CompileContent(content)
+	if err != nil {
+		return nil, err
+	}
+	if tr.Env != nil && len(res.Files) > 0 {
+		res.Files[0].Content += tr.Env.Now().Format("2006") + "\n"
+	}
+	return res, nil
+}
+
+// Negative: a render that reads the injected clock is refused end to end, naming the file.
+func TestVerifyRenderTwice_Negative_ClockReadingRenderRefused(t *testing.T) {
+	err := verifyRenderTwice(NewTranspiler(), layeredSource, clockReadingCompile)
+	if err == nil || !strings.Contains(err.Error(), "differ in") {
+		t.Fatalf("clock-reading render accepted: %v", err)
+	}
+}
+
+// Negative: a render that fails under one environment fails the check with the render named.
+func TestVerifyRenderTwice_Negative_RenderErrorPropagates(t *testing.T) {
+	failing := func(*Transpiler, string) (*CompileResult, error) { return nil, context.DeadlineExceeded }
+	if err := verifyRenderTwice(NewTranspiler(), layeredSource, failing); err == nil || !strings.Contains(err.Error(), "render 1") {
+		t.Fatalf("render error lost: %v", err)
 	}
 }

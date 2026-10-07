@@ -42,7 +42,7 @@ func VerifyStableContext(ctx context.Context, w io.Writer, tr *Transpiler, sourc
 		return fmt.Errorf("stability check: %w", err)
 	}
 	content := string(data)
-	renderErr := verifyRenderTwice(selected, content)
+	renderErr := verifyRenderTwice(selected, content, (*Transpiler).CompileContent)
 	head, layered := agentcontext.HeadBand(content)
 	if !layered {
 		_, werr := fmt.Fprintln(w, UnlayeredWarning)
@@ -52,14 +52,15 @@ func VerifyStableContext(ctx context.Context, w io.Writer, tr *Transpiler, sourc
 }
 
 // verifyRenderTwice compiles content under the two stability environments and names each
-// vendor file whose bytes differ.
-func verifyRenderTwice(tr *Transpiler, content string) error {
+// vendor file whose bytes differ. compile is the render under test: production passes
+// CompileContent, a test passes one that reads the env so the refusal is seen end to end.
+func verifyRenderTwice(tr *Transpiler, content string, compile func(*Transpiler, string) (*CompileResult, error)) error {
 	var results [2]*CompileResult
 	for i := range results {
 		run := *tr
 		clock := stableClocks[i]
 		run.Env = &agentcontext.RenderEnv{Now: func() time.Time { return clock }, Seed: stableSeeds[i]}
-		res, err := run.CompileContent(content)
+		res, err := compile(&run, content)
 		if err != nil {
 			return fmt.Errorf("stability check: render %d: %w", i+1, err)
 		}

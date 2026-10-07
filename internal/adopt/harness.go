@@ -46,6 +46,8 @@ const harnessLintScopeEnd = "<!-- markdownlint-enable MD013 -->\n<!-- markdownli
 const agentHarnessTemplate = `<!-- markdownlint-disable MD013 -->
 # {{ if .Owner }}{{ .Owner }}/{{ end }}{{ .RepoName }} Agent Operating Harness
 
+` + agentcontext.BandHeadMarker + `
+
 Before concluding any turn:
 
 ` + "```bash\n{{ if .VerifyCmd }}{{ .VerifyCmd }}{{ else }}praetorctl compile-context --verify\npraetorctl caveman check --configured-sources\npraetorctl audit{{ end }}\n```\n\n"
@@ -148,7 +150,7 @@ func buildAgentHarness(facts harnessFacts) (string, error) {
 	}
 	header += verificationSummary(facts) + harnessReceiptLine
 	directives := buildAgentHarnessDirectives(facts)
-	return header + directives + register + footer + "\n" + harnessLintScopeEnd + harnessEndMarker + "\n", nil
+	return header + directives + agentcontext.BandConfigMarker + "\n\n" + register + agentcontext.BandTailMarker + "\n\n" + footer + "\n" + harnessLintScopeEnd + harnessEndMarker + "\n", nil
 }
 
 // harnessIdentity returns the owner and name the harness title carries: the origin remote's
