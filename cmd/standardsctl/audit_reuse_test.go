@@ -118,3 +118,47 @@ func TestVendoredLicenseWarningsBoundary(t *testing.T) {
 		t.Fatalf("a family that vendors nothing read REUSE.toml: %v", warnings)
 	}
 }
+
+// auditReuseOrder runs the REUSE.toml annotation order gate over a repository whose REUSE.toml
+// is text, or that has none for a nil text, and returns what it printed and its verdict.
+func auditReuseOrder(t *testing.T, text *string) (string, error) {
+	t.Helper()
+	root := t.TempDir()
+	if text != nil {
+		writeFixtureFile(t, root, supplychain.ReuseFile, *text)
+	}
+	return captureStdout(t, func() error { return auditReuseRecords(t.Context(), root) })
+}
+
+// The annotation order gate holds an override to the record REUSE resolves for its files.
+// Positive: the default table first and the override after it passes, as praetor's own
+// REUSE.toml does. Negative: the default table after the override fails, naming each override
+// path and the default. Boundary: no REUSE.toml skips, saying why, and one the read cannot follow
+// fails instead of passing unchecked.
+func TestAuditReuseRecords_3D(t *testing.T) {
+	correct := "version = 1\n\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n" + reuseOverrideTable
+	if output, err := auditReuseOrder(t, &correct); err != nil || !strings.Contains(output, "[PASS] REUSE.toml annotation order") {
+		t.Fatalf("default then override: %v\n%s", err, output)
+	}
+	own, err := os.ReadFile(filepath.Join("..", "..", supplychain.ReuseFile))
+	if err != nil {
+		t.Fatalf("read praetor's own %s: %v", supplychain.ReuseFile, err)
+	}
+	ownText := string(own)
+	if output, err := auditReuseOrder(t, &ownText); err != nil {
+		t.Fatalf("praetor's own %s: %v\n%s", supplychain.ReuseFile, err, output)
+	}
+	reversed := "version = 1\n" + reuseOverrideTable + "\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n"
+	output, err := auditReuseOrder(t, &reversed)
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml annotation order: 1 path(s)") ||
+		!strings.Contains(output, `annotation 1 path "tools/figures/third_party/interfig/upstream/**" never takes effect: annotation 2 path "**"`) {
+		t.Fatalf("default after override: %v\n%s", err, output)
+	}
+	if output, err := auditReuseOrder(t, nil); err != nil || !strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") {
+		t.Fatalf("no REUSE.toml: %v\n%s", err, output)
+	}
+	unreadable := "version = 1\n[[annotations]]\npath = \"\"\"\n**\n\"\"\"\n"
+	if _, err := auditReuseOrder(t, &unreadable); err == nil || !strings.Contains(err.Error(), "not checked") {
+		t.Fatalf("a REUSE.toml the read cannot follow passed: %v", err)
+	}
+}

@@ -87,26 +87,116 @@ func reuseGlobNext(rest string) (reuseGlobToken, int) {
 // position in tokens, whether the tokens before it can match all of text. The run takes
 // len(text) passes over the tokens (HISS-02).
 func reuseGlobStates(tokens []reuseGlobToken, text string) []bool {
+	states := reuseGlobStart(tokens)
+	for index := 0; index < len(text); index++ {
+		states = reuseGlobStep(tokens, states, text[index])
+	}
+	return states
+}
+
+// reuseGlobStart returns the states of tokens before any byte is read.
+func reuseGlobStart(tokens []reuseGlobToken) []bool {
 	states := make([]bool, len(tokens)+1)
 	states[0] = true
 	reuseGlobClose(tokens, states)
-	for index := 0; index < len(text); index++ {
-		next := make([]bool, len(tokens)+1)
-		for position, token := range tokens {
-			if !states[position] {
-				continue
-			}
-			switch {
-			case token.kind == reuseGlobstar, token.kind == reuseGlobStar && text[index] != '/':
-				next[position] = true
-			case token.kind == reuseGlobLiteral && token.char == text[index]:
-				next[position+1] = true
+	return states
+}
+
+// reuseGlobStep returns the states tokens reach from states by reading one byte.
+func reuseGlobStep(tokens []reuseGlobToken, states []bool, char byte) []bool {
+	next := make([]bool, len(tokens)+1)
+	for position, token := range tokens {
+		if !states[position] {
+			continue
+		}
+		switch {
+		case token.kind == reuseGlobstar, token.kind == reuseGlobStar && char != '/':
+			next[position] = true
+		case token.kind == reuseGlobLiteral && token.char == char:
+			next[position+1] = true
+		}
+	}
+	reuseGlobClose(tokens, next)
+	return next
+}
+
+// maxReuseGlobPairs bounds the state pairs one reuseGlobIncludes explores (HISS-02). Two globs of
+// a REUSE.toml reach a few dozen; one past the bound is answered "not included", which only ever
+// withholds a finding.
+const maxReuseGlobPairs = 1 << 14
+
+// reuseGlobPair is one state of the product of two globs' automata: the states each reaches after
+// one path prefix.
+type reuseGlobPair struct {
+	inner, outer []bool
+}
+
+// reuseGlobIncludes reports whether outer matches every path inner matches, so a later table with
+// outer relabels every file of inner. It explores the product of both automata, inner's and outer's
+// state sets after each path prefix, and looks for a prefix inner accepts and outer does not. The
+// paths read only bytes the globs name as literals, "/" and one other byte that stands for every
+// byte neither names, which every star treats alike. A product past maxReuseGlobPairs is "not
+// included".
+func reuseGlobIncludes(outer, inner string) bool {
+	innerTokens, outerTokens := reuseGlobTokens(inner), reuseGlobTokens(outer)
+	alphabet := reuseGlobAlphabet(innerTokens, outerTokens)
+	start := reuseGlobPair{inner: reuseGlobStart(innerTokens), outer: reuseGlobStart(outerTokens)}
+	queue := []reuseGlobPair{start}
+	seen := map[string]bool{reuseGlobPairKey(start): true}
+	for len(queue) > 0 && len(seen) <= maxReuseGlobPairs {
+		pair := queue[0]
+		queue = queue[1:]
+		if pair.inner[len(innerTokens)] && !pair.outer[len(outerTokens)] {
+			return false
+		}
+		for _, char := range alphabet {
+			next := reuseGlobPair{inner: reuseGlobStep(innerTokens, pair.inner, char), outer: reuseGlobStep(outerTokens, pair.outer, char)}
+			if key := reuseGlobPairKey(next); slices.Contains(next.inner, true) && !seen[key] {
+				seen[key] = true
+				queue = append(queue, next)
 			}
 		}
-		reuseGlobClose(tokens, next)
-		states = next
 	}
-	return states
+	return len(queue) == 0
+}
+
+// reuseGlobAlphabet returns the bytes that tell paths apart for globs: every literal byte of
+// either, "/" and one byte neither names.
+func reuseGlobAlphabet(globs ...[]reuseGlobToken) []byte {
+	named := map[byte]bool{'/': true}
+	for _, tokens := range globs {
+		for _, token := range tokens {
+			if token.kind == reuseGlobLiteral {
+				named[token.char] = true
+			}
+		}
+	}
+	alphabet := make([]byte, 0, len(named)+1)
+	other := byte(0)
+	for char := 0; char < 256; char++ {
+		if named[byte(char)] {
+			alphabet = append(alphabet, byte(char))
+		} else if other == 0 && char != 0 {
+			other = byte(char)
+		}
+	}
+	return append(alphabet, other)
+}
+
+// reuseGlobPairKey identifies a product state, one byte per automaton state.
+func reuseGlobPairKey(pair reuseGlobPair) string {
+	key := make([]byte, 0, len(pair.inner)+len(pair.outer)+1)
+	for _, states := range [][]bool{pair.inner, pair.outer} {
+		for _, state := range states {
+			mark := byte('0')
+			if state {
+				mark = '1'
+			}
+			key = append(key, mark)
+		}
+		key = append(key, '|')
+	}
+	return string(key)
 }
 
 // reuseGlobClose marks every position that a marked one reaches by matching stars to nothing.

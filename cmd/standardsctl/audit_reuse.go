@@ -21,6 +21,39 @@ import (
 // license. Audit warns rather than fails: REUSE is the repository's own choice, and the files
 // keep their upstream LICENSE either way.
 
+// auditReuseRecords fails when an annotation of the repository's REUSE.toml never takes effect
+// because a later annotation matches every file it names (supplychain.ReuseShadowedPaths): the
+// override reuse lint then accepts is not the record REUSE resolves for its files. A repository
+// without REUSE.toml skips the check, saying so; one whose REUSE.toml cannot be read or followed
+// fails it, since a check that did not run is no pass.
+func auditReuseRecords(ctx context.Context, rootDir string) error {
+	data, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(rootDir, supplychain.ReuseFile))
+	if err != nil {
+		return fmt.Errorf("[FAIL] %s annotation order not checked: %w", supplychain.ReuseFile, err)
+	}
+	if !exists {
+		fmt.Printf("[SKIP] %s annotation order not checked: the repository has no %s.\n", supplychain.ReuseFile, supplychain.ReuseFile)
+		return nil
+	}
+	tables, err := supplychain.ReuseAnnotationTables(string(data))
+	if err != nil {
+		return fmt.Errorf("[FAIL] %s annotation order not checked: %w", supplychain.ReuseFile, err)
+	}
+	shadows, err := supplychain.ReuseShadowedPaths(tables)
+	if err != nil {
+		return fmt.Errorf("[FAIL] %s annotation order not checked: %w", supplychain.ReuseFile, err)
+	}
+	if len(shadows) > 0 {
+		for _, shadow := range shadows {
+			fmt.Printf("  - %s\n", shadow)
+		}
+		return fmt.Errorf("[FAIL] %s annotation order: %d path(s) resolve to a later annotation, not their own", supplychain.ReuseFile, len(shadows))
+	}
+	fmt.Printf("[PASS] %s annotation order: no path of its %d annotations is matched whole by a later annotation.\n",
+		supplychain.ReuseFile, len(tables))
+	return nil
+}
+
 // auditVendoredLicenses prints one warning for each of families whose vendored tree the
 // repository's REUSE.toml does not label with the tree's license.
 func auditVendoredLicenses(ctx context.Context, rootDir string, families []managedasset.Family) {
