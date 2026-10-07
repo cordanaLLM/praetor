@@ -50,7 +50,9 @@ func runIssue(args []string) error {
 func printIssueUsage() {
 	fmt.Println("Usage: praetorctl issue <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  reconcile [--repos=<owner>/<name>,...] [--owner=<owner>] [--dry-run] Reconcile cross-repo issue dependencies and tasklists")
+	fmt.Println("  reconcile [--repos=<owner>/<name>,...] [--owner=<owner>] [--dry-run|--apply] [--max-planning-writes=N]")
+	fmt.Println("            Reconcile cross-repo issue dependencies and planning state (parent task lists, epics, milestones);")
+	fmt.Println("            a dry run listing every intended write is the default")
 }
 
 // reconcileRequest is what the flags of one `issue reconcile` asked for. reposSet tells an
@@ -67,54 +69,121 @@ type reconcileScope struct {
 	repos []string
 }
 
+// reconcileRun is what one `issue reconcile` was asked to do once its flags are resolved.
+type reconcileRun struct {
+	scope     reconcileScope
+	token     string
+	endpoint  string
+	apply     bool
+	writeCap  int
+	labels    issueLabelIndex
+	engine    *forge.ReconcileEngine
+	unblocked *forge.ReconciliationReport
+	planning  *forge.PlanningReport
+}
+
 func runIssueReconcile(ctx context.Context, args []string) error {
+	run, err := parseReconcileRun(ctx, args)
+	if err != nil {
+		return err
+	}
+	if err := run.load(ctx); err != nil {
+		return err
+	}
+	if err := run.plan(ctx); err != nil {
+		return err
+	}
+
+	// Every write is made before the summary is printed: printing "[PASS] applied" ahead of
+	// the PATCH calls reported success for updates that had not happened yet.
+	applied, failed, planningFailed := 0, 0, 0
+	if run.apply {
+		applied, failed = applyUnblockTransitions(ctx, run.token, run.endpoint, run.unblocked.UnblockedIssues, run.labels)
+		planningFailed = run.engine.ApplyPlanning(ctx, run.planning, planningForgeFor(run.token, run.endpoint))
+	}
+
+	printReconciliationSummary(run.scope, run.unblocked, !run.apply, applied, failed)
+	printPlanningSummary(run.planning, run.apply)
+	if failed > 0 || planningFailed > 0 {
+		return fmt.Errorf("%d of %d status transitions and %d planning writes failed", failed, applied+failed, planningFailed)
+	}
+	return nil
+}
+
+// parseReconcileRun parses the flags of one `issue reconcile` and resolves its scope and
+// token. Nothing is read from the forge yet.
+func parseReconcileRun(ctx context.Context, args []string) (*reconcileRun, error) {
 	fs := flag.NewFlagSet("issue reconcile", flag.ContinueOnError)
 	owner := fs.String("owner", "", "Owner qualifying bare repository names "+ownerDefaultHelp)
 	reposFlag := fs.String("repos", "", "Comma-separated repositories to reconcile "+
 		"(default: forge.reconcile_repos, else the current repository)")
-	dryRun := fs.Bool("dry-run", true, "Simulate dependency resolution without applying changes")
+	dryRun := fs.Bool("dry-run", true, "List every intended write and make none (the default)")
+	apply := fs.Bool("apply", false, "Make the listed writes: label transitions, box ticks, parent and milestone closes")
+	writeCap := fs.Int("max-planning-writes", forge.DefaultPlanningWriteCap,
+		fmt.Sprintf("Planning writes one run makes, 1..%d; the rest are reported as deferred", forge.MaxPlanningWriteCap))
 	tokenFlag := fs.String("token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
 	endpoint := fs.String("endpoint", "", "Forge API endpoint (default: https://api.github.com)")
 	settings := registerOperatorSettingsFlags(fs)
 	if _, err := parseInterspersed(fs, args); err != nil {
-		return err
+		return nil, err
+	}
+	writes, err := reconcileWrites(fs, *dryRun, *apply)
+	if err != nil {
+		return nil, err
+	}
+	if *writeCap < 1 || *writeCap > forge.MaxPlanningWriteCap {
+		return nil, fmt.Errorf("--max-planning-writes=%d is outside 1..%d", *writeCap, forge.MaxPlanningWriteCap)
 	}
 	if strings.Count(*reposFlag, ",") >= config.MaxReconcileRepos {
-		return fmt.Errorf("repository selection exceeds limit of %d comma-separated entries", config.MaxReconcileRepos)
+		return nil, fmt.Errorf("repository selection exceeds limit of %d comma-separated entries", config.MaxReconcileRepos)
 	}
 	scope, err := selectReconcileScope(ctx, reconcileRequest{owner: *owner, repos: *reposFlag,
 		reposSet: flagWasSet(fs, "repos")}, settings)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	tok := resolveForgeAuthToken(ctx, *tokenFlag)
-	if !*dryRun && tok == "" {
-		return fmt.Errorf("--dry-run=false needs a forge token: set GITHUB_TOKEN, sign in with gh, or pass --token")
+	if writes && tok == "" {
+		return nil, fmt.Errorf("--apply needs a forge token: set GITHUB_TOKEN, sign in with gh, or pass --token")
 	}
+	return &reconcileRun{scope: scope, token: tok, endpoint: *endpoint, apply: writes, writeCap: *writeCap,
+		labels: newIssueLabelIndex(), engine: forge.NewReconcileEngine(scope.owner)}, nil
+}
 
-	engine := forge.NewReconcileEngine(scope.owner)
-	labels := newIssueLabelIndex()
-	if err := loadFleetIssues(ctx, tok, *endpoint, scope.repos, engine, labels); err != nil {
+// reconcileWrites decides whether the run writes. Every run is a dry run that lists the
+// writes it would make unless it is asked to write: --apply, or the older --dry-run=false.
+// The first run on a repository is no exception, so its drift is always listed before it
+// is repaired. --apply together with an explicit --dry-run is refused.
+func reconcileWrites(fs *flag.FlagSet, dryRun, apply bool) (bool, error) {
+	if apply && dryRun && flagWasSet(fs, "dry-run") {
+		return false, errors.New("--apply and --dry-run contradict each other: pass one of them")
+	}
+	return apply || !dryRun, nil
+}
+
+// load reads every selected repository's issues and milestones. Any listing failure stops
+// the run before anything is planned or written.
+func (r *reconcileRun) load(ctx context.Context) error {
+	if err := loadFleetIssues(ctx, r.token, r.endpoint, r.scope.repos, r.engine, r.labels); err != nil {
 		return fmt.Errorf("failed loading fleet issues: %w", err)
 	}
+	if err := loadFleetMilestones(ctx, r.token, r.endpoint, r.scope.repos, r.engine); err != nil {
+		return fmt.Errorf("failed loading fleet milestones: %w", err)
+	}
+	return nil
+}
 
-	rep, err := engine.Reconcile(ctx)
+// plan computes the unblock transitions and the planning sync's writes and findings.
+func (r *reconcileRun) plan(ctx context.Context) error {
+	unblocked, err := r.engine.Reconcile(ctx)
 	if err != nil {
 		return fmt.Errorf("issue reconciliation failed: %w", err)
 	}
-
-	// The transitions are applied before the summary is printed: printing "[PASS] applied"
-	// ahead of the PATCH calls reported success for updates that had not happened yet.
-	applied, failed := 0, 0
-	if !*dryRun {
-		applied, failed = applyUnblockTransitions(ctx, tok, *endpoint, rep.UnblockedIssues, labels)
+	planning, err := r.engine.PlanPlanning(r.writeCap)
+	if err != nil {
+		return fmt.Errorf("planning sync failed: %w", err)
 	}
-
-	printReconciliationSummary(scope, rep, *dryRun, applied, failed)
-	if failed > 0 {
-		return fmt.Errorf("%d of %d status transitions failed", failed, applied+failed)
-	}
+	r.unblocked, r.planning = unblocked, planning
 	return nil
 }
 
@@ -330,7 +399,7 @@ func printReconciliationSummary(scope reconcileScope, rep *forge.ReconciliationR
 	}
 
 	if dryRun {
-		fmt.Println("\n[INFO] Dry-run complete. Pass --dry-run=false to persist status transitions.")
+		fmt.Println("\n[INFO] Dry run: nothing was written. Pass --apply to make the status transitions and the planning writes below.")
 		return
 	}
 	if failed > 0 {

@@ -604,7 +604,8 @@ func TestDispatchCommand_IssueReconcile(t *testing.T) {
 	if strings.Contains(out, "[WARN]") {
 		t.Fatalf("fixture-backed reconcile must not warn about remote failures:\n%s", out)
 	}
-	if reads.Load() != 1 || writes.Load() != 0 {
+	// One issue listing and one milestone listing (#837), and no write.
+	if reads.Load() != 2 || writes.Load() != 0 {
 		t.Fatalf("dry-run performed %d reads and %d writes", reads.Load(), writes.Load())
 	}
 	if err := dispatchCommand("issue", []string{"invalid"}); err == nil {

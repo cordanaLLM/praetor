@@ -157,8 +157,9 @@ func TestIssueReconcileRepositorySelectionBoundBeforeRead(t *testing.T) {
 				return dispatchCommand("issue", []string{"reconcile", "--owner=example", "--repos=" + repos,
 					"--token=fixture", "--endpoint=" + srv.URL})
 			})
+			// Each selected repository is read twice: its issues and its milestones (#837).
 			if count == 256 {
-				if err != nil || reads.Load() != 256 {
+				if err != nil || reads.Load() != 512 {
 					t.Fatalf("supported selection failed: err=%v reads=%d", err, reads.Load())
 				}
 			} else if err == nil || reads.Load() != 0 {
