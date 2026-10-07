@@ -64,18 +64,27 @@ type RunDefaults struct {
 //
 // Uses is the reusable workflow a job calls instead of running steps: a path under Dir of this
 // repository ("./.github/workflows/<file>") or "<owner>/<repo>/.github/workflows/<file>@<ref>".
+//
+// Needs is raw because the key is one job ID or a list of them (NeedIDs).
 type Job struct {
 	Name            string    `yaml:"name"`
 	Uses            string    `yaml:"uses"`
 	If              string    `yaml:"if"`
 	Needs           yaml.Node `yaml:"needs"`
 	ContinueOnError string    `yaml:"continue-on-error"`
+	Needs           yaml.Node `yaml:"needs"`
 	Permissions     yaml.Node `yaml:"permissions"`
 	Strategy        Strategy  `yaml:"strategy"`
 	Steps           []Step    `yaml:"steps"`
 	RunsOn          yaml.Node `yaml:"runs-on"`
 	Defaults        Defaults  `yaml:"defaults"`
 	Container       yaml.Node `yaml:"container"`
+}
+
+// NeedIDs returns the IDs of the jobs j needs, in file order (StringList), and nil for a job that
+// needs none or whose needs key is no ID or list of IDs.
+func (j *Job) NeedIDs() []string {
+	return StringList(&j.Needs)
 }
 
 // Step is the step subset the Go cache audit and the portability checks decide on, plus the id

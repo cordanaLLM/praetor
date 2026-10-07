@@ -7,6 +7,7 @@ package ghworkflow
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -132,6 +133,84 @@ func TestHostedGateDraftMarker_Boundary(t *testing.T) {
 		if !strings.Contains(text, "\n"+lines+"\n") {
 			t.Errorf("checkpoint.py lacks the lines\n%s", lines)
 		}
+	}
+}
+
+// DraftStepFault, which the HISS-18 trigger audit reads (#817). Positive: the rendered draft step
+// passes. Negative: a gate step, a reworded draft step and no step at all are refused. Boundary:
+// the draft condition as one ${{ }} expression is the same step.
+func TestDraftStepFault(t *testing.T) {
+	spec, err := Parse([]byte(hostedGateFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := spec.Jobs["gate"].Steps
+	if err := DraftStepFault(&steps[0]); err != nil {
+		t.Fatalf("the rendered draft step: %v", err)
+	}
+	wrapped := steps[0]
+	wrapped.If = "${{ " + HostedGateDraft + " }}"
+	if err := DraftStepFault(&wrapped); err != nil {
+		t.Fatalf("the draft step with a wrapped condition: %v", err)
+	}
+	reworded := steps[0]
+	reworded.Run = strings.Replace(reworded.Run, "exit 1", "exit 0", 1)
+	for name, test := range map[string]struct {
+		step  *Step
+		fault string
+	}{
+		"gate step": {&steps[1], "does not run on a draft alone"},
+		"reworded":  {&reworded, "draft step's script"},
+		"no step":   {nil, "no first step"},
+	} {
+		if err := DraftStepFault(test.step); err == nil || !strings.Contains(err.Error(), test.fault) {
+			t.Errorf("%s: fault = %v, want one naming %q", name, err, test.fault)
+		}
+	}
+}
+
+// StringList and Job.NeedIDs. Positive: one string and a list of strings read alike. Negative:
+// an absent or null key, a mapping and a list holding a mapping yield nil. Boundary: a list of
+// MaxStepsPerJob entries is read in full and one more entry yields nil.
+func TestStringListAndNeedIDs(t *testing.T) {
+	read := func(text string) []string {
+		t.Helper()
+		spec, err := Parse([]byte("jobs:\n  lane:\n    needs: " + text + "\n    runs-on: x\n"))
+		if err != nil {
+			t.Fatalf("parse needs %s: %v", text, err)
+		}
+		job := spec.Jobs["lane"]
+		if got, want := job.NeedIDs(), StringList(&job.Needs); !slices.Equal(got, want) {
+			t.Fatalf("NeedIDs = %v, StringList = %v", got, want)
+		}
+		return job.NeedIDs()
+	}
+	cases := map[string][]string{
+		"plan":             {"plan"},
+		"[plan, build]":    {"plan", "build"},
+		"[]":               {},
+		"null":             nil,
+		"{plan: x}":        nil,
+		"[plan, {a: b}]":   nil,
+		"'[not, a, list]'": {"[not, a, list]"},
+	}
+	for text, want := range cases {
+		if got := read(text); !slices.Equal(got, want) || (want == nil) != (got == nil) {
+			t.Errorf("needs %s = %#v, want %#v", text, got, want)
+		}
+	}
+	if got := StringList(nil); got != nil {
+		t.Errorf("StringList(nil) = %v", got)
+	}
+	ids := make([]string, MaxStepsPerJob+1)
+	for i := range ids {
+		ids[i] = "j" + strconv.Itoa(i)
+	}
+	if got := read("[" + strings.Join(ids[:MaxStepsPerJob], ", ") + "]"); len(got) != MaxStepsPerJob {
+		t.Errorf("a list of %d entries read %d", MaxStepsPerJob, len(got))
+	}
+	if got := read("[" + strings.Join(ids, ", ") + "]"); got != nil {
+		t.Errorf("a list of %d entries read %d, want nil", len(ids), len(got))
 	}
 }
 

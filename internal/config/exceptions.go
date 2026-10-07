@@ -32,9 +32,21 @@ const ExceptionRuleCredits = "credits"
 // so the gap stays visible until the entry expires.
 const ExceptionRuleSupplyChain = "HISS-11"
 
+// ExceptionRuleWorkflowTriggers is the rule of the HISS-18 workflow trigger check
+// (internal/forge.AuditWorkflowTriggers): an entry names one workflow that must run on every
+// branch push or on a draft pull request. The check prints the workflow's findings with the
+// entry's reason and expiry instead of reporting them, until the entry expires.
+const ExceptionRuleWorkflowTriggers = "HISS-18"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
-var exceptionRules = []string{ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain}
+var exceptionRules = []string{
+	ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain, ExceptionRuleWorkflowTriggers,
+}
+
+// workflowExceptionRules are the rules whose gate judges a whole workflow document: an entry of
+// one of them names one workflow file by path (workflowTargetProblem).
+var workflowExceptionRules = []string{ExceptionRuleSupplyChain, ExceptionRuleWorkflowTriggers}
 
 // Bounds of the exceptions list (HISS-02).
 const (
@@ -119,6 +131,30 @@ func ExceptionsFor(entries []Exception, rule string) []Exception {
 	return selected
 }
 
+// ExceptionFor returns what entries, the entries of one rule, say about the slash-separated
+// repository path rel on today: the last live entry that names it (nil for none) and the first
+// expired one that does (nil for none). A gate excuses rel when live is set, and otherwise fails
+// on it, naming the expired entry when there is one. Every entry naming rel, live or expired, is
+// marked in used, so the gate reports an entry no path marked as stale and an expired one only
+// through its path. An entry beyond len(used) is judged but not marked.
+func ExceptionFor(entries []Exception, rel string, today time.Time, used []bool) (live, expired *Exception) {
+	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
+		if !entries[index].Matches(rel) {
+			continue
+		}
+		if index < len(used) {
+			used[index] = true
+		}
+		switch {
+		case !entries[index].Expired(today):
+			live = &entries[index]
+		case expired == nil:
+			expired = &entries[index]
+		}
+	}
+	return live, expired
+}
+
 // ValidateExceptions refuses an exceptions list a gate could not apply as written: more than
 // MaxExceptions entries, an unknown rule, an entry naming both or neither of path and glob, a
 // path that is not one clean repository-relative file, a glob outside the StyleExclusionProblem
@@ -152,7 +188,7 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.targetProblem(); problem != "" {
 		return problem
 	}
-	if problem := e.supplyChainTargetProblem(); problem != "" {
+	if problem := e.workflowTargetProblem(); problem != "" {
 		return problem
 	}
 	if problem := exceptionReasonProblem(e.Reason); problem != "" {
@@ -177,15 +213,16 @@ func (e Exception) targetProblem() string {
 	return ""
 }
 
-// supplyChainTargetProblem requires a HISS-11 entry to name one workflow document directly in
-// .github/workflows by path: the release workflow the supply-chain gate measured.
-func (e Exception) supplyChainTargetProblem() string {
-	if e.Rule != ExceptionRuleSupplyChain {
+// workflowTargetProblem requires an entry of a workflowExceptionRules rule to name one workflow
+// document directly in .github/workflows by path: the release workflow the HISS-11 supply-chain
+// gate measured, or the workflow the HISS-18 trigger check reported.
+func (e Exception) workflowTargetProblem() string {
+	if !slices.Contains(workflowExceptionRules, e.Rule) {
 		return ""
 	}
 	if !ghworkflow.IsWorkflowPath(e.Path) {
 		return fmt.Sprintf("rule %s must name one workflow file directly in %s by path, such as %s/release.yml",
-			ExceptionRuleSupplyChain, ghworkflow.Dir, ghworkflow.Dir)
+			e.Rule, ghworkflow.Dir, ghworkflow.Dir)
 	}
 	return ""
 }
