@@ -144,6 +144,7 @@ required when the job reports on every pull request:
   repository without such a takeover should not use it: a skipped job reports success, so
   nothing then verifies the Renovate pull request it merges.
 - The job is not advisory: `continue-on-error` is absent or `false`.
+- No proven aggregate job needs it directly (see the aggregate rule below).
 
 Any other condition makes the job optional, a status function joined with anything else
 (`always() && ...`) included. GitHub reports a job its condition skipped as successful, so a lane
@@ -171,15 +172,56 @@ an earlier sync added; remove that check from the live ruleset by hand
 The Platform Neutrality matrix is the case in point
 ([HISS-21](standards/hiss-21-platform-neutrality.md#outside-the-canonical-repository-the-matrix-is-opt-in-and-says-so)).
 
-Path-filtered CI therefore gets its protection from an aggregate job: it `needs` every lane, runs
-with `if: always()`, and fails when a job it needs failed or was cancelled. The ruleset requires
-that aggregate beside the unconditional planner, never the gated lanes
-(`internal/forge/workflow_aggregate_test.go`). The aggregate is only as strict as its own steps.
+Path-filtered CI therefore gets its protection from an aggregate job. GitHub skips every job
+whose `needs` include a skipped job, and a skipped matrix job reports none of its per-leg checks,
+so a lane the planner skips can leave a required leaf check unreported forever. When the workflow
+file proves the aggregate fails on every failed or cancelled job it needs, the ruleset requires
+the aggregate alone, and the jobs it needs directly are not required checks of their own
+(`internal/forge/workflow_aggregate.go`). A proven aggregate:
+
+- `needs` at least one job and runs on every run: `always()`, `success() || failure()` or
+  `!cancelled()`, as above;
+- is not advisory;
+- has a `run:` step whose last command is `exit` with a status from 1 to 255, with no other `exit`
+  and no `continue-on-error`, and whose `if:` is a disjunction, bare or as one `${{ }}`
+  expression, of `contains(needs.*.result, '<result>')`, `needs.<id>.result == '<result>'` and
+  `needs.<id>.result != '<result>'` terms. That condition must hold when any one needed job
+  failed or was cancelled, and must not hold when all of them succeeded.
+
+```yaml
+merge-gate:
+  name: Merge gate
+  needs: [impact-plan, go, test]
+  if: always()
+  runs-on: ubuntu-latest
+  steps:
+    - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      run: exit 1
+```
+
+A job the aggregate reaches only through another job stays required: when it fails, the job
+between is skipped, and a skipped need does not fail the aggregate. Put the planner in the
+aggregate's `needs` to cover it. An aggregate whose steps the file cannot read this way, such as
+a third-party action or a script that inspects `toJSON(needs)`, is required beside every
+unconditional job, as before. Tests: `TestRequiredStatusContexts_Positive_ProvenAggregateIsTheOnlyRequiredCheck`,
+`TestProvenAggregate_SkippedLaneMergesAndFailedLeafBlocks`,
+`TestRequiredStatusContexts_Negative_UnprovenAggregateKeepsTheLeaves` and
+`TestRequiredStatusContexts_Boundary_AggregateSpellingsAndReach` in
+`internal/forge/workflow_aggregate_proof_test.go`.
+
+A ruleset rendered before the aggregate was proven requires the leaf checks. The audit reports it
+as drift; delete `.github/rulesets/main.json` and run `praetorctl sync` to regenerate it.
+`sync --remote` then adds the aggregate to the live ruleset but never removes a check it already
+requires (`TestSync_Remote_KeepsLiveLeafChecksAndAddsTheAggregate` in
+`cmd/standardsctl/sync_remote_aggregate_test.go`). Remove the leaf checks from ruleset
+`praetor-main-protection` by hand in the repository's ruleset settings, then run
+`praetorctl plan --remote` to read the result back.
 
 A repository with one maintainer declares `review_mode: single_maintainer` under
 `overrides.branch_protection` ([review policy](guides/review-policy.md)). Adoption, `sync` and the audit
 render the ruleset from the same effective policy, so the file adoption writes, with zero
-approvals, no code-owner review and the aggregate required, is the one the audit accepts
+approvals, no code-owner review, the repository admin role as a pull-request bypass actor and the
+aggregate as the only required check, is the one the audit accepts
 (`TestAdopt_Positive_SoloPathFilteredRulesetIsMergeable` in `internal/adopt/ruleset_solo_test.go`).
 
 ### Refreshing a ruleset Praetor rendered earlier

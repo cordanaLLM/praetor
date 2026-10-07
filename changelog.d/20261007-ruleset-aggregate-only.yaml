@@ -1,0 +1,4 @@
+type: fixed
+title: "A skipped path-filtered lane can no longer make the generated ruleset unsatisfiable: when a workflow's always() merge gate has a step that exits 1..255 whenever a job it needs failed or was cancelled, the ruleset requires that gate alone instead of its planner and leaf jobs, and plan --remote and sync --remote judge the same list. Under review_mode single_maintainer the rendered ruleset lets the repository admin role bypass its rules on pull requests. Migration: a committed ruleset of such a repository now differs from the declared policy, so delete .github/rulesets/main.json and run `praetorctl sync` to regenerate it; sync --remote adds the gate to a live ruleset but never removes the leaf checks or adds a bypass actor there, so remove the leaves from ruleset praetor-main-protection by hand"
+issue: "#76"
+breaking: true
