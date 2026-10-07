@@ -150,6 +150,25 @@ tail is still printed when nothing parses as a block. Its internal Makefile chec
 a recorded one is the separator defect this invariant forbids, reached from inside the gate
 itself.
 
+A child process that a signal ends is started once more, and the crash is still reported. A
+macOS leg once failed `scripts/test_checkpoint_hooks.py` because the Python launcher of one
+scope-bridge call died by SIGSEGV with no output, and the same suite then passed on every
+rerun (#809). That suite starts every child through `run_child` in
+`scripts/portability_selftest.py`, and `ChildSuites` in `scripts/test_portability_selftest.py`
+fails when it starts one any other way. The rules are:
+
+- A child that exits is returned at once, whatever its exit code. Only a signal exit is retried.
+- After a signal exit, the helper prints a report between two marker lines. The report names
+  the test, the child's kind (Python launcher, `sh`, `lefthook` and so on), its resolved path
+  and the version it states, and each attempt's signal or exit code with its output.
+- When a signal also ends the retry, the test fails with `ChildCrashed` and the same report. A
+  crash is never a pass.
+- The driver repeats every report under the suite that printed it, whether the suite passed
+  or failed, and adds a warning annotation to the run. A pass after a retry therefore shows in
+  the log.
+- Windows has no signal exits: a crash there leaves an exit code, which is returned like any
+  other exit code. The signal cases of `ChildRetry` skip there and say why.
+
 The driver runs the same suites as the `Makefile`'s `hooks-test` target, and
 `test_suites_match_the_makefile` in `scripts/test_portability_selftest.py` fails when the two
 lists differ, so a suite added to one list only turns `make portability-test` red instead of
