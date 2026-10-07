@@ -60,7 +60,8 @@ a push, a paper feed and a releases listing. Its digest lists those four items a
 | `praetorctl radar collect --fixture=<dir> --now=<time> --out=<file> [--days=7] [--path=.] [--registry=<file>]` | Collects the window `[now - days, now)` from the planted files in `--fixture` and writes the digest to `--out` | every source failed, or an argument is missing or invalid |
 
 `--now` is an RFC 3339 timestamp or a calendar date, which means midnight UTC. `--days` runs from 1
-to 366. `collect` prints the read path it used. Without `--fixture` it fails with
+to 366. `collect` prints the read path it used and the number of entries without a readable
+date. Without `--fixture` it fails with
 `network collection is not implemented yet (#818)` instead of collecting nothing. Both commands
 live in `cmd/standardsctl/radar.go`; `TestRadarCommand_Negative_Refusals` covers each refusal.
 
@@ -104,6 +105,10 @@ source whose URL addresses one account (`internal/radar/person.go`):
 - a single path segment on a code host (`github.com`, `gitlab.com`, `codeberg.org`, `gitea.com`,
   `bitbucket.org`, `huggingface.co` and its short domain `hf.co`), which is a user or
   organisation page or an account's activity feed;
+- any host below a hosting service that gives each account its own subdomain: `github.io`,
+  `gitlab.io`, `substack.com`, `medium.com`, `wordpress.com`, `blogspot.com` and `bsky.social`.
+  `someone.github.io` and `en.someone.wordpress.com` are refused; the bare domain, such as
+  `https://medium.com/feed/tag/tokenizers`, is not;
 - a first path segment such as `user`, `users`, `u`, `people`, `profile`, `author` or `members`
   on any host, and arXiv author listings and dblp person pages;
 - any path segment starting with `@` or `~`, the shape of fediverse handles and home pages;
@@ -118,10 +123,11 @@ such as `https://about.gitlab.com/atom.xml`, does not load; the check errs on th
 refusing. `TestRegistry_Negative_Refusals` and `TestRegistry_Boundary_DomainLabels` list the
 cases.
 
-These refusals are structural. They catch the URL shapes listed here and nothing else: a page
-about one person at an address of another shape passes. Review the registry like any other
-change. Organisations cannot be told from users offline, so single-segment code host URLs are
-refused for both until the `github_owner` kind can ask the forge.
+This check is a documented tripwire, not a guarantee. It is structural: it catches the URL shapes
+listed here and nothing else, and a page about one person at an address of another shape, such
+as a personal domain, passes. Review the registry like any other change. Organisations cannot be
+told from users offline, so single-segment code host URLs and hosting subdomains such as
+`example-org.github.io` are refused for both until the `github_owner` kind can ask the forge.
 
 ## The window
 
@@ -152,14 +158,17 @@ every document as untrusted (`internal/radar/feed.go`, `internal/radar/release.g
   never an empty source;
 - a draft release is left out; an entry or release without a readable date is counted and named
   in the digest, because no window can place it;
-- a feed date is read the same way on every host. An RSS date counts only when its zone is a
-  numeric offset or an RFC 822 zone name with a fixed meaning (`UT`, `GMT`, `Z` and the US zones
-  `EST` to `PDT`), read at the offsets RFC 5322 section 4.3 gives them. Any other zone name, such
-  as `CEST` or a military letter other than `Z`, leaves the entry undated, because placing it
-  would rest on a guess or on the host's own zone. A
-  two-digit year takes the RFC 5322 century: `00` to `49` are 20xx, `50` to `99` are 19xx.
-  `TestParseFeed_Positive_RFC822Zones`, `TestParseFeed_Negative_UnresolvedZones` and
-  `TestParseFeed_Boundary_TwoDigitYear` run every case under three local zones.
+- a feed date is read the same way on every host, and only in three forms: an RFC 3339 date
+  (`2026-10-01`, placed by date), an RFC 3339 timestamp, and an RFC 822 or RFC 1123 date whose
+  zone is a numeric offset or a name in one table. The table holds the RFC 822 zone names with a
+  fixed meaning (`UT`, `GMT`, `Z` and the US zones `EST` to `PDT`), at the offsets RFC 5322
+  section 4.3 gives them, and `UTC`, which Go's `time.RFC1123` writes. Any other form leaves the
+  entry undated: another zone name, such as `CEST` or a military letter other than `Z`, because
+  placing it would rest on a guess or on the host's own zone, and other spellings such as RFC 850
+  dates, asctime dates or a colon in an RFC 822 offset. A two-digit year takes the RFC 5322
+  century: `00` to `49` are 20xx, `50` to `99` are 19xx. `TestParseFeed_Positive_RFC822Zones`,
+  `TestParseFeed_Negative_UnresolvedZones` and `TestParseFeed_Boundary_TwoDigitYear` run every
+  case under four local zones.
 
 ## The digest
 
@@ -178,20 +187,30 @@ Source: <https://github.com/example-org/example-project>
 
 ## Failed sources
 
-- example-papers: fixture example-papers.xml is missing: file does not exist
+- example-papers: fixture example-papers.xml is missing
 ```
 
 - Each source with something new gets a section, in registry order, newest item first. A section
   lists at most 50 items and counts the rest.
-- When nothing is new and no source failed, the digest is an empty file.
-- Every failed source is named with its reason. The run exits non-zero only when every source
-  failed, and it still writes the digest that names them.
+- Entries without a readable date are counted in their source's section, so only on a run where
+  that source has something new. Without state the collector cannot tell a new undated entry from
+  one an earlier digest counted, so undated entries alone add no section; `collect` prints their
+  total on standard output instead (`TestCollect_Boundary_UndatedOnlyBesideNewItems`).
+- When nothing is new and no source failed, the digest is an empty file, whatever undated entries
+  the sources hold.
+- Every failed source is named with its reason. A planted file that cannot be read is named by
+  its file name and a fixed reason, such as `is missing` or `exceeds the read limit`, never by the
+  local path or a link target (`TestFixtureReader_Negative_PathFreeReasons`). The run exits
+  non-zero only when every source failed, and it still writes the digest that names them.
 
 Titles and failure reasons are untrusted. `radar.Neutralize` reduces each to one line of inert
-Markdown, capped at 200 runes: it decodes HTML entities and removes HTML tags, drops control and
-invisible format characters, removes `@` so no account is mentioned, breaks issue references
-(`#12`, `GH-12`) so none links, replaces `|` so no table breaks, defangs URLs and escapes the
-Markdown punctuation that opens emphasis, code, links or images. An item link renders only when
+Markdown, capped at 200 runes: it decodes HTML entities, drops control and invisible format
+characters, removes `@` so no account is mentioned, breaks issue references (`#12`, `GH-12`) so
+none links, replaces `|` so no table breaks, defangs URLs and escapes the Markdown punctuation
+that opens emphasis, code, links, images or HTML. It removes only well-formed tags of HTML
+elements (`internal/radar/html.go`): the element names of the WHATWG HTML index, `math`, `svg`
+and obsolete presentational elements such as `font`, with attributes written `name=value`. Every other `<` and `>` stays text and is escaped, so a paper title such as
+`Speedup for n < 1000 and m > 5 in a<b` keeps every word (`TestNeutralize_Positive_Table`). An item link renders only when
 it is a plain `http` or `https` address; a link to an issue, pull request or discussion is printed
 as code so the digest does not cross-reference it. `TestNeutralize_Positive_Table` lists each
 case.
