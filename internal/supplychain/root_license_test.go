@@ -111,6 +111,12 @@ func TestCheckRootLicenseNegative(t *testing.T) {
 		"stale exception": {base, []config.Exception{keep("COPYING", "2026-12-31")}, "exceptions entry COPYING (root-license-notice): keeps no root file"},
 		"union default": {withFile(withFile(withFile(base, ReuseFile, unionDefault), LicensesDir+"/MIT.txt", "MIT License\n"), "LICENSE-MIT", "MIT License\n"),
 			nil, "LICENSE-MIT: a second root licence file"},
+		// Names Licensee, GitHub's licence detection, reads as a licence beyond the REUSE ones.
+		"LICENSE_MIT": {withFile(base, "LICENSE_MIT", "x\n"), nil, "LICENSE_MIT: a second root licence file"},
+		"UNLICENSE":   {withFile(base, "UNLICENSE", "x\n"), nil, "UNLICENSE: a second root licence file"},
+		"MIT-LICENSE": {withFile(base, "MIT-LICENSE", "x\n"), nil, "MIT-LICENSE: a second root licence file"},
+		"COPYRIGHT":   {withFile(base, "COPYRIGHT", "x\n"), nil, "COPYRIGHT: a second root licence file"},
+		"COPYING_x":   {withFile(base, "COPYING_x", "x\n"), nil, "COPYING_x: a second root licence file"},
 	} {
 		report := checkRoot(t, licensedRoot(t, tc.files), tc.exceptions...)
 		if !slices.ContainsFunc(report.Findings, func(finding string) bool { return strings.Contains(finding, tc.want) }) {
@@ -121,7 +127,8 @@ func TestCheckRootLicenseNegative(t *testing.T) {
 
 // Boundary: a root without LICENSES/ and a declaration that is no single licence skip with the
 // reason; a directory named like a licence is no licence file; a LICENSE with mixed line
-// endings compares byte for byte and says so; a nil context is refused.
+// endings compares byte for byte and says so; a LICENSE that is a directory or a symbolic link
+// is a finding saying to replace it with a regular copy, not an error; a nil context is refused.
 func TestCheckRootLicenseBoundary(t *testing.T) {
 	if report := checkRoot(t, licensedRoot(t, map[string]string{RootLicenseFile: eupl, "COPYING": "x\n"})); !strings.Contains(report.Skipped, "no LICENSES/") {
 		t.Errorf("no LICENSES/: %+v", report)
@@ -147,6 +154,17 @@ func TestCheckRootLicenseBoundary(t *testing.T) {
 	if report := checkRoot(t, licensedRoot(t, mixed)); len(report.Findings) != 1 || !strings.Contains(report.Findings[0], "compared byte for byte") {
 		t.Errorf("mixed line endings: %+v", report)
 	}
+	directory := licensedRoot(t, map[string]string{LicensesDir + "/EUPL-1.2.txt": eupl, ReuseFile: rootDefault, RootLicenseFile + "/EUPL-1.2.txt": eupl})
+	if report := checkRoot(t, directory); len(report.Findings) != 1 ||
+		report.Findings[0] != "LICENSE is a directory: replace it with a regular file holding a copy of LICENSES/EUPL-1.2.txt, the file forges and package indexes read" {
+		t.Errorf("a LICENSE directory: %+v", report)
+	}
+	linked := licensedRoot(t, map[string]string{LicensesDir + "/EUPL-1.2.txt": eupl, ReuseFile: rootDefault})
+	if err := os.Symlink(filepath.Join(LicensesDir, "EUPL-1.2.txt"), filepath.Join(linked, RootLicenseFile)); err != nil {
+		t.Logf("symbolic links unavailable here (%v); the LICENSE link case is not run", err)
+	} else if report := checkRoot(t, linked); len(report.Findings) != 1 || !strings.HasPrefix(report.Findings[0], "LICENSE is a symbolic link: replace it with a regular file") {
+		t.Errorf("a LICENSE symbolic link to its LICENSES text: %+v", report)
+	}
 	//nolint:staticcheck // SA1012: the nil context is the refusal under test.
 	if _, err := CheckRootLicense(nil, RootLicenseOptions{Root: t.TempDir()}); err == nil {
 		t.Error("a nil context was accepted")
@@ -168,4 +186,31 @@ func without(files map[string]string, rel string) map[string]string {
 	out := withFile(files, rel, "")
 	delete(out, rel)
 	return out
+}
+
+// licenceNamed reads a root file name as a licence as REUSE or Licensee does. Positive: the REUSE
+// names, and the Licensee forms around them, in any case: an underscore or a word before or after,
+// UNLICENSE, COPYRIGHT, OFL and PATENTS, with extensions. Negative: names neither reads as a
+// licence, Apache-License-2.0.txt among them, whose dots Licensee reads as no extension. Boundary:
+// an extension Licensee refuses after a name ends the form (copyright.go,
+// MIT-LICENSE.sh, PATENTS.xml, an extension that only starts like one), while LICENSE.go and
+// LICENSE.spdx stay licence names, by Licensee's plain LICENSE form and REUSE's suffix form.
+func TestLicenceNamed_3D(t *testing.T) {
+	for _, name := range []string{"COPYING", "LICENSE.md", "LICENCE", "LICENSE-MIT", "copying.txt", "LICENSE_MIT", "UNLICENSE",
+		"unlicense.txt", "MIT-LICENSE", "mit_license.txt", "Apache-License-2", "COPYING_x", "COPYING-GPL.v2.1", "GPL-COPYING",
+		"COPYRIGHT", "Copyright.md", "COPYRIGHT-MIT", "OFL", "OFL.txt", "PATENTS", "PATENTS.txt", "LICENSE.go", "LICENSE.spdx", "LICENSE-x.y.z"} {
+		if !licenceNamed(name) {
+			t.Errorf("%s is not read as a licence", name)
+		}
+	}
+	for _, name := range []string{"NOTICE", "README.md", "LICENSES", "mylicense", "sublicense.txt", "copyrights", "AUTHORS", "Apache-License-2.0.txt"} {
+		if licenceNamed(name) {
+			t.Errorf("%s is read as a licence", name)
+		}
+	}
+	for _, name := range []string{"copyright.go", "COPYRIGHT.golden", "MIT-LICENSE.sh", "PATENTS.xml", "OFL.gemspec", "COPYING_x.xml"} {
+		if licenceNamed(name) {
+			t.Errorf("%s is read as a licence despite its extension", name)
+		}
+	}
 }

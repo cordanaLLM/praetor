@@ -121,7 +121,8 @@ and fails the check until it is removed (`TestAuditReuseRecords_Bound`).
 
 Forges and package indexes read the licence from the files at the repository root, and the REUSE
 specification exempts `COPYING`, `LICENSE` and `LICENCE`, with any `-` or `.` suffix, from
-labelling. A repository that keeps `LICENSES/` therefore states one licence at its root, and
+labelling. GitHub's licence detection, Licensee, reads more names as licence files
+(`FILENAME_REGEXES` in `lib/licensee/project_files/license_file.rb`). A repository that keeps `LICENSES/` therefore states one licence at its root, and
 `praetorctl audit` checks it (`CheckRootLicense` in
 [`internal/supplychain/root_license.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/root_license.go)):
 
@@ -131,14 +132,19 @@ labelling. A repository that keeps `LICENSES/` therefore states one licence at i
   `LICENSES/` holds. A whole-tree annotation naming an expression, such as `MIT OR Apache-2.0`,
   or a `LICENSES/` with several texts and no whole-tree annotation, declares no single licence,
   and the check skips, saying so.
-- **`LICENSE`** must hold the text of `LICENSES/<id>.txt` for that licence. The comparison allows
-  one consistent line-ending style, as every other text comparison of the audit does, so a CRLF
-  checkout passes; a text with mixed line endings is compared byte for byte, and the finding
-  says so.
-- **Every other root file named like a licence**, such as `COPYING`, `LICENSE.md`, `LICENCE` or
-  `LICENSE-MIT`, compared without case, fails the check unless the manifest keeps it as an
-  upstream notice. Directories are not read. A notice under another name, such as `NOTICE`, is
-  not a licence file.
+- **`LICENSE`** must be a regular file holding the text of `LICENSES/<id>.txt` for that licence.
+  The comparison allows one consistent line-ending style, as every other text comparison of the
+  audit does, so a CRLF checkout passes; a text with mixed line endings is compared byte for
+  byte, and the finding says so. A `LICENSE` that is a symbolic link, such as one to
+  `LICENSES/<id>.txt`, or a directory is a finding that asks for a regular copy: an archive or a
+  forge may not follow the link.
+- **Every other root file named like a licence** fails the check unless the manifest keeps it as
+  an upstream notice. Names compare without case, and a name counts when REUSE or Licensee reads
+  it as a licence (`licenceNameForms`): `COPYING`, `LICENSE.md`, `LICENCE`, `LICENSE-MIT`,
+  `LICENSE_MIT`, `UNLICENSE`, `MIT-LICENSE`, `COPYING_x`, `COPYRIGHT`, `OFL` and `PATENTS`, with
+  the extensions Licensee accepts after them. Directories are not read. A notice under another
+  name, such as `NOTICE`, is not a licence file, and neither is `copyright.go`, whose extension
+  Licensee refuses (`TestLicenceNamed_3D`).
 
 To keep an upstream notice, name it in the top-level `exceptions` list of `.standards.yaml`, one
 file per entry, by `path` and at the root, with the reason and an expiry at most 90 days ahead,

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,10 +35,58 @@ const (
 	maxRootEntries = 1 << 16
 )
 
-// licenceNamedFile matches a file name the REUSE specification treats as a licence file
-// (COPYING, LICENSE and LICENCE, each optionally followed by "-" or "." and more), compared
-// without case, as forges detect licences.
-var licenceNamedFile = regexp.MustCompile(`(?i)^(copying|licen[cs]e)([-.].*)?$`)
+// licenceNameForm is one form of a root file name read as a licence: pattern matches the name in
+// lower case, its ext group being the extension after the first dot, and an extension that starts
+// with one of excluded makes the name no licence name.
+type licenceNameForm struct {
+	pattern  *regexp.Regexp
+	excluded []string
+}
+
+// licenceNameExt is the optional extension of a licence name as Licensee reads one: a dot, then
+// bytes that are no dot or slash, a dot followed by a digit included, to the end of the name.
+const licenceNameExt = `(?:\.(?P<ext>(?:[^./]|\.[0-9])+))?$`
+
+// licenceOtherExtensions are the extensions Licensee does not read as a licence text after a
+// name that is no plain LICENSE or COPYING (OTHER_EXT_REGEX).
+var licenceOtherExtensions = []string{"xml", "sh", "go", "gemspec"}
+
+// licenceNameForms are the root file names read as a licence, compared without case: the files
+// the REUSE specification exempts from labelling (reuse/covered_files.py, _IGNORE_FILE_PATTERNS:
+// LICENSE, LICENCE and COPYING with any "-" or "." suffix), and the names Licensee, the licence
+// detection GitHub runs, scores as licence files (lib/licensee/project_files/license_file.rb,
+// FILENAME_REGEXES, on its main branch as of October 2026): LICENSE, LICENCE and UNLICENSE with
+// an extension other than .spdx or .header, or with a "-" or "_" suffix (LICENSE_MIT), a word
+// before them (MIT-LICENSE), COPYING in the same forms (COPYING_x), and COPYRIGHT, OFL and
+// PATENTS. A form that matches decides, so the list is a union: protect by default, since a name
+// one of them misses is a second licence statement no check sees.
+var licenceNameForms = []licenceNameForm{
+	{pattern: regexp.MustCompile(`^(?:licen[cs]e|copying)(?:[-.].*)?$`)},
+	{pattern: regexp.MustCompile(`^(?:un)?licen[sc]e` + licenceNameExt), excluded: []string{"spdx", "header"}},
+	{pattern: regexp.MustCompile(`^copying` + licenceNameExt)},
+	{pattern: regexp.MustCompile(`^(?:un)?licen[sc]e[-_][^.]*` + licenceNameExt), excluded: licenceOtherExtensions},
+	{pattern: regexp.MustCompile(`^copying[-_][^.]*` + licenceNameExt), excluded: licenceOtherExtensions},
+	{pattern: regexp.MustCompile(`^\w+[-_](?:un)?licen[sc]e[^.]*` + licenceNameExt), excluded: licenceOtherExtensions},
+	{pattern: regexp.MustCompile(`^\w+[-_]copying[^.]*` + licenceNameExt), excluded: licenceOtherExtensions},
+	{pattern: regexp.MustCompile(`^(?:ofl|copyright|patents)` + licenceNameExt), excluded: licenceOtherExtensions},
+	{pattern: regexp.MustCompile(`^copyright[-_][^.]*` + licenceNameExt), excluded: licenceOtherExtensions},
+}
+
+// licenceNamed reports whether a root file name is read as a licence (licenceNameForms).
+func licenceNamed(name string) bool {
+	lower := strings.ToLower(name)
+	return slices.ContainsFunc(licenceNameForms, func(form licenceNameForm) bool { return form.matches(lower) })
+}
+
+// matches reports whether name, in lower case, has the form.
+func (f licenceNameForm) matches(name string) bool {
+	match := f.pattern.FindStringSubmatch(name)
+	if match == nil || len(f.excluded) == 0 {
+		return match != nil
+	}
+	extension := match[f.pattern.SubexpIndex("ext")]
+	return !slices.ContainsFunc(f.excluded, func(prefix string) bool { return strings.HasPrefix(extension, prefix) })
+}
 
 // RootLicenseOptions are the inputs of one CheckRootLicense run.
 type RootLicenseOptions struct {
@@ -204,6 +253,9 @@ func rootLicenseFinding(ctx context.Context, root, license string) (string, erro
 	if !exists {
 		return fmt.Sprintf("%s is missing: the repository declares %s, so %s/ must hold its text", text, license, LicensesDir), nil
 	}
+	if finding, err := rootLicenseKindFinding(root, text); finding != "" || err != nil {
+		return finding, err
+	}
 	got, exists, err := contextopt.ObserveSnapshotIn(ctx, root, RootLicenseFile)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", RootLicenseFile, err)
@@ -217,6 +269,30 @@ func rootLicenseFinding(ctx context.Context, root, license string) (string, erro
 			RootLicenseFile, text, util.ByteExactNote(strict), license), nil
 	}
 	return "", nil
+}
+
+// rootLicenseKindFinding returns the finding about a root LICENSE that exists and is no regular
+// file, and "" otherwise: a symbolic link, such as one to text, the LICENSES/ text it should copy,
+// which an archive or a forge may not follow, a directory, or another kind of file.
+func rootLicenseKindFinding(root, text string) (string, error) {
+	info, err := os.Lstat(filepath.Join(root, RootLicenseFile))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("inspect %s: %w", RootLicenseFile, err)
+	case info.Mode().IsRegular():
+		return "", nil
+	}
+	kind := "not a regular file"
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		kind = "a symbolic link"
+	case info.IsDir():
+		kind = "a directory"
+	}
+	return fmt.Sprintf("%s is %s: replace it with a regular file holding a copy of %s, the file forges and package indexes read",
+		RootLicenseFile, kind, text), nil
 }
 
 // judgeLicenceNamedFiles adds to report every root file named like a licence other than LICENSE:
@@ -260,7 +336,7 @@ func licenceNamedRootFiles(ctx context.Context, root string) ([]string, error) {
 	}
 	var names []string
 	for _, entry := range entries {
-		if name := entry.Name(); !entry.IsDir() && name != RootLicenseFile && licenceNamedFile.MatchString(name) {
+		if name := entry.Name(); !entry.IsDir() && name != RootLicenseFile && licenceNamed(name) {
 			names = append(names, name)
 		}
 	}
