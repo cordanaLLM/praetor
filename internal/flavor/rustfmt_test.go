@@ -259,26 +259,60 @@ func TestRustfmtApply_Positive_GlobBelowACheckoutPathWithMetacharacters(t *testi
 	}
 }
 
-// readRustfmtPriors returns every earlier scaffold text by the edition it named, in LF: the
+// readPriorFixtures returns every earlier scaffold text under dir by its file name, in LF: the
 // texts were written with LF, and a Windows checkout under core.autocrlf may convert the
-// fixtures, which the tests below then turn into CRLF themselves where they mean to.
-func readRustfmtPriors(t *testing.T) map[string]string {
+// fixtures, which the tests then turn into CRLF themselves where they mean to.
+func readPriorFixtures(t *testing.T, dir string) map[string]string {
 	t.Helper()
-	entries, err := os.ReadDir(rustfmtPriorFixtures)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("read %s: %v", rustfmtPriorFixtures, err)
+		t.Fatalf("read %s: %v", dir, err)
 	}
 	priors := make(map[string]string, len(entries))
 	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(rustfmtPriorFixtures, entry.Name()))
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}
-		edition := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "edition-"), ".rustfmt.toml")
-		priors[edition], _ = util.NormalizeLineEndings(string(data))
+		priors[entry.Name()], _ = util.NormalizeLineEndings(string(data))
 	}
 	if len(priors) == 0 {
-		t.Fatalf("%s holds no earlier scaffold", rustfmtPriorFixtures)
+		t.Fatalf("%s holds no earlier scaffold", dir)
+	}
+	return priors
+}
+
+// assertPriorFixturesRecorded fails unless the texts fixtures (by file name, from dir) and the
+// digests prior records (TemplateItem.Prior) are one set: each fixture's digest is recorded and
+// each recorded digest has a fixture.
+func assertPriorFixturesRecorded(t *testing.T, prior map[string]string, fixtures map[string]string, dir string) {
+	t.Helper()
+	seen := make(map[string]bool, len(prior))
+	for name, text := range fixtures {
+		digest, _, err := util.CanonicalTextDigest([]byte(text))
+		if err != nil {
+			t.Fatalf("%s/%s: %v", dir, name, err)
+		}
+		if _, ok := prior[digest]; !ok {
+			t.Errorf("the earlier scaffold %s/%s (%s) is not a recorded earlier text", dir, name, digest)
+		}
+		seen[digest] = true
+	}
+	for digest, origin := range prior {
+		if !seen[digest] {
+			t.Errorf("recorded earlier text %s (%s) has no fixture under %s", digest, origin, dir)
+		}
+	}
+}
+
+// readRustfmtPriors returns every earlier rustfmt.toml scaffold text by the edition it named,
+// in LF (readPriorFixtures).
+func readRustfmtPriors(t *testing.T) map[string]string {
+	t.Helper()
+	fixtures := readPriorFixtures(t, rustfmtPriorFixtures)
+	priors := make(map[string]string, len(fixtures))
+	for name, text := range fixtures {
+		priors[strings.TrimSuffix(strings.TrimPrefix(name, "edition-"), ".rustfmt.toml")] = text
 	}
 	return priors
 }
@@ -298,25 +332,11 @@ func rustfmtTemplate(t *testing.T) flavor.TemplateItem {
 // Every recorded earlier text has a fixture and every fixture is recorded, and each is exactly
 // what the template renders for the edition it names, so a crate on that edition keeps it.
 func TestRustfmtPriorTextsAreEarlierRenderings(t *testing.T) {
-	prior := rustfmtTemplate(t).Prior
-	seen := make(map[string]bool, len(prior))
+	assertPriorFixturesRecorded(t, rustfmtTemplate(t).Prior, readPriorFixtures(t, rustfmtPriorFixtures), rustfmtPriorFixtures)
 	for edition, text := range readRustfmtPriors(t) {
-		digest, _, err := util.CanonicalTextDigest([]byte(text))
-		if err != nil {
-			t.Fatalf("edition %s: %v", edition, err)
-		}
-		if _, ok := prior[digest]; !ok {
-			t.Errorf("the edition %s scaffold (%s) is not a recorded earlier text", edition, digest)
-		}
-		seen[digest] = true
 		rendered, err := templates.RenderFile("rust/rustfmt.toml.tmpl", templates.Context{RustEdition: edition})
 		if err != nil || rendered != text {
 			t.Errorf("edition %s renders %q (err %v), want the earlier text %q", edition, rendered, err, text)
-		}
-	}
-	for digest, origin := range prior {
-		if !seen[digest] {
-			t.Errorf("recorded earlier text %s (%s) has no fixture under %s", digest, origin, rustfmtPriorFixtures)
 		}
 	}
 }

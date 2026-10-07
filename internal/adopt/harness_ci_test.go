@@ -70,7 +70,7 @@ func TestScaffoldedWorkflowsReadWhatAdoptionWrites(t *testing.T) {
 	if !slices.Equal(runLabels(workflows[1].runs), []string{ghworkflow.HostedGateDraftStepName, `go run tools/apicompat/gate/main.go -base="$BASE"`}) {
 		t.Errorf("%s runs = %+v", APICompatibilityWorkflowFile, workflows[1].runs)
 	}
-	if !slices.Equal(runLabels(workflows[2].runs), []string{"go vet ./...", "go test -race ./..."}) {
+	if !slices.Equal(runLabels(workflows[2].runs), []string{ghworkflow.HostedGateDraftStepName, "go vet ./...", "go test -race ./..."}) {
 		t.Errorf("ci.yml runs = %+v", workflows[2].runs)
 	}
 
