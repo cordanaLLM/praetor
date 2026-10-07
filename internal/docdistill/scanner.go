@@ -6,7 +6,6 @@ package docdistill
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -106,11 +105,6 @@ func goPackageRef(line string, includeTransitive bool) (PackageRef, bool) {
 	}, true
 }
 
-type packageJSONDeps struct {
-	Dependencies    map[string]string `json:"dependencies"`
-	DevDependencies map[string]string `json:"devDependencies"`
-}
-
 // scanNodeDependencies reads every package.json the repository declares — the
 // root plus each workspace member — not just the root one.
 //
@@ -151,8 +145,8 @@ func scanOneNodeManifest(ctx context.Context, repoPath, manifest string) ([]Pack
 		return nil, fmt.Errorf("read %s: %w", manifest, err)
 	}
 
-	var parsed packageJSONDeps
-	if err := json.Unmarshal(data, &parsed); err != nil {
+	parsed, err := nodemanifest.ParseManifest(data)
+	if err != nil {
 		return nil, fmt.Errorf("failed unmarshaling %s: %w", manifest, err)
 	}
 

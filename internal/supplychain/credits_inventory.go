@@ -9,17 +9,16 @@ package supplychain
 // reader takes one file's text and returns its items; none of them touches the file system.
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
+	"github.com/cordanaLLM/praetor/internal/pymanifest"
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
@@ -37,18 +36,14 @@ const (
 	inventoryDownload = "download"
 )
 
-// maxInventoryEntries bounds the directory entries one inventory walk visits (HISS-02). The
-// checkout holds about 4,000 files outside the skipped directories.
-const maxInventoryEntries = 1 << 17
-
-// inventoryDotDirectories are the hidden directories the walk enters; every other directory
-// whose name starts with a dot holds agent state, editor settings or version-control data, not
-// a manifest.
+// inventoryDotDirectories are the hidden directories whose files the inventory reads; every
+// other directory whose name starts with a dot holds agent state, editor settings or
+// version-control data, not a manifest.
 var inventoryDotDirectories = []string{".config", ".devcontainer", ".github"}
 
-// inventorySkippedDirectories are directories the walk never enters: installed packages, whose
-// manifests belong to the packages' authors, and test fixtures, which the tests read as inputs
-// and nothing installs.
+// inventorySkippedDirectories are directories whose files the inventory never reads: installed
+// packages, whose manifests belong to the packages' authors, and test fixtures, which the tests
+// read as inputs and nothing installs.
 var inventorySkippedDirectories = []string{"node_modules", "testdata"}
 
 // workflowActionFiles are the globs, relative to the repository, of the files whose uses: lines
@@ -72,48 +67,15 @@ type InventoryItem struct {
 	Path string
 }
 
-// inventoryWalker collects the repository files the inventory reads.
-type inventoryWalker struct {
-	ctx     context.Context
-	root    string
-	visited int
-	files   []string
-}
-
-// visit is the filepath.WalkDir callback: it skips the directories the inventory does not read
-// and records every file one of the readers takes.
-func (w *inventoryWalker) visit(abs string, entry os.DirEntry, walkErr error) error {
-	if walkErr != nil {
-		return walkErr
-	}
-	if err := w.ctx.Err(); err != nil {
-		return err
-	}
-	if w.visited++; w.visited > maxInventoryEntries {
-		return fmt.Errorf("the credit inventory walk exceeds %d entries", maxInventoryEntries)
-	}
-	rel, err := filepath.Rel(w.root, abs)
-	if err != nil {
-		return err
-	}
-	rel = filepath.ToSlash(rel)
-	if entry.IsDir() {
-		return skippedInventoryDirectory(rel, entry.Name())
-	}
-	if entry.Type().IsRegular() && len(inventoryReaders(rel)) > 0 {
-		w.files = append(w.files, rel)
-	}
-	return nil
-}
-
-// skippedInventoryDirectory returns filepath.SkipDir for a directory the inventory does not read
-// and nil for one it enters.
-func skippedInventoryDirectory(rel, name string) error {
-	hidden := strings.HasPrefix(name, ".") && rel != "." && !slices.Contains(inventoryDotDirectories, name)
-	if hidden || slices.Contains(inventorySkippedDirectories, name) {
-		return filepath.SkipDir
-	}
-	return nil
+// inventoryFile reports whether the inventory reads the repository file at rel: one of the
+// readers takes it, and no directory above it is skipped or hidden.
+func inventoryFile(rel string) bool {
+	segments := strings.Split(rel, "/")
+	skipped := slices.ContainsFunc(segments[:len(segments)-1], func(dir string) bool {
+		hidden := strings.HasPrefix(dir, ".") && !slices.Contains(inventoryDotDirectories, dir)
+		return hidden || slices.Contains(inventorySkippedDirectories, dir)
+	})
+	return !skipped && len(inventoryReaders(rel)) > 0
 }
 
 // inventoryReader returns the items one file's text names.
@@ -170,31 +132,21 @@ func goModInventory(rel, text string) ([]InventoryItem, error) {
 	return items, nil
 }
 
-// npmDependencyGroups are the members of a package.json that list direct dependencies.
-var npmDependencyGroups = []string{"dependencies", "devDependencies", "peerDependencies", "optionalDependencies"}
-
 // localSpecifiers start a dependency version that names a package of this repository, not a
 // third-party one.
 var localSpecifiers = []string{"file:", "link:", "workspace:", "portal:"}
 
-// npmInventory lists every direct dependency of a package.json, of any dependency kind, sorted;
-// a dependency on a local folder or workspace is not third-party and is skipped.
+// npmInventory lists every direct dependency of a package.json, of any dependency group, sorted;
+// a dependency on a local folder or workspace is not third-party and is skipped. The file is read
+// through the one package.json reader (nodemanifest.ParseManifest).
 func npmInventory(rel, text string) ([]InventoryItem, error) {
-	members, err := decodeManifestMembers(rel, text, strictjson.StrictJSON)
+	manifest, err := nodemanifest.ParseManifest([]byte(text))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse %s: %w", rel, err)
 	}
 	names := map[string]bool{}
-	for _, group := range npmDependencyGroups {
-		raw, present := members[group]
-		if !present {
-			continue
-		}
-		var dependencies map[string]string
-		if err := json.Unmarshal(raw, &dependencies); err != nil {
-			return nil, fmt.Errorf("parse %s %s: %w", rel, group, err)
-		}
-		for name, version := range dependencies {
+	for _, group := range manifest.Groups() {
+		for name, version := range group {
 			names[name] = !slices.ContainsFunc(localSpecifiers, func(prefix string) bool { return strings.HasPrefix(version, prefix) }) || names[name]
 		}
 	}
@@ -223,8 +175,9 @@ func decodeManifestMembers(rel, text string, dialect strictjson.Dialect) (map[st
 	return members, nil
 }
 
-// pypiInventory lists every requirement of a requirements.in by its lower-cased name; blank
-// lines, comments and option lines name none.
+// pypiInventory lists every requirement of a requirements.in by its lower-cased name, read
+// through the one requirement reader (pymanifest.ParseRequirement); blank lines, comments and
+// option lines name none.
 func pypiInventory(rel, text string) ([]InventoryItem, error) {
 	lines, err := splitNoticeLines(text)
 	if err != nil {
@@ -232,15 +185,9 @@ func pypiInventory(rel, text string) ([]InventoryItem, error) {
 	}
 	var items []InventoryItem
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "-") {
-			continue
+		if requirement, ok := pymanifest.ParseRequirement(line); ok {
+			items = append(items, InventoryItem{Kind: inventoryPyPI, ID: requirement.Name, Path: rel})
 		}
-		name := line
-		if end := strings.IndexAny(line, " =<>!~;[@#"); end >= 0 {
-			name = line[:end]
-		}
-		items = append(items, InventoryItem{Kind: inventoryPyPI, ID: strings.ToLower(name), Path: rel})
 	}
 	return items, nil
 }

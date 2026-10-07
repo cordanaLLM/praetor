@@ -2,13 +2,13 @@ package needs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -28,12 +28,6 @@ func (a *NodeAnalyzer) Language() string {
 // Detect checks if the repository contains package.json.
 func (a *NodeAnalyzer) Detect(repoPath string) bool {
 	return util.FileExists(filepath.Join(repoPath, "package.json"))
-}
-
-type packageJSON struct {
-	Name            string            `json:"name"`
-	Dependencies    map[string]string `json:"dependencies"`
-	DevDependencies map[string]string `json:"devDependencies"`
 }
 
 // Analyze parses package.json and maps dependencies to capabilities of the typescript target
@@ -76,18 +70,20 @@ func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string, target Targ
 	return repoNeeds, nil
 }
 
-func readPackageJSON(pkgPath string) (*packageJSON, error) {
+// readPackageJSON reads the package.json at pkgPath through the one package.json reader
+// (nodemanifest.ParseManifest).
+func readPackageJSON(pkgPath string) (nodemanifest.Manifest, error) {
 	// #nosec G304 -- pkgPath is filepath.Join(repoPath, "package.json") for a repository
 	// the caller already selected; the filename is a constant, not user input.
-	data, err := util.ReadFileLimited(pkgPath, 1024*1024)
+	data, err := util.ReadFileLimited(pkgPath, nodemanifest.MaxManifestBytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read %q: %w", pkgPath, err)
+		return nodemanifest.Manifest{}, fmt.Errorf("failed to read %q: %w", pkgPath, err)
 	}
-	var pkg packageJSON
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return nil, fmt.Errorf("failed to parse %q: %w", pkgPath, err)
+	pkg, err := nodemanifest.ParseManifest(data)
+	if err != nil {
+		return nodemanifest.Manifest{}, fmt.Errorf("failed to parse %q: %w", pkgPath, err)
 	}
-	return &pkg, nil
+	return pkg, nil
 }
 
 func mergeDependencies(deps, devDeps map[string]string) map[string]string {

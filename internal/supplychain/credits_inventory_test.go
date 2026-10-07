@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // inventoryIDs returns the kind and id of each item, as "kind id".
@@ -89,11 +91,18 @@ func TestCreditInventoryReadersBoundary(t *testing.T) {
 	}
 }
 
-// ReadCreditInventory walks the repository: it reads the manifests where they are, skips
-// installed packages, test fixtures and hidden directories other than .config, .devcontainer
-// and .github, and records the file each item comes from.
+// ReadCreditInventory lists the checkout through git: it reads the manifests where they are,
+// skips installed packages, test fixtures, hidden directories other than .config, .devcontainer
+// and .github, and files git ignores, and records the file each item comes from. A directory
+// that is no git work tree has no listing and fails.
 func TestReadCreditInventory(t *testing.T) {
 	root := t.TempDir()
+	if _, err := ReadCreditInventory(context.Background(), root); err == nil {
+		t.Fatal("a directory outside any git work tree was listed")
+	}
+	testsupport.InitGitRepoWithOrigin(t, root, "")
+	writeRepoFile(t, root, ".gitignore", "/build/\n")
+	writeRepoFile(t, root, "build/package.json", `{"dependencies":{"ignored-output":"1"}}`)
 	writeRepoFile(t, root, "go.mod", "module m\n\nrequire example.com/lib v1.0.0\n")
 	writeRepoFile(t, root, "tools/web/package.json", `{"dependencies":{"left-pad":"1"}}`)
 	writeRepoFile(t, root, "tools/web/node_modules/left-pad/package.json", `{"dependencies":{"inner":"1"}}`)

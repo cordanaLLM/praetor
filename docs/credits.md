@@ -53,8 +53,11 @@ list to the repository; `TestShippedUpstreamsAreCredited`
   requirements and the tool block of every `go.mod` (`tools/go/go.mod` holds the tools), the
   direct dependencies of every `package.json`, every `requirements.in`, the `uses:` lines of the
   workflows, composite actions and CI templates, every Dockerfile `FROM`, and the image and
-  features of every `devcontainer.json`. What CI fetches outside a manifest, such as a release
-  binary downloaded with curl, is declared under `downloads` in the list;
+  features of every `devcontainer.json`. It reads the files git lists for the checkout (tracked
+  files and untracked ones git does not ignore), outside `node_modules`, `testdata` and hidden
+  directories other than `.config`, `.devcontainer` and `.github`. What CI fetches outside a
+  manifest, such as a release binary downloaded with curl, is declared under `downloads` in the
+  list;
 - a path an entry, an original or a download names is not a file, or no longer names the item;
 - a canonical persona or skill (`.agents/agents`, `.agents/skills`) neither declares
   `metadata.derived_from` nor is listed under `originals`;

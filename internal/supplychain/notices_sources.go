@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/generated"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -94,20 +95,25 @@ func ReadNoticeSources(ctx context.Context, root string) (NoticeSources, error) 
 }
 
 // ReadCreditInventory lists every third-party item the manifests of the repository at root name,
-// in walk order: the direct requirements and tool directives of each go.mod (tools/go/go.mod
+// in path order: the direct requirements and tool directives of each go.mod (tools/go/go.mod
 // holds the tool block), the direct dependencies of each package.json, the requirements of each
 // requirements.in, the remote actions of the workflows, composite actions and CI templates, the
-// image of each Dockerfile FROM, and the image and features of each devcontainer.json. The walk
-// skips installed packages, test fixtures and hidden directories other than .config,
-// .devcontainer and .github (credits_inventory.go). The downloads docs/credits.yaml declares
-// complete it in CheckUpstreamCredits.
+// image of each Dockerfile FROM, and the image and features of each devcontainer.json. The files
+// are the checkout's own, as git lists them (generated.DirTree: tracked files that exist and
+// untracked ones git does not ignore), so root must be a git work tree; files below installed
+// packages, test fixtures and hidden directories other than .config, .devcontainer and .github
+// are not read (inventoryFile). The downloads docs/credits.yaml declares complete it in
+// CheckUpstreamCredits.
 func ReadCreditInventory(ctx context.Context, root string) ([]InventoryItem, error) {
-	walker := &inventoryWalker{ctx: ctx, root: root}
-	if err := filepath.WalkDir(root, walker.visit); err != nil {
-		return nil, fmt.Errorf("walk %s for the credit inventory: %w", root, err)
+	files, err := generated.DirTree(root).Files(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list %s for the credit inventory: %w", root, err)
 	}
 	var items []InventoryItem
-	for _, rel := range walker.files {
+	for _, rel := range files {
+		if !inventoryFile(rel) {
+			continue
+		}
 		data, err := readNoticeSource(ctx, root, rel)
 		if err != nil {
 			return nil, err

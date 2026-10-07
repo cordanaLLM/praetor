@@ -14,6 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 const (
@@ -241,6 +242,7 @@ func writeRepoFile(t *testing.T, root, rel, content string) {
 // is left out, and a repository without the list fails naming it.
 func TestReadUpstreamCreditSources(t *testing.T) {
 	root := t.TempDir()
+	testsupport.InitGitRepoWithOrigin(t, root, "")
 	writeRepoFile(t, root, AcknowledgementsList, creditsFixture)
 	writeRepoFile(t, root, upstreamSkill, "---\nname: shout\nmetadata:\n  derived_from: \""+upstreamURL+" (MIT AND Apache-2.0)\"\n---\n")
 	writeRepoFile(t, root, originalSkill, "---\nname: plain\n---\n")
