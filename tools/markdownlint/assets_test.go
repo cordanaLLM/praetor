@@ -1,6 +1,7 @@
 package markdownlint
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 func TestLockedAssetInventory(t *testing.T) {
@@ -583,16 +585,44 @@ func mutateWorkflow(t *testing.T, old, replacement string) string {
 }
 
 const (
-	markdownStep = "      - name: Verify public Markdown\n        run: node tools/markdownlint/verify.mjs\n"
-	figureStep   = "      - name: Verify figures\n        run: |\n          node tools/figures/build.mjs check\n" +
-		"          node tools/figures/build.mjs sources\n"
+	markdownStep = "      - name: Verify public Markdown" + ghworkflow.HostedGateStepIf +
+		"\n        run: node tools/markdownlint/verify.mjs\n"
+	figureStep = "      - name: Verify figures" + ghworkflow.HostedGateStepIf +
+		"\n        run: |\n          node tools/figures/build.mjs check\n          node tools/figures/build.mjs sources\n"
 )
 
-// Positive: the shipped Workflow holds the binding, and forge derives exactly one required status
-// context from it, StatusContext, so branch-protection reconciliation is unchanged.
+// Positive: this repository's own hosted gate is the locked text, byte for byte, so the lint
+// gates that read the copy (scripts/test_emitted_hook_lint.py) judge what adoption writes.
+// Negative: the copy with one byte changed differs. Boundary: its CRLF checkout differs too; the
+// audit accepts one, but the lint gates read the bytes.
+func TestWorkflowIsTheRepositoryCopy(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(WorkflowFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != Workflow {
+		t.Fatalf("%s differs from the locked workflow in %s", WorkflowFile, SourceFile)
+	}
+	changed := bytes.Replace(data, []byte("timeout-minutes: 10"), []byte("timeout-minutes: 11"), 1)
+	crlf := bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))
+	if string(changed) == Workflow || string(crlf) == Workflow {
+		t.Fatal("a changed copy compares equal to the locked workflow")
+	}
+}
+
+// Positive: the shipped Workflow holds the binding and the hosted gate shape
+// (ghworkflow.HostedGateFault), and forge derives exactly one required status context from it,
+// StatusContext, so branch-protection reconciliation is unchanged.
 func TestWorkflowFigureStepPositive(t *testing.T) {
 	if fault := figureStepFault(Workflow); fault != "" {
 		t.Fatal(fault)
+	}
+	spec, err := ghworkflow.Parse([]byte(Workflow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ghworkflow.HostedGateFault(&spec, "documentation", ghworkflow.HostedGateDefaultBranch); err != nil {
+		t.Fatalf("the workflow departs from the hosted gate shape: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

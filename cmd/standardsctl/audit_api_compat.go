@@ -69,7 +69,7 @@ func auditEnabledAPICompatibility(ctx context.Context, rootDir string, families 
 	if err := auditFamilyContextsReported(ctx, rootDir, families); err != nil {
 		return err
 	}
-	fmt.Printf("[PASS] Locked API compatibility gate verified (%s reports %q on every pull request).\n",
+	fmt.Printf("[PASS] Locked API compatibility gate verified (%s reports %q on every pull request; on a draft it fails by design until the draft is marked ready).\n",
 		adopt.APICompatibilityWorkflowFile, adopt.APICompatibilityStatusContext)
 	return nil
 }

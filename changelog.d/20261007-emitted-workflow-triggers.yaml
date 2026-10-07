@@ -1,4 +1,4 @@
 type: fixed
-title: "The API compatibility and documentation workflows adoption writes run on pushes to the default branch only and skip draft pull requests, still reporting their required checks once a draft is marked ready, and adoption warns about an existing manifest that leaves a non-main default branch undeclared even when it declines the ruleset; the wiki mirror finishes with a notice instead of failing while the wiki has no first page"
+title: "The API compatibility and documentation workflows adoption writes run on pushes to the default branch only, keep their required checks on every pull request and fail by design on a draft until it is marked ready, which the checkpoint planner reads as draft pending; an unedited copy rendered for a non-main default branch refreshes without --force, also after a later workflow change; adoption warns about an existing manifest that leaves a non-main default branch undeclared even when it declines the ruleset; the wiki mirror finishes with a notice instead of failing while the wiki has no first page"
 issue: "#815"
 breaking: true

@@ -13,6 +13,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -32,10 +33,13 @@ const (
 // Workflow is the dedicated, required hosted documentation gate adoption writes to
 // WorkflowFile, rendered for a repository whose default branch is main; adoption and audit
 // render it for the repository's own default branch (managedasset.Family.ForBranch), which names
-// the one branch a push runs it on. Its job name is StatusContext. The job runs on every pull
-// request that is not a draft and again when a draft is marked ready (ready_for_review), so the
-// branch ruleset still requires it (the draft skip in internal/forge/workflow_guard.go); a push
-// to another branch or a tag, and a draft, start no run (#815).
+// the one branch a push runs it on. Its trigger and draft handling are the hosted gate shape
+// (ghworkflow.HostedGateOn, HostedGateDraftStep, HostedGateStepIf in
+// internal/ghworkflow/hostedgate.go), so a push to another branch or a tag starts no run (#815).
+// Its job name is StatusContext; the job has no condition, so the branch ruleset requires it. On
+// a draft the job fails by design without checking anything, saying the gate runs when the pull
+// request is marked ready; the ready_for_review run then reports the context on the same head
+// commit.
 //
 // After the Markdown check the job runs the figure engine's check and sources commands
 // (docs/adr/0016-figures-for-adopters.md, operator decision 4), which the documentation facet
@@ -55,38 +59,31 @@ const (
 const Workflow = `---
 name: Praetor Documentation Governance
 
-'on':
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: ['main']
-
+` + ghworkflow.HostedGateOn + `
 permissions:
   contents: read
 
 jobs:
   documentation:
     name: Documentation Governance
-    # A draft skips the job; marking it ready runs it (ready_for_review).
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
-      - name: Checkout source
+` + ghworkflow.HostedGateDraftStep + `      - name: Checkout source` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-      - name: Setup Node.js
+      - name: Setup Node.js` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: tools/markdownlint/package-lock.json
-      - name: Verify public Markdown
+      - name: Verify public Markdown` + ghworkflow.HostedGateStepIf + `
         run: node tools/markdownlint/verify.mjs
-      - name: Verify figures
+      - name: Verify figures` + ghworkflow.HostedGateStepIf + `
         run: |
           node tools/figures/build.mjs check
           node tools/figures/build.mjs sources

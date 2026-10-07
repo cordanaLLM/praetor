@@ -9,6 +9,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
@@ -42,7 +43,7 @@ func TestNeutralText_Positive(t *testing.T) {
 	// with what that CI runs, read from the workflow bodies (BUG-804).
 	for _, want := range []string{
 		"Adoption adds no server-side `praetorctl` gate run. Scaffolded CI: ",
-		"`" + DocumentationWorkflowFile + "` runs `node tools/markdownlint/verify.mjs`",
+		"`" + DocumentationWorkflowFile + "` runs step `" + ghworkflow.HostedGateDraftStepName + "`, `node tools/markdownlint/verify.mjs`",
 		"`.github/workflows/ci.yml` runs `go vet ./...`, `go test -race ./...`",
 	} {
 		if !strings.Contains(harness, want) {

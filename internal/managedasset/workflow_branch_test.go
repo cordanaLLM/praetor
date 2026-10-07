@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"gopkg.in/yaml.v3"
 )
 
@@ -136,11 +137,15 @@ func TestValidateRefusesTwoPushBranchLines(t *testing.T) {
 	}
 }
 
-// workflowModel is the part of a workflow that decides whether a run starts and its jobs run.
+// workflowModel is the part of a workflow that decides whether a run starts and which of its
+// steps run.
 type workflowModel struct {
 	On   map[string]*eventFilter `yaml:"on"`
 	Jobs map[string]struct {
-		If string `yaml:"if"`
+		If    string `yaml:"if"`
+		Steps []struct {
+			If string `yaml:"if"`
+		} `yaml:"steps"`
 	} `yaml:"jobs"`
 }
 
@@ -188,26 +193,39 @@ func (m workflowModel) starts(event hostedEvent) bool {
 	return slices.Contains(filter.Branches, event.ref)
 }
 
-// jobRuns evaluates the job conditions the hosted gates carry for event: none, or the draft
-// skip, which holds unless the event is a pull request on a draft. On a push the missing
-// pull_request property is an empty string, which GitHub's loose comparison reads as 0, not
-// true (1). Any other condition fails the test rather than guess.
-func jobRuns(t *testing.T, condition string, event hostedEvent) bool {
+// stepRuns evaluates the conditions the hosted gates carry for event: none, the draft step's,
+// which holds on a draft pull request only, and the gate steps', which hold everywhere else. On
+// a push the missing pull_request property is an empty string, which GitHub's loose comparison
+// reads as 0, not true (1). Any other condition fails the test rather than guess.
+func stepRuns(t *testing.T, condition string, event hostedEvent) bool {
 	t.Helper()
+	draft := event.name == "pull_request" && event.draft
 	switch strings.TrimSpace(condition) {
 	case "":
 		return true
-	case "github.event.pull_request.draft != true":
-		return event.name != "pull_request" || !event.draft
+	case ghworkflow.HostedGateDraft:
+		return draft
+	case ghworkflow.HostedGateNotDraft:
+		return !draft
 	}
-	t.Fatalf("job condition %q has no model", condition)
+	t.Fatalf("step condition %q has no model", condition)
 	return false
 }
 
+// The outcome of one event for a hosted gate: no run starts, the gate's steps run, or the draft
+// step alone runs and fails the job, so the required check is red until the draft is marked
+// ready.
+const (
+	noRun   = "no run"
+	gateRun = "gate runs"
+	refused = "draft refused"
+)
+
 // Positive: a push to the default branch, a ready pull request and a draft marked ready run the
-// gate. Negative: a push to another branch or a tag, a draft opened or updated, and an activity
-// outside the types start nothing or skip the job. Boundary: the rendering for develop moves the
-// push filter to develop, and every rendering still reports its required status context.
+// gate. Negative: a push to another branch or a tag, and an activity outside the types, start
+// nothing; a draft opened, updated or reopened runs the draft step alone, which fails the job.
+// Boundary: the rendering for develop moves the push filter to develop, holds the hosted gate
+// shape for develop, and every rendering still reports its required status context.
 func TestHostedWorkflowsRunOnlyOnTheDefaultBranchAndReadyPullRequests(t *testing.T) {
 	for _, family := range hostedFamilies(t) {
 		assertHostedGateRuns(t, family)
@@ -216,27 +234,29 @@ func TestHostedWorkflowsRunOnlyOnTheDefaultBranchAndReadyPullRequests(t *testing
 
 // hostedEventCases are the events a hosted gate rendered for develop is judged on.
 var hostedEventCases = []struct {
-	name  string
-	event hostedEvent
-	runs  bool
+	name    string
+	event   hostedEvent
+	outcome string
 }{
-	{"positive default branch push", hostedEvent{name: "push", ref: "develop"}, true},
-	{"positive ready pull request", hostedEvent{name: "pull_request", action: "opened"}, true},
-	{"positive ready pull request update", hostedEvent{name: "pull_request", action: "synchronize"}, true},
-	{"positive draft marked ready", hostedEvent{name: "pull_request", action: "ready_for_review"}, true},
-	{"positive reopened", hostedEvent{name: "pull_request", action: "reopened"}, true},
-	{"negative branch push", hostedEvent{name: "push", ref: "feature/x"}, false},
-	{"negative main push in a develop repository", hostedEvent{name: "push", ref: "main"}, false},
-	{"negative tag push", hostedEvent{name: "push", ref: "v1.0.0", tag: true}, false},
-	{"negative draft opened", hostedEvent{name: "pull_request", action: "opened", draft: true}, false},
-	{"negative draft updated", hostedEvent{name: "pull_request", action: "synchronize", draft: true}, false},
-	{"negative edited", hostedEvent{name: "pull_request", action: "edited"}, false},
-	{"boundary converted to draft", hostedEvent{name: "pull_request", action: "converted_to_draft", draft: true}, false},
+	{"positive default branch push", hostedEvent{name: "push", ref: "develop"}, gateRun},
+	{"positive ready pull request", hostedEvent{name: "pull_request", action: "opened"}, gateRun},
+	{"positive ready pull request update", hostedEvent{name: "pull_request", action: "synchronize"}, gateRun},
+	{"positive draft marked ready", hostedEvent{name: "pull_request", action: "ready_for_review"}, gateRun},
+	{"positive reopened", hostedEvent{name: "pull_request", action: "reopened"}, gateRun},
+	{"negative branch push", hostedEvent{name: "push", ref: "feature/x"}, noRun},
+	{"negative main push in a develop repository", hostedEvent{name: "push", ref: "main"}, noRun},
+	{"negative tag push", hostedEvent{name: "push", ref: "v1.0.0", tag: true}, noRun},
+	{"negative draft opened", hostedEvent{name: "pull_request", action: "opened", draft: true}, refused},
+	{"negative draft updated", hostedEvent{name: "pull_request", action: "synchronize", draft: true}, refused},
+	{"negative edited", hostedEvent{name: "pull_request", action: "edited"}, noRun},
+	{"boundary draft reopened", hostedEvent{name: "pull_request", action: "reopened", draft: true}, refused},
+	{"boundary converted to draft", hostedEvent{name: "pull_request", action: "converted_to_draft", draft: true}, noRun},
 }
 
 // assertHostedGateRuns renders family for develop and fails the test for every event of
-// hostedEventCases whose outcome differs, and unless the rendering reports the family's status
-// context as a required check.
+// hostedEventCases whose outcome differs, unless the rendering holds the hosted gate shape for
+// develop (ghworkflow.HostedGateFault), and unless it reports the family's status context as a
+// required check.
 func assertHostedGateRuns(t *testing.T, family Family) {
 	t.Helper()
 	develop, err := family.ForBranch("develop")
@@ -247,16 +267,42 @@ func assertHostedGateRuns(t *testing.T, family Family) {
 	if err := yaml.Unmarshal([]byte(develop.Workflow), &model); err != nil {
 		t.Fatalf("%s: %v", family.Name, err)
 	}
-	job := model.Jobs[jobID(t, model)]
+	id := jobID(t, model)
+	spec, err := ghworkflow.Parse([]byte(develop.Workflow))
+	if err != nil || ghworkflow.HostedGateFault(&spec, id, "develop") != nil {
+		t.Fatalf("%s: the develop rendering departs from the hosted gate shape: %v, %v", family.Name, err, ghworkflow.HostedGateFault(&spec, id, "develop"))
+	}
 	for _, tc := range hostedEventCases {
-		if got := model.starts(tc.event) && jobRuns(t, job.If, tc.event); got != tc.runs {
-			t.Errorf("%s: %s runs = %v, want %v", family.Name, tc.name, got, tc.runs)
+		if got := eventOutcome(t, model, id, tc.event); got != tc.outcome {
+			t.Errorf("%s: %s: %s, want %s", family.Name, tc.name, got, tc.outcome)
 		}
 	}
 	contexts, err := forge.RequiredStatusContextsPlanned(t.Context(), t.TempDir(), map[string][]byte{develop.WorkflowFile: []byte(develop.Workflow)})
 	if err != nil || !slices.Equal(contexts, []string{family.StatusContext}) {
 		t.Errorf("%s: required status contexts = %v, %v; want [%s]", family.Name, contexts, err, family.StatusContext)
 	}
+}
+
+// eventOutcome is what event does to job id of model: no run, the gate steps run, or the draft
+// step alone runs and fails the job.
+func eventOutcome(t *testing.T, model workflowModel, id string, event hostedEvent) string {
+	t.Helper()
+	job := model.Jobs[id]
+	if !model.starts(event) || !stepRuns(t, job.If, event) {
+		return noRun
+	}
+	if len(job.Steps) < 2 {
+		t.Fatalf("job %s has %d steps, want the draft step and gate steps", id, len(job.Steps))
+	}
+	if stepRuns(t, job.Steps[0].If, event) {
+		return refused
+	}
+	for i := 1; i < len(job.Steps); i++ {
+		if !stepRuns(t, job.Steps[i].If, event) {
+			t.Fatalf("job %s step %d skips on %+v while the gate runs", id, i+1, event)
+		}
+	}
+	return gateRun
 }
 
 // jobID returns the one job of a hosted gate's workflow.

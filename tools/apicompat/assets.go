@@ -19,6 +19,7 @@ import (
 	"maps"
 	"slices"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -41,11 +42,14 @@ const (
 
 // Workflow is the hosted gate adoption writes to WorkflowFile, rendered for a repository whose
 // default branch is main; adoption and audit render it for the repository's own default branch
-// (managedasset.Family.ForBranch), which names the one branch a push runs it on. Its one job,
-// named StatusContext, runs on every pull request that is not a draft, and again when a draft is
-// marked ready (ready_for_review), so the branch ruleset adoption renders from the workflows
-// requires it (the draft skip in internal/forge/workflow_guard.go). A push to another branch or
-// a tag, and a draft, start no API comparison (#815).
+// (managedasset.Family.ForBranch), which names the one branch a push runs it on. Its trigger and
+// draft handling are the hosted gate shape (ghworkflow.HostedGateOn, HostedGateDraftStep,
+// HostedGateStepIf in internal/ghworkflow/hostedgate.go), so a push to another branch or a tag
+// starts no API comparison (#815). Its one job, named StatusContext, has no condition, so it
+// reports on every pull request and the branch ruleset adoption renders from the workflows
+// requires it. On a draft the job fails by design without comparing anything, saying the gate
+// runs when the pull request is marked ready; the ready_for_review run then reports the context
+// on the same head commit.
 //
 // A pull request compares its base commit with the merge commit the checkout action checks
 // out; a push compares HEAD with the newest root release tag, and passes saying so while there
@@ -63,43 +67,36 @@ const (
 const Workflow = `---
 name: Praetor API Compatibility
 
-'on':
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: ['main']
-
+` + ghworkflow.HostedGateOn + `
 permissions:
   contents: read
 
 jobs:
   api-compatibility:
     name: Go API Compatibility
-    # A draft skips the job; marking it ready runs it (ready_for_review).
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
-      - name: Checkout source
+` + ghworkflow.HostedGateDraftStep + `      - name: Checkout source` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
-      - name: Setup Go
+      - name: Setup Go` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version: stable
           cache: false
       # yamllint disable rule:line-length
-      - name: Restore Go module cache
+      - name: Restore Go module cache` + ghworkflow.HostedGateStepIf + `
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/go/pkg/mod
           key: gomod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             gomod-${{ runner.os }}-${{ runner.arch }}-
-      - name: Restore Go build cache
+      - name: Restore Go build cache` + ghworkflow.HostedGateStepIf + `
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ~/.cache/go-build
@@ -108,7 +105,7 @@ jobs:
             gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-${{ hashFiles('**/go.sum') }}-
             gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-
       # yamllint enable rule:line-length
-      - name: Compare the API of every Go module
+      - name: Compare the API of every Go module` + ghworkflow.HostedGateStepIf + `
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: go run tools/apicompat/gate/main.go -base="$BASE"

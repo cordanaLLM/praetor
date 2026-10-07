@@ -98,6 +98,9 @@ type Step struct {
 	Shell string         `yaml:"shell"`
 	With  map[string]any `yaml:"with"`
 	Env   yaml.Node      `yaml:"env"`
+	// ContinueOnError is the step's continue-on-error: a step that sets it lets its job pass
+	// when it fails (HostedGateFault).
+	ContinueOnError string `yaml:"continue-on-error"`
 	// RunLine is the document line the run: value starts on, its | or > indicator for a block
 	// scalar, and 0 for a step without run:.
 	RunLine int `yaml:"-"`
@@ -169,13 +172,8 @@ func IsWorkflowPath(rel string) bool {
 // the expression ${{ false }}: GitHub then skips it on every run. Any other condition may hold,
 // so it is read as running.
 func NeverRuns(condition string) bool {
-	condition = strings.TrimSpace(condition)
-	if inner, ok := strings.CutPrefix(condition, "${{"); ok {
-		if inner, ok = strings.CutSuffix(inner, "}}"); ok {
-			condition = strings.TrimSpace(inner)
-		}
-	}
-	return condition == "false"
+	expression, closed := UnwrapExpression(condition)
+	return closed && expression == "false"
 }
 
 // RunStep is one run: step of a workflow, with the job it runs in.

@@ -368,11 +368,15 @@ class CheckpointTests(unittest.TestCase):
         head = git(self.root, "rev-parse", "HEAD").stdout.decode().strip()
         return head, base
 
-    def observe_review(self, head, base, checks, **overrides):
+    def observe_review(self, head, base, checks, annotations=None, **overrides):
+        """Observe a review; annotations is the GraphQL check-run answer, by default none."""
+        if annotations is None:
+            annotations = self.check_runs()
         original = checkpoint._run
         pr = {"number": 7, "url": "https://github.com/acme/demo/pull/7", "isDraft": True,
               "headRefOid": head, "headRefName": "checkpoint/test", "baseRefName": "main",
               "statusCheckRollup": checks, **overrides}
+        self.graphql_calls = []
 
         def fake(argv, root, **kwargs):
             if argv[:2] == ["git", "ls-remote"]:
@@ -380,6 +384,10 @@ class CheckpointTests(unittest.TestCase):
             if argv[:3] == ["gh", "pr", "list"]:
                 self.assertIn("statusCheckRollup", argv[-1])
                 return json.dumps([pr]).encode()
+            if argv[:3] == ["gh", "api", "graphql"]:
+                self.graphql_calls.append(argv)
+                self.assertTrue(kwargs.get("network"))
+                return annotations if isinstance(annotations, bytes) else json.dumps(annotations).encode()
             return original(argv, root, **kwargs)
 
         with mock.patch.object(checkpoint, "_run", side_effect=fake):
@@ -458,6 +466,91 @@ class CheckpointTests(unittest.TestCase):
                 result = self.observe_review(head, base, checks)
                 self.assertEqual(result["review_status"], "failed", result)
                 self.assertTrue(result["due"])
+
+    DRAFT_NOTE = {"title": checkpoint.DRAFT_GATE_TITLE, "message": checkpoint.DRAFT_GATE_MESSAGE}
+    EXIT_NOTE = {"title": "", "message": "Process completed with exit code 1."}
+
+    @staticmethod
+    def check_runs(*runs):
+        """A GraphQL commit answer holding one check suite with runs of (name, annotations)."""
+        nodes = [{"name": name, "annotations": {"nodes": notes}} for name, notes in runs]
+        return {"data": {"repository": {"object": {
+            "checkSuites": {"nodes": [{"checkRuns": {"nodes": nodes}}]}}}}}
+
+    def test_review_draft_refusal_is_draft_pending(self):
+        head, base = self.review_fixture()
+        failed = {"__typename": "CheckRun", "name": "gate", "status": "COMPLETED",
+                  "conclusion": "FAILURE"}
+        marked = self.check_runs(("gate", [self.DRAFT_NOTE, self.EXIT_NOTE]))
+        result = self.observe_review(head, base, [failed], annotations=marked)
+        self.assertEqual(result["review_status"], "draft_pending", result)
+        self.assertEqual(result["check_counts"]["draft_pending"], 1)
+        self.assertEqual(result["check_counts"]["failed"], 0)
+        self.assertEqual(result["required_checks_unpassed"], ["gate"])
+        self.assertTrue(result["due"])
+        argv = self.graphql_calls[0]
+        self.assertIn(f"oid={head}", argv)
+        self.assertIn("owner=acme", argv)
+        self.assertIn("name=demo", argv)
+
+    def test_review_draft_real_failure_stays_failed(self):
+        head, base = self.review_fixture()
+        failed = {"__typename": "CheckRun", "name": "gate", "status": "COMPLETED",
+                  "conclusion": "FAILURE"}
+        other_title = {**self.DRAFT_NOTE, "title": "Gate not run"}
+        other_message = {**self.DRAFT_NOTE, "message": checkpoint.DRAFT_GATE_MESSAGE + " "}
+        cases = (
+            ("exit annotation only", self.check_runs(("gate", [self.EXIT_NOTE]))),
+            ("other title", self.check_runs(("gate", [other_title]))),
+            ("other message", self.check_runs(("gate", [other_message]))),
+            ("one unmarked run", self.check_runs(("gate", [self.DRAFT_NOTE]), ("gate", [self.EXIT_NOTE]))),
+            ("marker on another check", self.check_runs(("other", [self.DRAFT_NOTE]))),
+            ("no failed run listed", self.check_runs()),
+        )
+        for label, answer in cases:
+            with self.subTest(label):
+                result = self.observe_review(head, base, [failed], annotations=answer)
+                self.assertEqual(result["review_status"], "failed", result)
+                self.assertEqual(result["check_counts"]["draft_pending"], 0)
+        marked = self.check_runs(("gate", [self.DRAFT_NOTE]))
+        for conclusion in ("CANCELLED", "TIMED_OUT", "STARTUP_FAILURE"):
+            with self.subTest(conclusion=conclusion):
+                result = self.observe_review(head, base, [{**failed, "conclusion": conclusion}])
+                self.assertEqual(result["review_status"], "failed", result)
+                self.assertEqual(self.graphql_calls, [])
+        status = {"__typename": "StatusContext", "context": "gate", "state": "FAILURE"}
+        result = self.observe_review(head, base, [status, failed], annotations=marked)
+        self.assertEqual(result["review_status"], "failed", result)
+
+    def test_review_ready_pull_request_with_draft_marker_is_failed(self):
+        head, base = self.review_fixture()
+        failed = {"__typename": "CheckRun", "name": "gate", "status": "COMPLETED",
+                  "conclusion": "FAILURE"}
+        result = self.observe_review(head, base, [failed], isDraft=False)
+        self.assertEqual(result["review_status"], "failed", result)
+        self.assertEqual(self.graphql_calls, [])
+        passed = {**failed, "conclusion": "SUCCESS"}
+        result = self.observe_review(head, base, [passed])
+        self.assertEqual(result["review_status"], "passed", result)
+        self.assertEqual(self.graphql_calls, [])
+
+    def test_review_draft_annotation_bounds_and_malformed_answers_fail_closed(self):
+        head, base = self.review_fixture()
+        failed = {"__typename": "CheckRun", "name": "gate", "status": "COMPLETED",
+                  "conclusion": "FAILURE"}
+        at_bound = self.check_runs(("gate", [self.EXIT_NOTE] * (checkpoint.MAX_DRAFT_ANNOTATIONS - 1)
+                                    + [self.DRAFT_NOTE]))
+        result = self.observe_review(head, base, [failed], annotations=at_bound)
+        self.assertEqual(result["review_status"], "draft_pending", result)
+        over = self.check_runs(("gate", [self.DRAFT_NOTE] * (checkpoint.MAX_DRAFT_ANNOTATIONS + 1)))
+        invalid = (b"not json", {}, {"data": {"repository": None}},
+                   {"data": {"repository": {"object": {"checkSuites": {"nodes": [{}]}}}}},
+                   self.check_runs((None, [self.DRAFT_NOTE])), over)
+        for answer in invalid:
+            with self.subTest(answer=answer):
+                result = self.observe_review(head, base, [failed], annotations=answer)
+                self.assertEqual(result["publication_status"], "error", result)
+                self.assertIn("error", result)
 
     def test_review_bounds_and_malformed_responses_fail_closed(self):
         head, base = self.review_fixture()

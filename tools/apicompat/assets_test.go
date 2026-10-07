@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -82,9 +83,11 @@ func TestGatePinsItsChecker(t *testing.T) {
 	}
 }
 
-// Positive: this repository's own hosted gate is the locked text. Negative: the text carries
-// no expression in its run line, where the shell would execute it. Boundary: the base reaches
-// the gate through env, and the step names the gate program by its asset path.
+// Positive: this repository's own hosted gate is the locked text, in the hosted gate shape
+// (ghworkflow.HostedGateFault), and its last step runs the gate. Negative: the text carries no
+// expression in its run line, where the shell would execute it. Boundary: the base reaches the
+// gate through env, the step names the gate program by its asset path, and the only other
+// command is the draft step's.
 func TestWorkflowRunsTheGate(t *testing.T) {
 	copyBytes, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(WorkflowFile)))
 	if err != nil {
@@ -93,35 +96,41 @@ func TestWorkflowRunsTheGate(t *testing.T) {
 	if string(copyBytes) != Workflow {
 		t.Fatalf("%s differs from the locked workflow in %s", WorkflowFile, SourceFile)
 	}
+	spec, err := ghworkflow.Parse([]byte(Workflow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ghworkflow.HostedGateFault(&spec, "api-compatibility", ghworkflow.HostedGateDefaultBranch); err != nil {
+		t.Fatalf("the workflow departs from the hosted gate shape: %v", err)
+	}
 	runs, err := forge.WorkflowRuns([]byte(Workflow))
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "go run " + Directory + "/" + GateFile + " -base=\"$BASE\""
-	if len(runs) != 1 || runs[0].Script != want {
-		t.Fatalf("workflow runs %+v, want the one step %q", runs, want)
+	if len(runs) != 2 || runs[0].Name != ghworkflow.HostedGateDraftStepName || runs[1].Script != want {
+		t.Fatalf("workflow runs %+v, want the draft step and the one gate step %q", runs, want)
 	}
 	if !strings.Contains(Workflow, "BASE: ${{ github.event.pull_request.base.sha }}") {
 		t.Fatal("the pull request base does not reach the gate through env")
 	}
 }
 
-// Positive: the job reports StatusContext on every pull request that can merge, its draft skip
-// included, so the rendered ruleset requires it. Negative: another condition, or the draft skip
-// in a workflow that does not run again on ready_for_review, removes it from the required set.
-// Boundary: an advisory job (continue-on-error) is not required either.
+// Positive: the job has no condition and reports StatusContext on every pull request, so the
+// rendered ruleset requires it; on a draft it reports a failure by design. Negative: a job
+// condition, the draft skip included, removes it from the required set, since GitHub reports the
+// skipped job as successful. Boundary: an advisory job (continue-on-error) is not required
+// either, and dropping ready_for_review keeps the job required while the shape check refuses it.
 func TestWorkflowIsARequiredCheck(t *testing.T) {
 	contexts, err := forge.RequiredStatusContextsPlanned(t.Context(), t.TempDir(), map[string][]byte{WorkflowFile: []byte(Workflow)})
 	if err != nil || !slices.Equal(contexts, []string{StatusContext}) {
 		t.Fatalf("required status contexts = %v, %v; want [%s]", contexts, err, StatusContext)
 	}
 	job := "    name: " + StatusContext + "\n"
-	skip := "    if: github.event.pull_request.draft != true\n"
 	for name, mutated := range map[string]string{
-		"conditional":     strings.Replace(Workflow, skip, "    if: github.actor != 'bot'\n", 1),
-		"no ready rerun":  strings.Replace(Workflow, ", ready_for_review]", "]", 1),
-		"advisory":        strings.Replace(Workflow, job, job+"    continue-on-error: true\n", 1),
-		"default trigger": strings.Replace(Workflow, "    types: [opened, synchronize, reopened, ready_for_review]\n", "", 1),
+		"conditional": strings.Replace(Workflow, job, job+"    if: github.actor != 'bot'\n", 1),
+		"draft skip":  strings.Replace(Workflow, job, job+"    if: "+ghworkflow.HostedGateNotDraft+"\n", 1),
+		"advisory":    strings.Replace(Workflow, job, job+"    continue-on-error: true\n", 1),
 	} {
 		if mutated == Workflow {
 			t.Fatalf("%s: the mutation did not change the workflow", name)
@@ -130,6 +139,11 @@ func TestWorkflowIsARequiredCheck(t *testing.T) {
 		if err != nil || len(contexts) != 0 {
 			t.Fatalf("%s job: required status contexts = %v, %v; want none", name, contexts, err)
 		}
+	}
+	noReady := strings.Replace(Workflow, ", ready_for_review]", "]", 1)
+	spec, err := ghworkflow.Parse([]byte(noReady))
+	if err != nil || ghworkflow.HostedGateFault(&spec, "api-compatibility", ghworkflow.HostedGateDefaultBranch) == nil {
+		t.Fatalf("a gate that never reruns on ready_for_review holds the hosted gate shape (%v)", err)
 	}
 }
 
