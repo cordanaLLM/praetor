@@ -1,0 +1,17 @@
+# HISS-10 positive: the C and C++ lane configures CMake with its default, so a compiler warning
+# prints and the job stays green. The build-warnings audit (internal/adopt.AuditBuildWarnings)
+# fails the configure step and names CMAKE_COMPILE_WARNING_AS_ERROR.
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel

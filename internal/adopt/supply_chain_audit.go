@@ -204,9 +204,7 @@ func selectSupplyChainEntries(gap supplyChainGap, entries []config.Exception, to
 // the release workflow, and the two ways out.
 func unexcusedSupplyChainGap(gap supplyChainGap, expired *config.Exception) string {
 	if expired != nil {
-		return fmt.Sprintf("[FAIL] %s: the exceptions entry (rule %s, %s) expired on %s, so the gap above fails as "+
-			"if it were not declared; close the gap, or renew the entry with a new reason and expiry.",
-			supplyChainGate, expired.Rule, expired.Target(), expired.Expires)
+		return expiredExceptionEntry(supplyChainGate, "the gap above fails", "close the gap", *expired)
 	}
 	return fmt.Sprintf("[FAIL] %s: no exceptions entry declares the gap above; raise the workflows (%s), or declare the "+
 		"gap in the exceptions list of .standards.yaml (rule %s, path %s, a reason, and an expiry at most %d days ahead).",
@@ -215,12 +213,7 @@ func unexcusedSupplyChainGap(gap supplyChainGap, expired *config.Exception) stri
 
 // staleSupplyChainEntries is the [FAIL] line for entries with no gap to excuse.
 func staleSupplyChainEntries(entries []config.Exception, why string) string {
-	targets := make([]string, 0, len(entries))
-	for index := 0; index < len(entries) && index < config.MaxExceptions; index++ {
-		targets = append(targets, entries[index].Target())
-	}
-	return fmt.Sprintf("[FAIL] %s: the exceptions entries with rule %s for %s excuse no gap, because %s; remove them.",
-		supplyChainGate, config.ExceptionRuleSupplyChain, strings.Join(targets, ", "), why)
+	return staleExceptionEntries(supplyChainGate, config.ExceptionRuleSupplyChain, "gap", entries, why)
 }
 
 // exceptedSupplyChainGap is the [PASS] line of a declared gap: the entry with its expiry and

@@ -1,0 +1,17 @@
+# HISS-10 gap: the Meson lane sets werror and passes the build-warnings audit
+# (internal/adopt.AuditBuildWarnings), but the vendored codec builds through make, whose recipe
+# runs the compiler without -Werror. The audit reads the commands of run: steps, not what a make
+# target, a script or a build file runs, so the vendored lane's warnings go unseen.
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: meson setup build --werror
+      - run: meson compile -C build
+      - run: make -C third_party/codec

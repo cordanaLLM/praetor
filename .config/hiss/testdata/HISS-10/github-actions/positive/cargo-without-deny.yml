@@ -1,0 +1,15 @@
+# HISS-10 positive: the Rust lane lints with clippy -D warnings but tests with neither RUSTFLAGS
+# nor CARGO_ENCODED_RUSTFLAGS, so a rustc warning in a test target prints and passes. The
+# build-warnings audit (internal/adopt.AuditBuildWarnings) fails the cargo test step.
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: cargo clippy -- -D warnings
+      - run: cargo test --locked

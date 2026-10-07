@@ -1,0 +1,20 @@
+# HISS-10 positive: a Meson lane set up without werror and an MSVC lane compiling without /WX,
+# the shape that printed tens of thousands of warnings in an adopter repository's green run. The
+# build-warnings audit (internal/adopt.AuditBuildWarnings) fails both.
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: meson setup build -Dwarning_level=3
+      - run: meson compile -C build
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: cl /W4 /c src\decoder.c

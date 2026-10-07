@@ -205,3 +205,61 @@ func TestParse_StepContinueOnError(t *testing.T) {
 		t.Fatalf("continue-on-error = %q, %q, %q", steps[0].ContinueOnError, steps[1].ContinueOnError, steps[2].ContinueOnError)
 	}
 }
+
+const envScopes = `on: push
+env:
+  RUSTFLAGS: -D warnings
+  CFLAGS: -O2
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CFLAGS: -Werror
+    steps:
+      - run: cargo build
+        continue-on-error: true
+        env:
+          RUSTFLAGS: ""
+      - run: cargo build
+      - run: cargo build
+        env: ${{ fromJSON(vars.BUILD_ENV) }}
+      - run: cargo build
+        env:
+`
+
+// EnvValue reads a variable from the innermost scope that declares it (positive), reports a
+// variable no scope declares as unset (negative), and treats an env: that is one expression as
+// unknown and an empty or null env: as declaring nothing (boundary). A step's continue-on-error
+// is read as written.
+func TestEnvValue(t *testing.T) {
+	spec, err := Parse([]byte(envScopes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := spec.Jobs["build"]
+	cases := []struct {
+		step           int
+		name, value    string
+		wantSet, known bool
+	}{
+		{0, "RUSTFLAGS", "", true, true},
+		{1, "RUSTFLAGS", "-D warnings", true, true},
+		{1, "CFLAGS", "-Werror", true, true},
+		{1, "CARGO_ENCODED_RUSTFLAGS", "", false, true},
+		{2, "RUSTFLAGS", "", false, false},
+		{3, "RUSTFLAGS", "-D warnings", true, true},
+	}
+	for _, tc := range cases {
+		value, set, known := EnvValue(tc.name, &job.Steps[tc.step].Env, &job.Env, &spec.Env)
+		if value != tc.value || set != tc.wantSet || known != tc.known {
+			t.Errorf("step %d EnvValue(%s) = %q, set %t, known %t; want %q, %t, %t",
+				tc.step, tc.name, value, set, known, tc.value, tc.wantSet, tc.known)
+		}
+	}
+	if _, set, known := EnvValue("RUSTFLAGS"); set || !known {
+		t.Errorf("EnvValue with no scope = set %t, known %t; want unset and known", set, known)
+	}
+	if got := job.Steps[0].ContinueOnError; got != "true" {
+		t.Errorf("step continue-on-error = %q, want true", got)
+	}
+}

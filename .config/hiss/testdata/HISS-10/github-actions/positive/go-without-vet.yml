@@ -1,0 +1,18 @@
+# HISS-10 positive: the Go lane builds and tests but no step runs go vet, so only the
+# high-confidence subset go test runs is checked. The build-warnings audit
+# (internal/adopt.AuditBuildWarnings) fails both Go steps.
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go test ./...
