@@ -1,4 +1,4 @@
 type: added
-title: "praetorctl audit and standards_audit warn about a workflow push that runs on every branch and a pull request job that runs on drafts or skips them with a job condition or through a need; a HISS-18 entry of the exceptions list declares a workflow that must run everywhere"
+title: "Audit warns about workflow triggers that start wasted runs: unfiltered pushes, draft runs and draft skips"
 issue: "#817"
 breaking: false

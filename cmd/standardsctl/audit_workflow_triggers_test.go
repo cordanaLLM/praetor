@@ -66,6 +66,10 @@ func TestAuditWorkflowTriggers_CLI(t *testing.T) {
 // ci.yml, whose job runs on draft pull requests. The audit reports that workflow and still
 // passes, so the pre-commit audit --offline an adopted repository runs does not block its commits
 // on a HISS-18 finding in a workflow Praetor wrote.
+//
+// The warning is asserted on purpose and the test stays as it is for now: the flavor ci
+// templates move to the hosted gate shape in a later change of #817, as the operator decided on
+// 2026-10-07, and this test then turns into the check that they pass.
 func TestAdoptThenAuditReportsTheFlavorWorkflowTriggers(t *testing.T) {
 	root, _ := adoptedRepository(t, map[string]string{
 		"go.mod": "module example.com/widgets\n\ngo 1.24\n", "cmd/widgets/main.go": "package main\n\nfunc main() {}\n",
