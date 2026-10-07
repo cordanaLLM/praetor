@@ -734,6 +734,10 @@ filters fail explicitly and name the path. The
 lists every binding input and bound. These checks establish synchronized bytes;
 they cannot establish that an agent recorded every relevant task or explanation.
 
+The gate's untracked Exit-0 receipt `.standards-receipt.json` at the root is outside
+the binding too, so a `praetorctl gate run` after the sync leaves the ledger current
+(#136); the [state ledger integrity guide](state-ledger-integrity.md) states why.
+
 This repository's native Stop/AfterAgent bridge calls the shared `agent-state-stop`
 job and requires its unique success marker. Missing, stale or invalid state blocks
 completion. The Git hooks rebuild the checkout CLI before ledger checks to avoid

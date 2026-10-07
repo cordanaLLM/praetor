@@ -420,6 +420,19 @@ the whole file before it, so older markers were never read. Earlier versions wro
 per entry and kept every marker; those entries still verify and are rewritten only
 by `state compact`.
 
+One path is outside the Git binding besides `.workingdir`: the gate's Exit-0 receipt
+`.standards-receipt.json` at the ledger root. `praetorctl gate run` writes it after the turn's
+sync, and while it was bound every gate run staled the ledger it had just found current (#136).
+It is excluded rather than having the gate sync the ledger because it carries nothing the ledger
+must bind: its signed content derives from the HEAD commit and the clean tree the binding already
+covers, and nothing commits it. The exclusion is the gate's own literal pathspec
+(`gateReceiptExclude` in
+[`internal/state/sync_receipt.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/sync_receipt.go)),
+so only the root file is excluded; the same name in a subdirectory still binds. Any other change
+beside the receipt still stales the ledger. The cases are replayed in
+`internal/state/sync_receipt_test.go` and, with the real receipt stage, in
+`TestRunReceiptStage_3D_StateLedgerStaysCurrent` (`internal/gating/receipt_ledger_test.go`).
+
 ## One-time ledger compaction
 
 Two commands shrink an existing ledger once. Both refuse a ledger whose last sync
