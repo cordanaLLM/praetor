@@ -19,9 +19,8 @@ import (
 // DirectoryLockBudget is how long LockDirectory waits, in total, for another process to
 // release a directory before it fails and names that process. A cooperating writer holds the
 // lock for one snapshot publish, a few milliseconds. The budget also absorbs a process that
-// takes the same advisory lock for a reason of its own: systemd-tmpfiles takes an exclusive
-// flock on every directory its age-based cleanup descends into, temporary directories
-// included (#820).
+// takes the same advisory lock for a reason of its own, for example systemd-tmpfiles, which
+// takes an exclusive flock on every directory its age-based cleanup descends into (#820).
 const DirectoryLockBudget = 5 * time.Second
 
 const (
