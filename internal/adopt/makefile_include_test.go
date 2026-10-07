@@ -142,3 +142,24 @@ func TestReadTrackedFragmentBoundaries(t *testing.T) {
 		}
 	}
 }
+
+// TestMergeDocumentationMakefileRemadeIncludeRefuses covers an include Make remakes before it
+// reads it (measured against GNU Make 4.4.1): a built-in rule builds gen.mk from a neighbouring
+// source, so the tracked text is not what Make reads and the include stays ambiguous.
+func TestMergeDocumentationMakefileRemadeIncludeRefuses(t *testing.T) {
+	neighbours := []string{"gen.mk.sh", "gen.mk.c", "gen.mk,v", "s.gen.mk", "RCS/gen.mk,v", "SCCS/s.gen.mk"}
+	for _, neighbour := range neighbours {
+		s := includeRepo(t, map[string]string{"gen.mk": "help:\n", neighbour: "x\n"}, "gen.mk")
+		if _, err := mergeWithIncludes(s, "include gen.mk\n"); err == nil {
+			t.Errorf("include with neighbour %s followed", neighbour)
+		}
+	}
+	s := includeRepo(t, map[string]string{"gen.mk": "help:\n", "gen.mk.in": "docs-lint:\n"}, "gen.mk")
+	if _, err := mergeWithIncludes(s, "include gen.mk\ngen.mk: gen.mk.in\n\tcp $< $@\n"); err == nil {
+		t.Error("include with an explicit rule followed")
+	}
+	s = includeRepo(t, map[string]string{"gen.mk": "help:\n", "other.txt": "x\n"}, "gen.mk")
+	if _, err := mergeWithIncludes(s, "include gen.mk\n"); err != nil {
+		t.Errorf("fragment with no source beside it refused: %v", err)
+	}
+}

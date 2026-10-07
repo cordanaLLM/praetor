@@ -30,20 +30,35 @@ func MakefileExpandIncludes(data string, read MakefileIncludeReader) string {
 		return data
 	}
 	files := 0
+	followed := make([]string, 0, MaxMakefileIncludeFiles)
+	original := data
 	for level := 0; level < MaxMakefileIncludeDepth; level++ {
-		expanded, changed := makefileExpandLevel(data, read, &files)
+		expanded, changed := makefileExpandLevel(data, read, &files, &followed)
 		if !changed {
-			return data
+			break
 		}
 		data = expanded
+	}
+	for _, operand := range followed {
+		if MakefileMayDefineTarget(data, operand) {
+			return original
+		}
 	}
 	return data
 }
 
+// makefileIncludeBoundary is the line spliced before and after every fragment. A variable binding
+// closes the recipe the scanner follows, which is what an include does in Make: Make closes the
+// including file's open rule at the include, reads the fragment with none open, and continues the
+// including file with none open. Without it a recipe, or a recipe state a conditional left unsure,
+// would carry across the splice and a tab-prefixed line would read as a recipe line where Make
+// parses it as makefile syntax (measured against GNU Make 4.4.1).
+const makefileIncludeBoundary = ".PRAETOR_INCLUDE_BOUNDARY := 1"
+
 // makefileExpandLevel replaces the literal include lines of data once. Nested includes the
 // fragments bring are left for the next level. It stops at the first point the scanner cannot
 // resolve, past which nothing is expanded.
-func makefileExpandLevel(data string, read MakefileIncludeReader, files *int) (string, bool) {
+func makefileExpandLevel(data string, read MakefileIncludeReader, files *int, followed *[]string) (string, bool) {
 	lines, whole := makefileLogicalLines(data)
 	if !whole {
 		return data, false
@@ -58,7 +73,7 @@ func makefileExpandLevel(data string, read MakefileIncludeReader, files *int) (s
 			return data, false
 		}
 		if kind == makefileSyntaxLine {
-			if text, ok := makefileIncludeText(line, read, files); ok {
+			if text, ok := makefileIncludeText(line, read, files, followed); ok {
 				line, changed = text, true
 			}
 		}
@@ -69,12 +84,14 @@ func makefileExpandLevel(data string, read MakefileIncludeReader, files *int) (s
 
 // makefileIncludeText returns the fragment text an include line stands for, and false when line is
 // no include of literal paths all of which read vouches for.
-func makefileIncludeText(line string, read MakefileIncludeReader, files *int) (string, bool) {
+func makefileIncludeText(line string, read MakefileIncludeReader, files *int, followed *[]string) (string, bool) {
 	fields := strings.Fields(line)
 	if len(fields) < 2 || fields[0] != "include" || strings.HasPrefix(line, "\t") {
 		return "", false
 	}
-	parts := make([]string, 0, len(fields)-1)
+	parts := make([]string, 0, 2*len(fields))
+	operands := make([]string, 0, len(fields)-1)
+	parts = append(parts, makefileIncludeBoundary)
 	for _, operand := range fields[1:] {
 		if !makefileLiteralPath(operand) || *files >= MaxMakefileIncludeFiles {
 			return "", false
@@ -85,7 +102,10 @@ func makefileIncludeText(line string, read MakefileIncludeReader, files *int) (s
 			return "", false
 		}
 		parts = append(parts, strings.TrimSuffix(strings.ReplaceAll(text, "\r\n", "\n"), "\n"))
+		parts = append(parts, makefileIncludeBoundary)
+		operands = append(operands, operand)
 	}
+	*followed = append(*followed, operands...)
 	return strings.Join(parts, "\n"), true
 }
 

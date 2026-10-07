@@ -201,8 +201,11 @@ merged Makefile keeps the include lines; the fragments are only read. A fragment
 `docs-lint` or `docs-figures` still refuses the block. Every other include stays ambiguous and
 refuses: `-include`, `sinclude`, `load`, an operand with a variable, wildcard, function or
 comment, a path outside the repository, a missing, untracked, generated or symlinked file, an
-include past the depth bound, and a fragment that ends inside a continuation, define or
-conditional (issue #843).
+include past the depth bound, a fragment that ends inside a continuation, define or
+conditional, and an include Make would remake before reading it: a rule in the Makefile or a
+fragment that may target the included file, or a neighbour a built-in rule builds it from
+(`name.sh`, `name.c`, any `name.*`, `name,v`, `s.name`, `RCS/`, `SCCS/`). Each fragment is spliced
+between lines that close the open recipe, as Make does at an include (issue #843).
 
 The answer holds for the invocation the gates run, `make verify-all` or `make docs-lint` with no
 variable definitions and no options. A command-line definition, `-e` with the variable in the

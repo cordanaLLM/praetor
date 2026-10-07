@@ -128,3 +128,59 @@ func TestMakefileExpandIncludesFileBound(t *testing.T) {
 		t.Fatal("include one over the file bound was read")
 	}
 }
+
+// TestMakefileExpandIncludesRecipeStateDoesNotCrossTheSplice replays three Makefiles measured
+// against GNU Make 4.4.1 that define docs-lint: Make closes the open rule at an include and reads
+// the fragment and the rest of the including file with none open, so a tab-prefixed line right
+// after the include is makefile syntax, not a recipe line of the fragment's last rule.
+func TestMakefileExpandIncludesRecipeStateDoesNotCrossTheSplice(t *testing.T) {
+	eval := "\tX := $(eval docs-lint: ; @echo x)\n"
+	cases := map[string]struct {
+		data      string
+		fragments map[string]string
+	}{
+		"fragment ends in an open recipe": {
+			data:      "include a.mk\n" + eval,
+			fragments: map[string]string{"a.mk": "all:\n\t@true\n"},
+		},
+		"tab include after a fragment ending in a recipe": {
+			data:      "include a.mk\n\tinclude b.mk\n",
+			fragments: map[string]string{"a.mk": "all:\n\t@true\n", "b.mk": "docs-lint:\n\t@echo x\n"},
+		},
+		"parent recipe open and fragment leaves an unsure state": {
+			data:      "all:\n\t@true\ninclude a.mk\n" + eval,
+			fragments: map[string]string{"a.mk": "ifdef UNSET\nfoo:\nendif\n"},
+		},
+	}
+	for name, tc := range cases {
+		got := util.MakefileExpandIncludes(tc.data, fragmentReader(tc.fragments))
+		if !util.MakefileMayDefineTarget(got, "docs-lint") {
+			t.Errorf("%s: docs-lint reads as unowned:\n%s", name, got)
+		}
+	}
+}
+
+// TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous covers an include Make remakes before it
+// reads it: a rule in the Makefile or in a fragment targets the included file, so its tracked text
+// is not what Make reads.
+func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
+	read := fragmentReader(map[string]string{
+		"gen.mk": "help:\n\t@echo help\n",
+		"b.mk":   "gen.mk: gen.mk.in\n\tcp $< $@\n",
+	})
+	for name, data := range map[string]string{
+		"rule in the Makefile": "include gen.mk\ngen.mk: gen.mk.in\n\tcp $< $@\n",
+		"rule in a fragment":   "include gen.mk\ninclude b.mk\n",
+		"pattern rule":         "include gen.mk\n%.mk: %.mk.in\n\tcp $< $@\n",
+		"rule before the line": "gen.mk: gen.mk.in\n\tcp $< $@\ninclude gen.mk\n",
+	} {
+		got := util.MakefileExpandIncludes(data, read)
+		if got != data || !util.MakefileMayDefineTarget(got, "docs-lint") {
+			t.Errorf("%s: include was followed:\n%s", name, got)
+		}
+	}
+	plain := util.MakefileExpandIncludes("include gen.mk\nother: x\n\t@true\n", read)
+	if strings.Contains(plain, "include") || util.MakefileMayDefineTarget(plain, "docs-lint") {
+		t.Fatalf("a rule for another target blocked the expansion:\n%s", plain)
+	}
+}
