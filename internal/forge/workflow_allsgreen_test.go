@@ -62,14 +62,22 @@ func TestAllsGreenAggregate_Positive_IsTheOnlyRequiredCheck(t *testing.T) {
 }
 
 // Negative: an alls-green step the file cannot judge proves nothing, so the gate stays required
-// beside the jobs it needs, as before: an unpinned or foreign action, a jobs input that is not
-// every need, a policy the file cannot settle, an input the action does not declare, a forgiven
-// failure, a step condition the model cannot read, or a policy that lets every need fail.
+// beside the jobs it needs, as before: an action referenced by tag or branch, a commit that is no
+// recorded release, a foreign action, a jobs input that is not every need, a policy the file
+// cannot settle or that names something other than a job id, an input the action does not
+// declare, a forgiven failure, a step condition the model cannot read, a policy that lets every
+// need fail, or another step beside it.
 func TestAllsGreenAggregate_Negative_UnjudgedStepKeepsTheLeaves(t *testing.T) {
 	pinned := func(with ...string) string { return allsGreenSteps(allsGreenUses, with...) }
 	gates := map[string]string{
 		"short SHA":            allsGreenSteps("re-actors/alls-green@05ac938", everyNeedInput),
 		"branch reference":     allsGreenSteps("re-actors/alls-green@release/v1", everyNeedInput),
+		"release tag":          allsGreenSteps("re-actors/alls-green@v1.3.0", everyNeedInput),
+		"release before skips": allsGreenSteps("re-actors/alls-green@bbc6a81c2162769a81d5d422dd4a51cebdf7ff08 # v1.0.2", everyNeedInput),
+		"unrecorded commit":    allsGreenSteps("re-actors/alls-green@0123456789abcdef0123456789abcdef01234567", everyNeedInput),
+		"expanding name":       pinned(everyNeedInput, "allowed-failures: $(echo impact-plan)"),
+		"JSON expanding name":  pinned(everyNeedInput, `allowed-failures: '["$(echo go)"]'`),
+		"earlier step":         strings.Replace(pinned(everyNeedInput), "    steps:\n", "    steps:\n      - uses: actions/checkout@v5\n", 1),
 		"other action":         allsGreenSteps("acme/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe", everyNeedInput),
 		"one need":             pinned("jobs: ${{ toJSON(needs.go) }}"),
 		"jobs from an input":   pinned("jobs: ${{ inputs.jobs }}"),
@@ -104,6 +112,9 @@ func TestAllsGreenAggregate_Boundary_SpellingsAndAllowedFailures(t *testing.T) {
 		"case and spacing":   allsGreenSteps("Re-Actors/Alls-Green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe", "jobs: ${{ tojson( needs ) }}"),
 		"failure of a stray": allsGreenSteps(allsGreenUses, everyNeedInput, "allowed-failures: docs"),
 	}
+	for sha, release := range allsGreenReleases {
+		proving["release "+release] = allsGreenSteps("re-actors/alls-green@"+sha, everyNeedInput)
+	}
 	for name, gate := range proving {
 		t.Run(name, func(t *testing.T) {
 			contexts, err := workflowPullRequestContexts([]byte(skippedLaneWorkflow(allNeeds, gate)))
@@ -120,6 +131,10 @@ func TestAllsGreenAggregate_Boundary_SpellingsAndAllowedFailures(t *testing.T) {
 	if conclusion := gateConclusion(t, workflow, map[string]string{"impact-plan": "failure", "go": "success", "test": "success"}); conclusion != "success" {
 		t.Fatalf("the action accepts the planner's failure: the gate reported %s", conclusion)
 	}
+}
+
+// Boundary: allsGreenNames reads a list of as many names as a workflow has jobs, and no more.
+func TestAllsGreenNames_Boundary_ListBound(t *testing.T) {
 	tooMany := strings.Repeat("a,", maxJobsPerFile) + "a"
 	if _, read := allsGreenNames(tooMany); read {
 		t.Fatalf("a list past %d names must not be read", maxJobsPerFile)
@@ -135,6 +150,7 @@ func TestFailingExit(t *testing.T) {
 		"exit 1": true, "exit 255": true, "exit\t2": true,
 		"exit 0": false, "exit 256": false, "exit -1": false, "exit": false, "exit x": false,
 		"exit 1 2": false, "exit 1 # done": false, "echo exit 1": false, "exit $?": false,
+		"exit 01": false, "exit +1": false, "Exit 1": false,
 	}
 	for command, want := range cases {
 		if got := failingExit(command); got != want {

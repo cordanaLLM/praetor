@@ -2,6 +2,7 @@ package forge
 
 import (
 	"encoding/json"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -9,9 +10,30 @@ import (
 )
 
 // allsGreenAction is the action re-actors/alls-green. Its one step fails when a job named in its
-// jobs input reported a result the step's policy rejects (action.yml and src/job_outcome.py on its
-// release/v1 branch, https://github.com/re-actors/alls-green).
+// jobs input reported a result the step's policy rejects (https://github.com/re-actors/alls-green).
 const allsGreenAction = "re-actors/alls-green"
+
+// allsGreenReleases maps the commit of each re-actors/alls-green release whose source was read to
+// its tag: the commit each annotated tag peels to, as `git ls-remote --tags` listed them on
+// 2026-10-07. Every one of them declares the jobs, allowed-failures and allowed-skips inputs,
+// accepts a need's success, rejects a need's failure or cancellation unless allowed-failures names
+// it, and rejects a skip unless allowed-skips or allowed-failures names it
+// (src/normalize_needed_jobs_status.py from v1.1.0, src/job_outcome.py at v1.3.0).
+//
+// The proof assumes the code at a listed commit is the code GitHub runs for it; a commit is
+// immutable, so a moved tag does not change it. Any other commit proves nothing: v1.0.0 to v1.0.2
+// declare no allowed-skips, and a later release, a branch head or a commit only a fork holds has
+// not been read. Add a release here only after reading its decision code.
+var allsGreenReleases = map[string]string{
+	"3a2de129f0713010a71314c74e33c0e3ef90e696": "v1.1.0",
+	"198badcb65a1a44528f27d5da555c4be9f12eac6": "v1.2.0",
+	"13b4244b312e8a314951e03958a2f91519a6a3c9": "v1.2.1",
+	"05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe": "v1.2.2",
+	"b5b5b37504aa4183270bd3d855c52a67f212be35": "v1.3.0",
+}
+
+// jobIDShape is the form GitHub allows a job id: a letter or _, then letters, digits, - and _.
+var jobIDShape = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*$`)
 
 // allsGreenEveryNeed is the jobs input, whitespace removed, that hands the action the result of
 // every job the step's job needs.
@@ -27,14 +49,16 @@ type allsGreenPolicy struct {
 }
 
 // allsGreenStep returns the policy of an alls-green step the file can judge, and false for any
-// other step. The step runs the action pinned by full commit SHA (util.ParseSHAPin), so the code it
-// runs is the code the file names; its jobs input is toJSON(needs); it carries no
-// continue-on-error and no input the action does not declare; and allowed-failures and
-// allowed-skips are absent or literal lists (allsGreenNames). A tag or branch reference, an
-// expression the file cannot evaluate, or a jobs input naming fewer jobs proves nothing.
+// other step. The step runs the action pinned by full commit SHA (util.ParseSHAPin) at a release
+// in allsGreenReleases, so the code it runs is code whose decision was read; its jobs input is
+// toJSON(needs); it carries no continue-on-error and no input the action does not declare; and
+// allowed-failures and allowed-skips are absent or literal lists of job ids (allsGreenNames). A
+// tag or branch reference, an unlisted commit, an expression the file cannot evaluate, or a jobs
+// input naming fewer jobs proves nothing.
 func allsGreenStep(step *workflowStep) (allsGreenPolicy, bool) {
 	pin, pinned := util.ParseSHAPin(step.Uses)
-	if !pinned || !strings.EqualFold(pin.Action, allsGreenAction) || advisoryJob(step.ContinueOnError) || !allsGreenInputsOnly(step.With) {
+	_, released := allsGreenReleases[pin.SHA]
+	if !pinned || !released || !strings.EqualFold(pin.Action, allsGreenAction) || advisoryJob(step.ContinueOnError) || !allsGreenInputsOnly(step.With) {
 		return allsGreenPolicy{}, false
 	}
 	jobs, jobsText := step.With["jobs"].(string)
@@ -61,7 +85,9 @@ func allsGreenInputsOnly(with map[string]any) bool {
 // (parse_as_list in src/normalize_needed_jobs_status.py): a JSON list of job names, or else a
 // comma-separated list (util.SplitCSV), blank names dropped. An absent value names no job. A value
 // the file cannot settle cannot be read: an expression, a YAML value that is no string, any other
-// JSON, or a list of more names than a workflow has jobs.
+// JSON, a list of more names than a workflow has jobs, or a name that is no job id (jobIDShape).
+// Releases before v1.3.0 paste the value into a bash here-document, where a name such as
+// $(echo go) would expand to another job's id.
 func allsGreenNames(value any) ([]string, bool) {
 	if value == nil {
 		return nil, true
@@ -70,12 +96,13 @@ func allsGreenNames(value any) ([]string, bool) {
 	if !isText || strings.Contains(text, expressionOpen) {
 		return nil, false
 	}
+	names, read := util.SplitCSV(text), strings.Count(text, ",") < maxJobsPerFile
 	if json.Valid([]byte(text)) {
-		var names []string
+		names = nil
 		err := json.Unmarshal([]byte(text), &names)
-		return names, err == nil && names != nil && len(names) <= maxJobsPerFile
+		read = err == nil && names != nil && len(names) <= maxJobsPerFile
 	}
-	return util.SplitCSV(text), strings.Count(text, ",") < maxJobsPerFile
+	return names, read && !slices.ContainsFunc(names, func(name string) bool { return !jobIDShape.MatchString(name) })
 }
 
 // rejects reports whether a need reported a result the policy rejects (evaluate_jobs in
