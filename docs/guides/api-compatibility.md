@@ -81,7 +81,10 @@ An earlier Praetor wrote a workflow that ran on every push to every branch and t
 draft (#815). Plain `praetorctl adopt` refreshes that text, and a rendering for a former default
 branch, without `--force`; a hand-edited copy still needs `--force`
 (`TestAdoptRefreshesPriorHostedGatesAndKeepsEditedOnes` in
-`internal/adopt/workflow_branch_test.go`).
+`internal/adopt/workflow_branch_test.go`). An earlier text rendered for a default branch other
+than `main` refreshes too: the prior lookup reads its one push branch line as `main` and matches
+the recorded text (`TestPriorTextRenderedForAnotherBranchIsPrior` in
+`internal/managedasset/workflow_branch_test.go`).
 
 ## Repositories without Go
 

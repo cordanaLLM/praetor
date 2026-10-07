@@ -386,7 +386,8 @@ func (f Family) PriorText(rel string, actual []byte) bool {
 }
 
 // PriorRendering reports whether actual is a text the family shipped at rel before its current
-// canonical text (Prior) or its current workflow rendered for another default branch
+// canonical text (Prior), such a text rendered for another default branch
+// (priorOtherBranchRendering), or its current workflow rendered for another default branch
 // (otherBranchRendering), and whether actual is its CRLF checkout, so a refresh can keep the
 // file's style. Prior is read with util.LookupCanonicalText, the lookup adoption applies to
 // every other earlier-text set: an LF text and its CRLF checkout match, while an edit, mixed
@@ -399,7 +400,31 @@ func (f Family) PriorRendering(rel string, actual []byte) (known, crlf bool) {
 	if branch, renderedCRLF := f.otherBranchRendering(rel, actual); branch != "" {
 		return true, renderedCRLF
 	}
-	return false, crlf
+	return f.priorOtherBranchRendering(rel, actual), crlf
+}
+
+// priorOtherBranchRendering reports whether actual, the family's workflow file, is a Prior text
+// rendered for a default branch other than WorkflowBranch. Prior records the WorkflowBranch
+// rendering of each earlier workflow only, so an unedited copy rendered for master would
+// otherwise turn into an edit, refreshed only with --force, as soon as the workflow changes
+// again. actual must name exactly one push branch line (pushBranchesLine), for a branch
+// config.ValidBranchName admits; that line rewritten to WorkflowBranch must then be a Prior text
+// of rel. Any other text, an edited rendering included, is no prior rendering.
+func (f Family) priorOtherBranchRendering(rel string, actual []byte) bool {
+	if f.WorkflowFile == "" || rel != f.WorkflowFile {
+		return false
+	}
+	text, _, err := util.NormalizeLineEndingsStrict(string(actual))
+	if err != nil || strings.Count(text, pushBranchesPrefix) != 1 {
+		return false
+	}
+	branch, found := pushBranch(text)
+	if !found || branch == WorkflowBranch || !config.ValidBranchName(branch) {
+		return false
+	}
+	rendered := strings.Replace(text, pushBranchesLine(branch), pushBranchesLine(WorkflowBranch), 1)
+	owner, known, _ := util.LookupCanonicalText([]byte(rendered), f.Prior)
+	return known && owner == rel
 }
 
 // EmbedDirective returns the exact go:embed line Source must carry: the inventory, in order.
