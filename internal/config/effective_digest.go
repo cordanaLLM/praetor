@@ -45,6 +45,9 @@ func (p *EffectivePolicy) verifyDigestMetadata() error {
 	if err := verifyOperatorFields(p.Operator, p.OperatorFields, seen); err != nil {
 		return err
 	}
+	if err := verifyBacklogFields(p.Policy.Backlog, p.BacklogFields, seen); err != nil {
+		return err
+	}
 	return p.Policy.validateJoined()
 }
 
@@ -97,13 +100,13 @@ func verifyDigestSource(source PolicySource, seen map[string]bool) error {
 }
 
 // validateJoined checks what a join can produce beyond the complexity limits: the
-// error-unwrap mode and the linter and DevContainer feature unions. It runs after every
+// error-unwrap mode, the linter and DevContainer feature unions and the backlog caps. It runs after every
 // layer and again when a retained snapshot is verified.
 func (p *ResolvedPolicy) validateJoined() error {
 	if !p.ErrorUnwraps.known() {
 		return fmt.Errorf("unsupported error_unwraps mode %q", p.ErrorUnwraps)
 	}
-	return errors.Join(validatePolicyNames(p.Linters), validatePolicyNames(p.DevFeatures))
+	return errors.Join(validatePolicyNames(p.Linters), validatePolicyNames(p.DevFeatures), p.Backlog.validate())
 }
 
 // validatePolicyNames is the one bound for linter and feature names, both per archetype

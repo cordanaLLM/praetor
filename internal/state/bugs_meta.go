@@ -1,7 +1,7 @@
 package state
 
-// bugMetaName is the sidecar that holds each bug's Context, CreatedAt and
-// ResolvedAt, keyed by bug ID. BUGS.md rows keep only a short v2 reference, so
+// bugMetaName is the sidecar that holds each bug's Context, CreatedAt,
+// ResolvedAt and Kind, keyed by bug ID. BUGS.md rows keep only a short v2 reference, so
 // the file an agent reads carries no Base64 metadata. The envelope and record
 // codec are shared with every ledger sidecar (ledger_meta.go).
 const (
@@ -9,7 +9,7 @@ const (
 	bugMetaPendingName = "bugs.meta.json.pending"
 )
 
-var bugSidecar = sidecarSpec{name: bugMetaName, member: "bugs", checkID: checkBugID}
+var bugSidecar = sidecarSpec{name: bugMetaName, member: "bugs", checkID: checkBugID, kinds: true}
 
 // decodeBugMeta reads bugs.meta.json strictly.
 func decodeBugMeta(data []byte) (ledgerMetaIndex, error) {

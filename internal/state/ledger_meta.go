@@ -7,17 +7,18 @@ import (
 )
 
 // sidecarVersion is the envelope version shared by every ledger metadata sidecar:
-// {"version":1,"<member>":{"<ID>":{context, created_at, resolved_at}}}.
+// {"version":1,"<member>":{"<ID>":{context, created_at, resolved_at[, kind]}}}.
 const sidecarVersion = 1
 
 // ledgerMetaIndex maps a canonical record ID to its metadata.
 type ledgerMetaIndex map[string]ledgerMetadata
 
 // sidecarSpec names one ledger's metadata sidecar: the file, the member holding its
-// records, and the ID rule every key must satisfy.
+// records, the ID rule every key must satisfy, and whether its records may carry a kind.
 type sidecarSpec struct {
 	name, member string
 	checkID      func(string) error
+	kinds        bool
 }
 
 // decodeSidecar reads a sidecar strictly: the envelope holds exactly the version and the
@@ -73,6 +74,9 @@ func decodeSidecarRecord(spec sidecarSpec, id string, raw jsontext.Value) (*ledg
 	metadata, err := decodeLedgerMetadataJSON(raw)
 	if err != nil {
 		return nil, err
+	}
+	if metadata.Kind != "" && !spec.kinds {
+		return nil, fmt.Errorf("kind is not a %s member", spec.member)
 	}
 	return metadata, validateLedgerText(metadata.Context)
 }

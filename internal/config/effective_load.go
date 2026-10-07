@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,6 +32,9 @@ type EffectiveOptions struct {
 	DeploymentPath   string
 	WorkstationPath  string
 	Audit            bool
+	// unpinned skips the lock and its pinned profiles and facets, for a repository that has
+	// no .standards.lock yet (LoadUnadoptedEffectivePolicyContext).
+	unpinned bool
 }
 
 // LoadEffectivePolicyContext resolves defaults, pinned profiles/facets, explicit
@@ -54,6 +58,31 @@ func LoadEffectivePolicyInputsContext(ctx context.Context, opts EffectiveOptions
 	return loadEffectivePolicy(ctx, opts, inputs)
 }
 
+// LoadUnadoptedEffectivePolicyContext resolves the policy for a command that also runs in a
+// repository before adoption, such as `praetorctl state status`. A root without
+// .standards.yaml has no policy: it returns nil and a notice saying so. A manifest without
+// .standards.lock resolves without pinned profiles or facets and returns NoLockNotice, the
+// case ResolveRepositoryPolicy handles the same way. Every other case is
+// LoadEffectivePolicyContext, so an unreadable or mismatched lock is an error, never skipped.
+func LoadUnadoptedEffectivePolicyContext(ctx context.Context, opts EffectiveOptions) (*EffectivePolicy, string, error) {
+	if ctx == nil || opts.Root == "" {
+		return nil, "", errors.New("effective policy requires context and explicit repository root")
+	}
+	paths, err := normalizeEffectiveOptions(opts)
+	if err != nil {
+		return nil, "", err
+	}
+	if !util.PathExists(paths.ManifestPath) {
+		return nil, "no " + ManifestFileName + ": no repository policy applies", nil
+	}
+	notice := ""
+	if !util.PathExists(filepath.Join(paths.Root, LockFileName)) {
+		opts.unpinned, notice = true, NoLockNotice
+	}
+	policy, err := loadEffectivePolicy(ctx, opts, nil)
+	return policy, notice, err
+}
+
 func loadEffectivePolicy(ctx context.Context, opts EffectiveOptions, inputs map[string][]byte) (*EffectivePolicy, error) {
 	if ctx == nil || opts.Root == "" {
 		return nil, errors.New("effective policy requires context and explicit repository root")
@@ -69,7 +98,10 @@ func loadEffectivePolicy(ctx context.Context, opts EffectiveOptions, inputs map[
 	if err != nil {
 		return nil, err
 	}
-	layers, err := loader.pinnedLayers(paths, manifest)
+	var layers []PolicyLayer
+	if !paths.unpinned {
+		layers, err = loader.pinnedLayers(paths, manifest)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -184,6 +216,9 @@ func (l *effectiveLoader) manifest(path string) (*Manifest, PolicyLayer, error) 
 	if overrides != nil && overrides.Kind != yaml.MappingNode {
 		return nil, layer, errors.New("manifest overrides must be a mapping")
 	}
+	if manifest.Backlog != nil {
+		layer.Backlog = manifest.Backlog.Caps
+	}
 	layer.Complexity, err = decodeComplexity(policyMember(overrides, "complexity"))
 	return &manifest, layer, err
 }
@@ -207,8 +242,8 @@ func (l *effectiveLoader) externalLayers(opts EffectiveOptions, layers []PolicyL
 }
 
 // externalLayer decodes one explicitly selected document. It must carry at least one owned
-// section: complexity or an operator section (operatorSectionNames). Other root keys stay
-// tolerated.
+// section: complexity, backlog or an operator section (operatorSectionNames). Other root keys
+// stay tolerated.
 func (l *effectiveLoader) externalLayer(id, path string) (PolicyLayer, error) {
 	node, layer, err := l.document(path, id)
 	if err != nil {
@@ -219,12 +254,15 @@ func (l *effectiveLoader) externalLayer(id, path string) (PolicyLayer, error) {
 	if err != nil {
 		return layer, fmt.Errorf("%s policy: %w", id, err)
 	}
-	complexity := policyMember(node, "complexity")
-	if complexity == nil && !owned {
-		return layer, fmt.Errorf("%s policy requires a complexity section or one of the operator sections %s",
+	complexity, backlog := policyMember(node, "complexity"), policyMember(node, "backlog")
+	if complexity == nil && backlog == nil && !owned {
+		return layer, fmt.Errorf("%s policy requires a complexity or backlog section or one of the operator sections %s",
 			id, strings.Join(operatorSectionNames[:], ", "))
 	}
 	layer.Complexity, err = decodeComplexity(complexity)
+	if err == nil {
+		layer.Backlog, err = decodeBacklog(backlog)
+	}
 	if err != nil {
 		return layer, fmt.Errorf("%s policy: %w", id, err)
 	}

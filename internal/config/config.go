@@ -298,6 +298,11 @@ type Manifest struct {
 	// vulnerability gate reads (security.go_vex, internal/govuln). It is repository-only, like
 	// Documentation.
 	Security *SecurityPolicy `yaml:"security,omitempty"`
+	// Backlog caps each backlog category (backlog.caps.<category>.max and .action). It is a
+	// policy layer like overrides.complexity: the effective policy joins it with the caps of the
+	// pinned profiles and facets and of the external documents, and a cap only tightens
+	// (backlog_caps.go, #792).
+	Backlog *BacklogSection `yaml:"backlog,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -321,6 +326,9 @@ type ResolvedPolicy struct {
 	DevFeatures      []string
 	Memory           MemoryPolicy    `json:",omitzero"`
 	ErrorUnwraps     ErrorUnwrapMode `json:",omitempty"`
+	// Backlog is omitted while no layer declares a cap, so a policy without caps keeps the
+	// digest it had before the dimension existed (backlog_caps.go).
+	Backlog BacklogCaps `json:",omitzero"`
 }
 
 // LoadManifest reads and parses a .standards.yaml file through the bounded regular-file read
@@ -500,6 +508,7 @@ func Join(a, b *ResolvedPolicy) *ResolvedPolicy {
 		DevFeatures:  unionStrings(a.DevFeatures, b.DevFeatures),
 		Memory:       joinMemory(a.Memory, b.Memory),
 		ErrorUnwraps: joinErrorUnwraps(a.ErrorUnwraps, b.ErrorUnwraps),
+		Backlog:      joinBacklog(a.Backlog, b.Backlog),
 	}
 }
 
