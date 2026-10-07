@@ -6,7 +6,8 @@ import (
 )
 
 // aggregateWorkflow is path-filtered CI: a planner job selects lanes, the lane runs only when
-// selected, and an aggregate job that needs both carries gateCondition.
+// selected, and an aggregate job that needs both carries gateCondition. The aggregate has no
+// steps, so nothing in the file proves it fails when a lane fails (provenAggregate).
 func aggregateWorkflow(gateCondition string) string {
 	return "on:\n  pull_request:\n  push:\n    branches: [main]\njobs:\n" +
 		"  impact-plan:\n    name: CI impact plan\n    runs-on: ubuntu-latest\n" +
@@ -14,8 +15,9 @@ func aggregateWorkflow(gateCondition string) string {
 		"  merge-gate:\n    name: Merge gate\n    needs: [impact-plan, go]\n    if: " + gateCondition + "\n"
 }
 
-// Positive: an aggregate merge gate with if: always() reports on every pull request, so the
-// repository's required checks are the planner and the gate, never the lane the planner gates.
+// Positive: an aggregate merge gate with if: always() reports on every pull request, so it is
+// required. Its steps do not prove it fails when a lane fails, so the unconditional planner stays
+// required beside it; the lane the planner gates never is.
 func TestRequiredStatusContexts_Positive_AlwaysAggregateIsRequired(t *testing.T) {
 	root := t.TempDir()
 	writeWorkflowFixture(t, root, "ci.yml", aggregateWorkflow("always()"))
