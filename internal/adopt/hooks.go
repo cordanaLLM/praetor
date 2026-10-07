@@ -632,6 +632,7 @@ var priorEvasionHookDigests = map[string]string{
 	"eb5beb82cfcc85f4f398c504696750d889ffe49171e61956446adbcd0927dbde": "black-clean layout, engine refusal texts",
 	"fed57187eef4b43b8d4810bcad13c1da8339d333ea74b675c0371cf6c93b309b": "abbreviated skip options, Windows hook removal",
 	"93c213517c41de42c3a44b9f950b205a94d43d9c1ea7a202266912c793ae68cb": "read-only chained command exemption",
+	"332845d1088325c24cd747bfc4e8c5e415132a46f06204fffcc267bc8af5d8f7": "find and in-place edit rules start at the first command word",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

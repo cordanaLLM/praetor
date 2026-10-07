@@ -1,0 +1,4 @@
+type: fixed
+title: "The interceptor scan-bound test no longer fails at random on slower runners"
+issue: "#829"
+breaking: false

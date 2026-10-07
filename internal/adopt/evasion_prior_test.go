@@ -14,7 +14,7 @@ import (
 const priorEvasionFixtures = "testdata/evasion"
 
 // currentEvasionFixture is the fixture holding the current rendering.
-const currentEvasionFixture = "read-only-words.block_evasion.py"
+const currentEvasionFixture = "first-word-anchor.block_evasion.py"
 
 // adoptEvasionFixture adopts a fresh repository whose interceptor holds existing.
 func adoptEvasionFixture(t *testing.T, name, existing string, force bool) (string, *AdoptReport) {

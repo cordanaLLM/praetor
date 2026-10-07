@@ -2,6 +2,8 @@ package operationalsync
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +25,10 @@ import (
 // overlay to .standards.yaml through this package's own ownerManifest, and runs these
 // packages' full test suites against the copy, so any test -- present or future, known or not
 // -- that assumes the canonical identity fails here first, not in a real fork's pre-push gate.
+// The run keeps every test of internal/adopt, although that package dominates its time (#831):
+// no test there is marked as reading identity, a test reaches the copy's .standards.yaml through
+// any helper that resolves the repository root, and a name or file selection would be the same
+// one-at-a-time list #263 found incomplete.
 var identitySensitivePackages = []string{"./internal/config/...", "./internal/forge/...", "./internal/adopt/..."}
 
 // maxOverlaySuiteFiles bounds the tracked-file copy (HISS-02). The repository carries under
@@ -33,6 +39,98 @@ const maxOverlaySuiteFiles = 20000
 // maxOverlaySuiteFileBytes bounds each copied file (HISS-02). The largest tracked file today is
 // half a megabyte; this stays a generous multiple above that rather than tracking it exactly.
 const maxOverlaySuiteFileBytes = 8 << 20
+
+// overlaySuiteMargin is the part of the outer go test -timeout deadline the guard holds back
+// from its nested run. The copy and the overlay run inside the nested deadline and are bounded
+// by it (HISS-02); the margin covers what must still happen after it, before the outer binary's
+// own timeout panics without a failing assertion: stopping the nested go test, which gets
+// util.CommandWaitDelay of grace before it is killed, and reporting its output.
+const overlaySuiteMargin = time.Minute
+
+// overlaySuiteMinimum is the shortest window the guard starts its copy, overlay and nested run
+// in. The nested go test builds and runs three packages' tests, and the fastest whole run
+// measured took 37 s with a warm build cache on a 32-core Linux host (#831); a window under
+// this floor cannot hold that run on any runner, so it fails at once and names both deadlines.
+// A window above the floor that still proves too short fails through overlaySuiteFailure,
+// which names both deadlines as well.
+const overlaySuiteMinimum = 15 * time.Second
+
+// overlaySuiteUnbounded bounds the nested run when go test -timeout 0 sets no outer deadline
+// (HISS-02). It equals the -timeout 30m that make test and the Portability workflow pass.
+const overlaySuiteUnbounded = 30 * time.Minute
+
+// suiteDeadline is the nested go test's deadline and the outer go test -timeout deadline it was
+// derived from; hasOuter is false when -timeout 0 set none.
+type suiteDeadline struct {
+	nested, outer time.Time
+	hasOuter      bool
+}
+
+// String names both deadlines, so a failure says which one ran out and which one set it.
+func (d suiteDeadline) String() string {
+	outer := "none (go test -timeout 0)"
+	if d.hasOuter {
+		outer = d.outer.Format(time.RFC3339)
+	}
+	return fmt.Sprintf("nested go test deadline %s, outer go test -timeout deadline %s", d.nested.Format(time.RFC3339), outer)
+}
+
+// deriveSuiteDeadline derives the nested run's deadline from the outer test binary's, given as
+// t.Deadline reports it: the outer deadline less overlaySuiteMargin, or now plus
+// overlaySuiteUnbounded when there is none. It refuses a window under overlaySuiteMinimum and
+// names both deadlines and the flag that moves them (#831).
+func deriveSuiteDeadline(now, outer time.Time, hasOuter bool) (suiteDeadline, error) {
+	if !hasOuter {
+		return suiteDeadline{nested: now.Add(overlaySuiteUnbounded)}, nil
+	}
+	d := suiteDeadline{nested: outer.Add(-overlaySuiteMargin), outer: outer, hasOuter: true}
+	if left := d.nested.Sub(now); left < overlaySuiteMinimum {
+		return d, fmt.Errorf("%s: %s left for the nested run after the %s margin, under its %s minimum; raise go test -timeout",
+			d, left.Round(time.Second), overlaySuiteMargin, overlaySuiteMinimum)
+	}
+	return d, nil
+}
+
+// nestedTimeoutPanic opens the panic a test binary prints on standard output when its own
+// -timeout runs out (testing.(*M).startAlarm). overlaySuiteFailure reads a nested run that
+// printed it as a deadline stop, not as an identity regression.
+const nestedTimeoutPanic = "panic: test timed out after "
+
+// nestedGoTestTimeout is the -timeout a nested go test gets when left remains of its context's
+// deadline: whole seconds at or above left. Every package binary starts after the arguments are
+// built, so its own alarm fires after the context's deadline, and that deadline stops the run,
+// not go test's default of ten minutes per package binary (#831). It never drops under one
+// second, because -timeout 0 disables the binary's alarm.
+func nestedGoTestTimeout(left time.Duration) time.Duration {
+	timeout := left.Truncate(time.Second)
+	if timeout < left {
+		timeout += time.Second
+	}
+	return max(timeout, time.Second)
+}
+
+// nestedGoTestArgs builds the nested go test arguments for packages, with -timeout from what
+// remains of ctx's deadline at now (nestedGoTestTimeout). It refuses a context without a
+// deadline, which would leave every package binary on go test's fixed default (HISS-02).
+func nestedGoTestArgs(ctx context.Context, now time.Time, packages []string) ([]string, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil, errors.New("nested go test needs a context deadline to derive its -timeout from")
+	}
+	args := []string{"test", "-count=1", "-timeout", nestedGoTestTimeout(deadline.Sub(now)).String()}
+	return append(args, packages...), nil
+}
+
+// overlaySuiteFailure words a failed nested run. A run that its derived deadline stopped, or in
+// which a package binary's own -timeout panicked, names both deadlines and the flag that moves
+// them; any other failure is the identity regression the guard exists to report.
+func overlaySuiteFailure(d suiteDeadline, ctxErr, runErr error, out string) string {
+	if errors.Is(ctxErr, context.DeadlineExceeded) || strings.Contains(out, nestedTimeoutPanic) {
+		return fmt.Sprintf("identity-sensitive packages did not finish by the %s; raise go test -timeout (%v):\n%s",
+			d, runErr, out)
+	}
+	return fmt.Sprintf("identity-sensitive packages failed under the owner overlay (%v):\n%s", runErr, out)
+}
 
 // TestIdentitySensitivePackagesPassUnderTheOwnerOverlay is the durable guard #263 asks for: a
 // one-at-a-time fix to a named failing test does not converge, because the next field the
@@ -49,26 +147,44 @@ func TestIdentitySensitivePackagesPassUnderTheOwnerOverlay(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a nested go test over a repository copy; excluded from -short")
 	}
-	// The nested run compiles and tests internal/adopt alongside config and forge; on
-	// windows-latest adopt alone takes close to three minutes, so four minutes left the
-	// whole suite a deadline away from failing there (HISS-21). The workflow's go test
-	// -timeout 30m stays above this bound.
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	// The nested run's deadline comes from the outer go test -timeout rather than a fixed minute
+	// count: internal/adopt alone took 341 to 557 s on macOS runners, past the eight minutes this
+	// guard once allowed (#831), and any fixed count only moves that cliff (HISS-21). The nested
+	// go test passes the same bound on as its own -timeout (nestedGoTestArgs), because its
+	// default of ten minutes per package binary is such a fixed count.
+	outer, hasOuter := t.Deadline()
+	deadline, err := deriveSuiteDeadline(time.Now(), outer, hasOuter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline.nested)
 	defer cancel()
 
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
+	out, runErr := runOverlaySuite(t, ctx, repoRoot, identitySensitivePackages)
+	if runErr != nil {
+		t.Fatal(overlaySuiteFailure(deadline, ctx.Err(), runErr, out))
+	}
+}
+
+// runOverlaySuite copies repoRoot's working tree into a fresh directory, applies the owner
+// overlay to the copy's .standards.yaml and runs go test over packages there, with -timeout
+// from what remains of ctx's deadline once the copy is done (nestedGoTestArgs). It returns the
+// nested run's output and error instead of failing t, so the guard and the fixture proving it
+// refuses a planted regression share one implementation.
+func runOverlaySuite(t *testing.T, ctx context.Context, repoRoot string, packages []string) (string, error) {
+	t.Helper()
 	dest := t.TempDir()
 	copyTrackedTree(t, ctx, repoRoot, dest)
 	overlayManifestInPlace(t, dest)
-
-	args := append([]string{"test", "-count=1"}, identitySensitivePackages...)
-	out, runErr := util.RunCommand(ctx, dest, "go", args...)
-	if runErr != nil {
-		t.Fatalf("identity-sensitive packages failed under the owner overlay (%v):\n%s", runErr, out)
+	args, err := nestedGoTestArgs(ctx, time.Now(), packages)
+	if err != nil {
+		return "", err
 	}
+	return util.RunCommand(ctx, dest, "go", args...)
 }
 
 // TestCopyTrackedTreeIncludesNonIgnoredUntrackedFiles keeps the overlay guard equivalent to a
