@@ -73,7 +73,7 @@ func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
 
 func countOpenAuditBugs(rep *StateAuditReport, bugs []BugEntry) {
 	for _, b := range bugs {
-		if strings.EqualFold(b.Status, "open") || strings.EqualFold(b.Status, "investigating") {
+		if b.Unresolved() {
 			rep.OpenBugs++
 			if strings.EqualFold(b.Severity, "p0") {
 				rep.P0Bugs++

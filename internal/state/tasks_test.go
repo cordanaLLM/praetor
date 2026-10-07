@@ -177,3 +177,75 @@ func TestArchiveCompletedTasks_CreatesPrivateBacklog(t *testing.T) {
 	}
 	testsupport.RequireCreatedMode(t, filepath.Join(workingdir, "BACKLOG.md"), 0o600)
 }
+
+// ListBacklogTasksContext reads BACKLOG.md through the OPEN.md parser: each row carries its
+// heading and its 1-based line, an archived discharged row is completed, and a fenced row is
+// an example. An archive into the seeded ledger keeps every row it writes completed.
+func TestListBacklogTasks_Positive_SectionsLinesAndArchivedRows(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	backlog := filepath.Join(root, WorkingDirName, "BACKLOG.md")
+	writeIntegrityFile(t, backlog, defaultBacklogMD()+"- [ ] deferred\n```\n- [ ] example\n```\n## Later\n- [ ] later\n")
+	writeIntegrityFile(t, filepath.Join(root, WorkingDirName, "OPEN.md"), "- [x] shipped\n")
+	if count, err := ArchiveCompletedTasks(root, "fixture"); err != nil || count != 1 {
+		t.Fatalf("archive = %d, %v", count, err)
+	}
+	tasks, err := ListBacklogTasksContext(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type row struct {
+		section string
+		line    int
+		done    bool
+	}
+	want := map[string]row{"deferred": {"Future Workstreams", 8, false}, "later": {"Later", 13, false}}
+	for _, task := range tasks {
+		if task.Description == "shipped" {
+			if !task.Completed || !strings.HasPrefix(task.Section, "Discharged Tasks") {
+				t.Errorf("archived row = %+v", task)
+			}
+			continue
+		}
+		if got, ok := want[task.Description]; !ok || got != (row{task.Section, task.Line, task.Completed}) {
+			t.Errorf("row %+v, want %+v", task, got)
+		}
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("tasks = %+v", tasks)
+	}
+}
+
+// Negative: an unterminated fence in BACKLOG.md is refused and the error names BACKLOG.md, not
+// OPEN.md; OPEN.md errors keep naming OPEN.md.
+func TestListBacklogTasks_Negative_FenceErrorNamesTheLedger(t *testing.T) {
+	root := t.TempDir()
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	writeIntegrityFile(t, filepath.Join(root, WorkingDirName, "BACKLOG.md"), "## Future Workstreams\n```\n- [ ] swallowed\n")
+	_, err := ListBacklogTasksContext(t.Context(), root)
+	if err == nil || !strings.Contains(err.Error(), "BACKLOG.md has an unterminated code fence opened at line 2") {
+		t.Fatalf("backlog fence error = %v", err)
+	}
+	writeIntegrityFile(t, filepath.Join(root, WorkingDirName, "OPEN.md"), "~~~\n- [ ] swallowed\n")
+	if _, err := ListTasksContext(t.Context(), root); err == nil || !strings.Contains(err.Error(), "OPEN.md has an unterminated") {
+		t.Fatalf("open fence error = %v", err)
+	}
+}
+
+// Boundary: an absent BACKLOG.md holds no row, and the seeded one holds headings only.
+func TestListBacklogTasks_Boundary_AbsentAndSeeded(t *testing.T) {
+	root := t.TempDir()
+	if tasks, err := ListBacklogTasksContext(t.Context(), root); err != nil || len(tasks) != 0 {
+		t.Fatalf("absent backlog = %+v, %v", tasks, err)
+	}
+	if err := InitWorkingDir(root); err != nil {
+		t.Fatal(err)
+	}
+	if tasks, err := ListBacklogTasksContext(t.Context(), root); err != nil || len(tasks) != 0 {
+		t.Fatalf("seeded backlog = %+v, %v", tasks, err)
+	}
+}

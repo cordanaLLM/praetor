@@ -108,7 +108,7 @@ register:
   sources:
     expected: 250
     not_applicable: 127
-    sha256: "sha256:7424dfe34061cb93ab0e8f1732aad60f704db1691c648ce1d7344820a09e2677"
+    sha256: "sha256:6d3447438255902af1a4ed4b459de0f418139777b05dced6b4b066b06fd35663"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts

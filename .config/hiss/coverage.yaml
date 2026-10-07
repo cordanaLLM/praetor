@@ -17,8 +17,9 @@
 #   not_applicable the axiom does not apply to this language
 #   manual         upheld by review, not by a runnable check -- never report it as a gate
 #
-# A rule's name comes from the HISS rule catalog (internal/hisscatalog); an entry may repeat
-# it as `title:` but never differ from it, so this file cannot keep a second list of names.
+# A rule's name comes from the HISS rule catalog (internal/hisscatalog), which owns it, so this
+# file omits `title:`. A title that differs from the catalog's only warns, and
+# `praetorctl hiss coverage --sync-titles --write` rewrites it.
 #
 # This file is deliberately incomplete. It covers the invariants whose behaviour has been
 # measured directly; the remaining rules and languages are being added with their fixtures

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -105,20 +106,11 @@ func listBlock(list declarationList, comment string, indent int, eol string) str
 	var out strings.Builder
 	out.WriteString(head + eol)
 	for i := 0; i < len(list.ids) && i < config.MaxManifestEntriesPerKind; i++ {
-		out.WriteString(strings.Repeat(" ", indent) + "- " + yamlScalar(list.ids[i]) + eol)
+		// An id that would not fit one line is refused before it reaches here
+		// (validateDeclarationIDs), so YAMLScalar's quoted fallback is never the only guard.
+		out.WriteString(strings.Repeat(" ", indent) + "- " + util.YAMLScalar(list.ids[i]) + eol)
 	}
 	return out.String()
-}
-
-// yamlScalar is id as the YAML encoder writes a one-line string scalar. An id that would not fit
-// one line is refused before it reaches here (validateDeclarationIDs), so the fallback quote is
-// never the only guard.
-func yamlScalar(id string) string {
-	encoded, err := yaml.Marshal(id)
-	if err != nil || strings.Count(string(encoded), "\n") != 1 {
-		return `"` + id + `"`
-	}
-	return strings.TrimSuffix(string(encoded), "\n")
 }
 
 // manifestListIndent is the dash indentation of the first root-level block sequence that holds

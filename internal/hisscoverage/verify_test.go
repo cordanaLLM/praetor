@@ -378,26 +378,54 @@ func TestValidateTitleDefersToTheHISSCatalog(t *testing.T) {
 	}
 }
 
-// Negative: a title the catalog does not state is refused, including the shortened name
-// coverage.yaml carried before the catalog was the one list ("Append-Only ABI").
-func TestValidateRefusesADriftedTitle(t *testing.T) {
-	err := titledCatalog("HISS-14", "Append-Only ABI").Validate()
-	if !errors.Is(err, ErrInvalidCatalog) || !strings.Contains(err.Error(), "differs from the HISS catalog title") {
-		t.Fatalf("a drifted title must be refused, got %v", err)
+// Negative: a title the catalog does not state, such as the shortened name coverage.yaml
+// carried before the catalog was the one list ("Append-Only ABI"), is a warning naming the
+// catalog's current text, never a failure: the catalog owns the titles, and a retitle there
+// must not break a coverage file that repeats the earlier text (#844). CatalogTitle still
+// reads the catalog.
+func TestValidateWarnsOnADriftedTitle(t *testing.T) {
+	registered, _ := hisscatalog.LookupRule("HISS-14")
+	catalog := titledCatalog("HISS-14", "Append-Only ABI")
+	if err := catalog.Validate(); err != nil {
+		t.Fatalf("a drifted title must not fail validation: %v", err)
+	}
+	stale := catalog.StaleTitles()
+	want := StaleTitle{ID: "HISS-14", Declared: "Append-Only ABI", Catalog: registered.Title}
+	if len(stale) != 1 || stale[0] != want {
+		t.Fatalf("StaleTitles() = %+v, want [%+v]", stale, want)
+	}
+	if !strings.Contains(stale[0].String(), `the HISS catalog title "`+registered.Title+`"`) {
+		t.Fatalf("the warning must name the catalog's text: %s", stale[0])
+	}
+	if got := catalog.Rules[0].CatalogTitle(); got != registered.Title {
+		t.Fatalf("CatalogTitle() = %q, want the catalog's %q", got, registered.Title)
 	}
 }
 
 // Boundary: the comparison is exact. A title differing from the catalog's only in case or by
-// surrounding whitespace is still a second spelling and is refused; an unregistered identifier
-// is refused for the identifier, and CatalogTitle falls back to the declared title.
+// surrounding whitespace is still a second spelling and is reported; an omitted title or the
+// catalog's own is not; an unregistered identifier is still refused for the identifier, and
+// CatalogTitle falls back to the declared title.
 func TestValidateTitleComparisonIsExact(t *testing.T) {
 	registered, _ := hisscatalog.LookupRule("HISS-01")
 	for _, title := range []string{strings.ToLower(registered.Title), " " + registered.Title} {
-		if err := titledCatalog("HISS-01", title).Validate(); !errors.Is(err, ErrInvalidCatalog) {
-			t.Errorf("title %q must be refused, got %v", title, err)
+		catalog := titledCatalog("HISS-01", title)
+		if err := catalog.Validate(); err != nil {
+			t.Errorf("title %q must validate, got %v", title, err)
+		}
+		if stale := catalog.StaleTitles(); len(stale) != 1 || stale[0].Declared != title {
+			t.Errorf("title %q must be reported stale, got %+v", title, stale)
+		}
+	}
+	for _, title := range []string{"", registered.Title} {
+		if stale := titledCatalog("HISS-01", title).StaleTitles(); len(stale) != 0 {
+			t.Errorf("title %q must not be reported stale, got %+v", title, stale)
 		}
 	}
 	unknown := titledCatalog("HISS-22", "Declared Only")
+	if stale := unknown.StaleTitles(); len(stale) != 0 {
+		t.Errorf("an unregistered rule is refused by Validate, not reported stale: %+v", stale)
+	}
 	if err := unknown.Validate(); err == nil || !strings.Contains(err.Error(), "not a registered invariant") {
 		t.Fatalf("unregistered rule must be refused for its identifier, got %v", err)
 	}

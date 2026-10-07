@@ -44,11 +44,13 @@ type PolicySource struct {
 // PolicyLayer contributes complexity constraints; every explicit limit must be positive.
 // A pinned profile or facet also carries Controls, its other lattice dimensions.
 // External layers may also carry operator settings (clients, hooks, update).
+// Backlog carries the layer's backlog caps, from any layer kind (backlog_caps.go).
 type PolicyLayer struct {
 	Source     PolicySource
 	Complexity ComplexityOverride
 	Controls   ArchetypeControls
 	Settings   []OperatorSetting
+	Backlog    BacklogCaps
 }
 
 // EffectivePolicy is an independently owned snapshot, immutable by convention.
@@ -58,7 +60,9 @@ type PolicyLayer struct {
 // linters and DevContainer features besides complexity. Repository branch-protection and
 // supply-chain overrides then apply on top, monotonic except for the explicit review mode.
 // Operator is nil unless a layer carried a clients, hooks or update section; OperatorFields
-// then records the layers that set each concrete settings path.
+// then records the layers that set each concrete settings path. BacklogFields records the
+// layers imposing each declared backlog cap value, keyed backlog.caps.<category>.max or
+// .action; it is nil while no layer declares a cap.
 type EffectivePolicy struct {
 	Manifest         *Manifest           `json:"-"`
 	Policy           ResolvedPolicy      `json:"policy"`
@@ -66,6 +70,7 @@ type EffectivePolicy struct {
 	Sources          []PolicySource      `json:"sources"`
 	Fields           map[string][]string `json:"fields"`
 	OperatorFields   map[string][]string `json:"operator_fields,omitempty"`
+	BacklogFields    map[string][]string `json:"backlog_fields,omitempty"`
 	SHA256           string              `json:"sha256"`
 	CatalogArtifacts []PolicyArtifact    `json:"-"`
 }
@@ -101,6 +106,7 @@ func (p *EffectivePolicy) Evidence() string {
 	if len(p.Sources) > maxEvidenceSources {
 		fmt.Fprintf(&evidence, "\n  %d additional sources retained in structured policy provenance", len(p.Sources)-maxEvidenceSources)
 	}
+	evidence.WriteString(p.backlogEvidence())
 	return evidence.String()
 }
 
@@ -134,6 +140,9 @@ func ResolvePolicy(ctx context.Context, layers []PolicyLayer) (*EffectivePolicy,
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := result.Policy.Backlog.validateResolved(result.BacklogFields); err != nil {
 		return nil, err
 	}
 	if err := result.seal(); err != nil {
@@ -190,6 +199,9 @@ func (p *EffectivePolicy) applyLayer(layer PolicyLayer, seen map[string]bool) er
 			return err
 		}
 	}
+	if err := p.applyBacklog(layer.Source.ID, layer.Backlog); err != nil {
+		return err
+	}
 	p.Policy = *Join(&p.Policy, layer.policy())
 	if err := p.Policy.validateJoined(); err != nil {
 		return fmt.Errorf("policy source %q: %w", layer.Source.ID, err)
@@ -203,6 +215,7 @@ func (p *EffectivePolicy) applyLayer(layer PolicyLayer, seen map[string]bool) er
 func (l PolicyLayer) policy() *ResolvedPolicy {
 	result := l.Complexity.policy()
 	l.Controls.contribution(result)
+	result.Backlog = l.Backlog
 	return result
 }
 
@@ -249,15 +262,16 @@ func (p *EffectivePolicy) seal() error {
 	for i := 0; i < len(sources) && i <= maxPolicyLayers; i++ {
 		sources[i].Path = ""
 	}
-	// The operator members are omitted when empty, so a policy without operator settings
-	// keeps the digest it had before those sections existed.
+	// The operator and backlog members are omitted when empty, so a policy without operator
+	// settings or backlog caps keeps the digest it had before those sections existed.
 	encoded, err := json.Marshal(struct {
 		Policy         ResolvedPolicy
 		Sources        []PolicySource
 		Fields         map[string][]string
 		Operator       *OperatorSettings   `json:",omitempty"`
 		OperatorFields map[string][]string `json:",omitempty"`
-	}{p.Policy, sources, p.Fields, p.Operator, p.OperatorFields})
+		BacklogFields  map[string][]string `json:",omitempty"`
+	}{p.Policy, sources, p.Fields, p.Operator, p.OperatorFields, p.BacklogFields})
 	if err != nil {
 		return fmt.Errorf("encode effective policy: %w", err)
 	}

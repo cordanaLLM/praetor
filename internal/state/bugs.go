@@ -3,13 +3,16 @@ package state
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
-// BugEntry captures a defect discovered during active development.
+// BugEntry captures a defect discovered during active development. Kind says whether the row
+// records a defect or scope (work the ledger tracks that is not a defect); a row without one
+// is unlabelled, which the backlog caps report as a finding and count as a defect.
 type BugEntry struct {
 	ID         string    `json:"id"`
 	Title      string    `json:"title"`
@@ -20,6 +23,23 @@ type BugEntry struct {
 	Resolution string    `json:"resolution,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	ResolvedAt time.Time `json:"resolved_at,omitempty"`
+	Kind       string    `json:"kind,omitempty"` // "defect", "scope", or "" when unlabelled
+}
+
+// The kinds a bug ledger row may carry. Only rows written in the sidecar or inline metadata
+// form can carry one; a legacy row without metadata is always unlabelled.
+const (
+	BugKindDefect = "defect"
+	BugKindScope  = "scope"
+)
+
+// BugKinds lists the kinds a row may carry.
+func BugKinds() []string { return []string{BugKindDefect, BugKindScope} }
+
+// Unresolved reports whether the row is still being worked on: open or investigating. A
+// deferred or resolved row is not. The state audit and the backlog caps count these rows.
+func (b BugEntry) Unresolved() bool {
+	return strings.EqualFold(b.Status, "open") || strings.EqualFold(b.Status, "investigating")
 }
 
 // AddBug records a bug without rewriting unrelated ledger rows or prose.
@@ -91,13 +111,29 @@ func ListBugsContext(ctx context.Context, rootPath, filterStatus string) ([]BugE
 
 // ResolveBug updates only the selected record, preserving all other bytes.
 func ResolveBug(rootPath, id, resolution string) error {
+	return updateBugRow(rootPath, id, func(bug *BugEntry) {
+		bug.Status, bug.Resolution, bug.ResolvedAt = "resolved", resolution, time.Now().UTC()
+	})
+}
+
+// SetBugKind labels the selected record as a defect or as scope, preserving all other bytes.
+// A legacy row is rewritten in the sidecar form, the only forms that carry a kind.
+func SetBugKind(rootPath, id, kind string) error {
+	if !slices.Contains(BugKinds(), kind) {
+		return fmt.Errorf("invalid bug kind %q: want %s", kind, strings.Join(BugKinds(), " or "))
+	}
+	return updateBugRow(rootPath, id, func(bug *BugEntry) { bug.Kind = kind })
+}
+
+// updateBugRow rewrites the one record whose ID matches id after change, in the sidecar form.
+func updateBugRow(rootPath, id string, change func(*BugEntry)) error {
 	return updateBugLedger(rootPath, func(doc *bugDocument) (string, error) {
 		for _, row := range doc.rows {
 			if !strings.EqualFold(row.bug.ID, id) {
 				continue
 			}
 			bug := row.bug
-			bug.Status, bug.Resolution, bug.ResolvedAt = "resolved", resolution, time.Now().UTC()
+			change(&bug)
 			encoded, err := encodeBugRow(bug)
 			if err != nil {
 				return "", err

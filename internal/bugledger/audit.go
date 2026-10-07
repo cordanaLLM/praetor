@@ -62,16 +62,37 @@ func Audit(ctx context.Context, repoPath string) (*Report, error) {
 			continue
 		}
 		report.Open++
-		path, line, ok := rows[i].FileLine()
-		if !ok {
+		check := CheckLocation(repoPath, rows[i].Location)
+		if !check.Checked {
 			continue
 		}
 		report.Locatable++
-		if detail, stale := checkLocation(repoPath, path, line); stale {
-			report.Findings = append(report.Findings, Finding{Row: rows[i], Detail: detail})
+		if check.Stale {
+			report.Findings = append(report.Findings, Finding{Row: rows[i], Detail: check.Detail})
 		}
 	}
 	return report, nil
+}
+
+// LocationCheck is the verdict of re-reading one recorded location against the tree.
+type LocationCheck struct {
+	// Checked is false when the location is not a Go file:line, so nothing re-read it.
+	Checked bool
+	// Stale reports a location that no longer resolves; Detail says why.
+	Stale  bool
+	Detail string
+}
+
+// CheckLocation re-reads one recorded location the way Audit does. It is the ledger's one
+// re-check, shared with the backlog cap batches (internal/backlogcap). A location that still
+// resolves is not evidence the defect survives; a stale one proves nobody re-read the row.
+func CheckLocation(repoPath, location string) LocationCheck {
+	path, line, ok := Row{Location: location}.FileLine()
+	if !ok {
+		return LocationCheck{}
+	}
+	detail, stale := checkLocation(repoPath, path, line)
+	return LocationCheck{Checked: true, Stale: stale, Detail: detail}
 }
 
 // checkLocation reports whether a recorded file and line still resolve.

@@ -43,6 +43,8 @@ carriers:
   - BranchProtectionPolicy
   - SupplyChainPolicy
   - MemoryPolicy
+  - BacklogCaps
+  - BacklogCap
 containers:
   - Archetype.Complexity
   - Archetype.Controls
@@ -53,6 +55,12 @@ containers:
   - ResolvedPolicy.BranchProtection
   - ResolvedPolicy.SupplyChain
   - ResolvedPolicy.Memory
+  - Archetype.Backlog
+  - ResolvedPolicy.Backlog
+  - BacklogCaps.Defects
+  - BacklogCaps.Tasks
+  - BacklogCaps.Questions
+  - BacklogCaps.ForgeAlerts
 plumbing:
   - func: internal/config.ArchetypeControls.contribution
     role: copies one catalog layer's controls into its policy layer
@@ -86,6 +94,16 @@ plumbing:
     role: applies a repository branch protection override
   - func: internal/config.newEffectivePolicy
     role: digests the built-in defaults as the first policy source
+  - func: internal/config.BacklogCaps.validate
+    role: bounds a layer's backlog caps
+  - func: internal/config.BacklogCaps.validateResolved
+    role: refuses an action no layer gave a max
+  - func: internal/config.joinBacklog
+    role: keeps the lower max and the stricter action of two layers
+  - func: internal/config.EffectivePolicy.applyBacklog
+    role: records the layers imposing each backlog cap value
+  - func: internal/config.verifyBacklogFields
+    role: checks a retained snapshot's backlog cap contributors
 fields:
   - key: id
     go: [Archetype.ID]
@@ -506,3 +524,126 @@ fields:
           re-reads each pinned file's features for
           config.ResolveDevContainerFeatures, which the devcontainer
           command, adoption and audit resolve
+  - key: backlog.caps.defects.max
+    go: [BacklogCap.Max]
+    state: consumed
+    consumers:
+      - func: internal/config.BacklogCap.Declared
+        kind: acts
+        effect: >-
+          selects the categories internal/backlogcap counts, so a category
+          without a max is not bounded, printed, batched or gated
+      - func: internal/config.BacklogCap.Over
+        kind: acts
+        effect: >-
+          decides that a count is over the cap, which makes praetorctl state
+          batch write the category's batch and praetorctl audit fail a gated
+          category
+      - func: internal/config.BacklogCap.Limit
+        kind: reports
+        effect: >-
+          prints the max in praetorctl state status, the audit, the batch file
+          and the effective-policy evidence line
+  - key: backlog.caps.defects.action
+    go: [BacklogCap.Action]
+    state: consumed
+    consumers:
+      - func: internal/config.BacklogCap.EffectiveAction
+        kind: acts
+        effect: >-
+          selects what an over-cap category triggers: batch makes praetorctl
+          state batch write its batch file, gate makes praetorctl audit fail;
+          an undeclared action is report
+  - key: backlog.caps.tasks.max
+    go: [BacklogCap.Max]
+    state: consumed
+    consumers:
+      - func: internal/config.BacklogCap.Declared
+        kind: acts
+        effect: >-
+          selects the categories internal/backlogcap counts, so a category
+          without a max is not bounded, printed, batched or gated
+      - func: internal/config.BacklogCap.Over
+        kind: acts
+        effect: >-
+          decides that a count is over the cap, which makes praetorctl state
+          batch write the category's batch and praetorctl audit fail a gated
+          category
+      - func: internal/config.BacklogCap.Limit
+        kind: reports
+        effect: >-
+          prints the max in praetorctl state status, the audit, the batch file
+          and the effective-policy evidence line
+  - key: backlog.caps.tasks.action
+    go: [BacklogCap.Action]
+    state: consumed
+    consumers:
+      - func: internal/config.BacklogCap.EffectiveAction
+        kind: acts
+        effect: >-
+          selects what an over-cap category triggers: batch makes praetorctl
+          state batch write its batch file, gate makes praetorctl audit fail;
+          an undeclared action is report
+  - key: backlog.caps.questions.max
+    go: [BacklogCap.Max]
+    state: consumed
+    consumers:
+      - func: internal/config.BacklogCap.Declared
+        kind: acts
+        effect: >-
+          selects the categories internal/backlogcap counts, so a category
+          without a max is not bounded, printed, batched or gated
+      - func: internal/config.BacklogCap.Over
+        kind: acts
+        effect: >-
+          decides that a count is over the cap, which makes praetorctl state
+          batch write the category's batch and praetorctl audit fail a gated
+          category
+      - func: internal/config.BacklogCap.Limit
+        kind: reports
+        effect: >-
+          prints the max in praetorctl state status, the audit, the batch file
+          and the effective-policy evidence line
+  - key: backlog.caps.questions.action
+    go: [BacklogCap.Action]
+    state: consumed
+    consumers:
+      - func: internal/config.BacklogCap.EffectiveAction
+        kind: acts
+        effect: >-
+          selects what an over-cap category triggers: batch makes praetorctl
+          state batch write its batch file, gate makes praetorctl audit fail;
+          an undeclared action is report
+  - key: backlog.caps.forge_alerts.max
+    go: [BacklogCap.Max]
+    state: consumed
+    consumers:
+      - func: internal/config.BacklogCap.Declared
+        kind: acts
+        effect: >-
+          selects the category; praetor has no forge alert reader, so it is
+          never counted or compared with the max: praetorctl state status and
+          the audit print it as not counted, and a gate on it fails the audit
+          as a category that cannot be counted
+      - func: internal/config.BacklogCap.Over
+        kind: acts
+        effect: >-
+          reads the max for the counted categories only; for forge_alerts
+          Category.State returns not counted before Over is evaluated, so
+          only Declared and Limit apply and the max never writes a batch or
+          fails the audit on a count
+      - func: internal/config.BacklogCap.Limit
+        kind: reports
+        effect: >-
+          prints the max in praetorctl state status, the audit and the
+          effective-policy evidence line
+  - key: backlog.caps.forge_alerts.action
+    go: [BacklogCap.Action]
+    state: consumed
+    consumers:
+      - func: internal/config.BacklogCap.EffectiveAction
+        kind: acts
+        effect: >-
+          gate makes praetorctl audit fail, because the category cannot be
+          counted; report and batch only print it as not counted, and no batch
+          is written; an undeclared action is report
