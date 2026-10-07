@@ -287,11 +287,32 @@ func protectionRuleset(name string, refs []string, policy config.BranchProtectio
 			"required_status_checks":               checks,
 		}})
 	}
-	return map[string]any{
+	doc := map[string]any{
 		"name": name, "target": "branch", "enforcement": rulesetEnforcementActive,
 		"conditions": map[string]any{"ref_name": map[string]any{"include": refs, "exclude": []string{}}},
 		"rules":      rules,
-	}, nil
+	}
+	if actors := rulesetBypassActors(policy); actors != nil {
+		doc["bypass_actors"] = actors
+	}
+	return doc, nil
+}
+
+// repositoryAdminRoleID is the actor_id of the repository admin role in a ruleset's
+// bypass_actors entry of actor_type RepositoryRole.
+const repositoryAdminRoleID = 5
+
+// rulesetBypassActors returns the bypass_actors of a ruleset rendered under policy. Under review
+// mode single_maintainer it is the repository admin role in bypass mode pull_request: the one
+// maintainer can merge a pull request whose rules cannot be met, such as a required check no run
+// reports, and still cannot push to the branch past them (#76). Every other mode renders none, so
+// every rule binds every actor. A live ruleset keeps its own bypass actors (mergeRuleset), so this
+// entry reaches GitHub only in a ruleset sync --remote creates.
+func rulesetBypassActors(policy config.BranchProtectionPolicy) []map[string]any {
+	if policy.ReviewMode != config.BranchReviewModeSingleMaintainer {
+		return nil
+	}
+	return []map[string]any{{"actor_id": repositoryAdminRoleID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}}
 }
 
 func validateRulesetInputs(contexts []string) error {
