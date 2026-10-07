@@ -359,8 +359,10 @@ removed first) and replaced by one line:
 Equal bytes give the same file and the same line. `standards_output_read {sha256, offset, limit}`
 reads it back, 12 KiB per call, and answers `next_offset`; only a 64-digit lowercase hex
 digest names a file, so no path argument can leave the directory
-(`internal/mcp/offload_test.go`). The 4 MiB sanitizer cap is unchanged. Add
-`.standards/cache/` to the repository's `.gitignore`.
+(`internal/mcp/offload_test.go`). The 4 MiB sanitizer cap is unchanged. The first offload
+writes `.standards/cache/.gitignore` containing `*`, so output never appears as untracked
+files in an adopter repository (`TestOffloadLeavesGitStatusClean`); an existing file there
+is kept as is.
 
 ### Shared audit authority and parity
 

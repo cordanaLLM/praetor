@@ -26,8 +26,10 @@ const (
 	OffloadMaxFiles = 256
 	// OffloadHeadBytes is how much of the text the pointer line carries inline.
 	OffloadHeadBytes = 400
-	// OffloadDir is the repository-relative offload directory, always with forward slashes.
-	OffloadDir = ".standards/cache/mcp-out"
+	// OffloadCacheDir is the repository-relative cache directory, always with forward slashes.
+	OffloadCacheDir = ".standards/cache"
+	// OffloadDir is the repository-relative offload directory.
+	OffloadDir = OffloadCacheDir + "/mcp-out"
 	// OffloadMaxReadBytes bounds one OffloadRead; it stays below the default threshold so
 	// a read-back is never offloaded again.
 	OffloadMaxReadBytes = 12 << 10
@@ -100,6 +102,9 @@ func (o Offloader) store(text string) (string, error) {
 	if err := util.MkdirConfined(o.Root, filepath.FromSlash(OffloadDir), util.SecureDirPerm); err != nil {
 		return "", fmt.Errorf("mcp: create offload directory: %w", err)
 	}
+	if err := o.ensureSelfIgnore(); err != nil {
+		return "", err
+	}
 	err := util.WriteFileConfinedExclusive(o.Root, rel, []byte(text), util.SecureFilePerm)
 	switch {
 	case err == nil:
@@ -114,6 +119,18 @@ func (o Offloader) store(text string) (string, error) {
 		return "", err
 	}
 	return pointerLine(digest, text), nil
+}
+
+// ensureSelfIgnore writes a .gitignore holding "*" in the cache directory, so offloaded
+// output never shows as untracked files in an adopter repository (the file ignores itself
+// too). An existing file is left alone.
+func (o Offloader) ensureSelfIgnore() error {
+	rel := filepath.Join(filepath.FromSlash(OffloadCacheDir), ".gitignore")
+	err := util.WriteFileConfinedExclusive(o.Root, rel, []byte("*\n"), util.SecureFilePerm)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("mcp: write offload ignore file: %w", err)
+	}
+	return nil
 }
 
 // touch refreshes the modification time of an existing file so cleanup keeps recent output.
@@ -237,10 +254,16 @@ func runeAligned(text string, start, end int) (string, int) {
 	}
 	if end == start && start < len(text) {
 		// A limit smaller than one rune still advances by that rune.
-		end = start + 1
-		for end < len(text) && !utf8.RuneStart(text[end]) {
-			end++
-		}
+		end = oneRuneEnd(text, start)
 	}
 	return text[start:end], end
+}
+
+// oneRuneEnd returns the end offset of the rune starting at start.
+func oneRuneEnd(text string, start int) int {
+	end := start + 1
+	for end < len(text) && !utf8.RuneStart(text[end]) {
+		end++
+	}
+	return end
 }

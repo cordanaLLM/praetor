@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -251,5 +252,49 @@ func TestNewToolSortsRequired(t *testing.T) {
 	}
 	if schema.Required[0] != "zeta" {
 		t.Fatalf("the caller's slice must stay unmodified")
+	}
+}
+
+func TestOffloadWritesSelfIgnoringCacheDir(t *testing.T) {
+	o := Offloader{Root: t.TempDir(), Threshold: 10}
+	offloadOne(t, o, strings.Repeat("a", 11))
+	rel := filepath.Join(filepath.FromSlash(OffloadCacheDir), ".gitignore")
+	data, err := os.ReadFile(filepath.Join(o.Root, rel))
+	if err != nil || string(data) != "*\n" {
+		t.Fatalf("cache .gitignore = %q, %v; want \"*\\n\"", data, err)
+	}
+	// A second offload keeps an operator-edited ignore file untouched.
+	if err := os.WriteFile(filepath.Join(o.Root, rel), []byte("custom\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	offloadOne(t, o, strings.Repeat("b", 11))
+	data, err = os.ReadFile(filepath.Join(o.Root, rel))
+	if err != nil || string(data) != "custom\n" {
+		t.Fatalf("existing ignore file was overwritten: %q, %v", data, err)
+	}
+}
+
+func TestOffloadLeavesGitStatusClean(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	root := t.TempDir()
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Skipf("git init: %v %s", err, out)
+	}
+	offloadOne(t, Offloader{Root: root, Threshold: 10}, strings.Repeat("a", 11))
+	out, err := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=all").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("offloaded output must be ignored by git, status = %q, %v", out, err)
+	}
+}
+
+func TestRuneAlignedSubRuneLimitAdvancesOneRune(t *testing.T) {
+	chunk, next := runeAligned("a€b", 1, 2)
+	if chunk != "€" || next != 4 {
+		t.Fatalf("got %q next %d, want one whole rune and next 4", chunk, next)
+	}
+	if chunk, next := runeAligned("abc", 3, 3); chunk != "" || next != 3 {
+		t.Fatalf("empty tail: got %q next %d", chunk, next)
 	}
 }
