@@ -225,7 +225,8 @@ pinned by the full commit SHA of a release whose decision code praetor has read:
 v1.3.0, listed in `allsGreenReleases` in `internal/forge/workflow_allsgreen.go`. A tag, a branch
 or any other commit is refused, v1.0.x included, which declares no `allowed-skips`. The step has
 `jobs: ${{ toJSON(needs) }}`, no `continue-on-error` and no input the action does not declare.
-Its `if:`, when present, follows the first shape's rule. `allowed-failures` and `allowed-skips`
+It has no `if:`: a condition on another need could skip it on the very run where a covered need
+failed, so an alls-green step with any `if:` is refused and the leaves stay required. `allowed-failures` and `allowed-skips`
 must be absent or literal lists of job ids, comma-separated or JSON. The action rejects a failed
 or cancelled job unless `allowed-failures` names it, so the aggregate covers every job it needs
 except those. It also rejects a skipped job that `allowed-skips` does not name, so name the
