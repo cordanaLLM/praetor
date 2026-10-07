@@ -1,0 +1,4 @@
+type: fixed
+title: "The owner-overlay identity suite no longer times out at random on slow macOS runners"
+issue: "#831"
+breaking: false

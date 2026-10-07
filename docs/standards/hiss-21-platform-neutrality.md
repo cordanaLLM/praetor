@@ -500,3 +500,16 @@ build check (go test took 27 minutes, the harness self-tests 13), so the job lim
 minutes. By October 2026 the Windows leg took 55 to 80 minutes (go test 41 to 63, the harness
 self-tests 12 to 13), and a slow runner was cancelled at 75 minutes in its last step with every
 step green, so the job limit is now 120 minutes (#729).
+
+**A deadline from the outer timeout (#831).** The eight minutes then ran out on macOS, where
+adopt alone took 341 to 557 s, so the identity suite timed out at random. A fixed count only
+moves that cliff, so the nested run's deadline now comes from the outer `go test -timeout`
+(`t.Deadline()`) less a one-minute margin for stopping the nested run and reporting it, and
+`go test -timeout 0` keeps an explicit 30-minute bound. A window under 15 seconds fails at once,
+and a run its deadline stopped fails naming both deadlines, so a slow runner reads as "raise the
+timeout", not as an identity regression. The nested run keeps all of adopt: a name or file
+selection would be the one-at-a-time list #263 found incomplete.
+`deriveSuiteDeadline` in `internal/operationalsync/identity_suite_test.go` derives the deadline;
+`internal/operationalsync/identity_suite_deadline_test.go` tests it at the minimum and on either
+side of it, and its `TestOverlaySuiteRefusesAPlantedIdentityRegression` proves the guard still
+fails a test that asserts the canonical owner.

@@ -48,10 +48,12 @@ const maxOverlaySuiteFileBytes = 8 << 20
 const overlaySuiteMargin = time.Minute
 
 // overlaySuiteMinimum is the shortest window the guard starts its copy, overlay and nested run
-// in. The nested go test builds and runs three packages' tests, which no runner has finished in
-// under a minute, so a shorter window fails at once and names both deadlines instead of
-// spending the rest of the outer timeout on a run that cannot finish.
-const overlaySuiteMinimum = time.Minute
+// in. The nested go test builds and runs three packages' tests, and the fastest whole run
+// measured took 37 s with a warm build cache on a 32-core Linux host (#831); a window under
+// this floor cannot hold that run on any runner, so it fails at once and names both deadlines.
+// A window above the floor that still proves too short fails through overlaySuiteFailure,
+// which names both deadlines as well.
+const overlaySuiteMinimum = 15 * time.Second
 
 // overlaySuiteUnbounded bounds the nested run when go test -timeout 0 sets no outer deadline
 // (HISS-02). It equals the -timeout 30m that make test and the Portability workflow pass.
