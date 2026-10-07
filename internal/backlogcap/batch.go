@@ -107,7 +107,7 @@ func renderBatch(root string, category *Category, date string) string {
 	fmt.Fprintf(&text, "# Backlog batch: %s, %s\n\n", category.Name, date)
 	fmt.Fprintf(&text, "`%s` holds %d items in `%s`, over its cap of %d (max set by %s, action %s set by %s). "+
 		"The cap is inclusive: a count of %d is at the cap and passes.\n\n",
-		category.Name, category.Count(), category.Ledger, category.Cap.Limit(), config.BacklogOrigin(category.MaxBy),
+		category.Name, category.Count(), strings.Join(category.Ledgers, "` and `"), category.Cap.Limit(), config.BacklogOrigin(category.MaxBy),
 		category.Cap.EffectiveAction(), config.BacklogOrigin(category.ActionBy), category.Cap.Limit())
 	text.WriteString("Every counted item is listed once, grouped by file, area or section. Before this batch was " +
 		"written each item was re-checked against the tree where a resolver exists; an item without one is " +

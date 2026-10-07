@@ -19,14 +19,23 @@ import (
 // the constant exists so every scanner loop has a statically verifiable bound.
 const maxScannedLines = 200000
 
+// The task ledgers parseLedgerTaskLines reads: OPEN.md holds the in-flight tasks the task
+// commands number, BACKLOG.md the deferred workstreams and the discharged records.
+const (
+	openLedgerName    = "OPEN.md"
+	backlogLedgerName = "BACKLOG.md"
+)
+
 // TaskItem represents an actionable task in OPEN.md or BACKLOG.md. Section is the text of the
-// nearest Markdown heading above the row, empty when none precedes it.
+// nearest Markdown heading above the row, empty when none precedes it. Line is the 1-based
+// line of the row in its ledger.
 type TaskItem struct {
 	Index         int    `json:"index"`
 	Description   string `json:"description"`
 	Completed     bool   `json:"completed"`
 	CompletedDate string `json:"completed_date,omitempty"`
 	Section       string `json:"section,omitempty"`
+	Line          int    `json:"line,omitempty"`
 }
 
 // ListTasks parses OPEN.md and returns all task items, bounded by the deadline
@@ -39,16 +48,29 @@ func ListTasks(rootPath string) ([]TaskItem, error) {
 
 // ListTasksContext reads a bounded task snapshot under the caller's deadline.
 func ListTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) {
-	openFile := filepath.Join(rootPath, WorkingDirName, "OPEN.md")
-	content, err := contextopt.ReadSnapshot(ctx, openFile)
+	return listLedgerTasks(ctx, rootPath, openLedgerName)
+}
+
+// ListBacklogTasksContext reads the checkbox rows of BACKLOG.md under the caller's deadline,
+// through the parser OPEN.md is read with: rows inside a code fence are examples, an
+// unterminated fence is an error, and pending and completed rows are numbered alike. The
+// discharged records `state task archive` appends are completed rows. An absent BACKLOG.md
+// holds no row.
+func ListBacklogTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) {
+	return listLedgerTasks(ctx, rootPath, backlogLedgerName)
+}
+
+// listLedgerTasks reads one task ledger of the working directory; an absent ledger holds no row.
+func listLedgerTasks(ctx context.Context, rootPath, name string) ([]TaskItem, error) {
+	content, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootPath, WorkingDirName, name))
 	if errors.Is(err, os.ErrNotExist) {
 		return []TaskItem{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read OPEN.md: %w", err)
+		return nil, fmt.Errorf("read %s: %w", name, err)
 	}
 
-	parsed, err := parseTaskLines(strings.Split(string(content), "\n"))
+	parsed, err := parseLedgerTaskLines(name, strings.Split(string(content), "\n"))
 	if err != nil {
 		return nil, err
 	}
@@ -59,6 +81,7 @@ func ListTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) 
 			Description: task.description,
 			Completed:   task.completed,
 			Section:     task.section,
+			Line:        task.line + 1,
 		})
 	}
 	return items, nil
@@ -248,15 +271,21 @@ type taskLine struct {
 // rows are numbered alike, and checkbox lines inside a fenced code block are
 // examples, never tasks.
 func parseTaskLines(lines []string) ([]taskLine, error) {
+	return parseLedgerTaskLines(openLedgerName, lines)
+}
+
+// parseLedgerTaskLines parses the checkbox rows of the task ledger name, which its errors
+// name. OPEN.md and BACKLOG.md share it, so both read fences, headings and rows alike.
+func parseLedgerTaskLines(name string, lines []string) ([]taskLine, error) {
 	if len(lines) > maxScannedLines {
-		return nil, fmt.Errorf("OPEN.md exceeds the %d line scan bound", maxScannedLines)
+		return nil, fmt.Errorf("%s exceeds the %d line scan bound", name, maxScannedLines)
 	}
 	tasks := make([]taskLine, 0, len(lines))
 	var fence util.MarkdownFence
 	opened, section := 0, ""
 	for i := 0; i < len(lines); i++ {
 		if len(lines[i]) >= maxTaskLineBytes {
-			return nil, fmt.Errorf("OPEN.md line %d reaches the %d byte line bound", i+1, maxTaskLineBytes)
+			return nil, fmt.Errorf("%s line %d reaches the %d byte line bound", name, i+1, maxTaskLineBytes)
 		}
 		trimmed := strings.TrimSpace(lines[i])
 		if !fence.Open() {
@@ -276,7 +305,7 @@ func parseTaskLines(lines []string) ([]taskLine, error) {
 		tasks = append(tasks, taskLine{index: len(tasks) + 1, line: i, description: description, completed: completed, section: section})
 	}
 	if fence.Open() {
-		return nil, fmt.Errorf("OPEN.md has an unterminated code fence opened at line %d; every row after it would be read as an example", opened)
+		return nil, fmt.Errorf("%s has an unterminated code fence opened at line %d; every row after it would be read as an example", name, opened)
 	}
 	return tasks, nil
 }

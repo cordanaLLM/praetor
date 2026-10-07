@@ -64,11 +64,11 @@ type Category struct {
 	Cap  config.BacklogCap
 	// MaxBy and ActionBy name the policy layers that set the cap's max and action.
 	MaxBy, ActionBy []string
-	// Ledger is the repository-relative file the category is counted from; empty when praetor
-	// has no reader for it.
-	Ledger string
-	// Present reports whether Ledger exists. An absent ledger holds no items.
-	Present bool
+	// Ledgers are the repository-relative files the category is counted from; empty when
+	// praetor has no reader for it.
+	Ledgers []string
+	// Absent lists the Ledgers that do not exist. An absent ledger holds no items.
+	Absent []string
 	// Counted is false for a category praetor has no reader for; Reason says why.
 	Counted bool
 	Reason  string
@@ -101,8 +101,12 @@ func (c *Category) Line() string {
 		return fmt.Sprintf("%s: not counted: %s (%s)", c.Name, c.Reason, origin)
 	}
 	absent := ""
-	if !c.Present {
-		absent = fmt.Sprintf("; %s is absent, so it holds no item", c.Ledger)
+	switch len(c.Absent) {
+	case 0:
+	case 1:
+		absent = fmt.Sprintf("; %s is absent, so it holds no item", c.Absent[0])
+	default:
+		absent = fmt.Sprintf("; %s are absent, so they hold no item", strings.Join(c.Absent, " and "))
 	}
 	return fmt.Sprintf("%s: %d of %d, %s (%s%s)", c.Name, c.Count(), c.Cap.Limit(), c.State(), origin, absent)
 }
@@ -133,21 +137,28 @@ func (r *Report) Gate() error {
 	return errors.Join(failures...)
 }
 
-// counter reads one category. A counter without count is a category praetor cannot count
-// yet; reason says why.
+// counter reads one category from its ledgers. A counter without count is a category praetor
+// cannot count yet; reason says why.
 type counter struct {
-	ledger string
-	count  func(ctx context.Context, root string) ([]Item, []string, error)
-	reason string
+	ledgers []string
+	count   func(ctx context.Context, root string) ([]Item, []string, error)
+	reason  string
 }
 
-// counters maps each category to its reader. Forge alerts have none: internal/forge reads no
-// code-scanning, dependency or secret-scanning alert, so the category is reported as not
-// counted rather than as zero.
+// The task ledgers: OPEN.md holds the in-flight tasks, BACKLOG.md the deferred workstreams.
+const (
+	openLedger    = ".workingdir/OPEN.md"
+	backlogLedger = ".workingdir/BACKLOG.md"
+)
+
+// counters maps each category to its reader. Tasks are every open item of the state ledger,
+// so they are counted from OPEN.md and BACKLOG.md alike. Forge alerts have no reader:
+// internal/forge reads no code-scanning, dependency or secret-scanning alert, so the category
+// is reported as not counted rather than as zero.
 var counters = map[string]counter{
-	config.BacklogDefects:   {ledger: ".workingdir/BUGS.md", count: countDefects},
-	config.BacklogTasks:     {ledger: ".workingdir/OPEN.md", count: countTasks},
-	config.BacklogQuestions: {ledger: ".workingdir/QUESTIONS.md", count: countQuestions},
+	config.BacklogDefects:   {ledgers: []string{".workingdir/BUGS.md"}, count: countDefects},
+	config.BacklogTasks:     {ledgers: []string{openLedger, backlogLedger}, count: countTasks},
+	config.BacklogQuestions: {ledgers: []string{".workingdir/QUESTIONS.md"}, count: countQuestions},
 	config.BacklogForgeAlerts: {reason: "praetor has no forge alert reader yet; internal/forge reads no " +
 		"code-scanning, dependency or secret-scanning alerts"},
 }
@@ -184,13 +195,18 @@ func evaluateCategory(ctx context.Context, root, name string, entry config.Backl
 	if !ok {
 		return Category{}, fmt.Errorf("no counter is registered for category %q", name)
 	}
-	category := Category{Name: name, Cap: entry, Ledger: reader.ledger, Reason: reader.reason}
+	category := Category{Name: name, Cap: entry, Ledgers: reader.ledgers, Reason: reader.reason}
 	if reader.count == nil {
 		return category, nil
 	}
-	present, err := ledgerPresent(root, reader.ledger)
-	if err != nil {
-		return category, err
+	for _, ledger := range reader.ledgers {
+		present, err := ledgerPresent(root, ledger)
+		if err != nil {
+			return category, err
+		}
+		if !present {
+			category.Absent = append(category.Absent, ledger)
+		}
 	}
 	items, findings, err := reader.count(ctx, root)
 	if err != nil {
@@ -199,7 +215,7 @@ func evaluateCategory(ctx context.Context, root, name string, entry config.Backl
 	if len(items) > maxItems {
 		return category, fmt.Errorf("category holds more than %d items", maxItems)
 	}
-	category.Present, category.Counted, category.Items, category.Findings = present, true, items, findings
+	category.Counted, category.Items, category.Findings = true, items, findings
 	return category, nil
 }
 
@@ -251,25 +267,62 @@ func locationGroup(location string) string {
 	return group
 }
 
-// countTasks counts the pending rows of OPEN.md, the rows `praetorctl state task list` reads,
-// grouped by the section heading above each.
+// countTasks counts the open items of the state ledger: the pending rows of OPEN.md, the rows
+// `praetorctl state task list` numbers, then the pending rows of BACKLOG.md. Each is grouped by
+// its ledger and the section heading above it.
 func countTasks(ctx context.Context, root string) ([]Item, []string, error) {
-	tasks, err := state.ListTasksContext(ctx, root)
+	open, err := state.ListTasksContext(ctx, root)
 	if err != nil {
 		return nil, nil, err
 	}
+	backlog, err := state.ListBacklogTasksContext(ctx, root)
+	if err != nil {
+		return nil, nil, err
+	}
+	items := pendingTasks(open, "OPEN.md", func(task state.TaskItem) string { return fmt.Sprintf("task %d", task.Index) })
+	items = append(items, pendingTasks(backlog, "BACKLOG.md", backlogTaskID)...)
+	return items, dischargedFindings(backlog), nil
+}
+
+// backlogTaskID names a BACKLOG.md row by its line; no command numbers BACKLOG.md rows.
+func backlogTaskID(task state.TaskItem) string { return fmt.Sprintf("BACKLOG.md:%d", task.Line) }
+
+// pendingTasks turns the pending rows of one task ledger into items, each named by id and
+// grouped as "<ledger>: <section>".
+func pendingTasks(tasks []state.TaskItem, ledger string, id func(state.TaskItem) string) []Item {
 	var items []Item
 	for i := 0; i < len(tasks) && i <= maxItems; i++ {
 		if tasks[i].Completed {
 			continue
 		}
-		group := tasks[i].Section
-		if group == "" {
-			group = "(no section)"
+		section := tasks[i].Section
+		if section == "" {
+			section = "(no section)"
 		}
-		items = append(items, Item{ID: fmt.Sprintf("task %d", tasks[i].Index), Title: tasks[i].Description, Group: group})
+		items = append(items, Item{ID: id(tasks[i]), Title: tasks[i].Description, Group: ledger + ": " + section})
 	}
-	return items, nil, nil
+	return items
+}
+
+// dischargedSection opens the heading of every BACKLOG.md section that records finished work:
+// the seeded "Discharged Milestones" and each "Discharged Tasks [...]" `state task archive`
+// appends.
+const dischargedSection = "Discharged"
+
+// dischargedFindings reports each pending BACKLOG.md row under a discharged heading. Archiving
+// writes only completed rows there, so a pending one was appended after the last archive or
+// never finished; it is counted like any other open item and named so it can be moved.
+func dischargedFindings(backlog []state.TaskItem) []string {
+	var findings []string
+	for i := 0; i < len(backlog) && i <= maxItems; i++ {
+		task := backlog[i]
+		if task.Completed || !strings.HasPrefix(task.Section, dischargedSection) {
+			continue
+		}
+		findings = append(findings, fmt.Sprintf("%s is pending under the discharged heading %q and is counted; "+
+			"move it under a workstream heading or mark it done", backlogTaskID(task), task.Section))
+	}
+	return findings
 }
 
 // countQuestions counts the pending questions; QUESTIONS.md records no area, so they form one

@@ -392,13 +392,15 @@ A category no layer caps has no bound, and `state status` prints nothing for it.
 | Category | What is counted | Re-check before a batch |
 | :-- | :-- | :-- |
 | `defects` | rows of `.workingdir/BUGS.md` whose status is `open` or `investigating` and whose kind is not `scope` ([row kinds](state-ledger-integrity.md#row-kinds)); a row without a kind is counted and reported as a finding | the bug ledger's location re-check (`bugledger.CheckLocation`, the check `praetorctl bugs audit` runs): a Go `file:line` that no longer resolves is marked; any other location is marked not re-checked |
-| `tasks` | pending `- [ ]` rows of `.workingdir/OPEN.md`, the rows `praetorctl state task list` numbers | none; each item is marked not re-checked |
+| `tasks` | every open item of the state ledger: the pending `- [ ]` rows of `.workingdir/OPEN.md` (the rows `praetorctl state task list` numbers, named `task <n>`), then the pending rows of `.workingdir/BACKLOG.md`, the deferred workstreams (named `BACKLOG.md:<line>`). The discharged sections hold the completed rows `state task archive` moves there, so they count nothing; a pending row under a `Discharged` heading is counted and reported as a finding | none; each item is marked not re-checked |
 | `questions` | pending rows of `.workingdir/QUESTIONS.md` | none; each item is marked not re-checked |
 | `forge_alerts` | nothing yet: praetor has no reader for code-scanning, dependency or secret-scanning alerts, so the category prints as `not counted` with that reason, never as 0 | none |
 
-The counts come from the ledger readers `praetorctl state` already uses
-(`internal/backlogcap/backlogcap.go`). An absent ledger holds no items, and the line says the
-file is absent.
+The counts come from the ledger readers in `internal/state` (`internal/backlogcap/backlogcap.go`);
+`BACKLOG.md` is read by `state.ListBacklogTasksContext`, the `OPEN.md` task parser applied to it
+(`TestBacklogCap_Positive_TasksCountBacklogWorkstreams`,
+`TestBacklogCap_Negative_BacklogRowsAloneTripTheGate`). An absent ledger holds no items, and the
+line says which file is absent.
 
 ### Keys, boundary and actions
 
@@ -418,7 +420,8 @@ Each action also does what the weaker ones do:
 - **`report`**: `state status` marks the category over its cap.
 - **`batch`**: `praetorctl state batch [dir] [--date=YYYY-MM-DD]` writes
   `.workingdir/batches/<category>-<date>.md`. It lists every counted item once, grouped by file
-  for `defects`, by the heading above the row for `tasks`, and as one group for `questions`; each
+  for `defects`, by ledger and the heading above the row for `tasks` (`OPEN.md: In-Flight Tasks`,
+  `BACKLOG.md: Future Workstreams`), and as one group for `questions`; each
   item carries its re-check verdict, and the findings follow. The date defaults to today in UTC,
   and the same input writes the same bytes (`TestWriteBatches_DateAndDeterminism`).
 - **`gate`**: `praetorctl audit` fails, naming the category, its count and its cap:

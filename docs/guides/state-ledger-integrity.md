@@ -199,10 +199,13 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 
 A refused selector writes nothing, so `OPEN.md` stays byte-identical.
 
-Each task also records the text of the nearest Markdown heading above it (`TaskItem.Section`);
-a heading inside a fence, or a `#` not followed by a space, is not one. The `tasks`
-[backlog cap](effective-policy.md#backlog-caps) counts the pending rows and groups its batch by
-that heading (`TestListTasks_SectionIsTheNearestHeading`).
+Each task also records the text of the nearest Markdown heading above it (`TaskItem.Section`)
+and its 1-based line (`TaskItem.Line`); a heading inside a fence, or a `#` not followed by a
+space, is not one (`TestListTasks_SectionIsTheNearestHeading`). `state.ListBacklogTasksContext`
+reads `BACKLOG.md` through the same parser, so fences, headings and the unterminated-fence error
+apply there too, naming `BACKLOG.md` (`TestListBacklogTasks_*` in `internal/state/tasks_test.go`).
+The `tasks` [backlog cap](effective-policy.md#backlog-caps) counts the pending rows of both
+ledgers and groups its batch by ledger and heading.
 
 `praetorctl state task archive` moves completed rows to `BACKLOG.md` under a header
 naming the commit they were discharged at. The commit comes from
