@@ -400,14 +400,40 @@ func proseWords(prose string) []string {
 	fields := strings.Fields(prose)
 	words := make([]string, 0, len(fields))
 	for _, field := range fields {
-		field = compatibilityFold(field)
-		if word := strings.ToLower(strings.TrimFunc(field, notLetter)); word != "" {
+		if word := proseWord(field); word != "" {
 			words = append(words, word)
 		}
 	}
 	return words
 }
 
+// proseWord returns the word one whitespace field carries, lower-cased and trimmed of
+// everything that is not a letter, or "" when the field holds no letter.
+func proseWord(field string) string {
+	return strings.ToLower(strings.TrimFunc(compatibilityFold(field), notLetter))
+}
+
 func notLetter(r rune) bool {
 	return !unicode.IsLetter(r)
+}
+
+// articleToken reports whether one whitespace field is the article a, an or the: once the
+// punctuation around it is trimmed, the field must be exactly one of the three words, case
+// insensitive. Only articleBoundary runes are trimmed, so a letter, digit, mark, dash or
+// symbol next to the word keeps it part of a longer token: A380, A-series, a11y, 3a, -a
+// and <a> are names or literals, while "a", "A." and "(the" are articles (#838).
+func articleToken(field string) bool {
+	switch strings.ToLower(strings.TrimFunc(compatibilityFold(field), articleBoundary)) {
+	case "a", "an", "the":
+		return true
+	default:
+		return false
+	}
+}
+
+// articleBoundary reports whether r may sit between an article and the whitespace or text
+// edge around it: punctuation (brackets, quotes, emphasis and sentence marks) other than a
+// dash. A dash joins words into one token, as in A-series.
+func articleBoundary(r rune) bool {
+	return unicode.IsPunct(r) && !unicode.Is(unicode.Pd, r)
 }
