@@ -179,13 +179,18 @@ func TestDispatchCommand_CoreGovernance(t *testing.T) {
 		t.Fatalf("sentinel failed: %v", err)
 	}
 
+	// gc and worktree list read a repository's worktrees. A scratch repository keeps them off
+	// the checkout running the test, whose worktrees differ from machine to machine (#755).
+	repo := t.TempDir()
+	testsupport.RunFixtureGit(t, repo, []string{"init", "-q"}, []string{"commit", "-q", "--allow-empty", "-m", "fixture"})
+
 	// Positive: GC check
-	if err := dispatchCommand("gc", []string{"--dry-run", "--path=../.."}); err != nil {
+	if err := dispatchCommand("gc", []string{"--dry-run", "--path=" + repo}); err != nil {
 		t.Fatalf("gc failed: %v", err)
 	}
 
 	// Positive: Worktree list
-	if err := dispatchCommand("worktree", []string{"list", "--path=../.."}); err != nil {
+	if err := dispatchCommand("worktree", []string{"list", "--path=" + repo}); err != nil {
 		t.Fatalf("worktree list failed: %v", err)
 	}
 
