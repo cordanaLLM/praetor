@@ -50,12 +50,14 @@ func triggerEntry(name, expires string) config.Exception {
 
 // Positive (#817): the hosted gate shape passes, and so do a tag release, a push filtered to
 // named branches, a schedule, a job a pull_request run never starts, a job that needs a job
-// stopping on a draft, and a job calling a reusable workflow of the repository whose job stops on
-// a draft. The pass line counts the workflows it read.
+// stopping on a draft but runs after a failed need and stops the draft in its own first step, and
+// a job calling a reusable workflow of the repository whose job stops on a draft. The pass line
+// counts the workflows it read.
 func TestAuditWorkflowTriggers_Positive_HostedGateShapePasses(t *testing.T) {
 	stopping := "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
 		"  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep + "      - run: make plan\n" +
-		"  lane:\n    needs: plan\n    if: success()\n    runs-on: x\n    steps:\n      - run: make lane\n" +
+		"  lane:\n    needs: plan\n    if: ${{ !cancelled() }}\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep +
+		"      - run: make lane\n" +
 		"  deploy:\n    if: github.event_name != 'pull_request'\n    runs-on: x\n    steps:\n      - run: make deploy\n"
 	caller := "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
 		"  call:\n    uses: ./.github/workflows/reusable.yml\n"
@@ -82,7 +84,9 @@ func TestAuditWorkflowTriggers_Positive_HostedGateShapePasses(t *testing.T) {
 // shapes, a push with only a paths or a branches-ignore filter, a branches pattern of asterisks,
 // a job-level draft skip, a job without the draft step, a draft step that continues on error, a
 // draft step whose trigger does not run on ready_for_review, a job calling another repository's
-// reusable workflow, and a job that needs a stopping job but runs after it fails.
+// reusable workflow, a job that needs a stopping job but runs after it fails, and a job a draft
+// skips because it needs a stopping job, with or without the draft step of its own: GitHub
+// reports that skip as successful, which a required check accepts.
 func TestAuditWorkflowTriggers_Negative_ReportsEachWastedRun(t *testing.T) {
 	const prTypes = "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n"
 	job := "    runs-on: x\n    steps:\n      - run: make test\n"
@@ -107,6 +111,12 @@ func TestAuditWorkflowTriggers_Negative_ReportsEachWastedRun(t *testing.T) {
 			"x.yml:5: pull_request job call runs on a draft pull request: it calls acme/ci/.github/workflows/gate.yml@v1"},
 		"runs after need": {prTypes + "  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep +
 			"  lane:\n    needs: [plan]\n    if: always()\n" + job, "x.yml:19: pull_request job lane runs on a draft pull request: its first step is not the draft step"},
+		"skipped by need": {prTypes + "  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep +
+			"  ci-ok:\n    needs: plan\n" + job, "x.yml:19: pull_request job ci-ok is skipped on a draft because it needs plan, " +
+			"which is held back on one: GitHub reports the skipped job as successful, which a required check accepts"},
+		"own draft step skipped by need": {prTypes + "  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep +
+			"  ci-ok:\n    needs: plan\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep,
+			"x.yml:19: pull_request job ci-ok is skipped on a draft because it needs plan"},
 	}
 	for name, tc := range cases {
 		out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": tc.doc}))
@@ -119,6 +129,35 @@ func TestAuditWorkflowTriggers_Negative_ReportsEachWastedRun(t *testing.T) {
 			"list of .standards.yaml (rule HISS-18, its path, a reason, and an expiry at most 90 days ahead).") {
 			t.Errorf("%s: the verdict does not report exactly one finding:\n%s", name, out)
 		}
+	}
+}
+
+// A job a draft skips through its needs. Negative: every job of a chain behind a stopping job is
+// reported, each naming the need that holds it back, since each one reports success on a draft
+// and any of them may be the required check. Boundary: a job that also needs a job a pull_request
+// run never starts is skipped on every pull request, not only on a draft, so the draft check
+// leaves it alone; a job that runs after a failed need and stops the draft in its first step
+// fails the draft itself and passes.
+func TestAuditWorkflowTriggers_JobsSkippedThroughNeeds(t *testing.T) {
+	plan := "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
+		"  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep + "      - run: make plan\n"
+	run := "    runs-on: x\n    steps:\n      - run: make\n"
+	chain := plan + "  build:\n    needs: plan\n" + run + "  ci-ok:\n    needs: [build]\n" + run
+	out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": chain}))
+	for _, want := range []string{
+		"[WARN] Workflow triggers (HISS-18): .github/workflows/x.yml:20: pull_request job build is skipped on a draft because it needs plan,",
+		"[WARN] Workflow triggers (HISS-18): .github/workflows/x.yml:25: pull_request job ci-ok is skipped on a draft because it needs build,",
+		"1 of 1 workflows start runs this check counts as wasted (findings: 2)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chain: output lacks %q:\n%s", want, out)
+		}
+	}
+	passing := plan + "  deploy:\n    if: github.event_name != 'pull_request'\n" + run +
+		"  publish:\n    needs: [plan, deploy]\n" + run +
+		"  gate:\n    needs: [plan]\n    if: always()\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep
+	if out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": passing})); !strings.HasPrefix(out, "[PASS]") {
+		t.Errorf("a job behind an unreached need and an always() job stopping the draft must pass:\n%s", out)
 	}
 }
 
