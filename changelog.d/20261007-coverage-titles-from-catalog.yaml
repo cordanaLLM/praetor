@@ -1,0 +1,4 @@
+type: fixed
+title: "A HISS coverage file whose rule title differs from the HISS catalog no longer fails `praetorctl hiss coverage --verify`: the title may be omitted, a stale one warns with the catalog's text, and `--sync-titles --write` rewrites it"
+issue: "#844"
+breaking: false

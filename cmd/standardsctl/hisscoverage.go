@@ -15,17 +15,27 @@ import (
 const maxCoverageFindingsPrinted = 40
 
 // runHissCoverage reports the declared enforcement evidence and, with --verify, replays the
-// fixture corpus that backs it.
+// fixture corpus that backs it. With --sync-titles it rewrites the coverage file's stale rule
+// titles instead (syncCoverageTitles).
 func runHissCoverage(args []string) error {
 	fs := flag.NewFlagSet("hiss coverage", flag.ContinueOnError)
 	root := fs.String("path", ".", "Repository root to inspect")
 	verify := fs.Bool("verify", false, "Replay the fixture corpus and fail when a claim is not supported")
+	syncTitles := fs.Bool("sync-titles", false,
+		"Rewrite each rule title that differs from the HISS catalog to the catalog's text; a dry run unless --write is given")
+	write := fs.Bool("write", false, "With --sync-titles, rewrite "+hisscoverage.CatalogFile+" in place")
 	if _, err := parseInterspersed(fs, args); err != nil {
+		return err
+	}
+	if err := checkCoverageModes(*verify, *syncTitles, *write); err != nil {
 		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	if *syncTitles {
+		return syncCoverageTitles(ctx, *root, *write)
+	}
 
 	catalog, err := hisscoverage.LoadCatalog(ctx, *root)
 	if err != nil {
@@ -38,10 +48,72 @@ func runHissCoverage(args []string) error {
 	}
 
 	printCoverageSummary(catalog)
+	printStaleTitles(catalog.StaleTitles())
 	if !*verify {
 		return nil
 	}
 	return verifyCoverage(ctx, *root, catalog)
+}
+
+// checkCoverageModes refuses a flag combination naming two runs: --write belongs to
+// --sync-titles, and a title sync is not a verification.
+func checkCoverageModes(verify, syncTitles, write bool) error {
+	if write && !syncTitles {
+		return errors.New("hiss coverage: --write applies only with --sync-titles")
+	}
+	if verify && syncTitles {
+		return errors.New("hiss coverage: --sync-titles and --verify are separate runs; sync the titles first")
+	}
+	return nil
+}
+
+// printStaleTitles warns about each declared title that differs from the HISS catalog. The
+// catalog owns the titles, so the summary above already printed its text, and a stale title
+// never fails the run (#844).
+func printStaleTitles(stale []hisscoverage.StaleTitle) {
+	if len(stale) == 0 {
+		return
+	}
+	fmt.Printf("\n  %d title(s) differ from the HISS catalog, which owns them; the catalog's text is used:\n", len(stale))
+	for i := 0; i < len(stale) && i < maxCoverageFindingsPrinted; i++ {
+		fmt.Printf("  [WARN] %s\n", stale[i])
+	}
+	if len(stale) > maxCoverageFindingsPrinted {
+		fmt.Printf("  ... and %d more\n", len(stale)-maxCoverageFindingsPrinted)
+	}
+	fmt.Printf("  Drop each title line, or run 'praetorctl hiss coverage --sync-titles --write' to rewrite them.\n")
+}
+
+// syncCoverageTitles rewrites the stale titles of the coverage file below root, or, without
+// write, lists what it would rewrite and leaves the file untouched.
+func syncCoverageTitles(ctx context.Context, root string, write bool) error {
+	result, err := hisscoverage.SyncTitlesFile(ctx, root, write)
+	if err != nil {
+		return err
+	}
+	if len(result.Stale) == 0 {
+		fmt.Printf("=== HISS Coverage titles: in sync ===\n")
+		fmt.Printf("  Every title in %s is omitted or matches the HISS catalog; nothing to rewrite.\n",
+			hisscoverage.CatalogFile)
+		return nil
+	}
+	mode := "dry run, nothing written"
+	if result.Written {
+		mode = "rewritten"
+	}
+	fmt.Printf("=== HISS Coverage titles: %d stale (%s) ===\n", len(result.Stale), mode)
+	for i := 0; i < len(result.Stale) && i < maxCoverageFindingsPrinted; i++ {
+		fmt.Printf("  %s %q -> %q\n", result.Stale[i].ID, result.Stale[i].Declared, result.Stale[i].Catalog)
+	}
+	if len(result.Stale) > maxCoverageFindingsPrinted {
+		fmt.Printf("  ... and %d more\n", len(result.Stale)-maxCoverageFindingsPrinted)
+	}
+	if result.Written {
+		fmt.Printf("\n  Rewrote %d title(s) in %s.\n", len(result.Stale), hisscoverage.CatalogFile)
+		return nil
+	}
+	fmt.Printf("\n  Rerun with --sync-titles --write to rewrite them in %s.\n", hisscoverage.CatalogFile)
+	return nil
 }
 
 // printCoverageSummary reports what the catalog claims, without implying it was checked.
@@ -109,6 +181,7 @@ func printHissUsage() {
 	fmt.Println("Usage: praetorctl hiss <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  coverage [--path=.] [--verify]    Report declared HISS enforcement evidence; --verify replays the fixture corpus")
+	fmt.Println("  coverage --sync-titles [--write]  Rewrite rule titles that differ from the HISS catalog; a dry run unless --write")
 }
 
 // runHiss dispatches the hiss subcommands. The top-level help tells a reader to run

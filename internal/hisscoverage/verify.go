@@ -48,6 +48,15 @@ var ErrClaimUnsupported = errors.New("hisscoverage: declared coverage is not sup
 
 // LoadCatalog reads and validates the declared enforcement evidence.
 func LoadCatalog(ctx context.Context, rootDir string) (*Catalog, error) {
+	data, err := readCatalogFile(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	return parseCatalog(data)
+}
+
+// readCatalogFile reads the coverage file below rootDir, bounded by maxCatalogBytes.
+func readCatalogFile(ctx context.Context, rootDir string) ([]byte, error) {
 	path := filepath.Join(rootDir, filepath.FromSlash(CatalogFile))
 	data, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
@@ -59,6 +68,11 @@ func LoadCatalog(ctx context.Context, rootDir string) (*Catalog, error) {
 	if len(data) > maxCatalogBytes {
 		return nil, fmt.Errorf("coverage catalog exceeds %d bytes", maxCatalogBytes)
 	}
+	return data, nil
+}
+
+// parseCatalog decodes and validates the text of a coverage file.
+func parseCatalog(data []byte) (*Catalog, error) {
 	catalog, err := decodeCatalog(data)
 	if err != nil {
 		return nil, err
