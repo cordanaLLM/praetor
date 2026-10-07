@@ -67,29 +67,43 @@ type InventoryItem struct {
 	Path string
 }
 
-// inventoryFile reports whether the inventory reads the repository file at rel: one of the
-// readers takes it, and no directory above it is skipped or hidden.
-func inventoryFile(rel string) bool {
+// inventoryFile reports whether the inventory reads the repository file at rel, one of the files
+// listed: one of the readers takes it, and no directory above it is skipped or hidden.
+func inventoryFile(rel string, listed map[string]bool) bool {
 	segments := strings.Split(rel, "/")
 	skipped := slices.ContainsFunc(segments[:len(segments)-1], func(dir string) bool {
 		hidden := strings.HasPrefix(dir, ".") && !slices.Contains(inventoryDotDirectories, dir)
 		return hidden || slices.Contains(inventorySkippedDirectories, dir)
 	})
-	return !skipped && len(inventoryReaders(rel)) > 0
+	return !skipped && len(inventoryReaders(rel, listed)) > 0
+}
+
+// pipRequirementsFile reports whether rel is a pip requirements file the inventory reads: a
+// requirements*.in, which pip-compile reads, or a requirements*.txt that no .in of the same name
+// sits beside among the files listed. A hand-pinned file (.config/semgrep/requirements.txt) is
+// read; a pip-compile lock is not, because its .in names every package it was asked for.
+func pipRequirementsFile(rel string, listed map[string]bool) bool {
+	base := path.Base(rel)
+	if !strings.HasPrefix(base, "requirements") {
+		return false
+	}
+	locked, isText := strings.CutSuffix(rel, ".txt")
+	return strings.HasSuffix(base, ".in") || isText && !listed[locked+".in"]
 }
 
 // inventoryReader returns the items one file's text names.
 type inventoryReader func(rel, text string) ([]InventoryItem, error)
 
-// inventoryReaders returns the readers that take the file at rel, by its name and place.
-func inventoryReaders(rel string) []inventoryReader {
+// inventoryReaders returns the readers that take the file at rel, by its name and place among
+// the files listed.
+func inventoryReaders(rel string, listed map[string]bool) []inventoryReader {
 	var readers []inventoryReader
 	switch base := path.Base(rel); {
 	case base == "go.mod":
 		readers = append(readers, goModInventory)
 	case base == "package.json":
 		readers = append(readers, npmInventory)
-	case base == "requirements.in":
+	case pipRequirementsFile(rel, listed):
 		readers = append(readers, pypiInventory)
 	case base == "devcontainer.json":
 		readers = append(readers, featureInventory)
@@ -175,9 +189,9 @@ func decodeManifestMembers(rel, text string, dialect strictjson.Dialect) (map[st
 	return members, nil
 }
 
-// pypiInventory lists every requirement of a requirements.in by its lower-cased name, read
+// pypiInventory lists every requirement of a pip requirements file by its lower-cased name, read
 // through the one requirement reader (pymanifest.ParseRequirement); blank lines, comments and
-// option lines name none.
+// option lines, a --hash continuation line among them, name none.
 func pypiInventory(rel, text string) ([]InventoryItem, error) {
 	lines, err := splitNoticeLines(text)
 	if err != nil {

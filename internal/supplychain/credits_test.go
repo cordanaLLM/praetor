@@ -70,7 +70,7 @@ func TestCreditsPackageTermBoundary(t *testing.T) {
 		"(react 19.3.0)":      true,
 		"@scope/react 19.3.0": false,
 	} {
-		if got := namesTerm(text, "react 19.3.0"); got != want {
+		if got := namesTerm(text, "react 19.3.0", termByte); got != want {
 			t.Errorf("namesTerm(%q) = %v, want %v", text, got, want)
 		}
 	}

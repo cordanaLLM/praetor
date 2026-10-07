@@ -97,8 +97,9 @@ func ReadNoticeSources(ctx context.Context, root string) (NoticeSources, error) 
 // ReadCreditInventory lists every third-party item the manifests of the repository at root name,
 // in path order: the direct requirements and tool directives of each go.mod (tools/go/go.mod
 // holds the tool block), the direct dependencies of each package.json, the requirements of each
-// requirements.in, the remote actions of the workflows, composite actions and CI templates, the
-// image of each Dockerfile FROM, and the image and features of each devcontainer.json. The files
+// pip requirements file that is no pip-compile lock (pipRequirementsFile), the remote actions of
+// the workflows, composite actions and CI templates, the image of each Dockerfile FROM, and the
+// image and features of each devcontainer.json. The files
 // are the checkout's own, as git lists them (generated.DirTree: tracked files that exist and
 // untracked ones git does not ignore), so root must be a git work tree; files below installed
 // packages, test fixtures and hidden directories other than .config, .devcontainer and .github
@@ -109,16 +110,20 @@ func ReadCreditInventory(ctx context.Context, root string) ([]InventoryItem, err
 	if err != nil {
 		return nil, fmt.Errorf("list %s for the credit inventory: %w", root, err)
 	}
+	listed := make(map[string]bool, len(files))
+	for _, rel := range files {
+		listed[rel] = true
+	}
 	var items []InventoryItem
 	for _, rel := range files {
-		if !inventoryFile(rel) {
+		if !inventoryFile(rel, listed) {
 			continue
 		}
 		data, err := readNoticeSource(ctx, root, rel)
 		if err != nil {
 			return nil, err
 		}
-		for _, read := range inventoryReaders(rel) {
+		for _, read := range inventoryReaders(rel, listed) {
 			found, err := read(rel, string(data))
 			if err != nil {
 				return nil, err

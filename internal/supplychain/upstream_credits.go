@@ -331,14 +331,14 @@ func checkInventoryCredited(inventory []InventoryItem, credits Credits) []error 
 	for _, download := range credits.Downloads {
 		items = append(items, InventoryItem{Kind: inventoryDownload, ID: download.ID, Path: download.Path})
 	}
-	missing := map[string][]string{}
-	var order []string
+	missing := map[InventoryItem][]string{}
+	var order []InventoryItem
 	for _, item := range items {
-		answered := slices.ContainsFunc(credits.Entries, func(entry CreditEntry) bool { return entry.answers(item.ID) })
+		answered := slices.ContainsFunc(credits.Entries, func(entry CreditEntry) bool { return entry.answers(item) })
 		if answered {
 			continue
 		}
-		key := item.Kind + " " + item.ID
+		key := InventoryItem{Kind: item.Kind, ID: item.ID}
 		if _, seen := missing[key]; !seen {
 			order = append(order, key)
 		}
@@ -346,15 +346,15 @@ func checkInventoryCredited(inventory []InventoryItem, credits Credits) []error 
 	}
 	findings := make([]error, 0, len(order))
 	for _, key := range order {
-		findings = append(findings, fmt.Errorf("%s uses %s, and no entry of %s names it among its packages; add an entry with its upstream and license",
-			strings.Join(missing[key], ", "), key, AcknowledgementsList))
+		findings = append(findings, fmt.Errorf("%s uses %s %s, and no entry of %s names it among its packages; add an entry with its upstream and license and the package %q",
+			strings.Join(missing[key], ", "), key.Kind, key.ID, AcknowledgementsList, packageKey(key)))
 	}
 	return findings
 }
 
 // checkEntryPaths returns a finding for every path an entry names that is no file in the
-// repository or no longer names the item by any of its terms, and for every package of an entry
-// that none of its paths names.
+// repository or no longer names the item by any of its terms as a whole word (namesWord), and for
+// every package of an entry that none of its paths names.
 func checkEntryPaths(entries []CreditEntry, texts map[string]string) []error {
 	var findings []error
 	for index, entry := range entries {
@@ -364,12 +364,13 @@ func checkEntryPaths(entries []CreditEntry, texts map[string]string) []error {
 			switch {
 			case !exists:
 				findings = append(findings, fmt.Errorf("%s names %s, which is not a file in the repository", entry.label(index), rel))
-			case !containsAnyTerm(text, terms):
+			case !slices.ContainsFunc(terms, func(term string) bool { return namesWord(text, term) }):
 				findings = append(findings, fmt.Errorf("%s names %s, which no longer uses it: the file names none of %q", entry.label(index), rel, terms))
 			}
 		}
 		for _, pkg := range entry.Packages {
-			named := slices.ContainsFunc(entry.Paths, func(rel string) bool { return strings.Contains(texts[rel], strings.ToLower(pkg)) })
+			id := strings.ToLower(packageIdentifier(pkg))
+			named := slices.ContainsFunc(entry.Paths, func(rel string) bool { return namesWord(texts[rel], id) })
 			if !named {
 				findings = append(findings, fmt.Errorf("%s answers package %s, which none of its paths names", entry.label(index), pkg))
 			}
@@ -382,7 +383,7 @@ func checkEntryPaths(entries []CreditEntry, texts map[string]string) []error {
 func checkDownloadPaths(downloads []CreditDownload, texts map[string]string) []error {
 	var findings []error
 	for index, download := range downloads {
-		if !strings.Contains(texts[download.Path], strings.ToLower(download.ID)) {
+		if !namesWord(texts[download.Path], strings.ToLower(download.ID)) {
 			findings = append(findings, fmt.Errorf("%s downloads[%d] says %s fetches %s, and that file does not name it",
 				AcknowledgementsList, index, download.Path, download.ID))
 		}
@@ -390,9 +391,16 @@ func checkDownloadPaths(downloads []CreditDownload, texts map[string]string) []e
 	return findings
 }
 
-// containsAnyTerm reports whether text holds one of terms.
-func containsAnyTerm(text string, terms []string) bool {
-	return slices.ContainsFunc(terms, func(term string) bool { return strings.Contains(text, term) })
+// namesWord reports whether text holds term as a whole word (namesTerm with wordByte): "go" is not
+// found in "golang" nor "git" in "digit", while a package path still counts where a slash
+// continues it ("github.com/a/b/v2"). Both are lower-cased.
+func namesWord(text, term string) bool {
+	return namesTerm(text, term, wordByte)
+}
+
+// wordByte reports whether b is an ASCII letter, digit or underscore.
+func wordByte(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
 // checkCreditExceptions returns a finding for every entry written license unknown that no

@@ -93,8 +93,10 @@ func TestCreditInventoryReadersBoundary(t *testing.T) {
 
 // ReadCreditInventory lists the checkout through git: it reads the manifests where they are,
 // skips installed packages, test fixtures, hidden directories other than .config, .devcontainer
-// and .github, and files git ignores, and records the file each item comes from. A directory
-// that is no git work tree has no listing and fails.
+// and .github, and files git ignores, and records the file each item comes from. A pip
+// requirements*.txt is read when no .in of its name sits beside it (the semgrep pin) and skipped
+// when one does (a pip-compile lock, whose pyyaml and pluggy are transitive). A directory that is
+// no git work tree has no listing and fails.
 func TestReadCreditInventory(t *testing.T) {
 	root := t.TempDir()
 	if _, err := ReadCreditInventory(context.Background(), root); err == nil {
@@ -109,6 +111,10 @@ func TestReadCreditInventory(t *testing.T) {
 	writeRepoFile(t, root, "internal/x/testdata/package.json", `{"dependencies":{"fixture":"1"}}`)
 	writeRepoFile(t, root, ".claude/worktrees/w/package.json", `{"dependencies":{"copy":"1"}}`)
 	writeRepoFile(t, root, ".config/lint/requirements.in", "yamllint==1\n")
+	writeRepoFile(t, root, ".config/lint/requirements.txt", "yamllint==1.0 \\\n    --hash=sha256:abc\npyyaml==6 \\\n    # via yamllint\n")
+	writeRepoFile(t, root, ".config/scan/requirements.txt", "semgrep==1.179.0\n")
+	writeRepoFile(t, root, ".config/scan/requirements-dev.in", "pytest==9\n")
+	writeRepoFile(t, root, ".config/scan/requirements-dev.txt", "pytest==9\npluggy==1\n")
 	writeRepoFile(t, root, ".github/workflows/ci.yml", "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v7\n")
 	writeRepoFile(t, root, ".github/notes.yml", "uses: not/an-action@v1\n")
 	writeRepoFile(t, root, "templates/go/Dockerfile.tmpl", "FROM gcr.io/distroless/static:nonroot\n")
@@ -118,7 +124,8 @@ func TestReadCreditInventory(t *testing.T) {
 	}
 	got := inventoryIDs(items)
 	slices.Sort(got)
-	want := []string{"Go module example.com/lib", "PyPI package yamllint", "action actions/checkout", "image gcr.io/distroless/static", "npm package left-pad"}
+	want := []string{"Go module example.com/lib", "PyPI package pytest", "PyPI package semgrep", "PyPI package yamllint", "action actions/checkout",
+		"image gcr.io/distroless/static", "npm package left-pad"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("inventory = %v, want %v", got, want)
 	}

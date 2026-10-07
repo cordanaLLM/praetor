@@ -43,9 +43,9 @@ func upstreamSources() UpstreamCreditSources {
 				{Name: "Upstream", URL: upstreamURL, Section: sectionAdapted, Kind: kindAdaptedCode, Relation: relationAdapted,
 					License: "MIT", Artifact: "`shout` skill", Use: "Rules rewritten.", Paths: []string{upstreamSkill}},
 				{Name: "Left Pad", URL: "https://example.test/left-pad", Section: "shipped", Kind: kindDependency, Relation: relationShipped,
-					License: "MIT", Use: "Pads.", Paths: []string{"package.json"}, Packages: []string{"left-pad"}},
+					License: "MIT", Use: "Pads.", Paths: []string{"package.json"}, Packages: []string{"npm:left-pad"}},
 				{Name: "Lint", URL: "https://example.test/lint", Section: "tooling", Kind: kindTool, Relation: relationUsedByCI,
-					License: "GPL-3.0-only", Use: "Lints.", Paths: []string{"ci.yml"}, Packages: []string{"example.test/lint"}},
+					License: "GPL-3.0-only", Use: "Lints.", Paths: []string{"ci.yml"}, Packages: []string{"download:example.test/lint", "go:example.test/lint"}},
 			},
 		},
 		Reuse:        reuseWholeTree,
@@ -107,7 +107,9 @@ func TestCheckUpstreamCreditsNegative(t *testing.T) {
 		"inventory item without an entry": {func(s *UpstreamCreditSources) {
 			s.Inventory = append(s.Inventory, InventoryItem{Kind: inventoryNPM, ID: "right-pad", Path: "package.json"})
 		}, "package.json uses npm package right-pad, and no entry"},
-		"download without an entry": {func(s *UpstreamCreditSources) { s.Credits.Entries[2].Packages = []string{"example.test/lint-other"} },
+		"download without an entry": {func(s *UpstreamCreditSources) {
+			s.Credits.Entries[2].Packages = []string{"download:example.test/lint-other"}
+		},
 			"ci.yml uses download example.test/lint, and no entry"},
 		"download its file no longer names": {func(s *UpstreamCreditSources) { s.PathTexts["ci.yml"] = "lint" },
 			"downloads[0] says ci.yml fetches example.test/lint, and that file does not name it"},
@@ -116,9 +118,9 @@ func TestCheckUpstreamCreditsNegative(t *testing.T) {
 		"path that no longer uses it": {func(s *UpstreamCreditSources) { s.PathTexts["package.json"] = `{"dependencies":{}}` },
 			"entries[1] (Left Pad) names package.json, which no longer uses it"},
 		"package no path names": {func(s *UpstreamCreditSources) {
-			s.Credits.Entries[1].Packages = append(s.Credits.Entries[1].Packages, "pad-utils")
+			s.Credits.Entries[1].Packages = append(s.Credits.Entries[1].Packages, "npm:pad-utils")
 		},
-			"answers package pad-utils, which none of its paths names"},
+			"answers package npm:pad-utils, which none of its paths names"},
 		"no entry for a derivation": {func(s *UpstreamCreditSources) { s.Credits.Entries[0].URL = "https://example.test/fork" },
 			"has no entry with that url naming " + upstreamSkill},
 		"other license": {func(s *UpstreamCreditSources) { s.Credits.Entries[0].License = "Apache-2.0" },
@@ -222,7 +224,7 @@ entries:
     license: unknown
     use: Pads.
     paths: [package.json, gone.txt]
-    packages: [left-pad]
+    packages: ["npm:left-pad"]
 `
 
 // writeRepoFile writes content to rel below root.

@@ -14,6 +14,7 @@ package supplychain
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -158,11 +159,15 @@ type CreditEntry struct {
 	Use string `yaml:"use"`
 	// Paths are the repository files that use the item; each must still name it.
 	Paths []string `yaml:"paths"`
-	// Packages are the inventory identifiers the entry answers: Go module or tool paths, npm and
-	// PyPI package names, action repositories, image repositories and download ids. One matches
-	// an identifier it equals or that continues it after a slash.
+	// Packages are the inventory items the entry answers, each written <ecosystem>:<identifier>
+	// (packageEcosystems): go: a Go module or tool path, npm: and pypi: a package name, action:
+	// an owner/repository, image: and feature: a repository, download: an id of the downloads
+	// list. One answers an item of its ecosystem whose identifier it equals or continues after a
+	// slash, so a name two ecosystems share (npm helm, the helm download) answers only one.
 	Packages []string `yaml:"packages,omitempty"`
-	// Match are further terms a path may name the item by, beside its name and packages.
+	// Match are terms a path names the item by. An entry with packages or match terms is looked
+	// for by those alone, so a generic name (Go, Continue) never counts as a use; an entry with
+	// neither is looked for by its name.
 	Match []string `yaml:"match,omitempty"`
 }
 
@@ -171,23 +176,63 @@ func (e CreditEntry) label(index int) string {
 	return fmt.Sprintf("%s entries[%d] (%s)", AcknowledgementsList, index, e.Name)
 }
 
-// terms are the words a path that uses the entry names it by, lower-cased: its name, packages
-// and match terms.
+// terms are the words a path that uses the entry names it by, lower-cased: the identifiers of its
+// packages and its match terms, or its name when it declares neither.
 func (e CreditEntry) terms() []string {
 	terms := make([]string, 0, 1+len(e.Packages)+len(e.Match))
-	for _, term := range append(append([]string{e.Name}, e.Packages...), e.Match...) {
+	for _, pkg := range e.Packages {
+		terms = append(terms, strings.ToLower(packageIdentifier(pkg)))
+	}
+	for _, term := range e.Match {
 		terms = append(terms, strings.ToLower(term))
+	}
+	if len(terms) == 0 {
+		terms = append(terms, strings.ToLower(e.Name))
 	}
 	return terms
 }
 
-// answers reports whether one of the entry's packages matches the inventory identifier id.
-func (e CreditEntry) answers(id string) bool {
-	id = strings.ToLower(id)
+// packageEcosystems maps each inventory kind to the ecosystem an entry's package names it under.
+var packageEcosystems = map[string]string{
+	inventoryGoModule: "go", inventoryGoTool: "go", inventoryNPM: "npm", inventoryPyPI: "pypi",
+	inventoryAction: "action", inventoryImage: "image", inventoryFeature: "feature", inventoryDownload: "download",
+}
+
+// packageKey is the package an entry answers item with: its ecosystem, a colon and its identifier.
+func packageKey(item InventoryItem) string {
+	return packageEcosystems[item.Kind] + ":" + item.ID
+}
+
+// packageIdentifier returns the identifier of a package an entry names, without its ecosystem.
+func packageIdentifier(pkg string) string {
+	_, id, _ := strings.Cut(pkg, ":")
+	return id
+}
+
+// answers reports whether one of the entry's packages names item: the same ecosystem, and an
+// identifier item's equals or continues after a slash, case aside.
+func (e CreditEntry) answers(item InventoryItem) bool {
+	key := strings.ToLower(packageKey(item))
 	return slices.ContainsFunc(e.Packages, func(pkg string) bool {
 		pkg = strings.ToLower(pkg)
-		return id == pkg || strings.HasPrefix(id, pkg+"/")
+		return key == pkg || strings.HasPrefix(key, pkg+"/")
 	})
+}
+
+// packageProblem names why a package an entry names is refused, or returns "": it must be an
+// ecosystem of packageEcosystems, a colon and a non-empty identifier.
+func packageProblem(pkg string) string {
+	ecosystem, id, found := strings.Cut(pkg, ":")
+	if !found || !slices.Contains(packageEcosystemNames(), ecosystem) || id == "" {
+		return fmt.Sprintf("package %q is not <ecosystem>:<identifier> with an ecosystem of %s", pkg, strings.Join(packageEcosystemNames(), ", "))
+	}
+	return ""
+}
+
+// packageEcosystemNames lists the ecosystems a package may name, sorted, once each.
+func packageEcosystemNames() []string {
+	names := slices.Sorted(maps.Values(packageEcosystems))
+	return slices.Compact(names)
 }
 
 var (
@@ -300,6 +345,11 @@ func entryListsProblem(entry CreditEntry) string {
 			return fmt.Sprintf("package or match term %q %s", term, problem)
 		}
 	}
+	for _, pkg := range entry.Packages {
+		if problem := packageProblem(pkg); problem != "" {
+			return problem
+		}
+	}
 	return ""
 }
 
@@ -323,8 +373,25 @@ func textProblem(value string, required bool) string {
 // licenseWords are the license values that are no SPDX expression.
 var licenseWords = map[string]bool{licenseUnknown: true, licenseProprietary: true, licenseNone: true}
 
+// deprecatedLicenseIDs are the license and exception identifiers SPDX License List 3.29.0
+// (2026-09-16, https://spdx.org/licenses/, isDeprecatedLicenseId) marks deprecated. A GNU
+// identifier without -only or -or-later is among them: it does not say whether later versions
+// apply, which is the difference the upstream's notice states. The repository vendors no SPDX
+// list, so the deprecated ones are held here; refresh them with a new list release.
+var deprecatedLicenseIDs = map[string]bool{
+	"AGPL-1.0": true, "AGPL-3.0": true, "BSD-2-Clause-FreeBSD": true, "BSD-2-Clause-NetBSD": true,
+	"GFDL-1.1": true, "GFDL-1.2": true, "GFDL-1.3": true, "GPL-1.0": true, "GPL-1.0+": true,
+	"GPL-2.0": true, "GPL-2.0+": true, "GPL-2.0-with-GCC-exception": true, "GPL-2.0-with-autoconf-exception": true,
+	"GPL-2.0-with-bison-exception": true, "GPL-2.0-with-classpath-exception": true, "GPL-2.0-with-font-exception": true,
+	"GPL-3.0": true, "GPL-3.0+": true, "GPL-3.0-with-GCC-exception": true, "GPL-3.0-with-autoconf-exception": true,
+	"LGPL-2.0": true, "LGPL-2.0+": true, "LGPL-2.1": true, "LGPL-2.1+": true, "LGPL-3.0": true, "LGPL-3.0+": true,
+	"Net-SNMP": true, "Nunit": true, "StandardML-NJ": true, "bzip2-1.0.5": true, "eCos-2.0": true, "wxWindows": true,
+	"Nokia-Qt-exception-1.1": true,
+}
+
 // licenseProblem names why a license value is refused, or returns "": it is one of the license
-// words, or an SPDX expression in which identifiers and AND, OR and WITH alternate.
+// words, or an SPDX expression in which identifiers and AND, OR and WITH alternate and no
+// identifier is deprecated (deprecatedLicenseIDs).
 func licenseProblem(license string) string {
 	if licenseWords[license] {
 		return ""
@@ -332,6 +399,10 @@ func licenseProblem(license string) string {
 	fields := strings.FieldsFunc(license, func(r rune) bool { return r == '(' || r == ')' || r == ' ' })
 	if len(fields)%2 == 0 || len(fields) > maxCreditValues || textProblem(license, true) != "" || !alternatesTerms(fields) {
 		return fmt.Sprintf("license %q is not an SPDX expression or one of %s, %s, %s", license, licenseUnknown, licenseProprietary, licenseNone)
+	}
+	if index := slices.IndexFunc(fields, func(field string) bool { return deprecatedLicenseIDs[field] }); index >= 0 {
+		return fmt.Sprintf("license %q names %s, which the SPDX License List deprecates; write the identifier the upstream states, "+
+			"for a GNU license the -only or -or-later form", license, fields[index])
 	}
 	return ""
 }

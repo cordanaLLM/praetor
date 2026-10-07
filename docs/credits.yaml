@@ -19,8 +19,11 @@
 # inspiration, specification, integration, font or icon), relation (shipped, vendored,
 # adapted, inspired, used by CI, integrated), license (an SPDX expression, or unknown,
 # proprietary or none), notice (after the license), artifact (adapted section only), use,
-# paths, packages (inventory identifiers it answers) and match (further terms a path names it
-# by). Licenses are as the upstream LICENSE file or registry entry states them.
+# paths, packages (the inventory items it answers, each <ecosystem>:<identifier>, the ecosystem
+# one of go, npm, pypi, action, image, feature and download) and match (terms a path names it
+# by; a path is checked for the packages and match terms, or for the name when there are
+# neither). Licenses are as the upstream LICENSE file or registry entry states them, never a
+# deprecated SPDX identifier (a GNU license names -only or -or-later).
 ---
 originals:
   - ".agents/agents/praetor-auditor.md"
@@ -149,7 +152,7 @@ entries:
     paths:
       - "go.mod"
     packages:
-      - "gopkg.in/yaml.v3"
+      - "go:gopkg.in/yaml.v3"
   - name: "markdownlint"
     url: "https://github.com/DavidAnson/markdownlint"
     detail: "0.41.1"
@@ -166,7 +169,7 @@ entries:
       - "tools/markdownlint/package.json"
       - "tools/markdownlint/verify.mjs"
     packages:
-      - "markdownlint"
+      - "npm:markdownlint"
   - name: "jsonc-parser"
     url: "https://github.com/microsoft/node-jsonc-parser"
     detail: "3.3.1"
@@ -179,7 +182,7 @@ entries:
     paths:
       - "tools/markdownlint/package.json"
     packages:
-      - "jsonc-parser"
+      - "npm:jsonc-parser"
   - name: "smol-toml"
     url: "https://github.com/squirrelchat/smol-toml"
     detail: "1.9.0"
@@ -192,7 +195,7 @@ entries:
     paths:
       - "tools/markdownlint/package.json"
     packages:
-      - "smol-toml"
+      - "npm:smol-toml"
   - name: "js-yaml"
     url: "https://github.com/nodeca/js-yaml"
     detail: "5.4.2"
@@ -205,7 +208,7 @@ entries:
     paths:
       - "tools/markdownlint/package.json"
     packages:
-      - "js-yaml"
+      - "npm:js-yaml"
   - name: "micromark"
     url: "https://github.com/micromark/micromark"
     detail: "4.0.3"
@@ -218,7 +221,7 @@ entries:
     paths:
       - "tools/markdownlint/package.json"
     packages:
-      - "micromark"
+      - "npm:micromark"
   - name: "micromark-extension-mdxjs"
     url: "https://github.com/micromark/micromark-extension-mdxjs"
     detail: "3.0.0"
@@ -231,7 +234,7 @@ entries:
     paths:
       - "tools/markdownlint/package.json"
     packages:
-      - "micromark-extension-mdxjs"
+      - "npm:micromark-extension-mdxjs"
   - name: "parse5"
     url: "https://github.com/inikulin/parse5"
     detail: "8.0.1"
@@ -244,7 +247,7 @@ entries:
     paths:
       - "tools/markdownlint/package.json"
     packages:
-      - "parse5"
+      - "npm:parse5"
   - name: "Dev Container CLI"
     url: "https://github.com/devcontainers/cli"
     detail: "(`@devcontainers/cli` 0.89.0)"
@@ -260,7 +263,7 @@ entries:
       - "internal/devcontainer/cli/package.json"
       - "internal/devcontainer/cli.go"
     packages:
-      - "@devcontainers/cli"
+      - "npm:@devcontainers/cli"
   - name: "interfig"
     url: "https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig"
     detail: "(`hindsight-interfig/` in vectorize-io/hindsight)"
@@ -268,7 +271,11 @@ entries:
     kind: "vendored file"
     relation: "vendored"
     license: "MIT"
-    notice: "© 2025 Vectorize AI, Inc."
+    notice: >-
+      © 2025 Vectorize AI, Inc. Its vendored `package.json` names [Vite](https://github.com/vitejs/vite),
+      [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react) and
+      [Prettier](https://github.com/prettier/prettier) (MIT each) as development dependencies; no code of theirs is
+      reproduced, and praetor's figure build does not install them
     use: >-
       Draws the interactive figures on this site; vendored byte-identical at commit
       `ccfe85b4851957ac2adf88b4a9ddf9668b2882f1` in `tools/figures/third_party/interfig/`. The binaries embed its
@@ -276,6 +283,13 @@ entries:
     paths:
       - "tools/figures/third_party/interfig/vendor.json"
       - "tools/figures/assets.go"
+      - "tools/figures/third_party/interfig/upstream/package.json"
+    packages:
+      - "npm:vite"
+      - "npm:@vitejs/plugin-react"
+      - "npm:prettier"
+    match:
+      - "interfig"
   - name: "React"
     url: "https://github.com/facebook/react"
     detail: "19.3.0, with react-dom 19.3.0 and scheduler 0.28.0"
@@ -292,9 +306,9 @@ entries:
       - "tools/figures/dist/THIRD-PARTY-LICENSES.txt"
       - "tools/figures/third_party/interfig/upstream/package.json"
     packages:
-      - "react"
-      - "react-dom"
-      - "scheduler"
+      - "npm:react"
+      - "npm:react-dom"
+      - "npm:scheduler"
   - name: "Distroless"
     url: "https://github.com/GoogleContainerTools/distroless"
     section: "images"
@@ -308,7 +322,7 @@ entries:
       - "Dockerfile"
       - "templates/go/Dockerfile.distroless.tmpl"
     packages:
-      - "gcr.io/distroless"
+      - "image:gcr.io/distroless"
   - name: "golang Docker Official Image"
     url: "https://github.com/docker-library/golang"
     section: "images"
@@ -323,8 +337,8 @@ entries:
       - "templates/go/Dockerfile.distroless.tmpl"
       - "docker/dev/Dockerfile"
     packages:
-      - "golang"
-      - "docker.io/library/golang"
+      - "image:golang"
+      - "image:docker.io/library/golang"
   - name: "Dev Container images"
     url: "https://github.com/devcontainers/images"
     section: "images"
@@ -338,7 +352,7 @@ entries:
       - ".devcontainer/Dockerfile.praetor"
       - "internal/devcontainer/bootstrap.go"
     packages:
-      - "mcr.microsoft.com/devcontainers/base"
+      - "image:mcr.microsoft.com/devcontainers/base"
   - name: "Dev Container Features"
     url: "https://github.com/devcontainers/features"
     section: "images"
@@ -352,7 +366,7 @@ entries:
       - ".devcontainer/devcontainer.json"
       - "internal/devcontainer/devcontainer.go"
     packages:
-      - "ghcr.io/devcontainers/features"
+      - "feature:ghcr.io/devcontainers/features"
   - name: "MkDocs"
     url: "https://github.com/mkdocs/mkdocs"
     detail: "(`mkdocs`)"
@@ -365,7 +379,7 @@ entries:
       - "docs/presets/mkdocs/requirements.in"
       - "mkdocs.yml"
     packages:
-      - "mkdocs"
+      - "pypi:mkdocs"
   - name: "Material for MkDocs"
     url: "https://github.com/squidfunk/mkdocs-material"
     detail: "(`mkdocs-material`)"
@@ -380,7 +394,7 @@ entries:
       - "docs/presets/mkdocs/requirements.in"
       - "mkdocs.yml"
     packages:
-      - "mkdocs-material"
+      - "pypi:mkdocs-material"
     match:
       - "name: material"
   - name: "mkdocs-minify-plugin"
@@ -394,7 +408,7 @@ entries:
     paths:
       - "docs/presets/mkdocs/requirements.in"
     packages:
-      - "mkdocs-minify-plugin"
+      - "pypi:mkdocs-minify-plugin"
   - name: "PyMdown Extensions"
     url: "https://github.com/facelessuser/pymdown-extensions"
     detail: "(`pymdown-extensions`)"
@@ -406,7 +420,7 @@ entries:
     paths:
       - "docs/presets/mkdocs/requirements.in"
     packages:
-      - "pymdown-extensions"
+      - "pypi:pymdown-extensions"
   - name: "Astro"
     url: "https://github.com/withastro/astro"
     detail: "(`astro`, `@astrojs/sitemap`)"
@@ -418,8 +432,8 @@ entries:
     paths:
       - "docs/presets/starlight/package.json"
     packages:
-      - "astro"
-      - "@astrojs/sitemap"
+      - "npm:astro"
+      - "npm:@astrojs/sitemap"
   - name: "Starlight"
     url: "https://github.com/withastro/starlight"
     detail: "(`@astrojs/starlight`)"
@@ -433,7 +447,7 @@ entries:
     paths:
       - "docs/presets/starlight/package.json"
     packages:
-      - "@astrojs/starlight"
+      - "npm:@astrojs/starlight"
   - name: "sharp"
     url: "https://github.com/lovell/sharp"
     detail: "(`sharp`)"
@@ -450,8 +464,8 @@ entries:
       - "docs/presets/starlight/package.json"
       - "docs/presets/starlight/package-lock.json"
     packages:
-      - "sharp"
-      - "@img/sharp-libvips"
+      - "npm:sharp"
+      - "npm:@img/sharp-libvips"
   - name: "Lightning CSS"
     url: "https://github.com/parcel-bundler/lightningcss"
     detail: "(`lightningcss`)"
@@ -464,7 +478,7 @@ entries:
     paths:
       - "docs/presets/starlight/package-lock.json"
     packages:
-      - "lightningcss"
+      - "npm:lightningcss"
   - name: "TypeScript"
     url: "https://github.com/microsoft/TypeScript"
     detail: "(`typescript`)"
@@ -480,7 +494,7 @@ entries:
       - "tools/figures/package.json"
       - "editors/vscode/package.json"
     packages:
-      - "typescript"
+      - "npm:typescript"
   - name: "actions/cache"
     url: "https://github.com/actions/cache"
     section: "actions"
@@ -492,7 +506,7 @@ entries:
       - ".github/workflows/ci.yml"
       - "templates/go/ci-go.yml.tmpl"
     packages:
-      - "actions/cache"
+      - "action:actions/cache"
   - name: "actions/checkout"
     url: "https://github.com/actions/checkout"
     section: "actions"
@@ -504,7 +518,7 @@ entries:
       - ".github/workflows/ci.yml"
       - "templates/go/ci-go.yml.tmpl"
     packages:
-      - "actions/checkout"
+      - "action:actions/checkout"
   - name: "actions/deploy-pages"
     url: "https://github.com/actions/deploy-pages"
     section: "actions"
@@ -515,7 +529,7 @@ entries:
     paths:
       - ".github/workflows/pages.yml"
     packages:
-      - "actions/deploy-pages"
+      - "action:actions/deploy-pages"
   - name: "actions/setup-go"
     url: "https://github.com/actions/setup-go"
     section: "actions"
@@ -527,7 +541,7 @@ entries:
       - ".github/workflows/ci.yml"
       - "templates/go/ci-go.yml.tmpl"
     packages:
-      - "actions/setup-go"
+      - "action:actions/setup-go"
   - name: "actions/setup-java"
     url: "https://github.com/actions/setup-java"
     section: "actions"
@@ -538,7 +552,7 @@ entries:
     paths:
       - "templates/jvm/ci-jvm.yml.tmpl"
     packages:
-      - "actions/setup-java"
+      - "action:actions/setup-java"
   - name: "actions/setup-node"
     url: "https://github.com/actions/setup-node"
     section: "actions"
@@ -550,7 +564,7 @@ entries:
       - ".github/workflows/ci.yml"
       - "templates/node/ci-node.yml.tmpl"
     packages:
-      - "actions/setup-node"
+      - "action:actions/setup-node"
   - name: "actions/setup-python"
     url: "https://github.com/actions/setup-python"
     section: "actions"
@@ -561,7 +575,7 @@ entries:
     paths:
       - ".github/workflows/ci.yml"
     packages:
-      - "actions/setup-python"
+      - "action:actions/setup-python"
   - name: "actions/upload-pages-artifact"
     url: "https://github.com/actions/upload-pages-artifact"
     section: "actions"
@@ -572,7 +586,7 @@ entries:
     paths:
       - ".github/workflows/pages.yml"
     packages:
-      - "actions/upload-pages-artifact"
+      - "action:actions/upload-pages-artifact"
   - name: "anchore/sbom-action"
     url: "https://github.com/anchore/sbom-action"
     section: "actions"
@@ -583,7 +597,7 @@ entries:
     paths:
       - ".github/workflows/release-binaries.yml"
     packages:
-      - "anchore/sbom-action"
+      - "action:anchore/sbom-action"
   - name: "Azure/setup-helm"
     url: "https://github.com/Azure/setup-helm"
     section: "actions"
@@ -594,7 +608,7 @@ entries:
     paths:
       - ".github/workflows/release-binaries.yml"
     packages:
-      - "azure/setup-helm"
+      - "action:azure/setup-helm"
   - name: "docker/login-action"
     url: "https://github.com/docker/login-action"
     section: "actions"
@@ -605,7 +619,7 @@ entries:
     paths:
       - ".github/workflows/release-binaries.yml"
     packages:
-      - "docker/login-action"
+      - "action:docker/login-action"
   - name: "docker/setup-buildx-action"
     url: "https://github.com/docker/setup-buildx-action"
     section: "actions"
@@ -616,7 +630,7 @@ entries:
     paths:
       - ".github/workflows/release-binaries.yml"
     packages:
-      - "docker/setup-buildx-action"
+      - "action:docker/setup-buildx-action"
   - name: "fsfe/reuse-action"
     url: "https://github.com/fsfe/reuse-action"
     section: "actions"
@@ -627,7 +641,7 @@ entries:
     paths:
       - ".github/workflows/compliance.yml"
     packages:
-      - "fsfe/reuse-action"
+      - "action:fsfe/reuse-action"
   - name: "goreleaser/goreleaser-action"
     url: "https://github.com/goreleaser/goreleaser-action"
     section: "actions"
@@ -638,7 +652,7 @@ entries:
     paths:
       - ".github/workflows/release-binaries.yml"
     packages:
-      - "goreleaser/goreleaser-action"
+      - "action:goreleaser/goreleaser-action"
   - name: "oven-sh/setup-bun"
     url: "https://github.com/oven-sh/setup-bun"
     section: "actions"
@@ -649,7 +663,7 @@ entries:
     paths:
       - "templates/node/ci-node.yml.tmpl"
     packages:
-      - "oven-sh/setup-bun"
+      - "action:oven-sh/setup-bun"
   - name: "sigstore/cosign-installer"
     url: "https://github.com/sigstore/cosign-installer"
     section: "actions"
@@ -660,7 +674,7 @@ entries:
     paths:
       - ".github/workflows/release-binaries.yml"
     packages:
-      - "sigstore/cosign-installer"
+      - "action:sigstore/cosign-installer"
   - name: "subosito/flutter-action"
     url: "https://github.com/subosito/flutter-action"
     section: "actions"
@@ -671,7 +685,7 @@ entries:
     paths:
       - "templates/flutter/ci-flutter.yml.tmpl"
     packages:
-      - "subosito/flutter-action"
+      - "action:subosito/flutter-action"
   - name: "GitHub"
     url: "https://github.com"
     section: "integrations"
@@ -829,7 +843,7 @@ entries:
     paths:
       - "internal/devcontainer/cli.go"
     packages:
-      - "nodejs.org"
+      - "download:nodejs.org"
   - name: "Git"
     url: "https://git-scm.com"
     section: "integrations"
@@ -852,6 +866,100 @@ entries:
       - "internal/editor/editor.go"
     match:
       - "vscode"
+  - name: "JetBrains IDEs"
+    url: "https://www.jetbrains.com/ides/"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "JetBrains products used under their terms; the open-source builds of IntelliJ IDEA and PyCharm are Apache-2.0 under the JetBrains Open-Source Build Terms"
+    use: "`praetorctl editors generate` writes their inspection profile and workspace settings (`.idea/`)"
+    paths:
+      - "internal/editor/editor.go"
+    match:
+      - ".idea/"
+  - name: "Neovim"
+    url: "https://github.com/neovim/neovim"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "Apache-2.0 AND Vim"
+    notice: "© Neovim contributors; the parts contributed under the Vim license keep it"
+    use: "`praetorctl editors generate` writes its project configuration (`.nvim.lua`, `lua/standards.lua`)"
+    paths:
+      - "internal/editor/editor.go"
+    match:
+      - "neovim"
+  - name: "Zed"
+    url: "https://github.com/zed-industries/zed"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "GPL-3.0-or-later"
+    notice: "the editor's license; upstream marks its Apache-2.0 components"
+    use: "`praetorctl editors generate` writes its settings and tasks (`.zed/`)"
+    paths:
+      - "internal/editor/editor.go"
+    match:
+      - ".zed/"
+  - name: "Helix"
+    url: "https://github.com/helix-editor/helix"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "MPL-2.0"
+    use: "`praetorctl editors generate` writes its configuration and languages (`.helix/`)"
+    paths:
+      - "internal/editor/editor.go"
+    match:
+      - ".helix/"
+  - name: "GNU Emacs"
+    url: "https://www.gnu.org/software/emacs/"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "GPL-3.0-or-later"
+    use: "`praetorctl editors generate` writes its directory variables (`.dir-locals.el`)"
+    paths:
+      - "internal/editor/editor.go"
+    match:
+      - ".dir-locals.el"
+  - name: "Fleet"
+    url: "https://www.jetbrains.com/fleet/"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "a JetBrains product used under its terms"
+    use: "`praetorctl editors generate` writes its settings and run configurations (`.fleet/`)"
+    paths:
+      - "internal/editor/editor.go"
+    match:
+      - ".fleet/"
+  - name: "Sublime Text"
+    url: "https://www.sublimetext.com"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "a Sublime HQ product used under its license"
+    use: "`praetorctl editors generate` writes its project file (`standards.sublime-project`)"
+    paths:
+      - "internal/editor/editor.go"
+    match:
+      - "sublime-project"
+  - name: "Visual Studio"
+    url: "https://visualstudio.microsoft.com"
+    section: "integrations"
+    kind: "integration"
+    relation: "integrated"
+    license: "proprietary"
+    notice: "a Microsoft product used under its license terms"
+    use: "`praetorctl editors generate` writes the `.clang-tidy` its code analysis reads"
+    paths:
+      - "internal/editor/editor.go"
+    match:
+      - "visual studio"
   - name: "Claude Code"
     url: "https://github.com/anthropics/claude-code"
     section: "integrations"
@@ -918,6 +1026,10 @@ entries:
     use: "Agent client praetor compiles agent context for and configures"
     paths:
       - "internal/clientid/clientid.go"
+      - "internal/clientsetup/plan.go"
+    match:
+      - "\"continue\""
+      - ".continue/"
   - name: "Kilo Code"
     url: "https://github.com/Kilo-Org/kilocode"
     section: "integrations"
@@ -1007,7 +1119,7 @@ entries:
       - "internal/forge/pr.go"
       - "internal/adopt/governance.go"
     match:
-      - "conventional commit"
+      - "conventional commits"
   - name: "Keep a Changelog 1.1.0"
     url: "https://keepachangelog.com"
     section: "specifications"
@@ -1220,7 +1332,9 @@ entries:
       - "lefthook.yml"
       - ".github/workflows/ci.yml"
     packages:
-      - "github.com/evilmartians/lefthook"
+      - "download:github.com/evilmartians/lefthook"
+    match:
+      - "lefthook"
   - name: "GoReleaser"
     url: "https://goreleaser.com"
     section: "tooling"
@@ -1235,13 +1349,14 @@ entries:
     section: "tooling"
     kind: "tool"
     relation: "used by CI"
-    license: "GPL-3.0"
+    license: "GPL-3.0-only"
+    notice: "the upstream LICENSE is the GPL version 3 text, with no notice granting later versions"
     use: "Go linting, run with go run at its latest release"
     paths:
       - ".golangci.yml"
       - "Makefile"
     packages:
-      - "github.com/golangci/golangci-lint"
+      - "download:github.com/golangci/golangci-lint"
   - name: "gosec"
     url: "https://github.com/securego/gosec"
     section: "tooling"
@@ -1253,7 +1368,9 @@ entries:
       - "tools/go/go.mod"
       - "Makefile"
     packages:
-      - "github.com/securego/gosec"
+      - "go:github.com/securego/gosec"
+    match:
+      - "gosec"
   - name: "Gitleaks"
     url: "https://github.com/gitleaks/gitleaks"
     section: "tooling"
@@ -1265,7 +1382,9 @@ entries:
       - "tools/go/go.mod"
       - "Makefile"
     packages:
-      - "github.com/zricethezav/gitleaks"
+      - "go:github.com/zricethezav/gitleaks"
+    match:
+      - "gitleaks"
   - name: "govulncheck"
     url: "https://go.googlesource.com/vuln"
     section: "tooling"
@@ -1278,17 +1397,22 @@ entries:
       - "tools/go/go.mod"
       - "Makefile"
     packages:
-      - "golang.org/x/vuln"
+      - "go:golang.org/x/vuln"
+    match:
+      - "govulncheck"
   - name: "Semgrep"
     url: "https://semgrep.dev"
     section: "tooling"
     kind: "tool"
     relation: "used by CI"
-    license: "LGPL-2.1"
+    license: "LGPL-2.1-or-later"
+    notice: "the license expression of the PyPI release"
     use: "Static analysis rules"
     paths:
       - ".config/semgrep/requirements.txt"
       - "Makefile"
+    packages:
+      - "pypi:semgrep"
   - name: "Black"
     url: "https://github.com/psf/black"
     section: "tooling"
@@ -1299,7 +1423,7 @@ entries:
     paths:
       - ".config/hook-lint/requirements.in"
     packages:
-      - "black"
+      - "pypi:black"
   - name: "Flake8"
     url: "https://github.com/PyCQA/flake8"
     section: "tooling"
@@ -1310,7 +1434,7 @@ entries:
     paths:
       - ".config/hook-lint/requirements.in"
     packages:
-      - "flake8"
+      - "pypi:flake8"
   - name: "yamllint"
     url: "https://github.com/adrienverge/yamllint"
     section: "tooling"
@@ -1321,18 +1445,19 @@ entries:
     paths:
       - ".config/hook-lint/requirements.in"
     packages:
-      - "yamllint"
+      - "pypi:yamllint"
   - name: "ShellCheck"
     url: "https://github.com/koalaman/shellcheck"
     section: "tooling"
     kind: "tool"
     relation: "used by CI"
-    license: "GPL-3.0"
+    license: "GPL-3.0-or-later"
+    notice: "the notice of every upstream source file"
     use: "Lints the shell hooks; the portability job downloads a pinned release"
     paths:
       - ".github/workflows/portability.yml"
     packages:
-      - "github.com/koalaman/shellcheck"
+      - "download:github.com/koalaman/shellcheck"
   - name: "Cosign"
     url: "https://github.com/sigstore/cosign"
     section: "tooling"
@@ -1363,7 +1488,7 @@ entries:
     paths:
       - ".github/workflows/release-binaries.yml"
     packages:
-      - "helm"
+      - "download:helm"
   - name: "Renovate"
     url: "https://github.com/renovatebot/renovate"
     section: "tooling"
@@ -1378,7 +1503,7 @@ entries:
       - "renovate.json"
       - ".github/workflows/ci.yml"
     packages:
-      - "renovate"
+      - "download:renovate"
   - name: "REUSE"
     url: "https://reuse.software"
     section: "tooling"
@@ -1401,7 +1526,7 @@ entries:
       - ".github/workflows/ci.yml"
       - ".github/workflows/pages.yml"
     packages:
-      - "chromium"
+      - "download:chromium"
   - name: "esbuild"
     url: "https://github.com/evanw/esbuild"
     section: "development"
@@ -1412,7 +1537,7 @@ entries:
     paths:
       - "tools/figures/package.json"
     packages:
-      - "esbuild"
+      - "npm:esbuild"
   - name: "Playwright"
     url: "https://github.com/microsoft/playwright"
     section: "development"
@@ -1424,7 +1549,7 @@ entries:
       - "tools/figures/package.json"
       - "tools/figures/third_party/interfig/upstream/package.json"
     packages:
-      - "playwright"
+      - "npm:playwright"
   - name: "Sätteri"
     url: "https://github.com/bruits/satteri"
     detail: "(`satteri`)"
@@ -1437,7 +1562,7 @@ entries:
       - "tools/figures/package.json"
       - "tools/figures/astro.mjs"
     packages:
-      - "satteri"
+      - "npm:satteri"
   - name: "DefinitelyTyped"
     url: "https://github.com/DefinitelyTyped/DefinitelyTyped"
     section: "development"
@@ -1452,7 +1577,7 @@ entries:
       - "editors/vscode/package.json"
       - "tools/figures/third_party/interfig/upstream/package.json"
     packages:
-      - "@types"
+      - "npm:@types"
   - name: "vscode-languageclient"
     url: "https://github.com/microsoft/vscode-languageserver-node"
     section: "development"
@@ -1464,40 +1589,4 @@ entries:
       - "editors/vscode/package.json"
       - "editors/vscode/src/extension.ts"
     packages:
-      - "vscode-languageclient"
-  - name: "Vite"
-    url: "https://github.com/vitejs/vite"
-    section: "development"
-    kind: "dependency"
-    relation: "vendored"
-    license: "MIT"
-    use: >-
-      Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it
-    paths:
-      - "tools/figures/third_party/interfig/upstream/package.json"
-    packages:
-      - "vite"
-  - name: "@vitejs/plugin-react"
-    url: "https://github.com/vitejs/vite-plugin-react"
-    section: "development"
-    kind: "dependency"
-    relation: "vendored"
-    license: "MIT"
-    use: >-
-      Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it
-    paths:
-      - "tools/figures/third_party/interfig/upstream/package.json"
-    packages:
-      - "@vitejs/plugin-react"
-  - name: "Prettier"
-    url: "https://github.com/prettier/prettier"
-    section: "development"
-    kind: "dependency"
-    relation: "vendored"
-    license: "MIT"
-    use: >-
-      Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it
-    paths:
-      - "tools/figures/third_party/interfig/upstream/package.json"
-    packages:
-      - "prettier"
+      - "npm:vscode-languageclient"

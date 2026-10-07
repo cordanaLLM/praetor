@@ -42,7 +42,7 @@ func CheckCredits(credits string, sources NoticeSources) error {
 	named := strings.ToLower(creditsLink.ReplaceAllString(tableCells(row)[0], "$1"))
 	var missing []string
 	for _, component := range components {
-		if !namesTerm(named, strings.ToLower(component.name+" "+component.version)) {
+		if !namesTerm(named, strings.ToLower(component.name+" "+component.version), termByte) {
 			missing = append(missing, component.name+" "+component.version)
 		}
 	}
@@ -71,16 +71,23 @@ func creditsPlayerRow(credits string) (string, error) {
 	return rows[0], nil
 }
 
-// namesTerm reports whether text holds term as a whole term: neither neighbour continues a
-// package name or a version, so "react 19.3.0" is not found in "preact 19.3.0" or "react 19.3.01".
-func namesTerm(text, term string) bool {
+// namesTerm reports whether text holds term as a whole term: where an edge byte of term
+// continues a term (continues), the byte next to it in text does not. With termByte, "react
+// 19.3.0" is not found in "preact 19.3.0" or "react 19.3.01"; an edge byte that continues
+// nothing, such as the slash of ".continue/", needs no boundary.
+func namesTerm(text, term string, continues func(byte) bool) bool {
+	if term == "" {
+		return false
+	}
 	for offset := 0; offset <= len(text)-len(term) && offset < len(text); {
 		index := strings.Index(text[offset:], term)
 		if index < 0 {
 			return false
 		}
 		start, end := offset+index, offset+index+len(term)
-		if (start == 0 || !termByte(text[start-1])) && (end == len(text) || !termByte(text[end])) {
+		before := start == 0 || !continues(term[0]) || !continues(text[start-1])
+		after := end == len(text) || !continues(term[len(term)-1]) || !continues(text[end])
+		if before && after {
 			return true
 		}
 		offset = start + 1

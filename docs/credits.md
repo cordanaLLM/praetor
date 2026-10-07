@@ -42,7 +42,14 @@ how much of it reaches praetor:
 
 A license is an SPDX expression, or one of three words: `proprietary` for a closed product or
 service used under its provider's terms, `none` when the upstream states no license, and `unknown`
-when the license could not be verified upstream.
+when the license could not be verified upstream. An identifier the SPDX License List deprecates is
+refused: a GNU license is written with `-only` or `-or-later`, as the upstream's notice states.
+
+An entry's `packages` name the inventory items it answers, each as `<ecosystem>:<identifier>`:
+`go:` a Go module or tool path, `npm:` and `pypi:` a package name, `action:` an owner/repository,
+`image:` and `feature:` a repository, and `download:` an id of the `downloads` list. A package
+answers only items of its own ecosystem, so an npm package and a download of the same name are
+two items. Its `match` terms are further words a path names the item by.
 
 The credits gate, `CheckUpstreamCredits` (`internal/supplychain/upstream_credits.go`), holds the
 list to the repository; `TestShippedUpstreamsAreCredited`
@@ -51,14 +58,18 @@ list to the repository; `TestShippedUpstreamsAreCredited`
 - an item the dependency inventory lists has no entry whose `packages` name it. The inventory,
   `ReadCreditInventory` (`internal/supplychain/notices_sources.go`), reads the direct
   requirements and the tool block of every `go.mod` (`tools/go/go.mod` holds the tools), the
-  direct dependencies of every `package.json`, every `requirements.in`, the `uses:` lines of the
-  workflows, composite actions and CI templates, every Dockerfile `FROM`, and the image and
-  features of every `devcontainer.json`. It reads the files git lists for the checkout (tracked
+  direct dependencies of every `package.json`, every pip `requirements*.in`, every
+  `requirements*.txt` with no `.in` of its name beside it (a hand-pinned file such as
+  `.config/semgrep/requirements.txt`; a `pip-compile` lock is read through its `.in`), the
+  `uses:` lines of the workflows, composite actions and CI templates, every Dockerfile `FROM`,
+  and the image and features of every `devcontainer.json`. It reads the files git lists for the checkout (tracked
   files and untracked ones git does not ignore), outside `node_modules`, `testdata` and hidden
   directories other than `.config`, `.devcontainer` and `.github`. What CI fetches outside a
   manifest, such as a release binary downloaded with curl, is declared under `downloads` in the
   list;
-- a path an entry, an original or a download names is not a file, or no longer names the item;
+- a path an entry, an original or a download names is not a file, or no longer names the item as a
+  whole word: by its packages and match terms, or by its name when it declares neither, so a
+  generic name such as Continue needs a specific match term;
 - a canonical persona or skill (`.agents/agents`, `.agents/skills`) neither declares
   `metadata.derived_from` nor is listed under `originals`;
 - an entry states license `unknown` and no unexpired entry of the `exceptions` list in
@@ -111,7 +122,7 @@ The `adhd-format` skill and `social-text`, which inherits from it, are adapted f
 | [micromark-extension-mdxjs](https://github.com/micromark/micromark-extension-mdxjs) 3.0.0 | MDX syntax for the same parser, pinned in the same lock | dependency, integrated | MIT, © 2020 Titus Wormer |
 | [parse5](https://github.com/inikulin/parse5) 8.0.1 | HTML parsing, pinned in the same lock | dependency, integrated | MIT, © 2013–2019 Ivan Nikulin |
 | [Dev Container CLI](https://github.com/devcontainers/cli) (`@devcontainers/cli` 0.89.0) | Builds a repository's devcontainer for the gate; the binaries embed its manifest and lock (`internal/devcontainer/cli.go`) and install it into the tool cache | tool, integrated | MIT, © Microsoft Corporation |
-| [interfig](https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig) (`hindsight-interfig/` in vectorize-io/hindsight) | Draws the interactive figures on this site; vendored byte-identical at commit `ccfe85b4851957ac2adf88b4a9ddf9668b2882f1` in `tools/figures/third_party/interfig/`. The binaries embed its render source and the figure player that bundles it (`tools/figures/assets.go`) | vendored file, vendored | MIT, © 2025 Vectorize AI, Inc. |
+| [interfig](https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig) (`hindsight-interfig/` in vectorize-io/hindsight) | Draws the interactive figures on this site; vendored byte-identical at commit `ccfe85b4851957ac2adf88b4a9ddf9668b2882f1` in `tools/figures/third_party/interfig/`. The binaries embed its render source and the figure player that bundles it (`tools/figures/assets.go`) | vendored file, vendored | MIT, © 2025 Vectorize AI, Inc. Its vendored `package.json` names [Vite](https://github.com/vitejs/vite), [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react) and [Prettier](https://github.com/prettier/prettier) (MIT each) as development dependencies; no code of theirs is reproduced, and praetor's figure build does not install them |
 | [React](https://github.com/facebook/react) 19.3.0, with react-dom 19.3.0 and scheduler 0.28.0 | Bundled with interfig into the figure player (`tools/figures/dist/player.js`) that the binaries embed and this site loads | dependency, shipped | MIT, © Meta Platforms, Inc. and affiliates |
 
 ## Container and development images
@@ -130,11 +141,12 @@ these packages, which the preset's lists pin: `docs/presets/mkdocs/requirements.
 `docs/presets/starlight/package.json`.
 
 An adopter who copies the Starlight preset and runs `npm ci` receives every package of
-`docs/presets/starlight/package-lock.json`, each with its own license file; praetor's binaries
-carry the preset's manifest and lock, not the packages. Most are under MIT, Apache-2.0, ISC or a
-BSD license. Two are weak copyleft, and their entries below follow the lock: the prebuilt libvips
-that sharp installs per platform (`@img/sharp-libvips-*`, also inside `@img/sharp-win32-*` and
-`@img/sharp-wasm32`) is LGPL-3.0-or-later, and Lightning CSS with its platform binaries is
+`docs/presets/starlight/package-lock.json`, each with its own license file. The preset ships in
+this repository only: praetor's binaries embed neither its manifest and lock nor the packages.
+Most are under MIT, Apache-2.0, ISC or a BSD license. Two are weak copyleft, and their entries
+below follow the lock: the prebuilt libvips that sharp installs per platform
+(`@img/sharp-libvips-*`, also inside `@img/sharp-win32-*` and `@img/sharp-wasm32`) is
+LGPL-3.0-or-later, and Lightning CSS with its platform binaries is
 MPL-2.0. The lock also holds BlueOak-1.0.0, CC0-1.0, Python-2.0 and 0BSD packages. To count the
 licenses the lock records:
 
@@ -203,6 +215,14 @@ configures. Praetor ships none of their code.
 | [Node.js](https://github.com/nodejs/node) | Runs the Markdown gate, the figure build and the devcontainer CLI; praetorctl downloads the release `internal/devcontainer/cli/node.json` pins from nodejs.org | tool, integrated | MIT, © Node.js contributors; each release archive carries the licenses of the dependencies it bundles |
 | [Git](https://git-scm.com) | praetorctl runs git for every repository read and write | tool, integrated | GPL-2.0-only |
 | [Visual Studio Code](https://github.com/microsoft/vscode) | The praetor extension in `editors/vscode` runs in it, and adoption writes its workspace settings | integration, integrated | MIT, the Code - OSS source; Microsoft's Visual Studio Code builds ship under the Microsoft product license |
+| [JetBrains IDEs](https://www.jetbrains.com/ides/) | `praetorctl editors generate` writes their inspection profile and workspace settings (`.idea/`) | integration, integrated | proprietary, JetBrains products used under their terms; the open-source builds of IntelliJ IDEA and PyCharm are Apache-2.0 under the JetBrains Open-Source Build Terms |
+| [Neovim](https://github.com/neovim/neovim) | `praetorctl editors generate` writes its project configuration (`.nvim.lua`, `lua/standards.lua`) | integration, integrated | Apache-2.0 AND Vim, © Neovim contributors; the parts contributed under the Vim license keep it |
+| [Zed](https://github.com/zed-industries/zed) | `praetorctl editors generate` writes its settings and tasks (`.zed/`) | integration, integrated | GPL-3.0-or-later, the editor's license; upstream marks its Apache-2.0 components |
+| [Helix](https://github.com/helix-editor/helix) | `praetorctl editors generate` writes its configuration and languages (`.helix/`) | integration, integrated | MPL-2.0 |
+| [GNU Emacs](https://www.gnu.org/software/emacs/) | `praetorctl editors generate` writes its directory variables (`.dir-locals.el`) | integration, integrated | GPL-3.0-or-later |
+| [Fleet](https://www.jetbrains.com/fleet/) | `praetorctl editors generate` writes its settings and run configurations (`.fleet/`) | integration, integrated | proprietary, a JetBrains product used under its terms |
+| [Sublime Text](https://www.sublimetext.com) | `praetorctl editors generate` writes its project file (`standards.sublime-project`) | integration, integrated | proprietary, a Sublime HQ product used under its license |
+| [Visual Studio](https://visualstudio.microsoft.com) | `praetorctl editors generate` writes the `.clang-tidy` its code analysis reads | integration, integrated | proprietary, a Microsoft product used under its license terms |
 | [Claude Code](https://github.com/anthropics/claude-code) | Agent client praetor compiles agent context for and configures | integration, integrated | proprietary, © Anthropic PBC; used under Anthropic's Commercial Terms of Service |
 | [Codex CLI](https://github.com/openai/codex) | Agent client praetor compiles agent context for and configures | integration, integrated | Apache-2.0 |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Agent client praetor compiles agent context for and configures | integration, integrated | Apache-2.0 |
@@ -258,15 +278,15 @@ outside a manifest. None of them ships in the binaries.
 | :-- | :-- | :-- | :-- |
 | [Lefthook](https://github.com/evilmartians/lefthook) | Git hooks; CI installs it with go install | tool, used by CI | MIT |
 | [GoReleaser](https://goreleaser.com) | Release archives, the container image and checksums | tool, used by CI | MIT |
-| [golangci-lint](https://golangci-lint.run) | Go linting, run with go run at its latest release | tool, used by CI | GPL-3.0 |
+| [golangci-lint](https://golangci-lint.run) | Go linting, run with go run at its latest release | tool, used by CI | GPL-3.0-only, the upstream LICENSE is the GPL version 3 text, with no notice granting later versions |
 | [gosec](https://github.com/securego/gosec) | Go security scan, a tool of `tools/go/go.mod` | tool, used by CI | Apache-2.0 |
 | [Gitleaks](https://github.com/gitleaks/gitleaks) | Secret scan, a tool of `tools/go/go.mod` | tool, used by CI | MIT |
 | [govulncheck](https://go.googlesource.com/vuln) | Go vulnerability scan, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © The Go Authors |
-| [Semgrep](https://semgrep.dev) | Static analysis rules | tool, used by CI | LGPL-2.1 |
+| [Semgrep](https://semgrep.dev) | Static analysis rules | tool, used by CI | LGPL-2.1-or-later, the license expression of the PyPI release |
 | [Black](https://github.com/psf/black) | Formats the hook sources adoption copies (`.config/hook-lint/requirements.in`) | tool, used by CI | MIT |
 | [Flake8](https://github.com/PyCQA/flake8) | Lints the hook sources adoption copies | tool, used by CI | MIT |
 | [yamllint](https://github.com/adrienverge/yamllint) | Lints the YAML praetor emits and the portability job's YAML | tool, used by CI | GPL-3.0-or-later |
-| [ShellCheck](https://github.com/koalaman/shellcheck) | Lints the shell hooks; the portability job downloads a pinned release | tool, used by CI | GPL-3.0 |
+| [ShellCheck](https://github.com/koalaman/shellcheck) | Lints the shell hooks; the portability job downloads a pinned release | tool, used by CI | GPL-3.0-or-later, the notice of every upstream source file |
 | [Cosign](https://github.com/sigstore/cosign) | Keyless signing and verification | tool, used by CI | Apache-2.0 |
 | [Syft](https://github.com/anchore/syft) | SBOM generation | tool, used by CI | Apache-2.0 |
 | [Helm](https://github.com/helm/helm) | Lints, packages and pushes the chart in `deploy/helm/praetor` during a release | tool, used by CI | Apache-2.0 |
@@ -286,8 +306,5 @@ extension (`editors/vscode/package.json`), and the packages the vendored interfi
 | [Sätteri](https://github.com/bruits/satteri) (`satteri`) | Markdown and MDX processing of the figures' Astro integration (`tools/figures/astro.mjs`) and its tests | dependency, used by CI | MIT |
 | [DefinitelyTyped](https://github.com/DefinitelyTyped/DefinitelyTyped) | Type declarations (`@types/react`, `@types/react-dom`, `@types/node`, `@types/vscode`) for the figure tooling and the VS Code extension | dependency, used by CI | MIT |
 | [vscode-languageclient](https://github.com/microsoft/vscode-languageserver-node) | The language client of the praetor VS Code extension (`editors/vscode`) | dependency, integrated | MIT |
-| [Vite](https://github.com/vitejs/vite) | Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it | dependency, vendored | MIT |
-| [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react) | Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it | dependency, vendored | MIT |
-| [Prettier](https://github.com/prettier/prettier) | Named as a development dependency by the vendored interfig manifest; praetor's figure build does not install it | dependency, vendored | MIT |
 
 <!-- REUSE-IgnoreEnd -->
