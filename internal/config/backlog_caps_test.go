@@ -5,6 +5,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -109,7 +110,7 @@ func TestBacklogCaps_Negative_ManifestValidationNamesTheKey(t *testing.T) {
 		"unknown key":      {"    tasks: {maxx: 3}\n", `unknown key "maxx"`},
 		"zero max":         {"    questions: {max: 0}\n", "backlog.caps.questions.max"},
 		"text max":         {"    questions: {max: ten}\n", "backlog.caps.questions.max"},
-		"above bound":      {"    defects: {max: 1000001}\n", "backlog.caps.defects.max"},
+		"above bound":      {"    defects: {max: 10001}\n", "backlog.caps.defects.max must be an integer from 1 to 10000"},
 		"empty category":   {"    defects: {}\n", "backlog.caps.defects declares neither max nor action"},
 	} {
 		manifest := "version: 1\nrepository:\n  owner: example\n  name: demo\nbacklog:\n  caps:\n" + tc.caps
@@ -117,6 +118,10 @@ func TestBacklogCaps_Negative_ManifestValidationNamesTheKey(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to name %s", name, err, tc.want)
 		}
+	}
+	atBound := "version: 1\nrepository:\n  owner: example\n  name: demo\nbacklog:\n  caps:\n    defects: {max: 10000}\n"
+	if _, err := ParseManifest(".standards.yaml", []byte(atBound)); err != nil {
+		t.Fatalf("a max at the bound must decode: %v", err)
 	}
 	if _, err := ParseManifest(".standards.yaml", []byte("version: 1\nbacklog:\n  limits: {}\n")); err == nil ||
 		!strings.Contains(err.Error(), `unknown key "limits"`) {
@@ -186,9 +191,13 @@ func TestBacklogCaps_Negative_ResolvePolicyRejectsInvalidLayerCaps(t *testing.T)
 	if _, err := ResolvePolicy(t.Context(), []PolicyLayer{layer}); err == nil {
 		t.Fatal("unknown action accepted")
 	}
-	layer.Backlog.Defects = BacklogCap{Max: maxBacklogCap, Action: BacklogGate}
+	layer.Backlog.Defects = BacklogCap{Max: MaxBacklogCap, Action: BacklogGate}
 	if _, err := ResolvePolicy(t.Context(), []PolicyLayer{layer}); err != nil {
 		t.Fatalf("the largest max must resolve: %v", err)
+	}
+	layer.Backlog.Defects = BacklogCap{Max: MaxBacklogCap + 1, Action: BacklogGate}
+	if _, err := ResolvePolicy(t.Context(), []PolicyLayer{layer}); err == nil {
+		t.Fatal("a max above the count bound resolved")
 	}
 }
 
@@ -229,5 +238,75 @@ func TestLoadUnadoptedEffectivePolicy_PositiveNegativeBoundary(t *testing.T) {
 	}
 	if _, _, err := LoadUnadoptedEffectivePolicyContext(t.Context(), EffectiveOptions{Root: filepath.Join(adopted, "absent")}); err != nil {
 		t.Fatalf("an absent root has no manifest and no policy: %v", err)
+	}
+}
+
+// The no-lock notice names every external document that still applies without a lock; with
+// none it is NoLockNotice.
+func TestLoadUnadoptedEffectivePolicy_NoLockNoticeNamesExternalLayers(t *testing.T) {
+	root := lockLessManifest(t, "")
+	external := t.TempDir()
+	opts := EffectiveOptions{Root: root,
+		FleetPath:       writePolicyFile(t, external, "fleet.yaml", "backlog:\n  caps:\n    defects: {max: 2}\n"),
+		WorkstationPath: writePolicyFile(t, external, "workstation.yaml", "complexity:\n  max_func_loc: 70\n")}
+	policy, notice, err := LoadUnadoptedEffectivePolicyContext(t.Context(), opts)
+	want := "no .standards.lock: built-in defaults, repository overrides and the fleet, workstation policy only; no pinned profile or facet applies"
+	if err != nil || notice != want || policy.Policy.Backlog.Defects.Limit() != 2 {
+		t.Fatalf("external layers without a lock: %q %v", notice, err)
+	}
+	if _, notice, err = LoadUnadoptedEffectivePolicyContext(t.Context(), EffectiveOptions{Root: root}); err != nil || notice != NoLockNotice {
+		t.Fatalf("no external layer: %q %v", notice, err)
+	}
+}
+
+// Positive: a backlog section in the manifest, an external document or a selected catalog
+// profile is declared, the profile even when the lock no longer verifies.
+func TestDeclaresBacklog_Positive_EveryLayerKind(t *testing.T) {
+	section := "backlog:\n  caps:\n    defects: {max: 2}\n"
+	manifest := lockLessManifest(t, section)
+	fleet := EffectiveOptions{Root: lockLessManifest(t, ""), FleetPath: writePolicyFile(t, t.TempDir(), "fleet.yaml", section)}
+	profile := policyFixture(t, section, "", "")
+	writePolicyFile(t, profile, LockFileName, "version: 1\n")
+	for name, opts := range map[string]EffectiveOptions{
+		"manifest": {Root: manifest}, "fleet": fleet, "profile with a stale lock": {Root: profile},
+	} {
+		if declared, err := DeclaresBacklogContext(t.Context(), opts); err != nil || !declared {
+			t.Errorf("%s: declared=%t err=%v", name, declared, err)
+		}
+	}
+}
+
+// Negative: no layer with a backlog section declares nothing even when the lock is invalid; a
+// selected profile the catalog does not hold cannot be read and is an error.
+func TestDeclaresBacklog_Negative_NothingDeclaredOrUnreadable(t *testing.T) {
+	plain := policyFixture(t, "", "", "")
+	writePolicyFile(t, plain, LockFileName, "version: 1\n")
+	if declared, err := DeclaresBacklogContext(t.Context(), EffectiveOptions{Root: plain}); err != nil || declared {
+		t.Fatalf("no backlog section: declared=%t err=%v", declared, err)
+	}
+	if err := os.Remove(filepath.Join(plain, ".config", "archetypes", "framework.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DeclaresBacklogContext(t.Context(), EffectiveOptions{Root: plain}); err == nil ||
+		!strings.Contains(err.Error(), `profile "framework" is not in the catalog`) {
+		t.Fatalf("unreadable profile: %v", err)
+	}
+	if _, err := DeclaresBacklogContext(t.Context(), EffectiveOptions{Root: lockLessManifest(t, ""), FleetPath: filepath.Join(t.TempDir(), "absent.yaml")}); err == nil {
+		t.Fatal("an absent fleet document declared nothing instead of failing")
+	}
+}
+
+// Boundary: a root without a manifest declares nothing, and without a lock the selected
+// profiles are not read, as resolution does not read them either.
+func TestDeclaresBacklog_Boundary_NoManifestOrNoLock(t *testing.T) {
+	if declared, err := DeclaresBacklogContext(t.Context(), EffectiveOptions{Root: t.TempDir()}); err != nil || declared {
+		t.Fatalf("no manifest: declared=%t err=%v", declared, err)
+	}
+	unpinned := lockLessManifest(t, "profiles: [absent-profile]\n")
+	if declared, err := DeclaresBacklogContext(t.Context(), EffectiveOptions{Root: unpinned}); err != nil || declared {
+		t.Fatalf("no lock: declared=%t err=%v", declared, err)
+	}
+	if _, err := DeclaresBacklogContext(t.Context(), EffectiveOptions{}); err == nil {
+		t.Fatal("an empty root was probed")
 	}
 }

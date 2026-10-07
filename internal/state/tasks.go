@@ -294,7 +294,7 @@ func parseLedgerTaskLines(name string, lines []string) ([]taskLine, error) {
 		if fence.Inside(trimmed) {
 			continue
 		}
-		if heading, ok := taskHeading(trimmed); ok {
+		if heading, ok := util.MarkdownHeadingText(trimmed); ok {
 			section = heading
 			continue
 		}
@@ -308,17 +308,6 @@ func parseLedgerTaskLines(name string, lines []string) ([]taskLine, error) {
 		return nil, fmt.Errorf("%s has an unterminated code fence opened at line %d; every row after it would be read as an example", name, opened)
 	}
 	return tasks, nil
-}
-
-// taskHeading returns the text of an ATX heading line ("## In-Flight Tasks"), reporting
-// whether the trimmed line is one: one to six '#' followed by a space or the end of the line.
-func taskHeading(trimmed string) (string, bool) {
-	text := strings.TrimLeft(trimmed, "#")
-	level := len(trimmed) - len(text)
-	if level < 1 || level > 6 || (text != "" && text[0] != ' ' && text[0] != '\t') {
-		return "", false
-	}
-	return strings.TrimSpace(strings.TrimRight(strings.TrimSpace(text), "#")), true
 }
 
 // taskCheckbox splits a trimmed line into its checkbox state and description,

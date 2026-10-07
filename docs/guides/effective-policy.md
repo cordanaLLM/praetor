@@ -399,14 +399,26 @@ A category no layer caps has no bound, and `state status` prints nothing for it.
 The counts come from the ledger readers in `internal/state` (`internal/backlogcap/backlogcap.go`);
 `BACKLOG.md` is read by `state.ListBacklogTasksContext`, the `OPEN.md` task parser applied to it
 (`TestBacklogCap_Positive_TasksCountBacklogWorkstreams`,
-`TestBacklogCap_Negative_BacklogRowsAloneTripTheGate`). An absent ledger holds no items, and the
-line says which file is absent.
+`TestBacklogCap_Negative_BacklogRowsAloneTripTheGate`). Every row is examined; a ledger holding
+more than 10,000 open items fails the count naming that bound rather than counting low
+(`TestPendingTasks_Boundary_FailsAboveTheBoundNeverTruncates`).
+
+A category is counted only when every ledger it reads exists and can be read. Otherwise its line
+says `not counted` with the reason, never 0:
+
+```text
+  Backlog Cap:       tasks: not counted: .workingdir/BACKLOG.md is not present in this checkout (max 40 set by repository, action gate set by repository)
+  Backlog Cap:       questions: not counted: QUESTIONS.md line 4: ... (max 10 set by repository, action report set by builtin default)
+```
+
+An unreadable ledger, such as a `BACKLOG.md` with an unterminated code fence, affects only its own
+category; the others are still counted (`TestEvaluate_Negative_ReadErrorStaysInItsCategory`).
 
 ### Keys, boundary and actions
 
 | Key | Accepted values |
 | :-- | :-- |
-| `backlog.caps.<category>.max` | an integer from 1 to 1,000,000 |
+| `backlog.caps.<category>.max` | an integer from 1 to 10,000, the bound one count reads (`config.MaxBacklogCap`) |
 | `backlog.caps.<category>.action` | `report` (the default once a max is declared), `batch` or `gate` |
 
 The cap is inclusive, like `max_func_loc`: `max` is the largest count within the cap. A count
@@ -426,14 +438,26 @@ Each action also does what the weaker ones do:
   and the same input writes the same bytes (`TestWriteBatches_DateAndDeterminism`).
 - **`gate`**: `praetorctl audit` fails, naming the category, its count and its cap:
   `[FAIL] backlog cap defects: 81 items, over the cap of 80 (action gate, max set by repository)`.
-  A gate on a category praetor cannot count fails too, because a gate that cannot count is not a
-  passing gate (`TestAudit_Negative_BacklogCapGateFailsTheAudit` in
-  `cmd/standardsctl/state_backlog_test.go`).
+  A gate on a category praetor cannot count, because it has no reader (`forge_alerts`) or its
+  ledger cannot be read, fails too: a gate that cannot count is not a passing gate
+  (`TestBacklogCap_Negative_UncountedCategoryIsNeverZero` in
+  `internal/backlogcap/backlogcap_test.go`, `TestAuditBacklogCaps_Negative_ReadErrorFailsOnlyAGate`
+  in `cmd/standardsctl/state_backlog_test.go`). A category with action `report` or `batch` whose
+  ledger cannot be read prints a `[WARN] Backlog cap` line and does not fail the audit.
 
 The audit counts the ledgers of the checkout it audits. A checkout without `.workingdir`, such
-as a CI clone, holds no ledger, so each category counts 0 and its `[INFO] Backlog cap` line says
-the ledger is absent. The MCP `standards_audit` tool does not run this gate and names it among
-the CLI-only gates in its summary.
+as a CI clone, holds no ledger, so a gated category cannot run its gate there. It is not counted,
+never counted as 0, and the audit says so instead of passing:
+
+```text
+[SKIP] Backlog cap defects: not counted: .workingdir/BUGS.md is not present in this checkout (max 2 set by repository, action gate set by repository)
+[SKIP] Backlog caps: the gate on defects did not run: the ledger is not present in this checkout.
+```
+
+The summary is `[PASS]` only when every gated category was counted and is within its cap, and
+`[INFO]` when no category declares `gate` (`TestAuditBacklogCaps_Boundary_AbsentLedgerSkipsTheGate`).
+The MCP `standards_audit` tool does not run this gate and names it among the CLI-only gates in its
+summary.
 
 An unknown category, an unknown key and an unknown action fail the document and name the key,
 for example `backlog.caps: unknown category "bugs"`. An action that no layer gives a `max` to act
@@ -461,8 +485,15 @@ digest is unchanged.
 `--fleet-config`, `--organization-config`, `--deployment-config`, `--workstation-config`) and
 discover nothing implicitly. A repository without `.standards.yaml` has no caps; one without
 `.standards.lock` resolves without pinned profiles and facets, as `plan` does
-(`config.LoadUnadoptedEffectivePolicyContext`). A policy that does not resolve is printed by
-`state status` as `Backlog Cap: unresolved: <error>`, never omitted.
+(`config.LoadUnadoptedEffectivePolicyContext`); its notice then names any external document
+that still applies, for example `no .standards.lock: built-in defaults, repository overrides and
+the fleet policy only; no pinned profile or facet applies` (`TestStateBatch_NoLockNoticeNamesTheFleet`).
+
+A policy that does not resolve is printed by `state status` as
+`Backlog Cap: unresolved: <error>` when a layer declares a `backlog` section, or when praetor
+cannot tell, because the manifest, an external document or a selected catalog profile cannot be
+read (`config.DeclaresBacklogContext`). With no `backlog` section in any layer it prints nothing,
+as for a repository without caps (`TestStateStatus_Boundary_AbsentLedgerAndUnresolvedWithoutCaps`).
 
 ## Selecting a shared or private configuration
 

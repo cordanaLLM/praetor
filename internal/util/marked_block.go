@@ -186,13 +186,26 @@ func endsMarkdownSection(trimmed string, inside, fenced bool) bool {
 	if !inside || fenced {
 		return false
 	}
-	return isMarkdownHeading(trimmed)
+	_, heading := MarkdownHeadingText(trimmed)
+	return heading
 }
 
-func isMarkdownHeading(trimmed string) bool {
-	hashes := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
-	return hashes > 0 && hashes <= 6 &&
-		(len(trimmed) == hashes || trimmed[hashes] == ' ' || trimmed[hashes] == '\t')
+// MarkdownHeadingText returns the text of an ATX heading line ("## In-Flight Tasks" yields
+// "In-Flight Tasks") and reports whether the trimmed line is one: one to six '#' followed by a
+// space, a tab or the end of the line. A closing '#' run is dropped only when a space or tab
+// precedes it, so "## C#" keeps its text. It is the one heading rule of this package and of
+// every ledger reader that groups rows by heading.
+func MarkdownHeadingText(trimmed string) (string, bool) {
+	text := strings.TrimLeft(trimmed, "#")
+	hashes := len(trimmed) - len(text)
+	if hashes < 1 || hashes > 6 || (text != "" && text[0] != ' ' && text[0] != '\t') {
+		return "", false
+	}
+	text = strings.TrimSpace(text)
+	if open := strings.TrimRight(text, "#"); open == "" || strings.HasSuffix(open, " ") || strings.HasSuffix(open, "\t") {
+		text = strings.TrimSpace(open)
+	}
+	return text, true
 }
 
 // ReplaceMarkedBlock replaces the start..end span of content, markers included, with

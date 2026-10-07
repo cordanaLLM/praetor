@@ -77,10 +77,103 @@ func LoadUnadoptedEffectivePolicyContext(ctx context.Context, opts EffectiveOpti
 	}
 	notice := ""
 	if !util.PathExists(filepath.Join(paths.Root, LockFileName)) {
-		opts.unpinned, notice = true, NoLockNotice
+		opts.unpinned, notice = true, noLockNotice(opts)
 	}
 	policy, err := loadEffectivePolicy(ctx, opts, nil)
 	return policy, notice, err
+}
+
+// noLockNotice is NoLockNotice for a resolution without external documents. An explicitly
+// selected fleet, organization, deployment or workstation document still applies without a
+// lock, so the notice then names each one instead of claiming defaults and overrides only.
+func noLockNotice(opts EffectiveOptions) string {
+	sources := externalSources(opts)
+	if len(sources) == 0 {
+		return NoLockNotice
+	}
+	ids := make([]string, 0, len(sources))
+	for _, source := range sources {
+		ids = append(ids, source.id)
+	}
+	return fmt.Sprintf("no %s: built-in defaults, repository overrides and the %s policy only; no pinned profile or facet applies",
+		LockFileName, strings.Join(ids, ", "))
+}
+
+// DeclaresBacklogContext reports whether a layer the effective policy reads for opts declares
+// a backlog section: the repository manifest, an explicitly selected external document or,
+// when the repository carries a lock, a profile or facet the manifest selects, read from the
+// catalog without the lock check. A read-only view uses it to tell a policy that caps nothing
+// from one whose caps do not resolve. A source it cannot read is an error, never a layer that
+// declares nothing; a root without a manifest declares nothing.
+func DeclaresBacklogContext(ctx context.Context, opts EffectiveOptions) (bool, error) {
+	if ctx == nil || opts.Root == "" {
+		return false, errors.New("backlog declaration probe requires context and explicit repository root")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	paths, err := normalizeEffectiveOptions(opts)
+	if err != nil || !util.PathExists(paths.ManifestPath) {
+		return false, err
+	}
+	loader := effectiveLoader{ctx: ctx}
+	manifest, _, err := loader.manifest(paths.ManifestPath)
+	if err != nil || manifest.Backlog != nil {
+		return err == nil, err
+	}
+	declared, err := loader.externalDeclaresBacklog(paths)
+	if err != nil || declared || !util.PathExists(filepath.Join(paths.Root, LockFileName)) {
+		return declared, err
+	}
+	return loader.catalogDeclaresBacklog(paths.CatalogRoot, manifest)
+}
+
+// externalDeclaresBacklog reports whether an explicitly selected external document carries a
+// backlog section. A selected document that cannot be read is an error.
+func (l *effectiveLoader) externalDeclaresBacklog(opts EffectiveOptions) (bool, error) {
+	for _, source := range externalSources(opts) {
+		node, _, err := l.document(source.path, source.id)
+		if err != nil || policyMember(node, "backlog") != nil {
+			return err == nil, err
+		}
+	}
+	return false, nil
+}
+
+// catalogDeclaresBacklog reports whether a profile or facet the manifest selects declares
+// backlog caps in the catalog under root. A selected id the catalog does not hold is an error.
+func (l *effectiveLoader) catalogDeclaresBacklog(root string, manifest *Manifest) (bool, error) {
+	if len(manifest.Profiles)+len(manifest.Facets) == 0 {
+		return false, nil
+	}
+	profiles, facets, err := archetypeSources(l.ctx, root)
+	if err != nil {
+		return false, err
+	}
+	declared, err := l.archetypesDeclareBacklog("profile", manifest.Profiles, profiles, root)
+	if err != nil || declared {
+		return declared, err
+	}
+	return l.archetypesDeclareBacklog("facet", manifest.Facets, facets, root)
+}
+
+// archetypesDeclareBacklog reads each selected catalog file of one kind and reports whether
+// one declares backlog caps.
+func (l *effectiveLoader) archetypesDeclareBacklog(kind string, ids []string, index map[string]string, root string) (bool, error) {
+	for i := 0; i < len(ids) && i < maxLockEntries; i++ {
+		path, ok := index[ids[i]]
+		if !ok {
+			return false, fmt.Errorf("%s %q is not in the catalog at %s, so its backlog caps cannot be read", kind, ids[i], root)
+		}
+		data, err := l.snapshot(path)
+		if err != nil {
+			return false, err
+		}
+		archetype, err := decodeArchetype(l.ctx, path, data)
+		if err != nil || archetype.Backlog != (BacklogCaps{}) {
+			return err == nil, err
+		}
+	}
+	return false, nil
 }
 
 func loadEffectivePolicy(ctx context.Context, opts EffectiveOptions, inputs map[string][]byte) (*EffectivePolicy, error) {
@@ -223,15 +316,28 @@ func (l *effectiveLoader) manifest(path string) (*Manifest, PolicyLayer, error) 
 	return &manifest, layer, err
 }
 
-func (l *effectiveLoader) externalLayers(opts EffectiveOptions, layers []PolicyLayer) ([]PolicyLayer, error) {
-	paths := []struct{ id, path string }{
+// externalSource is one explicitly selected external policy document and the layer id it
+// resolves under.
+type externalSource struct{ id, path string }
+
+// externalSources lists the external documents opts selects, in resolution order. An omitted
+// path selects nothing.
+func externalSources(opts EffectiveOptions) []externalSource {
+	all := [...]externalSource{
 		{"fleet", opts.FleetPath}, {"organization", opts.OrganizationPath},
 		{"deployment", opts.DeploymentPath}, {"workstation", opts.WorkstationPath},
 	}
-	for _, source := range paths {
-		if source.path == "" {
-			continue
+	selected := make([]externalSource, 0, len(all))
+	for _, source := range all {
+		if source.path != "" {
+			selected = append(selected, source)
 		}
+	}
+	return selected
+}
+
+func (l *effectiveLoader) externalLayers(opts EffectiveOptions, layers []PolicyLayer) ([]PolicyLayer, error) {
+	for _, source := range externalSources(opts) {
 		layer, err := l.externalLayer(source.id, source.path)
 		if err != nil {
 			return nil, err

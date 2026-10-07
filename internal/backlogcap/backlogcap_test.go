@@ -267,13 +267,22 @@ func TestWriteBatches_DateAndDeterminism(t *testing.T) {
 	}
 }
 
-// Boundary: an absent ledger counts as empty and says so; a policy without caps, or none at
-// all, yields an empty report; a nil context is refused.
+// Boundary: an absent ledger, as in a CI clone without .workingdir, leaves its category not
+// counted, never zero: a gate on it is skipped, neither passed nor failed. A policy without
+// caps, or none at all, yields an empty report; a nil context is refused.
 func TestEvaluate_Boundary_AbsentLedgerAndNoPolicy(t *testing.T) {
-	report := evaluate(t, t.TempDir(), config.BacklogCaps{Questions: config.BacklogCap{Max: 2}})
+	report := evaluate(t, t.TempDir(), config.BacklogCaps{Questions: config.BacklogCap{Max: 2, Action: config.BacklogGate}})
 	category := &report.Categories[0]
-	if len(category.Absent) != 1 || category.Count() != 0 || !strings.Contains(category.Line(), ".workingdir/QUESTIONS.md is absent") {
+	if category.Counted || category.State() != StateAbsent || len(category.Absent) != 1 ||
+		!strings.Contains(category.Line(), "questions: not counted: .workingdir/QUESTIONS.md is not present in this checkout") {
 		t.Fatalf("absent ledger = %+v / %q", category, category.Line())
+	}
+	if err := report.Gate(); err != nil || strings.Join(report.Skipped(), ",") != "questions" || report.Gated() != 1 {
+		t.Fatalf("a gate on an absent ledger: gate %v, skipped %v", err, report.Skipped())
+	}
+	report = evaluate(t, t.TempDir(), config.BacklogCaps{Questions: config.BacklogCap{Max: 2, Action: config.BacklogBatch}})
+	if len(report.Skipped()) != 0 || report.Gated() != 0 || report.Categories[0].State() != StateAbsent {
+		t.Fatalf("an ungated absent category is not a skipped gate: %v", report.Skipped())
 	}
 	if empty, err := Evaluate(t.Context(), t.TempDir(), nil); err != nil || len(empty.Categories) != 0 {
 		t.Fatalf("nil policy: %+v %v", empty, err)
@@ -353,26 +362,104 @@ func TestBacklogCap_Negative_BacklogRowsAloneTripTheGate(t *testing.T) {
 	}
 }
 
-// Boundary: rows split across both ledgers that reach max exactly are at the cap and pass; an
-// absent ledger is named, both absent are named together; an unterminated fence in BACKLOG.md
-// fails the count rather than dropping its rows.
+// Boundary: rows split across both ledgers that reach max exactly are at the cap and pass; one
+// absent ledger leaves the category not counted and names it, both absent are named together;
+// an unterminated fence in BACKLOG.md leaves the category not counted, so its gate fails
+// rather than dropping the rows.
 func TestBacklogCap_Boundary_TasksAcrossBothLedgers(t *testing.T) {
 	gate := config.BacklogCaps{Tasks: config.BacklogCap{Max: 2, Action: config.BacklogGate}}
 	report := evaluate(t, writeTaskLedgers(t, "- [ ] open\n", "- [ ] deferred\n"), gate)
-	if category := &report.Categories[0]; category.State() != StateAt || report.Gate() != nil {
+	if category := &report.Categories[0]; category.State() != StateAt || report.Gate() != nil || len(report.Skipped()) != 0 {
 		t.Fatalf("at the cap = %s, gate %v", category.State(), report.Gate())
 	}
 	report = evaluate(t, writeTaskLedgers(t, "- [ ] open\n", ""), gate)
-	if line := report.Categories[0].Line(); !strings.Contains(line, "; .workingdir/BACKLOG.md is absent, so it holds no item") {
-		t.Fatalf("absent backlog line = %q", line)
+	if line := report.Categories[0].Line(); !strings.Contains(line, "tasks: not counted: .workingdir/BACKLOG.md is not present in this checkout") ||
+		report.Gate() != nil || len(report.Skipped()) != 1 {
+		t.Fatalf("absent backlog line = %q, gate %v", line, report.Gate())
 	}
 	report = evaluate(t, t.TempDir(), gate)
-	if line := report.Categories[0].Line(); !strings.Contains(line, "tasks: 0 of 2") ||
-		!strings.Contains(line, ".workingdir/OPEN.md and .workingdir/BACKLOG.md are absent, so they hold no item") {
+	if line := report.Categories[0].Line(); strings.Contains(line, "0 of 2") ||
+		!strings.Contains(line, ".workingdir/OPEN.md and .workingdir/BACKLOG.md are not present in this checkout") {
 		t.Fatalf("absent ledgers line = %q", line)
 	}
 	root := writeTaskLedgers(t, "- [ ] open\n", "```\n- [ ] swallowed\n")
-	if _, err := Evaluate(t.Context(), root, capPolicy(t, gate)); err == nil || !strings.Contains(err.Error(), "BACKLOG.md has an unterminated code fence") {
-		t.Fatalf("unterminated backlog fence = %v", err)
+	report = evaluate(t, root, gate)
+	if category := &report.Categories[0]; category.State() != StateNotCounted ||
+		!strings.Contains(category.Reason, "BACKLOG.md has an unterminated code fence") {
+		t.Fatalf("unterminated backlog fence = %+v", category)
+	}
+	if err := report.Gate(); err == nil || !strings.Contains(err.Error(), "backlog cap tasks has action gate but cannot be counted") {
+		t.Fatalf("a gate on an unreadable ledger = %v", err)
+	}
+}
+
+// A ledger that cannot be read is reported for its own category only: with action report or
+// batch the gate passes and the other categories are still counted; only a gated category that
+// cannot be counted fails.
+func TestEvaluate_Negative_ReadErrorStaysInItsCategory(t *testing.T) {
+	root := defectLedger(t, 1)
+	writeFile(t, root, ".workingdir/BACKLOG.md", "```\n- [ ] swallowed\n")
+	caps := config.BacklogCaps{
+		Defects: config.BacklogCap{Max: 5, Action: config.BacklogGate},
+		Tasks:   config.BacklogCap{Max: 5, Action: config.BacklogBatch},
+	}
+	report := evaluate(t, root, caps)
+	defects, tasks := &report.Categories[0], &report.Categories[1]
+	if defects.State() != StateUnder || defects.Count() != 1 {
+		t.Fatalf("defects beside an unreadable task ledger = %+v", defects)
+	}
+	if tasks.State() != StateNotCounted || !strings.Contains(tasks.Line(), "tasks: not counted: BACKLOG.md has an unterminated code fence") {
+		t.Fatalf("tasks = %q", tasks.Line())
+	}
+	if err := report.Gate(); err != nil {
+		t.Fatalf("an unreadable batch-only category failed the gate: %v", err)
+	}
+	caps.Tasks.Action = config.BacklogGate
+	if err := evaluate(t, root, caps).Gate(); err == nil || !strings.Contains(err.Error(), "tasks has action gate but cannot be counted") {
+		t.Fatalf("an unreadable gated category passed: %v", err)
+	}
+}
+
+// pendingRows returns n task rows; the first completed ones are done.
+func pendingRows(n, completed int) []state.TaskItem {
+	rows := make([]state.TaskItem, n)
+	for i := range rows {
+		rows[i] = state.TaskItem{Index: i + 1, Line: i + 1, Description: "row", Completed: i < completed,
+			Section: "Discharged Tasks"}
+	}
+	return rows
+}
+
+// Boundary: maxItems pending rows are counted, one more fails naming the bound instead of
+// dropping it; completed rows ahead of the pending ones never push a pending row out. The
+// discharged findings hold the same bound.
+func TestPendingTasks_Boundary_FailsAboveTheBoundNeverTruncates(t *testing.T) {
+	id := func(state.TaskItem) string { return "row" }
+	if items, err := pendingTasks(pendingRows(maxItems, 0), "OPEN.md", id); err != nil || len(items) != maxItems {
+		t.Fatalf("at the bound: %d items, %v", len(items), err)
+	}
+	if _, err := pendingTasks(pendingRows(maxItems+1, 0), "OPEN.md", id); err == nil ||
+		!strings.Contains(err.Error(), "OPEN.md holds more than 10000 pending rows") {
+		t.Fatalf("one over the bound: %v", err)
+	}
+	if items, err := pendingTasks(pendingRows(maxItems+2, maxItems+1), "BACKLOG.md", id); err != nil || len(items) != 1 {
+		t.Fatalf("a pending row after %d completed ones: %d items, %v", maxItems+1, len(items), err)
+	}
+	if findings, err := dischargedFindings(pendingRows(maxItems, 0)); err != nil || len(findings) != maxItems {
+		t.Fatalf("findings at the bound: %d, %v", len(findings), err)
+	}
+	if _, err := dischargedFindings(pendingRows(maxItems+1, 0)); err == nil ||
+		!strings.Contains(err.Error(), "BACKLOG.md holds more than 10000 pending rows under a discharged heading") {
+		t.Fatalf("findings one over the bound: %v", err)
+	}
+}
+
+// Negative: a report's ledger list is its own copy, so a caller editing it leaves the counter
+// table every later evaluation reads unchanged.
+func TestEvaluate_Negative_LedgersAreACopy(t *testing.T) {
+	report := evaluate(t, defectLedger(t, 1), config.BacklogCaps{Defects: config.BacklogCap{Max: 5}})
+	report.Categories[0].Ledgers[0] = "edited"
+	if got := counters[config.BacklogDefects].ledgers[0]; got != ".workingdir/BUGS.md" {
+		t.Fatalf("the counter table was edited through a report: %q", got)
 	}
 }
