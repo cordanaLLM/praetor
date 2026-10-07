@@ -1,6 +1,8 @@
 ---
 name: adhd-format
 description: Format complex technical reports, architectural reviews, and diagnostic outputs for high cognitive focus, executive clarity, and ADHD readability using visual hierarchy, bionic bolding, chunked lists, and alert callouts.
+metadata:
+  derived_from: "https://github.com/ayghri/i-have-adhd (MIT)"
 ---
 
 # High-Focus Technical Formatting (`adhd-format`)

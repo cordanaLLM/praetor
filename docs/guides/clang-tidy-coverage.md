@@ -102,11 +102,13 @@ tracked `files` lane, such as the units a clang-tidy run last measured.
 ## Exceptions
 
 The top-level `exceptions` list is the repository's one declared per-file exception list
-(AGENTS.md rule 14). The gate reads the entries whose `rule` is `clang-tidy-coverage`.
+(AGENTS.md rule 14). The gate reads the entries whose `rule` is `clang-tidy-coverage`; the
+credits gate of a Praetor checkout reads those whose `rule` is `credits`
+([Credits & Acknowledgements](../credits.md#how-this-page-is-kept)).
 
 | Key | Rule |
 | :--- | :--- |
-| `rule` | A rule some gate reads from the list; today only `clang-tidy-coverage`. |
+| `rule` | A rule some gate reads from the list: `clang-tidy-coverage`, or `credits` (`config.ExceptionRuleCredits`). |
 | `path` or `glob` | Exactly one. `path` names one clean repository-relative file without glob characters. `glob` follows the `docs_surfaces` glob rules: `*` stays inside one segment and a `**` segment spans any number. |
 | `reason` | One line, at most 1024 bytes. |
 | `expires` | A `YYYY-MM-DD` date at most 90 days after today, the bound `scripts/npm_audit_gate.py` applies to its own list. The entry holds through that day. |

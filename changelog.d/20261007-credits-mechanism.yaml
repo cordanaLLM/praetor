@@ -1,0 +1,3 @@
+type: added
+title: "One curated credits list, docs/credits.yaml, renders the tables of the credits page and credits every dependency, tool, action, image, integration, specification, font and icon praetor uses; the credits gate fails on an inventory item without an entry, an entry path that no longer uses its item, a persona or skill neither derived nor marked original, and an unknown license without an unexpired credits exception, the declared exceptions list gains the rule credits, and THIRD-PARTY-NOTICES.md lists the embedded devcontainer CLI lock"
+breaking: false

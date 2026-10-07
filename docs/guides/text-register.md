@@ -303,6 +303,18 @@ Caveman covers text another agent reads: briefs, agent and workflow returns, res
 fan-outs and tool-call notes. Forge text stays `social-text`, documentation stays in the
 docs register, and a reply to a person is full prose.
 
+The skill and the prose linter (`internal/caveman`) are adapted from
+[Caveman](https://github.com/JuliusBrussee/caveman) by Julius Brussee and
+[contributors](https://github.com/JuliusBrussee/caveman/graphs/contributors). The rules are
+rewritten for agent-to-agent traffic and no upstream text is copied. The adaptation dates from
+2026-09-18, when the upstream skill was MIT-licensed, so the skill declares
+`metadata.derived_from: "https://github.com/JuliusBrussee/caveman (MIT)"`. Upstream commit
+921eab8a8 relicensed the repository to Apache-2.0 on 2026-09-24, and Caveman 3.0.0 shipped those
+terms on 2026-09-30; releases before 3.0.0 keep the terms they shipped with. "Caveman" is a
+trademark of Julius Brussee; praetor uses the name to refer to the upstream rules and is not
+affiliated with or endorsed by the Caveman project. The entries in `docs/credits.yaml`, rendered
+on [Credits & Acknowledgements](../credits.md), hold the credit.
+
 ## What is not enforced
 
 Register compliance on human-typed surfaces (issues, PR bodies, review comments, commit
