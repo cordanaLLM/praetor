@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
 // releasePipelineActions are the signing, SBOM, image and chart actions the engine's
@@ -126,5 +128,38 @@ func TestReleasePipelineRegistryBoundaries(t *testing.T) {
 		if a.CurrentVersion != a.LatestVersion {
 			t.Errorf("%s@%s reported drift to %s", a.Action, a.CurrentVersion, a.LatestVersion)
 		}
+	}
+}
+
+// The REUSE action's registry tag is the pin the emitted REUSE gate runs
+// (supplychain.ReuseActionVersion). Positive: the registry reads it, and every engine workflow
+// running the action pins it there, at least one doing so. Negative: an older tag reports drift
+// towards the pin. Boundary: the pinned tag reports none.
+func TestReuseActionPinMatchesRegistryAndEngine(t *testing.T) {
+	if got := knownActionLatest[supplychain.ReuseAction]; got != supplychain.ReuseActionVersion {
+		t.Fatalf("registry names %s@%s, pin is %s", supplychain.ReuseAction, got, supplychain.ReuseActionVersion)
+	}
+	actions, _, err := ScanWorkflowActions(t.Context(), filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("scan engine workflows: %v", err)
+	}
+	engine := 0
+	for _, a := range actions {
+		if a.Action == supplychain.ReuseAction {
+			engine++
+			if a.CurrentVersion != supplychain.ReuseActionVersion {
+				t.Errorf("%s pins %s@%s, not the REUSE pin %s", a.WorkflowFile, a.Action, a.CurrentVersion, supplychain.ReuseActionVersion)
+			}
+		}
+	}
+	if engine == 0 {
+		t.Error("no engine workflow runs the REUSE action; praetor's own CI must run reuse lint")
+	}
+	fixture, _, err := ScanWorkflowActions(t.Context(), writeReleaseWorkflow(t, []string{supplychain.ReuseAction + "@v5", supplychain.ReuseActionRef()}))
+	if err != nil || len(fixture) != 2 {
+		t.Fatalf("scan fixture: %v (%d actions)", err, len(fixture))
+	}
+	if fixture[0].CurrentVersion == fixture[0].LatestVersion || fixture[1].CurrentVersion != fixture[1].LatestVersion {
+		t.Errorf("want drift for v5 only: %+v", fixture)
 	}
 }

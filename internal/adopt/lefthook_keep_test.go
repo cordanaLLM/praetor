@@ -53,7 +53,7 @@ func TestAdopt_Negative_CurrentLefthookGainsCheckpointJobsWithoutForce(t *testin
 	repoPath := newTestRepo(t, "lefthook-gains-checkpoint")
 	mustWrite(t, filepath.Join(repoPath, lefthookFile), buildLefthookYAML())
 	rep := adoptWithSource(t, repoPath, checkpointLockSource(t), false)
-	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookJobLanguages, true) {
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, true) {
 		t.Fatalf("the checkpoint jobs were not added:\n%s", got)
 	}
 	if !strings.Contains(lefthookDetails(rep), "Added the checkpoint lifecycle jobs") || hasAction(rep, lefthookFile, actionReplace) {
@@ -68,7 +68,7 @@ func TestAdopt_Negative_CurrentLefthookGainsCheckpointJobsWithoutForce(t *testin
 // not install the lifecycle, --force included. Its checkpoint scripts are missing, so it is not
 // activated, and the skip names the regeneration path, never --force.
 func TestAdopt_Boundary_CheckpointLefthookKeptWhenLifecycleUnavailable(t *testing.T) {
-	withCheckpoint := buildLefthookYAMLFor(lefthookJobLanguages, true)
+	withCheckpoint := buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, true)
 	repoPath, rep := adoptLefthookFixture(t, "lefthook-keeps-checkpoint", withCheckpoint, true)
 	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != withCheckpoint {
 		t.Fatalf("the checkpoint jobs were stripped:\n%s", got)

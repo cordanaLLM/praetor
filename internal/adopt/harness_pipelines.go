@@ -68,7 +68,7 @@ func (s *adoptSession) plannedHookActivation(ctx context.Context) (hookActivatio
 	if declined {
 		return hooksNone, nil
 	}
-	owned, err := s.plannedLefthookOwned()
+	owned, err := s.plannedLefthookOwned(ctx)
 	if err != nil || !owned {
 		return hooksNone, err
 	}
@@ -95,7 +95,7 @@ func lefthookRunnable(ctx context.Context) bool {
 // configuration is kept, --force included (classifyLefthookConfig), and is not praetor's. When
 // the prediction cannot tell, the harness under-claims rather than credit a gate the repository
 // may not get. TestGeneratedPipelinesPredictGitHooks replays each case against the step.
-func (s *adoptSession) plannedLefthookOwned() (bool, error) {
+func (s *adoptSession) plannedLefthookOwned(ctx context.Context) (bool, error) {
 	existing, exists, err := s.readExistingLefthook()
 	if err != nil {
 		return false, err
@@ -103,11 +103,14 @@ func (s *adoptSession) plannedLefthookOwned() (bool, error) {
 	if !exists {
 		return true, nil
 	}
-	languages := s.lefthookLanguages()
-	identity := classifyLefthookConfig(existing, languages)
+	shape, err := s.lefthookShape(ctx)
+	if err != nil {
+		return false, err
+	}
+	identity := classifyLefthookConfig(existing, shape)
 	if identity.reason != "" {
 		return false, nil
 	}
-	match := matchCurrentLefthook(existing, languages)
+	match := matchCurrentLefthook(existing, shape)
 	return identity.prior || match.exact || (match.found && s.opts.Force), nil
 }

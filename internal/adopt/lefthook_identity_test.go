@@ -19,7 +19,7 @@ const priorLefthookFixtures = "testdata/lefthook"
 // language detected keeps every language's jobs (lefthookLanguages), and the fixture lock source
 // carries no checkpoint bundle.
 func buildLefthookYAML() string {
-	return buildLefthookYAMLFor(lefthookJobLanguages, false)
+	return buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, false)
 }
 
 func readPriorLefthookFixtures(t *testing.T) map[string][]byte {
@@ -104,11 +104,11 @@ var lefthookLanguageSets = []hisscatalog.Language{0, hisscatalog.LanguageGo, his
 func TestIsPriorLefthookConfig_Boundary_CurrentAndTruncated(t *testing.T) {
 	for _, languages := range lefthookLanguageSets {
 		for _, checkpoint := range []bool{false, true} {
-			current := []byte(buildLefthookYAMLFor(languages, checkpoint))
+			current := []byte(buildLefthookYAMLFor(lefthookShape{languages: languages}, checkpoint))
 			if isPriorLefthookConfig(current) {
 				t.Errorf("current rendering (languages=%v, checkpoint=%v) listed as prior", languages, checkpoint)
 			}
-			if classifyLefthookConfig(current, languages) != (lefthookIdentity{}) {
+			if classifyLefthookConfig(current, lefthookShape{languages: languages}) != (lefthookIdentity{}) {
 				t.Errorf("current rendering (languages=%v, checkpoint=%v) classified as prior or kept", languages, checkpoint)
 			}
 		}
@@ -366,7 +366,7 @@ func TestAdopt_Boundary_CRLFCurrentLefthookKeptWithoutForceAndInDryRun(t *testin
 // does not extend the canonical policy, with a reason holding want.
 func assertKeptNotCanonical(t *testing.T, body, want string) {
 	t.Helper()
-	got := classifyLefthookConfig([]byte(body), lefthookJobLanguages)
+	got := classifyLefthookConfig([]byte(body), lefthookShape{languages: lefthookJobLanguages})
 	if got.canonical || got.prior || !strings.Contains(got.reason, want) {
 		t.Errorf("want kept with %q, got %+v\n%s", want, got, body)
 	}
@@ -381,7 +381,7 @@ func TestClassifyLefthookConfig_Boundary_ExtendsAndJobDeltaEdges(t *testing.T) {
 		"extends: .config/lefthook/praetor.yml\n",
 		"extends:\n  - other.yml\n  - ./.config/lefthook/praetor.yml\n",
 	} {
-		if got := classifyLefthookConfig([]byte(body), lefthookJobLanguages); !got.canonical || got.reason == "" {
+		if got := classifyLefthookConfig([]byte(body), lefthookShape{languages: lefthookJobLanguages}); !got.canonical || got.reason == "" {
 			t.Errorf("extends not recognised in %q: %+v", body, got)
 		}
 	}
@@ -447,7 +447,7 @@ func TestClassifyLefthookConfig_Positive_JobsListSupersetAndRemotes(t *testing.T
 	assertKeptNotCanonical(t, superset, "It holds every generated job and adds 1 (pre-commit/commands/lint-docs).")
 	remote := "remotes:\n  - git_url: https://github.com/cordanaLLM/praetor\n    ref: v1.0.0\n    configs:\n      - ./.config/lefthook/praetor.yml\n"
 	for _, body := range []string{remote, canonicalRootLefthook} {
-		if got := classifyLefthookConfig([]byte(body), lefthookJobLanguages); !got.canonical || !strings.Contains(got.reason, canonicalLefthookPolicy) {
+		if got := classifyLefthookConfig([]byte(body), lefthookShape{languages: lefthookJobLanguages}); !got.canonical || !strings.Contains(got.reason, canonicalLefthookPolicy) {
 			t.Fatalf("configuration reaching the canonical policy not recognised: %+v\n%s", got, body)
 		}
 	}
@@ -472,11 +472,11 @@ func TestClassifyLefthookConfig_Negative_JobsListEquivalentAndOtherRemotes(t *te
 func TestClassifyLefthookConfig_Boundary_CheckpointOptionalAndLanguageJobs(t *testing.T) {
 	extension := "commit-msg:\n  commands:\n    conventional:\n      run: ./scripts/check-msg {1}\n"
 	for _, checkpoint := range []bool{false, true} {
-		extended := buildLefthookYAMLFor(lefthookJobLanguages, checkpoint) + extension
+		extended := buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, checkpoint) + extension
 		assertKeptNotCanonical(t, extended, "It holds every generated job and adds 1 (commit-msg/commands/conventional).")
 	}
-	goOnly := buildLefthookYAMLFor(hisscatalog.LanguageGo, false) + extension
-	got := classifyLefthookConfig([]byte(goOnly), hisscatalog.LanguageRust)
+	goOnly := buildLefthookYAMLFor(lefthookShape{languages: hisscatalog.LanguageGo}, false) + extension
+	got := classifyLefthookConfig([]byte(goOnly), lefthookShape{languages: hisscatalog.LanguageRust})
 	if !strings.Contains(got.reason, "It lacks 2 generated jobs (pre-commit/commands/clippy, pre-commit/commands/rustfmt) and adds 4 "+
 		"(commit-msg/commands/conventional, pre-commit/commands/gofmt, pre-commit/commands/govet, pre-push/commands/security).") {
 		t.Errorf("a Go extension in a Cargo repository names the wrong jobs: %+v", got)

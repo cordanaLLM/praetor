@@ -93,3 +93,31 @@ func TestWorkflowRuns_Boundary(t *testing.T) {
 		t.Fatal("job past the step bound must be refused")
 	}
 }
+
+// WorkflowActions lists what a workflow's steps use. Positive: every `uses:` value, job by job in
+// job ID order and step by step in file order, run steps skipped. Negative: a document that does
+// not parse is an error. Boundary: a job at the step bound is read whole, one past it refused.
+func TestWorkflowActions_3D(t *testing.T) {
+	actions, err := WorkflowActions([]byte("jobs:\n  b:\n    steps:\n      - uses: x/second@v1\n  a:\n    steps:\n" +
+		"      - uses: ' actions/checkout@v7 '\n      - run: make\n      - uses: fsfe/reuse-action@v6\n"))
+	if want := []string{"actions/checkout@v7", "fsfe/reuse-action@v6", "x/second@v1"}; err != nil || !slices.Equal(actions, want) {
+		t.Fatalf("WorkflowActions = %v, %v; want %v", actions, err, want)
+	}
+	if _, err := WorkflowActions([]byte("jobs: [\n")); err == nil {
+		t.Fatal("malformed workflow must be an error")
+	}
+	usesDoc := func(n int) []byte {
+		var b strings.Builder
+		b.WriteString("jobs:\n  test:\n    steps:\n")
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "      - uses: a/b@v%d\n", i)
+		}
+		return []byte(b.String())
+	}
+	if actions, err := WorkflowActions(usesDoc(maxStepsPerJob)); err != nil || len(actions) != maxStepsPerJob {
+		t.Fatalf("job at the bound: %d actions, %v", len(actions), err)
+	}
+	if _, err := WorkflowActions(usesDoc(maxStepsPerJob + 1)); err == nil {
+		t.Fatal("a job past the step bound was read in part")
+	}
+}

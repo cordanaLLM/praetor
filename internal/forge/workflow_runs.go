@@ -5,6 +5,7 @@
 package forge
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
@@ -59,6 +60,35 @@ func WorkflowRuns(data []byte) ([]WorkflowRun, error) {
 		}
 	}
 	return runs, nil
+}
+
+// WorkflowActions lists the `uses:` value of every step of a workflow document that uses an
+// action, job by job in job ID order and step by step in file order: what a workflow WorkflowRuns
+// finds no command in runs instead. The document is read through ghworkflow.Parse, as WorkflowRuns
+// reads it, and one with more jobs or steps than ghworkflow bounds is refused rather than read in
+// part.
+func WorkflowActions(data []byte) ([]string, error) {
+	spec, err := ghworkflow.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	ids := ghworkflow.SortedJobIDs(spec.Jobs)
+	if len(ids) > ghworkflow.MaxJobsPerFile {
+		return nil, fmt.Errorf("workflow exceeds %d jobs", ghworkflow.MaxJobsPerFile)
+	}
+	var actions []string
+	for i := 0; i < len(ids) && i < ghworkflow.MaxJobsPerFile; i++ {
+		steps := spec.Jobs[ids[i]].Steps
+		if len(steps) > ghworkflow.MaxStepsPerJob {
+			return nil, fmt.Errorf("workflow job %s exceeds %d steps", ids[i], ghworkflow.MaxStepsPerJob)
+		}
+		for j := 0; j < len(steps) && j < ghworkflow.MaxStepsPerJob; j++ {
+			if uses := strings.TrimSpace(steps[j].Uses); uses != "" {
+				actions = append(actions, uses)
+			}
+		}
+	}
+	return actions, nil
 }
 
 // stepRun names what one step runs: its one-line command, else its name, else the first line of

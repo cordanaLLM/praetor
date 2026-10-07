@@ -1,12 +1,13 @@
 package adopt
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
-	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -104,12 +105,12 @@ type lefthookMatch struct {
 	exact bool
 }
 
-// matchCurrentLefthook compares data with both current renderings for languages, without and
-// with the checkpoint jobs. It is the one comparison classification, the write and hook
-// activation (lefthookConfigIsPraetor) use. Mixed line endings match neither.
-func matchCurrentLefthook(data []byte, languages hisscatalog.Language) lefthookMatch {
+// matchCurrentLefthook compares data with both current renderings for shape, without and with
+// the checkpoint jobs. It is the one comparison classification, the write and hook activation
+// (lefthookConfigIsPraetor) use. Mixed line endings match neither.
+func matchCurrentLefthook(data []byte, shape lefthookShape) lefthookMatch {
 	for _, checkpoint := range []bool{false, true} {
-		rendering := buildLefthookYAMLFor(languages, checkpoint)
+		rendering := buildLefthookYAMLFor(shape, checkpoint)
 		if string(data) == rendering {
 			return lefthookMatch{found: true, checkpoint: checkpoint, exact: true}
 		}
@@ -120,10 +121,9 @@ func matchCurrentLefthook(data []byte, languages hisscatalog.Language) lefthookM
 	return lefthookMatch{}
 }
 
-// isCurrentLefthookConfig reports whether data is exactly a current Praetor rendering for
-// languages.
-func isCurrentLefthookConfig(data []byte, languages hisscatalog.Language) bool {
-	return matchCurrentLefthook(data, languages).exact
+// isCurrentLefthookConfig reports whether data is exactly a current Praetor rendering for shape.
+func isCurrentLefthookConfig(data []byte, shape lefthookShape) bool {
+	return matchCurrentLefthook(data, shape).exact
 }
 
 // readExistingLefthook returns the bytes of lefthook.yml and whether it exists.
@@ -139,24 +139,32 @@ func (s *adoptSession) readExistingLefthook() ([]byte, bool, error) {
 	return data, true, nil
 }
 
-// lefthookLanguages returns the languages this run's lefthook.yml carries jobs for.
-func (s *adoptSession) lefthookLanguages() hisscatalog.Language {
-	return lefthookLanguages(s.verification)
+// lefthookShape returns what this run's lefthook.yml carries jobs for: the languages
+// (lefthookLanguages) and, when the root declares its licensing the REUSE way, the reuse-lint
+// job (supplychain.ReuseDeclared). A root it cannot inspect is an error, never a repository
+// without REUSE.
+func (s *adoptSession) lefthookShape(ctx context.Context) (lefthookShape, error) {
+	reuse, err := supplychain.ReuseDeclared(ctx, s.repoPath)
+	if err != nil {
+		return lefthookShape{}, fmt.Errorf("decide the reuse-lint job of %s: %w", lefthookFile, err)
+	}
+	return lefthookShape{languages: lefthookLanguages(s.verification), reuse: reuse}, nil
 }
 
 // classifyLefthookConfig decides how adoption treats an existing lefthook.yml. Praetor's own
-// renderings come first: a current one for languages, line endings aside, is verified and an
-// earlier one (priorLefthookDigests) is migrated, neither needing --force. Every other
-// configuration is the repository's and is kept, --force included, and not activated, because
-// the audit checks only that the file exists and replacing it would drop whatever the
-// repository composed in (#502). The reason says why: a configuration that extends the canonical
-// policy names that policy; one that does not parse as a YAML mapping says so; any other names
-// the generated jobs it lacks and the jobs it adds, so an operator can merge them by hand.
-func classifyLefthookConfig(existing []byte, languages hisscatalog.Language) lefthookIdentity {
-	if matchCurrentLefthook(existing, languages).found {
+// renderings come first: a current one for shape, line endings aside, is verified, and an
+// earlier one (priorLefthookDigests) or the current one for the other REUSE switch
+// (lefthookShape.otherReuse) is migrated, neither needing --force. Every other configuration is
+// the repository's and is kept, --force included, and not activated, because the audit checks
+// only that the file exists and replacing it would drop whatever the repository composed in
+// (#502). The reason says why: a configuration that extends the canonical policy names that
+// policy; one that does not parse as a YAML mapping says so; any other names the generated jobs
+// it lacks and the jobs it adds, so an operator can merge them by hand.
+func classifyLefthookConfig(existing []byte, shape lefthookShape) lefthookIdentity {
+	if matchCurrentLefthook(existing, shape).found {
 		return lefthookIdentity{}
 	}
-	if isPriorLefthookConfig(existing) {
+	if isPriorLefthookConfig(existing) || matchCurrentLefthook(existing, shape.otherReuse()).found {
 		return lefthookIdentity{prior: true}
 	}
 	var parsed map[string]any
@@ -171,7 +179,7 @@ func classifyLefthookConfig(existing []byte, languages hisscatalog.Language) lef
 			evasionHookFile + " together from one reviewed Praetor commit (" +
 			".config/lefthook/README.md), then run 'lefthook install'"}
 	}
-	missing, extra := lefthookJobDelta(lefthookJobs(parsed), languages)
+	missing, extra := lefthookJobDelta(lefthookJobs(parsed), shape)
 	return lefthookIdentity{reason: "existing lefthook.yml differs from the scaffold adoption writes and is no earlier " +
 		"Praetor rendering; kept, --force included, and not activated. " + describeLefthookJobDelta(missing, extra) +
 		" Merge the generated jobs by hand, or " + lefthookRegenerateHint}
@@ -205,8 +213,8 @@ func bareJobName(job string) string {
 // that existing lacks, and the jobs existing defines beyond the rendering with them. The
 // checkpoint jobs are optional: a configuration without them lacks nothing the generated one
 // always holds, and one with them adds nothing.
-func lefthookJobDelta(existing map[string]bool, languages hisscatalog.Language) (missing, extra []string) {
-	required, known := generatedLefthookJobs(languages)
+func lefthookJobDelta(existing map[string]bool, shape lefthookShape) (missing, extra []string) {
+	required, known := generatedLefthookJobs(shape)
 	for job := range required {
 		if !existing[job] {
 			missing = append(missing, job)
@@ -222,10 +230,10 @@ func lefthookJobDelta(existing map[string]bool, languages hisscatalog.Language) 
 	return missing, extra
 }
 
-// generatedLefthookJobs returns the jobs of the rendering for languages without checkpoint jobs,
+// generatedLefthookJobs returns the jobs of the rendering for shape without checkpoint jobs,
 // which every generated configuration holds, and the jobs of the one with them.
-func generatedLefthookJobs(languages hisscatalog.Language) (required, known map[string]bool) {
-	return renderedLefthookJobs(buildLefthookYAMLFor(languages, false)), renderedLefthookJobs(buildLefthookYAMLFor(languages, true))
+func generatedLefthookJobs(shape lefthookShape) (required, known map[string]bool) {
+	return renderedLefthookJobs(buildLefthookYAMLFor(shape, false)), renderedLefthookJobs(buildLefthookYAMLFor(shape, true))
 }
 
 // renderedLefthookJobs names the jobs of a rendering. A rendering always parses

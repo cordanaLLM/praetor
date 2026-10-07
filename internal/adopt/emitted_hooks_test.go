@@ -29,14 +29,16 @@ const emittedFixtureRoot = "testdata/emitted"
 const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 
 // emittedHookRenderings maps each rendered file to the bytes adoption writes. The
-// lefthook.yml fixture is the rendering with every language's jobs and the checkpoint jobs, the
-// superset adopters get; the manifest is the current rendering of the declarations an earlier
-// adoption wrote (renderedPriorManifest); the actionlint configuration is the one adoption
-// creates with the default facets.
+// lefthook.yml fixture is the rendering with every language's jobs, the reuse-lint job and the
+// checkpoint jobs, the superset adopters get; the hosted REUSE gate is the one a repository
+// declaring REUSE gets (reuseWorkflow); the manifest is the current rendering of the
+// declarations an earlier adoption wrote (renderedPriorManifest); the actionlint configuration
+// is the one adoption creates with the default facets.
 func emittedHookRenderings(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
-		lefthookFile:         buildLefthookYAMLFor(lefthookJobLanguages, true),
+		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true}, true),
+		reuseWorkflowFile:    reuseWorkflow(),
 		evasionHookFile:      buildBlockEvasionPY(),
 		manifestFile:         renderedPriorManifest(t),
 		actionlintConfigFile: string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
@@ -76,7 +78,7 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 		if err := yaml.Unmarshal(fixtures[name], &prior); err != nil {
 			t.Fatalf("decode %s: %v", name, err)
 		}
-		if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(hisscatalog.LanguageGo, checkpoint)), &current); err != nil {
+		if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(lefthookShape{languages: hisscatalog.LanguageGo}, checkpoint)), &current); err != nil {
 			t.Fatalf("decode the current rendering (checkpoint=%v): %v", checkpoint, err)
 		}
 		preCommitAudit := decodedJob(t, prior, "pre-commit", "hiss-audit")
@@ -147,7 +149,7 @@ func TestLefthookPythonCommandStartsTheBundledLauncher(t *testing.T) {
 		t.Fatalf("the canonical launcher adoption copies: %v", err)
 	}
 	for _, languages := range lefthookLanguageSets {
-		rendering := buildLefthookYAMLFor(languages, true)
+		rendering := buildLefthookYAMLFor(lefthookShape{languages: languages}, true)
 		var with map[string]any
 		if err := yaml.Unmarshal([]byte(rendering), &with); err != nil {
 			t.Fatalf("decode the rendering with checkpoint jobs: %v", err)
@@ -161,7 +163,7 @@ func TestLefthookPythonCommandStartsTheBundledLauncher(t *testing.T) {
 		if named := strings.Count(rendering, "python"); named != strings.Count(rendering, checkpointLauncher) || named != len(checkpointEvents(true)) {
 			t.Errorf("languages=%v: python is named %d times, want only in the launcher path of each checkpoint job", languages, named)
 		}
-		without := buildLefthookYAMLFor(languages, false)
+		without := buildLefthookYAMLFor(lefthookShape{languages: languages}, false)
 		if strings.Contains(without, "python") || strings.Contains(rendering+without, "PRAETOR_PYTHON") {
 			t.Errorf("languages=%v: a rendering names an interpreter or the variable that selected one", languages)
 		}
@@ -239,7 +241,7 @@ func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[stri
 func TestLefthookRendering_Boundary_LinesWithinYamllintDefaults(t *testing.T) {
 	for _, languages := range lefthookLanguageSets {
 		for _, checkpoint := range []bool{false, true} {
-			rendered := buildLefthookYAMLFor(languages, checkpoint)
+			rendered := buildLefthookYAMLFor(lefthookShape{languages: languages}, checkpoint)
 			if !strings.Contains(rendered, "\n---\n") {
 				t.Errorf("languages=%v checkpoint=%v: no document start", languages, checkpoint)
 			}

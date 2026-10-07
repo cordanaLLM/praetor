@@ -189,7 +189,7 @@ func replayHookPrediction(t *testing.T, tc hookPredictionCase) {
 		t.Fatalf("Adopt: %v", err)
 	}
 	harness := mustRead(t, filepath.Join(repo, agentsFile))
-	owned := isCurrentLefthookConfig([]byte(mustRead(t, filepath.Join(repo, lefthookFile))), lefthookJobLanguages)
+	owned := isCurrentLefthookConfig([]byte(mustRead(t, filepath.Join(repo, lefthookFile))), lefthookShape{languages: lefthookJobLanguages})
 	claimed := strings.Contains(harness, lefthookRowClaim)
 	if owned != tc.owned || claimed != tc.claimed {
 		t.Fatalf("praetor rendering after adopt = %v, harness credits lefthook = %v; want %v, %v", owned, claimed, tc.owned, tc.claimed)

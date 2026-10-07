@@ -1,0 +1,25 @@
+---
+# REUSE licensing gate, written by praetorctl adopt because the repository
+# carries REUSE.toml or LICENSES/. It runs reuse lint at the release line the
+# reuse-lint pre-commit job of lefthook.yml requires.
+name: REUSE
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  reuse:
+    name: REUSE lint
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: reuse lint
+        uses: fsfe/reuse-action@v6

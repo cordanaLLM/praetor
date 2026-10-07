@@ -57,7 +57,7 @@ func TestCheckpointLauncher_Negative_SourceWithoutItInstallsNothing(t *testing.T
 			t.Errorf("%s was installed from a bundle without its launcher", name)
 		}
 	}
-	if strings.Contains(buildLefthookYAMLFor(lefthookJobLanguages, ready), checkpointLauncher) {
+	if strings.Contains(buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, ready), checkpointLauncher) {
 		t.Fatal("the rendering calls a launcher that was not installed")
 	}
 }
@@ -112,7 +112,7 @@ func TestAdopt_Boundary_Python3ByNameRenderingMigratesToTheLauncher(t *testing.T
 	mustWrite(t, filepath.Join(repoPath, lefthookFile), prior)
 	rep := adoptWithSource(t, repoPath, checkpointLockSource(t), false)
 	got := mustRead(t, filepath.Join(repoPath, lefthookFile))
-	if got != buildLefthookYAMLFor(lefthookJobLanguages, true) {
+	if got != buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, true) {
 		t.Fatalf("not migrated to the current rendering with checkpoint jobs:\n%s", got)
 	}
 	if strings.Contains(got, "python3") || strings.Count(got, "sh "+checkpointLauncher) != len(checkpointEvents(true)) {

@@ -126,7 +126,7 @@ func TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs(t *testing
 			t.Fatalf("%s: the Go-only rendering already satisfies rust-systems", name)
 		}
 		repoPath, rep := adoptMarkedRepo(t, "go-every-repository", map[string]string{"Cargo.toml": cargoTOMLBody}, string(fixtures[name]))
-		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(hisscatalog.LanguageRust, false) {
+		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: hisscatalog.LanguageRust}, false) {
 			t.Fatalf("%s: not migrated to the Cargo rendering:\n%s", name, got)
 		}
 		if !hasAction(rep, lefthookFile, actionReconcile) || hasAction(rep, lefthookFile, actionReplace) {
