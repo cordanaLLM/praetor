@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -25,6 +24,14 @@ GUARD_SPEC.loader.exec_module(GUARD)
 SCOPE_SPEC = importlib.util.spec_from_file_location("checkpoint_scope", ROOT / ".config/lefthook/scripts/checkpoint_scope.py")
 SCOPE = importlib.util.module_from_spec(SCOPE_SPEC)
 SCOPE_SPEC.loader.exec_module(SCOPE)
+# Every child this suite starts goes through the harness driver's run_child: a child that a
+# signal ends is started once more, and both attempts are reported with the child's path
+# and version (#809).
+DRIVER_SPEC = importlib.util.spec_from_file_location("portability_selftest",
+                                                     ROOT / "scripts/portability_selftest.py")
+DRIVER = importlib.util.module_from_spec(DRIVER_SPEC)
+DRIVER_SPEC.loader.exec_module(DRIVER)
+run_child = DRIVER.run_child
 # The fixture CLI under the name hooks.praetorctl_path() resolves: with the host's executable
 # suffix. An extensionless bin/praetorctl was never found by the hooks on Windows, so every state
 # verification there failed and Stop reported the ledger unverifiable.
@@ -184,8 +191,8 @@ class LifecycleOutput(unittest.TestCase):
                                ({"hook_event_name": "PostToolUse"}, "hookSpecificOutput")):
             with self.subTest(payload=payload):
                 started = time.monotonic()
-                result = subprocess.run([sys.executable, "-B", "-c", script], input=json.dumps(payload),
-                                        text=True, capture_output=True, timeout=20, check=False)
+                result = run_child([sys.executable, "-B", "-c", script], input=json.dumps(payload),
+                                   text=True, capture_output=True, timeout=20, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertLess(time.monotonic() - started, 10)
                 answer = json.loads(result.stdout)
@@ -239,8 +246,8 @@ class NativeLefthook(unittest.TestCase):
         cls.build = tempfile.TemporaryDirectory(prefix="praetor-state-hook-cli-")
         cls.addClassCleanup(cls.build.cleanup)
         cls.binary = Path(cls.build.name) / Path(PRAETORCTL).name
-        subprocess.run(["go", "build", "-o", str(cls.binary), "./cmd/standardsctl"],
-                       cwd=ROOT, capture_output=True, timeout=180, check=True)
+        run_child(["go", "build", "-o", str(cls.binary), "./cmd/standardsctl"],
+                  cwd=ROOT, capture_output=True, timeout=180, check=True)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-checkpoint-hooks-")
@@ -272,8 +279,8 @@ class NativeLefthook(unittest.TestCase):
 
     def state(self, action, root=None):
         root = self.root if root is None else root
-        result = subprocess.run([str(root / PRAETORCTL), "state", action, "."],
-                                cwd=root, text=True, capture_output=True, timeout=30)
+        result = run_child([str(root / PRAETORCTL), "state", action, "."],
+                           cwd=root, text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def linked_worktree(self, location):
@@ -289,15 +296,15 @@ class NativeLefthook(unittest.TestCase):
         env = dict(os.environ)
         for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
             env.pop(name, None)
-        result = subprocess.run(["git", *args], cwd=self.root, env=env,
-                                capture_output=True, timeout=20, check=False)
+        result = run_child(["git", *args], cwd=self.root, env=env,
+                           capture_output=True, timeout=20, check=False)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         return result.stdout
 
     def invoke(self, payload):
-        result = subprocess.run([sys.executable, "-B", str(self.root / SCRIPT)], cwd=self.root,
-                                input=json.dumps(payload), text=True, capture_output=True,
-                                timeout=60, check=False)
+        result = run_child([sys.executable, "-B", str(self.root / SCRIPT)], cwd=self.root,
+                           input=json.dumps(payload), text=True, capture_output=True,
+                           timeout=60, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
@@ -322,15 +329,15 @@ class NativeLefthook(unittest.TestCase):
             cwd = self.root / "nested path with spaces"
             cwd.mkdir(exist_ok=True)
         argv, directory, extra = self.registered_process(settings, action, cwd, project)
-        return subprocess.run(argv, cwd=directory, env={**os.environ, **extra, **(env or {})},
-                              input=json.dumps(payload), text=True,
-                              capture_output=True, timeout=60, check=False)
+        return run_child(argv, cwd=directory, env={**os.environ, **extra, **(env or {})},
+                         input=json.dumps(payload), text=True,
+                         capture_output=True, timeout=60, check=False)
 
     def foreign_repository(self):
         """A second Git repository whose own .config/agent/hooks must never be the one run."""
         foreign = Path(tempfile.mkdtemp(prefix="praetor-foreign-repo-"))
         self.addCleanup(shutil.rmtree, foreign, True)
-        subprocess.run(["git", "init", "-q", str(foreign)], capture_output=True, timeout=20, check=True)
+        run_child(["git", "init", "-q", str(foreign)], capture_output=True, timeout=20, check=True)
         return foreign
 
     def test_native_settings_units_and_registered_commands(self):
@@ -518,8 +525,8 @@ class NativeLefthook(unittest.TestCase):
         with self.assertRaises(ValueError):
             SCOPE.check(malformed)
         oversized = json.dumps(deleted) + " " * (1 << 20)
-        result = subprocess.run([sys.executable, "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
-                                cwd=self.root, input=oversized, text=True, capture_output=True, timeout=60)
+        result = run_child([sys.executable, "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
+                           cwd=self.root, input=oversized, text=True, capture_output=True, timeout=60)
         self.assertEqual(result.returncode, 2)
 
     def test_native_batch_scope_binds_repository_and_rejects_traversal(self):
@@ -603,8 +610,8 @@ class NativeLefthook(unittest.TestCase):
                 "tool_input": {"file_path": path}, "cwd": str(self.root), **changes}
 
     def scope_bridge(self, raw):
-        return subprocess.run([sys.executable, "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
-                              cwd=self.root, input=raw, capture_output=True, timeout=20)
+        return run_child([sys.executable, "-B", str(self.root / ".config/agent/hooks/checkpoint_scope.py")],
+                         cwd=self.root, input=raw, capture_output=True, timeout=20)
 
     def test_registered_file_guards_block_new_paths_before_write(self):
         (self.root / "README.md").write_text("dirty\n")
@@ -707,9 +714,9 @@ class NativeLefthook(unittest.TestCase):
     def submodule(self, name):
         """A registered submodule: a .git file pointing into the fixture's .git/modules."""
         source = self.foreign_repository()
-        subprocess.run(["git", "-C", str(source), "-c", "user.name=Fixture",
-                        "-c", "user.email=fixture@example.test", "commit", "-q", "--allow-empty",
-                        "-m", "chore: seed submodule"], capture_output=True, timeout=20, check=True)
+        run_child(["git", "-C", str(source), "-c", "user.name=Fixture",
+                   "-c", "user.email=fixture@example.test", "commit", "-q", "--allow-empty",
+                   "-m", "chore: seed submodule"], capture_output=True, timeout=20, check=True)
         self.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), name)
         module = self.root / name
         self.assertTrue((module / ".git").is_file(), "submodule has no gitfile")
@@ -724,7 +731,7 @@ class NativeLefthook(unittest.TestCase):
         self.addCleanup(shutil.rmtree, outside, True)
         foreign = self.foreign_repository()
         nested_git = self.root / "vendored"
-        subprocess.run(["git", "init", "-q", str(nested_git)], capture_output=True, timeout=20, check=True)
+        run_child(["git", "init", "-q", str(nested_git)], capture_output=True, timeout=20, check=True)
         module = self.submodule("module")
         for cwd in (str(worktree), str(worktree / "nested")):
             with self.subTest(cwd=cwd):
