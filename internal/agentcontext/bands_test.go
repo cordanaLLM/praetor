@@ -217,3 +217,61 @@ func TestScanVolatileBoundsFindings(t *testing.T) {
 		t.Fatalf("findings = %d, want %d", got, maxVolatileFindings)
 	}
 }
+
+// vendorBandFixture opens a Claude-only section inside the head band and another inside the
+// tail band, so only the relocation rule can place them in the config band.
+var vendorBandFixture = strings.Join([]string{
+	"# Harness",
+	"",
+	BandHeadMarker,
+	"Head text.",
+	"",
+	"## Claude Code",
+	"Claude head section.",
+	"",
+	BandConfigMarker,
+	"Config text.",
+	"",
+	BandTailMarker,
+	"Tail text.",
+	"",
+	"## Claude Code",
+	"Claude tail section.",
+	"",
+}, "\n")
+
+func TestVendorSectionsInHeadAndTailRelocateToConfigBand(t *testing.T) {
+	result, err := NewTranspiler().CompileContent(vendorBandFixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range result.Files {
+		c := file.Content
+		isClaude := file.RelativePath == "CLAUDE.md"
+		for _, section := range []string{"Claude head section.", "Claude tail section."} {
+			if strings.Contains(c, section) != isClaude {
+				t.Fatalf("%s: %q presence wrong", file.RelativePath, section)
+			}
+		}
+		if !isClaude {
+			continue
+		}
+		want := "Head text.\n\n## Claude Code\nClaude head section.\n\nConfig text.\n\n## Claude Code\nClaude tail section.\n\nTail text.\n"
+		if !strings.HasSuffix(c, want) {
+			t.Fatalf("%s: vendor sections not relocated into the config band, got %q", file.RelativePath, c)
+		}
+	}
+}
+
+func TestHeadBandOmitsVendorSectionOpenedInHead(t *testing.T) {
+	head, ok := HeadBand(vendorBandFixture)
+	if !ok {
+		t.Fatal("marked source reported unmarked")
+	}
+	if head != "Head text." && !strings.Contains(head, "Head text.") {
+		t.Fatalf("head lost its own text: %q", head)
+	}
+	if strings.Contains(head, "Claude") {
+		t.Fatalf("vendor section leaked into the head band: %q", head)
+	}
+}
