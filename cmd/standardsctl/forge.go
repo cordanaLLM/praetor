@@ -250,7 +250,11 @@ func runForgeCheckMessage(args []string) error {
 	if err != nil {
 		return fmt.Errorf("read commit message %s: %w", rest[0], err)
 	}
-	analysis, err := forge.AnalyzeCommit(forge.CleanCommitMessage(string(data)))
+	message, err := forge.CleanCommitMessage(string(data))
+	if err != nil {
+		return fmt.Errorf("commit message %s: %w", rest[0], err)
+	}
+	analysis, err := forge.AnalyzeCommit(message)
 	if err != nil {
 		return fmt.Errorf("commit message %s: %w", rest[0], err)
 	}

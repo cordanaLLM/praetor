@@ -1,6 +1,7 @@
 package forge
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,19 +34,27 @@ const maxCommitMessageLines = 100000
 // the lines that start with '#', git's comment character, and without the scissors line and
 // everything after it. The commit-msg hook reads the message file before git cleans it, so
 // check-message cleans it first; a message read from a commit is already clean.
-func CleanCommitMessage(message string) string {
-	lines := strings.Split(message, "\n")
-	kept := make([]string, 0, len(lines))
-	for i := 0; i < len(lines) && i < maxCommitMessageLines; i++ {
+//
+// A message of more than maxCommitMessageLines lines before the scissors line is refused, not
+// cleaned in part: the lines past the bound may hold the footer the policy reads, such as
+// BREAKING CHANGE:. A final newline ends the last line and starts no other.
+func CleanCommitMessage(message string) (string, error) {
+	lines := strings.Split(strings.TrimSuffix(message, "\n"), "\n")
+	kept := make([]string, 0, min(len(lines), maxCommitMessageLines))
+	for i := 0; i < len(lines) && i <= maxCommitMessageLines; i++ {
 		line := strings.TrimSuffix(lines[i], "\r")
 		if line == commitScissors {
 			break
+		}
+		if i == maxCommitMessageLines {
+			return "", fmt.Errorf("commit message holds more than %d lines before the scissors line; "+
+				"the policy refuses it rather than check it in part", maxCommitMessageLines)
 		}
 		if !strings.HasPrefix(line, "#") {
 			kept = append(kept, line)
 		}
 	}
-	return strings.Join(kept, "\n")
+	return strings.Join(kept, "\n"), nil
 }
 
 // commitSubjectError returns the policy failure for subject, the first line of a cleaned message,

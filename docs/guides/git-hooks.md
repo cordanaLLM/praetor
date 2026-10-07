@@ -582,7 +582,9 @@ pull request (`.github/workflows/ci.yml`, the two steps after the documentation 
 The commit-msg hook and CI share one implementation of the message policy, `forge.AnalyzeCommit`
 (`internal/forge/commit_message.go`). The hook runs `praetorctl forge check-message <file>` on the
 message file Git hands it, which first drops what Git removes before it records the message: the
-lines that start with `#`, and the scissors line with everything after it.
+lines that start with `#`, and the scissors line with everything after it. A message file over
+1 MiB, or of more than 100000 lines before the scissors line, is refused, not checked in part
+(`TestCleanCommitMessage_Boundary_LineBound`).
 
 These checks are not re-run per commit:
 
