@@ -19,12 +19,13 @@ GO_EXTENSIONS = {".go", ".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", 
                  ".f", ".F", ".for", ".f90", ".s", ".S", ".sx", ".swig", ".swigcxx", ".syso"}
 # What `compile-context --verify` reads or checks: canonical AGENTS.md and .agents/ (personas,
 # skills, plugin copies), the six vendor files (internal/agentcontext/render.go
-# vendorTargets), the vendor persona directories (compiler.CompileAgentSurfaces) and the
-# client skill directories (vendorTargets skillDir, .claude/skills).
+# vendorTargets) and the vendor persona directories (compiler.CompileAgentSurfaces).
 # test_context_changed_covers_every_compile_context_path runs the real compile-context and
 # fails if it writes a path these do not match.
 CONTEXT = {"AGENTS.md", "CLAUDE.md", ".windsurfrules",
            ".github/copilot-instructions.md", ".gemini/GEMINI.md", ".codex/rules.md"}
+# .claude/skills/ is the client skill directory compile-context copies register skills to
+# (vendorTargets skillDir, compiler.VerifyClientSkills).
 CONTEXT_PREFIXES = (".agents/", ".cursor/rules/", ".claude/agents/", ".claude/skills/",
                     ".codex/agents/", ".gemini/agents/", ".github/agents/")
 # The extensions semgrep assigns each language a rule can target, from semgrep's language
