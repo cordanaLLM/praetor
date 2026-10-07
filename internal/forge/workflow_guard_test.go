@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"gopkg.in/yaml.v3"
 )
 
@@ -477,10 +478,14 @@ func markdownGateSelfTestGap(job workflowJob) string {
 	return "no step runs " + markdownGateSelfTest
 }
 
+// everyLegConditions are the step conditions that cannot differ between matrix legs: none,
+// !cancelled(), and !cancelled() held off a draft pull request (ghworkflow.HostedGateNotDraft),
+// whose term reads the event every leg shares, never the leg (#817).
+var everyLegConditions = []string{"", "${{ !cancelled() }}", "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " }}"}
+
 // runsOnEveryLeg reports whether a step's condition cannot differ between matrix legs.
 func runsOnEveryLeg(step workflowStep) bool {
-	condition := strings.TrimSpace(step.If)
-	return condition == "" || condition == "${{ !cancelled() }}"
+	return slices.Contains(everyLegConditions, strings.TrimSpace(step.If))
 }
 
 // The Markdown gate runner is emitted into adopters' verify-all, and only the portability
@@ -522,6 +527,10 @@ func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
 		{"boundary os guard", workflowJob{Steps: []workflowStep{
 			node, {Run: markdownGateSelfTest, If: "runner.os != 'Windows'"}}}, "conditional"},
 		{"boundary advisory", workflowJob{ContinueOnError: "true", Steps: []workflowStep{node, selfTest}}, "advisory"},
+		{"boundary held off a draft", workflowJob{Steps: []workflowStep{
+			{Uses: node.Uses, If: everyLegConditions[2]}, {Run: markdownGateSelfTest, If: everyLegConditions[2]}}}, ""},
+		{"boundary draft term beside a leg term", workflowJob{Steps: []workflowStep{node,
+			{Run: markdownGateSelfTest, If: "${{ !cancelled() && " + ghworkflow.HostedGateNotDraft + " && runner.os != 'Windows' }}"}}}, "conditional"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

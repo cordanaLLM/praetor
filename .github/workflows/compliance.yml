@@ -1,11 +1,15 @@
 name: Compliance & Licensing Verification Gate
 
+# The hosted gate shape (internal/ghworkflow/hostedgate.go, docs/guides/workflow-triggers.md): a
+# pull request runs on every activity that can change what merges, and the job fails a draft in
+# its first step and runs once the draft is marked ready (ready_for_review).
 on:
   push:
     branches:
       - main
       - 'lts-*'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
       - 'lts-*'
@@ -31,6 +35,21 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      # The hosted gate's draft step, as ghworkflow.HostedGateDraftStep renders it: on a draft the
+      # job fails here with the annotation the checkpoint planner reads as draft pending. On a push
+      # the condition is false, so the DCO step below still runs on every push run.
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Checkout Source Code
         uses: actions/checkout@v7
         with:

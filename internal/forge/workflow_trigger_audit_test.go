@@ -311,17 +311,19 @@ func TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread(t *testing.T)
 	}
 }
 
-// Positive: the hosted gates this repository ships, rendered into .github/workflows, carry no
-// finding: the check and the emitter read one shape (ghworkflow).
-func TestAuditWorkflowTriggers_ShippedHostedGatesPass(t *testing.T) {
+// Positive: no workflow of this repository carries a finding (#817): the hosted gates it ships,
+// rendered into .github/workflows, read one shape with the check (ghworkflow), and its own
+// workflows (ci.yml, compliance.yml, pages.yml, portability.yml, security.yml) follow it.
+func TestAuditWorkflowTriggers_EngineWorkflowsPass(t *testing.T) {
 	engine := filepath.Join("..", "..")
-	_, findings, err := workflowTriggerFindings(t.Context(), engine)
+	read, findings, err := workflowTriggerFindings(t.Context(), engine)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if read < 11 {
+		t.Fatalf("read %d workflows, want every engine workflow", read)
+	}
 	for _, finding := range findings {
-		if finding.Workflow == ".github/workflows/praetor-api.yml" || finding.Workflow == ".github/workflows/praetor-docs.yml" {
-			t.Errorf("a shipped hosted gate is reported: %s", finding)
-		}
+		t.Errorf("an engine workflow is reported: %s", finding)
 	}
 }
