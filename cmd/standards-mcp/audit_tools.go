@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
@@ -63,6 +64,11 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 			return auditBranchProtection(ctx, manifest, s.rootDir, &effective.Policy)
 		},
 		func(context.Context) (string, error) { return adopt.AuditLabelTaxonomy(manifest, s.rootDir) },
+		func(ctx context.Context) (string, error) {
+			return adopt.AuditSupplyChain(ctx, adopt.SupplyChainOptions{
+				Root: s.rootDir, Policy: &effective.Policy, Exceptions: manifest.Exceptions, Today: time.Now(),
+			})
+		},
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}
 
@@ -82,7 +88,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		passed++
 	}
 
-	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, hooks. "+
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, hooks. "+
 		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
 	return mcpComposedTextResult(report.Text())

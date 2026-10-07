@@ -468,7 +468,8 @@ func boundedSourceReport(report string) string {
 }
 
 // auditBranchProtectionAndSupplyChain checks the committed ruleset against policy, the
-// effective policy the audit resolved and adopt rendered the ruleset from.
+// effective policy the audit resolved and adopt rendered the ruleset from, and the SLSA level,
+// cosign signing and SBOM policy declares against what the workflow files measure (#330).
 func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy) error {
 	if err := auditBranchProtection(ctx, manifest, rootDir, policy); err != nil {
 		return err
@@ -480,6 +481,15 @@ func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.M
 		return err
 	}
 	fmt.Println(labels)
+
+	// The supply-chain gate standards_audit runs too, with the manifest's HISS-11 exceptions.
+	supplyChain, err := adopt.AuditSupplyChain(ctx, adopt.SupplyChainOptions{
+		Root: rootDir, Policy: policy, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(supplyChain)
 	return nil
 }
 

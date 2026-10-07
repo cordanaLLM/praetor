@@ -122,7 +122,17 @@ Every dependency manifest must be cryptographically pinned:
 
 - Pinned lockfiles mandatory (`go.sum`, `Cargo.lock`, `pnpm-lock.yaml`).
 - Zero floating tags (e.g. `:latest`) in container deployments.
-- SLSA Level 3 provenance attestations and Sigstore Cosign signatures verified on all binaries.
+- SLSA provenance at the declared `supply_chain.slsa_level` and Sigstore Cosign signatures on all
+  released binaries.
+- `praetorctl audit` and the MCP `standards_audit` measure the SLSA Build level, cosign signing
+  and SBOM generation the release workflows can produce, and fail when the policy declares more
+  ([How the audit measures the SLSA level](../guides/releasing.md#how-the-audit-measures-the-slsa-level)).
+  The measurement reads workflow files only; published attestations are not checked.
+- A gap the release workflows cannot close yet is declared in the manifest's exceptions list (rule
+  `HISS-11`, the workflow the measurement read, a reason and an expiry at most 90 days ahead): the
+  audit prints it with the declared and measured values and passes until the entry expires, and
+  an expired entry fails like a missing one
+  ([Declaring a gap](../guides/releasing.md#declaring-a-gap)).
 
 ### HISS-12: Secret Leak Prevention
 

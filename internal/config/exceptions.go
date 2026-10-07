@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -24,9 +25,16 @@ const ExceptionRuleClangTidyCoverage = "clang-tidy-coverage"
 // verified upstream and is written unknown, when the entry names the excused path.
 const ExceptionRuleCredits = "credits"
 
+// ExceptionRuleSupplyChain is the rule of the HISS-11 supply-chain gate
+// (internal/adopt.AuditSupplyChain): an entry names the release workflow whose measured SLSA
+// Build level, cosign signing or SBOM generation falls short of what the policy declares. The
+// gate prints the declared and measured values with the entry's reason and expiry and passes,
+// so the gap stays visible until the entry expires.
+const ExceptionRuleSupplyChain = "HISS-11"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
-var exceptionRules = []string{ExceptionRuleClangTidyCoverage, ExceptionRuleCredits}
+var exceptionRules = []string{ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain}
 
 // Bounds of the exceptions list (HISS-02).
 const (
@@ -144,6 +152,9 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.targetProblem(); problem != "" {
 		return problem
 	}
+	if problem := e.supplyChainTargetProblem(); problem != "" {
+		return problem
+	}
 	if problem := exceptionReasonProblem(e.Reason); problem != "" {
 		return "reason " + problem
 	}
@@ -162,6 +173,19 @@ func (e Exception) targetProblem() string {
 		if problem := StyleExclusionProblem(e.Glob); problem != "" {
 			return fmt.Sprintf("glob %q %s", e.Glob, problem)
 		}
+	}
+	return ""
+}
+
+// supplyChainTargetProblem requires a HISS-11 entry to name one workflow document directly in
+// .github/workflows by path: the release workflow the supply-chain gate measured.
+func (e Exception) supplyChainTargetProblem() string {
+	if e.Rule != ExceptionRuleSupplyChain {
+		return ""
+	}
+	if !ghworkflow.IsWorkflowPath(e.Path) {
+		return fmt.Sprintf("rule %s must name one workflow file directly in %s by path, such as %s/release.yml",
+			ExceptionRuleSupplyChain, ghworkflow.Dir, ghworkflow.Dir)
 	}
 	return ""
 }

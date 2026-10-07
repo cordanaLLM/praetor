@@ -14,10 +14,12 @@ import (
 )
 
 // Digests of documents that carry no framework, forge or topology section, sealed before
-// those sections existed. The new fields are omitzero, so these stay byte-identical.
+// those sections existed. The new fields are omitzero, so these stay byte-identical. They were
+// resealed once when the built-in SLSA level default fell from 1 to 0 (#330): the fixture
+// profile declares no supply_chain, so its resolved policy changed with the default.
 const (
-	goldenOperatorDigest = "990ec173ac96253592982fe3eb03a6733919339be3d7a0e14e4a9f64858bad3d"
-	goldenBareDigest     = "3bd8007d362b49f271a951b6d28f9f401c03853f02f18191acb4ec1f08fd941c"
+	goldenOperatorDigest = "c66d71446b2ecbc1a01f56591e610a9876991bf4c0831f4173a36144d3219fb7"
+	goldenBareDigest     = "1482ca8653033bc7f6631a63d5a4adec6387aaa6129ebb7e5968dae1787bf430"
 )
 
 func operatorTestdata(name string) string {

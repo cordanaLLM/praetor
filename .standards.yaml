@@ -73,6 +73,14 @@ overrides:
     diff_aware_filtering: true
     skip_heavy_gates_on_docs_or_state: true
 
+# Declared per-file exceptions (AGENTS.md rule 14): one rule, one file, a reason and an expiry
+# at most 90 days ahead; an expired entry fails its gate like a missing one.
+exceptions:
+  - rule: "HISS-11"
+    path: ".github/workflows/release-binaries.yml"
+    reason: "release provenance not yet built by an isolated Level 3 builder; the release job reaches Level 2 (#799)"
+    expires: "2027-01-04"
+
 # Text register per audience surface and task class (ADR-0010). Task keys are target_tasks
 # labels of .config/models/routing.yaml; every label without a row writes in the register
 # of surfaces.agent. No output budget (max_tokens) is set: a budget comes from measured
@@ -100,7 +108,7 @@ register:
   sources:
     expected: 249
     not_applicable: 127
-    sha256: "sha256:fed4a82d19f112355a0bc6411dc3d3ac7b00255c1d928759b4d84c1615b9f259"
+    sha256: "sha256:1b1a04a8e9af09f4913dda373037e36a7ed576372dca1ccb5bfb67abd89a22bf"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts

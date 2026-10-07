@@ -183,6 +183,13 @@ type adoptSession struct {
 		resolved   bool
 		complexity config.ComplexityPolicy
 	}
+	// supplyChain is the HISS-11 exceptions entry the manifest a fresh adoption creates declares
+	// (supplyChainException), resolved once per run so every rendering of that manifest carries
+	// the same entry; nil when the workflows meet the declared supply chain.
+	supplyChain struct {
+		resolved bool
+		entry    *config.Exception
+	}
 	// dryRunWrites holds, in a dry run only, what each file the run would scaffold or remove
 	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
 	// the run leaves rather than the one on disk.
@@ -658,6 +665,9 @@ func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) e
 	}
 	if manifest.Register == nil {
 		note += "; register.sources not added: " + unboundSourcesReason(harness)
+	}
+	if len(manifest.Exceptions) > 0 {
+		note += supplyChainExceptionNote(manifest.Exceptions[0])
 	}
 	s.report.recordCreated(manifestFile, note)
 	return nil

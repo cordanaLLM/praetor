@@ -177,7 +177,128 @@ token, so `--skip=sign` is required outside CI; `--skip=sbom` drops the Syft dep
 
 Build Level 3 is not claimed. The provenance is generated and signed in the same job as
 the build steps, and SLSA Build Level 3 requires signing that the build steps cannot reach.
-Measuring the declared `supply_chain.slsa_level` against the workflow is tracked in #330.
+`praetorctl audit` measures this workflow at Level 2
+(`TestMeasureProvenanceReadsTheEngineReleaseAsLevel2` in
+`internal/forge/provenance_workflow_test.go`), below the Level 3 this repository's `framework`
+profile and `security:high` facet declare. `.standards.yaml` declares that gap as a HISS-11
+entry of its exceptions list for `.github/workflows/release-binaries.yml`, so the audit prints
+the gap with the entry's reason and expiry and passes until the entry expires
+([Declaring a gap](#declaring-a-gap)). Moving the release provenance to an isolated Level 3
+builder is tracked in #799.
+
+## How the audit measures the SLSA level
+
+`praetorctl audit` and the MCP `standards_audit` compare `supply_chain` in the effective policy
+with what the workflow files under `.github/workflows` can produce
+(`internal/adopt.AuditSupplyChain` over `internal/forge.MeasureProvenance`). Nothing is fetched:
+the gate reads the files, and its pass line says that published attestations and signatures were
+not checked. A workflow can attest without a release ever carrying a valid attestation, so verify
+a release with the commands under [Verifying a published release](#verifying-a-published-release).
+
+The measured level is the highest one any job reaches, following the
+[SLSA v1.0 Build track](https://slsa.dev/spec/v1.0/levels) and GitHub's
+[SLSA levels for artifact attestations](https://docs.github.com/en/actions/concepts/security/artifact-attestations#slsa-levels-for-artifact-attestations):
+
+| Level | What a job shows |
+| :--- | :--- |
+| 1 | `praetorctl provenance` writes a statement and nothing signs it |
+| 2 | `actions/attest-build-provenance`, or `actions/attest` without `sbom-path` and without a non-SLSA predicate, in the job; `cosign attest` or `attest-blob` with an SLSA provenance `--type`; or `cosign attest-blob --statement` over the file `praetorctl provenance -out` (or a `>` redirect) wrote earlier in the job |
+| 3 | The job calls a reusable workflow of `slsa-framework/slsa-github-generator` whose name ends in `_slsa3.yml`, by a `vX.Y.Z` tag; or it calls a reusable workflow of this repository (`./.github/workflows/<file>`, `on: workflow_call`) whose own job builds the artefacts and then runs GitHub's attestation action. GitHub documents [Build Level 3](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/increase-security-rating) only when the reusable workflow that builds the software also generates the attestation |
+
+For a reusable workflow of this repository, a build step must come before the attestation in the
+same job: `go build`, `cargo build`, `docker build` or `docker buildx build`, `goreleaser release`
+or `build` (as a command or through `goreleaser/goreleaser-action`), `docker/build-push-action`,
+`make` running a target, or an `npm run build`, `pnpm build` or `yarn build`. A bare `make`, and
+`make` with `--version`, `-n` or another option that only prints or checks, builds nothing the
+audit can rely on (`TestMeasureProvenanceNeedsAMakeTarget`). An `actions/download-artifact` or
+`gh run download` before the attestation makes it Level 2: a called workflow runs in its caller's
+workflow run, with the caller's
+[`github` context](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations),
+so the downloaded artefact may be the caller's build. So does an `actions/cache` or
+`actions/cache/restore` step whose `path` overlaps the attestation's `subject-path`, or any cache
+restore before an attestation that names its subject by digest, since the restored files may come
+from an earlier run (`TestMeasureProvenanceCountsACacheRestoreOfTheAttestedFiles`). The build
+step is recognised by its command, not by what it produces, so `make lint` counts as a build
+(`TestMeasureProvenanceCreditsLevel3OnlyWhenTheReusableWorkflowBuilds` in
+`internal/forge/provenance_workflow_test.go`).
+
+The SLSA generator's `generator_generic_slsa3.yml` is credited Level 3 although the caller's job
+builds the artefacts and hands the generator their digests (`base64-subjects`), the shape that
+leaves a reusable workflow of this repository at Level 2. The audit follows each tool's own
+documentation: the [SLSA v1.0 Build L3 requirements](https://slsa.dev/spec/v1.0/requirements)
+let the tenant generate the subject names and digests of unforgeable provenance, and the
+generator signs that provenance in its own isolated reusable workflow, which `slsa-verifier`
+checks; GitHub documents Level 3 for its attestation action only when the reusable workflow that
+attests also builds. The generator's repository states that it is no longer actively maintained
+and suggests GitHub artifact attestations instead.
+
+A workflow whose only trigger is `workflow_call` counts through the jobs that call it. Not
+credited, and named on the failure line: a reusable workflow in another repository, which a static
+read cannot open; the SLSA generator called by a branch or digest, since `slsa-verifier` accepts
+its provenance only from a tag; a reusable workflow called from a reusable workflow; and a
+reusable workflow of this repository whose attestation does not follow a build of its own job.
+
+A job or step whose `if:` is the literal `false` (or `${{ false }}`) never runs and counts for
+nothing; any other condition is read as running. A command an `echo` or `printf` prints does not
+run, so `echo cosign sign is todo` signs nothing (`TestMeasureProvenanceSkipsWhatNeverRuns`).
+Every workflow is measured, not only the ones a tag push starts, and the failure line names the
+one it read.
+
+`enforce_cosign` needs a `cosign sign`, `sign-blob`, `attest` or `attest-blob` step, or a
+GoReleaser release whose `signs`, `binary_signs` or `docker_signs` block runs cosign over some
+artifacts with GoReleaser's own defaults (`signs` signs nothing unless `artifacts` is set;
+`docker_signs` runs cosign by default). Installing cosign, verifying with it, or
+`goreleaser release --skip=sign` signs nothing. Each GoReleaser command of a `run:` script is read
+up to the end of that command, so `goreleaser check` followed by `gh release create` is no release
+(`TestGoreleaserCommandsAreReadOneAtATime`). `require_sbom` uses the SBOM rule `praetorctl plan`
+reports drift from (`forge.SBOMWorkflow`).
+
+The gate fails when the declared level exceeds the measured one, naming both and the workflow it
+read, and closed when a workflow is empty, malformed or calls a reusable workflow the repository
+does not hold. A policy that declares Level 0 and neither control reads no workflow. The built-in
+default is Level 0, so `org-health` and `upstream-fork`, which release nothing, resolve to the 0
+they declare. `TestAuditSupplyChainReplaysTheHISS11Fixtures` replays the HISS-11 fixtures under
+`.config/hiss/testdata/HISS-11/github-actions` in both directions.
+
+### Declaring a gap
+
+A repository whose release workflows cannot reach the declared supply chain yet declares the gap
+in the exceptions list of `.standards.yaml`, the one per-file exception list
+([clang-tidy coverage exceptions](clang-tidy-coverage.md#exceptions) uses it too):
+
+```yaml
+exceptions:
+  - rule: "HISS-11"
+    path: ".github/workflows/release-binaries.yml"
+    reason: "release provenance not yet built by an isolated Level 3 builder; the release job reaches Level 2 (#799)"
+    expires: "2027-01-04"
+```
+
+`path` names the workflow the measurement read, the one the failure line names; with no workflow
+writing provenance, it names the release workflow still to be added. The entry is validated like
+every exceptions entry (`config.ValidateExceptions`): one workflow file directly in
+`.github/workflows`, a one-line reason, and an expiry at most 90 days ahead. While it holds, the
+gate prints the declared and measured values with the entry's reason and expiry and passes:
+
+```text
+[PASS] Supply chain (HISS-11): declared gap, excepted until 2027-01-04 by the exceptions entry (rule HISS-11, .github/workflows/release-binaries.yml): release provenance not yet built by an isolated Level 3 builder; the release job reaches Level 2 (#799)
+  - policy declares SLSA Build Level 3 but the workflows reach Level 2 (.github/workflows/release-binaries.yml). Level 3 needs ...
+```
+
+An expired entry fails like a missing one, naming its expiry. An entry for another workflow than
+the one the measurement read, or one with no gap left to excuse, is stale and fails until it is
+removed (`TestAuditSupplyChainRefusesExpiredStaleAndMalformedEntries` in
+`internal/adopt/supply_chain_audit_test.go`).
+
+`praetorctl adopt` records such an entry in the `.standards.yaml` it creates when the policy
+declares more than the repository's workflows reach, which is the case for a fresh repository
+under the default facet `security:high`: its reason names the shortfalls and this guide, it
+expires 90 days after the adoption, and the adoption report says so on the `.standards.yaml`
+line. A first audit then passes with the gap printed instead of failing
+(`TestAdoptThenAuditDeclaresTheSupplyChainGap` in
+`cmd/standardsctl/audit_supply_chain_test.go`). Close the gap before the entry expires: raise
+the release workflow as this section describes, or select facets that declare less with
+`praetorctl profile set --facets`.
 
 ## Verifying a published release
 

@@ -85,6 +85,27 @@ func TestLoadEffectivePolicyRepositoryOverridesApplyAfterTheJoin(t *testing.T) {
 	}
 }
 
+// A profile that releases nothing declares SLSA Build Level 0 and resolves to it: the built-in
+// default no longer joins Level 1 over it, which the supply-chain audit would then demand from
+// a repository with no release (#330). Boundary: a profile declaring Level 1 keeps it.
+func TestLoadEffectivePolicyKeepsADeclaredSLSALevelZero(t *testing.T) {
+	for level, profile := range map[int]string{
+		0: "name: Health\nsupply_chain:\n  slsa_level: 0\n",
+		1: "name: Seed\nsupply_chain:\n  slsa_level: 1\n",
+	} {
+		result, err := LoadEffectivePolicyContext(t.Context(), EffectiveOptions{Root: policyFixture(t, profile, "", "")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := result.Policy.SupplyChain.SLSALevel; got != level {
+			t.Fatalf("profile declaring slsa_level %d resolved to %d", level, got)
+		}
+	}
+	if DefaultPolicy().SupplyChain.SLSALevel != 0 {
+		t.Fatalf("default SLSA level = %d; want 0", DefaultPolicy().SupplyChain.SLSALevel)
+	}
+}
+
 func TestLoadEffectivePolicyLooserFacetNeverLoosens(t *testing.T) {
 	loose := strings.Join([]string{
 		"complexity: {max_cyclomatic: 0, max_func_loc: 0}",

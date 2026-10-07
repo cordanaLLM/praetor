@@ -1,0 +1,4 @@
+type: added
+title: "A HISS-11 entry of the exceptions list declares a supply-chain gap with a reason and an expiry, and adoption records one when a fresh repository's workflows fall short of the declared SLSA level, cosign signing or SBOM"
+issue: "#330"
+breaking: false

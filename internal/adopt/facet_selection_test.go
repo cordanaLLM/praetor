@@ -94,8 +94,12 @@ func TestAdopt_Negative_WarnsAboutIgnoredFacets(t *testing.T) {
 // reports each default facet as a default, names what each one raises over the profile alone
 // from the pinned catalog, and names the commands that choose others.
 func TestAdopt_Positive_DefaultFacetsSayWhatEachRaises(t *testing.T) {
+	// template-seed declares Level 1, as the shipped profile does; the built-in default is 0.
 	source := newCatalogLockSource(t, &config.Manifest{Version: 1, Profiles: []string{"template-seed"}, Facets: config.DefaultFacets()},
-		map[string]string{"security:high": "id: \"security:high\"\nbranch_protection:\n  required_approving_reviewers: 2\nsupply_chain:\n  slsa_level: 3\n"})
+		map[string]string{
+			"template-seed": "id: \"template-seed\"\nsupply_chain:\n  slsa_level: 1\n",
+			"security:high": "id: \"security:high\"\nbranch_protection:\n  required_approving_reviewers: 2\nsupply_chain:\n  slsa_level: 3\n",
+		})
 	report, err := Adopt(t.Context(), AdoptOptions{Path: newTestRepo(t, "default-facets"), LockSourceRoot: source, DryRun: true})
 	if err != nil {
 		t.Fatal(err)

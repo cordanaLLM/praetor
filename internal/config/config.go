@@ -464,8 +464,11 @@ func DefaultPolicy() *ResolvedPolicy {
 			DismissStaleReviews:        true,
 			ReviewMode:                 BranchReviewModeIndependent,
 		},
+		// Level 0, so a profile that releases nothing (org-health, upstream-fork) resolves to the
+		// level it declares; a default of 1 joined over it, and the audit, which measures the
+		// level from the workflow files (#330), would demand provenance it has no release for.
 		SupplyChain: SupplyChainPolicy{
-			SLSALevel:     1,
+			SLSALevel:     0,
 			EnforceCosign: false,
 			RequireSBOM:   false,
 		},

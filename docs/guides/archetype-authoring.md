@@ -530,7 +530,7 @@ tested by `TestLoadEffectivePolicyJoinsEveryProfileDimension` in
 | `branch_protection.enforce_linear_history`, `require_signed_commits`, `dismiss_stale_reviews` | `true` wins | `true`, `false`, `true` |
 | `branch_protection.required_approving_reviewers` | maximum | 1 |
 | `branch_protection.review_mode` | no catalog layer may set it (`TestLoadEffectivePolicyRejectsInvalidArchetypes`), so the join keeps `independent`; only the repository override may relax it to `single_maintainer`, after the join | `independent` |
-| `supply_chain.slsa_level` | maximum | 1 |
+| `supply_chain.slsa_level` | maximum | 0 |
 | `supply_chain.enforce_cosign`, `require_sbom` | `true` wins | `false` |
 | `memory.zero_frame_malloc`, `banned_alloc_in_ticks` | `true` wins (ZeroFrameMalloc over StandardHeap) | `false` |
 | `error_unwraps` | `strict_ban` wins over `allow_with_comment` | `allow_with_comment` |
@@ -583,8 +583,14 @@ authors:
 - `error_unwraps`, both `memory` keys, `name`, `description` and `runtime` are
   unconsumed: declaring them changes no gate, emitted file or report. A capability that
   `description` names is enforced only where a consumed key enforces it.
-- `supply_chain.slsa_level`, `supply_chain.enforce_cosign` and `complexity.max_cognitive` are
-  reported: `praetorctl plan` or the HISS-04 measurement prints them, and nothing fails on them.
+- `complexity.max_cognitive` is reported: the HISS-04 measurement prints it, and nothing fails
+  on it.
+- `supply_chain.slsa_level`, `enforce_cosign` and `require_sbom` are gated: `praetorctl audit`
+  fails when the release workflows measure less than the profile declares
+  ([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level)).
+  Declare the level the adopters' releases can reach, and 0 for a repository that releases
+  nothing. A fresh adoption whose workflows fall short gets a HISS-11 exceptions entry that
+  expires in 90 days ([Declaring a gap](releasing.md#declaring-a-gap)).
 
 `TestShippedManifestMatchesTheSource` (`internal/archetypecoverage/shipped_test.go`) type-checks
 the module's Go source and fails when a key has no entry, when an entry names a key the schema

@@ -60,8 +60,12 @@ type RunDefaults struct {
 // RunsOn is a raw node because the key has three shapes: one label, a list of labels, and a
 // mapping of a runner group and its labels (RunnerLabels). Container is raw because it is an
 // image name or a mapping; only its presence changes the default shell (StepShell).
+//
+// Uses is the reusable workflow a job calls instead of running steps: a path under Dir of this
+// repository ("./.github/workflows/<file>") or "<owner>/<repo>/.github/workflows/<file>@<ref>".
 type Job struct {
 	Name            string    `yaml:"name"`
+	Uses            string    `yaml:"uses"`
 	If              string    `yaml:"if"`
 	ContinueOnError string    `yaml:"continue-on-error"`
 	Permissions     yaml.Node `yaml:"permissions"`
@@ -159,6 +163,19 @@ func IsYAMLName(name string) bool {
 func IsWorkflowPath(rel string) bool {
 	dir, name := slashpath.Split(rel)
 	return dir == Dir+"/" && IsYAMLName(name)
+}
+
+// NeverRuns reports whether an if: condition of a job or step is the literal false, bare or as
+// the expression ${{ false }}: GitHub then skips it on every run. Any other condition may hold,
+// so it is read as running.
+func NeverRuns(condition string) bool {
+	condition = strings.TrimSpace(condition)
+	if inner, ok := strings.CutPrefix(condition, "${{"); ok {
+		if inner, ok = strings.CutSuffix(inner, "}}"); ok {
+			condition = strings.TrimSpace(inner)
+		}
+	}
+	return condition == "false"
 }
 
 // RunStep is one run: step of a workflow, with the job it runs in.

@@ -161,3 +161,28 @@ func TestSBOMWorkflowBoundaries(t *testing.T) {
 		t.Error("nil context accepted")
 	}
 }
+
+// What never runs generates no SBOM (review of #330). Negative: a generator an echo prints, and
+// one in a step or job whose if: is the literal false. Positive: a generator after an echo in the
+// same script runs, and a condition that may hold is read as running.
+func TestSBOMWorkflowSkipsWhatNeverRuns(t *testing.T) {
+	syft := "run: syft dir:. -o spdx-json=sbom.spdx.json\n"
+	cases := map[string]struct {
+		workflow  string
+		generates bool
+	}{
+		"a generator an echo prints":  {sbomJob("      - run: echo syft dir:. -o spdx-json=sbom.spdx.json\n"), false},
+		"a step with if: false":       {sbomJob("      - if: false\n        " + syft), false},
+		"a job with if: ${{ false }}": {"on: push\njobs:\n  sbom:\n    if: ${{ false }}\n    runs-on: ubuntu-latest\n    steps:\n      - " + syft, false},
+		"a generator after an echo":   {sbomJob("      - run: echo cataloguing; syft dir:. -o spdx-json=sbom.spdx.json\n"), true},
+		"a condition that may hold":   {sbomJob("      - if: github.event_name == 'push'\n        " + syft), true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := SBOMWorkflow(context.Background(), sbomRepo(t, map[string]string{".github/workflows/sbom.yml": tc.workflow}))
+			if err != nil || (got != "") != tc.generates {
+				t.Fatalf("SBOMWorkflow = %q, %v; want generates=%t", got, err, tc.generates)
+			}
+		})
+	}
+}

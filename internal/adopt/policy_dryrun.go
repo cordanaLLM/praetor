@@ -17,13 +17,17 @@ import (
 // newAdoptionManifest builds the manifest adoption writes, plus the harness plan its
 // register.sources came from. Identity comes from the origin remote and stays empty
 // otherwise. Visibility is a forge setting adoption cannot observe offline, so it is left
-// unset rather than declared public.
+// unset rather than declared public. A supply-chain gap the workflows show under the policy the
+// manifest declares is recorded as a HISS-11 exceptions entry (supplyChainException).
 func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest, harnessPlan, error) {
 	plan, err := planHarness(ctx, s)
 	if err != nil {
 		return nil, harnessPlan{}, err
 	}
 	manifest := declaredAdoptionManifest(s)
+	if entry := s.supplyChainException(ctx); entry != nil {
+		manifest.Exceptions = []config.Exception{*entry}
+	}
 	if plan.absent() {
 		return manifest, plan, nil
 	}

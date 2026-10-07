@@ -97,7 +97,7 @@ func TestServerAuditExternalManifestPreservesExplicitAuthorization(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 8/8")
+	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 9/9")
 }
 
 func TestServerAuditUsesSelectedCatalog(t *testing.T) {
@@ -107,7 +107,7 @@ func TestServerAuditUsesSelectedCatalog(t *testing.T) {
 	relocateCatalog(t, root, "catalog")
 	expectError(t, "missing default catalog", callTool(t, srv, "standards_audit", nil), "materialized profile")
 	after := callTool(t, srv, "standards_audit", map[string]any{"catalog_root": "catalog"})
-	expectText(t, "selected catalog", after, "passed: 8/8")
+	expectText(t, "selected catalog", after, "passed: 9/9")
 	// Mounting identical catalog bytes at another path retains policy identity.
 	beforeLine := strings.Split(before.Content[0].Text, "\n")[2]
 	afterLine := strings.Split(after.Content[0].Text, "\n")[2]
@@ -138,4 +138,21 @@ func policyEvidenceLine(t *testing.T, text string) string {
 	}
 	t.Fatal("audit omitted effective policy evidence")
 	return ""
+}
+
+// TestServerAuditRunsTheSupplyChainGate (#330): standards_audit runs the HISS-11 gate the CLI
+// audit runs. Negative: an override declaring SLSA Build Level 2 fails while no workflow writes
+// provenance. Positive: a release job that attests its build meets it, and the gate's pass line
+// names the measurement.
+func TestServerAuditRunsTheSupplyChainGate(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n"+
+		"facets: []\noverrides:\n  supply_chain:\n    slsa_level: 2\n")
+	expectError(t, "declared level above the workflows", callTool(t, srv, "standards_audit", nil),
+		"[FAIL] Supply chain (HISS-11): policy declares SLSA Build Level 2 but the workflows reach Level 0")
+	writeFixtureFile(t, root, ".github/workflows/release.yml", "on:\n  push:\n    tags: ['v*']\njobs:\n  release:\n"+
+		"    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/attest-build-provenance@v4\n")
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "declared level met", audit, "[PASS] Supply chain (HISS-11): SLSA Build Level 2 declared, Level 2 measured from release.yml.")
+	expectText(t, "declared level met", audit, "passed: 9/9")
 }
