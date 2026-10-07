@@ -77,7 +77,9 @@ func (f workflowTriggerFinding) String() string {
 //     on a draft;
 //   - a job that needs a job held back on a draft, whatever its condition: GitHub skips it there
 //     unless the condition runs it after a failed need, which the check does not read, and
-//     reports the skip as successful, which a required check accepts;
+//     reports the skip as successful, which a required check accepts. The check decides each job
+//     once, after every job it needs (jobDraftDecisions), so the names of the jobs never change
+//     a verdict, and jobs whose needs form or follow a cycle are reported undecided;
 //   - a job that skips a draft with a job-level condition, or stops a draft and continues on
 //     error: GitHub reports either as successful, which a required check accepts, so the hosted
 //     gate shape fails a draft in a step instead (ghworkflow.HostedGateDraftStep);
@@ -234,20 +236,28 @@ func everyBranchPattern(patterns []string) (string, bool) {
 }
 
 // pullRequestFindings lists every job a pull_request run of w starts that runs its work on a
-// draft or passes a draft without running it (draftProblem), and the trigger itself when a job
-// stops on a draft but the trigger does not run on ready_for_review.
+// draft or passes a draft without running it (draftProblem), the jobs whose needs cannot be
+// ordered (cycleFinding), and the trigger itself when a job stops on a draft but the trigger does
+// not run on ready_for_review.
 func (w *triggerWorkflow) pullRequestFindings(trigger workflowTrigger, callees map[string]*workflowSpec) []workflowTriggerFinding {
-	handling := w.draftHandlings(callees)
+	decided, cycle := w.draftDecisions(callees)
 	ids := sortedJobIDs(w.spec.Jobs)
 	var findings []workflowTriggerFinding
 	stops := false
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
+		decision, known := decided[ids[i]]
+		if !known {
+			continue
+		}
 		job := w.spec.Jobs[ids[i]]
-		stops = stops || handling[ids[i]] == draftStops
-		if problem := draftProblem(handling[ids[i]], &job, handling); problem != "" {
+		stops = stops || decision.handling == draftStops
+		if problem := draftProblem(decision, &job); problem != "" {
 			findings = append(findings, workflowTriggerFinding{
 				Workflow: w.path, Line: w.jobLines[ids[i]], Trigger: pullRequestEvent, Job: ids[i], Problem: problem})
 		}
+	}
+	if len(cycle) > 0 {
+		findings = append(findings, w.cycleFinding(cycle))
 	}
 	types := ghworkflow.StringList(util.YAMLMappingValue(trigger.value, "types"))
 	if stops && !slices.Contains(types, ghworkflow.HostedGateReadyType) {
@@ -256,18 +266,34 @@ func (w *triggerWorkflow) pullRequestFindings(trigger workflowTrigger, callees m
 	return findings
 }
 
+// cycleFinding reports the jobs of w the needs order leaves out (jobDraftDecisions): each is on a
+// needs cycle or needs a job that is, so no order runs them and the check decides none of them.
+// The finding stands on the line of the first of them in the file.
+func (w *triggerWorkflow) cycleFinding(cycle []string) workflowTriggerFinding {
+	line := 0
+	for i := 0; i < len(cycle) && i < maxJobsPerFile; i++ {
+		if at := w.jobLines[cycle[i]]; line == 0 || at < line {
+			line = at
+		}
+	}
+	return workflowTriggerFinding{Workflow: w.path, Line: line, Trigger: pullRequestEvent, Problem: fmt.Sprintf(
+		"jobs %s form or follow a needs cycle, so no order runs them and the check judges none of them on a draft; "+
+			"break the cycle", strings.Join(cycle, ", "))}
+}
+
 // draftHandling is what a job of a pull_request workflow does on a draft pull request.
 type draftHandling int
 
 const (
-	// draftUnreached: the job's condition keeps a pull_request run from starting it.
+	// draftUnreached: the job's condition keeps a pull_request run from starting it, or it has no
+	// condition and needs such a job, which skips it on every pull request (decideJob).
 	draftUnreached draftHandling = iota
-	// draftStops: the job fails a draft before its work, in its own first step or in every job of
-	// the reusable workflow of this repository it calls (stopsOnDraft).
+	// draftStops: the job fails a draft before its work, in its own first step or in the reusable
+	// workflow of this repository it calls (calleeWork).
 	draftStops
 	// draftNeedSkip: the job needs a job held back on a draft (heldOnDraft), so GitHub skips it on
 	// a draft and reports the skip as successful unless its condition runs it after a failed
-	// need, which the check does not read (followHeldNeeds), whatever its own first step is.
+	// need, which the check does not read (decideJob), whatever its own first step is.
 	draftNeedSkip
 	// draftConditionSkip: the job's condition reads the draft flag.
 	draftConditionSkip
@@ -275,60 +301,118 @@ const (
 	draftAdvisoryStop
 	// draftRuns: the job runs its work on a draft.
 	draftRuns
+	// draftCallsIdle: the job calls a reusable workflow of this repository none of whose jobs a
+	// pull_request run starts, so nothing runs on a draft. The check does not read how GitHub
+	// reports such a calling job, so it holds back no job that needs it.
+	draftCallsIdle
 )
+
+// jobDecision is what one job does on a draft (handling) and, for a job its needs decide, the need
+// that does (need), which the job's finding names.
+type jobDecision struct {
+	handling draftHandling
+	need     string
+}
 
 // heldOnDraft reports whether a job with handling h fails or is skipped on a draft pull request
 // alone and so holds back every job that needs it there: GitHub skips a job whose need failed or
 // was skipped. A job a pull_request run never starts holds its dependents back on every pull
-// request instead (heldNeed).
+// request instead (needDecision).
 func heldOnDraft(h draftHandling) bool {
 	return h == draftStops || h == draftNeedSkip || h == draftConditionSkip
 }
 
-// draftHandlings decides each job's draftHandling in w. callees holds every workflow of the
-// repository by file name, for a job that calls one (stopsOnDraft).
-func (w *triggerWorkflow) draftHandlings(callees map[string]*workflowSpec) map[string]draftHandling {
+// draftDecisions decides each job of w (jobDraftDecisions) and returns the jobs it cannot order.
+// callees holds every workflow of the repository by file name, for a job that calls one
+// (workOnDraft).
+func (w *triggerWorkflow) draftDecisions(callees map[string]*workflowSpec) (map[string]jobDecision, []string) {
 	ids := sortedJobIDs(w.spec.Jobs)
-	stops := make(map[string]bool, len(ids))
+	work := make(map[string]draftHandling, len(ids))
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := w.spec.Jobs[ids[i]]
-		stops[ids[i]] = stopsOnDraft(&job, callees)
+		work[ids[i]] = workOnDraft(&job, callees)
 	}
-	return jobDraftHandlings(w.spec.Jobs, ids, stops)
+	return jobDraftDecisions(w.spec.Jobs, ids, work)
 }
 
-// jobDraftHandlings decides the draftHandling of each of jobs, whose IDs ids lists: first from the
-// job alone (ownDraftHandling), stops naming the jobs that fail a draft before their work, then by
-// following needs until no job moves (followHeldNeeds). A job moves at most twice, to
-// draftNeedSkip and then to draftUnreached, so 2n+1 passes over n jobs reach that point.
-func jobDraftHandlings(jobs map[string]workflowJob, ids []string, stops map[string]bool) map[string]draftHandling {
-	handling := make(map[string]draftHandling, len(ids))
-	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
-		job := jobs[ids[i]]
-		handling[ids[i]] = ownDraftHandling(&job, stops[ids[i]])
+// jobDraftDecisions decides each of jobs, whose IDs ids lists in name order, once: in needs order
+// (util.DependencyOrder, Kahn's algorithm, bounded by the job count), so every job is decided after
+// each job it needs, from its own handling and theirs (decideJob). work says what each job's own
+// steps or callee do on a draft (workOnDraft). Since a job reads only decisions already made, the
+// names of the jobs cannot change a decision. cycle lists, in name order, the jobs the order cannot
+// hold, each on a needs cycle or behind one; they stay undecided.
+func jobDraftDecisions(jobs map[string]workflowJob, ids []string, work map[string]draftHandling) (map[string]jobDecision, []string) {
+	order, cycle := util.DependencyOrder(ids, func(id string) []string {
+		job := jobs[id]
+		return job.NeedIDs()
+	})
+	decided := make(map[string]jobDecision, len(order))
+	for i := 0; i < len(order) && i < maxJobsPerFile; i++ {
+		job := jobs[order[i]]
+		decided[order[i]] = decideJob(&job, work[order[i]], decided)
 	}
-	for pass := 0; pass <= 2*len(ids) && pass <= 2*maxJobsPerFile; pass++ {
-		if !followHeldNeeds(jobs, ids, handling) {
-			break
-		}
-	}
-	return handling
+	return decided, cycle
 }
 
-// ownDraftHandling decides what job does on a draft from the job alone; stops says whether it
-// fails a draft before its work (stopsOnDraft).
-func ownDraftHandling(job *workflowJob, stops bool) draftHandling {
+// ownDraftHandling decides what job does on a draft from the job alone; work says what its own
+// steps or the reusable workflow it calls do there (workOnDraft).
+func ownDraftHandling(job *workflowJob, work draftHandling) draftHandling {
 	switch {
 	case len(reachingEvents(job.If, []string{pullRequestEvent})) == 0:
 		return draftUnreached
 	case strings.Contains(job.If, ghworkflow.PullRequestDraftField):
 		return draftConditionSkip
-	case !stops:
-		return draftRuns
+	case work != draftStops:
+		return work
 	case advisoryJob(job.ContinueOnError):
 		return draftAdvisoryStop
 	}
 	return draftStops
+}
+
+// decideJob decides what job does on a draft from its own handling (ownDraftHandling) and the
+// decisions of its needs, each made before it (jobDraftDecisions). A job its condition keeps from
+// a pull_request run, skips on a draft, or that calls a reusable workflow starting no job there
+// keeps its own handling. Every other job is judged with its needs (needDecision), whatever its
+// condition and its own first step: GitHub skips a job whose need failed or was skipped unless
+// its condition runs it after one, and a condition can mention a status function without doing
+// so (`!failure() && !cancelled()`, `always() && needs.plan.result == 'success'`), so the check
+// protects by default and reads none.
+//
+// TODO(#821): pass the proven always() aggregate job (internal/forge/workflow_aggregate.go) once
+// it is on main; until then such a workflow is declared in the exceptions list.
+func decideJob(job *workflowJob, work draftHandling, decided map[string]jobDecision) jobDecision {
+	own := ownDraftHandling(job, work)
+	if own == draftUnreached || own == draftConditionSkip || own == draftCallsIdle {
+		return jobDecision{handling: own}
+	}
+	if byNeed, held := needDecision(job.NeedIDs(), decided, strings.TrimSpace(job.If) == ""); held {
+		return byNeed
+	}
+	return jobDecision{handling: own}
+}
+
+// needDecision says how the decided needs of a job hold it back, naming the need that does. A job
+// without a condition of its own (plain) that needs a job a pull_request run never starts is
+// skipped on every pull request, not only on a draft: draftUnreached, which the required-checks
+// audit owns. A job that needs a job held back on a draft (heldOnDraft) is draftNeedSkip, naming
+// the first such need. A job with a condition behind a need that never starts is judged alone,
+// since a condition such as always() runs it after the skipped need. A need naming no job of the
+// workflow is not decided and holds nothing back. held is false when no need holds the job back.
+func needDecision(needs []string, decided map[string]jobDecision, plain bool) (jobDecision, bool) {
+	skip, held := jobDecision{}, false
+	for j := 0; j < len(needs) && j < maxJobsPerFile; j++ {
+		need, known := decided[needs[j]]
+		switch {
+		case !known:
+			continue
+		case need.handling == draftUnreached && plain:
+			return jobDecision{handling: draftUnreached, need: needs[j]}, true
+		case heldOnDraft(need.handling) && !held:
+			skip, held = jobDecision{handling: draftNeedSkip, need: needs[j]}, true
+		}
+	}
+	return skip, held
 }
 
 // beginsWithDraftStep reports whether the first step of job is the hosted gate's draft step. A
@@ -337,104 +421,71 @@ func beginsWithDraftStep(job *workflowJob) bool {
 	return len(job.Steps) > 0 && ghworkflow.DraftStepFault(&job.Steps[0]) == nil
 }
 
-// stopsOnDraft reports whether job fails a draft before its work: its first step is the draft
-// step, or it calls a reusable workflow of this repository (one of callees) that stops a draft in
-// every job (calleeStopsOnDraft). A reusable workflow of another repository cannot be read here.
-func stopsOnDraft(job *workflowJob, callees map[string]*workflowSpec) bool {
+// stepWork says what the steps of job do on a draft: draftStops when its first step is the draft
+// step, draftRuns otherwise.
+func stepWork(job *workflowJob) draftHandling {
+	if beginsWithDraftStep(job) {
+		return draftStops
+	}
+	return draftRuns
+}
+
+// workOnDraft says what job does on a draft before its condition and needs are read: its own
+// steps (stepWork), or the reusable workflow of this repository (one of callees) it calls
+// (calleeWork). A reusable workflow of another repository cannot be read here, so a job calling
+// one runs its work on a draft.
+func workOnDraft(job *workflowJob, callees map[string]*workflowSpec) draftHandling {
 	if job.Uses == "" {
-		return beginsWithDraftStep(job)
+		return stepWork(job)
 	}
 	name, local := strings.CutPrefix(job.Uses, "./"+plannedWorkflowDir)
 	callee := callees[name]
 	if !local || callee == nil {
-		return false
+		return draftRuns
 	}
-	return calleeStopsOnDraft(callee.Jobs)
+	return calleeWork(callee.Jobs)
 }
 
-// calleeStopsOnDraft reports whether a reusable workflow with jobs stops a draft before its work:
-// judged with their needs (jobDraftHandlings), its jobs each stop a draft (draftStops) or never
-// start on a pull request, and at least one stops it. A job that needs a job held back on a draft
-// is skipped there and reported as successful, so it does not stop the draft, and neither does a
-// job calling a further reusable workflow, which is not read.
-func calleeStopsOnDraft(jobs map[string]workflowJob) bool {
+// calleeWork says what a reusable workflow with jobs does on a draft, its jobs judged with their
+// needs like a caller's (jobDraftDecisions): draftStops when each stops a draft (draftStops) or
+// never starts on a pull request and at least one stops it, draftCallsIdle when none starts on a
+// pull request, and draftRuns otherwise. A job that needs a job held back on a draft is skipped
+// there and reported as successful, so it does not stop the draft; neither does a job calling a
+// further reusable workflow, which is not read (stepWork), nor a set of jobs the needs order
+// cannot hold.
+func calleeWork(jobs map[string]workflowJob) draftHandling {
 	ids := sortedJobIDs(jobs)
-	stops := make(map[string]bool, len(ids))
+	work := make(map[string]draftHandling, len(ids))
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := jobs[ids[i]]
-		stops[ids[i]] = beginsWithDraftStep(&job)
+		work[ids[i]] = stepWork(&job)
 	}
-	handling := jobDraftHandlings(jobs, ids, stops)
-	stopping := false
+	decided, cycle := jobDraftDecisions(jobs, ids, work)
+	if len(cycle) > 0 {
+		return draftRuns
+	}
+	result := draftCallsIdle
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
-		switch handling[ids[i]] {
+		switch decided[ids[i]].handling {
 		case draftStops:
-			stopping = true
+			result = draftStops
 		case draftUnreached:
 		default:
-			return false
+			return draftRuns
 		}
 	}
-	return stopping
+	return result
 }
 
-// followHeldNeeds moves every job a pull_request run starts whose needs hold it back (heldNeed)
-// to the handling its needs give it, whatever its condition and its own first step: GitHub skips
-// a job whose need failed or was skipped unless its condition runs it after one, and a condition
-// can mention a status function without holding after a failed need (`!failure() &&
-// !cancelled()`, `always() && needs.plan.result == 'success'`), so the check protects by default
-// and reads none. A job its condition keeps from a pull_request run or skips on a draft keeps its
-// own finding. It reports whether any job moved.
-//
-// TODO(#821): pass the proven always() aggregate job (internal/forge/workflow_aggregate.go) once
-// it is on main; until then such a workflow is declared in the exceptions list.
-func followHeldNeeds(jobs map[string]workflowJob, ids []string, handling map[string]draftHandling) bool {
-	moved := false
-	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
-		job := jobs[ids[i]]
-		current := handling[ids[i]]
-		if current == draftUnreached || current == draftConditionSkip {
-			continue
-		}
-		if next, _, held := heldNeed(job.NeedIDs(), handling, strings.TrimSpace(job.If) == ""); held && next != current {
-			handling[ids[i]], moved = next, true
-		}
-	}
-	return moved
-}
-
-// heldNeed says how needs hold back a job, naming the need that does. A job without a condition
-// of its own (plain) that needs a job a pull_request run never starts is skipped on every pull
-// request, not only on a draft: draftUnreached, which the required-checks audit owns. A job that
-// needs a job held back on a draft (heldOnDraft) is draftNeedSkip, naming the first such need. A
-// job with a condition behind a need that never starts is judged alone, since a condition such as
-// always() runs it after the skipped need. held is false when no need holds the job back.
-func heldNeed(needs []string, handling map[string]draftHandling, plain bool) (next draftHandling, need string, held bool) {
-	for j := 0; j < len(needs) && j < maxJobsPerFile; j++ {
-		h, known := handling[needs[j]]
-		switch {
-		case !known:
-			continue
-		case h == draftUnreached && plain:
-			return draftUnreached, needs[j], true
-		case heldOnDraft(h) && !held:
-			next, need, held = draftNeedSkip, needs[j], true
-		}
-	}
-	return next, need, held
-}
-
-// draftProblem says what a job with handling h does wrong on a draft, or returns "" for a job
-// that is held back on a draft without passing it. handling holds every job's handling, for the
-// need that holds back a draftNeedSkip job.
-func draftProblem(h draftHandling, job *workflowJob, handling map[string]draftHandling) string {
-	switch h {
+// draftProblem says what a job with decision d does wrong on a draft, or returns "" for a job
+// that is held back on a draft without passing it or runs nothing there.
+func draftProblem(d jobDecision, job *workflowJob) string {
+	switch d.handling {
 	case draftNeedSkip:
-		_, need, _ := heldNeed(job.NeedIDs(), handling, strings.TrimSpace(job.If) == "")
 		return fmt.Sprintf("may be skipped on a draft because it needs %s, which is held back on one: unless the job's "+
 			"condition runs it after a failed need, which this check does not read, GitHub skips it and reports the skip "+
 			"as successful, which a required check accepts; drop the need and begin the job with the draft step %q, or "+
-			"declare a workflow whose aggregate job needs the others in the exceptions list", need, ghworkflow.HostedGateDraftStepName)
+			"declare a workflow whose aggregate job needs the others in the exceptions list", d.need, ghworkflow.HostedGateDraftStepName)
 	case draftConditionSkip:
 		return fmt.Sprintf("skips a draft with the job condition %q: GitHub reports a job its condition skipped as "+
 			"successful, which a required check accepts; fail the draft in a first step %q instead",

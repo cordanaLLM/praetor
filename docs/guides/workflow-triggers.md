@@ -24,7 +24,8 @@ Each finding names the workflow file, the line of the trigger or job, and what s
 | A job a `pull_request` run starts whose first step is not the draft step | A draft runs the whole job, and runs it again on every push to the draft. | same |
 | A job whose condition reads `github.event.pull_request.draft` | GitHub reports a job its condition skipped as successful, and a required check accepts that, so a draft marked ready can merge on the skip. | same |
 | A job that stops a draft in its first step but sets `continue-on-error` | The failed draft reports success, which a required check accepts. | same |
-| A job that needs a job held back on a draft, whatever its condition and its own first step | GitHub skips a job whose need failed or was skipped unless its condition runs it after one, and reports the skip as successful, which a required check accepts, so a draft passes the job without its work; its own draft step never runs. The check does not read the condition ([Limits](#limits)). Each job of a chain is reported, naming the need that holds it back. | `TestAuditWorkflowTriggers_JobsSkippedThroughNeeds`, `TestAuditWorkflowTriggers_NeedSkipWhateverTheCondition` |
+| A job that needs a job held back on a draft, whatever its condition and its own first step | GitHub skips a job whose need failed or was skipped unless its condition runs it after one, and reports the skip as successful, which a required check accepts, so a draft passes the job without its work; its own draft step never runs. The check does not read the status functions in the condition ([Limits](#limits)). Each job of a chain is reported, naming the need that holds it back. | `TestAuditWorkflowTriggers_JobsSkippedThroughNeeds`, `TestAuditWorkflowTriggers_NeedSkipWhateverTheCondition`, `TestAuditWorkflowTriggers_NeedsChainAtTheJobBound` |
+| Jobs whose `needs` form a cycle, or need a job on one | No order runs them, so the check cannot say what they do on a draft. One finding names them all, on the line of the first of them. | `TestAuditWorkflowTriggers_ReportsNeedsCycle` |
 | A `pull_request` trigger whose jobs stop on a draft but that does not list `ready_for_review` in `types` | Marking the draft ready starts no run, so its failed check stands until the next push. | same |
 
 `pull_request_target` and `issue_comment` triggers are not judged; the permission audit covers
@@ -45,14 +46,22 @@ does. A job also passes when:
 
 - it calls a reusable workflow of this repository (`uses: ./.github/workflows/<file>`) whose
   jobs, judged with their needs like the caller's, each begin with the draft step and need no job
-  held back on a draft, or never start on a pull request
-  (`TestAuditWorkflowTriggers_FollowsNeedsInsideLocalCallee`);
+  held back on a draft, or never start on a pull request, as long as at least one of them does
+  start; or whose jobs all never start on a pull request, so nothing runs on a draft. A job that
+  needs such an idle caller is judged on its own, because the check does not read how GitHub
+  reports the caller (`TestAuditWorkflowTriggers_FollowsNeedsInsideLocalCallee`,
+  `TestAuditWorkflowTriggers_CalleeNeedsChain`);
 - a `pull_request` run never starts it, such as a deploy job guarded by
   `github.event_name != 'pull_request'`, or it has no condition of its own and needs such a job,
   which skips it on every pull request and not only on a draft.
 
 A `push` filtered to named branches, such as `[main, 'release/**']`, or to tags alone passes.
 `TestAuditWorkflowTriggers_Positive_HostedGateShapePasses` covers each of these.
+
+The check orders a workflow's jobs by their needs (`util.DependencyOrder`, Kahn's algorithm) and
+decides each job once, after every job it needs, from the job itself and the decisions of its
+needs. The names of the jobs therefore never change a verdict
+(`TestAuditWorkflowTriggers_VerdictIndependentOfJobNames` renames one workflow every way).
 
 ## Why findings warn
 
@@ -112,19 +121,23 @@ A finding is one line, and the last line counts them and names both ways out:
 ## Limits
 
 - A reusable workflow of another repository cannot be read, so a job calling one is reported.
-- The audit does not read job conditions, so a job that needs a job held back on a draft is
-  reported whatever its condition says. A condition can mention `always()`, `failure()` or
-  `cancelled()` and still skip the job after a failed need, as `!failure() && !cancelled()` does,
-  so the audit reports by default instead of guessing. That includes the aggregate merge gate that
-  begins with the draft step and runs with `if: always()`, which does fail a draft through its
-  failed need. A later change may pass that proven `always()` aggregate shape once the aggregate
-  prover of #821 is on main; until then, declare such a workflow in the exceptions list.
+- The audit reads three things from a job condition: whether a `pull_request` run can start the
+  job at all, whether it reads `github.event.pull_request.draft`, and whether the job has a
+  condition. It does not read the status functions `always()`, `failure()`, `success()` and
+  `cancelled()`, so a job that needs a job held back on a draft is reported whatever its
+  condition says. A condition can mention `always()`, `failure()` or `cancelled()` and still skip
+  the job after a failed need, as `!failure() && !cancelled()` does, so the audit reports by
+  default instead of guessing. That includes the aggregate merge gate that begins with the draft
+  step and runs with `if: always()`, which does fail a draft through its failed need. A later
+  change may pass that proven `always()` aggregate shape once the aggregate prover of #821 is on
+  main; until then, declare such a workflow in the exceptions list.
 - The audit does not read which jobs the ruleset requires, so every job of a need chain is
   reported, not only the required one.
 - A job with a condition of its own that needs a job a `pull_request` run never starts is judged
   alone, as if it had no needs: `always()` runs it on every pull request.
 - A reusable workflow that a reusable workflow of this repository calls in turn is not read, so
-  the job calling the first one is reported.
+  the job calling the first one is reported. So is a job calling a reusable workflow of this
+  repository whose jobs' needs form a cycle.
 - Steps after the draft step are not read: a later step whose condition calls `always()` still
   runs on a draft.
 - The run budget part of #817 (runs and run-minutes per workflow from the forge) and the check

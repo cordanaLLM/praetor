@@ -164,8 +164,8 @@ func TestAuditWorkflowTriggers_JobsSkippedThroughNeeds(t *testing.T) {
 	}
 }
 
-// Protect by default (#817): the check does not read a job's condition, so a job that needs a
-// job held back on a draft is reported whatever the condition says, even when the job begins
+// Protect by default (#817): the check does not read the status functions in a job's condition,
+// so a job that needs a job held back on a draft is reported whatever they say, even when it begins
 // with the draft step itself. Negative: a condition that mentions a status function but is false
 // after a failed need (GitHub's failure() holds when an ancestor job failed), one that mentions
 // always() inside a string, a compound always() condition, and the always() and !cancelled()
