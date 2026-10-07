@@ -581,6 +581,13 @@ PRAETOR_WORKSTATION_CONFIG=/path/to/workstation.yaml \
 See [framework targets](needs-capability-evidence.md#framework-targets) for what a target
 changes in a report.
 
+The tool scores the repository through `needs.ReportRepoWithFramework`, as
+`praetorctl needs report` does, and prints the same
+[umbrella-import recommendations](needs-capability-evidence.md#umbrella-imports)
+(`needs.FormatUmbrellaImports`) when the repository imports an umbrella package of the
+selected go framework (`TestNeedsMCPReportRecommendsUmbrellaSubPackages` in
+`cmd/standards-mcp/needs_coverage_test.go`).
+
 ## Retained public dogfood loops
 
 Use the [public dogfooding guide](../dogfooding.md) for the shared CLI/MCP
