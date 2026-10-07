@@ -84,6 +84,50 @@ const shortSkipFlagRule = `\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*
 // skipVariableRule refuses the skip variable ahead of a Git call (builtinEvasion).
 const skipVariableRule = `SKIP=.*git`
 
+// The in-place edit rule and the find rule (builtinEvasion) are a command word, the first one
+// of its line (lineThroughFirstWord), followed by a tail that starts with a `[^\n]*` gap. The
+// words are lowercase ASCII letters with pairwise distinct first letters within a list.
+var (
+	inPlaceEditorWords = []string{"sed", "perl"}
+	findWords          = []string{"find"}
+)
+
+const (
+	inPlaceEditTail = `[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*` + hooksDir
+	findTail        = `[^\n]*` + hooksDir + `[^\n]*\s-(delete|exec|execdir|ok)\b`
+)
+
+// lineThroughFirstWord returns a pattern for a line from its start through the first whole
+// word there (`\b` on both sides) that is one of words, captured as group 1. A rule starts
+// with it so Python's re starts that rule once per line. Unanchored, re retries the rule at
+// every occurrence of the word and backtracks through every later part from each one:
+// `\bfind\b[^\n]*X[^\n]*Y` on a line of find words and X costs cubic time in the line length;
+// anchored, quadratic.
+//
+// The anchor keeps a rule's language when a `[^\n]*` gap follows the word: a match from a
+// later occurrence of a word on the line is then a match from the first. Each repetition takes
+// one maximal run of word characters other than words, or none, and the one character after
+// it that is neither a word character nor a line break; `\w` is what each engine's own `\b`
+// reads (ASCII in RE2, Unicode in Python's re), so both find the occurrence `\bword\b` finds.
+// The run alternatives start with distinct letters and a run must end before a non-word
+// character, so a run parses one way only. TestAnchoredRulesKeepTheirLanguage replays both
+// rules against their unanchored form in RE2 and in Python's re.
+func lineThroughFirstWord(words ...string) string {
+	firsts := ""
+	runs := make([]string, 0, len(words)+1)
+	for _, word := range words {
+		firsts += word[:1]
+		rest := `\w+`
+		for index := len(word) - 1; index > 0; index-- {
+			letter := word[index : index+1]
+			rest = `(?:[^\W` + letter + `]\w*|` + letter + rest + `)?`
+		}
+		runs = append(runs, word[:1]+rest)
+	}
+	runs = append([]string{`[^\W` + firsts + `]\w*`}, runs...)
+	return `(?m)^(?:(?:` + strings.Join(runs, "|") + `)?[^\w\n])*(` + strings.Join(words, "|") + `)\b`
+}
+
 // builtinEvasion are the engine's evasion patterns. praetor's own Python guard
 // (`.config/agent/hooks/block_evasion.py`) carries the same list byte for byte
 // (TestPythonGuardCarriesTheBuiltinEvasionList), and adoption renders the interceptor it
@@ -121,6 +165,10 @@ const skipVariableRule = `SKIP=.*git`
 //     its ri alias, move, ren, copy, Set-Content, Out-File, icacls, attrib), matched in any
 //     letter case as both shells do; a `cmd /c` or `powershell -c` wrapper still carries the
 //     inner command in the text.
+//   - The in-place edit rule and the find rule start at the first sed or perl word, and the
+//     first find word, of a line (lineThroughFirstWord): they refuse what `\b(sed|perl)\b` and
+//     `\bfind\b` at any word did, and Python's re no longer retries them at every such word,
+//     which cost cubic time in the line length (#829).
 //
 // The short skip flag rule and the skip variable rule judge the command without the words of
 // chained read-only commands (readOnlyExemptRules); every other rule judges the whole command.
@@ -131,8 +179,8 @@ var builtinEvasion = []string{
 	skipVariableRule,
 	`(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])`,
 	`\b(?i:rm|rmdir|unlink|mv|cp|ln|chmod|chown|chattr|truncate|shred|tee|del|erase|rd|ri|remove-item|move|move-item|ren|rename|rename-item|copy|copy-item|set-content|add-content|out-file|icacls|attrib)\b[^\n]*` + hooksDir,
-	`\b(sed|perl)\b[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*` + hooksDir,
-	`\bfind\b[^\n]*` + hooksDir + `[^\n]*\s-(delete|exec|execdir|ok)\b`,
+	lineThroughFirstWord(inPlaceEditorWords...) + inPlaceEditTail,
+	lineThroughFirstWord(findWords...) + findTail,
 	`>\s*[\x22\x27]?[^ \t\n\x22\x27]*` + hooksDir,
 	`\blefthook\s+uninstall\b`,
 }
