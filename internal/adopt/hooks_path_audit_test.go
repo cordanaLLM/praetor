@@ -219,7 +219,7 @@ func TestAuditInstalledGitHook_Negative_HooksPathFromAnIncludedFile(t *testing.T
 				t.Fatal("an included core.hooksPath passed")
 			}
 			fix := `git config --file "` + filepath.Clean(included) + `" --unset-all core.hooksPath`
-			for _, want := range []string{`set in "` + filepath.Clean(included) + `"`, "local configuration includes", fix} {
+			for _, want := range []string{`set in "` + filepath.Clean(included) + `"`, "a file git config --local does not edit", fix} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("err %v; want %q", err, want)
 				}
@@ -279,9 +279,9 @@ func TestAuditHooksPath_Boundary_LefthookResetHint(t *testing.T) {
 	}
 }
 
-// TestMarkIncluded_Boundary: settings the read without includes lacks are marked, equal ones
-// matched one for one, so a value both set directly and included is marked once.
-func TestMarkIncluded_Boundary(t *testing.T) {
+// TestMarkOutsideScopeFile_Boundary: settings the reads of the scopes' own files lack are marked,
+// equal ones matched one for one, so a value both set directly and included is marked once.
+func TestMarkOutsideScopeFile_Boundary(t *testing.T) {
 	direct := hooksPathSetting{scope: "local", origin: "file:.git/config", value: ".husky"}
 	other := hooksPathSetting{scope: "local", origin: "file:.git/hooks.inc", value: os.DevNull}
 	for name, tc := range map[string]struct {
@@ -293,11 +293,185 @@ func TestMarkIncluded_Boundary(t *testing.T) {
 		"every value direct": {[]hooksPathSetting{direct, direct, other}, []bool{false, false, false}},
 	} {
 		settings := []hooksPathSetting{direct, direct, other}
-		markIncluded(settings, tc.direct)
+		markOutsideScopeFile(settings, tc.direct)
 		for i, setting := range settings {
-			if setting.included != tc.want[i] {
-				t.Fatalf("%s: setting %d included = %v, want %v", name, i, setting.included, tc.want[i])
+			if setting.outsideScopeFile != tc.want[i] {
+				t.Fatalf("%s: setting %d outsideScopeFile = %v, want %v", name, i, setting.outsideScopeFile, tc.want[i])
 			}
 		}
 	}
 }
+
+// symlinkedRoot returns root reached through a symlink to its parent directory, the way macOS
+// reaches its TMPDIR through /var -> /private/var, so Linux reproduces that case. Git resolves the
+// symlink in the common directory it reports for the returned spelling; the test is skipped where
+// the platform refuses to create a symlink.
+func symlinkedRoot(t *testing.T, root string) string {
+	t.Helper()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Dir(root), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	linked := filepath.Join(link, filepath.Base(root))
+	managed, err := managedHooksDir(t.Context(), linked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managed == filepath.Join(linked, ".git", "hooks") {
+		t.Fatalf("git reported the managed hooks directory %s through the symlink; the test would prove nothing", managed)
+	}
+	return linked
+}
+
+// TestAuditHooksPath_Boundary_SymlinkedRoot (#61): under a root reached through a symlink, a value
+// naming the managed hooks directory passes whether or not the directory exists yet, relative or
+// absolute through the symlink. A value naming another directory under that root fails, existing
+// or not, and so does a .. value that a cleaned spelling puts in the managed directory while the
+// symlink before the .. sends git elsewhere. A .. value the operating system resolves to the
+// managed directory passes.
+func TestAuditHooksPath_Boundary_SymlinkedRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		created bool
+		value   func(t *testing.T, root, linked string) string
+		pass    bool
+	}{
+		{"relative, managed directory exists", true, func(*testing.T, string, string) string { return ".git/hooks" }, true},
+		{"relative, managed directory not yet created", false, func(*testing.T, string, string) string { return ".git/hooks" }, true},
+		{"absolute through the symlink, not yet created", false, func(_ *testing.T, _, linked string) string {
+			return filepath.Join(linked, ".git", "hooks")
+		}, true},
+		{"relative, another directory not yet created", false, func(*testing.T, string, string) string { return ".githooks" }, false},
+		{"relative, another existing directory", true, func(t *testing.T, root, _ string) string {
+			plantKnownRunnerHook(t, filepath.Join(root, ".git", "custom-hooks"))
+			return ".git/custom-hooks"
+		}, false},
+		{".. after a symlink that leaves the root", true, func(t *testing.T, root, _ string) string {
+			elsewhere := t.TempDir()
+			plantKnownRunnerHook(t, filepath.Join(elsewhere, ".git", "hooks"))
+			if err := os.Symlink(filepath.Join(elsewhere, ".git"), filepath.Join(root, "escape")); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			return "escape/../.git/hooks"
+		}, false},
+		{".. inside the root, managed directory exists", true, func(t *testing.T, root, _ string) string {
+			if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			return "sub/../.git/hooks"
+		}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := hooksPathRepo(t)
+			linked := symlinkedRoot(t, root)
+			if !tc.created {
+				if err := os.RemoveAll(filepath.Join(root, ".git", "hooks")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			value := tc.value(t, root, linked)
+			setLocalHooksPath(t, root, value)
+			err := auditHooksPath(t.Context(), linked)
+			var finding *hooksPathFindingError
+			switch {
+			case tc.pass && err != nil:
+				t.Fatalf("core.hooksPath %q under a symlinked root refused: %v", value, err)
+			case !tc.pass && !errors.As(err, &finding):
+				t.Fatalf("core.hooksPath %q under a symlinked root: want a finding, got %v", value, err)
+			}
+		})
+	}
+}
+
+// xdgGlobalHooksPath sets core.hooksPath to value in $XDG_CONFIG_HOME/git/config of a fresh home,
+// with a ~/.gitconfig beside it when gitconfig is true, and unsets GIT_CONFIG_GLOBAL so git reads
+// both files. It returns the XDG file.
+func xdgGlobalHooksPath(t *testing.T, value string, gitconfig bool) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", "")
+	if err := os.Unsetenv("GIT_CONFIG_GLOBAL"); err != nil {
+		t.Fatal(err)
+	}
+	xdg := filepath.Join(home, ".config", "git", "config")
+	mustWrite(t, xdg, "[core]\n\thooksPath = "+filepath.ToSlash(value)+"\n")
+	if gitconfig {
+		mustWrite(t, filepath.Join(home, ".gitconfig"), "[user]\n\tname = praetor test\n")
+	}
+	return xdg
+}
+
+// TestAuditInstalledGitHook_Negative_HooksPathFromXDGBesideGitconfig (#61): git reads a global
+// value from $XDG_CONFIG_HOME/git/config while git config --global writes ~/.gitconfig when it
+// exists, so git config --unset-all --global, and lefthook install --reset-hooks-path with it,
+// leave the value in place. The failure names the XDG file and the git config --file command, and
+// running that command makes the audit pass.
+func TestAuditInstalledGitHook_Negative_HooksPathFromXDGBesideGitconfig(t *testing.T) {
+	root := hooksPathRepo(t)
+	xdg := filepath.Clean(xdgGlobalHooksPath(t, os.DevNull, true))
+	_, err := AuditInstalledGitHook(t.Context(), root)
+	if err == nil {
+		t.Fatal("a global core.hooksPath from the XDG file passed")
+	}
+	fix := `git config --file "` + xdg + `" --unset-all core.hooksPath`
+	for _, want := range []string{`(global scope, file:`, `set in "` + xdg + `"`, "a file git config --global does not edit", fix} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err %v; want %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "--unset-all --global") || strings.Contains(err.Error(), "--reset-hooks-path") {
+		t.Fatalf("an XDG value beside ~/.gitconfig got a hint that cannot remove it: %v", err)
+	}
+	if _, err := util.RunGit(t.Context(), root, "config", "--global", "--unset-all", hooksPathKey); err == nil {
+		t.Fatal("git config --unset-all --global removed the XDG value beside ~/.gitconfig")
+	}
+	if _, err := util.RunGit(t.Context(), root, "config", "--file", xdg, "--unset-all", hooksPathKey); err != nil {
+		t.Fatalf("the printed fix: %v", err)
+	}
+	if line, err := AuditInstalledGitHook(t.Context(), root); err != nil {
+		t.Fatalf("after the printed fix: %q, %v", line, err)
+	}
+}
+
+// TestAuditInstalledGitHook_Boundary_HooksPathFromXDGAlone (#61): without ~/.gitconfig, git config
+// --global writes the XDG file, so the failure names git config --unset-all --global and lefthook
+// install --reset-hooks-path, and the first makes the audit pass.
+func TestAuditInstalledGitHook_Boundary_HooksPathFromXDGAlone(t *testing.T) {
+	root := hooksPathRepo(t)
+	xdgGlobalHooksPath(t, os.DevNull, false)
+	_, err := AuditInstalledGitHook(t.Context(), root)
+	if err == nil || !strings.Contains(err.Error(), "git config --unset-all --global core.hooksPath") ||
+		!strings.Contains(err.Error(), "'lefthook install --reset-hooks-path'") || strings.Contains(err.Error(), "--file") {
+		t.Fatalf("XDG value without ~/.gitconfig: %v", err)
+	}
+	if _, err := util.RunGit(t.Context(), root, "config", "--global", "--unset-all", hooksPathKey); err != nil {
+		t.Fatalf("the printed fix: %v", err)
+	}
+	if line, err := AuditInstalledGitHook(t.Context(), root); err != nil {
+		t.Fatalf("after the printed fix: %q, %v", line, err)
+	}
+}
+
+// TestAuditHooksPath_Negative_ReadFailureIsNoFinding (#61): a value git cannot expand fails the
+// read, here a ~user value for a user that does not exist, and the audit returns that failure, not
+// a finding that claims a value leaves the managed directory.
+func TestAuditHooksPath_Negative_ReadFailureIsNoFinding(t *testing.T) {
+	root := hooksPathRepo(t)
+	setGlobalHooksPath(t, unexpandableHooksPath)
+	err := auditHooksPath(t.Context(), root)
+	var finding *hooksPathFindingError
+	if err == nil || errors.As(err, &finding) || !strings.Contains(err.Error(), "--get-all core.hooksPath") {
+		t.Fatalf("unreadable core.hooksPath: want a read failure, got %v", err)
+	}
+	setLocalHooksPath(t, root, ".githooks")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	if err := auditHooksPath(t.Context(), root); !errors.As(err, &finding) {
+		t.Fatalf("refused core.hooksPath: want a finding, got %v", err)
+	}
+}
+
+// unexpandableHooksPath is a core.hooksPath value git config --type=path cannot expand: the home
+// directory of a user that does not exist.
+const unexpandableHooksPath = "~praetor-no-such-user/hooks"
