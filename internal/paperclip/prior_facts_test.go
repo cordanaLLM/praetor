@@ -25,7 +25,7 @@ const (
 func synthesizeWidget(t *testing.T, repo, receiptSection string, facts hisscatalog.Facts) *Harness {
 	t.Helper()
 	writeRepoFile(t, repo, ".standards.yaml", widgetManifest+receiptSection)
-	h, err := SynthesizeHarness(context.Background(), repo, facts)
+	h, _, err := SynthesizeHarness(context.Background(), repo, facts)
 	if err != nil {
 		t.Fatal(err)
 	}

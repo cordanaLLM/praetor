@@ -62,9 +62,12 @@ func runPaperclipHarness(ctx context.Context, args []string) error {
 	for _, warning := range warnings {
 		fmt.Printf("[WARN] %s\n", warning)
 	}
-	h, err := paperclip.SynthesizeHarness(ctx, *path, facts)
+	h, substitution, err := paperclip.SynthesizeHarness(ctx, *path, facts)
 	if err != nil {
 		return fmt.Errorf("synthesize harness: %w", err)
+	}
+	if substitution != "" {
+		fmt.Printf("[WARN] %s\n", substitution)
 	}
 
 	if err := paperclip.WriteHarness(h, *path); err != nil {

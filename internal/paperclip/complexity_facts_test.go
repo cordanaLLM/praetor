@@ -42,7 +42,7 @@ func stricterFacts() hisscatalog.Facts {
 // rendering, not the function length alone.
 func TestSynthesizeHarness_Positive_ComplexityOverrideReachesRules(t *testing.T) {
 	repo := identifiedRepo(t)
-	h, err := SynthesizeHarness(t.Context(), repo, stricterFacts())
+	h, _, err := SynthesizeHarness(t.Context(), repo, stricterFacts())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -150,7 +150,7 @@ func assertCLIHarnessMatches(t *testing.T, repo string) {
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("RepositoryHISSFacts: %v %q", err, warnings)
 	}
-	synthesized, err := paperclip.SynthesizeHarness(t.Context(), repo, facts)
+	synthesized, _, err := paperclip.SynthesizeHarness(t.Context(), repo, facts)
 	if err != nil {
 		t.Fatal(err)
 	}

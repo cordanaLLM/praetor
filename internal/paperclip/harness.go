@@ -99,7 +99,8 @@ func releasedPushRows() []pushRows {
 var harnessInvariants = [...]string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", "HISS-10", "HISS-15", "HISS-16"}
 
 // SynthesizeHarness generates a Paperclip agent harness embedding fleet contracts. The
-// repository identity lookup (a git subprocess) runs under the caller's context. The
+// repository identity lookup (a git subprocess) and the register skill read run under the
+// caller's context, so a cancelled one fails the synthesis. The
 // platform is the identity .standards.yaml declares, else the origin remote's; with neither
 // the error wraps util.ErrRepoIdentityUnresolved and no harness is returned, because the
 // platform names a repository and none may be guessed. The invariants are the HISS catalog's
@@ -112,8 +113,8 @@ var harnessInvariants = [...]string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", 
 // those of the forge config.ResolveRepositoryForge resolves (forgePush); a repository whose
 // forge needs repository.forge and declares none is refused with config.ErrForgeUndeclared. The
 // register directive names the `caveman` skill only where the repository carries it
-// (SynthesizeHarnessOver).
-func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.Facts) (*Harness, error) {
+// (SynthesizeHarnessOver), which also says what the substitution string reports.
+func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.Facts) (*Harness, string, error) {
 	return SynthesizeHarnessOver(ctx, repoPath, facts, nil)
 }
 
@@ -123,47 +124,57 @@ func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.F
 // register directive names the `caveman` skill only where the repository carries
 // .agents/skills/caveman/SKILL.md or pending names it (compiler.AbsentRegisterSkills,
 // config.RegisterDirectiveWithout), so a harness never points a run at a skill the repository
-// does not hold (#235).
-func SynthesizeHarnessOver(ctx context.Context, repoPath string, facts hisscatalog.Facts, pending []string) (*Harness, error) {
+// does not hold (#235). substitution is empty unless a skill path could not be read, and then
+// says the directive names no skill in its place and why (harnessAbsentSkills); the caller
+// reports it, since the harness differs from the one a readable skill would give.
+func SynthesizeHarnessOver(ctx context.Context, repoPath string, facts hisscatalog.Facts, pending []string) (*Harness, string, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("paperclip: context cannot be nil")
+		return nil, "", fmt.Errorf("paperclip: context cannot be nil")
 	}
 	platform, err := resolvePlatform(ctx, repoPath)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	forge, err := config.ResolveRepositoryForge(ctx, repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("paperclip: harness push protocol: %w", err)
+		return nil, "", fmt.Errorf("paperclip: harness push protocol: %w", err)
 	}
-	absent := harnessAbsentSkills(ctx, repoPath, pending)
+	absent, substitution, err := harnessAbsentSkills(ctx, repoPath, pending)
+	if err != nil {
+		return nil, "", err
+	}
 	if facts.CeilingFuncLOC == 0 {
 		facts.CeilingFuncLOC = config.AuditMaxFuncLOC
 	}
 	invariants, err := catalogInvariants(facts)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	directive := config.RegisterDirectiveWithout(config.TextRegisterInternal, absent)
 	harness := releaseHarness(platform, forgePush(forge), receiptContract(receiptKeyPinned(ctx, repoPath)), invariants, directive)
-	return &harness, nil
+	return &harness, substitution, nil
 }
 
 // harnessAbsentSkills returns the register skills the repository at repoPath does not carry,
 // pending counted as carried (compiler.AbsentRegisterSkills). A skill path the confined read
 // refuses, such as one behind a symlinked .agents, which compile-context refuses to project too,
-// counts as absent: the directive then states the form alone, which points a run at nothing,
-// rather than failing a harness whose other rows do not depend on it. The context governs the git
-// lookup alone, as it does for the manifest reads; the skill read keeps its own bound
-// (contextopt.MaxDuration).
-func harnessAbsentSkills(ctx context.Context, repoPath string, pending []string) []string {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), contextopt.MaxDuration)
+// gives every register skill as absent and a substitution naming the refusal: the directive then
+// states the form alone, which points a run at nothing, rather than failing a harness whose other
+// rows do not depend on it, and the caller reports the substitution. A read the context ended,
+// the caller's cancellation or the read's own bound (contextopt.MaxDuration), is an error, never a
+// substitution.
+func harnessAbsentSkills(ctx context.Context, repoPath string, pending []string) ([]string, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
 	absent, err := compiler.AbsentRegisterSkills(ctx, repoPath, pending)
-	if err != nil {
-		return config.RegisterSkills()
+	if err == nil {
+		return absent, "", nil
 	}
-	return absent
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, "", fmt.Errorf("paperclip: read the register skills: %w", ctxErr)
+	}
+	return config.RegisterSkills(), "the register directive names no skill, since a register skill could not be read: " +
+		err.Error(), nil
 }
 
 // releaseHarness is this release's synthesis for platform under one set of repository facts:

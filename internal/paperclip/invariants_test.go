@@ -29,7 +29,7 @@ func invariantsForFacts(t *testing.T, facts hisscatalog.Facts) string {
 	t.Helper()
 	repo := t.TempDir()
 	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n  forge: forgejo\n")
-	h, err := SynthesizeHarness(t.Context(), repo, facts)
+	h, _, err := SynthesizeHarness(t.Context(), repo, facts)
 	if err != nil {
 		t.Fatal(err)
 	}

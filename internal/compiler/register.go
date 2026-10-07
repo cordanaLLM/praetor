@@ -67,7 +67,10 @@ func LoadRegisterBlockOver(ctx context.Context, root string, pending []string) (
 // as .agents/skills/<name>/SKILL.md (ReadCanonicalSkill), leaving out those named in pending,
 // which a caller writes before its output lands. A skill path that cannot be read is an error.
 // The register block, the Paperclip harness directive and adoption's warning about skills it
-// could not install all decide what a repository carries here, so they never disagree.
+// could not install all decide what a repository carries here, so over a readable repository
+// they agree. Over a refused read they differ by design: the block and the warning fail, while
+// the Paperclip harness states the register's form without a skill name and reports that
+// substitution (paperclip.SynthesizeHarnessOver).
 func AbsentRegisterSkills(ctx context.Context, root string, pending []string) ([]string, error) {
 	var absent []string
 	for _, name := range config.RegisterSkills() {
