@@ -228,7 +228,7 @@ func writeUmbrellaFinding(sb *strings.Builder, finding *UmbrellaFinding) {
 	case UmbrellaJustified:
 		writef(sb, "    wires every grouping (%d); the umbrella import is justified\n", finding.TotalGroupings)
 	case UmbrellaUnmapped:
-		writef(sb, "    references no grouping, only %s; nothing to recommend\n", strings.Join(finding.Unmapped, ", "))
+		sb.WriteString("    references no grouping" + umbrellaOnly(finding.Unmapped) + "; nothing to recommend\n")
 	default:
 		writeUmbrellaRecommendation(sb, finding)
 	}
@@ -262,6 +262,14 @@ func formatUmbrellaMeasurement(measurement *UmbrellaMeasurement) string {
 			measurement.ModulesBefore, measurement.ModulesAfter, measurement.ModulesBefore-measurement.ModulesAfter,
 			measurement.PackagesBefore, measurement.PackagesAfter, measurement.PackagesBefore-measurement.PackagesAfter)
 	}
+}
+
+// umbrellaOnly names the unmapped references of an umbrella that references no grouping.
+func umbrellaOnly(unmapped []string) string {
+	if len(unmapped) == 0 {
+		return ""
+	}
+	return ", only " + strings.Join(unmapped, ", ")
 }
 
 // umbrellaFiles names at most maxUmbrellaFilesShown importing files and counts the rest.

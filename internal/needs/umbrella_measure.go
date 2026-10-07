@@ -170,28 +170,53 @@ func (g moduleGraph) measureSwitch(umbrella string, replacements map[string][]st
 		PackagesBefore: len(before), PackagesAfter: len(after)}
 }
 
-// reachAfterSwitch returns every package reachable from the project's own packages once
-// each one's umbrella import is replaced. The walk visits each listed package at most once.
+// reachAfterSwitch returns every package of the build once each project package's umbrella
+// import is replaced. The go command adds dependencies no import names (the runtime and what
+// it imports), so every listed package the project's imports do not reach, and the runtime
+// itself, stays a root: the switch cannot remove them.
 func (g moduleGraph) reachAfterSwitch(umbrella string, replacements map[string][]string) (map[string]struct{}, error) {
+	sorted := slices.Sorted(maps.Keys(g))
+	own := make([]string, 0, len(g))
+	for _, pkg := range sorted {
+		if g[pkg].own {
+			own = append(own, pkg)
+		}
+	}
+	explicit, err := g.reach(own, func(pkg string) ([]string, error) { return g[pkg].imports, nil })
+	if err != nil {
+		return nil, err
+	}
+	roots := own
+	for _, pkg := range sorted {
+		if _, imported := explicit[pkg]; !imported || pkg == "runtime" {
+			roots = append(roots, pkg)
+		}
+	}
+	return g.reach(roots, func(pkg string) ([]string, error) { return g.switchedImports(pkg, umbrella, replacements) })
+}
+
+// reach returns every listed package reachable from roots through next. The walk visits each
+// listed package at most once.
+func (g moduleGraph) reach(roots []string, next func(pkg string) ([]string, error)) (map[string]struct{}, error) {
 	seen := make(map[string]struct{}, len(g))
 	queue := make([]string, 0, len(g))
-	for _, pkg := range slices.Sorted(maps.Keys(g)) {
-		if g[pkg].own {
+	enqueue := func(pkg string) {
+		_, listed := g[pkg]
+		if _, done := seen[pkg]; listed && !done {
 			seen[pkg] = struct{}{}
 			queue = append(queue, pkg)
 		}
 	}
+	for _, root := range roots {
+		enqueue(root)
+	}
 	for i := 0; i < len(queue) && i < len(g); i++ {
-		imports, err := g.switchedImports(queue[i], umbrella, replacements)
+		imports, err := next(queue[i])
 		if err != nil {
 			return nil, err
 		}
 		for _, imported := range imports {
-			_, listed := g[imported]
-			if _, done := seen[imported]; listed && !done {
-				seen[imported] = struct{}{}
-				queue = append(queue, imported)
-			}
+			enqueue(imported)
 		}
 	}
 	return seen, nil
