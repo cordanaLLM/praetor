@@ -360,10 +360,11 @@ class WikiSyncTests(unittest.TestCase):
 
             result = run(str(SCRIPT), str(source), str(missing), check=False)
 
+            # A missing local path is not GitHub's answer for a wiki without a first page.
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("could not be cloned", result.stderr)
-            self.assertIn("does not exist", result.stderr)
-            self.assertIn("initial page", result.stderr)
+            self.assertIn("could not be reached", result.stderr)
+            self.assertIn("does not appear to be a git repository", result.stderr)
+            self.assertNotIn("::notice", result.stdout)
             self.assertFalse(missing.exists())
 
     def test_credential_bearing_remote_is_rejected_without_echoing_secret(self) -> None:
@@ -475,6 +476,9 @@ class WikiSyncTests(unittest.TestCase):
             source = root / "wiki-source"
             source.mkdir()
             (source / "Home.md").write_text("# Page\n", encoding="utf-8")
+            # The probe reaches the remote; only the clone hangs.
+            remote = root / "unused.git"
+            init_bare(remote)
             real_git = shutil.which("git")
             self.assertIsNotNone(real_git)
             bin_dir = root / "bin"
@@ -501,6 +505,140 @@ class WikiSyncTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("exceeded the 1-second Git timeout", result.stderr)
+
+
+# The wiki remote GitHub would serve; the stubbed Git below answers for it, so no test reaches
+# the network.
+GITHUB_WIKI = "https://github.com/acme/widget.wiki.git"
+
+
+def stub_git(root: Path, ls_remote_body: str) -> tuple[dict[str, str], Path]:
+    """Put a git wrapper first on PATH that runs ls_remote_body for ls-remote.
+
+    Any other subcommand naming GITHUB_WIKI is refused, so no test reaches the network whatever
+    the script does; every other subcommand runs the real Git. Each invocation's arguments are
+    logged, so a test can tell whether the script went on to clone. Returns the environment and
+    the log path.
+    """
+    real_git = shutil.which("git")
+    if real_git is None:
+        raise unittest.SkipTest("git is not installed")
+    bin_dir = root / "bin"
+    bin_dir.mkdir()
+    log = root / "git-calls.log"
+    wrapper = bin_dir / "git"
+    wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf \'%s\\n\' "$*" >>"$GIT_CALL_LOG"\n'
+        'if [[ " $* " == *" ls-remote "* ]]; then\n'
+        f"{ls_remote_body}\n"
+        "fi\n"
+        f'if [[ " $* " == *"{GITHUB_WIKI}"* ]]; then\n'
+        '  echo "stub git: refusing a network call: $*" >&2\n'
+        "  exit 99\n"
+        "fi\n"
+        f'exec "{real_git}" "$@"\n',
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o700)
+    summary = root / "step-summary.md"
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "GIT_CALL_LOG": str(log),
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "WIKI_TOKEN": "test-token-value",
+    }
+    return env, log
+
+
+# GitHub's answer to a request for the Git repository of a wiki without a first page, which Git
+# reports in the C locale the script pins; any other locale gets a translated message.
+NOT_FOUND = (
+    'if [[ "${LC_ALL-}" != C ]]; then echo "fatal: Repository nicht gefunden" >&2; exit 128; fi\n'
+    "echo 'remote: Repository not found.' >&2\n"
+    f"echo \"fatal: repository '{GITHUB_WIKI}/' not found\" >&2\n"
+    "exit 128"
+)
+
+
+@unittest.skipIf(sys.platform == "win32", "bash script; no POSIX shell on Windows")
+class WikiProbeTests(unittest.TestCase):
+    """The probe that tells a wiki without a first page from every other failure."""
+
+    def sync(self, root: Path, remote: str, body: str, **env: str) -> tuple[subprocess.CompletedProcess[str], str, str]:
+        source = make_source(root, {"Home.md": "# Page\n"})
+        stub_env, log = stub_git(root, body)
+        result = run(str(SCRIPT), str(source), remote, check=False, extra_env={**stub_env, **env})
+        calls = log.read_text(encoding="utf-8") if log.exists() else ""
+        summary = Path(stub_env["GITHUB_STEP_SUMMARY"])
+        return result, calls, summary.read_text(encoding="utf-8") if summary.exists() else ""
+
+    def test_wiki_without_a_first_page_finishes_with_a_notice(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            result, calls, summary = self.sync(Path(directory), GITHUB_WIKI, NOT_FOUND)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("::notice title=Wiki not mirrored::", result.stdout)
+            self.assertIn("nothing was mirrored", result.stdout)
+            self.assertIn("save a first page in the web UI", summary)
+            self.assertNotIn(" clone ", f" {calls} ")
+            self.assertNotIn("test-token-value", result.stdout + result.stderr + summary)
+
+    def test_not_found_is_matched_in_the_c_locale_whatever_the_runner_locale(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            result, _, _ = self.sync(Path(directory), GITHUB_WIKI, NOT_FOUND, LC_ALL="de_DE.UTF-8", LANGUAGE="de")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("::notice", result.stdout)
+
+    def test_authentication_failure_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            body = f"echo \"fatal: Authentication failed for '{GITHUB_WIKI}/'\" >&2\nexit 128"
+            result, calls, summary = self.sync(Path(directory), GITHUB_WIKI, body)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("could not be reached", result.stderr)
+            self.assertIn("Authentication failed", result.stderr)
+            self.assertNotIn("::notice", result.stdout)
+            self.assertEqual(summary, "")
+            self.assertNotIn(" clone ", f" {calls} ")
+
+    def test_connectivity_failure_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            body = f"echo \"fatal: unable to access '{GITHUB_WIKI}/': Could not resolve host: github.com\" >&2\nexit 128"
+            result, _, summary = self.sync(Path(directory), GITHUB_WIKI, body)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Could not resolve host", result.stderr)
+            self.assertNotIn("::notice", result.stdout)
+            self.assertEqual(summary, "")
+
+    def test_not_found_text_after_a_timeout_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            body = f"echo \"fatal: repository '{GITHUB_WIKI}/' not found\" >&2\nexit 124"
+            result, _, _ = self.sync(Path(directory), GITHUB_WIKI, body)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("exceeded the 60-second Git timeout", result.stderr)
+            self.assertNotIn("::notice", result.stdout)
+
+    def test_reachable_wiki_is_probed_then_mirrored(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            root = Path(directory)
+            remote = root / "wiki.git"
+            init_bare(remote)
+            seed_remote(remote, {"Home.md": "# Old\n"})
+            result, calls, summary = self.sync(root, str(remote), ":")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Wiki sync completed successfully", result.stdout)
+            self.assertNotIn("::notice", result.stdout)
+            self.assertEqual(summary, "")
+            invoked = [line for line in calls.splitlines() if " ls-remote " in f" {line} " or " clone " in f" {line} "]
+            self.assertEqual(len(invoked), 2, calls)
+            self.assertIn(" ls-remote ", f" {invoked[0]} ")
+            self.assertIn(" clone ", f" {invoked[1]} ")
+            self.assertEqual(remote_files(remote)["Home.md"], "# Page\n")
 
 
 if __name__ == "__main__":
