@@ -50,12 +50,24 @@ const (
 // (perl for `perl {0}`), lower-cased and without a directory or an .exe suffix. It returns ""
 // when the shell is decided only when the workflow runs.
 func StepShell(spec *Spec, job *Job, step *Step) string {
-	for _, value := range []string{step.Shell, job.Defaults.Run.Shell, spec.Defaults.Run.Shell} {
-		if value = strings.TrimSpace(value); value != "" {
-			return shellProgram(value)
-		}
+	if value := StepShellValue(spec, job, step); value != "" {
+		return shellProgram(value)
 	}
 	return defaultShell(job)
+}
+
+// StepShellValue returns the shell: value that decides step's shell in job of spec, trimmed but
+// otherwise as written: the step's own, else the job's defaults.run.shell, else the workflow's.
+// It returns "" when none is set and the runner's default shell runs the step. A caller that
+// must tell a built-in keyword from a custom template (`bash {0}`) reads it here; StepShell
+// reduces both to the program they run.
+func StepShellValue(spec *Spec, job *Job, step *Step) string {
+	for _, value := range [...]string{step.Shell, job.Defaults.Run.Shell, spec.Defaults.Run.Shell} {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // shellProgram returns the program a shell: value names: the first word of a custom template, a
