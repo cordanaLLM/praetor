@@ -3,6 +3,7 @@ package operationalsync
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -95,14 +96,137 @@ func TestOverlaySuiteFailure_NamesBothDeadlinesOnlyWhenTheDeadlineStoppedTheRun(
 	}
 }
 
+// A package binary whose own -timeout panicked exits 1 while the guard's context is still live;
+// that is a slow runner, not an identity regression (#831).
+func TestOverlaySuiteFailure_Negative_BinaryTimeoutPanicIsADeadlineStop(t *testing.T) {
+	outer := suiteDeadlineNow.Add(30 * time.Minute)
+	d, err := deriveSuiteDeadline(suiteDeadlineNow, outer, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := "ok  \texample.com/config\t1.2s\npanic: test timed out after 10m0s\n\trunning tests:\n\t\tTestSlowAdopt (10m0s)\n" +
+		"FAIL\texample.com/adopt\t600.1s"
+	msg := overlaySuiteFailure(d, nil, errors.New("exit status 1"), out)
+	requireBothDeadlines(t, msg, d.nested, outer)
+	for _, want := range []string{"did not finish", "raise go test -timeout", "TestSlowAdopt"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("a package binary's timeout panic must read as a deadline stop naming %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "failed under the owner overlay") {
+		t.Fatalf("a package binary's timeout panic must not read as an identity regression:\n%s", msg)
+	}
+}
+
+func TestNestedGoTestTimeout_WholeSecondsAtOrAboveWhatRemains(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		left, want time.Duration
+	}{
+		{"positive: a fraction rounds up", 29*time.Minute + 30*time.Second + 400*time.Millisecond, 29*time.Minute + 31*time.Second},
+		{"boundary: whole seconds stay", overlaySuiteMinimum, overlaySuiteMinimum},
+		{"boundary: a nanosecond is a second", time.Nanosecond, time.Second},
+		{"negative: nothing left is a second, never the disabling 0", 0, time.Second},
+		{"negative: a passed deadline is a second", -1500 * time.Millisecond, time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := nestedGoTestTimeout(tc.left); got != tc.want {
+				t.Fatalf("nestedGoTestTimeout(%s) = %s, want %s", tc.left, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNestedGoTestArgs_CarryTheDerivedBound(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), suiteDeadlineNow.Add(29*time.Minute))
+	defer cancel()
+	args, err := nestedGoTestArgs(ctx, suiteDeadlineNow, []string{"./internal/adopt/..."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"test", "-count=1", "-timeout", "29m0s", "./internal/adopt/..."}; !slices.Equal(args, want) {
+		t.Fatalf("nested arguments = %q, want %q", args, want)
+	}
+	// Boundary: a deadline already passed still sets an alarm instead of disabling it.
+	args, err = nestedGoTestArgs(ctx, suiteDeadlineNow.Add(time.Hour), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"test", "-count=1", "-timeout", "1s"}; !slices.Equal(args, want) {
+		t.Fatalf("nested arguments past the deadline = %q, want %q", args, want)
+	}
+	// Negative: without a deadline the nested run would fall back to go test's fixed default.
+	if args, err = nestedGoTestArgs(context.Background(), suiteDeadlineNow, nil); err == nil {
+		t.Fatalf("a context without a deadline must be refused, got %q", args)
+	}
+}
+
 // overlayFixtureReader is the helper both fixture test packages read the module's manifest with.
 const overlayFixtureReader = "import (\n\t\"os\"\n\t\"path/filepath\"\n\t\"strings\"\n\t\"testing\"\n)\n\n" +
 	"func manifest(t *testing.T) string {\n\tdata, err := os.ReadFile(filepath.Join(\"..\", \".standards.yaml\"))\n" +
 	"\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\treturn string(data)\n}\n\n"
 
+// overlayFixtureBounded is the fixture test that fails unless the nested run's -timeout lets
+// the package binary outlive the guard's own deadline and stays at or under the most the parent
+// computed before the run. go test's default of ten minutes per package binary fails one side
+// or the other unless the window happens to round to exactly ten minutes (#831).
+const overlayFixtureBounded = `package bounded
+
+import (
+	"flag"
+	"os"
+	"testing"
+	"time"
+)
+
+func TestNestedTimeoutCoversTheGuardDeadline(t *testing.T) {
+	guard, err := time.Parse(time.RFC3339Nano, os.Getenv("OVERLAY_FIXTURE_DEADLINE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	most, err := time.ParseDuration(os.Getenv("OVERLAY_FIXTURE_MOST_TIMEOUT"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := flag.Lookup("test.timeout")
+	if f == nil {
+		t.Fatal("the test binary registers no test.timeout flag")
+	}
+	timeout, err := time.ParseDuration(f.Value.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, ok := t.Deadline()
+	if !ok || own.Before(guard) || timeout > most {
+		t.Fatalf("-timeout %s (binary deadline %s) must outlive the guard deadline %s and stay at or under %s",
+			timeout, own, guard, most)
+	}
+}
+`
+
+// boundedFixtureContext gives the nested run what overlayFixtureBounded reads: ctx's deadline,
+// and the most -timeout nestedGoTestTimeout can give a run whose arguments are built from now
+// on. goEnv is the whole environment the run otherwise gets (util.WithCommandEnvironment).
+func boundedFixtureContext(t *testing.T, ctx context.Context, goEnv []string) context.Context {
+	t.Helper()
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("the fixture run needs a context deadline")
+	}
+	env := append(slices.Clip(goEnv),
+		"OVERLAY_FIXTURE_DEADLINE="+deadline.Format(time.RFC3339Nano),
+		"OVERLAY_FIXTURE_MOST_TIMEOUT="+nestedGoTestTimeout(time.Until(deadline)).String())
+	bounded, err := util.WithCommandEnvironment(ctx, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bounded
+}
+
 // writeOverlayFixture writes a Git work tree holding a dependency-free module with a canonical
-// manifest and two test packages: canonical asserts the canonical owner, the planted identity
-// regression the guard exists to catch; neutral reads only what the overlay keeps.
+// manifest and three test packages: canonical asserts the canonical owner, the planted identity
+// regression the guard exists to catch; neutral reads only what the overlay keeps; bounded
+// holds overlayFixtureBounded.
 func writeOverlayFixture(t *testing.T, ctx context.Context) string {
 	t.Helper()
 	g, err := newGit(ctx)
@@ -120,12 +244,15 @@ func writeOverlayFixture(t *testing.T, ctx context.Context) string {
 	testWrite(t, source, "neutral/neutral_test.go", "package neutral\n\n"+overlayFixtureReader+
 		"func TestRepositoryName(t *testing.T) {\n\tif !strings.Contains(manifest(t), \"name: praetor\\n\") {\n"+
 		"\t\tt.Fatal(\"repository.name changed\")\n\t}\n}\n")
+	testWrite(t, source, "bounded/bounded_test.go", overlayFixtureBounded)
 	return source
 }
 
 // TestOverlaySuiteRefusesAPlantedIdentityRegression proves the guard can fail (rule 13): a test
 // asserting the canonical owner passes in the source tree and fails once runOverlaySuite has
-// overlaid the copy, while an identity-neutral package beside it passes the same run.
+// overlaid the copy, while an identity-neutral package beside it passes the same run. The
+// bounded package in that passing run proves the derived -timeout reaches the nested package
+// binary through runOverlaySuite's real arguments.
 func TestOverlaySuiteRefusesAPlantedIdentityRegression(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns nested go test runs over a fixture module; excluded from -short")
@@ -137,17 +264,23 @@ func TestOverlaySuiteRefusesAPlantedIdentityRegression(t *testing.T) {
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), deadline.nested)
 	defer cancel()
-	ctx, err = util.WithCommandEnvironment(ctx, testsupport.OfflineGoEnv(t))
+	goEnv := testsupport.OfflineGoEnv(t)
+	ctx, err = util.WithCommandEnvironment(ctx, goEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := writeOverlayFixture(t, ctx)
 
-	if out, err := util.RunCommand(ctx, source, "go", "test", "-count=1", "./canonical/..."); err != nil {
+	args, err := nestedGoTestArgs(ctx, time.Now(), []string{"./canonical/..."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := util.RunCommand(ctx, source, "go", args...); err != nil {
 		t.Fatalf("the planted test must pass against the canonical manifest (%v):\n%s", err, out)
 	}
-	if out, err := runOverlaySuite(t, ctx, source, []string{"./neutral/..."}); err != nil {
-		t.Fatalf("an identity-neutral package must pass under the overlay (%v):\n%s", err, out)
+	bounded := boundedFixtureContext(t, ctx, goEnv)
+	if out, err := runOverlaySuite(t, bounded, source, []string{"./neutral/...", "./bounded/..."}); err != nil {
+		t.Fatalf("an identity-neutral package must pass under the overlay, with the derived -timeout (%v):\n%s", err, out)
 	}
 	out, err := runOverlaySuite(t, ctx, source, []string{"./canonical/..."})
 	if err == nil {

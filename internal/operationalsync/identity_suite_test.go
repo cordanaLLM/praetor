@@ -91,11 +91,43 @@ func deriveSuiteDeadline(now, outer time.Time, hasOuter bool) (suiteDeadline, er
 	return d, nil
 }
 
-// overlaySuiteFailure words a failed nested run. A run its derived deadline stopped names both
-// deadlines; any other failure is the identity regression the guard exists to report.
+// nestedTimeoutPanic opens the panic a test binary prints on standard output when its own
+// -timeout runs out (testing.(*M).startAlarm). overlaySuiteFailure reads a nested run that
+// printed it as a deadline stop, not as an identity regression.
+const nestedTimeoutPanic = "panic: test timed out after "
+
+// nestedGoTestTimeout is the -timeout a nested go test gets when left remains of its context's
+// deadline: whole seconds at or above left. Every package binary starts after the arguments are
+// built, so its own alarm fires after the context's deadline, and that deadline stops the run,
+// not go test's default of ten minutes per package binary (#831). It never drops under one
+// second, because -timeout 0 disables the binary's alarm.
+func nestedGoTestTimeout(left time.Duration) time.Duration {
+	timeout := left.Truncate(time.Second)
+	if timeout < left {
+		timeout += time.Second
+	}
+	return max(timeout, time.Second)
+}
+
+// nestedGoTestArgs builds the nested go test arguments for packages, with -timeout from what
+// remains of ctx's deadline at now (nestedGoTestTimeout). It refuses a context without a
+// deadline, which would leave every package binary on go test's fixed default (HISS-02).
+func nestedGoTestArgs(ctx context.Context, now time.Time, packages []string) ([]string, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil, errors.New("nested go test needs a context deadline to derive its -timeout from")
+	}
+	args := []string{"test", "-count=1", "-timeout", nestedGoTestTimeout(deadline.Sub(now)).String()}
+	return append(args, packages...), nil
+}
+
+// overlaySuiteFailure words a failed nested run. A run that its derived deadline stopped, or in
+// which a package binary's own -timeout panicked, names both deadlines and the flag that moves
+// them; any other failure is the identity regression the guard exists to report.
 func overlaySuiteFailure(d suiteDeadline, ctxErr, runErr error, out string) string {
-	if errors.Is(ctxErr, context.DeadlineExceeded) {
-		return fmt.Sprintf("identity-sensitive packages did not finish by the %s (%v):\n%s", d, runErr, out)
+	if errors.Is(ctxErr, context.DeadlineExceeded) || strings.Contains(out, nestedTimeoutPanic) {
+		return fmt.Sprintf("identity-sensitive packages did not finish by the %s; raise go test -timeout (%v):\n%s",
+			d, runErr, out)
 	}
 	return fmt.Sprintf("identity-sensitive packages failed under the owner overlay (%v):\n%s", runErr, out)
 }
@@ -117,7 +149,9 @@ func TestIdentitySensitivePackagesPassUnderTheOwnerOverlay(t *testing.T) {
 	}
 	// The nested run's deadline comes from the outer go test -timeout rather than a fixed minute
 	// count: internal/adopt alone took 341 to 557 s on macOS runners, past the eight minutes this
-	// guard once allowed (#831), and any fixed count only moves that cliff (HISS-21).
+	// guard once allowed (#831), and any fixed count only moves that cliff (HISS-21). The nested
+	// go test passes the same bound on as its own -timeout (nestedGoTestArgs), because its
+	// default of ten minutes per package binary is such a fixed count.
 	outer, hasOuter := t.Deadline()
 	deadline, err := deriveSuiteDeadline(time.Now(), outer, hasOuter)
 	if err != nil {
@@ -137,7 +171,8 @@ func TestIdentitySensitivePackagesPassUnderTheOwnerOverlay(t *testing.T) {
 }
 
 // runOverlaySuite copies repoRoot's working tree into a fresh directory, applies the owner
-// overlay to the copy's .standards.yaml and runs go test over packages there. It returns the
+// overlay to the copy's .standards.yaml and runs go test over packages there, with -timeout
+// from what remains of ctx's deadline once the copy is done (nestedGoTestArgs). It returns the
 // nested run's output and error instead of failing t, so the guard and the fixture proving it
 // refuses a planted regression share one implementation.
 func runOverlaySuite(t *testing.T, ctx context.Context, repoRoot string, packages []string) (string, error) {
@@ -145,7 +180,10 @@ func runOverlaySuite(t *testing.T, ctx context.Context, repoRoot string, package
 	dest := t.TempDir()
 	copyTrackedTree(t, ctx, repoRoot, dest)
 	overlayManifestInPlace(t, dest)
-	args := append([]string{"test", "-count=1"}, packages...)
+	args, err := nestedGoTestArgs(ctx, time.Now(), packages)
+	if err != nil {
+		return "", err
+	}
 	return util.RunCommand(ctx, dest, "go", args...)
 }
 

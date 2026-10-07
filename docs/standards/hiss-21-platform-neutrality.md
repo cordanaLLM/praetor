@@ -505,11 +505,17 @@ step green, so the job limit is now 120 minutes (#729).
 adopt alone took 341 to 557 s, so the identity suite timed out at random. A fixed count only
 moves that cliff, so the nested run's deadline now comes from the outer `go test -timeout`
 (`t.Deadline()`) less a one-minute margin for stopping the nested run and reporting it, and
-`go test -timeout 0` keeps an explicit 30-minute bound. A window under 15 seconds fails at once,
-and a run its deadline stopped fails naming both deadlines, so a slow runner reads as "raise the
-timeout", not as an identity regression. The nested run keeps all of adopt: a name or file
-selection would be the one-at-a-time list #263 found incomplete.
-`deriveSuiteDeadline` in `internal/operationalsync/identity_suite_test.go` derives the deadline;
-`internal/operationalsync/identity_suite_deadline_test.go` tests it at the minimum and on either
-side of it, and its `TestOverlaySuiteRefusesAPlantedIdentityRegression` proves the guard still
-fails a test that asserts the canonical owner.
+`go test -timeout 0` keeps an explicit 30-minute bound. The nested `go test` passes that bound
+on as its own `-timeout`, in whole seconds at or above what remains: without it every nested
+package binary keeps the 10-minute default, the same fixed count one slow macOS runner away.
+Each binary starts after that value is computed, so the deadline, not a binary's own alarm,
+stops the run. A window under 15 seconds fails at once, and a run stopped
+by its deadline, or by a binary's `panic: test timed out`, fails naming both deadlines and
+`go test -timeout`, so a slow runner does not read as an identity regression. The nested run
+keeps all of adopt: a name or file selection would be the one-at-a-time list #263 found
+incomplete. `deriveSuiteDeadline` and `nestedGoTestArgs` in
+`internal/operationalsync/identity_suite_test.go` derive the deadline and the nested
+`-timeout`; `internal/operationalsync/identity_suite_deadline_test.go` tests both at their
+boundaries and the timeout-panic wording, and its
+`TestOverlaySuiteRefusesAPlantedIdentityRegression` proves the guard still fails a test that
+asserts the canonical owner, and that the derived `-timeout` reaches the nested package binary.
