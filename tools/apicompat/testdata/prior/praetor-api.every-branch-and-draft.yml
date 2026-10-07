@@ -3,9 +3,7 @@ name: Praetor API Compatibility
 
 'on':
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: ['main']
 
 permissions:
   contents: read
@@ -13,8 +11,6 @@ permissions:
 jobs:
   api-compatibility:
     name: Go API Compatibility
-    # A draft skips the job; marking it ready runs it (ready_for_review).
-    if: github.event.pull_request.draft != true
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:

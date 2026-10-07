@@ -318,9 +318,15 @@ func auditFamilyFilesCommitted(ctx context.Context, rootDir string, families []m
 		"re-include and commit them", gate, strings.Join(found, ", "))
 }
 
-// auditManagedFamily compares every asset of family, then its workflow, with the canonical
-// text and returns the number of assets verified.
+// auditManagedFamily compares every asset of family, then its workflow rendered for the
+// repository's default branch (adopt.FamilyForRepository), with the canonical text and returns
+// the number of assets verified.
 func auditManagedFamily(ctx context.Context, rootDir string, family managedasset.Family) (int, error) {
+	rendered, err := adopt.FamilyForRepository(ctx, rootDir, family)
+	if err != nil {
+		return 0, fmt.Errorf("[FAIL] %s: %w", familyGate(family), err)
+	}
+	family = rendered
 	names := family.Names()
 	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
 		if err := auditExactManagedFile(ctx, rootDir, family, family.AssetPath(names[index])); err != nil {

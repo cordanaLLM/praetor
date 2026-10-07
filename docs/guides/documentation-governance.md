@@ -860,8 +860,14 @@ The adopted CLI therefore emits the same locked gate when it is built
 inside a generated development container; undeclared `go:embed` inputs remain a
 bootstrap error.
 
-The dedicated hosted workflow runs for every push and pull request. The main CI
-workflow also selects the gate on documentation-only changes while skipping the
+The dedicated hosted workflow runs for every push to the repository's default
+branch and every pull request that is not a draft, and again when a draft is
+marked ready for review. Adoption renders it for the default branch the branch
+ruleset protects, and audit locks that rendering; a push to another branch or
+of a tag starts no run, and a draft skips the job while the ruleset keeps
+requiring `Documentation Governance`. The rules are the API compatibility
+gate's ([When the workflow runs](api-compatibility.md#when-the-workflow-runs)).
+The main CI workflow also selects the gate on documentation-only changes while skipping the
 race and security suites; state-only changes under the ignored private ledgers
 select no documentation work. Source/configuration changes reach the same gate
 through `make verify-all`. Only Markdown, images, plain-text documents and the

@@ -17,7 +17,7 @@ and `praetorctl audit` compares them byte for byte, one consistent line-ending s
 | File | Purpose |
 | :--- | :--- |
 | `tools/apicompat/gate/main.go` | The gate program. Its `//go:build apicompatgate` constraint keeps it out of every `./...` pattern, so the repository's own build, tests, linters and API never include it; `go run` builds it because the command names the file. |
-| `.github/workflows/praetor-api.yml` | One job, `Go API Compatibility`, on every pull request and push. It has no condition, so the branch ruleset adoption renders requires it. |
+| `.github/workflows/praetor-api.yml` | One job, `Go API Compatibility`, on pushes to the repository's default branch and on pull requests that are not drafts ([When the workflow runs](#when-the-workflow-runs)). The branch ruleset adoption renders requires it. |
 
 Adoption refuses, even with `--force`, to overwrite a file the repository already had at either
 path before the gate was adopted. `adoption.decline` cannot name the `api-compatibility-gate`
@@ -30,6 +30,37 @@ beside the documentation gate's. The actionlint runner labels adoption declares 
 every workflow it writes (`adoptedWorkflowFiles` in `internal/adopt/harness_ci.go`), so the
 runner `praetor-api.yml` runs on is declared exactly while adoption emits the gate
 (`TestActionlintLabelsFollowTheAPICompatibilityGate` in `internal/adopt/actionlint_test.go`).
+
+## When the workflow runs
+
+Adoption renders the workflow for the repository's default branch, resolved as for the branch
+ruleset: `repository.default_branch` in `.standards.yaml`, else the origin remote's `HEAD`, else
+`main` (`forge.RepositoryDefaultBranch` in `internal/forge/default_branch.go`). The rendering is
+the one audit locks, so a copy rendered for another branch, or edited, fails the audit.
+
+| Event | Runs the job |
+| :--- | :--- |
+| Push to the default branch | Yes. |
+| Push to any other branch, or of a tag | No run starts. |
+| Pull request opened, updated or reopened | Yes, unless it is a draft. |
+| Draft marked ready for review | Yes (`ready_for_review`). |
+| Draft opened or updated, or any other pull request activity | No. |
+
+A draft skips the job through `if: github.event.pull_request.draft != true`. GitHub reports a
+job its condition skipped as successful, and refuses to merge a draft. The `ready_for_review`
+run reports the check on the same head commit once the draft is marked ready, so the ruleset
+still requires the context: the required-context discovery keeps a job with this exact skip only
+in a workflow that lists `ready_for_review` (`withoutDraftSkip` in
+`internal/forge/workflow_guard.go`, `TestDraftSkipKeepsAJobRequiredOnlyWhenReadyReruns`). The
+event table is tested against both hosted gates
+(`TestHostedWorkflowsRunOnlyOnTheDefaultBranchAndReadyPullRequests` in
+`internal/managedasset/workflow_branch_test.go`).
+
+An earlier Praetor wrote a workflow that ran on every push to every branch and tag and on every
+draft (#815). Plain `praetorctl adopt` refreshes that text, and a rendering for a former default
+branch, without `--force`; a hand-edited copy still needs `--force`
+(`TestAdoptRefreshesPriorHostedGatesAndKeepsEditedOnes` in
+`internal/adopt/workflow_branch_test.go`).
 
 ## Repositories without Go
 

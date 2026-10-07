@@ -30,11 +30,17 @@ const (
 )
 
 // Workflow is the dedicated, required hosted documentation gate adoption writes to
-// WorkflowFile. Its job name is StatusContext. After the Markdown check it runs the figure
-// engine's check and sources commands (docs/adr/0016-figures-for-adopters.md, operator decision
-// 4), which the documentation facet writes beside this gate and which skip, saying why, in a
-// repository without a figure; the job stays on Linux, where the Node set up for the Markdown
-// gate runs them.
+// WorkflowFile, rendered for a repository whose default branch is main; adoption and audit
+// render it for the repository's own default branch (managedasset.Family.ForBranch), which names
+// the one branch a push runs it on. Its job name is StatusContext. The job runs on every pull
+// request that is not a draft and again when a draft is marked ready (ready_for_review), so the
+// branch ruleset still requires it (the draft skip in internal/forge/workflow_guard.go); a push
+// to another branch or a tag, and a draft, start no run (#815).
+//
+// After the Markdown check the job runs the figure engine's check and sources commands
+// (docs/adr/0016-figures-for-adopters.md, operator decision 4), which the documentation facet
+// writes beside this gate and which skip, saying why, in a repository without a figure; the job
+// stays on Linux, where the Node set up for the Markdown gate runs them.
 //
 // Audit locks an adopter's copy to these bytes, so the text holds to the policies an adopter
 // may enforce without being able to edit it: every action is pinned by full commit SHA with
@@ -51,7 +57,9 @@ name: Praetor Documentation Governance
 
 'on':
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
+    branches: ['main']
 
 permissions:
   contents: read
@@ -59,6 +67,8 @@ permissions:
 jobs:
   documentation:
     name: Documentation Governance
+    # A draft skips the job; marking it ready runs it (ready_for_review).
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -97,6 +107,9 @@ var priorDigests = map[string]string{
 	"97d1fad8184587e73dfa25af2cc4e30cf9fa278abf5868fdc0dc27c7a222c95e": WorkflowFile,
 	// The SHA-pinned gate before it ran the figure engine's check and sources commands.
 	"938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e": WorkflowFile,
+	// The gate that ran on every push to every branch and tag and on every draft pull request
+	// (#815).
+	"05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked

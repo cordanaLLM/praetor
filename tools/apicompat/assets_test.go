@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Positive: the inventory is the gate program alone and reads its exact embedded bytes.
@@ -105,19 +106,26 @@ func TestWorkflowRunsTheGate(t *testing.T) {
 	}
 }
 
-// Positive: the job reports StatusContext on every pull request, so the rendered ruleset
-// requires it. Negative: a condition on the job removes it from the required set. Boundary: an
-// advisory job (continue-on-error) is not required either.
+// Positive: the job reports StatusContext on every pull request that can merge, its draft skip
+// included, so the rendered ruleset requires it. Negative: another condition, or the draft skip
+// in a workflow that does not run again on ready_for_review, removes it from the required set.
+// Boundary: an advisory job (continue-on-error) is not required either.
 func TestWorkflowIsARequiredCheck(t *testing.T) {
 	contexts, err := forge.RequiredStatusContextsPlanned(t.Context(), t.TempDir(), map[string][]byte{WorkflowFile: []byte(Workflow)})
 	if err != nil || !slices.Equal(contexts, []string{StatusContext}) {
 		t.Fatalf("required status contexts = %v, %v; want [%s]", contexts, err, StatusContext)
 	}
 	job := "    name: " + StatusContext + "\n"
+	skip := "    if: github.event.pull_request.draft != true\n"
 	for name, mutated := range map[string]string{
-		"conditional": strings.Replace(Workflow, job, job+"    if: github.actor != 'bot'\n", 1),
-		"advisory":    strings.Replace(Workflow, job, job+"    continue-on-error: true\n", 1),
+		"conditional":     strings.Replace(Workflow, skip, "    if: github.actor != 'bot'\n", 1),
+		"no ready rerun":  strings.Replace(Workflow, ", ready_for_review]", "]", 1),
+		"advisory":        strings.Replace(Workflow, job, job+"    continue-on-error: true\n", 1),
+		"default trigger": strings.Replace(Workflow, "    types: [opened, synchronize, reopened, ready_for_review]\n", "", 1),
 	} {
+		if mutated == Workflow {
+			t.Fatalf("%s: the mutation did not change the workflow", name)
+		}
 		contexts, err := forge.RequiredStatusContextsPlanned(t.Context(), t.TempDir(), map[string][]byte{WorkflowFile: []byte(mutated)})
 		if err != nil || len(contexts) != 0 {
 			t.Fatalf("%s job: required status contexts = %v, %v; want none", name, contexts, err)
@@ -125,15 +133,37 @@ func TestWorkflowIsARequiredCheck(t *testing.T) {
 	}
 }
 
-// PriorDigests. Positive and boundary: no Prior text exists yet. Negative: the returned map is
-// a private copy, so a caller cannot add a digest the family then accepts.
+// PriorDigests. Positive: every file under testdata/prior reproduces one digest, mapped to the
+// workflow, and every digest is reproduced. Negative: the current text is no Prior text, and the
+// returned map is a private copy, so a caller cannot add a digest the family then accepts.
+// Boundary: a CRLF checkout of a prior text reproduces the same digest.
 func TestPriorDigests(t *testing.T) {
-	if len(PriorDigests()) != 0 {
-		t.Fatal("a Prior text is recorded although no earlier gate text shipped")
+	entries, err := os.ReadDir(filepath.Join("testdata", "prior"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	prior := PriorDigests()
-	prior["x"] = WorkflowFile
-	if len(PriorDigests()) != 0 {
+	digests := PriorDigests()
+	if len(entries) != len(digests) {
+		t.Fatalf("testdata/prior holds %d texts for %d digests", len(entries), len(digests))
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join("testdata", "prior", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, text := range [][]byte{data, bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))} {
+			digest, _, err := util.CanonicalTextDigest(text)
+			if err != nil || digests[digest] != WorkflowFile {
+				t.Fatalf("%s: digest %s maps to %q (%v), want %s", entry.Name(), digest, digests[digest], err, WorkflowFile)
+			}
+		}
+	}
+	current, _, err := util.CanonicalTextDigest([]byte(Workflow))
+	if err != nil || digests[current] != "" {
+		t.Fatalf("the current workflow is listed as a Prior text (%v)", err)
+	}
+	digests["x"] = WorkflowFile
+	if len(PriorDigests()) != len(entries) {
 		t.Fatal("PriorDigests exposed the map for mutation")
 	}
 }

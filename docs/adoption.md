@@ -143,6 +143,14 @@ required when the job reports on every pull request:
   requests over ([Renovate pull requests](guides/contributing.md#renovate-pull-requests)). A
   repository without such a takeover should not use it: a skipped job reports success, so
   nothing then verifies the Renovate pull request it merges.
+- A job whose whole condition is `github.event.pull_request.draft != true`, bare or as one
+  `${{ }}` expression, counts when its workflow's `pull_request` trigger lists
+  `ready_for_review` in `types`. The skipped draft reports success, but GitHub refuses to merge a
+  draft, and marking it ready runs the job on the same head commit. Without that type the skip
+  would stand as the passing check once the draft is ready, so the job is optional
+  (`TestDraftSkipKeepsAJobRequiredOnlyWhenReadyReruns` in
+  `internal/forge/workflow_draft_skip_test.go`). The hosted gates adoption writes use it
+  ([When the workflow runs](guides/api-compatibility.md#when-the-workflow-runs)).
 - The job is not advisory: `continue-on-error` is absent or `false`.
 
 Any other condition makes the job optional, a status function joined with anything else
