@@ -2,8 +2,10 @@ package paperclip
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,7 +25,7 @@ var plainInternalDirective = config.RegisterDirectiveWithout(config.TextRegister
 func TestHarnessContractStatesTheInternalRegister(t *testing.T) {
 	repo := identifiedRepo(t)
 	writeRepoFile(t, repo, cavemanSkillRel, "---\nname: caveman\ndescription: fixture\n---\n")
-	h, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
+	h, _, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +55,7 @@ func TestHarnessContractStatesTheInternalRegister(t *testing.T) {
 func TestHarnessContractNamesNoAbsentSkill(t *testing.T) {
 	repo := identifiedRepo(t)
 	writeRepoFile(t, repo, compiler.CanonicalSkillRel("social-text"), "---\nname: social-text\ndescription: fixture\n---\n")
-	h, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
+	h, _, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,24 +78,46 @@ func TestHarnessContractNamesNoAbsentSkill(t *testing.T) {
 }
 
 // Boundary: a skill the caller installs before the harness lands (pending) counts as carried,
-// a pending name that is no register skill changes nothing, and a caveman path the confined read
-// refuses counts as absent, so the directive names no skill a run cannot open and the harness
-// still synthesizes.
+// a pending name that is no register skill changes nothing, and neither is a substitution. A
+// caveman path the confined read refuses counts as absent, so the directive names no skill a run
+// cannot open and the harness still synthesizes, and the substitution names the refused path, so
+// the plain directive never lands unreported.
 func TestSynthesizeHarnessOver_Boundary(t *testing.T) {
 	repo := identifiedRepo(t)
-	named, err := SynthesizeHarnessOver(t.Context(), repo, unknownFacts, []string{"caveman"})
-	if err != nil || named.OperatingContract[5] != config.RegisterDirective(config.TextRegisterInternal) {
-		t.Fatalf("pending caveman: contract = %+v, err = %v", named, err)
+	named, substitution, err := SynthesizeHarnessOver(t.Context(), repo, unknownFacts, []string{"caveman"})
+	if err != nil || substitution != "" || named.OperatingContract[5] != config.RegisterDirective(config.TextRegisterInternal) {
+		t.Fatalf("pending caveman: contract = %+v, substitution = %q, err = %v", named, substitution, err)
 	}
-	plain, err := SynthesizeHarnessOver(t.Context(), repo, unknownFacts, []string{"adhd-format", "unknown"})
-	if err != nil || plain.OperatingContract[5] != plainInternalDirective {
-		t.Fatalf("pending without caveman: contract = %+v, err = %v", plain, err)
+	plain, substitution, err := SynthesizeHarnessOver(t.Context(), repo, unknownFacts, []string{"adhd-format", "unknown"})
+	if err != nil || substitution != "" || plain.OperatingContract[5] != plainInternalDirective {
+		t.Fatalf("pending without caveman: contract = %+v, substitution = %q, err = %v", plain, substitution, err)
 	}
 	unreadable := identifiedRepo(t)
 	if err := os.MkdirAll(filepath.Join(unreadable, filepath.FromSlash(cavemanSkillRel)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if h, err := SynthesizeHarness(t.Context(), unreadable, unknownFacts); err != nil || h.OperatingContract[5] != plainInternalDirective {
+	h, substitution, err := SynthesizeHarness(t.Context(), unreadable, unknownFacts)
+	if err != nil || h.OperatingContract[5] != plainInternalDirective {
 		t.Fatalf("a directory at %s: harness = %+v, err = %v; want the directive without the skill", cavemanSkillRel, h, err)
+	}
+	if !strings.Contains(substitution, "names no skill") || !strings.Contains(substitution, "read canonical skill caveman") {
+		t.Fatalf("a directory at %s: substitution = %q, want the plain directive reported with the refused read", cavemanSkillRel, substitution)
+	}
+}
+
+// Negative: the skill read runs under the caller's context. A cancelled context fails it, and the
+// failure is an error rather than a substitution, so a cancelled run neither reads on for the
+// read's own bound nor writes a harness stating the plain directive.
+func TestHarnessAbsentSkills_Negative_CancelledContextFails(t *testing.T) {
+	repo := identifiedRepo(t)
+	writeRepoFile(t, repo, cavemanSkillRel, "---\nname: caveman\ndescription: fixture\n---\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	absent, substitution, err := harnessAbsentSkills(ctx, repo, nil)
+	if !errors.Is(err, context.Canceled) || substitution != "" || absent != nil {
+		t.Fatalf("cancelled read: absent = %v, substitution = %q, err = %v; want context.Canceled alone", absent, substitution, err)
+	}
+	if absent, substitution, err := harnessAbsentSkills(t.Context(), repo, nil); err != nil || substitution != "" || slices.Contains(absent, "caveman") {
+		t.Fatalf("live read: absent = %v, substitution = %q, err = %v; want caveman carried", absent, substitution, err)
 	}
 }

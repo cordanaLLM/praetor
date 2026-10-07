@@ -282,7 +282,12 @@ run without `--lock-source-root`, installs nothing, and the block then names no 
 `internal/compiler/register_skills_test.go`). The Paperclip harness adoption writes follows the
 same rule: its register sentence names `caveman` only where the repository carries it, or the
 run installs it (`paperclip.SynthesizeHarnessOver`, `config.RegisterDirectiveWithout`,
-`internal/paperclip/register_test.go`). Repair jobs (`config.RegisterDirective`) name the skill
+`internal/paperclip/register_test.go`). Where the skill path cannot be read, for example behind a
+symlinked `.agents`, the harness states the form alone and the run reports that substitution:
+adoption warns under `.paperclip/harness.json`, and `praetorctl paperclip harness` prints a
+`[WARN]` line (`TestAdopt_Boundary_DeclinedAgentStepsAreNotPreflighted`,
+`TestPaperclipHarness_ReportsRegisterSkillSubstitution`). `compile-context` fails on the same
+read instead. Repair jobs (`config.RegisterDirective`) name the skill
 in every repository: they are prompts for a provider, kept as a private review artifact
 (`dogfood.SaveRepairPlan`), never repository content.
 

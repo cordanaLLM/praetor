@@ -154,7 +154,7 @@ const unconditionalPinnedRow = "Ed25519 Exit-0 Receipts: mint via `praetorctl ga
 // #550 wrote it, and returns harness.json.
 func writeUnconditionalPinnedHarness(t *testing.T, repo string) string {
 	t.Helper()
-	h, err := paperclip.SynthesizeHarness(t.Context(), repo, hisscatalog.Facts{})
+	h, _, err := paperclip.SynthesizeHarness(t.Context(), repo, hisscatalog.Facts{})
 	if err != nil {
 		t.Fatal(err)
 	}

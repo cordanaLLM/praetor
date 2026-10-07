@@ -125,7 +125,8 @@ func TestAdopt_Boundary_UnselectedLinkedAgentDirIsLeftAlone(t *testing.T) {
 
 // Boundary: the preflight checks only the steps that run. With agent-harness and
 // agent-definitions declined, a symlinked .agents is nothing adoption writes to, so adoption
-// succeeds and writes nothing behind it.
+// succeeds and writes nothing behind it. The Paperclip harness, whose register skill read the
+// link refuses, states the register's form without a skill name, and the report says so.
 func TestAdopt_Boundary_DeclinedAgentStepsAreNotPreflighted(t *testing.T) {
 	repoPath := newTestRepo(t, "declined-agent-steps")
 	mustWrite(t, filepath.Join(repoPath, manifestFile), "version: 1\nadoption:\n  decline: [agent-harness, agent-definitions]\n")
@@ -136,6 +137,16 @@ func TestAdopt_Boundary_DeclinedAgentStepsAreNotPreflighted(t *testing.T) {
 	}
 	assertNoIssues(t, rep)
 	assertDirEmpty(t, real)
+	assertHarnessDirective(t, repoPath, false)
+	reported := 0
+	for _, warning := range rep.Warnings {
+		if strings.Contains(warning, paperclipFile+": the register directive names no skill") {
+			reported++
+		}
+	}
+	if reported != 1 {
+		t.Errorf("the plain directive in place of the unreadable skill reported %d times, want once: %v", reported, rep.Warnings)
+	}
 }
 
 // Negative: the vendor files and the canonical personas go through the root-pinned writer, so a

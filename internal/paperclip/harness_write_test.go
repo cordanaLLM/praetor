@@ -12,7 +12,7 @@ import (
 
 func synthesizedHarness(t *testing.T, repo string) *Harness {
 	t.Helper()
-	h, err := SynthesizeHarness(context.Background(), repo, unknownFacts)
+	h, _, err := SynthesizeHarness(context.Background(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}

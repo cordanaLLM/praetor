@@ -34,7 +34,7 @@ func forgeRepo(t *testing.T, forge, remote string) string {
 // writtenRules synthesizes and writes the harness of repo and returns harness.json and rules.md.
 func writtenRules(t *testing.T, repo string) (*Harness, string, string) {
 	t.Helper()
-	h, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
+	h, _, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestSynthesizeHarness_Positive_ForgeSelectsPushRows(t *testing.T) {
 func TestSynthesizeHarness_Negative_UndeclaredForgeRefused(t *testing.T) {
 	for _, remote := range []string{"https://forgejo.example.org/acme/widget.git", ""} {
 		repo := forgeRepo(t, "", remote)
-		_, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
+		_, _, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
 		if !errors.Is(err, config.ErrForgeUndeclared) || !strings.Contains(err.Error(), config.ForgeKey) {
 			t.Fatalf("remote %q: %v, want ErrForgeUndeclared naming %s", remote, err, config.ForgeKey)
 		}
@@ -111,7 +111,7 @@ func TestPriorGenerated_Boundary_ForgeSwitchIsEarlierOutput(t *testing.T) {
 		t.Fatalf("released push rows %+v, want the AGit pair then the review-branch pair", pairs)
 	}
 	github := forgeRepo(t, "github", "")
-	current, err := SynthesizeHarness(t.Context(), github, unknownFacts)
+	current, _, err := SynthesizeHarness(t.Context(), github, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}
