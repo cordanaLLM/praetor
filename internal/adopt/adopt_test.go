@@ -2075,45 +2075,131 @@ func TestAdopt_Hooks_ForeignLefthookConfigIsNotActivated(t *testing.T) {
 	}
 }
 
-func TestAdopt_Hooks_LefthookInstallHonoursHooksPath(t *testing.T) {
+// hooksPathAdoptSuffix ends the error adoption reports for a core.hooksPath the audit refuses,
+// after the audit's own finding (auditHooksPath).
+const hooksPathAdoptSuffix = "; adoption installs no hook while it is set"
+
+// adoptHooksPathError returns the one report error naming the git hooks step, or fails the test.
+func adoptHooksPathError(t *testing.T, rep *AdoptReport) string {
+	t.Helper()
+	var found []string
+	for _, e := range rep.Errors {
+		if strings.HasPrefix(e, "git hooks: ") {
+			found = append(found, e)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("want one git hooks error, got %v", rep.Errors)
+	}
+	return found[0]
+}
+
+// TestAdopt_Hooks_Negative_LefthookInstallRefusesHooksPathOutsideManagedDir (#61): a core.hooksPath
+// that leaves the managed hooks directory, here husky's .husky, fails the audit, so adoption
+// reports the audit's finding, fix included, and does not run lefthook install, which would
+// install the hook where the audit refuses it.
+func TestAdopt_Hooks_Negative_LefthookInstallRefusesHooksPathOutsideManagedDir(t *testing.T) {
 	stubDir := t.TempDir()
-	// The stub installs the hook where git says hooks live, like real lefthook does.
-	writeStub(t, stubDir, "lefthook", "d=$(git rev-parse --git-path hooks) && '"+stubMkdir(t)+"' -p \"$d\" && printf '#!/bin/sh\\n# lefthook stub\\n' > \"$d/pre-commit\"\n")
+	ran := filepath.Join(t.TempDir(), "lefthook-install-ran")
+	// The stub installs the hook where git says hooks live, like real lefthook does, and records that it ran.
+	writeStub(t, stubDir, "lefthook", "if [ \"$1\" = install ]; then : > '"+ran+"'; d=$(git rev-parse --git-path hooks) && '"+
+		stubMkdir(t)+"' -p \"$d\" && printf '#!/bin/sh\\n# lefthook stub\\n' > \"$d/pre-commit\"; fi\n")
 	hermeticPath(t, stubDir)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	repoPath := filepath.Join(t.TempDir(), "hookspath")
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	initTestGit(t, repoPath)
-	mustWrite(t, filepath.Join(repoPath, ".git", "config"), "[core]\n\thooksPath = .husky\n")
+	setLocalHooksPath(t, repoPath, ".husky")
 
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
-	assertNoIssues(t, rep)
-	if !fileExists(filepath.Join(repoPath, ".husky", "pre-commit")) {
-		t.Fatal("hook must land in the core.hooksPath directory")
+	got := adoptHooksPathError(t, rep)
+	for _, want := range []string{
+		`git hooks: core.hooksPath is set to ".husky" (local scope, file:`,
+		"git config --unset-all --local core.hooksPath",
+		"'lefthook install --reset-hooks-path'",
+		hooksPathAdoptSuffix,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("adoption error %q lacks %q", got, want)
+		}
 	}
-	if !contains(rep.CreatedFiles, ".husky/pre-commit") {
-		t.Fatalf("report must name the real hook path, got %v", rep.CreatedFiles)
+	if fileExists(ran) {
+		t.Fatal("lefthook install ran although core.hooksPath leaves the managed hooks directory")
+	}
+	for _, hook := range []string{filepath.Join(repoPath, ".husky", "pre-commit"), filepath.Join(repoPath, ".git", "hooks", "pre-commit")} {
+		if fileExists(hook) {
+			t.Fatalf("adoption installed %s", hook)
+		}
 	}
 }
 
-func TestAdopt_Hooks_FallbackHonoursHooksPath(t *testing.T) {
-	repoPath := newTestRepo(t, "fallback-hookspath")
-	mustWrite(t, filepath.Join(repoPath, ".git", "config"), "[core]\n\thooksPath = .husky\n")
+// TestAdopt_Hooks_Negative_FallbackRefusesHooksPathOutsideManagedDir (#61): without lefthook the
+// fallback hook is not written into the directory core.hooksPath names either, in a real run or a
+// dry run; both report the audit's finding.
+func TestAdopt_Hooks_Negative_FallbackRefusesHooksPathOutsideManagedDir(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		repoPath := newTestRepo(t, "fallback-hookspath")
+		t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		setLocalHooksPath(t, repoPath, ".husky")
 
+		rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, DryRun: dryRun})
+		if err != nil {
+			t.Fatalf("dry run %v: Adopt failed: %v", dryRun, err)
+		}
+		if got := adoptHooksPathError(t, rep); !strings.Contains(got, `core.hooksPath is set to ".husky" (local scope`) ||
+			!strings.HasSuffix(got, hooksPathAdoptSuffix) {
+			t.Fatalf("dry run %v: adoption error %q", dryRun, got)
+		}
+		for _, hook := range []string{filepath.Join(repoPath, ".husky", "pre-commit"), filepath.Join(repoPath, ".git", "hooks", "pre-commit")} {
+			if fileExists(hook) {
+				t.Fatalf("dry run %v: adoption installed %s", dryRun, hook)
+			}
+		}
+	}
+}
+
+// TestAdopt_Hooks_Negative_AdoptAndAuditAgreeOnHooksPath (#61): adoption and the audit that
+// follows it give one result on a core.hooksPath. Husky's .husky/_ fails both with the same
+// finding and fix; adoption used to install the hook there and pass, and the next audit failed.
+// Boundary: a core.hooksPath naming the managed hooks directory passes both, the hook installed
+// where the audit reads it.
+func TestAdopt_Hooks_Negative_AdoptAndAuditAgreeOnHooksPath(t *testing.T) {
+	repoPath := newTestRepo(t, "husky-hookspath")
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	setLocalHooksPath(t, repoPath, ".husky/_")
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
-	assertNoIssues(t, rep)
-	if !strings.Contains(mustRead(t, filepath.Join(repoPath, ".husky", "pre-commit")), fallbackPreCommitMarker) {
-		t.Fatal("fallback hook must land in the core.hooksPath directory")
+	line, auditErr := AuditInstalledGitHook(t.Context(), repoPath)
+	if auditErr == nil {
+		t.Fatalf("audit passed after adoption refused core.hooksPath: %q", line)
 	}
-	if fileExists(filepath.Join(repoPath, ".git", "hooks", "pre-commit")) {
-		t.Fatal("no hook may be written to the ignored .git/hooks directory")
+	finding, ok := strings.CutPrefix(auditErr.Error(), "[FAIL] ")
+	if !ok {
+		t.Fatalf("audit failure without its verdict: %v", auditErr)
+	}
+	if got, want := adoptHooksPathError(t, rep), "git hooks: "+finding+hooksPathAdoptSuffix; got != want {
+		t.Fatalf("adoption and audit disagree:\nadopt: %s\naudit: %s", got, want)
+	}
+
+	managed := newTestRepo(t, "managed-hookspath")
+	setLocalHooksPath(t, managed, ".git/hooks")
+	rep, err = Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: managed})
+	if err != nil {
+		t.Fatalf("Adopt with the managed directory failed: %v", err)
+	}
+	assertNoIssues(t, rep)
+	if line, err := AuditInstalledGitHook(t.Context(), managed); err != nil || !strings.Contains(line, "verified active") {
+		t.Fatalf("audit after adoption with the managed directory: %q, %v", line, err)
 	}
 }
 
