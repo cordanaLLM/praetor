@@ -139,7 +139,11 @@ func TestMeasureBuildWarnings_Negative_LanesWithoutTheFormAreNamed(t *testing.T)
 		"clippy denying warnings in RUSTDOCFLAGS": {buildJob("      - run: RUSTDOCFLAGS=-Dwarnings cargo clippy\n"), ToolchainCargo, "no RUSTFLAGS"},
 		"a plain assignment is not exported":      {buildJob("      - run: |\n          RUSTFLAGS=-Dwarnings\n          cargo build\n"), ToolchainCargo, "no RUSTFLAGS"},
 		// rustc 1.98.1: -D warnings --cap-lints warn exits 0 on an unused variable.
-		"cargo deny capped":              {buildJob("      - run: cargo build\n        env:\n          RUSTFLAGS: -D warnings --cap-lints warn\n"), ToolchainCargo, "RUSTFLAGS is"},
+		"cargo deny capped": {buildJob("      - run: cargo build\n        env:\n          RUSTFLAGS: -D warnings --cap-lints warn\n"), ToolchainCargo, "RUSTFLAGS is"},
+		// cargo 1.98.1: CARGO_BUILD_WARNINGS=deny with RUSTFLAGS=--cap-lints allow exits 0 on an
+		// unused variable, the warning hidden (with --cap-lints warn it exits 101: the positive case).
+		"CARGO_BUILD_WARNINGS capped at allow": {buildJob("      - run: cargo test\n        env:\n          CARGO_BUILD_WARNINGS: deny\n          RUSTFLAGS: --cap-lints allow\n"),
+			ToolchainCargo, "CARGO_BUILD_WARNINGS is deny, but --cap-lints allow hides"},
 		"clippy deny capped":             {buildJob("      - run: cargo clippy -- -F warnings --cap-lints allow\n"), ToolchainCargo, "cargo clippy --"},
 		"target flags for a host build":  {buildJob("      - run: cargo build\n        env:\n          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -D warnings\n"), ToolchainCargo, "applies only when the runner's host"},
 		"target flags for another one":   {buildJob("      - run: cargo build --target=aarch64-apple-darwin\n        env:\n          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -D warnings\n"), ToolchainCargo, "no RUSTFLAGS"},

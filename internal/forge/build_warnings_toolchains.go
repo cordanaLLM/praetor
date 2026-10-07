@@ -291,31 +291,47 @@ var llvmCovNoBuild = map[string]bool{"report": true, "show-env": true, "clean": 
 // cargoValueOptions are the cargo options before a subcommand whose value is the next argument.
 var cargoValueOptions = map[string]bool{"--color": true, "--config": true, "-Z": true, "-C": true}
 
-// judgeCargo decides a cargo or cross command that compiles the repository: fatal with
-// CARGO_BUILD_WARNINGS=deny, or when the flags rustc receives deny warnings for every target
-// (cargoTargets): the [lints] levels (cargoLints), the flag source cargo uses (cargoFlagSource),
-// then for clippy and rustc what follows "--".
+// judgeCargo decides a cargo or cross command that compiles the repository: fatal for every
+// target (cargoTargets) with CARGO_BUILD_WARNINGS=deny no --cap-lints allow undoes, or when the
+// flags rustc receives deny warnings: the [lints] levels (cargoLints), the flag source cargo uses
+// (cargoFlagSource), then for clippy and rustc what follows "--" (cargoVerdict).
 func (m *buildMeasure) judgeCargo(site *laneSite, cmd shellCommand, args []string, lookup lookupFunc) (laneVerdict, bool) {
 	subcommand, rest := cargoSubcommand(args)
 	if !cargoBuilds(subcommand, rest) {
 		return laneVerdict{}, false
 	}
-	if value, set, known := lookup("CARGO_BUILD_WARNINGS"); set && known && strings.TrimSpace(value) == "deny" {
-		return laneVerdict{toolchain: ToolchainCargo, fatal: true, detail: "CARGO_BUILD_WARNINGS is deny"}, true
-	}
+	value, set, known := lookup("CARGO_BUILD_WARNINGS")
+	deny := set && known && strings.TrimSpace(value) == "deny"
 	options, trailing := cargoTrailing(subcommand, rest)
 	lints, lintsNote := m.cargoLints(site, options)
 	targets := cargoTargets(options, lookup)
 	verdict := laneVerdict{toolchain: ToolchainCargo}
 	for i := 0; i < len(targets) && i < maxRunScriptFields; i++ {
 		source := cargoFlagSource(site.env, cmd, targets[i], lookup)
-		verdict.fatal = source.decided && denyWarnings(slices.Concat(lints, source.flags, trailing))
-		verdict.detail = cargoDetail(subcommand, source.detail, trailing, lintsNote)
+		flags := slices.Concat(lints, source.flags, trailing)
+		verdict = cargoVerdict(deny, source.decided, flags, cargoDetail(subcommand, source.detail, trailing, lintsNote))
 		if !verdict.fatal {
 			break
 		}
 	}
 	return verdict, true
+}
+
+// cargoVerdict decides one target of a cargo lane from the flags rustc receives for it and
+// whether CARGO_BUILD_WARNINGS is deny. That setting fails the build on any warning rustc
+// reports, so a first --cap-lints allow, which hides every warning, undoes it, while --cap-lints
+// warn does not: measured with cargo 1.98.1 on an unused variable, CARGO_BUILD_WARNINGS=deny
+// exits 101 alone and with RUSTFLAGS=--cap-lints warn, and 0 with RUSTFLAGS=--cap-lints allow.
+// A flag source the workflow does not decide does not undo it.
+func cargoVerdict(deny, decided bool, flags []string, detail string) laneVerdict {
+	switch {
+	case deny && firstCapLints(flags) != "allow":
+		return laneVerdict{toolchain: ToolchainCargo, fatal: true, detail: "CARGO_BUILD_WARNINGS is deny"}
+	case deny:
+		return laneVerdict{toolchain: ToolchainCargo, detail: "CARGO_BUILD_WARNINGS is deny, but --cap-lints allow hides " +
+			"every warning from it (" + detail + ")"}
+	}
+	return laneVerdict{toolchain: ToolchainCargo, fatal: decided && denyWarnings(flags), detail: detail}
 }
 
 // cargoBuilds reports whether a cargo subcommand with the arguments after it compiles the
@@ -483,16 +499,23 @@ func denyWarnings(flags []string) bool {
 // --cap-lints deny exits 0, -D warnings --cap-lints deny --cap-lints warn exits 1, and -F
 // warnings --cap-lints warn exits 0.
 func capsLintsBelowDeny(flags []string) bool {
+	level := firstCapLints(flags)
+	return level == "allow" || level == "warn"
+}
+
+// firstCapLints returns the level of the first --cap-lints of flags, the one rustc reads, or ""
+// when flags hold none.
+func firstCapLints(flags []string) string {
 	for i := 0; i < len(flags) && i < maxRunScriptFields; i++ {
 		level, capped := strings.CutPrefix(flags[i], "--cap-lints=")
 		if flags[i] == "--cap-lints" && i+1 < len(flags) {
 			level, capped = flags[i+1], true
 		}
 		if capped {
-			return level == "allow" || level == "warn"
+			return level
 		}
 	}
-	return false
+	return ""
 }
 
 // warningsLevel returns the lint-level flag flags[i] gives the warnings group, and the index of

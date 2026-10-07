@@ -21,9 +21,9 @@ Give every build lane its toolchain's form:
 | :--- | :--- | :--- |
 | gcc, clang, icx, icpx (any target prefix, version suffix, or the `-posix`/`-win32` suffix of Debian's MinGW-w64 names) | a command that compiles a source file or runs with `-c` | `-Werror` on the command, not undone by a later `-Wno-error`. `-Werror=<warning>` covers that warning only and does not count ([GCC](https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html)). |
 | MSVC `cl`, `clang-cl` | the same | `/WX` (or `-WX`) on the command or in the `CL` or `_CL_` variable, not undone by a later `/WX-` ([MSVC](https://learn.microsoft.com/en-us/cpp/build/reference/compiler-option-warning-level)); `clang-cl` also takes `-Werror`, undone by `-Wno-error` |
-| CMake | a configure run (`cmake -S . -B build`, `cmake --preset`) | `-DCMAKE_COMPILE_WARNING_AS_ERROR=ON` (any CMake true constant, CMake 3.24 or later) without `--compile-no-warning-as-error` ([CMake](https://cmake.org/cmake/help/latest/variable/CMAKE_COMPILE_WARNING_AS_ERROR.html)), or `-Werror` (or `/WX`) in the flags of every language the repository's sources need: `CMAKE_C_FLAGS` for `.c` files, `CMAKE_CXX_FLAGS` for `.cc`, `.cpp`, `.cxx` and `.c++` files, and both when it holds neither, since `project()` enables C and C++ by default. Each is read from `-D` on the command, else from `CFLAGS` or `CXXFLAGS`, which initialize it ([`CMAKE_<LANG>_FLAGS`](https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_FLAGS.html)) |
+| CMake | a configure run (`cmake -S . -B build`, `cmake --preset`) | `-DCMAKE_COMPILE_WARNING_AS_ERROR=ON` (any CMake true constant, CMake 3.24 or later) without `--compile-no-warning-as-error` ([CMake](https://cmake.org/cmake/help/latest/variable/CMAKE_COMPILE_WARNING_AS_ERROR.html)), or `-Werror` (or `/WX`) in the flags of every language the repository's sources need: `CMAKE_C_FLAGS` for `.c` files, `CMAKE_CXX_FLAGS` for `.C`, `.cc`, `.cpp`, `.cxx` and `.c++` files, and both when it holds neither, since `project()` enables C and C++ by default. Each is read from `-D` on the command, else from `CFLAGS` or `CXXFLAGS`, which initialize it ([`CMAKE_<LANG>_FLAGS`](https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_FLAGS.html)) |
 | Meson | `meson setup` | `--werror` or `-Dwerror=true`, in any case as Meson reads a boolean ([Meson](https://mesonbuild.com/Builtin-options.html)) |
-| Cargo, `cross`, `cargo llvm-cov` | `build`, `check`, `test`, `run`, `bench`, `clippy`, `rustc`, `nextest`, `llvm-cov` (not its `report`, `show-env` or `clean`) | `CARGO_BUILD_WARNINGS: deny` (Cargo 1.97 or later); or `-D warnings` in the flags rustc receives for every target: the first set of `CARGO_ENCODED_RUSTFLAGS`, `RUSTFLAGS`, `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` and `CARGO_BUILD_RUSTFLAGS`, after the `[lints]` levels below, and for `cargo clippy` and `cargo rustc` what follows `--` ([Cargo](https://doc.rust-lang.org/cargo/reference/config.html), [Clippy](https://doc.rust-lang.org/clippy/continuous_integration/index.html)) |
+| Cargo, `cross`, `cargo llvm-cov` | `build`, `check`, `test`, `run`, `bench`, `clippy`, `rustc`, `nextest`, `llvm-cov` (not its `report`, `show-env` or `clean`) | `CARGO_BUILD_WARNINGS: deny` (Cargo 1.97 or later) without a `--cap-lints allow` in those flags; or `-D warnings` in the flags rustc receives for every target: the first set of `CARGO_ENCODED_RUSTFLAGS`, `RUSTFLAGS`, `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` and `CARGO_BUILD_RUSTFLAGS`, after the `[lints]` levels below, and for `cargo clippy` and `cargo rustc` what follows `--` ([Cargo](https://doc.rust-lang.org/cargo/reference/config.html), [Clippy](https://doc.rust-lang.org/clippy/continuous_integration/index.html)) |
 | Cargo `[lints]` | every crate of the root `Cargo.toml`'s workspace | `warnings = "deny"` (or `"forbid"`, or `{ level = "deny", priority = -1 }`) in each crate's `[lints.rust]`, or in `[workspace.lints.rust]` with `[lints] workspace = true` in each member ([lints](https://doc.rust-lang.org/cargo/reference/manifest.html#the-lints-section), [workspace lints](https://doc.rust-lang.org/cargo/reference/workspaces.html#the-lints-table)). Read only for a cargo command run in the repository root without `--manifest-path` |
 | rustc | a command that compiles a `.rs` file | `-D warnings` on the command |
 | Go | `go build`, `test` and `install` of the repository | a step of any workflow that runs `go vet` or `go test -vet=all`: the Go compiler reports no warnings, and `go vet` exits non-zero on a finding ([cmd/vet](https://pkg.go.dev/cmd/vet)). In a module with cgo files (`import "C"`), also `-Werror` in `CGO_CFLAGS` (or `CGO_CPPFLAGS`), and in `CGO_CXXFLAGS` when a cgo package holds C++ files, on the build step; `CGO_ENABLED=0` compiles no C |
@@ -33,6 +33,13 @@ Give every build lane its toolchain's form:
 passes the `[lints]` levels before the flags of its flag source, so `RUSTFLAGS: -W warnings`
 undoes a `[lints]` deny. A `--cap-lints allow` or `--cap-lints warn` turns every deny and forbid
 back into a warning; rustc reads the first `--cap-lints` it is given (measured with rustc 1.98.1).
+`CARGO_BUILD_WARNINGS: deny` fails the build on any warning rustc reports, so `--cap-lints warn`
+keeps it fatal while `--cap-lints allow`, which hides every warning, does not (measured with
+cargo 1.98.1); flags the workflow does not show do not undo it. A build for the runner's host
+takes `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` only when the host is that triple, which the workflow does
+not show: with no `CARGO_ENCODED_RUSTFLAGS` or `RUSTFLAGS` set, any such variable leaves the flags
+undecided, so the `-D warnings` form fails even when `CARGO_BUILD_RUSTFLAGS` also denies warnings.
+Name the target with `--target` or `CARGO_BUILD_TARGET`, or set `RUSTFLAGS`.
 
 ```yaml
 env:
@@ -87,8 +94,10 @@ runs `go vet ./...` (`TestAuditBuildWarningsPassesTheScaffoldedWorkflows`).
   `tools/apicompat/gate/main.go` adoption writes; neither is a lane.
 - **Repository sources.** For CMake's flags form and Go's cgo rule the gate reads which files the
   repository holds: the files git reports as its own (tracked, or untracked and not ignored),
-  every file outside a work tree. A Go file counts as the go command builds it: not a test file,
-  not under `testdata`, and under no directory starting with `.` or `_`.
+  every file outside a work tree. A Go file counts when its path is one the go command builds:
+  not a test file, not under `testdata`, and under no directory starting with `.` or `_`. Build
+  constraints are not read, so a `//go:build ignore` file that imports `"C"` still makes the
+  module a cgo module.
 - **Binding.** A step or job with `continue-on-error` passes whatever its compiler reports, so
   its lane fails, Go lanes included, and a `go vet` step with it does not count. A job or step
   whose `if:` is the literal `false` is not read.

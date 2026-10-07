@@ -80,9 +80,11 @@ func TestMeasureBuildWarnings_CMakeFlagsPerLanguage(t *testing.T) {
 		fatal   bool
 		detail  string
 	}{
-		"positive: C sources only":      {map[string]string{"src/a.c": "int a;\n", "include/a.h": "int a;\n"}, true, "CMAKE_C_FLAGS carries -Werror for C"},
-		"negative: C++ sources too":     {map[string]string{"src/a.c": "int a;\n", "src/b.cpp": "int b;\n"}, false, "CMAKE_CXX_FLAGS carries no -Werror, and the repository holds C++ sources"},
-		"negative: C++ sources only":    {map[string]string{"src/b.cxx": "int b;\n"}, false, "holds C++ sources"},
+		"positive: C sources only":   {map[string]string{"src/a.c": "int a;\n", "include/a.h": "int a;\n"}, true, "CMAKE_C_FLAGS carries -Werror for C"},
+		"negative: C++ sources too":  {map[string]string{"src/a.c": "int a;\n", "src/b.cpp": "int b;\n"}, false, "CMAKE_CXX_FLAGS carries no -Werror, and the repository holds C++ sources"},
+		"negative: C++ sources only": {map[string]string{"src/b.cxx": "int b;\n"}, false, "holds C++ sources"},
+		// gcc 16.2.1 compiles a.C with cc1plus, as C++; CMAKE_CXX_SOURCE_FILE_EXTENSIONS lists C.
+		"negative: .C sources are C++":  {map[string]string{"src/a.C": "class A {};\n"}, false, "holds C++ sources"},
 		"boundary: no source at all":    {map[string]string{"README.md": "x\n"}, false, "CMake enables C++ when project() names no language"},
 		"boundary: an ignored C++ tree": {map[string]string{"src/a.c": "int a;\n", ".git/b.cpp": "int b;\n", "zig-out/c.cpp": "int c;\n"}, true, "for C"},
 	}

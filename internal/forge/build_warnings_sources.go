@@ -109,13 +109,17 @@ func (w *sourceWalk) skips(name, rel string) bool {
 	return rel != "." && (name == ".git" || util.IsToolchainTreeDir(name) || !w.visible.HasDir(rel))
 }
 
-// file records what one regular file of the repository, at rel, is.
+// file records what one regular file of the repository, at rel, is. A .C file is C++: gcc and
+// clang compile it as C++ and CMake lists C among its C++ extensions
+// (CMAKE_CXX_SOURCE_FILE_EXTENSIONS), while go/build hands cgo none but .cc, .cpp and .cxx.
 func (w *sourceWalk) file(rel string) error {
 	dir := slashpath.Dir(rel)
-	switch ext := strings.ToLower(slashpath.Ext(rel)); {
+	switch ext := slashpath.Ext(rel); {
 	case ext == ".c":
 		w.found.c = true
-	case cxxUnitSuffixes[ext]:
+	case ext == ".C":
+		w.found.cxx = true
+	case cxxUnitSuffixes[strings.ToLower(ext)]:
 		w.found.cxx = true
 		w.cxxDirs[dir] = true
 	case strings.HasSuffix(rel, ".go") && goBuildsFile(rel):
