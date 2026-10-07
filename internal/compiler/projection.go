@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"slices"
 )
 
 // syncWriter prints progress lines and keeps the first write error, so a caller checks once.
@@ -53,8 +52,8 @@ func markAgentSurface(err error) error {
 
 // VerifyCompiledContext checks the text register block, the ignore rule for the evidence
 // directory the block names (CheckEvidenceIgnored), the six transpiled vendor files, the caveman
-// lint over AGENTS.md and every canonical persona and skill, and every persona and plugin skill
-// projection, without writing anything. Every check runs and every failure is returned, so one
+// lint over AGENTS.md, every tracked nested AGENTS.md and every canonical persona and skill, and
+// every persona and plugin skill projection, without writing anything. Every check runs and every failure is returned, so one
 // run names each fix instead of hiding the later failures behind the first; each projection
 // failure is marked ErrAgentSurface. The CLI's compile-context --verify and the MCP
 // standards_compile_context verify_only call both run it.
@@ -92,9 +91,10 @@ func verifyVendorContext(ctx context.Context, sw *syncWriter, tr *Transpiler, so
 }
 
 // lintAgentText runs the caveman gate over the canonical AGENTS.md at source and over every
-// canonical persona and skill under targetDir. It prints the verdict of each surface that
-// passed and returns one error per surface that failed. compile-context runs it after writing
-// and compile-context --verify runs it read-only, so both hold the text to the same gate.
+// other canonical agent source under targetDir: each tracked nested AGENTS.md, persona and
+// skill (lintAgentSources). It prints the verdict of each surface that passed and returns one
+// error per surface that failed. compile-context runs it after writing and compile-context
+// --verify runs it read-only, so both hold the text to the same gate.
 func lintAgentText(ctx context.Context, sw *syncWriter, source, targetDir string) []error {
 	var errs []error
 	if lint, err := LintContext(ctx, source); err != nil {
@@ -102,13 +102,11 @@ func lintAgentText(ctx context.Context, sw *syncWriter, source, targetDir string
 	} else {
 		sw.printf("  %s: %s.\n", source, lint.Summary())
 	}
-	personas, personaErr := LintCanonicalPersonas(ctx, targetDir)
-	skills, skillErr := LintCanonicalSkillFiles(ctx, targetDir)
-	if personaErr != nil || skillErr != nil {
-		return slices.DeleteFunc(append(errs, personaErr, skillErr), func(err error) bool { return err == nil })
+	sources, failures := lintAgentSources(ctx, targetDir, source)
+	if len(failures) > 0 {
+		return append(errs, failures...)
 	}
-	sw.printf("  %d personas and %d skills passed the caveman lint (<= %d prose words each).\n",
-		personas, skills, AgentTextCeiling)
+	sw.printf("  %s.\n", sources.summary())
 	return errs
 }
 
@@ -195,8 +193,8 @@ func printNotApplicable(w io.Writer, rels []string) error {
 // success line. Every canonical persona and skill is read, and every target is checked
 // (checkProjectionFiles), before the text register splice into source and before the first file
 // is written, so a refused target leaves source and every output unchanged. Once everything is
-// written, the caveman gate compile-context --verify applies runs over AGENTS.md and every
-// canonical persona and skill (lintAgentText): a failure is returned, so the run never reports
+// written, the caveman gate compile-context --verify applies runs over AGENTS.md, every tracked
+// nested AGENTS.md and every canonical persona and skill (lintAgentText): a failure is returned, so the run never reports
 // success on text the next verify rejects. The CLI's compile-context and the MCP
 // standards_compile_context write call both run it.
 func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {

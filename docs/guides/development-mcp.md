@@ -150,9 +150,12 @@ compiled. A `verify_only` call never writes the source: it reports a stale or mi
 as `Context verification failed`, and `standards_audit` reports it in its context gate.
 Both also run the caveman lint over `AGENTS.md`, as `praetorctl compile-context --verify`
 does: prose there fails with `AGENTS.md fails the caveman lint` and the first findings, and a
-pass names its counts (see [the context gate](text-register.md#the-context-gate)). The
-writing call runs the same lint after it writes and returns an error on a finding. The
-fixture above is terse, so it passes.
+pass names its counts (see [the context gate](text-register.md#the-context-gate)). Both lint
+every nested `AGENTS.md` Git tracks the same way, and a prose one fails with
+`nested AGENTS.md fails the caveman lint`
+([nested AGENTS.md files](text-register.md#nested-agentsmd-files)). The writing call runs the
+same lint after it writes and returns an error on a finding. The fixture above is terse, so it
+passes.
 
 The block sends agent evidence to `.workingdir/evidence/`. When the root is a Git work tree
 whose rules do not ignore that directory, the writing call merges the Praetor private-artifact
@@ -518,8 +521,9 @@ files were written behind it.
 Tests: `internal/adopt/agent_surface_preflight_test.go`,
 `internal/adopt/plugin_projection_test.go`.
 
-`standards_audit` does not run the persona and skill checks yet; see
-[the persona and skill gate](text-register.md#the-persona-and-skill-gate).
+`standards_audit` runs the persona, skill and nested `AGENTS.md` caveman lint the CLI audit
+runs (`compiler.AuditAgentSources`), but it does not verify persona or skill projections yet;
+see [the persona and skill gate](text-register.md#the-persona-and-skill-gate).
 
 ### Needs reports read operator settings at call time
 

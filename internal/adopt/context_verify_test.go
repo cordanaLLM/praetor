@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // customHelperCopy is a subagent an adopter wrote by hand into a client persona directory: a file
@@ -59,6 +60,7 @@ func TestVerifyOwner(t *testing.T) {
 		"persona copy":          {fmt.Errorf("wrapped: %w", markedSurface(t)), "agent-definitions"},
 		"canonical persona":     {fmt.Errorf("context verification failed: %w: x.md", compiler.ErrAgentTextProse), "agent-definitions"},
 		"AGENTS.md prose":       {fmt.Errorf("context verification failed: %w", compiler.ErrContextProse), "agent-harness"},
+		"nested AGENTS.md":      {fmt.Errorf("context verification failed: %w: a/AGENTS.md", compiler.ErrNestedContextProse), "agent-harness"},
 		"register block":        {fmt.Errorf("context verification failed: %w", compiler.ErrRegisterBlockOutOfSync), "agent-harness"},
 		"vendor file":           {errors.New("context verification failed: CLAUDE.md out of sync"), "agent-harness"},
 		"unmarked persona text": {fmt.Errorf("%w: .claude/agents/x.md", compiler.ErrAgentProjectionDrift), "agent-harness"},
@@ -140,6 +142,39 @@ func TestAdopt_Negative_ClientPersonaDirFileWithoutCanonicalPersona(t *testing.T
 		t.Errorf("the canonical subagent is not projected back into %s: %q", customHelperCopy, got)
 	}
 	assertContextVerifies(t, repoPath)
+}
+
+// nestedContextProse is a nested AGENTS.md an adopter wrote in prose.
+const nestedContextProse = "# Service\n\nSearch for an existing implementation before adding one. Grep the repository for " +
+	"the capability and extend the code that is already there. Two implementations of one behavior are a " +
+	"defect: they drift, and the second one stops matching the first.\n"
+
+// Boundary (#311): compile-context --verify after the chain rejects a tracked nested AGENTS.md
+// the repository wrote in prose, and adoption keeps that text as written, as it keeps a persona
+// or skill in prose: the run is applied with a warning naming the file, never an error, and the
+// file is left untouched.
+func TestAdopt_Boundary_NestedContextProseIsWarned(t *testing.T) {
+	repoPath := newTestRepo(t, "nested-prose")
+	nested := filepath.Join(repoPath, "service", agentsFile)
+	mustWrite(t, nested, nestedContextProse)
+	testsupport.RunFixtureGit(t, repoPath, []string{"add", "--", "service/" + agentsFile})
+	rep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	if rep.Outcome() != OutcomeApplied || len(rep.Errors) != 0 {
+		t.Fatalf("outcome = %s, errors = %v; want applied with no error", rep.Outcome(), rep.Errors)
+	}
+	warnings := strings.Join(rep.Warnings, "\n")
+	for _, want := range []string{compiler.ErrNestedContextProse.Error(), filepath.Join("service", agentsFile),
+		"adoption keeps the repository's text as written"} {
+		if !strings.Contains(warnings, want) {
+			t.Errorf("warnings lack %q: %v", want, rep.Warnings)
+		}
+	}
+	if got := mustRead(t, nested); got != nestedContextProse {
+		t.Fatalf("adoption rewrote the repository's nested AGENTS.md: %q", got)
+	}
 }
 
 // Boundary: a manifest that declines agent-harness, or agent-definitions, leaves part of the

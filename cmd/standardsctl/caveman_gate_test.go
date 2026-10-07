@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // fixtureSkill is a caveman-clean SKILL.md, used as the canonical (passing) fixture.
@@ -47,7 +48,7 @@ func TestCavemanGatePersonasNegative(t *testing.T) {
 		t.Fatalf("compile-context --verify: want ErrAgentTextProse, got %v", err)
 	}
 	mustErrContain(t, err, filepath.Join(compiler.CanonicalAgentsRel, "praetor-gatekeeper.md"))
-	if err := auditCavemanAgentSurfaces(t.Context(), dir); !errors.Is(err, compiler.ErrAgentTextProse) {
+	if err := auditCavemanAgentSurfaces(t.Context(), dir, filepath.Join(dir, "AGENTS.md")); !errors.Is(err, compiler.ErrAgentTextProse) {
 		t.Fatalf("audit gate: want ErrAgentTextProse, got %v", err)
 	}
 }
@@ -70,7 +71,7 @@ func TestCavemanGateSkillsNegative(t *testing.T) {
 		t.Fatalf("compile-context --verify: want ErrAgentTextProse, got %v", err)
 	}
 	mustErrContain(t, err, filepath.Join(compiler.CanonicalSkillsRel, "example", compiler.SkillEntryName))
-	if err := auditCavemanAgentSurfaces(t.Context(), dir); !errors.Is(err, compiler.ErrAgentTextProse) {
+	if err := auditCavemanAgentSurfaces(t.Context(), dir, filepath.Join(dir, "AGENTS.md")); !errors.Is(err, compiler.ErrAgentTextProse) {
 		t.Fatalf("audit gate: want ErrAgentTextProse, got %v", err)
 	}
 }
@@ -87,7 +88,7 @@ func TestCavemanGateBoundary(t *testing.T) {
 	if n, err := compiler.LintCanonicalSkillFiles(t.Context(), empty); err != nil || n != 0 {
 		t.Fatalf("no .agents/skills: compiler.LintCanonicalSkillFiles = %d, %v; want 0, nil", n, err)
 	}
-	if err := auditCavemanAgentSurfaces(t.Context(), empty); err != nil {
+	if err := auditCavemanAgentSurfaces(t.Context(), empty, filepath.Join(empty, "AGENTS.md")); err != nil {
 		t.Fatalf("audit gate over an empty root must not fail: %v", err)
 	}
 
@@ -101,5 +102,70 @@ func TestCavemanGateBoundary(t *testing.T) {
 	writeFixtureFile(t, dir, ".agents/agents/praetor-gatekeeper.md", over)
 	if _, err := compiler.LintCanonicalPersonas(t.Context(), dir); !errors.Is(err, compiler.ErrAgentTextProse) {
 		t.Fatalf("one word over the ceiling must fail: %v", err)
+	}
+}
+
+// nestedContextFixture is newContextFixture as a Git work tree, compiled once, with a clean
+// nested AGENTS.md tracked at nested/AGENTS.md.
+func nestedContextFixture(t *testing.T) string {
+	t.Helper()
+	dir := newContextFixture(t, false)
+	testsupport.InitGitRepoWithOrigin(t, dir, "")
+	if out, err := runCompileContextCmd(t, dir); err != nil {
+		t.Fatalf("initial compile-context: %v\n%s", err, out)
+	}
+	writeFixtureFile(t, dir, "nested/AGENTS.md", fixtureSkill)
+	testsupport.RunFixtureGit(t, dir, []string{"add", "--all"})
+	return dir
+}
+
+// TestCavemanGateNestedContextPositive: a clean tracked nested AGENTS.md passes compile-context
+// --verify and the audit gate, and both count it.
+func TestCavemanGateNestedContextPositive(t *testing.T) {
+	dir := nestedContextFixture(t)
+	out, err := runCompileContextCmd(t, dir, "--verify")
+	if err != nil {
+		t.Fatalf("compile-context --verify: %v\n%s", err, out)
+	}
+	mustContain(t, out, "1 nested AGENTS.md, 1 personas and 0 skills passed the caveman lint")
+	out, err = captureStdout(t, func() error {
+		return auditCavemanAgentSurfaces(t.Context(), dir, filepath.Join(dir, "AGENTS.md"))
+	})
+	if err != nil {
+		t.Fatalf("audit gate: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] 1 nested AGENTS.md, 1 personas and 0 skills passed the caveman lint")
+}
+
+// TestCavemanGateNestedContextNegative is the #311 sentinel pair: a tracked nested AGENTS.md
+// that regresses to prose fails compile-context --verify and the audit gate, each naming the
+// file, independently of the persona and skill sentinels above.
+func TestCavemanGateNestedContextNegative(t *testing.T) {
+	dir := nestedContextFixture(t)
+	writeFixtureFile(t, dir, "nested/AGENTS.md", cavemanProse)
+
+	_, err := runCompileContextCmd(t, dir, "--verify")
+	if !errors.Is(err, compiler.ErrNestedContextProse) {
+		t.Fatalf("compile-context --verify: want ErrNestedContextProse, got %v", err)
+	}
+	mustErrContain(t, err, filepath.Join("nested", "AGENTS.md"))
+	err = auditCavemanAgentSurfaces(t.Context(), dir, filepath.Join(dir, "AGENTS.md"))
+	if !errors.Is(err, compiler.ErrNestedContextProse) {
+		t.Fatalf("audit gate: want ErrNestedContextProse, got %v", err)
+	}
+	mustErrContain(t, err, filepath.Join("nested", "AGENTS.md"))
+}
+
+// TestCavemanGateNestedContextBoundary: the gate reads only tracked files. The same prose in an
+// ignored nested AGENTS.md is never read, so compile-context --verify and the audit gate pass.
+func TestCavemanGateNestedContextBoundary(t *testing.T) {
+	dir := nestedContextFixture(t)
+	writeFixtureFile(t, dir, ".gitignore", readFixtureFile(t, dir, ".gitignore")+"/ignored/\n")
+	writeFixtureFile(t, dir, "ignored/AGENTS.md", cavemanProse)
+	if out, err := runCompileContextCmd(t, dir, "--verify"); err != nil {
+		t.Fatalf("compile-context --verify read an ignored file: %v\n%s", err, out)
+	}
+	if err := auditCavemanAgentSurfaces(t.Context(), dir, filepath.Join(dir, "AGENTS.md")); err != nil {
+		t.Fatalf("audit gate read an ignored file: %v", err)
 	}
 }
