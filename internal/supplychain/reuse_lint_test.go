@@ -26,22 +26,10 @@ func TestReuseActionPin(t *testing.T) {
 // declares REUSE. Negative: a root with neither does not, nor a nil context. Boundary: a
 // REUSE.toml directory or a LICENSES file is no marker, and neither is a symlink to one.
 func TestReuseDeclared_3D(t *testing.T) {
-	write := func(root, rel string) {
-		t.Helper()
-		path := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("x\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	tomlRoot, licensesRoot, plain, wrongKinds := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
-	write(tomlRoot, ReuseFile)
-	write(licensesRoot, LicensesDir+"/MIT.txt")
-	write(plain, "README.md")
-	write(wrongKinds, ReuseFile+"/inner")
-	write(wrongKinds, LicensesDir)
+	tomlRoot := licensedRoot(t, map[string]string{ReuseFile: "x\n"})
+	licensesRoot := licensedRoot(t, map[string]string{LicensesDir + "/MIT.txt": "x\n"})
+	plain := licensedRoot(t, map[string]string{"README.md": "x\n"})
+	wrongKinds := licensedRoot(t, map[string]string{ReuseFile + "/inner": "x\n", LicensesDir: "x\n"})
 	for name, tc := range map[string]struct {
 		root string
 		want bool

@@ -548,11 +548,7 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	target := lefthookTarget{shape: shape, checkpoint: checkpointReady}
-	lefthookWritten, err := s.migrateReuseSwitch(target, existing)
-	if err == nil && !lefthookWritten {
-		lefthookWritten, err = s.writeLefthookConfig(ctx, target, existing, identity.prior)
-	}
+	lefthookWritten, err := s.renderLefthook(ctx, lefthookTarget{shape: shape, checkpoint: checkpointReady}, existing, identity.prior)
 	if err != nil {
 		return err
 	}
@@ -564,6 +560,17 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
+}
+
+// renderLefthook writes lefthook.yml for target and reports whether it did: the configuration an
+// earlier adoption wrote under the other REUSE switch is migrated (migrateReuseSwitch), and any
+// other is rendered as writeLefthookConfig decides, prior marking an exact earlier rendering.
+func (s *adoptSession) renderLefthook(ctx context.Context, target lefthookTarget, existing []byte, prior bool) (bool, error) {
+	written, err := s.migrateReuseSwitch(target, existing)
+	if err != nil || written {
+		return written, err
+	}
+	return s.writeLefthookConfig(ctx, target, existing, prior)
 }
 
 // keepLefthookConfig records why adoption keeps lefthook.yml and installs beside it only what

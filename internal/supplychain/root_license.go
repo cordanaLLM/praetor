@@ -73,29 +73,35 @@ func CheckRootLicense(ctx context.Context, opts RootLicenseOptions) (RootLicense
 	if ctx == nil {
 		return RootLicenseReport{}, errors.New("root licence check requires a context")
 	}
-	info, err := os.Lstat(filepath.Join(opts.Root, LicensesDir))
-	if errors.Is(err, os.ErrNotExist) || (err == nil && !info.IsDir()) {
-		return RootLicenseReport{Skipped: "the repository keeps no " + LicensesDir + "/ directory"}, nil
-	}
-	if err != nil {
-		return RootLicenseReport{}, fmt.Errorf("inspect %s: %w", LicensesDir, err)
+	skipped, err := licensesDirMissing(opts.Root)
+	if err != nil || skipped != "" {
+		return RootLicenseReport{Skipped: skipped}, err
 	}
 	license, skipped, err := declaredLicense(ctx, opts.Root)
 	if err != nil || skipped != "" {
 		return RootLicenseReport{Skipped: skipped}, err
 	}
 	report := RootLicenseReport{License: license}
-	finding, err := compareRootLicense(ctx, opts.Root, license)
-	if err != nil {
+	if err := compareRootLicense(ctx, opts.Root, &report); err != nil {
 		return RootLicenseReport{}, err
-	}
-	if finding != "" {
-		report.Findings = append(report.Findings, finding)
 	}
 	if err := judgeLicenceNamedFiles(ctx, opts, &report); err != nil {
 		return RootLicenseReport{}, err
 	}
 	return report, nil
+}
+
+// licensesDirMissing returns why the check skips a root that keeps no LICENSES/ directory, or ""
+// when it keeps one.
+func licensesDirMissing(root string) (string, error) {
+	info, err := os.Lstat(filepath.Join(root, LicensesDir))
+	switch {
+	case errors.Is(err, os.ErrNotExist) || (err == nil && !info.IsDir()):
+		return "the repository keeps no " + LicensesDir + "/ directory", nil
+	case err != nil:
+		return "", fmt.Errorf("inspect %s: %w", LicensesDir, err)
+	}
+	return "", nil
 }
 
 // declaredLicense returns the licence the repository at root declares: the one identifier of the
@@ -167,9 +173,19 @@ func licenseTextIDs(ctx context.Context, root string) ([]string, error) {
 	return ids, nil
 }
 
-// compareRootLicense returns the finding about the root LICENSE: absent, or holding another text
-// than LICENSES/<license>.txt; "" when it holds that text.
-func compareRootLicense(ctx context.Context, root, license string) (string, error) {
+// compareRootLicense adds to report the finding about the root LICENSE, if any: absent, or
+// holding another text than LICENSES/<license>.txt for the licence report declares.
+func compareRootLicense(ctx context.Context, root string, report *RootLicenseReport) error {
+	finding, err := rootLicenseFinding(ctx, root, report.License)
+	if finding != "" {
+		report.Findings = append(report.Findings, finding)
+	}
+	return err
+}
+
+// rootLicenseFinding returns the finding about the root LICENSE of a repository declaring
+// license, or "" when LICENSE holds the text of LICENSES/<license>.txt.
+func rootLicenseFinding(ctx context.Context, root, license string) (string, error) {
 	text := LicensesDir + "/" + license + ".txt"
 	want, exists, err := contextopt.ObserveSnapshotIn(ctx, root, text)
 	if err != nil {
@@ -197,23 +213,13 @@ func compareRootLicense(ctx context.Context, root, license string) (string, erro
 // kept when a live exception names it, a finding otherwise, and a finding for every exception
 // entry of the rule that keeps no such file.
 func judgeLicenceNamedFiles(ctx context.Context, opts RootLicenseOptions, report *RootLicenseReport) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(opts.Root)
+	names, err := licenceNamedRootFiles(ctx, opts.Root)
 	if err != nil {
-		return fmt.Errorf("read the repository root: %w", err)
-	}
-	if len(entries) > maxRootEntries {
-		return fmt.Errorf("the repository root holds %d entries, more than the %d the root licence check reads", len(entries), maxRootEntries)
+		return err
 	}
 	kept := config.ExceptionsFor(opts.Exceptions, config.ExceptionRuleRootLicenseNotice)
 	used := make([]bool, len(kept))
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || name == RootLicenseFile || !licenceNamedFile.MatchString(name) {
-			continue
-		}
+	for _, name := range names {
 		if finding := judgeLicenceNamedFile(name, kept, used, opts.Today); finding != "" {
 			report.Findings = append(report.Findings, finding)
 		} else {
@@ -227,6 +233,28 @@ func judgeLicenceNamedFiles(ctx context.Context, opts RootLicenseOptions, report
 		}
 	}
 	return nil
+}
+
+// licenceNamedRootFiles returns the files at root, other than LICENSE, named like a licence, in
+// name order; directories are not files.
+func licenceNamedRootFiles(ctx context.Context, root string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read the repository root: %w", err)
+	}
+	if len(entries) > maxRootEntries {
+		return nil, fmt.Errorf("the repository root holds %d entries, more than the %d the root licence check reads", len(entries), maxRootEntries)
+	}
+	var names []string
+	for _, entry := range entries {
+		if name := entry.Name(); !entry.IsDir() && name != RootLicenseFile && licenceNamedFile.MatchString(name) {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 // judgeLicenceNamedFile returns "" when a live entry of kept names the root file name, and

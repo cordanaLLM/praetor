@@ -151,11 +151,7 @@ type reuseGlobProduct struct {
 // byte none names, which every star treats alike. A product past maxReuseGlobPairs is "not
 // included".
 func reuseGlobIncludes(outers []string, inner string) bool {
-	product := reuseGlobProduct{inner: reuseGlobTokens(inner)}
-	for _, outer := range outers {
-		product.outers = append(product.outers, reuseGlobTokens(outer))
-	}
-	product.alphabet = reuseGlobAlphabet(append([][]reuseGlobToken{product.inner}, product.outers...)...)
+	product := newReuseGlobProduct(outers, inner)
 	start := reuseGlobPair{inner: reuseGlobStart(product.inner), outer: reuseGlobUnionStart(product.outers)}
 	if product.escapes(start) {
 		return false
@@ -163,24 +159,48 @@ func reuseGlobIncludes(outers []string, inner string) bool {
 	queue := []reuseGlobPair{start}
 	seen := map[string]bool{reuseGlobPairKey(start): true}
 	for len(queue) > 0 && len(seen) <= maxReuseGlobPairs {
-		pair := queue[0]
+		next, escaped := product.expand(queue[0])
+		if escaped {
+			return false
+		}
 		queue = queue[1:]
-		for _, char := range product.alphabet {
-			inner := reuseGlobStep(product.inner, pair.inner, char)
-			if !slices.Contains(inner, true) {
-				continue
-			}
-			next := reuseGlobPair{inner: inner, outer: reuseGlobUnionStep(product.outers, pair.outer, char)}
-			if product.escapes(next) {
-				return false
-			}
-			if key := reuseGlobPairKey(next); product.open(next) && !seen[key] {
+		for _, pair := range next {
+			if key := reuseGlobPairKey(pair); !seen[key] {
 				seen[key] = true
-				queue = append(queue, next)
+				queue = append(queue, pair)
 			}
 		}
 	}
 	return len(queue) == 0
+}
+
+// newReuseGlobProduct is the product of inner with the union of outers.
+func newReuseGlobProduct(outers []string, inner string) reuseGlobProduct {
+	product := reuseGlobProduct{inner: reuseGlobTokens(inner)}
+	for _, outer := range outers {
+		product.outers = append(product.outers, reuseGlobTokens(outer))
+	}
+	product.alphabet = reuseGlobAlphabet(append([][]reuseGlobToken{product.inner}, product.outers...)...)
+	return product
+}
+
+// expand returns the open pairs that one more byte after pair leads to, and whether one of them
+// escapes. A byte after which inner matches nothing more leads nowhere.
+func (p reuseGlobProduct) expand(pair reuseGlobPair) (next []reuseGlobPair, escaped bool) {
+	for _, char := range p.alphabet {
+		inner := reuseGlobStep(p.inner, pair.inner, char)
+		if !slices.Contains(inner, true) {
+			continue
+		}
+		candidate := reuseGlobPair{inner: inner, outer: reuseGlobUnionStep(p.outers, pair.outer, char)}
+		if p.escapes(candidate) {
+			return nil, true
+		}
+		if p.open(candidate) {
+			next = append(next, candidate)
+		}
+	}
+	return next, false
 }
 
 // escapes reports whether the prefix that reached pair is a path inner matches and no outer does.
@@ -189,8 +209,7 @@ func (p reuseGlobProduct) escapes(pair reuseGlobPair) bool {
 }
 
 // open reports whether a longer prefix than the one that reached pair may still escape: no outer
-// already matches every continuation. A byte after which inner matches nothing more is never
-// read.
+// already matches every continuation.
 func (p reuseGlobProduct) open(pair reuseGlobPair) bool {
 	for index, tokens := range p.outers {
 		for position := range tokens {
