@@ -1,0 +1,38 @@
+---
+name: CI
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # Corepack provisions the pnpm packageManager pins; Node 25 and later
+      # ship without Corepack.
+      - name: Enable pnpm
+        run: |
+          npm install --global corepack@latest
+          corepack enable pnpm
+
+      # --frozen-lockfile installs exactly what pnpm-lock.yaml records and
+      # fails when the two disagree.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run --if-present lint
+
+      - name: Build
+        run: pnpm run --if-present build
+
+      - name: Test
+        run: pnpm run test

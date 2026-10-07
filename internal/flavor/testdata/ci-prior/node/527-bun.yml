@@ -1,0 +1,32 @@
+---
+name: CI
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # --frozen-lockfile installs exactly what the Bun lockfile records and
+      # fails when the two disagree.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run --if-present lint
+
+      - name: Build
+        run: bun run --if-present build
+
+      - name: Test
+        run: bun run test
