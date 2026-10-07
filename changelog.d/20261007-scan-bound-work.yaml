@@ -1,0 +1,4 @@
+type: fixed
+title: "The interceptor scan-bound test no longer fails on slower runners: it bounds the matcher's work in passes over the bound, measured in the same run, and the find and in-place edit rules start once per line instead of costing cubic time"
+issue: "#829"
+breaking: false
