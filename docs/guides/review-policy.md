@@ -18,8 +18,19 @@ The configured reviewer minimum is retained. This mode renders zero required
 approvals and disables the code-owner approval requirement. Pull requests,
 review-thread resolution, required status checks, signed commits, linear history,
 deletion protection, and force-push protection remain governed by their existing
-settings. It does not grant bypass privileges or disable Lefthook, receipts,
-lint, or tests. Unknown review modes are configuration errors.
+settings. It does not disable Lefthook, receipts, lint, or tests. Unknown review
+modes are configuration errors.
+
+The mode also renders one bypass actor: the repository admin role
+(`actor_type: RepositoryRole`, `actor_id: 5`) in bypass mode `pull_request`. The
+one maintainer can then merge a pull request whose rules cannot be met, such as a
+required check that no run reports, and still cannot push to the branch past the
+rules. Every other review mode renders no bypass actor
+(`forge.rulesetBypassActors` in `internal/forge/ruleset.go`,
+`TestRenderRepositoryRuleset_BypassFollowsReviewMode`). `sync --remote` writes the
+entry only into a ruleset it creates. A live ruleset keeps its own bypass actors,
+so add or remove one there by hand
+(`TestGitHubDriver_ReconcileProtection_BypassOnlyInANewRuleset`).
 
 An adopter might configure this temporary mode when a single author
 is currently the only eligible repository account and no review bot is installed.

@@ -593,7 +593,10 @@ standardsctl sync --remote --forge-host=ghe.example.com \
   write, the live ruleset is read back and each left-off check is named: an `[INFO]` line when
   GitHub does not require it, and a `[WARN]` line when the live ruleset still requires it because
   an earlier sync added it. The merge below keeps that check, so remove it by hand
-  (`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`). An existing ruleset is read, merged, updated and read back. The
+  (`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`). A leaf check that a
+  proven aggregate job now covers stays required on GitHub the same way; remove it by hand
+  (`TestSync_Remote_KeepsLiveLeafChecksAndAddsTheAggregate`). A ruleset sync creates carries the
+  bypass actor `review_mode: single_maintainer` declares ([review policy](review-policy.md)). An existing ruleset is read, merged, updated and read back. The
   merge sets every parameter praetor renders from policy, a declared relaxation such as
   `review_mode: single_maintainer` included. Each parameter whose live value was stricter (a
   higher approving review count, or stale-review dismissal, code-owner review, last-push
