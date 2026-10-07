@@ -7,6 +7,7 @@ package supplychain
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,16 @@ const (
 		"[[annotations]]\npath = [\"vendor/**\"] # not \"**\"\nSPDX-License-Identifier = \"MIT\"\n" +
 		"# Like the table above, the next one must stay after the \"**\" table, ['**'] included.\n"
 )
+
+// labelled is ReuseLabels, failing the test on an error.
+func labelled(t *testing.T, tables []ReuseAnnotation, subject, license string) bool {
+	t.Helper()
+	labels, err := ReuseLabels(tables, subject, license)
+	if err != nil {
+		t.Fatalf("ReuseLabels(%q, %q): %v", subject, license, err)
+	}
+	return labels
+}
 
 // reuseTables parses text or fails the test.
 func reuseTables(t *testing.T, text string) []ReuseAnnotation {
@@ -41,12 +52,18 @@ func TestReuseLabelsPositive(t *testing.T) {
 		"\n[[annotations]]\npath = \"**/SKILL.md\"\nSPDX-License-Identifier = \"MIT\"\n[[annotations]]\npath = \"docs/**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n",
 	} {
 		tables := reuseTables(t, reuseWholeTree+override)
-		if !ReuseLabels(tables, ".agents/skills/x/SKILL.md", "MIT") {
+		if !labelled(t, tables, ".agents/skills/x/SKILL.md", "MIT") {
 			t.Errorf("override %q does not label the file MIT", override)
 		}
-		if !ReuseLabels(tables, "docs/index.md", "EUPL-1.2") {
+		if !labelled(t, tables, "docs/index.md", "EUPL-1.2") {
 			t.Errorf("override %q relabels an unrelated file", override)
 		}
+	}
+	// One override whose globs cover a directory only together, its files and its
+	// subdirectories, labels the directory: coverage is the union of the table's globs.
+	split := reuseTables(t, reuseWholeTree+"\n[[annotations]]\npath = [\"vendor/*\", \"vendor/*/**\"]\nSPDX-License-Identifier = \"MIT\"\n")
+	if !labelled(t, split, "vendor/**", "MIT") || labelled(t, split, "vendor/**", "EUPL-1.2") {
+		t.Error("an override covering vendor/ with two globs together does not label it MIT")
 	}
 }
 
@@ -63,19 +80,21 @@ func TestReuseLabelsNegative(t *testing.T) {
 		"later star glob":     reuseWholeTree + override + "\n[[annotations]]\npath = \"**/*.md\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n",
 		"star stops at /":     reuseWholeTree + strings.Replace(override, ".agents/skills/x/SKILL.md", ".agents/*/SKILL.md", 1),
 	} {
-		if ReuseLabels(reuseTables(t, text), ".agents/skills/x/SKILL.md", "MIT") {
+		if labelled(t, reuseTables(t, text), ".agents/skills/x/SKILL.md", "MIT") {
 			t.Errorf("%s: the file is labelled MIT", name)
 		}
 	}
 }
 
 // Positive: the read keeps only the path and license values of each annotations table, from a
-// string or an array spanning lines, and skips comments, other keys, other tables and the lines
-// of a multi-line array of another key. It steps over the values of other keys it does not read
-// as strings: an array of strings with escape sequences, a multi-line copyright string, and a
-// multi-line literal string whose lines look like a table and a path.
+// string or an array spanning lines, and skips comments and the lines of a multi-line array of a
+// stepped-over key. It steps over the values of version, precedence and SPDX-FileCopyrightText,
+// whatever they hold: an array of strings with escape sequences, a multi-line copyright string,
+// and a multi-line literal string whose lines look like a table and a path. A basic string's
+// escape sequences decode, so a path written with the escaped star of the REUSE specification
+// keeps its backslash for the glob dialect, as a literal string does.
 func TestReuseAnnotationTablesPositive(t *testing.T) {
-	text := "version = 1\r\n[other]\npath = \"ignored/**\"\n# path = [\"comment/**\"]\n" +
+	text := "version = 1\r\n# path = [\"comment/**\"]\n" +
 		"[[annotations]]\npath = 'a/**' # \"**\"\nprecedence = \"override\"\nSPDX-FileCopyrightText = [\n  \"2026 A = B\",\n  # path = \"x\"\n]\n" +
 		"SPDX-License-Identifier = [\"MIT\", 'EUPL-1.2 AND MIT']\n\n[[ annotations ]]\npath = [\n  \"b/*.md\", # x\n  \"c\"\n]\n"
 	tables := reuseTables(t, text)
@@ -83,14 +102,15 @@ func TestReuseAnnotationTablesPositive(t *testing.T) {
 		strings.Join(tables[1].Paths, " ") != "b/*.md c" || len(tables[1].Licenses) != 0 {
 		t.Fatalf("tables = %+v", tables)
 	}
-	stepped := `[[annotations]]
+	stepped := `version = 1
+[[annotations]]
 path = "a/**"
 SPDX-FileCopyrightText = ["2024 A \"B\" C", "x"]
 SPDX-FileCopyrightText = """
 2024 A
 2025 B \"C\"
 """
-note = '''
+precedence = '''
 [[annotations]]
 path = "ghost/**"
 '''
@@ -100,23 +120,46 @@ SPDX-License-Identifier = "MIT"
 	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "a/**" || strings.Join(tables[0].Licenses, " ") != "MIT" {
 		t.Fatalf("values of other keys stepped over: tables = %+v", tables)
 	}
+	escaped := reuseTables(t, "[[annotations]]\npath = [\"a\\\\*\", 'b\\*', \"caf\\u00e9.md\"]\nSPDX-License-Identifier = \"MIT\"\n")
+	if want := []string{`a\*`, `b\*`, "café.md"}; len(escaped) != 1 || !slices.Equal(escaped[0].Paths, want) {
+		t.Fatalf("escaped paths: %+v, want %q", escaped, want)
+	}
 }
 
 // Negative: a line the read cannot follow is an error naming its line, not a table read past. A
-// path or license value the read cannot take as plain strings fails, and so does another key's
-// value whose end it cannot find.
+// path or license value the read cannot take as single-line strings fails, and so does another
+// key's value whose end it cannot find. The read is an allow-list: annotations written as an
+// inline array of tables, on one line or several, which REUSE reads and earlier read as no table
+// at all, a dotted key, any other top-level key, table header or annotation key fail closed,
+// naming the key and the form to write it in.
 func TestReuseAnnotationTablesNegative(t *testing.T) {
 	for name, test := range map[string]struct{ text, want string }{
-		"not a key":          {"[[annotations]]\npath\n", "REUSE.toml:2: \"path\" is not a table header"},
-		"open array":         {"[[annotations]]\npath = [\n  \"a/**\",\n", "the path array is not closed"},
-		"number in array":    {"[[annotations]]\npath = [\"a\", 1]\n", "the path array holds something other than strings"},
-		"escape sequence":    {"[[annotations]]\npath = \"a\\\\*\"\n", "is not a string without escape sequences"},
-		"escaped path array": {"[[annotations]]\npath = [\"a\\\"b\", \"c\"]\n", "the path array holds something other than strings"},
-		"multi-line path":    {"[[annotations]]\npath = \"\"\"\na/**\n\"\"\"\n", "path holds a multi-line string"},
-		"multi-line license": {"[[annotations]]\nSPDX-License-Identifier = '''\nMIT\n'''\n", "SPDX-License-Identifier holds a multi-line string"},
-		"path as a number":   {"[[annotations]]\npath = 1\n", "path = 1 is not a string"},
-		"open other value":   {"[[annotations]]\nSPDX-FileCopyrightText = \"\"\"\n2026 A\n", "the value of SPDX-FileCopyrightText is not closed"},
-		"open other string":  {"[[annotations]]\nSPDX-FileCopyrightText = \"2026 A\n", "the value of SPDX-FileCopyrightText is not one this read can find the end of"},
+		"not a key":            {"[[annotations]]\npath\n", "REUSE.toml:2: \"path\" is not a table header"},
+		"open array":           {"[[annotations]]\npath = [\n  \"a/**\",\n", "the path array is not closed"},
+		"number in array":      {"[[annotations]]\npath = [\"a\", 1]\n", "the path array holds something other than single-line strings"},
+		"undefined escape":     {"[[annotations]]\npath = \"a\\qb\"\n", "a literal string ('...') keeps every backslash as written"},
+		"undefined escape arr": {"[[annotations]]\npath = [\"a\\qb\", \"c\"]\n", "the path array holds something other than single-line strings"},
+		"multi-line path":      {"[[annotations]]\npath = \"\"\"\na/**\n\"\"\"\n", "path holds a multi-line string"},
+		"multi-line license":   {"[[annotations]]\nSPDX-License-Identifier = '''\nMIT\n'''\n", "SPDX-License-Identifier holds a multi-line string"},
+		"path as a number":     {"[[annotations]]\npath = 1\n", "path = 1 is not a single-line string"},
+		"open other value":     {"[[annotations]]\nSPDX-FileCopyrightText = \"\"\"\n2026 A\n", "the value of SPDX-FileCopyrightText is not closed"},
+		"open other string":    {"[[annotations]]\nSPDX-FileCopyrightText = \"2026 A\n", "the value of SPDX-FileCopyrightText is not one this read can find the end of"},
+		"inline tables, one line": {
+			"version = 1\nannotations = [ { path = \"vendor/**\", SPDX-License-Identifier = \"MIT\" }, { path = \"**\", SPDX-License-Identifier = \"EUPL-1.2\" } ]\n",
+			"REUSE.toml:2: the top-level key annotations is not one this read follows: write each annotation as a table of its own, opened by a [[annotations]] line",
+		},
+		"inline tables, lines": {
+			"version = 1\nannotations = [\n  { path = \"vendor/**\", SPDX-License-Identifier = \"MIT\" },\n  { path = \"**\", SPDX-License-Identifier = \"EUPL-1.2\" },\n]\n",
+			"REUSE.toml:2: the top-level key annotations is not one this read follows",
+		},
+		"dotted top-level key": {"version = 1\nannotations.path = \"**\"\n", "the top-level key annotations.path is not one this read follows: write each annotation"},
+		"unknown top-level":    {"version = 1\nlicense = \"MIT\"\n", "the top-level key license is not one this read follows: REUSE.toml holds the version key and [[annotations]] tables"},
+		"plain table header":   {"version = 1\n[annotations]\npath = \"**\"\n", "the table header [annotations] is not one this read follows"},
+		"other table header":   {"[[annotations]]\npath = \"a\"\n[other]\npath = \"**\"\n", "REUSE.toml:3: the table header [other] is not one this read follows"},
+		"sub-table header":     {"[[annotations]]\npath = \"a\"\n[[annotations.more]]\n", "the table header [[annotations.more]] is not one this read follows"},
+		"unknown table key":    {"[[annotations]]\npath = \"a\"\nnote = \"x\"\n", "the key note of an [[annotations]] table is not one this read follows: a table holds path, SPDX-License-Identifier and precedence, SPDX-FileCopyrightText"},
+		"dotted table key":     {"[[annotations]]\npath.glob = \"a\"\n", "the key path.glob of an [[annotations]] table is not one this read follows"},
+		"version in a table":   {"[[annotations]]\nversion = 1\n", "the key version of an [[annotations]] table"},
 	} {
 		if _, err := ReuseAnnotationTables(test.text); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%s: err = %v, want %q", name, err, test.want)
@@ -124,8 +167,9 @@ func TestReuseAnnotationTablesNegative(t *testing.T) {
 	}
 }
 
-// Boundary: the REUSE 3.3 glob dialect against a file and a directory subject, an empty
-// REUSE.toml, and the line bound.
+// Boundary: the REUSE 3.3 glob dialect against a file and a directory subject, whether one glob
+// matches every file of the subject (the coverage decision, includes over reuseSubjectGlob) and
+// at least one (reuseGlobOverlaps), an empty REUSE.toml, and the line bound.
 func TestReuseAnnotationTablesBoundary(t *testing.T) {
 	for _, test := range []struct {
 		glob, subject    string
@@ -151,12 +195,13 @@ func TestReuseAnnotationTablesBoundary(t *testing.T) {
 		{"", "a", false, false},
 		{"", "**", false, false},
 	} {
-		covers, overlaps := reuseGlobRelation(test.glob, test.subject)
-		if covers != test.covers || overlaps != test.overlaps {
-			t.Errorf("glob %q, subject %q: covers %v, overlaps %v", test.glob, test.subject, covers, overlaps)
+		subject := reuseSubjectGlob(test.subject)
+		covers, err := newReuseGlobCheck([]string{test.glob, subject}, maxReuseGlobSteps).includes([]string{test.glob}, subject)
+		if overlaps := reuseGlobOverlaps(test.glob, test.subject); err != nil || covers != test.covers || overlaps != test.overlaps {
+			t.Errorf("glob %q, subject %q: covers %v (%v), overlaps %v", test.glob, test.subject, covers, err, overlaps)
 		}
 	}
-	if tables := reuseTables(t, ""); len(tables) != 0 || ReuseLabels(tables, "a.md", "MIT") {
+	if tables := reuseTables(t, ""); len(tables) != 0 || labelled(t, tables, "a.md", "MIT") {
 		t.Fatalf("an empty REUSE.toml labels: %v", tables)
 	}
 	atBound := strings.Repeat("\n", MaxReuseLines-1)
@@ -178,12 +223,12 @@ func TestRepositoryReuseLabels(t *testing.T) {
 	}
 	tables := reuseTables(t, string(data))
 	for _, rel := range []string{".agents/skills/caveman/SKILL.md", "cmd/standardsctl/main.go", "docs/index.md", "tools/figures/README.md"} {
-		if ReuseLabels(tables, rel, "MIT") || !ReuseLabels(tables, rel, "EUPL-1.2") {
+		if labelled(t, tables, rel, "MIT") || !labelled(t, tables, rel, "EUPL-1.2") {
 			t.Errorf("%s is labelled MIT or not EUPL-1.2", rel)
 		}
 	}
 	for _, subject := range []string{"tools/figures/third_party/interfig/upstream/**", "tools/figures/dist/player.js"} {
-		if !ReuseLabels(tables, subject, "MIT") {
+		if !labelled(t, tables, subject, "MIT") {
 			t.Errorf("%s is not labelled MIT", subject)
 		}
 	}

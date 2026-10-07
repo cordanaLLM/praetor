@@ -256,7 +256,10 @@ func checkCopiedLicense(parsed derivation, tables []ReuseAnnotation, texts map[s
 			findings = append(findings, fmt.Errorf("%s copies upstream text under %s, and %s/%s.txt does not exist; add the license text",
 				parsed.rel, id, LicensesDir, id))
 		}
-		if !ReuseLabels(tables, parsed.rel, id) {
+		labelled, err := ReuseLabels(tables, parsed.rel, id)
+		if err != nil {
+			findings = append(findings, fmt.Errorf("%s copies upstream text under %s: %w", parsed.rel, id, err))
+		} else if !labelled {
 			findings = append(findings, fmt.Errorf("%s copies upstream text under %s, and %s does not label it %s; add an override annotation with the upstream copyright after every table that covers it",
 				parsed.rel, id, ReuseFile, id))
 		}

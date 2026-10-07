@@ -5,6 +5,8 @@
 package supplychain
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,14 +15,14 @@ import (
 	"testing"
 )
 
-// reuseGlobIncludes decides whether later globs together relabel every file of an earlier one,
-// under the REUSE 3.3 glob dialect. Positive: the whole tree, a directory below a directory, a
-// suffix in any directory, an identical path, and unions no one of whose globs covers alone: the
-// whole tree spelled as "*", ".*", "*/**" and ".*/**" (a star matches a leading dot, so "*" and
-// "*/**" are enough) and a directory as its files plus its subdirectories. Negative: a single
-// star stops at "/", a narrower glob does not hold a wider one, two sibling files differ, and a
-// union that leaves subdirectories out is no whole tree. Boundary: an escaped star is a literal,
-// which a star includes and which does not include a star, and no globs include nothing.
+// includes decides whether later globs together relabel every file of an earlier one, under the
+// REUSE 3.3 glob dialect. Positive: the whole tree, a directory below a directory, a suffix in any
+// directory, an identical path, and unions no one of whose globs covers alone: the whole tree
+// spelled as "*", ".*", "*/**" and ".*/**" (a star matches a leading dot, so "*" and "*/**" are
+// enough) and a directory as its files plus its subdirectories. Negative: a single star stops at
+// "/", a narrower glob does not hold a wider one, two sibling files differ, and a union that leaves
+// subdirectories out is no whole tree. Boundary: an escaped star is a literal, which a star
+// includes and which does not include a star, and no globs include nothing.
 func TestReuseGlobIncludes_3D(t *testing.T) {
 	for _, tc := range []struct {
 		outers []string
@@ -47,9 +49,34 @@ func TestReuseGlobIncludes_3D(t *testing.T) {
 		{[]string{`a\*`}, "a*", false},
 		{nil, "a.txt", false},
 	} {
-		if got := reuseGlobIncludes(tc.outers, tc.inner); got != tc.want {
-			t.Errorf("reuseGlobIncludes(%q, %q) = %v, want %v", tc.outers, tc.inner, got, tc.want)
+		got, err := newReuseGlobCheck(append(tc.outers, tc.inner), maxReuseGlobSteps).includes(tc.outers, tc.inner)
+		if err != nil || got != tc.want {
+			t.Errorf("includes(%q, %q) = %v, %v; want %v", tc.outers, tc.inner, got, err, tc.want)
 		}
+	}
+}
+
+// The step budget bounds the real cost of one comparison. Boundary: a comparison given exactly
+// the steps it spends answers, and one step fewer is ErrReuseGlobBound naming the bound, never
+// "not included". Negative: a glob the check was not prepared for is refused, since the alphabet
+// would not name its bytes.
+func TestReuseGlobCheck_Budget(t *testing.T) {
+	outers, inner := []string{"*", ".*", "*/**", ".*/**"}, "vendor/upstream/**"
+	globs := append(append([]string{}, outers...), inner)
+	probe := newReuseGlobCheck(globs, maxReuseGlobSteps)
+	if covered, err := probe.includes(outers, inner); err != nil || !covered {
+		t.Fatalf("the union covers the directory: %v, %v", covered, err)
+	}
+	spent := maxReuseGlobSteps - probe.left
+	if covered, err := newReuseGlobCheck(globs, spent).includes(outers, inner); err != nil || !covered {
+		t.Fatalf("with exactly the %d steps it spends: %v, %v", spent, covered, err)
+	}
+	covered, err := newReuseGlobCheck(globs, spent-1).includes(outers, inner)
+	if !errors.Is(err, ErrReuseGlobBound) || covered || !strings.Contains(err.Error(), fmt.Sprintf("of %d", spent-1)) {
+		t.Fatalf("one step short: %v, %v; want ErrReuseGlobBound naming the bound", covered, err)
+	}
+	if _, err := newReuseGlobCheck(outers, maxReuseGlobSteps).includes(outers, inner); err == nil || errors.Is(err, ErrReuseGlobBound) {
+		t.Fatalf("an unprepared glob: %v, want a refusal", err)
 	}
 }
 
@@ -124,8 +151,7 @@ func TestReuseShadowedPaths_DefaultOrder(t *testing.T) {
 
 // Boundary: a later glob matching only some of an annotation's files leaves the rest in effect
 // and is no shadow; only the covered path of a table with several is reported; an identical later
-// path shadows the earlier one; past the comparison bound the check refuses instead of answering
-// in part.
+// path shadows the earlier one; a file of hundreds of single-file tables is checked in full.
 func TestReuseShadowedPaths_Boundary(t *testing.T) {
 	partial := overrideAfterDefault + "\n[[annotations]]\npath = \"**/*.md\"\nSPDX-License-Identifier = \"CC-BY-4.0\"\n"
 	if shadows := shadowsOf(t, partial); len(shadows) != 0 {
@@ -136,22 +162,35 @@ func TestReuseShadowedPaths_Boundary(t *testing.T) {
 	if !reflect.DeepEqual(shadows, []ReuseShadow{{Table: 2, Path: "NOTICE", By: 3, ByPaths: []string{"NOTICE"}}}) {
 		t.Fatalf("only NOTICE of table 2 is shadowed, by table 3: %+v", shadows)
 	}
-	// One table of n paths followed by one of m paths makes n*m pairs: exactly the bound passes,
-	// one pair more is refused.
-	wide := func(prefix string, count int) ReuseAnnotation {
-		paths := make([]string, 0, count)
-		for index := 0; index < count; index++ {
-			paths = append(paths, prefix+strconv.Itoa(index)+"/**")
-		}
-		return ReuseAnnotation{Paths: paths}
+	// A file listing every vendored file in a table of its own, after a whole-tree default, holds
+	// far more tables than the 362 the earlier pair bound refused, and stays well within the step
+	// budget: a glob dies in the comparison as soon as its path leaves the one compared.
+	listed := []ReuseAnnotation{{Paths: []string{"**"}}}
+	for index := 0; index < 600; index++ {
+		listed = append(listed, ReuseAnnotation{Paths: []string{"vendor/upstream/lib/source-" + strconv.Itoa(index) + ".c"}})
 	}
-	atBound := []ReuseAnnotation{wide("a", maxReuseShadowChecks/256), wide("b", 256)}
-	if shadows, err := ReuseShadowedPaths(atBound); err != nil || len(shadows) != 0 {
-		t.Fatalf("at the comparison bound: %v, %v", shadows, err)
+	if shadows, err := ReuseShadowedPaths(listed); err != nil || len(shadows) != 0 {
+		t.Fatalf("600 single-file tables after the default: %v, %v", shadows, err)
 	}
-	pastBound := []ReuseAnnotation{wide("a", maxReuseShadowChecks/256), wide("b", 256), wide("c", 1)}
-	if _, err := ReuseShadowedPaths(pastBound); err == nil || !strings.Contains(err.Error(), "path pairs") {
-		t.Fatalf("past the comparison bound: %v", err)
+}
+
+// Negative: past its step budget the order check refuses with ErrReuseGlobBound, naming the
+// table, the path and the bound, rather than report no shadow for a file that holds one.
+func TestReuseShadowedPaths_PastTheBound(t *testing.T) {
+	tables, err := ReuseAnnotationTables(defaultAfterOverride)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	shadows, err := reuseShadowedPaths(tables, 8)
+	if !errors.Is(err, ErrReuseGlobBound) || len(shadows) != 0 || !strings.Contains(err.Error(), `annotation 1 path "vendor/upstream/**"`) ||
+		!strings.Contains(err.Error(), "of 8") {
+		t.Fatalf("past the bound: %+v, %v; want ErrReuseGlobBound naming the path and the bound", shadows, err)
+	}
+	if _, found, err := wholeTreeLicense(tables, 2); found || !errors.Is(err, ErrReuseGlobBound) {
+		t.Fatalf("the whole-tree read past the bound: found %v, %v", found, err)
+	}
+	if labelled, err := reuseLabels(tables, "vendor/upstream/a.c", "EUPL-1.2", 2); labelled || !errors.Is(err, ErrReuseGlobBound) {
+		t.Fatalf("the label read past the bound: %v, %v", labelled, err)
 	}
 }
 

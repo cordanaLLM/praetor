@@ -4,7 +4,12 @@
 
 package util
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
 
 // TOMLTableName normalizes a TOML table header line to its name with the spaces TOML permits
 // removed and a trailing comment dropped: "[ extend ]" is "extend" and "[[ rules ]]  # x" is
@@ -58,10 +63,10 @@ func TOMLInlineTableFields(value string, visit func(key, fieldValue string)) boo
 }
 
 // TOMLStringValue returns the text of the single-line string value holds, value being what
-// TOMLKeyValue returns after the equals sign: a basic ("...") or literal ('...') string followed
-// by nothing or a comment. Anything else is refused rather than guessed at: a number, a boolean,
-// an inline table, a multi-line string, and a basic string holding an escape sequence, which is
-// not decoded.
+// TOMLKeyValue returns after the equals sign: a basic ("...") string, its escape sequences
+// decoded (decodeTOMLEscape), or a literal ('...') one, followed by nothing or a comment.
+// Anything else is refused rather than guessed at: a number, a boolean, an inline table, a
+// multi-line string, and a basic string holding an escape sequence TOML does not define.
 func TOMLStringValue(value string) (string, bool) {
 	text, rest, ok := cutTOMLString(value)
 	rest = strings.TrimSpace(rest)
@@ -119,18 +124,82 @@ func skipTOMLArraySeparators(rest string) string {
 }
 
 // cutTOMLString cuts the single-line basic ("...") or literal ('...') string that opens value
-// and returns its text and what follows it. A basic string holding an escape sequence, which is
-// not decoded, and a string running past the end of its line are refused.
+// and returns its text, a basic string's escape sequences decoded, and what follows it. A string
+// running past the end of its line, and a basic string holding an escape sequence TOML does not
+// define, are refused.
 func cutTOMLString(value string) (text, rest string, ok bool) {
-	if value == "" || (value[0] != '"' && value[0] != '\'') {
+	switch {
+	case strings.HasPrefix(value, `"`):
+		return cutTOMLBasicString(value[1:])
+	case !strings.HasPrefix(value, "'"):
 		return "", "", false
 	}
-	quote := value[:1]
-	text, rest, closed := strings.Cut(value[1:], quote)
-	if !closed || strings.Contains(text, "\n") || (quote == `"` && strings.Contains(text, `\`)) {
+	text, rest, closed := strings.Cut(value[1:], "'")
+	if !closed || strings.Contains(text, "\n") {
 		return "", "", false
 	}
 	return text, rest, true
+}
+
+// cutTOMLBasicString reads body, what follows the opening quote of a single-line basic string,
+// to its closing quote, and returns the string's text with every escape sequence decoded and what
+// follows the quote.
+func cutTOMLBasicString(body string) (text, rest string, ok bool) {
+	var decoded strings.Builder
+	// Every pass consumes at least one byte, so len(body) passes read the whole body.
+	for index := 0; index < len(body); {
+		switch body[index] {
+		case '"':
+			return decoded.String(), body[index+1:], true
+		case '\n':
+			return "", "", false
+		case '\\':
+			char, width, good := decodeTOMLEscape(body[index:])
+			if !good {
+				return "", "", false
+			}
+			decoded.WriteString(char)
+			index += width
+		default:
+			decoded.WriteByte(body[index])
+			index++
+		}
+	}
+	return "", "", false
+}
+
+// tomlEscapes are the escape sequences of one letter after the backslash a TOML basic string may
+// hold, with the text each stands for.
+var tomlEscapes = map[byte]string{'b': "\b", 't': "\t", 'n': "\n", 'f': "\f", 'r': "\r", 'e': "\x1b", '"': `"`, '\\': `\`}
+
+// tomlCodeEscapes are the escape letters a fixed number of hexadecimal digits follows, naming a
+// Unicode scalar value: \xHH, \uHHHH and \UHHHHHHHH.
+var tomlCodeEscapes = map[byte]int{'x': 2, 'u': 4, 'U': 8}
+
+// decodeTOMLEscape decodes the escape sequence that opens rest, a backslash first, and returns its
+// text and the bytes it spans. It takes the escapes TOML 1.0 defines and the \e and \xHH that
+// tomlkit 0.15, the TOML library of the reuse tool, decodes too (tomlEscapes, tomlCodeEscapes),
+// and refuses any other, a code that is no Unicode scalar value included.
+func decodeTOMLEscape(rest string) (text string, width int, ok bool) {
+	if len(rest) < 2 {
+		return "", 0, false
+	}
+	if decoded, simple := tomlEscapes[rest[1]]; simple {
+		return decoded, 2, true
+	}
+	digits := tomlCodeEscapes[rest[1]]
+	if digits == 0 || len(rest) < 2+digits {
+		return "", 0, false
+	}
+	code, err := strconv.ParseUint(rest[2:2+digits], 16, 32)
+	if err != nil || code > unicode.MaxRune {
+		return "", 0, false
+	}
+	char := rune(code)
+	if !utf8.ValidRune(char) {
+		return "", 0, false
+	}
+	return string(char), 2 + digits, true
 }
 
 // TOMLValueScan follows the extent of one TOML value across lines without decoding it, so a

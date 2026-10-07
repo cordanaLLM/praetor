@@ -22,7 +22,7 @@ import (
 // annotation order (auditReuseRecords) and the one root licence (auditRootLicense). Both run,
 // and both verdicts are printed, before the first failure is returned.
 func auditLicensing(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
-	return errors.Join(auditReuseRecords(ctx, rootDir), auditRootLicense(ctx, manifest, rootDir, today))
+	return errors.Join(auditReuseRecords(ctx, manifest, rootDir, today), auditRootLicense(ctx, manifest, rootDir, today))
 }
 
 // auditRootLicense runs supplychain.CheckRootLicense over rootDir with the manifest's exceptions
@@ -64,8 +64,10 @@ func auditRootLicense(ctx context.Context, manifest *config.Manifest, rootDir st
 // because later annotations match every file it names (supplychain.ReuseShadowedPaths): the
 // override reuse lint then accepts is not the record REUSE resolves for its files. A repository
 // without REUSE.toml skips the check, saying so; one whose REUSE.toml cannot be read or followed
-// fails it, since a check that did not run is no pass.
-func auditReuseRecords(ctx context.Context, rootDir string) error {
+// fails it, since a check that did not run is no pass. A file whose globs need more comparison
+// steps than the bound is not checked: it fails, naming the bound, unless the manifest excuses it
+// (reuseOrderBound), and an entry excusing a file checked in full is stale and fails too.
+func auditReuseRecords(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
 	data, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(rootDir, supplychain.ReuseFile))
 	if err != nil {
 		return fmt.Errorf("[FAIL] %s annotation order not checked: %w", supplychain.ReuseFile, err)
@@ -78,19 +80,60 @@ func auditReuseRecords(ctx context.Context, rootDir string) error {
 	if err != nil {
 		return fmt.Errorf("[FAIL] %s annotation order not checked: %w", supplychain.ReuseFile, err)
 	}
+	entries := config.ExceptionsFor(manifest.Exceptions, config.ExceptionRuleReuseAnnotationOrder)
 	shadows, err := supplychain.ReuseShadowedPaths(tables)
+	if errors.Is(err, supplychain.ErrReuseGlobBound) {
+		return reuseOrderBound(entries, err, today)
+	}
 	if err != nil {
 		return fmt.Errorf("[FAIL] %s annotation order not checked: %w", supplychain.ReuseFile, err)
 	}
-	if len(shadows) > 0 {
-		for _, shadow := range shadows {
-			fmt.Printf("  - %s\n", shadow)
-		}
+	return reuseOrderVerdict(shadows, entries, len(tables))
+}
+
+// reuseOrderVerdict prints the verdict of an annotation order check that ran in full over a
+// REUSE.toml of tables annotations: every shadow and every reuse-annotation-order entry, which
+// excuses nothing here, before the failure, or the pass.
+func reuseOrderVerdict(shadows []supplychain.ReuseShadow, entries []config.Exception, tables int) error {
+	for _, shadow := range shadows {
+		fmt.Printf("  - %s\n", shadow)
+	}
+	for _, entry := range entries {
+		fmt.Printf("  - exceptions entry %s (%s): the annotation order was checked in full, so the entry excuses nothing; remove it\n",
+			entry.Target(), config.ExceptionRuleReuseAnnotationOrder)
+	}
+	switch {
+	case len(shadows) > 0:
 		return fmt.Errorf("[FAIL] %s annotation order: %d path(s) resolve to a later annotation, not their own", supplychain.ReuseFile, len(shadows))
+	case len(entries) > 0:
+		return fmt.Errorf("[FAIL] %s annotation order: its %s exceptions entries excuse nothing", supplychain.ReuseFile, config.ExceptionRuleReuseAnnotationOrder)
 	}
 	fmt.Printf("[PASS] %s annotation order: no path of its %d annotations is matched whole by the annotations after it.\n",
-		supplychain.ReuseFile, len(tables))
+		supplychain.ReuseFile, tables)
 	return nil
+}
+
+// reuseOrderBound returns the verdict of an annotation order check that stopped at its step bound
+// (supplychain.ErrReuseGlobBound, bound): not checked either way. A live exceptions entry of rule
+// reuse-annotation-order naming REUSE.toml excuses it, and the check prints the entry's reason and
+// expiry; an expired one excuses nothing, and without one the check fails, naming the bound and
+// the entry that would excuse it.
+func reuseOrderBound(entries []config.Exception, bound error, today time.Time) error {
+	used := make([]bool, len(entries))
+	live, expired := config.ExceptionFor(entries, supplychain.ReuseFile, today, used)
+	switch {
+	case live != nil:
+		entry := *live
+		fmt.Printf("[SKIP] %s annotation order not checked: %v; excused by exceptions entry %s (%s) until %s: %s.\n",
+			supplychain.ReuseFile, bound, entry.Target(), config.ExceptionRuleReuseAnnotationOrder, entry.Expires, entry.Reason)
+		return nil
+	case expired != nil:
+		return fmt.Errorf("[FAIL] %s annotation order not checked: %w; its %s exception expired on %s",
+			supplychain.ReuseFile, bound, config.ExceptionRuleReuseAnnotationOrder, expired.Expires)
+	}
+	return fmt.Errorf("[FAIL] %s annotation order not checked: %w; merge its path globs into fewer tables, or keep the file "+
+		"unchecked with an exceptions entry of rule %s naming %s (docs/guides/licensing-gates.md)",
+		supplychain.ReuseFile, bound, config.ExceptionRuleReuseAnnotationOrder, supplychain.ReuseFile)
 }
 
 // auditVendoredLicenses prints one warning for each of families whose vendored tree the
@@ -127,11 +170,25 @@ func vendoredLicenseWarnings(ctx context.Context, rootDir string, families []man
 	}
 	var warnings []string
 	for _, family := range vendoring {
-		if !supplychain.ReuseLabels(tables, family.VendoredGlob(), family.VendoredLicense) {
-			warnings = append(warnings, fmt.Sprintf(
-				"%s has no annotation labelling %s %s; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (%s/README.md, Credit)",
-				supplychain.ReuseFile, family.VendoredGlob(), family.VendoredLicense, family.Directory))
+		if warning := vendoredLabelWarning(tables, family); warning != "" {
+			warnings = append(warnings, warning)
 		}
 	}
 	return warnings
+}
+
+// vendoredLabelWarning returns the warning about one family whose vendored tree tables do not
+// label with the tree's license, or about a label the check could not decide, and "" when tables
+// label it.
+func vendoredLabelWarning(tables []supplychain.ReuseAnnotation, family managedasset.Family) string {
+	labelled, err := supplychain.ReuseLabels(tables, family.VendoredGlob(), family.VendoredLicense)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("the vendored license annotation of %s was not checked: %v", family.Directory, err)
+	case labelled:
+		return ""
+	}
+	return fmt.Sprintf(
+		"%s has no annotation labelling %s %s; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (%s/README.md, Credit)",
+		supplychain.ReuseFile, family.VendoredGlob(), family.VendoredLicense, family.Directory)
 }

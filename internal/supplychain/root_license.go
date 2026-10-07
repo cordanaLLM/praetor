@@ -118,7 +118,11 @@ func declaredLicense(ctx context.Context, root string) (license, skipped string,
 		if err != nil {
 			return "", "", err
 		}
-		if expression, found := wholeTreeLicense(tables); found {
+		expression, found, err := wholeTreeLicense(tables, maxReuseGlobSteps)
+		if err != nil {
+			return "", "", err
+		}
+		if found {
 			return singleLicense(expression, "the whole-tree "+ReuseFile+" annotation names")
 		}
 	}
@@ -136,14 +140,20 @@ func declaredLicense(ctx context.Context, root string) (license, skipped string,
 // wholeTreeLicense returns the licence expression of the last table whose globs together match
 // every path, and whether there is one: the table REUSE resolves for a file no later table names.
 // Its globs may be "**" or a union no one of them covers alone, such as "*", ".*", "*/**" and
-// ".*/**".
-func wholeTreeLicense(tables []ReuseAnnotation) (string, bool) {
+// ".*/**". Comparisons past a budget of steps, maxReuseGlobSteps for the gate, are
+// ErrReuseGlobBound.
+func wholeTreeLicense(tables []ReuseAnnotation, steps int) (string, bool, error) {
+	check := newReuseGlobCheck(append(reuseTablePaths(tables), "**"), steps)
 	for index := len(tables) - 1; index >= 0; index-- {
-		if reuseGlobIncludes(tables[index].Paths, "**") {
-			return strings.Join(tables[index].Licenses, " AND "), true
+		whole, err := check.includes(tables[index].Paths, "**")
+		if err != nil {
+			return "", false, fmt.Errorf("%s whole-tree annotation not found: %w", ReuseFile, err)
+		}
+		if whole {
+			return strings.Join(tables[index].Licenses, " AND "), true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // singleLicense returns expression as the declared licence when it is one SPDX identifier, and

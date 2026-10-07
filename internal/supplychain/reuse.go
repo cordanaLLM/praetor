@@ -16,9 +16,15 @@ import (
 // The REUSE.toml reads: praetorctl audit's licensing gates and vendored license warning
 // (cmd/standardsctl, audit_reuse.go) and the label a copied upstream file must carry
 // (CheckUpstreamCredits). They read the file's shape, not TOML: the module carries no TOML
-// library (util.TOMLTableName). Only the values of the path and SPDX-License-Identifier keys of
-// [[annotations]] tables count; comments and the other keys never match a path, and their values
-// are stepped over whatever they hold (util.TOMLValueScan).
+// library (util.TOMLTableName). The read mirrors what the reuse tool parses
+// (reuse/global_licensing.py, ReuseTOML.from_dict and AnnotationsItem.from_dict), so it follows
+// an allow-list and refuses everything else, naming the line: the version key, [[annotations]]
+// table headers, and in each table the four keys REUSE reads, one per line. Only the values of
+// path and SPDX-License-Identifier count; the values of version, precedence and
+// SPDX-FileCopyrightText are stepped over whatever they hold (util.TOMLValueScan). Any other
+// top-level key, such as annotations written as an inline array of tables, any dotted key, any
+// other table header and any other key of a table fail closed, since REUSE may read them as
+// annotations this read never sees.
 
 const (
 	// ReuseFile is the REUSE configuration a repository may declare its licensing in.
@@ -27,11 +33,17 @@ const (
 	MaxReuseLines = 4096
 	// reuseAnnotationsTable is the array-of-tables name util.TOMLTableName gives [[annotations]].
 	reuseAnnotationsTable = "[annotations]"
+	// reuseVersionKey is the one top-level key of a REUSE.toml.
+	reuseVersionKey = "version"
 	// reusePathKey holds the globs an annotation table covers, a string or an array of strings.
 	reusePathKey = "path"
 	// reuseLicenseKey holds the SPDX license expressions of a table, a string or an array.
 	reuseLicenseKey = "SPDX-License-Identifier"
 )
+
+// reuseSteppedKeys are the keys of an [[annotations]] table REUSE reads and the gates do not:
+// their values are stepped over.
+var reuseSteppedKeys = []string{"precedence", "SPDX-FileCopyrightText"}
 
 // ReuseAnnotation is one [[annotations]] table of a REUSE.toml.
 type ReuseAnnotation struct {
@@ -57,13 +69,14 @@ type reuseScan struct {
 }
 
 // ReuseAnnotationTables returns every [[annotations]] table of a REUSE.toml with the values of
-// its path and SPDX-License-Identifier keys, each a single-line string or an array of them that
-// may span lines. The value of any other key, such as a SPDX-FileCopyrightText array of strings
-// with escape sequences or a multi-line string, is stepped over unread. A text past
-// MaxReuseLines is an error, and so is one the read cannot follow: a line that is no table
-// header, key or comment, a value whose end it cannot find, and a path or license value that is
-// a multi-line string, an array of anything but plain single-line strings or one left open, or
-// neither a string nor an array, so the gates reading those keys never judge a file in part.
+// its path and SPDX-License-Identifier keys, each a single-line string, its escape sequences
+// decoded, or an array of them that may span lines. The values of version, precedence and
+// SPDX-FileCopyrightText, such as an array of strings with escape sequences or a multi-line
+// string, are stepped over unread. A text past MaxReuseLines is an error, and so is one the read
+// does not follow: a line that is no table header, key or comment, a key or table header outside
+// the allow-list above, a value whose end it cannot find, and a path or license value that is a
+// multi-line string, an array of anything but single-line strings or one left open, or neither a
+// string nor an array, so the gates reading those keys never judge a file in part.
 func ReuseAnnotationTables(text string) ([]ReuseAnnotation, error) {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	if len(lines) > MaxReuseLines {
@@ -96,27 +109,57 @@ func (s *reuseScan) read(line string) error {
 	case line == "" || strings.HasPrefix(line, "#"):
 		return nil
 	case strings.HasPrefix(line, "["):
-		s.inTable = util.TOMLTableName(line) == reuseAnnotationsTable
-		if s.inTable {
-			s.tables = append(s.tables, ReuseAnnotation{})
-		}
-		return nil
+		return s.header(line)
 	}
 	return s.assign(line)
 }
 
-// assign reads the key line assigns: it records the strings of a key ReuseAnnotation holds and
-// steps over the value of any other.
+// header opens the [[annotations]] table line starts, and refuses any other table header.
+func (s *reuseScan) header(line string) error {
+	if !strings.HasPrefix(line, "[[") || util.TOMLTableName(line) != reuseAnnotationsTable {
+		return fmt.Errorf("the table header %s is not one this read follows: %s holds the %s key and [[annotations]] tables, "+
+			"each opened by a [[annotations]] line of its own", line, ReuseFile, reuseVersionKey)
+	}
+	s.inTable = true
+	s.tables = append(s.tables, ReuseAnnotation{})
+	return nil
+}
+
+// assign reads the key line assigns: it records the strings of path and SPDX-License-Identifier,
+// steps over the value of another key the allow-list holds, and refuses any other key.
 func (s *reuseScan) assign(line string) error {
 	key, value, ok := util.TOMLKeyValue(line)
 	if !ok {
 		return fmt.Errorf("%q is not a table header, a key or a comment", line)
 	}
 	s.listKey, s.listItems = strings.Trim(key, `"'`), nil
-	if !s.inTable || (s.listKey != reusePathKey && s.listKey != reuseLicenseKey) {
+	switch {
+	case !s.inTable && s.listKey == reuseVersionKey, s.inTable && slices.Contains(reuseSteppedKeys, s.listKey):
 		s.skip = util.TOMLValueScan{}
 		return s.skipValue(value)
+	case !s.inTable:
+		return reuseTopLevelKeyError(s.listKey)
+	case s.listKey != reusePathKey && s.listKey != reuseLicenseKey:
+		return fmt.Errorf("the key %s of an [[annotations]] table is not one this read follows: a table holds %s, %s and %s, "+
+			"each assigned on a line of its own, with no dotted key", s.listKey, reusePathKey, reuseLicenseKey, strings.Join(reuseSteppedKeys, ", "))
 	}
+	return s.readValue(value)
+}
+
+// reuseTopLevelKeyError refuses key, a key outside every table other than version: annotations
+// written as an inline array of tables or with dotted keys, which REUSE reads and this read does
+// not follow, or a key REUSE.toml does not hold.
+func reuseTopLevelKeyError(key string) error {
+	if key == "annotations" || strings.HasPrefix(key, "annotations.") {
+		return fmt.Errorf("the top-level key %s is not one this read follows: write each annotation as a table of its own, "+
+			"opened by a [[annotations]] line and holding one key = value per line, not as an inline array of tables or dotted keys", key)
+	}
+	return fmt.Errorf("the top-level key %s is not one this read follows: %s holds the %s key and [[annotations]] tables", key, ReuseFile, reuseVersionKey)
+}
+
+// readValue records the value of the path or license key, which is a single-line string or an
+// array of them.
+func (s *reuseScan) readValue(value string) error {
 	if strings.HasPrefix(value, `"""`) || strings.HasPrefix(value, "'''") {
 		return fmt.Errorf("%s holds a multi-line string, which this read does not follow", s.listKey)
 	}
@@ -126,7 +169,8 @@ func (s *reuseScan) assign(line string) error {
 	}
 	text, isString := util.TOMLStringValue(value)
 	if !isString {
-		return fmt.Errorf("%s = %s is not a string without escape sequences or an array of them", s.listKey, value)
+		return fmt.Errorf("%s = %s is not a single-line string or an array of them; a basic string may hold only the escape "+
+			"sequences TOML defines, and a literal string ('...') keeps every backslash as written", s.listKey, value)
 	}
 	s.record([]string{text})
 	return nil
@@ -148,7 +192,8 @@ func (s *reuseScan) skipValue(text string) error {
 func (s *reuseScan) readList(text string) error {
 	items, closed, ok := util.TOMLStringArray(text + "\n")
 	if !ok {
-		return fmt.Errorf("the %s array holds something other than strings without escape sequences, each on one line", s.listKey)
+		return fmt.Errorf("the %s array holds something other than single-line strings, each on one line; a basic string may hold "+
+			"only the escape sequences TOML defines, and a literal string ('...') keeps every backslash as written", s.listKey)
 	}
 	s.listItems = append(s.listItems, items...)
 	if closed {
@@ -158,9 +203,9 @@ func (s *reuseScan) readList(text string) error {
 	return nil
 }
 
-// record keeps the strings of listKey on the current table when the key is one it holds.
+// record keeps the strings of listKey, path or SPDX-License-Identifier, on the current table.
 func (s *reuseScan) record(values []string) {
-	if !s.inTable || len(s.tables) == 0 {
+	if len(s.tables) == 0 {
 		return
 	}
 	table := &s.tables[len(s.tables)-1]
@@ -175,21 +220,32 @@ func (s *reuseScan) record(values []string) {
 // ReuseLabels reports whether REUSE.toml labels every file subject names with license among the
 // terms of a license expression. subject is one file's path, or a directory glob "<dir>/**"
 // naming every file below dir. REUSE 3.3 applies only the last table whose path globs match a
-// file, so the tables are read from the last: one whose globs match every file of subject
-// decides, and one matching only some of them, such as "**/*.md" for a directory, decides when
-// it does not name license, since those files lose the label. An override placed before a
-// whole-tree table is thus relabelled by it, and reuse lint still passes.
-func ReuseLabels(tables []ReuseAnnotation, subject, license string) bool {
+// file, so the tables are read from the last: one whose globs together match every file of
+// subject decides, and one matching only some of them, such as "**/*.md" for a directory, decides
+// when it does not name license, since those files lose the label. An override placed before a
+// whole-tree table is thus relabelled by it, and reuse lint still passes. Comparisons past
+// maxReuseGlobSteps are ErrReuseGlobBound, never a guess.
+func ReuseLabels(tables []ReuseAnnotation, subject, license string) (bool, error) {
+	return reuseLabels(tables, subject, license, maxReuseGlobSteps)
+}
+
+// reuseLabels is ReuseLabels with a budget of steps.
+func reuseLabels(tables []ReuseAnnotation, subject, license string, steps int) (bool, error) {
+	glob := reuseSubjectGlob(subject)
+	check := newReuseGlobCheck(append(reuseTablePaths(tables), glob), steps)
 	for index := len(tables) - 1; index >= 0; index-- {
-		covers, overlaps := tables[index].relation(subject)
+		covers, err := check.includes(tables[index].Paths, glob)
+		if err != nil {
+			return false, fmt.Errorf("%s label of %s not checked: %w", ReuseFile, subject, err)
+		}
 		labels := slices.ContainsFunc(tables[index].Licenses, func(expression string) bool {
 			return slices.Contains(licenseTerms(expression), license)
 		})
-		if covers || (overlaps && !labels) {
-			return labels
+		if covers || (!labels && tables[index].overlaps(subject)) {
+			return labels, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // ReuseShadow is one path glob of a REUSE.toml annotation table that never takes effect: the
@@ -230,9 +286,6 @@ func reusePathsText(paths []string) string {
 	return "paths " + strings.Join(quoted, ", ")
 }
 
-// maxReuseShadowChecks bounds the glob pairs one ReuseShadowedPaths compares (HISS-02).
-const maxReuseShadowChecks = 1 << 16
-
 // ReuseShadowedPaths returns every path glob of tables whose files all resolve to a later table:
 // the record REUSE resolves for each of them is a later table, never this one. The specification
 // says so for any precedence ("exclusively the last matching table in the file is used"), and
@@ -242,58 +295,63 @@ const maxReuseShadowChecks = 1 << 16
 // table placed after an override is the usual cause, whether it names the whole tree with "**" or
 // with several globs such as "*", ".*", "*/**" and ".*/**". Later globs matching only some of the
 // paths, such as a narrower override after a whole-tree default, leave the rest in effect and are
-// no shadow. A file holding more than maxReuseShadowChecks pairs of a path and a later path is
-// refused before the first comparison, never answered in part.
+// no shadow. A file whose comparisons need more than maxReuseGlobSteps automaton steps is
+// ErrReuseGlobBound, never answered in part.
 func ReuseShadowedPaths(tables []ReuseAnnotation) ([]ReuseShadow, error) {
-	pairs, later := 0, 0
-	for index := len(tables) - 1; index >= 0; index-- {
-		pairs += len(tables[index].Paths) * later
-		later += len(tables[index].Paths)
-		if pairs > maxReuseShadowChecks {
-			return nil, fmt.Errorf("%s holds more path pairs than the %d its annotation order check compares", ReuseFile, maxReuseShadowChecks)
-		}
-	}
+	return reuseShadowedPaths(tables, maxReuseGlobSteps)
+}
+
+// reuseShadowedPaths is ReuseShadowedPaths with a budget of steps.
+func reuseShadowedPaths(tables []ReuseAnnotation, steps int) ([]ReuseShadow, error) {
+	check := newReuseGlobCheck(reuseTablePaths(tables), steps)
 	var shadows []ReuseShadow
 	for index := range tables {
 		for _, glob := range tables[index].Paths {
-			if by := reuseShadowOf(tables[index+1:], glob); by > 0 {
-				shadows = append(shadows, newReuseShadow(tables, index, glob, index+by))
+			shadow, found, err := reuseShadowOf(check, tables, index, glob)
+			if err != nil {
+				return nil, fmt.Errorf("%s annotation %d path %q: %w", ReuseFile, index+1, glob, err)
+			}
+			if found {
+				shadows = append(shadows, shadow)
 			}
 		}
 	}
 	return shadows, nil
 }
 
-// newReuseShadow is the shadow of glob, a path of tables[table], completed by tables[by].
-func newReuseShadow(tables []ReuseAnnotation, table int, glob string, by int) ReuseShadow {
-	shadow := ReuseShadow{Table: table + 1, Path: glob, By: by + 1}
-	if reuseGlobIncludes(tables[by].Paths, glob) {
-		shadow.ByPaths = tables[by].Paths
-	}
-	return shadow
-}
-
 // maxReuseShadowSearch bounds the halvings of one reuseShadowOf search (HISS-02): enough for any
 // slice length.
 const maxReuseShadowSearch = 64
 
-// reuseShadowOf returns the position in later, from 1, of the table that completes the shadow of
-// glob: the first k for which the globs of later[:k] together match every path glob does, or 0
-// when all of later does not. Coverage only grows with k, so the search halves the range.
-func reuseShadowOf(later []ReuseAnnotation, glob string) int {
-	if !reuseGlobIncludes(reuseTablePaths(later), glob) {
-		return 0
+// reuseShadowOf returns the shadow of glob, a path of tables[table], and whether the tables after
+// it together match every path glob does. The table that completes it is the first k for which
+// the globs of the k tables after table do; coverage only grows with k, so the search halves the
+// range.
+func reuseShadowOf(check *reuseGlobCheck, tables []ReuseAnnotation, table int, glob string) (ReuseShadow, bool, error) {
+	later := tables[table+1:]
+	if covered, err := check.includes(reuseTablePaths(later), glob); err != nil || !covered {
+		return ReuseShadow{}, false, err
 	}
 	low, high := 1, len(later)
 	for pass := 0; low < high && pass < maxReuseShadowSearch; pass++ {
 		middle := low + (high-low)/2
-		if reuseGlobIncludes(reuseTablePaths(later[:middle]), glob) {
+		covered, err := check.includes(reuseTablePaths(later[:middle]), glob)
+		if err != nil {
+			return ReuseShadow{}, false, err
+		}
+		if covered {
 			high = middle
 		} else {
 			low = middle + 1
 		}
 	}
-	return high
+	by := table + high
+	shadow := ReuseShadow{Table: table + 1, Path: glob, By: by + 1}
+	alone, err := check.includes(tables[by].Paths, glob)
+	if alone {
+		shadow.ByPaths = tables[by].Paths
+	}
+	return shadow, true, err
 }
 
 // reuseTablePaths returns the globs of tables, in file order.
@@ -305,13 +363,7 @@ func reuseTablePaths(tables []ReuseAnnotation) []string {
 	return paths
 }
 
-// relation reports whether one of the table's globs matches every file subject names (covers)
-// and whether one matches at least one of them (overlaps).
-func (a ReuseAnnotation) relation(subject string) (covers, overlaps bool) {
-	for _, glob := range a.Paths {
-		globCovers, globOverlaps := reuseGlobRelation(glob, subject)
-		covers = covers || globCovers
-		overlaps = overlaps || globOverlaps
-	}
-	return covers, overlaps
+// overlaps reports whether one of the table's globs matches at least one file subject names.
+func (a ReuseAnnotation) overlaps(subject string) bool {
+	return slices.ContainsFunc(a.Paths, func(glob string) bool { return reuseGlobOverlaps(glob, subject) })
 }

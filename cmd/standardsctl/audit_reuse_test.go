@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,15 +122,20 @@ func TestVendoredLicenseWarningsBoundary(t *testing.T) {
 	}
 }
 
+// reuseOrderToday is the day the annotation order tests judge exceptions entries against.
+var reuseOrderToday = time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC)
+
 // auditReuseOrder runs the REUSE.toml annotation order gate over a repository whose REUSE.toml
-// is text, or that has none for a nil text, and returns what it printed and its verdict.
-func auditReuseOrder(t *testing.T, text *string) (string, error) {
+// is text, or that has none for a nil text, under a manifest with entries as its exceptions, and
+// returns what it printed and its verdict.
+func auditReuseOrder(t *testing.T, text *string, entries ...config.Exception) (string, error) {
 	t.Helper()
 	root := t.TempDir()
 	if text != nil {
 		writeFixtureFile(t, root, supplychain.ReuseFile, *text)
 	}
-	return captureStdout(t, func() error { return auditReuseRecords(t.Context(), root) })
+	manifest := &config.Manifest{Exceptions: entries}
+	return captureStdout(t, func() error { return auditReuseRecords(t.Context(), manifest, root, reuseOrderToday) })
 }
 
 // The annotation order gate holds an override to the record REUSE resolves for its files.
@@ -162,6 +168,52 @@ func TestAuditReuseRecords_3D(t *testing.T) {
 	unreadable := "version = 1\n[[annotations]]\npath = \"\"\"\n**\n\"\"\"\n"
 	if _, err := auditReuseOrder(t, &unreadable); err == nil || !strings.Contains(err.Error(), "not checked") {
 		t.Fatalf("a REUSE.toml the read cannot follow passed: %v", err)
+	}
+	// The reversed order written as an inline array of tables, which REUSE reads, fails closed
+	// instead of passing over no annotation.
+	inline := "version = 1\nannotations = [\n  { path = \"tools/figures/third_party/interfig/upstream/**\", SPDX-License-Identifier = \"MIT\" },\n" +
+		"  { path = \"**\", SPDX-License-Identifier = \"EUPL-1.2\" },\n]\n"
+	if output, err := auditReuseOrder(t, &inline); err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml annotation order not checked") ||
+		!strings.Contains(err.Error(), "top-level key annotations") || strings.Contains(output, "[PASS]") {
+		t.Fatalf("annotations as an inline array of tables: %v\n%s", err, output)
+	}
+}
+
+// reuseOrderEntry is an exceptions entry of the annotation order rule naming REUSE.toml, expiring
+// on expires.
+func reuseOrderEntry(expires string) config.Exception {
+	return config.Exception{Rule: config.ExceptionRuleReuseAnnotationOrder, Path: supplychain.ReuseFile,
+		Reason: "4000 vendored file globs", Expires: expires}
+}
+
+// A REUSE.toml whose comparisons pass the step bound is not checked. Negative: without an
+// exceptions entry the gate fails, naming the bound and the rule that would excuse it, and an
+// expired entry excuses nothing. Positive: a live entry excuses it, printing the entry's reason
+// and expiry as not checked, never as a pass. Boundary: an entry for a file the gate checks in
+// full is stale and fails the gate.
+func TestAuditReuseRecords_Bound(t *testing.T) {
+	bound := fmt.Errorf("REUSE.toml annotation 1 path \"**\": %w of 16777216", supplychain.ErrReuseGlobBound)
+	err := reuseOrderBound(nil, bound, reuseOrderToday)
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml annotation order not checked") || !strings.Contains(err.Error(), "of 16777216") ||
+		!strings.Contains(err.Error(), "exceptions entry of rule reuse-annotation-order naming REUSE.toml") {
+		t.Fatalf("no entry: %v", err)
+	}
+	if err := reuseOrderBound([]config.Exception{reuseOrderEntry("2026-10-06")}, bound, reuseOrderToday); err == nil ||
+		!strings.Contains(err.Error(), "its reuse-annotation-order exception expired on 2026-10-06") {
+		t.Fatalf("expired entry: %v", err)
+	}
+	output, err := captureStdout(t, func() error {
+		return reuseOrderBound([]config.Exception{reuseOrderEntry("2026-12-31")}, bound, reuseOrderToday)
+	})
+	if err != nil || !strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") ||
+		!strings.Contains(output, "until 2026-12-31: 4000 vendored file globs") || strings.Contains(output, "[PASS]") {
+		t.Fatalf("live entry: %v\n%s", err, output)
+	}
+	correct := "version = 1\n\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n" + reuseOverrideTable
+	output, err = auditReuseOrder(t, &correct, reuseOrderEntry("2026-12-31"))
+	if err == nil || !strings.Contains(err.Error(), "reuse-annotation-order exceptions entries excuse nothing") ||
+		!strings.Contains(output, "exceptions entry REUSE.toml (reuse-annotation-order): the annotation order was checked in full") {
+		t.Fatalf("stale entry: %v\n%s", err, output)
 	}
 }
 

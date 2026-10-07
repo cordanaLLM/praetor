@@ -50,11 +50,18 @@ const ExceptionRuleBuildWarnings = "HISS-10"
 // path, one entry per file.
 const ExceptionRuleRootLicenseNotice = "root-license-notice"
 
+// ExceptionRuleReuseAnnotationOrder is the rule of the REUSE.toml annotation order gate
+// (praetorctl audit, supplychain.ReuseShadowedPaths): an entry names the root REUSE.toml whose
+// path globs need more comparison steps than the gate's bound, so the gate reports the order as
+// not checked, with the entry's reason and expiry, instead of failing. A file the gate checks in
+// full makes the entry stale.
+const ExceptionRuleReuseAnnotationOrder = "reuse-annotation-order"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
 var exceptionRules = []string{
 	ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings,
-	ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice,
+	ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
 }
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -233,11 +240,13 @@ func (e Exception) targetProblem() string {
 	return ""
 }
 
-// rootLicenseTargetProblem requires a root-license-notice entry to name one file at the
-// repository root by path, the file the root licence gate keeps, one entry per file.
+// rootLicenseTargetProblem requires a root-license-notice or reuse-annotation-order entry to name
+// one file at the repository root by path, the file the root licence gate keeps or the REUSE.toml
+// the order gate excuses, one entry per file.
 func (e Exception) rootLicenseTargetProblem() string {
-	if e.Rule == ExceptionRuleRootLicenseNotice && (e.Glob != "" || strings.Contains(e.Path, "/")) {
-		return "rule " + ExceptionRuleRootLicenseNotice + " must name one file at the repository root by path, one entry per file"
+	if (e.Rule == ExceptionRuleRootLicenseNotice || e.Rule == ExceptionRuleReuseAnnotationOrder) &&
+		(e.Glob != "" || strings.Contains(e.Path, "/")) {
+		return "rule " + e.Rule + " must name one file at the repository root by path, one entry per file"
 	}
 	return ""
 }

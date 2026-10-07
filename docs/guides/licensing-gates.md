@@ -56,22 +56,66 @@ names`, and asks to move the annotation after the last of them.
 Put the default table first and every override after it. Later paths that match only some of an
 annotation's files, such as `**/*.md` after `docs/**`, leave the rest in effect and are not
 reported. Paths compare as REUSE globs: `*` stops at `/`, `**` crosses it, and `\` makes the
-next character literal (`ReuseShadowedPaths` and `reuseGlobIncludes` in
+next character literal (`ReuseShadowedPaths` in
 [`internal/supplychain/reuse.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse.go)
-and `reuse_glob.go`). Tests: `TestReuseGlobIncludes_3D` and `TestReuseShadowedPaths_*`,
-`_Union` among them, in `internal/supplychain/reuse_shadow_test.go`, and
-`TestAuditReuseRecords_3D` in `cmd/standardsctl/audit_reuse_test.go`.
+and `reuseGlobCheck.includes` in `reuse_glob.go`, the one coverage decision every licensing check
+uses). Tests: `TestReuseGlobIncludes_3D` and `TestReuseShadowedPaths_*`, `_Union` among them,
+in `internal/supplychain/reuse_shadow_test.go`, and `TestAuditReuseRecords_3D` in
+`cmd/standardsctl/audit_reuse_test.go`.
 
-Both audit checks read only the `path` and `SPDX-License-Identifier` keys of each
-`[[annotations]]` table, each a string or an array of plain single-line strings. The values of
-every other key, such as a `SPDX-FileCopyrightText` array with escaped quotes or a multi-line
-copyright string, are stepped over unread (`util.TOMLValueScan` in
-[`internal/util/toml.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/toml.go)).
-A `REUSE.toml` whose `path` or `SPDX-License-Identifier` the audit cannot read this way, such as a
-multi-line string as a path, or whose other values it cannot find the end of, fails both checks
-rather than passing them unchecked (`TestReuseAnnotationTablesPositive` and
+### What the audit reads
+
+Both audit checks read `REUSE.toml` against an allow-list, the keys the reuse tool reads
+(`ReuseTOML.from_dict` and `AnnotationsItem.from_dict` in `reuse/global_licensing.py`), and fail
+on anything else rather than pass over it:
+
+- the top-level `version` key;
+- `[[annotations]]` tables, each opened by a `[[annotations]]` line of its own;
+- in each table, `path` and `SPDX-License-Identifier`, each a single-line string or an array of
+  them, and `precedence` and `SPDX-FileCopyrightText`, whose values are stepped over whatever they
+  hold, such as an array with escaped quotes or a multi-line copyright string
+  (`util.TOMLValueScan` in
+  [`internal/util/toml.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/toml.go)).
+
+Any other top-level key, table header or table key fails both checks with the line and the key,
+and says how to write it. Annotations written as an inline array of tables, which REUSE accepts,
+fail this way:
+
+```text
+[FAIL] REUSE.toml annotation order not checked: REUSE.toml:2: the top-level key annotations is not one this read follows: write each annotation as a table of its own, opened by a [[annotations]] line and holding one key = value per line, not as an inline array of tables or dotted keys
+```
+
+Rewrite each element as an `[[annotations]]` table. Dotted keys, such as `annotations.path`, fail
+the same way. A basic string's escape sequences are decoded as TOML defines them, so
+`path = "a\\*"`, the escaped star of the REUSE specification, reads as the glob `a\*`, as the
+literal string `path = 'a\*'` does. A multi-line string as a `path` or `SPDX-License-Identifier`,
+an escape sequence TOML does not define, and a value whose end the read cannot find fail both
+checks rather than passing them unchecked (`TestReuseAnnotationTablesPositive` and
 `TestReuseAnnotationTablesNegative` in `internal/supplychain/reuse_test.go`, and
 `TestAuditLicensing_3D`).
+
+### The comparison bound
+
+Comparing globs explores the product of their automata. Every check spends at most
+16,777,216 automaton steps (`maxReuseGlobSteps` in `reuse_glob.go`), one step for each byte one
+glob reads, so the bound measures the real cost, not the number of tables: a file listing hundreds
+of vendored files, one table each, stays far below it (`TestReuseShadowedPaths_Boundary`). A file
+whose comparisons need more is not answered in part: the check fails as not checked, naming the
+annotation, the path and the bound (`TestReuseGlobCheck_Budget`,
+`TestReuseShadowedPaths_PastTheBound`). Merge its globs into fewer tables, or, while you do, keep
+the file unchecked with an exceptions entry in `.standards.yaml`:
+
+```yaml
+exceptions:
+  - rule: "reuse-annotation-order"
+    path: "REUSE.toml"
+    reason: "4000 generated vendored file globs; merging them tracked in the backlog"
+    expires: "2026-12-31"
+```
+
+The audit then prints the order as not checked, with the entry's reason and expiry, and never as a
+pass. An expired entry excuses nothing, and an entry for a file the audit checks in full is stale
+and fails the check until it is removed (`TestAuditReuseRecords_Bound`).
 
 ## One root licence
 

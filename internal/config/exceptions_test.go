@@ -318,14 +318,23 @@ func TestValidateClangTidyNegativeAndBoundary(t *testing.T) {
 	}
 }
 
-// The root-license-notice rule keeps one root file per entry. Positive: an entry naming a root
-// file by path validates and decodes from the manifest. Negative: a glob, or a path below the
-// root, is refused, naming the rule. Boundary: the same root file under the other rule is
-// another entry, not a repeat.
+// The root-license-notice and reuse-annotation-order rules name one root file per entry.
+// Positive: an entry naming a root file by path validates and decodes from the manifest.
+// Negative: a glob, or a path below the root, is refused, naming the rule. Boundary: the same
+// root file under the other rule is another entry, not a repeat.
 func TestValidateExceptionsRootLicenseNotice(t *testing.T) {
 	notice := Exception{Rule: ExceptionRuleRootLicenseNotice, Path: "COPYING", Reason: "upstream GPL notice kept verbatim", Expires: "2026-12-31"}
 	if err := ValidateExceptions([]Exception{notice}, exceptionsToday); err != nil {
 		t.Fatalf("a root file entry refused: %v", err)
+	}
+	order := Exception{Rule: ExceptionRuleReuseAnnotationOrder, Path: "REUSE.toml", Reason: "4000 vendored globs", Expires: "2026-12-31"}
+	if err := ValidateExceptions([]Exception{order}, exceptionsToday); err != nil {
+		t.Fatalf("a REUSE.toml order entry refused: %v", err)
+	}
+	order.Path = "sub/REUSE.toml"
+	if err := ValidateExceptions([]Exception{order}, exceptionsToday); err == nil ||
+		!strings.Contains(err.Error(), "rule reuse-annotation-order must name one file at the repository root by path") {
+		t.Errorf("a nested REUSE.toml order entry: ValidateExceptions = %v", err)
 	}
 	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
 	m, err := LoadManifest(writeManifest(t, "version: 1\nexceptions:\n  - rule: \"root-license-notice\"\n    path: \"COPYING\"\n"+

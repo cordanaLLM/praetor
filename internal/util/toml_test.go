@@ -132,13 +132,20 @@ func TestTOMLInlineTableFieldsBoundary(t *testing.T) {
 	}
 }
 
-// Positive: basic and literal single-line strings, with or without a trailing comment.
+// Positive: basic and literal single-line strings, with or without a trailing comment, and the
+// escape sequences of a basic string decoded: a REUSE glob's escaped star, an escaped quote, the
+// one-letter escapes and the hexadecimal codes, as tomlkit decodes them.
 func TestTOMLStringValuePositive(t *testing.T) {
 	for value, want := range map[string]string{
-		`"2021"`:             "2021",
-		`'2021'`:             "2021",
-		`"2021" # workspace`: "2021",
-		`'C:\path'`:          `C:\path`,
+		`"2021"`:                 "2021",
+		`'2021'`:                 "2021",
+		`"2021" # workspace`:     "2021",
+		`'C:\path'`:              `C:\path`,
+		`"a\\*"`:                 `a\*`,
+		`"20\"21"`:               `20"21`,
+		`"\b\t\n\f\r\e"`:         "\b\t\n\f\r\x1b",
+		`"\x41\u00e9\U0001F600"`: "A\u00e9\U0001F600",
+		`"a\"#b" # c`:            `a"#b`,
 	} {
 		if got, ok := util.TOMLStringValue(value); !ok || got != want {
 			t.Errorf("TOMLStringValue(%q) = %q, %v; want %q", value, got, ok, want)
@@ -147,19 +154,21 @@ func TestTOMLStringValuePositive(t *testing.T) {
 }
 
 // Negative: numbers, booleans, inline tables, unterminated and multi-line strings, text after
-// the string, and basic strings holding an escape are refused, never guessed at.
+// the string, and basic strings holding an escape TOML does not define, a short or invalid code
+// or a surrogate code included, are refused, never guessed at.
 func TestTOMLStringValueNegative(t *testing.T) {
 	for _, value := range []string{"2021", "true", "{ workspace = true }", `"2021`, `"""2021"""`,
-		`"2021" extra`, `"20\"21"`, `"2021\n"`, ""} {
+		`"2021" extra`, `"a\q"`, `"a\/"`, `"\u12"`, `"\x4g"`, `"\uD800"`, `"\UFFFFFFFF"`, `"a\"`, `"a\`, ""} {
 		if got, ok := util.TOMLStringValue(value); ok {
 			t.Errorf("TOMLStringValue(%q) = %q, true; want refused", value, got)
 		}
 	}
 }
 
-// Boundary: the empty string is a string, and a comment may follow without a space.
+// Boundary: the empty string is a string, a comment may follow without a space, an escape at the
+// end of the text decodes, and the largest Unicode scalar value is a valid code.
 func TestTOMLStringValueBoundary(t *testing.T) {
-	for value, want := range map[string]string{`""`: "", `''`: "", `'x'#c`: "x"} {
+	for value, want := range map[string]string{`""`: "", `''`: "", `'x'#c`: "x", `"a\\"`: `a\`, `"\U0010FFFF"`: "\U0010FFFF"} {
 		if got, ok := util.TOMLStringValue(value); !ok || got != want {
 			t.Errorf("TOMLStringValue(%q) = %q, %v; want %q", value, got, ok, want)
 		}
@@ -175,6 +184,7 @@ func TestTOMLStringArrayPositive(t *testing.T) {
 		"[\"a\"] # members\n":                                     {"a"},
 		"[ # opened\r\n  \"a\" ,\"b\"\r\n]\r\n":                   {"a", "b"},
 		`['C:\dir']`:                                              {`C:\dir`},
+		`["a\"b", "c\\*"]`:                                        {`a"b`, `c\*`},
 	} {
 		items, closed, ok := util.TOMLStringArray(text)
 		if !ok || !closed || !slices.Equal(items, want) {
@@ -183,10 +193,10 @@ func TestTOMLStringArrayPositive(t *testing.T) {
 	}
 }
 
-// Negative: a value that is no array, an element that is not a plain single-line string, and
-// text after the closing bracket are refused.
+// Negative: a value that is no array, an element that is not a single-line string TOML can
+// decode, and text after the closing bracket are refused.
 func TestTOMLStringArrayNegative(t *testing.T) {
-	for _, text := range []string{"", `"a"`, "{ a = 1 }", "[1, 2]", "[true]", `[["a"]]`, `["a\"b"]`,
+	for _, text := range []string{"", `"a"`, "{ a = 1 }", "[1, 2]", "[true]", `[["a"]]`, `["a\qb"]`,
 		`["""a"""]`, `["a""b"]`, "[\"a\n\"]", `["a"] extra`, `["a" ]]`} {
 		if items, closed, ok := util.TOMLStringArray(text); ok {
 			t.Errorf("TOMLStringArray(%q) = %q, closed %v, true; want refused", text, items, closed)
