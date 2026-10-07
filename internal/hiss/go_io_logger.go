@@ -209,7 +209,11 @@ func (l *loggerProof) assign(lhs, rhs []ast.Expr, declares bool) {
 			continue
 		}
 		delete(l.typed, ident.Name)
-		bindTracked(l.held, ident.Name, held[i], declares, l.scope)
+		// A plain assignment to a name not proven before proves it only in the scope the
+		// assignment is in: the variable may be declared wider, as another type, and hold
+		// something else on the paths that skip this one.
+		_, proven := l.held[ident.Name]
+		bindTracked(l.held, ident.Name, held[i], declares || !proven, l.scope)
 	}
 }
 

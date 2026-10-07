@@ -255,7 +255,7 @@ not match it is reported as before.
 
 | Shape | Accepted | Still reported | Where |
 | :--- | :--- | :--- | :--- |
-| Lifecycle-owned | `ctx, cancel := context.WithCancel(...)` used inside the `OnStart` literal of an `fx.Hook` whose `OnStop` literal calls `cancel()` as a top-level statement (or `defer cancel()`); the cancel function may be stored first, in a variable (`cancel = runCancel`) or a field of a name (`h.drainCancel = runCancel`), and `OnStop` then calls that place | the same context in the constructor body or in `OnStop`; `OnStop` that never calls the place, calls it only in a nested block or closure, calls it after a statement that may return (the guard `if cancel == nil { return }` on that very place excepted), rebinds or shadows the name, or reaches it through another call (`return h.stop(ctx)`); a place overwritten or whose holder is reassigned before the context is used | `lifecycleHooks` in `internal/hiss/go_io_lifecycle.go` |
+| Lifecycle-owned | `ctx, cancel := context.WithCancel(...)` used inside the `OnStart` literal of an `fx.Hook` whose `OnStop` literal calls `cancel()` as a top-level statement (or `defer cancel()`); the cancel function may be stored first, by a top-level statement of the `OnStart` literal or of the constructor body, in a variable or field declared outside the `OnStart` literal (`cancel = runCancel`, `h.drainCancel = runCancel`), and `OnStop` then calls that place | the same context in the constructor body or in `OnStop`; `OnStop` that never calls the place, calls it only in a nested block or closure, calls it after a statement that may return (the guard `if cancel == nil { return }` on that very place excepted), rebinds or shadows the name, or reaches it through another call (`return h.stop(ctx)`); a place overwritten or whose holder is reassigned before the context is used; a name the `OnStart` literal declares itself (`cancel := runCancel`, `var cancel = runCancel`, a local holder, a shadowing `ctx, cancel :=`), which is not the variable `OnStop` calls; a store inside a nested block or a closure; `OnStop` that assigns the place or its holder in a nested block before the call | `lifecycleHooks` in `internal/hiss/go_io_lifecycle.go` |
 | Sinks | the `log/slog` functions and `*slog.Logger` methods `DebugContext`, `InfoContext`, `WarnContext`, `ErrorContext`, `Log`, `LogAttrs`, on a receiver proven `*slog.Logger` in the function that holds the finding and in every callee the package pass follows; a `select` whose cases only send to or receive from channels, `<-ctx.Done()` among them | a logger method on a receiver not provably `*slog.Logger` (another type, a field that is not one, a shadowed name); a `select` case that hands the context to a call | `contextFuncs`, `contextMethods` in `internal/hiss/go_io.go`, `loggerProof` in `internal/hiss/go_io_logger.go` |
 | Callee-bounded | a function of the same module that derives `WithTimeout` or `WithDeadline` from the parameter before any other use, followed up to 4 calls deep | a callee that uses the context first, derives the deadline only on one branch, stores, returns or compares it, or hands it to a function outside the module | `internal/hiss/go_io_callee.go` |
 | Ignored by a third-party constructor | `otlptracegrpc.New` and `otlpmetricgrpc.New` at v1.46.0, `otlploggrpc.New` at v0.22.0, as the calling module's `go.mod` requires them; `otlptracegrpc.New` also needs `go.opentelemetry.io/otel/exporters/otlp/otlptrace` at v1.46.0, the separately versioned module it hands the context to | any other version of either module, a module the `go.mod` replaces, a module inside a Go workspace (`go.work`), a file without a `go.mod` | `contextIgnoredBy` in `internal/hiss/go_io_index.go` |
@@ -269,7 +269,7 @@ on a logger, a parameter, local or `var` declared `*slog.Logger`, or a field of 
 receiver declared `T` or `*T` for a type `T` of the package whose struct type declares that field
 `*slog.Logger` (the package pass looks the field up, so a dependency struct such as an fx
 `Params` qualifies). A name rebound to anything else, a range variable of the same name and a
-function literal's parameter of the same name end the proof.
+function literal's parameter of the same name end the proof. A plain assignment to a name not proven before proves it only in the scope the assignment is in, because the variable may be declared wider, as another type.
 
 The callee walk and the receiver field need files other than the caller's. The walk therefore
 records each finding together with what would discharge it, and the package pass in
@@ -289,8 +289,13 @@ followed. The walk holds no recursion (HISS-01): it explores callees on an expli
 4 calls deep (`maxCalleeDepth`) and 64 callees per proof (`maxCalleeNodes`, one budget shared by
 every context argument of the call), and a cycle fails the proof.
 
-The lifecycle shape has known gaps, all on the accepting side, because the rule reads one function
-at a time: a cancel place overwritten after the context was used, and a blocking `OnStart` that
+The lifecycle shape pairs by binding, not by name, and follows only top-level statements: a store
+in a nested block or closure may never run, and the nil guard `if cancel == nil { return }` in
+`OnStop` would turn the resulting leak into a silent return, so such a store is not followed and
+the guard is honoured only for a place stored at top level. It has known gaps, all on the
+accepting side, because the rule reads one function at a time: a cancel place overwritten after the
+context was used, a place the constructor rebinds in an inner scope between its declaration and the
+hook, and a blocking `OnStart` that
 uses the lifecycle context synchronously (`return mgr.Ping(ctx)`). The framework never runs the
 `OnStop` of a hook whose `OnStart` did not return, so such a start is never cancelled; the rule
 cannot tell a hang from a long start. A context that outlives a call without a framework hook,

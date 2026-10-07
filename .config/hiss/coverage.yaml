@@ -195,7 +195,8 @@ rules:
           OnStart whose OnStop calls its cancel (negative/lifecycle-fx-hook-cancel.go;
           positive/lifecycle-cancel-not-in-onstop.go), also when the cancel function is stored in
           a variable or a struct field first (negative/lifecycle-stored-cancel.go;
-          positive/lifecycle-stored-cancel-not-called.go); the log/slog sinks on a proven logger,
+          positive/lifecycle-stored-cancel-not-called.go, positive/lifecycle-stored-cancel-shadowed.go
+          for a name the start function declares itself and a store inside a branch or closure); the log/slog sinks on a proven logger,
           in the function itself or in a callee, and a select that only touches channels
           (negative/slog-and-channel-sinks.go, negative/slog-logger-in-callee.go,
           negative/callee-select-on-channels.go; positive/select-with-blocking-call.go,

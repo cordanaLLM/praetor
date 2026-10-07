@@ -90,6 +90,53 @@ func TestGoIOLifecycle_Positive_StoredCancelNearMisses(t *testing.T) {
 	}
 }
 
+const (
+	withCancel = "\t\t\trunCtx, runCancel := context.WithCancel(context.Background())\n"
+	guardCall  = "\t\t\tif cancel == nil {\n\t\t\t\treturn nil\n\t\t\t}\n\t\t\tcancel()"
+)
+
+// Positive: pairing is by binding and by top-level statement. A cancel place the start literal
+// declares itself is another variable than the one OnStop calls, with or without the nil guard;
+// a store inside a nested block or an uncalled closure may never run, so the guard would turn
+// the leak into a silent return; and a conditional reassignment in OnStop may replace the function.
+func TestGoIOLifecycle_Positive_BindingAndTopLevelOnly(t *testing.T) {
+	cases := map[string][2]string{
+		"shadow guarded":    {"\t\t\trunCtx, cancel := context.WithCancel(context.Background())\n\t\t\tgo mgr.Start(runCtx)", guardCall},
+		"shadow plain":      {"\t\t\trunCtx, cancel := context.WithCancel(context.Background())\n\t\t\tgo mgr.Start(runCtx)", "\t\t\tcancel()"},
+		"define alias":      {withCancel + "\t\t\tcancel := runCancel\n\t\t\tgo mgr.Start(runCtx)", guardCall},
+		"var alias":         {withCancel + "\t\t\tvar cancel = runCancel\n\t\t\tgo mgr.Start(runCtx)", guardCall},
+		"local holder":      {withCancel + "\t\t\th := &holder{}\n\t\t\th.drainCancel = runCancel\n\t\t\tgo mgr.Start(runCtx)", "\t\t\th.drainCancel()"},
+		"local param":       {withCancel + "\t\t\tfunc(cancel context.CancelFunc) { cancel = runCancel }(nil)\n\t\t\tgo mgr.Start(runCtx)", "\t\t\tcancel()"},
+		"conditional store": {withCancel + "\t\t\tif mgr == nil {\n\t\t\t\tcancel = runCancel\n\t\t\t}\n\t\t\tgo mgr.Start(runCtx)", guardCall},
+		"conditional plain": {withCancel + "\t\t\tif mgr == nil {\n\t\t\t\tcancel = runCancel\n\t\t\t}\n\t\t\tgo mgr.Start(runCtx)", "\t\t\tcancel()"},
+		"closure store":     {withCancel + "\t\t\tsetter := func() { cancel = runCancel }\n\t\t\t_ = setter\n\t\t\tgo mgr.Start(runCtx)", guardCall},
+		"stop reassigns":    {storeVar, "\t\t\tif mgr.Up() {\n\t\t\t\tcancel = func() {}\n\t\t\t}\n\t\t\tcancel()"},
+		"stop field reset":  {storeField, "\t\t\tif mgr.Up() {\n\t\t\t\th = &holder{}\n\t\t\t}\n\t\t\th.drainCancel()"},
+	}
+	for name, c := range cases {
+		if rep := scanGoIO(t, "svc.go", hookSource(c[0], c[1])); hiss02Count(rep) != 1 {
+			t.Errorf("%s: the context must stay reported once: %+v", name, rep.Violations)
+		}
+	}
+}
+
+// Negative: the adopter shapes. An outer variable or an outer struct field assigned by a
+// top-level statement of the start literal, directly or through a local alias of the cancel
+// function, and called by OnStop (guarded or not) is accepted.
+func TestGoIOLifecycle_Negative_OuterPlaceAssignedAtTopLevel(t *testing.T) {
+	cases := map[string][2]string{
+		"outer var":      {storeVar, guardCall},
+		"outer field":    {storeField, "\t\t\tif h.drainCancel == nil {\n\t\t\t\treturn nil\n\t\t\t}\n\t\t\th.drainCancel()"},
+		"through alias":  {withCancel + "\t\t\tc2 := runCancel\n\t\t\tcancel = c2\n\t\t\tgo mgr.Start(runCtx)", "\t\t\tcancel()"},
+		"other shadowed": {storeVar, "\t\t\tx := func() { cancel := 1; _ = cancel }\n\t\t\t_ = x\n\t\t\tcancel()"},
+	}
+	for name, c := range cases {
+		if rep := scanGoIO(t, "svc.go", hookSource(c[0], c[1])); hiss02Count(rep) != 0 {
+			t.Errorf("%s: an outer place stored at top level and called by OnStop must be accepted: %+v", name, rep.Violations)
+		}
+	}
+}
+
 // Boundary: the pairing follows at most maxCancelAliases places; the store past it is not
 // followed, so a stop function that calls only that last place leaves the context reported.
 func TestGoIOLifecycle_Boundary_AliasBound(t *testing.T) {
@@ -194,6 +241,43 @@ func TestGoIOCallee_Positive_LoggerLookalikes(t *testing.T) {
 	assertViolations(t, scanGoIO(t, "p.go", src), []expectedViolation{
 		{"HISS-02", "p.go", 15}, {"HISS-02", "p.go", 16}, {"HISS-02", "p.go", 17}, {"HISS-02", "p.go", 18},
 	})
+}
+
+// Boundary: a plain assignment proves a logger only in the scope it occurs in. The variable is
+// declared as another type, so after the block it may hold something that is no logger; inside
+// the block it holds one. The main walk and the callee walk decide alike.
+func TestGoIOLogger_Boundary_PlainAssignmentProvesItsOwnScope(t *testing.T) {
+	src := loggerFile(
+		"type Shipper interface{ InfoContext(ctx context.Context, msg string) }",
+		"func After(flag bool, s Shipper) {",
+		"	ctx := context.Background()",
+		"	var l Shipper = s",
+		"	if flag {",
+		"		l = slog.Default()",
+		"	}",
+		"	l.InfoContext(ctx, \"x\")",
+		"}",
+		"func Inside(flag bool, s Shipper) {",
+		"	ctx := context.Background()",
+		"	var l Shipper = s",
+		"	if flag {",
+		"		l = slog.Default()",
+		"		l.InfoContext(ctx, \"x\")",
+		"	}",
+		"}",
+		"func Callee(flag bool, s Shipper) { viaFlag(context.Background(), flag, s) }",
+		"func viaFlag(ctx context.Context, flag bool, s Shipper) {",
+		"	var l Shipper = s",
+		"	if flag {",
+		"		l = slog.Default()",
+		"	}",
+		"	l.InfoContext(ctx, \"x\")",
+		"}",
+	)
+	rep := scanGoIO(t, "p.go", src)
+	if got := hiss02Count(rep); got != 2 {
+		t.Fatalf("the use after the block (main walk and callee walk) must be reported, the one inside not: %+v", rep.Violations)
+	}
 }
 
 // Boundary: the main walk and the callee walk decide alike. The same sink call is accepted when

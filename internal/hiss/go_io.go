@@ -407,8 +407,8 @@ func (g *goScanner) trackContextBinding(lhs, rhs []ast.Expr, declares bool) {
 			g.lifecycle[ident.Name] = read[i].pair
 		}
 	}
-	g.storeCancel(lhs, rhs)
-	g.pairCancel(lhs, rhs)
+	g.storeCancel(lhs, rhs, declares)
+	g.pairCancel(lhs, rhs, declares)
 }
 
 // boundValue returns the expression lhs[i] receives, or nil when it receives one result of a

@@ -19,21 +19,29 @@ import (
 //
 // The accepted shape is exact. A context bound with its cancel function by context.WithCancel
 // or WithCancelCause (cancelPairs) is lifecycle-owned where it is used inside the start function
-// literal of a lifecycleHooks composite literal whose stop function literal calls that cancel
-// function as one of its own top-level statements. Anywhere else the context is what it was: a
-// use in the constructor body runs before the lifecycle starts and is reported, as is a use in
-// the stop function, which runs under the framework's own stop deadline.
+// literal of a lifecycleHooks composite literal whose stop function calls that cancel function as
+// one of its own top-level statements. Anywhere else the context is what it was: a use in the
+// constructor body runs before the lifecycle starts and is reported, as is a use in the stop
+// function, which runs under the framework's own stop deadline.
 //
-// The cancel function may be stored before it is called: `cancel = runCancel` for a variable and
-// `h.drainCancel = runCancel` for a field of a name (storeCancel), and the stop function then
-// calls the place it was stored in. The call must be reachable on every path: no statement before
-// it may return, except the guard `if cancel == nil { return }` on the very place it calls, which
-// returns only when nothing was stored. A place stored in more than maxCancelAliases times, a
-// place overwritten or whose holder is reassigned before the context is used, and a stop function
-// that reaches the cancel function through a call (`return h.stop(ctx)`) are not followed.
+// The stop function calls a cancel place, a variable or a struct field that is declared outside
+// the start literal (in the constructor body) and is bound to the cancel function by a top-level
+// statement of the start literal or of the constructor body: `ctx, cancel := context.WithCancel(...)`
+// in the constructor, or `cancel = runCancel` and `h.drainCancel = runCancel` in the start literal
+// (storeCancel). Pairing is by binding, not by name: a name the start literal declares itself
+// (`:=`, var, a parameter, a local holder) is another variable than the outer name the stop
+// function calls, so it pairs with nothing. A store inside a nested block or a closure is not
+// followed: it may never run, and a nil guard in the stop function would turn the resulting leak
+// into a silent return. The call in the stop function must be reachable on every path: no
+// statement before it may return, except the guard `if cancel == nil { return }` on the very place
+// it calls, and none may assign the place or its holder, in a nested block or not. A place stored
+// in more than maxCancelAliases times, a place overwritten or whose holder is reassigned before the
+// context is used, and a stop function that reaches the cancel function through a call
+// (`return h.stop(ctx)`) are not followed.
 //
 // Known gaps, all on the side of accepting: a place overwritten after the context was used, a
-// cancel place a different function than OnStop shares the name of, and a blocking OnStart that
+// cancel place a different function than OnStop shares the name of, a place the constructor
+// rebinds in an inner scope between its declaration and the hook, and a blocking OnStart that
 // uses the lifecycle context synchronously (`return mgr.Ping(ctx)`). The framework never runs the
 // stop function of a hook whose start function did not return, so a start that hangs is never
 // cancelled; the shape is accepted anyway because the rule cannot tell a hang from a long start.
@@ -62,9 +70,17 @@ var lifecycleHooks = map[goFunc]lifecycleHook{
 
 // lifecyclePair is the set of places that hold the cancel function of one lifecycle context:
 // the variable context.WithCancel returned it in, and every variable or struct field the walk saw
-// it stored in (`cancel = runCancel`, `h.drainCancel = cancel`). Each is a cancelKey.
+// it stored in (`cancel = runCancel`, `h.drainCancel = cancel`).
 type lifecyclePair struct {
-	cancels []string
+	cancels []cancelPlace
+}
+
+// cancelPlace is one cancelKey holding a cancel function. Owned is set when the place is declared
+// outside the start literal and bound by a top-level statement (cancelOwned): only an owned place
+// is one the stop function can call. The others only carry the function on to a later store.
+type cancelPlace struct {
+	key   string
+	owned bool
 }
 
 // maxCancelAliases bounds how many places one pairing follows a cancel function to (HISS-02); a
@@ -121,7 +137,7 @@ func (g *goScanner) lifecycleOwner(value ast.Expr) (lifecyclePair, bool) {
 
 // pairCancel records the context and the cancel function one assignment binds from a
 // cancelPairs derivation, when the context holds no deadline.
-func (g *goScanner) pairCancel(lhs, rhs []ast.Expr) {
+func (g *goScanner) pairCancel(lhs, rhs []ast.Expr, declares bool) {
 	if len(lhs) != 2 || len(rhs) != 1 {
 		return
 	}
@@ -135,16 +151,17 @@ func (g *goScanner) pairCancel(lhs, rhs []ast.Expr) {
 		return
 	}
 	if _, _, local, ok := resolvePackageCall(g.imports, call.Fun, cancelPairs); ok && !g.shadowed(local) {
-		g.lifecycle[ctx.Name] = lifecyclePair{cancels: []string{cancel.Name}}
+		place := cancelPlace{key: cancel.Name, owned: g.cancelOwned(cancel.Name, declares)}
+		g.lifecycle[ctx.Name] = lifecyclePair{cancels: []cancelPlace{place}}
 	}
 }
 
 // storeCancel follows a cancel function into the variable or field an assignment stores it in
 // (`cancel = runCancel`, `h.drainCancel = cancel`): every pairing that holds the stored function
-// gains the place it was stored in. A field that receives anything else stops holding what it
-// held before, so a later call of it proves nothing; a bare name was forgotten when it was rebound
-// (trackContextBinding).
-func (g *goScanner) storeCancel(lhs, rhs []ast.Expr) {
+// gains the place it was stored in, owned or not (cancelOwned). A field that receives anything
+// else stops holding what it held before, so a later call of it proves nothing; a bare name was
+// forgotten when it was rebound (trackContextBinding).
+func (g *goScanner) storeCancel(lhs, rhs []ast.Expr, declares bool) {
 	for i := 0; i < len(lhs); i++ {
 		dst, ok := cancelKey(lhs[i])
 		if !ok {
@@ -158,13 +175,92 @@ func (g *goScanner) storeCancel(lhs, rhs []ast.Expr) {
 		if strings.Contains(dst, ".") {
 			g.forgetLifecycle(dst)
 		}
+		place := cancelPlace{key: dst, owned: g.cancelOwned(dst, declares)}
 		for j := 0; j < len(holders); j++ {
 			pair := g.lifecycle[holders[j]]
 			if len(pair.cancels) < maxCancelAliases {
-				g.lifecycle[holders[j]] = lifecyclePair{cancels: append(slices.Clone(pair.cancels), dst)}
+				g.lifecycle[holders[j]] = lifecyclePair{cancels: append(slices.Clone(pair.cancels), place)}
 			}
 		}
 	}
+}
+
+// stmtSite says where the statement the walk is about to enter sits.
+type stmtSite int
+
+const (
+	// siteOther is a nested block, a closure other than a start literal, or no function at all.
+	siteOther stmtSite = iota
+	// siteConstructor is a top-level statement of a function declaration's body.
+	siteConstructor
+	// siteStart is a top-level statement of the start literal of a lifecycleHooks hook.
+	siteStart
+)
+
+// statementSite classifies the assignment or var declaration the walk is about to enter: the
+// walk stack holds its ancestors, so a top-level statement has the function body block above it
+// (a var declaration also a DeclStmt and a GenDecl). For siteStart it returns the start literal.
+func (g *goScanner) statementSite() (stmtSite, *ast.FuncLit) {
+	i := len(g.stack) - 1
+	if i >= 1 {
+		if _, isGen := g.stack[i].(*ast.GenDecl); isGen {
+			if _, isDecl := g.stack[i-1].(*ast.DeclStmt); !isDecl {
+				return siteOther, nil
+			}
+			i -= 2
+		}
+	}
+	if i < 1 {
+		return siteOther, nil
+	}
+	if _, isBlock := g.stack[i].(*ast.BlockStmt); !isBlock {
+		return siteOther, nil
+	}
+	switch fn := g.stack[i-1].(type) {
+	case *ast.FuncDecl:
+		return siteConstructor, nil
+	case *ast.FuncLit:
+		if _, _, isStart := g.startLiteral(i - 1); isStart {
+			return siteStart, fn
+		}
+	}
+	return siteOther, nil
+}
+
+// cancelOwned reports whether the place key is one the stop function can call: the binding
+// statement is a top-level statement of the constructor body (the place is declared there or
+// further out), or of the start literal when the literal does not declare the name itself. A
+// statement that declares the name in the start literal makes a variable of the literal, which is
+// not the variable the stop function sees.
+func (g *goScanner) cancelOwned(key string, declares bool) bool {
+	site, start := g.statementSite()
+	switch site {
+	case siteConstructor:
+		return true
+	case siteStart:
+		return !declares && !declaresIn(start, keyBase(key))
+	}
+	return false
+}
+
+// declaresIn reports whether lit declares name anywhere in its parameters or body, closures
+// included: by a short variable declaration, a var, a range clause or a parameter.
+func declaresIn(lit *ast.FuncLit, name string) bool {
+	found := paramNamed(lit.Type, name)
+	ast.Inspect(lit, func(n ast.Node) bool {
+		switch d := n.(type) {
+		case *ast.AssignStmt:
+			found = found || (d.Tok == token.DEFINE && exprsName(d.Lhs, name))
+		case *ast.ValueSpec:
+			found = found || specsName([]ast.Spec{d}, name)
+		case *ast.RangeStmt:
+			found = found || (d.Tok == token.DEFINE && exprsName([]ast.Expr{d.Key, d.Value}, name))
+		case *ast.FuncLit:
+			found = found || paramNamed(d.Type, name)
+		}
+		return !found
+	})
+	return found
 }
 
 // cancelHolders returns the contexts whose pairing holds the cancel function at key.
@@ -174,7 +270,7 @@ func (g *goScanner) cancelHolders(key string) []string {
 		return held
 	}
 	for ctx, pair := range g.lifecycle {
-		if slices.Contains(pair.cancels, key) {
+		if slices.ContainsFunc(pair.cancels, func(p cancelPlace) bool { return p.key == key }) {
 			held = append(held, ctx)
 		}
 	}
@@ -186,9 +282,9 @@ func (g *goScanner) cancelHolders(key string) []string {
 func (g *goScanner) forgetLifecycle(name string) {
 	delete(g.lifecycle, name)
 	for ctx, pair := range g.lifecycle {
-		kept := make([]string, 0, len(pair.cancels))
+		kept := make([]cancelPlace, 0, len(pair.cancels))
 		for i := 0; i < len(pair.cancels); i++ {
-			if pair.cancels[i] != name && !strings.HasPrefix(pair.cancels[i], name+".") {
+			if key := pair.cancels[i].key; key != name && !strings.HasPrefix(key, name+".") {
 				kept = append(kept, pair.cancels[i])
 			}
 		}
@@ -201,22 +297,35 @@ func (g *goScanner) forgetLifecycle(name string) {
 }
 
 // inLifecycleStart reports whether the walk is inside the start function literal of a
-// lifecycleHooks composite literal whose stop function calls one of the cancel places. The walk
-// stack holds only ancestors of the current node, so this is a bounded scan (maxNodeStack).
-func (g *goScanner) inLifecycleStart(cancels []string) bool {
+// lifecycleHooks composite literal whose stop function calls one of the owned cancel places. The
+// walk stack holds only ancestors of the current node, so this is a bounded scan (maxNodeStack).
+func (g *goScanner) inLifecycleStart(cancels []cancelPlace) bool {
 	for i := len(g.stack) - 1; i >= 2; i-- {
-		lit, isLit := g.stack[i].(*ast.FuncLit)
-		field, isField := g.stack[i-1].(*ast.KeyValueExpr)
-		hook, isHook := g.stack[i-2].(*ast.CompositeLit)
-		if !isLit || !isField || !isHook || field.Value != lit {
-			continue
-		}
-		shape, known := g.lifecycleHook(hook)
-		if known && isKey(field.Key, shape.Start) && stopCalls(hook, shape.Stop, cancels) {
+		hook, shape, isStart := g.startLiteral(i)
+		if isStart && stopCalls(hook, shape.Stop, cancels) {
 			return true
 		}
 	}
 	return false
+}
+
+// startLiteral reports whether g.stack[i] is the start function literal of a lifecycleHooks
+// composite literal, and returns the literal and its shape.
+func (g *goScanner) startLiteral(i int) (*ast.CompositeLit, lifecycleHook, bool) {
+	if i < 2 {
+		return nil, lifecycleHook{}, false
+	}
+	lit, isLit := g.stack[i].(*ast.FuncLit)
+	field, isField := g.stack[i-1].(*ast.KeyValueExpr)
+	hook, isHook := g.stack[i-2].(*ast.CompositeLit)
+	if !isLit || !isField || !isHook || field.Value != lit {
+		return nil, lifecycleHook{}, false
+	}
+	shape, known := g.lifecycleHook(hook)
+	if !known || !isKey(field.Key, shape.Start) {
+		return nil, lifecycleHook{}, false
+	}
+	return hook, shape, true
 }
 
 // lifecycleHook resolves the type of a composite literal to a lifecycleHooks entry that no
@@ -236,8 +345,8 @@ func isKey(key ast.Expr, name string) bool {
 }
 
 // stopCalls reports whether the hook's stop field holds a function literal that calls one of the
-// cancel places.
-func stopCalls(hook *ast.CompositeLit, stop string, cancels []string) bool {
+// owned cancel places.
+func stopCalls(hook *ast.CompositeLit, stop string, cancels []cancelPlace) bool {
 	for i := 0; i < len(hook.Elts); i++ {
 		field, ok := hook.Elts[i].(*ast.KeyValueExpr)
 		if !ok || !isKey(field.Key, stop) {
@@ -248,7 +357,7 @@ func stopCalls(hook *ast.CompositeLit, stop string, cancels []string) bool {
 			return false
 		}
 		for j := 0; j < len(cancels); j++ {
-			if callsAtTop(lit, cancels[j]) {
+			if cancels[j].owned && callsAtTop(lit, cancels[j].key) {
 				return true
 			}
 		}
@@ -335,19 +444,23 @@ func mayReturn(stmt ast.Stmt) bool {
 	return found
 }
 
-// assignsKey reports whether stmt is a plain assignment to key, or to the name a key field
-// belongs to.
+// assignsKey reports whether stmt assigns key, or the name a key field belongs to, anywhere in
+// it: a conditional or nested reassignment may replace the cancel function before the call.
 func assignsKey(stmt ast.Stmt, key string) bool {
-	assign, ok := stmt.(*ast.AssignStmt)
-	if !ok || assign.Tok == token.DEFINE {
-		return false
-	}
-	for i := 0; i < len(assign.Lhs); i++ {
-		if lhs, ok := cancelKey(assign.Lhs[i]); ok && (lhs == key || lhs == keyBase(key)) {
-			return true
+	found := false
+	ast.Inspect(stmt, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || assign.Tok == token.DEFINE {
+			return !found
 		}
-	}
-	return false
+		for i := 0; i < len(assign.Lhs); i++ {
+			if lhs, ok := cancelKey(assign.Lhs[i]); ok && (lhs == key || lhs == keyBase(key)) {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 // paramNamed reports whether ft declares a parameter or result called name.
