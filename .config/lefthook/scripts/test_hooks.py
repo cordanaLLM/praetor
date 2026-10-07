@@ -1409,7 +1409,8 @@ class ScopeAndGuard(unittest.TestCase):
 
     def test_context_changed_covers_every_compile_context_path(self):
         # Positive: every file compile-context reads or writes -- AGENTS.md, .agents/ personas,
-        # skills and plugin copies, the six vendor files and the vendor persona directories --
+        # skills and plugin copies, the six vendor files, the vendor persona directories and the
+        # client skill directories a register skill is copied to (.claude/skills, #235) --
         # triggers compile-context --verify. The real command produces the list, so a target
         # it gains fails here instead of going unverified by the pre-commit hook.
         with tempfile.TemporaryDirectory(prefix="praetor-context-") as temp:
@@ -1418,6 +1419,7 @@ class ScopeAndGuard(unittest.TestCase):
             for name, text in {"AGENTS.md": "# Demo\n\nRun tests before commit.\n",
                                ".agents/agents/demo.md": persona,
                                ".agents/skills/demo/SKILL.md": persona,
+                               ".agents/skills/caveman/SKILL.md": persona,
                                ".agents/plugins/praetor/plugin.json": '{"name": "praetor"}\n'}.items():
                 (root / name).parent.mkdir(parents=True, exist_ok=True)
                 (root / name).write_text(text, encoding="utf-8")
@@ -1426,7 +1428,8 @@ class ScopeAndGuard(unittest.TestCase):
                 cwd=ROOT, env=clean_env(), timeout=600)
             written = sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file())
         for vendor in (".claude/agents/demo.md", ".codex/agents/demo.md", ".gemini/agents/demo.md",
-                       ".github/agents/demo.md", ".agents/plugins/praetor/skills/demo/SKILL.md"):
+                       ".github/agents/demo.md", ".agents/plugins/praetor/skills/demo/SKILL.md",
+                       ".claude/skills/caveman/SKILL.md"):
             self.assertIn(vendor, written)
         self.assertEqual([name for name in written if not context_changed([name])], [])
 
@@ -1435,7 +1438,7 @@ class ScopeAndGuard(unittest.TestCase):
         # workflows and lookalike prefixes do not start compile-context --verify.
         for name in ("README.md", "docs/guides/onboarding.md", ".claude/settings.json",
                      ".codex/config.toml", ".gemini/settings.json", ".github/workflows/ci.yml",
-                     ".agentsrc", "docs/.agents/x.md", ".claude/agents.md"):
+                     ".agentsrc", "docs/.agents/x.md", ".claude/agents.md", ".claude/skills.md"):
             with self.subTest(name=name):
                 self.assertFalse(context_changed([name]))
         self.assertFalse(context_changed([]))
