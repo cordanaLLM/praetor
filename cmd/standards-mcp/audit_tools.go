@@ -104,13 +104,17 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 			})
 		},
 		// The CLI audit's HISS-10 build-warnings gate (#816).
-		func(ctx context.Context) (string, error) {
-			return adopt.AuditBuildWarnings(ctx, adopt.BuildWarningsOptions{
-				Root: s.rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
-			})
-		},
+		func(ctx context.Context) (string, error) { return auditBuildWarnings(ctx, s.rootDir, manifest) },
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}
+}
+
+// auditBuildWarnings runs the CLI audit's HISS-10 build-warnings gate over root with the
+// manifest's HISS-10 exceptions (#816).
+func auditBuildWarnings(ctx context.Context, root string, manifest *config.Manifest) (string, error) {
+	return adopt.AuditBuildWarnings(ctx, adopt.BuildWarningsOptions{
+		Root: root, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
 }
 
 // auditLockfile uses the same version, entry, source and aggregate checks as the CLI,

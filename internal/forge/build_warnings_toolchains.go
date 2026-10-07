@@ -330,21 +330,31 @@ func (m *buildMeasure) goCommand(site *laneSite, args []string) {
 	if len(args) == 0 {
 		return
 	}
-	switch args[0] {
-	case "vet":
+	if goRunsVet(args) {
 		m.vetAt(site)
-	case "test":
-		if slices.Contains(args, "-vet=all") || slices.Contains(args, "--vet=all") {
-			m.vetAt(site)
-		}
-		m.goLane(site)
-	case "build":
-		m.goLane(site)
-	case "install", "run":
-		if !strings.Contains(firstOperand(args[1:]), "@") {
-			m.goLane(site)
-		}
 	}
+	if goBuildsRepository(args) {
+		m.goLane(site)
+	}
+}
+
+// goRunsVet reports whether a go command's args, from its subcommand, run every go vet check:
+// go vet, or go test -vet=all.
+func goRunsVet(args []string) bool {
+	return args[0] == "vet" || args[0] == "test" && (slices.Contains(args, "-vet=all") || slices.Contains(args, "--vet=all"))
+}
+
+// goBuildsRepository reports whether a go command's args, from its subcommand, compile the
+// repository's packages: go build and test, and go install and run of anything but a
+// module@version, which builds a tool.
+func goBuildsRepository(args []string) bool {
+	switch args[0] {
+	case "build", "test":
+		return true
+	case "install", "run":
+		return !strings.Contains(firstOperand(args[1:]), "@")
+	}
+	return false
 }
 
 // vetAt records the first binding step that runs go vet.
