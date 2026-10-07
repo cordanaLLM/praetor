@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -118,6 +119,67 @@ func TestOtherBranchRenderingIsPrior(t *testing.T) {
 	}
 	if err := develop.Validate(); err != nil {
 		t.Fatalf("Validate refused a rendered family: %v", err)
+	}
+}
+
+// futureFamily is family as a later Praetor ships it: its current workflow has become a Prior
+// text, recorded as its WorkflowBranch rendering, and the workflow has changed.
+func futureFamily(t *testing.T, family Family) Family {
+	t.Helper()
+	digest, _, err := util.CanonicalTextDigest([]byte(family.Workflow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	future := family
+	future.Prior = map[string]string{digest: family.WorkflowFile}
+	future.Workflow = strings.Replace(family.Workflow, "\njobs:", "\n# a later text\njobs:", 1)
+	if future.Workflow == family.Workflow || !future.BranchDependent() {
+		t.Fatalf("%s: the simulated later workflow did not change or names no default branch", family.Name)
+	}
+	return future
+}
+
+// Positive (finding of #815): once a hosted workflow changes, an unedited copy of today's text
+// rendered for master, LF or CRLF, is still a prior rendering, for a main family and for a master
+// family, so a repository whose default branch is not main refreshes it without --force.
+// Negative: an edited master copy, one naming two push branch lines, and one naming a branch
+// nothing renders stay refused. Boundary: the main copy is found by its digest alone.
+func TestPriorTextRenderedForAnotherBranchIsPrior(t *testing.T) {
+	for _, family := range hostedFamilies(t) {
+		future := futureFamily(t, family)
+		master, err := family.ForBranch("master")
+		if err != nil {
+			t.Fatal(err)
+		}
+		futureMaster, err := future.ForBranch("master")
+		if err != nil {
+			t.Fatal(err)
+		}
+		crlfText := strings.ReplaceAll(master.Workflow, "\n", "\r\n")
+		for _, judge := range []Family{future, futureMaster} {
+			if known, crlf := judge.PriorRendering(judge.WorkflowFile, []byte(master.Workflow)); !known || crlf {
+				t.Errorf("%s for %s: master copy of the prior text known=%v crlf=%v", family.Name, judge.Branch(), known, crlf)
+			}
+			if known, crlf := judge.PriorRendering(judge.WorkflowFile, []byte(crlfText)); !known || !crlf {
+				t.Errorf("%s for %s: CRLF master copy known=%v crlf=%v", family.Name, judge.Branch(), known, crlf)
+			}
+			if !judge.PriorText(judge.WorkflowFile, []byte(family.Workflow)) {
+				t.Errorf("%s for %s: the main copy of the prior text is not prior", family.Name, judge.Branch())
+			}
+		}
+		for name, text := range map[string]string{
+			"edited":         master.Workflow + "# edited\n",
+			"two lines":      master.Workflow + "  other:\n    branches: ['master']\n",
+			"invalid branch": strings.Replace(master.Workflow, "['master']", "['-lead']", 1),
+			"mixed endings":  strings.Replace(crlfText, "\r\n", "\n", 1),
+		} {
+			if future.PriorText(future.WorkflowFile, []byte(text)) || futureMaster.PriorText(futureMaster.WorkflowFile, []byte(text)) {
+				t.Errorf("%s: %s master copy is a prior text", family.Name, name)
+			}
+		}
+		if future.PriorText("tools/other.yml", []byte(master.Workflow)) {
+			t.Errorf("%s: a master copy at another path is a prior text", family.Name)
+		}
 	}
 }
 
