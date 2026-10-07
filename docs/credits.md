@@ -66,6 +66,11 @@ list to the repository; `TestShippedUpstreamsAreCredited`
   excuses nothing. The exceptions list and its rules are described in the
   [clang-tidy coverage guide](guides/clang-tidy-coverage.md#exceptions).
 
+`make credits-check` runs these tests and the notices tests on their own. `ci filter` classes this
+page, the list and `THIRD-PARTY-NOTICES.md` as documentation, so the light run of a
+documentation-only pull request runs the target (`.github/workflows/ci.yml`); every other run
+reaches the same tests through `make verify-all`.
+
 ## Adapted work
 
 A persona or skill derived from an upstream names it in its front matter as
