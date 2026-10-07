@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func requireGit(t *testing.T) {
@@ -182,17 +184,9 @@ func TestHermeticGitEnv_Boundary_EnvironmentContents(t *testing.T) {
 	}
 }
 
-// withoutCeiling returns env without its GIT_CEILING_DIRECTORIES entry: the environment
-// HermeticGitEnv returned before it bounded repository discovery.
-func withoutCeiling(env []string) []string {
-	kept := make([]string, 0, len(env))
-	for _, entry := range env {
-		if !strings.HasPrefix(entry, "GIT_CEILING_DIRECTORIES=") {
-			kept = append(kept, entry)
-		}
-	}
-	return kept
-}
+// isCeilingVariable reports the GIT_CEILING_DIRECTORIES entry, so a filtered environment is
+// the one HermeticGitEnv returned before it bounded repository discovery.
+func isCeilingVariable(name string) bool { return name == "GIT_CEILING_DIRECTORIES" }
 
 // sameDirectory reports whether git's answer names the directory want, compared by file
 // identity, so a resolved symlink, a short name or git's forward slashes on Windows do not
@@ -252,7 +246,7 @@ func TestHermeticGitEnv_Negative_ScratchUnderACheckoutDoesNotFindIt(t *testing.T
 			t.Fatalf("scratch directory %s is not inside %s; the fixture proves nothing", scratch, temporary)
 		}
 		env := HermeticGitEnv(t)
-		top, err := runGit(t, scratch, withoutCeiling(env), "rev-parse", "--show-toplevel")
+		top, err := runGit(t, scratch, util.FilterEnvironment(env, isCeilingVariable), "rev-parse", "--show-toplevel")
 		if err != nil || !sameDirectory(top, checkout) {
 			t.Fatalf("without the ceiling git found %q (err %v), want the enclosing checkout %s", top, err, checkout)
 		}
