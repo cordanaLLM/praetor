@@ -1,4 +1,4 @@
 type: fixed
-title: "Snapshot writes no longer fail with 'snapshot directory busy' at the first contention: writers of one process take turns per directory, another process's lock is waited for up to 5 seconds, and a lock held longer fails naming its holder and the budget"
+title: "Snapshot writes wait for a busy directory lock instead of failing at once"
 issue: "#820"
 breaking: false
