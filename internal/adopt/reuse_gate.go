@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -39,30 +40,27 @@ const (
 // itself (reuseRenderingBranch). testdata/reuse-workflow reproduces each digest
 // (reuse_gate_test.go).
 var priorReuseWorkflowDigests = map[string]string{
-	"17dc517cc1e1190158eb83eab35f0a6eb61ad469ac45549630f71d0a721b85ae": "reuse-action v6, checkout v7, default branch main, 10-minute timeout",
+	"c8b2b85f7d8f3be75dc21737409a7583e159adca329ba91c9578f180ccf17b25": "reuse-action v6, checkout v7, hosted gate shape, default branch main, 10-minute timeout",
 }
-
-// reusePushBranches opens the line of the hosted REUSE gate that names the default branch its
-// push trigger runs on, the line the hosted workflows of the managed asset families use too: the
-// branch single-quoted, so a name YAML would read as a number or a boolean stays a string, which
-// config.ValidBranchName leaves nothing to escape in.
-const reusePushBranches = "\n    branches: ['"
 
 // reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
 // the ruleset requiring its job protects: one job, on the runner the flavor workflows use, with a
-// timeout, that checks the commit out without keeping the token and runs
-// supplychain.ReuseActionRef, which runs reuse lint over the checkout. It runs on a push to the
-// default branch and on a pull request into it.
+// timeout, in the hosted gate shape every hosted gate shares (ghworkflow.HostedGateOn: pull
+// request activity and a push to the default branch only; ghworkflow.HostedGateDraftStep first,
+// so a draft run fails by design; ghworkflow.HostedGateStepIf on every later step). It checks the
+// commit out without keeping the token and runs supplychain.ReuseActionRef, which runs reuse lint
+// over the checkout.
 func reuseWorkflow(branch string) string {
+	on := strings.Replace(ghworkflow.HostedGateOn,
+		ghworkflow.HostedGatePushBranchesPrefix+ghworkflow.HostedGateDefaultBranch+"']",
+		ghworkflow.HostedGatePushBranchesPrefix+branch+"']", 1)
 	return "---\n" +
 		"# REUSE licensing gate, written by praetorctl adopt because the repository\n" +
 		"# carries REUSE.toml or LICENSES/. It runs reuse lint at the release line the\n" +
 		"# reuse-lint pre-commit job of lefthook.yml requires.\n" +
 		"name: REUSE\n" +
 		"\n" +
-		"'on':\n" +
-		"  push:" + reusePushBranches + branch + "']\n" +
-		"  pull_request:" + reusePushBranches + branch + "']\n" +
+		on +
 		"\n" +
 		"permissions:\n" +
 		"  contents: read\n" +
@@ -73,10 +71,12 @@ func reuseWorkflow(branch string) string {
 		"    runs-on: ubuntu-26.04\n" +
 		"    timeout-minutes: 10\n" +
 		"    steps:\n" +
-		"      - uses: actions/checkout@v7\n" +
+		ghworkflow.HostedGateDraftStep +
+		"      - name: Check out the source" + ghworkflow.HostedGateStepIf + "\n" +
+		"        uses: actions/checkout@v7\n" +
 		"        with:\n" +
 		"          persist-credentials: false\n" +
-		"      - name: reuse lint\n" +
+		"      - name: reuse lint" + ghworkflow.HostedGateStepIf + "\n" +
 		"        uses: " + supplychain.ReuseActionRef() + "\n"
 }
 
@@ -85,7 +85,7 @@ func reuseWorkflow(branch string) string {
 // Praetor's unedited output, for the current default branch or another one, such as before the
 // branch was renamed.
 func reuseRenderingBranch(data []byte) (string, bool) {
-	_, rest, found := strings.Cut(string(data), reusePushBranches)
+	_, rest, found := strings.Cut(string(data), ghworkflow.HostedGatePushBranchesPrefix)
 	branch, _, closed := strings.Cut(rest, "']")
 	if !found || !closed || !config.ValidBranchName(branch) {
 		return "", false

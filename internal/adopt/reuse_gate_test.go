@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
@@ -201,7 +202,7 @@ func TestAdopt_ReuseGateFollowsTheRoot(t *testing.T) {
 		t.Errorf("the ruleset does not require the gate's job:\n%s", ruleset)
 	}
 	if harness := mustRead(t, filepath.Join(reuseRepo, agentsFile)); !strings.Contains(harness,
-		"`"+reuseWorkflowFile+"` runs no command of its own, only the actions `actions/checkout@v7`, `"+supplychain.ReuseActionRef()+"`") {
+		"`"+reuseWorkflowFile+"` runs step `"+ghworkflow.HostedGateDraftStepName+"`") {
 		t.Errorf("the harness does not name what the gate runs:\n%s", harness)
 	}
 
@@ -327,7 +328,7 @@ func TestWorkflowClaim_NamesActionsOnlyWithoutCommands(t *testing.T) {
 }
 
 // The hosted REUSE gate runs on the default branch the ruleset requiring its job protects, within
-// a timeout. Positive: the rendering for master names master on its push and pull request triggers,
+// a timeout. Positive: the rendering for master names master on its push trigger,
 // sets timeout-minutes, and reads back as Praetor's rendering for master. Negative: an edited
 // rendering is no rendering. Boundary: a branch YAML would read as a number or a boolean stays a
 // string, and a name config.ValidBranchName refuses is no rendering.
@@ -345,10 +346,11 @@ func TestReuseWorkflow_RendersTheDefaultBranch(t *testing.T) {
 		if err := yaml.Unmarshal([]byte(rendering), &decoded); err != nil {
 			t.Fatalf("%s: decode: %v", branch, err)
 		}
-		for _, event := range []string{"push", "pull_request"} {
-			if branches := decoded.On[event].Branches; len(branches) != 1 || branches[0] != branch {
-				t.Errorf("%s: the %s trigger runs on %#v", branch, event, branches)
-			}
+		if branches := decoded.On["push"].Branches; len(branches) != 1 || branches[0] != branch {
+			t.Errorf("%s: the push trigger runs on %#v", branch, branches)
+		}
+		if branches := decoded.On["pull_request"].Branches; len(branches) != 0 {
+			t.Errorf("%s: the pull_request trigger is filtered to %#v", branch, branches)
 		}
 		if decoded.Jobs["reuse"].Timeout != 10 {
 			t.Errorf("%s: timeout-minutes %d, want 10", branch, decoded.Jobs["reuse"].Timeout)
@@ -363,6 +365,41 @@ func TestReuseWorkflow_RendersTheDefaultBranch(t *testing.T) {
 	}
 	if _, rendered := reuseRenderingBranch([]byte(reuseWorkflow("a b"))); rendered {
 		t.Error("a rendering for a name that is no branch reads as Praetor's")
+	}
+}
+
+// The hosted REUSE gate has the hosted gate shape every emitted gate shares. Positive: the
+// rendering for main and for master passes ghworkflow.HostedGateFault for its branch. Negative: it
+// fails the check for another branch, without the draft step, and with a step that lost its
+// not-draft condition.
+func TestReuseWorkflow_HasTheHostedGateShape(t *testing.T) {
+	for _, branch := range []string{forge.FallbackDefaultBranch, "master"} {
+		spec, err := ghworkflow.Parse([]byte(reuseWorkflow(branch)))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", branch, err)
+		}
+		if err := ghworkflow.HostedGateFault(&spec, "reuse", branch); err != nil {
+			t.Errorf("%s: %v", branch, err)
+		}
+		if err := ghworkflow.HostedGateFault(&spec, "reuse", branch+"-other"); err == nil {
+			t.Errorf("%s: the shape check accepts another default branch", branch)
+		}
+	}
+	rendering := reuseWorkflow(forge.FallbackDefaultBranch)
+	mutants := map[string]string{
+		"no draft step":       strings.Replace(rendering, ghworkflow.HostedGateDraftStep, "", 1),
+		"unguarded lint":      strings.Replace(rendering, "reuse lint"+ghworkflow.HostedGateStepIf, "reuse lint", 1),
+		"draft job skipped":   strings.Replace(rendering, "    timeout-minutes: 10\n", "    timeout-minutes: 10\n    if: "+ghworkflow.HostedGateNotDraft+"\n", 1),
+		"pull request filter": strings.Replace(rendering, "  pull_request:\n", "  pull_request:\n    branches: ['main']\n", 1),
+	}
+	for name, mutant := range mutants {
+		spec, err := ghworkflow.Parse([]byte(mutant))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", name, err)
+		}
+		if ghworkflow.HostedGateFault(&spec, "reuse", forge.FallbackDefaultBranch) == nil {
+			t.Errorf("%s: the shape check accepts the mutant", name)
+		}
 	}
 }
 
