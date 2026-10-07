@@ -64,49 +64,6 @@ const (
 // request runs every job.
 const renovateBranchSkip = "!(" + renovateHeadBranch + " && " + renovateAuthor + ")"
 
-// draftSkip is the job condition that skips a job on a draft pull request only. On a push run
-// github.event.pull_request is absent and evaluates to an empty string, which GitHub coerces to
-// 0 and true to 1, so the term holds there; on a pull request run it holds unless the pull
-// request is a draft. The hosted gates adoption writes carry it (tools/apicompat,
-// tools/markdownlint), so a draft no longer spends a run on them.
-//
-// GitHub reports the skipped job as successful on the draft's head commit, and refuses to merge
-// a draft. The job stays required only where its workflow also runs on ready_for_review
-// (rerunsWhenReady): marking the draft ready then runs the job on that head commit, and its
-// result, not the skip, is the check the ruleset reads. Without that type the skip would stand
-// as the head commit's passing check once the draft is ready, so the job is judged conditional.
-const draftSkip = "github.event.pull_request.draft != true"
-
-// readyForReviewType is the pull_request activity type GitHub sends when a draft is marked ready.
-const readyForReviewType = "ready_for_review"
-
-// withoutDraftSkip returns "" for a condition that is draftSkip alone, bare or as one ${{ }}
-// expression, when rerunsOnReady says the workflow runs again once a draft is marked ready, and
-// condition unchanged otherwise. Only the exact term counts: a negated, joined or reworded draft
-// test stays conditional.
-func withoutDraftSkip(condition string, rerunsOnReady bool) string {
-	if rerunsOnReady && unwrapExpression(condition) == draftSkip {
-		return ""
-	}
-	return condition
-}
-
-// unwrapExpression returns condition trimmed, with one ${{ }} wrapper around the whole of it
-// removed, so a bare condition and the same condition as one expression read alike. An
-// unclosed wrapper is returned as it stands.
-func unwrapExpression(condition string) string {
-	expression := strings.TrimSpace(condition)
-	inner, wrapped := strings.CutPrefix(expression, "${{")
-	if !wrapped {
-		return expression
-	}
-	body, closed := strings.CutSuffix(inner, "}}")
-	if !closed {
-		return expression
-	}
-	return strings.TrimSpace(body)
-}
-
 // withoutRenovateBranchSkip returns condition with a leading renovateBranchSkip conjunct removed,
 // so the rest is judged as if the job had no such skip. Only the exact two-fact term counts: a
 // looser skip, such as the head branch test alone, stays in place and makes the job conditional.

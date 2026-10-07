@@ -157,7 +157,8 @@ func TestAuditAPICompatibilityGate_Disabled(t *testing.T) {
 func TestAuditAPICompatibilityGate_Boundary_NestedModuleIsAudited(t *testing.T) {
 	root := apiGateFixture(t, "lib/go.mod")
 	out, err := captureStdout(t, func() error { return auditAPICompatibilityGate(t.Context(), apiGateManifest(), root) })
-	if err != nil || !strings.Contains(out, "[PASS] Locked API compatibility gate verified") {
+	if err != nil || !strings.Contains(out, "[PASS] Locked API compatibility gate verified") ||
+		!strings.Contains(out, "on a draft it fails by design until the draft is marked ready") {
 		t.Fatalf("nested module audit = %v:\n%s", err, out)
 	}
 }

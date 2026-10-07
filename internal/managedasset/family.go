@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
@@ -46,17 +47,17 @@ const (
 	DocumentationFacet = "docs:seo-portal"
 	// APIContractFacet is the manifest facet that enables the Go API compatibility gate.
 	APIContractFacet = "api:public-contract"
-	// WorkflowBranch is the default branch every family's Workflow text is written for: the
-	// branch a repository that declares none and records none resolves
-	// (forge.FallbackDefaultBranch). ForBranch renders the text for another one.
-	WorkflowBranch = "main"
+	// WorkflowBranch is the default branch every family's Workflow text, and every Prior text
+	// that names one, is written for (ghworkflow.HostedGateDefaultBranch): the branch a
+	// repository that declares none and records none resolves (forge.FallbackDefaultBranch).
+	// ForBranch renders the text for another one.
+	WorkflowBranch = ghworkflow.HostedGateDefaultBranch
 )
 
 // pushBranchesPrefix opens the one line of a hosted workflow that names the default branch its
-// push trigger runs on, at the indentation of a key under 'on': push:. The branch is
-// single-quoted, so a branch name YAML would read as a number or a boolean stays a string;
-// config.ValidBranchName admits no quote, glob character or space that would need escaping.
-const pushBranchesPrefix = "\n    branches: ['"
+// push trigger runs on (ghworkflow.HostedGatePushBranchesPrefix). config.ValidBranchName admits
+// no quote, glob character or space that would need escaping inside its single quotes.
+const pushBranchesPrefix = ghworkflow.HostedGatePushBranchesPrefix
 
 // pushBranchesLine is the push trigger's branch line for branch, with the line breaks around it.
 func pushBranchesLine(branch string) string {

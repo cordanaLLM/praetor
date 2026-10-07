@@ -33,7 +33,6 @@ const (
 	issueCommentEvent = "issue_comment"
 	workflowPathsKey  = "paths"
 	workflowIgnoreKey = "paths-ignore"
-	workflowTypesKey  = "types"
 	// workflowDiscoveryTimeout bounds one required-context discovery (HISS-02).
 	workflowDiscoveryTimeout = 30 * time.Second
 )
@@ -324,11 +323,10 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 		return nil, fmt.Errorf("workflow exceeds %d jobs", maxJobsPerFile)
 	}
 	ids := sortedJobIDs(spec.Jobs)
-	rerunsOnReady := rerunsWhenReady(&spec.On)
 	var contexts []string
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
-		if !reportsOnEveryPullRequest(withoutDraftSkip(job.If, rerunsOnReady), identity) {
+		if !reportsOnEveryPullRequest(job.If, identity) {
 			continue
 		}
 		// An advisory leg is reported to the forge as successful whether or not it passed,
@@ -372,8 +370,12 @@ var everyRunConditions = []string{"always()", "!cancelled()", "success()||failur
 // fork without PRAETOR_FORK_PORTABILITY, every skipped check reports success and the pull request
 // can merge with no Go test or security scan run (docs/guides/operational-sync.md).
 //
-// workflowContextsIn removes a draft skip (draftSkip) before it asks, but only from a workflow
-// that runs again when a draft is marked ready (withoutDraftSkip).
+// A draft skip, github.event.pull_request.draft != true, is a condition like any other: the
+// skipped draft reports success, which a required check accepts, and nothing waits for the run
+// that marking the draft ready starts. The hosted gates Praetor emits keep their job
+// unconditional instead and fail on a draft by design (ghworkflow.HostedGateDraftStep); the
+// ready_for_review run then reports the same context on the same head commit and replaces the
+// failure.
 func reportsOnEveryPullRequest(condition, identity string) bool {
 	condition = withoutRenovateBranchSkip(condition)
 	return strings.TrimSpace(condition) == "" || holdsOnEveryRun(condition) ||
@@ -384,8 +386,8 @@ func reportsOnEveryPullRequest(condition, identity string) bool {
 // whole ${{ }} expression. A status function joined with anything else is not: the value of the
 // rest is not knowable from the file.
 func holdsOnEveryRun(condition string) bool {
-	expression := unwrapExpression(condition)
-	return slices.Contains(everyRunConditions, strings.Join(strings.Fields(expression), ""))
+	expression, closed := ghworkflow.UnwrapExpression(condition)
+	return closed && slices.Contains(everyRunConditions, strings.Join(strings.Fields(expression), ""))
 }
 
 // advisoryJob reports whether continue-on-error makes a job's result non-binding. An
@@ -484,36 +486,6 @@ func pullRequestTriggers(on *yaml.Node) []string {
 func triggersOnEveryPullRequest(on *yaml.Node) bool {
 	value, declared := eventTrigger(on, pullRequestEvent)
 	return declared && !filtersPaths(value)
-}
-
-// rerunsWhenReady reports whether an "on" node's pull_request trigger lists ready_for_review in
-// its types, as a scalar or a sequence entry, so the workflow runs again when a draft is marked
-// ready (withoutDraftSkip). A trigger without types runs on GitHub's defaults, opened, synchronize
-// and reopened, which do not include it.
-func rerunsWhenReady(on *yaml.Node) bool {
-	value, declared := eventTrigger(on, pullRequestEvent)
-	if !declared || value == nil || value.Kind != yaml.MappingNode {
-		return false
-	}
-	for j := 0; j+1 < len(value.Content) && j < 2*maxJobsPerFile; j += 2 {
-		if value.Content[j].Value == workflowTypesKey {
-			return listsReadyForReview(value.Content[j+1])
-		}
-	}
-	return false
-}
-
-// listsReadyForReview reports whether a types node is ready_for_review or a sequence holding it.
-func listsReadyForReview(types *yaml.Node) bool {
-	if types.Kind == yaml.ScalarNode {
-		return types.Value == readyForReviewType
-	}
-	for i := 0; types.Kind == yaml.SequenceNode && i < len(types.Content) && i < maxJobsPerFile; i++ {
-		if types.Content[i].Value == readyForReviewType {
-			return true
-		}
-	}
-	return false
 }
 
 // filtersPaths reports whether a trigger's value node carries paths or paths-ignore.

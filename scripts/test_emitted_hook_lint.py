@@ -20,8 +20,10 @@ on all five files (BUG-782). The paths are read from the Go constants, so a move
 followed without editing this list.
 
 The documentation gate's YAML is part of the same set: the hosted workflow text adoption
-writes to .github/workflows/praetor-docs.yml (the Workflow constant) and every YAML asset the
-gate embeds, read through the constants and go:embed line of tools/markdownlint/assets.go.
+writes to .github/workflows/praetor-docs.yml (the Workflow constant, which renders the shared
+hosted gate shape of internal/ghworkflow/hostedgate.go; the repository's own copy at
+WorkflowFile holds its bytes, TestWorkflowIsTheRepositoryCopy) and every YAML asset the gate
+embeds, read through the constants and go:embed line of tools/markdownlint/assets.go.
 Audit locks an adopter's copies to these bytes, so an adopter whose yamllint covers the tree
 cannot fix a finding in them.
 
@@ -103,17 +105,21 @@ def emitted_sources():
 def documentation_gate_yaml():
     """Return {repository path: emitted text} for the documentation gate's YAML.
 
-    The workflow text is the Workflow raw string constant, the bytes adoption writes; each YAML
-    asset named on the go:embed line is read from the gate's directory, which is its source.
+    The workflow text is the repository's own copy at WorkflowFile, which a Go test holds byte
+    for byte to the Workflow constant adoption writes (TestWorkflowIsTheRepositoryCopy in
+    tools/markdownlint/assets_test.go): the constant is concatenated from the shared hosted gate
+    shape, so it is no one raw string this script could read. Each YAML asset named on the
+    go:embed line is read from the gate's directory, which is its source.
     """
     source = (ROOT / DOCUMENTATION_GATE_SOURCE).read_text(encoding="utf-8")
-    workflow = re.search(r"^const Workflow = `([^`]*)`$", source, re.M)
+    declared = re.search(r"^const Workflow = `", source, re.M)
     embed = re.search(r"^//go:embed (.+)$", source, re.M)
-    if workflow is None or embed is None:
+    if declared is None or embed is None:
         raise AssertionError(
             f"{DOCUMENTATION_GATE_SOURCE} no longer declares Workflow and a go:embed line")
     directory = go_constant(DOCUMENTATION_GATE_SOURCE, "Directory")
-    files = {go_constant(DOCUMENTATION_GATE_SOURCE, "WorkflowFile"): workflow.group(1)}
+    workflow_file = go_constant(DOCUMENTATION_GATE_SOURCE, "WorkflowFile")
+    files = {workflow_file: (ROOT / workflow_file).read_text(encoding="utf-8")}
     for name in embed.group(1).split():
         if name.endswith((".yml", ".yaml")):
             files[f"{directory}/{name}"] = (ROOT / directory / name).read_text(encoding="utf-8")
@@ -357,7 +363,7 @@ class ResolutionTest(unittest.TestCase):
                                          probe=lambda path, value=reported: value)
             self.assertIn("26.5.1 is pinned", problem)
 
-    def test_documentation_gate_yaml_comes_from_go_source(self):
+    def test_documentation_gate_yaml_comes_from_the_gate(self):
         files = documentation_gate_yaml()
         self.assertEqual(sorted(files), [".github/workflows/praetor-docs.yml",
                                          "tools/markdownlint/markdownlint-cli2.yaml"])

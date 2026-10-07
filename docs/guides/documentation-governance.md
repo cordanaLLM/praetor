@@ -864,9 +864,11 @@ The dedicated hosted workflow runs for every push to the repository's default
 branch and every pull request that is not a draft, and again when a draft is
 marked ready for review. Adoption renders it for the default branch the branch
 ruleset protects, and audit locks that rendering; a push to another branch or
-of a tag starts no run, and a draft skips the job while the ruleset keeps
-requiring `Documentation Governance`. The rules are the API compatibility
-gate's ([When the workflow runs](api-compatibility.md#when-the-workflow-runs)).
+of a tag starts no run. On a draft the job fails by design without checking
+anything, saying the gate runs when the pull request is marked ready, and the
+`ready_for_review` run then reports `Documentation Governance` on the same head
+commit. The rules are the API compatibility gate's
+([When the workflow runs](api-compatibility.md#when-the-workflow-runs)).
 The main CI workflow also selects the gate on documentation-only changes while skipping the
 race and security suites; state-only changes under the ignored private ledgers
 select no documentation work. Source/configuration changes reach the same gate

@@ -32,8 +32,8 @@ gates continue to apply independently.
 
 Publication and hosted acceptance are separate observations. When the optional
 `require_checks` policy is true, an exact-head PR can be `publication_status:
-present` while `review_status` is `failed`, `pending`, or `missing` and work
-remains `due`. The agent must resolve the failures or retain an explicit blocker;
+present` while `review_status` is `failed`, `pending`, `draft_pending`, or
+`missing` and work remains `due`. The agent must resolve the failures or retain an explicit blocker;
 the existence of a draft cannot close that work. `passed` requires at least one
 successful check, no failed or pending checks, and success for every configured
 `required_checks` name. Optional skipped/neutral jobs are reported separately;
@@ -42,6 +42,20 @@ same head, as GitHub judges it: within one workflow, only the run of a job with 
 `startedAt` counts (`_latest_runs` in `.config/lefthook/scripts/checkpoint.py`). Otherwise
 duplicate names never hide a failure: two workflows sharing a job name, status contexts, and
 runs without a workflow name or start time are all judged.
+
+The hosted gates Praetor emits fail on a draft by design: their first step prints
+an error annotation titled `Gate not run on a draft` with a fixed message and
+exits 1, and the gate runs once the draft is marked ready
+([When the workflow runs](api-compatibility.md#when-the-workflow-runs)). On a
+draft, the planner reads the annotations of the head commit's failed check runs
+with one `gh api graphql` query and counts a failed check as `draft_pending`, not
+`failed`, only when every failed run of that name carries exactly that title and
+message (`DRAFT_GATE_TITLE` and `DRAFT_GATE_MESSAGE` in
+`.config/lefthook/scripts/checkpoint.py`, held to `internal/ghworkflow/hostedgate.go`
+by `TestHostedGateDraftMarker_Boundary`). Any other conclusion, annotation or
+unmarked run, and the same marker on a pull request that is not a draft, stay
+`failed`. `draft_pending` keeps the work `due`: it says the draft has not run its
+hosted gates yet, not that they passed.
 
 The check observer uses `gh pr list --json statusCheckRollup`, verified against
 GitHub CLI 2.100.0. It rejects 100 or more contexts as incomplete because that
