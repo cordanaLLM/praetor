@@ -1,0 +1,4 @@
+type: added
+title: "`needs report` recommends the sub-package imports that replace a framework umbrella import wiring only a few groupings, and measures what the switch removes from the build offline"
+issue: "#846"
+breaking: false
