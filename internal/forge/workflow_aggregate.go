@@ -161,6 +161,11 @@ func gateSteps(spec *workflowSpec, job *workflowJob) ([]gateStep, bool) {
 		if !allsGreen && !exitStep(spec, job, step) {
 			return nil, false
 		}
+		// A condition on the alls-green step can skip it on the very run where a covered need
+		// failed (a term on another need), and a skipped step passes the gate: refuse it.
+		if allsGreen && strings.TrimSpace(step.If) != "" {
+			return nil, false
+		}
 		steps = append(steps, gateStep{condition: step.If, allsGreen: allsGreen, policy: policy})
 	}
 	return steps, true
