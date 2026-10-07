@@ -405,6 +405,11 @@ fields:
         effect: >-
           drops the review gate from the rendered ruleset under
           single_maintainer
+      - func: internal/forge.rulesetBypassActors
+        kind: acts
+        effect: >-
+          renders the repository admin role as the ruleset's pull-request
+          bypass actor under single_maintainer, and none under any other mode
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the mode in praetorctl plan
