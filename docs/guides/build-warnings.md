@@ -19,16 +19,20 @@ Give every build lane its toolchain's form:
 
 | Toolchain | Lane the gate reads | Passes with |
 | :--- | :--- | :--- |
-| gcc, clang, icx, icpx (any target prefix or version suffix) | a command that compiles a source file or runs with `-c` | `-Werror` on the command, not undone by a later `-Wno-error`. `-Werror=<warning>` covers that warning only and does not count ([GCC](https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html)). |
-| MSVC `cl`, `clang-cl` | the same | `/WX` (or `-WX`) on the command or in the `CL` or `_CL_` variable, not undone by a later `/WX-` ([MSVC](https://learn.microsoft.com/en-us/cpp/build/reference/compiler-option-warning-level)) |
-| CMake | a configure run (`cmake -S . -B build`, `cmake --preset`) | `-DCMAKE_COMPILE_WARNING_AS_ERROR=ON` (any CMake true constant, CMake 3.24 or later) without `--compile-no-warning-as-error`, or `-Werror` in every `CMAKE_C_FLAGS` and `CMAKE_CXX_FLAGS` it defines ([CMake](https://cmake.org/cmake/help/latest/variable/CMAKE_COMPILE_WARNING_AS_ERROR.html)) |
-| Meson | `meson setup` | `--werror` or `-Dwerror=true` ([Meson](https://mesonbuild.com/Builtin-options.html)) |
-| Cargo | `cargo build`, `check`, `test`, `run`, `bench`, `clippy`, `rustc`, `nextest` | `-D warnings` in `CARGO_ENCODED_RUSTFLAGS`, else in `RUSTFLAGS`, the first of the two cargo uses; or after `cargo clippy --` and `cargo rustc --` ([Cargo](https://doc.rust-lang.org/cargo/reference/config.html), [Clippy](https://doc.rust-lang.org/clippy/continuous_integration/index.html)) |
+| gcc, clang, icx, icpx (any target prefix, version suffix, or the `-posix`/`-win32` suffix of Debian's MinGW-w64 names) | a command that compiles a source file or runs with `-c` | `-Werror` on the command, not undone by a later `-Wno-error`. `-Werror=<warning>` covers that warning only and does not count ([GCC](https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html)). |
+| MSVC `cl`, `clang-cl` | the same | `/WX` (or `-WX`) on the command or in the `CL` or `_CL_` variable, not undone by a later `/WX-` ([MSVC](https://learn.microsoft.com/en-us/cpp/build/reference/compiler-option-warning-level)); `clang-cl` also takes `-Werror`, undone by `-Wno-error` |
+| CMake | a configure run (`cmake -S . -B build`, `cmake --preset`) | `-DCMAKE_COMPILE_WARNING_AS_ERROR=ON` (any CMake true constant, CMake 3.24 or later) without `--compile-no-warning-as-error` ([CMake](https://cmake.org/cmake/help/latest/variable/CMAKE_COMPILE_WARNING_AS_ERROR.html)), or `-Werror` (or `/WX`) in the flags of every language the repository's sources need: `CMAKE_C_FLAGS` for `.c` files, `CMAKE_CXX_FLAGS` for `.cc`, `.cpp`, `.cxx` and `.c++` files, and both when it holds neither, since `project()` enables C and C++ by default. Each is read from `-D` on the command, else from `CFLAGS` or `CXXFLAGS`, which initialize it ([`CMAKE_<LANG>_FLAGS`](https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_FLAGS.html)) |
+| Meson | `meson setup` | `--werror` or `-Dwerror=true`, in any case as Meson reads a boolean ([Meson](https://mesonbuild.com/Builtin-options.html)) |
+| Cargo, `cross`, `cargo llvm-cov` | `build`, `check`, `test`, `run`, `bench`, `clippy`, `rustc`, `nextest`, `llvm-cov` (not its `report`, `show-env` or `clean`) | `CARGO_BUILD_WARNINGS: deny` (Cargo 1.97 or later); or `-D warnings` in the flags rustc receives for every target: the first set of `CARGO_ENCODED_RUSTFLAGS`, `RUSTFLAGS`, `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` and `CARGO_BUILD_RUSTFLAGS`, after the `[lints]` levels below, and for `cargo clippy` and `cargo rustc` what follows `--` ([Cargo](https://doc.rust-lang.org/cargo/reference/config.html), [Clippy](https://doc.rust-lang.org/clippy/continuous_integration/index.html)) |
+| Cargo `[lints]` | every crate of the root `Cargo.toml`'s workspace | `warnings = "deny"` (or `"forbid"`, or `{ level = "deny", priority = -1 }`) in each crate's `[lints.rust]`, or in `[workspace.lints.rust]` with `[lints] workspace = true` in each member ([lints](https://doc.rust-lang.org/cargo/reference/manifest.html#the-lints-section), [workspace lints](https://doc.rust-lang.org/cargo/reference/workspaces.html#the-lints-table)). Read only for a cargo command run in the repository root without `--manifest-path` |
 | rustc | a command that compiles a `.rs` file | `-D warnings` on the command |
-| Go | `go build`, `test` and `install` of the repository | a step of any workflow that runs `go vet` or `go test -vet=all`: the Go compiler reports no warnings, and `go vet` exits non-zero on a finding ([cmd/vet](https://pkg.go.dev/cmd/vet)) |
+| Go | `go build`, `test` and `install` of the repository | a step of any workflow that runs `go vet` or `go test -vet=all`: the Go compiler reports no warnings, and `go vet` exits non-zero on a finding ([cmd/vet](https://pkg.go.dev/cmd/vet)). In a module with cgo files (`import "C"`), also `-Werror` in `CGO_CFLAGS` (or `CGO_CPPFLAGS`), and in `CGO_CXXFLAGS` when a cgo package holds C++ files, on the build step; `CGO_ENABLED=0` compiles no C |
 
 `-D warnings` may also be written `-Dwarnings`, `--deny warnings`, `--deny=warnings` or with
-`-F`/`--forbid`; a later `-W warnings` or `-A warnings` undoes a deny, never a forbid.
+`-F`/`--forbid`; a later `-W warnings` or `-A warnings` undoes a deny, never a forbid. Cargo
+passes the `[lints]` levels before the flags of its flag source, so `RUSTFLAGS: -W warnings`
+undoes a `[lints]` deny. A `--cap-lints allow` or `--cap-lints warn` turns every deny and forbid
+back into a warning; rustc reads the first `--cap-lints` it is given (measured with rustc 1.98.1).
 
 ```yaml
 env:
@@ -52,24 +56,38 @@ runs `go vet ./...` (`TestAuditBuildWarningsPassesTheScaffoldedWorkflows`).
 ## What the gate reads
 
 - **Commands of `run:` steps.** A script is cut into commands at `;`, `&&`, `||`, `|`, `&` and
-  line ends. Words before the program that run nothing of their own (`sudo`, `env`, `time`,
-  `ccache`, `sccache`, `if`, `then`, `do`) are passed over. An `echo cargo build` or a command in
-  a comment builds nothing.
+  line ends, and the parentheses of a subshell (`(cd build && cmake ..)`) are dropped. Words
+  before the program that run nothing of their own (`if`, `then`, `do`, `time`, `nice`,
+  `timeout`, `env`, `sudo`, `exec`, `ccache`, `sccache`) are passed over with their options. An
+  `echo cargo build` or a command in a comment builds nothing. A program path is cut at `/` or
+  `\` on every host, so `C:\msys64\mingw64\bin\gcc.exe` reads as `gcc` on Linux too.
 - **Variables.** A variable is read from the command's own assignments
   (`RUSTFLAGS="-D warnings" cargo build`), an `export` earlier in the script, then the step's,
   the job's and the workflow's `env:`, in that order. A word that is one whole reference
   (`$CMAKE_ARGS`, `${CMAKE_ARGS}`) expands to its value. An `env:` that is one expression, such as
   `${{ fromJSON(vars.CI_ENV) }}`, decides nothing the file shows, so the lane fails.
+- **Wrappers and the environment.** `sudo` runs its program in a reset environment
+  (`env_reset`, on by default in sudoers), so `RUSTFLAGS` from `env:` reaches `sudo cargo build`
+  only with `sudo -E` or `--preserve-env=RUSTFLAGS`; `env -i` empties the environment and
+  `env -u NAME` removes one variable.
+- **Compilers given as variables.** `$CC -c a.c` reads `CC` from the environment and judges the
+  compiler it names. A compiler the workflow shows no value for, such as `${{ matrix.cc }}` or an
+  unset `$CC`, is a lane that fails as unread: name the compiler on the command or set the
+  variable in `env:`.
 - **Configure before build.** `cmake --build` and `meson compile`, `test` or `install` are lanes
   only in a job where no earlier `run:` step configures: what configured that tree cannot be
   read, so the lane fails and says so.
-- **Go.** Every Go lane of every workflow passes once one binding step runs `go vet` or
+- **Go.** Every Go lane of every workflow needs one binding step that runs `go vet` or
   `go test -vet=all`. `go install` of a `module@version` installs a tool, not the repository,
   and `go run` compiles a program only to execute it, such as the API gate
   `tools/apicompat/gate/main.go` adoption writes; neither is a lane.
+- **Repository sources.** For CMake's flags form and Go's cgo rule the gate reads which files the
+  repository holds: the files git reports as its own (tracked, or untracked and not ignored),
+  every file outside a work tree. A Go file counts as the go command builds it: not a test file,
+  not under `testdata`, and under no directory starting with `.` or `_`.
 - **Binding.** A step or job with `continue-on-error` passes whatever its compiler reports, so
-  its lane fails, and a `go vet` step with it does not count. A job or step whose `if:` is the
-  literal `false` is not read.
+  its lane fails, Go lanes included, and a `go vet` step with it does not count. A job or step
+  whose `if:` is the literal `false` is not read.
 
 ## What the gate does not read
 
@@ -78,7 +96,14 @@ The gate reads the flags a `run:` step passes. It does not run a build, and it d
 - what a `make` target, a script (`./build.sh`, `bash -c`), an action (`uses:`) or a reusable
   workflow of another repository compiles;
 - a preset's `cacheVariables` (`CMakePresets.json`), a Meson machine file or `default_options`,
-  `CMakeLists.txt`, `Cargo.toml` `[lints]` or `.cargo/config.toml` `build.rustflags`;
+  `CMakeLists.txt`, `.cargo/config.toml` (`build.rustflags`, `target.<cfg>.rustflags`,
+  `build.warnings`), `cargo --config`, or `go env -w` settings;
+- the flags of languages other than C and C++ in CMake's flags form (`CMAKE_CUDA_FLAGS` and the
+  like): `CMAKE_COMPILE_WARNING_AS_ERROR` covers every language;
+- `#cgo CFLAGS` directives in Go files, which come after `CGO_CFLAGS` and can undo it, and
+  Fortran files in cgo packages;
+- build scripts and proc macros under `--target`: Cargo then passes `RUSTFLAGS` and its other
+  flag sources to the target's code only, so `[lints]` or `CARGO_BUILD_WARNINGS` covers them;
 - an assignment in PowerShell or cmd syntax, or a variable a step writes to `$GITHUB_ENV`;
 - whether the script lets the failure through (`|| true`, `set +e`);
 - which warnings the lane enables (`-Wall`, `-Wextra`, `warning_level`): `-Werror` makes the
@@ -91,6 +116,12 @@ exception declares it. A lane the gate never sees passes unread:
 and
 [`gap/make-hides-the-compiler.yml`](https://github.com/cordanaLLM/praetor/blob/main/.config/hiss/testdata/HISS-10/github-actions/gap/make-hides-the-compiler.yml)
 record two such shapes in the HISS-20 coverage table, `.config/hiss/coverage.yaml`.
+
+A lane that cannot build with warnings as errors at all, such as one compiling a vendored tree
+whose warnings are not yours to fix, needs a gate that reads the warnings a build prints instead
+of its flags. That log-scan gate is tracked in
+[#825](https://github.com/cordanaLLM/praetor/issues/825); until it lands, declare such a lane in
+the exceptions list below.
 
 ## Exceptions
 
@@ -138,6 +169,11 @@ A repository whose workflows build none of these languages skips the gate:
 
 - `internal/forge/build_warnings_test.go`: each toolchain's form, each lane without it, the Go
   vet rule, and the commands that are no lane.
+- `internal/forge/build_warnings_sources_test.go`: the cgo rule, CMake's flags per language, and
+  the Cargo `[lints]` level; `internal/forge/build_warnings_shell_test.go`: subshells, wrappers,
+  compilers given as variables and host-neutral program names.
+- `internal/flavor/cargo_lints_test.go`: the `[lints]` level of a root package and of a
+  workspace's members.
 - `internal/adopt/build_warnings_audit_test.go`: the gate per language, exceptions, the skip,
   the scaffolded workflows, and the HISS-10 fixture replay.
 - `cmd/standardsctl/audit_build_warnings_test.go` and

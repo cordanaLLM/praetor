@@ -626,7 +626,9 @@ rules:
           internal/hiss implements no HISS-10 rule. In an adopter repository, praetorctl audit's
           build-warnings gate (internal/adopt.AuditBuildWarnings, the github-actions entry below)
           fails every Go lane of the workflows while no binding step runs go vet or go test
-          -vet=all; it does not read which analyzers a golangci-lint configuration enables.
+          -vet=all, and, in a module with cgo files, a Go lane whose CGO_CPPFLAGS and CGO_CFLAGS
+          carry no -Werror; it does not read which analyzers a golangci-lint configuration
+          enables.
         rationale: >-
           6/6 positive fixtures reported by the real stack: ineffassign (ineffectual-assignment),
           nolintlint 'should provide explanation' (unexplained-nolint), nolintlint 'is unused for
@@ -667,8 +669,11 @@ rules:
         mechanism: >-
           rustc in an adopter repository's cargo lanes, which praetorctl audit's build-warnings gate
           (internal/adopt.AuditBuildWarnings over internal/forge.MeasureBuildWarnings) requires to
-          run with -D warnings: in CARGO_ENCODED_RUSTFLAGS or RUSTFLAGS, or after cargo clippy's
-          "--". The scaffolded Rust CI workflow (templates/rust/ci-rust.yml.tmpl) sets RUSTFLAGS: -D
+          run with warnings denied: -D warnings in the first set of CARGO_ENCODED_RUSTFLAGS,
+          RUSTFLAGS, CARGO_TARGET_<triple>_RUSTFLAGS and CARGO_BUILD_RUSTFLAGS, a deny in the
+          [lints.rust] table of every crate of the root Cargo.toml, CARGO_BUILD_WARNINGS=deny, or
+          -D warnings after cargo clippy's "--"; a --cap-lints below deny defeats it. The
+          scaffolded Rust CI workflow (templates/rust/ci-rust.yml.tmpl) sets RUSTFLAGS: -D
           warnings on its job. This repository holds no .rs file and no cargo lane. internal/hiss
           reads .rs but implements only HISS-02/04/07/09.
         rationale: >-
