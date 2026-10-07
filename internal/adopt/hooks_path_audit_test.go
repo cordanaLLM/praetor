@@ -2,10 +2,13 @@ package adopt
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // hooksPathRepo returns a hermetic checkout (hookRunnerRepo) with lefthook.yml and lefthook's hook
@@ -18,12 +21,17 @@ func hooksPathRepo(t *testing.T) string {
 	return root
 }
 
-// setLocalHooksPath writes core.hooksPath into the checkout's own configuration. Git reads a
-// backslash in a configuration value as an escape, so the value is written with forward slashes,
-// which git for Windows accepts too.
+// setLocalHooksPath appends core.hooksPath to the checkout's own configuration, keeping what it
+// holds, such as the origin remote. Git reads a backslash in a configuration value as an escape,
+// so the value is written with forward slashes, which git for Windows accepts too.
 func setLocalHooksPath(t *testing.T, root, value string) {
 	t.Helper()
-	mustWrite(t, filepath.Join(root, ".git", "config"), "[core]\n\thooksPath = "+filepath.ToSlash(value)+"\n")
+	path := filepath.Join(root, ".git", "config")
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	mustWrite(t, path, string(existing)+"[core]\n\thooksPath = "+filepath.ToSlash(value)+"\n")
 }
 
 // setGlobalHooksPath points git's global configuration at a file that sets core.hooksPath.
@@ -167,7 +175,8 @@ func TestParseHooksPathSettings_Boundary(t *testing.T) {
 		t.Fatalf("empty output: %v, %v", settings, err)
 	}
 	settings, err := parseHooksPathSettings(bytes.Repeat(triple, maxHooksPathSettings))
-	if err != nil || len(settings) != maxHooksPathSettings || settings[0] != (hooksPathSetting{"local", "file:.git/config", ".githooks"}) {
+	if err != nil || len(settings) != maxHooksPathSettings ||
+		settings[0] != (hooksPathSetting{scope: "local", origin: "file:.git/config", value: ".githooks"}) {
 		t.Fatalf("bound: %d settings, %v", len(settings), err)
 	}
 	for name, out := range map[string][]byte{
@@ -177,6 +186,118 @@ func TestParseHooksPathSettings_Boundary(t *testing.T) {
 	} {
 		if _, err := parseHooksPathSettings(out); err == nil {
 			t.Fatalf("%s: parsed", name)
+		}
+	}
+}
+
+// writeIncludedHooksPath writes a file that sets core.hooksPath to value, and a local configuration
+// that includes it with section, include or includeIf "onbranch:main" (the test checkout's HEAD).
+// It returns the included file.
+func writeIncludedHooksPath(t *testing.T, root, section, value string) string {
+	t.Helper()
+	included := filepath.Join(t.TempDir(), "hooks.inc")
+	mustWrite(t, included, "[core]\n\thooksPath = "+filepath.ToSlash(value)+"\n")
+	mustWrite(t, filepath.Join(root, ".git", "config"), section+"\n\tpath = "+filepath.ToSlash(included)+"\n")
+	return included
+}
+
+// TestAuditInstalledGitHook_Negative_HooksPathFromAnIncludedFile (#61): a value an include.path or
+// includeIf file sets fails like any other, and the failure names that file and the git config
+// --file command that removes the value from it. git config --unset-all --local, the hint for a
+// value of the local file itself, edits .git/config only and fails on an included value. Running
+// the printed command makes the audit pass.
+func TestAuditInstalledGitHook_Negative_HooksPathFromAnIncludedFile(t *testing.T) {
+	for name, section := range map[string]string{
+		"include.path":            "[include]",
+		"includeIf onbranch:main": `[includeIf "onbranch:main"]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := hooksPathRepo(t)
+			included := writeIncludedHooksPath(t, root, section, os.DevNull)
+			_, err := AuditInstalledGitHook(t.Context(), root)
+			if err == nil {
+				t.Fatal("an included core.hooksPath passed")
+			}
+			fix := `git config --file "` + filepath.Clean(included) + `" --unset-all core.hooksPath`
+			for _, want := range []string{`set in "` + filepath.Clean(included) + `"`, "local configuration includes", fix} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("err %v; want %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "--unset-all --local") || strings.Contains(err.Error(), "--reset-hooks-path") {
+				t.Fatalf("an included value got a hint that cannot remove it: %v", err)
+			}
+			if _, err := util.RunGit(t.Context(), root, "config", "--local", "--unset-all", hooksPathKey); err == nil {
+				t.Fatal("git config --unset-all --local removed an included value")
+			}
+			if _, err := util.RunGit(t.Context(), root, "config", "--file", included, "--unset-all", hooksPathKey); err != nil {
+				t.Fatalf("the printed fix: %v", err)
+			}
+			if line, err := AuditInstalledGitHook(t.Context(), root); err != nil {
+				t.Fatalf("after the printed fix: %q, %v", line, err)
+			}
+		})
+	}
+}
+
+// TestAuditHooksPath_Boundary_LefthookResetHint (#61): where lefthook runs the hooks (lefthook.yml),
+// the finding names lefthook install --reset-hooks-path, which unsets a local or a global value
+// from the scope's own file (lefthook 2.1.14 unsetHooksPathConfig). It is not named for a value
+// that command does not remove, an included or a command-line one, nor without lefthook.yml.
+func TestAuditHooksPath_Boundary_LefthookResetHint(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(t *testing.T, root string)
+		want bool
+	}{
+		{"local", func(t *testing.T, root string) { setLocalHooksPath(t, root, ".githooks") }, true},
+		{"global", func(t *testing.T, _ string) { setGlobalHooksPath(t, os.DevNull) }, true},
+		{"included", func(t *testing.T, root string) { writeIncludedHooksPath(t, root, "[include]", os.DevNull) }, false},
+		{"command", func(t *testing.T, _ string) {
+			t.Setenv("GIT_CONFIG_COUNT", "1")
+			t.Setenv("GIT_CONFIG_KEY_0", hooksPathKey)
+			t.Setenv("GIT_CONFIG_VALUE_0", os.DevNull)
+		}, false},
+		{"local without lefthook.yml", func(t *testing.T, root string) {
+			if err := os.Remove(filepath.Join(root, lefthookFile)); err != nil {
+				t.Fatal(err)
+			}
+			setLocalHooksPath(t, root, ".githooks")
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := hooksPathRepo(t)
+			tc.set(t, root)
+			err := auditHooksPath(t.Context(), root)
+			if err == nil {
+				t.Fatal("core.hooksPath outside the managed directory passed")
+			}
+			if got := strings.Contains(err.Error(), "'lefthook install --reset-hooks-path'"); got != tc.want {
+				t.Fatalf("reset hint named = %v, want %v: %v", got, tc.want, err)
+			}
+		})
+	}
+}
+
+// TestMarkIncluded_Boundary: settings the read without includes lacks are marked, equal ones
+// matched one for one, so a value both set directly and included is marked once.
+func TestMarkIncluded_Boundary(t *testing.T) {
+	direct := hooksPathSetting{scope: "local", origin: "file:.git/config", value: ".husky"}
+	other := hooksPathSetting{scope: "local", origin: "file:.git/hooks.inc", value: os.DevNull}
+	for name, tc := range map[string]struct {
+		direct []hooksPathSetting
+		want   []bool
+	}{
+		"none direct":        {nil, []bool{true, true, true}},
+		"one of two equal":   {[]hooksPathSetting{direct}, []bool{false, true, true}},
+		"every value direct": {[]hooksPathSetting{direct, direct, other}, []bool{false, false, false}},
+	} {
+		settings := []hooksPathSetting{direct, direct, other}
+		markIncluded(settings, tc.direct)
+		for i, setting := range settings {
+			if setting.included != tc.want[i] {
+				t.Fatalf("%s: setting %d included = %v, want %v", name, i, setting.included, tc.want[i])
+			}
 		}
 	}
 }

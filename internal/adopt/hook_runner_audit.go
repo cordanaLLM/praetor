@@ -125,7 +125,7 @@ func AuditInstalledGitHook(ctx context.Context, rootDir string) (string, error) 
 		return "", fmt.Errorf("[FAIL] Resolve git hooks directory: %w", err)
 	}
 	if err := auditHooksPath(ctx, rootDir); err != nil {
-		return "", err
+		return "", fmt.Errorf("[FAIL] %w", err)
 	}
 	hookPath := filepath.Join(hooksDir, preCommitHook)
 	info, data, err := readInstalledHook(hookPath)
