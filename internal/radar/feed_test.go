@@ -1,0 +1,151 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package radar
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+)
+
+const rssFeed = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:media="http://search.yahoo.com/mrss/">
+<channel><title>Example blog</title><link>https://example.org/</link>
+<item><title>First &amp; <![CDATA[best]]></title><link>https://example.org/first</link>
+<pubDate>Thu, 1 Oct 2026 09:30:00 +0000</pubDate><media:title>ignored</media:title></item>
+<item><title>Dated by Dublin Core</title><link>https://example.org/dc</link><dc:date>2026-10-02</dc:date></item>
+<item><title>No date</title><link>https://example.org/none</link></item>
+</channel></rss>`
+
+const atomFeed = `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Example releases</title>
+<entry><title type="html">v2.0 &lt;b&gt;bold&lt;/b&gt;</title>
+<link rel="self" href="https://example.org/self"/><link href="https://example.org/v2"/>
+<updated>2026-10-03T10:00:00Z</updated><published>2026-10-02T10:00:00+02:00</published></entry>
+<entry><title>Only updated</title><link rel="alternate" href="https://example.org/u"/><updated>2026-10-04T00:00:00Z</updated></entry>
+</feed>`
+
+const rdfFeed = `<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel><title>Papers</title></channel>
+<item><title>A paper</title><link>https://example.org/abs/1</link><dc:date>2026-10-05T00:00:00Z</dc:date></item>
+</rdf:RDF>`
+
+// Positive: RSS 2.0, Atom and RSS 1.0 entries are read with their title, link and most specific
+// date; an entry without a readable date is counted, not dropped silently.
+func TestParseFeed_Positive_Formats(t *testing.T) {
+	rss, err := ParseFeed([]byte(rssFeed))
+	if err != nil {
+		t.Fatalf("rss: %v", err)
+	}
+	if len(rss.Items) != 2 || rss.Undated != 1 {
+		t.Fatalf("rss = %+v", rss)
+	}
+	first := rss.Items[0]
+	if first.Title != "First & best" || first.Link != "https://example.org/first" ||
+		!first.Published.Equal(time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)) || first.DateOnly {
+		t.Errorf("rss first = %+v", first)
+	}
+	if second := rss.Items[1]; !second.DateOnly || !second.Published.Equal(time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("rss second = %+v", second)
+	}
+	atom, err := ParseFeed([]byte(atomFeed))
+	if err != nil || len(atom.Items) != 2 {
+		t.Fatalf("atom = %+v, %v", atom, err)
+	}
+	if v2 := atom.Items[0]; v2.Title != "v2.0 <b>bold</b>" || v2.Link != "https://example.org/v2" ||
+		!v2.Published.Equal(time.Date(2026, 10, 2, 8, 0, 0, 0, time.UTC)) {
+		t.Errorf("atom published entry = %+v", v2)
+	}
+	if updated := atom.Items[1]; updated.Link != "https://example.org/u" || updated.Published.Day() != 4 {
+		t.Errorf("atom updated entry = %+v", updated)
+	}
+	rdf, err := ParseFeed([]byte(rdfFeed))
+	if err != nil || len(rdf.Items) != 1 || rdf.Items[0].Title != "A paper" {
+		t.Fatalf("rdf = %+v, %v", rdf, err)
+	}
+}
+
+// feedRefusals are documents ParseFeed must refuse, each with the sentinel or text expected.
+var feedRefusals = []struct {
+	name, body string
+	sentinel   error
+	want       string
+}{
+	{"doctype", `<?xml version="1.0"?><!DOCTYPE rss [<!ENTITY x "boom">]><rss><channel><item><title>&x;</title></item></channel></rss>`, ErrFeedDoctype, ""},
+	{"external doctype", `<!DOCTYPE rss SYSTEM "https://example.org/rss.dtd"><rss/>`, ErrFeedDoctype, ""},
+	{"html page", `<html><body>not a feed</body></html>`, ErrNotFeed, ""},
+	{"empty document", ``, ErrNotFeed, ""},
+	{"comment only", `<!-- nothing -->`, ErrNotFeed, ""},
+	{"unclosed element", `<rss><channel><item><title>x</title>`, nil, "radar feed"},
+	{"mismatched tags", `<rss><channel></item></rss>`, nil, "radar feed"},
+	{"undefined entity", `<rss><channel><item><title>&bogus;</title></item></channel></rss>`, nil, "radar feed"},
+	{"non-UTF-8 encoding", `<?xml version="1.0" encoding="ISO-8859-1"?><rss/>`, nil, "radar feed"},
+}
+
+// Negative: a document type or entity declaration, a document that is not a feed, malformed XML,
+// an undeclared entity, a foreign encoding and an oversized document are errors, never an empty
+// feed.
+func TestParseFeed_Negative_Refusals(t *testing.T) {
+	for _, tc := range feedRefusals {
+		_, err := ParseFeed([]byte(tc.body))
+		if err == nil || (tc.sentinel != nil && !errors.Is(err, tc.sentinel)) || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %v %q", tc.name, err, tc.sentinel, tc.want)
+		}
+	}
+	oversize := make([]byte, MaxFeedBytes+1)
+	if _, err := ParseFeed(oversize); !errors.Is(err, ErrFeedTooLarge) {
+		t.Errorf("oversize: %v, want ErrFeedTooLarge", err)
+	}
+}
+
+// nested renders a feed whose single entry's title sits inside depth elements in total.
+func nested(depth int) string {
+	// rss(1) > channel(2) > item(3) > title(4) > span... ; depth counts every element.
+	extra := depth - 4
+	return "<rss><channel><item><title>" + strings.Repeat("<s>", extra) + "deep" + strings.Repeat("</s>", extra) +
+		"</title><pubDate>Thu, 1 Oct 2026 09:30:00 +0000</pubDate></item></channel></rss>"
+}
+
+// entries renders an RSS feed of count dated entries.
+func entries(count int) string {
+	var b strings.Builder
+	b.WriteString("<rss><channel>")
+	for i := 0; i < count; i++ {
+		fmt.Fprintf(&b, "<item><title>e%d</title><pubDate>Thu, 1 Oct 2026 09:30:00 +0000</pubDate></item>", i)
+	}
+	b.WriteString("</channel></rss>")
+	return b.String()
+}
+
+// Boundary: nesting of exactly MaxFeedDepth parses and one level more is refused; MaxFeedEntries
+// entries parse and one more is refused; a document of exactly MaxFeedBytes is read; a feed with
+// no entries is a valid empty feed; a long title is cut to the field cap.
+func TestParseFeed_Boundary_Caps(t *testing.T) {
+	if got, err := ParseFeed([]byte(nested(MaxFeedDepth))); err != nil || len(got.Items) != 1 || got.Items[0].Title != "deep" {
+		t.Errorf("depth %d: %+v, %v", MaxFeedDepth, got, err)
+	}
+	if _, err := ParseFeed([]byte(nested(MaxFeedDepth + 1))); !errors.Is(err, ErrFeedTooDeep) {
+		t.Errorf("depth %d: %v, want ErrFeedTooDeep", MaxFeedDepth+1, err)
+	}
+	if got, err := ParseFeed([]byte(entries(MaxFeedEntries))); err != nil || len(got.Items) != MaxFeedEntries {
+		t.Errorf("%d entries: %d, %v", MaxFeedEntries, len(got.Items), err)
+	}
+	if _, err := ParseFeed([]byte(entries(MaxFeedEntries + 1))); err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Errorf("%d entries: %v", MaxFeedEntries+1, err)
+	}
+	body := "<rss><channel></channel></rss>"
+	exact := body + "<!--" + strings.Repeat("x", MaxFeedBytes-len(body)-7) + "-->"
+	if got, err := ParseFeed([]byte(exact)); err != nil || len(exact) != MaxFeedBytes || len(got.Items) != 0 || got.Undated != 0 {
+		t.Errorf("%d-byte empty feed: %+v, %v", len(exact), got, err)
+	}
+	long := "<rss><channel><item><title>" + strings.Repeat("t", 2*maxFieldBytes) +
+		"</title><pubDate>Thu, 1 Oct 2026 09:30:00 +0000</pubDate></item></channel></rss>"
+	if got, err := ParseFeed([]byte(long)); err != nil || len(got.Items[0].Title) != maxFieldBytes {
+		t.Errorf("long title kept %d bytes, %v; want %d", len(got.Items[0].Title), err, maxFieldBytes)
+	}
+}
