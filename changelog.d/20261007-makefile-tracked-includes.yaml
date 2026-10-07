@@ -1,0 +1,4 @@
+type: fixed
+title: Adoption attaches the documentation gate block to a Makefile that includes tracked fragments defining no docs gate target, instead of refusing every include
+issue: "#843"
+breaking: false

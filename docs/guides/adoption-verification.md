@@ -191,6 +191,19 @@ Neither does a file whose computed binding names hold more than 256 literal runs
 fixes with each run, and the bound keeps that work small on a large Makefile. A line such as
 `$(PREFIX) verify-all: dep` with `PREFIX` bound nowhere counts as no `verify-all` rule.
 
+The documentation gate block is the one place adoption follows includes. When the Makefile holds
+`include path` with literal operands only, adoption reads each file that Git tracks under exactly
+that name, as a regular, symlink-free text file inside the repository within the same size and
+line bounds as the Makefile, and decides from the combined text (`MakefileExpandIncludes` in
+`internal/util/makefile_include.go`, read by `internal/adopt/makefile_include.go`). Nested literal
+includes are followed to a depth of four (`MaxMakefileIncludeDepth`) and 64 files in all. The
+merged Makefile keeps the include lines; the fragments are only read. A fragment that defines
+`docs-lint` or `docs-figures` still refuses the block. Every other include stays ambiguous and
+refuses: `-include`, `sinclude`, `load`, an operand with a variable, wildcard, function or
+comment, a path outside the repository, a missing, untracked, generated or symlinked file, an
+include past the depth bound, and a fragment that ends inside a continuation, define or
+conditional (issue #843).
+
 The answer holds for the invocation the gates run, `make verify-all` or `make docs-lint` with no
 variable definitions and no options. A command-line definition, `-e` with the variable in the
 environment, `--eval`, and `MAKEFLAGS` or `MAKEFILES` in the environment can change any variable or
