@@ -90,8 +90,8 @@ func TestRunHissCoverage_Positive_SyncTitlesFixesElevenDriftedTitles(t *testing.
 	}
 	mustContain(t, out, "11 stale (dry run, nothing written)",
 		`HISS-01 "Earlier name 1" -> "`+catalogTitle(t, "HISS-01")+`"`, "Rerun with --sync-titles --write")
-	if data, _ := os.ReadFile(path); string(data) != body.String() {
-		t.Fatal("the dry run must leave the coverage file untouched")
+	if data, err := os.ReadFile(path); err != nil || string(data) != body.String() {
+		t.Fatalf("the dry run must leave the coverage file untouched: %v", err)
 	}
 
 	out, err = runCoverage(t, "--path="+root, "--sync-titles", "--write")

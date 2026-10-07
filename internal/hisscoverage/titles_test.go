@@ -191,8 +191,8 @@ func TestSyncTitlesFile_Boundary_DryRunUnlessWrite(t *testing.T) {
 	if dry.Written || len(dry.Stale) != 11 {
 		t.Fatalf("dry run must name 11 stale titles and write nothing: written=%v stale=%d", dry.Written, len(dry.Stale))
 	}
-	if data, _ := os.ReadFile(path); string(data) != before {
-		t.Fatal("a dry run must leave the file untouched")
+	if data, err := os.ReadFile(path); err != nil || string(data) != before {
+		t.Fatalf("a dry run must leave the file untouched: %v", err)
 	}
 
 	written, err := SyncTitlesFile(t.Context(), root, true)
