@@ -86,6 +86,12 @@ func TestGoIOAllowlist_Positive_UncheckedVersionsAreReported(t *testing.T) {
 	if found := hiss02Only(scanFixture(t, bare, ScanOptions{})); len(found) != 2 {
 		t.Fatalf("a go.mod without a module states no version: %+v", found)
 	}
+	checked := "require " + otlpTraceModule + " v1.46.0\nrequire " + otlpLogModule + " v0.22.0\n"
+	workspace := otelRoot(t, checked)
+	writeFixture(t, workspace, "go.work", "go 1.27\n\nuse .\n")
+	if found := hiss02Only(scanFixture(t, workspace, ScanOptions{})); len(found) != 2 {
+		t.Fatalf("inside a Go workspace no single go.mod states the version: %+v", found)
+	}
 }
 
 // Boundary: versionWithin is inclusive at both ends and refuses what does not parse.

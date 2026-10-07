@@ -10,6 +10,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	slashpath "path"
 	"path/filepath"
 	"strings"
@@ -50,8 +51,9 @@ type ignoredContext struct {
 
 // contextIgnoredBy lists the third-party functions HISS-02 accepts a deadline-free context for,
 // keyed by import path and function name. Each entry names the versions read and what the
-// source does; a version outside the range, a module the go.mod replaces, and a module without
-// a go.mod are reported as before. docs/standards/hiss-rule-matching.md says how to propose one.
+// source does; a version outside the range, a module the go.mod replaces, a module inside a Go
+// workspace and a call without a go.mod are reported as before (allowedAt).
+// docs/standards/hiss-rule-matching.md says how to propose one.
 var contextIgnoredBy = map[goFunc]ignoredContext{
 	{"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc", "New"}: {
 		Module: "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc",
@@ -172,13 +174,35 @@ func (x *moduleIndex) classify(t ioTarget, args []int) ([]calleeKey, bool) {
 }
 
 // allowedAt reports whether the module owning dir requires entry's module at a version entry
-// covers, with no replace directive for it.
+// covers, with no replace directive for it. Inside a Go workspace the build selects versions
+// across every module the go.work uses, so no single go.mod states the version and nothing is
+// allowed.
 func (x *moduleIndex) allowedAt(dir string, entry ignoredContext) bool {
 	mod := x.moduleFor(dir)
-	if mod == nil || mod.replaced[entry.Module] {
+	if mod == nil || mod.replaced[entry.Module] || x.inWorkspace(mod.dir) {
 		return false
 	}
 	return versionWithin(mod.requires[entry.Module], entry.Min, entry.Max)
+}
+
+// inWorkspace reports whether a go.work lies at dir or above it within the root. A go.work
+// that cannot be checked counts as present.
+func (x *moduleIndex) inWorkspace(dir string) bool {
+	at := dir
+	for depth := 0; depth < maxModuleDepth; depth++ {
+		path, err := util.ConfinePath(x.root, slashpath.Join(at, "go.work"))
+		if err != nil {
+			return true
+		}
+		if _, statErr := os.Stat(path); !errors.Is(statErr, fs.ErrNotExist) {
+			return true
+		}
+		if at == "." {
+			return false
+		}
+		at = slashpath.Dir(at)
+	}
+	return true
 }
 
 // versionWithin reports whether version lies from low to high inclusive under SemVer precedence.
