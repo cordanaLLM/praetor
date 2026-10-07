@@ -121,8 +121,9 @@ func TestLockDirectory_Positive_WritersOfOneProcessTakeTurns(t *testing.T) {
 	}
 }
 
-// Positive: many writers of one process publishing into one directory at once all succeed,
-// as the vendor-context and persona writers of one adoption run do.
+// Positive: many writers of one process publishing into one directory at once all succeed.
+// Adoption writes its targets one after another today; the in-process lock keeps a future
+// concurrent writer from failing on its own sibling.
 func TestLockDirectory_Positive_ConcurrentWritersAllPublish(t *testing.T) {
 	_, dir := pinnedDirectory(t)
 	const writers = 16
