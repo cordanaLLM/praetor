@@ -87,10 +87,17 @@ no finding:
 - **Praetor's own workflows.** `ci.yml`, `compliance.yml`, `pages.yml`, `portability.yml` and
   `security.yml` run on `ready_for_review` and begin every job a pull request starts with the
   draft step; their schedule, dispatch and protected-branch push triggers stay. `ci.yml` also
-  keeps `edited`, because its governance step reads the pull request body. A matrix step that
-  runs after a failure (`!cancelled()`) carries the draft term too. Every context the committed
-  ruleset requires keeps its name and fails a draft in its draft step
-  (`TestEngineRequiredContextsFailOnADraft` in `internal/forge/workflow_draft_contexts_test.go`).
+  keeps `edited`, because its governance step reads the pull request body, and its push on
+  `checkpoint/**`, the hosted run behind the lighter checkpoint pre-push policy
+  ([remote checkpoints](git-hooks.md#remote-checkpoints)). A push carries no pull request, so the
+  draft step never stops that run. Beside a checkpoint's draft pull request it reports the same
+  contexts as the draft run, and the checkpoint planner, which keeps the newest run of each job
+  (`_latest_runs` in `.config/lefthook/scripts/checkpoint.py`), reads the pair as draft pending
+  or as the push run's own result (`test_review_checkpoint_push_run_beside_draft_run` in
+  `.config/lefthook/scripts/test_checkpoint.py`). A matrix step that runs after a failure
+  (`!cancelled()`) carries the draft term too. Every context the committed ruleset requires keeps
+  its name and fails a draft in its draft step (`TestEngineRequiredContextsFailOnADraft` in
+  `internal/forge/workflow_draft_contexts_test.go`).
 
 On a draft, each required check therefore fails with the annotation the checkpoint planner reads
 as `draft_pending` ([checkpoint cadence](checkpoint-cadence.md)); marking the pull request ready

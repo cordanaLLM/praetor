@@ -522,6 +522,34 @@ class CheckpointTests(unittest.TestCase):
         result = self.observe_review(head, base, [status, failed], annotations=marked)
         self.assertEqual(result["review_status"], "failed", result)
 
+    def test_review_checkpoint_push_run_beside_draft_run(self):
+        # ci.yml runs on a push to checkpoint/** as well as on the branch's draft pull request.
+        # The push event carries no pull request, so its run does the work and reports the same
+        # job name in the same workflow as the draft run that stopped in its draft step. The
+        # newest run of the job decides; a failed push run is never read as draft pending.
+        head, base = self.review_fixture()
+        early, late = "2026-10-07T18:00:01Z", "2026-10-07T18:00:02Z"
+        draft_marked = self.check_runs(("gate", [self.DRAFT_NOTE, self.EXIT_NOTE]))
+        push_failed = self.check_runs(("gate", [self.DRAFT_NOTE]), ("gate", [self.EXIT_NOTE]))
+        cases = (
+            ("draft run newest, push run passed",
+             [self.rerun("SUCCESS", early), self.rerun("FAILURE", late)], draft_marked, "draft_pending"),
+            ("draft run newest, push run running",
+             [self.rerun("", early, status="IN_PROGRESS"), self.rerun("FAILURE", late)], draft_marked,
+             "draft_pending"),
+            ("draft run newest, push run failed",
+             [self.rerun("FAILURE", early), self.rerun("FAILURE", late)], push_failed, "failed"),
+            ("push run newest and passed",
+             [self.rerun("FAILURE", early), self.rerun("SUCCESS", late)], draft_marked, "passed"),
+            ("push run newest and failed",
+             [self.rerun("FAILURE", early), self.rerun("FAILURE", late)], push_failed, "failed"),
+        )
+        for label, checks, answer, status in cases:
+            with self.subTest(label):
+                result = self.observe_review(head, base, checks, annotations=answer)
+                self.assertEqual(result["review_status"], status, result)
+                self.assertEqual(result["due"], status != "passed")
+
     def test_review_ready_pull_request_with_draft_marker_is_failed(self):
         head, base = self.review_fixture()
         failed = {"__typename": "CheckRun", "name": "gate", "status": "COMPLETED",
