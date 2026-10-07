@@ -101,9 +101,13 @@ Every accepted mutation advances the revision, including setting the same
 status again. Replaying the original request fails with a stale revision.
 Read the current state before deciding whether another request is needed.
 Cooperating concurrent writers use atomic snapshot replacement with a second
-comparison before publication; a competing writer receives a conflict or busy
-error. This protects a trusted local store, not against an administrator editing
-files outside the protocol.
+comparison before publication (`contextopt.ReplaceSnapshot`). Writers in one
+process take turns on the store's directory; a writer in another process is
+waited for up to `contextopt.DirectoryLockBudget` (5 seconds) and then fails
+with a busy error that names the holder (`internal/contextopt/directory_lock.go`).
+A writer whose store changed since it read it receives a conflict. This protects
+a trusted local store, not against an administrator editing files outside the
+protocol.
 
 The store is a mutable canonical snapshot in this phase. It is not an
 append-only audit log. A later event phase may add immutable request and
