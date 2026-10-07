@@ -1,26 +1,32 @@
+<%- /*
+The trigger, the draft step and every later step's condition are the hosted gate shape
+(templates/hostedgate.go, defined in internal/ghworkflow/hostedgate.go): the job runs on a push to
+the default branch and on every pull request activity that can change what merges, and on a draft
+it fails in its first step, saying it runs when the pull request is marked ready (#817). Every
+rendering this body or an earlier one produced is recorded (internal/flavor/ci_prior.go), so an
+unedited copy is refreshed without --force.
+*/ -%>
 ---
 name: CI
 
-'on':
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+<% hostedGateOn %>
 jobs:
   test:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+<% hostedGateDraftStep %>
+      - name: Checkout source<% hostedGateStepIf %>
+        uses: actions/checkout@v4
+      - name: Setup Flutter<% hostedGateStepIf %>
+        uses: subosito/flutter-action@v2
         with:
           channel: stable
 
-      - name: Install dependencies
+      - name: Install dependencies<% hostedGateStepIf %>
         run: flutter pub get
 
-      - name: Analyze
+      - name: Analyze<% hostedGateStepIf %>
         run: flutter analyze
 
-      - name: Test
+      - name: Test<% hostedGateStepIf %>
         run: flutter test

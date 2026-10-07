@@ -123,12 +123,13 @@ func Names() ([]string, error) {
 }
 
 // execute is the one parse-and-execute path behind Render and RenderFile. An empty
-// template is refused: it renders an empty file, which is a placeholder, not content.
+// template is refused: it renders an empty file, which is a placeholder, not content. Every
+// template may call the hosted gate functions (hostedGateFuncs).
 func execute(name, text, left, right string, ctx Context) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("template %s: content cannot be empty", name)
 	}
-	tmpl, err := template.New(name).Delims(left, right).Parse(text)
+	tmpl, err := template.New(name).Delims(left, right).Funcs(hostedGateFuncs).Parse(text)
 	if err != nil {
 		return "", fmt.Errorf("parse template %s: %w", name, err)
 	}

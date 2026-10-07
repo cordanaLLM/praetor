@@ -14,12 +14,22 @@ import (
 )
 
 // renderedRoot holds, relative to this directory, the committed renderings of each YAML
-// template whose actions branch on repository facts: one file per distinct rendering, at
-// <renderedRoot>/<template path without .tmpl>/<variant><extension>. The yamllint gate
-// (scripts/test_emitted_yaml_lint.py, make hooks-lint) lints these files, because it cannot
-// lint a body that still carries actions. TestBranchingYAMLTemplateRenderingsAreCommitted
+// template whose actions go beyond a leading comment (renderedYAMLTemplates): one file per
+// distinct rendering, at <renderedRoot>/<template path without .tmpl>/<variant><extension>. The
+// yamllint gate (scripts/test_emitted_yaml_lint.py, make hooks-lint) lints these files, because
+// it cannot lint a body that still carries actions. TestBranchingYAMLTemplateRenderingsAreCommitted
 // keeps them equal to every rendering the template can produce.
 const renderedRoot = "testdata/rendered"
+
+// hostedGateVariant names the one rendering of a template whose only actions, beside a leading
+// comment, render the hosted gate shape (templates/hostedgate.go): it reads no repository fact.
+const hostedGateVariant = "default"
+
+// hostedGateYAMLTemplates are the CI workflow templates that render the hosted gate shape and
+// read no repository fact; the Node CI body renders it too and is a branching template.
+var hostedGateYAMLTemplates = []string{
+	"flutter/ci-flutter.yml.tmpl", "go/ci-go.yml.tmpl", "jvm/ci-jvm.yml.tmpl", "rust/ci-rust.yml.tmpl",
+}
 
 // branchingVariant is one Context a branching template renders against, and the file name its
 // rendering is committed under.
@@ -35,6 +45,17 @@ func branchingYAMLTemplates() map[string][]branchingVariant {
 		"flutter/analysis_options.yaml.tmpl": dartLintVariants(),
 		"node/ci-node.yml.tmpl":              nodeVariants(),
 	}
+}
+
+// renderedYAMLTemplates maps each YAML template whose actions go beyond a leading comment to the
+// contexts it renders against: every branching template's variants (branchingYAMLTemplates), and
+// one sample context for each body that renders the hosted gate shape alone.
+func renderedYAMLTemplates() map[string][]branchingVariant {
+	rendered := branchingYAMLTemplates()
+	for _, name := range hostedGateYAMLTemplates {
+		rendered[name] = []branchingVariant{{name: hostedGateVariant, ctx: sampleContext}}
+	}
+	return rendered
 }
 
 func dartLintVariants() []branchingVariant {
@@ -111,12 +132,13 @@ func strayRenderings(entries []os.DirEntry, want map[string]string) []string {
 	return stray
 }
 
-// Positive: every distinct rendering of each branching template is committed byte for byte,
-// and negative: a committed file no variant renders any longer is stale. Regenerate with
+// Positive: every distinct rendering of each branching template, and the one rendering of each
+// hosted gate CI template, is committed byte for byte, and negative: a committed file no variant
+// renders any longer is stale. Regenerate with
 // PRAETOR_UPDATE_GOLDEN=1 go test ./templates -run TestBranchingYAMLTemplateRenderingsAreCommitted
 // and delete what the stale check names.
 func TestBranchingYAMLTemplateRenderingsAreCommitted(t *testing.T) {
-	for name, variants := range branchingYAMLTemplates() {
+	for name, variants := range renderedYAMLTemplates() {
 		dir := filepath.Join(renderedRoot, filepath.FromSlash(strings.TrimSuffix(name, ".tmpl")))
 		want := distinctRenderings(t, name, variants)
 		for file, body := range want {
