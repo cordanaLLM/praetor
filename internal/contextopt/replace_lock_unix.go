@@ -3,23 +3,20 @@
 package contextopt
 
 import (
-	"errors"
 	"os"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// Lock the existing directory inode; no disposable lock path can split writers. The release
-// unlocks before it closes, so a subprocess holding a copy of the descriptor cannot keep the
-// lock alive.
-func lockSnapshotDirectory(root *os.Root) (func() error, error) {
+// tryLockSnapshotDirectory makes one attempt at the flock lock on the directory root pins and
+// reports busy while another open file description holds it, which is another process for
+// every writer that goes through LockDirectory. Locking the existing directory inode leaves no
+// disposable lock path that could split writers. The release unlocks before it closes, so a
+// subprocess holding a copy of the descriptor cannot keep the lock alive.
+func tryLockSnapshotDirectory(root *os.Root) (release func() error, busy bool, err error) {
 	file, err := root.Open(".")
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	release, busy, err := util.LockExclusive(file, "snapshot directory")
-	if busy {
-		return nil, errors.Join(errors.New("snapshot directory busy: another writer holds its lock"), err)
-	}
-	return release, err
+	return util.LockExclusive(file, "snapshot directory")
 }

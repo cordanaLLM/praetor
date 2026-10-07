@@ -202,7 +202,13 @@ func assertBusyLockRestores(t *testing.T, op commitOperation) {
 	dir := seedLedger(t, op.withStore)
 	before := readLedgers(t, dir)
 	release := holdWorkingDirLock(t, dir)
-	err := op.run(ctx, dir)
+	// A writer of this process waits for the holder until its context ends (#820); a zero
+	// budget makes the BACKLOG.md write give up at once, as a write held past its budget does.
+	impatient, err := contextopt.WithDirectoryLockBudget(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = op.run(impatient, dir)
 	if err == nil || !strings.Contains(err.Error(), restoredNote) {
 		t.Fatalf("busy BACKLOG.md write must fail with the store restored: %v", err)
 	}

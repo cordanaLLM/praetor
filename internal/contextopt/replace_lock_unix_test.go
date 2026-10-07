@@ -12,28 +12,13 @@ import (
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
+// A write refused because another process holds the directory past the budget stages nothing.
 func TestReplacementRefusesBusyDirectoryWithoutStaging(t *testing.T) {
-	dir := t.TempDir()
-	root, err := OpenDirectory(t.Context(), dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := root.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
-	unlock, err := lockSnapshotDirectory(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := unlock(); err != nil {
-			t.Error(err)
-		}
-	}()
-	if err := ReplaceSnapshot(t.Context(), filepath.Join(dir, "new"), []byte("content"), ReplaceOptions{Mode: 0o600}); err == nil {
-		t.Fatal("write accepted while another writer holds directory lock")
+	root, dir := pinnedDirectory(t)
+	holdPlatformLock(t, root)
+	err := ReplaceSnapshot(budgetContext(t, 0), filepath.Join(dir, "new"), []byte("content"), ReplaceOptions{Mode: 0o600})
+	if err == nil || !strings.Contains(err.Error(), "snapshot directory busy") {
+		t.Fatalf("write while another writer holds the directory past the budget: %v", err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) != 0 {
@@ -77,35 +62,26 @@ func TestFailedPublicationRetainsPrivateStagedText(t *testing.T) {
 	}
 }
 
-// The snapshot directory lock goes through util.LockExclusive, whose tests cover concurrent
-// process starts and repeated releases. Here: a second writer is refused with this lock's
-// message, a descriptor copy such as a forked child holds does not keep the lock past its
-// release (it does against a close-only release), and a second release is reported.
+// The snapshot directory's platform lock goes through util.LockExclusive, whose tests cover
+// concurrent process starts and repeated releases. Here: a second open file description is
+// reported busy, a descriptor copy such as a forked child holds does not keep the lock past
+// its release (it does against a close-only release), and a second release is reported.
 func TestLockSnapshotDirectoryReleaseDropsLockHeldByForkedCopy(t *testing.T) {
-	dir := t.TempDir()
-	root, err := OpenDirectory(t.Context(), dir)
-	if err != nil {
-		t.Fatal(err)
+	root, dir := pinnedDirectory(t)
+	release, busy, err := tryLockSnapshotDirectory(root)
+	if err != nil || busy {
+		t.Fatalf("first writer: busy=%v err=%v", busy, err)
 	}
-	defer func() {
-		if err := root.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
-	release, err := lockSnapshotDirectory(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second, err := lockSnapshotDirectory(root); err == nil || second != nil || !strings.Contains(err.Error(), "snapshot directory busy") {
-		t.Fatalf("second writer: %v", err)
+	if second, busy, err := tryLockSnapshotDirectory(root); err != nil || !busy || second != nil {
+		t.Fatalf("second writer: busy=%v err=%v", busy, err)
 	}
 	testsupport.CopyDescriptorsOf(t, dir)
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	again, err := lockSnapshotDirectory(root)
-	if err != nil {
-		t.Fatalf("lock still held by a descriptor copy after release: %v", err)
+	again, busy, err := tryLockSnapshotDirectory(root)
+	if err != nil || busy {
+		t.Fatalf("lock still held by a descriptor copy after release: busy=%v err=%v", busy, err)
 	}
 	if err := again(); err != nil {
 		t.Fatal(err)
