@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
 
@@ -151,4 +153,99 @@ func TestAuditPaperclip_VerificationBoundFromManifest(t *testing.T) {
 	withVerification(t, f, "  max_entries: 200001\n")
 	_, err = f.audit(t)
 	mustErrContain(t, err, "verification.max_entries must be an integer from 1 to 200000; got 200001")
+}
+
+// withHarnessDirective rewrites the register directive of the fixture's harness.json, from to
+// to, as `praetorctl paperclip harness` writes a harness: rules.md renders the result.
+func withHarnessDirective(t *testing.T, f *auditFixture, from, to string) *paperclip.Harness {
+	t.Helper()
+	h, err := paperclip.LoadHarness(filepath.Join(f.dir, ".paperclip", "harness.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := slices.Index(h.OperatingContract, from)
+	if index < 0 {
+		t.Fatalf("fixture precondition: harness contract lacks %q: %v", from, h.OperatingContract)
+	}
+	h.OperatingContract[index] = to
+	if err := paperclip.WriteHarness(h, f.dir); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+// TestAuditPaperclip_Migration_HarnessNamingAbsentCaveman (#235, #321): every release before
+// #235 wrote the register directive naming the `caveman` skill, whether or not the repository
+// carries it, and bound register.sources to that harness. Since the audit compares the harness
+// with this release's synthesis, which names only a carried skill, such a harness in a repository
+// without .agents/skills/caveman is unmodified earlier output. Negative: the audit fails it with
+// the adopt remedy, though every gate before it, the register block's included, passes.
+// Positive: the remedy, praetorctl adopt, refreshes it to the directive without the skill name
+// and re-binds register.sources, and the full audit passes.
+func TestAuditPaperclip_Migration_HarnessNamingAbsentCaveman(t *testing.T) {
+	f := adoptedHarnessFixture(t)
+	if _, err := os.Stat(filepath.Join(f.dir, ".agents", "skills", "caveman")); !os.IsNotExist(err) {
+		t.Fatalf("fixture precondition: .agents/skills/caveman exists or is unreadable: %v", err)
+	}
+	plain := config.RegisterDirectiveWithout(config.TextRegisterInternal, config.RegisterSkills())
+	withHarnessDirective(t, f, plain, config.RegisterDirective(config.TextRegisterInternal))
+	earlier := readFixtureFile(t, f.dir, ".paperclip/harness.json")
+	writeFixtureFile(t, f.dir, ".standards.yaml", strings.TrimSuffix(fixtureManifest("acme", "widgets", false),
+		fixtureRegisterSources())+declineDevContainer+fixtureRegisterSourcesOver([]byte(earlier)))
+
+	_, err := f.audit(t)
+	if !errors.Is(err, paperclip.ErrHarnessStale) {
+		t.Fatalf("audit of a harness naming an absent caveman skill = %v, want ErrHarnessStale", err)
+	}
+	mustErrContain(t, err, "[FAIL] Paperclip harness out of date: ")
+	mustErrContain(t, err, "run 'praetorctl adopt', which refreshes unmodified earlier output without --force")
+
+	if err := adoptFixture(t, f, false); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("audit after adopt: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] Paperclip agent runtime harness verified (acme/widgets, 6 rules; synthesis for repository facts;")
+	if harness := readFixtureFile(t, f.dir, ".paperclip/harness.json"); !strings.Contains(harness, plain) {
+		t.Fatalf("adopt left the harness naming the absent skill:\n%s", harness)
+	}
+}
+
+// TestAuditPaperclip_RegisterSkillSubstitution (#235): the audit compares the harness with the
+// synthesis the repository's register skills give. Positive: a readable caveman skill gives the
+// directive naming it, which a harness naming it passes with no warning. Boundary: a directory
+// at its SKILL.md, which the confined read refuses, gives the directive without a skill name;
+// the harness stating it passes, and the audit prints that substitution as a [WARN] line naming
+// the refused skill, never silently.
+func TestAuditPaperclip_RegisterSkillSubstitution(t *testing.T) {
+	plain := config.RegisterDirectiveWithout(config.TextRegisterInternal, config.RegisterSkills())
+	named := config.RegisterDirective(config.TextRegisterInternal)
+	const warn = "[WARN] Paperclip harness synthesis: the register directive names no skill, since a register skill could not be read: "
+	for _, readable := range []bool{true, false} {
+		f := adoptedHarnessFixture(t)
+		skill := filepath.Join(f.dir, ".agents", "skills", "caveman", "SKILL.md")
+		want := plain
+		if readable {
+			writeFixtureFile(t, f.dir, ".agents/skills/caveman/SKILL.md", "---\nname: caveman\ndescription: fixture\n---\n")
+			want = named
+		} else if err := os.MkdirAll(skill, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		loaded := withHarnessDirective(t, f, plain, want)
+		var verdict string
+		out, err := captureStdout(t, func() error {
+			var auditErr error
+			verdict, auditErr = auditPaperclipSynthesis(t.Context(), f.dir, nil, loaded)
+			return auditErr
+		})
+		if err != nil || !strings.HasPrefix(verdict, "synthesis for repository facts") {
+			t.Fatalf("readable=%v: verdict %q, err %v\n%s", readable, verdict, err, out)
+		}
+		warned := strings.Count(out, warn)
+		if readable && warned != 0 || !readable && (warned != 1 || !strings.Contains(out, "read canonical skill caveman")) {
+			t.Fatalf("readable=%v: output\n%s\nwant one [WARN] naming the refused caveman skill only when it is unreadable", readable, out)
+		}
+	}
 }
