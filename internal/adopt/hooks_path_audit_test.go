@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -353,7 +354,10 @@ func TestAuditHooksPath_Boundary_SymlinkedRoot(t *testing.T) {
 				t.Skipf("symlinks unavailable: %v", err)
 			}
 			return "escape/../.git/hooks"
-		}, false},
+			// Windows normalizes a path before the file system sees it and removes ".." with
+			// its parent segment as text, so on Windows the value names the managed directory
+			// (git there resolves it the same way); elsewhere ".." follows the symlink out.
+		}, runtime.GOOS == "windows"},
 		{".. inside the root, managed directory exists", true, func(t *testing.T, root, _ string) string {
 			if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
 				t.Fatal(err)
