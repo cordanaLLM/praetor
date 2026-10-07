@@ -44,9 +44,11 @@ func DigestTitle(w Window) string {
 	return "Radar digest " + w.Since.Format(dateLayout) + " to " + w.Now.Format(dateLayout)
 }
 
-// Render writes the digest as Markdown. A digest with nothing new and no failure renders as no
-// bytes at all, so an unchanged week writes an empty file. Every text a source supplied passes
-// through Neutralize; the source ids and URLs come from the validated registry.
+// Render writes the digest as Markdown. A digest with no section and no failure renders as no
+// bytes at all, so an unchanged week writes an empty file; Collect gives a source a section only
+// for an entry inside the window, so undated entries alone never make a digest non-empty. Every
+// text a source supplied passes through Neutralize; the source ids and URLs come from the
+// validated registry.
 func Render(d Digest) []byte {
 	if len(d.Sections) == 0 && len(d.Failed) == 0 {
 		return nil
@@ -77,11 +79,11 @@ func renderSection(b *strings.Builder, s Section) {
 	if hidden := len(s.Items) - shown; hidden > 0 {
 		fmt.Fprintf(b, "- %d more not shown (section cap %d).\n", hidden, MaxSectionItems)
 	}
-	if s.Undated > 0 {
-		if shown > 0 {
-			b.WriteString("\n")
-		}
-		fmt.Fprintf(b, "%d entries carry no readable date and are in no window.\n", s.Undated)
+	switch {
+	case s.Undated == 1:
+		b.WriteString("\n1 entry of this source carries no readable date and is in no window.\n")
+	case s.Undated > 1:
+		fmt.Fprintf(b, "\n%d entries of this source carry no readable date and are in no window.\n", s.Undated)
 	}
 }
 

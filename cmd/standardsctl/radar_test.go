@@ -5,6 +5,8 @@
 package main
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,12 +100,16 @@ func TestRadarCommand_Negative_Refusals(t *testing.T) {
 	if _, err := os.Stat(out); !os.IsNotExist(err) {
 		t.Errorf("a refused collect wrote %s: %v", out, err)
 	}
+	absent := collectArgs(repo, filepath.Join(root, "absent"), "2026-10-07", out)
+	if err := dispatchCommand("radar", absent); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "--fixture") {
+		t.Errorf("missing fixture directory: %v, want the wrapped stat error", err)
+	}
 	err := dispatchCommand("radar", collectArgs(repo, t.TempDir(), "2026-10-07", out))
 	if err == nil || !strings.Contains(err.Error(), "every radar source failed (3 of 3)") {
 		t.Fatalf("all sources failed: %v", err)
 	}
 	digest, readErr := os.ReadFile(out)
-	if readErr != nil || strings.Count(string(digest), " is missing: file does not exist") != 3 {
+	if readErr != nil || strings.Count(string(digest), " is missing\n") != 3 {
 		t.Errorf("digest of a failed run = %q, %v", digest, readErr)
 	}
 }
@@ -131,6 +137,14 @@ func TestRadarCommand_Boundary_EmptyAndPartial(t *testing.T) {
 			t.Fatal(err)
 		}
 		writeFixtureFile(t, fixture, name, string(data))
+	}
+	writeFixtureFile(t, fixture, "example-papers.xml",
+		`<rss><channel><item><title>x</title><pubDate>Thu, 01 Oct 2026 09:30:00 CEST</pubDate></item></channel></rss>`)
+	undated := filepath.Join(t.TempDir(), "undated.md")
+	out, err = captureStdout(t, func() error { return dispatchCommand("radar", collectArgs(repo, fixture, "2026-11-07", undated)) })
+	if info, statErr := os.Stat(undated); err != nil || statErr != nil || info.Size() != 0 ||
+		!strings.Contains(out, "entries without a readable date, in no window: 1;") {
+		t.Fatalf("undated entry in an unchanged window: %q, %v, %v; want an empty digest and the count on stdout", out, err, statErr)
 	}
 	writeFixtureFile(t, fixture, "example-papers.xml", `<!DOCTYPE rss [<!ENTITY x "boom">]><rss/>`)
 	partial := filepath.Join(t.TempDir(), "partial.md")

@@ -140,7 +140,11 @@ func parseRadarCollect(args []string) (radarCollectRequest, error) {
 	case *out == "":
 		return radarCollectRequest{}, errors.New("radar collect: --out=<file> is required")
 	}
-	if info, statErr := os.Stat(*fixture); statErr != nil || !info.IsDir() {
+	info, statErr := os.Stat(*fixture)
+	if statErr != nil {
+		return radarCollectRequest{}, fmt.Errorf("radar collect: --fixture: %w", statErr)
+	}
+	if !info.IsDir() {
 		return radarCollectRequest{}, fmt.Errorf("radar collect: --fixture %s is not a directory", *fixture)
 	}
 	instant, err := radar.ParseNow(*now)
@@ -182,13 +186,23 @@ func runRadarCollect(ctx context.Context, args []string) error {
 	return nil
 }
 
-// printRadarSummary reports what the digest holds and names every failed source.
+// printRadarSummary reports what the digest holds, names every failed source and counts the
+// undated entries, which the digest counts only beside a source's new items.
 func printRadarSummary(req radarCollectRequest, digest radar.Digest, size int) {
 	window := req.window.Since.Format(time.RFC3339) + " <= t < " + req.window.Now.Format(time.RFC3339)
 	if size == 0 {
 		fmt.Printf("[PASS] nothing new in %s; wrote an empty digest to %s\n", window, req.out)
-		return
+	} else {
+		printRadarWritten(req, digest, window)
 	}
+	if digest.Undated > 0 {
+		fmt.Printf("  entries without a readable date, in no window: %d; the digest counts them only beside their source's new items\n",
+			digest.Undated)
+	}
+}
+
+// printRadarWritten reports the items of a non-empty digest and names every failed source.
+func printRadarWritten(req radarCollectRequest, digest radar.Digest, window string) {
 	items := 0
 	for i := 0; i < len(digest.Sections); i++ {
 		items += len(digest.Sections[i].Items)

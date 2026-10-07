@@ -159,7 +159,7 @@ func TestRender_Positive_SectionsAndFailures(t *testing.T) {
 		"- 2026-10-02 (untitled)\n",
 		"- 2026-10-02 [Encoded](https://example.org/v1%2B2)\n",
 		"- 2026-10-02 Spaced\n",
-		"2 entries carry no readable date and are in no window.",
+		"2 entries of this source carry no readable date and are in no window.",
 		"## Failed sources\n\n- broken: read fixture broken.xml: missing ¦ x\n",
 	} {
 		if !strings.Contains(out, want) {
