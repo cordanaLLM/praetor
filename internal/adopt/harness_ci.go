@@ -21,8 +21,8 @@ import (
 const maxScaffoldedWorkflows = 64
 
 // scaffoldedWorkflow is one CI workflow this adoption run leaves as its own rendering, and what
-// it runs as read from the file (forge.WorkflowRuns), with the actions its steps use
-// (forge.WorkflowActions), named for a workflow that runs no command of its own.
+// it runs as read from the file (forge.WorkflowRuns), with the actions it uses (workflowActions),
+// named for a workflow that runs no command of its own.
 type scaffoldedWorkflow struct {
 	path    string
 	runs    []forge.WorkflowRun
@@ -111,7 +111,7 @@ func workflowRuns(files []flavor.PlannedTemplate) ([]scaffoldedWorkflow, error) 
 		if err != nil {
 			return nil, fmt.Errorf("read scaffolded workflow %s: %w", files[i].Path, err)
 		}
-		actions, err := forge.WorkflowActions([]byte(files[i].Content))
+		actions, err := workflowActions(files[i].Content)
 		if err != nil {
 			return nil, fmt.Errorf("read the actions of scaffolded workflow %s: %w", files[i].Path, err)
 		}
@@ -139,6 +139,23 @@ func ciClaim(workflows []scaffoldedWorkflow) string {
 		lead = "Scaffolded CI: "
 	}
 	return lead + strings.Join(parts, "; ") + ".\n\n"
+}
+
+// workflowActions lists the uses: value of every line of workflow that declares one, in file
+// order and without its trailing comment or quotes, through util.ScanActionUses, the scan bump
+// and the managed asset families read a workflow's actions with.
+func workflowActions(workflow string) ([]string, error) {
+	_, uses, err := util.ScanActionUses(workflow, managedasset.MaxWorkflowLines)
+	if err != nil {
+		return nil, err
+	}
+	actions := make([]string, 0, len(uses))
+	for _, use := range uses {
+		if fields := strings.Fields(use.Ref); len(fields) > 0 {
+			actions = append(actions, strings.Trim(fields[0], `"'`))
+		}
+	}
+	return actions, nil
 }
 
 // workflowClaim renders what one workflow runs: its commands (codeList), or, for a workflow

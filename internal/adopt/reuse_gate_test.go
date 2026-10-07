@@ -17,6 +17,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
@@ -436,5 +437,25 @@ func TestAdopt_ReuseGateRemovedWithTheMarkers(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(dry, filepath.FromSlash(reuseWorkflowFile))) || !hasAction(rep, reuseWorkflowFile, actionRemove) {
 		t.Fatalf("a dry run must keep the file and report the removal: %+v", rep.ActionDetails)
+	}
+}
+
+// workflowActions names what a workflow uses through util.ScanActionUses. Positive: every uses:
+// value in file order, a release comment and quotes dropped, a reusable workflow's job-level uses
+// included. Negative: a workflow past managedasset.MaxWorkflowLines is refused, not read in part.
+// Boundary: a workflow using nothing names nothing.
+func TestWorkflowActions_3D(t *testing.T) {
+	workflow := "jobs:\n  b:\n    steps:\n      - uses: x/second@v1\n  a:\n    steps:\n" +
+		"      - uses: 'actions/checkout@v7'\n      - run: make\n      - uses: fsfe/reuse-action@" + strings.Repeat("a", 40) + " # v6.0.0\n" +
+		"  call:\n    uses: acme/ci/.github/workflows/ci.yml@v1\n"
+	want := []string{"x/second@v1", "actions/checkout@v7", "fsfe/reuse-action@" + strings.Repeat("a", 40), "acme/ci/.github/workflows/ci.yml@v1"}
+	if actions, err := workflowActions(workflow); err != nil || !slices.Equal(actions, want) {
+		t.Fatalf("workflowActions = %q, %v; want %q", actions, err, want)
+	}
+	if _, err := workflowActions(strings.Repeat("\n", managedasset.MaxWorkflowLines)); err == nil {
+		t.Fatal("a workflow past the line bound was read")
+	}
+	if actions, err := workflowActions("jobs:\n  a:\n    steps:\n      - run: make\n"); err != nil || len(actions) != 0 {
+		t.Fatalf("a workflow using nothing: %q, %v", actions, err)
 	}
 }

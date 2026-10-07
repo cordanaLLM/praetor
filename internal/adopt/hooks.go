@@ -117,8 +117,15 @@ func optionalToolGuard(tool, command string) string {
 // touching a .go file on go vet (#242). The reason avoids ": " so the line stays one plain YAML
 // scalar.
 func rootMarkerCommand(marker, skipped, command string) string {
-	return "if [ -f " + marker + " ]; then " + command +
-		"; else echo no " + marker + " at the repository root, skipping " + skipped + " >&2; fi"
+	return rootGuardCommand("[ -f "+marker+" ]", marker, skipped, command)
+}
+
+// rootGuardCommand renders a lefthook run line that runs command only where test, a shell test of
+// the repository root, holds, and otherwise skips naming markers, what the root lacks, and
+// skipped, what it does not run. rootMarkerCommand and reuseLintCommand share it.
+func rootGuardCommand(test, markers, skipped, command string) string {
+	return "if " + test + "; then " + command +
+		"; else echo no " + markers + " at the repository root, skipping " + skipped + " >&2; fi"
 }
 
 // goModuleCommand is rootMarkerCommand for a Go module tool.
@@ -190,18 +197,17 @@ func lefthookPrePushJobs(languages hisscatalog.Language) string {
 // reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line
 // praetor pins for REUSE (supplychain.ReuseActionVersion), the one the step of the emitted
 // workflow runs (reuseWorkflow). It runs only where the root still carries REUSE.toml or
-// LICENSES/, is skipped with the reason where reuse is not installed, as every third-party tool
-// is (optionalToolGuard), and fails, naming the pin, on another reuse major. The line holds no
-// quote (lefthookPythonCommand) and no ": ": the version reads as its digits and dots alone, so
-// the comparison needs neither.
+// LICENSES/ (rootGuardCommand), is skipped with the reason where reuse is not installed, as every
+// third-party tool is (optionalToolGuard), and fails, naming the pin, on another reuse major. The
+// line holds no quote (lefthookPythonCommand) and no ": ": the version reads as its digits and
+// dots alone, so the comparison needs neither.
 func reuseLintCommand() string {
 	major := supplychain.ReuseMajor()
 	pinned := "if [ x$(reuse --version | head -n 1 | tr -dc 0-9. | cut -d . -f 1) = x" + major +
 		" ]; then reuse lint; else echo reuse " + major + ".x is required, the release line " +
 		supplychain.ReuseActionRef() + " runs in CI >&2; exit 1; fi"
-	return "if [ -f " + supplychain.ReuseFile + " ] || [ -d " + supplychain.LicensesDir + " ]; then " +
-		optionalToolGuard("reuse", pinned) + "; else echo no " + supplychain.ReuseFile + " or " +
-		supplychain.LicensesDir + "/ at the repository root, skipping reuse lint >&2; fi"
+	return rootGuardCommand("[ -f "+supplychain.ReuseFile+" ] || [ -d "+supplychain.LicensesDir+" ]",
+		supplychain.ReuseFile+" or "+supplychain.LicensesDir+"/", "reuse lint", optionalToolGuard("reuse", pinned))
 }
 
 // lefthookReuseJob renders the reuse-lint pre-commit job when shape carries it.
