@@ -1,5 +1,7 @@
 # cordanaLLM/praetor Agent Operating Harness
 
+<!-- praetor:head -->
+
 Session start: `python3 scripts/dev_mcp.py probe`; verify source identity.
 
 - MCP-facing change -> exercise through real tool; temporary roots; mutation = write + readback.
@@ -85,6 +87,8 @@ make verify-all
 
 16. **Per-hunk conflict resolution.** Resolve inside markers only. Never whole-file `--ours` / `--theirs`: discards hunks rebase already applied. Generated files: take one side at each stop, regenerate once at tip, never hand-merge. After clean merge of structured file (JSON, YAML), load with duplicate-refusing reader.
 
+<!-- praetor:config -->
+
 ## Text Register
 
 <!-- praetor:register:start -->
@@ -100,6 +104,8 @@ Register follows the audience, then the task label of your brief (`register:` in
 - Evidence above 58 lines or 1500 tokens leaves the message as a file under `.workingdir/evidence/`; return `evidence: <path> sha256:<12 hex> lines:<n>` and fetch it only when a decision needs it.
 - An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.
 <!-- praetor:register:end -->
+
+<!-- praetor:tail -->
 
 ## Primary Verification Commands
 
