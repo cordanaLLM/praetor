@@ -158,3 +158,23 @@ func TestFailingExit(t *testing.T) {
 		}
 	}
 }
+
+// Negative (#76): a condition on the alls-green step can skip it on exactly the run where a
+// covered need failed, through a term on another need, and a skipped step passes the gate. A
+// step with any if: therefore proves nothing and the leaves stay required.
+func TestAllsGreenAggregate_Negative_StepConditionKeepsTheLeaves(t *testing.T) {
+	for name, condition := range map[string]string{
+		"other need not skipped": "needs.go.result != 'skipped'",
+		"other need succeeded":   "needs.test.result == 'success'",
+		"any need succeeded":     "contains(needs.*.result, 'success')",
+	} {
+		t.Run(name, func(t *testing.T) {
+			steps := strings.Replace(allsGreenSteps(allsGreenUses, everyNeedInput, laneSkipsInput),
+				"      - uses: ", "      - if: "+condition+"\n        uses: ", 1)
+			contexts, err := workflowPullRequestContexts([]byte(skippedLaneWorkflow(allNeeds, steps)))
+			if err != nil || !slices.Equal(contexts, leafContexts) {
+				t.Fatalf("contexts = %v, %v; want the leaves %v", contexts, err, leafContexts)
+			}
+		})
+	}
+}
