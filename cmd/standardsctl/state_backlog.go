@@ -37,15 +37,21 @@ func evaluateBacklogCaps(ctx context.Context, dir string, policy config.Effectiv
 }
 
 // printStateBacklogCaps appends the backlog caps to `state status`. Nothing is printed while no
-// cap is declared, so the status of an uncapped repository is unchanged. A policy that does not
-// resolve is printed as unresolved rather than omitted: the caps are then unknown, not absent.
+// cap is declared, so the status of an uncapped repository is unchanged. A category that
+// cannot be counted, because a ledger is absent or unreadable, prints as not counted with the
+// reason. A policy that does not resolve prints as unresolved when a layer declares a backlog
+// section, or when that cannot be told (config.DeclaresBacklogContext): the caps are then
+// unknown, not absent. With no backlog section anywhere it prints nothing, as without caps.
 func printStateBacklogCaps(ctx context.Context, dir string, policy config.EffectiveOptions) {
 	report, _, err := evaluateBacklogCaps(ctx, dir, policy)
 	if err != nil {
-		fmt.Printf("%sunresolved: %v\n", stateCapsPrefix, err)
+		policy.Root, policy.ManifestPath = dir, ""
+		if declared, probeErr := config.DeclaresBacklogContext(ctx, policy); probeErr != nil || declared {
+			fmt.Printf("%sunresolved: %v\n", stateCapsPrefix, err)
+		}
 		return
 	}
-	printBacklogLines(report, stateCapsPrefix, stateCapsIndent)
+	printBacklogLines(report, fixedBacklogPrefix(stateCapsPrefix), stateCapsIndent)
 	for i := range report.Categories {
 		category := &report.Categories[i]
 		if category.State() == backlogcap.StateOver && category.Cap.EffectiveAction().Includes(config.BacklogBatch) {
@@ -79,7 +85,7 @@ func runStateBatch(args []string) error {
 		fmt.Println("state batch: no backlog cap is declared; nothing written")
 		return nil
 	}
-	printBacklogLines(report, "  ", "    ")
+	printBacklogLines(report, fixedBacklogPrefix("  "), "    ")
 	return withLedgerIgnore(ctx, dir, func() error {
 		written, err := backlogcap.WriteBatches(ctx, dir, report, *date)
 		for _, path := range written {

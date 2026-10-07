@@ -251,3 +251,36 @@ func TestRemoveMarkdownSectionBoundaryPreservesFencedExample(t *testing.T) {
 		t.Fatalf("fenced heading was not preserved: got %q want %q", out, want)
 	}
 }
+
+// Positive: an ATX heading yields its text without the opening and closing '#' runs.
+func TestMarkdownHeadingTextPositive(t *testing.T) {
+	for line, want := range map[string]string{
+		"## In-Flight Tasks":               "In-Flight Tasks",
+		"# Title ##":                       "Title",
+		"###\tTabbed\t#":                   "Tabbed",
+		"## Discharged Tasks [2026-10-07]": "Discharged Tasks [2026-10-07]",
+	} {
+		if got, ok := MarkdownHeadingText(line); !ok || got != want {
+			t.Errorf("MarkdownHeadingText(%q) = %q, %v; want %q, true", line, got, ok, want)
+		}
+	}
+}
+
+// Negative: a hashtag, a seventh level, a checkbox row and an empty line are no heading.
+func TestMarkdownHeadingTextNegative(t *testing.T) {
+	for _, line := range []string{"#hashtag", "####### seven", "- [ ] ## not a heading", "", "text"} {
+		if got, ok := MarkdownHeadingText(line); ok || got != "" {
+			t.Errorf("MarkdownHeadingText(%q) = %q, %v; want no heading", line, got, ok)
+		}
+	}
+}
+
+// Boundary: six '#' is the deepest level, a bare run is an empty heading, and a closing run
+// without a space before it is part of the text.
+func TestMarkdownHeadingTextBoundary(t *testing.T) {
+	for line, want := range map[string]string{"###### six": "six", "#": "", "## ##": "", "## C#": "C#"} {
+		if got, ok := MarkdownHeadingText(line); !ok || got != want {
+			t.Errorf("MarkdownHeadingText(%q) = %q, %v; want %q, true", line, got, ok, want)
+		}
+	}
+}

@@ -1,4 +1,4 @@
 type: added
-title: "No ledger had a size bound: backlog.caps.<category> now reports, batches or gates open defects, tasks and questions over a cap. Migration: rebuild every praetorctl that reads the ledger before labelling bug rows with a kind"
+title: "No ledger had a size bound: backlog.caps.<category> now reports, batches or gates open defects, tasks and questions over a cap. Migration: rebuild every praetorctl that reads the ledger before adding or labelling bug rows, since state bug add now records a kind"
 issue: "#792"
 breaking: true

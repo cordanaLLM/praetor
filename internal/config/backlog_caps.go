@@ -47,9 +47,11 @@ const (
 	BacklogGate BacklogAction = "gate"
 )
 
-// maxBacklogCap bounds a declared max; no ledger reader holds more rows (maxLedgerEntries in
-// internal/state is 10000).
-const maxBacklogCap = 1000000
+// MaxBacklogCap bounds a declared max and, in internal/backlogcap, one category's count: a
+// ledger holding more open items fails the count instead of counting low, so every max a
+// layer may declare can be evaluated. It matches the bug and question ledgers' record bound
+// (maxLedgerEntries in internal/state).
+const MaxBacklogCap = 10000
 
 // rank orders the actions by strictness: 0 for an undeclared action, -1 for an unknown one.
 func (a BacklogAction) rank() int {
@@ -200,8 +202,8 @@ func decodeBacklogMax(path string, node *yaml.Node) (int, error) {
 		return 0, nil
 	}
 	var limit int
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!int" || node.Decode(&limit) != nil || limit <= 0 || limit > maxBacklogCap {
-		return 0, fmt.Errorf("%s.max must be an integer from 1 to %d", path, maxBacklogCap)
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!int" || node.Decode(&limit) != nil || limit <= 0 || limit > MaxBacklogCap {
+		return 0, fmt.Errorf("%s.max must be an integer from 1 to %d", path, MaxBacklogCap)
 	}
 	return limit, nil
 }
@@ -219,12 +221,12 @@ func decodeBacklogAction(path string, node *yaml.Node) (BacklogAction, error) {
 }
 
 // validate holds a layer's caps, decoded or built by a ResolvePolicy caller, to the decoder's
-// bounds: a max from 0 (undeclared) to maxBacklogCap and a known or undeclared action.
+// bounds: a max from 0 (undeclared) to MaxBacklogCap and a known or undeclared action.
 func (c BacklogCaps) validate() error {
 	names := BacklogCategories()
 	for i, entry := range c.Caps() {
-		if entry.Max < 0 || entry.Max > maxBacklogCap {
-			return fmt.Errorf("backlog.caps.%s.max must be an integer from 1 to %d", names[i], maxBacklogCap)
+		if entry.Max < 0 || entry.Max > MaxBacklogCap {
+			return fmt.Errorf("backlog.caps.%s.max must be an integer from 1 to %d", names[i], MaxBacklogCap)
 		}
 		if entry.Action.rank() < 0 {
 			return fmt.Errorf("backlog.caps.%s.action %q must be report, batch or gate", names[i], entry.Action)

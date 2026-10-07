@@ -136,7 +136,9 @@ cap.
 A record without a kind omits the member, so its bytes are the ones it had before the member
 existed. An empty, null or unknown kind is an error, and the questions sidecar refuses the
 member (`internal/state/bugs_kind_test.go`). A `praetorctl` built before kinds existed refuses a
-ledger whose metadata carries one; refresh every local binary, as below, before labelling.
+ledger whose metadata carries one. `state bug add` writes `defect` by default, so the first row
+added after upgrading already carries a kind: refresh every local binary, as below, before adding
+or labelling bug rows.
 
 The parser requires one complete ledger table. Fenced examples and unrelated
 Markdown are preserved. An unterminated code fence is a ledger error naming the
@@ -201,7 +203,8 @@ A refused selector writes nothing, so `OPEN.md` stays byte-identical.
 
 Each task also records the text of the nearest Markdown heading above it (`TaskItem.Section`)
 and its 1-based line (`TaskItem.Line`); a heading inside a fence, or a `#` not followed by a
-space, is not one (`TestListTasks_SectionIsTheNearestHeading`). `state.ListBacklogTasksContext`
+space, is not one (`TestListTasks_SectionIsTheNearestHeading`). The heading rule is
+`util.MarkdownHeadingText`, the one the milestone section remover uses. `state.ListBacklogTasksContext`
 reads `BACKLOG.md` through the same parser, so fences, headings and the unterminated-fence error
 apply there too, naming `BACKLOG.md` (`TestListBacklogTasks_*` in `internal/state/tasks_test.go`).
 The `tasks` [backlog cap](effective-policy.md#backlog-caps) counts the pending rows of both

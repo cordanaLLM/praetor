@@ -130,26 +130,20 @@ func TestStateBugKind_LabelsARow(t *testing.T) {
 // The audit's backlog gate: at the cap it passes and prints the category; one over it fails
 // naming the category, the count and the cap; without a cap it prints nothing.
 func TestAuditBacklogCaps_GateAtAndOverTheCap(t *testing.T) {
-	resolve := func(dir string) *config.EffectivePolicy {
-		policy, _, err := config.LoadUnadoptedEffectivePolicyContext(t.Context(), config.EffectiveOptions{Root: dir})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return policy
-	}
 	dir := capsRepository(t, "    defects: {max: 2, action: gate}\n", 2)
-	out, err := captureStdout(t, func() error { return auditBacklogCaps(t.Context(), dir, resolve(dir)) })
+	out, err := captureStdout(t, func() error { return auditBacklogCaps(t.Context(), dir, resolveCaps(t, dir)) })
 	if err != nil {
 		t.Fatalf("at the cap: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[INFO] Backlog cap defects: 2 of 2, at the cap", "[PASS] Backlog caps")
+	mustContain(t, out, "[INFO] Backlog cap defects: 2 of 2, at the cap",
+		"[PASS] Backlog caps: every category with action gate was counted and is within its cap.")
 
 	addDefects(t, dir, 1)
-	_, err = captureStdout(t, func() error { return auditBacklogCaps(t.Context(), dir, resolve(dir)) })
+	_, err = captureStdout(t, func() error { return auditBacklogCaps(t.Context(), dir, resolveCaps(t, dir)) })
 	mustErrContain(t, err, "[FAIL] backlog cap defects: 3 items, over the cap of 2 (action gate, max set by repository)")
 
 	uncapped := capsRepository(t, "", 5)
-	out, err = captureStdout(t, func() error { return auditBacklogCaps(t.Context(), uncapped, resolve(uncapped)) })
+	out, err = captureStdout(t, func() error { return auditBacklogCaps(t.Context(), uncapped, resolveCaps(t, uncapped)) })
 	if err != nil || out != "" {
 		t.Fatalf("uncapped audit: %v %q", err, out)
 	}
@@ -168,4 +162,107 @@ func TestAudit_Negative_BacklogCapGateFailsTheAudit(t *testing.T) {
 	out, err := f.audit(t)
 	mustErrContain(t, err, "backlog cap defects: 2 items, over the cap of 1")
 	mustContain(t, out, "backlog.caps.defects: max=1 (repository) action=gate (repository)")
+}
+
+// resolveCaps resolves the unadopted policy of dir as the audit hands it to the gate.
+func resolveCaps(t *testing.T, dir string) *config.EffectivePolicy {
+	t.Helper()
+	policy, _, err := config.LoadUnadoptedEffectivePolicyContext(t.Context(), config.EffectiveOptions{Root: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy
+}
+
+// manifestOnly writes a repository with a manifest and no .workingdir, as a CI clone is.
+func manifestOnly(t *testing.T, caps string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widgets\nbacklog:\n  caps:\n"+caps)
+	return dir
+}
+
+// HISS-21: in a checkout without the ledgers a gated category is not counted, prints SKIP with
+// the reason and the summary is SKIP, never PASS; the audit does not fail on it. Once the
+// ledger exists the same cap is counted and passes.
+func TestAuditBacklogCaps_Boundary_AbsentLedgerSkipsTheGate(t *testing.T) {
+	dir := manifestOnly(t, "    defects: {max: 2, action: gate}\n    questions: {max: 2}\n")
+	out, err := captureStdout(t, func() error { return auditBacklogCaps(t.Context(), dir, resolveCaps(t, dir)) })
+	if err != nil {
+		t.Fatalf("absent ledger failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[SKIP] Backlog cap defects: not counted: .workingdir/BUGS.md is not present in this checkout",
+		"[INFO] Backlog cap questions: not counted: .workingdir/QUESTIONS.md is not present in this checkout",
+		"[SKIP] Backlog caps: the gate on defects did not run: the ledger is not present in this checkout.")
+	if strings.Contains(out, "[PASS]") || strings.Contains(out, "0 of 2") {
+		t.Fatalf("an absent ledger passed or counted zero:\n%s", out)
+	}
+	if err := state.InitWorkingDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	out, err = captureStdout(t, func() error { return auditBacklogCaps(t.Context(), dir, resolveCaps(t, dir)) })
+	if err != nil || !strings.Contains(out, "[PASS] Backlog caps") || strings.Contains(out, "[SKIP]") {
+		t.Fatalf("present ledger: %v\n%s", err, out)
+	}
+}
+
+// A ledger that cannot be read fails the audit only for a gated category; with action batch
+// it is reported as a warning for that category, and without any gate the summary says so.
+func TestAuditBacklogCaps_Negative_ReadErrorFailsOnlyAGate(t *testing.T) {
+	dir := capsRepository(t, "    tasks: {max: 5, action: batch}\n", 0)
+	writeFixtureFile(t, dir, ".workingdir/BACKLOG.md", "```\n- [ ] swallowed\n")
+	out, err := captureStdout(t, func() error { return auditBacklogCaps(t.Context(), dir, resolveCaps(t, dir)) })
+	if err != nil {
+		t.Fatalf("an unreadable batch-only category failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[WARN] Backlog cap tasks: not counted: BACKLOG.md has an unterminated code fence",
+		"[INFO] Backlog caps: no category declares action gate; nothing is gated.")
+	writeFixtureFile(t, dir, ".standards.yaml", "version: 1\nbacklog:\n  caps:\n    tasks: {max: 5, action: gate}\n")
+	_, err = captureStdout(t, func() error { return auditBacklogCaps(t.Context(), dir, resolveCaps(t, dir)) })
+	mustErrContain(t, err, "[FAIL] backlog cap tasks has action gate but cannot be counted: BACKLOG.md has an unterminated code fence")
+}
+
+// state status prints a category whose ledger is absent as not counted, and prints no
+// unresolved line for a policy that fails to resolve while no layer declares a backlog
+// section; with one declared, the unresolved line stays.
+func TestStateStatus_Boundary_AbsentLedgerAndUnresolvedWithoutCaps(t *testing.T) {
+	dir := capsRepository(t, "    defects: {max: 1}\n", 0)
+	if err := os.Remove(filepath.Join(dir, ".workingdir", "BUGS.md")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return dispatchCommand("state", []string{"status", dir}) })
+	if err != nil || !strings.Contains(out, "Backlog Cap:       defects: not counted: .workingdir/BUGS.md is not present in this checkout") {
+		t.Fatalf("absent ledger status: %v\n%s", err, out)
+	}
+	plain := capsRepository(t, "", 0)
+	writeFixtureFile(t, plain, ".standards.lock", "version: 1\n")
+	out, err = captureStdout(t, func() error { return dispatchCommand("state", []string{"status", plain}) })
+	if err != nil || strings.Contains(out, "Backlog Cap") {
+		t.Fatalf("an invalid lock without caps printed a cap line: %v\n%s", err, out)
+	}
+	capped := capsRepository(t, "    defects: {max: 1}\n", 0)
+	writeFixtureFile(t, capped, ".standards.lock", "version: 1\n")
+	out, err = captureStdout(t, func() error { return dispatchCommand("state", []string{"status", capped}) })
+	if err != nil || !strings.Contains(out, "Backlog Cap:       unresolved: resolve backlog caps:") {
+		t.Fatalf("an invalid lock with caps hid them: %v\n%s", err, out)
+	}
+}
+
+// The no-lock notice of state batch names the external layer that set the cap instead of
+// claiming built-in defaults and repository overrides only.
+func TestStateBatch_NoLockNoticeNamesTheFleet(t *testing.T) {
+	dir := capsRepository(t, "", 2)
+	fleet := writeFixtureFile(t, t.TempDir(), "fleet.yaml", "backlog:\n  caps:\n    defects: {max: 1, action: batch}\n")
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"batch", dir, "--date=2026-10-07", "--fleet-config=" + fleet})
+	})
+	if err != nil {
+		t.Fatalf("state batch: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[INFO] no .standards.lock: built-in defaults, repository overrides and the fleet policy only",
+		"max 1 set by fleet", "Wrote .workingdir/batches/defects-2026-10-07.md")
+	if strings.Contains(out, config.NoLockNotice) {
+		t.Fatalf("the notice contradicts the fleet layer:\n%s", out)
+	}
 }
