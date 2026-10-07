@@ -1246,6 +1246,16 @@ valid lock. The source must have a valid manifest/lock and every selected local
 archetype source. Digests come from actual source bytes. The MCP source path obeys
 server root confinement.
 
+A source root is a Praetor Git checkout or a source bundle. A source that holds `go.mod` also
+feeds the DevContainer bootstrap, which lists its build inputs with `git ls-files`, so it must
+sit in a Git checkout. Adoption refuses one that does not before its first step writes, naming
+the source, the flag (MCP: `source_root`) and the cause, so a `git archive` export never leaves a
+half-adopted repository (`preflightDevContainerSource` in `internal/adopt/devcontainer.go`,
+`TestAdoptRefusesUncapturableSourceBeforeWriting`). A bundle without `go.mod` needs no Git; the
+DevContainer then records its bootstrap as unavailable. `profile set` builds no bootstrap and
+accepts either form. A failing inventory carries git's own error rather than a cause Praetor
+guessed (`TestRunSourceGitCarriesGitStderr_3D` in `internal/devcontainer`).
+
 ### Lock version: the source catalog's identity
 
 A built lock's `pinned_version`, and every entry's `version`, name the source catalog

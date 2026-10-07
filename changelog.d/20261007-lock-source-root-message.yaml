@@ -1,0 +1,4 @@
+type: fixed
+title: "adopt --lock-source-root with a source that holds go.mod outside a Git checkout, such as a git archive export, no longer fails with a bare \"exit status 128\" after writing part of the adoption: the run refuses it before the first write, naming the flag, the path and the Git requirement; devcontainer generate --source-root and the MCP source_root report it the same way, and a failing source inventory carries git's own error"
+issue: "#839"
+breaking: false

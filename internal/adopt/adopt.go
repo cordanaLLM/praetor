@@ -536,14 +536,18 @@ func runOrSkipStep(ctx context.Context, s *adoptSession, step namedStep, decline
 
 // preflightSteps runs, before the first step writes anything, the refusals of the agent steps
 // (preflightAgentSurfaces), the refusal of a .gitattributes the DevContainer rule cannot be
-// merged into (preflightManagedAttributes) and the read-only policy resolution of a declined
-// policy-catalog step (preflightDeclinedPolicyCatalog), so each stops a run that has written
-// nothing.
+// merged into (preflightManagedAttributes), the refusal of a lock source the DevContainer
+// bootstrap cannot capture (preflightDevContainerSource) and the read-only policy resolution of
+// a declined policy-catalog step (preflightDeclinedPolicyCatalog), so each stops a run that has
+// written nothing.
 func preflightSteps(ctx context.Context, s *adoptSession, declined map[string]bool) error {
 	if err := preflightAgentSurfaces(ctx, s, declined); err != nil {
 		return err
 	}
 	if err := preflightManagedAttributes(ctx, s, declined); err != nil {
+		return err
+	}
+	if err := preflightDevContainerSource(ctx, s, declined); err != nil {
 		return err
 	}
 	return preflightDeclinedPolicyCatalog(ctx, s, declined)
@@ -986,11 +990,11 @@ func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baselin
 }
 
 func reconcileDevContainer(ctx context.Context, s *adoptSession) error {
-	full, err := repoFile(s.repoPath, devcontainerFile)
+	full, preserved, err := s.devContainerPreserved()
 	if err != nil {
 		return err
 	}
-	if fileExists(full) && !s.opts.Force {
+	if preserved {
 		s.report.recordReconciled(devcontainerFile, "Existing DevContainer preserved; container startup has not been verified by adoption")
 		s.report.addWarning("Existing DevContainer preserved; bootstrap readiness requires separate verification.")
 		return nil

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
@@ -18,7 +19,7 @@ type publicDogfoodFlags struct {
 func addPublicDogfoodFlags(fs *flag.FlagSet) publicDogfoodFlags {
 	return publicDogfoodFlags{
 		enabled:   fs.Bool("public-loop", false, "Retain public clone plan/apply/verification and repeat-apply evidence"),
-		source:    fs.String("source-root", "", "Validated Praetor source bundle for public adoption (default: --path)"),
+		source:    fs.String("source-root", "", "Validated "+devcontainer.SourceRootForms+" for public adoption"+devcontainer.SourceRootGitNote+" (default: --path)"),
 		artifacts: fs.String("artifacts", "", "Required retained public-loop evidence directory"),
 		attempts:  fs.Int("attempts", 2, "Maximum public-loop applications including stability recheck (2..3)"),
 	}

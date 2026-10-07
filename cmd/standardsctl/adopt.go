@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -64,7 +65,7 @@ func runAdopt(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
 	force := fs.Bool("force", false, adopt.ForceContract+". --force needs --lock-source-root, --dry-run included")
 	baselineFlags := registerAdoptBaselineFlags(fs)
-	lockSource := fs.String("lock-source-root", "", "Praetor source bundle with validated pins and local archetypes for missing lockfiles")
+	lockSource := fs.String("lock-source-root", "", devcontainer.SourceRootForms+" with validated pins and local archetypes for missing lockfiles"+devcontainer.SourceRootGitNote)
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")
 	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing "+devRootUsageDefault)
 	path := fs.String("path", ".", "Target repository path to adopt")
@@ -81,8 +82,13 @@ func runAdopt(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), adoptTimeout)
 	defer cancel()
 
+	resolvedLockSource, err := resolveLockSourceRoot(*lockSource, "--lock-source-root")
+	if err != nil {
+		return err
+	}
+
 	// The options every adopted repository shares; --all-missing passes exactly these.
-	opts := adopt.AdoptOptions{LockSourceRoot: *lockSource, DryRun: *dryRun, Force: *force}
+	opts := adopt.AdoptOptions{LockSourceRoot: resolvedLockSource, DryRun: *dryRun, Force: *force}
 	baselineFlags.apply(&opts)
 	if *allMissing {
 		root, err := resolveDevRootDir(*devDir, "--dev-dir")
@@ -103,7 +109,7 @@ func runAdopt(args []string) error {
 		printAdoptReport(report)
 	}
 	if err != nil {
-		return fmt.Errorf("adopt repository failed: %w", err)
+		return fmt.Errorf("adopt repository failed: %w", devcontainer.NameSource(err, "--lock-source-root"))
 	}
 	if len(report.Errors) > 0 {
 		return fmt.Errorf("%w: %d error(s) listed above", errAdoptIncomplete, len(report.Errors))
@@ -206,7 +212,7 @@ func batchAdoptMissing(ctx context.Context, devDir string, shared adopt.AdoptOpt
 func printBatchResult(repoName string, dryRun bool, rep *adopt.AdoptReport, err error) bool {
 	repoName = util.NormalizeSlashes(repoName)
 	if err != nil {
-		fmt.Printf("[FAIL] %s: %v\n", repoName, err)
+		fmt.Printf("[FAIL] %s: %v\n", repoName, devcontainer.NameSource(err, "--lock-source-root"))
 		if rep != nil {
 			fmt.Printf("  Written before failure: %d created, %d reconciled, %d replaced\n",
 				len(rep.CreatedFiles), len(rep.ReconciledNotReplaced()), len(rep.Replaced()))
