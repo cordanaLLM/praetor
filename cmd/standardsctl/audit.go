@@ -179,7 +179,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		},
 		func() error { return auditAPICompatibilityGate(ctx, manifest, rootDir) },
 		func() error { return auditTidyCoverage(ctx, manifest, rootDir, &opts.effective.Policy) },
-		func() error { return auditReuseRecords(ctx, rootDir) },
+		func() error { return auditLicensing(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(ctx, rootDir) },
 		func() error { return auditCavemanAgentSurfaces(ctx, rootDir, opts.agentsPath) },

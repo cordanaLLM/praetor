@@ -44,10 +44,18 @@ const ExceptionRuleWorkflowTriggers = "HISS-18"
 // expiry and passes, so the lanes stay visible until the entry expires.
 const ExceptionRuleBuildWarnings = "HISS-10"
 
+// ExceptionRuleRootLicenseNotice is the rule of the one-root-licence gate
+// (supplychain.CheckRootLicense): an entry keeps one file at the repository root that is named
+// like a licence, such as an upstream COPYING, beside the root LICENSE. It names that file by
+// path, one entry per file.
+const ExceptionRuleRootLicenseNotice = "root-license-notice"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
-var exceptionRules = []string{ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
-	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers}
+var exceptionRules = []string{
+	ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings,
+	ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice,
+}
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
 // workflow a refusal names as an example.
@@ -200,6 +208,9 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.workflowTargetProblem(); problem != "" {
 		return problem
 	}
+	if problem := e.rootLicenseTargetProblem(); problem != "" {
+		return problem
+	}
 	if problem := exceptionReasonProblem(e.Reason); problem != "" {
 		return "reason " + problem
 	}
@@ -218,6 +229,15 @@ func (e Exception) targetProblem() string {
 		if problem := StyleExclusionProblem(e.Glob); problem != "" {
 			return fmt.Sprintf("glob %q %s", e.Glob, problem)
 		}
+	}
+	return ""
+}
+
+// rootLicenseTargetProblem requires a root-license-notice entry to name one file at the
+// repository root by path, the file the root licence gate keeps, one entry per file.
+func (e Exception) rootLicenseTargetProblem() string {
+	if e.Rule == ExceptionRuleRootLicenseNotice && (e.Glob != "" || strings.Contains(e.Path, "/")) {
+		return "rule " + ExceptionRuleRootLicenseNotice + " must name one file at the repository root by path, one entry per file"
 	}
 	return ""
 }

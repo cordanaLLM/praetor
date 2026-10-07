@@ -303,6 +303,7 @@ docs_surfaces:
       - "internal/supplychain/reuse.go"
       - "internal/supplychain/reuse_glob.go"
       - "internal/supplychain/reuse_lint.go"
+      - "internal/supplychain/root_license.go"
       - "internal/adopt/reuse_gate.go"
       - "cmd/standardsctl/audit_reuse.go"
     docs:

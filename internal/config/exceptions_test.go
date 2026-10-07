@@ -317,3 +317,35 @@ func TestValidateClangTidyNegativeAndBoundary(t *testing.T) {
 		t.Fatal("LoadManifest accepted an unknown lane key")
 	}
 }
+
+// The root-license-notice rule keeps one root file per entry. Positive: an entry naming a root
+// file by path validates and decodes from the manifest. Negative: a glob, or a path below the
+// root, is refused, naming the rule. Boundary: the same root file under the other rule is
+// another entry, not a repeat.
+func TestValidateExceptionsRootLicenseNotice(t *testing.T) {
+	notice := Exception{Rule: ExceptionRuleRootLicenseNotice, Path: "COPYING", Reason: "upstream GPL notice kept verbatim", Expires: "2026-12-31"}
+	if err := ValidateExceptions([]Exception{notice}, exceptionsToday); err != nil {
+		t.Fatalf("a root file entry refused: %v", err)
+	}
+	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
+	m, err := LoadManifest(writeManifest(t, "version: 1\nexceptions:\n  - rule: \"root-license-notice\"\n    path: \"COPYING\"\n"+
+		"    reason: \"upstream notice\"\n    expires: \""+expires+"\"\n"))
+	if err != nil || len(ExceptionsFor(m.Exceptions, ExceptionRuleRootLicenseNotice)) != 1 {
+		t.Fatalf("LoadManifest: %v, %+v", err, m)
+	}
+	for name, edit := range map[string]func(*Exception){
+		"glob":        func(e *Exception) { e.Path, e.Glob = "", "LICENSE-*" },
+		"nested path": func(e *Exception) { e.Path = "vendor/COPYING" },
+	} {
+		entry := notice
+		edit(&entry)
+		if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "one file at the repository root by path") {
+			t.Errorf("%s: ValidateExceptions = %v", name, err)
+		}
+	}
+	other := notice
+	other.Rule = ExceptionRuleClangTidyCoverage
+	if err := ValidateExceptions([]Exception{notice, other}, exceptionsToday); err != nil {
+		t.Fatalf("one file under two rules refused: %v", err)
+	}
+}

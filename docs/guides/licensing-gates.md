@@ -1,14 +1,18 @@
 # Licensing gates
 
 A repository that declares its licensing the [REUSE](https://reuse.software/spec-3.3/) way, with
-`REUSE.toml` or a `LICENSES/` directory at its root, gets two checks from Praetor:
+`REUSE.toml` or a `LICENSES/` directory at its root, gets three checks from Praetor:
 
 1. [`reuse lint`](#reuse-lint-in-hooks-and-ci) before every commit and in CI, written by
    `praetorctl adopt`;
 2. the [annotation order check](#annotation-order) of `praetorctl audit`, which fails an
-   override in `REUSE.toml` that never takes effect.
+   override in `REUSE.toml` that never takes effect;
+3. the [root licence check](#one-root-licence) of `praetorctl audit`, which holds the root to one
+   `LICENSE` with the declared licence's text.
 
-A repository with neither marker gets neither, and the audit says that it skipped the check.
+A repository with neither marker gets none of them, and the audit says that it skipped each. No
+profile writes a `LICENSE` or `LICENSES/` for the repository, so the checks follow the markers,
+whatever the profile.
 
 ## `reuse lint` in hooks and CI
 
@@ -53,3 +57,51 @@ and `reuse_glob.go`). A `REUSE.toml` the audit cannot read, such as one with a m
 as a path, fails the check rather than passing it unchecked. Tests: `TestReuseShadowedPaths_*` in
 `internal/supplychain/reuse_shadow_test.go` and `TestAuditReuseRecords_3D` in
 `cmd/standardsctl/audit_reuse_test.go`.
+
+## One root licence
+
+Forges and package indexes read the licence from the files at the repository root, and the REUSE
+specification exempts `COPYING`, `LICENSE` and `LICENCE`, with any `-` or `.` suffix, from
+labelling. A repository that keeps `LICENSES/` therefore states one licence at its root, and
+`praetorctl audit` checks it (`CheckRootLicense` in
+[`internal/supplychain/root_license.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/root_license.go)):
+
+- **The declared licence** is the one SPDX identifier of the last `REUSE.toml` annotation whose
+  path covers the whole tree, such as `path = "**"`; without such an annotation, the one text
+  `LICENSES/` holds. A whole-tree annotation naming an expression, such as `MIT OR Apache-2.0`,
+  or a `LICENSES/` with several texts and no whole-tree annotation, declares no single licence,
+  and the check skips, saying so.
+- **`LICENSE`** must hold the text of `LICENSES/<id>.txt` for that licence. The comparison allows
+  one consistent line-ending style, as every other text comparison of the audit does, so a CRLF
+  checkout passes; a text with mixed line endings is compared byte for byte, and the finding
+  says so.
+- **Every other root file named like a licence**, such as `COPYING`, `LICENSE.md`, `LICENCE` or
+  `LICENSE-MIT`, compared without case, fails the check unless the manifest keeps it as an
+  upstream notice. Directories are not read. A notice under another name, such as `NOTICE`, is
+  not a licence file.
+
+To keep an upstream notice, name it in the top-level `exceptions` list of `.standards.yaml`, one
+file per entry, by `path` and at the root, with the reason and an expiry at most 90 days ahead,
+as for the [clang-tidy coverage gate](clang-tidy-coverage.md#exceptions):
+
+```yaml
+exceptions:
+  - rule: "root-license-notice"
+    path: "COPYING"
+    reason: "upstream GPL notice the fork keeps verbatim"
+    expires: "2026-12-31"
+```
+
+An expired entry keeps nothing, and an entry that keeps no root licence file is stale and fails
+until it is removed:
+
+```text
+  - COPYING: a second root licence file; its root-license-notice exception expired on 2026-10-06
+  - exceptions entry LICENSE-MIT (root-license-notice): keeps no root file named like a licence; remove the entry
+[FAIL] root licence: 2 problem(s) with the one root licence of a repository declaring EUPL-1.2
+```
+
+Tests: `TestCheckRootLicensePositive`, `TestCheckRootLicenseNegative` and
+`TestCheckRootLicenseBoundary` in `internal/supplychain/root_license_test.go`,
+`TestValidateExceptionsRootLicenseNotice` in `internal/config/exceptions_test.go`, and
+`TestAuditLicensing_3D` in `cmd/standardsctl/audit_reuse_test.go`.

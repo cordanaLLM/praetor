@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
@@ -160,5 +162,37 @@ func TestAuditReuseRecords_3D(t *testing.T) {
 	unreadable := "version = 1\n[[annotations]]\npath = \"\"\"\n**\n\"\"\"\n"
 	if _, err := auditReuseOrder(t, &unreadable); err == nil || !strings.Contains(err.Error(), "not checked") {
 		t.Fatalf("a REUSE.toml the read cannot follow passed: %v", err)
+	}
+}
+
+// auditLicensing runs both licensing gates and prints both verdicts. Positive: a root whose
+// LICENSE holds the one LICENSES text passes, and an upstream COPYING the manifest keeps is named.
+// Negative: the same COPYING without the exception fails the root licence gate while the
+// annotation order gate still prints its verdict. Boundary: a root with neither LICENSES/ nor
+// REUSE.toml skips both, saying why.
+func TestAuditLicensing_3D(t *testing.T) {
+	today := time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC)
+	run := func(manifest *config.Manifest, root string) (string, error) {
+		return captureStdout(t, func() error { return auditLicensing(t.Context(), manifest, root, today) })
+	}
+	root := t.TempDir()
+	writeFixtureFile(t, root, "LICENSES/MIT.txt", "MIT License\n")
+	writeFixtureFile(t, root, supplychain.RootLicenseFile, "MIT License\n")
+	writeFixtureFile(t, root, "COPYING", "upstream notice\n")
+	kept := &config.Manifest{Exceptions: []config.Exception{{Rule: config.ExceptionRuleRootLicenseNotice, Path: "COPYING",
+		Reason: "upstream notice kept verbatim", Expires: "2026-12-31"}}}
+	output, err := run(kept, root)
+	if err != nil || !strings.Contains(output, "[PASS] root licence: LICENSE holds the text of LICENSES/MIT.txt; kept upstream notices COPYING.") ||
+		!strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") {
+		t.Fatalf("kept COPYING: %v\n%s", err, output)
+	}
+	output, err = run(&config.Manifest{}, root)
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] root licence: 1 problem(s)") ||
+		!strings.Contains(output, "COPYING: a second root licence file beside LICENSE") || !strings.Contains(output, "REUSE.toml annotation order") {
+		t.Fatalf("unkept COPYING: %v\n%s", err, output)
+	}
+	output, err = run(&config.Manifest{}, t.TempDir())
+	if err != nil || !strings.Contains(output, "[SKIP] root licence not checked: the repository keeps no LICENSES/ directory.") {
+		t.Fatalf("no licensing: %v\n%s", err, output)
 	}
 }
