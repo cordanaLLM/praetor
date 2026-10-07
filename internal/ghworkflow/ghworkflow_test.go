@@ -150,3 +150,58 @@ func TestNeverRuns(t *testing.T) {
 		}
 	}
 }
+
+// NeedIDs reads the two shapes of needs: in document order. Positive: one id and a list. Negative:
+// an absent key, a mapping and blank or non-scalar entries need nothing. Boundary: a list at the
+// job bound is read whole and one past it is cut at the bound.
+func TestJob_NeedIDs(t *testing.T) {
+	cases := []struct {
+		name, needs string
+		want        []string
+	}{
+		{"positive scalar", "needs: plan", []string{"plan"}},
+		{"positive list", "needs: [plan, go]", []string{"plan", "go"}},
+		{"negative absent", "name: Gate", nil},
+		{"negative mapping", "needs: {plan: true}", nil},
+		{"negative blank and nested entries", "needs: ['', [go], ' lint ']", []string{"lint"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := Parse([]byte("jobs:\n  gate:\n    " + tc.needs + "\n    runs-on: ubuntu-latest\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			gate := spec.Jobs["gate"]
+			if got := gate.NeedIDs(); fmt.Sprint(got) != fmt.Sprint(tc.want) {
+				t.Fatalf("NeedIDs() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	ids := make([]string, MaxJobsPerFile+1)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("job%03d", i)
+	}
+	for _, n := range []int{MaxJobsPerFile, MaxJobsPerFile + 1} {
+		spec, err := Parse([]byte("jobs:\n  gate:\n    needs: [" + strings.Join(ids[:n], ", ") + "]\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gate := spec.Jobs["gate"]
+		if got := gate.NeedIDs(); len(got) != MaxJobsPerFile || got[MaxJobsPerFile-1] != ids[MaxJobsPerFile-1] {
+			t.Fatalf("a list of %d ids read %d, want the first %d", n, len(got), MaxJobsPerFile)
+		}
+	}
+}
+
+// Step continue-on-error decodes as written, a literal or an expression, and is empty when absent.
+func TestParse_StepContinueOnError(t *testing.T) {
+	spec, err := Parse([]byte("jobs:\n  gate:\n    steps:\n      - run: exit 1\n        continue-on-error: true\n" +
+		"      - run: exit 1\n        continue-on-error: ${{ matrix.experimental }}\n      - run: exit 1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := spec.Jobs["gate"].Steps
+	if steps[0].ContinueOnError != "true" || steps[1].ContinueOnError != "${{ matrix.experimental }}" || steps[2].ContinueOnError != "" {
+		t.Fatalf("continue-on-error = %q, %q, %q", steps[0].ContinueOnError, steps[1].ContinueOnError, steps[2].ContinueOnError)
+	}
+}
