@@ -153,7 +153,9 @@ func TestParseFeed_Boundary_Caps(t *testing.T) {
 // hostZones are local zones the RFC 822 date tests run under. Each carries the abbreviation of a
 // zone the tests parse, which is how time.Parse would let the host's zone decide an instant.
 // Fixed zones need no tz database, so the tests run alike on Linux, macOS and Windows.
-var hostZones = []*time.Location{time.UTC, time.FixedZone("EST", -5*3600), time.FixedZone("CEST", 2*3600)}
+var hostZones = []*time.Location{
+	time.UTC, time.FixedZone("EST", -5*3600), time.FixedZone("CEST", 2*3600), time.FixedZone("IST", 5*3600+1800),
+}
 
 // underHostZones runs check once with each of hostZones as the local zone. It replaces
 // time.Local, so no test of this package may call t.Parallel.
@@ -179,8 +181,9 @@ func pubDateFeed(dates ...string) []byte {
 	return []byte(b.String())
 }
 
-// rfc822Dates are RFC 822 dates with the UTC instant each names: every named zone RFC 822
-// section 5 defines, matched without regard to case, numeric zones, and two-digit years.
+// rfc822Dates are RFC 822 and RFC 1123 dates with the UTC instant each names: every named zone
+// RFC 822 section 5 defines and UTC, matched without regard to case, numeric zones, and
+// two-digit years.
 var rfc822Dates = []struct {
 	raw  string
 	want time.Time
@@ -194,6 +197,8 @@ var rfc822Dates = []struct {
 	{"Thu, 01 Oct 2026 09:30:00 PST", time.Date(2026, 10, 1, 17, 30, 0, 0, time.UTC)},
 	{"Thu, 01 Oct 2026 09:30 PDT", time.Date(2026, 10, 1, 16, 30, 0, 0, time.UTC)},
 	{"Thu, 01 Oct 2026 09:30:00 GMT", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
+	{"Thu, 01 Oct 2026 09:30:00 UTC", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
+	{"01 Oct 2026 09:30 utc", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
 	{"01 Oct 2026 09:30:00 UT", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
 	{"01 Oct 2026 09:30 Z", time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC)},
 	{"Thu, 01 Oct 2026 09:30:00 est", time.Date(2026, 10, 1, 14, 30, 0, 0, time.UTC)},
@@ -216,18 +221,27 @@ func TestParseFeed_Positive_RFC822Zones(t *testing.T) {
 	})
 }
 
-// Negative: a zone name RFC 822 does not define, a military letter other than Z, a date without
-// a zone and a malformed numeric zone leave the entry undated on every host, instead of being
-// placed by the host's local zone or at offset zero.
+// Negative: a zone name outside the table, a military letter other than Z, a date without a
+// zone, a malformed numeric zone and every date form outside the accepted three (RFC 850,
+// asctime, a colon offset in an RFC 822 date, a date-time without a zone or without the T) leave
+// the entry undated on every host, instead of being placed by the host's local zone or at offset
+// zero.
 func TestParseFeed_Negative_UnresolvedZones(t *testing.T) {
 	unresolved := []string{
 		"Thu, 01 Oct 2026 09:30:00 CEST",
 		"Thu, 01 Oct 2026 09:30:00 BST",
+		"Thu, 01 Oct 2026 09:30:00 IST",
 		"Thu, 01 Oct 2026 09:30:00 A",
 		"Thu, 01 Oct 2026 09:30:00 Y",
 		"Thu, 01 Oct 2026 09:30:00",
 		"Thu, 01 Oct 2026 09:30:00 +02",
 		"Thu, 01 Oct 2026 09:30:00 0200",
+		"Thu, 01 Oct 2026 09:30:00 +00:00",
+		"Thursday, 01-Oct-26 09:30:00 GMT",
+		"Thu Oct  1 09:30:00 2026",
+		"2026-10-01T09:30:00",
+		"2026-10-01 09:30:00Z",
+		"1 October 2026",
 	}
 	underHostZones(t, func(t *testing.T) {
 		got, err := ParseFeed(pubDateFeed(unresolved...))

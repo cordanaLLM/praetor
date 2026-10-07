@@ -82,16 +82,19 @@ var feedDateLayouts = [...]struct {
 	{"2 Jan 06 15:04 -0700", true},
 }
 
-// rfc822Zones are the zone names RFC 822 section 5 defines with a fixed meaning, as the offsets
-// RFC 5322 section 4.3 gives them. The names are matched without regard to case.
+// rfc822Zones is the one table of zone names a feed date may carry: the names RFC 822 section 5
+// defines with a fixed meaning, at the offsets RFC 5322 section 4.3 gives them, plus UTC, which
+// Go's time.RFC1123 and C's strftime %Z write for a UTC time. The names are matched without
+// regard to case.
 //
 // Any other name is left out on purpose and leaves the entry undated. time.Parse would resolve
 // a name through the host's local zone, or give a name it does not know offset zero, so the same
-// feed would place an entry differently on two hosts. RFC 5322 section 4.3 calls the military
-// letters other than Z unpredictable in meaning, and says a zone of unknown meaning, such as
-// CEST, carries no zone information; placing either in a window would rest on a guess.
+// feed would place an entry differently on two hosts. RFC 1123 section 5.2.14 says RFC 822 gave
+// the military letters the wrong signs, RFC 5322 section 4.3 calls the letters other than Z
+// unpredictable in meaning, and a zone of unknown meaning, such as CEST, carries no zone
+// information; placing either in a window would rest on a guess.
 var rfc822Zones = map[string]string{
-	"UT": "+0000", "GMT": "+0000", "Z": "+0000",
+	"UT": "+0000", "UTC": "+0000", "GMT": "+0000", "Z": "+0000",
 	"EST": "-0500", "EDT": "-0400", "CST": "-0600", "CDT": "-0500",
 	"MST": "-0700", "MDT": "-0600", "PST": "-0800", "PDT": "-0700",
 }
@@ -304,9 +307,11 @@ func (e *feedEntry) date() (time.Time, bool, bool) {
 	return time.Time{}, false, false
 }
 
-// parseFeedDate reads one date as UTC: a calendar date, an RFC 3339 timestamp, or an RFC 822
-// date whose zone is numeric or named in rfc822Zones. Every other spelling, a named zone outside
-// rfc822Zones among them, reports false, so the entry is counted as undated.
+// parseFeedDate reads one date as UTC. It accepts exactly three forms: an RFC 3339 full-date
+// (YYYY-MM-DD, placed by date), an RFC 3339 date-time, and an RFC 822 or RFC 1123 date in a
+// feedDateLayouts spelling whose zone is a numeric offset or a name in rfc822Zones. Every other
+// spelling reports false, so the entry is counted as undated; no form is read through the host's
+// local zone.
 func parseFeedDate(raw string) (time.Time, bool, bool) {
 	if date, err := time.Parse(dateLayout, raw); err == nil {
 		return date.UTC(), true, true
