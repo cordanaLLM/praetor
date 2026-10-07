@@ -268,29 +268,13 @@ func ValidateRepositoryRuleset(data []byte, branch string, policy config.BranchP
 	return nil
 }
 
+// protectionRuleset renders the praetor ruleset named name over refs under policy, requiring
+// contexts, with the bypass actors policy declares (rulesetBypassActors). The local file and a
+// ruleset sync --remote writes are both rendered here.
 func protectionRuleset(name string, refs []string, policy config.BranchProtectionPolicy, contexts []string, strict bool) (map[string]any, error) {
-	reviewCount, requireCodeOwner, err := policy.EffectiveReviewRequirements()
+	doc, err := protectionDocument(name, refs, policy, contexts, strict)
 	if err != nil {
 		return nil, err
-	}
-	if err := validateRulesetInputs(contexts); err != nil {
-		return nil, err
-	}
-	rules := protectionRules(policy, reviewCount, requireCodeOwner)
-	if len(contexts) > 0 {
-		checks := make([]map[string]string, 0, len(contexts))
-		for i := 0; i < len(contexts) && i < maxRulesetContexts; i++ {
-			checks = append(checks, map[string]string{"context": contexts[i]})
-		}
-		rules = append(rules, map[string]any{"type": "required_status_checks", "parameters": map[string]any{
-			"strict_required_status_checks_policy": strict,
-			"required_status_checks":               checks,
-		}})
-	}
-	doc := map[string]any{
-		"name": name, "target": "branch", "enforcement": rulesetEnforcementActive,
-		"conditions": map[string]any{"ref_name": map[string]any{"include": refs, "exclude": []string{}}},
-		"rules":      rules,
 	}
 	if actors := rulesetBypassActors(policy); actors != nil {
 		doc["bypass_actors"] = actors
@@ -313,6 +297,34 @@ func rulesetBypassActors(policy config.BranchProtectionPolicy) []map[string]any 
 		return nil
 	}
 	return []map[string]any{{"actor_id": repositoryAdminRoleID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}}
+}
+
+// protectionDocument is protectionRuleset without its bypass actors: the name, target,
+// enforcement, refs and rules.
+func protectionDocument(name string, refs []string, policy config.BranchProtectionPolicy, contexts []string, strict bool) (map[string]any, error) {
+	reviewCount, requireCodeOwner, err := policy.EffectiveReviewRequirements()
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRulesetInputs(contexts); err != nil {
+		return nil, err
+	}
+	rules := protectionRules(policy, reviewCount, requireCodeOwner)
+	if len(contexts) > 0 {
+		checks := make([]map[string]string, 0, len(contexts))
+		for i := 0; i < len(contexts) && i < maxRulesetContexts; i++ {
+			checks = append(checks, map[string]string{"context": contexts[i]})
+		}
+		rules = append(rules, map[string]any{"type": "required_status_checks", "parameters": map[string]any{
+			"strict_required_status_checks_policy": strict,
+			"required_status_checks":               checks,
+		}})
+	}
+	return map[string]any{
+		"name": name, "target": "branch", "enforcement": rulesetEnforcementActive,
+		"conditions": map[string]any{"ref_name": map[string]any{"include": refs, "exclude": []string{}}},
+		"rules":      rules,
+	}, nil
 }
 
 func validateRulesetInputs(contexts []string) error {
