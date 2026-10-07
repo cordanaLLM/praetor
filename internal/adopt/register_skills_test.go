@@ -120,7 +120,8 @@ func TestAdopt_Positive_FreshAdoptionShipsTheRegisterSkills(t *testing.T) {
 		if got := repoText(t, repoPath, claudeSkillRel(name)); got != want {
 			t.Errorf("%s differs from the shipped skill", claudeSkillRel(name))
 		}
-		if !strings.Contains(want, "SPDX-License-Identifier: EUPL-1.2") {
+		// The tag is split so REUSE lint does not read this literal as the file's licence.
+		if !strings.Contains(want, "SPDX-License-"+"Identifier: EUPL-1.2") {
 			t.Errorf("%s ships without its REUSE licence header", name)
 		}
 		if !contains(rep.CreatedFiles, compiler.CanonicalSkillRel(name)) || !contains(rep.CreatedFiles, claudeSkillRel(name)) {
