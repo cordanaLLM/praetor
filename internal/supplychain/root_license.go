@@ -127,11 +127,13 @@ func declaredLicense(ctx context.Context, root string) (license, skipped string,
 	return texts[0], "", nil
 }
 
-// wholeTreeLicense returns the licence expression of the last table whose globs match every
-// path, and whether there is one: the table REUSE resolves for a file no later table names.
+// wholeTreeLicense returns the licence expression of the last table whose globs together match
+// every path, and whether there is one: the table REUSE resolves for a file no later table names.
+// Its globs may be "**" or a union no one of them covers alone, such as "*", ".*", "*/**" and
+// ".*/**".
 func wholeTreeLicense(tables []ReuseAnnotation) (string, bool) {
 	for index := len(tables) - 1; index >= 0; index-- {
-		if covers, _ := tables[index].relation("**"); covers {
+		if reuseGlobIncludes(tables[index].Paths, "**") {
 			return strings.Join(tables[index].Licenses, " AND "), true
 		}
 	}

@@ -40,22 +40,28 @@ licensing information inside the file or in another `REUSE.toml`. An override pl
 whole-tree default table is therefore relabelled by the default, and `reuse lint` still passes,
 because every file still carries licensing information.
 
-`praetorctl audit` fails when a path of an annotation is matched whole by the path of a later
-annotation, and names both:
+`praetorctl audit` fails when the paths of later annotations together match every file a path
+of an annotation names, and names the later annotation that completes the match:
 
 ```text
   - REUSE.toml annotation 1 path "vendor/upstream/**" never takes effect: annotation 2 path "**", after it, matches every file it names, and REUSE applies only the last matching annotation, whatever its precedence; move annotation 1 after annotation 2
 [FAIL] REUSE.toml annotation order: 1 path(s) resolve to a later annotation, not their own
 ```
 
-Put the default table first and every override after it. A later path that matches only some
-of an annotation's files, such as `**/*.md` after `docs/**`, leaves the rest in effect and is
-not reported. Paths compare as REUSE globs: `*` stops at `/`, `**` crosses it, and `\` makes the
+A default spelled as several globs, such as `path = ["*", ".*", "*/**", ".*/**"]`, is listed
+with all of them. When no one later annotation matches every file but several do between them,
+the finding names the range, such as `annotations 2 to 4, after it, together match every file it
+names`, and asks to move the annotation after the last of them.
+
+Put the default table first and every override after it. Later paths that match only some of an
+annotation's files, such as `**/*.md` after `docs/**`, leave the rest in effect and are not
+reported. Paths compare as REUSE globs: `*` stops at `/`, `**` crosses it, and `\` makes the
 next character literal (`ReuseShadowedPaths` and `reuseGlobIncludes` in
 [`internal/supplychain/reuse.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse.go)
 and `reuse_glob.go`). A `REUSE.toml` the audit cannot read, such as one with a multi-line string
-as a path, fails the check rather than passing it unchecked. Tests: `TestReuseShadowedPaths_*` in
-`internal/supplychain/reuse_shadow_test.go` and `TestAuditReuseRecords_3D` in
+as a path, fails the check rather than passing it unchecked. Tests: `TestReuseGlobIncludes_3D`
+and `TestReuseShadowedPaths_*`, `_Union` among them, in
+`internal/supplychain/reuse_shadow_test.go`, and `TestAuditReuseRecords_3D` in
 `cmd/standardsctl/audit_reuse_test.go`.
 
 ## One root licence
@@ -67,7 +73,8 @@ labelling. A repository that keeps `LICENSES/` therefore states one licence at i
 [`internal/supplychain/root_license.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/root_license.go)):
 
 - **The declared licence** is the one SPDX identifier of the last `REUSE.toml` annotation whose
-  path covers the whole tree, such as `path = "**"`; without such an annotation, the one text
+  paths cover the whole tree, such as `path = "**"` or
+  `path = ["*", ".*", "*/**", ".*/**"]`; without such an annotation, the one text
   `LICENSES/` holds. A whole-tree annotation naming an expression, such as `MIT OR Apache-2.0`,
   or a `LICENSES/` with several texts and no whole-tree annotation, declares no single licence,
   and the check skips, saying so.

@@ -7,36 +7,48 @@ package supplychain
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-// reuseGlobIncludes decides whether a later glob relabels every file of an earlier one, under the
-// REUSE 3.3 glob dialect. Positive: the whole tree, a directory below a directory, a suffix in any
-// directory, an identical path. Negative: a single star stops at "/", a narrower glob does not
-// hold a wider one, and two sibling files differ. Boundary: an escaped star is a literal, which a
-// star includes and which does not include a star.
+// reuseGlobIncludes decides whether later globs together relabel every file of an earlier one,
+// under the REUSE 3.3 glob dialect. Positive: the whole tree, a directory below a directory, a
+// suffix in any directory, an identical path, and unions no one of whose globs covers alone: the
+// whole tree spelled as "*", ".*", "*/**" and ".*/**" (a star matches a leading dot, so "*" and
+// "*/**" are enough) and a directory as its files plus its subdirectories. Negative: a single
+// star stops at "/", a narrower glob does not hold a wider one, two sibling files differ, and a
+// union that leaves subdirectories out is no whole tree. Boundary: an escaped star is a literal,
+// which a star includes and which does not include a star, and no globs include nothing.
 func TestReuseGlobIncludes_3D(t *testing.T) {
 	for _, tc := range []struct {
-		outer, inner string
-		want         bool
+		outers []string
+		inner  string
+		want   bool
 	}{
-		{"**", "tools/vendor/upstream/**", true},
-		{"docs/**", "docs/a/*.md", true},
-		{"**/*.md", "docs/*.md", true},
-		{"a/b.txt", "a/b.txt", true},
-		{"**", "**", true},
-		{"*.md", "docs/x.md", false},
-		{"docs/*.md", "**/*.md", false},
-		{"tools/vendor/upstream/**", "**", false},
-		{"a/b.txt", "a/c.txt", false},
-		{"**/*.md", "docs/**", false},
-		{"a*", `a\*`, true},
-		{`a\*`, "a*", false},
+		{[]string{"**"}, "tools/vendor/upstream/**", true},
+		{[]string{"docs/**"}, "docs/a/*.md", true},
+		{[]string{"**/*.md"}, "docs/*.md", true},
+		{[]string{"a/b.txt"}, "a/b.txt", true},
+		{[]string{"**"}, "**", true},
+		{[]string{"*", ".*", "*/**", ".*/**"}, "**", true},
+		{[]string{"*", "*/**"}, "**", true},
+		{[]string{"docs/*", "docs/*/**"}, "docs/**", true},
+		{[]string{"*", ".*", "*/**", ".*/**"}, "**/*.patch", true},
+		{[]string{"*.md"}, "docs/x.md", false},
+		{[]string{"docs/*.md"}, "**/*.md", false},
+		{[]string{"tools/vendor/upstream/**"}, "**", false},
+		{[]string{"a/b.txt"}, "a/c.txt", false},
+		{[]string{"**/*.md"}, "docs/**", false},
+		{[]string{"*", ".*", ".*/**"}, "**", false},
+		{[]string{"*", ".*", ".*/**"}, "*/**", false},
+		{[]string{"a*"}, `a\*`, true},
+		{[]string{`a\*`}, "a*", false},
+		{nil, "a.txt", false},
 	} {
-		if got := reuseGlobIncludes(tc.outer, tc.inner); got != tc.want {
-			t.Errorf("reuseGlobIncludes(%q, %q) = %v, want %v", tc.outer, tc.inner, got, tc.want)
+		if got := reuseGlobIncludes(tc.outers, tc.inner); got != tc.want {
+			t.Errorf("reuseGlobIncludes(%q, %q) = %v, want %v", tc.outers, tc.inner, got, tc.want)
 		}
 	}
 }
@@ -100,8 +112,8 @@ func TestReuseShadowedPaths_DefaultOrder(t *testing.T) {
 		t.Fatalf("praetor's own %s shadows %v", ReuseFile, shadows)
 	}
 	shadows := shadowsOf(t, defaultAfterOverride)
-	want := []ReuseShadow{{Table: 1, Path: "vendor/upstream/**", By: 2, ByPath: "**"}, {Table: 1, Path: "NOTICE", By: 2, ByPath: "**"}}
-	if len(shadows) != len(want) || shadows[0] != want[0] || shadows[1] != want[1] {
+	want := []ReuseShadow{{Table: 1, Path: "vendor/upstream/**", By: 2, ByPaths: []string{"**"}}, {Table: 1, Path: "NOTICE", By: 2, ByPaths: []string{"**"}}}
+	if !reflect.DeepEqual(shadows, want) {
 		t.Fatalf("default after override: %+v, want %+v", shadows, want)
 	}
 	if text := shadows[0].String(); !strings.Contains(text, `annotation 1 path "vendor/upstream/**" never takes effect`) ||
@@ -121,7 +133,7 @@ func TestReuseShadowedPaths_Boundary(t *testing.T) {
 	}
 	narrower := overrideAfterDefault + "\n[[annotations]]\npath = \"NOTICE\"\nSPDX-License-Identifier = \"Apache-2.0\"\n"
 	shadows := shadowsOf(t, narrower)
-	if len(shadows) != 1 || shadows[0] != (ReuseShadow{Table: 2, Path: "NOTICE", By: 3, ByPath: "NOTICE"}) {
+	if !reflect.DeepEqual(shadows, []ReuseShadow{{Table: 2, Path: "NOTICE", By: 3, ByPaths: []string{"NOTICE"}}}) {
 		t.Fatalf("only NOTICE of table 2 is shadowed, by table 3: %+v", shadows)
 	}
 	// One table of n paths followed by one of m paths makes n*m pairs: exactly the bound passes,
@@ -140,5 +152,54 @@ func TestReuseShadowedPaths_Boundary(t *testing.T) {
 	pastBound := []ReuseAnnotation{wide("a", maxReuseShadowChecks/256), wide("b", 256), wide("c", 1)}
 	if _, err := ReuseShadowedPaths(pastBound); err == nil || !strings.Contains(err.Error(), "path pairs") {
 		t.Fatalf("past the comparison bound: %v", err)
+	}
+}
+
+// unionAfterOverride places a whole-tree default spelled as four globs after an override, the
+// order that relabels every patch EUPL-1.2.
+const unionAfterOverride = `version = 1
+
+[[annotations]]
+path = "**/*.patch"
+precedence = "override"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+[[annotations]]
+path = ["*", ".*", "*/**", ".*/**"]
+precedence = "closest"
+SPDX-License-Identifier = "EUPL-1.2"
+`
+
+// Later globs shadow a path together. Positive: the same union placed first shadows nothing.
+// Negative: the union default after the override shadows it and is named with all its globs, and
+// a directory whose files and subdirectories two later tables cover between them is shadowed by
+// the second, with the tables named as a range and an unrelated table between them skipped.
+// Boundary: a range that still leaves some files to the earlier path is no shadow.
+func TestReuseShadowedPaths_Union(t *testing.T) {
+	defaultFirst := "version = 1\n\n[[annotations]]\npath = [\"*\", \".*\", \"*/**\", \".*/**\"]\nSPDX-License-Identifier = \"EUPL-1.2\"\n\n" +
+		"[[annotations]]\npath = \"**/*.patch\"\nSPDX-License-Identifier = \"LGPL-2.1-or-later\"\n"
+	if shadows := shadowsOf(t, defaultFirst); len(shadows) != 0 {
+		t.Fatalf("the union default placed first shadows %+v", shadows)
+	}
+	want := []ReuseShadow{{Table: 1, Path: "**/*.patch", By: 2, ByPaths: []string{"*", ".*", "*/**", ".*/**"}}}
+	shadows := shadowsOf(t, unionAfterOverride)
+	if !reflect.DeepEqual(shadows, want) {
+		t.Fatalf("the union default after the override: %+v, want %+v", shadows, want)
+	}
+	if text := shadows[0].String(); !strings.Contains(text, `annotation 2 paths "*", ".*", "*/**", ".*/**", after it, matches every file`) {
+		t.Errorf("the finding does not name the union: %s", text)
+	}
+	split := []ReuseAnnotation{{Paths: []string{"docs/**"}}, {Paths: []string{"src/**"}}, {Paths: []string{"docs/*"}},
+		{Paths: []string{"docs/*/**"}}, {Paths: []string{"NOTICE"}}}
+	shadows, err := ReuseShadowedPaths(split)
+	if err != nil || !reflect.DeepEqual(shadows, []ReuseShadow{{Table: 1, Path: "docs/**", By: 4}}) {
+		t.Fatalf("a directory two later tables cover between them: %+v, %v", shadows, err)
+	}
+	if text := shadows[0].String(); !strings.Contains(text, "annotations 2 to 4, after it, together match every file") ||
+		!strings.Contains(text, "move annotation 1 after annotation 4") {
+		t.Errorf("the finding does not name the range: %s", text)
+	}
+	if shadows, err := ReuseShadowedPaths(split[:3]); err != nil || len(shadows) != 0 {
+		t.Fatalf("a range leaving the subdirectories in effect: %+v, %v", shadows, err)
 	}
 }

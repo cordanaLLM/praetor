@@ -7,6 +7,7 @@ package supplychain
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -166,37 +167,57 @@ func ReuseLabels(tables []ReuseAnnotation, subject, license string) bool {
 	return false
 }
 
-// ReuseShadow is one path glob of a REUSE.toml annotation table that never takes effect: a later
-// table's glob matches every path it does, and REUSE 3.3 applies to a file only the last table in
-// the file whose path matches it.
+// ReuseShadow is one path glob of a REUSE.toml annotation table that never takes effect: the
+// globs of the tables after it match every path it does, and REUSE 3.3 applies to a file only the
+// last table in the file whose path matches it.
 type ReuseShadow struct {
 	// Table and Path are the shadowed table, numbered from 1 in file order, and its glob.
 	Table int
 	Path  string
-	// By and ByPath are the first later table whose glob matches every path of Path, and that glob.
-	By     int
-	ByPath string
+	// By is the later table that completes the shadow: the globs of the tables after Table up to
+	// By together match every file of Path, and those before By do not.
+	By int
+	// ByPaths are the globs of By when they match every file of Path on their own, as a whole-tree
+	// default does, and nil when only the tables up to By together do.
+	ByPaths []string
 }
 
 // String names the shadow and why the annotation does not take effect.
 func (s ReuseShadow) String() string {
-	return fmt.Sprintf("%s annotation %d path %q never takes effect: annotation %d path %q, after it, matches every file it names, "+
-		"and REUSE applies only the last matching annotation, whatever its precedence; move annotation %d after annotation %d",
-		ReuseFile, s.Table, s.Path, s.By, s.ByPath, s.Table, s.By)
+	shadow := fmt.Sprintf("annotations %d to %d, after it, together match", s.Table+1, s.By)
+	if len(s.ByPaths) > 0 {
+		shadow = fmt.Sprintf("annotation %d %s, after it, matches", s.By, reusePathsText(s.ByPaths))
+	}
+	return fmt.Sprintf("%s annotation %d path %q never takes effect: %s every file it names, and REUSE applies only the last "+
+		"matching annotation, whatever its precedence; move annotation %d after annotation %d",
+		ReuseFile, s.Table, s.Path, shadow, s.Table, s.By)
+}
+
+// reusePathsText names the globs of one table: path "**", or paths "*", "*/**".
+func reusePathsText(paths []string) string {
+	quoted := make([]string, 0, len(paths))
+	for _, glob := range paths {
+		quoted = append(quoted, strconv.Quote(glob))
+	}
+	if len(quoted) == 1 {
+		return "path " + quoted[0]
+	}
+	return "paths " + strings.Join(quoted, ", ")
 }
 
 // maxReuseShadowChecks bounds the glob pairs one ReuseShadowedPaths compares (HISS-02).
 const maxReuseShadowChecks = 1 << 16
 
 // ReuseShadowedPaths returns every path glob of tables whose files all resolve to a later table:
-// the record REUSE resolves for each of them is that table, never this one. The specification
+// the record REUSE resolves for each of them is a later table, never this one. The specification
 // says so for any precedence ("exclusively the last matching table in the file is used"), and
 // the reuse tool reads the tables from the last (reuse/global_licensing.py,
 // ReuseTOML.find_annotations_item): precedence = "override" or "aggregate" decides only between
 // the table and licensing information inside the file or in other REUSE.toml files. A default
-// table placed after an override is the usual cause. A later glob matching only some of the
-// paths, such as a narrower override after a whole-tree default, leaves the rest in effect and
-// is no shadow. A file holding more than maxReuseShadowChecks pairs of a path and a later path is
+// table placed after an override is the usual cause, whether it names the whole tree with "**" or
+// with several globs such as "*", ".*", "*/**" and ".*/**". Later globs matching only some of the
+// paths, such as a narrower override after a whole-tree default, leave the rest in effect and are
+// no shadow. A file holding more than maxReuseShadowChecks pairs of a path and a later path is
 // refused before the first comparison, never answered in part.
 func ReuseShadowedPaths(tables []ReuseAnnotation) ([]ReuseShadow, error) {
 	pairs, later := 0, 0
@@ -210,25 +231,53 @@ func ReuseShadowedPaths(tables []ReuseAnnotation) ([]ReuseShadow, error) {
 	var shadows []ReuseShadow
 	for index := range tables {
 		for _, glob := range tables[index].Paths {
-			if by, byPath := reuseShadowOf(tables[index+1:], glob); by > 0 {
-				shadows = append(shadows, ReuseShadow{Table: index + 1, Path: glob, By: index + 1 + by, ByPath: byPath})
+			if by := reuseShadowOf(tables[index+1:], glob); by > 0 {
+				shadows = append(shadows, newReuseShadow(tables, index, glob, index+by))
 			}
 		}
 	}
 	return shadows, nil
 }
 
-// reuseShadowOf returns the position in later, from 1, and the glob of the first table whose glob
-// matches every path glob does, or 0 when none does.
-func reuseShadowOf(later []ReuseAnnotation, glob string) (by int, byPath string) {
-	for index, table := range later {
-		for _, candidate := range table.Paths {
-			if reuseGlobIncludes(candidate, glob) {
-				return index + 1, candidate
-			}
+// newReuseShadow is the shadow of glob, a path of tables[table], completed by tables[by].
+func newReuseShadow(tables []ReuseAnnotation, table int, glob string, by int) ReuseShadow {
+	shadow := ReuseShadow{Table: table + 1, Path: glob, By: by + 1}
+	if reuseGlobIncludes(tables[by].Paths, glob) {
+		shadow.ByPaths = tables[by].Paths
+	}
+	return shadow
+}
+
+// maxReuseShadowSearch bounds the halvings of one reuseShadowOf search (HISS-02): enough for any
+// slice length.
+const maxReuseShadowSearch = 64
+
+// reuseShadowOf returns the position in later, from 1, of the table that completes the shadow of
+// glob: the first k for which the globs of later[:k] together match every path glob does, or 0
+// when all of later does not. Coverage only grows with k, so the search halves the range.
+func reuseShadowOf(later []ReuseAnnotation, glob string) int {
+	if !reuseGlobIncludes(reuseTablePaths(later), glob) {
+		return 0
+	}
+	low, high := 1, len(later)
+	for pass := 0; low < high && pass < maxReuseShadowSearch; pass++ {
+		middle := low + (high-low)/2
+		if reuseGlobIncludes(reuseTablePaths(later[:middle]), glob) {
+			high = middle
+		} else {
+			low = middle + 1
 		}
 	}
-	return 0, ""
+	return high
+}
+
+// reuseTablePaths returns the globs of tables, in file order.
+func reuseTablePaths(tables []ReuseAnnotation) []string {
+	var paths []string
+	for _, table := range tables {
+		paths = append(paths, table.Paths...)
+	}
+	return paths
 }
 
 // relation reports whether one of the table's globs matches every file subject names (covers)

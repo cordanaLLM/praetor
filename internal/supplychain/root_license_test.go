@@ -25,6 +25,11 @@ const eupl = "EUROPEAN UNION PUBLIC LICENCE v. 1.2\nEUPL (c) the European Union 
 // rootDefault is a REUSE.toml labelling the whole tree EUPL-1.2.
 const rootDefault = "version = 1\n\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n"
 
+// unionDefault labels the whole tree EUPL-1.2 with four globs no one of which covers it alone, as
+// a repository that spells out its dotfiles does, followed by a narrower override.
+const unionDefault = "version = 1\n\n[[annotations]]\npath = [\"*\", \".*\", \"*/**\", \".*/**\"]\nprecedence = \"closest\"\n" +
+	"SPDX-License-Identifier = \"EUPL-1.2\"\n\n[[annotations]]\npath = [\"vendor/**\"]\nSPDX-License-Identifier = \"MIT\"\n"
+
 // licensedRoot writes files, relative path to text, below a fresh root and returns it.
 func licensedRoot(t *testing.T, files map[string]string) string {
 	t.Helper()
@@ -74,6 +79,10 @@ func TestCheckRootLicensePositive(t *testing.T) {
 	if report := checkRoot(t, single); report.License != "MIT" || len(report.Findings) != 0 {
 		t.Fatalf("one LICENSES text, no REUSE.toml: %+v", report)
 	}
+	union := withFile(base, ReuseFile, unionDefault)
+	if report := checkRoot(t, licensedRoot(t, union)); report.Skipped != "" || report.License != "EUPL-1.2" || len(report.Findings) != 0 {
+		t.Fatalf("a whole-tree default spelled as a union of globs: %+v", report)
+	}
 	kept := withFile(base, "COPYING", "GNU GENERAL PUBLIC LICENSE\n")
 	if report := checkRoot(t, licensedRoot(t, kept), keep("COPYING", "2026-12-31")); len(report.Findings) != 0 || !slices.Equal(report.Kept, []string{"COPYING"}) {
 		t.Fatalf("an upstream COPYING kept by a live exception: %+v", report)
@@ -100,6 +109,8 @@ func TestCheckRootLicenseNegative(t *testing.T) {
 		"lower case":      {withFile(base, "copying.txt", "x\n"), nil, "copying.txt: a second root licence file"},
 		"expired":         {withFile(base, "COPYING", "x\n"), []config.Exception{keep("COPYING", "2026-10-06")}, "its root-license-notice exception expired on 2026-10-06"},
 		"stale exception": {base, []config.Exception{keep("COPYING", "2026-12-31")}, "exceptions entry COPYING (root-license-notice): keeps no root file"},
+		"union default": {withFile(withFile(withFile(base, ReuseFile, unionDefault), LicensesDir+"/MIT.txt", "MIT License\n"), "LICENSE-MIT", "MIT License\n"),
+			nil, "LICENSE-MIT: a second root licence file"},
 	} {
 		report := checkRoot(t, licensedRoot(t, tc.files), tc.exceptions...)
 		if !slices.ContainsFunc(report.Findings, func(finding string) bool { return strings.Contains(finding, tc.want) }) {
@@ -123,6 +134,10 @@ func TestCheckRootLicenseBoundary(t *testing.T) {
 	several := map[string]string{LicensesDir + "/MIT.txt": "m\n", LicensesDir + "/Apache-2.0.txt": "a\n"}
 	if report := checkRoot(t, licensedRoot(t, several)); !strings.Contains(report.Skipped, "holds 2 licence texts") {
 		t.Errorf("several texts, no REUSE.toml: %+v", report)
+	}
+	gap := withFile(several, ReuseFile, strings.Replace(unionDefault, `"*/**", `, "", 1))
+	if report := checkRoot(t, licensedRoot(t, gap)); !strings.Contains(report.Skipped, "holds 2 licence texts") {
+		t.Errorf("a union of globs that leaves subdirectories out is no whole-tree default: %+v", report)
 	}
 	base := map[string]string{LicensesDir + "/EUPL-1.2.txt": eupl, ReuseFile: rootDefault, RootLicenseFile: eupl, "LICENSE.d/readme": "x\n"}
 	if report := checkRoot(t, licensedRoot(t, base)); len(report.Findings) != 0 {
