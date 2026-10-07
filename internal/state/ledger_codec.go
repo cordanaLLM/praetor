@@ -21,11 +21,13 @@ const (
 )
 
 // ledgerMetadata is one record's sidecar payload. ResolvedAt is when the record was closed:
-// a bug's resolution, a question's decision.
+// a bug's resolution, a question's decision. Kind is a bug's kind (BugKinds); it is omitted
+// while empty, so a record without one keeps the bytes it had before the member existed.
 type ledgerMetadata struct {
 	Context    string    `json:"context"`
 	CreatedAt  time.Time `json:"created_at"`
 	ResolvedAt time.Time `json:"resolved_at"`
+	Kind       string    `json:"kind,omitempty"`
 }
 
 // ledgerIDNumber parses a canonical ledger ID such as BUG-007 or Q-012.
@@ -103,12 +105,14 @@ func claimsLedgerRow(line, prefix string) bool {
 }
 
 // decodeLedgerMetadataJSON is the one strict metadata reader for every ledger and form:
-// unknown, missing, null, duplicate and case-alias fields are rejected.
+// unknown, missing, null, duplicate and case-alias fields are rejected. kind is the one
+// optional member; whether a ledger accepts it is the ledger's decision (sidecarSpec.kinds).
 func decodeLedgerMetadataJSON(raw []byte) (*ledgerMetadata, error) {
 	var wire *struct {
 		Context    *string    `json:"context"`
 		CreatedAt  *time.Time `json:"created_at"`
 		ResolvedAt *time.Time `json:"resolved_at"`
+		Kind       *string    `json:"kind"`
 	}
 	if err := json.Unmarshal(raw, &wire, json.RejectUnknownMembers(true)); err != nil {
 		return nil, fmt.Errorf("invalid ledger metadata: %w", err)
@@ -116,5 +120,12 @@ func decodeLedgerMetadataJSON(raw []byte) (*ledgerMetadata, error) {
 	if wire == nil || wire.Context == nil || wire.CreatedAt == nil || wire.ResolvedAt == nil {
 		return nil, fmt.Errorf("ledger metadata requires context, created_at and resolved_at")
 	}
-	return &ledgerMetadata{*wire.Context, *wire.CreatedAt, *wire.ResolvedAt}, nil
+	metadata := &ledgerMetadata{Context: *wire.Context, CreatedAt: *wire.CreatedAt, ResolvedAt: *wire.ResolvedAt}
+	if wire.Kind != nil {
+		if *wire.Kind == "" {
+			return nil, fmt.Errorf("ledger metadata kind must be omitted rather than empty")
+		}
+		metadata.Kind = *wire.Kind
+	}
+	return metadata, nil
 }

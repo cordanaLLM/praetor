@@ -30,7 +30,7 @@ const (
 )
 
 func metadataOf(bug BugEntry) ledgerMetadata {
-	return ledgerMetadata{bug.Context, bug.CreatedAt, bug.ResolvedAt}
+	return ledgerMetadata{Context: bug.Context, CreatedAt: bug.CreatedAt, ResolvedAt: bug.ResolvedAt, Kind: bug.Kind}
 }
 
 func bugNumber(id string) (int, error) {
@@ -62,6 +62,9 @@ func validateBug(bug BugEntry) error {
 	}
 	if !slices.Contains([]string{"open", "investigating", "deferred", "resolved"}, bug.Status) {
 		return fmt.Errorf("invalid bug status %q", bug.Status)
+	}
+	if bug.Kind != "" && !slices.Contains(BugKinds(), bug.Kind) {
+		return fmt.Errorf("invalid bug kind %q: want %s", bug.Kind, strings.Join(BugKinds(), " or "))
 	}
 	for _, field := range []string{bug.Title, bug.Location, bug.Resolution, bug.Context} {
 		if err := validateLedgerText(field); err != nil {
@@ -159,6 +162,6 @@ func decodeBugRow(line string, index ledgerMetaIndex) (BugEntry, bugRowForm, err
 		return BugEntry{}, form, err
 	}
 	bug.Title, bug.Location, bug.Resolution = decodeLedgerCell(rawParts[2]), decodeLedgerCell(rawParts[5]), decodeLedgerCell(rawParts[6])
-	bug.Context, bug.CreatedAt, bug.ResolvedAt = metadata.Context, metadata.CreatedAt, metadata.ResolvedAt
+	bug.Context, bug.CreatedAt, bug.ResolvedAt, bug.Kind = metadata.Context, metadata.CreatedAt, metadata.ResolvedAt, metadata.Kind
 	return bug, form, validateBug(bug)
 }

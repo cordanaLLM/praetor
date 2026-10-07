@@ -97,6 +97,7 @@ func (l *effectiveLoader) pinnedLayer(path, kind string, pin lockEntry) (PolicyL
 	}
 	layer.Complexity = archetype.Complexity
 	layer.Controls = archetype.Controls
+	layer.Backlog = archetype.Backlog
 	l.retainArtifact(path, kind, data, policyDigest(data))
 	return layer, nil
 }

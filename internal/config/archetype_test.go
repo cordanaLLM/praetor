@@ -177,6 +177,23 @@ var archetypeKeyProbes = map[string]string{
 	"branch_protection.dismiss_stale_reviews": "true", "branch_protection.review_mode": "independent",
 	"supply_chain.slsa_level": "2", "supply_chain.enforce_cosign": "true", "supply_chain.require_sbom": "true",
 	"linters": "[semgrep]", "devcontainer_features": `["ghcr.io/devcontainers/features/go:1"]`,
+	"backlog.caps.defects.max": "80", "backlog.caps.defects.action": "gate",
+	"backlog.caps.tasks.max": "40", "backlog.caps.tasks.action": "batch",
+	"backlog.caps.questions.max": "10", "backlog.caps.questions.action": "report",
+	"backlog.caps.forge_alerts.max": "20", "backlog.caps.forge_alerts.action": "report",
+}
+
+// probeDocument spells one dotted key as nested mappings holding value.
+func probeDocument(key, value string) string {
+	parts := strings.Split(key, ".")
+	var document strings.Builder
+	for depth, part := range parts {
+		document.WriteString(strings.Repeat("  ", depth) + part + ":")
+		if depth < len(parts)-1 {
+			document.WriteString("\n")
+		}
+	}
+	return document.String() + " " + value + "\n"
 }
 
 // ArchetypeKeys lists the closed schema with sections spelled dotted and never bare, and
@@ -186,7 +203,7 @@ func TestArchetypeKeysListTheClosedSchema(t *testing.T) {
 	if len(keys) != len(archetypeKeyProbes) || !slices.IsSorted(keys) {
 		t.Fatalf("keys = %v, want the %d probed keys in order", keys, len(archetypeKeyProbes))
 	}
-	for _, section := range []string{"complexity", "memory", "branch_protection", "supply_chain"} {
+	for _, section := range []string{"complexity", "memory", "branch_protection", "supply_chain", "backlog", "backlog.caps"} {
 		if slices.Contains(keys, section) {
 			t.Errorf("section %s listed bare", section)
 		}
@@ -197,11 +214,7 @@ func TestArchetypeKeysListTheClosedSchema(t *testing.T) {
 			t.Errorf("key %s has no probe value", key)
 			continue
 		}
-		document := key + ": " + value + "\n"
-		if section, member, nested := strings.Cut(key, "."); nested {
-			document = section + ":\n  " + member + ": " + value + "\n"
-		}
-		_, err := decodeArchetype(t.Context(), "catalog/probe.yaml", []byte(document))
+		_, err := decodeArchetype(t.Context(), "catalog/probe.yaml", []byte(probeDocument(key, value)))
 		if refused := key == "branch_protection.review_mode"; (err != nil) != refused {
 			t.Errorf("%s: decode error %v, refused %t", key, err, refused)
 		}

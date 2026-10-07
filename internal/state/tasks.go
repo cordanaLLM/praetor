@@ -19,12 +19,14 @@ import (
 // the constant exists so every scanner loop has a statically verifiable bound.
 const maxScannedLines = 200000
 
-// TaskItem represents an actionable task in OPEN.md or BACKLOG.md.
+// TaskItem represents an actionable task in OPEN.md or BACKLOG.md. Section is the text of the
+// nearest Markdown heading above the row, empty when none precedes it.
 type TaskItem struct {
 	Index         int    `json:"index"`
 	Description   string `json:"description"`
 	Completed     bool   `json:"completed"`
 	CompletedDate string `json:"completed_date,omitempty"`
+	Section       string `json:"section,omitempty"`
 }
 
 // ListTasks parses OPEN.md and returns all task items, bounded by the deadline
@@ -56,6 +58,7 @@ func ListTasksContext(ctx context.Context, rootPath string) ([]TaskItem, error) 
 			Index:       task.index,
 			Description: task.description,
 			Completed:   task.completed,
+			Section:     task.section,
 		})
 	}
 	return items, nil
@@ -236,6 +239,7 @@ type taskLine struct {
 	line        int
 	description string
 	completed   bool
+	section     string
 }
 
 // parseTaskLines is the single numbering authority for OPEN.md. Listing and
@@ -249,7 +253,7 @@ func parseTaskLines(lines []string) ([]taskLine, error) {
 	}
 	tasks := make([]taskLine, 0, len(lines))
 	var fence util.MarkdownFence
-	opened := 0
+	opened, section := 0, ""
 	for i := 0; i < len(lines); i++ {
 		if len(lines[i]) >= maxTaskLineBytes {
 			return nil, fmt.Errorf("OPEN.md line %d reaches the %d byte line bound", i+1, maxTaskLineBytes)
@@ -261,16 +265,31 @@ func parseTaskLines(lines []string) ([]taskLine, error) {
 		if fence.Inside(trimmed) {
 			continue
 		}
+		if heading, ok := taskHeading(trimmed); ok {
+			section = heading
+			continue
+		}
 		description, completed, ok := taskCheckbox(trimmed)
 		if !ok {
 			continue
 		}
-		tasks = append(tasks, taskLine{index: len(tasks) + 1, line: i, description: description, completed: completed})
+		tasks = append(tasks, taskLine{index: len(tasks) + 1, line: i, description: description, completed: completed, section: section})
 	}
 	if fence.Open() {
 		return nil, fmt.Errorf("OPEN.md has an unterminated code fence opened at line %d; every row after it would be read as an example", opened)
 	}
 	return tasks, nil
+}
+
+// taskHeading returns the text of an ATX heading line ("## In-Flight Tasks"), reporting
+// whether the trimmed line is one: one to six '#' followed by a space or the end of the line.
+func taskHeading(trimmed string) (string, bool) {
+	text := strings.TrimLeft(trimmed, "#")
+	level := len(trimmed) - len(text)
+	if level < 1 || level > 6 || (text != "" && text[0] != ' ' && text[0] != '\t') {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimRight(strings.TrimSpace(text), "#")), true
 }
 
 // taskCheckbox splits a trimmed line into its checkbox state and description,
