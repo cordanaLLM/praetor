@@ -74,7 +74,10 @@ func archiveMarker(line []byte) (string, bool) {
 	if len(text) < len("-- --") || text[:3] != "-- " || text[len(text)-3:] != " --" {
 		return "", false
 	}
-	return string(bytes.TrimSpace([]byte(text[3 : len(text)-3]))), true
+	// "-- --" shares its one space between prefix and suffix: it names nothing, so checkArchiveName
+	// refuses it as an empty name.
+	end := max(3, len(text)-3)
+	return string(bytes.TrimSpace([]byte(text[3:end]))), true
 }
 
 // checkArchiveName refuses a name that cannot be staged under the fixture root, a repeated

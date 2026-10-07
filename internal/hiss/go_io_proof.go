@@ -28,8 +28,9 @@ type ioTarget struct {
 	ImportPath string
 	// RecvType is the base type of the enclosing method's receiver, for a call made through it.
 	RecvType string
-	// Field is the receiver field a log/slog sink method is called on.
-	Field string
+	// Struct and Field name the field a log/slog sink method is called on: a field of a
+	// parameter or receiver of the package type Struct (loggerProof.sink).
+	Struct, Field string
 	// Name is the function, method or sink method called.
 	Name string
 }
@@ -64,10 +65,18 @@ func newCallSite(im GoImports, dir, pkg string, fn *ast.FuncDecl, count func(str
 	return site
 }
 
+// resolve names what call reaches for the package pass: the field a log/slog sink method is
+// called on when the logger proof deferred it (sink), and otherwise the function target names.
+func (s callSite) resolve(call *ast.CallExpr, sink sinkVerdict) (ioTarget, bool) {
+	if sink.kind == fieldSink {
+		return ioTarget{Dir: s.dir, Pkg: s.pkg, Struct: sink.Struct, Field: sink.Field, Name: sink.Field}, true
+	}
+	return s.target(call)
+}
+
 // target names the function call reaches: a bare identifier no binding shadows, a method called
-// through the enclosing method's receiver, a function of an imported package no binding shadows,
-// or a log/slog sink method called on a field of the receiver. Anything else names nothing the
-// package pass can judge.
+// through the enclosing method's receiver, or a function of an imported package no binding
+// shadows. Anything else names nothing the package pass can judge.
 func (s callSite) target(call *ast.CallExpr) (ioTarget, bool) {
 	base := ioTarget{Dir: s.dir, Pkg: s.pkg}
 	switch fun := stripTypeArgs(call.Fun).(type) {
@@ -83,21 +92,17 @@ func (s callSite) target(call *ast.CallExpr) (ioTarget, bool) {
 // selectorTarget resolves a selector callee (target).
 func (s callSite) selectorTarget(base ioTarget, sel *ast.SelectorExpr) (ioTarget, bool) {
 	base.Name = sel.Sel.Name
-	switch x := ast.Unparen(sel.X).(type) {
-	case *ast.Ident:
-		if s.isReceiver(x) {
-			base.RecvType = s.recvType
-			return base, true
-		}
-		path, bound := s.im.Path(x.Name)
-		base.ImportPath = path
-		return base, bound && s.count(x.Name) == 0
-	case *ast.SelectorExpr:
-		recv, ok := ast.Unparen(x.X).(*ast.Ident)
-		base.RecvType, base.Field = s.recvType, x.Sel.Name
-		return base, ok && s.isReceiver(recv) && neutralMethod("log/slog", "Logger", sel.Sel.Name)
+	x, ok := ast.Unparen(sel.X).(*ast.Ident)
+	if !ok {
+		return base, false
 	}
-	return base, false
+	if s.isReceiver(x) {
+		base.RecvType = s.recvType
+		return base, true
+	}
+	path, bound := s.im.Path(x.Name)
+	base.ImportPath = path
+	return base, bound && s.count(x.Name) == 0
 }
 
 // isReceiver reports whether x is the enclosing method's receiver: its name, bound once where
@@ -111,15 +116,23 @@ func slashDir(rel string) string {
 	return slashpath.Dir(filepath.ToSlash(rel))
 }
 
+// spreads reports whether argument arg of call is spread into a variadic parameter, which the
+// package pass never follows. Every argument before the spread one maps to its own parameter.
+func spreads(call *ast.CallExpr, arg int) bool {
+	return call.Ellipsis.IsValid() && arg == len(call.Args)-1
+}
+
 // deferProof keeps, beside the finding just recorded for call, what the package pass may prove
-// to discharge it. A call with a spread argument passes its contexts to a variadic parameter,
-// which the callee walk does not follow.
-func (g *goScanner) deferProof(call *ast.CallExpr, args []int) {
-	if call.Ellipsis.IsValid() {
-		return
+// to discharge it: the deadline-free contexts at args, and what call reaches (callSite.resolve,
+// with the logger proof's verdict sink). A context spread into a variadic parameter gets none.
+func (g *goScanner) deferProof(call *ast.CallExpr, args []int, sink sinkVerdict) {
+	for i := 0; i < len(args); i++ {
+		if spreads(call, args[i]) {
+			return
+		}
 	}
 	site := newCallSite(g.imports, slashDir(g.rel), g.pkg, g.enclosingFunc(), g.scope.count)
-	target, ok := site.target(call)
+	target, ok := site.resolve(call, sink)
 	if !ok {
 		return
 	}

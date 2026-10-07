@@ -42,12 +42,13 @@ func TestParseArchive_Positive_SplitsFilesAndStagesThem(t *testing.T) {
 // name, an empty name and a repeated name are refused, and staging refuses them too.
 func TestParseArchive_Negative_RefusesUnsafeArchives(t *testing.T) {
 	cases := map[string]string{
-		"no marker":  "package p\n",
-		"parent":     "-- ../escape.go --\npackage p\n",
-		"absolute":   "-- /etc/passwd --\nx\n",
-		"unclean":    "-- a/./b.go --\nx\n",
-		"empty name": "--   --\nx\n",
-		"repeated":   "-- a.go --\nx\n-- a.go --\ny\n",
+		"no marker":    "package p\n",
+		"parent":       "-- ../escape.go --\npackage p\n",
+		"absolute":     "-- /etc/passwd --\nx\n",
+		"unclean":      "-- a/./b.go --\nx\n",
+		"empty name":   "--   --\nx\n",
+		"shared space": "-- --\nx\n",
+		"repeated":     "-- a.go --\nx\n-- a.go --\ny\n",
 	}
 	for name, archive := range cases {
 		if _, err := parseArchive([]byte(archive)); !errors.Is(err, errArchive) {

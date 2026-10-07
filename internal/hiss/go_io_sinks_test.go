@@ -90,7 +90,7 @@ func TestGoIOSinks_Positive_UnprovenReceiversAndBlockingSelects(t *testing.T) {
 		"\tclient.ErrorContext(ctx, \"x\")",                        // 15 receiver unproven
 		"\tclient.Log(ctx, entry)",                                 // 16 another type's Log
 		"\ts.remote.ErrorContext(ctx, \"x\")",                      // 17 field is not a logger
-		"\tfunc(s *Server) { s.log.InfoContext(ctx, \"x\") }(nil)", // 18 s is the literal's parameter
+		"\tfunc(s *Other) { s.log.InfoContext(ctx, \"x\") }(nil)",  // 18 s is the literal's parameter of a type with no logger
 		"\tslog := client",                                         // 19
 		"\tslog.InfoContext(ctx, \"x\")",                           // 20 shadowed package
 		"\tselect {",                                               // 21

@@ -33,7 +33,8 @@ lists the evidence and the near misses each one still reports:
 
 - **Lifecycle-owned:** a `context.WithCancel` context used in the start function of a framework
   hook whose stop function cancels it (`fx.Hook` `OnStart` and `OnStop`), as `main.main` owns the
-  process lifetime.
+  process lifetime. The cancel function may be stored in a variable or a field before the stop
+  function calls it.
 - **Sinks:** the `log/slog` functions and `*slog.Logger` methods that take a context only for its
   values, and a `select` whose cases only send to or receive from channels.
 - **Callee-bounded:** a function of the same module that derives `WithTimeout` or `WithDeadline`

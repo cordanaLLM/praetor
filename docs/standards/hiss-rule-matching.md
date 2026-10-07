@@ -255,16 +255,21 @@ not match it is reported as before.
 
 | Shape | Accepted | Still reported | Where |
 | :--- | :--- | :--- | :--- |
-| Lifecycle-owned | `ctx, cancel := context.WithCancel(...)` used inside the `OnStart` literal of an `fx.Hook` whose `OnStop` literal calls `cancel()` as a top-level statement (or `defer cancel()`) | the same context in the constructor body or in `OnStop`; `OnStop` that never calls `cancel`, calls it only in a nested block or closure, or rebinds the name | `lifecycleHooks` in `internal/hiss/go_io_lifecycle.go` |
-| Sinks | the `log/slog` functions and `*slog.Logger` methods `DebugContext`, `InfoContext`, `WarnContext`, `ErrorContext`, `Log`, `LogAttrs`; a `select` whose cases only send to or receive from channels, `<-ctx.Done()` among them | a logger method on a receiver not provably `*slog.Logger`; a `select` case that hands the context to a call | `contextFuncs`, `contextMethods` in `internal/hiss/go_io.go` |
+| Lifecycle-owned | `ctx, cancel := context.WithCancel(...)` used inside the `OnStart` literal of an `fx.Hook` whose `OnStop` literal calls `cancel()` as a top-level statement (or `defer cancel()`); the cancel function may be stored first, in a variable (`cancel = runCancel`) or a field of a name (`h.drainCancel = runCancel`), and `OnStop` then calls that place | the same context in the constructor body or in `OnStop`; `OnStop` that never calls the place, calls it only in a nested block or closure, calls it after a statement that may return (the guard `if cancel == nil { return }` on that very place excepted), rebinds or shadows the name, or reaches it through another call (`return h.stop(ctx)`); a place overwritten or whose holder is reassigned before the context is used | `lifecycleHooks` in `internal/hiss/go_io_lifecycle.go` |
+| Sinks | the `log/slog` functions and `*slog.Logger` methods `DebugContext`, `InfoContext`, `WarnContext`, `ErrorContext`, `Log`, `LogAttrs`, on a receiver proven `*slog.Logger` in the function that holds the finding and in every callee the package pass follows; a `select` whose cases only send to or receive from channels, `<-ctx.Done()` among them | a logger method on a receiver not provably `*slog.Logger` (another type, a field that is not one, a shadowed name); a `select` case that hands the context to a call | `contextFuncs`, `contextMethods` in `internal/hiss/go_io.go`, `loggerProof` in `internal/hiss/go_io_logger.go` |
 | Callee-bounded | a function of the same module that derives `WithTimeout` or `WithDeadline` from the parameter before any other use, followed up to 4 calls deep | a callee that uses the context first, derives the deadline only on one branch, stores, returns or compares it, or hands it to a function outside the module | `internal/hiss/go_io_callee.go` |
-| Ignored by a third-party constructor | `otlptracegrpc.New` and `otlpmetricgrpc.New` at v1.46.0, `otlploggrpc.New` at v0.22.0, as the calling module's `go.mod` requires them | any other version, a module the `go.mod` replaces, a module inside a Go workspace (`go.work`), a file without a `go.mod` | `contextIgnoredBy` in `internal/hiss/go_io_index.go` |
+| Ignored by a third-party constructor | `otlptracegrpc.New` and `otlpmetricgrpc.New` at v1.46.0, `otlploggrpc.New` at v0.22.0, as the calling module's `go.mod` requires them; `otlptracegrpc.New` also needs `go.opentelemetry.io/otel/exporters/otlp/otlptrace` at v1.46.0, the separately versioned module it hands the context to | any other version of either module, a module the `go.mod` replaces, a module inside a Go workspace (`go.work`), a file without a `go.mod` | `contextIgnoredBy` in `internal/hiss/go_io_index.go` |
 
 The `log/slog` evidence is the standard library's own: `Handler.Handle` documents its context as
 present solely to give handlers access to its values, and says canceling it should not affect
-record processing. A `*slog.Logger` receiver is proved by a `log/slog` constructor (`Default`,
-`New`, `With`), a `With` or `WithGroup` chain on a logger, a parameter, local or `var` declared
-`*slog.Logger`, or a field of the enclosing method's receiver whose struct type declares it so.
+record processing. A `*slog.Logger` receiver is proved by one decision, `loggerProof` in
+`internal/hiss/go_io_logger.go`, that the walk of the function holding the finding and the callee
+walk both feed: a `log/slog` constructor (`Default`, `New`, `With`), a `With` or `WithGroup` chain
+on a logger, a parameter, local or `var` declared `*slog.Logger`, or a field of a parameter or
+receiver declared `T` or `*T` for a type `T` of the package whose struct type declares that field
+`*slog.Logger` (the package pass looks the field up, so a dependency struct such as an fx
+`Params` qualifies). A name rebound to anything else, a range variable of the same name and a
+function literal's parameter of the same name end the proof.
 
 The callee walk and the receiver field need files other than the caller's. The walk therefore
 records each finding together with what would discharge it, and the package pass in
@@ -274,13 +279,23 @@ method's receiver, or an import path under the module path of the nearest `go.mo
 (`gomanifest.ParseManifest`). A name declared twice in a package (two build-tagged files), a
 package directory with two package names or an unparsable file, and a directory owned by a nested
 module resolve to nothing, so the finding stays. A callee bounds its parameter when every mention
-of it is a `WithTimeout` or `WithDeadline` argument, a `log/slog` sink argument, the receiver of a
-`context.Context` method, or the argument of another call the pass resolves; a top-level
+of it is a `WithTimeout` or `WithDeadline` argument, the context argument of a `log/slog` sink
+on a proven logger, the receiver of a `context.Context` method (how a `select` reads it), or the
+argument of another call the pass resolves; a call that spreads its last argument still maps its
+fixed arguments one to one, and only a context in the spread position is not followed; a top-level
 `ctx, cancel := context.WithTimeout(ctx, d)` ends the walk, because every later use is the bounded
 context. An unnamed or blank parameter is never used and bounds trivially; a variadic one is not
 followed. The walk holds no recursion (HISS-01): it explores callees on an explicit stack, at most
-4 calls deep (`maxCalleeDepth`) and 64 callees per proof (`maxCalleeNodes`), and a cycle fails the
-proof.
+4 calls deep (`maxCalleeDepth`) and 64 callees per proof (`maxCalleeNodes`, one budget shared by
+every context argument of the call), and a cycle fails the proof.
+
+The lifecycle shape has known gaps, all on the accepting side, because the rule reads one function
+at a time: a cancel place overwritten after the context was used, and a blocking `OnStart` that
+uses the lifecycle context synchronously (`return mgr.Ping(ctx)`). The framework never runs the
+`OnStop` of a hook whose `OnStart` did not return, so such a start is never cancelled; the rule
+cannot tell a hang from a long start. A context that outlives a call without a framework hook,
+such as one whose cancel function a subscribe method returns to its caller, is not lifecycle-owned
+and stays reported.
 
 To propose another shape, open an issue that names the exact code shape, the source it relies on
 at a named version (a framework's stop hook, a function's body), and a near miss the rule must

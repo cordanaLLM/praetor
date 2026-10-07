@@ -193,15 +193,23 @@ rules:
           whose block has closed are not reported. Four exact shapes are accepted (#841), each
           beside a near miss that stays reported: a WithCancel context used in an fx.Hook
           OnStart whose OnStop calls its cancel (negative/lifecycle-fx-hook-cancel.go;
-          positive/lifecycle-cancel-not-in-onstop.go); the log/slog sinks and a select that only
-          touches channels (negative/slog-and-channel-sinks.go;
-          positive/select-with-blocking-call.go); a same-module callee that derives its own
-          timeout before any other use, followed at most four calls deep
-          (negative/callee-derives-timeout.go, negative/callee-depth-at-bound.go;
-          positive/callee-io-before-timeout.go, positive/callee-depth-over-bound.go); and the OTLP
-          gRPC exporter constructors at the versions their source was read, which the go.mod in
-          an archive fixture states (negative/otel-exporter-checked-version.txtar;
-          positive/otel-exporter-unchecked-version.txtar). exec.Command, net.Dial, DialTCP, DialUDP,
+          positive/lifecycle-cancel-not-in-onstop.go), also when the cancel function is stored in
+          a variable or a struct field first (negative/lifecycle-stored-cancel.go;
+          positive/lifecycle-stored-cancel-not-called.go); the log/slog sinks on a proven logger,
+          in the function itself or in a callee, and a select that only touches channels
+          (negative/slog-and-channel-sinks.go, negative/slog-logger-in-callee.go,
+          negative/callee-select-on-channels.go; positive/select-with-blocking-call.go,
+          positive/slog-lookalike-in-callee.go, positive/callee-select-and-io.go); a same-module
+          callee that derives its own timeout before any other use, followed at most four calls
+          deep, also from a call that spreads its last argument
+          (negative/callee-derives-timeout.go, negative/callee-depth-at-bound.go,
+          negative/spread-argument-callee.go; positive/callee-io-before-timeout.go,
+          positive/callee-depth-over-bound.go, positive/spread-argument-callee-io.go); and the
+          OTLP gRPC exporter constructors at the versions their source was read, in every module
+          the evidence read, which the go.mod in an archive fixture states
+          (negative/otel-exporter-checked-version.txtar;
+          positive/otel-exporter-unchecked-version.txtar,
+          positive/otel-trace-module-unchecked-version.txtar). exec.Command, net.Dial, DialTCP, DialUDP,
           DialIP, DialUnix and http.Get, Head, Post, PostForm and NewRequest are reported as
           calls that take no context, through an alias or a dot import, unless a local shadows
           the package name; net.DialTimeout is bounded by its own timeout. The language

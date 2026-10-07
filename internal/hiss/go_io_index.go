@@ -45,8 +45,17 @@ type ignoredContext struct {
 	Module string
 	// Min and Max bound the versions whose source was read.
 	Min, Max string
+	// With lists the other modules whose source the evidence also read; the go.mod must require
+	// each at a version it covers too, because the build selects the highest version of each
+	// module independently.
+	With []ignoredModule
 	// Evidence cites what that source does with the context.
 	Evidence string
+}
+
+// ignoredModule is a module whose versions from Min to Max inclusive were read.
+type ignoredModule struct {
+	Module, Min, Max string
 }
 
 // contextIgnoredBy lists the third-party functions HISS-02 accepts a deadline-free context for,
@@ -58,9 +67,13 @@ var contextIgnoredBy = map[goFunc]ignoredContext{
 	{"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc", "New"}: {
 		Module: "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc",
 		Min:    "v1.46.0", Max: "v1.46.0",
-		Evidence: "exporter.go New passes ctx to otlptrace.New, whose Exporter.Start hands it to " +
-			"client.Start(context.Context) in client.go, which leaves the parameter unnamed; " +
-			"grpc.NewClient there opens no connection",
+		With: []ignoredModule{{
+			Module: "go.opentelemetry.io/otel/exporters/otlp/otlptrace", Min: "v1.46.0", Max: "v1.46.0",
+		}},
+		Evidence: "otlptracegrpc exporter.go New passes ctx to otlptrace.New, which lives in the separate " +
+			"module go.opentelemetry.io/otel/exporters/otlp/otlptrace (read at v1.46.0, checked beside " +
+			"otlptracegrpc): its Exporter.Start hands ctx to client.Start(context.Context) in " +
+			"otlptracegrpc client.go, which leaves the parameter unnamed; grpc.NewClient there opens no connection",
 	},
 	{"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc", "New"}: {
 		Module: "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc",
@@ -182,7 +195,16 @@ func (x *moduleIndex) allowedAt(dir string, entry ignoredContext) bool {
 	if mod == nil || mod.replaced[entry.Module] || x.inWorkspace(mod.dir) {
 		return false
 	}
-	return versionWithin(mod.requires[entry.Module], entry.Min, entry.Max)
+	if !versionWithin(mod.requires[entry.Module], entry.Min, entry.Max) {
+		return false
+	}
+	for i := 0; i < len(entry.With); i++ {
+		other := entry.With[i]
+		if mod.replaced[other.Module] || !versionWithin(mod.requires[other.Module], other.Min, other.Max) {
+			return false
+		}
+	}
+	return true
 }
 
 // inWorkspace reports whether a go.work lies at dir or above it within the root. A go.work
@@ -214,13 +236,13 @@ func versionWithin(version, low, high string) bool {
 	return ok && loOK && hiOK && semver.Compare(lo, v) <= 0 && semver.Compare(v, hi) <= 0
 }
 
-// loggerField reports whether t's field of the receiver type is declared *slog.Logger.
+// loggerField reports whether t's field of the struct type t.Struct is declared *slog.Logger.
 func (x *moduleIndex) loggerField(t ioTarget) bool {
 	p := x.packageAt(t.Dir, t.Pkg)
 	if p == nil {
 		return false
 	}
-	fields := p.loggerFields[t.RecvType]
+	fields := p.loggerFields[t.Struct]
 	return fields != nil && fields[t.Field]
 }
 

@@ -58,6 +58,24 @@ func (s *goScope) count(name string) int {
 	return s.visible[name]
 }
 
+// bindingEnd returns where a binding made at the node the walk has reached goes out of scope:
+// the innermost open scope for a declaration, and the innermost function for a plain
+// assignment, which writes a variable declared there or further out. It returns NoPos outside
+// every function, where nothing a walk tracks is bound.
+func (s *goScope) bindingEnd(declares bool) token.Pos {
+	for i := len(s.frames) - 1; i >= 0; i-- {
+		node := s.frames[i].node
+		switch node.(type) {
+		case *ast.FuncDecl, *ast.FuncLit:
+			return node.End()
+		}
+		if declares {
+			return node.End()
+		}
+	}
+	return token.NoPos
+}
+
 // enter opens the scope n begins and binds what is in scope from its start: a signature's
 // names, a range clause's variables as the walk reaches the body, and a local type's name.
 func (s *goScope) enter(n ast.Node) {

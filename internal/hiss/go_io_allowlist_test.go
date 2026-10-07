@@ -17,6 +17,8 @@ import (
 const (
 	otlpTraceModule = "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	otlpLogModule   = "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	// otlpTraceBase is the separately versioned module otlptracegrpc.New hands its context to.
+	otlpTraceBase = "go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 )
 
 // otelRoot writes a module whose telemetry package builds the trace and log exporters with
@@ -57,7 +59,7 @@ func hiss02Only(rep *ScanReport) []InvariantViolation {
 
 // Negative: both exporters at the versions read are accepted.
 func TestGoIOAllowlist_Negative_CheckedVersionsAreAccepted(t *testing.T) {
-	root := otelRoot(t, "require (\n\t"+otlpLogModule+" v0.22.0\n\t"+otlpTraceModule+" v1.46.0 // indirect\n)\n")
+	root := otelRoot(t, "require (\n\t"+otlpLogModule+" v0.22.0\n\t"+otlpTraceModule+" v1.46.0 // indirect\n\t"+otlpTraceBase+" v1.46.0 // indirect\n)\n")
 	if found := hiss02Only(scanFixture(t, root, ScanOptions{})); len(found) != 0 {
 		t.Fatalf("exporters at the checked versions ignore the context: %+v", found)
 	}
@@ -86,11 +88,31 @@ func TestGoIOAllowlist_Positive_UncheckedVersionsAreReported(t *testing.T) {
 	if found := hiss02Only(scanFixture(t, bare, ScanOptions{})); len(found) != 2 {
 		t.Fatalf("a go.mod without a module states no version: %+v", found)
 	}
-	checked := "require " + otlpTraceModule + " v1.46.0\nrequire " + otlpLogModule + " v0.22.0\n"
+	checked := "require " + otlpTraceModule + " v1.46.0\nrequire " + otlpTraceBase + " v1.46.0\nrequire " + otlpLogModule + " v0.22.0\n"
 	workspace := otelRoot(t, checked)
 	writeFixture(t, workspace, "go.work", "go 1.27\n\nuse .\n")
 	if found := hiss02Only(scanFixture(t, workspace, ScanOptions{})); len(found) != 2 {
 		t.Fatalf("inside a Go workspace no single go.mod states the version: %+v", found)
+	}
+}
+
+// Positive: otlptracegrpc at the version read is not enough. Its New hands the context to the
+// separately versioned otlptrace module, so a go.mod that selects another version of it, replaces
+// it or does not require it leaves only the trace exporter reported.
+func TestGoIOAllowlist_Positive_TraceModuleIsCheckedToo(t *testing.T) {
+	head := "require " + otlpTraceModule + " v1.46.0\nrequire " + otlpLogModule + " v0.22.0\n"
+	cases := map[string]string{
+		"newer":       head + "require " + otlpTraceBase + " v1.47.0\n",
+		"replaced":    head + "require " + otlpTraceBase + " v1.46.0\nreplace " + otlpTraceBase + " => ../fork\n",
+		"notrequired": head,
+	}
+	for name, requires := range cases {
+		t.Run(name, func(t *testing.T) {
+			found := hiss02Only(scanFixture(t, otelRoot(t, requires), ScanOptions{}))
+			if len(found) != 1 {
+				t.Fatalf("only the trace exporter must be reported at %s: %+v", name, found)
+			}
+		})
 	}
 }
 

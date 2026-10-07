@@ -128,19 +128,6 @@ func neutralMethod(path, typ, name string) bool {
 	return known && effect == ctxNeutral
 }
 
-// loggerType is log/slog's Logger, whose pointer receives the sink methods contextMethods lists.
-var loggerType = map[goFunc]struct{}{{"log/slog", "Logger"}: {}}
-
-// loggerSources are the log/slog functions that return a *slog.Logger.
-var loggerSources = map[goFunc]struct{}{
-	{"log/slog", "Default"}: {},
-	{"log/slog", "New"}:     {},
-	{"log/slog", "With"}:    {},
-}
-
-// loggerDerivations are the methods of *slog.Logger that return another *slog.Logger.
-var loggerDerivations = map[string]struct{}{"With": {}, "WithGroup": {}}
-
 // contextType is context.Context, the declared type of a parameter the callee walk follows.
 var contextType = map[goFunc]struct{}{{"context", "Context"}: {}}
 
@@ -157,12 +144,6 @@ var cancelPairs = map[goFunc]struct{}{
 func namesType[V any](im GoImports, expr ast.Expr, table map[goFunc]V) bool {
 	_, _, _, ok := resolvePackageCall(im, expr, table)
 	return ok
-}
-
-// isLoggerPointer reports whether expr spells *slog.Logger through the file's imports im.
-func isLoggerPointer(im GoImports, expr ast.Expr) bool {
-	star, ok := expr.(*ast.StarExpr)
-	return ok && namesType(im, star.X, loggerType)
 }
 
 // contextlessIO maps a standard-library call that takes no context to the call that
@@ -308,52 +289,44 @@ func (g *goScanner) derivedDeadline(call *ast.CallExpr) (parent ast.Expr, free, 
 	}
 }
 
-// enterFunc starts a function declaration with nothing tracked but its *slog.Logger parameters.
-func (g *goScanner) enterFunc(fn *ast.FuncDecl) {
+// enterFunc starts a function declaration with no deadline-free context and no lifecycle
+// pairing tracked; the logger proof starts with its parameters (loggerProof.track).
+func (g *goScanner) enterFunc() {
 	clear(g.freeContexts)
-	clear(g.loggers)
 	clear(g.lifecycle)
-	g.bindParams(fn.Type, fn.End())
 }
 
 // forgetParams drops a function literal's parameters from what the walk tracks: inside the
 // literal each name is the parameter, not the enclosing variable it may shadow. The enclosing
 // variable stays forgotten after the literal too, which can miss a later use of it but never
-// reports a parameter; a forgotten logger is reported, never exempted.
+// reports a parameter.
 func (g *goScanner) forgetParams(lit *ast.FuncLit) {
-	g.bindParams(lit.Type, lit.End())
-}
-
-// bindParams rebinds every parameter of ft as a parameter, which holds no deadline-free context
-// the walk knows of and no lifecycle pairing, and holds a logger until end exactly when it is
-// declared *slog.Logger.
-func (g *goScanner) bindParams(ft *ast.FuncType, end token.Pos) {
-	if ft == nil || ft.Params == nil {
+	if lit.Type == nil || lit.Type.Params == nil {
 		return
 	}
-	fields := ft.Params.List
+	fields := lit.Type.Params.List
 	for i := 0; i < len(fields); i++ {
-		logger := isLoggerPointer(g.imports, fields[i].Type)
 		for j := 0; j < len(fields[i].Names); j++ {
 			name := fields[i].Names[j].Name
 			delete(g.freeContexts, name)
 			g.forgetLifecycle(name)
-			delete(g.loggers, name)
-			if logger {
-				g.loggers[name] = end
-			}
 		}
 	}
 }
 
 // checkContextSink reports a deadline-free context passed to a call that is not a context
-// derivation or a sink, unless the context is lifecycle-owned there. When the call may reach a
-// function the package pass can judge, the finding carries the proof that would discharge it.
+// derivation or a proven log/slog sink, unless the context is lifecycle-owned there. When the
+// call may reach a function or a logger field the package pass can judge, the finding carries
+// the proof that would discharge it.
 func (g *goScanner) checkContextSink(call *ast.CallExpr) {
 	if !g.ioRuleApplies() {
 		return
 	}
-	if _, classified := g.contextCall(call); classified || g.loggerSink(call) {
+	if _, classified := g.contextCall(call); classified {
+		return
+	}
+	sink := g.logs.sink(call)
+	if sink.kind == provenSink {
 		return
 	}
 	free := g.freeArgs(call)
@@ -364,7 +337,7 @@ func (g *goScanner) checkContextSink(call *ast.CallExpr) {
 	g.record("HISS-02", call.Args[free[0]].Pos(), "",
 		"Context without a deadline reaches a call; derive it with context.WithTimeout or context.WithDeadline")
 	if len(g.rep.Violations) > recorded {
-		g.deferProof(call, free)
+		g.deferProof(call, free, sink)
 	}
 }
 
@@ -378,48 +351,6 @@ func (g *goScanner) freeArgs(call *ast.CallExpr) []int {
 		}
 	}
 	return free
-}
-
-// loggerSink reports whether call is a sink method of a *slog.Logger the walk can prove: its
-// receiver is a log/slog constructor's result, a With or WithGroup of a logger, or a parameter
-// or local holding one (loggers). A receiver field is proved by the package pass instead.
-func (g *goScanner) loggerSink(call *ast.CallExpr) bool {
-	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	return ok && neutralMethod("log/slog", "Logger", sel.Sel.Name) && g.loggerExpr(sel.X)
-}
-
-// loggerExpr reports whether expr evaluates to a *slog.Logger the walk knows of, following
-// With and WithGroup inward to their receiver. The loop is bounded by maxNodeStack.
-func (g *goScanner) loggerExpr(expr ast.Expr) bool {
-	for depth := 0; depth < maxNodeStack; depth++ {
-		switch e := ast.Unparen(expr).(type) {
-		case *ast.Ident:
-			end, held := g.loggers[e.Name]
-			return held && e.Pos() < end
-		case *ast.CallExpr:
-			if _, _, local, ok := resolvePackageCall(g.imports, e.Fun, loggerSources); ok {
-				return !g.shadowed(local)
-			}
-			parent, derives := loggerDerivation(e)
-			if !derives {
-				return false
-			}
-			expr = parent
-		default:
-			return false
-		}
-	}
-	return false
-}
-
-// loggerDerivation returns the receiver of a With or WithGroup method call.
-func loggerDerivation(call *ast.CallExpr) (ast.Expr, bool) {
-	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
-	if !ok {
-		return nil, false
-	}
-	_, derives := loggerDerivations[sel.Sel.Name]
-	return sel.X, derives
 }
 
 // checkContextlessIO reports a standard-library I/O call that takes no context.
@@ -441,42 +372,42 @@ func (g *goScanner) trackContextAssign(assign *ast.AssignStmt) {
 	g.trackContextBinding(assign.Lhs, assign.Rhs, assign.Tok == token.DEFINE)
 }
 
-// trackContextSpec does the same for a var declaration. A variable declared *slog.Logger holds
-// a logger whatever its value.
+// trackContextSpec does the same for a var declaration.
 func (g *goScanner) trackContextSpec(spec *ast.ValueSpec) {
-	lhs := make([]ast.Expr, 0, len(spec.Names))
-	for i := 0; i < len(spec.Names); i++ {
-		lhs = append(lhs, spec.Names[i])
-	}
-	g.trackContextBinding(lhs, spec.Values, true)
-	if spec.Type == nil || !isLoggerPointer(g.imports, spec.Type) {
-		return
-	}
-	for i := 0; i < len(spec.Names); i++ {
-		g.bindTracked(g.loggers, spec.Names[i].Name, true, true)
-	}
+	g.trackContextBinding(identExprs(spec.Names), spec.Values, true)
+}
+
+// ctxBinding is what one bound value makes of the name that receives it.
+type ctxBinding struct {
+	free  bool
+	pair  lifecyclePair
+	owned bool
 }
 
 // trackContextBinding pairs each bound identifier with the value it receives (boundValue) and
-// records whether it now holds a deadline-free context, a logger, and the lifecycle pairing of
-// the context it inherits from. Every value is read before any name is rebound.
+// records whether it now holds a deadline-free context and the lifecycle pairing of the context
+// it inherits from. Every value is read before any name is rebound, so in a swap
+// `a, b = b, a` both values are the ones the names held before the statement.
 func (g *goScanner) trackContextBinding(lhs, rhs []ast.Expr, declares bool) {
+	read := make([]ctxBinding, len(lhs))
+	for i := 0; i < len(lhs); i++ {
+		if value := boundValue(lhs, rhs, i); value != nil {
+			read[i].free = g.deadlineFree(value)
+			read[i].pair, read[i].owned = g.lifecycleOwner(value)
+		}
+	}
 	for i := 0; i < len(lhs); i++ {
 		ident, ok := lhs[i].(*ast.Ident)
 		if !ok || ident.Name == "_" {
 			continue
 		}
-		value := boundValue(lhs, rhs, i)
-		free := value != nil && g.deadlineFree(value)
-		logger := value != nil && g.loggerExpr(value)
-		cancel, owned := g.lifecycleOwner(value)
 		g.forgetLifecycle(ident.Name)
-		g.bindTracked(g.freeContexts, ident.Name, free, declares)
-		g.bindTracked(g.loggers, ident.Name, logger, declares)
-		if owned && free {
-			g.lifecycle[ident.Name] = cancel
+		bindTracked(g.freeContexts, ident.Name, read[i].free, declares, &g.scope)
+		if read[i].owned && read[i].free {
+			g.lifecycle[ident.Name] = read[i].pair
 		}
 	}
+	g.storeCancel(lhs, rhs)
 	g.pairCancel(lhs, rhs)
 }
 
@@ -492,44 +423,4 @@ func boundValue(lhs, rhs []ast.Expr, i int) ast.Expr {
 	default:
 		return nil
 	}
-}
-
-// bindTracked records in tracked whether name is now set, and until where. A declaration lives
-// to the end of the innermost enclosing scope. A plain assignment writes a variable declared
-// earlier: one already tracked keeps its scope, and any other is taken to live to the end of
-// the enclosing function, since a same-named variable of a narrower scope would have been
-// shadowed by it. At package level nothing is tracked.
-func (g *goScanner) bindTracked(tracked map[string]token.Pos, name string, set, declares bool) {
-	if !set {
-		delete(tracked, name)
-		return
-	}
-	end := g.scopeEnd(declares)
-	if prior, ok := tracked[name]; ok && !declares {
-		end = prior
-	}
-	if end == token.NoPos {
-		return
-	}
-	tracked[name] = end
-}
-
-// scopeEnd returns where the scope of a binding made at the current node ends: the
-// innermost block, case or select clause, or the if, for, range, switch or type switch
-// whose header declares it, for a declaration; the innermost function for a plain
-// assignment. The walk stack holds only ancestors of the current node, so this is a
-// bounded scan (maxNodeStack). It returns NoPos at package level.
-func (g *goScanner) scopeEnd(declares bool) token.Pos {
-	for i := len(g.stack) - 1; i >= 0; i-- {
-		switch g.stack[i].(type) {
-		case *ast.FuncDecl, *ast.FuncLit:
-			return g.stack[i].End()
-		case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause, *ast.IfStmt, *ast.ForStmt,
-			*ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt:
-			if declares {
-				return g.stack[i].End()
-			}
-		}
-	}
-	return token.NoPos
 }

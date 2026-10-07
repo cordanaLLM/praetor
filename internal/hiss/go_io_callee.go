@@ -21,11 +21,15 @@ import (
 //     `ctx, cancel := context.WithTimeout(ctx, d)`, every later use is of the bounded context and
 //     the walk stops there;
 //   - the argument of a function that performs no I/O on it (contextFuncs ctxNeutral, the
-//     log/slog sinks among them) or the receiver of a context.Context method (contextMethods),
-//     which is how a select over channels reads it;
-//   - the argument of another call the pass resolves (callSite.target, moduleIndex.classify): an
-//     allow-listed function at a checked version, a log/slog sink on a receiver field, or a
-//     function of the same module, which must bound its own parameter in turn.
+//     log/slog functions among them) or the receiver of a context.Context method
+//     (contextMethods), which is how a select over channels reads it;
+//   - the argument of a log/slog sink method on a receiver the logger proof accepts
+//     (loggerProof, shared with the walk of the function that holds the finding), or on a field of
+//     a parameter the package pass finds declared *slog.Logger;
+//   - the argument of another call the pass resolves (callSite.resolve, moduleIndex.classify): an
+//     allow-listed function at a checked version, or a function of the same module, which must
+//     bound its own parameter in turn. A call that spreads its last argument maps the others one
+//     to one; only an argument in the spread position is not followed.
 //
 // Any other mention fails the callee: an inheriting derivation, an assignment, a return, a
 // comparison, a call the pass cannot resolve, a function outside the module. A parameter that is
@@ -33,13 +37,14 @@ import (
 //
 // The walk holds no recursion (HISS-01): each proof explores the callees with an explicit stack,
 // at most maxCalleeDepth calls deep from the call that recorded the finding and over at most
-// maxCalleeNodes callees (HISS-02), and a callee already on the stack fails the proof.
+// maxCalleeNodes callees in all, across every argument of that call (HISS-02), and a callee
+// already on the stack fails the proof.
 
 const (
 	// maxCalleeDepth bounds how many module-local calls deep one proof follows a context: the
 	// callee the finding's call names is depth 1.
 	maxCalleeDepth = 4
-	// maxCalleeNodes bounds the callees one proof visits.
+	// maxCalleeNodes bounds the callees one proof visits, shared by every argument it follows.
 	maxCalleeNodes = 64
 	// maxCalleeSteps bounds the steps of one proof's walk over its stack.
 	maxCalleeSteps = 4096
@@ -68,9 +73,11 @@ type calleeFrame struct {
 }
 
 // boundedAll reports whether every callee parameter in deps bounds its context.
+// The callees they reach count toward one budget of maxCalleeNodes for the whole proof.
 func (x *moduleIndex) boundedAll(deps []calleeKey) bool {
+	visits := 0
 	for i := 0; i < len(deps); i++ {
-		if !x.boundedFrom(deps[i]) {
+		if !x.boundedFrom(deps[i], &visits) {
 			return false
 		}
 	}
@@ -80,9 +87,10 @@ func (x *moduleIndex) boundedAll(deps []calleeKey) bool {
 // boundedFrom reports whether start bounds its context, following the callees it hands it to
 // depth-first with an explicit stack. Every callee must bound it, so the first one that does not,
 // a callee past maxCalleeDepth, a cycle, or a walk past its node or step bound fails the proof.
-func (x *moduleIndex) boundedFrom(start calleeKey) bool {
+// visits counts the callees the proof has visited so far, across every start it was called for.
+func (x *moduleIndex) boundedFrom(start calleeKey, visits *int) bool {
 	stack := []calleeFrame{{key: start, depth: 1}}
-	visits := 1
+	*visits++
 	for step := 0; step < maxCalleeSteps && len(stack) > 0; step++ {
 		top := &stack[len(stack)-1]
 		if !top.analyzed {
@@ -98,10 +106,10 @@ func (x *moduleIndex) boundedFrom(start calleeKey) bool {
 		}
 		dep := top.deps[top.next]
 		top.next++
-		if top.depth >= maxCalleeDepth || visits >= maxCalleeNodes || onCalleeStack(stack, dep) {
+		if top.depth >= maxCalleeDepth || *visits >= maxCalleeNodes || onCalleeStack(stack, dep) {
 			return false
 		}
-		visits++
+		*visits++
 		stack = append(stack, calleeFrame{key: dep, depth: top.depth + 1})
 	}
 	return len(stack) == 0
@@ -143,6 +151,7 @@ func (x *moduleIndex) analyzeParam(key calleeKey) calleeAnalysis {
 		x: x, entry: key.entry, param: name,
 		top: make(map[ast.Stmt]bool), accounted: make(map[*ast.Ident]bool),
 	}
+	walk.logs = newLoggerProof(key.entry.im, &walk.scope)
 	return walk.run()
 }
 
@@ -177,6 +186,8 @@ type mentionWalk struct {
 	entry *funcEntry
 	param string
 	scope goScope
+	// logs is the logger proof the main walk uses, fed the nodes of this function (go_io_logger.go).
+	logs loggerProof
 	// top holds the body's own statements, where a bounded rebinding ends the walk.
 	top map[ast.Stmt]bool
 	// accounted holds the identifiers a classified use already explains.
@@ -206,6 +217,7 @@ func (w *mentionWalk) visit(n ast.Node) bool {
 	if w.failed || w.done || w.signature(n) {
 		return false
 	}
+	w.logs.track(n)
 	if stmt, ok := n.(ast.Stmt); ok && w.top[stmt] && w.rebindsBounded(stmt) {
 		w.done = true
 		return false
@@ -280,17 +292,22 @@ func (w *mentionWalk) accountCall(call *ast.CallExpr) {
 }
 
 // accepts reports whether handing the parameter to call as argument arg is a use that bounds it,
-// does no I/O with it, or reaches a callee the proof follows next (deps).
+// does no I/O with it, or reaches a callee the proof follows next (deps). A call that spreads its
+// last argument maps every other argument to its own parameter; only the spread one is not followed.
 func (w *mentionWalk) accepts(call *ast.CallExpr, arg int) bool {
 	if effect, known := w.contextEffect(call); known {
 		return effect == ctxNeutral || (effect == ctxBounded && arg == 0)
 	}
-	if call.Ellipsis.IsValid() {
+	sink := w.logs.sink(call)
+	if sink.kind == provenSink {
+		return true
+	}
+	if spreads(call, arg) {
 		return false
 	}
 	decl := w.entry.decl
 	site := newCallSite(w.entry.im, w.entry.dir, w.entry.pkg, decl, w.scope.count)
-	target, ok := site.target(call)
+	target, ok := site.resolve(call, sink)
 	if !ok {
 		return false
 	}
