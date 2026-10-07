@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -168,6 +169,9 @@ func newTool(kind, name, description string, schema ToolInputSchema, handler Too
 		strict := false
 		schema.AdditionalProperties = &strict
 	}
+	// Required is published on tools/list; a sorted copy keeps those bytes independent of
+	// the order an author declared the names in.
+	schema.Required = slices.Sorted(slices.Values(schema.Required))
 	tool := Tool{
 		Name:        name,
 		Description: description,
