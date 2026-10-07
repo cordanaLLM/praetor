@@ -7,7 +7,7 @@ import (
 
 // aggregateWorkflow is path-filtered CI: a planner job selects lanes, the lane runs only when
 // selected, and an aggregate job that needs both carries gateCondition. The aggregate has no
-// steps, so nothing in the file proves it fails when a lane fails (provenAggregate).
+// steps, so nothing in the file proves it fails when a lane fails (provenAggregateNeeds).
 func aggregateWorkflow(gateCondition string) string {
 	return "on:\n  pull_request:\n  push:\n    branches: [main]\njobs:\n" +
 		"  impact-plan:\n    name: CI impact plan\n    runs-on: ubuntu-latest\n" +

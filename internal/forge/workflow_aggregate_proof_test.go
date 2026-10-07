@@ -9,7 +9,7 @@ import (
 )
 
 // provenGateSteps is the step list an aggregate fails with when a job it needs failed or was
-// cancelled, the shape provenAggregate recognises.
+// cancelled, a shape provenAggregateNeeds recognises.
 const provenGateSteps = "    steps:\n      - name: Fail when a needed job failed or was cancelled\n" +
 	"        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')\n" +
 	"        run: |\n          echo \"::error::a needed job failed or was cancelled\"\n          exit 1\n"
@@ -158,8 +158,9 @@ func TestRequiredStatusContexts_Negative_UnprovenAggregateKeepsTheLeaves(t *test
 
 // Boundary: every recognised spelling proves the gate, and the proof covers only the jobs the gate
 // needs directly. A planner the gate reaches only through a lane stays required, because its
-// failure skips the lane and a skipped need does not fail the gate. A proven inner gate that an
-// outer gate needs is covered like any other need.
+// failure skips the lane and a skipped need does not fail the gate. A need whose failure the
+// gate's condition does not test stays required too. A proven inner gate that an outer gate needs
+// is covered like any other need.
 func TestRequiredStatusContexts_Boundary_AggregateSpellingsAndReach(t *testing.T) {
 	proving := map[string]string{
 		"one expression": strings.Replace(provenGateSteps, "if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')",
@@ -188,6 +189,11 @@ func TestRequiredStatusContexts_Boundary_AggregateSpellingsAndReach(t *testing.T
 	contexts, err := workflowPullRequestContexts([]byte(skippedLaneWorkflow("[go, test]", provenGateSteps)))
 	if want := []string{"CI impact plan", "Merge gate"}; err != nil || !slices.Equal(contexts, want) {
 		t.Fatalf("a planner the gate needs only through a lane must stay required: %v, %v; want %v", contexts, err, want)
+	}
+	partial := "    steps:\n      - if: needs.go.result != 'success' || needs.test.result != 'success'\n        run: exit 1\n"
+	contexts, err = workflowPullRequestContexts([]byte(skippedLaneWorkflow(allNeeds, partial)))
+	if want := []string{"CI impact plan", "Merge gate"}; err != nil || !slices.Equal(contexts, want) {
+		t.Fatalf("a gate covers only the needs whose failure it proves fails it: %v, %v; want %v", contexts, err, want)
 	}
 	nested := skippedLaneWorkflow(allNeeds, provenGateSteps) +
 		"  release-gate:\n    name: Release gate\n    needs: merge-gate\n    if: always()\n" + provenGateSteps
