@@ -1,0 +1,4 @@
+type: changed
+title: "The CI workflows flavor apply and adoption scaffold for Go, Rust, Node, JVM and Flutter, and Praetor's own CI, compliance, Pages, portability and security workflows, follow the hosted gate shape: they run on ready_for_review and every required check fails a draft in its first step until it is marked ready, which the checkpoint planner reads as draft pending; an unedited scaffolded ci.yml refreshes without --force, and a fresh adoption audits with no HISS-18 finding"
+issue: "#817"
+breaking: true

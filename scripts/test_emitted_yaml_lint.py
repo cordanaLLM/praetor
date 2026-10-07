@@ -27,11 +27,12 @@ into it (BUG-782). This gate covers:
   with a YAML validator whatever its name (.clang-format and .clang-tidy, which clang reads as
   YAML; the Visual Studio editor target writes the same .clang-tidy), rendered by dropping its
   leading template comment, the one action most of these bodies carry. A body whose actions
-  branch on repository facts (the Node CI job, the Dart analyzer config) is linted from its
-  committed renderings instead, one per distinct body, which
+  branch on repository facts (the Node CI job, the Dart analyzer config), or render the hosted
+  gate shape (every flavor CI job, templates/hostedgate.go), is linted from its committed
+  renderings instead, one per distinct body, which
   TestBranchingYAMLTemplateRenderingsAreCommitted (templates/branching_test.go) keeps equal to
-  every rendering the template can produce. A body with any other action, or a branching one
-  with no committed rendering, fails the gate instead of being linted as unrendered text.
+  every rendering the template can produce. A body with any other action, or one with actions
+  and no committed rendering, fails the gate instead of being linted as unrendered text.
 
 Each path is read from the Go constant that names it, so a moved file is followed without
 editing this list.
@@ -199,7 +200,7 @@ class SourceTest(unittest.TestCase):
             ".config/archetypes/framework.yaml",
             ".config/archetypes/facets/security-high.yaml",
             ".standards.yaml",
-            "templates/go/ci-go.yml",
+            "templates/go/ci-go.yml/default.yml",
             "templates/go/.golangci.yml",
             "templates/native/.clang-format",
             "templates/native/.clang-tidy",

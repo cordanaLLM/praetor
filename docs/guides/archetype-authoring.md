@@ -109,7 +109,20 @@ refreshed. While `Resolve` withholds the body, a file already there is kept. An 
 unrefreshed and is listed under *Unmet Requirement* with the reason, and any other file is reported
 skipped (`internal/flavor/target_write_internal_test.go`). Every recorded text needs a fixture
 that reproduces its digest, as `TestRustfmtPriorTextsAreEarlierRenderings`
-(`internal/flavor/rustfmt_test.go`) holds for `rustfmt.toml`.
+(`internal/flavor/rustfmt_test.go`) holds for `rustfmt.toml` and
+`TestCIWorkflowPriorTextsAreRecorded` (`internal/flavor/ci_prior_test.go`) for every CI workflow
+template, whose earlier texts sit in `internal/flavor/testdata/ci-prior`.
+
+A CI workflow template takes its trigger and draft handling from the hosted gate shape
+(`internal/ghworkflow/hostedgate.go`) through the template functions `hostedGateOn`,
+`hostedGateDraftStep` and `hostedGateStepIf` (`templates/hostedgate.go`) instead of spelling
+them out ([Workflow trigger audit](workflow-triggers.md#workflows-praetor-writes-and-runs)).
+Each placed on a line of its own, the first two are followed by one blank line; the third goes
+on a step's `name:` line. A body with such actions commits its rendering under
+`templates/testdata/rendered`, where the yamllint gate lints it
+(`TestBranchingYAMLTemplateRenderingsAreCommitted`), and
+`TestCIWorkflowTemplatesRenderTheHostedGateShape` holds every rendering to
+`ghworkflow.HostedGateFault`.
 
 A template with neither is an apply error, not a placeholder. `flavor apply` used to write a one-line
 `# <file> configuration for <owner>/<repo>` comment for every template it had no body for, which
