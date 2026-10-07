@@ -37,14 +37,14 @@ type HISSExceptions struct {
 }
 
 // validate holds every declared exception document to a clean repository-relative path, the
-// shape register.sources inputs use (validRepositoryPath), and every declared label to a C
+// shape register.sources inputs use (ValidRepositoryPath), and every declared label to a C
 // identifier. A nil section declares nothing.
 func (p *HISSPolicy) validate() error {
 	if p == nil {
 		return nil
 	}
 	exceptions := p.Exceptions
-	if document := exceptions.CGotoCleanup; document != "" && !validRepositoryPath(document) {
+	if document := exceptions.CGotoCleanup; document != "" && !ValidRepositoryPath(document) {
 		return fmt.Errorf("hiss.exceptions.c_goto_cleanup %q must be a clean local forward-slash path of at most %d bytes",
 			document, maxRepositoryPath)
 	}

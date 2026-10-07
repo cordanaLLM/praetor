@@ -321,7 +321,8 @@ func moveDockerfilePin(rel, dockerfile string, next reviewedPin, replaced []stri
 // replaced digests include the current one, so a move to another tag of the same digest (a
 // floating tag and a patch tag share one) rewrites the tag alone.
 func moveFromLine(line string, next reviewedPin, replaced []string) (string, bool) {
-	reference := fromReference(line)
+	from, _ := util.ParseDockerFrom(line)
+	reference := from.Image
 	if reference == "" {
 		return line, false
 	}
@@ -331,21 +332,6 @@ func moveFromLine(line string, next reviewedPin, replaced []string) (string, boo
 		line = strings.Replace(line, reference, repository+":"+tag+"@"+digest, 1)
 	}
 	return line, tag == next.tag && digest == next.digest
-}
-
-// fromReference returns the image of a FROM instruction, skipping flags such as --platform,
-// or "" when line is not one.
-func fromReference(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) < 2 || !strings.EqualFold(fields[0], "FROM") {
-		return ""
-	}
-	for index := 1; index < len(fields) && index < MaxLoopLimit; index++ {
-		if !strings.HasPrefix(fields[index], "--") {
-			return fields[index]
-		}
-	}
-	return ""
 }
 
 // apply writes the source edits, regenerates and verifies the bundle, and restores every

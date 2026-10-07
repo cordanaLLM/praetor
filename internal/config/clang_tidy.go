@@ -75,7 +75,7 @@ func (l ClangTidyLane) validate(prefix string) error {
 	if (l.CompileDatabase == "") == (l.Files == "") {
 		return fmt.Errorf("%s must name exactly one of compile_database and files", prefix)
 	}
-	if !validRepositoryPath(l.Source()) {
+	if !ValidRepositoryPath(l.Source()) {
 		return fmt.Errorf("%s path %q must be one clean repository-relative file path of at most %d bytes",
 			prefix, l.Source(), maxRepositoryPath)
 	}

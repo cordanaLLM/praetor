@@ -193,8 +193,9 @@ func pypiInventory(rel, text string) ([]InventoryItem, error) {
 }
 
 // dockerInventory lists the image repository of every FROM of a Dockerfile or Dockerfile
-// template. A FROM naming an earlier stage, scratch, or a reference a build argument or a
-// template action supplies names no image the file pins and is skipped.
+// template, read through the one FROM reader (util.ParseDockerFrom). A FROM naming an earlier
+// stage, scratch, or a reference a build argument or a template action supplies names no image
+// the file pins and is skipped.
 func dockerInventory(rel, text string) ([]InventoryItem, error) {
 	lines, err := splitNoticeLines(text)
 	if err != nil {
@@ -203,14 +204,14 @@ func dockerInventory(rel, text string) ([]InventoryItem, error) {
 	var items []InventoryItem
 	stages := map[string]bool{"scratch": true}
 	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || !strings.EqualFold(fields[0], "FROM") {
+		from, ok := util.ParseDockerFrom(line)
+		if !ok {
 			continue
 		}
-		ref := firstNonFlag(fields[1:])
-		if at := slices.IndexFunc(fields, func(field string) bool { return strings.EqualFold(field, "AS") }); at > 0 && at+1 < len(fields) {
-			stages[strings.ToLower(fields[at+1])] = true
+		if from.Stage != "" {
+			stages[from.Stage] = true
 		}
+		ref := from.Image
 		repository, _, _ := util.SplitImageReference(ref)
 		if ref == "" || stages[strings.ToLower(ref)] || strings.ContainsAny(ref, "${") {
 			continue

@@ -329,8 +329,8 @@ func finalBaseImage(dockerfile string) (noticeRow, bool, error) {
 	}
 	ref := ""
 	for _, line := range lines {
-		if fields := strings.Fields(line); len(fields) > 1 && strings.EqualFold(fields[0], "FROM") {
-			ref = firstNonFlag(fields[1:])
+		if from, ok := util.ParseDockerFrom(line); ok {
+			ref = from.Image
 		}
 	}
 	name, tag, _ := util.SplitImageReference(ref)
@@ -341,16 +341,6 @@ func finalBaseImage(dockerfile string) (noticeRow, bool, error) {
 		tag = "latest"
 	}
 	return noticeRow{name: name, version: tag}, true, nil
-}
-
-// firstNonFlag returns the first field that is not a "--flag", or "" when every one is.
-func firstNonFlag(fields []string) string {
-	for _, field := range fields {
-		if !strings.HasPrefix(field, "--") {
-			return field
-		}
-	}
-	return ""
 }
 
 // shippedNoticeRows derives every shipped component from sources, keyed by the notices

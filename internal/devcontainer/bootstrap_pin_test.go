@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // splitImagePin separates a reference into repository and sha256 digest. The
@@ -41,7 +43,8 @@ func pinnedDigestDrift(dockerfile []byte, pin string) error {
 	}
 	matched := 0
 	for i := 0; i < len(lines) && i < MaxLoopLimit; i++ {
-		ref := fromReference(lines[i])
+		from, _ := util.ParseDockerFrom(lines[i])
+		ref := from.Image
 		if ref == "" {
 			continue
 		}

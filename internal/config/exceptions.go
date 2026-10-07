@@ -155,7 +155,7 @@ func (e Exception) targetProblem() string {
 	switch {
 	case (e.Path == "") == (e.Glob == ""):
 		return "must name exactly one of path and glob"
-	case e.Path != "" && (!validRepositoryPath(e.Path) || strings.ContainsAny(e.Path, globCharacters)):
+	case e.Path != "" && (!ValidRepositoryPath(e.Path) || strings.ContainsAny(e.Path, globCharacters)):
 		return fmt.Sprintf("path %q must be one clean repository-relative file path of at most %d bytes, without glob characters",
 			e.Path, maxRepositoryPath)
 	case e.Glob != "":

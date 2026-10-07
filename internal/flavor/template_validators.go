@@ -57,8 +57,7 @@ func validClangTidyConfig(content []byte) bool {
 func validDockerfile(content []byte) bool {
 	lines := strings.Split(string(content), "\n")
 	for i := 0; i < len(lines) && i < maxValidatedLines; i++ {
-		fields := strings.Fields(lines[i])
-		if len(fields) >= 2 && strings.EqualFold(fields[0], "FROM") {
+		if _, ok := util.ParseDockerFrom(lines[i]); ok {
 			return true
 		}
 	}
