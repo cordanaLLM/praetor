@@ -94,12 +94,12 @@ jobs:
           go install github.com/evilmartians/lefthook/v2@v2.1.14
           lefthook version
 
-      # Pinned, not inherited. Three steps below run `python3` -- the semgrep venv, the
-      # docs-drift check and the MkDocs install -- and without this the interpreter is
-      # whatever the runner image ships: ubuntu-24.04 shipped 3.12 and ubuntu-26.04 ships
-      # 3.14.4, so the OS bump alone changed all three. It also takes the mkdocs
-      # `pip install` off a PEP-668 system interpreter. Unconditional because those three
-      # steps are gated on three different conditions. Keep it equal to the setup-python
+      # Pinned, not inherited. Four steps below run `python3` -- the semgrep venv, the
+      # docs-drift check, the commit hook re-run and the MkDocs install -- and without this the
+      # interpreter is whatever the runner image ships: ubuntu-24.04 shipped 3.12 and
+      # ubuntu-26.04 ships 3.14.4, so the OS bump alone changed them all. It also takes the mkdocs
+      # `pip install` off a PEP-668 system interpreter. Unconditional because those
+      # steps are gated on different conditions. Keep it equal to the setup-python
       # version pages.yml and portability.yml pin.
       - name: Setup Python Toolchain
         id: python
@@ -198,9 +198,22 @@ jobs:
             --base="$BASE_SHA" --head="$HEAD_SHA" \
             --pr-body-file="$RUNNER_TEMP/docs_drift_body.txt"
 
+      # #61: a commit made with its hooks skipped (a core.hooksPath override, --no-verify) carries
+      # no proof that they ran, so these two steps re-run over every commit of the pull request
+      # the commit checks that need no workstation: the commit message policy the commit-msg hook
+      # applies (a Conventional Commits subject, the HISS-14 Migration: footer), then the
+      # pre-commit hook's whitespace and conflict-marker check and the private-state check
+      # (docs/guides/git-hooks.md, "Commit checks CI re-runs"). The compliance workflow checks
+      # the DCO trailer.
       - name: Enforce HISS-14 Migration Footers (Commit Lint)
         if: github.event_name == 'pull_request'
         run: go run ./cmd/standardsctl forge check-commits --base="origin/${{ github.base_ref }}" --head=HEAD
+
+      - name: Re-run Commit Hook Checks Over Every Pull Request Commit
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 -B .config/lefthook/scripts/hooks.py commits "origin/${BASE_REF}"
 
       - name: Verify Cross-Agent Context Synchronization (HISS-16)
         if: steps.filter.outputs.skip_heavy_gates == 'true' && steps.filter.outputs.run_context_sync != 'false' && github.event_name != 'push'
