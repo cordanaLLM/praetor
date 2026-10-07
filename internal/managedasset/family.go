@@ -319,27 +319,37 @@ func (f Family) ForBranch(branch string) (Family, error) {
 	return f, nil
 }
 
-// otherBranchRendering reports whether actual, in one consistent line-ending style, is the
-// family's workflow at rel rendered for a default branch other than Branch, and whether actual
-// is its CRLF checkout. Such a file is Praetor's unedited output for a branch the repository no
-// longer resolves, such as after a default branch rename.
-func (f Family) otherBranchRendering(rel string, actual []byte) (known, crlf bool) {
+// OtherBranch returns the default branch other than Branch that actual, the family's file at rel,
+// is the workflow rendered for (otherBranchRendering). found is false for any other text, the
+// rendering for Branch included. Audit names that branch, so the repair it suggests says which
+// branch the file was rendered for and which one this checkout resolves.
+func (f Family) OtherBranch(rel string, actual []byte) (branch string, found bool) {
+	branch, _ = f.otherBranchRendering(rel, actual)
+	return branch, branch != ""
+}
+
+// otherBranchRendering returns the default branch other than Branch that actual, in one
+// consistent line-ending style, is the family's workflow at rel rendered for, empty when it is
+// no such rendering, and whether actual is its CRLF checkout. Such a file is Praetor's unedited
+// output for a branch the repository does not resolve here: after a default branch rename, or in
+// a checkout that lacks the origin HEAD it was rendered from.
+func (f Family) otherBranchRendering(rel string, actual []byte) (branch string, crlf bool) {
 	if rel != f.WorkflowFile || !f.BranchDependent() {
-		return false, false
+		return "", false
 	}
 	text, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
 	if err != nil {
-		return false, false
+		return "", false
 	}
 	branch, found := pushBranch(text)
 	if !found || branch == f.Branch() {
-		return false, false
+		return "", false
 	}
 	other, err := f.ForBranch(branch)
-	if err != nil {
-		return false, false
+	if err != nil || other.Workflow != text {
+		return "", false
 	}
-	return other.Workflow == text, crlf
+	return branch, crlf
 }
 
 // pushBranch returns the branch the first push branch line of text names (pushBranchesLine).
@@ -385,7 +395,7 @@ func (f Family) PriorRendering(rel string, actual []byte) (known, crlf bool) {
 	if known && owner == rel {
 		return true, crlf
 	}
-	if rendered, renderedCRLF := f.otherBranchRendering(rel, actual); rendered {
+	if branch, renderedCRLF := f.otherBranchRendering(rel, actual); branch != "" {
 		return true, renderedCRLF
 	}
 	return false, crlf

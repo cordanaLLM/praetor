@@ -66,9 +66,10 @@ func TestForBranch(t *testing.T) {
 }
 
 // Positive: the workflow rendered for another default branch is a prior rendering, LF or CRLF,
-// so adoption refreshes it and a disabled facet removes it. Negative: an edited rendering, a
-// rendering naming a branch nothing would render, and a rendering at another path are not.
-// Boundary: the family's own rendering is canonical, never prior, and Validate accepts it.
+// so adoption refreshes it and a disabled facet removes it, and OtherBranch names that branch.
+// Negative: an edited rendering, a rendering naming a branch nothing would render, and a
+// rendering at another path are neither. Boundary: the family's own rendering is canonical, never
+// prior and names no other branch, and Validate accepts it.
 func TestOtherBranchRenderingIsPrior(t *testing.T) {
 	family := branchFixtureFamily()
 	develop, err := family.ForBranch("develop")
@@ -82,24 +83,37 @@ func TestOtherBranchRenderingIsPrior(t *testing.T) {
 	if known, crlf := family.PriorRendering(family.WorkflowFile, []byte(crlfText)); !known || !crlf {
 		t.Fatalf("CRLF develop rendering: known=%v crlf=%v", known, crlf)
 	}
+	for _, text := range []string{develop.Workflow, crlfText} {
+		if branch, found := family.OtherBranch(family.WorkflowFile, []byte(text)); !found || branch != "develop" {
+			t.Fatalf("OtherBranch of the develop rendering = %q, %v", branch, found)
+		}
+	}
 	for name, text := range map[string]string{
 		"edited":       develop.Workflow + "# edited\n",
 		"invalid name": strings.Replace(develop.Workflow, "['develop']", "['a b']", 1),
 		"unclosed":     strings.Replace(develop.Workflow, "['develop']", "['develop", 1),
 		"mixed ends":   strings.Replace(crlfText, "\r\n", "\n", 1),
 	} {
-		if family.PriorText(family.WorkflowFile, []byte(text)) {
-			t.Fatalf("%s rendering is a prior text", name)
+		_, other := family.OtherBranch(family.WorkflowFile, []byte(text))
+		if other || family.PriorText(family.WorkflowFile, []byte(text)) {
+			t.Fatalf("%s rendering is a prior text or names another branch", name)
 		}
 	}
-	if family.PriorText("tools/fixture/core.mjs", []byte(develop.Workflow)) {
-		t.Fatal("a rendering at another path is a prior text")
+	if _, other := family.OtherBranch("tools/fixture/core.mjs", []byte(develop.Workflow)); other ||
+		family.PriorText("tools/fixture/core.mjs", []byte(develop.Workflow)) {
+		t.Fatal("a rendering at another path is a prior text or names another branch")
 	}
 	if family.PriorText(family.WorkflowFile, []byte(family.Workflow)) || develop.PriorText(develop.WorkflowFile, []byte(develop.Workflow)) {
 		t.Fatal("a family's own rendering is a prior text")
 	}
+	if branch, other := develop.OtherBranch(develop.WorkflowFile, []byte(develop.Workflow)); other {
+		t.Fatalf("a family's own rendering names another branch, %q", branch)
+	}
 	if !develop.PriorText(develop.WorkflowFile, []byte(family.Workflow)) {
 		t.Fatal("the main rendering is not prior for a develop family")
+	}
+	if branch, other := develop.OtherBranch(develop.WorkflowFile, []byte(family.Workflow)); !other || branch != WorkflowBranch {
+		t.Fatalf("OtherBranch of the main rendering for a develop family = %q, %v", branch, other)
 	}
 	if err := develop.Validate(); err != nil {
 		t.Fatalf("Validate refused a rendered family: %v", err)

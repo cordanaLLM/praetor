@@ -17,7 +17,10 @@ import (
 
 // auditExactManagedFile requires the managed file at rel to hold family's canonical text, one
 // consistent checkout line-ending style allowed. An earlier Praetor text of rel fails as well,
-// naming plain adoption, which refreshes it, instead of --force.
+// naming plain adoption, which refreshes it, instead of --force. The workflow rendered for
+// another default branch (managedasset.Family.OtherBranch) fails naming both branches and the
+// declaration that settles them: a checkout without the origin HEAD it was rendered from
+// resolves another branch, and adoption run where that HEAD exists renders it again.
 func auditExactManagedFile(ctx context.Context, rootDir string, family managedasset.Family, rel string) error {
 	gate := familyGate(family)
 	expected, _, err := family.Canonical(rel)
@@ -39,10 +42,24 @@ func auditExactManagedFile(ctx context.Context, rootDir string, family managedas
 	if equivalent {
 		return nil
 	}
+	if branch, other := family.OtherBranch(rel, actual); other {
+		return otherBranchRenderingFailure(gate, rel, branch, family.Branch())
+	}
 	if family.PriorText(rel, actual) {
 		return fmt.Errorf("[FAIL] %s asset %s holds an earlier Praetor text; run 'praetorctl adopt' to refresh it", gate, rel)
 	}
 	return fmt.Errorf("[FAIL] %s asset %s differs from the locked Praetor asset; run '%s'", gate, rel, adopt.ForceCommand(""))
+}
+
+// otherBranchRenderingFailure is the audit failure of a hosted workflow at rel that Praetor
+// rendered for the default branch rendered while this checkout resolves resolved
+// (forge.RepositoryDefaultBranch).
+func otherBranchRenderingFailure(gate, rel, rendered, resolved string) error {
+	return fmt.Errorf("[FAIL] %s workflow %s is Praetor's rendering for default branch %s, but this checkout resolves %s "+
+		"(repository.default_branch in %s, else the origin remote's HEAD, else %s): if %s is the default branch, declare "+
+		"repository.default_branch: %s in %s; otherwise run 'praetorctl adopt' to render it for %s",
+		gate, rel, rendered, resolved, config.ManifestFileName, forge.FallbackDefaultBranch,
+		rendered, rendered, config.ManifestFileName, resolved)
 }
 
 // familyGate names a family's gate in audit failures: "Documentation gate" for Kind

@@ -36,7 +36,15 @@ runner `praetor-api.yml` runs on is declared exactly while adoption emits the ga
 Adoption renders the workflow for the repository's default branch, resolved as for the branch
 ruleset: `repository.default_branch` in `.standards.yaml`, else the origin remote's `HEAD`, else
 `main` (`forge.RepositoryDefaultBranch` in `internal/forge/default_branch.go`). The rendering is
-the one audit locks, so a copy rendered for another branch, or edited, fails the audit.
+the one audit locks, so a copy rendered for another branch, or edited, fails the audit. A copy
+rendered for another branch fails naming both branches: a CI checkout usually has no origin
+`HEAD` and resolves `main`, so a repository whose default branch is not `main` declares
+`repository.default_branch`, as for the ruleset
+([Protected default branch](../adoption.md#protected-default-branch)). Adoption warns about an
+existing manifest that leaves it out, even one that declines the ruleset
+(`TestAdoptWarnsAnUndeclaredBranchTheHostedGatesRenderFor` in
+`internal/adopt/workflow_branch_test.go`, `TestAuditHostedGatesLockTheDefaultBranchRendering` in
+`cmd/standardsctl/audit_hosted_gate_branch_test.go`).
 
 | Event | Runs the job |
 | :--- | :--- |
