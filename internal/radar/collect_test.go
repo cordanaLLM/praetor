@@ -136,7 +136,7 @@ func TestCollect_Boundary_UnchangedAndFailures(t *testing.T) {
 	if err != nil || digest.Read != 2 || len(digest.Failed) != 1 || digest.Failed[0].Source.ID != "example-papers" {
 		t.Fatalf("one failure = %+v, %v", digest, err)
 	}
-	if out := string(Render(digest)); !strings.Contains(out, "## Failed sources\n\n- example-papers: read fixture example-papers.xml") {
+	if out := string(Render(digest)); !strings.Contains(out, "## Failed sources\n\n- example-papers: fixture example-papers.xml is missing: file does not exist\n") {
 		t.Errorf("digest does not name the failed source:\n%s", out)
 	}
 	allMissing := t.TempDir()
@@ -144,7 +144,7 @@ func TestCollect_Boundary_UnchangedAndFailures(t *testing.T) {
 	if !errors.Is(err, ErrAllSourcesFailed) || len(digest.Failed) != 3 || digest.Read != 0 {
 		t.Fatalf("all failed = %+v, %v; want ErrAllSourcesFailed", digest, err)
 	}
-	if out := string(Render(digest)); strings.Count(out, ": read fixture ") != 3 {
+	if out := string(Render(digest)); strings.Count(out, " is missing: file does not exist\n") != 3 {
 		t.Errorf("digest does not name every failed source:\n%s", out)
 	}
 }

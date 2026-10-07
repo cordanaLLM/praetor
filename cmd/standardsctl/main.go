@@ -104,6 +104,7 @@ func printCoreCommands() {
 	fmt.Println("  hook               Serve one agent-hook event: praetorctl hook <client> <event>")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
+	fmt.Println("  radar              Validate a research and upstream source registry or collect its digest")
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
 	fmt.Println("  operational        Plan or prepare an operational fork from reviewed local commits")
 	fmt.Println("  adr verify         Replay the machine-checkable clauses of decision records")
@@ -248,6 +249,7 @@ func coreCommandTable() map[string]commandFunc {
 		"models":                   runModels,
 		"operational":              runOperational,
 		"plan":                     runPlan,
+		"radar":                    runRadar,
 		"sync":                     runSync,
 		"security":                 runSecurity,
 		"seo":                      runSEO,

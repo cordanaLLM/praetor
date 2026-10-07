@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"sort"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -30,26 +31,38 @@ type FixtureReader struct {
 	Dir string
 }
 
-// Read reads source's planted file through the bounded regular-file read confined to Dir.
+// fixtureFormat is how FixtureReader stores and parses one source kind.
+type fixtureFormat struct {
+	extension string
+	limit     int64
+	parse     func([]byte) (Entries, error)
+}
+
+// fixtureFormats are the planted file formats of the kinds this version reads.
+var fixtureFormats = map[Kind]fixtureFormat{
+	KindFeed:       {extension: ".xml", limit: MaxFeedBytes, parse: ParseFeed},
+	KindGitHubRepo: {extension: ".json", limit: MaxReleaseBytes, parse: ParseReleases},
+}
+
+// Read reads source's planted file through the bounded regular-file read confined to Dir. A
+// missing file is named without the local directory, which a published digest has no use for.
 func (f FixtureReader) Read(ctx context.Context, source Source) (Entries, error) {
 	if err := ctx.Err(); err != nil {
 		return Entries{}, err
 	}
-	switch source.Kind {
-	case KindFeed:
-		data, err := util.ReadConfinedLimited(f.Dir, source.ID+".xml", MaxFeedBytes)
-		if err != nil {
-			return Entries{}, fmt.Errorf("read fixture %s.xml: %w", source.ID, err)
-		}
-		return ParseFeed(data)
-	case KindGitHubRepo:
-		data, err := util.ReadConfinedLimited(f.Dir, source.ID+".json", MaxReleaseBytes)
-		if err != nil {
-			return Entries{}, fmt.Errorf("read fixture %s.json: %w", source.ID, err)
-		}
-		return ParseReleases(data)
+	format, ok := fixtureFormats[source.Kind]
+	if !ok {
+		return Entries{}, fmt.Errorf("kind %q: %w", source.Kind, ErrUnsupportedKind)
 	}
-	return Entries{}, fmt.Errorf("kind %q: %w", source.Kind, ErrUnsupportedKind)
+	name := source.ID + format.extension
+	data, err := util.ReadConfinedLimited(f.Dir, name, format.limit)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Entries{}, fmt.Errorf("fixture %s is missing: %w", name, fs.ErrNotExist)
+	}
+	if err != nil {
+		return Entries{}, fmt.Errorf("read fixture %s: %w", name, err)
+	}
+	return format.parse(data)
 }
 
 // Section is what one source published inside the window.
