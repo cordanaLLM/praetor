@@ -20,7 +20,9 @@ type ReplaceOptions struct {
 }
 
 // ReplaceSnapshot publishes bounded UTF-8 text through a pinned parent directory.
-// Cooperative writers serialize on that directory; replacement checks the prior
+// Cooperative writers serialize on that directory (LockDirectory: the writers of one process
+// take turns, and another process's writer is waited for within DirectoryLockBudget);
+// replacement checks the prior
 // snapshot again before rename. External writers can still race the final check.
 // Creation uses an exclusive hard link and never replaces an existing name.
 // Any failure once the staging entry exists retains the staged bytes under the
@@ -133,18 +135,6 @@ func CreateRootSnapshot(ctx context.Context, root *os.Root, name string, data []
 		return false, fmt.Errorf("publish snapshot %s (inspect %s): %w", name, stagedPath(root, stage), err)
 	}
 	return created, SyncDirectory(ctx, root)
-}
-
-// LockDirectory serializes cooperating operations on an already pinned
-// directory. The returned release function must be called; contention fails fast.
-func LockDirectory(ctx context.Context, root *os.Root) (func() error, error) {
-	if ctx == nil || root == nil {
-		return nil, errors.New("directory lock requires a context and pinned root")
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return lockSnapshotDirectory(root)
 }
 
 func validateReplacement(ctx context.Context, data []byte, options ReplaceOptions) error {
