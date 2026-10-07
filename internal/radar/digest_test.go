@@ -29,6 +29,22 @@ var neutralizeCases = []struct{ name, in, want string }{
 	{"invalid UTF-8", "a\xffb", "ab"},
 	{"backslash", `a\b`, `a\\b`},
 	{"whitespace only", " \n\t ", ""},
+	{"tag case and shapes", `<EM>a</EM> b<br/>c<br />d</b >e<a href="x>y" title='q' data-id=7>f</a>`, "a bcdef"},
+}
+
+// comparisonCases are titles whose angle brackets open no tag: each keeps every word, its
+// brackets escaped, including where a bracket precedes an element name such as b or q.
+var comparisonCases = []struct{ in, want string }{
+	{"Speedup for n < 1000 tokens", `Speedup for n \< 1000 tokens`},
+	{"Tight bounds for k<n and more", `Tight bounds for k\<n and more`},
+	{"a<b and m > 5", `a\<b and m \> 5`},
+	{"Speedup for n < 1000 and m > 5 in a<b", `Speedup for n \< 1000 and m \> 5 in a\<b`},
+	{"x &lt; y", `x \< y`},
+	{"if p<q and q>r", `if p\<q and q\>r`},
+	{"<custom>x</custom>", `\<custom\>x\</custom\>`},
+	{"< b>x", `\< b\>x`},
+	{"<b=1>", `\<b=1\>`},
+	{`<a href="open>x`, `\<a href="open\>x`},
 }
 
 // Positive: every untrusted construct renders inert, and plain text passes unchanged.
@@ -41,17 +57,35 @@ func TestNeutralize_Positive_Table(t *testing.T) {
 	if got := Neutralize("A faster tokenizer, version 2", MaxTitleRunes); got != "A faster tokenizer, version 2" {
 		t.Errorf("plain text changed: %q", got)
 	}
+	for _, tc := range comparisonCases {
+		if got := Neutralize(tc.in, MaxTitleRunes); got != tc.want {
+			t.Errorf("Neutralize(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// unescapedBracket reports whether text holds a '<' or '>' without a backslash before it.
+func unescapedBracket(text string) bool {
+	for i := 0; i < len(text); i++ {
+		if (text[i] == '<' || text[i] == '>') && (i == 0 || text[i-1] != '\\') {
+			return true
+		}
+	}
+	return false
 }
 
 // Negative: no rendered title may still carry a mention, an issue reference, a table break, an
 // HTML tag or a line break, whatever the input.
 func TestNeutralize_Negative_NoActiveConstructSurvives(t *testing.T) {
-	hostile := "@a #1 GH-2 | <i>x</i> \n &lt;b&gt; @@b ##3 #\u200b4"
+	hostile := "@a #1 GH-2 | <i>x</i> \n &lt;b&gt; @@b ##3 #\u200b4 <script x=1 <b>> 3 >< <!-- c --> <foo>"
 	got := Neutralize(hostile, MaxTitleRunes)
-	for _, banned := range []string{"@", "#1", "#3", "#4", "GH-2", "|", "<", ">", "\n"} {
+	for _, banned := range []string{"@", "#1", "#3", "#4", "GH-2", "|", "<i>", "<b>", "\n"} {
 		if strings.Contains(got, banned) {
 			t.Errorf("Neutralize(%q) = %q still carries %q", hostile, got, banned)
 		}
+	}
+	if unescapedBracket(got) {
+		t.Errorf("Neutralize(%q) = %q carries an unescaped angle bracket", hostile, got)
 	}
 }
 
@@ -71,6 +105,23 @@ func TestNeutralize_Boundary_Truncation(t *testing.T) {
 	}
 	if got := Neutralize("abc", 0); got != "abc" {
 		t.Errorf("cap 0 = %q", got)
+	}
+}
+
+// Boundary: a tag of exactly maxTagBytes bytes is removed and one byte longer stays text; a tag
+// cut off by the end of the text stays text.
+func TestStripHTML_Boundary_TagCap(t *testing.T) {
+	tag := func(size int) string {
+		return `<a title="` + strings.Repeat("x", size-len(`<a title="">`)) + `">`
+	}
+	if exact := tag(maxTagBytes); len(exact) != maxTagBytes || stripHTML(exact+"ok") != "ok" {
+		t.Errorf("a %d-byte tag was kept: %.40q", len(exact), stripHTML(exact+"ok"))
+	}
+	if over := tag(maxTagBytes + 1); stripHTML(over+"ok") != over+"ok" {
+		t.Errorf("a %d-byte tag was removed", len(over))
+	}
+	if cut := `x<a href="y"`; stripHTML(cut) != cut {
+		t.Errorf("an unclosed tag was removed: %q", stripHTML(cut))
 	}
 }
 

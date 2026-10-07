@@ -26,8 +26,9 @@ const (
 )
 
 // markdownEscapes are the ASCII punctuation characters Neutralize escapes with a backslash, so
-// untrusted text cannot open emphasis, code, a link, an image or an entity.
-const markdownEscapes = "\\`*_[]()!~&"
+// untrusted text cannot open emphasis, code, a link, an image, an entity or an HTML tag. An
+// escaped '<' is literal text in CommonMark, never the start of raw HTML or an autolink.
+const markdownEscapes = "\\`*_[]()!~&<>"
 
 // linkUnsafe are the characters that keep a link out of a Markdown link destination; a link
 // carrying one is not rendered as a link.
@@ -137,11 +138,12 @@ func referenceLink(link string) bool {
 }
 
 // Neutralize turns untrusted text into one line of inert Markdown of at most maxRunes runes
-// (plus an ellipsis when cut). It decodes HTML entities and removes HTML tags; drops control and
-// invisible format characters; collapses line breaks and whitespace; removes '@', so no account is
+// (plus an ellipsis when cut). It decodes HTML entities and removes the well-formed tags of HTML
+// elements (stripHTML), keeping every other '<' and '>' as text; drops control and invisible
+// format characters; collapses line breaks and whitespace; removes '@', so no account is
 // mentioned; breaks issue references (#12, GH-12) so none links; replaces '|' so no table breaks;
 // defangs URLs so none links; and escapes the Markdown punctuation that opens emphasis, code,
-// links, images or entities.
+// links, images, entities or HTML.
 func Neutralize(text string, maxRunes int) string {
 	if len(text) > maxNeutralizeBytes {
 		text = text[:maxNeutralizeBytes]
@@ -151,23 +153,6 @@ func Neutralize(text string, maxRunes int) string {
 	text = strings.NewReplacer("://", "[:]//", "www.", "www[.]").Replace(text)
 	text = truncateRunes(strings.Join(strings.Fields(text), " "), maxRunes)
 	return escapeMarkdown(text)
-}
-
-// stripHTML removes every tag, from '<' to the next '>', and any unmatched angle bracket.
-func stripHTML(text string) string {
-	var b strings.Builder
-	inTag := false
-	for _, r := range text {
-		switch {
-		case r == '<':
-			inTag = true
-		case r == '>':
-			inTag = false
-		case !inTag:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // inertRune maps whitespace controls to a space, drops other control and format characters and
