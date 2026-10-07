@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 // hiss10Fixtures holds the HISS-10 workflow fixtures .config/hiss/coverage.yaml attributes to
@@ -193,6 +194,36 @@ func TestAuditBuildWarningsBoundaries(t *testing.T) {
 	if err == nil || strings.Count(err.Error(), "gcc/clang builds without warnings as errors") != maxBuildWarningsLanes ||
 		!strings.Contains(err.Error(), "3 more lanes build without warnings as errors") {
 		t.Fatalf("oversized failure = %v; want %d lanes listed and 3 counted", err, maxBuildWarningsLanes)
+	}
+}
+
+// Every workflow template a flavor scaffolds passes the gate it is audited by: a fresh adoption
+// must not fail its own audit. The Rust template denies warnings for its test build too.
+func TestAuditBuildWarningsPassesTheScaffoldedWorkflows(t *testing.T) {
+	names, err := templates.Names()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, name := range names {
+		if !strings.HasSuffix(name, ".yml.tmpl") || !strings.Contains(name, "/ci-") && !strings.Contains(name, "/security-") {
+			continue
+		}
+		body, err := templates.RenderFile(name, templates.Context{RepoName: "widget", Owner: "acme"})
+		if err != nil {
+			t.Fatalf("render %s: %v", name, err)
+		}
+		out, err := auditBuildWarningsIn(t, map[string]string{".github/workflows/ci.yml": body})
+		if err != nil {
+			t.Errorf("%s fails the gate it is audited by: %v", name, err)
+		}
+		if name == "rust/ci-rust.yml.tmpl" && !strings.Contains(out, "2 build lanes fail on a warning (Cargo 2)") {
+			t.Errorf("%s: %q; want both cargo steps to fail on a warning", name, out)
+		}
+		checked++
+	}
+	if checked < 6 {
+		t.Fatalf("checked %d workflow templates; want every ci- and security- template", checked)
 	}
 }
 

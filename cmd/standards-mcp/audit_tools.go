@@ -68,7 +68,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		passed++
 	}
 
-	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, hooks. "+
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, build warnings, hooks. "+
 		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation, backlog caps.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
 	return mcpComposedTextResult(report.Text())
@@ -100,6 +100,12 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 		// The CLI audit's HISS-18 workflow trigger check (#817): findings warn, the gate passes.
 		func(ctx context.Context) (string, error) {
 			return forge.AuditWorkflowTriggers(ctx, forge.WorkflowTriggerOptions{
+				Root: s.rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+			})
+		},
+		// The CLI audit's HISS-10 build-warnings gate (#816).
+		func(ctx context.Context) (string, error) {
+			return adopt.AuditBuildWarnings(ctx, adopt.BuildWarningsOptions{
 				Root: s.rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
 			})
 		},

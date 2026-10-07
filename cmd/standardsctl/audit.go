@@ -186,6 +186,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
 		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir) },
+		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
