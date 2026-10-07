@@ -19,14 +19,26 @@ whatever the profile.
 Adoption writes two jobs, both at the one REUSE pin, `supplychain.ReuseActionVersion` in
 [`internal/supplychain/reuse_lint.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse_lint.go):
 
-- `.github/workflows/reuse.yml`, whose **REUSE lint** job runs `fsfe/reuse-action@v6` and
-  becomes a required status check of the branch ruleset adoption renders;
+- `.github/workflows/reuse.yml`, whose **REUSE lint** job runs `fsfe/reuse-action@v6` within
+  `timeout-minutes: 10` and becomes a required status check of the branch ruleset adoption
+  renders. It runs on a push to, and a pull request into, the default branch that ruleset
+  protects: `repository.default_branch` of `.standards.yaml`, else the origin HEAD the checkout
+  records, else `main` (`forge.RepositoryDefaultBranch`), written as `branches: ['master']`;
 - a `reuse-lint` pre-commit job in `lefthook.yml` that runs `reuse lint` where reuse 6.x is
   installed, skips with the reason where reuse is not installed, and fails, naming the pin, on
   another reuse major.
 
 `praetorctl bump` expects the same tag, and praetor's own Compliance workflow runs it
 (`TestReuseActionPinMatchesRegistryAndEngine` in `internal/bump/release_pins_test.go`).
+
+The workflow follows the root on every adoption. Praetor's unedited rendering, for the current
+default branch or another one, is refreshed to the current default branch without `--force`.
+When the root loses both `REUSE.toml` and `LICENSES/`, adoption removes the unedited workflow,
+so the ruleset it renders next stops requiring a check that `reuse lint` would fail on every
+pull request, and drops the `reuse-lint` job from an unedited `lefthook.yml`. An edited
+`reuse.yml` is kept, `--force` included, and adoption warns that its check now fails
+(`TestAdopt_ReuseGateFollowsTheDefaultBranch` and `TestAdopt_ReuseGateRemovedWithTheMarkers` in
+`internal/adopt/reuse_gate_test.go`).
 [Fast adoption](../adoption.md#what-adoption-scaffolds-automatically) lists how adoption
 treats an existing workflow and how to decline it; [git hooks](git-hooks.md) lists the other
 pre-commit jobs.

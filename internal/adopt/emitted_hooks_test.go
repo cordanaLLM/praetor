@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
@@ -31,14 +32,14 @@ const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 // emittedHookRenderings maps each rendered file to the bytes adoption writes. The
 // lefthook.yml fixture is the rendering with every language's jobs, the reuse-lint job and the
 // checkpoint jobs, the superset adopters get; the hosted REUSE gate is the one a repository
-// declaring REUSE gets (reuseWorkflow); the manifest is the current rendering of the
+// declaring REUSE gets (reuseWorkflow) for the default branch main; the manifest is the current rendering of the
 // declarations an earlier adoption wrote (renderedPriorManifest); the actionlint configuration
 // is the one adoption creates with the default facets.
 func emittedHookRenderings(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
 		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true}, true),
-		reuseWorkflowFile:    reuseWorkflow(),
+		reuseWorkflowFile:    reuseWorkflow(forge.FallbackDefaultBranch),
 		evasionHookFile:      buildBlockEvasionPY(),
 		manifestFile:         renderedPriorManifest(t),
 		actionlintConfigFile: string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
