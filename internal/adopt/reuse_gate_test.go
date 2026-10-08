@@ -21,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 	"gopkg.in/yaml.v3"
 )
 
@@ -538,11 +539,35 @@ func assertUsesPins(t *testing.T, rendering string) {
 	for _, use := range uses {
 		assertValidActionUse(t, use)
 	}
-	if uses[0].Pin.Action != "actions/checkout" || uses[0].Ref != reuseCheckoutRef() {
-		t.Errorf("checkout action = %q, want %q", uses[0].Ref, reuseCheckoutRef())
+	wantCheckout, err := scanCheckoutPinnedRef(markdownassets.Workflow)
+	if err != nil {
+		t.Fatalf("scan markdownassets.Workflow: %v", err)
+	}
+	if uses[0].Pin.Action != "actions/checkout" || uses[0].Ref != wantCheckout {
+		t.Errorf("checkout action = %q, want %q", uses[0].Ref, wantCheckout)
 	}
 	if uses[1].Pin.Action != supplychain.ReuseAction || uses[1].Ref != supplychain.ReuseActionPinnedRef() {
 		t.Errorf("reuse action = %q, want %q", uses[1].Ref, supplychain.ReuseActionPinnedRef())
+	}
+}
+
+// Positive: markdownassets.Workflow carries a pinned actions/checkout step, which reuseCheckoutRef
+// extracts without duplicating the pin literal (HISS-19).
+func TestMarkdownAssetsWorkflowCarriesPinnedCheckout(t *testing.T) {
+	ref, err := scanCheckoutPinnedRef(markdownassets.Workflow)
+	if err != nil {
+		t.Fatalf("markdownassets.Workflow carries no pinned actions/checkout: %v", err)
+	}
+	if !strings.HasPrefix(ref, "actions/checkout@") {
+		t.Errorf("scanned checkout ref = %q, want actions/checkout@<sha> # <version>", ref)
+	}
+}
+
+// Negative: a workflow without a pinned checkout reports an error, never falling back to a hardcoded pin.
+func TestScanCheckoutPinnedRef_Negative(t *testing.T) {
+	_, err := scanCheckoutPinnedRef("name: Empty\njobs:\n  test:\n    steps:\n      - run: true\n")
+	if err == nil {
+		t.Fatal("scanCheckoutPinnedRef on workflow without checkout: want error, got nil")
 	}
 }
 

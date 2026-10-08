@@ -6,9 +6,12 @@ package supplychain
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -76,4 +79,120 @@ func TestReuseDeclared_3D(t *testing.T) {
 	if got, err := ReuseDeclared(context.Background(), linked); err != nil || got {
 		t.Errorf("a symlinked LICENSES/: ReuseDeclared = %v, %v; want false", got, err)
 	}
+}
+
+type renovateCustomManager struct {
+	CustomType          string   `json:"customType"`
+	ManagerFilePatterns []string `json:"managerFilePatterns"`
+	MatchStrings        []string `json:"matchStrings"`
+	DepNameTemplate     string   `json:"depNameTemplate"`
+	DatasourceTemplate  string   `json:"datasourceTemplate"`
+}
+
+type renovateConfig struct {
+	GitHubActions struct {
+		ManagerFilePatterns []string `json:"managerFilePatterns"`
+	} `json:"github-actions"`
+	CustomManagers []renovateCustomManager `json:"customManagers"`
+}
+
+// Positive: renovate.json carries a regex custom manager for internal/supplychain/reuse_lint.go
+// that extracts currentValue from ReuseActionVersion, currentDigest from ReuseActionCommit,
+// depName fsfe/reuse-action, and datasource github-tags.
+// Negative: github-actions.managerFilePatterns does not match reuse_lint.go, and a malformed
+// source without either constant fails the regex.
+func TestRenovateRegexMatchesReuseActionPin(t *testing.T) {
+	config := readRenovateTestConfig(t)
+	rel := "internal/supplychain/reuse_lint.go"
+	assertNoGitHubActionsMatch(t, config.GitHubActions.ManagerFilePatterns, rel)
+	manager := findCustomManagerForFile(config.CustomManagers, rel)
+	if manager == nil {
+		t.Fatalf("no custom manager matches %s", rel)
+	}
+	assertReuseManagerConfig(t, manager)
+
+	re, err := regexp.Compile(manager.MatchStrings[0])
+	if err != nil {
+		t.Fatalf("regex compile: %v", err)
+	}
+	src, err := os.ReadFile("reuse_lint.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRegexMatchesReuseSource(t, re, src)
+
+	broken := strings.Replace(string(src), ReuseActionCommit, "", 1)
+	if re.MatchString(broken) {
+		t.Error("regex matched broken source missing commit SHA")
+	}
+}
+
+func readRenovateTestConfig(t *testing.T) renovateConfig {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config renovateConfig
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	return config
+}
+
+func assertNoGitHubActionsMatch(t *testing.T, patterns []string, rel string) {
+	t.Helper()
+	for _, pattern := range patterns {
+		expr := strings.Trim(pattern, "/")
+		if regexp.MustCompile(expr).MatchString(rel) {
+			t.Fatalf("github-actions.managerFilePatterns must not match %s", rel)
+		}
+	}
+}
+
+func assertReuseManagerConfig(t *testing.T, manager *renovateCustomManager) {
+	t.Helper()
+	if manager.CustomType != "regex" {
+		t.Errorf("customType = %q, want regex", manager.CustomType)
+	}
+	if manager.DepNameTemplate != ReuseAction {
+		t.Errorf("depNameTemplate = %q, want %s", manager.DepNameTemplate, ReuseAction)
+	}
+	if manager.DatasourceTemplate != "github-tags" {
+		t.Errorf("datasourceTemplate = %q, want github-tags", manager.DatasourceTemplate)
+	}
+	if len(manager.MatchStrings) == 0 {
+		t.Fatal("custom manager has empty matchStrings")
+	}
+}
+
+func assertRegexMatchesReuseSource(t *testing.T, re *regexp.Regexp, src []byte) {
+	t.Helper()
+	match := re.FindSubmatch(src)
+	if match == nil {
+		t.Fatal("regex did not match reuse_lint.go")
+	}
+	valIndex := re.SubexpIndex("currentValue")
+	digestIndex := re.SubexpIndex("currentDigest")
+	if valIndex < 0 || digestIndex < 0 {
+		t.Fatal("regex missing currentValue or currentDigest capture groups")
+	}
+	if gotVal := string(match[valIndex]); gotVal != ReuseActionVersion {
+		t.Errorf("currentValue = %q, want %q", gotVal, ReuseActionVersion)
+	}
+	if gotDigest := string(match[digestIndex]); gotDigest != ReuseActionCommit {
+		t.Errorf("currentDigest = %q, want %q", gotDigest, ReuseActionCommit)
+	}
+}
+
+func findCustomManagerForFile(managers []renovateCustomManager, rel string) *renovateCustomManager {
+	for i := range managers {
+		for _, pattern := range managers[i].ManagerFilePatterns {
+			expr := strings.Trim(pattern, "/")
+			if regexp.MustCompile(expr).MatchString(rel) {
+				return &managers[i]
+			}
+		}
+	}
+	return nil
 }
