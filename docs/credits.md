@@ -282,9 +282,11 @@ outside a manifest. None of them ships in the binaries.
 | [gosec](https://github.com/securego/gosec) | Go security scan, a tool of `tools/go/go.mod` | tool, used by CI | Apache-2.0 |
 | [Gitleaks](https://github.com/gitleaks/gitleaks) | Secret scan, a tool of `tools/go/go.mod` | tool, used by CI | MIT |
 | [govulncheck](https://go.googlesource.com/vuln) | Go vulnerability scan, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © The Go Authors |
+| [gofumpt](https://github.com/mvdan/gofumpt) | Format-checks the Go managed assets adoption copies, a tool of `tools/go/go.mod` | tool, used by CI | BSD-3-Clause, © 2019, Daniel Martí |
 | [Semgrep](https://semgrep.dev) | Static analysis rules | tool, used by CI | LGPL-2.1-or-later, the license expression of the PyPI release |
 | [Black](https://github.com/psf/black) | Formats the hook sources adoption copies (`.config/hook-lint/requirements.in`) | tool, used by CI | MIT |
 | [Flake8](https://github.com/PyCQA/flake8) | Lints the hook sources adoption copies | tool, used by CI | MIT |
+| [Ruff](https://github.com/astral-sh/ruff) | Lints and format-checks the Python managed assets adoption copies | tool, used by CI | MIT |
 | [yamllint](https://github.com/adrienverge/yamllint) | Lints the YAML praetor emits and the portability job's YAML | tool, used by CI | GPL-3.0-or-later |
 | [ShellCheck](https://github.com/koalaman/shellcheck) | Lints the shell hooks; the portability job downloads a pinned release | tool, used by CI | GPL-3.0-or-later, the notice of every upstream source file |
 | [Cosign](https://github.com/sigstore/cosign) | Keyless signing and verification | tool, used by CI | Apache-2.0 |

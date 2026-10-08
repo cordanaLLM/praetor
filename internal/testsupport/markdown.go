@@ -21,7 +21,7 @@ const maxMarkdownLines = 20000
 var (
 	markdownHeading  = regexp.MustCompile(`^#{1,6} `)
 	markdownListItem = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)]) `)
-	markdownFence    = regexp.MustCompile("^\\s*(```|~~~)")
+	markdownFence    = regexp.MustCompile("^\\s*(`{3,}|~{3,})(.*)$")
 	markdownDisable  = regexp.MustCompile(`^<!-- markdownlint-(disable|enable)((?: MD\d{3})*) -->$`)
 )
 
@@ -30,6 +30,7 @@ type markdownScan struct {
 	lines    []string
 	offset   int
 	inFence  bool
+	marker   string // the opening fence's run of backticks or tildes while inFence
 	inList   bool
 	disabled map[string]bool
 	h1       int
@@ -94,8 +95,8 @@ func (s *markdownScan) empty(index int) bool {
 func (s *markdownScan) line(i int) {
 	text := s.lines[i]
 	s.lineLength(i, text)
-	if markdownFence.MatchString(text) {
-		s.fence(i)
+	if m := markdownFence.FindStringSubmatch(text); m != nil && s.fenceLine(m[1], m[2]) {
+		s.fence(i, m[1])
 		return
 	}
 	if s.inFence {
@@ -121,8 +122,19 @@ func (s *markdownScan) lineLength(i int, text string) {
 	}
 }
 
-// fence applies MD031 to an opening or closing fence line.
-func (s *markdownScan) fence(i int) {
+// fenceLine reports whether a line made of the fence run marker and the text after it opens or
+// closes a fence. Inside one, only a run of the same character at least as long as the opening
+// run, followed by nothing, closes it; every other fence-like line is content, as in CommonMark,
+// so a four-backtick fence can hold a three-backtick one.
+func (s *markdownScan) fenceLine(marker, rest string) bool {
+	if !s.inFence {
+		return true
+	}
+	return marker[0] == s.marker[0] && len(marker) >= len(s.marker) && strings.TrimSpace(rest) == ""
+}
+
+// fence applies MD031 to an opening or closing fence line whose run is marker.
+func (s *markdownScan) fence(i int, marker string) {
 	if !s.inFence && !s.blank(i-1) {
 		s.report(i, "MD031", "fence must follow a blank line")
 	}
@@ -130,6 +142,7 @@ func (s *markdownScan) fence(i int) {
 		s.report(i, "MD031", "fence must be followed by a blank line")
 	}
 	s.inFence = !s.inFence
+	s.marker = marker
 }
 
 // toggle applies a disable or enable comment; no rule names means every rule.

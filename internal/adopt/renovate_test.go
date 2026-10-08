@@ -42,7 +42,7 @@ func withBundleFixturePaths(paths []string) []string {
 const ownDevContainer = "{\n  \"image\": \"ghcr.io/acme/dev:1\"\n}\n"
 
 // apiCompatibilityFixturePaths are the managed paths of the api:public-contract family.
-var apiCompatibilityFixturePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go"}
+var apiCompatibilityFixturePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go", "tools/apicompat/gate/placeholder.go"}
 
 // documentationFixturePaths are the managed paths of the docs:seo-portal families.
 var documentationFixturePaths = []string{
@@ -522,7 +522,7 @@ func TestUncoveredRenovatePathsBoundary(t *testing.T) {
 	}{
 		"globstar covers every path":     {`[{"matchFileNames": ["**"], "enabled": false}]`, nil},
 		"star is every file":             {`[{"description": "all", "matchFileNames": ["*"], "enabled": false}]`, nil},
-		"rules cover together":           {`[{"matchFileNames": ["tools/markdownlint/*"], "enabled": false}, {"matchFileNames": [".github/**/praetor-docs.yml", ".github/**/praetor-api.yml"], "enabled": false}, {"matchFileNames": ["tools/figures/**", "tools/apicompat/*/main.go"], "enabled": false}]`, nil},
+		"rules cover together":           {`[{"matchFileNames": ["tools/markdownlint/*"], "enabled": false}, {"matchFileNames": [".github/**/praetor-docs.yml", ".github/**/praetor-api.yml"], "enabled": false}, {"matchFileNames": ["tools/figures/**", "tools/apicompat/*/*.go"], "enabled": false}]`, nil},
 		"earlier re-enabling rule":       {`[{"matchPackageNames": ["left-pad"], "enabled": true}, {"matchFileNames": ["**"], "enabled": false}]`, nil},
 		"patterns at the bound":          {renovatePatternRule(maxRenovatePatterns), nil},
 		"enabled true":                   {`[{"matchFileNames": ["**"], "enabled": true}]`, all},

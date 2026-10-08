@@ -56,7 +56,7 @@ func TestAuditAPICompatibilityGate_Positive_LockedGatePasses(t *testing.T) {
 	if err := auditAPICompatibilityGate(t.Context(), apiGateManifest(), root); err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{apiassets.WorkflowFile, apiassets.Directory + "/" + apiassets.GateFile} {
+	for _, rel := range []string{apiassets.WorkflowFile, apiassets.Directory + "/" + apiassets.GateFile, apiassets.Directory + "/" + apiassets.PlaceholderFile} {
 		writeFixtureFile(t, root, rel, strings.ReplaceAll(readFixtureFile(t, root, rel), "\n", "\r\n"))
 	}
 	if err := auditAPICompatibilityGate(t.Context(), apiGateManifest(), root); err != nil {
@@ -137,7 +137,7 @@ func TestAuditAPICompatibilityGate_Disabled(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "retains Praetor asset") {
 		t.Fatalf("retained gate files: %v", err)
 	}
-	for _, rel := range []string{apiassets.WorkflowFile, apiassets.Directory + "/" + apiassets.GateFile} {
+	for _, rel := range []string{apiassets.WorkflowFile, apiassets.Directory + "/" + apiassets.GateFile, apiassets.Directory + "/" + apiassets.PlaceholderFile} {
 		writeFixtureFile(t, root, rel, "# the operator's own file\n")
 	}
 	err = auditAPICompatibilityGate(t.Context(), manifest, root)

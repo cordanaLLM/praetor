@@ -110,6 +110,12 @@ var priorDigests = map[string]string{
 	// README.md while it said a block naming a figure without JSON fails an Astro build; an .md
 	// page only logs the error and builds without its content.
 	"5c4f4f5eb3e714fd2b3fee90505ef73b147c943cea8cc99a3aaec9096e5c0572": Directory + "/README.md",
+	// mkdocs_hook.py, VENDOR.md and README.md before they held to the lint settings adopters run
+	// over every tracked file: ruff check with the I and RUF100 rules and ruff format at 100
+	// columns, and markdownlint at its default 80-column MD013 (#845, #578).
+	"8cb476e7baceb9e1f9205248c125284d43c4eaf69886c84d00db999738f21fb0": Directory + "/mkdocs_hook.py",
+	"93c89f5ba72ef0111c735aebda14a5bf2bc3012948f092b64ff312f93510910c": Directory + "/third_party/interfig/VENDOR.md",
+	"06a88460af38141f8a1ae087a4d54b97514749cb0ad5459a8acec171e0a42580": Directory + "/README.md",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md

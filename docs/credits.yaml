@@ -1400,6 +1400,18 @@ entries:
       - "go:golang.org/x/vuln"
     match:
       - "govulncheck"
+  - name: "gofumpt"
+    url: "https://github.com/mvdan/gofumpt"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "BSD-3-Clause"
+    notice: "© 2019, Daniel Martí"
+    use: "Format-checks the Go managed assets adoption copies, a tool of `tools/go/go.mod`"
+    paths:
+      - "tools/go/go.mod"
+    packages:
+      - "go:mvdan.cc/gofumpt"
   - name: "Semgrep"
     url: "https://semgrep.dev"
     section: "tooling"
@@ -1435,6 +1447,17 @@ entries:
       - ".config/hook-lint/requirements.in"
     packages:
       - "pypi:flake8"
+  - name: "Ruff"
+    url: "https://github.com/astral-sh/ruff"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Lints and format-checks the Python managed assets adoption copies"
+    paths:
+      - ".config/hook-lint/requirements.in"
+    packages:
+      - "pypi:ruff"
   - name: "yamllint"
     url: "https://github.com/adrienverge/yamllint"
     section: "tooling"

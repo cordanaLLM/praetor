@@ -6,6 +6,7 @@ tool (
 	github.com/securego/gosec/v2/cmd/gosec
 	github.com/zricethezav/gitleaks/v8
 	golang.org/x/vuln/cmd/govulncheck
+	mvdan.cc/gofumpt
 )
 
 require (
@@ -123,4 +124,5 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	mvdan.cc/gofumpt v0.12.0 // indirect
 )

@@ -45,11 +45,13 @@ hand with its scripts and extends it from their own `lefthook.yml`, as
 hooks may run: black and yamllint with their built-in defaults (yamllint in strict mode) and
 flake8 at 100 columns. The gate lints copies in an empty directory with configuration files
 ignored, and checks negative and boundary fixtures so the policy is proven to be on.
-The same yamllint run covers the documentation gate's locked YAML, which audit holds byte-equal
-in every `docs:seo-portal` repository: the workflow text adoption writes to
-`.github/workflows/praetor-docs.yml` and `tools/markdownlint/markdownlint-cli2.yaml`, both read
-through `tools/markdownlint/assets.go`
-(`test_yamllint_accepts_emitted_yaml`).
+The same run covers every managed asset adoption writes, enumerated from the registry by
+`go run ./internal/managedasset/export` and not by a list kept in the script: the documentation
+gate's workflow and YAML, the figure engine's Python and the API compatibility gate's Go program.
+Audit holds an adopter's copies byte-equal, so an adopter cannot fix a finding in them. They are
+held to black, flake8, yamllint, `ruff check` and `ruff format --check` (Python), gofmt, gofumpt
+and `go vet` (Go) and shellcheck (shell); the policy is in the script's docstring and in the
+[figures guide](figures.md#locked-assets-and-linters).
 
 The gate also lints the two hook files adoption renders from templates in
 `internal/adopt/hooks.go`: the root `lefthook.yml` (`buildLefthookYAMLFor`) and
@@ -76,6 +78,11 @@ python3 -m venv "$HOME/.local/share/praetor-tools/hook-lint"
 "$HOME/.local/share/praetor-tools/hook-lint/bin/python" -m pip install --require-hashes -r .config/hook-lint/requirements.txt
 PRAETOR_HOOK_LINT_BIN="$HOME/.local/share/praetor-tools/hook-lint/bin" make hooks-lint
 ```
+
+gofumpt is pinned in `tools/go/go.mod` instead, the one version source for Go tools; install it
+into the same directory with
+`GOBIN="$HOME/.local/share/praetor-tools/hook-lint/bin" go install -modfile=tools/go/go.mod mvdan.cc/gofumpt`.
+`go`, `gofmt` and `shellcheck` come from `PATH`.
 
 Without `PRAETOR_HOOK_LINT_BIN` the gate takes the tools from `PATH`, and each check skips
 with its reason when its tool is missing or is not the pinned version. With the variable set,

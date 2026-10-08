@@ -86,6 +86,35 @@ unedited copy. The family holds at most 64 earlier texts; a React bump costs two
 `dist/player.js` and one for `dist/THIRD-PARTY-LICENSES.txt`, and an esbuild bump two, one for
 each bundle under `dist/`.
 
+### Locked assets and linters
+
+Audit locks the engine files byte for byte, so an adopter that runs a linter over every tracked
+file cannot fix a finding in one. `make hooks-lint` (`scripts/test_emitted_hook_lint.py`)
+therefore lints every file of every registered family. It does not list them: it runs
+`go run ./internal/managedasset/export`, which writes `managedasset.Assets` (the registry's
+canonical bytes), so a family added to the registry is linted the day it is registered. Per
+language:
+
+| Language | Check |
+| :-- | :-- |
+| Go | `gofmt -l`, `gofumpt -l`, and `go vet` per package directory, in a scratch module |
+| Python | black at its defaults and `flake8` at 100 columns; `ruff check` at the rules of `templates/python/ruff.toml.tmpl` plus `S`, `RUF`, `PERF`, `ASYNC` and `C90` (#845), line length 100, target Python 3.12; and `ruff format --check` at black's width (ruff's formatter reproduces black's, so one formatting policy holds under both tools) |
+| YAML | `yamllint --strict` with its defaults |
+| Shell | `shellcheck` |
+
+The Markdown assets are held to markdownlint's default rules as far as the in-process subset of
+`internal/testsupport` reaches (`TestManagedMarkdownHoldsTheDefaultRules`, MD013 at 80 columns
+included); `make docs-lint` runs the real markdownlint library over the repository's copies of the
+same files.
+
+The tools come from the declared pin sources: black, flake8, yamllint and ruff from the
+hash-locked `.config/hook-lint/requirements.txt`, gofumpt from `tools/go/go.mod`. CI installs them
+from there and sets `PRAETOR_HOOK_LINT_BIN`, and while it is set a missing or mismatched tool
+fails the gate; without it a missing tool skips its check and says why. The harness plants a
+defect per language (an unformatted Go file, a `RUF005` concatenation, an unquoted shell
+expansion) and fails when a linter accepts it. When a change to a managed file makes it unclean,
+fix the file and record its outgoing text as above; do not exclude it.
+
 ## Mermaid is retired
 
 Every diagram the root site builds is a figure, the generated wiki pages included, so the root

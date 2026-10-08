@@ -11,12 +11,13 @@ run by the workflow `.github/workflows/praetor-api.yml` under the status context
 
 ## What adoption writes
 
-While the facet is declared and git tracks a `go.mod`, `praetorctl adopt` writes two locked files
+While the facet is declared and git tracks a `go.mod`, `praetorctl adopt` writes three locked files
 and `praetorctl audit` compares them byte for byte, one consistent line-ending style allowed:
 
 | File | Purpose |
 | :--- | :--- |
-| `tools/apicompat/gate/main.go` | The gate program. Its `//go:build apicompatgate` constraint keeps it out of every `./...` pattern, so the repository's own build, tests, linters and API never include it; `go run` builds it because the command names the file. |
+| `tools/apicompat/gate/main.go` | The gate program. Its `//go:build apicompatgate` constraint keeps the gate itself out of every `./...` pattern, so the repository's own build, tests, linters and API never include it; `go run` builds it because the command names the file. |
+| `tools/apicompat/gate/placeholder.go` | A stand-in for the gate in a build without the tag: a `main` that exits 1 and names the command that runs the gate. It gives the directory one buildable package, which a `./...` pattern of the repository now builds, vets and lints (a `main` that prints one line and exits 1, with no exported API), and so `go vet ./tools/apicompat/gate` and `golangci-lint run ./tools/apicompat/gate`, which a pre-commit hook may run on the directory of a staged file, find a Go file instead of failing on a package whose files the tag excludes. |
 | `.github/workflows/praetor-api.yml` | One job, `Go API Compatibility`, on pushes to the repository's default branch and on every pull request; on a draft it fails by design until the draft is marked ready ([When the workflow runs](#when-the-workflow-runs)). The branch ruleset adoption renders requires it. |
 
 Adoption refuses, even with `--force`, to overwrite a file the repository already had at either
@@ -217,6 +218,12 @@ earlier text refreshes without `--force`:
 ```bash
 PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'
 ```
+
+Both Go files are formatted with gofumpt and pass `go vet` without a tag for the placeholder and
+with `-tags apicompatgate` for the gate, because audit locks them byte for byte and an adopter
+cannot reformat them. `TestManagedAssetsAreLintClean` in
+`internal/managedasset/lint_clean_test.go` holds every managed asset of every family to that kind
+of default (see [Locked assets and linters](figures.md#locked-assets-and-linters)).
 
 Praetor lints, vets and scans the gate with its build tag (`make lint`, `make sec`,
 `.golangci.yml` `run.build-tags`) and tests it by building the embedded bytes

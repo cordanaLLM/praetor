@@ -142,6 +142,11 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/praetor-hook-lint"
           "$RUNNER_TEMP/praetor-hook-lint/bin/python" -m pip install --require-hashes -r .config/hook-lint/requirements.txt
+          # gofumpt joins the venv's bin directory from tools/go/go.mod, the one version source
+          # for Go tools (Renovate keeps it current); ruff comes from the hash lock above.
+          # scripts/test_emitted_hook_lint.py fails instead of skipping any tool that is missing
+          # or not the pinned version while PRAETOR_HOOK_LINT_BIN is set.
+          GOBIN="$RUNNER_TEMP/praetor-hook-lint/bin" go install -modfile=tools/go/go.mod mvdan.cc/gofumpt
           echo "PRAETOR_HOOK_LINT_BIN=$RUNNER_TEMP/praetor-hook-lint/bin" >> "$GITHUB_ENV"
 
       - name: Verify Go Formatting (gofmt)

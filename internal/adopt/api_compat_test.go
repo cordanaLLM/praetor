@@ -18,7 +18,7 @@ import (
 
 // apiGatePaths are the files the api:public-contract facet owns, spelled out rather than read
 // from the code under test.
-var apiGatePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go"}
+var apiGatePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go", "tools/apicompat/gate/placeholder.go"}
 
 func assertAPIGate(t *testing.T, root string, present bool) {
 	t.Helper()
