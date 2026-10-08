@@ -487,3 +487,84 @@ func TestWorkflowActions_3D(t *testing.T) {
 		t.Fatalf("a workflow using nothing: %q, %v", actions, err)
 	}
 }
+
+// Positive: the hosted REUSE gate pins every action by full 40-hex commit SHA with its release
+// version as a trailing comment, and the audit SHA-pin check (managedasset.UnpinnedActions)
+// reports zero unpinned actions on the rendering and on the committed emitted fixture.
+// Negative (Rule 13): the earlier tag-pinned rendering fails the check, returning the unpinned
+// actions. Boundary: each uses: line carries a 40-hex SHA, a version comment, and a yamllint
+// line-length exemption.
+func TestReuseWorkflow_PinsActionsByDigest_3D(t *testing.T) {
+	rendering := reuseWorkflow(forge.FallbackDefaultBranch)
+	assertUnpinnedActions(t, rendering, "rendering", nil)
+
+	emittedPath := filepath.Join(emittedFixtureRoot, filepath.FromSlash(reuseWorkflowFile))
+	assertUnpinnedActions(t, mustRead(t, emittedPath), emittedPath, nil)
+
+	oldPath := filepath.Join("testdata", "reuse-workflow", "reuse-action-v6.yml")
+	wantOldUnpinned := []string{"uses: actions/checkout@v7", "uses: fsfe/reuse-action@v6"}
+	assertUnpinnedActions(t, mustRead(t, oldPath), oldPath, wantOldUnpinned)
+
+	assertUsesPins(t, rendering)
+}
+
+func assertUnpinnedActions(t *testing.T, workflow, name string, want []string) {
+	t.Helper()
+	unpinned, err := managedasset.UnpinnedActions(workflow)
+	if err != nil {
+		t.Fatalf("UnpinnedActions(%s): %v", name, err)
+	}
+	if (len(unpinned) == 0 && len(want) != 0) || (len(unpinned) != 0 && !slices.Equal(unpinned, want)) {
+		t.Errorf("%s unpinned actions = %q, want %q", name, unpinned, want)
+	}
+}
+
+func assertValidActionUse(t *testing.T, use util.ActionUse) {
+	t.Helper()
+	if !use.Pinned || !use.SHAPinned || len(use.Pin.SHA) != 40 || use.Pin.Release == "" {
+		t.Errorf("action %q not fully SHA-pinned with release comment: %+v", use.Ref, use)
+	}
+}
+
+func assertUsesPins(t *testing.T, rendering string) {
+	t.Helper()
+	_, uses, err := util.ScanActionUses(rendering, managedasset.MaxWorkflowLines)
+	if err != nil {
+		t.Fatalf("ScanActionUses(rendering): %v", err)
+	}
+	if len(uses) != 2 {
+		t.Fatalf("rendering has %d action uses, want 2", len(uses))
+	}
+	for _, use := range uses {
+		assertValidActionUse(t, use)
+	}
+	if uses[0].Pin.Action != "actions/checkout" || uses[0].Ref != reuseCheckoutRef() {
+		t.Errorf("checkout action = %q, want %q", uses[0].Ref, reuseCheckoutRef())
+	}
+	if uses[1].Pin.Action != supplychain.ReuseAction || uses[1].Ref != supplychain.ReuseActionPinnedRef() {
+		t.Errorf("reuse action = %q, want %q", uses[1].Ref, supplychain.ReuseActionPinnedRef())
+	}
+}
+
+// Boundary: an unedited earlier tag-pinned hosted REUSE gate (reuse-action-v6.yml) is refreshed
+// to the current digest-pinned rendering on adoption without --force.
+func TestAdopt_RefreshesPriorTagPinnedReuseWorkflow(t *testing.T) {
+	repoPath := newTestRepo(t, "refresh-prior-reuse-gate")
+	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", "reuse-action-v6.yml"))
+	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPath, priorText)
+
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	got := mustRead(t, workflowPath)
+	want := reuseWorkflow(forge.FallbackDefaultBranch)
+	if got != want {
+		t.Fatalf("refreshed gate differs from current rendering:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if hasAction(rep, reuseWorkflowFile, actionReplace) {
+		t.Errorf("want a refresh without --force, got actionReplace: %+v", rep.ActionDetails)
+	}
+	if !strings.Contains(reuseGateDetails(rep), "Refreshed") {
+		t.Errorf("report details do not mention Refreshed: %s", reuseGateDetails(rep))
+	}
+}
