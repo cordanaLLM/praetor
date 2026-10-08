@@ -43,3 +43,23 @@ func Assets() ([]Asset, error) {
 	}
 	return assets, nil
 }
+
+// DraftSkipAssets returns the opt-in draft skip rendering (Family.WithDraftShape) of the hosted
+// workflow of every registered family that has one, at the repository-relative path adoption
+// writes it to when hosted_gates.draft is skip. Assets lists the fail-closed rendering of that
+// path only, so the lint harness reaches the skip text through this second enumeration too.
+func DraftSkipAssets() ([]Asset, error) {
+	families := Families()
+	var assets []Asset
+	for index := 0; index < len(families) && index < MaxFamilies; index++ {
+		if families[index].WorkflowFile == "" {
+			continue
+		}
+		skip, err := families[index].WithDraftShape(true)
+		if err != nil {
+			return nil, fmt.Errorf("render the draft skip of %s: %w", families[index].Name, err)
+		}
+		assets = append(assets, Asset{Path: skip.WorkflowFile, Data: []byte(skip.Workflow)})
+	}
+	return assets, nil
+}

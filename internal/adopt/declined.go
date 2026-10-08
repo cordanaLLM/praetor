@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // maxDeclinedArtifacts bounds the declared list so a malformed manifest cannot make
@@ -307,28 +306,13 @@ func declaredManifest(ctx context.Context, repoPath string) (manifest *config.Ma
 	return manifest, false
 }
 
-// loadDeclaredManifest reads and strictly decodes the repository's manifest (one bounded
-// document, BUG-857) and applies every manifest validation, as config.LoadManifest does. A
-// missing manifest is (nil, nil). A manifest that exists but cannot be resolved, read or decoded
-// is an error, so a caller that writes on the strength of "not declined" (EnsurePrivateIgnore)
-// fails closed instead of treating an unreadable decision as no decision.
+// loadDeclaredManifest reads and validates the repository's manifest through the one shared
+// reader (config.LoadRepositoryManifest: confined path, one bounded snapshot, ParseManifest). A
+// missing manifest is (nil, nil); one that exists but cannot be resolved, read, decoded or
+// validated is an error, so a caller that writes on the strength of "not declined"
+// (EnsurePrivateIgnore) fails closed instead of treating an unreadable decision as no decision.
 func loadDeclaredManifest(ctx context.Context, repoPath string) (*config.Manifest, error) {
-	full, err := repoFile(repoPath, manifestFile)
-	if err != nil {
-		return nil, fmt.Errorf("resolve the adoption manifest: %w", err)
-	}
-	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", manifestFile, err)
-	}
-	if !exists {
-		return nil, nil
-	}
-	manifest, err := config.ParseManifest(manifestFile, data)
-	if err != nil {
-		return nil, fmt.Errorf("decode %s: %w", manifestFile, err)
-	}
-	return manifest, nil
+	return config.LoadRepositoryManifest(ctx, repoPath)
 }
 
 // adoptStepNames returns the name of every step in the adoption chain, so tests and error

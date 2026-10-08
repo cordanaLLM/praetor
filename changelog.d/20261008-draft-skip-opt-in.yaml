@@ -1,0 +1,4 @@
+type: added
+title: "hosted_gates.draft: skip in .standards.yaml opts the managed praetor-api.yml and praetor-docs.yml into a job-level draft skip, rendered from the same hosted gate definition as the fail-closed draft step (which stays the default): the gate job skips a draft and a result job reporting the required check needs it and fails when it is skipped, the audit accepts the opt-in only while that result job is a proven aggregate and otherwise refuses naming the missing condition, locks the rendering byte for byte, and the HISS-18 workflow trigger audit accepts the shape under the same guard; the result job prints the draft annotation the checkpoint planner reads as draft pending; a plain praetorctl adopt refreshes either shape into the other, including the skip copy of an earlier gate text"
+issue: "#857"
+breaking: false

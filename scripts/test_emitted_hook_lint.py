@@ -424,6 +424,8 @@ class ManagedAssetsTest(LintCase):
         files = self.registry()
         for path in ("tools/apicompat/gate/main.go", "tools/figures/mkdocs_hook.py",
                      ".github/workflows/praetor-docs.yml",
+                     "draft-skip/.github/workflows/praetor-docs.yml",
+                     "draft-skip/.github/workflows/praetor-api.yml",
                      "tools/markdownlint/markdownlint-cli2.yaml"):
             self.assertIn(path, files)
 

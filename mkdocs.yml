@@ -124,6 +124,7 @@ nav:
       - Agents, Clients & Model Routing:
           - guides/agents-and-clients/index.md
           - Agent Lifecycle Coverage: guides/agent-lifecycle.md
+          - Context Cache Bands: guides/context-cache-bands.md
           - Agent Hooks: guides/agent-hooks.md
           - Client Bootstrap: guides/client-bootstrap.md
           - Client Connections: guides/client-connections.md

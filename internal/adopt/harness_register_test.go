@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/changelog"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -353,5 +354,26 @@ func TestAdoptRegisterBlockFollowsFragmentDirectory(t *testing.T) {
 	}
 	if content := adopt(true, "version: 1\nregister:\n  conventions:\n    social: \"\"\n"); strings.Contains(content, "changelog fragment") {
 		t.Errorf("an empty conventions.social key must decline the detected clause")
+	}
+}
+
+// The harness opens every cache band, so a fresh adoption does not earn the unlayered warning
+// and a --force refresh of the harness region keeps the markers (#853).
+func TestHarnessCarriesTheCacheBandMarkers(t *testing.T) {
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", registerTestPlan()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := strings.Index(harness, agentcontext.BandHeadMarker)
+	cfg := strings.Index(harness, agentcontext.BandConfigMarker)
+	tail := strings.Index(harness, agentcontext.BandTailMarker)
+	title := strings.Index(harness, harnessTitleSuffix)
+	register := strings.Index(harness, config.RegisterBlockHeading)
+	footer := strings.Index(harness, harnessFooterHeading)
+	if title < 0 || title >= head || head >= cfg || cfg >= register || register >= tail || tail >= footer {
+		t.Fatalf("band order wrong: title=%d head=%d config=%d register=%d tail=%d footer=%d", title, head, cfg, register, tail, footer)
+	}
+	if _, layered, err := agentcontext.HeadBand(harness); err != nil || !layered {
+		t.Fatalf("harness is not layered: %v", err)
 	}
 }

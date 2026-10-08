@@ -35,6 +35,9 @@ func auditExactManagedFile(ctx context.Context, rootDir string, family managedas
 	if err != nil {
 		return fmt.Errorf("[FAIL] %s asset %s is missing or unreadable: %w", gate, rel, err)
 	}
+	if err := auditDraftSkipGuard(gate, family, rel, actual); err != nil {
+		return err
+	}
 	equivalent, compareErr := util.CanonicalTextEquivalent(actual, expected)
 	if compareErr != nil {
 		return fmt.Errorf("[FAIL] %s asset %s has invalid line endings: %w", gate, rel, compareErr)
@@ -49,6 +52,25 @@ func auditExactManagedFile(ctx context.Context, rootDir string, family managedas
 		return fmt.Errorf("[FAIL] %s asset %s holds an earlier Praetor text; run 'praetorctl adopt' to refresh it", gate, rel)
 	}
 	return fmt.Errorf("[FAIL] %s asset %s differs from the locked Praetor asset; run '%s'", gate, rel, adopt.ForceCommand(""))
+}
+
+// auditDraftSkipGuard refuses the opt-in draft skip (hosted_gates.draft: skip) of the family's
+// workflow at rel while its copy actual does not keep the required check failing on a draft
+// (forge.DraftSkipFault), naming the missing condition. Only the draft skip family workflow is
+// judged, and only a copy that is not an earlier Praetor text: a stale fail-closed or earlier skip
+// copy reports the refresh adoption performs (PriorText), not a guard fault it never had to meet.
+// The byte comparison that follows locks the accepted rendering.
+func auditDraftSkipGuard(gate string, family managedasset.Family, rel string, actual []byte) error {
+	gateJob, _, skipping := family.DraftSkipJobs()
+	if !skipping || rel != family.WorkflowFile || family.PriorText(rel, actual) {
+		return nil
+	}
+	if err := forge.DraftSkipFault(actual, gateJob, family.StatusContext); err != nil {
+		return fmt.Errorf("[FAIL] %s: hosted_gates.draft: skip is refused for %s: %w; a draft pull request would satisfy "+
+			"the required check. Run 'praetorctl adopt' to render the accepted shape, or remove hosted_gates.draft to keep "+
+			"the fail-closed draft step", gate, rel, err)
+	}
+	return nil
 }
 
 // otherBranchRenderingFailure is the audit failure of a hosted workflow at rel that Praetor

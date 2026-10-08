@@ -240,8 +240,16 @@ func replaceMarkedBlock(content, start, end, body string, maxLines, scanLines in
 	default:
 		out = strings.TrimRight(content, "\n") + "\n\n" + body + "\n"
 	}
-	if count := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; count > maxLines {
-		return "", false, fmt.Errorf("%w: %d lines, budget %d", ErrMarkedBlockBudget, count, maxLines)
+	if err := CheckLineBudget(out, maxLines); err != nil {
+		return "", false, err
 	}
 	return out, out != content, nil
+}
+
+// CheckLineBudget reports an error if content has more lines than maxLines.
+func CheckLineBudget(content string, maxLines int) error {
+	if count := strings.Count(strings.TrimRight(content, "\n"), "\n") + 1; count > maxLines {
+		return fmt.Errorf("%w: %d lines, budget %d", ErrMarkedBlockBudget, count, maxLines)
+	}
+	return nil
 }

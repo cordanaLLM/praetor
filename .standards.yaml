@@ -172,6 +172,12 @@ docs_surfaces:
       - "internal/config/*_test.go"
     docs:
       - "docs/guides/effective-policy.md"
+  - name: "context cache bands"
+    paths:
+      - "internal/agentcontext/bands.go"
+      - "internal/compiler/stable.go"
+    docs:
+      - "docs/guides/context-cache-bands.md"
   - name: "text register policy"
     paths:
       - "internal/config/register*.go"

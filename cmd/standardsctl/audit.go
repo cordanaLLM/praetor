@@ -361,6 +361,9 @@ func auditAgentContext(ctx context.Context, manifest *config.Manifest, opts *aud
 		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", harness.Narrow(err))
 	}
 	fmt.Printf("[PASS] Cross-agent context targets verified in sync: %s.\n", verifiedTargetList(res))
+	if err := compiler.VerifyStableContext(ctx, os.Stdout, tr, opts.agentsPath); err != nil {
+		return fmt.Errorf("[FAIL] Agent context cache stability: %w", harness.Narrow(err))
+	}
 	lint, err := compiler.LintContext(ctx, opts.agentsPath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Agent context: %w", harness.Narrow(err))

@@ -72,6 +72,12 @@ check by design. Marking it ready starts the `ready_for_review` run, which repor
 check on the same head commit and replaces the failure; until it reports, the failed check keeps
 the pull request from merging.
 
+`hosted_gates.draft: skip` in `.standards.yaml` opts in to a job-level draft skip instead, which
+the audit accepts only behind a result job that reports `Go API Compatibility`, needs the gate
+job and fails when it is skipped. A draft then skips the gate job and fails the required check
+through the result job ([Adoption](../adoption.md#which-jobs-the-ruleset-requires),
+`TestAuditLocksTheDraftSkipRendering` in `cmd/standardsctl/audit_draft_skip_test.go`).
+
 The trigger and the draft handling are defined once, in `internal/ghworkflow/hostedgate.go`:
 both hosted gates render their text from it, and `ghworkflow.HostedGateFault` checks a workflow
 against the same shape (`TestHostedGateFault_Negative` in

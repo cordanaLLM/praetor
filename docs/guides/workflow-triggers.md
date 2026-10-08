@@ -22,7 +22,7 @@ Each finding names the workflow file, the line of the trigger or job, and what s
 | `push` with only a `branches-ignore` filter | Every branch the filter does not name starts it. | same |
 | `push` with a `branches` pattern made of asterisks alone, such as `'**'` or `'*'` | `'**'` matches every branch name, and `'*'` every branch name without a slash. | same |
 | A job a `pull_request` run starts whose first step is not the draft step | A draft runs the whole job, and runs it again on every push to the draft. | same |
-| A job whose condition reads `github.event.pull_request.draft` | GitHub reports a job its condition skipped as successful, and a required check accepts that, so a draft marked ready can merge on the skip. | same |
+| A job whose condition reads `github.event.pull_request.draft` | GitHub reports a job its condition skipped as successful, and a required check accepts that, so a draft marked ready can merge on the skip. The one exception is the opt-in draft skip, accepted behind a proven aggregate ([below](#the-opt-in-draft-skip)). | same |
 | A job that stops a draft in its first step but sets `continue-on-error` | The failed draft reports success, which a required check accepts. | same |
 | A job that needs a job held back on a draft, whatever its condition and its own first step | GitHub skips a job whose need failed or was skipped unless its condition runs it after one, and reports the skip as successful, which a required check accepts, so a draft passes the job without its work; its own draft step never runs. The check does not read the status functions in the condition ([Limits](#limits)). Each job of a chain is reported, naming the need that holds it back. | `TestAuditWorkflowTriggers_JobsSkippedThroughNeeds`, `TestAuditWorkflowTriggers_NeedSkipWhateverTheCondition`, `TestAuditWorkflowTriggers_NeedsChainAtTheJobBound` |
 | Jobs whose `needs` form a cycle, or need a job on one | No order runs them, so the check cannot say what they do on a draft. One finding names them all, on the line of the first of them. | `TestAuditWorkflowTriggers_ReportsNeedsCycle` |
@@ -60,6 +60,20 @@ does. A job also passes when:
 
 A `push` filtered to named branches, such as `[main, 'release/**']`, or to tags alone passes.
 `TestAuditWorkflowTriggers_Positive_HostedGateShapePasses` covers each of these.
+
+## The opt-in draft skip
+
+A job condition that reads the draft flag is reported, except one shape: the managed hosted gates
+rendered with `hosted_gates.draft: skip` in `.standards.yaml`
+([Adopting](../adoption.md#which-jobs-the-ruleset-requires)). There the gate job carries exactly
+`github.event_name != 'pull_request' || github.event.pull_request.draft == false`, and the job
+reporting the required check is a proven aggregate in the same workflow: it needs the gate job,
+runs under `always()` alone and fails when the gate job is skipped, which is what a draft leaves of
+it (`forge.DraftSkipFault`, built on the aggregate proof in `internal/forge/workflow_aggregate.go`).
+The check counts both jobs as stopping a draft. The same condition without that aggregate, or
+with an aggregate that passes while the gate job is skipped, is reported as the job-condition
+skip it is (`TestAuditWorkflowTriggersAcceptsTheDraftSkipOnlyBehindItsAggregate`). The judgement
+reads one workflow at a time, so an aggregate in another workflow proves nothing.
 
 The check orders a workflow's jobs by their needs (`util.DependencyOrder`, Kahn's algorithm) and
 decides each job once, after every job it needs, from the job itself and the decisions of its
@@ -172,9 +186,9 @@ A finding is one line, and the last line counts them and names both ways out:
   condition says. A condition can mention `always()`, `failure()` or `cancelled()` and still skip
   the job after a failed need, as `!failure() && !cancelled()` does, so the audit reports by
   default instead of guessing. That includes the aggregate merge gate that begins with the draft
-  step and runs with `if: always()`, which does fail a draft through its failed need. A later
-  change may pass that proven `always()` aggregate shape once the aggregate prover of #821 is on
-  main; until then, declare such a workflow in the exceptions list.
+  step and runs with `if: always()`, which does fail a draft through its failed need. Only the
+  [opt-in draft skip](#the-opt-in-draft-skip) passes through the proven `always()` aggregate;
+  for any other such workflow, declare it in the exceptions list.
 - The audit does not read which jobs the ruleset requires, so every job of a need chain is
   reported, not only the required one.
 - A job with a condition of its own that needs a job a `pull_request` run never starts is judged

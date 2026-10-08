@@ -395,6 +395,20 @@ only a workflow it cannot read or a malformed `HISS-18` exceptions entry fails i
 ([Workflow trigger audit](workflow-triggers.md),
 `TestServerAuditRunsTheWorkflowTriggerCheck` in `cmd/standards-mcp/audit_policy_test.go`).
 
+The context gate inside `standards_audit` also runs the cache-stability check
+(`compiler.VerifyStableContext`, called from `auditContextSync` in
+`cmd/standards-mcp/audit_tools.go`), the same one `praetorctl audit` and
+`compile-context --verify-stable` run. It renders `AGENTS.md` twice under different injected
+clocks and target visit orders and scans the head band for volatile text (a timestamp with
+seconds, a `sha256:` digest, an absolute path, a run or build counter). A drifting render or a
+volatile head fails the tool call with `[FAIL] Agent context cache stability: ...` naming the
+token. An `AGENTS.md` without band markers still passes; the tool prints the unlayered
+`[WARN]` line in the context gate's output, after the `[PASS] Agent context ...` line
+([Context cache bands](context-cache-bands.md#stability-gate),
+`TestMCPAuditAgentContext_Negative_RefusesVolatileHeadBand` and
+`TestMCPAuditAgentContext_Boundary_UnmarkedSourceWarns` in
+`cmd/standards-mcp/audit_context_stable_test.go`).
+
 The lock digest gate inside `standards_audit` resolves its catalog from the same
 `catalog_root` tool argument the effective-policy gate uses
 (`p.policy.CatalogRoot` in `cmd/standards-mcp/audit_tools.go`), not the repository

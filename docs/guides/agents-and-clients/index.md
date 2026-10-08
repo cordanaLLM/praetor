@@ -9,6 +9,8 @@ repository policy from the client-specific adapters the other pages configure.
 
 - [Agent lifecycle coverage](../agent-lifecycle.md): the shared Lefthook jobs and
   `AGENTS.md` context versus each client's native lifecycle adapter.
+- [Context cache bands](../context-cache-bands.md): the head, config and tail markers in
+  `AGENTS.md` that keep the compiled files a stable prompt prefix, and `--verify-stable`.
 - [Agent hooks](../agent-hooks.md): the single `praetorctl hook <client> <event>` entrypoint
   and the native hook coverage of each client.
 - [Shared client configuration](../client-bootstrap.md): `praetorctl clients` projects the

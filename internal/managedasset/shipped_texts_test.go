@@ -6,6 +6,7 @@ package managedasset
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -110,7 +111,7 @@ func textHolder(f Family, rel string) string {
 }
 
 // ledgerProblems reports every way entries break the prior-text contract of f, sorted.
-func ledgerProblems(f Family, entries []shippedText, current map[string]string) []string {
+func ledgerProblems(f Family, entries []shippedText, current, skipEarlier map[string]string) []string {
 	last, earlier, problems := splitLedger(f, entries)
 	for _, rel := range f.ManagedPaths() {
 		if last[rel] != current[rel] {
@@ -123,7 +124,7 @@ func ledgerProblems(f Family, entries []shippedText, current map[string]string) 
 		}
 	}
 	for digest, rel := range f.Prior {
-		if earlier[digest] != rel {
+		if earlier[digest] != rel && skipEarlier[digest] != rel {
 			problems = append(problems, fmt.Sprintf("Prior lists %s for %s but the ledger records no such earlier text", digest, rel))
 		}
 	}
@@ -180,10 +181,16 @@ func TestShippedTextLedger(t *testing.T) {
 			if err := os.WriteFile(ledgerPath(family), []byte(text), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			updateSkipLedger(t, family)
 			continue
 		}
-		for _, problem := range ledgerProblems(family, entries, current) {
+		_, skipEntries, skipCurrent := readSkipLedger(t, family)
+		_, skipEarlier, _ := splitLedger(family, skipEntries)
+		for _, problem := range ledgerProblems(family, entries, current, skipEarlier) {
 			t.Errorf("%s: %s", ledgerPath(family), problem)
+		}
+		for _, problem := range skipLedgerProblems(family, skipEntries, skipCurrent) {
+			t.Errorf("%s: %s", skipLedgerPath(family), problem)
 		}
 	}
 }
@@ -195,15 +202,15 @@ func TestShippedTextLedgerNegative(t *testing.T) {
 	text, entries, _ := readLedger(t, family)
 	family.Workflow += "# a pin moved\n"
 	current := mustCurrentDigests(t, family)
-	assertLedgerProblem(t, ledgerProblems(family, entries, current), "but the ledger ends at")
+	assertLedgerProblem(t, ledgerProblems(family, entries, current, nil), "but the ledger ends at")
 	appended := mustParseLedger(t, appendChangedTexts(family, text, entries, current))
-	assertLedgerProblem(t, ledgerProblems(family, appended, current), "is not in Prior")
+	assertLedgerProblem(t, ledgerProblems(family, appended, current, nil), "is not in Prior")
 	family = Families()[0]
 	current = mustCurrentDigests(t, family)
 	family.Prior[sha256Hex("never shipped\n")] = family.WorkflowFile
-	assertLedgerProblem(t, ledgerProblems(family, entries, current), "records no such earlier text")
+	assertLedgerProblem(t, ledgerProblems(family, entries, current, nil), "records no such earlier text")
 	stray := append(slices.Clone(entries), shippedText{digest: sha256Hex("x"), rel: "README.md"})
-	assertLedgerProblem(t, ledgerProblems(Families()[0], stray, current), "is not a managed path")
+	assertLedgerProblem(t, ledgerProblems(Families()[0], stray, current, nil), "is not a managed path")
 	for _, malformed := range []string{"abc  " + family.WorkflowFile, sha256Hex("x"), sha256Hex("x") + "  a  b"} {
 		if _, err := parseLedger(malformed); err == nil {
 			t.Fatalf("malformed ledger line %q parsed", malformed)
@@ -226,16 +233,125 @@ func TestShippedTextLedgerBoundary(t *testing.T) {
 	moved := mustCurrentDigests(t, family)
 	appended := mustParseLedger(t, appendChangedTexts(family, text, entries, moved))
 	family.Prior[outgoing] = family.WorkflowFile
-	if problems := ledgerProblems(family, appended, moved); len(problems) != 0 {
+	if problems := ledgerProblems(family, appended, moved, nil); len(problems) != 0 {
 		t.Fatalf("a recorded outgoing text still fails the ledger: %v", problems)
 	}
 	back := append(slices.Clone(appended), shippedText{digest: outgoing, rel: family.WorkflowFile})
-	assertLedgerProblem(t, ledgerProblems(family, back, current), "is listed twice")
+	assertLedgerProblem(t, ledgerProblems(family, back, current, nil), "is listed twice")
 	if _, err := parseLedger(strings.Repeat("\n", maxLedgerLines)); err == nil {
 		t.Fatal("a ledger past its line bound parsed")
 	}
 	if _, err := parseLedger(strings.Repeat("\n", maxLedgerLines-1)); err != nil {
 		t.Fatalf("a ledger at its line bound was refused: %v", err)
+	}
+}
+
+// The opt-in draft skip rendering of a family's hosted workflow (Family.WithDraftShape) is a text
+// adoption writes too, derived from the fail-closed workflow by ghworkflow.RenderDraftSkip. A
+// copy of it is read back to its fail-closed text only while the rendering code is unchanged
+// (ghworkflow.UnrenderDraftSkip), so an edit to the skip shape alone orphans every skip copy
+// unless the outgoing skip digest is in Prior. Its ledger, "<family>-draft-skip.sha256", has the
+// format of the main ledger with the workflow as its only path, and fails the same two ways.
+
+// skipLedgerPath names the draft skip ledger of f beside its main ledger.
+func skipLedgerPath(f Family) string {
+	return strings.TrimSuffix(ledgerPath(f), ".sha256") + "-draft-skip.sha256"
+}
+
+// currentSkipDigests maps the hosted workflow of f to the digest of its draft skip rendering; a
+// family without a hosted workflow has none.
+func currentSkipDigests(f Family) (map[string]string, error) {
+	current := map[string]string{}
+	if f.WorkflowFile == "" {
+		return current, nil
+	}
+	skip, err := f.WithDraftShape(true)
+	if err != nil {
+		return nil, err
+	}
+	current[f.WorkflowFile] = sha256Hex(skip.Workflow)
+	return current, nil
+}
+
+// skipLedgerProblems reports every way the skip ledger entries break the prior-text contract of
+// f: the last line must be the current skip rendering and every earlier line must be in Prior.
+func skipLedgerProblems(f Family, entries []shippedText, current map[string]string) []string {
+	last, earlier, problems := splitLedger(f, entries)
+	for rel, digest := range current {
+		if last[rel] != digest {
+			problems = append(problems, fmt.Sprintf("the draft skip rendering of %s is %s but its ledger ends at %q: append it with %s=1, then add the outgoing skip text to Prior", rel, digest, last[rel], updateShippedTextsEnv))
+		}
+	}
+	for rel := range last {
+		if _, ok := current[rel]; !ok {
+			problems = append(problems, fmt.Sprintf("%s has no draft skip rendering but its ledger records one", rel))
+		}
+	}
+	for digest, rel := range earlier {
+		if f.Prior[digest] != rel {
+			problems = append(problems, fmt.Sprintf("the earlier draft skip text %s of %s is not in Prior: add it to Prior and keep the text as a fixture (git log -p -- %s holds it)", digest, rel, textHolder(f, rel)))
+		}
+	}
+	slices.Sort(problems)
+	return problems[:min(len(problems), maxLedgerProblems)]
+}
+
+// readSkipLedger reads the draft skip ledger of f; a family without a hosted workflow has no
+// ledger and needs none.
+func readSkipLedger(t *testing.T, f Family) (string, []shippedText, map[string]string) {
+	t.Helper()
+	current, err := currentSkipDigests(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(skipLedgerPath(f))
+	if err != nil && len(current) > 0 {
+		t.Fatalf("family %s has no draft skip ledger: %v", f.Name, err)
+	}
+	return string(raw), mustParseLedger(t, string(raw)), current
+}
+
+// updateSkipLedger appends the changed draft skip rendering of f to its ledger.
+func updateSkipLedger(t *testing.T, f Family) {
+	t.Helper()
+	text, entries, current := readSkipLedger(t, f)
+	if len(current) == 0 {
+		return
+	}
+	text = appendChangedTexts(f, text, entries, current)
+	if err := os.WriteFile(skipLedgerPath(f), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Negative: a changed skip rendering fails the skip ledger, appending its digest still fails until
+// the outgoing skip text is in Prior, and recording it in Prior satisfies the ledger (boundary).
+func TestShippedSkipLedgerNegative(t *testing.T) {
+	for _, family := range Families() {
+		if family.WorkflowFile == "" {
+			continue
+		}
+		text, entries, current := readSkipLedger(t, family)
+		outgoing := current[family.WorkflowFile]
+		changed := family
+		changed.Workflow += "# a later change to the skip text\n"
+		moved, err := currentSkipDigests(changed)
+		if err != nil {
+			t.Fatalf("%s: a changed workflow no longer renders the skip: %v", family.Name, err)
+		}
+		if moved[family.WorkflowFile] == outgoing {
+			t.Fatalf("%s: a changed workflow left the skip digest unchanged", family.Name)
+		}
+		assertLedgerProblem(t, skipLedgerProblems(changed, entries, moved), "but its ledger ends at")
+		appended := mustParseLedger(t, appendChangedTexts(changed, text, entries, moved))
+		assertLedgerProblem(t, skipLedgerProblems(changed, appended, moved), "is not in Prior")
+		changed.Prior = maps.Clone(family.Prior)
+		changed.Prior[outgoing] = family.WorkflowFile
+		if problems := skipLedgerProblems(changed, appended, moved); len(problems) != 0 {
+			t.Fatalf("%s: a recorded outgoing skip text still fails the ledger: %v", family.Name, problems)
+		}
+		assertLedgerProblem(t, skipLedgerProblems(family, append(slices.Clone(entries),
+			shippedText{digest: sha256Hex("x"), rel: "README.md"}), current), "is not a managed path")
 	}
 }
 

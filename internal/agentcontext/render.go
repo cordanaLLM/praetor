@@ -34,6 +34,9 @@ type CompileResult struct {
 	// They are neither written nor verified, so a projection the repository deleted stays
 	// deleted.
 	NotApplicable []string
+	// Layered reports that AGENTS.md carries band markers, so the files emit the head, the
+	// config band and the tail in that order. An unmarked source compiles in source order.
+	Layered bool
 }
 
 // Transpiler compiles canonical AGENTS.md into vendor-native agent configurations.
@@ -43,6 +46,8 @@ type Transpiler struct {
 	// every projection, the behaviour before selection existed; a non-nil list, empty
 	// included, emits exactly the projections of the clients it names (#202).
 	Clients []string
+	// Env varies time and visit order for the stability check; nil is the production render.
+	Env *RenderEnv
 }
 
 // NewTranspiler creates a Transpiler with standard budget constraints.
@@ -291,26 +296,43 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	files := make([]TargetFile, 0, len(targets))
-	for _, target := range targets {
-		body := target.prefix + generatedHeader + selectVendorLines(lines, owners, target.section)
-		count := countLines(body)
-		if count > t.MaxLines {
-			return nil, fmt.Errorf("target file %s exceeds max line budget (%d > %d)", target.path, count, t.MaxLines)
+	bands, layered := scanBands(lines)
+	files, err := t.renderTargets(targets, func(section string) string {
+		if layered {
+			return layoutBands(lines, owners, bands, section)
 		}
-		files = append(files, TargetFile{RelativePath: target.path, Content: body, LineCount: count})
+		return selectVendorLines(lines, owners, section)
+	})
+	if err != nil {
+		return nil, err
 	}
-
 	return &CompileResult{
 		SourcePath:    CanonicalFile,
 		Files:         files,
 		NotApplicable: excluded,
+		Layered:       layered,
 	}, nil
+}
+
+// renderTargets renders every target through body, visiting them in the order the render env
+// chooses and returning the files in registry order whatever that order was.
+func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section string) string) ([]TargetFile, error) {
+	files := make([]TargetFile, len(targets))
+	for _, i := range t.Env.order(len(targets)) {
+		target := targets[i]
+		text := target.prefix + generatedHeader + body(target.section)
+		count := countLines(text)
+		if count > t.MaxLines {
+			return nil, fmt.Errorf("target file %s exceeds max line budget (%d > %d)", target.path, count, t.MaxLines)
+		}
+		files[i] = TargetFile{RelativePath: target.path, Content: text, LineCount: count}
+	}
+	return files, nil
 }
 
 // ownVendorLines splits content into lines and labels each one with the vendor section that
 // owns it, or "" when it is shared by every target. A section opens at its `## <Vendor>`
-// heading and closes at the next H1 or H2; a heading inside a fenced block opens nothing.
+// heading and closes at the next H1, H2 or band marker; a heading inside a fenced block opens nothing.
 func ownVendorLines(content string) ([]string, []string, error) {
 	lines := strings.Split(content, "\n")
 	if len(lines) > maxCanonicalLines {
@@ -324,7 +346,10 @@ func ownVendorLines(content string) ([]string, []string, error) {
 	var fence util.MarkdownFence
 	for i := range lines {
 		trimmed := strings.TrimSpace(lines[i])
-		if !fence.Inside(trimmed) && isTopHeading(trimmed) {
+		inside := fence.Inside(trimmed)
+		if _, isMarker := markerBand(trimmed); isMarker && !inside {
+			owner = ""
+		} else if !inside && isTopHeading(trimmed) {
 			owner = vendorFor(trimmed)
 		}
 		owners[i] = owner

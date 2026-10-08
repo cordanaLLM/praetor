@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -37,7 +36,7 @@ func RepositoryDefaultBranch(ctx context.Context, repoPath string, manifest *con
 	if ctx == nil {
 		return "", errors.New("resolving the default branch requires a context")
 	}
-	declared, err := declaredDefaultBranch(repoPath, manifest)
+	declared, err := declaredDefaultBranch(ctx, repoPath, manifest)
 	if err != nil || declared != "" {
 		return declared, err
 	}
@@ -90,15 +89,14 @@ func recordedDefaultBranch(ctx context.Context, repoPath string) (string, error)
 
 // declaredDefaultBranch returns manifest's repository.default_branch, or that of repoPath's
 // .standards.yaml when manifest is nil, or "" when neither declares one.
-func declaredDefaultBranch(repoPath string, manifest *config.Manifest) (string, error) {
+func declaredDefaultBranch(ctx context.Context, repoPath string, manifest *config.Manifest) (string, error) {
 	if manifest == nil {
-		path := filepath.Join(repoPath, config.ManifestFileName)
-		if !util.FileExists(path) {
-			return "", nil
-		}
-		loaded, err := config.LoadManifest(path)
+		loaded, err := config.LoadRepositoryManifest(ctx, repoPath)
 		if err != nil {
 			return "", fmt.Errorf("read repository.default_branch: %w", err)
+		}
+		if loaded == nil {
+			return "", nil
 		}
 		manifest = loaded
 	}

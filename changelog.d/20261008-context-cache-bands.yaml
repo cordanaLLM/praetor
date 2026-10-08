@@ -1,0 +1,4 @@
+type: changed
+title: "Compiled context files keep a stable prompt-cache prefix through AGENTS.md band markers (migration: docs/guides/context-cache-bands.md)"
+issue: "#853"
+breaking: false

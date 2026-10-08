@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/changelog"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -165,8 +166,15 @@ func spliceRegister(content, block string) (out string, changed, missing bool, e
 		return "", false, false, err
 	}
 	if first < 0 {
-		// A document without markers receives the whole section, heading included.
+		// A document without markers receives the whole section, heading included. A layered
+		// document receives it in its config band, not at the end, which is the tail band.
 		block = config.RegisterSectionPrefix + block
+		if banded, layered := agentcontext.InsertIntoConfigBand(lf, block); layered {
+			if err := util.CheckLineBudget(banded, MaxLineBudget); err != nil {
+				return "", false, false, err
+			}
+			return util.RestoreLineEndings(banded, crlf), true, true, nil
+		}
 	}
 	spliced, changed, err := util.ReplaceMarkedBlock(lf, config.RegisterBlockStart, config.RegisterBlockEnd, block, MaxLineBudget)
 	if err != nil {
