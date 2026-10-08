@@ -146,7 +146,17 @@ func (g *GitHubDriver) EnsureLabel(ctx context.Context, label Label) error {
 	case http.StatusOK:
 		return nil
 	case http.StatusNotFound:
-		return g.createLabel(ctx, label.Name, map[string]string{"name": label.Name, "color": label.Color, "description": label.Description})
+		createErr := g.createLabel(ctx, label.Name, map[string]string{"name": label.Name, "color": label.Color, "description": label.Description})
+		if createErr == nil {
+			return nil
+		}
+		// A concurrent writer may have created the label between our GET and POST (GitHub returns
+		// HTTP 422 Unprocessable Entity with error code already_exists). Re-read to confirm it exists.
+		_, recheckStatus, recheckErr := g.sendRequest(ctx, http.MethodGet, path, nil)
+		if recheckErr == nil && recheckStatus == http.StatusOK {
+			return nil
+		}
+		return createErr
 	}
 	return fmt.Errorf("unexpected status %d reading label %s: %s", status, label.Name, util.BodyPreview(body))
 }

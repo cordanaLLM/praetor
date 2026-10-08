@@ -31,7 +31,7 @@ outside it, such as one with a space, is refused.
 A claim does three things on the issue:
 
 - It posts one claim comment. That comment is the only place the claim lives; every later
-  stage edits it, so an issue never collects one comment per stage.
+  stage of the session edits it in place, so an issue never collects one comment per stage.
 - It adds the `status:in-progress` label, creating the label first when the repository has
   none.
 - It assigns the authenticated account.
@@ -82,10 +82,11 @@ A claim is refused while another session holds a live claim. The refusal names t
 its session, lane, branch, stage and last update (`forge.ClaimHeldError`).
 
 A claim is stale once its last update is older than the window. A claim whose last update is
-exactly one window old is still live; one second more makes it stale. A claim whose update
-lies in the future, from a skewed clock, is live. A session that finds only a stale claim takes
-it over: the same comment is rewritten for the new session and gains a `Takeover` line naming
-the claim it replaced. Tests: `TestClaim_Boundary_StaleWindowEdge`.
+exactly one window old is still live; one second more makes it stale. Future clock skew is capped
+at the stale window: a claim update timestamp further in the future than the window is malformed
+and ignored. A session that finds only a stale claim takes it over: a new claim comment is
+written with a `Takeover` line naming the claim it replaced, and the old stale comment is
+finalised as `abandoned`. Tests: `TestClaim_Boundary_StaleWindowEdge`.
 
 The window is 6 hours by default. Set `forge.claim_stale` in the operator settings to change
 it, from 10 minutes to 720 hours ([effective policy](effective-policy.md)). It is read through
@@ -95,17 +96,20 @@ file.
 A status update from a session that does not hold the claim is refused, so a session whose
 claim was taken over learns that at its next update.
 
-Two sessions that claim at the same moment both write a comment. Each reads the comments back
-after writing; the claim with the lower comment identifier holds, and the other finalises its
-own comment as `abandoned` and is refused naming the winner
-(`TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID`).
+Every new claim (first claim, reuse after release, stale takeover) writes a new claim comment.
+Stages of an ongoing claim edit the session's own comment in place. When two sessions claim
+at the same moment, both write a comment; each reads the comments back after writing, and the
+claim with the lower comment identifier holds. Any loser finalises its own comment as `abandoned`
+and is refused naming the winner (`TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID`,
+`TestClaim_Negative_InterleavedClaimersOnReleasedCommentExactlyOneHolds`,
+`TestClaim_Negative_InterleavedClaimersOnStaleCommentExactlyOneHolds`).
 
 ## Release
 
 `release` removes `status:in-progress` and `status:blocked`, then rewrites the comment with
 stage `released` and the outcome, and leaves the issue open. The pull request closes
-the issue. The released comment is reused by the next claim on the same issue, so the one
-comment per issue rule holds across claims. Labels go first, so a label failure leaves the claim
+the issue. Subsequent claims on the same issue write a new claim comment, leaving earlier
+released comments as historical records. Labels go first, so a label failure leaves the claim
 live and a retried release succeeds (`TestRelease_Negative_LabelFailureKeepsClaimReleasable`).
 
 ## Failure behaviour
@@ -116,16 +120,18 @@ unreadable comment thread or a thread longer than 1,000 comments, returns an err
 `forge.ErrClaimUnverifiable`. A claim that could not be verified is never reported as held,
 and a hold that could not be checked is never reported as absent. When the comment was written
 but the labels or the read-back failed, the claim is finalised as `abandoned` so a half-made
-claim does not hold the issue and its status labels are removed again
-(`TestClaim_Negative_ForgeErrorsFailClosed`, `TestClaim_Negative_LabelFailureAbandonsTheComment`,
-`TestClaim_Negative_AbandonedClaimLeavesNoStatusLabel`). A session that re-runs `claim` on its
+claim does not hold the issue and its status labels are removed again; on a takeover, status
+labels are cleared as well (`TestClaim_Negative_ForgeErrorsFailClosed`,
+`TestClaim_Negative_LabelFailureAbandonsTheComment`,
+`TestClaim_Negative_AbandonedClaimLeavesNoStatusLabel`,
+`TestClaim_Negative_TakeoverConfirmHoldFailureClearsLabels`). A session that re-runs `claim` on its
 own live claim and hits a transient failure keeps that claim live; it is never finalised as
 `abandoned` (`TestClaim_Negative_FailedResumeKeepsTheClaimLive`).
 
 ## Dispatch enforcement
 
-The pre-dispatch hook ([agent hooks](agent-hooks.md)) reads two fields from a subagent brief
-with the Caveman scanner (`caveman.ExtractBriefClaim`):
+The pre-dispatch hook ([agent hooks](agent-hooks.md)) extracts claim tokens from a subagent
+brief with Caveman (`caveman.ExtractBriefClaim`) and parses them with `forge.ParseBriefClaim`:
 
 ```text
 issue: acme/widgets#7, acme/widgets#8
@@ -133,8 +139,8 @@ session: unit7
 ```
 
 `issue:` lists the issues the brief works on; `session:` names the session that holds their
-claims. A token that is not `<owner>/<repo>#<number>` is an error, not skipped. The gate
-then decides per issue:
+claims. A token that is not `<owner>/<repo>#<number>` (including `#0` or leading zeros) is an
+error, not skipped. The gate then decides per issue:
 
 | Situation | Verdict |
 | :--- | :--- |

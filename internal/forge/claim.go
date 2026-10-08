@@ -75,23 +75,30 @@ const MaxIssueNumberDigits = 9
 // claim never lands on a repository nobody named.
 func ParseClaimRef(text string) (ClaimRef, error) {
 	coordinate, digits, ok := strings.Cut(text, "#")
-	if !ok || digits == "" || len(digits) > MaxIssueNumberDigits {
+	if !ok {
 		return ClaimRef{}, fmt.Errorf("issue reference %q is not <owner>/<repo>#<number>", text)
 	}
-	for _, r := range digits {
-		if r < '0' || r > '9' {
-			return ClaimRef{}, fmt.Errorf("issue reference %q is not <owner>/<repo>#<number>", text)
-		}
-	}
-	number, err := strconv.Atoi(digits)
-	if err != nil || number < 1 {
-		return ClaimRef{}, fmt.Errorf("issue reference %q needs a positive issue number", text)
+	number, err := parseIssueNumber(digits)
+	if err != nil {
+		return ClaimRef{}, fmt.Errorf("issue reference %q: %w", text, err)
 	}
 	owner, repo, err := util.SplitGitHubRepository(coordinate)
 	if err != nil {
 		return ClaimRef{}, fmt.Errorf("issue reference %q: %w", text, err)
 	}
 	return ClaimRef{Owner: owner, Repo: repo, Number: number}, nil
+}
+
+func parseIssueNumber(digits string) (int, error) {
+	if digits == "" || len(digits) > MaxIssueNumberDigits || digits[0] == '0' {
+		return 0, errors.New("needs a positive issue number without leading zeros")
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return 0, errors.New("issue number contains non-digits")
+		}
+	}
+	return strconv.Atoi(digits)
 }
 
 // IssueComment is one comment of an issue as the claim code reads it.
@@ -219,10 +226,17 @@ func readClaims(ctx context.Context, f ClaimForge, number int) ([]claimComment, 
 }
 
 // fresh reports whether a live claim is still inside the stale window: a claim is stale
-// once its last update is older than the window, and a claim whose update lies in the
-// future (clock skew) is fresh.
+// once its last update is older than the window. Future clock skew is capped at the stale
+// window: an update timestamp further in the future than the window is malformed and ignored.
 func (d *ClaimDesk) fresh(c Claim) bool {
-	return !c.Released() && d.Now().Sub(c.Updated) <= d.Stale
+	if c.Released() {
+		return false
+	}
+	now := d.Now()
+	if c.Updated.After(now.Add(d.Stale)) || c.Updated.Before(now.Add(-d.Stale)) {
+		return false
+	}
+	return true
 }
 
 // holder returns the first fresh live claim: the lowest comment id wins when a race left two.
@@ -305,34 +319,27 @@ func (d *ClaimDesk) Claim(ctx context.Context, ref ClaimRef, req ClaimRequest) (
 func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, req ClaimRequest, found []claimComment) (ClaimResult, error) {
 	now := d.Now().UTC().Truncate(time.Second)
 	claim := Claim{Session: req.Session, Lane: req.Lane, Branch: req.Branch, Stage: "claimed", Started: now, Updated: now}
-	result := ClaimResult{Ref: ref.String(), Action: "created"}
 	target, hasTarget := pickClaimTarget(found, req.Session)
-	takeover := ""
-	if hasTarget {
-		result.Action = "took-over"
-		switch {
-		case target.claim.Session == req.Session && !target.claim.Released():
-			result.Action = "resumed"
-			claim.Started, claim.Stage = target.claim.Started, target.claim.Stage
-		case target.claim.Released():
-			result.Action = "created"
-		default:
-			old := target.claim
-			result.TookOver = &old
-			takeover = "replaces the stale claim of " + strings.TrimPrefix(DescribeClaim(old), "claimed by ")
-		}
+	action, tookOver, takeover := resolveClaimAction(target, hasTarget, req.Session)
+	if action == "resumed" {
+		claim.Started, claim.Stage = target.claim.Started, target.claim.Stage
 	}
 	body, err := renderClaimBody(claim, takeover)
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	id, err := d.putClaim(ctx, f, ref.Number, target, hasTarget, body)
+	resumed, isTakeover := action == "resumed", action == "took-over"
+	id, err := d.putClaim(ctx, f, ref.Number, target, resumed, body)
 	if err != nil {
 		return ClaimResult{}, err
 	}
 	claim.CommentID = id
-	resumed := result.Action == "resumed"
-	if err := d.confirmHold(ctx, f, ref, claim, resumed); err != nil {
+	if isTakeover {
+		if err := d.finalise(ctx, f, *tookOver, "abandoned"); err != nil {
+			return ClaimResult{}, errors.Join(d.abandon(ctx, f, claim, err), d.clearLabels(ctx, f, ref.Number))
+		}
+	}
+	if err := d.confirmHold(ctx, f, ref, claim, resumed, isTakeover); err != nil {
 		return ClaimResult{}, err
 	}
 	if err := d.applyClaimLabels(ctx, f, ref.Number, claim.Stage == claimBlockedStage); err != nil {
@@ -342,35 +349,45 @@ func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, 
 		}
 		return ClaimResult{}, errors.Join(d.abandon(ctx, f, claim, err), d.clearLabels(ctx, f, ref.Number))
 	}
-	result.Claim = claim
-	return result, nil
+	return ClaimResult{Ref: ref.String(), Action: action, Claim: claim, TookOver: tookOver}, nil
 }
 
-// pickClaimTarget chooses the one comment a claim is written to: the session's own, else a
-// stale live one, else a released one. No claim comment at all means a new comment.
+func resolveClaimAction(target claimComment, hasTarget bool, session string) (string, *Claim, string) {
+	if !hasTarget {
+		return "created", nil, ""
+	}
+	if target.claim.Session == session && !target.claim.Released() {
+		return "resumed", nil, ""
+	}
+	if !target.claim.Released() {
+		old := target.claim
+		takeover := "replaces the stale claim of " + strings.TrimPrefix(DescribeClaim(old), "claimed by ")
+		return "took-over", &old, takeover
+	}
+	return "created", nil, ""
+}
+
+// pickClaimTarget finds an existing claim to resume (the session's own live claim) or to
+// take over (a stale live claim). Released claims are never reused; every new claim writes
+// a new comment.
 func pickClaimTarget(found []claimComment, session string) (claimComment, bool) {
-	var live, released *claimComment
+	var stale *claimComment
 	for i := range found {
 		switch {
 		case found[i].claim.Session == session && !found[i].claim.Released():
 			return found[i], true
-		case !found[i].claim.Released() && live == nil:
-			live = &found[i]
-		case found[i].claim.Released() && released == nil:
-			released = &found[i]
+		case !found[i].claim.Released() && stale == nil:
+			stale = &found[i]
 		}
 	}
-	switch {
-	case live != nil:
-		return *live, true
-	case released != nil:
-		return *released, true
+	if stale != nil {
+		return *stale, true
 	}
 	return claimComment{}, false
 }
 
-func (d *ClaimDesk) putClaim(ctx context.Context, f ClaimForge, number int, target claimComment, hasTarget bool, body string) (int64, error) {
-	if hasTarget {
+func (d *ClaimDesk) putClaim(ctx context.Context, f ClaimForge, number int, target claimComment, resumed bool, body string) (int64, error) {
+	if resumed {
 		if err := f.EditIssueComment(ctx, target.claim.CommentID, body); err != nil {
 			return 0, unverifiable("edit claim comment", err)
 		}
@@ -386,13 +403,10 @@ func (d *ClaimDesk) putClaim(ctx context.Context, f ClaimForge, number int, targ
 // confirmHold reads the comments back after the write. When two sessions claimed at once the
 // lowest comment id holds; a loser finalises its own comment as abandoned and is refused,
 // naming the winner.
-func (d *ClaimDesk) confirmHold(ctx context.Context, f ClaimForge, ref ClaimRef, mine Claim, resumed bool) error {
+func (d *ClaimDesk) confirmHold(ctx context.Context, f ClaimForge, ref ClaimRef, mine Claim, resumed, takeover bool) error {
 	found, err := readClaims(ctx, f, ref.Number)
 	if err != nil {
-		if resumed {
-			return err
-		}
-		return d.abandon(ctx, f, mine, err)
+		return d.failHold(ctx, f, ref.Number, mine, err, resumed, takeover)
 	}
 	winner, held := d.holder(found)
 	if held && winner.Session == mine.Session {
@@ -400,16 +414,23 @@ func (d *ClaimDesk) confirmHold(ctx context.Context, f ClaimForge, ref ClaimRef,
 	}
 	if !held {
 		cause := fmt.Errorf("%w: claim comment %d not found on read-back", ErrClaimUnverifiable, mine.CommentID)
-		if resumed {
-			return cause
-		}
-		return d.abandon(ctx, f, mine, cause)
+		return d.failHold(ctx, f, ref.Number, mine, cause, resumed, takeover)
 	}
 	refusal := &ClaimHeldError{Ref: ref, Holder: winner}
 	if winner.CommentID != mine.CommentID {
 		return errors.Join(refusal, d.finalise(ctx, f, mine, "abandoned"))
 	}
 	return refusal
+}
+
+func (d *ClaimDesk) failHold(ctx context.Context, f ClaimForge, number int, mine Claim, cause error, resumed, takeover bool) error {
+	if resumed {
+		return cause
+	}
+	if takeover {
+		return errors.Join(d.abandon(ctx, f, mine, cause), d.clearLabels(ctx, f, number))
+	}
+	return d.abandon(ctx, f, mine, cause)
 }
 
 // abandon finalises a claim whose labels or read-back failed, so a half-made claim does not

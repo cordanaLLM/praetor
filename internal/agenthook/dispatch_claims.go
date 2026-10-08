@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cordanaLLM/praetor/internal/caveman"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 // IssueClaim is the live claim on a forge issue as the dispatch gate sees it.
@@ -41,7 +41,7 @@ func claimDenied(format string, args ...any) Verdict {
 func evaluateBriefClaims(ctx context.Context, briefs []string, lookup IssueClaimLookup) Verdict {
 	seen := make(map[string]*IssueClaim)
 	for index := 0; index < len(briefs) && index < MaxDispatchBriefs; index++ {
-		claim, err := caveman.ExtractBriefClaim(briefs[index])
+		claim, err := forge.ParseBriefClaim(briefs[index])
 		if err != nil {
 			return claimDenied("brief %d: %v", index, err)
 		}
@@ -55,7 +55,7 @@ func evaluateBriefClaims(ctx context.Context, briefs []string, lookup IssueClaim
 	return Verdict{Outcome: Allow}
 }
 
-func checkBriefIssues(ctx context.Context, index int, claim caveman.BriefClaim, lookup IssueClaimLookup, seen map[string]*IssueClaim) Verdict {
+func checkBriefIssues(ctx context.Context, index int, claim forge.BriefClaim, lookup IssueClaimLookup, seen map[string]*IssueClaim) Verdict {
 	if claim.Session == "" {
 		return claimDenied("brief %d names issue %s but no session: line says which session works it", index, claim.Issues[0])
 	}

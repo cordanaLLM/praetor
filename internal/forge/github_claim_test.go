@@ -160,3 +160,32 @@ func TestGitHubClaim_EnsureLabel_CreatesOnlyWhenMissing(t *testing.T) {
 		t.Fatalf("an existing label must be left alone, requests: %v", methodsOf(fake))
 	}
 }
+
+func TestGitHubClaim_EnsureLabel_ConcurrentCreateSurvivesAlreadyExists(t *testing.T) {
+	getCalls := 0
+	gh, _ := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, _ int) {
+		if r.Method == http.MethodGet {
+			getCalls++
+			if getCalls == 1 {
+				writeJSON(t, w, http.StatusNotFound, map[string]any{})
+				return
+			}
+			writeJSON(t, w, http.StatusOK, map[string]any{"name": LabelInProgress})
+			return
+		}
+		// POST returns 422 Unprocessable Entity with GitHub's already_exists error shape
+		writeJSON(t, w, http.StatusUnprocessableEntity, map[string]any{
+			"message": "Validation Failed",
+			"errors": []map[string]any{
+				{"resource": "Label", "code": "already_exists", "field": "name"},
+			},
+		})
+	})
+	label := Label{Name: LabelInProgress, Color: "1d76db", Description: "d"}
+	if err := gh.EnsureLabel(context.Background(), label); err != nil {
+		t.Fatalf("concurrent create returning 422 already_exists must succeed, got %v", err)
+	}
+	if getCalls < 2 {
+		t.Fatalf("expected re-GET after failed create, got %d GET calls", getCalls)
+	}
+}
