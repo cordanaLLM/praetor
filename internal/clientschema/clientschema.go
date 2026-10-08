@@ -23,8 +23,32 @@ import (
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
+// SourceFile and EmbedDirective name the one file and the exact directive that embed the vendored
+// schemas, which the devcontainer bootstrap source capture declares as an asset family
+// (internal/devcontainer.bootstrapAssetFamilies); keep the directive below equal to
+// EmbedDirective.
+const (
+	SourceFile     = "internal/clientschema/clientschema.go"
+	EmbedDirective = "//go:embed vendor"
+	vendorRoot     = "internal/clientschema/vendor/"
+)
+
 //go:embed vendor
 var vendored embed.FS
+
+// AssetPaths lists every embedded file, the manifest included, as a repository-relative path.
+func AssetPaths() ([]string, error) {
+	paths, err := EmbeddedPaths()
+	if err != nil {
+		return nil, err
+	}
+	assets := make([]string, 0, len(paths)+1)
+	for _, rel := range append(paths, ManifestFile) {
+		assets = append(assets, vendorRoot+rel)
+	}
+	slices.Sort(assets)
+	return assets, nil
+}
 
 // Bounds of one read (HISS-02).
 const (

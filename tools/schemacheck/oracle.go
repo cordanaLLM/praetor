@@ -18,6 +18,7 @@ package schemacheck
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -76,8 +77,10 @@ func (v *Violations) Error() string {
 // Names reports whether any violation sits at or below the field pointer, so a test can assert
 // that a failure names the field it planted.
 func (v *Violations) Names(field string) bool {
+	want := "/" + strings.TrimPrefix(field, "/")
 	for _, item := range v.Items {
-		if item.Field == field || strings.HasPrefix(item.Field, field+"/") || strings.Contains(item.Message, "'"+lastSegment(field)+"'") {
+		if item.Field == want || strings.HasPrefix(item.Field, want+"/") || strings.HasSuffix(item.Field, want) ||
+			strings.Contains(item.Message, "'"+lastSegment(field)+"'") {
 			return true
 		}
 	}
@@ -140,6 +143,37 @@ func CompileVendored(relPath string, external External) (*Schema, error) {
 		return nil, err
 	}
 	return Compile(relPath, raw, external)
+}
+
+// CompileDefinition compiles one named definition ($defs or definitions) of the schema in raw as
+// the root, keeping every definition reachable for its references: it is how a test validates a
+// message against, say, MCP's CallToolResult.
+func CompileDefinition(name string, raw []byte, def string, external External) (*Schema, error) {
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, fmt.Errorf("read schema %s: %w", name, err)
+	}
+	wrapper := map[string]any{}
+	for _, key := range []string{"$schema", "$defs", "definitions"} {
+		if value, ok := document[key]; ok {
+			wrapper[key] = value
+		}
+	}
+	for _, home := range []string{"$defs", "definitions"} {
+		if defs, ok := document[home].(map[string]any); ok {
+			if _, found := defs[def]; found {
+				wrapper["$ref"] = "#/" + home + "/" + def
+			}
+		}
+	}
+	if _, ok := wrapper["$ref"]; !ok {
+		return nil, fmt.Errorf("schema %s has no definition %q", name, def)
+	}
+	encoded, err := json.Marshal(wrapper)
+	if err != nil {
+		return nil, fmt.Errorf("encode schema %s: %w", name, err)
+	}
+	return Compile(name+"~"+def, encoded, external)
 }
 
 // Name is the manifest path or the name the schema was compiled under.

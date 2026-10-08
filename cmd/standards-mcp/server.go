@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/mcpwire"
 	"github.com/cordanaLLM/praetor/internal/needs"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/workstation"
@@ -74,12 +75,10 @@ type JSONRPCResponse struct {
 	Error   *JSONRPCError `json:"error,omitempty"`
 }
 
-// JSONRPCError holds structured error details.
-type JSONRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data,omitempty"`
-}
+// JSONRPCError holds structured error details. It is the MCP schema's Error, generated from the
+// vendored 2025-11-25 schema (internal/mcpwire), so the member names and types are the
+// specification's and not a hand copy of them.
+type JSONRPCError = mcpwire.Error
 
 // ServerOptions configures a standards-mcp server instance.
 type ServerOptions struct {
@@ -815,7 +814,7 @@ func errorResponse(id any, code int, message string) *JSONRPCResponse {
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
-		Error:   &JSONRPCError{Code: code, Message: message},
+		Error:   &JSONRPCError{Code: int64(code), Message: message},
 	}
 }
 

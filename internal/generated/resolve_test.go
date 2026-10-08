@@ -53,6 +53,7 @@ func praetorTree() memoryTree {
 		".devcontainer/Dockerfile.praetor": "FROM scratch\n",
 		".devcontainer/devcontainer.json":  "{}\n",
 		"internal/managedasset/testdata/shipped/markdown.sha256": "abc  x\n",
+		"internal/codexhook/events_gen.go":                       "package codexhook\n",
 	}
 }
 
@@ -63,7 +64,7 @@ func TestResolve_Positive_BuiltinsApplyInAPraetorCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{NameProjections, NameRegisterBlock, NameBaseline, NameReadmeBlock, NameNeeds, NameFigures, NameShippedTexts, NameDevContainer}
+	want := []string{NameProjections, NameRegisterBlock, NameBaseline, NameReadmeBlock, NameNeeds, NameFigures, NameShippedTexts, NameClientTypes, NameDevContainer}
 	var names []string
 	for _, artefact := range set.Artefacts {
 		names = append(names, artefact.Name)
@@ -134,7 +135,8 @@ func TestResolve_Negative_ReasonsAndRefusals(t *testing.T) {
 	}
 	wantReasons := map[string]string{
 		NameShippedTexts: "not a Praetor source checkout", NameDevContainer: "not a Praetor source checkout",
-		NameNeeds: ".needs.yaml is absent", NameReadmeBlock: "no file carries its block markers",
+		NameClientTypes: "not a Praetor source checkout",
+		NameNeeds:       ".needs.yaml is absent", NameReadmeBlock: "no file carries its block markers",
 	}
 	for name, want := range wantReasons {
 		if !strings.Contains(reasons[name], want) {
@@ -168,7 +170,7 @@ func TestResolve_Boundary_DeclineAndGlobBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(set.Declined, ",") != NameDevContainer || len(set.Artefacts) != 7 {
+	if strings.Join(set.Declined, ",") != NameDevContainer || len(set.Artefacts) != 8 {
 		t.Fatalf("declined = %q, artefacts = %d", set.Declined, len(set.Artefacts))
 	}
 	files := make([]string, 0, MaxArtefactFiles+1)
