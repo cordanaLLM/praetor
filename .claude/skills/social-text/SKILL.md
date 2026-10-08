@@ -10,6 +10,8 @@ metadata:
 
 # Social register for the forge (`social-text`)
 
+Adapted from [i-have-adhd](https://github.com/ayghri/i-have-adhd) by Ayoub Ghriss and [contributors](https://github.com/ayghri/i-have-adhd/graphs/contributors) via adhd-format; MIT licence.
+
 Use this skill for forge text a person reads: issue, pull-request body, review comment, commit body, changelog fragment title. = `social` register of text-register policy (`register:` in `.standards.yaml`; "Text Register" section of AGENTS.md). Agent-to-agent text -> `internal` register, documentation -> `docs` register; neither uses this skill.
 
 ## Inherited from adhd-format

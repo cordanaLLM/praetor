@@ -102,3 +102,61 @@ func TestRegisterBlockSkills_Boundary_DeclaredAndProjected(t *testing.T) {
 		t.Error("internal-brief is forbidden by ADR-0010; caveman is the one internal skill")
 	}
 }
+
+// Positive: CheckShippedSkillReferences accepts skills referencing absolute URLs or paths
+// within their directory or a sibling shipped skill.
+func TestCheckShippedSkillReferences_Positive_AllowedPaths(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"local notice", "See [NOTICE](NOTICE) for license."},
+		{"sibling skill", "Derived from [adhd-format](../adhd-format/SKILL.md)."},
+		{"absolute URL", "Adapted from [caveman](https://github.com/JuliusBrussee/caveman)."},
+		{"anchor link", "See [section](#features)."},
+	}
+	for _, tc := range cases {
+		if err := CheckShippedSkillReferences("caveman", []byte(tc.text)); err != nil {
+			t.Errorf("%s: unexpected error: %v", tc.name, err)
+		}
+	}
+}
+
+// Negative: CheckShippedSkillReferences fails on planted docs/credits.md reference and other
+// repository-relative paths not received by an adopter (Rule 13).
+func TestCheckShippedSkillReferences_Negative_PlantedReferencesRefused(t *testing.T) {
+	// Planted negative from issue #850:
+	plantedCredits := []byte("---\nname: caveman\n---\n\nCredit: docs/credits.md\n")
+	if err := CheckShippedSkillReferences("caveman", plantedCredits); err == nil || !strings.Contains(err.Error(), "docs/credits.md") {
+		t.Fatalf("planted docs/credits.md reference was not refused: err=%v", err)
+	}
+
+	plantedRepoPaths := []struct {
+		name string
+		text string
+	}{
+		{"external markdown link", "See [credits](docs/credits.md)."},
+		{"repo relative readme", "See [readme](../../README.md)."},
+		{"unshipped directory", "See [pkg](../pkg/foo)."},
+		{"reference definition", "[credits]: docs/credits.md\nSee [credits]."},
+	}
+	for _, tc := range plantedRepoPaths {
+		if err := CheckShippedSkillReferences("caveman", []byte(tc.text)); err == nil {
+			t.Errorf("%s: unreceived repository path was not refused", tc.name)
+		}
+	}
+}
+
+// Boundary: SkillRequiresNotice identifies licenses requiring copyright notice distribution.
+func TestSkillRequiresNotice_Boundary_Licenses(t *testing.T) {
+	if !SkillRequiresNotice([]byte("MIT licence")) {
+		t.Error("MIT licence must require notice")
+	}
+	// The tag is split so REUSE lint does not read this literal as the file's licence.
+	if !SkillRequiresNotice([]byte("SPDX-License-" + "Identifier: Apache-2.0")) {
+		t.Error("Apache-2.0 must require notice")
+	}
+	if SkillRequiresNotice([]byte("Unlicensed proprietary code")) {
+		t.Error("proprietary code should not trigger open source notice requirement")
+	}
+}

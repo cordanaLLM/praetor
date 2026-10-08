@@ -1,0 +1,4 @@
+type: fixed
+title: "Shipped register skills carry their upstream credit inline and install their licence notice next to the skill instead of pointing at Praetor-only docs/credits.md; adoption refuses shipped skills referencing repository-relative paths adopters lack."
+issue: "#850"
+breaking: false
