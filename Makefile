@@ -88,6 +88,32 @@ third-party-notices:
 credits-check:
 	go test -count=1 ./internal/supplychain
 
+# Go modules nested below the root module. `./...` of the root module never reaches them, so each
+# gate that walks packages (lint, sec, vuln) names them here and cannot leave one outside
+# (HISS-10, exceptions-never-tiers). Add a nested go.mod to this list when it is created.
+NESTED_GO_MODULES := tools/schemacheck
+
+.PHONY: lint-nested sec-nested vuln-nested
+lint: lint-nested
+sec: sec-nested
+vuln: vuln-nested
+
+lint-nested:
+	for module in $(NESTED_GO_MODULES); do \
+		go -C $$module vet ./... && \
+		go -C $$module run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --config $(CURDIR)/.golangci.yml || exit 1; \
+	done
+
+sec-nested:
+	for module in $(NESTED_GO_MODULES); do \
+		go -C $$module tool -modfile=$(CURDIR)/tools/go/go.mod gosec -conf $(CURDIR)/.gosec.json ./... || exit 1; \
+	done
+
+vuln-nested:
+	for module in $(NESTED_GO_MODULES); do \
+		go run ./cmd/standardsctl security govuln --path=$$module -- go tool -modfile=$(CURDIR)/tools/go/go.mod govulncheck || exit 1; \
+	done
+
 # The JSON Schema oracle is a test-only module (tools/schemacheck), so `go test ./...` of this
 # module never reaches it. It validates every client config Praetor renders, the Codex hook
 # fixtures and the standards-mcp responses against the vendored upstream schemas

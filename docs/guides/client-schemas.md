@@ -9,8 +9,11 @@ Renovate pin bump whose failing test names the field that drifted.
 ## Pinned schemas
 
 `internal/clientschema/vendor/manifest.json` is the one pin file. It records, per source,
-the repository, the pin, the licence, the copyright holder and the sha256 of every file.
-`internal/clientschema` reads it; no other code lists a schema.
+the repository, the pin, the pin the digests were taken at (`digest_pin`), the licence, the
+copyright holder and the sha256 of every file. `internal/clientschema` reads it; no other code
+lists a schema. Only the manifest is embedded in the binaries: the schema files are read from
+the checkout by the generator and the tests, so a release binary does not redistribute the
+upstream schemas (`TestOnlyTheManifestIsEmbedded`). The types generated from them do ship.
 
 | Client or format | Vendored file | Upstream | Pin | Licence |
 | --- | --- | --- | --- | --- |
@@ -59,12 +62,22 @@ make client-schemas-test
 | Check | Test |
 | --- | --- |
 | Every vendored file equals its pin; no vendored file is unpinned | `internal/clientschema` `TestVendoredFilesMatchTheirPins`, `TestNoUnpinnedFileInTheVendorDirectory` |
-| Every pin is visible to Renovate | `TestRenovateTracksEveryPin` |
+| Every pin is visible to Renovate, and the versioning of its rule parses the pin (a prefixed tag needs a regex versioning; `extractVersion` never applies to the current value) | `TestRenovateTracksEveryPin`, `TestRenovateVersioningParsesThePinsItTracks` |
+| A pin that moved without a refresh of its digests is refused, naming the source; the refresh accepts that state and records the new pin | `TestMovedPinIsRefusedUntilRefreshed`, `tools/schemacheck` `TestRefreshAcceptsABumpedPinAndRecordsIt` |
+| Only the manifest is embedded | `TestOnlyTheManifestIsEmbedded` |
+| Generated MCP types lose no member in a decode and encode round trip | `tools/schemacheck` `TestGeneratedMCPTypesRoundTripWithoutLoss` |
 | Adoption hooks for Claude Code, Codex and Gemini CLI, the MCP registry for Gemini CLI and opencode, merges into existing settings, and this repository's tracked hook files validate | `tools/schemacheck` `TestRenderedClientConfigsValidateAgainstThePinnedSchemas` |
 | A schema that renames a member Praetor renders fails and names it; the restored schema passes | `TestPlantedSchemaRenameFailsAndNamesTheField` |
 | Each schema family refuses a mutated document | `TestEachSchemaRefusesAMutatedDocument`, `TestMCPSchemaDefinitionsRefuseMutatedMessages` |
 | Codex hook payload fixtures validate against the published input schemas, and every registered Codex event has one | `TestCodexHookFixturesValidateAgainstThePublishedInputSchemas`, `TestEveryRegisteredCodexEventHasASchemaCheckedFixture` |
 | The `standards-mcp` binary, started over stdio, answers `initialize`, `tools/list` and `tools/call` in the MCP shape | `TestStandardsMCPResponsesConformToTheMCPSchema` |
+
+The nested module is held to the same gates as the root module: `make lint`, `make sec` and
+`make vuln` run `golangci-lint`, `gosec` and `govulncheck` over every module in
+`NESTED_GO_MODULES` of the `Makefile` (`lint-nested`, `sec-nested`, `vuln-nested`), the
+`security.yml` workflow runs the last two, and `portability.yml` vets and tests the module on
+Linux, macOS and Windows. A planted unchecked error or `crypto/md5` import fails `lint-nested`
+and `sec-nested`.
 
 Offline runs need no network. The one check that fetches, comparing every vendored file with
 its pinned upstream URL, runs only with `PRAETOR_CLIENT_SCHEMAS_ONLINE=1` and otherwise skips
@@ -97,6 +110,15 @@ gate is `TestGeneratedTypesAreFresh`: it fails, naming the file, when a committe
 from what the vendored schemas generate (`TestCheckFailsAStaleGeneration` plants the failure).
 `PRAETOR_UPDATE_CLIENT_SCHEMA_TYPES=1 go test ./internal/clientschema/typegen` rewrites them.
 
+The generator maps an object by its schema, so no member is dropped on the way through:
+
+- An object with named members is a struct. Unless its schema says `additionalProperties:
+  false`, the struct also has `Extra`, the members it does not name, and encodes through
+  `internal/clientschema/wirejson`, so decoding and encoding a document returns every member.
+- An object with no named members is a `map[string]V`, never an empty struct.
+- An optional map is a pointer, so `"logging": {}` (a capability statement) survives
+  `omitempty`.
+
 `JSONRPCError` of `standards-mcp` and `ContentItem` of `internal/mcp` are aliases of the
 generated `Error` and `TextContent`. The other hand-written MCP structs stay, each for a
 stated reason:
@@ -114,11 +136,13 @@ want a typed payload.
 ## Bumping a pin
 
 1. Renovate changes `pin` in `manifest.json` (tag, hosted release or commit; `renovate.json`
-   has the two custom managers and the version rules for the Codex and MCP tags).
+   has the two custom managers and the version rules for the Codex and MCP tags). It cannot
+   move `digest_pin` or the digests, so every test that loads the manifest fails with
+   `ErrPinMoved` until step 2 has run.
 2. The takeover refreshes the files:
    `PRAETOR_UPDATE_CLIENT_SCHEMAS=1 go test ./tools/schemacheck -run TestRefreshVendor`
-   fetches every file at its pin and rewrites the files and their digests. It writes nothing
-   if any fetch fails.
+   fetches every file at its pin and rewrites the files, their digests and `digest_pin`. It
+   writes nothing if any fetch fails.
 3. `go generate ./internal/clientschema` regenerates the types.
 4. `make client-schemas-test` and `go test ./internal/clientschema/...` run. A removed or
    renamed member fails a rendering test naming the field; a changed hook payload fails a

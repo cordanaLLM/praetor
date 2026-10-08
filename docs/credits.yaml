@@ -165,7 +165,7 @@ entries:
     notice: "© SchemaStore contributors"
     use: >-
       Checks the Claude Code settings and hook files Praetor renders; vendored byte-identical under
-      `internal/clientschema/vendor/` and embedded in the binaries (docs/guides/client-schemas.md)
+      `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files) (docs/guides/client-schemas.md)
     paths:
       - "internal/clientschema/vendor/manifest.json"
     match:
@@ -180,7 +180,7 @@ entries:
     notice: "© Google LLC"
     use: >-
       Checks the Gemini CLI settings and hook files Praetor renders; vendored byte-identical under
-      `internal/clientschema/vendor/` and embedded in the binaries
+      `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files)
     paths:
       - "internal/clientschema/vendor/manifest.json"
     match:
@@ -195,8 +195,7 @@ entries:
     notice: "© OpenAI"
     use: >-
       Checks the Codex hook files and payload fixtures and generates the Codex hook event types
-      (`internal/codexhook`); vendored byte-identical under `internal/clientschema/vendor/` and embedded in the
-      binaries
+      (`internal/codexhook`); vendored byte-identical under `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files)
     paths:
       - "internal/clientschema/vendor/manifest.json"
     match:
@@ -211,7 +210,7 @@ entries:
     notice: "© 2024–2025 Anthropic, PBC and contributors; the LICENSE file at tag 2025-11-25 states MIT"
     use: >-
       Checks the `standards-mcp` responses and generates the MCP message types (`internal/mcpwire`); vendored
-      byte-identical under `internal/clientschema/vendor/` and embedded in the binaries
+      byte-identical under `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files)
     paths:
       - "internal/clientschema/vendor/manifest.json"
     match:
@@ -226,7 +225,7 @@ entries:
     notice: "© 2025 opencode"
     use: >-
       Checks the `opencode.json` MCP projection Praetor renders; vendored byte-identical under
-      `internal/clientschema/vendor/` and embedded in the binaries
+      `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files)
     paths:
       - "internal/clientschema/vendor/manifest.json"
     match:

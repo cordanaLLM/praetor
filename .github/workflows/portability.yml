@@ -191,6 +191,15 @@ jobs:
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         run: go test -timeout 30m ./...
 
+      # tools/schemacheck is a nested module, outside ./... above. It validates every rendered
+      # client config against the vendored upstream schemas and builds and drives standards-mcp,
+      # so it runs on each platform too (HISS-21); its network checks skip with a stated reason.
+      - name: Test The Client Schema Oracle Module
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        run: |
+          go -C tools/schemacheck vet ./...
+          go -C tools/schemacheck test -timeout 30m ./...
+
       # The self-tests drive the real hooks, so they need the pinned hook runner and the
       # binary the hooks invoke. Both are installed per platform rather than assumed present:
       # a suite that silently degrades because a tool is missing is the failure mode this whole
