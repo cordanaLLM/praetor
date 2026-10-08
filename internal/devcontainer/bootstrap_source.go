@@ -31,8 +31,72 @@ type bootstrapSourceFile struct {
 	Data []byte
 }
 
+// SourceRootForms is what every flag or parameter selecting a Praetor source root accepts, and
+// SourceRootGitNote the clause a command that prepares the bootstrap adds (ErrSourceNotGitCheckout).
+// The CLI and the MCP server both describe their source roots with them, so no two help texts
+// disagree on what a source root may be.
+const (
+	SourceRootForms   = "Praetor Git checkout or source bundle"
+	SourceRootGitNote = "; one holding go.mod must be a Git checkout, as the DevContainer bootstrap lists it with git ls-files"
+)
+
+// ErrSourceNotGitCheckout refuses a bootstrap source that holds go.mod outside any Git
+// checkout: the capture lists its build inputs with git ls-files (bootstrapSourcePaths), so
+// such a source can never be captured. A source export without go.mod is no bootstrap source
+// at all and is not refused (bootstrapSourceCapturable).
+var ErrSourceNotGitCheckout = errors.New("not a Git checkout; the bootstrap inventories it with git ls-files")
+
+// SourceError is a failure to capture the Praetor build source at Root, and only that: every
+// error captureBootstrapSource and CheckSource return is one, and no other error of this package
+// is. A caller that selected Root through a flag or parameter names it with NameSource, so the
+// refusal names the input at fault while every other preparation error keeps its own subject.
+type SourceError struct {
+	Root string
+	Err  error
+}
+
+func (e *SourceError) Error() string { return fmt.Sprintf("bootstrap source %q: %v", e.Root, e.Err) }
+
+func (e *SourceError) Unwrap() error { return e.Err }
+
+// NameSource prefixes err with name, the flag or parameter that selected the bootstrap source,
+// when err wraps a SourceError. Any other error, and a nil one, is returned unchanged, so a
+// refusal about the target repository or the images never names the source input.
+func NameSource(err error, name string) error {
+	var source *SourceError
+	if name == "" || !errors.As(err, &source) {
+		return err
+	}
+	return fmt.Errorf("%s: %w", name, err)
+}
+
+// CheckSource applies the checks PrepareBundle applies to a source root before it lists a
+// file of it: the root is a readable directory and, when it holds go.mod, declares the Praetor
+// module and sits in a Git checkout. A caller that writes other files before it prepares a
+// bundle runs it first, so an unusable source stops a run that has written nothing. An empty
+// root or one without go.mod passes: PrepareBundle then records the bootstrap as unavailable.
+func CheckSource(ctx context.Context, root string) error {
+	if ctx == nil {
+		return errors.New("bootstrap source check requires context")
+	}
+	if _, err := bootstrapSourceCapturable(ctx, root); err != nil {
+		return &SourceError{Root: root, Err: err}
+	}
+	return nil
+}
+
+// captureBootstrapSource captures the build source at root (captureBootstrapFiles); every
+// failure is a SourceError naming root.
 func captureBootstrapSource(ctx context.Context, root string) ([]bootstrapSourceFile, error) {
-	ready, err := bootstrapSourceAvailable(ctx, root)
+	files, err := captureBootstrapFiles(ctx, root)
+	if err != nil {
+		return nil, &SourceError{Root: root, Err: err}
+	}
+	return files, nil
+}
+
+func captureBootstrapFiles(ctx context.Context, root string) ([]bootstrapSourceFile, error) {
+	ready, err := bootstrapSourceCapturable(ctx, root)
 	if err != nil || !ready {
 		return nil, err
 	}
@@ -102,12 +166,19 @@ func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
 	return paths, nil
 }
 
+// runSourceGit runs one git command in the source root. A failure names the command and carries
+// git's own standard error (util.CommandDiagnostic), and claims no cause: git missing from PATH,
+// the deadline, output over the bound and a refused ownership are all reported as git reported
+// them. Whether root is a Git checkout at all is settled before, in bootstrapSourceCapturable.
 func runSourceGit(ctx context.Context, root string, args ...string) (string, error) {
+	if len(args) == 0 {
+		return "", errors.New("bootstrap source git command requires arguments")
+	}
 	// Disable repository-configured filesystem monitor hooks for read-only inventory.
 	command := append([]string{"-c", "core.fsmonitor=false"}, args...)
 	result, err := util.RunGitBytes(ctx, root, contextopt.MaxSourceBytes, command...)
 	if err != nil {
-		return "", fmt.Errorf("bootstrap source inventory: %w", err)
+		return "", fmt.Errorf("inventory with git %s: %w", args[0], util.CommandDiagnostic(err, result.Stderr))
 	}
 	return string(result.Stdout), nil
 }
@@ -226,6 +297,9 @@ func validBootstrapDigest(digest string) bool {
 	return true
 }
 
+// bootstrapSourceAvailable reports whether root holds the Praetor module source: false without
+// error for an empty root or one without go.mod, true for a go.mod declaring the Praetor module,
+// and an error for an unreadable root or any other module.
 func bootstrapSourceAvailable(ctx context.Context, root string) (bool, error) {
 	if root == "" {
 		return false, nil
@@ -246,6 +320,25 @@ func bootstrapSourceAvailable(ctx context.Context, root string) (bool, error) {
 	}
 	if !declaresPraetorModule(module) {
 		return false, errors.New("bootstrap source must declare the Praetor module")
+	}
+	return true, nil
+}
+
+// bootstrapSourceCapturable is bootstrapSourceAvailable for a source the bootstrap captures: a
+// Praetor module must also sit in a Git checkout, since the capture lists its build inputs with
+// git ls-files (ErrSourceNotGitCheckout). The legacy self-host check (verifyLegacyBootstrapInputs)
+// asks only bootstrapSourceAvailable: its container builds with go run and lists nothing.
+func bootstrapSourceCapturable(ctx context.Context, root string) (bool, error) {
+	ready, err := bootstrapSourceAvailable(ctx, root)
+	if err != nil || !ready {
+		return false, err
+	}
+	present, err := util.GitWorktreePresent(ctx, root)
+	if err != nil {
+		return false, fmt.Errorf("detect a Git checkout: %w", err)
+	}
+	if !present {
+		return false, ErrSourceNotGitCheckout
 	}
 	return true, nil
 }

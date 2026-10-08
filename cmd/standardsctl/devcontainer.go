@@ -33,7 +33,7 @@ func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	fs.StringVar(&opts.configPath, "config", ".standards.yaml", "Path to .standards.yaml")
 	fs.StringVar(&opts.outputPath, "output", ".devcontainer/devcontainer.json", "Target path for devcontainer.json")
 	fs.BoolVar(&opts.verify, "verify", false, "Verify configuration against declared standards and recorded bootstrap inputs")
-	fs.StringVar(&opts.sourceRoot, "source-root", "", "Explicit complete Praetor source checkout for a portable bootstrap bundle (bump: the checkout whose pins move, default the directory of --config)")
+	fs.StringVar(&opts.sourceRoot, "source-root", "", "Explicit complete Praetor source checkout for a portable bootstrap bundle, a Git checkout the bootstrap lists with git ls-files (bump: the checkout whose pins move, default the directory of --config)")
 	fs.StringVar(&opts.builderImage, "builder-image", "", "Digest-pinned Go builder image, repository[:tag]@sha256:<digest> (default: the recorded image unless it names a reviewed default's repository and digest, else the reviewed bootstrap image; bump: the new reviewed pin, repository:tag@sha256:<digest>)")
 	fs.StringVar(&opts.baseImage, "base-image", "", "Digest-pinned DevContainer base image, repository[:tag]@sha256:<digest> (default: the recorded image unless it names a reviewed default's repository and digest, else the reviewed base; bump: the new reviewed pin, repository:tag@sha256:<digest>)")
 	fs.BoolVar(&opts.force, "force", false, "Replace only the reviewed generated DevContainer bundle files")
@@ -168,7 +168,7 @@ func generateDevContainerBundle(ctx context.Context, manifest *config.Manifest, 
 	}
 	bundle, err := devcontainer.PrepareBundle(ctx, dc.Name, manifest.Profiles, manifest.Facets, selected)
 	if err != nil {
-		return fmt.Errorf("prepare devcontainer bootstrap: %w", err)
+		return devcontainer.NameSource(fmt.Errorf("prepare devcontainer bootstrap: %w", err), "--source-root")
 	}
 	if err := devcontainer.WriteBundle(ctx, opts.outputPath, bundle, opts.force); err != nil {
 		return fmt.Errorf("write devcontainer bundle: %w", err)

@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 )
 
 // profileTimeout bounds one profile change, including the git checks of its backups (HISS-02).
@@ -54,6 +55,11 @@ func runProfileSet(args []string) error {
 	}
 	ctx, cancel := commandContext(profileTimeout)
 	defer cancel()
+	resolved, err := resolveLockSourceRoot(opts.LockSourceRoot, "--lock-source-root")
+	if err != nil {
+		return err
+	}
+	opts.LockSourceRoot = resolved
 	report, err := adopt.SetProfile(ctx, opts)
 	if report != nil {
 		printProfileSetReport(report)
@@ -73,7 +79,7 @@ func runProfileSet(args []string) error {
 func parseProfileSetOptions(args []string) (adopt.ProfileSetOptions, error) {
 	fs := flag.NewFlagSet("profile set", flag.ContinueOnError)
 	facets := fs.String("facets", "", "Comma-separated facets that replace the declared ones; --facets= declares none (omitted: keep the declared facets)")
-	lockSource := fs.String("lock-source-root", "", "Praetor source bundle the new pins and vendored catalog texts come from (required)")
+	lockSource := fs.String("lock-source-root", "", devcontainer.SourceRootForms+" the new pins and vendored catalog texts come from (required)")
 	path := fs.String("path", ".", "Adopted repository whose declaration changes")
 	dryRun := fs.Bool("dry-run", false, "Preview every change as a diff without writing files")
 	positional, err := parseInterspersed(fs, args)

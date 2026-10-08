@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 )
@@ -98,7 +99,7 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 				Type:        "boolean",
 				Description: "Refresh, not reset. Rebuild .standards.lock + pinned catalog from source_root (required, dry_run included); rewrite drifted files audit compares byte for byte (documentation gate, branch ruleset while policy requires one, DevContainer, edited Makefile or .gitattributes managed block); merge managed values into editor JSON; regenerate AGENTS.md harness, repository additions kept; reset Paperclip platform naming another repository to this repository. Replaced or merged file: line delta + backup under .workingdir/adopt-backups when git ignores backup path. Other files audit never verifies: kept; delete one, rerun adopt to regenerate (default: false)",
 			},
-			"source_root": {Type: "string", Description: "Praetor source bundle; required for missing lock and with force; purpose: real pinned lock; confinement: server root"},
+			"source_root": {Type: "string", Description: "Praetor Git checkout or source bundle; go.mod source: Git checkout required (bootstrap inventory = git ls-files); required for missing lock and with force; purpose: real pinned lock; confinement: server root"},
 			"record_baseline": {
 				Type:        "boolean",
 				Description: "Record existing infractions into .standards-baseline.json when absent. Existing baseline: kept, rescanned, ratchet verdict reported, never rewritten; re-record = CLI only (praetorctl adopt --rerecord-baseline or praetorctl baseline --record). false skips scan (default: true)",
@@ -134,7 +135,7 @@ func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.To
 		if report != nil {
 			details.Append(formatAdoptMCPResult(report, a.dryRun))
 		}
-		details.Template("block: adoption failed: %v", err)
+		details.Template("block: adoption failed: %v", devcontainer.NameSource(err, "source_root"))
 		return mcpComposedErrorResult(details.Text()), nil
 	}
 

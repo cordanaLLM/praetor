@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
@@ -15,7 +16,7 @@ func runDogfoodSuite(ctx context.Context, args []string) error {
 	var opts dogfood.SuiteOptions
 	fs.StringVar(&opts.ConfigPath, "config", "", "Explicit version-1 JSON suite configuration")
 	fs.StringVar(&opts.ArtifactDir, "artifacts", "", "New private evidence directory under an existing parent")
-	fs.StringVar(&opts.SourceRoot, "source-root", ".", "Validated Praetor source bundle for public cases")
+	fs.StringVar(&opts.SourceRoot, "source-root", ".", "Validated "+devcontainer.SourceRootForms+" for public cases"+devcontainer.SourceRootGitNote)
 	fs.StringVar(&opts.Stage, "stage", "plan", "plan (declarations only) or verify (execute and replay)")
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err

@@ -13,7 +13,7 @@ func (s *Server) createDogfoodSuiteTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{Type: "object", Required: []string{"config_path", "artifact_dir"}, Properties: map[string]mcp.PropertySchema{
 		"config_path":  {Type: "string", Description: "Version-1 JSON suite file; embedded transcript paths also obey server confinement"},
 		"artifact_dir": {Type: "string", Description: "Private evidence directory creation path under existing parent"},
-		"source_root":  {Type: "string", Description: "Praetor source bundle for public cases; default server root"},
+		"source_root":  {Type: "string", Description: "Praetor Git checkout or source bundle for public cases; go.mod source: Git checkout required (bootstrap inventory = git ls-files); default server root"},
 		"stage":        {Type: "string", Description: "plan (declarations only, default) or verify (bounded execution and replay); public verify requires server remote opt-in"},
 	}}
 	return mcp.NewOpenWorldTool("standards_dogfood_suite", "Run configured pinned public adoption and private transcript replay cases; retain explicit completion/failure metadata without executing transcript content or upstream code", schema, s.runDogfoodSuite, false, false)

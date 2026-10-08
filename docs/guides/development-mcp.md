@@ -423,6 +423,13 @@ needs `source_root`, a dry run included
 ([what a forced re-adoption changes](../adoption.md#what-a-forced-re-adoption-changes),
 `TestCreateAdoptTool_ForceStatesTheContract` in
 `cmd/standards-mcp/tools_adoption_force_test.go`).
+`source_root` accepts what `--lock-source-root` accepts: a Praetor Git checkout or a source bundle.
+A source holding `go.mod` must sit in a Git checkout, because the DevContainer bootstrap lists it
+with `git ls-files`. The tool refuses one that does not before anything is written, with
+`source_root: prepare devcontainer bootstrap: bootstrap source "<path>": not a Git checkout; ...`.
+Only a failure to capture the source names the parameter; every other error keeps its own subject
+(`devcontainer.NameSource`, `TestAdoptMCPSourceRootRefusalNamesParameter_3D` in
+`cmd/standards-mcp/tools_adoption_source_test.go`).
 
 `record_baseline` records a first `.standards-baseline.json` and keeps an existing one. On a
 repository that already has the file the tool prints `Existing Legacy Debt Baseline: <n>
