@@ -124,6 +124,9 @@ type ScanReport struct {
 	// functions are the functions the scanner located in the file being read (noteFunction);
 	// the walk anchors that file's findings to them and starts the next file empty.
 	functions []funcSpan
+	// ioProofs are the Go HISS-02 findings the package pass may discharge once every file has
+	// been read (go_io_proof.go resolveIOProofs), which empties it.
+	ioProofs []ioProof
 }
 
 // Incomplete reports whether the scan left part of its scope unexamined, so that

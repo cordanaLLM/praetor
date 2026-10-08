@@ -2,6 +2,7 @@ package p
 
 import (
 	"context"
+	"net"
 	"os"
 	"os/signal"
 )
@@ -14,4 +15,11 @@ func Serve(addr string) error {
 	return listen(ctx, addr)
 }
 
-func listen(ctx context.Context, addr string) error { return ctx.Err() }
+func listen(ctx context.Context, addr string) error {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return err
+	}
+	return ln.Close()
+}

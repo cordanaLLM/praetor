@@ -320,7 +320,8 @@ type fixtureStage struct {
 // Each fixture is scanned alone in a temporary directory so a finding cannot be attributed
 // to a neighbouring file, and so a fixture that fails to parse cannot silently suppress the
 // rest of its bucket. It is staged where the scan reads its language (hiss.FixturePath): a
-// GitHub Actions workflow in .github/workflows, any other fixture at the root.
+// GitHub Actions workflow in .github/workflows, any other fixture at the root. An archive
+// fixture (archive.go) is staged as the files it holds, each at its own path.
 func (stage fixtureStage) reported(ctx context.Context, dir, name string) (result fixtureResult, err error) {
 	result.name = name
 	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(dir, name))
@@ -335,11 +336,7 @@ func (stage fixtureStage) reported(ctx context.Context, dir, name string) (resul
 	// rather than discarded: a verifier that silently ignores its own errors is the shape
 	// this package exists to detect.
 	defer func() { err = errors.Join(err, os.RemoveAll(tmp)) }()
-	target := filepath.Join(tmp, filepath.FromSlash(hiss.FixturePath(stage.language, name)))
-	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
-		return result, fmt.Errorf("stage fixture %s: %w", name, err)
-	}
-	if err := os.WriteFile(target, data, 0o600); err != nil {
+	if err := stage.stage(tmp, name, data); err != nil {
 		return result, fmt.Errorf("stage fixture %s: %w", name, err)
 	}
 	rep, scanErr := hiss.Scan(ctx, tmp, hiss.ScanOptions{})
@@ -349,6 +346,19 @@ func (stage fixtureStage) reported(ctx context.Context, dir, name string) (resul
 	result.detected = rep.Breakdown[stage.ruleID] > 0
 	result.measured = measuresRule(rep.Complexity.Measurements, stage.ruleID)
 	return result, nil
+}
+
+// stage writes one fixture's bytes below root: an archive as the files it holds, any other
+// fixture where the scan reads its language.
+func (stage fixtureStage) stage(root, name string, data []byte) error {
+	if filepath.Ext(name) == archiveExt {
+		return stageArchive(root, data)
+	}
+	target := filepath.Join(root, filepath.FromSlash(hiss.FixturePath(stage.language, name)))
+	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+		return err
+	}
+	return os.WriteFile(target, data, 0o600)
 }
 
 // measuresRule reports whether any measurement belongs to ruleID.

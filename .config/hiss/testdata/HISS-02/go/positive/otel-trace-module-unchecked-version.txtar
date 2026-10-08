@@ -1,0 +1,27 @@
+The near miss: otlptracegrpc is at the version whose source was read, but its New hands the
+context to otlptrace, a separately versioned module, and the go.mod selects a version of that
+module whose source was not read. The call is reported.
+
+-- go.mod --
+module example.com/telemetry
+
+go 1.27
+
+require (
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.47.0
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.46.0
+)
+-- otel/otel.go --
+package otel
+
+import (
+	"context"
+
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+)
+
+// Exporter builds the trace exporter with a context that carries no deadline.
+func Exporter() error {
+	_, err := otlptracegrpc.New(context.Background())
+	return err
+}
