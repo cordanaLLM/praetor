@@ -332,8 +332,11 @@ Both keys are repository-only: a catalog archetype or facet that sets either fai
   `MERGE` otherwise (`TestMergeQueueRendersOnlyMergeGroupContexts`).
 - The required status checks come only from workflows that declare a `merge_group` trigger
   (`forge.ForMergeQueue`). A workflow that would otherwise require a check but lacks the trigger
-  is left out, and `forge.MergeQueueFindings` names its path and contexts. Add `merge_group:` to
-  the workflow to require it again. A workflow that requires no pull request check is no finding.
+  is left out. `adopt`, `flavor apply` and `sync` (with or without `--remote`) print a warning
+  per omitted workflow with its path and contexts (`forge.QueueOmissions`,
+  `TestQueueOmissions`, `TestSync_Remote_LiveMergeQueueSelectsMergeGroupChecks`). Add
+  `merge_group:` to the workflow to require it again. A workflow that requires no pull request
+  check is no finding.
 - Praetor's locked `praetor-docs.yml` and `praetor-api.yml` declare `merge_group`
   (`ghworkflow.HostedGateOn`), so their `Documentation Governance` and `Go API Compatibility`
   contexts stay required. An unedited earlier copy refreshes without `--force` because its text is
@@ -351,6 +354,22 @@ an active `merge_queue` rule and requires such a context
 (`TestAuditBranchProtection_MergeQueue_Negative`, `TestLiveMergeQueueFindings`). The failure names
 the workflow path and the missing trigger. Without a queue the rendering is the previous ruleset
 byte for byte (`TestNoMergeQueueRendersTheOldRuleset`).
+
+`sync --remote` treats a branch as queue-protected when the policy declares a queue or an active
+`merge_queue` rule of any ruleset applies to it on GitHub, so a queue configured only on GitHub
+also selects the `merge_group` checks alone
+(`TestSync_Remote_LiveMergeQueueSelectsMergeGroupChecks`). The merge into a live ruleset keeps the
+operator's `merge_queue` parameters (timeout, entry counts, grouping, merge method) and every tool a
+live `code_scanning` rule lists, adding only what the live rule lacks
+(`TestMergeRulesetKeepsLiveMergeQueueParameters`, `TestMergeRulesetUnionsLiveCodeScanningTools`).
+The queue parameters have no policy key: change them on GitHub.
+
+To move a repository that already has a committed ruleset onto a queue, declare `merge_queue: true`
+and run `praetorctl adopt` or `praetorctl flavor apply`. The unedited queue-less ruleset is
+recognised as Praetor's and refreshed without `--force`
+(`TestAdopt_Positive_DeclaringAMergeQueueRefreshesTheUneditedRuleset`); a ruleset with a value
+edited is kept and warned about, and `--force` replaces it. `praetorctl sync` writes the ruleset
+only when it is absent and otherwise reports drift, so it does not perform this refresh.
 
 ### Refreshing a ruleset Praetor rendered earlier
 

@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
@@ -128,7 +129,22 @@ func applyRuleset(ctx context.Context, repoPath string, opts ApplyOptions, basel
 	if err != nil {
 		return SettingOutcome{}, fmt.Errorf("render %s: %w", forge.RepositoryRulesetPath, err)
 	}
-	return writeRuleset(ctx, repoPath, content, opts.Force, forge.PriorRulesetDigests(baseline.inputs, content), len(contexts))
+	outcome, err := writeRuleset(ctx, repoPath, content, opts.Force, forge.PriorRulesetDigests(baseline.inputs, content), len(contexts))
+	if err != nil {
+		return SettingOutcome{}, err
+	}
+	omissions, err := forge.QueueOmissions(ctx, repoPath, nil, baseline.inputs.Policy.MergeQueue)
+	if err != nil {
+		return SettingOutcome{}, fmt.Errorf("read the merge_group triggers: %w", err)
+	}
+	if len(omissions) > 0 {
+		notes := omissions
+		if outcome.Note != "" {
+			notes = append([]string{outcome.Note}, omissions...)
+		}
+		outcome.Note = strings.Join(notes, "; ")
+	}
+	return outcome, nil
 }
 
 // writeRuleset writes the rendered ruleset content unless the file on disk already holds it or

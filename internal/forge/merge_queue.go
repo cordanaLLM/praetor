@@ -138,6 +138,27 @@ func MergeQueueFindings(ctx context.Context, repoPath string, planned map[string
 	return findings, err
 }
 
+// QueueOmissions names, as report lines, the workflows a merge queue leaves out of the required
+// status checks of the repository at repoPath (ForMergeQueue), with planned applied over its
+// workflows: each has jobs that report on a pull request but no merge_group trigger, so its
+// checks are not required and nothing gates a merge on them. It is empty when on is false, so a
+// writer or sync prints it without asking whether the repository has a queue.
+func QueueOmissions(ctx context.Context, repoPath string, planned map[string][]byte, on bool) ([]string, error) {
+	if !on {
+		return nil, nil
+	}
+	findings, err := MergeQueueFindings(ctx, repoPath, planned)
+	if err != nil {
+		return nil, err
+	}
+	lines := make([]string, 0, len(findings))
+	for i := 0; i < len(findings) && i < maxWorkflowFiles; i++ {
+		lines = append(lines, fmt.Sprintf("%s: not required by the merge queue ruleset; add `%s:` to the workflow to gate merges on %s",
+			findings[i].Workflow, mergeGroupEvent, strings.Join(findings[i].Contexts, ", ")))
+	}
+	return lines, nil
+}
+
 // RequiredWithoutMergeGroup narrows findings to the workflows one of whose contexts is in
 // required, the contexts a branch protected by a merge queue requires, and to those contexts.
 // The result is empty when the branch requires nothing a group cannot report.

@@ -275,8 +275,15 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 		return errors.New("reconcile branch protection: no resolved policy")
 	}
 	repository := gh.Owner + "/" + gh.Repo
-	contexts, omitted, err := remoteStatusContexts(ctx, rootDir, repository, in.policy.MergeQueue, in.contexts)
+	queued, err := branchUsesMergeQueue(ctx, gh, in.branch, in.policy.MergeQueue)
 	if err != nil {
+		return err
+	}
+	contexts, omitted, err := remoteStatusContexts(ctx, rootDir, repository, queued, in.contexts)
+	if err != nil {
+		return err
+	}
+	if err := printQueueOmissions(ctx, rootDir, queued); err != nil {
 		return err
 	}
 	gh.RulesetName = forge.RepositoryRulesetName
@@ -305,6 +312,38 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 	fmt.Printf("  [OK] Remote branch protection synchronized on GitHub (%s and lts-*, read back; live rules praetor does not render kept)\n", in.branch)
 	return reportOmittedStatusChecks(ctx, gh, in.branch, omitted)
 }
+
+// branchUsesMergeQueue reports whether branch merges through a merge queue: the declared policy
+// says so, or an active merge_queue rule of any ruleset applies to the branch on GitHub (#893).
+// A queue only the forge carries still stalls on a required check no merge group reports, so the
+// checks a sync writes are selected for it. The forge is not read when the policy declares one.
+func branchUsesMergeQueue(ctx context.Context, gh *forge.GitHubDriver, branch string, declared bool) (bool, error) {
+	if declared {
+		return true, nil
+	}
+	live, err := gh.ReadBranchProtection(ctx, branch)
+	if err != nil {
+		return false, fmt.Errorf("read the live branch protection of %s: %w", branch, err)
+	}
+	return live.HasActiveRule("merge_queue"), nil
+}
+
+// printQueueOmissions names, for a branch protected by a merge queue, each workflow whose checks
+// the ruleset does not require because it lacks the merge_group trigger (forge.QueueOmissions),
+// so the omission is visible where the ruleset is rendered and not only to the audit.
+func printQueueOmissions(ctx context.Context, rootDir string, queued bool) error {
+	lines, err := forge.QueueOmissions(ctx, rootDir, nil, queued)
+	if err != nil {
+		return fmt.Errorf("read the merge_group triggers: %w", err)
+	}
+	for i := 0; i < len(lines) && i < maxQueueOmissionLines; i++ {
+		fmt.Println("  [WARN] " + lines[i])
+	}
+	return nil
+}
+
+// maxQueueOmissionLines bounds the merge queue omissions one sync prints (HISS-02).
+const maxQueueOmissionLines = 256
 
 // remoteStatusContexts returns the required status checks a --remote sync writes to the forge
 // repository named repository, which are the jobs that report on every pull request there
@@ -501,6 +540,9 @@ func verifySyncLocal(ctx context.Context, configPath, catalogRoot string, manife
 	}
 	policy, _, cause := config.ResolveRepositoryPolicyFromCatalog(ctx, configPath, catalogRoot, manifest)
 	if cause == nil && policy != nil {
+		if err := printQueueOmissions(ctx, rootDir, policy.BranchProtection.MergeQueue); err != nil {
+			return nil, 0, err
+		}
 		return policy, companions.incomplete, reconcileRuleset(ctx, rootDir, branch, policy.BranchProtection, contexts)
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {

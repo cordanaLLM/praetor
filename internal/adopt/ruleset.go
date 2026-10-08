@@ -73,6 +73,9 @@ func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	if err := warnQueueOmissions(ctx, s, planned, policy.MergeQueue); err != nil {
+		return err
+	}
 	checks := len(contexts)
 	return s.scaffoldPreviewed(ctx, scaffold{
 		rel:         rulesetFile,
@@ -85,6 +88,23 @@ func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 		refreshed:   fmt.Sprintf("Refreshed the unedited earlier Praetor branch protection ruleset to the current policy and workflows (%d required status checks)", checks),
 	}, rulesetPreviewNote(checks))
 }
+
+// warnQueueOmissions warns, for a repository behind a merge queue, about each workflow whose
+// checks the ruleset leaves out because it lacks the merge_group trigger (forge.QueueOmissions),
+// over the workflows this run writes.
+func warnQueueOmissions(ctx context.Context, s *adoptSession, planned map[string][]byte, queued bool) error {
+	lines, err := forge.QueueOmissions(ctx, s.repoPath, planned, queued)
+	if err != nil {
+		return fmt.Errorf("read the merge_group triggers: %w", err)
+	}
+	for i := 0; i < len(lines) && i < maxQueueOmissionWarnings; i++ {
+		s.report.addWarning("%s", lines[i])
+	}
+	return nil
+}
+
+// maxQueueOmissionWarnings bounds the merge queue omissions one adoption reports (HISS-02).
+const maxQueueOmissionWarnings = 256
 
 // readRulesetBaseline reads, before any step writes, what the branch-ruleset step compares an
 // existing ruleset against (forge.ReadRulesetBaseline): the policy and the workflows of the

@@ -179,18 +179,80 @@ func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, [
 	if len(liveParams) == 0 && len(desiredParams) == 0 {
 		return rule, nil, nil
 	}
-	params := make(map[string]any, len(liveParams)+len(desiredParams))
-	maps.Copy(params, liveParams)
-	maps.Copy(params, desiredParams)
-	if ruleType == statusChecksParameter {
-		checks, checkErr := unionStatusChecks(liveParams[statusChecksParameter], desiredParams[statusChecksParameter])
-		if checkErr != nil {
-			return nil, nil, checkErr
-		}
-		params[statusChecksParameter] = checks
+	params, err := mergeRuleParameters(ruleType, liveParams, desiredParams)
+	if err != nil {
+		return nil, nil, err
 	}
 	rule["parameters"] = params
 	return rule, loweredParameters(ruleType, liveParams, desiredParams), nil
+}
+
+// mergeRuleParameters merges the desired parameters of a rule over the live ones. Most rules take
+// the declared value for every parameter praetor renders. The two rules a merge queue renders
+// take no declared values (there is no policy key for the queue sizes, timeout or grouping, nor
+// for the scanning thresholds), so the live ones are the operator's: a live merge_queue keeps
+// every parameter it has, and a live code_scanning keeps every tool it lists (#893).
+func mergeRuleParameters(ruleType string, liveParams, desiredParams map[string]any) (map[string]any, error) {
+	params := make(map[string]any, len(liveParams)+len(desiredParams))
+	switch ruleType {
+	case mergeQueueRule:
+		maps.Copy(params, desiredParams)
+		maps.Copy(params, liveParams)
+		return params, nil
+	case codeScanningRule:
+		maps.Copy(params, liveParams)
+		maps.Copy(params, desiredParams)
+		tools, err := unionCodeScanningTools(liveParams[codeScanningToolsParameter], desiredParams[codeScanningToolsParameter])
+		if err != nil {
+			return nil, err
+		}
+		params[codeScanningToolsParameter] = tools
+		return params, nil
+	}
+	maps.Copy(params, liveParams)
+	maps.Copy(params, desiredParams)
+	if ruleType == statusChecksParameter {
+		checks, err := unionStatusChecks(liveParams[statusChecksParameter], desiredParams[statusChecksParameter])
+		if err != nil {
+			return nil, err
+		}
+		params[statusChecksParameter] = checks
+	}
+	return params, nil
+}
+
+// codeScanningToolsParameter is the code_scanning rule parameter that lists the required tools.
+const codeScanningToolsParameter = "code_scanning_tools"
+
+// maxCodeScanningTools bounds the tools one code_scanning rule lists (HISS-02).
+const maxCodeScanningTools = 64
+
+// unionCodeScanningTools keeps every live tool entry as it is, thresholds included, and appends
+// each desired tool the live rule does not list yet.
+func unionCodeScanningTools(liveRaw, desiredRaw any) ([]any, error) {
+	live, err := objectList(liveRaw, codeScanningToolsParameter, maxCodeScanningTools)
+	if err != nil {
+		return nil, err
+	}
+	desired, err := objectList(desiredRaw, codeScanningToolsParameter, maxCodeScanningTools)
+	if err != nil {
+		return nil, err
+	}
+	merged := make([]any, 0, len(live)+len(desired))
+	present := make(map[any]bool, len(live))
+	for i := 0; i < len(live) && i < maxCodeScanningTools; i++ {
+		present[live[i]["tool"]] = true
+		merged = append(merged, live[i])
+	}
+	for i := 0; i < len(desired) && i < maxCodeScanningTools; i++ {
+		if !present[desired[i]["tool"]] {
+			merged = append(merged, desired[i])
+		}
+	}
+	if len(merged) > maxCodeScanningTools {
+		return nil, fmt.Errorf("merged %s exceed %d tools", codeScanningToolsParameter, maxCodeScanningTools)
+	}
+	return merged, nil
 }
 
 // LoweredParameter is a rendered ruleset parameter whose live value was stricter than the

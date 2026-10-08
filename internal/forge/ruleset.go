@@ -148,6 +148,10 @@ type RulesetBaseline struct {
 	Branch   string
 	Policy   config.BranchProtectionPolicy
 	Contexts []string
+	// UnqueuedContexts are the contexts of every workflow, read only when Policy declares a merge
+	// queue (Contexts then holds the merge_group workflows alone): with the policy minus its queue
+	// they render the ruleset the repository carried before the queue was declared.
+	UnqueuedContexts []string
 }
 
 // ReadRulesetBaseline reads the baseline of the repository at repoPath as it stands. A writer
@@ -167,7 +171,13 @@ func ReadRulesetBaseline(ctx context.Context, repoPath string) (RulesetBaseline,
 	if err != nil {
 		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
 	}
-	return RulesetBaseline{Branch: branch, Policy: policy, Contexts: contexts}, nil
+	baseline := RulesetBaseline{Branch: branch, Policy: policy, Contexts: contexts}
+	if policy.MergeQueue {
+		if baseline.UnqueuedContexts, err = RequiredStatusContexts(ctx, repoPath); err != nil {
+			return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
+		}
+	}
+	return baseline, nil
 }
 
 // RepositoryBranchPolicy is the branch protection the repository at repoPath renders its ruleset
@@ -203,17 +213,31 @@ func RepositoryBranchPolicy(ctx context.Context, repoPath string) (config.Branch
 // review count, a signature rule, a status check) as much as an operator's own, matches no digest
 // and keeps the --force contract.
 func PriorRulesetDigests(baseline RulesetBaseline, current []byte) map[string]string {
-	priors := make(map[string]string, 2)
-	addPriorRuleset(priors, baseline.Branch, baseline, current,
-		"the ruleset of the repository's policy and workflows before this run")
-	if baseline.Branch != FallbackDefaultBranch {
-		addPriorRuleset(priors, FallbackDefaultBranch, baseline, current,
-			"the ruleset of the repository's policy and workflows before this run, for main as Praetor rendered it before it read the default branch")
+	priors := make(map[string]string, 4)
+	addPriorBranches(priors, baseline, current, "the ruleset of the repository's policy and workflows before this run")
+	if baseline.Policy.MergeQueue {
+		// The policy is read after the operator declared the queue, so the ruleset on disk is
+		// still the queue-less one: it is Praetor's too, and the run that adds the queue refreshes it.
+		unqueued := baseline
+		unqueued.Policy.MergeQueue, unqueued.Policy.CodeQLDefaultSetup = false, false
+		unqueued.Contexts = baseline.UnqueuedContexts
+		addPriorBranches(priors, unqueued, current, "the ruleset of the repository's policy before it declared a merge queue")
 	}
 	if len(priors) == 0 {
 		return nil
 	}
 	return priors
+}
+
+// addPriorBranches adds the rendering of baseline for its default branch to priors and, when that
+// branch is not FallbackDefaultBranch, for main as Praetor rendered it before it read the default
+// branch.
+func addPriorBranches(priors map[string]string, baseline RulesetBaseline, current []byte, label string) {
+	addPriorRuleset(priors, baseline.Branch, baseline, current, label)
+	if baseline.Branch != FallbackDefaultBranch {
+		addPriorRuleset(priors, FallbackDefaultBranch, baseline, current,
+			label+", for main as Praetor rendered it before it read the default branch")
+	}
 }
 
 // addPriorRuleset adds to priors, under label, the digest of the ruleset baseline's policy and
