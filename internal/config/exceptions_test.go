@@ -6,6 +6,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -389,5 +391,44 @@ func TestValidateExceptionsDedupeTarget(t *testing.T) {
 	m, err := LoadManifest(writeManifest(t, manifest))
 	if err != nil || len(ExceptionsFor(m.Exceptions, ExceptionRuleDedupe)) != 1 {
 		t.Fatalf("LoadManifest: %v, %+v", err, m)
+	}
+}
+
+func TestLoadExceptionsFor_Positive(t *testing.T) {
+	root := t.TempDir()
+	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
+	content := fmt.Sprintf("version: 1\nexceptions:\n  - rule: %q\n    path: %q\n    reason: %q\n    expires: %q\n",
+		ExceptionRuleDedupe, "pkg/deepcopy.go", "generated clones", expires)
+	if err := os.WriteFile(filepath.Join(root, ManifestFileName), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := LoadExceptionsFor(root, ExceptionRuleDedupe)
+	if err != nil {
+		t.Fatalf("LoadExceptionsFor failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Path != "pkg/deepcopy.go" {
+		t.Fatalf("unexpected entries: %+v", entries)
+	}
+}
+
+func TestLoadExceptionsFor_Boundary_MissingManifestReturnsNil(t *testing.T) {
+	root := t.TempDir()
+	entries, err := LoadExceptionsFor(root, ExceptionRuleDedupe)
+	if err != nil {
+		t.Fatalf("LoadExceptionsFor missing manifest: %v", err)
+	}
+	if entries != nil {
+		t.Fatalf("expected nil entries, got %+v", entries)
+	}
+}
+
+func TestLoadExceptionsFor_Negative_MalformedManifestFails(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ManifestFileName), []byte("version: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadExceptionsFor(root, ExceptionRuleDedupe)
+	if err == nil {
+		t.Fatal("expected error on malformed manifest")
 	}
 }

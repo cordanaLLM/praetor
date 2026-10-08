@@ -1049,3 +1049,134 @@ func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), wantDir)
 	}
 }
+
+const cleanGoSource = `package sample
+
+func CleanAlpha() string {
+	return "alpha"
+}
+
+func CleanBeta() int {
+	return 42
+}
+`
+
+func TestScanRepo_Negative_StaleExceptionForCleanFileFails(t *testing.T) {
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "clean.go")
+	if err := os.WriteFile(sourcePath, []byte(cleanGoSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := `exceptions:
+  - rule: HISS-19
+    path: clean.go
+    reason: clean file has no clones
+    expires: 2026-11-01
+`
+	writeStandardsManifest(t, tmp, manifest)
+
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: tmp,
+		Today:    today,
+	})
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if report.Passed {
+		t.Fatal("expected report to fail when exception excuses no duplicate function block")
+	}
+	if len(report.StaleExceptions) != 1 {
+		t.Fatalf("expected 1 stale exception, got %d", len(report.StaleExceptions))
+	}
+	want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
+	if report.StaleExceptions[0] != want {
+		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
+	}
+}
+
+func TestScanRepo_Negative_StaleExceptionForNonGoFileFails(t *testing.T) {
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "clean.go")
+	if err := os.WriteFile(sourcePath, []byte(cleanGoSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	readmePath := filepath.Join(tmp, "README.md")
+	if err := os.WriteFile(readmePath, []byte("# Demo\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := `exceptions:
+  - rule: HISS-19
+    path: README.md
+    reason: non-Go file cannot have Go clones
+    expires: 2026-11-01
+`
+	writeStandardsManifest(t, tmp, manifest)
+
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: tmp,
+		Today:    today,
+	})
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if report.Passed {
+		t.Fatal("expected report to fail on stale non-Go exception target")
+	}
+	if len(report.StaleExceptions) != 1 {
+		t.Fatalf("expected 1 stale exception, got %d", len(report.StaleExceptions))
+	}
+	want := "exceptions entry README.md (HISS-19): excuses no duplicate function block; remove the entry"
+	if report.StaleExceptions[0] != want {
+		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
+	}
+}
+
+func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testing.T) {
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "zz_generated.deepcopy.go")
+	if err := os.WriteFile(sourcePath, []byte(deepCopyGeneratedClonesSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanPath := filepath.Join(tmp, "clean.go")
+	if err := os.WriteFile(cleanPath, []byte(cleanGoSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	manifest := `exceptions:
+  - rule: HISS-19
+    path: zz_generated.deepcopy.go
+    reason: generated clones
+    expires: 2026-11-01
+  - rule: HISS-19
+    path: clean.go
+    reason: clean file has no clones
+    expires: 2026-11-01
+`
+	writeStandardsManifest(t, tmp, manifest)
+
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: tmp,
+		Today:    today,
+	})
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if report.Passed {
+		t.Fatal("expected report to fail when an unused exception entry is present")
+	}
+	if len(report.Excepted) != 1 {
+		t.Fatalf("expected 1 excepted duplicate group, got %d", len(report.Excepted))
+	}
+	if len(report.StaleExceptions) != 1 {
+		t.Fatalf("expected 1 stale exception, got %d", len(report.StaleExceptions))
+	}
+	want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
+	if report.StaleExceptions[0] != want {
+		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
+	}
+}

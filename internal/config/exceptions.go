@@ -5,7 +5,10 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -147,6 +150,19 @@ func (e Exception) Matches(rel string) bool {
 func ExceptionDay(t time.Time) time.Time {
 	year, month, day := t.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+}
+
+// LoadExceptionsFor loads the repository manifest at root/.standards.yaml and returns the
+// entries declaring rule. When root has no manifest, LoadExceptionsFor returns nil, nil.
+func LoadExceptionsFor(root, rule string) ([]Exception, error) {
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFileName))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return ExceptionsFor(manifest.Exceptions, rule), nil
 }
 
 // ExceptionsFor returns the entries of entries that name rule, in declaration order: what the

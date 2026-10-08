@@ -243,15 +243,15 @@ One behavior has exactly one implementation:
 - `praetorctl dedupe cadence` makes a sweep due after 20 commits, or once 1,000 Go production lines or 10 Go production files have been added since the recorded sweep, whichever comes first (`--threshold`, `--added-lines`, `--added-files`; `CheckCadence` in `internal/dedupe/cadence.go`).
 - Duplication that is genuinely unavoidable (such as toolchain-generated boilerplate that cannot be unified) is declared in the top-level `exceptions` list of `.standards.yaml` with rule `HISS-19`. The entry names one repository file by `path` (a glob is refused), a reason, and an expiry at most 90 days ahead (`config.ExceptionRuleDedupe` in `internal/config/exceptions.go`):
 
-```yaml
-exceptions:
-  - rule: "HISS-19"
-    path: "api/v1alpha1/zz_generated.deepcopy.go"
-    reason: "controller-gen produces near-identical DeepCopyInto methods per type"
-    expires: "2026-11-01"
-```
+  ```yaml
+  exceptions:
+    - rule: "HISS-19"
+      path: "api/v1alpha1/zz_generated.deepcopy.go"
+      reason: "controller-gen produces near-identical DeepCopyInto methods per type"
+      expires: "2026-11-01"
+  ```
 
-  A clone group whose members all sit in declared, unexpired files does not fail the scan and is reported under `Excepted Duplicate Function Blocks` with each entry's reason and expiry. A group with any member outside excepted files still fails. An expired entry fails like a missing one, naming the entry. The target must exist and be a regular repository file; no skip is applied on generated-code headers or file names alone.
+  A clone group whose members all sit in declared, unexpired files does not fail the scan and is reported under `Excepted Duplicate Function Blocks` with each entry's reason and expiry. A group with any member outside excepted files still fails. An expired entry fails like a missing one, naming the entry; an entry that excuses no duplicate function block is stale and fails until removed. The target must exist and be a regular repository file; no skip is applied on generated-code headers or file names alone.
 - Unexcused duplication is justified in the commit body, not left silent.
 
 ### HISS-20: Replayable Enforcement Evidence

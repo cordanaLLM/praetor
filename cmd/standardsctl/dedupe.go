@@ -105,6 +105,10 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		fmt.Println("  Not applicable: no Go sources found; this detector reads Go only.")
 		printUnscannedLanguages(report)
 		fmt.Println("  Clone detection for other languages is not implemented.")
+		if len(report.StaleExceptions) > 0 {
+			printStaleExceptions(report.StaleExceptions)
+			return dedupeVerdict(report)
+		}
 		return nil
 	}
 	fmt.Printf("  Files Scanned:     %d\n", report.TotalFilesScanned)
@@ -122,6 +126,7 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 	printDuplicateBlocks(report.Duplicates)
 	printExceptedBlocks(report.Excepted)
 	printSprawlInfractions(report.SprawlItems)
+	printStaleExceptions(report.StaleExceptions)
 	return dedupeVerdict(report)
 }
 
@@ -181,17 +186,28 @@ func printUnscannedLanguages(report *dedupe.DedupeReport) {
 	fmt.Println("  HISS-19 is not measured for these languages; this detector reads Go only.")
 }
 
+func printStaleExceptions(stale []string) {
+	if len(stale) == 0 {
+		return
+	}
+	fmt.Printf("\nStale Exceptions (%d):\n", len(stale))
+	for _, s := range stale {
+		fmt.Printf("  - %s\n", s)
+	}
+}
+
 // dedupeVerdict turns a report into the command's exit: nil when the scan passed or did not
 // apply, an error naming the finding counts otherwise.
 func dedupeVerdict(report *dedupe.DedupeReport) error {
-	if report.Applicable && !report.Passed {
-		// The score is not the verdict: any finding fails the scan, so a single sprawl item
-		// used to be reported as "failed with score 95.0%", which reads like a threshold the
-		// repository missed rather than the one call site it has to fix.
-		return fmt.Errorf("dedupe audit failed: %d duplicate function group(s), %d utility sprawl finding(s); cleanliness %.1f%%",
-			len(report.Duplicates), len(report.SprawlItems), report.CleanlinessScore)
+	if report.Passed || (!report.Applicable && len(report.StaleExceptions) == 0) {
+		return nil
 	}
-	return nil
+	if len(report.StaleExceptions) > 0 {
+		return fmt.Errorf("dedupe audit failed: %d duplicate function group(s), %d utility sprawl finding(s), %d stale exception(s); cleanliness %.1f%%",
+			len(report.Duplicates), len(report.SprawlItems), len(report.StaleExceptions), report.CleanlinessScore)
+	}
+	return fmt.Errorf("dedupe audit failed: %d duplicate function group(s), %d utility sprawl finding(s); cleanliness %.1f%%",
+		len(report.Duplicates), len(report.SprawlItems), report.CleanlinessScore)
 }
 
 func runDedupeCadence(args []string) error {

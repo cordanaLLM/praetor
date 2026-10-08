@@ -8,8 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -133,17 +131,10 @@ func readLicenseTexts(ctx context.Context, root string, assets []compiler.AssetU
 }
 
 // readCreditExceptions returns the entries of the manifest's declared exceptions list under
-// config.ExceptionRuleCredits, read and validated by config.LoadManifest. A repository without a
+// config.ExceptionRuleCredits, read and validated by config.LoadExceptionsFor. A repository without a
 // manifest declares none.
 func readCreditExceptions(root string) ([]config.Exception, error) {
-	manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return config.ExceptionsFor(manifest.Exceptions, config.ExceptionRuleCredits), nil
+	return config.LoadExceptionsFor(root, config.ExceptionRuleCredits)
 }
 
 // readCreditPathTexts reads every path the credits list names below root and returns each

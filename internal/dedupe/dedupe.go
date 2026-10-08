@@ -62,6 +62,7 @@ type DedupeReport struct {
 	Duplicates        []DuplicateGroup `json:"duplicates"`
 	Excepted          []DuplicateGroup `json:"excepted,omitempty"`
 	SprawlItems       []SprawlItem     `json:"sprawl_items"`
+	StaleExceptions   []string         `json:"stale_exceptions,omitempty"`
 	CleanlinessScore  float64          `json:"cleanliness_score"`
 	Passed            bool             `json:"passed"`
 	// Applicable reports whether there was anything to scan. This detector reads Go sources
@@ -125,7 +126,7 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 	exceptions := opts.Exceptions
 	if exceptions == nil {
 		var err error
-		exceptions, err = loadDedupeExceptions(repoPath)
+		exceptions, err = config.LoadExceptionsFor(repoPath, config.ExceptionRuleDedupe)
 		if err != nil {
 			return nil, err
 		}
@@ -139,10 +140,11 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 		return nil, err
 	}
 	report := &DedupeReport{
-		Duplicates:  make([]DuplicateGroup, 0),
-		Excepted:    make([]DuplicateGroup, 0),
-		SprawlItems: make([]SprawlItem, 0),
-		Unscanned:   scope.unscanned,
+		Duplicates:      make([]DuplicateGroup, 0),
+		Excepted:        make([]DuplicateGroup, 0),
+		SprawlItems:     make([]SprawlItem, 0),
+		StaleExceptions: make([]string, 0),
+		Unscanned:       scope.unscanned,
 	}
 
 	fset := token.NewFileSet()
@@ -162,18 +164,6 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 	collectDuplicates(funcHashMap, funcLocMap, exceptions, today, report)
 	calculateScore(report)
 	return report, nil
-}
-
-func loadDedupeExceptions(repoPath string) ([]config.Exception, error) {
-	manifestPath := filepath.Join(repoPath, config.ManifestFileName)
-	manifest, err := config.LoadManifest(manifestPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read manifest for dedupe exceptions: %w", err)
-	}
-	return config.ExceptionsFor(manifest.Exceptions, config.ExceptionRuleDedupe), nil
 }
 
 // ValidateExceptions validates the HISS-19 exceptions against the repository at repoPath:
@@ -506,6 +496,13 @@ func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int,
 	sort.Slice(report.Excepted, func(i, j int) bool {
 		return report.Excepted[i].Hash < report.Excepted[j].Hash
 	})
+	for i := 0; i < len(exceptions) && i < config.MaxExceptions; i++ {
+		if !used[i] {
+			report.StaleExceptions = append(report.StaleExceptions, fmt.Sprintf(
+				"exceptions entry %s (%s): excuses no duplicate function block; remove the entry",
+				exceptions[i].Target(), config.ExceptionRuleDedupe))
+		}
+	}
 }
 
 func classifyDuplicateGroup(hash string, loc int, locs []FileLocation, exceptions []config.Exception, today time.Time, used []bool) (DuplicateGroup, bool) {
@@ -577,5 +574,5 @@ func calculateScore(report *DedupeReport) {
 	// repository is from clean: with both lists empty every deduction is zero and the score
 	// is always exactly 100, so keeping "score >= 80" in the condition was dead logic that a
 	// third finding category would have slipped past unnoticed.
-	report.Passed = len(report.Duplicates) == 0 && len(report.SprawlItems) == 0
+	report.Passed = len(report.Duplicates) == 0 && len(report.SprawlItems) == 0 && len(report.StaleExceptions) == 0
 }

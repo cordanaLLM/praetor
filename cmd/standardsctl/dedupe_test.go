@@ -382,3 +382,50 @@ func TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation(t *tes
 	}
 	mustErrContain(t, err, "target file does not exist: missing file")
 }
+
+func TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt(t *testing.T) {
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	manifest := fmt.Sprintf(`exceptions:
+  - rule: HISS-19
+    path: clean.go
+    reason: clean file has no clones
+    expires: %s
+`, expires)
+	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
+
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if err == nil {
+		t.Fatal("stale exceptions entry must fail scan")
+	}
+	mustContain(t, out,
+		"Passed:            false",
+		"Stale Exceptions (1):",
+		"- exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry",
+	)
+	mustErrContain(t, err, "1 stale exception(s)")
+}
+
+func TestRunDedupeScan_Negative_StaleExceptionForNonGoFileFails(t *testing.T) {
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	writeFixtureFile(t, dir, "README.md", "# Demo\n")
+	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	manifest := fmt.Sprintf(`exceptions:
+  - rule: HISS-19
+    path: README.md
+    reason: non-Go file
+    expires: %s
+`, expires)
+	writeFixtureFile(t, dir, config.ManifestFileName, manifest)
+
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if err == nil {
+		t.Fatal("stale exception for non-Go file must fail scan")
+	}
+	mustContain(t, out,
+		"Passed:            false",
+		"Stale Exceptions (1):",
+		"- exceptions entry README.md (HISS-19): excuses no duplicate function block; remove the entry",
+	)
+	mustErrContain(t, err, "1 stale exception(s)")
+}
