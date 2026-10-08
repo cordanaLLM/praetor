@@ -1,11 +1,13 @@
 package compiler
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -106,6 +108,121 @@ func SkillEntryRel(dir, name string) string {
 // CanonicalSkillsRel.
 func CanonicalSkillRel(name string) string {
 	return SkillEntryRel(CanonicalSkillsRel, name)
+}
+
+// SkillNoticeName is the notice file name where an upstream license requires notices to travel
+// with copies.
+const SkillNoticeName = "NOTICE"
+
+// SkillNoticeRel is the declared slash path of one skill's NOTICE file below dir.
+func SkillNoticeRel(dir, name string) string {
+	return dir + "/" + name + "/" + SkillNoticeName
+}
+
+// CanonicalSkillNoticeRel is the declared slash path of the NOTICE file of skill name under
+// CanonicalSkillsRel.
+func CanonicalSkillNoticeRel(name string) string {
+	return SkillNoticeRel(CanonicalSkillsRel, name)
+}
+
+// ReadCanonicalSkillNotice reads the NOTICE file of skill name under .agents/skills below root
+// without following a symlink at any component, and reports whether it exists.
+func ReadCanonicalSkillNotice(ctx context.Context, root, name string) ([]byte, bool, error) {
+	rel := CanonicalSkillNoticeRel(name)
+	data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, filepath.FromSlash(rel))
+	if err != nil {
+		return nil, false, fmt.Errorf("read canonical skill notice %s: %w", name, err)
+	}
+	return data, exists, nil
+}
+
+// SkillRequiresNotice reports whether data indicates an upstream license (such as MIT)
+// that requires its copyright and permission notice to travel with copies.
+func SkillRequiresNotice(data []byte) bool {
+	return bytes.Contains(data, []byte("MIT")) || bytes.Contains(data, []byte("Apache-2.0")) || bytes.Contains(data, []byte("BSD-3-Clause"))
+}
+
+var (
+	skillMarkdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)]+)\)`)
+	skillMarkdownRefRe  = regexp.MustCompile(`(?m)^\[[^\]]+\]:\s*(\S+)`)
+)
+
+// CheckShippedSkillReferences refuses a shipped skill text referencing a repository-relative path
+// that the adopter does not receive. It protects by default, allowing only absolute URLs and paths
+// inside the shipped skill set (the skill's own directory or sibling shipped skills).
+func CheckShippedSkillReferences(skillName string, data []byte) error {
+	if bytes.Contains(data, []byte("docs/credits.md")) {
+		return fmt.Errorf("skill %s references repository path docs/credits.md, which an adopter does not receive", skillName)
+	}
+	links := skillMarkdownLinkRe.FindAllSubmatch(data, -1)
+	for i := 0; i < len(links) && i < maxSkillProjections; i++ {
+		target := string(links[i][1])
+		if idx := strings.IndexAny(target, " \t"); idx != -1 {
+			target = target[:idx]
+		}
+		if err := validateSkillReferenceTarget(skillName, target); err != nil {
+			return err
+		}
+	}
+	refs := skillMarkdownRefRe.FindAllSubmatch(data, -1)
+	for i := 0; i < len(refs) && i < maxSkillProjections; i++ {
+		if err := validateSkillReferenceTarget(skillName, string(refs[i][1])); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isExternalOrAnchorTarget(target string) bool {
+	if target == "" || strings.HasPrefix(target, "#") {
+		return true
+	}
+	for _, scheme := range []string{"https://", "http://", "mailto:"} {
+		if strings.HasPrefix(target, scheme) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSiblingSkillTarget(clean string) bool {
+	bundle := config.RegisterSkillBundle()
+	for i := 0; i < len(bundle) && i < maxSkillProjections; i++ {
+		prefix := "../" + bundle[i] + "/"
+		if strings.HasPrefix(clean, prefix) || clean == "../"+bundle[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedLocalTarget(clean string) bool {
+	if strings.HasPrefix(clean, "../") || clean == ".." || strings.HasPrefix(clean, "/") {
+		return false
+	}
+	base := clean
+	if idx := strings.Index(clean, "/"); idx != -1 {
+		base = clean[:idx]
+	}
+	switch base {
+	case SkillNoticeName, "LICENSE", SkillEntryName, "references", "scripts":
+		return true
+	default:
+		return false
+	}
+}
+
+// validateSkillReferenceTarget validates one link target from a shipped skill text.
+func validateSkillReferenceTarget(skillName, target string) error {
+	target = strings.TrimSpace(target)
+	if isExternalOrAnchorTarget(target) {
+		return nil
+	}
+	clean := filepath.ToSlash(filepath.Clean(target))
+	if isSiblingSkillTarget(clean) || isAllowedLocalTarget(clean) {
+		return nil
+	}
+	return fmt.Errorf("skill %s references repository path %q, which an adopter does not receive", skillName, target)
 }
 
 // pluginSkillProjections reads every canonical skill once (readCanonicalSkill) and returns its

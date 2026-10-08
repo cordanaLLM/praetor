@@ -10,11 +10,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Adoption ships the skills the text register block names, and adhd-format, which social-text
@@ -126,6 +128,15 @@ func TestAdopt_Positive_FreshAdoptionShipsTheRegisterSkills(t *testing.T) {
 		}
 		if !contains(rep.CreatedFiles, compiler.CanonicalSkillRel(name)) || !contains(rep.CreatedFiles, claudeSkillRel(name)) {
 			t.Errorf("%s and its client copy not reported created: %v", name, rep.CreatedFiles)
+		}
+		if noticeRel := compiler.CanonicalSkillNoticeRel(name); compiler.SkillRequiresNotice([]byte(want)) {
+			sourceNotice := mustRead(t, filepath.Join(sourceCheckout, filepath.FromSlash(noticeRel)))
+			if gotNotice := repoText(t, repoPath, noticeRel); gotNotice != sourceNotice {
+				t.Errorf("%s differs from the shipped notice", noticeRel)
+			}
+			if !contains(rep.CreatedFiles, noticeRel) {
+				t.Errorf("%s not reported created: %v", noticeRel, rep.CreatedFiles)
+			}
 		}
 	}
 	if !strings.Contains(repoText(t, repoPath, compiler.CanonicalSkillRel("caveman")), "derived_from: \"https://github.com/JuliusBrussee/caveman (MIT)\"") {
@@ -280,5 +291,107 @@ func TestInstallRegisterSkills_SourceBundle(t *testing.T) {
 	writeRegisterSkillSources(t, carried.repoPath)
 	if err := carried.installRegisterSkills(t.Context()); err != nil || len(carried.report.Warnings) != 0 {
 		t.Fatalf("a repository carrying the skills: err=%v warnings=%v", err, carried.report.Warnings)
+	}
+}
+
+// Positive: each shipped register skill names its credit (upstream author, upstream URL, licence
+// identifier) in one line in its text, and has its required licence notice file next to it.
+func TestShippedSkills_CreditAndNotice(t *testing.T) {
+	creditPattern := regexp.MustCompile(`(?m)^Adapted from .*https://.*MIT licence\.\r?$`)
+	bundle := config.RegisterSkillBundle()
+	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
+		name := bundle[i]
+		text := sourceSkillText(t, name)
+		if !creditPattern.MatchString(text) {
+			t.Errorf("skill %s does not name its credit (author, URL, licence) in one line:\n%s", name, text)
+		}
+		if compiler.SkillRequiresNotice([]byte(text)) {
+			noticeRel := compiler.CanonicalSkillNoticeRel(name)
+			noticePath := filepath.Join(sourceCheckout, filepath.FromSlash(noticeRel))
+			data, err := os.ReadFile(noticePath)
+			if err != nil {
+				t.Fatalf("skill %s requires notice but %s missing: %v", name, noticeRel, err)
+			}
+			notice := string(data)
+			if !strings.Contains(notice, "Copyright") || !strings.Contains(notice, "Permission is hereby granted") {
+				t.Errorf("notice %s does not contain copyright and permission notice:\n%s", noticeRel, notice)
+			}
+		}
+	}
+}
+
+// Negative: a source bundle with a skill referencing docs/credits.md fails the path check
+// and is refused without being installed (Rule 13 planted negative).
+func TestInstallRegisterSkills_Negative_PlantedCreditsReferenceRefused(t *testing.T) {
+	partial := t.TempDir()
+	writeRegisterSkillSources(t, partial)
+	cavemanPath := filepath.Join(partial, filepath.FromSlash(compiler.CanonicalSkillRel("caveman")))
+	cavemanPlanted := sourceSkillText(t, "caveman") + "\nCredit: docs/credits.md\n"
+	mustWrite(t, cavemanPath, cavemanPlanted)
+
+	session := &adoptSession{repoPath: t.TempDir(), opts: AdoptOptions{LockSourceRoot: partial}, report: &AdoptReport{}}
+	if err := session.installRegisterSkills(t.Context()); err != nil {
+		t.Fatalf("unexpected fatal err: %v", err)
+	}
+	if warning := warningNaming(session.report, "docs/credits.md"); warning == "" {
+		t.Errorf("warning does not name planted docs/credits.md: %v", session.report.Warnings)
+	}
+	assertAbsent(t, session.repoPath, compiler.CanonicalSkillsRel)
+}
+
+// Positive: unedited earlier skill texts held by an adopter refresh on a plain adoption run
+// without --force.
+func TestAdopt_Positive_PriorSkillRefreshedOnPlainRun(t *testing.T) {
+	repoPath := newTestRepo(t, "register-skills-prior-refresh")
+	bundle := config.RegisterSkillBundle()
+	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
+		name := bundle[i]
+		rel := compiler.CanonicalSkillRel(name)
+		priorText := "---\nname: " + name + "\ndescription: earlier unedited fixture\n---\n\n# Prior text\n"
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(rel)), priorText)
+		digest, _, err := util.CanonicalTextDigest([]byte(priorText))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if priorSkillDigests[rel] == nil {
+			priorSkillDigests[rel] = make(map[string]string)
+		}
+		priorSkillDigests[rel][digest] = "earlier unedited fixture"
+		t.Cleanup(func() {
+			delete(priorSkillDigests[rel], digest)
+		})
+		if noticeRel := compiler.CanonicalSkillNoticeRel(name); compiler.SkillRequiresNotice([]byte(sourceSkillText(t, name))) {
+			noticePath := filepath.Join(sourceCheckout, filepath.FromSlash(noticeRel))
+			mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(noticeRel)), mustRead(t, noticePath))
+		}
+	}
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
+		name := bundle[i]
+		rel := compiler.CanonicalSkillRel(name)
+		if got := repoText(t, repoPath, rel); got != sourceSkillText(t, name) {
+			t.Errorf("%s was not refreshed to current text", rel)
+		}
+		if got := findActionDetail(rep.ActionDetails, rel); !strings.Contains(got, "Refreshed the unedited earlier") {
+			t.Errorf("%s action detail %q, want refresh", rel, got)
+		}
+	}
+}
+
+// Negative: a hand-edited skill in an adopter repository is preserved (refused overwrite)
+// on a plain run without --force and reported with a warning.
+func TestAdopt_Negative_HandEditedSkillRefusedOnPlainRun(t *testing.T) {
+	repoPath := newTestRepo(t, "register-skills-hand-edited")
+	edited := sourceSkillText(t, "caveman") + "\n# custom adopter instructions\n"
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.CanonicalSkillRel("caveman"))), edited)
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	if got := repoText(t, repoPath, compiler.CanonicalSkillRel("caveman")); got != edited {
+		t.Fatal("plain run replaced a hand-edited caveman skill")
+	}
+	if warningNaming(rep, compiler.CanonicalSkillRel("caveman")) == "" {
+		t.Errorf("the kept hand-edited caveman skill is not reported in warnings: %v", rep.Warnings)
+	}
+	if contains(rep.CreatedFiles, compiler.CanonicalSkillRel("caveman")) || hasAction(rep, compiler.CanonicalSkillRel("caveman"), actionReplace) {
+		t.Errorf("hand-edited skill reported created or replaced: created=%v actions=%+v", rep.CreatedFiles, rep.ActionDetails)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -69,6 +70,10 @@ func writeRegisterSkillSources(t *testing.T, root string) {
 	for _, name := range config.RegisterSkillBundle() {
 		rel := filepath.FromSlash(compiler.CanonicalSkillRel(name))
 		mustWrite(t, filepath.Join(root, rel), mustRead(t, filepath.Join(sourceCheckout, rel)))
+		noticeRel := filepath.FromSlash(compiler.CanonicalSkillNoticeRel(name))
+		if data, err := os.ReadFile(filepath.Join(sourceCheckout, noticeRel)); err == nil {
+			mustWrite(t, filepath.Join(root, noticeRel), string(data))
+		}
 	}
 }
 
