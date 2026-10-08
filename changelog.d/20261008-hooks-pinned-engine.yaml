@@ -1,4 +1,4 @@
 type: fixed
-title: "Git hooks run the engine the repository pins with PRAETOR_REF, installed once per pin with go install, and fail closed when the pin cannot be resolved or installed; a repository that declares a pin now needs a Go toolchain and network on the first hook run, and a PRAETOR_REF that is no commit id or release tag blocks commits; pin a commit or tag, install Go or pre-seed the cache, tune PRAETOR_ENGINE_INSTALL_TIMEOUT"
+title: "Git hooks run the engine the repository pins with PRAETOR_REF, installed once per pin with go install, and fail closed when the pin cannot be resolved or installed; a repository that declares a pin now needs a Go toolchain and network on the first hook run, and a PRAETOR_REF that is no commit id or release tag blocks commits; in CI and devcontainers, persist or pre-seed the engine cache (${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine) or ensure Go toolchain and network access; pin a commit or tag, install Go or pre-seed the cache, tune PRAETOR_ENGINE_INSTALL_TIMEOUT"
 issue: "#906"
 breaking: true

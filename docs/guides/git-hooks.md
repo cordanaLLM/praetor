@@ -378,12 +378,12 @@ praetor hooks: installing the engine pinned by PRAETOR_REF=492a00f930e1 (declare
 The launcher is a POSIX shell script that runs under Git Bash on Windows, and every line ends
 in a comment sign for the reason given for the [Python launcher](#the-launcher-adoption-writes).
 
-Generated `Makefile`s and unedited adopted `Makefile`s with declared verification wire
-`PRAETORCTL ?= sh .config/lefthook/engine.sh` when the engine launcher is installed, so make targets
-and hooks resolve the exact same engine binary (#906, HISS-19). Where git-hooks is declined, or
-where an adopter maintains a custom `verify-all` or an edited verification block, `make` keeps
-its existing resolution (such as from `PATH`), and an edited verification block emits a warning
-naming the line to change.
+Generated `Makefile`s and adopted `Makefile`s whose appended verification block matches an allow-list
+of canonical current or prior renderings wire `PRAETORCTL ?= sh .config/lefthook/engine.sh` when the
+engine launcher is installed, so make targets and hooks resolve the exact same engine binary (#906, HISS-19).
+Where git-hooks is declined, or where an adopter maintains a custom `verify-all` or an edited verification
+block, `make` keeps its existing resolution (such as from `PATH`), and an edited verification block is
+preserved with a warning naming the line to change or insert.
 
 **One pin reader.** `.config/lefthook/engine.sh` is also a standalone entry point: an adopter
 `Makefile` target or script runs `sh .config/lefthook/engine.sh <arguments>` from the repository

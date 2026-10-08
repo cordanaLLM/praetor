@@ -103,6 +103,9 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	if exists && string(data) == replacement {
+		return s.recordPreservedVerificationMakefile(ctx, documentationEnabled)
+	}
 	return publishVerificationMakefile(ctx, s, full, data, replacement, exists)
 }
 
@@ -224,16 +227,30 @@ func launcherInstalled(ctx context.Context, s *adoptSession) bool {
 	if err == nil && fileExists(launcherPath) {
 		return true
 	}
-	if data, exists, err := s.readExistingLefthook(); err == nil && exists {
-		shape, err := s.lefthookShape(ctx)
-		if err == nil {
-			identity := classifyLefthookConfig(data, shape)
-			if identity.reason != "" {
-				return false
-			}
-		}
+	owned, err := s.plannedLefthookOwned(ctx)
+	if err != nil || !owned {
+		return false
 	}
 	return true
+}
+
+func (s *adoptSession) warnEditedAppendedBlock(state appendedBlockState) {
+	targetLine := "PRAETORCTL ?= " + lefthookGovernedCommand("")
+	if state.hasVar {
+		s.report.addWarning("%s line %d: verification block was edited; change %q to %q to resolve the engine launcher",
+			makefileName, state.lineNum, strings.TrimSpace(state.lineContent), targetLine)
+		return
+	}
+	s.report.addWarning("%s: verification block was edited; insert %q after line %d to resolve the engine launcher",
+		makefileName, targetLine, state.lineNum)
+}
+
+func (s *adoptSession) recordPreservedVerificationMakefile(ctx context.Context, documentationEnabled bool) error {
+	if documentationEnabled {
+		return reconcileDocumentationMakefile(ctx, s)
+	}
+	s.report.recordReconciled(makefileName, "Existing verify-all preserved; execution has not been verified by adoption")
+	return nil
 }
 
 func reconcileExistingVerificationMakefile(
@@ -246,26 +263,21 @@ func reconcileExistingVerificationMakefile(
 	if err != nil {
 		return false, err
 	}
-	if launcherInstalled(ctx, s) {
-		if edited, lineNum, lineContent := editedAppendedVerificationBlock(normalized); edited {
-			targetLine := "PRAETORCTL ?= " + lefthookGovernedCommand("")
-			s.report.addWarning("%s line %d: verification block was edited; change %q to %q to resolve the engine launcher",
-				makefileName, lineNum, strings.TrimSpace(lineContent), targetLine)
-			if documentationEnabled {
-				return true, reconcileDocumentationMakefile(ctx, s)
+	state := inspectAppendedVerificationBlock(normalized, s.verification)
+	if state.hasMarker {
+		if !state.known {
+			if launcherInstalled(ctx, s) {
+				s.warnEditedAppendedBlock(state)
 			}
-			s.report.recordReconciled(makefileName, "Existing verify-all preserved; execution has not been verified by adoption")
-			return true, nil
+			return true, s.recordPreservedVerificationMakefile(ctx, documentationEnabled)
 		}
-	}
-	if hasKnownAppendedVerificationBlock(normalized) {
+		targetVar := makefileCLIVariableLine(launcherInstalled(ctx, s))
+		if state.matchedVar == targetVar {
+			return true, s.recordPreservedVerificationMakefile(ctx, documentationEnabled)
+		}
 		return false, nil
 	}
-	if documentationEnabled {
-		return true, reconcileDocumentationMakefile(ctx, s)
-	}
-	s.report.recordReconciled(makefileName, "Existing verify-all preserved; execution has not been verified by adoption")
-	return true, nil
+	return true, s.recordPreservedVerificationMakefile(ctx, documentationEnabled)
 }
 
 func reconcileContributing(ctx context.Context, s *adoptSession) error {

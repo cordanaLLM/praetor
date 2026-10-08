@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -395,11 +396,12 @@ func TestEngineLauncher_Boundary_NoSleepSurvivesInstall(t *testing.T) {
 	}
 	// Check that no sleep process with timeout 299 survived.
 	pgrep, err := exec.LookPath("pgrep")
-	if err == nil {
-		pgrepOut, pgrepErr := exec.CommandContext(t.Context(), pgrep, "-f", "sleep 299").Output()
-		if pgrepErr == nil && len(strings.TrimSpace(string(pgrepOut))) > 0 {
-			t.Fatalf("orphaned sleep process survived install: %s", pgrepOut)
-		}
+	if err != nil {
+		t.Fatalf("pgrep is required: %v", err)
+	}
+	pgrepOut, pgrepErr := exec.CommandContext(t.Context(), pgrep, "-g", strconv.Itoa(currentProcessGroup()), "-f", "sleep 299").Output()
+	if pgrepErr == nil && len(strings.TrimSpace(string(pgrepOut))) > 0 {
+		t.Fatalf("orphaned sleep process survived install: %s", pgrepOut)
 	}
 }
 

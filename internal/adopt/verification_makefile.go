@@ -419,12 +419,12 @@ func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) || text == buildMakefile(plan) {
 		return
 	}
-	if hasKnownAppendedVerificationBlock(text) {
-		return
-	}
 	if normalized, _ := util.NormalizeLineEndings(text); strings.Contains(normalized, unavailableVerificationRecipe) {
 		plan.Status = verificationUnavailable
 		plan.unavailable("The Makefile still holds the failing placeholder recipe adoption writes; replace it with the project's build and test commands.")
+		return
+	}
+	if hasKnownAppendedVerificationBlock(text, plan) {
 		return
 	}
 	plan.Status = verificationPreserved
@@ -448,16 +448,43 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 
 const verificationAppendedMarker = "# Praetor declared verification; existing project recipes remain unchanged."
 
-// priorAppendedCLIVariables are the exact Makefile variable lines an earlier Praetor wrote
-// following verificationAppendedMarker when appending verification targets.
-var priorAppendedCLIVariables = []string{
-	util.MakefileCLIVariable,
+func renderAppendedBlock(before string, plan *VerificationPlan, varLine, cli string, caveman bool, prefix string) string {
+	var b strings.Builder
+	b.WriteString(verificationAppendedMarker + "\n")
+	if varLine != "" {
+		b.WriteString(varLine)
+	}
+	b.WriteString(".PHONY: verify-all\nverify-all:\n\t@" + cli + " compile-context --verify\n")
+	if caveman {
+		b.WriteString("\t@" + cli + " caveman check --configured-sources\n")
+	}
+	b.WriteString("\t@" + cli + " audit\n")
+	b.WriteString(verificationRecipeWith(plan, plan.commands(), prefix))
+	for _, target := range []string{"compile-context", "audit"} {
+		if !util.MakefileHasTarget(before, target) {
+			b.WriteString("\n" + target + ":\n\t@" + cli + " " + target + "\n")
+		}
+	}
+	return b.String()
 }
 
-// knownAppendedCLIVariables returns the allow-list of known variable line renderings following
-// verificationAppendedMarker: the prior lines resolving from PATH, and the current launcher line.
-func knownAppendedCLIVariables() []string {
-	return append([]string{makefileCLIVariableLine(true)}, priorAppendedCLIVariables...)
+func knownAppendedVerificationBlocks(before string, plan *VerificationPlan) map[string]string {
+	if plan == nil || plan.Status == verificationUnavailable {
+		return nil
+	}
+	blocks := make(map[string]string)
+	record := func(block, matchedVar string) {
+		if digest, _, err := util.CanonicalTextDigest([]byte(block)); err == nil {
+			blocks[digest] = matchedVar
+		}
+	}
+	record(renderAppendedBlock(before, plan, makefileCLIVariableLine(true), "$(PRAETORCTL)", true, verificationRecipePrefix), makefileCLIVariableLine(true))
+	for _, prefix := range []string{verificationRecipePrefix, priorVerificationRecipePrefix} {
+		record(renderAppendedBlock(before, plan, makefileCLIVariableLine(false), "$(PRAETORCTL)", true, prefix), makefileCLIVariableLine(false))
+		record(renderAppendedBlock(before, plan, makefileCLIVariableLine(false), "$(PRAETORCTL)", false, prefix), makefileCLIVariableLine(false))
+		record(renderAppendedBlock(before, plan, "", "standardsctl", false, prefix), "")
+	}
+	return blocks
 }
 
 type appendedBlockState struct {
@@ -466,9 +493,10 @@ type appendedBlockState struct {
 	matchedVar  string
 	lineNum     int
 	lineContent string
+	hasVar      bool
 }
 
-func inspectAppendedVerificationBlock(normalized string) appendedBlockState {
+func inspectAppendedVerificationBlock(normalized string, plan *VerificationPlan) appendedBlockState {
 	if strings.Count(normalized, verificationAppendedMarker) != 1 {
 		return appendedBlockState{}
 	}
@@ -480,53 +508,42 @@ func inspectAppendedVerificationBlock(normalized string) appendedBlockState {
 	if mayDefineVerificationTarget(withoutDocumentationMakefileBlock(before)) {
 		return appendedBlockState{}
 	}
-	after := normalized[idx+len(verificationAppendedMarker):]
-	if !strings.HasPrefix(after, "\n") {
-		return appendedBlockState{}
+	block := normalized[idx:]
+	if strings.Contains(block, unavailableVerificationRecipe) {
+		return appendedBlockState{hasMarker: true}
 	}
-	after = after[1:]
 	state := appendedBlockState{hasMarker: true}
-	for _, known := range knownAppendedCLIVariables() {
-		if strings.HasPrefix(after, known) {
-			state.known = true
-			state.matchedVar = known
-			return state
-		}
+	if matchedVar, known, _ := util.LookupCanonicalText([]byte(block), knownAppendedVerificationBlocks(before, plan)); known {
+		state.known = true
+		state.matchedVar = matchedVar
+		return state
 	}
-	state.lineNum, state.lineContent = findEditedCLIVariableLine(before, after)
+	afterMarker := strings.TrimPrefix(block[len(verificationAppendedMarker):], "\n")
+	state.lineNum, state.lineContent, state.hasVar = findEditedCLIVariableLine(before, afterMarker)
 	return state
 }
 
-func findEditedCLIVariableLine(before, afterMarker string) (int, string) {
+func findEditedCLIVariableLine(before, afterMarker string) (int, string, bool) {
 	markerLine := strings.Count(before, "\n") + 1
 	lines := strings.Split(afterMarker, "\n")
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "PRAETORCTL") || strings.HasPrefix(trimmed, "PRAETOR_") {
-			return markerLine + 1 + i, line
+			return markerLine + 1 + i, line, true
 		}
 		if strings.HasPrefix(trimmed, "verify-all:") || strings.HasPrefix(trimmed, ".PHONY:") {
 			break
 		}
 	}
-	firstLine := ""
-	if len(lines) > 0 {
-		firstLine = lines[0]
-	}
-	return markerLine + 1, firstLine
+	return markerLine, "", false
 }
 
-func hasKnownAppendedVerificationBlock(normalized string) bool {
-	return inspectAppendedVerificationBlock(normalized).known
+func hasKnownAppendedVerificationBlock(normalized string, plan *VerificationPlan) bool {
+	return inspectAppendedVerificationBlock(normalized, plan).known
 }
 
-func editedAppendedVerificationBlock(normalized string) (bool, int, string) {
-	state := inspectAppendedVerificationBlock(normalized)
-	return state.hasMarker && !state.known, state.lineNum, state.lineContent
-}
-
-func swapAppendedVerificationLauncher(normalized string, launcher bool) (string, bool) {
-	state := inspectAppendedVerificationBlock(normalized)
+func swapAppendedVerificationLauncher(normalized string, plan *VerificationPlan, launcher bool) (string, bool) {
+	state := inspectAppendedVerificationBlock(normalized, plan)
 	if !state.known {
 		return "", false
 	}
@@ -535,9 +552,9 @@ func swapAppendedVerificationLauncher(normalized string, launcher bool) (string,
 		return normalized, true
 	}
 	idx := strings.Index(normalized, verificationAppendedMarker)
-	prefixLen := idx + len(verificationAppendedMarker) + 1
-	rest := normalized[prefixLen+len(state.matchedVar):]
-	return normalized[:prefixLen] + targetVar + rest, true
+	before := normalized[:idx]
+	targetBlock := renderAppendedBlock(before, plan, targetVar, "$(PRAETORCTL)", true, verificationRecipePrefix)
+	return before + targetBlock, true
 }
 
 func appendVerificationTargetsWithLauncher(existing string, plan *VerificationPlan, launcher bool) (string, error) {
@@ -545,21 +562,12 @@ func appendVerificationTargetsWithLauncher(existing string, plan *VerificationPl
 	if err != nil {
 		return "", fmt.Errorf("makefile line endings are inconsistent: %w", err)
 	}
-	if swapped, ok := swapAppendedVerificationLauncher(normalized, launcher); ok {
+	if swapped, ok := swapAppendedVerificationLauncher(normalized, plan, launcher); ok {
 		return util.RestoreLineEndings(swapped, crlf), nil
 	}
 	var result strings.Builder
 	result.WriteString(normalized)
-	result.WriteString("\n" + verificationAppendedMarker + "\n" +
-		makefileCLIVariableLine(launcher) + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
-	// One recipe for the build and test commands together: rendered once for each, an
-	// unavailable plan wrote its failing pair twice (#594).
-	result.WriteString(verificationRecipe(plan, plan.commands()))
-	for _, target := range []string{"compile-context", "audit"} {
-		if !util.MakefileHasTarget(normalized, target) {
-			result.WriteString("\n" + target + ":\n\t@$(PRAETORCTL) " + target + "\n")
-		}
-	}
+	result.WriteString("\n" + renderAppendedBlock(normalized, plan, makefileCLIVariableLine(launcher), "$(PRAETORCTL)", true, verificationRecipePrefix))
 	return util.RestoreLineEndings(result.String(), crlf), nil
 }
 
