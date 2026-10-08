@@ -113,8 +113,7 @@ func ScanRepoContext(ctx context.Context, repoPath string) (*DedupeReport, error
 	return ScanRepoWithOptions(ctx, ScanOptions{RepoPath: repoPath})
 }
 
-// ScanRepoWithOptions scans tracked and nonignored working tree Go sources with explicit scan options.
-func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, error) {
+func normalizeScanOptions(opts ScanOptions) (string, time.Time) {
 	repoPath := opts.RepoPath
 	if repoPath == "" {
 		repoPath = "."
@@ -123,15 +122,24 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 	if today.IsZero() {
 		today = time.Now()
 	}
+	return repoPath, today
+}
+
+// ScanRepoWithOptions scans tracked and nonignored working tree Go sources with explicit scan options.
+func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, error) {
+	if ctx == nil {
+		return nil, errors.New("dedupe scan requires a context")
+	}
+	repoPath, today := normalizeScanOptions(opts)
 	exceptions := opts.Exceptions
 	if exceptions == nil {
 		var err error
-		exceptions, err = config.LoadExceptionsFor(repoPath, config.ExceptionRuleDedupe)
+		exceptions, err = config.LoadExceptionsFor(ctx, repoPath, config.ExceptionRuleDedupe)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("load HISS-19 exceptions: %w", err)
 		}
 	}
-	if err := ValidateExceptions(repoPath, exceptions, today); err != nil {
+	if err := ValidateExceptions(ctx, repoPath, exceptions, today); err != nil {
 		return nil, fmt.Errorf("validate dedupe exceptions: %w", err)
 	}
 
@@ -168,26 +176,38 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 
 // ValidateExceptions validates the HISS-19 exceptions against the repository at repoPath:
 // each entry must pass config.ValidateExceptions, and its target must name an existing regular file.
-func ValidateExceptions(repoPath string, exceptions []config.Exception, today time.Time) error {
+func ValidateExceptions(ctx context.Context, repoPath string, exceptions []config.Exception, today time.Time) error {
+	if ctx == nil {
+		return errors.New("validate exceptions requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := config.ValidateExceptions(exceptions, today); err != nil {
 		return err
 	}
 	for index := 0; index < len(exceptions) && index < config.MaxExceptions; index++ {
-		entry := exceptions[index]
-		target := filepath.Join(repoPath, entry.Path)
-		info, err := os.Stat(target)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("exceptions entry %s (%s): target file does not exist: missing file",
-					entry.Path, config.ExceptionRuleDedupe)
-			}
-			return fmt.Errorf("exceptions entry %s (%s): inspect target %s: %w",
-				entry.Path, config.ExceptionRuleDedupe, entry.Path, err)
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("exceptions entry %s (%s): target %s is not a regular file",
-				entry.Path, config.ExceptionRuleDedupe, entry.Path)
+		if err := validateExceptionTarget(repoPath, index, exceptions[index]); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func validateExceptionTarget(repoPath string, index int, entry config.Exception) error {
+	target := filepath.Join(repoPath, entry.Path)
+	info, err := os.Lstat(target)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("exceptions[%d] target file does not exist: %s", index, entry.Path)
+		}
+		return fmt.Errorf("exceptions[%d] inspect target %s: %w", index, entry.Path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("exceptions[%d] target %s is not a regular file", index, entry.Path)
 	}
 	return nil
 }
@@ -516,7 +536,7 @@ func classifyDuplicateGroup(hash string, loc int, locs []FileLocation, exception
 	seen := make(map[string]bool)
 
 	for i := range group.Locations {
-		live, _ := judgeLocation(&group.Locations[i], exceptions, today, used)
+		live := judgeLocation(&group.Locations[i], exceptions, today, used)
 		if live != nil {
 			if !seen[live.Path] {
 				seen[live.Path] = true
@@ -536,12 +556,12 @@ func classifyDuplicateGroup(hash string, loc int, locs []FileLocation, exception
 	return group, allExcepted
 }
 
-func judgeLocation(loc *FileLocation, exceptions []config.Exception, today time.Time, used []bool) (*config.Exception, *config.Exception) {
+func judgeLocation(loc *FileLocation, exceptions []config.Exception, today time.Time, used []bool) *config.Exception {
 	live, expired := config.ExceptionFor(exceptions, loc.Path, today, used)
 	if live == nil && expired != nil {
 		loc.Expired = expired.Expires
 	}
-	return live, expired
+	return live
 }
 
 func calculateScore(report *DedupeReport) {
@@ -571,8 +591,9 @@ func calculateScore(report *DedupeReport) {
 	// it. Every sprawl item now has to be resolved or waived, exactly like a clone.
 	//
 	// The finding lists are the verdict, and the score only describes how far a failing
-	// repository is from clean: with both lists empty every deduction is zero and the score
-	// is always exactly 100, so keeping "score >= 80" in the condition was dead logic that a
-	// third finding category would have slipped past unnoticed.
+	// repository is from clean: with all three lists (Duplicates, SprawlItems, StaleExceptions)
+	// empty every deduction is zero and the score is always exactly 100, so keeping "score >= 80"
+	// in the condition was dead logic that another finding category would have slipped past
+	// unnoticed.
 	report.Passed = len(report.Duplicates) == 0 && len(report.SprawlItems) == 0 && len(report.StaleExceptions) == 0
 }

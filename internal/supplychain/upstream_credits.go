@@ -92,7 +92,7 @@ func ReadUpstreamCreditSources(ctx context.Context, root string) (UpstreamCredit
 	if err != nil {
 		return UpstreamCreditSources{}, err
 	}
-	exceptions, err := readCreditExceptions(root)
+	exceptions, err := readCreditExceptions(ctx, root)
 	if err != nil {
 		return UpstreamCreditSources{}, err
 	}
@@ -133,8 +133,8 @@ func readLicenseTexts(ctx context.Context, root string, assets []compiler.AssetU
 // readCreditExceptions returns the entries of the manifest's declared exceptions list under
 // config.ExceptionRuleCredits, read and validated by config.LoadExceptionsFor. A repository without a
 // manifest declares none.
-func readCreditExceptions(root string) ([]config.Exception, error) {
-	return config.LoadExceptionsFor(root, config.ExceptionRuleCredits)
+func readCreditExceptions(ctx context.Context, root string) ([]config.Exception, error) {
+	return config.LoadExceptionsFor(ctx, root, config.ExceptionRuleCredits)
 }
 
 // readCreditPathTexts reads every path the credits list names below root and returns each

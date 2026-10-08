@@ -5,6 +5,8 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -402,7 +404,7 @@ func TestLoadExceptionsFor_Positive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ManifestFileName), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := LoadExceptionsFor(root, ExceptionRuleDedupe)
+	entries, err := LoadExceptionsFor(t.Context(), root, ExceptionRuleDedupe)
 	if err != nil {
 		t.Fatalf("LoadExceptionsFor failed: %v", err)
 	}
@@ -413,7 +415,7 @@ func TestLoadExceptionsFor_Positive(t *testing.T) {
 
 func TestLoadExceptionsFor_Boundary_MissingManifestReturnsNil(t *testing.T) {
 	root := t.TempDir()
-	entries, err := LoadExceptionsFor(root, ExceptionRuleDedupe)
+	entries, err := LoadExceptionsFor(t.Context(), root, ExceptionRuleDedupe)
 	if err != nil {
 		t.Fatalf("LoadExceptionsFor missing manifest: %v", err)
 	}
@@ -427,8 +429,17 @@ func TestLoadExceptionsFor_Negative_MalformedManifestFails(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ManifestFileName), []byte("version: [\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadExceptionsFor(root, ExceptionRuleDedupe)
+	_, err := LoadExceptionsFor(t.Context(), root, ExceptionRuleDedupe)
 	if err == nil {
 		t.Fatal("expected error on malformed manifest")
+	}
+}
+
+func TestLoadExceptionsFor_Negative_CanceledContextFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := LoadExceptionsFor(ctx, ".", ExceptionRuleDedupe)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("LoadExceptionsFor with canceled context: %v, want context.Canceled", err)
 	}
 }

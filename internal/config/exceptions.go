@@ -5,6 +5,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -154,7 +155,13 @@ func ExceptionDay(t time.Time) time.Time {
 
 // LoadExceptionsFor loads the repository manifest at root/.standards.yaml and returns the
 // entries declaring rule. When root has no manifest, LoadExceptionsFor returns nil, nil.
-func LoadExceptionsFor(root, rule string) ([]Exception, error) {
+func LoadExceptionsFor(ctx context.Context, root, rule string) ([]Exception, error) {
+	if ctx == nil {
+		return nil, errors.New("load exceptions requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	manifest, err := LoadManifest(filepath.Join(root, ManifestFileName))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

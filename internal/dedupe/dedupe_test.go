@@ -1023,7 +1023,7 @@ func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T
 	if err == nil {
 		t.Fatal("expected ScanRepo to fail on missing exception target file")
 	}
-	want := "target file does not exist: missing file"
+	want := "exceptions[0] target file does not exist: nonexistent.go"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
@@ -1178,5 +1178,84 @@ func TestScanRepo_Negative_UnusedExceptionWithClonesFailsForUnusedEntry(t *testi
 	want := "exceptions entry clean.go (HISS-19): excuses no duplicate function block; remove the entry"
 	if report.StaleExceptions[0] != want {
 		t.Fatalf("stale exception = %q, want %q", report.StaleExceptions[0], want)
+	}
+}
+
+func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "real.go")
+	if err := os.WriteFile(sourcePath, []byte(cleanGoSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlinkPath := filepath.Join(tmp, "symlink.go")
+	if err := os.Symlink(sourcePath, symlinkPath); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+
+	manifest := `exceptions:
+  - rule: HISS-19
+    path: symlink.go
+    reason: symlink target
+    expires: 2026-11-01
+`
+	writeStandardsManifest(t, tmp, manifest)
+
+	_, err := dedupe.ScanRepo(tmp)
+	if err == nil {
+		t.Fatal("expected ScanRepo to fail on symlink exception target")
+	}
+	want := "exceptions[0] target symlink.go is not a regular file"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
+	}
+}
+
+func TestValidateExceptions_Negative_SymlinkAndContextCancellation(t *testing.T) {
+	tmp := t.TempDir()
+	sourcePath := filepath.Join(tmp, "real.go")
+	if err := os.WriteFile(sourcePath, []byte(cleanGoSource), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlinkPath := filepath.Join(tmp, "symlink.go")
+	if err := os.Symlink(sourcePath, symlinkPath); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+
+	entry := config.Exception{
+		Rule:    config.ExceptionRuleDedupe,
+		Path:    "symlink.go",
+		Reason:  "symlink target exception",
+		Expires: "2026-11-01",
+	}
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+
+	err := dedupe.ValidateExceptions(t.Context(), tmp, []config.Exception{entry}, today)
+	if err == nil {
+		t.Fatal("expected ValidateExceptions to fail on symlink target")
+	}
+	want := "exceptions[0] target symlink.go is not a regular file"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
+	}
+
+	// Boundary: canceled context fails with context.Canceled.
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err = dedupe.ValidateExceptions(ctx, tmp, []config.Exception{entry}, today)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("ValidateExceptions with canceled context: %v, want context.Canceled", err)
+	}
+}
+
+func TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError(t *testing.T) {
+	tmp := t.TempDir()
+	writeStandardsManifest(t, tmp, ": invalid yaml")
+	_, err := dedupe.ScanRepo(tmp)
+	if err == nil {
+		t.Fatal("expected ScanRepo to fail on malformed manifest")
+	}
+	want := "load HISS-19 exceptions:"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
 }
