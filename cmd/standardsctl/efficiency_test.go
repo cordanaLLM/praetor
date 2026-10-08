@@ -42,6 +42,22 @@ func TestRunEfficiency_Negative_InvalidArgs(t *testing.T) {
 	if err := runEfficiency([]string{"--format=xml"}); err == nil {
 		t.Error("expected error for invalid format 'xml'")
 	}
+
+	// Misspelled manifest field must fail
+	dir := t.TempDir()
+	badManifest := `version: 1
+repository:
+  owner: "example"
+  name: "repo"
+efficiency:
+  frontier_modelz: ["claude"]
+`
+	if err := os.WriteFile(filepath.Join(dir, ".standards.yaml"), []byte(badManifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runEfficiency([]string{"--path=" + dir}); err == nil {
+		t.Error("expected error for misspelled manifest key in efficiency policy")
+	}
 }
 
 func TestRunEfficiency_Boundary_EmptySource(t *testing.T) {

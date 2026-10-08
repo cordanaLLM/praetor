@@ -21,7 +21,7 @@ const (
 	MaxSourceLines = 100000
 
 	// MaxFileBytes bounds the size of a single source file read into memory (HISS-02).
-	MaxFileBytes = 16 * 1024 * 1024
+	MaxFileBytes = 256 * 1024 * 1024
 )
 
 // UnitReport represents efficiency metrics for one landed pull request.

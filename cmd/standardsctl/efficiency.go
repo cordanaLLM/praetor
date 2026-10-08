@@ -4,6 +4,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/efficiency"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // efficiencyTimeout bounds one efficiency ledger run (HISS-02).
@@ -75,32 +78,44 @@ func parseEfficiencyFlags(args []string) (*efficiencyFlags, error) {
 	}, nil
 }
 
-func loadEfficiencyPolicy(root, manifestPath string) (*config.EfficiencyPolicy, *config.Manifest) {
+func loadEfficiencyPolicy(root, manifestPath string) (*config.EfficiencyPolicy, *config.Manifest, error) {
 	effectiveManifestPath := filepath.Join(root, config.ManifestFileName)
 	if manifestPath != "" {
 		effectiveManifestPath = manifestPath
 	}
 	m, err := config.LoadManifest(effectiveManifestPath)
-	if err != nil || m == nil {
-		return nil, nil
+	if err != nil {
+		if manifestPath == "" && errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("load manifest %s: %w", effectiveManifestPath, err)
 	}
-	return m.Efficiency, m
+	if m == nil {
+		return nil, nil, nil
+	}
+	return m.Efficiency, m, nil
 }
 
-func resolveLiveForge(manifest *config.Manifest) forge.Forge {
+func resolveLiveForge(ctx context.Context, manifest *config.Manifest) forge.Forge {
 	if manifest == nil || manifest.Repository.Owner == "" || manifest.Repository.Name == "" {
 		return nil
 	}
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		token = os.Getenv("GH_TOKEN")
-	}
+	token := util.ResolveAuthTokenContext(ctx, "")
 	if token == "" {
 		return nil
 	}
-	gh := forge.NewGitHubDriver(token, "")
-	gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
-	return gh
+	provider := string(manifest.Repository.Forge)
+	if provider == "" {
+		provider = "github"
+	}
+	f, err := forge.NewForge(provider, token, "")
+	if err != nil {
+		return nil
+	}
+	if gh, ok := f.(*forge.GitHubDriver); ok {
+		gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
+	}
+	return f
 }
 
 func runEfficiency(args []string) error {
@@ -111,10 +126,13 @@ func runEfficiency(args []string) error {
 	ctx, cancel := commandContext(efficiencyTimeout)
 	defer cancel()
 
-	policy, manifest := loadEfficiencyPolicy(fl.root, fl.manifestPath)
+	policy, manifest, err := loadEfficiencyPolicy(fl.root, fl.manifestPath)
+	if err != nil {
+		return err
+	}
 	var forgeDriver forge.Forge
 	if fl.forgeFile == "" && (policy == nil || policy.Sources.Forge.Path == "") {
-		forgeDriver = resolveLiveForge(manifest)
+		forgeDriver = resolveLiveForge(ctx, manifest)
 	}
 
 	collector := efficiency.NewCollector(efficiency.CollectorOptions{

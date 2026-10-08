@@ -13,7 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
-// CollectorOptions supplies inputs and overrides for efficiency metrics collection.
+// CollectorOptions sets configuration, input sources and overrides for the collector.
 type CollectorOptions struct {
 	Root           string
 	Milestone      string
@@ -25,27 +25,32 @@ type CollectorOptions struct {
 	SpendLogPath   string
 }
 
-// Collector coordinates loading sources and assembling the efficiency report.
+// Collector coordinates gathering metrics from forge, transcripts and spend log.
 type Collector struct {
 	opts       CollectorOptions
 	classifier *Classifier
+	initErr    error
 }
 
-// NewCollector constructs a Collector with validated options.
+// NewCollector constructs an efficiency metrics collector.
 func NewCollector(opts CollectorOptions) *Collector {
 	if opts.Root == "" {
 		opts.Root = "."
 	}
 	policy := opts.Policy
+	var initErr error
 	if policy == nil {
 		p, err := config.RepositoryEfficiencyPolicy(opts.Root)
-		if err == nil {
+		if err != nil {
+			initErr = fmt.Errorf("load efficiency policy: %w", err)
+		} else {
 			policy = p
 		}
 	}
 	return &Collector{
 		opts:       opts,
 		classifier: NewClassifier(policy),
+		initErr:    initErr,
 	}
 }
 
@@ -76,16 +81,11 @@ func formatTokens(tokens int64) string {
 	return fmt.Sprintf("%d", tokens)
 }
 
-// Collect executes the data collection and builds the final Report.
-func (c *Collector) Collect(ctx context.Context) (*Report, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	report := &Report{
+func newReport(milestone string) *Report {
+	return &Report{
 		Units: make([]UnitReport, 0),
 		MilestoneSummary: MilestoneSummary{
-			Milestone:           c.opts.Milestone,
+			Milestone:           milestone,
 			FrontierTokens:      NotMeasured,
 			AttributedSpend:     NotMeasured,
 			UnattributedSpend:   NotMeasured,
@@ -98,6 +98,18 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 			ChecksBeforeReviews: FollowUpRefs,
 		},
 	}
+}
+
+// Collect executes the data collection and builds the final Report.
+func (c *Collector) Collect(ctx context.Context) (*Report, error) {
+	if c.initErr != nil {
+		return nil, c.initErr
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	report := newReport(c.opts.Milestone)
 
 	prs, forgeMeasured, err := c.loadForgePRs(ctx)
 	if err != nil {
@@ -109,20 +121,22 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 	transDir := c.resolveTranscriptsDir()
 	if transDir != "" {
 		stats, transErr := ReadTranscriptsDir(ctx, transDir, c.classifier)
-		if transErr == nil {
-			transStats = stats
-			report.Sources.Transcripts = true
+		if transErr != nil {
+			return nil, fmt.Errorf("read transcripts from %s: %w", transDir, transErr)
 		}
+		transStats = stats
+		report.Sources.Transcripts = true
 	}
 
 	var spendReport *SpendReport
 	spendPath := c.resolveSpendLogPath()
 	if spendPath != "" {
-		sr, spendErr := ReadSpendLogFile(ctx, spendPath, prs)
-		if spendErr == nil {
-			spendReport = sr
-			report.Sources.SpendLog = true
+		sr, spendErr := ReadSpendLogFile(ctx, spendPath, prs, c.classifier)
+		if spendErr != nil {
+			return nil, fmt.Errorf("read spend log from %s: %w", spendPath, spendErr)
 		}
+		spendReport = sr
+		report.Sources.SpendLog = true
 	}
 
 	filteredPRs := c.filterPRs(prs)
@@ -188,10 +202,7 @@ func (c *Collector) loadForgePRs(ctx context.Context) ([]forge.MergedPullRequest
 }
 
 func (c *Collector) filterPRs(prs []forge.MergedPullRequest) []forge.MergedPullRequest {
-	if len(prs) == 0 {
-		return nil
-	}
-	filtered := make([]forge.MergedPullRequest, 0, len(prs))
+	var filtered []forge.MergedPullRequest
 	for _, pr := range prs {
 		if c.opts.Milestone != "" && pr.Milestone != c.opts.Milestone {
 			continue
@@ -204,28 +215,46 @@ func (c *Collector) filterPRs(prs []forge.MergedPullRequest) []forge.MergedPullR
 	return filtered
 }
 
+func earliestClosingIssueCreatedAt(issues []forge.ClosingIssue) time.Time {
+	var earliest time.Time
+	for _, ci := range issues {
+		if ci.CreatedAt.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || ci.CreatedAt.Before(earliest) {
+			earliest = ci.CreatedAt
+		}
+	}
+	return earliest
+}
+
 func (c *Collector) calculateIssueToMerge(pr forge.MergedPullRequest) (string, *int64) {
 	if pr.MergedAt.IsZero() {
 		return NotMeasured, nil
 	}
-	var earliestCreated time.Time
-	for _, ci := range pr.ClosingIssues {
-		if !ci.CreatedAt.IsZero() && (earliestCreated.IsZero() || ci.CreatedAt.Before(earliestCreated)) {
-			earliestCreated = ci.CreatedAt
-		}
-	}
-	if earliestCreated.IsZero() && !pr.CreatedAt.IsZero() {
-		earliestCreated = pr.CreatedAt
-	}
-	if earliestCreated.IsZero() {
+	earliestCreated := earliestClosingIssueCreatedAt(pr.ClosingIssues)
+	// If closing issues are linked but none have created_at measured, do not silently fall back to PR age.
+	if len(pr.ClosingIssues) > 0 && earliestCreated.IsZero() {
 		return NotMeasured, nil
+	}
+	isPRFallback := false
+	if earliestCreated.IsZero() {
+		if pr.CreatedAt.IsZero() {
+			return NotMeasured, nil
+		}
+		earliestCreated = pr.CreatedAt
+		isPRFallback = true
 	}
 	dur := pr.MergedAt.Sub(earliestCreated)
 	if dur < 0 {
 		dur = 0
 	}
 	secs := int64(dur.Seconds())
-	return formatDuration(dur), &secs
+	res := formatDuration(dur)
+	if isPRFallback {
+		res += " (PR)"
+	}
+	return res, &secs
 }
 
 func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats, spendReport *SpendReport, sources SourcesMeasured) UnitReport {
@@ -255,68 +284,63 @@ func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, transStats map[s
 		ChecksBeforeReviews: FollowUpRefs,
 	}
 
-	if sources.Transcripts {
-		applyTranscriptStatsToUnit(&unit, transStats[pr.HeadBranch])
+	stats := transStats[pr.HeadBranch]
+	if sources.Transcripts && stats != nil {
+		touches := stats.OperatorTouches
+		unit.OperatorTouches = fmt.Sprintf("%d", touches)
+		unit.OperatorTouchNum = &touches
+
+		if rate, ok := stats.PromptCacheHitRate(); ok {
+			unit.PromptCacheHitRate = formatPercent(rate)
+			unit.CacheHitRatio = &rate
+		}
 	}
+
 	if sources.SpendLog {
-		applySpendReportToUnit(&unit, spendReport, pr.Number)
+		spend := 0.0
+		if spendReport != nil {
+			spend = spendReport.SpendByPRNumber[pr.Number]
+		}
+		unit.Spend = formatSpend(spend)
+		unit.SpendAmount = &spend
 	}
+
+	applyCombinedTokensAndLocality(&unit, stats, spendReport, pr.Number, sources)
 	return unit
 }
 
-func applyTranscriptStatsToUnit(unit *UnitReport, stats *BranchTranscriptStats) {
-	if stats == nil {
-		applyZeroTranscriptStats(unit)
-		return
+func applyCombinedTokensAndLocality(unit *UnitReport, stats *BranchTranscriptStats, spendReport *SpendReport, prNum int, sources SourcesMeasured) {
+	var totalFrontier int64
+	hasTokens := false
+	if stats != nil {
+		totalFrontier += stats.FrontierTokens
+		hasTokens = true
 	}
-	touches := stats.OperatorTouches
-	unit.OperatorTouches = fmt.Sprintf("%d", touches)
-	unit.OperatorTouchNum = &touches
-
-	unit.FrontierTokens = formatTokens(stats.FrontierTokens)
-	fTokens := stats.FrontierTokens
-	unit.FrontierTokensNum = &fTokens
-
-	if rate, ok := stats.PromptCacheHitRate(); ok {
-		unit.PromptCacheHitRate = formatPercent(rate)
-		unit.CacheHitRatio = &rate
-	} else {
-		unit.PromptCacheHitRate = "0.0%"
-		zero := 0.0
-		unit.CacheHitRatio = &zero
+	if spendReport != nil {
+		if ft, ok := spendReport.FrontierTokensByPRNumber[prNum]; ok {
+			totalFrontier += ft
+			hasTokens = true
+		}
+	}
+	if hasTokens && (sources.Transcripts || sources.SpendLog) {
+		unit.FrontierTokens = formatTokens(totalFrontier)
+		unit.FrontierTokensNum = &totalFrontier
 	}
 
-	if ratio, ok := stats.LocalFirstRatio(); ok {
+	var totalReqs, localReqs int
+	if stats != nil {
+		totalReqs += stats.TotalRequests
+		localReqs += stats.LocalRequests
+	}
+	if spendReport != nil {
+		totalReqs += spendReport.RequestsByPRNumber[prNum]
+		localReqs += spendReport.LocalRequestsByPRNumber[prNum]
+	}
+	if totalReqs > 0 {
+		ratio := float64(localReqs) / float64(totalReqs)
 		unit.LocalFirstRatio = formatPercent(ratio)
 		unit.LocalRatio = &ratio
-	} else {
-		unit.LocalFirstRatio = "0.0%"
-		zero := 0.0
-		unit.LocalRatio = &zero
 	}
-}
-
-func applyZeroTranscriptStats(unit *UnitReport) {
-	zero := 0
-	zero64 := int64(0)
-	zeroF := 0.0
-	unit.OperatorTouches = "0"
-	unit.OperatorTouchNum = &zero
-	unit.FrontierTokens = "0"
-	unit.FrontierTokensNum = &zero64
-	unit.PromptCacheHitRate = "0.0%"
-	unit.CacheHitRatio = &zeroF
-	unit.LocalFirstRatio = "0.0%"
-	unit.LocalRatio = &zeroF
-}
-
-func applySpendReportToUnit(unit *UnitReport, spendReport *SpendReport, prNum int) {
-	spend := 0.0
-	if spendReport != nil {
-		spend = spendReport.SpendByPRNumber[prNum]
-	}
-	unit.Spend = formatSpend(spend)
-	unit.SpendAmount = &spend
 }
 
 func (c *Collector) buildMilestoneSummary(report *Report, prs []forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats, spendReport *SpendReport) {
@@ -330,8 +354,8 @@ func (c *Collector) buildMilestoneSummary(report *Report, prs []forge.MergedPull
 	if report.Sources.Forge {
 		summarizeForge(report, summary)
 	}
-	if report.Sources.Transcripts {
-		summarizeTranscripts(prs, transStats, summary)
+	if report.Sources.Transcripts || report.Sources.SpendLog {
+		summarizeTranscriptsAndSpend(prs, transStats, spendReport, report.Sources, summary)
 	}
 	if report.Sources.SpendLog {
 		summarizeSpend(report, spendReport, summary)
@@ -354,48 +378,78 @@ func summarizeForge(report *Report, summary *MilestoneSummary) {
 	}
 }
 
-func summarizeTranscripts(prs []forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats, summary *MilestoneSummary) {
-	var totalFrontier int64
-	var totalTouches int
-	var totalRead, totalCacheCreation, totalInput int64
-	var totalLocalReqs, totalReqs int
+type transcriptTotals struct {
+	frontierTokens int64
+	touches        int
+	cacheRead      int64
+	cacheCreation  int64
+	inputTokens    int64
+	localReqs      int
+	totalReqs      int
+	hasTokens      bool
+}
 
+func aggregateTranscripts(prs []forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats) transcriptTotals {
+	var t transcriptTotals
 	for _, pr := range prs {
-		if stats := transStats[pr.HeadBranch]; stats != nil {
-			totalFrontier += stats.FrontierTokens
-			totalTouches += stats.OperatorTouches
-			totalRead += stats.CacheReadTokens
-			totalCacheCreation += stats.CacheCreationTokens
-			totalInput += stats.InputTokens
-			totalLocalReqs += stats.LocalRequests
-			totalReqs += stats.TotalRequests
+		stats := transStats[pr.HeadBranch]
+		if stats == nil {
+			continue
+		}
+		t.frontierTokens += stats.FrontierTokens
+		t.touches += stats.OperatorTouches
+		t.cacheRead += stats.CacheReadTokens
+		t.cacheCreation += stats.CacheCreationTokens
+		t.inputTokens += stats.InputTokens
+		t.localReqs += stats.LocalRequests
+		t.totalReqs += stats.TotalRequests
+		t.hasTokens = true
+	}
+	return t
+}
+
+func summarizeTranscriptsAndSpend(prs []forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats, spendReport *SpendReport, sources SourcesMeasured, summary *MilestoneSummary) {
+	var totalFrontier int64
+	var totalLocalReqs, totalReqs int
+	hasTokens := false
+
+	if sources.Transcripts {
+		t := aggregateTranscripts(prs, transStats)
+		totalFrontier += t.frontierTokens
+		totalLocalReqs += t.localReqs
+		totalReqs += t.totalReqs
+		hasTokens = t.hasTokens
+		summary.OperatorTouches = fmt.Sprintf("%d", t.touches)
+		summary.OperatorTouchNum = &t.touches
+
+		cacheDenom := t.inputTokens + t.cacheCreation + t.cacheRead
+		if cacheDenom > 0 {
+			rate := float64(t.cacheRead) / float64(cacheDenom)
+			summary.PromptCacheHitRate = formatPercent(rate)
+			summary.CacheHitRatio = &rate
 		}
 	}
 
-	summary.FrontierTokens = formatTokens(totalFrontier)
-	summary.FrontierTokensNum = &totalFrontier
-	summary.OperatorTouches = fmt.Sprintf("%d", totalTouches)
-	summary.OperatorTouchNum = &totalTouches
+	if sources.SpendLog && spendReport != nil {
+		for _, pr := range prs {
+			totalReqs += spendReport.RequestsByPRNumber[pr.Number]
+			totalLocalReqs += spendReport.LocalRequestsByPRNumber[pr.Number]
+			if ft, ok := spendReport.FrontierTokensByPRNumber[pr.Number]; ok {
+				totalFrontier += ft
+				hasTokens = true
+			}
+		}
+	}
 
-	cacheDenom := totalInput + totalCacheCreation + totalRead
-	if cacheDenom > 0 {
-		rate := float64(totalRead) / float64(cacheDenom)
-		summary.PromptCacheHitRate = formatPercent(rate)
-		summary.CacheHitRatio = &rate
-	} else {
-		summary.PromptCacheHitRate = "0.0%"
-		zero := 0.0
-		summary.CacheHitRatio = &zero
+	if hasTokens {
+		summary.FrontierTokens = formatTokens(totalFrontier)
+		summary.FrontierTokensNum = &totalFrontier
 	}
 
 	if totalReqs > 0 {
 		ratio := float64(totalLocalReqs) / float64(totalReqs)
 		summary.LocalFirstRatio = formatPercent(ratio)
 		summary.LocalRatio = &ratio
-	} else {
-		summary.LocalFirstRatio = "0.0%"
-		zero := 0.0
-		summary.LocalRatio = &zero
 	}
 }
 

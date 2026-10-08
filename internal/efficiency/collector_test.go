@@ -149,8 +149,9 @@ func TestCollector_Positive_MilestoneSummaryOverTwoUnits(t *testing.T) {
 	if u2.FrontierTokens != "200" {
 		t.Errorf("unit 2 frontier tokens = %s, want 200", u2.FrontierTokens)
 	}
-	if u2.IssueToMerge != "3h00m" {
-		t.Errorf("unit 2 issue to merge = %s, want 3h00m", u2.IssueToMerge)
+	// PR 2 had no closing issues -> falls back to PR creation time marked with (PR)
+	if u2.IssueToMerge != "3h00m (PR)" {
+		t.Errorf("unit 2 issue to merge = %s, want 3h00m (PR)", u2.IssueToMerge)
 	}
 
 	// 2. Milestone Summary over two units
@@ -249,6 +250,108 @@ func TestCollector_Negative_MissingSourcesPrintNotMeasuredNeverZero(t *testing.T
 		ms.AttributedSpend != NotMeasured || ms.UnattributedSpend != NotMeasured ||
 		ms.TotalSpend != NotMeasured {
 		t.Errorf("milestone summary must report %q for missing sources, got %+v", NotMeasured, ms)
+	}
+}
+
+func TestCollector_Positive_NoSessionsJoinedGivesNotMeasured(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// PR #8 on feat/pr-eight
+	forgeJSON := `[{"number": 8, "head_branch": "feat/pr-eight", "title": "PR 8", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z"}]`
+	forgePath := filepath.Join(dir, "prs.json")
+	if err := os.WriteFile(forgePath, []byte(forgeJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Transcripts directory with a session on another branch (no join for feat/pr-eight!)
+	transDir := filepath.Join(dir, "transcripts")
+	if err := os.MkdirAll(transDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	otherTranscript := `{"type":"user","gitBranch":"feat/other-unrelated","origin":{"kind":"human"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(transDir, "other.jsonl"), []byte(otherTranscript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := CollectorOptions{
+		Root:           dir,
+		ForgeJSONPath:  forgePath,
+		TranscriptsDir: transDir,
+	}
+
+	collector := NewCollector(opts)
+	report, err := collector.Collect(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(report.Units) != 1 {
+		t.Fatalf("expected 1 unit, got %d", len(report.Units))
+	}
+
+	u := report.Units[0]
+	// PR #8 has no joined sessions: CACHE HIT and LOCAL-1ST must be "not measured", never "0.0%"!
+	if u.PromptCacheHitRate != NotMeasured {
+		t.Errorf("expected PromptCacheHitRate for unjoined PR #8 to be %q, got %q", NotMeasured, u.PromptCacheHitRate)
+	}
+	if u.LocalFirstRatio != NotMeasured {
+		t.Errorf("expected LocalFirstRatio for unjoined PR #8 to be %q, got %q", NotMeasured, u.LocalFirstRatio)
+	}
+}
+
+func TestCollector_CalculateIssueToMerge_UnmeasuredClosingIssues(t *testing.T) {
+	c := NewCollector(CollectorOptions{})
+
+	now := time.Now().UTC()
+	// PR has closing issue #578, but CreatedAt is zero (unmeasured)!
+	prWithUnmeasuredIssue := forge.MergedPullRequest{
+		Number:     866,
+		HeadBranch: "feat/unmeasured",
+		CreatedAt:  now.Add(-55 * time.Minute),
+		MergedAt:   now,
+		ClosingIssues: []forge.ClosingIssue{
+			{Number: 578}, // CreatedAt is zero!
+		},
+	}
+
+	itm, secs := c.calculateIssueToMerge(prWithUnmeasuredIssue)
+	// Must NOT quietly fall back to PR age (55m); must report "not measured"!
+	if itm != NotMeasured || secs != nil {
+		t.Errorf("expected %q with nil secs when closing issue is unmeasured, got %q (%v)", NotMeasured, itm, secs)
+	}
+
+	// PR with no closing issue at all: falls back to PR age with (PR) suffix
+	prWithNoClosingIssue := forge.MergedPullRequest{
+		Number:        867,
+		HeadBranch:    "feat/no-issues",
+		CreatedAt:     now.Add(-55 * time.Minute),
+		MergedAt:      now,
+		ClosingIssues: nil,
+	}
+	itmPR, secsPR := c.calculateIssueToMerge(prWithNoClosingIssue)
+	if itmPR != "55m (PR)" || secsPR == nil {
+		t.Errorf("expected '55m (PR)', got %q (%v)", itmPR, secsPR)
+	}
+}
+
+func TestCollector_Negative_SourceErrorsPropagate(t *testing.T) {
+	ctx := context.Background()
+
+	// Unreadable transcripts directory must fail
+	collectorBadTrans := NewCollector(CollectorOptions{
+		TranscriptsDir: "/nonexistent/directory/for/transcripts",
+	})
+	if _, err := collectorBadTrans.Collect(ctx); err == nil {
+		t.Error("expected error when transcripts directory does not exist")
+	}
+
+	// Unreadable spend log file must fail
+	collectorBadSpend := NewCollector(CollectorOptions{
+		SpendLogPath: "/nonexistent/file/for/spend.jsonl",
+	})
+	if _, err := collectorBadSpend.Collect(ctx); err == nil {
+		t.Error("expected error when spend log file does not exist")
 	}
 }
 
