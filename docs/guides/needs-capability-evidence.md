@@ -160,6 +160,7 @@ Version 1 also accepts optional fields; a reader that predates them ignores them
 | `adapts` (per package) | third-party names the package offers an adapter for: `adapter_available`, not a replacement |
 | `wraps`, `tooling_for` (per package) | libraries the package wraps or is tooling for; the library is retained (`wrapped-by`, `tooling`) |
 | `foundations` (top level) | libraries the framework retains as foundations; a go contract may list standard-library imports here |
+| `umbrellas` (top level, go only) | umbrella packages and the declared packages each of their groupings groups; see [Umbrella imports](#umbrella-imports) |
 
 Each list holds at most 64 names (`internal/needs/framework_contract.go`). A
 contract that fails validation (unsupported version, `framework` not matching the
@@ -167,6 +168,79 @@ checkout's `go.mod` module, packages outside the framework, undeclared modules, 
 capability keys, more than 512 packages or 1 MiB) fails inspection rather than
 degrading to heuristics. None of this proves API compatibility, runs a build, or
 admits `needs migrate --apply`.
+
+## Umbrella imports
+
+A framework may publish an umbrella package: a root package whose only job is to group the
+modules of every subsystem. A consumer that imports it to reach a few capabilities still links
+every subsystem into its module graph, its build and every vulnerability report.
+`praetorctl needs report` and `standards_needs_report` name the sub-package imports that would
+replace such an import and measure what the switch removes. The section is a recommendation:
+it never fails the report.
+
+The framework's contract describes the umbrella and its groupings, each an exported identifier
+of the umbrella:
+
+```yaml
+umbrellas:
+  - import: example.com/kit
+    name: kit # optional: the package name, when it differs from the last path element
+    groupings:
+      - name: Core
+        packages: [example.com/kit/config]
+      - name: HTTP
+        packages: [example.com/kit/httpx]
+      - name: Store
+        packages: [example.com/kit/store]
+```
+
+A consumer whose code selects `kit.Core` and `kit.HTTP`, but not `kit.Store`, gets:
+
+```text
+Umbrella imports (recommendations, not a gate):
+  example.com/kit imported in main.go
+    wires 2 of 3 groupings (Core, HTTP); import instead:
+    -> example.com/kit/config (grouping Core): config.loader
+    -> example.com/kit/httpx (grouping HTTP): http.router, http.middleware
+    switch effect: modules 2 -> 1 (-1), packages 35 -> 33 (-2); go list -deps, offline
+```
+
+Each umbrella import gets one verdict (`internal/needs/umbrella.go`, tests in
+`internal/needs/umbrella_test.go`):
+
+- **recommend**: some groupings are wired. One line per grouped package, with the
+  capabilities the contract declares for it, or `capabilities not observed in the selected
+  framework` when a checkout lacks the package.
+- **justified**: every grouping is wired; nothing is recommended.
+- **unmapped**: the code references no grouping, only identifiers no grouping names, or a
+  blank or dot import. Such identifiers beside wired groupings keep the umbrella import, so
+  the switch is not measured.
+- **unknown**: the code imports the framework's root package, which the contract neither
+  describes as an umbrella nor declares as a package. It is reported, never mapped by guess.
+
+References are the `<name>.<Identifier>` selectors in the non-test sources the import scan
+reads. A renamed import binds its rename; an unrenamed one binds the contract's `name`, else
+the last element of the import path without a major-version suffix. There is no type
+information, so a local variable that shadows the name still counts.
+
+The switch effect comes from `go list -deps ./...` in the consumer's module, run offline:
+`GOPROXY=off`, `GOTOOLCHAIN=local`, `GOWORK=off`, and `-mod=readonly` (`-mod=vendor` with a
+`vendor/modules.txt`) on the command line, which overrides a `-mod=mod` in `GOFLAGS`, so
+`go.mod` and `go.sum` never change. In the listed graph, each package's umbrella import is
+replaced by the packages of the groupings its own files reference; packages the go command
+adds without an import, such as the runtime, stay. Modules count the dependency modules that
+provide a package of the build, the main module excluded; packages include the standard
+library. When the module graph is not available offline (a module the cache does not hold, a
+missing `go.sum` entry), the effect reads `not measured (<reason>)` and no count is
+estimated (`TestUmbrellaMeasurementUnavailableOffline_3D`; the graph walk is tested in
+`internal/needs/umbrella_measure_test.go`).
+
+The contract check refuses an umbrella outside the framework, a grouping name that is not an
+exported Go identifier, a grouping package the contract does not declare, repeats, more than
+16 umbrellas, more than 64 groupings per umbrella or 64 packages per grouping, and umbrellas
+in a contract of another ecosystem (`internal/needs/framework_umbrella.go`, tests in
+`internal/needs/framework_umbrella_test.go`). `needs contract export` carries the umbrellas,
+and a fork's checkout is judged at its own umbrella path.
 
 ## The committed manifest
 

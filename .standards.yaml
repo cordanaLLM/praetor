@@ -107,8 +107,8 @@ register:
   # deleting one value or selector fails the gate.
   sources:
     expected: 250
-    not_applicable: 127
-    sha256: "sha256:e34a2ef3a6ab746ce4f5b520e2da9aa0ae2c06863a94a80c1d821e69f0d8f802"
+    not_applicable: 128
+    sha256: "sha256:0f54495d96c22aca6c06a525cca31c784ea4576feef005ed91672d8f6a7c1c72"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts

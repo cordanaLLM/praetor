@@ -3,7 +3,9 @@ package needs
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -62,6 +64,7 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 	}
 
 	buildDependencyDemands(module.directDeps, astImports, repoNeeds)
+	repoNeeds.Imports = slices.Sorted(maps.Keys(astImports))
 	target.applyTo(repoNeeds)
 	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)

@@ -60,8 +60,8 @@ const ExceptionRuleReuseAnnotationOrder = "reuse-annotation-order"
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
 var exceptionRules = []string{
-	ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings,
-	ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
+	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
+	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
 }
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -216,6 +216,9 @@ func (e Exception) problem(today time.Time) string {
 		return problem
 	}
 	if problem := e.rootLicenseTargetProblem(); problem != "" {
+		return problem
+	}
+	if problem := e.apiModuleTargetProblem(); problem != "" {
 		return problem
 	}
 	if problem := exceptionReasonProblem(e.Reason); problem != "" {

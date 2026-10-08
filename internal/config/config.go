@@ -307,6 +307,10 @@ type Manifest struct {
 	// source registry `praetorctl radar` reads (internal/radar, #818). It is repository-only,
 	// like Documentation.
 	Radar *RadarPolicy `yaml:"radar,omitempty"`
+	// API declares what the locked Go API compatibility workflow needs to build the repository's
+	// modules: api.system_packages, the Debian packages it installs first (#849). It is
+	// repository-only, like Documentation.
+	API *APIPolicy `yaml:"api,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -386,6 +390,7 @@ var manifestValidators = [...]func(*Manifest) error{
 	},
 	validateManifestSecurity,
 	validateManifestRadar,
+	validateManifestAPI,
 }
 
 // DecodeManifest parses the manifest with no unknown fields, so a misspelled key is an

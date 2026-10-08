@@ -151,7 +151,7 @@ func TestWorkflowIsARequiredCheck(t *testing.T) {
 
 // PriorDigests. Positive: every file under testdata/prior reproduces one digest, each digest is
 // reproduced by one file, and the file maps to the path it was shipped at: the workflow, or the
-// gate program (api-gate-main.go.txt). Negative: the current texts are no Prior text, and the
+// gate program (api-gate-main*.go.txt). Negative: the current texts are no Prior text, and the
 // returned map is a private copy, so a caller cannot add a digest the family then accepts.
 // Boundary: a CRLF checkout of a prior text reproduces the same digest.
 func TestPriorDigests(t *testing.T) {
@@ -171,7 +171,7 @@ func TestPriorDigests(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := WorkflowFile
-		if entry.Name() == "api-gate-main.go.txt" {
+		if strings.HasPrefix(entry.Name(), "api-gate-main") {
 			want = Directory + "/" + GateFile
 		}
 		for _, text := range [][]byte{data, bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))} {

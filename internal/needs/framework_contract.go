@@ -55,14 +55,16 @@ var goStandardImport = regexp.MustCompile(`^[a-z0-9]+(/[a-z0-9_]+)*$`)
 // names the framework retains as foundations. Ecosystem (go, npm, pypi, cargo or system;
 // go when empty) selects the grammar those names are checked against. Every field after
 // the version-1 core is optional, and unknown fields are ignored, so a newer contract stays
-// readable; unknown versions fail.
+// readable; unknown versions fail. Umbrellas (framework_umbrella.go) describe the packages
+// that only group every subsystem's modules.
 type frameworkContract struct {
-	Version     int               `yaml:"version"`
-	Framework   string            `yaml:"framework"`
-	Ecosystem   string            `yaml:"ecosystem,omitempty"`
-	Modules     []string          `yaml:"modules,omitempty"`
-	Foundations []string          `yaml:"foundations,omitempty"`
-	Packages    []contractPackage `yaml:"packages"`
+	Version     int                `yaml:"version"`
+	Framework   string             `yaml:"framework"`
+	Ecosystem   string             `yaml:"ecosystem,omitempty"`
+	Modules     []string           `yaml:"modules,omitempty"`
+	Foundations []string           `yaml:"foundations,omitempty"`
+	Packages    []contractPackage  `yaml:"packages"`
+	Umbrellas   []contractUmbrella `yaml:"umbrellas,omitempty"`
 }
 
 type contractPackage struct {
@@ -148,7 +150,7 @@ func (c *frameworkContract) validate(module string) error {
 			return err
 		}
 	}
-	return nil
+	return validateUmbrellas(c.Umbrellas, c.ecosystem(), c.Framework, seen)
 }
 
 // validateEcosystem checks the ecosystem and the top-level foundations against it.
@@ -302,6 +304,7 @@ func (c *frameworkContract) rebase(module string) *frameworkContract {
 			out.Packages[i].Module = move(out.Packages[i].Module)
 		}
 	}
+	out.Umbrellas = rebaseUmbrellas(c.Umbrellas, move)
 	return &out
 }
 
@@ -393,6 +396,7 @@ func beginContractIndex(index *FrameworkIndex, contract *frameworkContract, name
 	index.Wrappers = make(map[string][]string)
 	index.Tooling = make(map[string][]string)
 	index.Foundations = slices.Clone(contract.Foundations)
+	index.Umbrellas = indexUmbrellas(contract.Umbrellas)
 	packages := slices.Clone(contract.Packages)
 	slices.SortFunc(packages, func(a, b contractPackage) int { return strings.Compare(a.Import, b.Import) })
 	return packages

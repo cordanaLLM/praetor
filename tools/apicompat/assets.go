@@ -122,7 +122,7 @@ jobs:
 // priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the family's
 // managed paths, taken with LF line endings, to that path: the family's Prior
 // (internal/managedasset). Adoption refreshes a file holding exactly one of these texts without
-// --force. testdata/prior holds each text (the gate program's is api-gate-main.go.txt), and
+// --force. testdata/prior holds each text (the gate program's start with api-gate-main), and
 // TestPriorDigests recomputes every digest from it.
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
@@ -133,6 +133,9 @@ var priorDigests = map[string]string{
 	// The gate before it was gofumpt-formatted and before its header comment said that pushes run
 	// on the default branch only and a draft fails without running it (#842, #824).
 	"0f1a48dcdccd12c57c7c8cc80dfd7718339272b66c546bf6f80a19336bb74554": Directory + "/" + GateFile,
+	// The gate before it excused a module that cannot be built on an api-compatibility exception
+	// of the manifest (#849).
+	"c785a3669ba9e88b2f6306ff0733f109fef2fad27c426759eb63936fd82c666b": Directory + "/" + GateFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

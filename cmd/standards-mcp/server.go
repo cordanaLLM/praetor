@@ -686,17 +686,18 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to inspect framework: %v", err)), nil
 		}
 
-		rep, err := needs.ScanRepoWithFramework(ctx, targetPath, fwIndex, registry)
+		rep, err := needs.ReportRepoWithFramework(ctx, targetPath, fwIndex, registry)
 		if err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Failed to scan repository: %v", err)), nil
 		}
 
 		var b mcpTextBuilder
 		// internal/needs renders the header once for this tool and the CLI needs report, for the
-		// framework the row is scored against; the relationship table carries repository-derived
-		// library names.
+		// framework the row is scored against; the relationship table and the umbrella-import
+		// recommendations carry repository-derived names.
 		b.External(needs.FormatReportHeader(rep, needs.RowFramework(registry, rep, fwIndex)), mcpTextShared)
 		b.External(needs.FormatLibraryRelationships(rep), mcpTextUntrusted)
+		b.External(needs.FormatUmbrellaImports(rep), mcpTextUntrusted)
 
 		return mcpComposedTextResult(b.Text()), nil
 	}

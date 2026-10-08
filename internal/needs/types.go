@@ -143,6 +143,15 @@ type RepoNeeds struct {
 	// written with a former key. The CLI and the MCP report print them; a manifest written
 	// from this row carries none of them.
 	Deprecations []string `json:"deprecations,omitempty" yaml:"-"`
+	// UmbrellaImports are the imports of the selected framework's umbrella package that
+	// ReportRepoWithFramework found, each with the sub-package imports that would replace it
+	// (umbrella.go). They depend on the selected framework and are never written into a
+	// .needs.yaml manifest.
+	UmbrellaImports []UmbrellaFinding `json:"umbrella_imports,omitempty" yaml:"-"`
+	// Imports holds the raw Go import paths observed during AST analysis.
+	Imports []string `json:"imports,omitempty" yaml:"-"`
+	// ProjectImports maps each Go project directory (relative to repo root) to its observed imports.
+	ProjectImports map[string][]string `json:"project_imports,omitempty" yaml:"-"`
 }
 
 // SubprojectFailure names a nested sub-project whose scan failed, with the error.
@@ -200,6 +209,9 @@ type FrameworkIndex struct {
 	// NonGoals are the capabilities the framework checkout's own .needs.yaml declares
 	// non-goals; demands of them are resolved, not gaps (StatusNonGoal).
 	NonGoals []NonGoal `json:"non_goals,omitempty"`
+	// Umbrellas are the umbrella packages the contract describes, keyed by import path: the
+	// packages that only group every subsystem's modules (framework_umbrella.go).
+	Umbrellas map[string]FrameworkUmbrella `json:"umbrellas,omitempty"`
 }
 
 // GapDetail documents an unmet capability demand across the fleet.
