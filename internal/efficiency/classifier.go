@@ -23,6 +23,22 @@ func NewClassifier(policy *config.EfficiencyPolicy) *Classifier {
 	}
 }
 
+func matchModelClass(model, pattern string) bool {
+	norm := strings.ToLower(strings.TrimSpace(model))
+	pat := strings.ToLower(strings.TrimSpace(pattern))
+	if norm == "" || pat == "" {
+		return false
+	}
+	clean := norm
+	if idx := strings.Index(clean, "/"); idx != -1 {
+		clean = clean[idx+1:]
+	}
+	if norm == pat || clean == pat {
+		return true
+	}
+	return strings.HasPrefix(norm, pat) || strings.HasPrefix(clean, pat)
+}
+
 // IsFrontier reports whether model is classified as frontier.
 func (c *Classifier) IsFrontier(model string) bool {
 	norm := strings.ToLower(strings.TrimSpace(model))
@@ -30,11 +46,8 @@ func (c *Classifier) IsFrontier(model string) bool {
 		return false
 	}
 	for i := 0; i < len(c.frontierClasses) && i < 100; i++ {
-		fc := strings.ToLower(strings.TrimSpace(c.frontierClasses[i]))
-		if fc == "" {
-			continue
-		}
-		if norm == fc || strings.HasPrefix(norm, fc) || strings.Contains(norm, fc) {
+		fc := c.frontierClasses[i]
+		if matchModelClass(norm, fc) {
 			return true
 		}
 	}
@@ -48,11 +61,8 @@ func (c *Classifier) IsLocal(model string) bool {
 		return false
 	}
 	for i := 0; i < len(c.localClasses) && i < 100; i++ {
-		lc := strings.ToLower(strings.TrimSpace(c.localClasses[i]))
-		if lc == "" {
-			continue
-		}
-		if norm == lc || strings.HasPrefix(norm, lc) || strings.Contains(norm, lc) {
+		lc := c.localClasses[i]
+		if matchModelClass(norm, lc) {
 			return true
 		}
 	}

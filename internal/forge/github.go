@@ -154,6 +154,17 @@ func (g *GitHubDriver) Authenticate(ctx context.Context) error {
 	return nil
 }
 
+func marshalPayload(payload any) (io.Reader, error) {
+	if payload == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed encoding request payload: %w", err)
+	}
+	return bytes.NewReader(data), nil
+}
+
 // sendRequest handles authenticated HTTP communication with GitHub REST API.
 func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, payload any) (respBody []byte, statusCode int, err error) {
 	if err := g.Authenticate(ctx); err != nil {
@@ -161,13 +172,9 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 	}
 
 	target := g.Endpoint + path
-	var bodyReader io.Reader
-	if payload != nil {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed encoding request payload: %w", err)
-		}
-		bodyReader = bytes.NewReader(data)
+	bodyReader, err := marshalPayload(payload)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
@@ -1022,5 +1029,83 @@ func (g *GitHubDriver) ListMergedPullRequests(ctx context.Context, limit int) ([
 	if err != nil && !errors.Is(err, errPageCeiling) {
 		return nil, err
 	}
+	g.populateClosingIssues(ctx, all)
 	return all, nil
+}
+
+type ghIssueDetailRaw struct {
+	Number      int     `json:"number"`
+	CreatedAt   string  `json:"created_at"`
+	ClosedAt    *string `json:"closed_at"`
+	PullRequest *struct {
+		URL string `json:"url"`
+	} `json:"pull_request"`
+}
+
+func parseIssueTimes(raw *ghIssueDetailRaw, number int) (time.Time, *time.Time, error) {
+	if raw.PullRequest != nil {
+		return time.Time{}, nil, fmt.Errorf("item #%d is a pull request", number)
+	}
+	created, err := time.Parse(time.RFC3339, raw.CreatedAt)
+	if err != nil {
+		return time.Time{}, nil, fmt.Errorf("parse issue #%d created_at: %w", number, err)
+	}
+	var closed *time.Time
+	if raw.ClosedAt != nil && *raw.ClosedAt != "" {
+		if t, err := time.Parse(time.RFC3339, *raw.ClosedAt); err == nil {
+			closed = &t
+		}
+	}
+	return created, closed, nil
+}
+
+func (g *GitHubDriver) fetchIssueTimes(ctx context.Context, number int) (time.Time, *time.Time, error) {
+	if number <= 0 {
+		return time.Time{}, nil, fmt.Errorf("invalid issue number %d", number)
+	}
+	base, err := g.repoPath("issues")
+	if err != nil {
+		return time.Time{}, nil, err
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodGet, fmt.Sprintf("%s/%d", base, number), nil)
+	if err != nil {
+		return time.Time{}, nil, err
+	}
+	if status != http.StatusOK {
+		return time.Time{}, nil, fmt.Errorf("unexpected status %d fetching issue #%d", status, number)
+	}
+	var raw ghIssueDetailRaw
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return time.Time{}, nil, err
+	}
+	return parseIssueTimes(&raw, number)
+}
+
+func (g *GitHubDriver) populateClosingIssues(ctx context.Context, prs []MergedPullRequest) {
+	issueCache := make(map[int]time.Time)
+	closedCache := make(map[int]*time.Time)
+	issueFetches := 0
+	const maxIssueFetches = 200
+
+	for i := range prs {
+		for j := range prs[i].ClosingIssues {
+			num := prs[i].ClosingIssues[j].Number
+			if t, ok := issueCache[num]; ok {
+				prs[i].ClosingIssues[j].CreatedAt = t
+				prs[i].ClosingIssues[j].ClosedAt = closedCache[num]
+				continue
+			}
+			if issueFetches >= maxIssueFetches || ctx.Err() != nil {
+				return
+			}
+			issueFetches++
+			created, closed, err := g.fetchIssueTimes(ctx, num)
+			if err == nil && !created.IsZero() {
+				issueCache[num] = created
+				closedCache[num] = closed
+				prs[i].ClosingIssues[j].CreatedAt = created
+				prs[i].ClosingIssues[j].ClosedAt = closed
+			}
+		}
+	}
 }

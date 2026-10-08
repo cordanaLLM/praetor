@@ -21,8 +21,11 @@ import (
 
 // SpendReport records spend attributed per PR number and total unattributed spend.
 type SpendReport struct {
-	SpendByPRNumber map[int]float64
-	Unattributed    float64
+	SpendByPRNumber          map[int]float64
+	RequestsByPRNumber       map[int]int
+	LocalRequestsByPRNumber  map[int]int
+	FrontierTokensByPRNumber map[int]int64
+	Unattributed             float64
 }
 
 // rawSpendEntry is an intermediate representation of a spend log row/line.
@@ -169,13 +172,45 @@ func entrySpend(e *rawSpendEntry) float64 {
 	return e.Cost
 }
 
-// ReadSpendLogJSONL decodes JSON lines from reader and attributes spend to PRs or unattributed bucket.
-func ReadSpendLogJSONL(ctx context.Context, r io.Reader, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) error {
-	scanner := bufio.NewScanner(io.LimitReader(r, MaxFileBytes))
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, MaxFileBytes)
+func entryTokens(e *rawSpendEntry) int64 {
+	if e.Tokens > 0 {
+		return e.Tokens
+	}
+	if e.InputTokens > 0 {
+		return e.InputTokens
+	}
+	return 0
+}
 
-	for lineCount := 0; lineCount < MaxSourceLines && scanner.Scan(); lineCount++ {
+func processSpendEntry(entry *rawSpendEntry, classifier *Classifier, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) {
+	spend := entrySpend(entry)
+	prNum, ok := attributeEntry(entry, branchToPR, validPRs)
+	if ok {
+		if spend > 0 {
+			report.SpendByPRNumber[prNum] += spend
+		}
+		report.RequestsByPRNumber[prNum]++
+		if classifier != nil && classifier.IsLocal(entry.Model) {
+			report.LocalRequestsByPRNumber[prNum]++
+		}
+		tokens := entryTokens(entry)
+		if tokens > 0 && classifier != nil && classifier.IsFrontier(entry.Model) {
+			report.FrontierTokensByPRNumber[prNum] += tokens
+		}
+	} else if spend > 0 {
+		report.Unattributed += spend
+	}
+}
+
+// ReadSpendLogJSONL decodes JSON lines from reader and attributes spend to PRs or unattributed bucket.
+func ReadSpendLogJSONL(ctx context.Context, r io.Reader, classifier *Classifier, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) error {
+	limitedReader := &countReader{r: io.LimitReader(r, MaxFileBytes+1)}
+	scanner := bufio.NewScanner(limitedReader)
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+
+	lineCount := 0
+	for ; lineCount < MaxSourceLines && scanner.Scan(); lineCount++ {
 		if lineCount%1000 == 0 && ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -185,48 +220,53 @@ func ReadSpendLogJSONL(ctx context.Context, r io.Reader, branchToPR map[string]i
 		}
 		var entry rawSpendEntry
 		if err := json.Unmarshal(lineBytes, &entry); err != nil {
-			continue
+			return fmt.Errorf("spend log line %d: %w", lineCount+1, err)
 		}
-		spend := entrySpend(&entry)
-		if spend <= 0 {
-			continue
-		}
-		if prNum, ok := attributeEntry(&entry, branchToPR, validPRs); ok {
-			report.SpendByPRNumber[prNum] += spend
-		} else {
-			report.Unattributed += spend
-		}
+		processSpendEntry(&entry, classifier, branchToPR, validPRs, report)
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if limitedReader.count > MaxFileBytes {
+		return fmt.Errorf("spend log exceeds %d byte limit", MaxFileBytes)
+	}
+	if scanner.Scan() {
+		return fmt.Errorf("spend log exceeds %d lines limit", MaxSourceLines)
+	}
+	return nil
 }
 
-func processCSVRecord(record []string, indices map[string]int, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) {
-	entry := csvRecordToEntry(record, indices)
-	spend := entrySpend(&entry)
-	if spend <= 0 {
-		return
+func parseCSVHeader(header []string) (map[string]int, error) {
+	indices := make(map[string]int, len(header))
+	hasSpendCol := false
+	for i, h := range header {
+		key := strings.ToLower(strings.TrimSpace(h))
+		indices[key] = i
+		if key == "spend" || key == "cost" || key == "model" {
+			hasSpendCol = true
+		}
 	}
-	if prNum, ok := attributeEntry(&entry, branchToPR, validPRs); ok {
-		report.SpendByPRNumber[prNum] += spend
-	} else {
-		report.Unattributed += spend
+	if !hasSpendCol {
+		return nil, fmt.Errorf("CSV header must include spend, cost or model columns, got %v", header)
 	}
+	return indices, nil
 }
 
 // ReadSpendLogCSV decodes CSV from reader and attributes spend to PRs or unattributed bucket.
-func ReadSpendLogCSV(ctx context.Context, r io.Reader, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) error {
-	csvReader := csv.NewReader(io.LimitReader(r, MaxFileBytes))
+func ReadSpendLogCSV(ctx context.Context, r io.Reader, classifier *Classifier, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) error {
+	limitedReader := &countReader{r: io.LimitReader(r, MaxFileBytes+1)}
+	csvReader := csv.NewReader(limitedReader)
 	header, err := csvReader.Read()
 	if err != nil {
 		return fmt.Errorf("read CSV header: %w", err)
 	}
-
-	indices := map[string]int{}
-	for i, h := range header {
-		indices[strings.ToLower(strings.TrimSpace(h))] = i
+	indices, err := parseCSVHeader(header)
+	if err != nil {
+		return err
 	}
 
-	for lineCount := 0; lineCount < MaxSourceLines; lineCount++ {
+	lineCount := 0
+	for ; lineCount < MaxSourceLines; lineCount++ {
 		if lineCount%1000 == 0 && ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -234,9 +274,17 @@ func ReadSpendLogCSV(ctx context.Context, r io.Reader, branchToPR map[string]int
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err == nil {
-			processCSVRecord(record, indices, branchToPR, validPRs, report)
+		if err != nil {
+			return fmt.Errorf("read CSV line %d: %w", lineCount+2, err)
 		}
+		entry := csvRecordToEntry(record, indices)
+		processSpendEntry(&entry, classifier, branchToPR, validPRs, report)
+	}
+	if limitedReader.count > MaxFileBytes {
+		return fmt.Errorf("spend log exceeds %d byte limit", MaxFileBytes)
+	}
+	if _, err := csvReader.Read(); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("spend log exceeds %d lines limit", MaxSourceLines)
 	}
 	return nil
 }
@@ -264,6 +312,16 @@ func extractCSVField(record []string, indices map[string]int, field string) stri
 	return ""
 }
 
+func extractCSVInt64(record []string, indices map[string]int, field string) int64 {
+	if idx, ok := indices[field]; ok && idx < len(record) {
+		val, err := strconv.ParseInt(strings.TrimSpace(record[idx]), 10, 64)
+		if err == nil {
+			return val
+		}
+	}
+	return 0
+}
+
 func extractCSVPR(record []string, indices map[string]int) json.RawMessage {
 	if idx, ok := indices["pull_request"]; ok && idx < len(record) {
 		return json.RawMessage(strconv.Quote(strings.TrimSpace(record[idx])))
@@ -287,6 +345,9 @@ func extractCSVTags(record []string, indices map[string]int) []string {
 func csvRecordToEntry(record []string, indices map[string]int) rawSpendEntry {
 	var entry rawSpendEntry
 	entry.Spend = extractCSVSpend(record, indices)
+	entry.Model = extractCSVField(record, indices, "model")
+	entry.Tokens = extractCSVInt64(record, indices, "tokens")
+	entry.InputTokens = extractCSVInt64(record, indices, "input_tokens")
 	entry.Branch = extractCSVField(record, indices, "branch")
 	entry.PullRequest = extractCSVPR(record, indices)
 	entry.Tags = extractCSVTags(record, indices)
@@ -296,7 +357,6 @@ func csvRecordToEntry(record []string, indices map[string]int) rawSpendEntry {
 	return entry
 }
 
-// ReadSpendLogFile reads a gateway spend-log export file (JSON lines or CSV).
 func buildPRLookupMaps(prs []forge.MergedPullRequest) (map[string]int, map[int]bool) {
 	branchToPR := make(map[string]int, len(prs))
 	validPRs := make(map[int]bool, len(prs))
@@ -309,7 +369,7 @@ func buildPRLookupMaps(prs []forge.MergedPullRequest) (map[string]int, map[int]b
 	return branchToPR, validPRs
 }
 
-func parseSpendLogStream(ctx context.Context, r io.Reader, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) error {
+func parseSpendLogStream(ctx context.Context, r io.Reader, classifier *Classifier, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) error {
 	bufReader := bufio.NewReader(r)
 	peekBytes, peekErr := bufReader.Peek(100)
 	if peekErr != nil && len(peekBytes) == 0 {
@@ -317,13 +377,13 @@ func parseSpendLogStream(ctx context.Context, r io.Reader, branchToPR map[string
 	}
 	trimmed := bytes.TrimSpace(peekBytes)
 	if len(trimmed) > 0 && trimmed[0] == '{' {
-		return ReadSpendLogJSONL(ctx, bufReader, branchToPR, validPRs, report)
+		return ReadSpendLogJSONL(ctx, bufReader, classifier, branchToPR, validPRs, report)
 	}
-	return ReadSpendLogCSV(ctx, bufReader, branchToPR, validPRs, report)
+	return ReadSpendLogCSV(ctx, bufReader, classifier, branchToPR, validPRs, report)
 }
 
 // ReadSpendLogFile reads a gateway spend-log export file (JSON lines or CSV).
-func ReadSpendLogFile(ctx context.Context, path string, prs []forge.MergedPullRequest) (reportResult *SpendReport, resultErr error) {
+func ReadSpendLogFile(ctx context.Context, path string, prs []forge.MergedPullRequest, classifier *Classifier) (reportResult *SpendReport, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -337,12 +397,30 @@ func ReadSpendLogFile(ctx context.Context, path string, prs []forge.MergedPullRe
 	}
 	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
 
+	info, err := f.Stat()
+	if err == nil && info.Size() > MaxFileBytes {
+		return nil, fmt.Errorf("spend log file %s exceeds %d byte limit", cleanPath, MaxFileBytes)
+	}
+
 	branchToPR, validPRs := buildPRLookupMaps(prs)
 	report := &SpendReport{
-		SpendByPRNumber: make(map[int]float64),
+		SpendByPRNumber:          make(map[int]float64),
+		RequestsByPRNumber:       make(map[int]int),
+		LocalRequestsByPRNumber:  make(map[int]int),
+		FrontierTokensByPRNumber: make(map[int]int64),
 	}
-	if err := parseSpendLogStream(ctx, f, branchToPR, validPRs, report); err != nil {
+	if err := readSpendLogFormat(ctx, f, cleanPath, classifier, branchToPR, validPRs, report); err != nil {
 		return nil, fmt.Errorf("read spend log file %s: %w", cleanPath, err)
 	}
 	return report, nil
+}
+
+func readSpendLogFormat(ctx context.Context, f io.Reader, path string, classifier *Classifier, branchToPR map[string]int, validPRs map[int]bool, report *SpendReport) error {
+	if strings.HasSuffix(path, ".jsonl") {
+		return ReadSpendLogJSONL(ctx, f, classifier, branchToPR, validPRs, report)
+	}
+	if strings.HasSuffix(path, ".csv") {
+		return ReadSpendLogCSV(ctx, f, classifier, branchToPR, validPRs, report)
+	}
+	return parseSpendLogStream(ctx, f, classifier, branchToPR, validPRs, report)
 }

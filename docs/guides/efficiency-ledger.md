@@ -24,19 +24,31 @@ efficiency:
     spend_log:
       path: ".workingdir/spend-export.jsonl"
   frontier_models:
-    - "claude-3-7-sonnet"
-    - "claude-3-5-sonnet"
+    - "claude-opus-"
+    - "claude-sonnet-"
+    - "claude-3-"
+    - "claude-4"
+    - "claude-5"
     - "gpt-4"
+    - "gpt-5"
+    - "o1-"
     - "o1"
+    - "o3-"
     - "o3"
+    - "gemini-1.5-pro"
+    - "gemini-2.0-pro"
     - "gemini-2.5-pro"
+    - "gemini-3"
     - "heavy-frontier"
+    - "grok-3"
+    - "grok-4"
+    - "deepseek-reasoner"
+    - "deepseek-r1"
   local_models:
     - "local"
     - "cluster"
     - "ollama"
     - "vllm"
-    - "nano"
     - "gpu-local"
 ```
 
@@ -76,7 +88,7 @@ caps):
    issues with their creation times. Loaded from a local JSON fixture (`sources.forge.path` or
    `--forge-records`) or queried via the live forge adapter (`internal/forge`) when credentials
    are present.
-2. **Agent session transcripts:** A configured directory of Claude Code JSONL files. Each line
+2. **Agent session transcripts:** A configured directory of agent session JSONL files. Each line
    carries `gitBranch` and token usage metrics. Session lines join to a pull request **only by
    exact head-branch match**, never by guess. Operator touches count human-authored user messages;
    tool results and hook or system injections are strictly excluded.
@@ -89,8 +101,9 @@ caps):
 
 For each landed pull request unit, the ledger computes:
 
-- **Issue-to-merge time:** Duration from the earliest closing issue creation time (or the pull
-  request creation time if no closing issue is linked) to pull request merge time.
+- **Issue-to-merge time:** Duration from the earliest closing issue creation time to pull request
+  merge time. When no closing issue is linked, the measurement falls back to the pull request creation
+  time and is marked with `(PR)`. When closing issues are linked but unmeasured, `not measured` is reported.
 - **Operator touches:** Count of human user messages in joined transcript session lines.
 - **Frontier tokens:** Total tokens (input, cache creation, cache read, output) consumed by models
   classified as frontier.

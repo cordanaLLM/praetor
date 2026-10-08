@@ -48,23 +48,31 @@ type SpendLogSource struct {
 	Path string `yaml:"path,omitempty"`
 }
 
-// DefaultFrontierModels returns the documented default list of models/families/tiers classified as frontier.
+// DefaultFrontierModels returns the documented default list of model prefixes classified as frontier.
 func DefaultFrontierModels() []string {
 	return []string{
-		"claude-3-7-sonnet",
-		"claude-3-5-sonnet",
-		"claude-3-opus",
+		"claude-opus-",
+		"claude-sonnet-",
+		"claude-3-",
+		"claude-4",
+		"claude-5",
 		"gpt-4",
-		"gpt-4o",
-		"gpt-4.5",
+		"gpt-5",
+		"o1-",
 		"o1",
+		"o3-",
 		"o3",
+		"o4-",
+		"o4",
 		"gemini-1.5-pro",
-		"gemini-2.0-flash",
+		"gemini-2.0-pro",
 		"gemini-2.5-pro",
+		"gemini-3",
 		"heavy-frontier",
 		"grok-3",
+		"grok-4",
 		"deepseek-reasoner",
+		"deepseek-r1",
 	}
 }
 
@@ -75,7 +83,6 @@ func DefaultLocalModels() []string {
 		"cluster",
 		"ollama",
 		"vllm",
-		"nano",
 		"gpu-local",
 	}
 }
