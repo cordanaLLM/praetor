@@ -89,8 +89,8 @@ run_pinned() { #
 } #
 #
 # install_pinned DIRECTORY WHERE FIX: go install the pinned engine into DIRECTORY, bounded by
-# the timeout, through a scratch directory renamed into place so an interrupted install leaves
-# no half-written engine under the pin.
+# the timeout, through a scratch directory whose files are renamed into place so an interrupted
+# install leaves no half-written engine under the pin.
 install_pinned() { #
   command -v go >/dev/null 2>&1 || refuse "the Go toolchain is not on PATH, so the engine pinned by $2 cannot be installed; install Go and run: $3" #
   scratch=$1.tmp.$$ #
@@ -112,8 +112,21 @@ install_pinned() { #
     rm -rf "$scratch" "$log" #
     refuse "installing the engine pinned by $2 failed (exit $status, timeout $timeout seconds); run: $3" #
   fi #
-  rm -rf "$1" "$log" #
-  mv "$scratch" "$1" || refuse "cannot move the installed engine into $1 for the pin in $2; run: $3" #
+  rm -f "$log" #
+  # Jobs that run in parallel, and worktrees that share the cache, each install on a cold cache.
+  # The target directory is never removed or replaced as a whole: each built file is renamed over
+  # the target one, which is atomic and swaps in an identical file when another job was first. A
+  # rename that fails because the engine is running (Windows) leaves that engine in place.
+  mkdir -p "$1" || refuse "cannot create $1 for the engine pinned by $2; run: $3" #
+  for built in "$scratch"/*; do #
+    if ! mv -f "$built" "$1/" 2>/dev/null && [ ! -e "$1/${built##*/}" ]; then #
+      refuse "cannot move the installed engine into $1 for the pin in $2; run: $3" #
+    fi #
+  done #
+  rm -rf "$scratch" #
+  if [ ! -x "$1/$binary" ] && [ ! -x "$1/$binary.exe" ]; then #
+    refuse "the installed engine is not in $1 for the pin in $2; run: $3" #
+  fi #
 } #
 #
 pins=$(declared_pins) #

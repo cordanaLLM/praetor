@@ -1,3 +1,4 @@
 type: fixed
-title: Run the hooks with the engine the repository pins, installed once per pin, and fail closed when the pin cannot be resolved
-breaking: false
+title: "Git hooks run the engine the repository pins with PRAETOR_REF, installed once per pin with go install, and fail closed when the pin cannot be resolved or installed; a repository that declares a pin now needs a Go toolchain and network on the first hook run, and a PRAETOR_REF that is no commit id or release tag blocks commits; pin a commit or tag, install Go or pre-seed the cache, tune PRAETOR_ENGINE_INSTALL_TIMEOUT"
+issue: "#906"
+breaking: true

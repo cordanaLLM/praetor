@@ -73,11 +73,20 @@ func (f *engineFixture) goStub(body string) {
 // run starts the launcher with the cache and extra environment.
 func (f *engineFixture) run(extra ...string) (string, int) {
 	f.t.Helper()
+	return f.runLine(engineLauncher, extra...)
+}
+
+// runLine is run with another command line.
+func (f *engineFixture) runLine(line string, extra ...string) (string, int) {
+	f.t.Helper()
+	if os.PathSeparator == '\\' {
+		f.t.Skip("POSIX shell stubs required: the toolbox links MSYS tools, which do not start from a link, and the stubs are shell scripts")
+	}
 	shellPath, err := lookShell()
 	if err != nil {
 		f.t.Skip(err.Error())
 	}
-	return runHookLineEnv(f.t, shellPath, engineLauncher, f.stubs, f.work, append([]string{"XDG_CACHE_HOME=" + f.cache}, extra...))
+	return runHookLineEnv(f.t, shellPath, line, f.stubs, f.work, append([]string{"XDG_CACHE_HOME=" + f.cache}, extra...))
 }
 
 func lookShell() (string, error) {
@@ -149,6 +158,34 @@ func TestEngineLauncher_Positive_InstallsOncePerPin(t *testing.T) {
 	f.run()
 	if got := mustRead(t, f.log); strings.Count(got, "go install") != 2 || !strings.Contains(got, "@1111111aaaaaaa") {
 		t.Fatalf("a new pin did not install its own engine: %q", got)
+	}
+}
+
+// Boundary: jobs that start together on a cold cache (parallel pre-commit jobs, worktrees sharing
+// the cache) all succeed, and the pin directory holds the engine and nothing else.
+func TestEngineLauncher_Boundary_ConcurrentColdInstalls(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.goStub("sleep 1\n" + installingGo)
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n")
+	job := "sh " + engineLauncherFile + " audit"
+	line := "for n in 1 2 3 4; do (" + job + " >\"out$n\" 2>&1; echo $? >\"code$n\") & done; wait"
+	if out, code := f.runLine(line); code != 0 {
+		t.Fatalf("exit %d, output %q", code, out)
+	}
+	for _, n := range []string{"1", "2", "3", "4"} {
+		out, code := mustRead(t, filepath.Join(f.work, "out"+n)), mustRead(t, filepath.Join(f.work, "code"+n))
+		if strings.TrimSpace(code) != "0" || !strings.Contains(out, "installed-engine audit") {
+			t.Errorf("job %s: exit %q, output %q", n, strings.TrimSpace(code), out)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(f.cache, "praetor", "engine", enginePin))
+	if err != nil || len(entries) != 1 || entries[0].Name() != "standardsctl" {
+		t.Fatalf("pin directory = %v (%v), want only standardsctl", entries, err)
+	}
+	left, err := filepath.Glob(filepath.Join(f.cache, "praetor", "engine", "*.tmp.*"))
+	if err != nil || len(left) != 0 {
+		t.Fatalf("scratch left behind: %v (%v)", left, err)
 	}
 }
 

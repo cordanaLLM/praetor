@@ -353,8 +353,9 @@ The first hook run with a pin that is not cached installs it:
 GOBIN=<cache>/<pin> go install github.com/cordanaLLM/praetor/cmd/standardsctl@<pin>
 ```
 
-The install goes through a scratch directory renamed into place, so an interrupted run leaves no
-half-written engine, and it is bounded by `PRAETOR_ENGINE_INSTALL_TIMEOUT` seconds (default
+The install goes through a scratch directory whose files are renamed into place, so an interrupted run leaves no
+half-written engine and parallel jobs on a cold cache cannot remove each other's engine
+(`TestEngineLauncher_Boundary_ConcurrentColdInstalls`), and it is bounded by `PRAETOR_ENGINE_INSTALL_TIMEOUT` seconds (default
 300). Later runs find the cached binary and install nothing. Changing the pin selects, and
 installs when needed, another directory; old directories stay until you delete them.
 
