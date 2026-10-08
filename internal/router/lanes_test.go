@@ -10,7 +10,7 @@ import (
 
 const laneCatalog = `version: 1
 gateway:
-  address: http://gateway.example.invalid/v1
+  address: https://gateway.example.invalid/v1
   key_env: GATEWAY_KEY
 lanes:
   gateway-coding:

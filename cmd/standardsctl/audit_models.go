@@ -34,6 +34,6 @@ func auditModelCatalog(ctx context.Context, rootDir string, now time.Time) error
 	for _, finding := range findings {
 		fmt.Printf("  - %s\n", finding)
 	}
-	return fmt.Errorf("[FAIL] model catalog %s is stale: %d finding(s); run praetorctl models sync, or replace the entries it reports",
+	return fmt.Errorf("[FAIL] model catalog %s is stale: %d finding(s); delete or replace the entries it reports; a retired seed entry leaves only with praetorctl models sync --prune on a machine that can run local discovery, or by hand",
 		router.DefaultConfigPath, len(findings))
 }

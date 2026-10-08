@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const testGatewayAddress = "http://gateway.example.invalid/v1"
+const testGatewayAddress = "https://gateway.example.invalid/v1"
 
 func aliasModel(id, alias string, status AliasStatus, reason string) ModelDescriptor {
 	model := costTaskModel(id, 0.1, 0.1)
@@ -122,8 +122,35 @@ func TestHTTPAliasProber(t *testing.T) {
 	}
 	server.Close()
 	t.Setenv("PRAETOR_TEST_PROBE_KEY", "k")
-	if err := prober(context.Background(), gw, "light"); err == nil || errors.Is(err, ErrProbeNotRun) {
-		t.Fatalf("unreachable gateway must be an unanswered alias: %v", err)
+	if err := prober(context.Background(), gw, "light"); !errors.Is(err, ErrProbeNotRun) {
+		t.Fatalf("an unreachable gateway is no evidence about the alias: %v", err)
+	}
+}
+
+func TestProbeTreatsTransientStatusesAsNotRun(t *testing.T) {
+	for _, tc := range []struct {
+		status   int
+		notRun   bool
+		boundary string
+	}{{http.StatusTooManyRequests, true, "rate limit"}, {http.StatusServiceUnavailable, true, "5xx"}, {http.StatusRequestTimeout, true, "timeout"},
+		{http.StatusBadRequest, false, "refusal"}, {http.StatusUnauthorized, false, "key refused"}, {499, false, "just below 5xx"}, {500, true, "first 5xx"}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tc.status) }))
+		err := HTTPAliasProber(server.Client())(context.Background(), GatewayConfig{Address: server.URL}, "light")
+		server.Close()
+		if err == nil || errors.Is(err, ErrProbeNotRun) != tc.notRun {
+			t.Fatalf("%s (HTTP %d): not-run = %v, err %v", tc.boundary, tc.status, errors.Is(err, ErrProbeNotRun), err)
+		}
+	}
+}
+
+func TestGatewayAddressRequiresHTTPSExceptOnLoopback(t *testing.T) {
+	for address, ok := range map[string]bool{"https://gw.example/v1": true, "http://localhost:4000": true, "http://127.0.0.1:4000/v1": true,
+		"http://[::1]:4000": true, "http://gw.example/v1": false, "http://127.0.0.1.example/v1": false, "http://10.0.0.5/v1": false} {
+		cfg := gatewayConfig(aliasModel("alias", "light", "", ""))
+		cfg.Gateway.Address = address
+		if err := validateGateway(cfg); (err == nil) != ok {
+			t.Errorf("%s: accepted = %v, err %v", address, err == nil, err)
+		}
 	}
 }
 
@@ -156,14 +183,11 @@ func TestRouteNeverFallsBackToPinnedModelWhenGatewayServesAliases(t *testing.T) 
 	}
 }
 
-func TestRouteSkipsUnprobedAliasAndKeepsPinnedWhenNoAliasAnswers(t *testing.T) {
+func TestRouteExcludesPinnedModelsWhenNoAliasAnswers(t *testing.T) {
 	cfg := gatewayConfig(costTaskModel("pinned", 1, 1), aliasModel("alias-new", "new", "", ""))
-	route := routeTask(t, NewModelCapacityArbiter(cfg, nil), TaskRequest{Task: "implement", InputTokens: 1})
-	if route.Model.ID != "pinned" {
-		t.Fatalf("routed to %s", route.Model.ID)
-	}
-	if len(route.Skipped) != 1 || !strings.Contains(route.Skipped[0].Reason, "not been probed") {
-		t.Fatalf("unprobed alias not reported: %+v", route.Skipped)
+	_, err := NewModelCapacityArbiter(cfg, nil).SelectForTask(context.Background(), TaskRequest{Task: "implement", InputTokens: 1})
+	if !errors.Is(err, ErrNoEligibleModel) || !strings.Contains(err.Error(), "alias-new: alias has not been probed") || !strings.Contains(err.Error(), "pinned: pinned model") {
+		t.Fatalf("a gateway outage must not bring pinned models back: %v", err)
 	}
 }
 
@@ -178,13 +202,13 @@ func TestRouteKeepsLocalModelBesideAnsweringAlias(t *testing.T) {
 }
 
 func TestTierOnlyRouteRanksByRatesWithoutEstimates(t *testing.T) {
-	cfg := taskConfig(costTaskModel("dear", 3, 3), costTaskModel("cheap", 1, 1), costTaskModel("middle", 1, 2))
+	cfg := taskConfig(costTaskModel("dear", 3, 3), costTaskModel("zz-cheap", 1, 1), costTaskModel("middle", 1, 2))
 	arbiter := NewModelCapacityArbiter(cfg, nil)
 	route := routeTask(t, arbiter, TaskRequest{Task: "implement"})
-	if route.Model.ID != "cheap" || route.EstimatedCost != 0 || !strings.Contains(route.Basis, "no token estimates") {
+	if route.Model.ID != "zz-cheap" || route.EstimatedCost != 0 || !strings.Contains(route.Basis, "no token estimates") {
 		t.Fatalf("tier-only route wrong: %+v", route)
 	}
-	if got := routeTask(t, arbiter, TaskRequest{Task: "implement", OutputTokens: 1}); got.Model.ID != "cheap" || strings.Contains(got.Basis, "no token estimates") {
+	if got := routeTask(t, arbiter, TaskRequest{Task: "implement", OutputTokens: 1}); got.Model.ID != "zz-cheap" || strings.Contains(got.Basis, "no token estimates") {
 		t.Fatalf("estimates must keep the cost basis: %+v", got)
 	}
 	tied := NewModelCapacityArbiter(taskConfig(costTaskModel("b", 1, 1), costTaskModel("a", 1, 1)), nil)

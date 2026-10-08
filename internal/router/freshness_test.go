@@ -75,7 +75,7 @@ func writeCatalogText(t *testing.T, body string) string {
 
 const syncAliasCatalog = `version: 1
 gateway:
-  address: http://gateway.example.invalid/v1
+  address: https://gateway.example.invalid/v1
 lanes:
   runner:
     harness: runner
@@ -140,7 +140,7 @@ func TestSyncWithoutProbeFlagMakesNoCall(t *testing.T) {
 	}
 }
 
-func TestSyncSeedEntriesAreDatedAndNeverPreview(t *testing.T) {
+func TestSyncSeedEntriesAreNeverPreviewAndNeverAgeJudged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "routing.yaml")
 	result, err := syncCatalog(context.Background(), path, SyncOptions{Now: freshnessNow}, nil)
 	if err != nil {
@@ -155,17 +155,26 @@ func TestSyncSeedEntriesAreDatedAndNeverPreview(t *testing.T) {
 	}
 	for _, tier := range cfg.Tiers {
 		for _, model := range tier.Models {
-			if model.AsOf != SeedListDate || IsPreviewModel(model) {
+			if model.AsOf != "" || IsPreviewModel(model) {
 				t.Fatalf("seed entry %s: as_of %q", model.ID, model.AsOf)
 			}
 		}
 	}
-	later := freshnessNow.AddDate(0, 0, DefaultCatalogMaxAgeDays+1)
-	stale, err := syncCatalog(context.Background(), path, SyncOptions{Now: later}, nil)
-	if err != nil || len(stale.Findings) == 0 {
-		t.Fatalf("a sync dates seed entries by the seed list, so an old list must read as stale: %v %v", stale.Findings, err)
+	// The same unchanged catalog must give the same audit result on any later date.
+	far := freshnessNow.AddDate(10, 0, 0)
+	if got := CatalogFindings(cfg, far); len(got) != 0 {
+		t.Fatalf("a seed-only catalog turned stale with the wall clock: %v", got)
 	}
-	if got := CatalogFindings(cfg, later); len(got) != len(stale.Findings) {
-		t.Fatalf("sync and audit disagree: %d vs %d", len(got), len(stale.Findings))
+	stamped := ModelDescriptor{ID: "seed-with-old-date", Source: SourceSeed, AsOf: "2020-01-01"}
+	if got := entryFindings(stamped, far, 24*time.Hour); len(got) != 0 {
+		t.Fatalf("a seed-owned entry carrying an old as_of must not be age-judged: %v", got)
+	}
+	handMade := ModelDescriptor{ID: "hand-made", AsOf: "2020-01-01"}
+	if got := entryFindings(handMade, far, 24*time.Hour); len(got) != 1 {
+		t.Fatalf("a hand-made entry must still be age-judged: %v", got)
+	}
+	preview := ModelDescriptor{ID: "seed-preview", Source: SourceSeed, Preview: true}
+	if got := entryFindings(preview, far, 24*time.Hour); len(got) != 1 {
+		t.Fatalf("a seed preview entry must still be flagged: %v", got)
 	}
 }

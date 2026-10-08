@@ -268,21 +268,25 @@ defaults or docs names a gateway: the adopter configures its address and aliases
 second deadline) and records `alias_status: answers` or `unanswered` with the gateway's
 refusal in `alias_reason`. It does not trust the gateway's model listing, which can list
 more than the key may use. A probe that cannot run, such as an unset `key_env` variable,
-changes nothing and is reported as `Alias not probed`. `--probe-aliases=false` skips the
-calls. The route then applies three rules:
+changes nothing and is reported as `Alias not probed`, as is a transport failure or an HTTP
+408, 429 or 5xx answer, which say nothing about the alias; any other refusal is recorded
+as `unanswered`. The probe is opt-in (`--probe-aliases`) because it sends the value of
+`key_env` as a bearer token to the declared address: the address must be `https` unless
+it is a loopback host, and a change to the `gateway` section in a pull request needs the
+same review as a change to a CI secret binding. The route then applies three rules:
 
 - An alias entry is a candidate only while its status is `answers`. An `unanswered` or
   never probed alias is skipped and listed in the result's `skipped` array with the
   reason.
-- Once any alias answers, a pinned model is excluded too, however cheap, because the
-  gateway refuses concrete IDs; only models from a local runtime (`source: local`)
-  stay, since they never pass through the gateway. With no answering alias the
-  declared pinned models remain the only candidates. No eligible model is an error
-  that quotes the skipped reasons.
+- A catalog that declares a gateway with alias entries excludes every pinned model, however
+  cheap and whatever the probes said, because the gateway refuses concrete IDs; only
+  models from a local runtime (`source: local`) stay, since they never pass through the
+  gateway. A gateway outage therefore fails closed: no eligible model is an error that
+  quotes the skipped reasons.
 - The harness is told the alias, never a model ID behind it.
 
 `TestRouteNeverFallsBackToPinnedModelWhenGatewayServesAliases`,
-`TestRouteSkipsUnprobedAliasAndKeepsPinnedWhenNoAliasAnswers` and
+`TestRouteExcludesPinnedModelsWhenNoAliasAnswers` and
 `TestProbeAliasesRecordsAnswerAndReason` pin these.
 
 ## Lanes and outcomes
@@ -326,14 +330,19 @@ Every entry may carry `preview: true` and an `as_of` date (YYYY-MM-DD) for when 
 was written or confirmed; a model ID containing `preview` counts as preview. `models
 sync` lists each preview entry and each entry whose `as_of` is older than
 `governance.catalog_max_age_days` (default 180) as `Catalog stale`. An answering alias
-probe sets `as_of` to the sync date, a discovered local model gets the sync date, and a
-seed entry gets `router.SeedListDate`, the date the seed list was last edited: it dates
-the list and does not claim a provider confirmed the price. An entry without `as_of` is
-not judged on age.
+probe sets `as_of` to the sync date and a discovered local model gets the sync date. An
+entry without `as_of`, and an entry owned by the seed list (`source: seed`), is not
+judged on age: the seed list ships inside the binary, so a fixed date would turn the
+audit red on that date with no change in the repository. The preview check applies to
+every entry, seed included, so the seed prices are only as current as the binary.
 
 `praetorctl audit` runs the same check over `.config/models/routing.yaml`
 (`auditModelCatalog`) and fails on any finding; a repository without that file skips it,
-saying so, and a file that does not load fails. The seed list no longer carries the three
+saying so, and a file that does not load fails. A retired seed entry that an older
+`models sync` wrote (for example a preview model) is removed by `praetorctl models sync
+--prune` on a machine that can run local discovery, since `--prune` drops local entries
+discovery does not find, or by deleting the entry by hand; a plain `models sync` refuses
+to remove it. The seed list no longer carries the three
 preview models it once did. Tests: `TestAuditModelCatalogFailsStaleAndPreviewEntries`,
 `TestAuditModelCatalogWindowBoundary`, `TestSyncProbesAliasesAndReportsStalePreviewEntries`.
 

@@ -443,7 +443,6 @@ func seedCatalog() *RoutingConfig {
 			ID: m.id, Family: family, Source: SourceSeed,
 			RPMLimit: m.rpm, TPMLimit: m.tpm,
 			CostPerMIn: m.costIn, CostPerMOut: m.costOut, CostRatesDeclared: true,
-			AsOf: SeedListDate,
 		})
 	}
 	return cfg

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,7 @@ func writeRouteCLIInput(t *testing.T, body string) string {
 
 const cliLaneFixture = `version: 1
 gateway:
-  address: http://gateway.example.invalid/v1
+  address: https://gateway.example.invalid/v1
 lanes:
   gateway-coding:
     harness: coding-harness
@@ -81,22 +82,17 @@ func TestModelsRouteCLITierOnlyReturnsExecutableLane(t *testing.T) {
 	}
 }
 
-func TestModelsRouteCLIUnansweredAliasIsSkippedWithItsReason(t *testing.T) {
+func TestModelsRouteCLIUnansweredAliasFailsClosedWithItsReason(t *testing.T) {
 	body := strings.Replace(cliLaneFixture, "alias_status: answers", "alias_status: unanswered, alias_reason: 'HTTP 400: Invalid model name passed'", 1)
 	path := writeRouteCLIInput(t, body)
-	out, err := captureStdout(t, func() error { return runModels([]string{"route", "--config=" + path, "--task=implement"}) })
-	if err != nil {
-		t.Fatal(err)
+	_, err := captureStdout(t, func() error { return runModels([]string{"route", "--config=" + path, "--task=implement"}) })
+	if !errors.Is(err, router.ErrNoEligibleModel) {
+		t.Fatalf("a dead gateway must fail closed, not fall back to a pinned model: %v", err)
 	}
-	var report cliRouteLane
-	if err := json.Unmarshal([]byte(out), &report); err != nil {
-		t.Fatal(err)
-	}
-	if len(report.Skipped) != 1 || report.Skipped[0].Model != "gw-light" || !strings.Contains(report.Skipped[0].Reason, "Invalid model name passed") {
-		t.Fatalf("the dead alias must be skipped with its reason: %+v", report.Skipped)
-	}
-	if report.Model.ID != "pinned-cheap" {
-		t.Fatalf("with no answering alias the declared pinned model remains the only candidate: %s", report.Model.ID)
+	for _, want := range []string{"gw-light: alias did not answer the gateway probe: HTTP 400: Invalid model name passed", "pinned-cheap: pinned model"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error lacks %q: %v", want, err)
+		}
 	}
 }
 

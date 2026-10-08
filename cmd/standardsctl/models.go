@@ -18,7 +18,7 @@ func runModels(args []string) error {
 	discoverLocal := fs.Bool("discover-local", true, "Auto-discover local Ollama/vLLM models")
 	endpoints := fs.String("local-endpoints", "http://localhost:11434,http://localhost:8000", "Comma-separated local runtime endpoints")
 	prune := fs.Bool("prune", false, "models sync: rebuild the catalog from the seed list and this run's local discovery, removing every other entry")
-	probeAliases := fs.Bool("probe-aliases", true, "models sync: probe each gateway alias entry once and record whether it answers")
+	probeAliases := fs.Bool("probe-aliases", false, "models sync: probe each gateway alias entry once and record whether it answers; sends the gateway key_env value to the declared gateway address")
 	route := addModelRouteFlags(fs)
 	outcome := addModelOutcomeFlags(fs)
 

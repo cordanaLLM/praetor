@@ -12,9 +12,6 @@ const (
 	DefaultCatalogMaxAgeDays = 180
 	// MaxCatalogMaxAgeDays bounds a declared window.
 	MaxCatalogMaxAgeDays = 3650
-	// SeedListDate is the date the built-in seed list was last edited. Seed entries carry it
-	// as their as_of date: it dates the list, it does not claim a provider confirmed the entry.
-	SeedListDate = "2026-10-08"
 )
 
 // CatalogFinding is one catalog entry the freshness policy flags.
@@ -41,8 +38,8 @@ func IsPreviewModel(model ModelDescriptor) bool {
 }
 
 // CatalogFindings lists, sorted by model ID, the entries that are marked preview or whose
-// as_of date is older than the freshness window at now. An entry without an as_of date is not
-// judged on age: nothing says when its data was written. The result is empty for a fresh
+// as_of date is older than the freshness window at now. An entry without an as_of date, and an
+// entry owned by the seed list, is not judged on age: nothing says when its data was written. The result is empty for a fresh
 // catalog, never nil-versus-empty significant.
 func CatalogFindings(cfg *RoutingConfig, now time.Time) []CatalogFinding {
 	window := CatalogMaxAge(cfg)
@@ -66,7 +63,10 @@ func entryFindings(model ModelDescriptor, now time.Time, window time.Duration) [
 	if IsPreviewModel(model) {
 		findings = append(findings, CatalogFinding{Model: model.ID, Reason: "marked preview"})
 	}
-	if model.AsOf == "" {
+	// A seed entry ships inside the binary, so its age is the binary's age; stamping it with a
+	// fixed date would turn the audit red on that date with no change in the repository. The
+	// preview check above still applies to it.
+	if model.AsOf == "" || model.Source == SourceSeed {
 		return findings
 	}
 	asOf, err := time.Parse(time.DateOnly, model.AsOf)
