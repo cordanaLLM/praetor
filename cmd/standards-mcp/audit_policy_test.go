@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,7 +101,7 @@ func TestServerAuditExternalManifestPreservesExplicitAuthorization(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 10/10")
+	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 11/11")
 }
 
 func TestServerAuditUsesSelectedCatalog(t *testing.T) {
@@ -110,7 +111,7 @@ func TestServerAuditUsesSelectedCatalog(t *testing.T) {
 	relocateCatalog(t, root, "catalog")
 	expectError(t, "missing default catalog", callTool(t, srv, "standards_audit", nil), "materialized profile")
 	after := callTool(t, srv, "standards_audit", map[string]any{"catalog_root": "catalog"})
-	expectText(t, "selected catalog", after, "passed: 10/10")
+	expectText(t, "selected catalog", after, "passed: 11/11")
 	// Mounting identical catalog bytes at another path retains policy identity.
 	beforeLine := strings.Split(before.Content[0].Text, "\n")[2]
 	afterLine := strings.Split(after.Content[0].Text, "\n")[2]
@@ -157,7 +158,7 @@ func TestServerAuditRunsTheSupplyChainGate(t *testing.T) {
 		"    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/attest-build-provenance@v4\n")
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "declared level met", audit, "[PASS] Supply chain (HISS-11): SLSA Build Level 2 declared, Level 2 measured from release.yml.")
-	expectText(t, "declared level met", audit, "passed: 10/10")
+	expectText(t, "declared level met", audit, "passed: 11/11")
 }
 
 // TestServerAuditRunsTheWorkflowTriggerCheck (#817): standards_audit runs the HISS-18 workflow
@@ -171,7 +172,7 @@ func TestServerAuditRunsTheWorkflowTriggerCheck(t *testing.T) {
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "unfiltered push", audit,
 		"[WARN] Workflow triggers (HISS-18): .github/workflows/everywhere.yml:1: push runs on every branch and tag")
-	expectText(t, "unfiltered push", audit, "passed: 10/10")
+	expectText(t, "unfiltered push", audit, "passed: 11/11")
 	expires := config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n"+
 		"facets: []\nexceptions:\n  - rule: \"HISS-18\"\n    path: \".github/workflows/everywhere.yml\"\n"+
@@ -179,5 +180,31 @@ func TestServerAuditRunsTheWorkflowTriggerCheck(t *testing.T) {
 	excepted := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "excepted push", excepted, "[PASS] Workflow triggers (HISS-18): .github/workflows/everywhere.yml excepted until "+
 		expires+" by the exceptions entry (rule HISS-18, .github/workflows/everywhere.yml): builds every branch push by design")
-	expectText(t, "excepted push", excepted, "passed: 10/10")
+	expectText(t, "excepted push", excepted, "passed: 11/11")
+}
+
+// TestServerAuditRunsTheBuildWarningsGate (#816): standards_audit runs the HISS-10 gate the CLI
+// audit runs. Boundary: a repository without a build lane skips it with the reason. Negative: a
+// cargo lane without -D warnings fails, naming the workflow and the step. Positive: RUSTFLAGS in
+// the job's env: passes, and so does the failing lane while a live HISS-10 entry names its
+// workflow.
+func TestServerAuditRunsTheBuildWarningsGate(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	expectText(t, "no build lane", callTool(t, srv, "standards_audit", nil),
+		"[SKIP] Build warnings (HISS-10) not checked: no run: step under .github/workflows builds C, C++, Rust or Go code")
+	lane := "on: push\njobs:\n  rust:\n    runs-on: ubuntu-latest\n%s    steps:\n      - run: cargo test --locked\n"
+	writeFixtureFile(t, root, ".github/workflows/ci.yml", fmt.Sprintf(lane, ""))
+	expectError(t, "lane without the form", callTool(t, srv, "standards_audit", nil),
+		`[FAIL] Build warnings (HISS-10): .github/workflows/ci.yml:6: job rust, step "cargo test --locked": Cargo builds without warnings as errors`)
+	writeFixtureFile(t, root, ".github/workflows/ci.yml", fmt.Sprintf(lane, "    env:\n      RUSTFLAGS: -D warnings\n"))
+	expectText(t, "lane with the form", callTool(t, srv, "standards_audit", nil),
+		"[PASS] Build warnings (HISS-10): 1 build lanes fail on a warning (Cargo 1).")
+	writeFixtureFile(t, root, ".github/workflows/ci.yml", fmt.Sprintf(lane, ""))
+	expires := time.Now().AddDate(0, 0, 30).Format("2006-01-02")
+	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n"+
+		"facets: []\nexceptions:\n  - rule: HISS-10\n    path: .github/workflows/ci.yml\n    reason: vendored crate warns until upstream lands its fix\n"+
+		"    expires: \""+expires+"\"\n")
+	audit := callTool(t, srv, "standards_audit", nil)
+	expectText(t, "excepted lane", audit, "0 build lanes fail on a warning; 1 excepted:")
+	expectText(t, "excepted lane", audit, "passed: 11/11")
 }

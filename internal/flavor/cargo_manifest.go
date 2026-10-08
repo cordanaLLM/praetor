@@ -10,8 +10,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// cargoManifest is what one Cargo.toml declares about crate editions and workspace members, as
-// parseCargoManifest reads it.
+// cargoManifest is what one Cargo.toml declares about crate editions, workspace members and the
+// level of the warnings lint group, as parseCargoManifest reads it.
 type cargoManifest struct {
 	// hasPackage reports a [package] table: the manifest describes a crate.
 	hasPackage bool
@@ -26,6 +26,12 @@ type cargoManifest struct {
 	members, exclude []string
 	// invalid says why a members or exclude value could not be read, "" when both could.
 	invalid string
+	// warnings is the level [lints.rust] gives the warnings lint group, "" for none, and
+	// lintsInherit reports [lints] workspace = true, which takes [workspace.lints] instead.
+	warnings     string
+	lintsInherit bool
+	// workspaceWarnings is the level [workspace.lints.rust] gives the warnings lint group.
+	workspaceWarnings string
 }
 
 // cargoScan is parseCargoManifest's position in the manifest.
@@ -39,10 +45,10 @@ type cargoScan struct {
 	listItems []string
 }
 
-// parseCargoManifest reads the edition and workspace keys of a Cargo.toml. Like the other TOML
-// reads of the module (internal/util/toml.go) it reads the file's shape, not TOML: table
-// headers, single-line keys, dotted or under their table, and the arrays members and exclude
-// hold, which may span lines. Cargo parses the file and rejects a malformed one.
+// parseCargoManifest reads the edition, workspace and warnings lint keys of a Cargo.toml. Like
+// the other TOML reads of the module (internal/util/toml.go) it reads the file's shape, not TOML:
+// table headers, single-line keys, dotted or under their table, and the arrays members and
+// exclude hold, which may span lines. Cargo parses the file and rejects a malformed one.
 func parseCargoManifest(text string) cargoManifest {
 	var scan cargoScan
 	lines := strings.Split(text, "\n")
@@ -90,7 +96,42 @@ func (s *cargoScan) assign(line string) {
 	case "workspace.members", "workspace.exclude":
 		s.listKey, s.listItems = key, nil
 		s.readList(value)
+	default:
+		s.assignLints(key, value)
 	}
+}
+
+// assignLints records the warnings lint keys: [lints.rust] warnings and [workspace.lints.rust]
+// warnings, each a level string or a { level = ..., priority = ... } table, and [lints]
+// workspace = true, also written lints = { workspace = true }
+// (https://doc.rust-lang.org/cargo/reference/manifest.html#the-lints-section,
+// https://doc.rust-lang.org/cargo/reference/workspaces.html#the-lints-table).
+func (s *cargoScan) assignLints(key, value string) {
+	switch key {
+	case "lints.rust.warnings":
+		s.manifest.warnings = lintLevel(value)
+	case "workspace.lints.rust.warnings":
+		s.manifest.workspaceWarnings = lintLevel(value)
+	case "lints.workspace":
+		s.manifest.lintsInherit = s.manifest.lintsInherit || tomlTrue(value)
+	case "lints":
+		s.manifest.lintsInherit = s.manifest.lintsInherit || inheritsWorkspace(value)
+	}
+}
+
+// lintLevel returns the level a [lints] entry's value gives: the string itself, or the level
+// field of an inline table; "" for anything else.
+func lintLevel(value string) string {
+	if level, ok := util.TOMLStringValue(value); ok {
+		return level
+	}
+	level := ""
+	util.TOMLInlineTableFields(value, func(key, fieldValue string) {
+		if text, ok := util.TOMLStringValue(fieldValue); ok && key == "level" {
+			level = text
+		}
+	})
+	return level
 }
 
 // readList reads text, one line of the array listKey opened, and records the array once it

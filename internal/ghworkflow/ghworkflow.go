@@ -37,10 +37,11 @@ const (
 //
 // On and Permissions are raw nodes because each key has several shapes: a trigger is one event,
 // a list or a mapping, and permissions are a shorthand scalar, a scope mapping, or absent, which
-// is not the same as an empty mapping.
+// is not the same as an empty mapping. Env is raw for the reason Step.Env is.
 type Spec struct {
 	On          yaml.Node      `yaml:"on"`
 	Permissions yaml.Node      `yaml:"permissions"`
+	Env         yaml.Node      `yaml:"env"`
 	Defaults    Defaults       `yaml:"defaults"`
 	Jobs        map[string]Job `yaml:"jobs"`
 }
@@ -50,9 +51,11 @@ type Defaults struct {
 	Run RunDefaults `yaml:"run"`
 }
 
-// RunDefaults is defaults.run: the shell every run: step without its own shell: runs under.
+// RunDefaults is defaults.run: the shell every run: step without its own shell: runs under, and
+// the directory it runs in without its own working-directory:.
 type RunDefaults struct {
-	Shell string `yaml:"shell"`
+	Shell            string `yaml:"shell"`
+	WorkingDirectory string `yaml:"working-directory"`
 }
 
 // Job is the subset of one job the audits and the run: block scan decide on.
@@ -64,6 +67,7 @@ type RunDefaults struct {
 //
 // Uses is the reusable workflow a job calls instead of running steps: a path under Dir of this
 // repository ("./.github/workflows/<file>") or "<owner>/<repo>/.github/workflows/<file>@<ref>".
+// Env is raw for the reason Step.Env is.
 type Job struct {
 	Name            string    `yaml:"name"`
 	Uses            string    `yaml:"uses"`
@@ -71,6 +75,7 @@ type Job struct {
 	Needs           yaml.Node `yaml:"needs"`
 	ContinueOnError string    `yaml:"continue-on-error"`
 	Permissions     yaml.Node `yaml:"permissions"`
+	Env             yaml.Node `yaml:"env"`
 	Strategy        Strategy  `yaml:"strategy"`
 	Steps           []Step    `yaml:"steps"`
 	RunsOn          yaml.Node `yaml:"runs-on"`
@@ -86,23 +91,26 @@ type Job struct {
 //
 // Env is a raw node because the key has two shapes: a mapping, or one expression such as
 // `${{ fromJSON(vars.X) }}` that evaluates to one (the workflow schema gives step env a
-// context). A typed map rejects the second shape and would fail the whole document for a key
-// no production check reads.
+// context). A typed map rejects the second shape and would fail the whole document over a key
+// that holds a value the file cannot show; EnvValue reads both.
 //
 // Shell is the step's `shell:`; empty means the job's or the workflow's defaults.run.shell, or
 // else the runner's default (StepShell). ContinueOnError is the step's `continue-on-error:` as
 // written, a literal or an expression, so an aggregate's failing step can be told from one whose
 // failure is forgiven (internal/forge/workflow_aggregate.go).
+// WorkingDirectory is the step's own working-directory:; empty means the job's or the
+// workflow's defaults.run.working-directory, or else the checkout's root.
 type Step struct {
-	Name            string         `yaml:"name"`
-	ID              string         `yaml:"id"`
-	If              string         `yaml:"if"`
-	Uses            string         `yaml:"uses"`
-	Run             string         `yaml:"run"`
-	Shell           string         `yaml:"shell"`
-	ContinueOnError string         `yaml:"continue-on-error"`
-	With            map[string]any `yaml:"with"`
-	Env             yaml.Node      `yaml:"env"`
+	Name             string         `yaml:"name"`
+	ID               string         `yaml:"id"`
+	If               string         `yaml:"if"`
+	Uses             string         `yaml:"uses"`
+	Run              string         `yaml:"run"`
+	Shell            string         `yaml:"shell"`
+	WorkingDirectory string         `yaml:"working-directory"`
+	ContinueOnError  string         `yaml:"continue-on-error"`
+	With             map[string]any `yaml:"with"`
+	Env              yaml.Node      `yaml:"env"`
 	// RunLine is the document line the run: value starts on, its | or > indicator for a block
 	// scalar, and 0 for a step without run:.
 	RunLine int `yaml:"-"`
@@ -198,6 +206,50 @@ func IsWorkflowPath(rel string) bool {
 func NeverRuns(condition string) bool {
 	expression, closed := UnwrapExpression(condition)
 	return closed && expression == "false"
+}
+
+// EnvValue returns the value the environment variable name has for a step, read from scopes in
+// the order GitHub applies them, the innermost first: the step's env:, its job's, then the
+// workflow's. set is false when no scope declares name. known is false when the scope that
+// decides is one expression, an env: such as `${{ fromJSON(vars.X) }}` whose variables the file
+// cannot show, so name may be set to anything there.
+func EnvValue(name string, scopes ...*yaml.Node) (value string, set, known bool) {
+	for i := 0; i < len(scopes); i++ {
+		scope := scopes[i]
+		if scope == nil || scope.Kind == 0 || scope.Tag == "!!null" {
+			continue
+		}
+		if scope.Kind != yaml.MappingNode {
+			return "", false, false
+		}
+		if entry := util.YAMLMappingValue(scope, name); entry != nil {
+			return entry.Value, true, true
+		}
+	}
+	return "", false, true
+}
+
+// EnvNames returns every variable name scopes declare, in the order EnvValue reads them, each
+// name once. known is false when a scope is one expression, an env: whose variables the file
+// cannot show, so any other name may be set there.
+func EnvNames(scopes ...*yaml.Node) (names []string, known bool) {
+	seen := map[string]bool{}
+	for i := 0; i < len(scopes); i++ {
+		scope := scopes[i]
+		if scope == nil || scope.Kind == 0 || scope.Tag == "!!null" {
+			continue
+		}
+		if scope.Kind != yaml.MappingNode {
+			return names, false
+		}
+		for j := 0; j+1 < len(scope.Content); j += 2 {
+			if name := scope.Content[j].Value; !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	return names, true
 }
 
 // RunStep is one run: step of a workflow, with the job it runs in.

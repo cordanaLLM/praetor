@@ -162,39 +162,47 @@ func TestValidateExceptionsBoundary(t *testing.T) {
 	}
 }
 
-// A HISS-11 entry names the release workflow the supply-chain gate measured (#330), and a HISS-18
-// entry the workflow the trigger check reported (#817). Positive: for either rule, a .yml or
+// A HISS-11 entry names the release workflow the supply-chain gate measured (#330), and a
+// HISS-10 entry the workflow holding the build lanes it excuses (#816), and a HISS-18 entry the
+// workflow the trigger check reported (#817). Positive: a .yml or
 // .yaml file directly in .github/workflows is accepted and selected by its rule. Negative: a
 // glob, a file outside .github/workflows or below it, and a file that is no YAML document are
-// refused with the rule named. Boundary: the target check binds only those two rules, so a
+// refused with the rule named. Boundary: the target check binds only those rules, so a
 // clang-tidy-coverage entry for a C file stays valid beside them.
 func TestValidateExceptionsWorkflowTarget(t *testing.T) {
-	for _, rule := range []string{ExceptionRuleSupplyChain, ExceptionRuleWorkflowTriggers} {
-		entry := func(target string) Exception {
-			return Exception{Rule: rule, Path: target, Reason: "the workflow falls short of the rule", Expires: "2026-12-31"}
+	for _, rule := range []string{ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers} {
+		t.Run(rule, func(t *testing.T) { validateWorkflowTarget(t, rule) })
+	}
+}
+
+// validateWorkflowTarget runs the workflow-target cases for one rule.
+func validateWorkflowTarget(t *testing.T, rule string) {
+	entry := func(target string) Exception {
+		return Exception{Rule: rule, Path: target, Reason: "the workflow falls short of the rule", Expires: "2026-12-31"}
+	}
+	for _, target := range []string{".github/workflows/release.yml", ".github/workflows/release-binaries.yaml"} {
+		if err := ValidateExceptions([]Exception{validException(), entry(target)}, exceptionsToday); err != nil {
+			t.Fatalf("%s entry for %s refused: %v", rule, target, err)
 		}
-		for _, target := range []string{".github/workflows/release.yml", ".github/workflows/release-binaries.yaml"} {
-			if err := ValidateExceptions([]Exception{validException(), entry(target)}, exceptionsToday); err != nil {
-				t.Fatalf("%s entry for %s refused: %v", rule, target, err)
-			}
-		}
-		if got := ExceptionsFor([]Exception{validException(), entry(".github/workflows/release.yml")}, rule); len(got) != 1 ||
-			got[0].Path != ".github/workflows/release.yml" {
-			t.Fatalf("ExceptionsFor(%s) = %+v", rule, got)
-		}
-		globbed := entry("")
-		globbed.Glob = ".github/workflows/*.yml"
-		for name, refused := range map[string]Exception{
-			"glob":                  globbed,
-			"outside the workflows": entry("release.yml"),
-			"below the workflows":   entry(".github/workflows/nested/release.yml"),
-			"not a YAML document":   entry(".github/workflows/release.sh"),
-			"another directory":     entry(".github/actions/release.yml"),
-		} {
-			err := ValidateExceptions([]Exception{refused}, exceptionsToday)
-			if err == nil || !strings.Contains(err.Error(), "rule "+rule+" must name one workflow file directly in .github/workflows") {
-				t.Errorf("%s %s: ValidateExceptions = %v; want the target refused", rule, name, err)
-			}
+	}
+	if got := ExceptionsFor([]Exception{validException(), entry(".github/workflows/release.yml")}, rule); len(got) != 1 ||
+		got[0].Path != ".github/workflows/release.yml" {
+		t.Fatalf("ExceptionsFor(%s) = %+v", rule, got)
+	}
+	globbed := entry("")
+	globbed.Glob = ".github/workflows/*.yml"
+	for name, refused := range map[string]Exception{
+		"glob":                  globbed,
+		"outside the workflows": entry("release.yml"),
+		"below the workflows":   entry(".github/workflows/nested/release.yml"),
+		"not a YAML document":   entry(".github/workflows/release.sh"),
+		"another directory":     entry(".github/actions/release.yml"),
+	} {
+		err := ValidateExceptions([]Exception{refused}, exceptionsToday)
+		want := "rule " + rule + " must name one workflow file directly in .github/workflows by path, such as .github/workflows/" +
+			workflowRuleExamples[rule]
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: ValidateExceptions = %v; want the %s target refused", name, err, rule)
 		}
 	}
 }

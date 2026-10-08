@@ -1,0 +1,16 @@
+# HISS-10 gap: the configure step sets CMAKE_COMPILE_WARNING_AS_ERROR, so the lane passes the
+# build-warnings audit (internal/adopt.AuditBuildWarnings), but the build step catches its own
+# failure with || true, so a warning turned error still leaves the job green. The audit reads
+# which flags a step passes, not whether the script lets the failure through.
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: cmake -S . -B build -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+      - run: cmake --build build || true

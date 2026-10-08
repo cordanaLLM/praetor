@@ -38,15 +38,24 @@ const ExceptionRuleSupplyChain = "HISS-11"
 // entry's reason and expiry instead of reporting them, until the entry expires.
 const ExceptionRuleWorkflowTriggers = "HISS-18"
 
+// ExceptionRuleBuildWarnings is the rule of the HISS-10 build-warnings gate
+// (internal/adopt.AuditBuildWarnings): an entry names a workflow whose build lanes cannot run
+// with warnings as errors yet. The gate prints each excused lane with the entry's reason and
+// expiry and passes, so the lanes stay visible until the entry expires.
+const ExceptionRuleBuildWarnings = "HISS-10"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
-var exceptionRules = []string{
-	ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain, ExceptionRuleWorkflowTriggers,
-}
+var exceptionRules = []string{ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
+	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers}
 
-// workflowExceptionRules are the rules whose gate judges a whole workflow document: an entry of
-// one of them names one workflow file by path (workflowTargetProblem).
-var workflowExceptionRules = []string{ExceptionRuleSupplyChain, ExceptionRuleWorkflowTriggers}
+// workflowRuleExamples maps each rule whose entries name one workflow file by path to the
+// workflow a refusal names as an example.
+var workflowRuleExamples = map[string]string{
+	ExceptionRuleSupplyChain:      "release.yml",
+	ExceptionRuleBuildWarnings:    "ci.yml",
+	ExceptionRuleWorkflowTriggers: "release.yml",
+}
 
 // Bounds of the exceptions list (HISS-02).
 const (
@@ -213,18 +222,16 @@ func (e Exception) targetProblem() string {
 	return ""
 }
 
-// workflowTargetProblem requires an entry of a workflowExceptionRules rule to name one workflow
-// document directly in .github/workflows by path: the release workflow the HISS-11 supply-chain
-// gate measured, or the workflow the HISS-18 trigger check reported.
+// workflowTargetProblem requires an entry of a rule in workflowRuleExamples to name one
+// workflow document directly in .github/workflows by path: the release workflow the HISS-11
+// supply-chain gate measured, or the workflow holding the build lanes a HISS-10 entry excuses.
 func (e Exception) workflowTargetProblem() string {
-	if !slices.Contains(workflowExceptionRules, e.Rule) {
+	example, scoped := workflowRuleExamples[e.Rule]
+	if !scoped || ghworkflow.IsWorkflowPath(e.Path) {
 		return ""
 	}
-	if !ghworkflow.IsWorkflowPath(e.Path) {
-		return fmt.Sprintf("rule %s must name one workflow file directly in %s by path, such as %s/release.yml",
-			e.Rule, ghworkflow.Dir, ghworkflow.Dir)
-	}
-	return ""
+	return fmt.Sprintf("rule %s must name one workflow file directly in %s by path, such as %s/%s",
+		e.Rule, ghworkflow.Dir, ghworkflow.Dir, example)
 }
 
 // exceptionReasonProblem requires one non-empty line of at most MaxExceptionReasonBytes.

@@ -1,0 +1,28 @@
+# HISS-10 negative: every native lane builds with the form its toolchain documents: CMake with
+# CMAKE_COMPILE_WARNING_AS_ERROR, Meson with --werror, MSVC with /WX in CL. The build-warnings
+# audit (internal/adopt.AuditBuildWarnings) passes.
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  cmake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: cmake -S . -B build -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+      - run: cmake --build build
+  meson:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: meson setup build --werror -Dwarning_level=3
+      - run: meson compile -C build
+  windows:
+    runs-on: windows-latest
+    env:
+      CL: /W4 /WX
+    steps:
+      - uses: actions/checkout@v7
+      - run: cl /c src\decoder.c
