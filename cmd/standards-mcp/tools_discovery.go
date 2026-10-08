@@ -10,9 +10,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/mcp"
+	"github.com/cordanaLLM/praetor/internal/util"
+	"gopkg.in/yaml.v3"
 )
 
 // Tool-list modes selected by -tools.
@@ -26,6 +29,9 @@ const (
 
 // outputReadToolName names the offload read-back tool, whose output is never offloaded.
 const outputReadToolName = mcp.OffloadReadToolName
+
+// manifestReadTimeout bounds the one manifest read at server start (HISS-02).
+const manifestReadTimeout = 10 * time.Second
 
 // maxSummaryRunes bounds the one-line summary in the tool index.
 const maxSummaryRunes = 120
@@ -254,28 +260,45 @@ func boundedIntArg(args map[string]any, key string, minimum, maximum, def int) (
 }
 
 // resolveOffloadThreshold returns the offload threshold of a server rooted at root: requested
-// when the caller set one, else the mcp.offload_threshold_bytes key of the manifest read through
-// the manifest loader (0 there opts out of offloading), else 0 for the default. A manifest the
-// loader refuses fails the server start instead of silently selecting the default.
-func resolveOffloadThreshold(root string, requested int) (int, error) {
+// when the caller set one, else the mcp.offload_threshold_bytes key of the manifest (0 there
+// opts out of offloading), else 0 for the default. Only the mcp section decides the start: an
+// invalid mcp section fails it, because a value the operator wrote must not silently select
+// the default. A manifest that is broken elsewhere (unknown key, YAML typo) starts the server
+// with the default threshold and a non-empty notice naming the substitution, so the tools that
+// repair the manifest (standards_audit, standards_adopt) stay available.
+func resolveOffloadThreshold(root string, requested int) (threshold int, notice string, err error) {
 	if requested != 0 {
-		return requested, nil
+		return requested, "", nil
 	}
-	manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
+	path := filepath.Join(root, config.ManifestFileName)
+	ctx, cancel := context.WithTimeout(context.Background(), manifestReadTimeout)
+	defer cancel()
+	var doc yaml.Node
+	err = config.ReadYAMLDocument(ctx, path, &doc, util.YAMLDocumentOptions{AllowEmpty: true})
 	if errors.Is(err, os.ErrNotExist) {
-		return 0, nil
+		return 0, "", nil
 	}
 	if err != nil {
-		return 0, fmt.Errorf("read the offload threshold: %w", err)
+		return 0, fmt.Sprintf("standards-mcp: manifest %s unreadable (%v); offload threshold default %d bytes",
+			config.ManifestFileName, err, mcp.OffloadThresholdBytes), nil
 	}
-	policy := manifest.DeclaredMCP()
+	var section struct {
+		MCP *config.MCPPolicy `yaml:"mcp"`
+	}
+	if err := doc.Decode(&section); err != nil {
+		return 0, "", fmt.Errorf("read offload threshold from %s: %w", config.ManifestFileName, err)
+	}
+	if _, err := config.LoadManifest(path); err != nil {
+		notice = fmt.Sprintf("standards-mcp: manifest %s invalid outside mcp section (%v); mcp section honored",
+			config.ManifestFileName, err)
+	}
 	switch {
-	case policy == nil || policy.OffloadThresholdBytes == nil:
-		return 0, nil
-	case *policy.OffloadThresholdBytes == 0:
-		return mcp.OffloadDisabled, nil
+	case section.MCP == nil || section.MCP.OffloadThresholdBytes == nil:
+		return 0, notice, nil
+	case *section.MCP.OffloadThresholdBytes == 0:
+		return mcp.OffloadDisabled, notice, nil
 	}
-	return *policy.OffloadThresholdBytes, nil
+	return *section.MCP.OffloadThresholdBytes, notice, nil
 }
 
 // listedToolNames returns the tool names tools/list serves in the server's mode, sorted.

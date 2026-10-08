@@ -159,8 +159,12 @@ func NewServerWithOptions(opts ServerOptions) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	if opts.OffloadThreshold, err = resolveOffloadThreshold(root, opts.OffloadThreshold); err != nil {
+	var notice string
+	if opts.OffloadThreshold, notice, err = resolveOffloadThreshold(root, opts.OffloadThreshold); err != nil {
 		return nil, err
+	}
+	if notice != "" {
+		fmt.Fprintln(os.Stderr, notice)
 	}
 
 	s := &Server{

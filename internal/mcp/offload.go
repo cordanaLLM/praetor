@@ -51,8 +51,14 @@ const (
 	// offloadProbeDigest names the path that query asks about; any digest-shaped name is
 	// ignored by the same rule.
 	offloadProbeDigest = "0000000000000000000000000000000000000000000000000000000000000000"
-	// maxGitAncestors bounds the walk up from the root that looks for a git work tree.
-	maxGitAncestors = 256
+	// offloadRecordName names the record of the digests this server wrote, in the offload
+	// directory. Read serves only a digest the record lists.
+	offloadRecordName = "written.idx"
+	// offloadRecordKeep bounds the record to this many digests per allowed stored file.
+	offloadRecordKeep = 2
+	// offloadRecordMaxBytes bounds one read of the record: offloadRecordKeep times the default
+	// file cap of 64-digit lines, rounded up. A larger record is refused as foreign.
+	offloadRecordMaxBytes = 64 << 10
 )
 
 var (
@@ -100,22 +106,22 @@ func (o Offloader) maxFiles() int {
 
 // Serve makes the result of the tool named tool safe to serve: sanitize first, then offload,
 // so the stored bytes are the sanitized bytes. A successful read-back (OffloadReadToolName) is
-// exempt from both. Its chunk is a slice of text that was sanitized once when it was stored;
-// sanitizing the slice again would find word boundaries the cut created, so the chunks would
-// no longer join to the stored bytes and their sha256, and offloading it would point the
-// client at the file it just read. Read refuses a file that does not match its digest, so a
-// file edited in place after it was stored is never served; the cache is repository-local
-// state under the operator's control, trusted like the repository itself.
+// sanitized too but never offloaded: offloading it would point the client at the file it just
+// read. Read verifies that the stored file is one this server wrote and a sanitizer fixed
+// point, so sanitizing the chunk changes it only where the cut created a phrase the whole text
+// does not contain ("xignore previous instructions" cut after the x). There the served chunk
+// is the neutralized text, not the stored bytes: the byte fidelity of a chunk is traded for
+// never serving an injection phrase a cut exposed.
 func (o Offloader) Serve(ctx context.Context, tool string, res *ToolResult) (*ToolResult, error) {
 	if res == nil {
 		return nil, ErrNilResult
 	}
-	if tool == OffloadReadToolName && !res.IsError {
-		return res, nil
-	}
 	safe, err := SanitizeResult(res)
 	if err != nil {
 		return nil, err
+	}
+	if tool == OffloadReadToolName && !res.IsError {
+		return safe, nil
 	}
 	return o.Apply(ctx, safe)
 }
@@ -181,9 +187,14 @@ func withOffloadNotice(out *ToolResult, reason string) (*ToolResult, error) {
 	return out, nil
 }
 
+// gitWorktreePresent is the work-tree detection prepare uses; a variable so a test can inject
+// an error no portable fixture produces (a permission failure on an ancestor).
+var gitWorktreePresent = util.GitWorktreePresent
+
 // prepare creates the offload directory and its self-ignoring .gitignore, then proves git
 // ignores the cache path. A non-empty reason means offloading must not write; err is an I/O
-// failure. A root outside any git work tree has no status to pollute and passes.
+// failure, including a failed look for the work tree (fail closed: an unreadable ancestor is
+// not a root outside git). A root outside any git work tree has no status to pollute and passes.
 func (o Offloader) prepare(ctx context.Context) (reason string, err error) {
 	if err := util.MkdirConfined(o.Root, filepath.FromSlash(OffloadDir), util.SecureDirPerm); err != nil {
 		return "", fmt.Errorf("mcp: create offload directory: %w", err)
@@ -191,11 +202,15 @@ func (o Offloader) prepare(ctx context.Context) (reason string, err error) {
 	if err := o.ensureSelfIgnore(); err != nil {
 		return "", err
 	}
-	if !insideGitWorkTree(o.Root) {
-		return "", nil
-	}
 	ctx, cancel := context.WithTimeout(ctx, offloadGitTimeout)
 	defer cancel()
+	inside, err := gitWorktreePresent(ctx, o.Root)
+	if err != nil {
+		return "", fmt.Errorf("mcp: look for a git work tree above the offload root: %w", err)
+	}
+	if !inside {
+		return "", nil
+	}
 	probe := path.Join(OffloadDir, offloadProbeDigest+offloadExt)
 	ignored, err := util.GitIgnoredPaths(ctx, o.Root, []string{probe}, true)
 	switch {
@@ -205,22 +220,6 @@ func (o Offloader) prepare(ctx context.Context) (reason string, err error) {
 		return "git does not ignore " + OffloadCacheDir, nil
 	}
 	return "", nil
-}
-
-// insideGitWorkTree reports whether root or one of its parents holds a .git entry.
-func insideGitWorkTree(root string) bool {
-	dir := filepath.Clean(root)
-	for i := 0; i < maxGitAncestors; i++ {
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
-			return true
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return false
-		}
-		dir = parent
-	}
-	return false
 }
 
 // store writes text content-addressed and returns its pointer line. The directory and its
@@ -241,6 +240,9 @@ func (o Offloader) store(text string) (string, error) {
 		}
 	default:
 		return "", fmt.Errorf("mcp: write offloaded output: %w", err)
+	}
+	if err := o.recordWritten(digest); err != nil {
+		return "", err
 	}
 	if err := o.prune(digest); err != nil {
 		return "", err
@@ -365,10 +367,8 @@ func (o Offloader) Read(digest string, offset, limit int) (chunk string, next, t
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("%w: %s", ErrOffloadUnreadable, path.Join(OffloadDir, digest+offloadExt))
 	}
-	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != digest {
-		// The file name is the digest of its content. A file that no longer matches was
-		// replaced after it was stored, and it is served unsanitized, so it is refused.
-		return "", 0, 0, fmt.Errorf("%w: %s does not match its digest", ErrOffloadUnreadable, path.Join(OffloadDir, digest+offloadExt))
+	if err := o.verifyStored(digest, data); err != nil {
+		return "", 0, 0, err
 	}
 	total = len(data)
 	if offset > total {
@@ -376,6 +376,30 @@ func (o Offloader) Read(digest string, offset, limit int) (chunk string, next, t
 	}
 	chunk, next = runeAligned(string(data), offset, min(offset+limit, total))
 	return chunk, next, total, nil
+}
+
+// verifyStored refuses a stored file the server must not serve: one the server did not write
+// (a committed or hand-placed file whose name is the digest of its content passes the digest
+// check, so the record of written digests decides), one whose content does not match its
+// digest, and one that is not a sanitizer fixed point. The last is what holds even when a
+// record or file was forged: text the sanitizer would change was never stored by this server.
+func (o Offloader) verifyStored(digest string, data []byte) error {
+	name := path.Join(OffloadDir, digest+offloadExt)
+	written, err := o.wasWritten(digest)
+	if err != nil {
+		return err
+	}
+	if !written {
+		return fmt.Errorf("%w: %s was not written by this server", ErrOffloadUnreadable, name)
+	}
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != digest {
+		return fmt.Errorf("%w: %s does not match its digest", ErrOffloadUnreadable, name)
+	}
+	safe, err := SanitizeText(string(data))
+	if err != nil || safe != string(data) {
+		return fmt.Errorf("%w: %s is not sanitized text", ErrOffloadUnreadable, name)
+	}
+	return nil
 }
 
 // runeAligned returns text[start:end] with both ends moved inward to rune boundaries, and

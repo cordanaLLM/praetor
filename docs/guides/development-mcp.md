@@ -362,25 +362,37 @@ When the text of one result exceeds 16 KiB in all, the largest items are written
 `[offloaded] path=<repo-relative, forward slashes> bytes=<n> sha256=<hex> read=standards_output_read head=<first 400 bytes, quoted>`.
 Equal bytes give the same file and the same line. `standards_output_read {sha256, offset, limit}`
 reads it back, 12 KiB per call, and answers `next_offset`; only a 64-digit lowercase hex
-digest names a file, a file that no longer matches its digest is refused, and errors name
-repository-relative paths only (an evicted pointer says to rerun the tool). A chunk is a
-verbatim slice of the stored bytes: it is not sanitized a second time, because the stored
-text was sanitized once (`TestReadBackServesStoredBytesUnchanged`). The 4 MiB bound holds
-for the sanitized bytes too, since neutralizing lengthens text.
+digest names a file, and errors name repository-relative paths only (an evicted pointer
+says to rerun the tool). A file is served only if the server wrote it (the digest record
+`written.idx` in the offload directory lists it), its content matches its digest, and the
+text is a fixed point of the sanitizer; a committed or hand-placed file that fails any of
+these is refused (`TestReadBackRefusesACommittedCacheFile`,
+`TestOffloadReadRefusesAFileTheServerDidNotWrite`,
+`TestOffloadReadRefusesNonFixedPointEvenWhenRecorded`). Every read-back is sanitized like any
+other result. A chunk cut inside a phrase the whole text does not contain (`xignore previous
+instructions` cut after the `x`) is therefore served neutralized: the byte fidelity of that
+chunk is traded for never serving an injection phrase a cut exposed
+(`TestReadBackNeutralizesAPhraseACutExposes`). The 4 MiB bound holds for the sanitized bytes
+too, since neutralizing lengthens text.
 
 The threshold is the `mcp.offload_threshold_bytes` key of `.standards.yaml`, read at server
-start through the manifest loader: absent keeps 16 KiB, `0` turns offloading off (every
-result is served inline up to 4 MiB), any other value lies in 1024..4194304. A manifest the
-loader refuses stops the server instead of selecting the default.
+start from its `mcp` section only: absent keeps 16 KiB, `0` turns offloading off (every
+result is served inline up to 4 MiB), any other value lies in 1024..4194304. An invalid
+`mcp` section stops the server. A manifest that is broken elsewhere (an unknown key, a YAML
+typo) starts the server with the default threshold (the `mcp` section is still honored where
+the YAML parses) and a notice on stderr, so `standards_audit` and `standards_adopt` stay
+available to repair it (`TestOffloadThresholdFromManifest`).
 
 Offloading never leaves files for git to list. The first offload writes
 `.standards/cache/.gitignore` containing `*`, and `praetorctl adopt` adds
 `/.standards/cache/` to the managed `.gitignore` block, so an existing block gains the rule on
-the next run. Before it writes, the server asks git whether the cache path is ignored; where
-it is not (an operator-edited ignore file, or no answer from git), nothing is written and the
+the next run. After creating the cache directory and its ignore file, and before the first
+output file, the server asks git whether the cache path is ignored; where it is not (an
+operator-edited ignore file, or no answer from git), no output is written and the
 result is served inline with an `[offload skipped]` notice item
 (`TestOffloadRefusesWhereGitDoesNotIgnoreTheCache`). A root outside any git work tree needs no
-such proof. A write failure, such as a read-only root, still withholds the result with an
+such proof; a work-tree lookup that fails (an unreadable ancestor) fails the call instead
+of skipping the proof. A write failure, such as a read-only root, still withholds the result with an
 error instead of serving it inline silently; set `mcp.offload_threshold_bytes: 0` for a
 checkout the server cannot write to.
 
