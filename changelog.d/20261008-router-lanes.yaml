@@ -1,4 +1,4 @@
 type: added
-title: "Route models by gateway alias and lane: a catalog entry names a gateway router alias that sync probes once, models route returns the lane (harness, alias and exact command) and skips an alias that does not answer, models outcome logs results per task label, token estimates are optional, models sync and praetorctl audit report stale and preview catalog entries, and the seed list drops three retired preview models"
+title: "Breaking change: route models by gateway alias and lane with per-tier fail-closed, PRAETOR_GATEWAY_ key_env prefix allow-list, and seed-only prune scope"
 issue: "#852"
 breaking: true

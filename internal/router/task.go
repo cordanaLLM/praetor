@@ -55,8 +55,8 @@ type RouteSkip struct {
 }
 
 // admit reports whether the gateway rules keep a candidate; an excluded one is recorded.
-func (p *taskPass) admit(model ModelDescriptor) bool {
-	reason := gatewayExclusion(model, p.serves)
+func (p *taskPass) admit(model ModelDescriptor, tierServes bool) bool {
+	reason := gatewayExclusion(model, tierServes)
 	if reason == "" {
 		return true
 	}
@@ -70,11 +70,10 @@ func (p *taskPass) admit(model ModelDescriptor) bool {
 const maxErrorSkips = 8
 
 // taskPass is the state of one selection: the request, whether a reservation filters
-// candidates, whether the gateway serves answering aliases, and the candidates skipped.
+// candidates, and the candidates skipped.
 type taskPass struct {
 	request   TaskRequest
 	reserving bool
-	serves    bool
 	skips     []RouteSkip
 }
 
@@ -97,7 +96,7 @@ func (a *ModelCapacityArbiter) selectTaskLocked(ctx context.Context, request Tas
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	pass := &taskPass{request: request, reserving: reserving, serves: gatewayServesAliases(a.Config)}
+	pass := &taskPass{request: request, reserving: reserving}
 	var best *TaskRoute
 	for i := 0; i < len(names) && i < MaxRoutingTiers; i++ {
 		if err := ctx.Err(); err != nil {
@@ -169,13 +168,14 @@ func (a *ModelCapacityArbiter) selectTaskTier(pass *taskPass, name string) (*Tas
 	if !hasRoutingTag(tier.TargetTasks, request.Task) {
 		return nil, nil
 	}
+	serves := TierServesAliases(tier)
 	var best *TaskRoute
 	for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
 		model := tier.Models[i]
 		if !hasTaskCapabilities(model.Capabilities, request.Capabilities) {
 			continue
 		}
-		if !pass.admit(model) {
+		if !pass.admit(model, serves) {
 			continue
 		}
 		if reserving && !a.reservationAvailableLocked(model.ID) {

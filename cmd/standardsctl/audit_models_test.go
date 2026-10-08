@@ -112,12 +112,28 @@ func TestModelsSyncCLIReportsPreviewEntryAndSkipsProbeWhenAsked(t *testing.T) {
 	}
 }
 
-func TestRepositoryModelCatalogIsFreshAtItsSeedDate(t *testing.T) {
+func TestRepositoryModelCatalogSyncRoundTrip(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runModelCatalogAudit(t, root); err != nil {
-		t.Fatalf("the repository's own catalog is stale: %v", err)
+	catalogPath := filepath.Join(root, filepath.FromSlash(router.DefaultConfigPath))
+	original, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyPath := filepath.Join(t.TempDir(), "routing.yaml")
+	if err := os.WriteFile(copyPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runModels([]string{"sync", "--config=" + copyPath, "--discover-local=false"}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	synced, err := os.ReadFile(copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(original) != string(synced) {
+		t.Fatal("tracked model catalog does not match 'models sync --discover-local=false' output; run 'praetorctl models sync --discover-local=false'")
 	}
 }

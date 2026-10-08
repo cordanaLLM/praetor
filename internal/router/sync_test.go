@@ -101,17 +101,38 @@ func TestSyncCatalogMergeKeepsLocalAndOperatorEntriesAndUpdatesSeed(t *testing.T
 		t.Fatal(err)
 	}
 	cfg := loadSynced(t, path)
-	if tier, model, ok := findSynced(cfg, "qwen2.5-coder:7b"); !ok || tier != "lightweight" || model.Source != SourceLocal {
+	assertSyncedLocalModel(t, cfg)
+	assertSyncedOperatorTier(t, cfg)
+	assertSyncedSeedUpdate(t, cfg)
+	if result.Preserved != 2 || result.LocalModels != 1 || len(result.Removed) != 0 {
+		t.Fatalf("result counts wrong: %+v", result)
+	}
+	if result.TotalModels != len(legacySeedCatalog)+2 {
+		t.Fatalf("result total models wrong: %+v", result)
+	}
+}
+
+func assertSyncedLocalModel(t *testing.T, cfg *RoutingConfig) {
+	t.Helper()
+	tier, model, ok := findSynced(cfg, "qwen2.5-coder:7b")
+	if !ok || tier != "lightweight" || model.Source != SourceLocal {
 		t.Fatalf("local entry lost or moved: tier=%q model=%+v", tier, model)
 	}
-	if tier, _, ok := findSynced(cfg, "example/qwen3-8-27b"); !ok || tier != "gpu-local" || cfg.Tiers["gpu-local"].TargetTasks[0] != "grunt" {
+}
+
+func assertSyncedOperatorTier(t *testing.T, cfg *RoutingConfig) {
+	t.Helper()
+	tier, _, ok := findSynced(cfg, "example/qwen3-8-27b")
+	if !ok || tier != "gpu-local" || cfg.Tiers["gpu-local"].TargetTasks[0] != "grunt" {
 		t.Fatalf("operator entry or tier lost: tier=%q", tier)
 	}
-	if _, model, _ := findSynced(cfg, "o1"); model.CostPerMIn != 15.0 || model.Source != SourceSeed || model.Family != FamilyOpenAI {
+}
+
+func assertSyncedSeedUpdate(t *testing.T, cfg *RoutingConfig) {
+	t.Helper()
+	_, model, ok := findSynced(cfg, "o1")
+	if !ok || model.CostPerMIn != 15.0 || model.Source != SourceSeed || model.Family != FamilyOpenAI {
 		t.Fatalf("seed entry not updated in place: %+v", model)
-	}
-	if result.Preserved != 2 || result.LocalModels != 1 || len(result.Removed) != 0 || result.TotalModels != len(legacySeedCatalog)+2 {
-		t.Fatalf("result %+v", result)
 	}
 }
 
@@ -139,39 +160,44 @@ func TestSyncCatalogDiscoveryAddsOnlyModelsNotAlreadyDeclared(t *testing.T) {
 
 func TestSyncCatalogPruneRemovesUnownedEntriesOnlyWhenAsked(t *testing.T) {
 	fixture := syncFixture(map[string]Tier{
-		"lightweight": {Models: []ModelDescriptor{syncModel("qwen2.5-coder:7b", SourceLocal), syncModel("hand-added", SourceOperator)}},
+		"lightweight": {Models: []ModelDescriptor{
+			syncModel("qwen2.5-coder:7b", SourceLocal),
+			syncModel("hand-added", SourceOperator),
+			syncModel("retired-seed-preview", SourceSeed),
+		}},
 	})
 	path := writeSyncCatalog(t, fixture)
-	if _, err := syncCatalog(context.Background(), path, SyncOptions{}, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, ok := findSynced(loadSynced(t, path), "hand-added"); !ok {
-		t.Fatal("sync without prune removed an entry")
+	if _, err := syncCatalog(context.Background(), path, SyncOptions{}, nil); err == nil {
+		t.Fatal("expected refusal when catalog contains flagged retired seed entry without prune")
 	}
 	result, err := syncCatalog(context.Background(), path, SyncOptions{Prune: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(result.Removed, []string{"hand-added", "qwen2.5-coder:7b"}) || result.TotalModels != len(legacySeedCatalog) {
+	if !reflect.DeepEqual(result.Removed, []string{"retired-seed-preview"}) {
 		t.Fatalf("prune result %+v", result)
 	}
-	path = writeSyncCatalog(t, fixture)
-	opts := discoverOpts
-	opts.Prune = true
-	result, err = syncCatalog(context.Background(), path, opts, stubDiscovery(syncModel("qwen2.5-coder:7b", SourceOperator)))
-	if err != nil || !reflect.DeepEqual(result.Removed, []string{"hand-added"}) {
-		t.Fatalf("prune with rediscovery: removed=%v err=%v", result, err)
+	cfg := loadSynced(t, path)
+	if _, _, ok := findSynced(cfg, "hand-added"); !ok {
+		t.Fatal("prune dropped hand-added entry")
+	}
+	if _, _, ok := findSynced(cfg, "qwen2.5-coder:7b"); !ok {
+		t.Fatal("prune dropped local entry")
 	}
 }
 
 func TestSyncCatalogRefusesRemovalWithoutPrune(t *testing.T) {
 	path := writeSyncCatalog(t, syncFixture(map[string]Tier{
-		"nano": {Models: []ModelDescriptor{syncModel("retired-seed-model", SourceSeed), syncModel("qwen2.5:0.5b", SourceLocal)}},
+		"nano": {Models: []ModelDescriptor{syncModel("retired-seed-preview", SourceSeed), syncModel("qwen2.5:0.5b", SourceLocal)}},
 	}))
 	requireRefused(t, path, SyncOptions{}, nil, ErrSyncWouldRemove)
 	result, err := syncCatalog(context.Background(), path, SyncOptions{Prune: true, DiscoverLocal: true}, nil)
-	if err != nil || !reflect.DeepEqual(result.Removed, []string{"qwen2.5:0.5b", "retired-seed-model"}) {
+	if err != nil || !reflect.DeepEqual(result.Removed, []string{"retired-seed-preview"}) {
 		t.Fatalf("prune without endpoints: result=%+v err=%v", result, err)
+	}
+	cfg := loadSynced(t, path)
+	if _, _, ok := findSynced(cfg, "qwen2.5:0.5b"); !ok {
+		t.Fatal("prune dropped local entry")
 	}
 }
 
@@ -259,26 +285,36 @@ func TestSyncCatalogKeepsDeclaredGovernanceAndTierMetadata(t *testing.T) {
 	}
 }
 
-// Negative: a pruning sync keeps a declared fallback that names an operator tier the
-// rebuild drops, and refuses with that tier named rather than rewriting the fallback.
-func TestSyncCatalogPruneRefusesDanglingDeclaredFallback(t *testing.T) {
+// Positive: a pruning sync preserves operator tiers and models, keeping a declared fallback to an operator tier valid.
+func TestSyncCatalogPrunePreservesOperatorFallbackTier(t *testing.T) {
 	path := writeSyncCatalog(t, syncFixture(map[string]Tier{
 		"heavy-frontier": {FallbackTier: "gpu-local"},
 		"gpu-local":      {Models: []ModelDescriptor{syncModel("example/qwen3-8-27b", SourceOperator)}},
 	}))
-	if _, err := syncCatalog(context.Background(), path, SyncOptions{}, nil); err != nil {
-		t.Fatalf("merge with an operator fallback: %v", err)
-	}
-	before, err := os.ReadFile(path)
+	result, err := syncCatalog(context.Background(), path, SyncOptions{Prune: true}, nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("prune dropped operator fallback tier: %v", err)
 	}
-	_, err = syncCatalog(context.Background(), path, SyncOptions{Prune: true}, nil)
-	if err == nil || !strings.Contains(err.Error(), "unknown fallback tier gpu-local") {
-		t.Fatalf("want a refusal naming gpu-local, got %v", err)
+	cfg := loadSynced(t, path)
+	if _, ok := cfg.Tiers["gpu-local"]; !ok {
+		t.Fatal("prune dropped operator tier gpu-local")
 	}
-	if after, readErr := os.ReadFile(path); readErr != nil || !bytes.Equal(before, after) {
-		t.Fatalf("refused prune changed the catalog: %v", readErr)
+	if cfg.Tiers["heavy-frontier"].FallbackTier != "gpu-local" {
+		t.Fatal("prune corrupted fallback tier")
+	}
+	if len(result.Removed) != 0 {
+		t.Fatalf("unexpected removed entries: %v", result.Removed)
+	}
+}
+
+// Negative: a sync refuses a catalog whose declared fallback tier does not exist.
+func TestSyncCatalogRefusesUnknownFallbackTier(t *testing.T) {
+	path := writeSyncCatalog(t, syncFixture(map[string]Tier{
+		"heavy-frontier": {FallbackTier: "missing-tier"},
+	}))
+	_, err := syncCatalog(context.Background(), path, SyncOptions{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "unknown fallback tier missing-tier") {
+		t.Fatalf("want unknown fallback tier refusal, got %v", err)
 	}
 }
 
@@ -370,4 +406,34 @@ func TestSyncCatalogModelAndTagBounds(t *testing.T) {
 	requireRefused(t, path, discoverOpts, stubDiscovery(syncModel("extra-7b", SourceOperator)), nil)
 	tagged.Capabilities = append(tags, "overflow")
 	requireRefused(t, writeSyncCatalog(t, syncFixture(map[string]Tier{"nano": {Models: []ModelDescriptor{tagged}}})), SyncOptions{}, nil, nil)
+}
+
+func TestSyncPruneRemovesOnlyFlaggedSeedEntries(t *testing.T) {
+	fixture := syncFixture(map[string]Tier{
+		"lightweight": {
+			Models: []ModelDescriptor{
+				{ID: "retired-seed-preview", Family: FamilyGoogle, Source: SourceSeed, Preview: true},
+				{ID: "gw-light", Family: FamilyOpenAI, Provider: "gw", Alias: "light", AliasStatus: AliasAnswers, RPMLimit: 1, TPMLimit: 1, CostRatesDeclared: true},
+				{ID: "hand-entry", Family: FamilyOpenAI, Source: SourceOperator, RPMLimit: 1, TPMLimit: 1, CostRatesDeclared: true},
+			},
+		},
+	})
+	fixture.Gateway = &GatewayConfig{Address: "https://gateway.example.invalid/v1"}
+	fixture.Lanes = map[string]Lane{"gateway-coding": {Harness: "coding-harness", Command: []string{"coding-harness", "run"}}}
+	path := writeSyncCatalog(t, fixture)
+	requireRefused(t, path, SyncOptions{}, nil, ErrSyncWouldRemove)
+	result, err := syncCatalog(context.Background(), path, SyncOptions{Prune: true, Now: freshnessNow}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Removed, []string{"retired-seed-preview"}) {
+		t.Fatalf("removed = %v, want [retired-seed-preview]", result.Removed)
+	}
+	cfg := loadSynced(t, path)
+	if _, _, ok := findSynced(cfg, "gw-light"); !ok {
+		t.Fatal("prune dropped answering alias entry")
+	}
+	if _, _, ok := findSynced(cfg, "hand-entry"); !ok {
+		t.Fatal("prune dropped hand entry")
+	}
 }

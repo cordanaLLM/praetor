@@ -407,9 +407,7 @@ func planCatalog(existing *RoutingConfig, declared settingsPresence, discovered 
 	cfg := seedCatalog()
 	keepDeclaredSettings(cfg, existing, declared)
 	cfg.Gateway, cfg.Lanes = existing.Gateway, existing.Lanes
-	if !prune {
-		preserveUnowned(cfg, existing, modelIDs(cfg))
-	}
+	preserveUnowned(cfg, existing, modelIDs(cfg), now)
 	addDiscovered(cfg, discovered, now)
 	removed := missingIDs(existing, cfg)
 	if len(removed) > 0 && !prune {
@@ -449,16 +447,25 @@ func seedCatalog() *RoutingConfig {
 }
 
 // preserveUnowned keeps every existing entry the seed list does not own, in its
-// tier and order, and keeps tiers the defaults do not define. An entry marked as
-// seed that the seed list no longer carries is retired, not kept, so the removal
-// check reports it and only a pruning sync drops it.
-func preserveUnowned(cfg, existing *RoutingConfig, owned map[string]bool) {
+// tier and order, and keeps tiers the defaults do not define. Hand-declared and
+// alias entries are operator data and are never removed. A retired seed entry that
+// the freshness check flags is left unpreserved so that prune drops it and plain sync
+// refuses to remove it.
+func preserveUnowned(cfg, existing *RoutingConfig, owned map[string]bool, now time.Time) {
+	window := CatalogMaxAge(existing)
 	for name, tier := range existing.Tiers {
 		if _, ok := cfg.Tiers[name]; !ok {
 			cfg.Tiers[name] = Tier{Description: tier.Description, TargetTasks: tier.TargetTasks, FallbackTier: tier.FallbackTier, Lane: tier.Lane}
 		}
 		for _, model := range tier.Models {
-			if !owned[model.ID] && model.Source != SourceSeed {
+			if owned[model.ID] {
+				continue
+			}
+			if model.Source != SourceSeed {
+				appendModel(cfg.Tiers, name, model)
+				continue
+			}
+			if len(entryFindings(model, now, window)) == 0 {
 				appendModel(cfg.Tiers, name, model)
 			}
 		}

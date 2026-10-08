@@ -106,6 +106,14 @@ func TestModelsOutcomeCLIRecordsAndReadsBack(t *testing.T) {
 	if err != nil || len(recorded) != 1 || recorded[0].Task != "implement" || recorded[0].Result != router.OutcomeOK || recorded[0].DurationMS != 900 {
 		t.Fatalf("readback: %+v %v", recorded, err)
 	}
+}
+
+func TestModelsOutcomeCLIRejectsInvalidArguments(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "routing", "outcomes.jsonl")
+	args := []string{"outcome", "--task=implement", "--lane=gateway-coding", "--target=light", "--result=ok", "--duration-ms=900", "--outcome-log=" + log}
+	if _, err := captureStdout(t, func() error { return runModels(args) }); err != nil {
+		t.Fatal(err)
+	}
 	for name, bad := range map[string][]string{
 		"unknown result":     {"outcome", "--task=implement", "--target=light", "--result=great", "--outcome-log=" + log},
 		"missing task":       {"outcome", "--target=light", "--result=ok", "--outcome-log=" + log},
@@ -119,6 +127,27 @@ func TestModelsOutcomeCLIRecordsAndReadsBack(t *testing.T) {
 	}
 	if again, err := router.ReadOutcomes(context.Background(), log); err != nil || len(again) != 1 {
 		t.Fatalf("a refused record changed the log: %+v %v", again, err)
+	}
+}
+
+func checkProjectedCapacityOutput(t *testing.T, arbiter *router.ModelCapacityArbiter, path, usagePath, output string, outTokens int64) {
+	t.Helper()
+	request := router.TaskRequest{Task: "implement", InputTokens: 60, OutputTokens: outTokens, RequireObservedCapacity: true}
+	core, coreErr := arbiter.SelectForTask(context.Background(), request)
+	args := []string{"route", "--config=" + path, "--usage=" + usagePath, "--task=implement", "--input-tokens=60", "--output-tokens=" + output}
+	out, cliErr := captureStdout(t, func() error { return runModels(args) })
+	if (cliErr != nil) != (coreErr != nil) {
+		t.Fatalf("CLI/core disagreement: %v / %v", cliErr, coreErr)
+	}
+	if coreErr != nil {
+		return
+	}
+	var result modelRouteReport
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Model.ID != core.Model.ID || !result.QuotaLimitsKnown || result.ProjectedHeadroom == nil || *result.ProjectedHeadroom != *core.ProjectedHeadroom {
+		t.Fatalf("CLI lost projected capacity: %s", out)
 	}
 }
 
@@ -138,27 +167,18 @@ func TestModelsRouteCLIProjectedCapacityMatchesCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, output := range []string{"40", "41"} {
-		request := router.TaskRequest{Task: "implement", InputTokens: 60, OutputTokens: 40, RequireObservedCapacity: true}
-		if output == "41" {
-			request.OutputTokens = 41
-		}
-		core, coreErr := router.NewModelCapacityArbiter(cfg, tracker).SelectForTask(ctx, request)
-		args := []string{"route", "--config=" + path, "--usage=" + usagePath, "--task=implement", "--input-tokens=60", "--output-tokens=" + output}
-		out, cliErr := captureStdout(t, func() error { return runModels(args) })
-		if (cliErr != nil) != (coreErr != nil) {
-			t.Fatalf("CLI/core disagreement: %v / %v", cliErr, coreErr)
-		}
-		if coreErr != nil {
-			continue
-		}
-		var result modelRouteReport
-		if err := json.Unmarshal([]byte(out), &result); err != nil {
-			t.Fatal(err)
-		}
-		if result.Model.ID != core.Model.ID || !result.QuotaLimitsKnown || result.ProjectedHeadroom == nil || *result.ProjectedHeadroom != *core.ProjectedHeadroom {
-			t.Fatalf("CLI lost projected capacity: %s", out)
-		}
+	arbiter := router.NewModelCapacityArbiter(cfg, tracker)
+	checkProjectedCapacityOutput(t, arbiter, path, usagePath, "40", 40)
+	checkProjectedCapacityOutput(t, arbiter, path, usagePath, "41", 41)
+}
+
+func checkUnobservedRouteReport(t *testing.T, result modelRouteReport, out string) {
+	t.Helper()
+	if result.Model.ID != "cheap" || result.EstimatedCost != .002 {
+		t.Fatalf("route outcome model/cost mismatch: %s", out)
+	}
+	if result.CapacitySource != "unobserved" || result.CapacityObserved || result.RecordedHeadroom != nil {
+		t.Fatalf("route outcome capacity mismatch: %s", out)
 	}
 }
 
@@ -174,9 +194,7 @@ func TestModelsRouteCLIUsesConfiguredCostAndLabelsUnknownCapacity(t *testing.T) 
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Model.ID != "cheap" || result.EstimatedCost != .002 || result.CapacitySource != "unobserved" || result.CapacityObserved || result.RecordedHeadroom != nil {
-		t.Fatalf("route outcome: %s", out)
-	}
+	checkUnobservedRouteReport(t, result, out)
 	if len(result.ConfigSHA256) != 64 {
 		t.Fatal("missing configuration provenance")
 	}
@@ -251,8 +269,6 @@ func routeReport(t *testing.T, args ...string) (modelRouteReport, error) {
 
 func TestModelsRouteCLIReportsTheTaskRegister(t *testing.T) {
 	path := routeRegisterRepo(t, "register:\n  tasks:\n    summarize: {register: social, max_tokens: 512}\n")
-
-	// Positive: the row decides the register, and its budget seeds a missing output estimate.
 	report, err := routeReport(t, "--config="+path, "--task=summarize", "--input-tokens=100")
 	if err != nil {
 		t.Fatal(err)
@@ -264,6 +280,14 @@ func TestModelsRouteCLIReportsTheTaskRegister(t *testing.T) {
 	if report.Request.OutputTokens != 512 || !strings.Contains(report.Limitations, "seeded from the 512-token budget of tasks.summarize") {
 		t.Fatalf("budget must seed the output estimate and say so: %d / %s", report.Request.OutputTokens, report.Limitations)
 	}
+}
+
+func TestModelsRouteCLIExplicitOutputEstimateWins(t *testing.T) {
+	path := routeRegisterRepo(t, "register:\n  tasks:\n    summarize: {register: social, max_tokens: 512}\n")
+	report, err := routeReport(t, "--config="+path, "--task=summarize", "--input-tokens=100")
+	if err != nil {
+		t.Fatal(err)
+	}
 	explicit, err := routeReport(t, "--config="+path, "--task=summarize", "--input-tokens=100", "--output-tokens=40")
 	if err != nil || explicit.Request.OutputTokens != 40 || strings.Contains(explicit.Limitations, "seeded") {
 		t.Fatalf("an explicit estimate must win: %+v, %v", explicit, err)
@@ -274,8 +298,14 @@ func TestModelsRouteCLIReportsTheTaskRegister(t *testing.T) {
 	if explicit.RegisterManifestSHA256 != report.RegisterManifestSHA256 {
 		t.Fatal("one manifest snapshot produced two register digests")
 	}
+}
 
-	// Boundary: a routing label without a row falls back to surfaces.agent, no budget.
+func TestModelsRouteCLIRegisterFallbackToSurfacesAgent(t *testing.T) {
+	path := routeRegisterRepo(t, "register:\n  tasks:\n    summarize: {register: social, max_tokens: 512}\n")
+	report, err := routeReport(t, "--config="+path, "--task=summarize", "--input-tokens=100")
+	if err != nil {
+		t.Fatal(err)
+	}
 	fallback, err := routeReport(t, "--config="+path, "--task=implement", "--input-tokens=100")
 	if err != nil {
 		t.Fatal(err)
@@ -296,4 +326,62 @@ func TestModelsRouteCLIRegisterNegative(t *testing.T) {
 	writeFixtureFile(t, ".", ".standards.yaml", "version: 1\nregister:\n  tasks:\n    deploy_prod: docs\n")
 	_, err := routeReport(t, "--config="+path, "--task=implement", "--input-tokens=1")
 	mustErrContain(t, err, `register task "deploy_prod" is not a declared target_tasks label`)
+}
+
+const perTierExclusionFixture = `version: 1
+gateway:
+  address: https://gateway.example.invalid/v1
+lanes:
+  frontier-agent:
+    harness: agent
+    command: [agent, run, --model, "{target}"]
+  gateway-coding:
+    harness: coding-harness
+    command: [coding-harness, run, --model, "{target}"]
+tiers:
+  light:
+    target_tasks: [stubs]
+    lane: gateway-coding
+    models:
+      - {id: pinned-light, family: openai, cost_per_m_in: 0, cost_per_m_out: 0}
+      - {id: gw-light, family: openai, provider: gw, alias: light, alias_status: answers, cost_per_m_in: 1, cost_per_m_out: 1}
+  heavy:
+    target_tasks: [architecture_synthesis]
+    lane: frontier-agent
+    models:
+      - {id: claude-3-opus, family: anthropic, cost_per_m_in: 15, cost_per_m_out: 75}
+`
+
+func TestModelsRouteCLIAliasExclusionPerTierReturnsHeavyLane(t *testing.T) {
+	path := writeRouteCLIInput(t, perTierExclusionFixture)
+	out, err := captureStdout(t, func() error {
+		return runModels([]string{"route", "--config=" + path, "--task=architecture_synthesis"})
+	})
+	if err != nil {
+		t.Fatalf("route architecture_synthesis failed: %v", err)
+	}
+	var report cliRouteLane
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Lane.Name != "frontier-agent" || report.Model.ID != "claude-3-opus" {
+		t.Fatalf("expected heavy lane with claude-3-opus, got lane %q model %q", report.Lane.Name, report.Model.ID)
+	}
+}
+
+func TestModelsRouteCLIAliasExclusionPerTierLightNeverReturnsPinned(t *testing.T) {
+	path := writeRouteCLIInput(t, perTierExclusionFixture)
+	stubsOut, err := captureStdout(t, func() error {
+		return runModels([]string{"route", "--config=" + path, "--task=stubs"})
+	})
+	if err != nil {
+		t.Fatalf("route stubs failed: %v", err)
+	}
+	var stubsReport cliRouteLane
+	if err := json.Unmarshal([]byte(stubsOut), &stubsReport); err != nil {
+		t.Fatal(err)
+	}
+	if stubsReport.Model.ID == "pinned-light" {
+		t.Fatalf("light tier must never return its pinned model, got %s", stubsReport.Model.ID)
+	}
 }

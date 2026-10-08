@@ -84,11 +84,7 @@ func decodeRoutingConfig(data []byte, path string) (*RoutingConfig, error) {
 // maxModelFieldNodes bounds one model mapping: sixteen known keys, a key and a value node each.
 const maxModelFieldNodes = 32
 
-// UnmarshalYAML records actual numeric price presence, including explicit zero.
-func (model *ModelDescriptor) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode || len(node.Content) > maxModelFieldNodes {
-		return fmt.Errorf("%w: invalid model descriptor", ErrInvalidRoutingConfig)
-	}
+func validateModelNodeFields(node *yaml.Node) error {
 	prices := 0
 	for i := 0; i+1 < len(node.Content) && i < maxModelFieldNodes; i += 2 {
 		key, value := node.Content[i].Value, node.Content[i+1]
@@ -105,6 +101,17 @@ func (model *ModelDescriptor) UnmarshalYAML(node *yaml.Node) error {
 	}
 	if prices != 2 {
 		return fmt.Errorf("%w: both model cost rates must be declared", ErrInvalidRoutingConfig)
+	}
+	return nil
+}
+
+// UnmarshalYAML records actual numeric price presence, including explicit zero.
+func (model *ModelDescriptor) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode || len(node.Content) > maxModelFieldNodes {
+		return fmt.Errorf("%w: invalid model descriptor", ErrInvalidRoutingConfig)
+	}
+	if err := validateModelNodeFields(node); err != nil {
+		return err
 	}
 	type plainModel ModelDescriptor
 	var decoded plainModel

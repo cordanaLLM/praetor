@@ -116,7 +116,16 @@ func TestHTTPAliasProber(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "HTTP 400: Invalid model name passed") || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("refusal not reported cleanly: %v", err)
 	}
+}
+
+func TestHTTPAliasProberProbeNotRunConditions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		respond(t, w, `{}`)
+	}))
+	defer server.Close()
 	t.Setenv("PRAETOR_TEST_PROBE_KEY", "")
+	gw := GatewayConfig{Address: server.URL, KeyEnv: "PRAETOR_TEST_PROBE_KEY"}
+	prober := HTTPAliasProber(server.Client())
 	if err := prober(context.Background(), gw, "light"); !errors.Is(err, ErrProbeNotRun) {
 		t.Fatalf("missing key must not count as an unanswered alias: %v", err)
 	}
@@ -160,7 +169,7 @@ func TestRoutePrefersAnsweringAliasOverCheaperPinnedModel(t *testing.T) {
 	if route.Model.ID != "alias-light" {
 		t.Fatalf("routed to %s", route.Model.ID)
 	}
-	if len(route.Skipped) != 1 || route.Skipped[0].Model != "pinned-free" || !strings.Contains(route.Skipped[0].Reason, "gateway serves aliases") {
+	if len(route.Skipped) != 1 || route.Skipped[0].Model != "pinned-free" || !strings.Contains(route.Skipped[0].Reason, "the tier serves aliases") {
 		t.Fatalf("pinned model not reported as skipped: %+v", route.Skipped)
 	}
 	if ModelTarget(route.Model) != "light" {
@@ -222,7 +231,6 @@ func TestTierOnlyRouteRanksByRatesWithoutEstimates(t *testing.T) {
 
 func TestAliasValidation(t *testing.T) {
 	bad := map[string]func(*RoutingConfig){
-		"alias without provider": func(c *RoutingConfig) { c.Tiers["work"].Models[0].Provider = "" },
 		"provider without alias": func(c *RoutingConfig) { c.Tiers["work"].Models[0].Alias = "" },
 		"unknown status":         func(c *RoutingConfig) { c.Tiers["work"].Models[0].AliasStatus = "maybe" },
 		"status without alias": func(c *RoutingConfig) {
@@ -244,10 +252,103 @@ func TestAliasValidation(t *testing.T) {
 		}
 	}
 	ok := gatewayConfig(aliasModel("a", "light", AliasAnswers, ""), costTaskModel("p", 1, 1))
-	ok.Gateway.KeyEnv = "GATEWAY_KEY"
+	ok.Gateway.KeyEnv = "PRAETOR_GATEWAY_KEY"
 	ok.Tiers["work"].Models[1].AsOf = "2026-10-08"
 	ok.Governance.CatalogMaxAgeDays = MaxCatalogMaxAgeDays
 	if err := ValidateRoutingConfig(ok); err != nil {
 		t.Fatalf("valid alias catalog refused: %v", err)
+	}
+}
+
+func TestValidateGatewayKeyEnvPrefix(t *testing.T) {
+	cases := map[string]bool{
+		"GITHUB_TOKEN":        true,
+		"PRAETOR_GATEWAY_":    true,
+		"PRAETOR_GATEWAY_KEY": false,
+	}
+	for name, wantErr := range cases {
+		cfg := gatewayConfig()
+		cfg.Gateway.KeyEnv = name
+		err := validateGateway(cfg)
+		if (err != nil) != wantErr {
+			t.Errorf("%s: err=%v, wantErr=%v", name, err, wantErr)
+		}
+	}
+}
+
+type closeErrReader struct {
+	io.Reader
+	closeErr error
+}
+
+func (c *closeErrReader) Close() error {
+	return c.closeErr
+}
+
+type errRoundTripper struct {
+	roundTrip func(*http.Request) (*http.Response, error)
+}
+
+func (rt errRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return rt.roundTrip(req)
+}
+
+func TestProbeAliasBodyCloseErrorDoesNotMarkUnanswered(t *testing.T) {
+	client := &http.Client{
+		Transport: errRoundTripper{
+			roundTrip: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body: &closeErrReader{
+						Reader:   strings.NewReader(`{"choices":[{"message":{"content":"pong"}}]}`),
+						closeErr: errors.New("simulated close error"),
+					},
+				}, nil
+			},
+		},
+	}
+	gw := GatewayConfig{Address: "https://gateway.example.invalid/v1"}
+	err := probeAlias(context.Background(), client, gw, "light")
+	if err != nil {
+		t.Fatalf("expected nil error on answered probe with body close error, got: %v", err)
+	}
+}
+
+type readErrReader struct {
+	readErr error
+}
+
+func (r *readErrReader) Read(p []byte) (n int, err error) {
+	return 0, r.readErr
+}
+
+func (r *readErrReader) Close() error {
+	return nil
+}
+
+func TestProbeAliasReadErrorWrapsErrProbeNotRun(t *testing.T) {
+	client := &http.Client{
+		Transport: errRoundTripper{
+			roundTrip: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body: &readErrReader{
+						readErr: errors.New("simulated read error"),
+					},
+				}, nil
+			},
+		},
+	}
+	gw := GatewayConfig{Address: "https://gateway.example.invalid/v1"}
+	err := probeAlias(context.Background(), client, gw, "light")
+	if !errors.Is(err, ErrProbeNotRun) {
+		t.Fatalf("expected ErrProbeNotRun on body read error, got: %v", err)
+	}
+}
+
+func TestValidateAliasEntryOptionalProvider(t *testing.T) {
+	model := ModelDescriptor{ID: "gw-light", Alias: "light"}
+	if err := validateAliasEntry(model); err != nil {
+		t.Fatalf("alias without provider rejected: %v", err)
 	}
 }

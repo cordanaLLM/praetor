@@ -113,6 +113,11 @@ func TestSyncProbesAliasesAndReportsStalePreviewEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertSyncedAliases(t, cfg)
+}
+
+func assertSyncedAliases(t *testing.T, cfg *RoutingConfig) {
+	t.Helper()
 	byID := map[string]ModelDescriptor{}
 	for _, model := range cfg.Tiers["lightweight"].Models {
 		byID[model.ID] = model
@@ -160,11 +165,14 @@ func TestSyncSeedEntriesAreNeverPreviewAndNeverAgeJudged(t *testing.T) {
 			}
 		}
 	}
-	// The same unchanged catalog must give the same audit result on any later date.
 	far := freshnessNow.AddDate(10, 0, 0)
 	if got := CatalogFindings(cfg, far); len(got) != 0 {
 		t.Fatalf("a seed-only catalog turned stale with the wall clock: %v", got)
 	}
+}
+
+func TestEntryFindingsIgnoresSeedSourceAsOf(t *testing.T) {
+	far := freshnessNow.AddDate(10, 0, 0)
 	stamped := ModelDescriptor{ID: "seed-with-old-date", Source: SourceSeed, AsOf: "2020-01-01"}
 	if got := entryFindings(stamped, far, 24*time.Hour); len(got) != 0 {
 		t.Fatalf("a seed-owned entry carrying an old as_of must not be age-judged: %v", got)

@@ -11,7 +11,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -43,8 +42,8 @@ const (
 // unset). It is not evidence about the alias, so the recorded status stays as it was.
 var ErrProbeNotRun = errors.New("alias probe not run")
 
-// envNameShape is the shape of an environment variable name; its length is bounded apart.
-var envNameShape = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+// GatewayKeyEnvPrefix is the required prefix for gateway key_env variable names.
+const GatewayKeyEnvPrefix = "PRAETOR_GATEWAY_"
 
 // GatewayConfig declares the gateway serving the router aliases; the adopter supplies it.
 type GatewayConfig struct {
@@ -60,10 +59,30 @@ func validateGateway(cfg *RoutingConfig) error {
 	if err := validateGatewayAddress(gw.Address); err != nil {
 		return err
 	}
-	if gw.KeyEnv != "" && (len(gw.KeyEnv) > maxEnvNameBytes || !envNameShape.MatchString(gw.KeyEnv)) {
-		return fmt.Errorf("%w: gateway key_env must be an environment variable name", ErrInvalidRoutingConfig)
+	return validateGatewayKeyEnv(gw.KeyEnv)
+}
+
+func validateGatewayKeyEnv(name string) error {
+	if name == "" {
+		return nil
+	}
+	if len(name) > maxEnvNameBytes || !strings.HasPrefix(name, GatewayKeyEnvPrefix) || len(name) == len(GatewayKeyEnvPrefix) || !validKeyEnvSuffix(name[len(GatewayKeyEnvPrefix):]) {
+		return fmt.Errorf("%w: gateway key_env must start with %s followed by at least one character of [A-Z0-9_]", ErrInvalidRoutingConfig, GatewayKeyEnvPrefix)
 	}
 	return nil
+}
+
+func isKeyEnvChar(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+func validKeyEnvSuffix(suffix string) bool {
+	for i := 0; i < len(suffix); i++ {
+		if !isKeyEnvChar(suffix[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // validateGatewayAddress accepts an https URL, or an http URL only on a loopback host, because
@@ -101,27 +120,21 @@ func requireNoAliases(cfg *RoutingConfig) error {
 	return nil
 }
 
-// gatewayServesAliases reports whether the catalog declares a gateway with at least one alias
-// entry, whatever the probes said: a gateway outage must not bring pinned models back.
-func gatewayServesAliases(cfg *RoutingConfig) bool {
-	if cfg.Gateway == nil {
-		return false
-	}
-	for _, tier := range cfg.Tiers {
-		for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
-			if tier.Models[i].Alias != "" {
-				return true
-			}
+// TierServesAliases reports whether a tier holds at least one alias entry.
+func TierServesAliases(tier Tier) bool {
+	for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
+		if tier.Models[i].Alias != "" {
+			return true
 		}
 	}
 	return false
 }
 
 // gatewayExclusion returns why the gateway rules exclude a candidate, or "" when it stays.
-// An alias entry stays only once its probe answered. When the catalog declares a gateway with
-// alias entries, a pinned model is excluded too, answering or not, because the gateway refuses concrete IDs its key cannot use;
+// An alias entry stays only once its probe answered. When a tier declares alias entries,
+// its pinned models are excluded too, answering or not, because the gateway refuses concrete IDs its key cannot use;
 // a model from a local runtime never passes through the gateway and stays.
-func gatewayExclusion(model ModelDescriptor, serves bool) string {
+func gatewayExclusion(model ModelDescriptor, tierServes bool) string {
 	if model.Alias != "" {
 		switch model.AliasStatus {
 		case AliasAnswers:
@@ -129,22 +142,25 @@ func gatewayExclusion(model ModelDescriptor, serves bool) string {
 		case AliasUnanswered:
 			return "alias did not answer the gateway probe: " + model.AliasReason
 		default:
-			return "alias has not been probed; run models sync"
+			return "alias has not been probed; run models sync --probe-aliases"
 		}
 	}
-	if serves && model.Source != SourceLocal {
-		return "pinned model; the gateway serves aliases"
+	if tierServes && model.Source != SourceLocal {
+		return "pinned model; the tier serves aliases"
 	}
 	return ""
 }
 
 // validateAliasEntry checks the alias, probe and as_of fields of one model.
 func validateAliasEntry(model ModelDescriptor) error {
-	if (model.Alias == "") != (model.Provider == "") {
-		return fmt.Errorf("%w: model %s needs provider and alias together", ErrInvalidRoutingConfig, model.ID)
+	if model.Alias == "" && model.Provider != "" {
+		return fmt.Errorf("%w: model %s declares provider without an alias", ErrInvalidRoutingConfig, model.ID)
 	}
-	if model.Alias != "" && (!routingName(model.Alias) || !routingName(model.Provider)) {
-		return fmt.Errorf("%w: model %s has an invalid provider or alias", ErrInvalidRoutingConfig, model.ID)
+	if model.Alias != "" && !routingName(model.Alias) {
+		return fmt.Errorf("%w: model %s has an invalid alias", ErrInvalidRoutingConfig, model.ID)
+	}
+	if model.Provider != "" && !routingName(model.Provider) {
+		return fmt.Errorf("%w: model %s has an invalid provider", ErrInvalidRoutingConfig, model.ID)
 	}
 	return validateProbeFields(model)
 }
@@ -183,37 +199,50 @@ func HTTPAliasProber(client *http.Client) AliasProber {
 	}
 }
 
-func probeAlias(ctx context.Context, client *http.Client, gw GatewayConfig, alias string) (resultErr error) {
+func probeRequest(ctx context.Context, gw GatewayConfig, alias string) (*http.Request, error) {
 	key := ""
 	if gw.KeyEnv != "" {
 		if key = os.Getenv(gw.KeyEnv); key == "" {
-			return fmt.Errorf("%w: environment variable %s is empty", ErrProbeNotRun, gw.KeyEnv)
+			return nil, fmt.Errorf("%w: environment variable %s is empty", ErrProbeNotRun, gw.KeyEnv)
 		}
 	}
 	body, err := json.Marshal(map[string]any{"model": alias, "max_tokens": 1,
 		"messages": []map[string]string{{"role": "user", "content": "ping"}}})
 	if err != nil {
-		return fmt.Errorf("encode probe: %w", err)
+		return nil, fmt.Errorf("encode probe: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, aliasProbeTimeout)
-	defer cancel()
 	target := strings.TrimRight(gw.Address, "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrProbeNotRun, err)
+		return nil, fmt.Errorf("%w: %w", ErrProbeNotRun, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
+	return req, nil
+}
+
+func probeAlias(ctx context.Context, client *http.Client, gw GatewayConfig, alias string) (resultErr error) {
+	ctx, cancel := context.WithTimeout(ctx, aliasProbeTimeout)
+	defer cancel()
+	req, err := probeRequest(ctx, gw, alias)
+	if err != nil {
+		return err
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("%w: gateway unreachable: %w", ErrProbeNotRun, err)
 	}
-	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
+	defer func() {
+		closeErr := resp.Body.Close()
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, closeErr)
+		}
+	}()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes))
 	if err != nil {
-		return fmt.Errorf("read probe response: %w", err)
+		return fmt.Errorf("%w: read probe response: %w", ErrProbeNotRun, err)
 	}
 	if transientStatus(resp.StatusCode) {
 		return fmt.Errorf("%w: HTTP %d: %s", ErrProbeNotRun, resp.StatusCode, gatewayMessage(data))
