@@ -91,6 +91,11 @@ func auditGateFailureCases() []auditGateCase {
 			// The fixture enables no docs:* facet; the evidence check runs without one.
 			writeFixtureFile(t, f.dir, ".gitignore", ".workingdir/*\n!.workingdir/evidence/\n")
 		}, "Agent context evidence directory: git does not ignore .workingdir/evidence/"},
+		{"configured evidence directory not ignored", func(t *testing.T, f *auditFixture) {
+			// register.evidence.dir moves evidence out of the .workingdir/ the fixture ignores.
+			writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", false)+"  evidence:\n    dir: scratch/evidence/\n")
+			recompileFixtureContext(t, f.dir)
+		}, "Agent context evidence directory: git does not ignore scratch/evidence/"},
 		{"empty manifest identity", func(t *testing.T, f *auditFixture) {
 			writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nprofiles:\n  - \"framework\"\nfacets:\n  - \"security:high\"\n")
 		}, "owner and name must not be empty"},

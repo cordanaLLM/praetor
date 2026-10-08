@@ -46,7 +46,8 @@ func runCompileContext(args []string) error {
 	if err := workstation.CheckBuildCurrent(ctx, *targetDir, engineBuild()); err != nil {
 		return fmt.Errorf("compile-context wrote nothing: %w", err)
 	}
-	// The text register block sends agent evidence to config.EvidenceDir beside the source; Git
+	// The text register block sends agent evidence to the register policy's evidence directory
+	// (config.RegisterPolicy.EvidenceDir, register.evidence.dir) beside the source; Git
 	// has to ignore it before the rule is rendered (BUG-604).
 	return adopt.CompileAgentContext(ctx, os.Stdout, tr, *source, *targetDir)
 }

@@ -157,10 +157,11 @@ every nested `AGENTS.md` Git tracks the same way, and a prose one fails with
 same lint after it writes and returns an error on a finding. The fixture above is terse, so it
 passes.
 
-The block sends agent evidence to `.workingdir/evidence/`. When the root is a Git work tree
-whose rules do not ignore that directory, the writing call merges the Praetor private-artifact
-block into `.gitignore` first and reports it, and a `verify_only` call fails with
-`git does not ignore .workingdir/evidence/` (see [evidence](text-register.md#evidence)). A
+The block sends agent evidence to `register.evidence.dir`, by default `.workingdir/evidence/`.
+When the root is a Git work tree whose rules do not ignore that directory, the writing call
+merges the Praetor private-artifact block into `.gitignore` first and reports it, and a
+`verify_only` call fails with `git does not ignore <dir>` (see
+[evidence](text-register.md#evidence)). A
 `mktemp -d` root outside any work tree needs neither.
 
 The same manifest selects which vendor files exist. `agent_clients: [claude]` in the
@@ -491,7 +492,7 @@ A tool call and the CLI therefore check and write the same things:
   in `internal/compiler/agent_projection.go`, tests in
   `internal/compiler/checkout_line_endings_test.go`).
 - A write runs the same lint after writing and fails on a finding, and before it
-  compiles it makes Git ignore `.workingdir/evidence/`. Both steps are
+  compiles it makes Git ignore the evidence directory (`register.evidence.dir`). Both steps are
   `adopt.CompileAgentContext`, the write the CLI's `compile-context` and `init` run.
 - More than 50 files in `.agents/agents` fail both modes instead of being
   truncated.

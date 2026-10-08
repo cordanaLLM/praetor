@@ -64,9 +64,10 @@ register; reply to human operator -> full prose.
 7. **Return shape** follows register block: verdict, changed paths, commands run, evidence
    pointers, open questions.
 8. **Evidence** follows register block, same wording: evidence above 58 lines or 1500
-   tokens -> file under `.workingdir/evidence/`; return
+   tokens -> file under evidence dir, default `.workingdir/evidence/`; return
    `evidence: <path> sha256:<12 hex> lines:<n>`, fetch only when decision needs it.
-   Manifest may tighten both numbers; block in AGENTS.md prints values in force.
+   Manifest may tighten both numbers and move dir (`register.evidence.dir`); block in
+   AGENTS.md prints values in force.
 
 ## Static checker
 

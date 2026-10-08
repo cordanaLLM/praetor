@@ -43,11 +43,11 @@ func TestEvidenceIgnored_Positive(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := evidenceRepo(t, rules)
-			ignored, err := EvidenceIgnored(t.Context(), root)
+			ignored, err := EvidenceIgnored(t.Context(), root, config.EvidenceDirDefault)
 			if err != nil || !ignored {
 				t.Fatalf("ignored = %v, err = %v; want ignored", ignored, err)
 			}
-			if err := CheckEvidenceIgnored(t.Context(), root); err != nil {
+			if err := CheckEvidenceIgnored(t.Context(), root, config.EvidenceDirDefault); err != nil {
 				t.Fatalf("check: %v", err)
 			}
 		})
@@ -58,15 +58,15 @@ func TestEvidenceIgnored_Positive(t *testing.T) {
 // error, and the check names the directory and both remedies.
 func TestEvidenceIgnored_Negative(t *testing.T) {
 	root := evidenceRepo(t, "user-output/\n")
-	ignored, err := EvidenceIgnored(t.Context(), root)
+	ignored, err := EvidenceIgnored(t.Context(), root, config.EvidenceDirDefault)
 	if err != nil || ignored {
 		t.Fatalf("ignored = %v, err = %v; want not ignored", ignored, err)
 	}
-	err = CheckEvidenceIgnored(t.Context(), root)
+	err = CheckEvidenceIgnored(t.Context(), root, config.EvidenceDirDefault)
 	if !errors.Is(err, ErrEvidenceNotIgnored) {
 		t.Fatalf("want ErrEvidenceNotIgnored, got %v", err)
 	}
-	for _, want := range []string{config.EvidenceDir, "praetorctl compile-context", "adoption.decline", "/.workingdir/"} {
+	for _, want := range []string{config.EvidenceDirDefault, "praetorctl compile-context", "adoption.decline", "/.workingdir/"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("check error lacks %q: %v", want, err)
 		}
@@ -75,7 +75,7 @@ func TestEvidenceIgnored_Negative(t *testing.T) {
 	if present, presentErr := util.GitWorktreePresent(t.Context(), outside); presentErr != nil || present {
 		t.Skipf("temporary directory sits inside a Git work tree (%v, %v)", present, presentErr)
 	}
-	if _, err := EvidenceIgnored(t.Context(), outside); err == nil {
+	if _, err := EvidenceIgnored(t.Context(), outside, config.EvidenceDirDefault); err == nil {
 		t.Fatal("the bare probe outside a work tree must fail, not answer")
 	}
 }
@@ -85,17 +85,17 @@ func TestEvidenceIgnored_Negative(t *testing.T) {
 // passes the check, since no commit can publish it.
 func TestEvidenceIgnored_Boundary(t *testing.T) {
 	root := evidenceRepo(t, ".workingdir/*\n!.workingdir/evidence/\n")
-	if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(config.EvidenceDir)), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(config.EvidenceDirDefault)), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckEvidenceIgnored(t.Context(), root); !errors.Is(err, ErrEvidenceNotIgnored) {
+	if err := CheckEvidenceIgnored(t.Context(), root, config.EvidenceDirDefault); !errors.Is(err, ErrEvidenceNotIgnored) {
 		t.Fatalf("an effective re-include must fail the check, got %v", err)
 	}
 	outside := t.TempDir()
 	if present, err := util.GitWorktreePresent(t.Context(), outside); err != nil || present {
 		t.Skipf("temporary directory sits inside a Git work tree (%v, %v)", present, err)
 	}
-	if err := CheckEvidenceIgnored(t.Context(), outside); err != nil {
+	if err := CheckEvidenceIgnored(t.Context(), outside, config.EvidenceDirDefault); err != nil {
 		t.Fatalf("outside a work tree the check must pass: %v", err)
 	}
 }
@@ -170,5 +170,68 @@ func TestVerifyCompiledContext_Negative_ReportsEveryFailure(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "out of sync with canonical") {
 		t.Errorf("targets compiled from the source must verify: %v", err)
+	}
+}
+
+// evidenceDirRepo is evidenceRepo with AGENTS.md and a manifest whose register policy sends
+// evidence to evidenceDir.
+func evidenceDirRepo(t *testing.T, rules, evidenceDir string) string {
+	t.Helper()
+	root := evidenceRepo(t, rules)
+	writeCanonicalFixture(t, filepath.Join(root, "AGENTS.md"), fixtureSource)
+	writeCanonicalFixture(t, filepath.Join(root, ".standards.yaml"),
+		"version: 1\nregister:\n  evidence:\n    dir: "+evidenceDir+"\n")
+	return root
+}
+
+// verifyEvidenceDir runs compile-context --verify over the repository at root.
+func verifyEvidenceDir(t *testing.T, root string) error {
+	t.Helper()
+	return VerifyCompiledContext(t.Context(), io.Discard, NewTranspiler(), filepath.Join(root, "AGENTS.md"), root)
+}
+
+// Negative: verify probes the directory the manifest configures, not the default. A repository
+// that ignores .workingdir/ but sends evidence to scratch/evidence/ fails, naming that
+// directory and the root an operator rule has to cover.
+func TestVerifyCompiledContext_Negative_ProbesConfiguredEvidenceDir(t *testing.T) {
+	root := evidenceDirRepo(t, "/.workingdir/\n", "scratch/evidence/")
+	err := verifyEvidenceDir(t, root)
+	if !errors.Is(err, ErrEvidenceNotIgnored) {
+		t.Fatalf("an unignored configured directory must fail verify, got %v", err)
+	}
+	for _, want := range []string{"git does not ignore scratch/evidence/ in ", "add /scratch/ to the operator-owned .gitignore"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("verify error lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "git does not ignore "+config.EvidenceDirDefault) {
+		t.Errorf("verify probed the default directory: %v", err)
+	}
+}
+
+// Positive: a repository that keeps only its legacy scratch root private, as .workingdir2/**,
+// and sends evidence there passes the ignore check although .workingdir/ is not ignored.
+func TestVerifyCompiledContext_Positive_ConfiguredEvidenceDirIgnored(t *testing.T) {
+	root := evidenceDirRepo(t, ".workingdir2/**\n", ".workingdir2/evidence/")
+	if err := verifyEvidenceDir(t, root); errors.Is(err, ErrEvidenceNotIgnored) {
+		t.Fatalf("an ignored configured directory must pass the ignore check: %v", err)
+	}
+	if err := CheckEvidenceIgnored(t.Context(), root, ".workingdir2/evidence"); err != nil {
+		t.Fatalf("check without the trailing slash: %v", err)
+	}
+}
+
+// Boundary: a directory config.CheckEvidenceDir refuses is an error before any probe, inside or
+// outside a work tree, never a pass and never ErrEvidenceNotIgnored.
+func TestCheckEvidenceIgnored_Boundary_RefusesInvalidDir(t *testing.T) {
+	root := evidenceRepo(t, "/.workingdir/\n")
+	for _, dir := range []string{"", "/abs/evidence/", "../evidence/", ".git/evidence/"} {
+		if _, err := EvidenceIgnored(t.Context(), root, dir); err == nil || !strings.Contains(err.Error(), "register evidence dir") {
+			t.Errorf("EvidenceIgnored(%q) = %v; want the directory refused", dir, err)
+		}
+		err := CheckEvidenceIgnored(t.Context(), t.TempDir(), dir)
+		if err == nil || errors.Is(err, ErrEvidenceNotIgnored) {
+			t.Errorf("CheckEvidenceIgnored(%q) = %v; want the directory refused", dir, err)
+		}
 	}
 }

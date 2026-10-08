@@ -193,8 +193,9 @@ func auditContextSync(ctx context.Context, manifest *config.Manifest, agentsPath
 		return "", fmt.Errorf("[FAIL] Agent context: %w", harness.Narrow(err))
 	}
 	// The CLI audit runs the same check: whatever facets the manifest enables, the block sends
-	// agent evidence to the evidence directory in every repository.
-	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(agentsPath)); err != nil {
+	// agent evidence to the directory its register policy names (register.evidence.dir) in every
+	// repository.
+	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(agentsPath), manifest.EffectiveRegister().EvidenceDir()); err != nil {
 		return "", fmt.Errorf("[FAIL] Agent context evidence directory: %w", err)
 	}
 	line := "[PASS] Cross-agent context targets verified in sync.\n[PASS] Agent context " + lint.Summary() + "."

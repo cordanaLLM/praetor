@@ -366,8 +366,9 @@ func auditAgentContext(ctx context.Context, manifest *config.Manifest, opts *aud
 		return fmt.Errorf("[FAIL] Agent context: %w", harness.Narrow(err))
 	}
 	fmt.Printf("[PASS] Agent context %s.\n", lint.Summary())
-	// Whatever facets the manifest enables: the block sends agent evidence there in every repository.
-	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(opts.agentsPath)); err != nil {
+	// Whatever facets the manifest enables: the block sends agent evidence to the directory its
+	// register policy names (register.evidence.dir) in every repository.
+	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(opts.agentsPath), manifest.EffectiveRegister().EvidenceDir()); err != nil {
 		return fmt.Errorf("[FAIL] Agent context evidence directory: %w", err)
 	}
 	if harness.Declined {

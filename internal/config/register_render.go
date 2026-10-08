@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -25,10 +27,14 @@ const (
 	evidencePointerDigestHex = 12
 	// maxEvidencePointerPathBytes bounds the path embedded in a pointer line.
 	maxEvidencePointerPathBytes = 4096
-	// EvidenceDir is where the rendered evidence rule sends agent evidence, relative to the
-	// directory of the AGENTS.md that carries the block. compile-context makes Git ignore it,
-	// and compile-context --verify and audit fail while Git does not (compiler.EvidenceIgnored).
-	EvidenceDir = ".workingdir/evidence/"
+	// EvidenceDirDefault is where the rendered evidence rule sends agent evidence unless
+	// register.evidence.dir names another directory (RegisterPolicy.EvidenceDir), relative to
+	// the directory of the AGENTS.md that carries the block. compile-context makes Git ignore
+	// it, and compile-context --verify and audit fail while Git does not
+	// (compiler.EvidenceIgnored).
+	EvidenceDirDefault = ".workingdir/evidence/"
+	// MaxEvidenceDirBytes bounds register.evidence.dir; it renders inside one line of the block.
+	MaxEvidenceDirBytes = 255
 )
 
 // registerOrder fixes the row order of every rendered list.
@@ -133,10 +139,14 @@ func RenderRegisterBlock(p RegisterPolicy, dispatchGated bool) (string, error) {
 		"Register follows the audience, then the task label of your brief (`register:` in `.standards.yaml`; labels are the router's `target_tasks`).",
 		"",
 	}
+	evidence, err := renderEvidenceRule(p)
+	if err != nil {
+		return "", err
+	}
 	lines = append(lines, renderRegisterTable(p)...)
 	lines = append(lines, "",
 		"- "+renderRegisterTaskRows(p, dispatchGated),
-		"- "+renderEvidenceRule(p.Evidence),
+		"- "+evidence,
 		"- An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.",
 		RegisterBlockEnd)
 	block := strings.Join(lines, "\n")
@@ -217,13 +227,76 @@ const (
 	subagentBriefGate  = "; registered dispatch hook denies brief missing `task:`."
 )
 
-func renderEvidenceRule(e EvidenceBounds) string {
+// renderEvidenceRule renders the evidence line from the policy's bounds and directory. A
+// directory CheckEvidenceDir rejects fails the render instead of falling back to the default.
+func renderEvidenceRule(p RegisterPolicy) (string, error) {
+	dir, err := CheckEvidenceDir(p.EvidenceDir())
+	if err != nil {
+		return "", err
+	}
 	bounds := DefaultRegisterPolicy().Evidence
-	tightenPositive(&bounds.InlineMaxLines, e.InlineMaxLines)
-	tightenPositive(&bounds.InlineMaxTokens, e.InlineMaxTokens)
+	tightenPositive(&bounds.InlineMaxLines, p.Evidence.InlineMaxLines)
+	tightenPositive(&bounds.InlineMaxTokens, p.Evidence.InlineMaxTokens)
 	return fmt.Sprintf("Evidence above %d lines or %d tokens leaves the message as a file under `%s`; "+
 		"return `evidence: <path> sha256:<12 hex> lines:<n>` and fetch it only when a decision needs it.",
-		bounds.InlineMaxLines, bounds.InlineMaxTokens, EvidenceDir)
+		bounds.InlineMaxLines, bounds.InlineMaxTokens, dir), nil
+}
+
+// CheckEvidenceDir returns dir, a register.evidence.dir value, in canonical form: a
+// slash-separated path relative to the AGENTS.md that carries the block, ending in one slash.
+// It refuses an empty or oversized value, an absolute path, a path that leaves the repository
+// through "..", an empty or "." segment, a path inside .git, and any character that would break
+// the rendered line or is not portable across platforms (control characters, backslash, ':',
+// '|', '`'). Whether Git ignores the directory is a property of the repository, not of the value:
+// compiler.CheckEvidenceIgnored decides it.
+func CheckEvidenceDir(dir string) (string, error) {
+	if err := checkEvidenceDirText(dir); err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSuffix(dir, "/")
+	for i, segment := range strings.Split(trimmed, "/") {
+		if err := checkEvidenceDirSegment(dir, segment, i == 0); err != nil {
+			return "", err
+		}
+	}
+	return trimmed + "/", nil
+}
+
+// checkEvidenceDirText refuses a value whose length, characters or leading slash CheckEvidenceDir
+// does not accept, before it is split into segments.
+func checkEvidenceDirText(dir string) error {
+	if dir == "" || len(dir) > MaxEvidenceDirBytes {
+		return fmt.Errorf("register evidence dir must be 1..%d bytes", MaxEvidenceDirBytes)
+	}
+	if !utf8.ValidString(dir) || strings.ContainsFunc(dir, unicode.IsControl) || strings.ContainsAny(dir, "\\:|`") {
+		return fmt.Errorf("register evidence dir %q must be one line of UTF-8 without control characters, '\\', ':', '|' or '`'", dir)
+	}
+	if strings.HasPrefix(dir, "/") {
+		return fmt.Errorf("register evidence dir %q must be relative to the repository, not absolute", dir)
+	}
+	return nil
+}
+
+// checkEvidenceDirSegment refuses one slash-separated segment of dir: "..", an empty or "."
+// segment, and .git as the first one.
+func checkEvidenceDirSegment(dir, segment string, first bool) error {
+	switch {
+	case segment == "..":
+		return fmt.Errorf("register evidence dir %q must not leave the repository through '..'", dir)
+	case segment == "" || segment == ".":
+		return fmt.Errorf("register evidence dir %q must not hold an empty or '.' segment", dir)
+	case first && strings.EqualFold(segment, ".git"):
+		return fmt.Errorf("register evidence dir %q must not lie inside .git", dir)
+	}
+	return nil
+}
+
+// EvidenceRoot returns the top-level directory of evidenceDir, a value CheckEvidenceDir
+// accepted: the directory an ignore rule names to keep the evidence directory and everything
+// beside it private, such as .workingdir for .workingdir/evidence/.
+func EvidenceRoot(evidenceDir string) string {
+	root, _, _ := strings.Cut(evidenceDir, "/")
+	return root
 }
 
 // EvidencePointer renders the one pointer format for evidence that left the token path:

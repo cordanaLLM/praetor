@@ -125,6 +125,13 @@ func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write boo
 	if err != nil {
 		return false, err
 	}
+	return syncLoadedRegister(ctx, authority, block, agentsMdPath, write)
+}
+
+// syncLoadedRegister is SyncRegisterBlock once the authority and its rendered block are loaded,
+// so a caller that also needs the policy, such as the verify that probes its evidence directory,
+// reads the manifest once.
+func syncLoadedRegister(ctx context.Context, authority config.RegisterAuthority, block, agentsMdPath string, write bool) (bool, error) {
 	data, err := contextopt.ReadSnapshot(ctx, agentsMdPath)
 	if err != nil {
 		return false, fmt.Errorf("failed to read source %s: %w", agentsMdPath, err)
