@@ -239,6 +239,12 @@ none. `compile-context` and `praetorctl adopt` both ask it, so the block an adop
 repository receives verifies unchanged (`TestDispatchGateRegistered_Positive`,
 `TestDispatchGateRegistered_Negative`, `TestDispatchGateRegistered_Boundary`).
 
+A brief that names forge issues is also checked against their claims. `issue:` lines list the
+issues and a `session:` line names the session that must hold them; `pre-dispatch` refuses an
+issue another live session claims, an unclaimed one and one whose claim it cannot read
+([issue claims](issue-claims.md), `internal/agenthook/dispatch_claims.go`). A brief that names
+no issue skips the check.
+
 Claude's pre-tool hook stores only the resolved register row, never the prompt. Its
 post-tool receipt atomically binds that row to the native agent id. The private bounded
 store lives below Git's shared directory at

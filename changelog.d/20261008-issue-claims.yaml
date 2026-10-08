@@ -1,0 +1,3 @@
+type: added
+title: "Add issue claims: praetorctl issue claim, status and release, the standards_issue_claim, standards_issue_status and standards_issue_release MCP tools, and a pre-dispatch check that refuses a brief whose issue another live session claims. One claim comment per issue carries a machine-readable marker and every stage edits it; a claim without an update for forge.claim_stale (default 6 hours) is taken over."
+breaking: false

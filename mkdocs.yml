@@ -126,6 +126,7 @@ nav:
           - Agent Lifecycle Coverage: guides/agent-lifecycle.md
           - Context Cache Bands: guides/context-cache-bands.md
           - Agent Hooks: guides/agent-hooks.md
+          - Issue Claims: guides/issue-claims.md
           - Client Bootstrap: guides/client-bootstrap.md
           - Client Connections: guides/client-connections.md
           - Editor Capabilities: guides/editor-capabilities.md
