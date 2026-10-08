@@ -2,37 +2,39 @@ package adopt
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
-// includeRepo builds a git repository holding files, tracks the names in tracked, and returns a
-// session over it. The Makefile is only text the tests pass to the merge.
+// mergeDocumentationMakefile is mergeDocumentationMakefileWith where no include is followed; the
+// production path always passes the session's expander (documentationMakefile).
+func mergeDocumentationMakefile(existing string, force bool) (string, error) {
+	return mergeDocumentationMakefileWith(existing, force, noMakefileIncludes)
+}
+
+// noMakefileIncludes follows no include: every one stays ambiguous.
+func noMakefileIncludes(data string) (string, []string) { return data, nil }
+
+// includeRepo builds a git repository holding files, tracks the names in tracked under the
+// hermetic fixture git (timeout-bound), and returns a session over it. The Makefile is only text
+// the tests pass to the merge.
 func includeRepo(t *testing.T, files map[string]string, tracked ...string) *adoptSession {
 	t.Helper()
 	root := t.TempDir()
 	for name, body := range files {
-		full := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		mustWrite(t, filepath.Join(root, filepath.FromSlash(name)), body)
 	}
-	run := func(args ...string) {
-		cmd := exec.CommandContext(context.Background(), "git", args...)
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
-		}
-	}
-	run("init", "-q")
+	testsupport.InitGitRepoWithOrigin(t, root, "")
 	if len(tracked) > 0 {
-		run(append([]string{"add", "--"}, tracked...)...)
+		testsupport.RunFixtureGit(t, root, append([]string{"add", "--"}, tracked...))
 	}
 	return &adoptSession{repoPath: root}
 }
@@ -78,11 +80,7 @@ func TestMergeDocumentationMakefileUnvouchedIncludesRefuse(t *testing.T) {
 	if err := os.Symlink("tracked.mk", filepath.Join(s.repoPath, "link.mk")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	gitAdd := exec.CommandContext(context.Background(), "git", "add", "--", "link.mk")
-	gitAdd.Dir = s.repoPath
-	if out, err := gitAdd.CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v: %s", err, out)
-	}
+	testsupport.RunFixtureGit(t, s.repoPath, []string{"add", "--", "link.mk"})
 	for name, makefile := range map[string]string{
 		"untracked":        "include untracked.mk\n",
 		"tracked symlink":  "include link.mk\n",
@@ -133,64 +131,166 @@ func TestMergeDocumentationMakefileNestedIncludeDepthBound(t *testing.T) {
 func TestReadTrackedFragmentBoundaries(t *testing.T) {
 	s := includeRepo(t, map[string]string{"a.mk": "x:\n", "b.mk": "y:\n"}, "a.mk")
 	ctx := context.Background()
-	if text, ok := readTrackedFragment(ctx, s.repoPath, "./a.mk"); !ok || text != "x:\n" {
-		t.Fatalf("tracked fragment = %q, %v", text, ok)
+	if text, err := readTrackedFragment(ctx, s.repoPath, "./a.mk"); err != nil || text != "x:\n" {
+		t.Fatalf("tracked fragment = %q, %v", text, err)
 	}
-	for _, rel := range []string{"b.mk", "", ".", "../a.mk", "a.mk/../b.mk"} {
-		if _, ok := readTrackedFragment(ctx, s.repoPath, rel); ok {
-			t.Fatalf("%q read", rel)
+	causes := map[string]string{
+		"b.mk": "not tracked", "": "", ".": "", "../a.mk": "leaves the repository", "a.mk/../b.mk": "not tracked",
+	}
+	for rel, cause := range causes {
+		_, err := readTrackedFragment(ctx, s.repoPath, rel)
+		if err == nil || !strings.Contains(err.Error(), cause) {
+			t.Fatalf("%q: error %v, want cause %q", rel, err, cause)
 		}
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := readTrackedFragment(cancelled, s.repoPath, "a.mk"); err == nil {
+		t.Fatal("cancelled context read the fragment")
 	}
 }
 
-// TestMergeDocumentationMakefileRemadeIncludeRefuses covers an include Make remakes before it
-// reads it (measured against GNU Make 4.4.1): a built-in rule builds gen.mk from a neighbouring
-// source, so the tracked text is not what Make reads and the include stays ambiguous.
+// TestIncludeExpanderNamesPathAndCause: an include that is not followed says which one and why.
+func TestIncludeExpanderNamesPathAndCause(t *testing.T) {
+	s := includeRepo(t, map[string]string{"free.mk": "a:\n"})
+	_, notes := s.includeExpander(context.Background())("include free.mk\n")
+	if len(notes) != 1 || !strings.Contains(notes[0], "free.mk") || !strings.Contains(notes[0], "not tracked") {
+		t.Fatalf("notes %q", notes)
+	}
+	_, err := mergeWithIncludes(s, "include free.mk\n")
+	if err == nil || !strings.Contains(err.Error(), "include free.mk not followed") {
+		t.Fatalf("refusal does not name the include: %v", err)
+	}
+}
+
+func TestMakefileImplicitSourceNearBoundary(t *testing.T) {
+	big := map[string]string{"gen.mk": "a:\n"}
+	for i := 0; i <= maxImplicitSourceEntries; i++ {
+		big[fmt.Sprintf("d/f%d", i)] = ""
+	}
+	s := includeRepo(t, map[string]string{"gen.mk": "a:\n"}, "gen.mk")
+	if err := makefileImplicitSourceNear(context.Background(), s.repoPath, "gen.mk"); err != nil {
+		t.Fatalf("lone file: %v", err)
+	}
+	for _, name := range []string{"xgen.mk", "gen.mkx", "gen.mk.sh", "s.gen.mk.sh", "RCS", "SCCS"} {
+		mustWrite(t, filepath.Join(s.repoPath, name), "")
+		if err := makefileImplicitSourceNear(context.Background(), s.repoPath, "gen.mk"); err == nil {
+			t.Errorf("neighbour %s not seen", name)
+		}
+		if err := os.Remove(filepath.Join(s.repoPath, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := makefileImplicitSourceNear(context.Background(), s.repoPath, "missing/gen.mk"); err == nil {
+		t.Error("unreadable directory counted as clean")
+	}
+	over := includeRepo(t, big, "gen.mk")
+	if err := makefileImplicitSourceNear(context.Background(), over.repoPath, "d/x.mk"); err == nil {
+		t.Error("directory over the entry bound counted as clean")
+	}
+}
+
+// remadeCase is a Makefile that includes the tracked gen.mk (text "tracked") while something makes
+// Make rebuild gen.mk before reading it (text "remade" or a failed build): the reader must refuse.
+type remadeCase struct {
+	name, makefile string
+	files          map[string]string // beside gen.mk and the Makefile; every one is newer than gen.mk
+}
+
+const (
+	trackedGenMk = "docs-lint:\n\t@echo tracked\n"
+	remadeGenMk  = "docs-lint:\n\t@echo remade\n"
+)
+
+// remadeCases are measured against GNU Make 4.4.1 (TestRemadeIncludeCasesMatchGNUMake replays them
+// when GNU Make is installed): each rebuilds gen.mk, so Make runs "remade" (or fails running the
+// missing SCCS tool "get") instead of the tracked recipe. An allow-list reader follows none.
+var remadeCases = []remadeCase{
+	{"sibling gen.mk.sh", "include gen.mk\n", map[string]string{"gen.mk.sh": remadeGenMk}},
+	{"vpath directive", "vpath %.sh src\ninclude gen.mk\n", map[string]string{"src/gen.mk.sh": remadeGenMk}},
+	{"VPATH variable", "VPATH = src\ninclude gen.mk\n", map[string]string{"src/gen.mk.sh": remadeGenMk}},
+	{"chained SCCS", "VPATH = src\ninclude gen.mk\n", map[string]string{"src/s.gen.mk.sh": remadeGenMk}},
+	{"dot-dot-slash target", "include gen.mk\n././gen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"dot-double-slash target", "include gen.mk\n.//gen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"plain target", "include gen.mk\ngen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"dot operand", "include ././gen.mk\ngen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"pattern rule", "include gen.mk\n%.mk: %.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"double-colon rule", "include gen.mk\ngen.mk:: gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"custom suffix rule", ".SUFFIXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.in": remadeGenMk}},
+}
+
+// files2 is every file of the case including the tracked gen.mk.
+func (tc remadeCase) files2() map[string]string {
+	files := map[string]string{"gen.mk": trackedGenMk}
+	for name, body := range tc.files {
+		files[name] = body
+	}
+	return files
+}
+
 func TestMergeDocumentationMakefileRemadeIncludeRefuses(t *testing.T) {
-	neighbours := []string{"gen.mk.sh", "gen.mk.c", "gen.mk,v", "s.gen.mk", "RCS/gen.mk,v", "SCCS/s.gen.mk"}
-	for _, neighbour := range neighbours {
-		s := includeRepo(t, map[string]string{"gen.mk": "help:\n", neighbour: "x\n"}, "gen.mk")
-		if _, err := mergeWithIncludes(s, "include gen.mk\n"); err == nil {
-			t.Errorf("include with neighbour %s followed", neighbour)
+	for _, tc := range remadeCases {
+		s := includeRepo(t, tc.files2(), "gen.mk")
+		_, err := mergeWithIncludes(s, tc.makefile)
+		if err == nil {
+			t.Errorf("%s: remade include followed", tc.name)
 		}
-	}
-	s := includeRepo(t, map[string]string{"gen.mk": "help:\n", "gen.mk.in": "docs-lint:\n"}, "gen.mk")
-	if _, err := mergeWithIncludes(s, "include gen.mk\ngen.mk: gen.mk.in\n\tcp $< $@\n"); err == nil {
-		t.Error("include with an explicit rule followed")
-	}
-	s = includeRepo(t, map[string]string{"gen.mk": "help:\n", "other.txt": "x\n"}, "gen.mk")
-	if _, err := mergeWithIncludes(s, "include gen.mk\n"); err != nil {
-		t.Errorf("fragment with no source beside it refused: %v", err)
 	}
 }
 
-// TestMergeDocumentationMakefileRemadeIncludeSpellings covers the spellings Make treats alike
-// (GNU Make 4.4.1 strips a leading "./" from include operands and targets) and the suffix rules
-// that build an include from a neighbour of another suffix: each stays ambiguous and refuses.
-func TestMergeDocumentationMakefileRemadeIncludeSpellings(t *testing.T) {
-	cases := []struct {
-		name, makefile string
-		files          map[string]string
-	}{
-		{"dot operand, plain target", "include ./gen.mk\ngen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.mk": "help:\n"}},
-		{"plain operand, dot target", "include gen.mk\n./gen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.mk": "help:\n"}},
-		{"custom suffix rule", ".SUFFIXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.mk": "help:\n", "gen.in": "x\n"}},
-		{"built-in suffix rule", "include gen.s\n", map[string]string{"gen.s": "help:\n", "gen.S": "x\n"}},
-		{"built-in suffix without neighbour", "include gen.s\n", map[string]string{"gen.s": "help:\n"}},
-	}
-	for _, tc := range cases {
-		tracked := "gen.mk"
-		if _, ok := tc.files["gen.s"]; ok {
-			tracked = "gen.s"
+// TestRemadeIncludeCasesMatchGNUMake replays remadeCases (and the safe controls) against GNU Make:
+// a refused case must not run the tracked recipe, an allowed one must.
+func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
+	gnuMake := testsupport.GNUMake(t)
+	testsupport.RequireGNUMakeShell(t, "cat", "chmod", "cp")
+	run := func(tc remadeCase) string {
+		dir := t.TempDir()
+		for name, body := range tc.files2() {
+			mustWrite(t, filepath.Join(dir, filepath.FromSlash(name)), body)
 		}
-		s := includeRepo(t, tc.files, tracked)
-		if _, err := mergeWithIncludes(s, tc.makefile); err == nil {
-			t.Errorf("%s: include followed", tc.name)
+		mustWrite(t, filepath.Join(dir, "Makefile"), tc.makefile)
+		old := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(filepath.Join(dir, "gen.mk"), old, old); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, gnuMake, "-s", "docs-lint")
+		cmd.Dir, cmd.Env = dir, append(os.Environ(), "LC_ALL=C", "MAKEFLAGS=")
+		out, err := cmd.CombinedOutput()
+		var exited *exec.ExitError
+		if err != nil && !errors.As(err, &exited) { // a failed rebuild exits non-zero by design
+			t.Fatalf("running %s: %v", gnuMake, err)
+		}
+		return string(out)
+	}
+	for _, tc := range remadeCases {
+		if out := run(tc); strings.Contains(out, "tracked") {
+			t.Errorf("%s: Make read the tracked text, so the case proves nothing: %q", tc.name, out)
 		}
 	}
-	s := includeRepo(t, map[string]string{"gen.mk": "help:\n"}, "gen.mk")
-	if _, err := mergeWithIncludes(s, "include ./gen.mk\n"); err != nil {
-		t.Errorf("dot-prefixed literal include with no rule refused: %v", err)
+	safe := remadeCase{"no source", "include gen.mk\nother: x\n\t@true\n", nil}
+	if out := run(safe); !strings.Contains(out, "tracked") {
+		t.Errorf("safe control: Make did not read the tracked text: %q", out)
+	}
+}
+
+// TestMergeDocumentationMakefileAllowListFollowsSafeIncludes: the includes the allow-list keeps
+// following (GNU Make reads the tracked text in each; TestRemadeIncludeCasesMatchGNUMake holds the
+// plain case).
+func TestMergeDocumentationMakefileAllowListFollowsSafeIncludes(t *testing.T) {
+	for name, makefile := range map[string]string{
+		"plain":                 "include gen.mk\n",
+		"dot operand":           "include ./gen.mk\n",
+		"rule for another file": "include gen.mk\nother: x\n\t@true\n",
+		"percent in recipe":     "include gen.mk\nother:\n\t@printf '%s: x\\n' y\n",
+		"percent in prereq":     "include gen.mk\nobjs := $(SRC:%.c=%.o)\nother: $(objs)\n",
+		"assignment with colon": "include gen.mk\nT := a::b\n",
+	} {
+		s := includeRepo(t, map[string]string{"gen.mk": "help:\n", "other.txt": "x\n"}, "gen.mk")
+		if _, err := mergeWithIncludes(s, makefile); err != nil {
+			t.Errorf("%s: safe include refused: %v", name, err)
+		}
 	}
 }
 

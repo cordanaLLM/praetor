@@ -74,9 +74,12 @@ func documentationMakefileBlockPrior(state documentationMarkerState) bool {
 // defined by outside, the rest of the Makefile: Make would then warn "overriding recipe" and run
 // only one of the two recipes.
 func documentationTargetCollision(outside, inside string, expand makefileExpander) error {
-	outside = expand(outside)
+	outside, notes := expand(outside)
 	for _, target := range documentationMakefileTargets {
 		if !util.MakefileHasTarget(inside, target) && util.MakefileMayDefineTarget(outside, target) {
+			if len(notes) > 0 {
+				return fmt.Errorf("makefile may define target %s outside the Praetor-managed block (%s)", target, strings.Join(notes, "; "))
+			}
 			return fmt.Errorf("makefile may define target %s outside the Praetor-managed block", target)
 		}
 	}
@@ -123,8 +126,9 @@ func scanDocumentationMakefileMarkers(data string) (documentationMarkerState, er
 // --force; documentationMakefile names the forced re-adoption that restores it.
 var errDocumentationBlockEdited = errors.New("makefile Praetor documentation gate block was edited")
 
-// documentationMakefile is mergeDocumentationMakefile for this session: a refused edited block
-// names the forced re-adoption that restores it (forceCommand).
+// documentationMakefile merges the documentation gate block into existing for this session,
+// following the tracked includes of the repository (includeExpander): a refused edited block names
+// the forced re-adoption that restores it (forceCommand).
 func (s *adoptSession) documentationMakefile(ctx context.Context, existing string, force bool) (string, error) {
 	merged, err := mergeDocumentationMakefileWith(existing, force, s.includeExpander(ctx))
 	if errors.Is(err, errDocumentationBlockEdited) {
@@ -133,12 +137,9 @@ func (s *adoptSession) documentationMakefile(ctx context.Context, existing strin
 	return merged, err
 }
 
-func mergeDocumentationMakefile(existing string, force bool) (string, error) {
-	return mergeDocumentationMakefileWith(existing, force, noMakefileIncludes)
-}
-
-// mergeDocumentationMakefileWith is mergeDocumentationMakefile where expand resolves the includes
-// the ownership check may follow (makefileExpander); the merged text never carries the expansion.
+// mergeDocumentationMakefileWith merges the documentation gate block into existing; expand
+// resolves the includes the ownership check may follow (makefileExpander); the merged text never
+// carries the expansion.
 func mergeDocumentationMakefileWith(existing string, force bool, expand makefileExpander) (string, error) {
 	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
 	if err != nil {

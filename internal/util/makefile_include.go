@@ -29,8 +29,16 @@ type MakefileIncludeReader func(path string) (string, bool)
 // whose own structure the splice would misread (makefileSpliceable), and an include past the depth
 // or file bound. The result is for the ownership check only; a caller never writes it.
 func MakefileExpandIncludes(data string, read MakefileIncludeReader) string {
+	expanded, _ := MakefileExpandIncludesReport(data, read)
+	return expanded
+}
+
+// MakefileExpandIncludesReport is MakefileExpandIncludes that also returns a note when it
+// discards the expansion because Make may remake a followed include, naming the includes, so the
+// caller's refusal can say why an include it expected to follow stayed ambiguous.
+func MakefileExpandIncludesReport(data string, read MakefileIncludeReader) (string, []string) {
 	if read == nil {
-		return data
+		return data, nil
 	}
 	files := 0
 	followed := make([]string, 0, MaxMakefileIncludeFiles)
@@ -43,9 +51,9 @@ func MakefileExpandIncludes(data string, read MakefileIncludeReader) string {
 		data = expanded
 	}
 	if makefileMayRemakeIncluded(data, followed) {
-		return original
+		return original, []string{"includes " + strings.Join(followed, ", ") + " not followed: Make may remake them before reading"}
 	}
-	return data
+	return data, nil
 }
 
 // makefileDefaultSuffixes is GNU Make's default .SUFFIXES list. A file ending in one can be built
@@ -57,30 +65,105 @@ var makefileDefaultSuffixes = []string{
 	".texi", ".txinfo", ".w", ".ch", ".web", ".sh", ".elc", ".el",
 }
 
-// makefileMayRemakeIncluded reports whether Make may remake any followed include before reading it:
-// a rule that may target it under any spelling Make treats alike, a mention of .SUFFIXES (a suffix
-// rule can then build it from a neighbour of the same stem), or a name ending in a default suffix.
+// makefileMayRemakeIncluded reports whether Make may remake any followed include before reading it.
+// It is an allow-list: an include is trusted only when nothing in the combined text can make Make
+// look for a source. The text must mention no VPATH, vpath or .SUFFIXES (they widen where and how
+// a source is found), hold no pattern rule or double-colon rule (either can build any file), and
+// no explicit rule whose target equals a followed operand after Make's normalisation
+// (makefileNormalizeName); no operand may end in one of Make's default suffixes.
 func makefileMayRemakeIncluded(data string, followed []string) bool {
 	if len(followed) == 0 {
 		return false
 	}
-	if strings.Contains(data, ".SUFFIXES") {
+	for _, word := range []string{".SUFFIXES", "VPATH", "vpath"} {
+		if strings.Contains(data, word) {
+			return true
+		}
+	}
+	targets, unsafe := makefileRuleTargets(data)
+	if unsafe {
 		return true
 	}
 	for _, operand := range followed {
 		clean := path.Clean(operand)
+		if _, named := targets[makefileNormalizeName(operand)]; named || makefileHasDefaultSuffix(clean) {
+			return true
+		}
 		for _, spelling := range []string{operand, clean, "./" + clean} {
 			if MakefileMayDefineTarget(data, spelling) {
 				return true
 			}
 		}
-		for _, suffix := range makefileDefaultSuffixes {
-			if strings.HasSuffix(clean, suffix) {
-				return true
-			}
+	}
+	return false
+}
+
+// makefileHasDefaultSuffix reports whether name ends in a suffix of Make's default .SUFFIXES list.
+func makefileHasDefaultSuffix(name string) bool {
+	for _, suffix := range makefileDefaultSuffixes {
+		if strings.HasSuffix(name, suffix) {
+			return true
 		}
 	}
 	return false
+}
+
+// makefileNormalizeName spells a file name as Make compares it: every leading "./" and the slashes
+// after it are dropped, then the path is cleaned (GNU Make 4.4.1 treats "include gen.mk" and a rule
+// target "././gen.mk" or ".//gen.mk" as one file). The loop shortens name each pass (HISS-02).
+func makefileNormalizeName(name string) string {
+	for strings.HasPrefix(name, "./") {
+		name = strings.TrimLeft(name[2:], "/")
+	}
+	return path.Clean(name)
+}
+
+// makefileRuleTargets returns the normalised explicit rule targets of data's syntax lines, and
+// whether data holds a rule the set cannot describe: a pattern rule (a "%" in the target part) or
+// a double-colon rule. Recipe lines are skipped; a line that is not a rule contributes nothing.
+func makefileRuleTargets(data string) (map[string]struct{}, bool) {
+	lines, whole := makefileLogicalLines(data)
+	if !whole {
+		return nil, true
+	}
+	targets := make(map[string]struct{})
+	var scanner makefileScanner
+	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
+		kind := scanner.next(lines[index])
+		if scanner.lost {
+			return nil, true
+		}
+		if kind != makefileSyntaxLine {
+			continue
+		}
+		head, double, isRule := makefileRuleHead(lines[index])
+		if isRule && (double || strings.Contains(head, "%")) {
+			return nil, true
+		}
+		for _, field := range strings.Fields(head) {
+			targets[makefileNormalizeName(field)] = struct{}{}
+		}
+	}
+	return targets, false
+}
+
+// makefileRuleHead splits a syntax line at its first colon: head is the target part, double says
+// the colon is followed by another that does not start an assignment, and isRule is false for a
+// line with no colon or an assignment (":=", "::=", ":::=").
+func makefileRuleHead(line string) (head string, double, isRule bool) {
+	trimmed := strings.TrimSpace(line)
+	colon := strings.IndexByte(trimmed, ':')
+	if colon < 0 || strings.HasPrefix(trimmed, "#") {
+		return "", false, false
+	}
+	if equals := strings.IndexByte(trimmed, '='); equals >= 0 && equals < colon {
+		return "", false, false
+	}
+	rest := trimmed[colon+1:]
+	if strings.HasPrefix(rest, "=") || strings.HasPrefix(rest, ":=") || strings.HasPrefix(rest, "::=") {
+		return "", false, false
+	}
+	return trimmed[:colon], strings.HasPrefix(rest, ":"), true
 }
 
 // makefileIncludeBoundary is the line spliced before and after every fragment. A variable binding
@@ -92,8 +175,8 @@ func makefileMayRemakeIncluded(data string, followed []string) bool {
 const makefileIncludeBoundary = ".PRAETOR_INCLUDE_BOUNDARY := 1"
 
 // makefileExpandLevel replaces the literal include lines of data once. Nested includes the
-// fragments bring are left for the next level. It stops at the first point the scanner cannot
-// resolve, past which nothing is expanded.
+// fragments bring are left for the next level. When the scanner loses its place anywhere in data
+// the whole level is discarded and data comes back unchanged, so nothing is expanded.
 func makefileExpandLevel(data string, read MakefileIncludeReader, files *int, followed *[]string) (string, bool) {
 	lines, whole := makefileLogicalLines(data)
 	if !whole {

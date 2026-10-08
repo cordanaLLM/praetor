@@ -1,0 +1,4 @@
+type: fixed
+title: Adoption follows tracked Makefile includes that Make cannot remake
+issue: "#843"
+breaking: false

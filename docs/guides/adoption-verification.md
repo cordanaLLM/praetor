@@ -198,16 +198,30 @@ line bounds as the Makefile, and decides from the combined text (`MakefileExpand
 `internal/util/makefile_include.go`, read by `internal/adopt/makefile_include.go`). Nested literal
 includes are followed to a depth of four (`MaxMakefileIncludeDepth`) and 64 files in all. The
 merged Makefile keeps the include lines; the fragments are only read. A fragment that defines
-`docs-lint` or `docs-figures` still refuses the block. Every other include stays ambiguous and
-refuses: `-include`, `sinclude`, `load`, an operand with a variable, wildcard, function or
-comment, a path outside the repository, a missing, untracked, generated or symlinked file, an
-include past the depth bound, a fragment that ends inside a continuation, define or
-conditional, and an include Make would remake before reading it: a rule in the Makefile or a
-fragment that may target the included file (a leading `./` on either side is
-ignored, as Make does), a neighbour a built-in rule builds it from (`name.sh`, `name.c`, any
-`name.*`, `name,v`, `s.name`, `RCS/`, `SCCS/`), any mention of `.SUFFIXES`, or an include whose
-name ends in one of Make's default suffixes (`gen.s` is built from `gen.S`). Each fragment is spliced
-between lines that close the open recipe, as Make does at an include (issue #843).
+`docs-lint` or `docs-figures` still refuses the block.
+
+Make remakes an included file before it reads it, and the tracked text then proves nothing, so the
+follow rule is an allow-list. An include is followed only when all of these hold; anything else
+stays ambiguous and refuses, naming the include and the cause in the message:
+
+- The operand is a literal path to a regular file that Git tracks, inside the repository, with no
+  variable, wildcard, function, comment or `..`; `-include`, `sinclude` and `load` are never
+  followed.
+- The Makefile and every followed fragment together mention no `VPATH`, `vpath` or `.SUFFIXES`,
+  hold no pattern rule (a target containing `%`) and no double-colon rule, and have no rule target
+  equal to a followed operand. Both sides are normalised as Make does: every leading `./` and the
+  slashes after it are dropped, then the path is cleaned, so `include gen.mk` and a target
+  `././gen.mk` or `.//gen.mk` are the same file.
+- The operand does not end in one of Make's default suffixes (`.s`, `.c`, `.sh` and the rest of the
+  default `.SUFFIXES` list), which a built-in suffix rule can build from a neighbour.
+- No entry in the include's directory has a name that contains the include's base name other than
+  the file itself, and the directory holds no `RCS` or `SCCS` entry. That covers the built-in
+  rules that build `gen.mk` from `gen.mk.sh`, `gen.mk.c`, `gen.mk,v` or `s.gen.mk`, and chains
+  of them. An unreadable directory or one with more than 4096 entries counts as holding one.
+
+Each rejected case was replayed against GNU Make 4.4.1
+(`TestRemadeIncludeCasesMatchGNUMake` in `internal/adopt/makefile_include_test.go`). Each fragment
+is spliced between lines that close the open recipe, as Make does at an include (issue #843).
 
 The answer holds for the invocation the gates run, `make verify-all` or `make docs-lint` with no
 variable definitions and no options. A command-line definition, `-e` with the variable in the

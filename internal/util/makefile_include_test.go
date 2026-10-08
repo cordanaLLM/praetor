@@ -161,26 +161,65 @@ func TestMakefileExpandIncludesRecipeStateDoesNotCrossTheSplice(t *testing.T) {
 }
 
 // TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous covers an include Make remakes before it
-// reads it: a rule in the Makefile or in a fragment targets the included file, so its tracked text
-// is not what Make reads.
+// reads it (each replayed against GNU Make 4.4.1 in internal/adopt TestRemadeIncludeCasesMatchGNUMake):
+// text in the Makefile or a fragment that may rebuild the included file, under any spelling Make
+// treats alike, so its tracked text is not what Make reads. The reader is an allow-list.
 func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 	read := fragmentReader(map[string]string{
-		"gen.mk": "help:\n\t@echo help\n",
-		"b.mk":   "gen.mk: gen.mk.in\n\tcp $< $@\n",
+		"gen.mk":   "help:\n\t@echo help\n",
+		"./gen.mk": "help:\n", "././gen.mk": "help:\n",
+		"b.mk": "gen.mk: gen.mk.in\n\tcp $< $@\n",
+		"v.mk": "VPATH = src\n",
+		"p.mk": "%.mk: %.in\n\tcp $< $@\n",
 	})
 	for name, data := range map[string]string{
-		"rule in the Makefile": "include gen.mk\ngen.mk: gen.mk.in\n\tcp $< $@\n",
-		"rule in a fragment":   "include gen.mk\ninclude b.mk\n",
-		"pattern rule":         "include gen.mk\n%.mk: %.mk.in\n\tcp $< $@\n",
-		"rule before the line": "gen.mk: gen.mk.in\n\tcp $< $@\ninclude gen.mk\n",
+		"rule in the Makefile":    "include gen.mk\ngen.mk: gen.mk.in\n\tcp $< $@\n",
+		"rule in a fragment":      "include gen.mk\ninclude b.mk\n",
+		"pattern rule":            "include gen.mk\n%.mk: %.mk.in\n\tcp $< $@\n",
+		"pattern rule in include": "include gen.mk\ninclude p.mk\n",
+		"rule before the line":    "gen.mk: gen.mk.in\n\tcp $< $@\ninclude gen.mk\n",
+		"dot-dot-slash target":    "include gen.mk\n././gen.mk: gen.in\n",
+		"dot-double-slash target": "include gen.mk\n.//gen.mk: gen.in\n",
+		"dot operand":             "include ././gen.mk\ngen.mk: gen.in\n",
+		"double-colon rule":       "include gen.mk\ngen.mk:: gen.in\n",
+		"double-colon other":      "include gen.mk\nother:: x\n",
+		"VPATH":                   "VPATH = src\ninclude gen.mk\n",
+		"vpath":                   "vpath %.sh src\ninclude gen.mk\n",
+		"VPATH in a fragment":     "include gen.mk\ninclude v.mk\n",
+		".SUFFIXES":               ".SUFFIXES:\ninclude gen.mk\n",
+		"default suffix":          "include gen.s\n",
+		"static pattern rule":     "include gen.mk\ngen.mk gen.o: %.mk: %.in\n",
 	} {
 		got := util.MakefileExpandIncludes(data, read)
+		if strings.Contains(name, "default suffix") {
+			got = util.MakefileExpandIncludes(data, fragmentReader(map[string]string{"gen.s": "help:\n"}))
+		}
 		if got != data || !util.MakefileMayDefineTarget(got, "docs-lint") {
 			t.Errorf("%s: include was followed:\n%s", name, got)
 		}
 	}
-	plain := util.MakefileExpandIncludes("include gen.mk\nother: x\n\t@true\n", read)
-	if strings.Contains(plain, "include") || util.MakefileMayDefineTarget(plain, "docs-lint") {
-		t.Fatalf("a rule for another target blocked the expansion:\n%s", plain)
+	for name, data := range map[string]string{
+		"rule for another target": "include gen.mk\nother: x\n\t@true\n",
+		"dot operand":             "include ./gen.mk\n",
+		"assignment":              "include gen.mk\nT := a::b\nU = c:d\n",
+		"percent in a prereq":     "include gen.mk\nobjs := $(S:%.c=%.o)\nother: $(objs)\n",
+		"percent in a recipe":     "include gen.mk\nother:\n\t@printf '%s: x' y\n",
+		"percent after semicolon": "include gen.mk\nother: x ; @printf '%s: x' y\n",
+	} {
+		plain := util.MakefileExpandIncludes(data, read)
+		if strings.Contains(plain, "include") || util.MakefileMayDefineTarget(plain, "docs-lint") {
+			t.Errorf("%s: blocked the expansion:\n%s", name, plain)
+		}
+	}
+}
+
+func TestMakefileExpandIncludesReportNamesRemadeIncludes(t *testing.T) {
+	read := fragmentReader(map[string]string{"gen.mk": "help:\n"})
+	_, notes := util.MakefileExpandIncludesReport("include gen.mk\nvpath %.sh src\n", read)
+	if len(notes) != 1 || !strings.Contains(notes[0], "gen.mk") || !strings.Contains(notes[0], "remake") {
+		t.Fatalf("notes %q", notes)
+	}
+	if _, notes := util.MakefileExpandIncludesReport("include gen.mk\n", read); len(notes) != 0 {
+		t.Fatalf("followed include noted: %q", notes)
 	}
 }
