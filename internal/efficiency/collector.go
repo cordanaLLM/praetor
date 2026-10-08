@@ -7,13 +7,19 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
-// CollectorOptions sets configuration, input sources and overrides for the collector.
+// DefaultLimit is the number of landed pull requests reported when no limit is given.
+const DefaultLimit = 20
+
+// CollectorOptions sets configuration, input sources and overrides for the collector. Policy
+// is the efficiency section of the manifest the caller already loaded (nil selects defaults);
+// the collector never loads a manifest itself.
 type CollectorOptions struct {
 	Root           string
 	Milestone      string
@@ -23,13 +29,14 @@ type CollectorOptions struct {
 	ForgeJSONPath  string
 	TranscriptsDir string
 	SpendLogPath   string
+	// Notes are caller-side findings, for example why no forge driver exists, printed with the report.
+	Notes []string
 }
 
 // Collector coordinates gathering metrics from forge, transcripts and spend log.
 type Collector struct {
 	opts       CollectorOptions
 	classifier *Classifier
-	initErr    error
 }
 
 // NewCollector constructs an efficiency metrics collector.
@@ -37,43 +44,34 @@ func NewCollector(opts CollectorOptions) *Collector {
 	if opts.Root == "" {
 		opts.Root = "."
 	}
-	policy := opts.Policy
-	var initErr error
-	if policy == nil {
-		p, err := config.RepositoryEfficiencyPolicy(opts.Root)
-		if err != nil {
-			initErr = fmt.Errorf("load efficiency policy: %w", err)
-		} else {
-			policy = p
-		}
+	if opts.Limit <= 0 {
+		opts.Limit = DefaultLimit
 	}
-	return &Collector{
-		opts:       opts,
-		classifier: NewClassifier(policy),
-		initErr:    initErr,
-	}
+	return &Collector{opts: opts, classifier: NewClassifier(opts.Policy)}
 }
 
 func formatDuration(d time.Duration) string {
-	if d < time.Minute {
+	switch {
+	case d < time.Minute:
 		return fmt.Sprintf("%ds", int(d.Seconds()))
-	}
-	if d < time.Hour {
+	case d < time.Hour:
 		return fmt.Sprintf("%dm", int(d.Minutes()))
-	}
-	if d < 24*time.Hour {
+	case d < 24*time.Hour:
 		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dd%dh", int(d.Hours())/24, int(d.Hours())%24)
 	}
-	days := int(d.Hours()) / 24
-	hours := int(d.Hours()) % 24
-	return fmt.Sprintf("%dd%dh", days, hours)
 }
 
 func formatPercent(val float64) string {
 	return fmt.Sprintf("%.1f%%", val*100)
 }
 
+// formatSpend prints cents, or four decimals for sub-cent amounts so they do not read as zero.
 func formatSpend(amount float64) string {
+	if amount > 0 && amount < 0.01 {
+		return fmt.Sprintf("$%.4f", amount)
+	}
 	return fmt.Sprintf("$%.2f", amount)
 }
 
@@ -89,6 +87,7 @@ func newReport(milestone string) *Report {
 			FrontierTokens:      NotMeasured,
 			AttributedSpend:     NotMeasured,
 			UnattributedSpend:   NotMeasured,
+			OtherUnitsSpend:     NotMeasured,
 			TotalSpend:          NotMeasured,
 			AvgIssueToMerge:     NotMeasured,
 			OperatorTouches:     NotMeasured,
@@ -100,377 +99,146 @@ func newReport(milestone string) *Report {
 	}
 }
 
-// Collect executes the data collection and builds the final Report.
+// loaded is the set of pull requests of one run: all lists every pull request the forge source
+// returned (for spend attribution), units the selected ones.
+type loaded struct {
+	all      []forge.MergedPullRequest
+	units    []forge.MergedPullRequest
+	measured bool
+}
+
+// Collect executes the data collection and builds the final Report. A source that is
+// configured but cannot be read fails the run.
 func (c *Collector) Collect(ctx context.Context) (*Report, error) {
-	if c.initErr != nil {
-		return nil, c.initErr
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-
 	report := newReport(c.opts.Milestone)
-
-	prs, forgeMeasured, err := c.loadForgePRs(ctx)
+	report.Notes = append(report.Notes, c.opts.Notes...)
+	prs, err := c.loadForgePRs(ctx, report)
 	if err != nil {
 		return nil, err
 	}
-	report.Sources.Forge = forgeMeasured
+	report.Sources.Forge = prs.measured
 
-	var transStats map[string]*BranchTranscriptStats
-	transDir := c.resolveTranscriptsDir()
-	if transDir != "" {
-		stats, transErr := ReadTranscriptsDir(ctx, transDir, c.classifier)
-		if transErr != nil {
-			return nil, fmt.Errorf("read transcripts from %s: %w", transDir, transErr)
-		}
-		transStats = stats
-		report.Sources.Transcripts = true
+	transStats, err := c.loadTranscripts(ctx, report)
+	if err != nil {
+		return nil, err
 	}
-
-	var spendReport *SpendReport
-	spendPath := c.resolveSpendLogPath()
-	if spendPath != "" {
-		sr, spendErr := ReadSpendLogFile(ctx, spendPath, prs, c.classifier)
-		if spendErr != nil {
-			return nil, fmt.Errorf("read spend log from %s: %w", spendPath, spendErr)
-		}
-		spendReport = sr
-		report.Sources.SpendLog = true
+	spend, err := c.loadSpend(ctx, report, prs.all)
+	if err != nil {
+		return nil, err
 	}
-
-	filteredPRs := c.filterPRs(prs)
-	for _, pr := range filteredPRs {
-		unit := c.buildUnitReport(pr, transStats, spendReport, report.Sources)
-		report.Units = append(report.Units, unit)
+	owners := branchOwners(prs.all)
+	for _, pr := range prs.units {
+		report.Units = append(report.Units, c.buildUnitReport(pr, owners, transStats, spend, report.Sources))
 	}
-
-	c.buildMilestoneSummary(report, filteredPRs, transStats, spendReport)
+	c.buildMilestoneSummary(report, spend)
 	return report, nil
 }
 
-func (c *Collector) resolveForgePath() string {
-	if c.opts.ForgeJSONPath != "" {
-		return c.opts.ForgeJSONPath
+func (c *Collector) loadTranscripts(ctx context.Context, report *Report) (map[string]*BranchTranscriptStats, error) {
+	dir := c.resolve(c.opts.TranscriptsDir, c.transcriptsConfigured())
+	if dir == "" {
+		return nil, nil
 	}
-	if c.opts.Policy != nil && c.opts.Policy.Sources.Forge.Path != "" {
-		return filepath.Join(c.opts.Root, c.opts.Policy.Sources.Forge.Path)
+	stats, notes, err := ReadTranscriptsDir(ctx, dir, c.classifier)
+	if err != nil {
+		return nil, fmt.Errorf("read transcripts from %s: %w", dir, err)
 	}
-	return ""
+	report.Sources.Transcripts = true
+	report.Notes = append(report.Notes, notes.Lines()...)
+	return stats, nil
 }
 
-func (c *Collector) resolveTranscriptsDir() string {
-	if c.opts.TranscriptsDir != "" {
-		return c.opts.TranscriptsDir
+func (c *Collector) loadSpend(ctx context.Context, report *Report, prs []forge.MergedPullRequest) (*SpendReport, error) {
+	path := c.resolve(c.opts.SpendLogPath, c.spendConfigured())
+	if path == "" {
+		return nil, nil
 	}
-	if c.opts.Policy != nil && c.opts.Policy.Sources.Transcripts.Directory() != "" {
-		return filepath.Join(c.opts.Root, c.opts.Policy.Sources.Transcripts.Directory())
+	spend, err := ReadSpendLogFile(ctx, path, prs, c.classifier)
+	if err != nil {
+		return nil, fmt.Errorf("read spend log from %s: %w", path, err)
 	}
-	return ""
+	report.Sources.SpendLog = true
+	if spend.DuplicateRequests > 0 {
+		report.Notes = append(report.Notes, fmt.Sprintf("spend log %s: %d repeated request_id entries counted once", path, spend.DuplicateRequests))
+	}
+	return spend, nil
 }
 
-func (c *Collector) resolveSpendLogPath() string {
-	if c.opts.SpendLogPath != "" {
-		return c.opts.SpendLogPath
+// resolve returns the flag value, else the manifest path joined to the root.
+func (c *Collector) resolve(flag, configured string) string {
+	if flag != "" {
+		return flag
 	}
-	if c.opts.Policy != nil && c.opts.Policy.Sources.SpendLog.Path != "" {
-		return filepath.Join(c.opts.Root, c.opts.Policy.Sources.SpendLog.Path)
+	if configured == "" {
+		return ""
 	}
-	return ""
+	return filepath.Join(c.opts.Root, configured)
 }
 
-func (c *Collector) loadForgePRs(ctx context.Context) ([]forge.MergedPullRequest, bool, error) {
-	if forgePath := c.resolveForgePath(); forgePath != "" {
-		prs, err := forge.ReadMergedPullRequestsFile(forgePath)
+func (c *Collector) transcriptsConfigured() string {
+	if c.opts.Policy == nil {
+		return ""
+	}
+	return c.opts.Policy.Sources.Transcripts.Directory()
+}
+
+func (c *Collector) spendConfigured() string {
+	if c.opts.Policy == nil {
+		return ""
+	}
+	return c.opts.Policy.Sources.SpendLog.Path
+}
+
+func (c *Collector) forgeConfigured() string {
+	if c.opts.Policy == nil {
+		return ""
+	}
+	return c.opts.Policy.Sources.Forge.Path
+}
+
+func (c *Collector) loadForgePRs(ctx context.Context, report *Report) (loaded, error) {
+	if path := c.resolve(c.opts.ForgeJSONPath, c.forgeConfigured()); path != "" {
+		all, err := forge.ReadMergedPullRequestsFile(path)
 		if err != nil {
-			return nil, false, err
+			return loaded{}, err
 		}
-		return prs, true, nil
+		units, truncated := c.selectUnits(all)
+		if truncated != "" {
+			report.Notes = append(report.Notes, "forge records "+path+": "+truncated)
+		}
+		return loaded{all: all, units: units, measured: true}, nil
 	}
-	if c.opts.ForgeDriver != nil {
-		limit := c.opts.Limit
-		if limit <= 0 {
-			limit = 100
-		}
-		prs, err := c.opts.ForgeDriver.ListMergedPullRequests(ctx, limit)
-		if err != nil {
-			return nil, false, err
-		}
-		return prs, true, nil
+	if c.opts.ForgeDriver == nil {
+		return loaded{}, nil
 	}
-	return nil, false, nil
+	list, err := c.opts.ForgeDriver.ListMergedPullRequests(ctx, forge.MergedPullRequestQuery{Limit: c.opts.Limit, Milestone: c.opts.Milestone})
+	if err != nil {
+		return loaded{}, fmt.Errorf("list merged pull requests: %w", err)
+	}
+	if list.Truncated != "" {
+		report.Notes = append(report.Notes, "forge listing incomplete: "+list.Truncated)
+	}
+	for _, warning := range list.Warnings {
+		report.Notes = append(report.Notes, "forge: "+warning)
+	}
+	return loaded{all: list.PullRequests, units: list.PullRequests, measured: true}, nil
 }
 
-func (c *Collector) filterPRs(prs []forge.MergedPullRequest) []forge.MergedPullRequest {
-	var filtered []forge.MergedPullRequest
-	for _, pr := range prs {
-		if c.opts.Milestone != "" && pr.Milestone != c.opts.Milestone {
-			continue
-		}
-		filtered = append(filtered, pr)
-		if c.opts.Limit > 0 && len(filtered) >= c.opts.Limit {
-			break
+// selectUnits filters by milestone first, sorts by merge time (newest first) and applies the
+// limit, and says so when the limit cut matching pull requests.
+func (c *Collector) selectUnits(all []forge.MergedPullRequest) ([]forge.MergedPullRequest, string) {
+	matched := make([]forge.MergedPullRequest, 0, len(all))
+	for _, pr := range all {
+		if c.opts.Milestone == "" || pr.Milestone == c.opts.Milestone {
+			matched = append(matched, pr)
 		}
 	}
-	return filtered
-}
-
-func earliestClosingIssueCreatedAt(issues []forge.ClosingIssue) time.Time {
-	var earliest time.Time
-	for _, ci := range issues {
-		if ci.CreatedAt.IsZero() {
-			continue
-		}
-		if earliest.IsZero() || ci.CreatedAt.Before(earliest) {
-			earliest = ci.CreatedAt
-		}
+	sort.SliceStable(matched, func(i, j int) bool { return matched[i].MergedAt.After(matched[j].MergedAt) })
+	if len(matched) <= c.opts.Limit {
+		return matched, ""
 	}
-	return earliest
-}
-
-func (c *Collector) calculateIssueToMerge(pr forge.MergedPullRequest) (string, *int64) {
-	if pr.MergedAt.IsZero() {
-		return NotMeasured, nil
-	}
-	earliestCreated := earliestClosingIssueCreatedAt(pr.ClosingIssues)
-	// If closing issues are linked but none have created_at measured, do not silently fall back to PR age.
-	if len(pr.ClosingIssues) > 0 && earliestCreated.IsZero() {
-		return NotMeasured, nil
-	}
-	isPRFallback := false
-	if earliestCreated.IsZero() {
-		if pr.CreatedAt.IsZero() {
-			return NotMeasured, nil
-		}
-		earliestCreated = pr.CreatedAt
-		isPRFallback = true
-	}
-	dur := pr.MergedAt.Sub(earliestCreated)
-	if dur < 0 {
-		dur = 0
-	}
-	secs := int64(dur.Seconds())
-	res := formatDuration(dur)
-	if isPRFallback {
-		res += " (PR)"
-	}
-	return res, &secs
-}
-
-func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats, spendReport *SpendReport, sources SourcesMeasured) UnitReport {
-	closingNums := make([]int, 0, len(pr.ClosingIssues))
-	for _, ci := range pr.ClosingIssues {
-		closingNums = append(closingNums, ci.Number)
-	}
-
-	itmStr, itmSecs := c.calculateIssueToMerge(pr)
-
-	unit := UnitReport{
-		PullRequestNumber:   pr.Number,
-		HeadBranch:          pr.HeadBranch,
-		Title:               pr.Title,
-		Milestone:           pr.Milestone,
-		CreatedAt:           pr.CreatedAt,
-		MergedAt:            pr.MergedAt,
-		ClosingIssues:       closingNums,
-		IssueToMerge:        itmStr,
-		IssueToMergeSecs:    itmSecs,
-		FrontierTokens:      NotMeasured,
-		Spend:               NotMeasured,
-		OperatorTouches:     NotMeasured,
-		PromptCacheHitRate:  NotMeasured,
-		LocalFirstRatio:     NotMeasured,
-		FactHitRatio:        FollowUpRefs,
-		ChecksBeforeReviews: FollowUpRefs,
-	}
-
-	stats := transStats[pr.HeadBranch]
-	if sources.Transcripts && stats != nil {
-		touches := stats.OperatorTouches
-		unit.OperatorTouches = fmt.Sprintf("%d", touches)
-		unit.OperatorTouchNum = &touches
-
-		if rate, ok := stats.PromptCacheHitRate(); ok {
-			unit.PromptCacheHitRate = formatPercent(rate)
-			unit.CacheHitRatio = &rate
-		}
-	}
-
-	if sources.SpendLog {
-		spend := 0.0
-		if spendReport != nil {
-			spend = spendReport.SpendByPRNumber[pr.Number]
-		}
-		unit.Spend = formatSpend(spend)
-		unit.SpendAmount = &spend
-	}
-
-	applyCombinedTokensAndLocality(&unit, stats, spendReport, pr.Number, sources)
-	return unit
-}
-
-func applyCombinedTokensAndLocality(unit *UnitReport, stats *BranchTranscriptStats, spendReport *SpendReport, prNum int, sources SourcesMeasured) {
-	var totalFrontier int64
-	hasTokens := false
-	if stats != nil {
-		totalFrontier += stats.FrontierTokens
-		hasTokens = true
-	}
-	if spendReport != nil {
-		if ft, ok := spendReport.FrontierTokensByPRNumber[prNum]; ok {
-			totalFrontier += ft
-			hasTokens = true
-		}
-	}
-	if hasTokens && (sources.Transcripts || sources.SpendLog) {
-		unit.FrontierTokens = formatTokens(totalFrontier)
-		unit.FrontierTokensNum = &totalFrontier
-	}
-
-	var totalReqs, localReqs int
-	if stats != nil {
-		totalReqs += stats.TotalRequests
-		localReqs += stats.LocalRequests
-	}
-	if spendReport != nil {
-		totalReqs += spendReport.RequestsByPRNumber[prNum]
-		localReqs += spendReport.LocalRequestsByPRNumber[prNum]
-	}
-	if totalReqs > 0 {
-		ratio := float64(localReqs) / float64(totalReqs)
-		unit.LocalFirstRatio = formatPercent(ratio)
-		unit.LocalRatio = &ratio
-	}
-}
-
-func (c *Collector) buildMilestoneSummary(report *Report, prs []forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats, spendReport *SpendReport) {
-	summary := &report.MilestoneSummary
-	summary.UnitsCount = len(report.Units)
-
-	if len(report.Units) == 0 {
-		return
-	}
-
-	if report.Sources.Forge {
-		summarizeForge(report, summary)
-	}
-	if report.Sources.Transcripts || report.Sources.SpendLog {
-		summarizeTranscriptsAndSpend(prs, transStats, spendReport, report.Sources, summary)
-	}
-	if report.Sources.SpendLog {
-		summarizeSpend(report, spendReport, summary)
-	}
-}
-
-func summarizeForge(report *Report, summary *MilestoneSummary) {
-	var totalDurSecs int64
-	measuredCount := int64(0)
-	for _, u := range report.Units {
-		if u.IssueToMergeSecs != nil {
-			totalDurSecs += *u.IssueToMergeSecs
-			measuredCount++
-		}
-	}
-	if measuredCount > 0 {
-		avgSecs := totalDurSecs / measuredCount
-		summary.AvgIssueToMerge = formatDuration(time.Duration(avgSecs) * time.Second)
-		summary.AvgIssueToMergeSecs = &avgSecs
-	}
-}
-
-type transcriptTotals struct {
-	frontierTokens int64
-	touches        int
-	cacheRead      int64
-	cacheCreation  int64
-	inputTokens    int64
-	localReqs      int
-	totalReqs      int
-	hasTokens      bool
-}
-
-func aggregateTranscripts(prs []forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats) transcriptTotals {
-	var t transcriptTotals
-	for _, pr := range prs {
-		stats := transStats[pr.HeadBranch]
-		if stats == nil {
-			continue
-		}
-		t.frontierTokens += stats.FrontierTokens
-		t.touches += stats.OperatorTouches
-		t.cacheRead += stats.CacheReadTokens
-		t.cacheCreation += stats.CacheCreationTokens
-		t.inputTokens += stats.InputTokens
-		t.localReqs += stats.LocalRequests
-		t.totalReqs += stats.TotalRequests
-		t.hasTokens = true
-	}
-	return t
-}
-
-func summarizeTranscriptsAndSpend(prs []forge.MergedPullRequest, transStats map[string]*BranchTranscriptStats, spendReport *SpendReport, sources SourcesMeasured, summary *MilestoneSummary) {
-	var totalFrontier int64
-	var totalLocalReqs, totalReqs int
-	hasTokens := false
-
-	if sources.Transcripts {
-		t := aggregateTranscripts(prs, transStats)
-		totalFrontier += t.frontierTokens
-		totalLocalReqs += t.localReqs
-		totalReqs += t.totalReqs
-		hasTokens = t.hasTokens
-		summary.OperatorTouches = fmt.Sprintf("%d", t.touches)
-		summary.OperatorTouchNum = &t.touches
-
-		cacheDenom := t.inputTokens + t.cacheCreation + t.cacheRead
-		if cacheDenom > 0 {
-			rate := float64(t.cacheRead) / float64(cacheDenom)
-			summary.PromptCacheHitRate = formatPercent(rate)
-			summary.CacheHitRatio = &rate
-		}
-	}
-
-	if sources.SpendLog && spendReport != nil {
-		for _, pr := range prs {
-			totalReqs += spendReport.RequestsByPRNumber[pr.Number]
-			totalLocalReqs += spendReport.LocalRequestsByPRNumber[pr.Number]
-			if ft, ok := spendReport.FrontierTokensByPRNumber[pr.Number]; ok {
-				totalFrontier += ft
-				hasTokens = true
-			}
-		}
-	}
-
-	if hasTokens {
-		summary.FrontierTokens = formatTokens(totalFrontier)
-		summary.FrontierTokensNum = &totalFrontier
-	}
-
-	if totalReqs > 0 {
-		ratio := float64(totalLocalReqs) / float64(totalReqs)
-		summary.LocalFirstRatio = formatPercent(ratio)
-		summary.LocalRatio = &ratio
-	}
-}
-
-func summarizeSpend(report *Report, spendReport *SpendReport, summary *MilestoneSummary) {
-	attrSpend := 0.0
-	for _, u := range report.Units {
-		if u.SpendAmount != nil {
-			attrSpend += *u.SpendAmount
-		}
-	}
-	summary.AttributedSpend = formatSpend(attrSpend)
-	summary.AttributedSpendNum = &attrSpend
-
-	unattrSpend := 0.0
-	if spendReport != nil {
-		unattrSpend = spendReport.Unattributed
-	}
-	summary.UnattributedSpend = formatSpend(unattrSpend)
-	summary.UnattributedSpendNum = &unattrSpend
-
-	totSpend := attrSpend + unattrSpend
-	summary.TotalSpend = formatSpend(totSpend)
-	summary.TotalSpendNum = &totSpend
+	return matched[:c.opts.Limit], fmt.Sprintf("%d matching pull requests beyond the limit of %d were left out", len(matched)-c.opts.Limit, c.opts.Limit)
 }

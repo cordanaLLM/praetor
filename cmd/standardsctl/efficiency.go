@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -96,29 +97,36 @@ func loadEfficiencyPolicy(root, manifestPath string) (*config.EfficiencyPolicy, 
 	return m.Efficiency, m, nil
 }
 
-func resolveLiveForge(ctx context.Context, manifest *config.Manifest) forge.Forge {
+// resolveLiveForge builds the forge driver of the manifest repository from the shared token
+// resolver. A missing repository or token leaves the forge unmeasured with the reason in
+// note; an unsupported forge kind is an error.
+func resolveLiveForge(ctx context.Context, manifest *config.Manifest) (driver forge.Forge, note string, err error) {
 	if manifest == nil || manifest.Repository.Owner == "" || manifest.Repository.Name == "" {
-		return nil
+		return nil, "forge not measured: the manifest declares no repository owner and name", nil
 	}
 	token := util.ResolveAuthTokenContext(ctx, "")
 	if token == "" {
-		return nil
+		return nil, "forge not measured: no forge token available (set GITHUB_TOKEN/GH_TOKEN or sign in with gh)", nil
 	}
 	provider := string(manifest.Repository.Forge)
 	if provider == "" {
 		provider = "github"
 	}
-	f, err := forge.NewForge(provider, token, "")
+	driver, err = forge.NewForge(provider, token, "")
 	if err != nil {
-		return nil
+		return nil, "", fmt.Errorf("create %s forge driver: %w", provider, err)
 	}
-	if gh, ok := f.(*forge.GitHubDriver); ok {
+	if gh, ok := driver.(*forge.GitHubDriver); ok {
 		gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
 	}
-	return f
+	return driver, "", nil
 }
 
 func runEfficiency(args []string) error {
+	return runEfficiencyTo(args, os.Stdout)
+}
+
+func runEfficiencyTo(args []string, out io.Writer) error {
 	fl, err := parseEfficiencyFlags(args)
 	if err != nil {
 		return err
@@ -131,8 +139,16 @@ func runEfficiency(args []string) error {
 		return err
 	}
 	var forgeDriver forge.Forge
+	var notes []string
 	if fl.forgeFile == "" && (policy == nil || policy.Sources.Forge.Path == "") {
-		forgeDriver = resolveLiveForge(ctx, manifest)
+		driver, note, liveErr := resolveLiveForge(ctx, manifest)
+		if liveErr != nil {
+			return liveErr
+		}
+		forgeDriver = driver
+		if note != "" {
+			notes = append(notes, note)
+		}
 	}
 
 	collector := efficiency.NewCollector(efficiency.CollectorOptions{
@@ -144,6 +160,7 @@ func runEfficiency(args []string) error {
 		ForgeJSONPath:  fl.forgeFile,
 		TranscriptsDir: fl.transcriptsDir,
 		SpendLogPath:   fl.spendLogFile,
+		Notes:          notes,
 	})
 
 	report, err := collector.Collect(ctx)
@@ -152,7 +169,7 @@ func runEfficiency(args []string) error {
 	}
 
 	if fl.format == "json" {
-		return efficiency.RenderJSON(report, os.Stdout)
+		return efficiency.RenderJSON(report, out)
 	}
-	return efficiency.RenderTable(report, os.Stdout)
+	return efficiency.RenderTable(report, out)
 }

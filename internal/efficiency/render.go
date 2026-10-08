@@ -75,12 +75,19 @@ func renderSummary(report *Report, out io.Writer) error {
 		fmt.Sprintf("Operator Touches:        %s", ms.OperatorTouches),
 		fmt.Sprintf("Frontier Tokens:         %s", ms.FrontierTokens),
 		fmt.Sprintf("Attributed Spend:        %s", ms.AttributedSpend),
+		fmt.Sprintf("Other Units Spend:       %s", ms.OtherUnitsSpend),
 		fmt.Sprintf("Unattributed Spend:      %s", ms.UnattributedSpend),
 		fmt.Sprintf("Total Spend:             %s", ms.TotalSpend),
 		fmt.Sprintf("Prompt-Cache Hit Rate:   %s", ms.PromptCacheHitRate),
 		fmt.Sprintf("Local-First Ratio:       %s", ms.LocalFirstRatio),
 		fmt.Sprintf("Fact-Hit Ratio:          %s", ms.FactHitRatio),
 		fmt.Sprintf("Checks-Before-Reviews:   %s", ms.ChecksBeforeReviews),
+	}
+	if len(report.Notes) > 0 {
+		lines = append(lines, "\n--- Notes ---")
+		for _, note := range report.Notes {
+			lines = append(lines, "- "+note)
+		}
 	}
 	_, err := fmt.Fprintln(out, strings.Join(lines, "\n"))
 	return err

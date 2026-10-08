@@ -44,24 +44,8 @@ efficiency:
 	}
 
 	p := m.Efficiency
-	if p.Sources.Forge.Path != "fixtures/prs.json" {
-		t.Errorf("expected forge path fixtures/prs.json, got %q", p.Sources.Forge.Path)
-	}
-	if p.Sources.Transcripts.Directory() != ".claude/transcripts" {
-		t.Errorf("expected transcripts dir .claude/transcripts, got %q", p.Sources.Transcripts.Directory())
-	}
-	if p.Sources.SpendLog.Path != "fixtures/spend.jsonl" {
-		t.Errorf("expected spend_log path fixtures/spend.jsonl, got %q", p.Sources.SpendLog.Path)
-	}
-
-	frontier := p.EffectiveFrontierModels()
-	if len(frontier) != 2 || frontier[0] != "custom-frontier-1" {
-		t.Errorf("unexpected effective frontier models: %v", frontier)
-	}
-	local := p.EffectiveLocalModels()
-	if len(local) != 1 || local[0] != "custom-local-1" {
-		t.Errorf("unexpected effective local models: %v", local)
-	}
+	assertLoadedSources(t, p)
+	assertLoadedModels(t, p)
 
 	// RepositoryEfficiencyPolicy on temp directory
 	rootDir := filepath.Dir(manifestPath)
@@ -71,6 +55,31 @@ efficiency:
 	}
 	if loadedPolicy == nil || loadedPolicy.Sources.Forge.Path != "fixtures/prs.json" {
 		t.Errorf("unexpected policy returned by RepositoryEfficiencyPolicy: %+v", loadedPolicy)
+	}
+}
+
+func assertLoadedSources(t *testing.T, p *EfficiencyPolicy) {
+	t.Helper()
+	if p.Sources.Forge.Path != "fixtures/prs.json" {
+		t.Errorf("expected forge path fixtures/prs.json, got %q", p.Sources.Forge.Path)
+	}
+	if p.Sources.Transcripts.Directory() != ".claude/transcripts" {
+		t.Errorf("expected transcripts dir .claude/transcripts, got %q", p.Sources.Transcripts.Directory())
+	}
+	if p.Sources.SpendLog.Path != "fixtures/spend.jsonl" {
+		t.Errorf("expected spend_log path fixtures/spend.jsonl, got %q", p.Sources.SpendLog.Path)
+	}
+}
+
+func assertLoadedModels(t *testing.T, p *EfficiencyPolicy) {
+	t.Helper()
+	frontier := p.EffectiveFrontierModels()
+	if len(frontier) != 2 || frontier[0] != "custom-frontier-1" {
+		t.Errorf("unexpected effective frontier models: %v", frontier)
+	}
+	local := p.EffectiveLocalModels()
+	if len(local) != 1 || local[0] != "custom-local-1" {
+		t.Errorf("unexpected effective local models: %v", local)
 	}
 }
 
@@ -208,5 +217,58 @@ func TestEfficiencyPolicy_Boundary_ModelLimits(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "frontier_models exceeds 100 entries limit") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestEfficiencyPolicy_Positive_ClassesAndDefaults(t *testing.T) {
+	path := writeManifest(t, "version: 1\nrepository:\n  owner: \"exampleOrg\"\n  name: \"example\"\nefficiency:\n  frontier_classes: [\"deep\"]\n  light_classes: [\"tiny\"]\n")
+	manifest, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := manifest.Efficiency
+	if got := p.EffectiveFrontierClasses(); len(got) != 1 || got[0] != "deep" {
+		t.Errorf("frontier classes: %v", got)
+	}
+	if got := p.EffectiveLightClasses(); len(got) != 1 || got[0] != "tiny" {
+		t.Errorf("light classes: %v", got)
+	}
+	var none *EfficiencyPolicy
+	if len(none.EffectiveFrontierClasses()) == 0 || len(none.EffectiveLightClasses()) == 0 {
+		t.Error("a nil policy selects the default classes")
+	}
+}
+
+func TestEfficiencyPolicy_Negative_TranscriptsDirAndPathDisagree(t *testing.T) {
+	path := writeManifest(t, "version: 1\nrepository:\n  owner: \"exampleOrg\"\n  name: \"example\"\nefficiency:\n  sources:\n    transcripts:\n      dir: \"a\"\n      path: \"b\"\n")
+	if _, err := LoadManifest(path); err == nil || !strings.Contains(err.Error(), "sets both dir") {
+		t.Fatalf("want a conflict error, got %v", err)
+	}
+	same := writeManifest(t, "version: 1\nrepository:\n  owner: \"exampleOrg\"\n  name: \"example\"\nefficiency:\n  sources:\n    transcripts:\n      dir: \"a\"\n      path: \"a\"\n")
+	if _, err := LoadManifest(same); err != nil {
+		t.Fatalf("equal values are one setting: %v", err)
+	}
+}
+
+func TestEfficiencyPolicy_Boundary_ClassLimit(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("version: 1\nrepository:\n  owner: \"exampleOrg\"\n  name: \"example\"\nefficiency:\n  light_classes:\n")
+	for i := 0; i < 101; i++ {
+		fmt.Fprintf(&sb, "    - \"c%d\"\n", i)
+	}
+	if _, err := LoadManifest(writeManifest(t, sb.String())); err == nil || !strings.Contains(err.Error(), "limited to 100") {
+		t.Fatalf("want class limit error, got %v", err)
+	}
+}
+
+func TestDefaultFrontierModels_Negative_NoCheapFamilyPrefixes(t *testing.T) {
+	for _, entry := range DefaultFrontierModels() {
+		for _, token := range strings.FieldsFunc(entry, func(r rune) bool { return r == '-' || r == '.' }) {
+			for _, marker := range CheapTierMarkers() {
+				if token == marker {
+					t.Errorf("default %q names cheap tier %q", entry, marker)
+				}
+			}
+		}
 	}
 }

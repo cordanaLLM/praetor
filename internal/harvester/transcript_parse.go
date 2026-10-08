@@ -4,7 +4,6 @@
 package harvester
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -29,24 +28,17 @@ type antigravityRecord struct {
 }
 
 func parseTranscript(ctx context.Context, data []byte, source TranscriptSource) ([]TranscriptEvent, error) {
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 64*1024), MaxTranscriptLineBytes+1)
 	events := make([]TranscriptEvent, 0)
-	for line := 1; scanner.Scan(); line++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if line > MaxTranscriptRecords {
-			return nil, fmt.Errorf("transcript exceeds %d record bound", MaxTranscriptRecords)
-		}
-		event, err := parseTranscriptEvent(scanner.Bytes(), source, line)
+	err := ScanTranscriptLines(ctx, bytes.NewReader(data), ScanLimits{MaxRecords: MaxTranscriptRecords}, func(line int, raw []byte) error {
+		event, err := parseTranscriptEvent(raw, source, line)
 		if err != nil {
-			return nil, fmt.Errorf("transcript line %d: %w", line, err)
+			return fmt.Errorf("transcript line %d: %w", line, err)
 		}
 		events = append(events, event)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan transcript: %w", err)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return events, nil
 }

@@ -4,100 +4,85 @@
 package efficiency
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-func TestClassifier_Positive_FrontierAndLocal(t *testing.T) {
-	policy := &config.EfficiencyPolicy{
-		FrontierModels: []string{"claude-opus-", "claude-sonnet-", "gpt-5", "heavy-frontier"},
-		LocalModels:    []string{"local", "ollama", "vllm"},
+func TestClassifier_Positive_CurrentFrontierFamilies(t *testing.T) {
+	c := NewClassifier(nil)
+	for _, model := range []string{
+		"claude-opus-4-1", "claude-sonnet-4-5", "claude-fable-5-1", "anthropic/claude-opus-5",
+		"gpt-5", "gpt-5.1-codex", "gpt-6-astra", "gemini-3.1-pro-preview", "gemini-2.5-pro", "Gemini-3-Pro-Preview",
+	} {
+		if !c.IsFrontier("", model) {
+			t.Errorf("%s must be frontier", model)
+		}
 	}
+}
+
+func TestClassifier_Positive_RouterClassDecidesFirst(t *testing.T) {
+	c := NewClassifier(nil)
+	if !c.IsFrontier("cordana/reasoning", "some-routed-model") || !c.IsFrontier("coding", "") {
+		t.Error("frontier router classes must classify without a family match")
+	}
+	if c.IsFrontier("cordana/light", "claude-sonnet-4-5") {
+		t.Error("a light class is never frontier, whatever model serves it")
+	}
+	if !c.IsLocal("local", "any") || !c.IsLocal("", "ollama/llama3") || !c.IsLocal("", "vllm/mistral") || !c.IsLocal("", "local-qwen-7b") {
+		t.Error("local class and local model prefixes must classify as local")
+	}
+}
+
+func TestClassifier_Negative_CheapTiersNeverFrontier(t *testing.T) {
+	c := NewClassifier(nil)
+	for _, model := range []string{
+		"gpt-5-mini", "gpt-5-nano", "gpt-6-mini", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3-flash-preview",
+		"gemini-2.5-flash", "claude-haiku-4-5", "claude-3-haiku", "claude-3-7-sonnet", "gpt-4o-mini", "unknown-small-model", "o1-mini", "",
+	} {
+		if c.IsFrontier("", model) {
+			t.Errorf("%q must not be frontier", model)
+		}
+	}
+	if c.IsLocal("", "claude-3-7-sonnet") || c.IsLocal("", "") || c.IsLocal("", "gpt-5-nano") {
+		t.Error("hosted models are not local")
+	}
+}
+
+func TestClassifier_Boundary_ConfiguredListsReplaceDefaults(t *testing.T) {
+	policy := &config.EfficiencyPolicy{FrontierModels: []string{"heavy-"}, FrontierClasses: []string{"deep"}, LightClasses: []string{"tiny"}, LocalModels: []string{"rack"}}
 	c := NewClassifier(policy)
-
-	// Frontier matches with modern IDs
-	if !c.IsFrontier("claude-opus-4-1") {
-		t.Error("expected claude-opus-4-1 to be classified as frontier")
+	if !c.IsFrontier("", "HEAVY-one") || c.IsFrontier("", "claude-opus-4-1") {
+		t.Error("configured families replace the defaults")
 	}
-	if !c.IsFrontier("claude-sonnet-4-5") {
-		t.Error("expected claude-sonnet-4-5 to be classified as frontier")
+	if !c.IsFrontier("deep", "") || c.IsFrontier("reasoning", "x") || c.IsFrontier("tiny", "heavy-one") {
+		t.Error("configured classes replace the defaults")
 	}
-	if !c.IsFrontier("gpt-5") {
-		t.Error("expected gpt-5 to be classified as frontier")
-	}
-	if !c.IsFrontier("gpt-5-preview") {
-		t.Error("expected gpt-5-preview to be classified as frontier")
-	}
-	if !c.IsFrontier("heavy-frontier") {
-		t.Error("expected heavy-frontier tier to be classified as frontier")
-	}
-
-	// Local matches
-	if !c.IsLocal("local-qwen-7b") {
-		t.Error("expected local-qwen-7b to be classified as local")
-	}
-	if !c.IsLocal("ollama/llama3") {
-		t.Error("expected ollama/llama3 to be classified as local")
-	}
-	if !c.IsLocal("vllm/mistral") {
-		t.Error("expected vllm/mistral to be classified as local")
+	if !c.IsLocal("rack", "") || c.IsLocal("local", "") {
+		t.Error("configured local list replaces the default")
 	}
 }
 
-func TestClassifier_Negative_NonMatching(t *testing.T) {
-	c := NewClassifier(&config.EfficiencyPolicy{})
-
-	if c.IsFrontier("unknown-small-model") {
-		t.Error("expected unknown model not to be classified as frontier")
+// The guide documents the default lists; a drift between the two is a defect.
+func TestDefaultsMatchGuide(t *testing.T) {
+	data, err := os.ReadFile("../../docs/guides/efficiency-ledger.md")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if c.IsLocal("claude-3-7-sonnet") {
-		t.Error("expected claude-3-7-sonnet not to be classified as local")
+	guide := string(data)
+	lists := map[string][]string{
+		"frontier_models":  config.DefaultFrontierModels(),
+		"frontier_classes": config.DefaultFrontierClasses(),
+		"light_classes":    config.DefaultLightClasses(),
+		"local_models":     config.DefaultLocalModels(),
+		"cheap markers":    config.CheapTierMarkers(),
 	}
-	if c.IsFrontier("") {
-		t.Error("empty model name should not be frontier")
-	}
-	if c.IsLocal("") {
-		t.Error("empty model name should not be local")
-	}
-
-	// Hosted nano models must NOT match local
-	if c.IsLocal("gpt-4.1-nano") {
-		t.Error("gpt-4.1-nano should NOT be classified as local")
-	}
-	if c.IsLocal("claude-3-nano") {
-		t.Error("claude-3-nano should NOT be classified as local")
-	}
-
-	// Arbitrary substrings must NOT match o1/o3
-	if c.IsFrontier("model-foo123") {
-		t.Error("model-foo123 should NOT match frontier o1")
-	}
-}
-
-func TestClassifier_Boundary_DefaultsAndCase(t *testing.T) {
-	c := NewClassifier(nil) // nil policy falls back to documented defaults
-
-	// Default family prefix matches
-	if !c.IsFrontier("claude-opus-4-1") {
-		t.Error("expected claude-opus-4-1 to match default frontier prefixes")
-	}
-	if !c.IsFrontier("claude-sonnet-4-5") {
-		t.Error("expected claude-sonnet-4-5 to match default frontier prefixes")
-	}
-	if !c.IsFrontier("gpt-5") {
-		t.Error("expected gpt-5 to match default frontier prefixes")
-	}
-	if !c.IsFrontier("gemini-3") {
-		t.Error("expected gemini-3 to match default frontier prefixes")
-	}
-	if !c.IsFrontier("gemini-3-pro") {
-		t.Error("expected gemini-3-pro to match default frontier prefixes")
-	}
-	if !c.IsFrontier("CLAUDE-OPUS-4-1") {
-		t.Error("expected case-insensitive match for frontier model")
-	}
-	if !c.IsLocal("OLLAMA/LLAMA3") {
-		t.Error("expected case-insensitive match for local model")
+	for name, list := range lists {
+		line := "Default " + name + ": `" + strings.Join(list, "`, `") + "`"
+		if !strings.Contains(guide, line) {
+			t.Errorf("guide lacks the exact default line %q", line)
+		}
 	}
 }

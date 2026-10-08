@@ -97,7 +97,7 @@ func TestStubDrivers_Negative_EveryEnforcementMethodIsUnsupported(t *testing.T) 
 		if _, err := f.WorkflowRunHistory(ctx, "ci.yml", "main"); true {
 			checks["WorkflowRunHistory"] = err
 		}
-		if _, err := f.ListMergedPullRequests(ctx, 10); true {
+		if _, err := f.ListMergedPullRequests(ctx, MergedPullRequestQuery{Limit: 10}); true {
 			checks["ListMergedPullRequests"] = err
 		}
 		for method, err := range checks {
@@ -200,8 +200,8 @@ func (r *recordingForge) EditIssueBody(context.Context, int, string) error {
 	return ErrNotImplemented
 }
 
-func (r *recordingForge) ListMergedPullRequests(context.Context, int) ([]MergedPullRequest, error) {
-	return nil, ErrNotImplemented
+func (r *recordingForge) ListMergedPullRequests(context.Context, MergedPullRequestQuery) (MergedPullRequestList, error) {
+	return MergedPullRequestList{}, ErrNotImplemented
 }
 
 func (r *recordingForge) UpdateIssue(ctx context.Context, number int, labels []string, state string) error {

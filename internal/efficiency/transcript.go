@@ -4,8 +4,6 @@
 package efficiency
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +16,14 @@ import (
 	"github.com/cordanaLLM/praetor/internal/harvester"
 )
 
+// usageSnapshot is the largest usage seen so far for one response (message id plus request id).
+// A response is written as one line per content block and every line repeats the usage, so
+// later lines can only raise the counts.
+type usageSnapshot struct {
+	input, cacheCreation, cacheRead, output int64
+	frontier                                bool
+}
+
 // BranchTranscriptStats aggregates metrics from joined transcript session lines for a branch.
 type BranchTranscriptStats struct {
 	OperatorTouches     int
@@ -28,13 +34,7 @@ type BranchTranscriptStats struct {
 	OutputTokens        int64
 	LocalRequests       int
 	TotalRequests       int
-	seenResponses       map[string]bool
-}
-
-func (s *BranchTranscriptStats) initSeen() {
-	if s.seenResponses == nil {
-		s.seenResponses = make(map[string]bool)
-	}
+	seenResponses       map[string]usageSnapshot
 }
 
 // PromptCacheHitRate returns cache_read / (input + cache_creation + cache_read).
@@ -54,267 +54,217 @@ func (s BranchTranscriptStats) LocalFirstRatio() (float64, bool) {
 	return float64(s.LocalRequests) / float64(s.TotalRequests), true
 }
 
-func isHookOrSystem(rec *harvester.ClaudeRecord) bool {
-	if rec.Type == "attachment" || rec.HookName != "" || rec.HookEvent != "" {
-		return true
-	}
-	if strings.EqualFold(rec.Source, "system") {
-		return true
-	}
-	if rec.Origin != nil {
-		k := strings.ToLower(rec.Origin.Kind)
-		if k == "hook" || k == "system" {
-			return true
-		}
-	}
-	return false
-}
-
-func isToolResult(rec *harvester.ClaudeRecord, inner *harvester.ClaudeInnerMessage) bool {
-	if rec.ToolUseID != "" || strings.EqualFold(rec.Type, "tool_result") {
-		return true
-	}
-	if inner != nil {
-		if strings.EqualFold(inner.Type, "tool_result") {
-			return true
-		}
-		if len(inner.Content) > 0 {
-			contentStr := string(inner.Content)
-			if strings.Contains(contentStr, `"tool_result"`) || strings.Contains(contentStr, `"tool_use_id"`) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isMetaOrSynthetic(rec *harvester.ClaudeRecord, inner *harvester.ClaudeInnerMessage) bool {
-	if rec.IsMeta || rec.IsCompactSummary || rec.IsSidechain {
-		return true
-	}
-	return inner != nil && (inner.IsMeta || inner.IsCompactSummary || inner.IsSidechain)
-}
-
-func isUserRoleOrType(rec *harvester.ClaudeRecord, inner *harvester.ClaudeInnerMessage) bool {
-	if strings.EqualFold(rec.Type, "user") || strings.EqualFold(rec.Type, "user_input") || strings.EqualFold(rec.Source, "user_explicit") {
-		return true
-	}
-	if inner != nil {
-		return strings.EqualFold(inner.Role, "user") || strings.EqualFold(inner.Type, "user")
-	}
-	return false
-}
-
-func isOperatorTouch(rec *harvester.ClaudeRecord, inner *harvester.ClaudeInnerMessage) bool {
-	if isMetaOrSynthetic(rec, inner) {
+// isOperatorTouch reports a human prompt: a user record whose origin is human and that is
+// neither meta, a compact summary nor part of a sidechain. Task notifications, peer
+// messages, hook output and tool results carry another origin or none.
+func isOperatorTouch(rec *harvester.LedgerRecord) bool {
+	if rec.Type != "user" || rec.IsMeta || rec.IsCompactSummary || rec.IsSidechain {
 		return false
 	}
-	if isHookOrSystem(rec) || isToolResult(rec, inner) {
-		return false
-	}
-	if rec.Origin != nil && !strings.EqualFold(rec.Origin.Kind, "human") {
-		return false
-	}
-	return isUserRoleOrType(rec, inner)
+	return rec.Origin != nil && rec.Origin.Kind == "human"
 }
 
-func extractUsageAndModel(rec *harvester.ClaudeRecord, inner *harvester.ClaudeInnerMessage) (*harvester.ClaudeUsage, string) {
-	var usage *harvester.ClaudeUsage
-	var model string
-	if rec.Usage != nil {
-		usage = rec.Usage
-	} else if inner != nil && inner.Usage != nil {
-		usage = inner.Usage
+func responseKey(rec *harvester.LedgerRecord) string {
+	if rec.Message == nil || rec.Message.ID == "" {
+		return ""
 	}
-	if rec.Model != "" {
-		model = rec.Model
-	} else if inner != nil && inner.Model != "" {
-		model = inner.Model
-	}
-	return usage, model
+	return rec.Message.ID + ":" + rec.RequestID
 }
 
-func dedupeKey(rec *harvester.ClaudeRecord, inner *harvester.ClaudeInnerMessage) string {
-	msgID := rec.MessageID
-	if inner != nil && inner.ID != "" {
-		msgID = inner.ID
+func maxInt64(a, b int64) int64 {
+	if b > a {
+		return b
 	}
-	reqID := rec.RequestID
-	if msgID != "" && reqID != "" {
-		return msgID + ":" + reqID
-	}
-	if msgID != "" {
-		return msgID
-	}
-	return reqID
+	return a
 }
 
-func applyTranscriptLine(rec *harvester.ClaudeRecord, inner *harvester.ClaudeInnerMessage, classifier *Classifier, stats *BranchTranscriptStats) {
-	stats.initSeen()
-	if isOperatorTouch(rec, inner) {
-		stats.OperatorTouches++
+// applyUsage counts a response once. A repeated key only adds the growth of its usage.
+func (s *BranchTranscriptStats) applyUsage(rec *harvester.LedgerRecord, classifier *Classifier) {
+	usage := rec.Message.Usage
+	key := responseKey(rec)
+	prev, repeated := s.seenResponses[key]
+	if key == "" {
+		prev, repeated = usageSnapshot{}, false
 	}
-	usage, model := extractUsageAndModel(rec, inner)
-	if usage == nil {
-		return
+	next := usageSnapshot{
+		input:         maxInt64(prev.input, usage.InputTokens),
+		cacheCreation: maxInt64(prev.cacheCreation, usage.CacheCreationInputTokens),
+		cacheRead:     maxInt64(prev.cacheRead, usage.CacheReadInputTokens),
+		output:        maxInt64(prev.output, usage.OutputTokens),
+		frontier:      prev.frontier,
 	}
-	key := dedupeKey(rec, inner)
-	if key != "" && stats.seenResponses[key] {
-		return
+	if !repeated {
+		s.TotalRequests++
+		next.frontier = classifier.IsFrontier("", rec.Message.Model)
+		if classifier.IsLocal("", rec.Message.Model) {
+			s.LocalRequests++
+		}
+	}
+	s.InputTokens += next.input - prev.input
+	s.CacheCreationTokens += next.cacheCreation - prev.cacheCreation
+	s.CacheReadTokens += next.cacheRead - prev.cacheRead
+	s.OutputTokens += next.output - prev.output
+	if next.frontier {
+		s.FrontierTokens += (next.input + next.cacheCreation + next.cacheRead + next.output) -
+			(prev.input + prev.cacheCreation + prev.cacheRead + prev.output)
 	}
 	if key != "" {
-		stats.seenResponses[key] = true
+		s.seenResponses[key] = next
 	}
-
-	stats.TotalRequests++
-	if classifier != nil && classifier.IsLocal(model) {
-		stats.LocalRequests++
-	}
-	lineTokens := usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens + usage.OutputTokens
-	if classifier != nil && classifier.IsFrontier(model) {
-		stats.FrontierTokens += lineTokens
-	}
-	stats.InputTokens += usage.InputTokens
-	stats.CacheCreationTokens += usage.CacheCreationInputTokens
-	stats.CacheReadTokens += usage.CacheReadInputTokens
-	stats.OutputTokens += usage.OutputTokens
 }
 
-type countReader struct {
-	r     io.Reader
-	count int64
+func (s *BranchTranscriptStats) apply(rec *harvester.LedgerRecord, classifier *Classifier) {
+	if isOperatorTouch(rec) {
+		s.OperatorTouches++
+	}
+	if rec.Message != nil && rec.Message.Usage != nil {
+		s.applyUsage(rec, classifier)
+	}
 }
 
-func (c *countReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.count += int64(n)
-	return n, err
+// SourceNotes lists what a read skipped. Undecodable lines are reported with file and line,
+// never dropped; limit overflows and I/O errors fail the read instead.
+type SourceNotes struct {
+	SkippedLines int
+	Examples     []string
 }
 
-// ReadTranscriptStream reads and decodes JSON lines from a stream bounded by MaxSourceLines.
-func processTranscriptLine(lineBytes []byte, lineCount int, classifier *Classifier, byBranch map[string]*BranchTranscriptStats) error {
-	rec, inner, err := harvester.DecodeClaudeLine(lineBytes)
+const maxNoteExamples = 10
+
+func (n *SourceNotes) skip(source string, line int, err error) {
+	n.SkippedLines++
+	if len(n.Examples) < maxNoteExamples {
+		n.Examples = append(n.Examples, fmt.Sprintf("%s:%d: %v", source, line, err))
+	}
+}
+
+// Lines describes the notes as report lines.
+func (n *SourceNotes) Lines() []string {
+	if n == nil || n.SkippedLines == 0 {
+		return nil
+	}
+	out := []string{fmt.Sprintf("skipped %d undecodable transcript lines (first %d listed)", n.SkippedLines, len(n.Examples))}
+	return append(out, n.Examples...)
+}
+
+// sourceLimits bounds one source read (HISS-02). Exceeding any bound is an error.
+type sourceLimits struct {
+	Files int
+	Lines int
+	Bytes int64
+}
+
+func defaultLimits() sourceLimits {
+	return sourceLimits{Files: MaxSourceFiles, Lines: MaxSourceLines, Bytes: MaxFileBytes}
+}
+
+type transcriptReader struct {
+	classifier *Classifier
+	byBranch   map[string]*BranchTranscriptStats
+	notes      *SourceNotes
+	limits     sourceLimits
+}
+
+func (r *transcriptReader) line(source string, lineNo int, raw []byte) error {
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return nil
+	}
+	rec, err := harvester.DecodeLedgerLine(raw)
 	if err != nil {
-		return fmt.Errorf("line %d: %w", lineCount+1, err)
+		r.notes.skip(source, lineNo, err)
+		return nil
 	}
 	branch := strings.TrimSpace(rec.GitBranch)
 	if branch == "" {
 		return nil
 	}
-	stats, ok := byBranch[branch]
+	stats, ok := r.byBranch[branch]
 	if !ok {
-		stats = &BranchTranscriptStats{}
-		byBranch[branch] = stats
+		stats = &BranchTranscriptStats{seenResponses: make(map[string]usageSnapshot)}
+		r.byBranch[branch] = stats
 	}
-	applyTranscriptLine(rec, inner, classifier, stats)
+	stats.apply(rec, r.classifier)
 	return nil
 }
 
-// ReadTranscriptStream reads and decodes JSON lines from a stream bounded by MaxSourceLines.
-func ReadTranscriptStream(ctx context.Context, r io.Reader, classifier *Classifier, byBranch map[string]*BranchTranscriptStats) error {
-	limitedReader := &countReader{r: io.LimitReader(r, MaxFileBytes+1)}
-	scanner := bufio.NewScanner(limitedReader)
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
-
-	lineCount := 0
-	for ; lineCount < MaxSourceLines && scanner.Scan(); lineCount++ {
-		if lineCount%1000 == 0 && ctx.Err() != nil {
-			return ctx.Err()
-		}
-		lineBytes := bytes.TrimSpace(scanner.Bytes())
-		if len(lineBytes) == 0 {
-			continue
-		}
-		if err := processTranscriptLine(lineBytes, lineCount, classifier, byBranch); err != nil {
-			return err
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	if limitedReader.count > MaxFileBytes {
-		return fmt.Errorf("transcript exceeds %d byte limit", MaxFileBytes)
-	}
-	if scanner.Scan() {
-		return fmt.Errorf("transcript exceeds %d lines limit", MaxSourceLines)
-	}
-	return nil
-}
-
-// ReadTranscriptFile reads a single transcript JSONL file.
-func ReadTranscriptFile(ctx context.Context, path string, classifier *Classifier, byBranch map[string]*BranchTranscriptStats) (resultErr error) {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	cleanPath := filepath.Clean(path)
-	f, err := os.Open(cleanPath) // #nosec G304 -- path is configured in manifest or resolved from configured directory.
+func (r *transcriptReader) stream(ctx context.Context, source string, in io.Reader) error {
+	limits := harvester.ScanLimits{MaxRecords: r.limits.Lines, MaxBytes: r.limits.Bytes}
+	err := harvester.ScanTranscriptLines(ctx, in, limits, func(lineNo int, raw []byte) error {
+		return r.line(source, lineNo, raw)
+	})
 	if err != nil {
-		return fmt.Errorf("open transcript file %s: %w", cleanPath, err)
+		return fmt.Errorf("transcript %s: %w", source, err)
+	}
+	return nil
+}
+
+func (r *transcriptReader) file(ctx context.Context, path string) (resultErr error) {
+	f, err := os.Open(filepath.Clean(path)) // #nosec G304 -- path is configured in the manifest, a flag or a bounded directory walk.
+	if err != nil {
+		return fmt.Errorf("open transcript file %s: %w", path, err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
-	info, err := f.Stat()
-	if err == nil && info.Size() > MaxFileBytes {
-		return fmt.Errorf("transcript file %s exceeds %d byte limit", cleanPath, MaxFileBytes)
-	}
-	return ReadTranscriptStream(ctx, f, classifier, byBranch)
+	return r.stream(ctx, path, f)
 }
 
-func shouldSkipTranscriptDir(cleanDir, dirName string) bool {
-	return dirName != filepath.Base(cleanDir) && strings.HasPrefix(dirName, ".")
+type transcriptWalker struct {
+	reader    *transcriptReader
+	cleanDir  string
+	fileCount int
 }
 
-type transcriptDirWalker struct {
-	ctx        context.Context
-	cleanDir   string
-	classifier *Classifier
-	byBranch   map[string]*BranchTranscriptStats
-	fileCount  int
-}
-
-func (w *transcriptDirWalker) walk(path string, d fs.DirEntry, walkErr error) error {
-	if walkErr != nil {
-		return walkErr
-	}
-	if err := w.ctx.Err(); err != nil {
-		return err
-	}
-	if d.IsDir() {
-		if shouldSkipTranscriptDir(w.cleanDir, d.Name()) {
-			return filepath.SkipDir
+func (w *transcriptWalker) walk(ctx context.Context) fs.WalkDirFunc {
+	return func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
-		return nil
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() != filepath.Base(w.cleanDir) && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".jsonl") {
+			return nil
+		}
+		w.fileCount++
+		if w.fileCount > w.reader.limits.Files {
+			return fmt.Errorf("transcripts directory %s exceeds %d files limit", w.cleanDir, w.reader.limits.Files)
+		}
+		return w.reader.file(ctx, path)
 	}
-	if !strings.HasSuffix(d.Name(), ".jsonl") {
-		return nil
-	}
-	w.fileCount++
-	if w.fileCount > MaxSourceFiles {
-		return fmt.Errorf("transcripts directory %s exceeds %d files limit", w.cleanDir, MaxSourceFiles)
-	}
-	return ReadTranscriptFile(w.ctx, path, w.classifier, w.byBranch)
 }
 
-// ReadTranscriptsDir reads all .jsonl files in dir (including subdirectories) bounded by MaxSourceFiles.
-func ReadTranscriptsDir(ctx context.Context, dir string, classifier *Classifier) (map[string]*BranchTranscriptStats, error) {
+// ReadTranscriptStream reads one session stream; the source label names it in notes and errors.
+func ReadTranscriptStream(ctx context.Context, source string, in io.Reader, classifier *Classifier, byBranch map[string]*BranchTranscriptStats) (*SourceNotes, error) {
+	reader := &transcriptReader{classifier: classifier, byBranch: byBranch, notes: &SourceNotes{}, limits: defaultLimits()}
+	return reader.notes, reader.stream(ctx, source, in)
+}
+
+// ReadTranscriptsDir reads all .jsonl files in dir, subagent sessions included, bounded by
+// the source limits. Overflow of the file, line or byte bound is an error.
+func ReadTranscriptsDir(ctx context.Context, dir string, classifier *Classifier) (map[string]*BranchTranscriptStats, *SourceNotes, error) {
+	return readTranscriptsDir(ctx, dir, classifier, defaultLimits())
+}
+
+func readTranscriptsDir(ctx context.Context, dir string, classifier *Classifier, limits sourceLimits) (map[string]*BranchTranscriptStats, *SourceNotes, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cleanDir := strings.TrimSpace(dir)
 	if cleanDir == "" {
-		return nil, errors.New("empty transcripts directory")
+		return nil, nil, errors.New("empty transcripts directory")
 	}
 	if _, err := os.Stat(cleanDir); err != nil {
-		return nil, fmt.Errorf("read transcripts directory %s: %w", cleanDir, err)
+		return nil, nil, fmt.Errorf("read transcripts directory %s: %w", cleanDir, err)
 	}
-	walker := &transcriptDirWalker{
-		ctx:        ctx,
-		cleanDir:   cleanDir,
-		classifier: classifier,
-		byBranch:   make(map[string]*BranchTranscriptStats),
+	reader := &transcriptReader{classifier: classifier, byBranch: make(map[string]*BranchTranscriptStats), notes: &SourceNotes{}, limits: limits}
+	walker := &transcriptWalker{reader: reader, cleanDir: cleanDir}
+	if err := filepath.WalkDir(cleanDir, walker.walk(ctx)); err != nil {
+		return nil, nil, fmt.Errorf("walk transcripts in %s: %w", cleanDir, err)
 	}
-	if err := filepath.WalkDir(cleanDir, walker.walk); err != nil {
-		return nil, fmt.Errorf("walk transcripts in %s: %w", cleanDir, err)
-	}
-	return walker.byBranch, nil
+	return reader.byBranch, reader.notes, nil
 }

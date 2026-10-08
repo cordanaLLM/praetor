@@ -4,382 +4,228 @@
 package efficiency
 
 import (
+	"bytes"
 	"context"
-	"fmt"
-	"os"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
-func TestCollector_Positive_MilestoneSummaryOverTwoUnits(t *testing.T) {
-	ctx := context.Background()
-	dir := t.TempDir()
+type stubForge struct {
+	forge.Forge
+	list  forge.MergedPullRequestList
+	err   error
+	query forge.MergedPullRequestQuery
+}
 
-	t0 := time.Now().Add(-5 * time.Hour).Truncate(time.Second).UTC()
-	t1 := t0.Add(2 * time.Hour) // Issue 1 created
-	t2 := t1.Add(1 * time.Hour) // PR 1 created
-	t3 := t2.Add(1 * time.Hour) // PR 1 merged (issue-to-merge = 2h)
+func (s *stubForge) ListMergedPullRequests(_ context.Context, q forge.MergedPullRequestQuery) (forge.MergedPullRequestList, error) {
+	s.query = q
+	return s.list, s.err
+}
 
-	t4 := t0.Add(1 * time.Hour) // PR 2 created
-	t5 := t4.Add(3 * time.Hour) // PR 2 merged (issue-to-merge = 3h)
+const forgeRecords = `[
+ {"number":1,"head_branch":"feat/x","title":"One","milestone":"M1","created_at":"2026-10-01T10:00:00Z","merged_at":"2026-10-04T10:00:00Z",
+  "closing_issues":[{"number":10,"created_at":"2026-10-01T00:00:00Z"}]},
+ {"number":2,"head_branch":"feat/y","title":"Two","milestone":"M1","created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-03T10:00:00Z",
+  "closing_issues":[{"number":11}]},
+ {"number":3,"head_branch":"feat/z","title":"Three","milestone":"M1","created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-02T10:00:00Z"},
+ {"number":4,"head_branch":"feat/o","title":"Other","milestone":"M2","created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-09T10:00:00Z"}
+]`
 
-	// Forge JSON fixture: 2 PRs in milestone "1.0"
-	forgeJSON := fmt.Sprintf(`[
-		{
-			"number": 101,
-			"head_branch": "feat/pr-one",
-			"title": "Slice 1 Feature",
-			"milestone": "1.0",
-			"created_at": %q,
-			"merged_at": %q,
-			"closing_issues": [
-				{
-					"number": 10,
-					"created_at": %q
-				}
-			]
-		},
-		{
-			"number": 102,
-			"head_branch": "feat/pr-two",
-			"title": "Slice 2 Feature",
-			"milestone": "1.0",
-			"created_at": %q,
-			"merged_at": %q
+func collect(t *testing.T, opts CollectorOptions) *Report {
+	t.Helper()
+	report, err := NewCollector(opts).Collect(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report
+}
+
+func unitByNumber(t *testing.T, r *Report, n int) UnitReport {
+	t.Helper()
+	for _, u := range r.Units {
+		if u.PullRequestNumber == n {
+			return u
 		}
-	]`, t2.Format(time.RFC3339), t3.Format(time.RFC3339), t1.Format(time.RFC3339),
-		t4.Format(time.RFC3339), t5.Format(time.RFC3339))
+	}
+	t.Fatalf("unit #%d missing in %+v", n, r.Units)
+	return UnitReport{}
+}
 
-	forgePath := filepath.Join(dir, "prs.json")
-	if err := os.WriteFile(forgePath, []byte(forgeJSON), 0o600); err != nil {
-		t.Fatal(err)
+func TestCollector_Positive_IssueToMergeNeverFallsBackToPRAge(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "prs.json")
+	writeFile(t, path, []byte(forgeRecords))
+	report := collect(t, CollectorOptions{ForgeJSONPath: path, Milestone: "M1"})
+	if len(report.Units) != 3 {
+		t.Fatalf("units: %d", len(report.Units))
 	}
-
-	// Transcripts directory fixture
-	transDir := filepath.Join(dir, "transcripts")
-	if err := os.MkdirAll(transDir, 0o750); err != nil {
-		t.Fatal(err)
+	if got := unitByNumber(t, report, 1).IssueToMerge; got != "3d10h" {
+		t.Errorf("#1 issue-to-merge = %q", got)
 	}
-	// PR 1: 1 operator touch, 100 frontier tokens, 50 cache read, 50 input
-	// PR 2: 2 operator touches, 200 frontier tokens, 100 cache read, 100 input
-	pr1Transcript := `
-{"type":"user","gitBranch":"feat/pr-one","message":{"role":"user","content":[{"type":"text","text":"start"}]},"origin":{"kind":"human"}}
-{"type":"assistant","gitBranch":"feat/pr-one","message":{"model":"claude-3-7-sonnet","role":"assistant","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":50,"output_tokens":0}}}
-`
-	pr2Transcript := `
-{"type":"user","gitBranch":"feat/pr-two","message":{"role":"user","content":[{"type":"text","text":"part 1"}]},"origin":{"kind":"human"}}
-{"type":"user","gitBranch":"feat/pr-two","message":{"role":"user","content":[{"type":"text","text":"part 2"}]},"origin":{"kind":"human"}}
-{"type":"assistant","gitBranch":"feat/pr-two","message":{"model":"claude-3-5-sonnet","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":0}}}
-`
-	if err := os.WriteFile(filepath.Join(transDir, "pr1.jsonl"), []byte(pr1Transcript), 0o600); err != nil {
-		t.Fatal(err)
+	for _, n := range []int{2, 3} {
+		if got := unitByNumber(t, report, n).IssueToMerge; got != NotMeasured {
+			t.Errorf("#%d without a closing issue time must print %q, got %q", n, NotMeasured, got)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(transDir, "pr2.jsonl"), []byte(pr2Transcript), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Spend log fixture: PR 1 = $0.10, PR 2 = $0.20, Unattributed = $0.05
-	spendJSONL := `
-{"model":"claude-3-7-sonnet","spend":0.10,"tags":["branch:feat/pr-one"]}
-{"model":"claude-3-5-sonnet","spend":0.20,"tags":["branch:feat/pr-two"]}
-{"model":"o1","spend":0.05}
-`
-	spendPath := filepath.Join(dir, "spend.jsonl")
-	if err := os.WriteFile(spendPath, []byte(spendJSONL), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	opts := CollectorOptions{
-		Root:           dir,
-		Milestone:      "1.0",
-		ForgeJSONPath:  forgePath,
-		TranscriptsDir: transDir,
-		SpendLogPath:   spendPath,
-	}
-
-	collector := NewCollector(opts)
-	report, err := collector.Collect(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error collecting report: %v", err)
-	}
-
-	// 1. Two units
-	if len(report.Units) != 2 {
-		t.Fatalf("expected 2 units, got %d", len(report.Units))
-	}
-
-	// Unit 1 assertions
-	u1 := report.Units[0]
-	if u1.PullRequestNumber != 101 || u1.HeadBranch != "feat/pr-one" {
-		t.Errorf("unexpected unit 1 head: %+v", u1)
-	}
-	if u1.OperatorTouches != "1" {
-		t.Errorf("unit 1 operator touches = %s, want 1", u1.OperatorTouches)
-	}
-	if u1.Spend != "$0.10" {
-		t.Errorf("unit 1 spend = %s, want $0.10", u1.Spend)
-	}
-	if u1.FrontierTokens != "100" {
-		t.Errorf("unit 1 frontier tokens = %s, want 100", u1.FrontierTokens)
-	}
-	if u1.PromptCacheHitRate != "50.0%" {
-		t.Errorf("unit 1 prompt cache hit rate = %s, want 50.0%%", u1.PromptCacheHitRate)
-	}
-	if u1.IssueToMerge != "2h00m" {
-		t.Errorf("unit 1 issue to merge = %s, want 2h00m", u1.IssueToMerge)
-	}
-	if u1.FactHitRatio != FollowUpRefs || u1.ChecksBeforeReviews != FollowUpRefs {
-		t.Errorf("unmeasured ratios must reference follow-up issue #881")
-	}
-
-	// Unit 2 assertions
-	u2 := report.Units[1]
-	if u2.PullRequestNumber != 102 || u2.HeadBranch != "feat/pr-two" {
-		t.Errorf("unexpected unit 2 head: %+v", u2)
-	}
-	if u2.OperatorTouches != "2" {
-		t.Errorf("unit 2 operator touches = %s, want 2", u2.OperatorTouches)
-	}
-	if u2.Spend != "$0.20" {
-		t.Errorf("unit 2 spend = %s, want $0.20", u2.Spend)
-	}
-	if u2.FrontierTokens != "200" {
-		t.Errorf("unit 2 frontier tokens = %s, want 200", u2.FrontierTokens)
-	}
-	// PR 2 had no closing issues -> falls back to PR creation time marked with (PR)
-	if u2.IssueToMerge != "3h00m (PR)" {
-		t.Errorf("unit 2 issue to merge = %s, want 3h00m (PR)", u2.IssueToMerge)
-	}
-
-	// 2. Milestone Summary over two units
-	summary := report.MilestoneSummary
-	if summary.UnitsCount != 2 {
-		t.Errorf("summary units count = %d, want 2", summary.UnitsCount)
-	}
-	if summary.Milestone != "1.0" {
-		t.Errorf("summary milestone = %s, want 1.0", summary.Milestone)
-	}
-	// Total touches = 1 + 2 = 3
-	if summary.OperatorTouches != "3" {
-		t.Errorf("summary operator touches = %s, want 3", summary.OperatorTouches)
-	}
-	// Total frontier tokens = 100 + 200 = 300
-	if summary.FrontierTokens != "300" {
-		t.Errorf("summary frontier tokens = %s, want 300", summary.FrontierTokens)
-	}
-	// Attributed spend = 0.10 + 0.20 = $0.30
-	if summary.AttributedSpend != "$0.30" {
-		t.Errorf("summary attributed spend = %s, want $0.30", summary.AttributedSpend)
-	}
-	// Unattributed spend = $0.05
-	if summary.UnattributedSpend != "$0.05" {
-		t.Errorf("summary unattributed spend = %s, want $0.05", summary.UnattributedSpend)
-	}
-	// Total spend = $0.35
-	if summary.TotalSpend != "$0.35" {
-		t.Errorf("summary total spend = %s, want $0.35", summary.TotalSpend)
-	}
-	// Average issue-to-merge = (2h + 3h) / 2 = 2h30m
-	if summary.AvgIssueToMerge != "2h30m" {
-		t.Errorf("summary avg issue to merge = %s, want 2h30m", summary.AvgIssueToMerge)
-	}
-	// Overall prompt cache hit rate = (50 + 100) / (100 + 200) = 150 / 300 = 50.0%
-	if summary.PromptCacheHitRate != "50.0%" {
-		t.Errorf("summary prompt cache hit rate = %s, want 50.0%%", summary.PromptCacheHitRate)
-	}
-	// Fact-hit and checks-before-reviews follow up pointers
-	if summary.FactHitRatio != FollowUpRefs || summary.ChecksBeforeReviews != FollowUpRefs {
-		t.Errorf("milestone summary follow-up pointers incorrect")
+	if !strings.Contains(report.MilestoneSummary.AvgIssueToMerge, "3d10h (1 of 3 units measured)") {
+		t.Errorf("average must exclude unmeasured units and say so: %q", report.MilestoneSummary.AvgIssueToMerge)
 	}
 }
 
-func TestCollector_Negative_MissingSourcesPrintNotMeasuredNeverZero(t *testing.T) {
-	ctx := context.Background()
+func TestCollector_Positive_MilestoneFiltersBeforeLimitAndStatesTruncation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, path, []byte(forgeRecords))
+	report := collect(t, CollectorOptions{ForgeJSONPath: path, Milestone: "M1", Limit: 2})
+	if len(report.Units) != 2 || report.Units[0].PullRequestNumber != 1 || report.Units[1].PullRequestNumber != 2 {
+		t.Fatalf("want the two newest M1 merges (#4 of M2 is newer but filtered first): %+v", report.Units)
+	}
+	if len(report.Notes) != 1 || !strings.Contains(report.Notes[0], "1 matching pull requests beyond the limit of 2") {
+		t.Fatalf("truncation must be stated: %v", report.Notes)
+	}
+}
+
+func TestCollector_Positive_LiveDriverQueryAndNotes(t *testing.T) {
+	stub := &stubForge{list: forge.MergedPullRequestList{
+		PullRequests: []forge.MergedPullRequest{{Number: 7, HeadBranch: "b"}},
+		Truncated:    "scanned only 2000",
+		Warnings:     []string{"closing issue #9 not fetched"},
+	}}
+	report := collect(t, CollectorOptions{ForgeDriver: stub, Milestone: "M1", Limit: 5, Notes: []string{"caller note"}})
+	if stub.query.Limit != 5 || stub.query.Milestone != "M1" {
+		t.Errorf("milestone and limit go to the forge together: %+v", stub.query)
+	}
+	joined := strings.Join(report.Notes, "\n")
+	for _, want := range []string{"caller note", "forge listing incomplete: scanned only 2000", "forge: closing issue #9 not fetched"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("note %q missing in %q", want, joined)
+		}
+	}
+	if !report.Sources.Forge || len(report.Units) != 1 {
+		t.Errorf("%+v", report)
+	}
+}
+
+func TestCollector_Negative_SourceErrorsFailTheRun(t *testing.T) {
 	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	boom := errors.New("boom")
+	cases := map[string]CollectorOptions{
+		"forge file missing":  {ForgeJSONPath: filepath.Join(dir, "none.json")},
+		"forge driver error":  {ForgeDriver: &stubForge{err: boom}},
+		"transcripts missing": {ForgeJSONPath: prs, TranscriptsDir: filepath.Join(dir, "none")},
+		"spend log missing":   {ForgeJSONPath: prs, SpendLogPath: filepath.Join(dir, "none.jsonl")},
+	}
+	for name, opts := range cases {
+		if _, err := NewCollector(opts).Collect(context.Background()); err == nil {
+			t.Errorf("%s must fail the run", name)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewCollector(CollectorOptions{ForgeJSONPath: prs}).Collect(ctx); err == nil {
+		t.Error("cancelled context must fail")
+	}
+}
 
-	// Only forge records provided; Transcripts and SpendLog are absent!
-	forgeJSON := `[{"number": 201, "head_branch": "feat/solo", "title": "Solo", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z"}]`
-	forgePath := filepath.Join(dir, "prs.json")
-	if err := os.WriteFile(forgePath, []byte(forgeJSON), 0o600); err != nil {
-		t.Fatal(err)
+func TestCollector_Negative_ZeroDenominatorsPrintNotMeasured(t *testing.T) {
+	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	tr := filepath.Join(dir, "tr")
+	writeFile(t, filepath.Join(tr, "s.jsonl"), readFixture(t))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, TranscriptsDir: tr, Milestone: "M1"})
+	u := unitByNumber(t, report, 2)
+	for name, got := range map[string]string{"cache": u.PromptCacheHitRate, "local": u.LocalFirstRatio, "touches": u.OperatorTouches, "tokens": u.FrontierTokens, "spend": u.Spend} {
+		if got != NotMeasured {
+			t.Errorf("unit without joined sessions: %s = %q, want %q", name, got, NotMeasured)
+		}
 	}
+	empty := collect(t, CollectorOptions{ForgeJSONPath: prs, Milestone: "none"})
+	ms := empty.MilestoneSummary
+	if ms.UnitsCount != 0 || ms.LocalFirstRatio != NotMeasured || ms.PromptCacheHitRate != NotMeasured || ms.AvgIssueToMerge != NotMeasured {
+		t.Errorf("empty summary: %+v", ms)
+	}
+	none := collect(t, CollectorOptions{})
+	if none.Sources.Forge || none.MilestoneSummary.TotalSpend != NotMeasured {
+		t.Errorf("no sources: %+v", none)
+	}
+}
 
-	opts := CollectorOptions{
-		Root:          dir,
-		ForgeJSONPath: forgePath,
-		// TranscriptsDir and SpendLogPath deliberately empty!
+func TestCollector_Positive_GatewayWinsOverTranscriptsWithoutDoubleCount(t *testing.T) {
+	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	tr := filepath.Join(dir, "tr")
+	writeFile(t, filepath.Join(tr, "s.jsonl"), readFixture(t))
+	spend := filepath.Join(dir, "spend.jsonl")
+	writeFile(t, spend, []byte(`{"request_id":"a","model":"claude-opus-4-1","spend":1.5,"total_tokens":500,"request_tags":["branch:feat/x"]}
+{"request_id":"b","model":"ollama/q","model_group":"local","spend":0,"total_tokens":50,"request_tags":["branch:feat/x"]}
+{"request_id":"c","model":"claude-opus-4-1","spend":0.5,"total_tokens":5,"request_tags":["branch:feat/o"]}
+{"request_id":"d","model":"claude-opus-4-1","spend":0.25,"total_tokens":5}
+`))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, TranscriptsDir: tr, SpendLogPath: spend, Milestone: "M1"})
+	u := unitByNumber(t, report, 1)
+	if u.FrontierTokens != "500" || u.LocalFirstRatio != "50.0%" || u.Spend != "$1.50" {
+		t.Errorf("gateway entries decide tokens and local-first: %+v", u)
 	}
-
-	collector := NewCollector(opts)
-	report, err := collector.Collect(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if u.OperatorTouches != "2" || u.PromptCacheHitRate == NotMeasured {
+		t.Errorf("touches and cache hit still come from transcripts: %+v", u)
 	}
-
-	if len(report.Units) != 1 {
-		t.Fatalf("expected 1 unit, got %d", len(report.Units))
-	}
-
-	u := report.Units[0]
-	// Missing transcripts MUST be "not measured", never "0"
-	if u.FrontierTokens != NotMeasured {
-		t.Errorf("expected FrontierTokens to be %q, got %q", NotMeasured, u.FrontierTokens)
-	}
-	if u.OperatorTouches != NotMeasured {
-		t.Errorf("expected OperatorTouches to be %q, got %q", NotMeasured, u.OperatorTouches)
-	}
-	if u.PromptCacheHitRate != NotMeasured {
-		t.Errorf("expected PromptCacheHitRate to be %q, got %q", NotMeasured, u.PromptCacheHitRate)
-	}
-	if u.LocalFirstRatio != NotMeasured {
-		t.Errorf("expected LocalFirstRatio to be %q, got %q", NotMeasured, u.LocalFirstRatio)
-	}
-
-	// Missing spend log MUST be "not measured", never "$0.00"
-	if u.Spend != NotMeasured {
-		t.Errorf("expected Spend to be %q, got %q", NotMeasured, u.Spend)
-	}
-
-	// Milestone summary missing fields must also be "not measured"
 	ms := report.MilestoneSummary
-	if ms.FrontierTokens != NotMeasured || ms.OperatorTouches != NotMeasured ||
-		ms.PromptCacheHitRate != NotMeasured || ms.LocalFirstRatio != NotMeasured ||
-		ms.AttributedSpend != NotMeasured || ms.UnattributedSpend != NotMeasured ||
-		ms.TotalSpend != NotMeasured {
-		t.Errorf("milestone summary must report %q for missing sources, got %+v", NotMeasured, ms)
+	if ms.AttributedSpend != "$1.50" || ms.OtherUnitsSpend != "$0.50" || ms.UnattributedSpend != "$0.25" || ms.TotalSpend != "$2.25" {
+		t.Errorf("spend scopes must add up: %+v", ms)
 	}
 }
 
-func TestCollector_Positive_NoSessionsJoinedGivesNotMeasured(t *testing.T) {
-	ctx := context.Background()
+func TestCollector_Positive_TranscriptsFeedUnitsWithoutGateway(t *testing.T) {
 	dir := t.TempDir()
-
-	// PR #8 on feat/pr-eight
-	forgeJSON := `[{"number": 8, "head_branch": "feat/pr-eight", "title": "PR 8", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z"}]`
-	forgePath := filepath.Join(dir, "prs.json")
-	if err := os.WriteFile(forgePath, []byte(forgeJSON), 0o600); err != nil {
-		t.Fatal(err)
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	tr := filepath.Join(dir, "tr")
+	writeFile(t, filepath.Join(tr, "s.jsonl"), readFixture(t))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, TranscriptsDir: tr, Milestone: "M1"})
+	u := unitByNumber(t, report, 1)
+	if u.FrontierTokens != "1150" || u.LocalFirstRatio != "0.0%" || u.OperatorTouches != "2" {
+		t.Errorf("%+v", u)
 	}
-
-	// Transcripts directory with a session on another branch (no join for feat/pr-eight!)
-	transDir := filepath.Join(dir, "transcripts")
-	if err := os.MkdirAll(transDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	otherTranscript := `{"type":"user","gitBranch":"feat/other-unrelated","origin":{"kind":"human"}}` + "\n"
-	if err := os.WriteFile(filepath.Join(transDir, "other.jsonl"), []byte(otherTranscript), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	opts := CollectorOptions{
-		Root:           dir,
-		ForgeJSONPath:  forgePath,
-		TranscriptsDir: transDir,
-	}
-
-	collector := NewCollector(opts)
-	report, err := collector.Collect(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if len(report.Units) != 1 {
-		t.Fatalf("expected 1 unit, got %d", len(report.Units))
-	}
-
-	u := report.Units[0]
-	// PR #8 has no joined sessions: CACHE HIT and LOCAL-1ST must be "not measured", never "0.0%"!
-	if u.PromptCacheHitRate != NotMeasured {
-		t.Errorf("expected PromptCacheHitRate for unjoined PR #8 to be %q, got %q", NotMeasured, u.PromptCacheHitRate)
-	}
-	if u.LocalFirstRatio != NotMeasured {
-		t.Errorf("expected LocalFirstRatio for unjoined PR #8 to be %q, got %q", NotMeasured, u.LocalFirstRatio)
+	if !strings.Contains(report.MilestoneSummary.OperatorTouches, "2 (1 of 3 units measured)") {
+		t.Errorf("summary: %q", report.MilestoneSummary.OperatorTouches)
 	}
 }
 
-func TestCollector_CalculateIssueToMerge_UnmeasuredClosingIssues(t *testing.T) {
-	c := NewCollector(CollectorOptions{})
-
-	now := time.Now().UTC()
-	// PR has closing issue #578, but CreatedAt is zero (unmeasured)!
-	prWithUnmeasuredIssue := forge.MergedPullRequest{
-		Number:     866,
-		HeadBranch: "feat/unmeasured",
-		CreatedAt:  now.Add(-55 * time.Minute),
-		MergedAt:   now,
-		ClosingIssues: []forge.ClosingIssue{
-			{Number: 578}, // CreatedAt is zero!
-		},
-	}
-
-	itm, secs := c.calculateIssueToMerge(prWithUnmeasuredIssue)
-	// Must NOT quietly fall back to PR age (55m); must report "not measured"!
-	if itm != NotMeasured || secs != nil {
-		t.Errorf("expected %q with nil secs when closing issue is unmeasured, got %q (%v)", NotMeasured, itm, secs)
-	}
-
-	// PR with no closing issue at all: falls back to PR age with (PR) suffix
-	prWithNoClosingIssue := forge.MergedPullRequest{
-		Number:        867,
-		HeadBranch:    "feat/no-issues",
-		CreatedAt:     now.Add(-55 * time.Minute),
-		MergedAt:      now,
-		ClosingIssues: nil,
-	}
-	itmPR, secsPR := c.calculateIssueToMerge(prWithNoClosingIssue)
-	if itmPR != "55m (PR)" || secsPR == nil {
-		t.Errorf("expected '55m (PR)', got %q (%v)", itmPR, secsPR)
+func TestCollector_Boundary_ReusedBranchJoinsOnlyTheLatestMergedPR(t *testing.T) {
+	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(`[
+ {"number":1,"head_branch":"feat/x","created_at":"2026-10-01T10:00:00Z","merged_at":"2026-10-02T10:00:00Z"},
+ {"number":2,"head_branch":"feat/x","created_at":"2026-10-03T10:00:00Z","merged_at":"2026-10-04T10:00:00Z"}]`))
+	tr := filepath.Join(dir, "tr")
+	writeFile(t, filepath.Join(tr, "s.jsonl"), readFixture(t))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, TranscriptsDir: tr})
+	if unitByNumber(t, report, 1).OperatorTouches != NotMeasured || unitByNumber(t, report, 2).OperatorTouches != "2" {
+		t.Errorf("sessions counted for the wrong or both pull requests: %+v", report.Units)
 	}
 }
 
-func TestCollector_Negative_SourceErrorsPropagate(t *testing.T) {
-	ctx := context.Background()
-
-	// Unreadable transcripts directory must fail
-	collectorBadTrans := NewCollector(CollectorOptions{
-		TranscriptsDir: "/nonexistent/directory/for/transcripts",
-	})
-	if _, err := collectorBadTrans.Collect(ctx); err == nil {
-		t.Error("expected error when transcripts directory does not exist")
+func TestFormatSpend_Boundary_SubCentIsNotZero(t *testing.T) {
+	if formatSpend(0.0042) != "$0.0042" || formatSpend(0) != "$0.00" || formatSpend(1.5) != "$1.50" {
+		t.Errorf("%s %s %s", formatSpend(0.0042), formatSpend(0), formatSpend(1.5))
 	}
-
-	// Unreadable spend log file must fail
-	collectorBadSpend := NewCollector(CollectorOptions{
-		SpendLogPath: "/nonexistent/file/for/spend.jsonl",
-	})
-	if _, err := collectorBadSpend.Collect(ctx); err == nil {
-		t.Error("expected error when spend log file does not exist")
+	if formatDuration(30e9) != "30s" || formatDuration(90*60e9) != "1h30m" {
+		t.Error("duration format")
 	}
 }
 
-func TestCollector_Boundary_EmptySourcesAndLimits(t *testing.T) {
-	ctx := context.Background()
-
-	// Empty collector (no sources)
-	collector := NewCollector(CollectorOptions{})
-	report, err := collector.Collect(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error on empty collector: %v", err)
-	}
-	if len(report.Units) != 0 {
-		t.Errorf("expected 0 units on empty collector, got %d", len(report.Units))
-	}
-	if report.MilestoneSummary.UnitsCount != 0 {
-		t.Errorf("expected 0 units count in summary, got %d", report.MilestoneSummary.UnitsCount)
-	}
-
-	// Limit test with forge PRs
-	fakePRs := []forge.MergedPullRequest{
-		{Number: 1, HeadBranch: "b1"},
-		{Number: 2, HeadBranch: "b2"},
-		{Number: 3, HeadBranch: "b3"},
-	}
-	collectorWithLimit := NewCollector(CollectorOptions{Limit: 2})
-	filtered := collectorWithLimit.filterPRs(fakePRs)
-	if len(filtered) != 2 {
-		t.Errorf("expected 2 filtered PRs with Limit=2, got %d", len(filtered))
+func TestRenderTable_Positive_PrintsNotes(t *testing.T) {
+	report := newReport("")
+	report.Notes = []string{"forge listing incomplete: x"}
+	var out bytes.Buffer
+	if err := RenderTable(report, &out); err != nil || !strings.Contains(out.String(), "- forge listing incomplete: x") {
+		t.Fatalf("%v %q", err, out.String())
 	}
 }
