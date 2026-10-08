@@ -1,0 +1,4 @@
+type: fixed
+title: Render a branch ruleset a GitHub merge queue can use - the locked praetor-docs.yml and praetor-api.yml now trigger on merge_group, and the new repository-only keys overrides.branch_protection.merge_queue and codeql_default_setup render the merge_queue rule, require only contexts of workflows that trigger on merge_group and gate CodeQL default setup with a code_scanning rule; the audit names a required context whose workflow lacks merge_group; an unedited earlier praetor-docs.yml and praetor-api.yml refresh without --force, and an edited copy is kept and warned about
+issue: "#893"
+breaking: true

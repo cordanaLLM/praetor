@@ -129,7 +129,7 @@ func RenderRulesetForRepository(ctx context.Context, repoPath string, policy con
 	if err != nil {
 		return nil, nil, fmt.Errorf("render %s: %w", RepositoryRulesetPath, err)
 	}
-	contexts, err := RequiredStatusContextsPlanned(ctx, repoPath, planned)
+	contexts, err := RequiredStatusContextsPlanned(ctx, repoPath, planned, ForMergeQueue(policy.MergeQueue))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -163,7 +163,7 @@ func ReadRulesetBaseline(ctx context.Context, repoPath string) (RulesetBaseline,
 	if err != nil {
 		return RulesetBaseline{}, fmt.Errorf("read the default branch for %s: %w", RepositoryRulesetPath, err)
 	}
-	contexts, err := RequiredStatusContexts(ctx, repoPath)
+	contexts, err := RequiredStatusContexts(ctx, repoPath, ForMergeQueue(policy.MergeQueue))
 	if err != nil {
 		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
 	}
@@ -354,11 +354,19 @@ func protectionRules(policy config.BranchProtectionPolicy, reviewCount int, requ
 	if policy.RequireSignedCommits {
 		rules = append(rules, map[string]any{"type": "required_signatures"})
 	}
-	return append(rules, map[string]any{"type": "pull_request", "parameters": map[string]any{
+	rules = append(rules, map[string]any{"type": "pull_request", "parameters": map[string]any{
 		"required_approving_review_count":   reviewCount,
 		"dismiss_stale_reviews_on_push":     policy.DismissStaleReviews,
 		"require_code_owner_review":         requireCodeOwner,
 		"require_last_push_approval":        false,
 		"required_review_thread_resolution": true,
 	}})
+	if !policy.MergeQueue {
+		return rules
+	}
+	rules = append(rules, mergeQueueRuleOf(policy.EnforceLinearHistory))
+	if policy.CodeQLDefaultSetup {
+		rules = append(rules, codeScanningRuleOf())
+	}
+	return rules
 }

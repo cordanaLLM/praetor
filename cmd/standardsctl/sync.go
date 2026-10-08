@@ -275,7 +275,7 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 		return errors.New("reconcile branch protection: no resolved policy")
 	}
 	repository := gh.Owner + "/" + gh.Repo
-	contexts, omitted, err := remoteStatusContexts(ctx, rootDir, repository, in.contexts)
+	contexts, omitted, err := remoteStatusContexts(ctx, rootDir, repository, in.policy.MergeQueue, in.contexts)
 	if err != nil {
 		return err
 	}
@@ -312,8 +312,8 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 // A check leaves when a repository guard keeps its job out of that repository, such as a
 // Platform Neutrality leg in an operational fork: no run there reports it, so requiring it would
 // block every pull request.
-func remoteStatusContexts(ctx context.Context, rootDir, repository string, local []string) (contexts, omitted []string, err error) {
-	contexts, err = forge.RequiredStatusContextsIn(ctx, rootDir, repository)
+func remoteStatusContexts(ctx context.Context, rootDir, repository string, mergeQueue bool, local []string) (contexts, omitted []string, err error) {
+	contexts, err = forge.RequiredStatusContextsIn(ctx, rootDir, repository, forge.ForMergeQueue(mergeQueue))
 	if err != nil {
 		return nil, nil, fmt.Errorf("discover the required status checks of %s: %w", repository, err)
 	}
@@ -446,7 +446,7 @@ func runSync(args []string) error {
 	}
 
 	rootDir := filepath.Dir(flags.configPath)
-	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
+	contexts, err := forge.RequiredStatusContexts(ctx, rootDir, forge.ForMergeQueue(manifest.Overrides.DeclaresMergeQueue()))
 	if err != nil {
 		return fmt.Errorf("discover repository workflow checks: %w", err)
 	}

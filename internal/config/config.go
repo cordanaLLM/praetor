@@ -80,12 +80,24 @@ type BranchProtectionPolicy struct {
 	RequiredApprovingReviewers int              `yaml:"required_approving_reviewers"`
 	DismissStaleReviews        bool             `yaml:"dismiss_stale_reviews"`
 	ReviewMode                 BranchReviewMode `yaml:"review_mode,omitempty"`
+	// MergeQueue declares that the default branch merges through a GitHub merge queue (#893).
+	// The rendered ruleset then carries the merge_queue rule and requires only the status
+	// contexts of workflows that trigger on merge_group, the one event a group runs. It is a
+	// property of the repository, not of an archetype, so only .standards.yaml sets it.
+	MergeQueue bool `yaml:"merge_queue,omitempty" json:",omitempty"`
+	// CodeQLDefaultSetup declares that the repository scans with CodeQL default setup, which
+	// never runs for a merge group and has no workflow file to read. Under MergeQueue the
+	// ruleset gates pull requests with a code_scanning rule instead of a status context. It is
+	// repository-only, like MergeQueue. Both carry an omitempty JSON tag: the policy digest
+	// (EffectivePolicy.seal) encodes the struct, and a repository that declares neither keeps
+	// the digest it had before the keys existed.
+	CodeQLDefaultSetup bool `yaml:"codeql_default_setup,omitempty" json:",omitempty"`
 }
 
 // branchProtectionKeys is the closed key set of a branch_protection section.
 var branchProtectionKeys = []string{
 	"enforce_linear_history", "require_signed_commits", "required_approving_reviewers",
-	"dismiss_stale_reviews", "review_mode",
+	"dismiss_stale_reviews", "review_mode", "merge_queue", "codeql_default_setup",
 }
 
 // UnmarshalYAML distinguishes an omitted review mode from an explicitly null
@@ -558,6 +570,8 @@ func joinBranchProtection(a, b BranchProtectionPolicy) BranchProtectionPolicy {
 		DismissStaleReviews:        a.DismissStaleReviews || b.DismissStaleReviews,
 		RequiredApprovingReviewers: max(a.RequiredApprovingReviewers, b.RequiredApprovingReviewers),
 		ReviewMode:                 joinReviewMode(a.ReviewMode, b.ReviewMode),
+		MergeQueue:                 a.MergeQueue || b.MergeQueue,
+		CodeQLDefaultSetup:         a.CodeQLDefaultSetup || b.CodeQLDefaultSetup,
 	}
 }
 
@@ -600,6 +614,13 @@ func clonePolicy(p *ResolvedPolicy) *ResolvedPolicy {
 	clone.Linters = append([]string(nil), p.Linters...)
 	clone.DevFeatures = append([]string(nil), p.DevFeatures...)
 	return &clone
+}
+
+// DeclaresMergeQueue reports whether the overrides declare a merge queue on the default branch.
+// Only .standards.yaml sets it (ArchetypeControls.validate refuses it in a catalog layer), so
+// the overrides answer for the resolved policy before that policy is resolved.
+func (o Overrides) DeclaresMergeQueue() bool {
+	return o.BranchProtection != nil && o.BranchProtection.MergeQueue
 }
 
 // ApplyOverrides applies project-level overrides on top of the resolved policy.

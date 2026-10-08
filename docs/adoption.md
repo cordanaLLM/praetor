@@ -310,6 +310,48 @@ approvals, no code-owner review, the repository admin role as a pull-request byp
 aggregate as the only required check, is the one the audit accepts
 (`TestAdopt_Positive_SoloPathFilteredRulesetIsMergeable` in `internal/adopt/ruleset_solo_test.go`).
 
+### Merge queue
+
+A branch protected by a GitHub merge queue starts a run for a merge group, not a pull request, and
+a required check reports for a group only when its workflow triggers on `merge_group`. A ruleset
+that requires a context of any other workflow leaves every queued group waiting until the queue's
+check timeout, and the queue then removes it. Declare the queue in `.standards.yaml`:
+
+```yaml
+overrides:
+  branch_protection:
+    merge_queue: true
+    codeql_default_setup: true # only when CodeQL default setup scans the repository
+```
+
+Both keys are repository-only: a catalog archetype or facet that sets either fails to decode
+(`ArchetypeControls.validate`, `TestMergeQueueIsRepositoryOnly`). With `merge_queue: true`:
+
+- The ruleset carries a `merge_queue` rule with the seven parameters GitHub requires, at GitHub's
+  documented defaults. The merge method is `SQUASH` while the policy enforces linear history and
+  `MERGE` otherwise (`TestMergeQueueRendersOnlyMergeGroupContexts`).
+- The required status checks come only from workflows that declare a `merge_group` trigger
+  (`forge.ForMergeQueue`). A workflow that would otherwise require a check but lacks the trigger
+  is left out, and `forge.MergeQueueFindings` names its path and contexts. Add `merge_group:` to
+  the workflow to require it again. A workflow that requires no pull request check is no finding.
+- Praetor's locked `praetor-docs.yml` and `praetor-api.yml` declare `merge_group`
+  (`ghworkflow.HostedGateOn`), so their `Documentation Governance` and `Go API Compatibility`
+  contexts stay required. An unedited earlier copy refreshes without `--force` because its text is
+  recorded as a prior
+  (`TestPriorDigestsReproduce` in `tools/markdownlint/assets_test.go`, `TestPriorDigests` in
+  `tools/apicompat/assets_test.go`).
+- CodeQL default setup never runs for a merge group and has no workflow file, so no check context
+  can require it. With `codeql_default_setup: true` the ruleset gates pull requests with a
+  `code_scanning` rule for CodeQL instead (`TestMergeQueueRendersCodeScanningForDefaultSetup`).
+  A CodeQL workflow of your own that triggers on `merge_group` is an ordinary required check.
+
+The audit fails a stored ruleset that requires a context whose workflow lacks `merge_group` while
+the policy declares a queue or the file carries a `merge_queue` rule, and a live branch that has
+an active `merge_queue` rule and requires such a context
+(`TestAuditBranchProtection_MergeQueue_Negative`, `TestLiveMergeQueueFindings`). The failure names
+the workflow path and the missing trigger. Without a queue the rendering is the previous ruleset
+byte for byte (`TestNoMergeQueueRendersTheOldRuleset`).
+
 ### Refreshing a ruleset Praetor rendered earlier
 
 The ruleset is rendered from the effective policy and the workflows present, so it goes stale when

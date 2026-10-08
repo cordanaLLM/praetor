@@ -421,6 +421,74 @@ fields:
         effect: >-
           compares the setting GitHub enforces on the default branch with the
           declared one (plan --remote, sync --remote readback)
+  - key: branch_protection.merge_queue
+    go: [BranchProtectionPolicy.MergeQueue]
+    state: refused
+    refused_by: internal/config.ArchetypeControls.validate
+    reason: >-
+      A merge queue is a property of one repository: a catalog file that sets
+      it fails to decode. The consumers read it from the .standards.yaml
+      override.
+    consumers:
+      - func: internal/forge.protectionRules
+        kind: acts
+        effect: renders the merge_queue rule into the ruleset
+      - func: internal/forge.RenderRulesetForRepository
+        kind: acts
+        effect: >-
+          selects the required status contexts from the workflows that
+          trigger on merge_group only
+      - func: internal/config.Overrides.DeclaresMergeQueue
+        kind: acts
+        effect: >-
+          lets sync select the merge_group contexts before the policy is
+          resolved
+      - func: internal/forge.ReadRulesetBaseline
+        kind: acts
+        effect: >-
+          reads the earlier ruleset's contexts under the same selection, so an
+          unedited file refreshes
+      - func: internal/adopt.auditRulesetContent
+        kind: acts
+        effect: >-
+          compares the committed ruleset with the merge_group selection
+      - func: internal/adopt.queueRequiredContexts
+        kind: reports
+        effect: >-
+          names a required context whose workflow lacks the merge_group
+          trigger, with the workflow path (the offline audit)
+      - func: cmd/standardsctl.auditDocumentationHostedWiring
+        kind: acts
+        effect: >-
+          compares the documentation gate's ruleset with the merge_group
+          selection
+      - func: cmd/standardsctl.reconcileRemoteRuleset
+        kind: acts
+        effect: >-
+          writes the merge_group selection to the forge ruleset
+      - func: cmd/standardsctl.liveProtectionTarget
+        kind: acts
+        effect: >-
+          compares the live branch protection with the merge_group selection
+      - func: cmd/standardsctl.auditProtectionTarget
+        kind: acts
+        effect: >-
+          compares the live branch protection with the merge_group selection
+          of the default branch's workflows
+  - key: branch_protection.codeql_default_setup
+    go: [BranchProtectionPolicy.CodeQLDefaultSetup]
+    state: refused
+    refused_by: internal/config.ArchetypeControls.validate
+    reason: >-
+      Whether CodeQL default setup is on is a property of one repository: a
+      catalog file that sets it fails to decode. The consumer reads it from
+      the .standards.yaml override.
+    consumers:
+      - func: internal/forge.protectionRules
+        kind: acts
+        effect: >-
+          renders a code_scanning rule for CodeQL under a merge queue, where
+          default setup reports no status context for a merge group
   - key: supply_chain.slsa_level
     go: [SupplyChainPolicy.SLSALevel]
     state: consumed
