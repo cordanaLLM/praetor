@@ -522,7 +522,7 @@ func TestUncoveredRenovatePathsBoundary(t *testing.T) {
 	}{
 		"globstar covers every path":     {`[{"matchFileNames": ["**"], "enabled": false}]`, nil},
 		"star is every file":             {`[{"description": "all", "matchFileNames": ["*"], "enabled": false}]`, nil},
-		"rules cover together":           {`[{"matchFileNames": ["tools/markdownlint/*"], "enabled": false}, {"matchFileNames": [".github/**/praetor-docs.yml", ".github/**/praetor-api.yml"], "enabled": false}, {"matchFileNames": ["tools/figures/**", "tools/apicompat/*/main.go"], "enabled": false}]`, nil},
+		"rules cover together":           {`[{"matchFileNames": ["tools/markdownlint/*"], "enabled": false}, {"matchFileNames": [".github/**/praetor-docs.yml", ".github/**/praetor-api.yml"], "enabled": false}, {"matchFileNames": ["tools/figures/**", "tools/apicompat/*/*.go"], "enabled": false}]`, nil},
 		"earlier re-enabling rule":       {`[{"matchPackageNames": ["left-pad"], "enabled": true}, {"matchFileNames": ["**"], "enabled": false}]`, nil},
 		"patterns at the bound":          {renovatePatternRule(maxRenovatePatterns), nil},
 		"enabled true":                   {`[{"matchFileNames": ["**"], "enabled": true}]`, all},
