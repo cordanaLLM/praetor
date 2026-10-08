@@ -3,6 +3,7 @@ package dedupe_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1038,7 +1039,7 @@ func TestScanRepo_Negative_EntryForMissingFileIsRefusedByValidation(t *testing.T
 	if err == nil {
 		t.Fatal("expected ScanRepo to fail on missing exception target file")
 	}
-	want := "exceptions[0] target file does not exist: nonexistent.go"
+	want := "exceptions entry nonexistent.go (HISS-19): target file does not exist"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
@@ -1219,7 +1220,7 @@ func TestScanRepo_Negative_SymlinkExceptionTargetIsRefused(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected ScanRepo to fail on symlink exception target")
 	}
-	want := "exceptions[0] target symlink.go is not a regular file"
+	want := "exceptions entry symlink.go (HISS-19): target is not a regular file"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
@@ -1248,7 +1249,7 @@ func TestValidateExceptions_Negative_SymlinkAndContextCancellation(t *testing.T)
 	if err == nil {
 		t.Fatal("expected ValidateExceptions to fail on symlink target")
 	}
-	want := "exceptions[0] target symlink.go is not a regular file"
+	want := "exceptions entry symlink.go (HISS-19): target is not a regular file"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
 	}
@@ -1272,5 +1273,161 @@ func TestScanRepo_Negative_MalformedManifestWrapsLoadExceptionsError(t *testing.
 	want := "load HISS-19 exceptions:"
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
+	}
+}
+
+func TestScanRepo_Negative_MissingExceptionTargetWordingWithFilteredOutPredecessor(t *testing.T) {
+	tmp := t.TempDir()
+	expires := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	manifest := fmt.Sprintf(`exceptions:
+  - rule: HISS-10
+    path: .github/workflows/ci.yml
+    reason: build warnings
+    expires: %s
+  - rule: HISS-19
+    path: gone.go
+    reason: missing file
+    expires: %s
+`, expires, expires)
+	writeStandardsManifest(t, tmp, manifest)
+
+	_, err := dedupe.ScanRepo(tmp)
+	if err == nil {
+		t.Fatal("expected ScanRepo to fail on missing exception target file")
+	}
+	want := "exceptions entry gone.go (HISS-19): target file does not exist"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %q, want it to contain %q", err.Error(), want)
+	}
+	if strings.Contains(err.Error(), "exceptions[0]") {
+		t.Fatalf("err = %q must not use index into filtered list", err.Error())
+	}
+}
+
+func TestScanRepoWithOptions_Negative_SuppliedExceptionsFilteredToHISS19(t *testing.T) {
+	tmp := t.TempDir()
+	sourceA := `package test
+import "fmt"
+func DuplicateHelperA() {
+	fmt.Println("line 1")
+	fmt.Println("line 2")
+	fmt.Println("line 3")
+}
+`
+	sourceB := `package test
+import "fmt"
+func DuplicateHelperB() {
+	fmt.Println("line 1")
+	fmt.Println("line 2")
+	fmt.Println("line 3")
+}
+`
+	if err := os.WriteFile(filepath.Join(tmp, "cloneA.go"), []byte(sourceA), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "cloneB.go"), []byte(sourceB), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	supplied := []config.Exception{
+		{
+			Rule:    config.ExceptionRuleCredits,
+			Path:    "cloneA.go",
+			Reason:  "upstream credits entry",
+			Expires: expires,
+		},
+		{
+			Rule:    config.ExceptionRuleCredits,
+			Path:    "cloneB.go",
+			Reason:  "upstream credits entry",
+			Expires: expires,
+		},
+		{
+			Rule:    config.ExceptionRuleClangTidyCoverage,
+			Glob:    "**/*.c",
+			Reason:  "foreign translation unit",
+			Expires: expires,
+		},
+	}
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath:   tmp,
+		Exceptions: supplied,
+		Today:      today,
+	})
+	if err != nil {
+		t.Fatalf("expected ScanRepoWithOptions to succeed without validation error, got: %v", err)
+	}
+	if len(report.Duplicates) != 1 {
+		t.Fatalf("expected 1 duplicate group (clone must not be excused by credits exceptions), got %d", len(report.Duplicates))
+	}
+	if len(report.Excepted) != 0 {
+		t.Fatalf("expected 0 excepted groups, got %d", len(report.Excepted))
+	}
+	if report.Passed {
+		t.Fatal("expected scan to fail because clones were not excused")
+	}
+}
+
+func TestScanRepoWithOptions_Negative_CreditsExceptionDoesNotExcuseClone(t *testing.T) {
+	tmp := t.TempDir()
+	sourceA := `package test
+import "fmt"
+func DuplicateHelperA() {
+	fmt.Println("step 1")
+	fmt.Println("step 2")
+	fmt.Println("step 3")
+}
+`
+	sourceB := `package test
+import "fmt"
+func DuplicateHelperB() {
+	fmt.Println("step 1")
+	fmt.Println("step 2")
+	fmt.Println("step 3")
+}
+`
+	if err := os.WriteFile(filepath.Join(tmp, "cloneA.go"), []byte(sourceA), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "cloneB.go"), []byte(sourceB), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	expires := today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	supplied := []config.Exception{
+		{
+			Rule:    config.ExceptionRuleDedupe,
+			Path:    "cloneA.go",
+			Reason:  "declared clone A",
+			Expires: expires,
+		},
+		{
+			Rule:    config.ExceptionRuleCredits,
+			Path:    "cloneB.go",
+			Reason:  "upstream credits entry",
+			Expires: expires,
+		},
+	}
+
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath:   tmp,
+		Exceptions: supplied,
+		Today:      today,
+	})
+	if err != nil {
+		t.Fatalf("expected ScanRepoWithOptions to succeed, got: %v", err)
+	}
+	if len(report.Duplicates) != 1 {
+		t.Fatalf("expected 1 duplicate group, got %d", len(report.Duplicates))
+	}
+	if len(report.Excepted) != 0 {
+		t.Fatalf("expected 0 excepted groups, got %d", len(report.Excepted))
+	}
+	if report.Passed {
+		t.Fatal("expected scan to fail because clone was not fully excused")
 	}
 }

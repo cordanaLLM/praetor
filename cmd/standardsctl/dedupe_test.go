@@ -380,7 +380,7 @@ func TestRunDedupeScan_Negative_MissingExceptionTargetRefusedByValidation(t *tes
 	if err == nil {
 		t.Fatal("missing file exception target must be refused by validation")
 	}
-	mustErrContain(t, err, "exceptions[0] target file does not exist: nonexistent.go")
+	mustErrContain(t, err, "exceptions entry nonexistent.go (HISS-19): target file does not exist")
 }
 
 func TestRunDedupeScan_Negative_StaleExceptionFailsNamingIt(t *testing.T) {

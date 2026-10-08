@@ -139,6 +139,7 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 			return nil, fmt.Errorf("load HISS-19 exceptions: %w", err)
 		}
 	}
+	exceptions = config.ExceptionsFor(exceptions, config.ExceptionRuleDedupe)
 	if err := ValidateExceptions(ctx, repoPath, exceptions, today); err != nil {
 		return nil, fmt.Errorf("validate dedupe exceptions: %w", err)
 	}
@@ -190,24 +191,24 @@ func ValidateExceptions(ctx context.Context, repoPath string, exceptions []confi
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := validateExceptionTarget(repoPath, index, exceptions[index]); err != nil {
+		if err := validateExceptionTarget(repoPath, exceptions[index]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateExceptionTarget(repoPath string, index int, entry config.Exception) error {
+func validateExceptionTarget(repoPath string, entry config.Exception) error {
 	target := filepath.Join(repoPath, entry.Path)
 	info, err := os.Lstat(target)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("exceptions[%d] target file does not exist: %s", index, entry.Path)
+			return fmt.Errorf("exceptions entry %s (%s): target file does not exist", entry.Path, config.ExceptionRuleDedupe)
 		}
-		return fmt.Errorf("exceptions[%d] inspect target %s: %w", index, entry.Path, err)
+		return fmt.Errorf("exceptions entry %s (%s): inspect target: %w", entry.Path, config.ExceptionRuleDedupe, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return fmt.Errorf("exceptions[%d] target %s is not a regular file", index, entry.Path)
+		return fmt.Errorf("exceptions entry %s (%s): target is not a regular file", entry.Path, config.ExceptionRuleDedupe)
 	}
 	return nil
 }
