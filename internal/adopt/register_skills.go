@@ -38,13 +38,16 @@ import (
 // here (register_skills_test.go).
 var priorSkillDigests = map[string]map[string]string{
 	compiler.CanonicalSkillRel("social-text"): {
-		"4bbcf2b726218a7e876b13df50f1e1c2fe71ea4766615225d40955f3ed777c7f": "first shipped, inline credit and upstream licence notice (#850)",
+		"a128a86ad170bfaf89012567e1405693006627e260cd18c420f3abb500dd6d9e": "first shipped, REUSE header and upstream credit (#235)",
+		"4bbcf2b726218a7e876b13df50f1e1c2fe71ea4766615225d40955f3ed777c7f": "inline credit and upstream licence notice (#850)",
 	},
 	compiler.CanonicalSkillRel("caveman"): {
-		"cc8d5c4235721a0890b1473c81e4d1af41e4d0078efdb18e9512b733aba396bd": "first shipped, inline credit and upstream licence notice (#850)",
+		"c0ab6d15d42d9dab2640eb53abf7865495ab99979931cd463540646974d59b49": "first shipped, REUSE header and upstream credit (#235)",
+		"54c31c7c5dfe320228c5db1535765dc2414dd2a5fa1b6a79d5c68fa4f71b9fa3": "inline credit and upstream licence notice (#850)",
 	},
 	compiler.CanonicalSkillRel("adhd-format"): {
-		"1d5efc9bf3e177ddb016daf50663cd7554bac8495b408fa5e784ebfc6cfdd8ac": "first shipped, inline credit and upstream licence notice (#850)",
+		"1db3a6e0ec137143cb81002491bab5f5ae6a9331333126423de199a1c66edb44": "first shipped, REUSE header and upstream credit (#235)",
+		"1d5efc9bf3e177ddb016daf50663cd7554bac8495b408fa5e784ebfc6cfdd8ac": "inline credit and upstream licence notice (#850)",
 	},
 }
 
@@ -52,13 +55,16 @@ var priorSkillDigests = map[string]map[string]string{
 // canonical skill notice path of the bundle.
 var priorSkillNoticeDigests = map[string]map[string]string{
 	compiler.CanonicalSkillNoticeRel("social-text"): {
-		"00ce9229ed278a6730e0d0d495b06d6555e802c4032e75763b90482b85d15549": "first shipped, upstream MIT notice (#850)",
+		"00ce9229ed278a6730e0d0d495b06d6555e802c4032e75763b90482b85d15549": "shipped with contributors in copyright line (#850)",
+		"8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c": "first shipped, upstream MIT notice (#850)",
 	},
 	compiler.CanonicalSkillNoticeRel("caveman"): {
-		"6df7ffc52b0daea109eb96701daa0426cf41d0baf829ba8d3fbf664eaba5f410": "first shipped, upstream MIT notice (#850)",
+		"6df7ffc52b0daea109eb96701daa0426cf41d0baf829ba8d3fbf664eaba5f410": "shipped with contributors in copyright line (#850)",
+		"5eb826cd03151bcc7cce3f80d40e87733237fedfc6c36d6908aca5fd650a0bdb": "first shipped, upstream MIT notice (#850)",
 	},
 	compiler.CanonicalSkillNoticeRel("adhd-format"): {
-		"00ce9229ed278a6730e0d0d495b06d6555e802c4032e75763b90482b85d15549": "first shipped, upstream MIT notice (#850)",
+		"00ce9229ed278a6730e0d0d495b06d6555e802c4032e75763b90482b85d15549": "shipped with contributors in copyright line (#850)",
+		"8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c": "first shipped, upstream MIT notice (#850)",
 	},
 }
 

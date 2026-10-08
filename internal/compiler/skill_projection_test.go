@@ -104,7 +104,7 @@ func TestRegisterBlockSkills_Boundary_DeclaredAndProjected(t *testing.T) {
 }
 
 // Positive: CheckShippedSkillReferences accepts skills referencing absolute URLs or paths
-// within their directory or a sibling shipped skill.
+// within their directory, a sibling shipped skill, or adopter repository paths.
 func TestCheckShippedSkillReferences_Positive_AllowedPaths(t *testing.T) {
 	cases := []struct {
 		name string
@@ -112,8 +112,12 @@ func TestCheckShippedSkillReferences_Positive_AllowedPaths(t *testing.T) {
 	}{
 		{"local notice", "See [NOTICE](NOTICE) for license."},
 		{"sibling skill", "Derived from [adhd-format](../adhd-format/SKILL.md)."},
+		{"sibling notice", "See [notice](../adhd-format/NOTICE)."},
 		{"absolute URL", "Adapted from [caveman](https://github.com/JuliusBrussee/caveman)."},
 		{"anchor link", "See [section](#features)."},
+		{"code span adopted files", "See `AGENTS.md` and `.standards.yaml`."},
+		{"plain text adopted files", "Consult AGENTS.md or .standards.yaml."},
+		{"allowed adopted path", "Fill `.github/pull_request_template.md`."},
 	}
 	for _, tc := range cases {
 		if err := CheckShippedSkillReferences("caveman", []byte(tc.text)); err != nil {
@@ -123,7 +127,8 @@ func TestCheckShippedSkillReferences_Positive_AllowedPaths(t *testing.T) {
 }
 
 // Negative: CheckShippedSkillReferences fails on planted docs/credits.md reference and other
-// repository-relative paths not received by an adopter (Rule 13).
+// repository-relative paths not received by an adopter (Rule 13), covering markdown link,
+// reference definition, HTML link, code-span, plain-text and leading-space forms.
 func TestCheckShippedSkillReferences_Negative_PlantedReferencesRefused(t *testing.T) {
 	// Planted negative from issue #850:
 	plantedCredits := []byte("---\nname: caveman\n---\n\nCredit: docs/credits.md\n")
@@ -139,10 +144,17 @@ func TestCheckShippedSkillReferences_Negative_PlantedReferencesRefused(t *testin
 		{"repo relative readme", "See [readme](../../README.md)."},
 		{"unshipped directory", "See [pkg](../pkg/foo)."},
 		{"reference definition", "[credits]: docs/credits.md\nSee [credits]."},
+		{"code-span form", "Credit: `docs/notices.md`"},
+		{"plain-text form", "Credit: docs/THIRD-PARTY.md"},
+		{"html href form", `<a href="docs/credits.yaml">credits</a>`},
+		{"leading-space link target", "[x]( docs/credits.yaml )"},
+		{"unshipped local file", "See [license](LICENSE)."},
+		{"unshipped sibling target", "See [other](../adhd-format/other.md)."},
+		{"unshipped sibling folder", "See [unknown](../unknown-skill/SKILL.md)."},
 	}
 	for _, tc := range plantedRepoPaths {
 		if err := CheckShippedSkillReferences("caveman", []byte(tc.text)); err == nil {
-			t.Errorf("%s: unreceived repository path was not refused", tc.name)
+			t.Errorf("%s: unreceived repository path was not refused: %q", tc.name, tc.text)
 		}
 	}
 }
