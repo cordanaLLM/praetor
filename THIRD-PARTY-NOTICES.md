@@ -238,7 +238,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `is-alphanumerical` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `is-decimal` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `is-hexadecimal` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
-| `js-yaml` | 5.4.2 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
+| `js-yaml` | 5.4.3 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
 | `jsonc-parser` | 3.3.1 | MIT | `Copyright (c) Microsoft` |
 | `katex` | 0.19.0 | MIT | `Copyright (c) 2013-2020 Khan Academy and other contributors` |
 | `markdownlint` | 0.41.1 | MIT | `Copyright (c) David Anson` |

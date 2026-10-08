@@ -4,7 +4,7 @@ report-error refusing to remove drifted documentation asset tools/markdownlint/p
 error refusing to remove drifted documentation asset tools/markdownlint/package.json
 file .github/workflows/praetor-docs.yml sha256:9b91f7cbcd861ea9844ad498ad727c2fcdce091f74d5a7f2a156ce0b7bbe6332
 file tools/markdownlint/package.json sha256:814f0b111bbd33310d28e9307d3ca07556631e895002729953c06f0c1ef6859a
-file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
+file tools/markdownlint/package-lock.json sha256:25ed0ab9ccd4c38e89290a251700909a23014c8c54eada41af2af28a815bde75
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:a0c5fb780b9d3961f822e10bf7fcd8b9290e760434018a894ad86634434837c3
 file tools/markdownlint/no-private-scratch-links.mjs sha256:3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0
@@ -16,7 +16,7 @@ report-error refusing to remove documentation asset tools/markdownlint/package.j
 error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
 file .github/workflows/praetor-docs.yml sha256:9b91f7cbcd861ea9844ad498ad727c2fcdce091f74d5a7f2a156ce0b7bbe6332
 file tools/markdownlint/package.json sha256:478075b86e983158355cb48f3fdd7630b2217b5855be6bfa69c4428b6ae58a25
-file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
+file tools/markdownlint/package-lock.json sha256:25ed0ab9ccd4c38e89290a251700909a23014c8c54eada41af2af28a815bde75
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:a0c5fb780b9d3961f822e10bf7fcd8b9290e760434018a894ad86634434837c3
 file tools/markdownlint/no-private-scratch-links.mjs sha256:3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0
