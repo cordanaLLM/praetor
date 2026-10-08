@@ -80,6 +80,9 @@ EMITTED_CONSTANTS = (
 )
 # The Go file declaring the documentation gate's workflow, its directory and its embedded assets.
 DOCUMENTATION_GATE_SOURCE = "tools/markdownlint/assets.go"
+# The Go file embedding the figure engine, whose Python assets adoption locks into an adopted
+# repository the same way (#845).
+FIGURE_ENGINE_SOURCE = "tools/figures/assets.go"
 VERSION = re.compile(r"(\d+(?:\.\d+)+)")
 
 
@@ -124,6 +127,25 @@ def documentation_gate_yaml():
         if name.endswith((".yml", ".yaml")):
             files[f"{directory}/{name}"] = (ROOT / directory / name).read_text(encoding="utf-8")
     return files
+
+
+def figure_engine_python():
+    """Return {repository path: text} for the Python assets of the figure engine.
+
+    Adoption locks these into an adopter's tree (tools/figures/mkdocs_hook.py), so an adopter
+    whose black or flake8 covers the tree cannot fix a finding in them. The names come from the
+    go:embed line of the engine's asset file, the directory from its Directory constant.
+    """
+    source = (ROOT / FIGURE_ENGINE_SOURCE).read_text(encoding="utf-8")
+    embed = re.search(r"^//go:embed (.+)$", source, re.M)
+    if embed is None:
+        raise AssertionError(f"{FIGURE_ENGINE_SOURCE} no longer has a go:embed line")
+    directory = go_constant(FIGURE_ENGINE_SOURCE, "Directory")
+    return {
+        f"{directory}/{name}": (ROOT / directory / name).read_text(encoding="utf-8")
+        for name in embed.group(1).split()
+        if name.endswith(".py")
+    }
 
 
 def pinned_versions(text):
@@ -225,11 +247,13 @@ class LintCase(unittest.TestCase):
 def emitted(suffixes):
     """Return {adopted path: text} of every linted file with one of `suffixes`.
 
-    The set is the hook files named in EMITTED_CONSTANTS and the documentation gate's YAML.
+    The set is the hook files named in EMITTED_CONSTANTS, the documentation gate's YAML and the
+    figure engine's Python.
     """
     files = {path: (ROOT / source).read_text(encoding="utf-8")
              for path, source in emitted_sources().items()}
     files.update(documentation_gate_yaml())
+    files.update(figure_engine_python())
     return {path: text for path, text in files.items() if path.endswith(suffixes)}
 
 
@@ -371,6 +395,12 @@ class ResolutionTest(unittest.TestCase):
         yaml = emitted((".yml", ".yaml"))
         self.assertLessEqual(set(files), set(yaml))
         self.assertIn("lefthook.yml", yaml)
+
+    def test_figure_engine_python_comes_from_the_engine(self):
+        files = figure_engine_python()
+        self.assertEqual(sorted(files), ["tools/figures/mkdocs_hook.py"])
+        self.assertIn("def on_page_markdown", files["tools/figures/mkdocs_hook.py"])
+        self.assertLessEqual(set(files), set(emitted((".py",))))
 
     def test_emitted_sources_come_from_go_constants(self):
         sources = emitted_sources()

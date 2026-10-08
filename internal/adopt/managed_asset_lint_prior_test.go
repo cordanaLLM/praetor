@@ -41,7 +41,8 @@ func lintPriorText(t *testing.T, fixture string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(data)
+	// The text is recorded with LF endings; a checkout that converted them is read as recorded.
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
 }
 
 // Positive: an unedited copy of the earlier text refreshes to the lint-clean text without

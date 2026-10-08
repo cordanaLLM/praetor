@@ -25,7 +25,10 @@ import (
 // file cannot fix a finding in one (#842, #845, #578). These tests hold every managed asset any
 // family can write, enumerated from Families rather than listed by hand, to the linters at the
 // settings Praetor's own gates and emitted templates use, per language. A linter that is not
-// installed skips its subtest with the reason (HISS-21); it never passes silently.
+// installed skips its subtest with the reason, and fails it where requiredToolsEnv is set (CI),
+// so it never passes silently (HISS-21). The Python formatter policy is black's default with
+// flake8 at 100 columns, linted by scripts/test_emitted_hook_lint.py from the same registry
+// paths; this test adds the ruff lint rules the Python template selects and does not format.
 const (
 	// lintTimeout bounds one linter run (HISS-02).
 	lintTimeout = 3 * time.Minute
@@ -33,6 +36,10 @@ const (
 	maxLintOutput = 1 << 20
 	// maxLintAssets bounds the assets one lint pass reads.
 	maxLintAssets = 256
+	// requiredToolsEnv is the variable the hook-lint gate (scripts/test_emitted_hook_lint.py)
+	// sets to the directory of its pinned toolchain; CI sets it. Where it is set, a missing
+	// linter fails the test instead of skipping it, as that gate does (HISS-21).
+	requiredToolsEnv = "PRAETOR_HOOK_LINT_BIN"
 	// pythonLineLength is the line length of templates/python/ruff.toml.tmpl.
 	pythonLineLength = "100"
 	// pythonRules are the ruff rules of templates/python/ruff.toml.tmpl plus RUF100, the unused
@@ -96,14 +103,44 @@ func writeLintTree(t testing.TB, assets []lintAsset) string {
 	return root
 }
 
-// requireTool returns the path of a linter on PATH, or skips the test with the reason.
+// findTool returns the path of a linter, looked up in the pinned toolchain directory first and
+// then on PATH, and the lookup error when it is in neither.
+func findTool(name string) (string, error) {
+	if dir := os.Getenv(requiredToolsEnv); dir != "" {
+		if found, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
+			return found, nil
+		}
+	}
+	return exec.LookPath(name)
+}
+
+// requireTool returns the path of a linter, or skips the test with the reason. Where
+// requiredToolsEnv is set, a missing linter fails the test.
 func requireTool(t testing.TB, name string) string {
 	t.Helper()
-	found, err := exec.LookPath(name)
+	found, err := findTool(name)
 	if err != nil {
+		if os.Getenv(requiredToolsEnv) != "" {
+			t.Fatalf("%s is required where %s is set and was not found: %v", name, requiredToolsEnv, err)
+		}
 		t.Skipf("%s is not installed on this leg, so its check did not run: %v", name, err)
 	}
 	return found
+}
+
+// optionalTool is requireTool for a check that must not stop its siblings: where the linter is
+// missing and not required, it logs the skipped check and returns "".
+func optionalTool(t testing.TB, name string) string {
+	t.Helper()
+	found, err := findTool(name)
+	if err == nil {
+		return found
+	}
+	if os.Getenv(requiredToolsEnv) != "" {
+		t.Fatalf("%s is required where %s is set and was not found: %v", name, requiredToolsEnv, err)
+	}
+	t.Logf("%s is not installed on this leg, so only its check was skipped: %v", name, err)
+	return ""
 }
 
 // runLinter runs one linter in dir and returns its combined output and whether it exited 0.
@@ -131,7 +168,7 @@ func goModule(t testing.TB) string {
 	return "module managedassetlint\n\ngo " + match[1] + "\n"
 }
 
-// goFindings runs gofmt, gofumpt and a per-package go vet over the Go assets in a scratch
+// goFindings runs gofmt, gofumpt (when installed) and a per-package go vet over the Go assets in a scratch
 // module. The vet runs name the package directory alone, with no build tag, as the pre-commit
 // hooks of an adopter do.
 func goFindings(t testing.TB, assets []lintAsset) []string {
@@ -140,14 +177,18 @@ func goFindings(t testing.TB, assets []lintAsset) []string {
 	if len(files) == 0 {
 		return nil
 	}
-	gofmt, gofumpt, goTool := requireTool(t, "gofmt"), requireTool(t, "gofumpt"), requireTool(t, "go")
+	gofmt, goTool, gofumpt := requireTool(t, "gofmt"), requireTool(t, "go"), optionalTool(t, "gofumpt")
 	files = append(files, lintAsset{rel: "go.mod", data: []byte(goModule(t))})
 	root := writeLintTree(t, files)
 	t.Setenv("GOTOOLCHAIN", "local")
 	t.Setenv("GOWORK", "off")
 	t.Setenv("GOFLAGS", "")
 	var findings []string
-	for _, check := range [][]string{{gofmt, "-l", "."}, {gofumpt, "-l", "."}} {
+	formatters := [][]string{{gofmt, "-l", "."}}
+	if gofumpt != "" {
+		formatters = append(formatters, []string{gofumpt, "-l", "."})
+	}
+	for _, check := range formatters {
 		output, ok := runLinter(t, root, check[0], check[1:]...)
 		if !ok || output != "" {
 			findings = append(findings, filepath.Base(check[0])+" reports unformatted files or failed: "+output)
@@ -173,8 +214,8 @@ func goPackageDirs(files []lintAsset) []string {
 	return dirs
 }
 
-// pythonFindings runs ruff check at the template rule set and ruff format --check over the
-// Python assets, ignoring any configuration file of the host.
+// pythonFindings runs ruff check at the template rule set over the Python assets, ignoring any
+// configuration file of the host. Formatting is black's, checked by the hook-lint gate.
 func pythonFindings(t testing.TB, assets []lintAsset) []string {
 	t.Helper()
 	files := withExtension(assets, ".py")
@@ -187,18 +228,14 @@ func pythonFindings(t testing.TB, assets []lintAsset) []string {
 	for _, file := range files {
 		names = append(names, file.rel)
 	}
-	common := []string{"--isolated", "--no-cache", "--line-length", pythonLineLength}
-	checks := map[string][]string{
-		"ruff check":  append(append([]string{"check"}, common...), append([]string{"--target-version", pythonTarget, "--select", pythonRules}, names...)...),
-		"ruff format": append(append([]string{"format"}, common...), append([]string{"--check"}, names...)...),
+	args := []string{
+		"check", "--isolated", "--no-cache", "--line-length", pythonLineLength,
+		"--target-version", pythonTarget, "--select", pythonRules,
 	}
-	var findings []string
-	for _, label := range []string{"ruff check", "ruff format"} {
-		if output, ok := runLinter(t, root, ruff, checks[label]...); !ok {
-			findings = append(findings, label+": "+output)
-		}
+	if output, ok := runLinter(t, root, ruff, append(args, names...)...); !ok {
+		return []string{"ruff check: " + output}
 	}
-	return findings
+	return nil
 }
 
 // markdownFindings holds the Markdown assets to markdownlint's default rules: the in-process
@@ -215,7 +252,7 @@ func markdownFindings(t testing.TB, assets []lintAsset) []string {
 	if len(files) == 0 {
 		return findings
 	}
-	cli, err := exec.LookPath("markdownlint-cli2")
+	cli, err := findTool("markdownlint-cli2")
 	if err != nil {
 		t.Logf("markdownlint-cli2 is not installed on this leg; only the in-process default-rule subset ran: %v", err)
 		return findings
@@ -302,6 +339,9 @@ func TestManagedAssetsLintRefusesPlantedDefects(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "go gofumpt only" {
+				requireTool(t, "gofumpt") // gofmt accepts this defect, so only gofumpt can refuse it
+			}
 			if findings := tc.lint(t, []lintAsset{tc.asset}); len(findings) == 0 {
 				t.Fatalf("the planted %s asset passed its linters", tc.name)
 			}

@@ -107,13 +107,13 @@ def fence_blocks(text: str) -> list[Fence]:
             and not rest.strip()
         ):
             first_body = opener[0] + 1
-            blocks.append(
-                Fence(opener[0], index + 1, opener[1], opener[3], lines[first_body:index])
-            )
+            body = lines[first_body:index]
+            blocks.append(Fence(opener[0], index + 1, opener[1], opener[3], body))
             opener = None
     if opener is not None:
         first_body = opener[0] + 1
-        blocks.append(Fence(opener[0], len(lines), opener[1], opener[3], lines[first_body:]))
+        body = lines[first_body:]
+        blocks.append(Fence(opener[0], len(lines), opener[1], opener[3], body))
     return blocks
 
 
@@ -175,7 +175,8 @@ def expand(markdown: str, base: str, figures_dir: Path) -> tuple[str, list[str]]
     errors: list[str] = []
     for block in reversed([b for b in fence_blocks(markdown) if b.info == "figure"]):
         try:
-            rendered = render_block(figure_meta(figures_dir, figure_slug(block.body)), base)
+            meta = figure_meta(figures_dir, figure_slug(block.body))
+            rendered = render_block(meta, base)
         except CheckError as error:
             errors.append(str(error))
             continue
@@ -210,8 +211,10 @@ def published_files() -> list[tuple[str, Path]]:
         else []
     )
     if len(names) > MAX_DIST_FILES:
-        raise CheckError(f"{DIST_DIR.as_posix()} holds more than {MAX_DIST_FILES} files")
-    return [(CSS_URI, CSS_FILE)] + [(f"{DIST_URI}/{name}", DIST_DIR / name) for name in names]
+        where = DIST_DIR.as_posix()
+        raise CheckError(f"{where} holds more than {MAX_DIST_FILES} files")
+    served = [(f"{DIST_URI}/{name}", DIST_DIR / name) for name in names]
+    return [(CSS_URI, CSS_FILE)] + served
 
 
 def on_files(files, config):
@@ -246,7 +249,8 @@ def on_page_markdown(markdown, page, config, files):
     """Replace the page's figure fences before MkDocs converts the Markdown."""
     figures = Path(config["docs_dir"]) / "assets" / "figures"
     try:
-        text, errors = expand(markdown, site_base(page.url) + "/assets/figures", figures)
+        base = site_base(page.url) + "/assets/figures"
+        text, errors = expand(markdown, base, figures)
     except CheckError as error:
         text, errors = markdown, [str(error)]
     for error in errors:
