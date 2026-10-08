@@ -13,6 +13,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
+// vendorDirForTests is the vendor directory seen from this package's directory.
+var vendorDirForTests = VendorDir(filepath.Join("..", ".."))
+
 func loadManifest(t *testing.T) *Manifest {
 	t.Helper()
 	manifest, err := LoadManifest()
@@ -28,7 +31,7 @@ func TestVendoredFilesMatchTheirPins(t *testing.T) {
 	count := 0
 	for _, source := range manifest.Sources {
 		for _, file := range source.Files {
-			if _, err := Read(file); err != nil {
+			if _, err := Read(vendorDirForTests, file); err != nil {
 				t.Errorf("%s: %v", source.ID, err)
 			}
 			count++
@@ -50,7 +53,7 @@ func TestNoUnpinnedFileInTheVendorDirectory(t *testing.T) {
 		}
 	}
 	slices.Sort(listed)
-	embedded, err := EmbeddedPaths()
+	embedded, err := VendoredPaths(vendorDirForTests)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +67,7 @@ func TestNoUnpinnedFileInTheVendorDirectory(t *testing.T) {
 func TestVerifyRefusesADriftedCopy(t *testing.T) {
 	manifest := loadManifest(t)
 	file := manifest.Sources[0].Files[0]
-	data, err := Read(file)
+	data, err := Read(vendorDirForTests, file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +141,7 @@ func TestLookups(t *testing.T) {
 	if _, ok := manifest.Source("nope"); ok {
 		t.Error("Source(nope) found")
 	}
-	if _, err := manifest.Schema("nope.json"); err == nil {
+	if _, err := manifest.Schema(vendorDirForTests, "nope.json"); err == nil {
 		t.Error("Schema(nope.json) found")
 	}
 	hooks := manifest.ForClient("codex")
@@ -207,5 +210,130 @@ func TestRenovateTracksEveryPin(t *testing.T) {
 	}
 	if len(tracked) < 5 {
 		t.Errorf("Renovate sees %d distinct pins, want the 5 repositories of the manifest: %v", len(tracked), tracked)
+	}
+}
+
+// A Renovate branch moves "pin" and nothing else. The manifest must then be refused offline,
+// naming the source, until the refresh has recorded the new pin with its digests; the stale
+// reader the refresh starts from still accepts it. Boundary: a digest pin that differs from a
+// commit pin in one hex digit is refused too, and a missing digest pin fails the structure check.
+func TestMovedPinIsRefusedUntilRefreshed(t *testing.T) {
+	good, err := os.ReadFile(filepath.Join("vendor", ManifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(good)
+	moved := strings.Replace(text, `"pin": "v0.63.0"`, `"pin": "v0.64.0"`, 1)
+	if moved == text {
+		t.Fatal("mutation did not change the manifest")
+	}
+	if _, err := ParseManifest([]byte(moved)); !errors.Is(err, ErrPinMoved) || !strings.Contains(err.Error(), "gemini-settings") {
+		t.Fatalf("ParseManifest(moved pin) = %v, want ErrPinMoved naming gemini-settings", err)
+	}
+	if _, err := ParseStaleManifest([]byte(moved)); err != nil {
+		t.Fatalf("ParseStaleManifest(moved pin) = %v, want the state a refresh starts from", err)
+	}
+	commit := strings.Replace(text, `"pin": "ce64da2a95a2bd40740c2d608206f8a36024d30b"`, `"pin": "ce64da2a95a2bd40740c2d608206f8a36024d30c"`, 1)
+	if _, err := ParseManifest([]byte(commit)); !errors.Is(err, ErrPinMoved) {
+		t.Fatalf("ParseManifest(commit pin off by one digit) = %v, want ErrPinMoved", err)
+	}
+	missing := strings.Replace(text, `"digest_pin": "v0.63.0",`, "", 1)
+	if _, err := ParseStaleManifest([]byte(missing)); err == nil {
+		t.Fatal("a source without digest_pin was accepted")
+	}
+}
+
+// Only the manifest is embedded: the schema files are build-time and test-time inputs, so no
+// release binary redistributes the upstream schemas. The test reads the source for its embed
+// directives and fails a second one or a wider pattern.
+func TestOnlyTheManifestIsEmbedded(t *testing.T) {
+	source, err := os.ReadFile("clientschema.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var directives []string
+	for _, line := range strings.Split(string(source), "\n") {
+		if strings.HasPrefix(line, "//go:embed") {
+			directives = append(directives, line)
+		}
+	}
+	if !slices.Equal(directives, []string{EmbedDirective}) {
+		t.Fatalf("embed directives = %q, want only %q", directives, EmbedDirective)
+	}
+	if got := AssetPaths(); !slices.Equal(got, []string{"internal/clientschema/vendor/manifest.json"}) {
+		t.Fatalf("AssetPaths = %v", got)
+	}
+	if len(manifestJSON) == 0 {
+		t.Fatal("the embedded manifest is empty")
+	}
+}
+
+// renovateRule is the part of a package rule of renovate.json the version test reads.
+type renovateRule struct {
+	Files          []string `json:"matchFileNames"`
+	DepNames       []string `json:"matchDepNames"`
+	Versioning     string   `json:"versioning"`
+	ExtractVersion string   `json:"extractVersion"`
+}
+
+// renovateRules reads the package rules of renovate.json that name the client schema manifest
+// and a repository.
+func renovateRules(t *testing.T) []renovateRule {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Rules []renovateRule `json:"packageRules"`
+	}
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	var rules []renovateRule
+	for _, rule := range config.Rules {
+		if slices.Contains(rule.Files, "internal/clientschema/vendor/manifest.json") && len(rule.DepNames) > 0 {
+			rules = append(rules, rule)
+		}
+	}
+	return rules
+}
+
+// Renovate validates the manifest's currentValue with the versioning of the rule before it looks
+// anything up, and extractVersion only rewrites the datasource's releases, never currentValue. A
+// pin that carries a prefix (rust-v0.162.0) is therefore tracked only by a versioning that
+// parses the prefix itself. The test holds each repository-specific rule to that: no
+// extractVersion, and where the versioning is a regex, it matches the pin and refuses a
+// pre-release tag of the same shape.
+func TestRenovateVersioningParsesThePinsItTracks(t *testing.T) {
+	rules := renovateRules(t)
+	if len(rules) == 0 {
+		t.Fatal("renovate.json has no package rule for a pinned client schema repository")
+	}
+	manifest := loadManifest(t)
+	for _, rule := range rules {
+		if rule.ExtractVersion != "" {
+			t.Errorf("rule for %v sets extractVersion %q, which Renovate never applies to the current value", rule.DepNames, rule.ExtractVersion)
+		}
+		pattern, isRegex := strings.CutPrefix(rule.Versioning, "regex:")
+		if !isRegex {
+			continue
+		}
+		expression, err := regexp.Compile(pattern)
+		if err != nil {
+			t.Errorf("versioning %q: %v", rule.Versioning, err)
+			continue
+		}
+		for _, source := range manifest.Sources {
+			if !slices.Contains(rule.DepNames, source.Repo) {
+				continue
+			}
+			if !expression.MatchString(source.Pin) {
+				t.Errorf("versioning %q does not parse the pin %q of %s: Renovate would skip it as an invalid value", rule.Versioning, source.Pin, source.ID)
+			}
+			if expression.MatchString(source.Pin + "-alpha.1") {
+				t.Errorf("versioning %q accepts a pre-release of %q", rule.Versioning, source.Pin)
+			}
+		}
 	}
 }

@@ -22,7 +22,7 @@ type Target struct {
 	Package string
 	// Source is the manifest source the file is built from.
 	Source string
-	build  func(source clientschema.Source, pkg, header string) ([]byte, error)
+	build  func(dir string, source clientschema.Source, pkg, header string) ([]byte, error)
 }
 
 // Targets lists every generated file, in path order.
@@ -42,8 +42,8 @@ var mcpRoots = []string{
 	"ToolAnnotations",
 }
 
-func buildMCP(source clientschema.Source, pkg, header string) ([]byte, error) {
-	raw, err := clientschema.Read(source.Files[0])
+func buildMCP(dir string, source clientschema.Source, pkg, header string) ([]byte, error) {
+	raw, err := clientschema.Read(dir, source.Files[0])
 	if err != nil {
 		return nil, err
 	}
@@ -54,10 +54,10 @@ func buildMCP(source clientschema.Source, pkg, header string) ([]byte, error) {
 	return Generate(pkg, header, raw, roots)
 }
 
-func buildCodexHooks(source clientschema.Source, pkg, header string) ([]byte, error) {
+func buildCodexHooks(dir string, source clientschema.Source, pkg, header string) ([]byte, error) {
 	sources := make([]Source, 0, len(source.Files))
 	for _, file := range source.Files {
-		raw, err := clientschema.Read(file)
+		raw, err := clientschema.Read(dir, file)
 		if err != nil {
 			return nil, err
 		}
@@ -97,19 +97,20 @@ func header(source clientschema.Source) string {
 `, source.ID, source.Repo, source.Pin, source.License, len(source.Files), hex.EncodeToString(digests.Sum(nil))[:16])
 }
 
-// Render builds the content of every target from the vendored schemas.
-func Render() (map[string][]byte, error) {
+// Render builds the content of every target from the vendored schemas of the checkout at root.
+func Render(root string) (map[string][]byte, error) {
 	manifest, err := clientschema.LoadManifest()
 	if err != nil {
 		return nil, err
 	}
+	dir := clientschema.VendorDir(root)
 	rendered := map[string][]byte{}
 	for _, target := range Targets() {
 		source, ok := manifest.Source(target.Source)
 		if !ok {
 			return nil, fmt.Errorf("target %s: no source %q in the manifest", target.Path, target.Source)
 		}
-		content, err := target.build(source, target.Package, header(source))
+		content, err := target.build(dir, source, target.Package, header(source))
 		if err != nil {
 			return nil, fmt.Errorf("target %s: %w", target.Path, err)
 		}
@@ -127,7 +128,7 @@ var ErrStale = errors.New("generated file is stale")
 // Check compares every target under root with its rendering and returns one error naming each
 // file that is missing or differs.
 func Check(root string) error {
-	rendered, err := Render()
+	rendered, err := Render(root)
 	if err != nil {
 		return err
 	}
@@ -146,7 +147,7 @@ func Check(root string) error {
 
 // Write regenerates every target under root.
 func Write(root string) error {
-	rendered, err := Render()
+	rendered, err := Render(root)
 	if err != nil {
 		return err
 	}

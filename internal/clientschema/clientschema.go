@@ -1,8 +1,11 @@
 // Package clientschema is the one reader of the vendored upstream schemas for the coding-client
 // formats Praetor renders and the protocol messages it serves (#909, epic #910). The schemas sit
 // under vendor/ with a manifest that records, per source, the upstream repository, the pin, the
-// licence and the sha256 of every file. The loader refuses a file that differs from its pin, so a
-// hand edit or a partial bump cannot pass for the published schema.
+// licence and the sha256 of every file. Only the manifest is embedded in the binary: the schema
+// files are build-time and test-time inputs, read from the checkout (Read), so no release binary
+// redistributes the upstream schemas. The loader refuses a file that differs from its pin, so a
+// hand edit or a partial bump cannot pass for the published schema, and a manifest whose pin moved
+// without a refresh of the digests (Source.DigestPin).
 //
 // The package performs no network I/O and validates no document: validation needs a JSON Schema
 // implementation, which lives in the test-only module tools/schemacheck so the production module
@@ -11,43 +14,40 @@ package clientschema
 
 import (
 	"crypto/sha256"
-	"embed"
+	_ "embed" // the manifest is the one embedded file.
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
-	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/strictjson"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// SourceFile and EmbedDirective name the one file and the exact directive that embed the vendored
-// schemas, which the devcontainer bootstrap source capture declares as an asset family
+// SourceFile and EmbedDirective name the one file and the exact directive that embed the manifest,
+// which the devcontainer bootstrap source capture declares as an asset family
 // (internal/devcontainer.bootstrapAssetFamilies); keep the directive below equal to
 // EmbedDirective.
 const (
 	SourceFile     = "internal/clientschema/clientschema.go"
-	EmbedDirective = "//go:embed vendor"
+	EmbedDirective = "//go:embed vendor/manifest.json"
 	vendorRoot     = "internal/clientschema/vendor/"
 )
 
-//go:embed vendor
-var vendored embed.FS
+//go:embed vendor/manifest.json
+var manifestJSON []byte
 
-// AssetPaths lists every embedded file, the manifest included, as a repository-relative path.
-func AssetPaths() ([]string, error) {
-	paths, err := EmbeddedPaths()
-	if err != nil {
-		return nil, err
-	}
-	assets := make([]string, 0, len(paths)+1)
-	for _, rel := range append(paths, ManifestFile) {
-		assets = append(assets, vendorRoot+rel)
-	}
-	slices.Sort(assets)
-	return assets, nil
+// VendorDir is the vendor directory of the checkout at root.
+func VendorDir(root string) string {
+	return filepath.Join(root, filepath.FromSlash(vendorRoot))
+}
+
+// AssetPaths lists the embedded files as repository-relative paths: the manifest alone.
+func AssetPaths() []string {
+	return []string{vendorRoot + ManifestFile}
 }
 
 // Bounds of one read (HISS-02).
@@ -84,13 +84,17 @@ type File struct {
 
 // Source is one upstream origin pinned at one reference.
 type Source struct {
-	ID        string `json:"id"`
-	Client    string `json:"client"`
-	Kind      string `json:"kind"`
-	Repo      string `json:"repo"`
-	PinKind   string `json:"pin_kind"`
-	Branch    string `json:"branch,omitempty"`
-	Pin       string `json:"pin"`
+	ID      string `json:"id"`
+	Client  string `json:"client"`
+	Kind    string `json:"kind"`
+	Repo    string `json:"repo"`
+	PinKind string `json:"pin_kind"`
+	Branch  string `json:"branch,omitempty"`
+	Pin     string `json:"pin"`
+	// DigestPin is the pin the sha256 values of Files were taken at. Only the refresh writes
+	// it (tools/schemacheck Refresh); a Renovate bump moves Pin alone, so Pin != DigestPin
+	// marks digests that no longer answer for the pin, and the manifest is refused.
+	DigestPin string `json:"digest_pin"`
 	Version   string `json:"version"`
 	URLBase   string `json:"url_base"`
 	License   string `json:"license"`
@@ -107,18 +111,34 @@ type Manifest struct {
 // ErrDrift marks a vendored file that differs from its pin.
 var ErrDrift = errors.New("vendored schema differs from its pin")
 
+// ErrPinMoved marks a source whose pin moved without a refresh of its digests.
+var ErrPinMoved = errors.New("pin moved without a refresh of the vendored files")
+
 // LoadManifest reads and checks the embedded manifest: strict JSON, no duplicate member, known
 // pin kinds, relative file paths and well-formed digests.
 func LoadManifest() (*Manifest, error) {
-	raw, err := vendored.ReadFile(path.Join("vendor", ManifestFile))
-	if err != nil {
-		return nil, fmt.Errorf("read client schema manifest: %w", err)
-	}
-	return ParseManifest(raw)
+	return ParseManifest(manifestJSON)
 }
 
-// ParseManifest checks raw as a manifest; LoadManifest and the tests share it.
+// ParseManifest checks raw as a manifest, including that every pin is the one its digests were
+// taken at; LoadManifest and the tests share it.
 func ParseManifest(raw []byte) (*Manifest, error) {
+	manifest, err := ParseStaleManifest(raw)
+	if err != nil {
+		return nil, err
+	}
+	for _, source := range manifest.Sources {
+		if source.Pin != source.DigestPin {
+			return nil, fmt.Errorf("client schema manifest: source %q: %w: pin %q, digests taken at %q (run the refresh in docs/guides/client-schemas.md)",
+				source.ID, ErrPinMoved, source.Pin, source.DigestPin)
+		}
+	}
+	return manifest, nil
+}
+
+// ParseStaleManifest checks raw like ParseManifest except that a pin may differ from the pin its
+// digests were taken at: the state right after a Renovate bump, which the refresh starts from.
+func ParseStaleManifest(raw []byte) (*Manifest, error) {
 	var manifest Manifest
 	opts := strictjson.Options{MaxBytes: maxManifestBytes, MaxDepth: maxJSONDepth, Names: strictjson.ExactNames}
 	if err := strictjson.Decode(raw, &manifest, opts); err != nil {
@@ -174,9 +194,9 @@ func (s *Source) check() error {
 }
 
 func (s *Source) checkIdentity() error {
-	for _, text := range []string{s.ID, s.Client, s.Kind, s.Repo, s.Pin, s.Version} {
+	for _, text := range []string{s.ID, s.Client, s.Kind, s.Repo, s.Pin, s.DigestPin, s.Version} {
 		if text == "" {
-			return errors.New("id, client, kind, repo, pin and version are required")
+			return errors.New("id, client, kind, repo, pin, digest_pin and version are required")
 		}
 	}
 	if s.License == "" || s.Copyright == "" || !strings.HasPrefix(s.URLBase, "https://") {
@@ -223,14 +243,12 @@ func (s Source) URL(f File) string {
 	return strings.ReplaceAll(s.URLBase+f.Upstream, PinPlaceholder, s.Pin)
 }
 
-// Read returns the vendored bytes of file after verifying them against the pin.
-func Read(file File) ([]byte, error) {
-	data, err := vendored.ReadFile(path.Join("vendor", file.Path))
+// Read returns the vendored bytes of file from the vendor directory dir after verifying them
+// against the pin. The read is bounded by MaxSchemaBytes and refuses anything but a regular file.
+func Read(dir string, file File) ([]byte, error) {
+	data, err := util.ReadFileLimited(filepath.Join(dir, filepath.FromSlash(file.Path)), MaxSchemaBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read vendored schema %s: %w", file.Path, err)
-	}
-	if len(data) > MaxSchemaBytes {
-		return nil, fmt.Errorf("vendored schema %s exceeds %d bytes", file.Path, MaxSchemaBytes)
 	}
 	if err := file.Verify(data); err != nil {
 		return nil, err
@@ -259,28 +277,40 @@ func (m *Manifest) ForClient(client string) []Source {
 	return found
 }
 
-// Schema returns the verified bytes of the one file at relPath, a Path of the manifest.
-func (m *Manifest) Schema(relPath string) ([]byte, error) {
+// Schema returns the verified bytes of the one file at relPath, a Path of the manifest, read
+// from the vendor directory dir.
+func (m *Manifest) Schema(dir, relPath string) ([]byte, error) {
 	for _, source := range m.Sources {
 		for _, file := range source.Files {
 			if file.Path == relPath {
-				return Read(file)
+				return Read(dir, file)
 			}
 		}
 	}
 	return nil, fmt.Errorf("no vendored schema %q in the manifest", relPath)
 }
 
-// EmbeddedPaths lists every file under vendor/ except the manifest, sorted. The coverage test
-// compares it with the manifest, so a file nobody pinned cannot sit in the directory.
-func EmbeddedPaths() ([]string, error) {
+// maxVendorEntries bounds the walk of VendoredPaths (HISS-02).
+const maxVendorEntries = 4096
+
+// VendoredPaths lists every file under the vendor directory dir except the manifest, sorted, as
+// vendor-relative slash paths. The coverage test compares it with the manifest, so a file nobody
+// pinned cannot sit in the directory.
+func VendoredPaths(dir string) ([]string, error) {
 	var found []string
-	err := fs.WalkDir(vendored, "vendor", func(p string, entry fs.DirEntry, walkErr error) error {
+	seen := 0
+	err := filepath.WalkDir(dir, func(p string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		rel := strings.TrimPrefix(p, "vendor/")
-		if !entry.IsDir() && rel != ManifestFile {
+		if seen++; seen > maxVendorEntries {
+			return fmt.Errorf("more than %d entries", maxVendorEntries)
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		if rel = filepath.ToSlash(rel); !entry.IsDir() && rel != ManifestFile {
 			found = append(found, rel)
 		}
 		return nil

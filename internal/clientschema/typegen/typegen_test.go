@@ -4,10 +4,13 @@ import (
 	"errors"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/clientschema"
 )
 
 const repoRoot = "../../.."
@@ -29,10 +32,40 @@ func TestGeneratedTypesAreFresh(t *testing.T) {
 	}
 }
 
-// copyTargets writes the current rendering into a fresh root and returns it.
+// copyVendor copies the vendor directory of the checkout into root, so Check and Write of that
+// root read the same pinned bytes.
+func copyVendor(t *testing.T, root string) {
+	t.Helper()
+	src := clientschema.VendorDir(repoRoot)
+	dst := clientschema.VendorDir(root)
+	err := filepath.WalkDir(src, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, rel), 0o750)
+		}
+		data, err := os.ReadFile(path) // #nosec G304 -- test walk of the vendor directory.
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), data, 0o600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// copyTargets writes the current rendering into a fresh root, vendor directory included, and
+// returns it.
 func copyTargets(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	copyVendor(t, root)
 	if err := Write(root); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +117,7 @@ func TestCheckFailsAMissingFile(t *testing.T) {
 }
 
 func TestGeneratedFilesParseAndDeclareTheirPins(t *testing.T) {
-	rendered, err := Render()
+	rendered, err := Render(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +170,7 @@ func TestGeneratePositive(t *testing.T) {
 	for _, want := range []string{
 		"package sample", "type Kind string", `KindAB Kind = "a-b"`, "type Name = *string",
 		"Kind  Kind `json:\"kind\"`", "Item  Item `json:\"item\"`", "Grid [][]float64 `json:\"grid,omitempty\"`",
-		"Flag *bool `json:\"flag,omitempty\"`", "Wrapped *Item", "Free map[string]any", "Union json.RawMessage",
+		"Flag *bool `json:\"flag,omitempty\"`", "Wrapped *Item", "Free *map[string]any", "Union json.RawMessage",
 		"Maybe *string", "Fixed *string", "BoxInline", "// Box is generated from the vendored schema: A box.",
 	} {
 		if !strings.Contains(strings.Join(strings.Fields(text), " "), strings.Join(strings.Fields(want), " ")) {
@@ -185,5 +218,52 @@ func TestGoNameBoundaries(t *testing.T) {
 		if got := goName(in); got != want {
 			t.Errorf("goName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// An object with no named member never becomes an empty struct, which would drop every member;
+// an object with named members keeps the rest in Extra unless its schema closes it. The empty
+// and the single-member boundaries are both covered.
+func TestGenerateKeepsOpenObjects(t *testing.T) {
+	const schema = `{"$defs": {
+	  "Root": {"type": "object", "properties": {
+	    "emptyOpen": {"type": "object", "properties": {}, "additionalProperties": true},
+	    "emptySchema": {"type": "object", "properties": {}, "additionalProperties": {}},
+	    "namedOpen": {"type": "object", "properties": {"id": {"type": "string"}}, "additionalProperties": {}},
+	    "typedValues": {"type": "object", "additionalProperties": {"type": "string"}},
+	    "namedClosed": {"type": "object", "properties": {"id": {"type": "string"}}, "additionalProperties": false},
+	    "namedUnstated": {"type": "object", "properties": {"id": {"type": "string"}}},
+	    "noType": {"properties": {"id": {"type": "string"}}, "additionalProperties": true}
+	  }, "additionalProperties": false},
+	  "Bare": {"type": "object", "properties": {}, "additionalProperties": true}
+	}}`
+	out, err := Generate("p", "", []byte(schema), []Root{{Def: "Root", Name: "Root"}, {Def: "Bare", Name: "Bare"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(strings.Fields(string(out)), " ")
+	for _, want := range []string{
+		"EmptyOpen *map[string]any", "EmptySchema *map[string]any", "TypedValues *map[string]string", "type Bare = map[string]any",
+		"NamedOpen *RootNamedOpen", "NamedUnstated *RootNamedUnstated", "NamedClosed *RootNamedClosed", "NoType *RootNoType",
+		"func (v *RootNamedOpen) UnmarshalJSON", "func (v RootNamedUnstated) MarshalJSON", "func (v *RootNoType) UnmarshalJSON",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("generated source lacks %q:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"type RootEmptyOpen", "type Bare struct", "RootNamedClosed) UnmarshalJSON", "func (v *Root) UnmarshalJSON"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("generated source contains %q:\n%s", unwanted, out)
+		}
+	}
+	if got := strings.Count(text, "Extra map[string]json.RawMessage"); got != 3 {
+		t.Errorf("%d open structs carry Extra, want RootNamedOpen, RootNamedUnstated and RootNoType", got)
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), "open.go", out, 0); err != nil {
+		t.Fatalf("generated source does not parse: %v\n%s", err, out)
+	}
+	clash := `{"type":"object","properties":{"extra":{"type":"string"}}}`
+	if _, err := Generate("p", "", []byte(clash), []Root{{Name: "X"}}); err == nil {
+		t.Error("a property named extra collided with the Extra member silently")
 	}
 }

@@ -19,8 +19,9 @@ type Fetcher func(ctx context.Context, url string) ([]byte, error)
 // Refresh brings the vendor directory at dir (internal/clientschema/vendor) to the pins its
 // manifest records: it fetches every file at its pinned URL, then rewrites the files and their
 // sha256 values. Nothing is written unless every fetch succeeded, so a failure half way leaves
-// the directory as it was. A bump flows as: Renovate moves a pin in manifest.json, the takeover
-// runs this (PRAETOR_UPDATE_CLIENT_SCHEMAS=1 go test ./tools/schemacheck -run TestRefreshVendor),
+// the directory as it was. A refresh also records the pin the digests were taken at
+// (Source.DigestPin), which the offline manifest check compares with Pin. A bump flows as:
+// Renovate moves a pin in manifest.json, the takeover runs this (PRAETOR_UPDATE_CLIENT_SCHEMAS=1 go test ./tools/schemacheck -run TestRefreshVendor),
 // then go generate ./internal/clientschema regenerates the types, and the failing tests of the
 // branch name every field the new schema no longer accepts.
 func Refresh(ctx context.Context, dir string, fetch Fetcher) error {
@@ -30,7 +31,7 @@ func Refresh(ctx context.Context, dir string, fetch Fetcher) error {
 	if err != nil {
 		return fmt.Errorf("read manifest: %w", err)
 	}
-	manifest, err := clientschema.ParseManifest(raw)
+	manifest, err := clientschema.ParseStaleManifest(raw)
 	if err != nil {
 		return err
 	}
@@ -47,6 +48,7 @@ func Refresh(ctx context.Context, dir string, fetch Fetcher) error {
 			file.SHA256 = hex.EncodeToString(sum[:])
 			fetched[file.Path] = data
 		}
+		source.DigestPin = source.Pin
 	}
 	for path, data := range fetched {
 		target := filepath.Join(dir, filepath.FromSlash(path))

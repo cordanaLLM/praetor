@@ -414,14 +414,10 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 			name: family.Name, source: family.Source, directive: family.EmbedDirective(), assets: family.AssetPaths(),
 		})
 	}
-	schemaAssets, err := clientschema.AssetPaths()
-	if err != nil {
-		return nil, fmt.Errorf("bootstrap client schema assets: %w", err)
-	}
 	return append(families, bootstrapAssetFamily{
 		name: "template", source: templates.SourceFile, directive: "//go:embed " + templates.Pattern, assets: templateAssets,
 	}, cliBootstrapFamily(), bootstrapAssetFamily{
-		name: "client schemas", source: clientschema.SourceFile, directive: clientschema.EmbedDirective, assets: schemaAssets,
+		name: "client schemas", source: clientschema.SourceFile, directive: clientschema.EmbedDirective, assets: clientschema.AssetPaths(),
 	}, bootstrapAssetFamily{
 		name: "reviewed images", source: reviewedImagesSource, directive: priorImagesDirective, assets: []string{PriorImagesFile},
 	}), nil

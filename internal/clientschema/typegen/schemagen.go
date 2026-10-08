@@ -6,10 +6,14 @@
 //
 // The generator covers the JSON Schema subset those schemas use: objects with properties,
 // string enums, string constants, arrays, nullable and optional members, local references, and
-// allOf with one reference. Anything else (a union, a schema-valued additionalProperties on an
-// object with properties) maps to json.RawMessage or any and is named in the field's comment, and
-// a construct the generator cannot place (an external reference, two properties that collide on
-// one Go name) fails the generation instead of guessing.
+// allOf with one reference. An object with no named members maps to map[string]V (V from a
+// schema-valued additionalProperties, any otherwise), never to an empty struct that would drop
+// every member. An object with named members is a struct; unless its schema says
+// additionalProperties false, the struct also carries Extra, the members it does not name, and
+// encodes through internal/clientschema/wirejson so a decode and encode round trip drops
+// nothing. Anything else (a union) maps to json.RawMessage or any, and a construct the generator
+// cannot place (an external reference, two properties that collide on one Go name) fails the
+// generation instead of guessing.
 package typegen
 
 import (
@@ -176,7 +180,10 @@ func (g *generator) source(pkg, header string) ([]byte, error) {
 	}
 	out.WriteString(header)
 	out.WriteString("\npackage " + pkg + "\n")
-	if strings.Contains(body.String(), "json.") {
+	switch {
+	case strings.Contains(body.String(), "wirejson."):
+		out.WriteString("\nimport (\n\t\"encoding/json\"\n\n\t\"" + wirejsonImport + "\"\n)\n")
+	case strings.Contains(body.String(), "json."):
 		out.WriteString("\nimport \"encoding/json\"\n")
 	}
 	out.WriteString(body.String())
@@ -193,7 +200,7 @@ func (g *generator) declare(name string, node map[string]any) (string, error) {
 	if values := stringEnum(node); len(values) > 0 {
 		return enumDecl(name, node, values), nil
 	}
-	if _, ok := node["properties"].(map[string]any); ok {
+	if hasMembers(node) {
 		return g.structDecl(name, node)
 	}
 	expression, nullable, err := g.expr(node, name)
@@ -279,8 +286,34 @@ func (g *generator) structDecl(name string, node map[string]any) (string, error)
 		}
 		b.WriteString(line)
 	}
+	if isOpen(node) {
+		if other, clash := used[extraField]; clash {
+			return "", fmt.Errorf("property %q collides with the %s member of an open object", other, extraField)
+		}
+		b.WriteString("\t// " + extraField + " holds the members the schema does not name, kept verbatim.\n")
+		b.WriteString("\t" + extraField + " map[string]json.RawMessage `json:\"-\"`\n")
+		b.WriteString("}\n" + openMethods(name))
+		return b.String(), nil
+	}
 	b.WriteString("}\n")
 	return b.String(), nil
+}
+
+// extraField is the struct member that holds what an open object's properties do not name.
+const extraField = "Extra"
+
+// wirejsonImport is the package the methods of open objects call.
+const wirejsonImport = "github.com/cordanaLLM/praetor/internal/clientschema/wirejson"
+
+// openMethods renders the JSON methods that keep Extra through a round trip. The local plain
+// type has the fields without the methods, so the call cannot recurse.
+func openMethods(name string) string {
+	return "\n// UnmarshalJSON decodes the named members and keeps the others in " + extraField + ".\n" +
+		"func (v *" + name + ") UnmarshalJSON(data []byte) error {\n\ttype plain " + name + "\n" +
+		"\treturn wirejson.Decode(data, (*plain)(v), &v." + extraField + ")\n}\n" +
+		"\n// MarshalJSON encodes the named members, then " + extraField + ".\n" +
+		"func (v " + name + ") MarshalJSON() ([]byte, error) {\n\ttype plain " + name + "\n" +
+		"\treturn wirejson.Encode(plain(v), v." + extraField + ")\n}\n"
 }
 
 func (g *generator) field(owner, key string, raw any, required bool, used map[string]string) (string, error) {
@@ -307,11 +340,12 @@ func (g *generator) field(owner, key string, raw any, required bool, used map[st
 	return "\t" + field + " " + expression + " `json:" + quote(tag) + "`" + trail(prop) + "\n", nil
 }
 
-// pointerable reports whether an optional member is told apart from its zero value by a pointer:
-// scalars and generated structs, not slices, maps, raw messages or any.
+// pointerable reports whether an optional member is told apart from its absence by a pointer:
+// scalars, generated structs and maps, not slices, raw messages or any. A map needs it because
+// an empty object is a statement ("logging": {} advertises a capability) that omitempty would
+// drop.
 func pointerable(expression string) bool {
-	switch {
-	case strings.HasPrefix(expression, "[]"), strings.HasPrefix(expression, "map["), strings.HasPrefix(expression, "*"):
+	if strings.HasPrefix(expression, "[]") || strings.HasPrefix(expression, "*") {
 		return false
 	}
 	return expression != "json.RawMessage" && expression != "any"
@@ -360,6 +394,9 @@ func (g *generator) leaf(node map[string]any, hint string) (string, error) {
 	case "object":
 		return g.objectExpr(node, hint)
 	}
+	if _, ok := node["properties"].(map[string]any); ok {
+		return g.objectExpr(node, hint)
+	}
 	if _, ok := node["const"].(string); ok {
 		return "string", nil
 	}
@@ -372,12 +409,25 @@ func (g *generator) leaf(node map[string]any, hint string) (string, error) {
 	return "any", nil
 }
 
+// hasMembers reports whether node is an object with at least one named member.
+func hasMembers(node map[string]any) bool {
+	properties, ok := node["properties"].(map[string]any)
+	return ok && len(properties) > 0
+}
+
+// isOpen reports whether node admits members its properties do not name: JSON Schema's default,
+// unless additionalProperties is false.
+func isOpen(node map[string]any) bool {
+	extra, present := node["additionalProperties"]
+	return !present || extra != false
+}
+
 func (g *generator) objectExpr(node map[string]any, hint string) (string, error) {
-	if _, ok := node["properties"].(map[string]any); ok {
+	if hasMembers(node) {
 		g.enqueue(hint, node)
 		return hint, nil
 	}
-	if extra, ok := node["additionalProperties"].(map[string]any); ok {
+	if extra, ok := node["additionalProperties"].(map[string]any); ok && len(extra) > 0 {
 		value, _, err := g.expr(extra, hint+"Value")
 		return "map[string]" + value, err
 	}

@@ -87,7 +87,7 @@
     },
     {
       "customType": "regex",
-      "description": "Vendored upstream client schemas pinned at a release tag, and the hosted opencode copy whose pin names the release it was observed beside (internal/clientschema/vendor/manifest.json, #909). Renovate moves the pin; the takeover then runs the refresh in docs/guides/client-schemas.md, which fetches every file at the new pin and rewrites the sha256 values, and the pin test fails the branch until it has.",
+      "description": "Vendored upstream client schemas pinned at a release tag, and the hosted opencode copy whose pin names the release it was observed beside (internal/clientschema/vendor/manifest.json, #909). Renovate moves the pin; the takeover then runs the refresh in docs/guides/client-schemas.md, which fetches every file at the new pin and rewrites the sha256 values and the digest_pin, and the offline manifest check (clientschema.ErrPinMoved) fails the branch until it has.",
       "managerFilePatterns": ["/^internal/clientschema/vendor/manifest\\.json$/"],
       "matchStrings": ["\"repo\": \"(?<depName>[A-Za-z0-9._/-]+)\",\\s*\"pin_kind\": \"(?:tag|hosted)\",\\s*\"pin\": \"(?<currentValue>[^\"]+)\""],
       "datasourceTemplate": "github-tags"
@@ -221,12 +221,13 @@
       "groupName": "vendored client schemas"
     },
     {
+      "description": "Codex tags are rust-v<major>.<minor>.<patch> and the manifest records the whole tag as the current value, so the versioning parses the prefix itself: extractVersion would only rewrite the datasource's releases, the current value would fail the validity check, and a bump would lose the prefix the URLs need. Alpha builds do not match and are never offered.",
       "matchFileNames": ["internal/clientschema/vendor/manifest.json"],
       "matchDepNames": ["openai/codex"],
-      "extractVersion": "^rust-v(?<version>\\d+\\.\\d+\\.\\d+)$",
-      "versioning": "semver"
+      "versioning": "regex:^rust-v(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)$"
     },
     {
+      "description": "MCP specification tags are revision dates; release candidates carry an -RC suffix and do not match.",
       "matchFileNames": ["internal/clientschema/vendor/manifest.json"],
       "matchDepNames": ["modelcontextprotocol/modelcontextprotocol"],
       "allowedVersions": "/^\\d{4}-\\d{2}-\\d{2}$/",

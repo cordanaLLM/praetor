@@ -4,10 +4,10 @@
 package gomanifest
 
 import (
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxManifestLines bounds the lines ParseManifest reads (HISS-02). A go.mod is read through a
@@ -99,12 +99,7 @@ func ownModule(directive ReplaceDirective, modDir, root string) bool {
 	if rootErr != nil || targetErr != nil || !insideRoot(realRoot, realTarget) {
 		return false
 	}
-	file, err := os.Open(filepath.Join(realTarget, "go.mod")) // #nosec G304 -- confined to root above
-	if err != nil {
-		return false
-	}
-	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(io.LimitReader(file, maxReplacedManifestBytes))
+	data, err := util.ReadFileLimited(filepath.Join(realTarget, "go.mod"), maxReplacedManifestBytes)
 	if err != nil {
 		return false
 	}

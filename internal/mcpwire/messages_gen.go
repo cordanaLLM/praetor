@@ -9,119 +9,255 @@
 
 package mcpwire
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/cordanaLLM/praetor/internal/clientschema/wirejson"
+)
 
 // Annotations is generated from the vendored schema: Optional annotations for the client.
 type Annotations struct {
 	Audience     []Role   `json:"audience,omitempty"`     // Describes who the intended audience of this object or data is.
 	LastModified *string  `json:"lastModified,omitempty"` // The moment the resource was last modified, as an ISO 8601 formatted string.
 	Priority     *float64 `json:"priority,omitempty"`     // Describes how important this data is for operating the server.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *Annotations) UnmarshalJSON(data []byte) error {
+	type plain Annotations
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v Annotations) MarshalJSON() ([]byte, error) {
+	type plain Annotations
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // CallToolRequestParams is generated from the vendored schema: Parameters for a `tools/call` request.
 type CallToolRequestParams struct {
 	Meta      *CallToolRequestParamsMeta `json:"_meta,omitempty"`     // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
-	Arguments map[string]any             `json:"arguments,omitempty"` // Arguments to use for the tool call.
+	Arguments *map[string]any            `json:"arguments,omitempty"` // Arguments to use for the tool call.
 	Name      string                     `json:"name"`                // The name of the tool.
 	Task      *TaskMetadata              `json:"task,omitempty"`      // If specified, the caller is requesting task-augmented execution for this request.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *CallToolRequestParams) UnmarshalJSON(data []byte) error {
+	type plain CallToolRequestParams
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v CallToolRequestParams) MarshalJSON() ([]byte, error) {
+	type plain CallToolRequestParams
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // CallToolRequestParamsMeta is generated from the vendored schema: See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
 type CallToolRequestParamsMeta struct {
 	ProgressToken *ProgressToken `json:"progressToken,omitempty"` // If specified, the caller is requesting out-of-band progress notifications for this request (as repre...
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *CallToolRequestParamsMeta) UnmarshalJSON(data []byte) error {
+	type plain CallToolRequestParamsMeta
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v CallToolRequestParamsMeta) MarshalJSON() ([]byte, error) {
+	type plain CallToolRequestParamsMeta
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // CallToolResult is generated from the vendored schema: The server's response to a tool call.
 type CallToolResult struct {
-	Meta              map[string]any `json:"_meta,omitempty"`             // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
-	Content           []ContentBlock `json:"content"`                     // A list of content objects that represent the unstructured result of the tool call.
-	IsError           *bool          `json:"isError,omitempty"`           // Whether the tool call ended in an error.
-	StructuredContent map[string]any `json:"structuredContent,omitempty"` // An optional JSON object that represents the structured result of the tool call.
+	Meta              *map[string]any `json:"_meta,omitempty"`             // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
+	Content           []ContentBlock  `json:"content"`                     // A list of content objects that represent the unstructured result of the tool call.
+	IsError           *bool           `json:"isError,omitempty"`           // Whether the tool call ended in an error.
+	StructuredContent *map[string]any `json:"structuredContent,omitempty"` // An optional JSON object that represents the structured result of the tool call.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *CallToolResult) UnmarshalJSON(data []byte) error {
+	type plain CallToolResult
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v CallToolResult) MarshalJSON() ([]byte, error) {
+	type plain CallToolResult
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ClientCapabilities is generated from the vendored schema: Capabilities a client may support.
 type ClientCapabilities struct {
-	Elicitation  *ClientCapabilitiesElicitation                 `json:"elicitation,omitempty"`  // Present if the client supports elicitation from the server.
-	Experimental map[string]ClientCapabilitiesExperimentalValue `json:"experimental,omitempty"` // Experimental, non-standard capabilities that the client supports.
-	Roots        *ClientCapabilitiesRoots                       `json:"roots,omitempty"`        // Present if the client supports listing roots.
-	Sampling     *ClientCapabilitiesSampling                    `json:"sampling,omitempty"`     // Present if the client supports sampling from an LLM.
-	Tasks        *ClientCapabilitiesTasks                       `json:"tasks,omitempty"`        // Present if the client supports task-augmented requests.
+	Elicitation  *ClientCapabilitiesElicitation `json:"elicitation,omitempty"`  // Present if the client supports elicitation from the server.
+	Experimental *map[string]map[string]any     `json:"experimental,omitempty"` // Experimental, non-standard capabilities that the client supports.
+	Roots        *ClientCapabilitiesRoots       `json:"roots,omitempty"`        // Present if the client supports listing roots.
+	Sampling     *ClientCapabilitiesSampling    `json:"sampling,omitempty"`     // Present if the client supports sampling from an LLM.
+	Tasks        *ClientCapabilitiesTasks       `json:"tasks,omitempty"`        // Present if the client supports task-augmented requests.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ClientCapabilities) UnmarshalJSON(data []byte) error {
+	type plain ClientCapabilities
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ClientCapabilities) MarshalJSON() ([]byte, error) {
+	type plain ClientCapabilities
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ClientCapabilitiesElicitation is generated from the vendored schema: Present if the client supports elicitation from the server.
 type ClientCapabilitiesElicitation struct {
-	Form *ClientCapabilitiesElicitationForm `json:"form,omitempty"`
-	Url  *ClientCapabilitiesElicitationUrl  `json:"url,omitempty"`
+	Form *map[string]any `json:"form,omitempty"`
+	Url  *map[string]any `json:"url,omitempty"`
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ClientCapabilitiesElicitationForm is generated from the vendored schema.
-type ClientCapabilitiesElicitationForm struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ClientCapabilitiesElicitation) UnmarshalJSON(data []byte) error {
+	type plain ClientCapabilitiesElicitation
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
 }
 
-// ClientCapabilitiesElicitationUrl is generated from the vendored schema.
-type ClientCapabilitiesElicitationUrl struct {
-}
-
-// ClientCapabilitiesExperimentalValue is generated from the vendored schema.
-type ClientCapabilitiesExperimentalValue struct {
+// MarshalJSON encodes the named members, then Extra.
+func (v ClientCapabilitiesElicitation) MarshalJSON() ([]byte, error) {
+	type plain ClientCapabilitiesElicitation
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ClientCapabilitiesRoots is generated from the vendored schema: Present if the client supports listing roots.
 type ClientCapabilitiesRoots struct {
 	ListChanged *bool `json:"listChanged,omitempty"` // Whether the client supports notifications for changes to the roots list.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ClientCapabilitiesRoots) UnmarshalJSON(data []byte) error {
+	type plain ClientCapabilitiesRoots
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ClientCapabilitiesRoots) MarshalJSON() ([]byte, error) {
+	type plain ClientCapabilitiesRoots
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ClientCapabilitiesSampling is generated from the vendored schema: Present if the client supports sampling from an LLM.
 type ClientCapabilitiesSampling struct {
-	Context *ClientCapabilitiesSamplingContext `json:"context,omitempty"` // Whether the client supports context inclusion via includeContext parameter.
-	Tools   *ClientCapabilitiesSamplingTools   `json:"tools,omitempty"`   // Whether the client supports tool use via tools and toolChoice parameters.
+	Context *map[string]any `json:"context,omitempty"` // Whether the client supports context inclusion via includeContext parameter.
+	Tools   *map[string]any `json:"tools,omitempty"`   // Whether the client supports tool use via tools and toolChoice parameters.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ClientCapabilitiesSamplingContext is generated from the vendored schema: Whether the client supports context inclusion via includeContext parameter.
-type ClientCapabilitiesSamplingContext struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ClientCapabilitiesSampling) UnmarshalJSON(data []byte) error {
+	type plain ClientCapabilitiesSampling
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
 }
 
-// ClientCapabilitiesSamplingTools is generated from the vendored schema: Whether the client supports tool use via tools and toolChoice parameters.
-type ClientCapabilitiesSamplingTools struct {
+// MarshalJSON encodes the named members, then Extra.
+func (v ClientCapabilitiesSampling) MarshalJSON() ([]byte, error) {
+	type plain ClientCapabilitiesSampling
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ClientCapabilitiesTasks is generated from the vendored schema: Present if the client supports task-augmented requests.
 type ClientCapabilitiesTasks struct {
-	Cancel   *ClientCapabilitiesTasksCancel   `json:"cancel,omitempty"`   // Whether this client supports tasks/cancel.
-	List     *ClientCapabilitiesTasksList     `json:"list,omitempty"`     // Whether this client supports tasks/list.
+	Cancel   *map[string]any                  `json:"cancel,omitempty"`   // Whether this client supports tasks/cancel.
+	List     *map[string]any                  `json:"list,omitempty"`     // Whether this client supports tasks/list.
 	Requests *ClientCapabilitiesTasksRequests `json:"requests,omitempty"` // Specifies which request types can be augmented with tasks.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ClientCapabilitiesTasksCancel is generated from the vendored schema: Whether this client supports tasks/cancel.
-type ClientCapabilitiesTasksCancel struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ClientCapabilitiesTasks) UnmarshalJSON(data []byte) error {
+	type plain ClientCapabilitiesTasks
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
 }
 
-// ClientCapabilitiesTasksList is generated from the vendored schema: Whether this client supports tasks/list.
-type ClientCapabilitiesTasksList struct {
+// MarshalJSON encodes the named members, then Extra.
+func (v ClientCapabilitiesTasks) MarshalJSON() ([]byte, error) {
+	type plain ClientCapabilitiesTasks
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ClientCapabilitiesTasksRequests is generated from the vendored schema: Specifies which request types can be augmented with tasks.
 type ClientCapabilitiesTasksRequests struct {
 	Elicitation *ClientCapabilitiesTasksRequestsElicitation `json:"elicitation,omitempty"` // Task support for elicitation-related requests.
 	Sampling    *ClientCapabilitiesTasksRequestsSampling    `json:"sampling,omitempty"`    // Task support for sampling-related requests.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ClientCapabilitiesTasksRequests) UnmarshalJSON(data []byte) error {
+	type plain ClientCapabilitiesTasksRequests
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ClientCapabilitiesTasksRequests) MarshalJSON() ([]byte, error) {
+	type plain ClientCapabilitiesTasksRequests
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ClientCapabilitiesTasksRequestsElicitation is generated from the vendored schema: Task support for elicitation-related requests.
 type ClientCapabilitiesTasksRequestsElicitation struct {
-	Create *ClientCapabilitiesTasksRequestsElicitationCreate `json:"create,omitempty"` // Whether the client supports task-augmented elicitation/create requests.
+	Create *map[string]any `json:"create,omitempty"` // Whether the client supports task-augmented elicitation/create requests.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ClientCapabilitiesTasksRequestsElicitationCreate is generated from the vendored schema: Whether the client supports task-augmented elicitation/create requests.
-type ClientCapabilitiesTasksRequestsElicitationCreate struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ClientCapabilitiesTasksRequestsElicitation) UnmarshalJSON(data []byte) error {
+	type plain ClientCapabilitiesTasksRequestsElicitation
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ClientCapabilitiesTasksRequestsElicitation) MarshalJSON() ([]byte, error) {
+	type plain ClientCapabilitiesTasksRequestsElicitation
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ClientCapabilitiesTasksRequestsSampling is generated from the vendored schema: Task support for sampling-related requests.
 type ClientCapabilitiesTasksRequestsSampling struct {
-	CreateMessage *ClientCapabilitiesTasksRequestsSamplingCreateMessage `json:"createMessage,omitempty"` // Whether the client supports task-augmented sampling/createMessage requests.
+	CreateMessage *map[string]any `json:"createMessage,omitempty"` // Whether the client supports task-augmented sampling/createMessage requests.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ClientCapabilitiesTasksRequestsSamplingCreateMessage is generated from the vendored schema: Whether the client supports task-augmented sampling/createMessage requests.
-type ClientCapabilitiesTasksRequestsSamplingCreateMessage struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ClientCapabilitiesTasksRequestsSampling) UnmarshalJSON(data []byte) error {
+	type plain ClientCapabilitiesTasksRequestsSampling
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ClientCapabilitiesTasksRequestsSampling) MarshalJSON() ([]byte, error) {
+	type plain ClientCapabilitiesTasksRequestsSampling
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ContentBlock is generated from the vendored schema.
@@ -132,6 +268,20 @@ type Error struct {
 	Code    int64  `json:"code"`           // The error type that occurred.
 	Data    any    `json:"data,omitempty"` // Additional information about the error.
 	Message string `json:"message"`        // A short description of the error.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *Error) UnmarshalJSON(data []byte) error {
+	type plain Error
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v Error) MarshalJSON() ([]byte, error) {
+	type plain Error
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // Icon is generated from the vendored schema: An optionally-sized icon that can be displayed in a user interface.
@@ -140,6 +290,20 @@ type Icon struct {
 	Sizes    []string `json:"sizes,omitempty"`    // Optional array of strings that specify sizes at which the icon can be used.
 	Src      string   `json:"src"`                // A standard URI pointing to an icon resource.
 	Theme    *string  `json:"theme,omitempty"`    // Optional specifier for the theme this icon is designed for.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *Icon) UnmarshalJSON(data []byte) error {
+	type plain Icon
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v Icon) MarshalJSON() ([]byte, error) {
+	type plain Icon
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // Implementation is generated from the vendored schema: Describes the MCP implementation.
@@ -150,6 +314,20 @@ type Implementation struct {
 	Title       *string `json:"title,omitempty"`       // Intended for UI and end-user contexts — optimized to be human-readable and easily understood, even...
 	Version     string  `json:"version"`
 	WebsiteUrl  *string `json:"websiteUrl,omitempty"` // An optional URL of the website for this implementation.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *Implementation) UnmarshalJSON(data []byte) error {
+	type plain Implementation
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v Implementation) MarshalJSON() ([]byte, error) {
+	type plain Implementation
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // InitializeRequestParams is generated from the vendored schema: Parameters for an `initialize` request.
@@ -158,20 +336,62 @@ type InitializeRequestParams struct {
 	Capabilities    ClientCapabilities           `json:"capabilities"`
 	ClientInfo      Implementation               `json:"clientInfo"`
 	ProtocolVersion string                       `json:"protocolVersion"` // The latest version of the Model Context Protocol that the client supports.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *InitializeRequestParams) UnmarshalJSON(data []byte) error {
+	type plain InitializeRequestParams
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v InitializeRequestParams) MarshalJSON() ([]byte, error) {
+	type plain InitializeRequestParams
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // InitializeRequestParamsMeta is generated from the vendored schema: See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
 type InitializeRequestParamsMeta struct {
 	ProgressToken *ProgressToken `json:"progressToken,omitempty"` // If specified, the caller is requesting out-of-band progress notifications for this request (as repre...
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *InitializeRequestParamsMeta) UnmarshalJSON(data []byte) error {
+	type plain InitializeRequestParamsMeta
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v InitializeRequestParamsMeta) MarshalJSON() ([]byte, error) {
+	type plain InitializeRequestParamsMeta
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // InitializeResult is generated from the vendored schema: After receiving an initialize request from the client, the server sends this response.
 type InitializeResult struct {
-	Meta            map[string]any     `json:"_meta,omitempty"` // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
+	Meta            *map[string]any    `json:"_meta,omitempty"` // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
 	Capabilities    ServerCapabilities `json:"capabilities"`
 	Instructions    *string            `json:"instructions,omitempty"` // Instructions describing how to use the server and its features.
 	ProtocolVersion string             `json:"protocolVersion"`        // The version of the Model Context Protocol that the server wants to use.
 	ServerInfo      Implementation     `json:"serverInfo"`
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *InitializeResult) UnmarshalJSON(data []byte) error {
+	type plain InitializeResult
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v InitializeResult) MarshalJSON() ([]byte, error) {
+	type plain InitializeResult
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // JSONRPCErrorResponse is generated from the vendored schema: A response to a request that indicates an error occurred.
@@ -179,21 +399,63 @@ type JSONRPCErrorResponse struct {
 	Error   Error      `json:"error"`
 	Id      *RequestId `json:"id,omitempty"`
 	Jsonrpc string     `json:"jsonrpc"` // always "2.0"
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *JSONRPCErrorResponse) UnmarshalJSON(data []byte) error {
+	type plain JSONRPCErrorResponse
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v JSONRPCErrorResponse) MarshalJSON() ([]byte, error) {
+	type plain JSONRPCErrorResponse
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // JSONRPCNotification is generated from the vendored schema: A notification which does not expect a response.
 type JSONRPCNotification struct {
-	Jsonrpc string         `json:"jsonrpc"` // always "2.0"
-	Method  string         `json:"method"`
-	Params  map[string]any `json:"params,omitempty"`
+	Jsonrpc string          `json:"jsonrpc"` // always "2.0"
+	Method  string          `json:"method"`
+	Params  *map[string]any `json:"params,omitempty"`
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *JSONRPCNotification) UnmarshalJSON(data []byte) error {
+	type plain JSONRPCNotification
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v JSONRPCNotification) MarshalJSON() ([]byte, error) {
+	type plain JSONRPCNotification
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // JSONRPCRequest is generated from the vendored schema: A request that expects a response.
 type JSONRPCRequest struct {
-	Id      RequestId      `json:"id"`
-	Jsonrpc string         `json:"jsonrpc"` // always "2.0"
-	Method  string         `json:"method"`
-	Params  map[string]any `json:"params,omitempty"`
+	Id      RequestId       `json:"id"`
+	Jsonrpc string          `json:"jsonrpc"` // always "2.0"
+	Method  string          `json:"method"`
+	Params  *map[string]any `json:"params,omitempty"`
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *JSONRPCRequest) UnmarshalJSON(data []byte) error {
+	type plain JSONRPCRequest
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v JSONRPCRequest) MarshalJSON() ([]byte, error) {
+	type plain JSONRPCRequest
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // JSONRPCResultResponse is generated from the vendored schema: A successful (non-error) response to a request.
@@ -201,13 +463,41 @@ type JSONRPCResultResponse struct {
 	Id      RequestId `json:"id"`
 	Jsonrpc string    `json:"jsonrpc"` // always "2.0"
 	Result  Result    `json:"result"`
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *JSONRPCResultResponse) UnmarshalJSON(data []byte) error {
+	type plain JSONRPCResultResponse
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v JSONRPCResultResponse) MarshalJSON() ([]byte, error) {
+	type plain JSONRPCResultResponse
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ListToolsResult is generated from the vendored schema: The server's response to a tools/list request from the client.
 type ListToolsResult struct {
-	Meta       map[string]any `json:"_meta,omitempty"`      // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
-	NextCursor *string        `json:"nextCursor,omitempty"` // An opaque token representing the pagination position after the last returned result.
-	Tools      []Tool         `json:"tools"`
+	Meta       *map[string]any `json:"_meta,omitempty"`      // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
+	NextCursor *string         `json:"nextCursor,omitempty"` // An opaque token representing the pagination position after the last returned result.
+	Tools      []Tool          `json:"tools"`
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ListToolsResult) UnmarshalJSON(data []byte) error {
+	type plain ListToolsResult
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ListToolsResult) MarshalJSON() ([]byte, error) {
+	type plain ListToolsResult
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ProgressToken is generated from the vendored schema: A progress token, used to associate progress notifications with the original request.
@@ -218,7 +508,21 @@ type RequestId = any
 
 // Result is generated from the vendored schema.
 type Result struct {
-	Meta map[string]any `json:"_meta,omitempty"` // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
+	Meta *map[string]any `json:"_meta,omitempty"` // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *Result) UnmarshalJSON(data []byte) error {
+	type plain Result
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v Result) MarshalJSON() ([]byte, error) {
+	type plain Result
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // Role is generated from the vendored schema: The sender or recipient of messages and data in a conversation.
@@ -231,88 +535,190 @@ const (
 
 // ServerCapabilities is generated from the vendored schema: Capabilities that a server may support.
 type ServerCapabilities struct {
-	Completions  *ServerCapabilitiesCompletions                 `json:"completions,omitempty"`  // Present if the server supports argument autocompletion suggestions.
-	Experimental map[string]ServerCapabilitiesExperimentalValue `json:"experimental,omitempty"` // Experimental, non-standard capabilities that the server supports.
-	Logging      *ServerCapabilitiesLogging                     `json:"logging,omitempty"`      // Present if the server supports sending log messages to the client.
-	Prompts      *ServerCapabilitiesPrompts                     `json:"prompts,omitempty"`      // Present if the server offers any prompt templates.
-	Resources    *ServerCapabilitiesResources                   `json:"resources,omitempty"`    // Present if the server offers any resources to read.
-	Tasks        *ServerCapabilitiesTasks                       `json:"tasks,omitempty"`        // Present if the server supports task-augmented requests.
-	Tools        *ServerCapabilitiesTools                       `json:"tools,omitempty"`        // Present if the server offers any tools to call.
+	Completions  *map[string]any              `json:"completions,omitempty"`  // Present if the server supports argument autocompletion suggestions.
+	Experimental *map[string]map[string]any   `json:"experimental,omitempty"` // Experimental, non-standard capabilities that the server supports.
+	Logging      *map[string]any              `json:"logging,omitempty"`      // Present if the server supports sending log messages to the client.
+	Prompts      *ServerCapabilitiesPrompts   `json:"prompts,omitempty"`      // Present if the server offers any prompt templates.
+	Resources    *ServerCapabilitiesResources `json:"resources,omitempty"`    // Present if the server offers any resources to read.
+	Tasks        *ServerCapabilitiesTasks     `json:"tasks,omitempty"`        // Present if the server supports task-augmented requests.
+	Tools        *ServerCapabilitiesTools     `json:"tools,omitempty"`        // Present if the server offers any tools to call.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ServerCapabilitiesCompletions is generated from the vendored schema: Present if the server supports argument autocompletion suggestions.
-type ServerCapabilitiesCompletions struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ServerCapabilities) UnmarshalJSON(data []byte) error {
+	type plain ServerCapabilities
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
 }
 
-// ServerCapabilitiesExperimentalValue is generated from the vendored schema.
-type ServerCapabilitiesExperimentalValue struct {
-}
-
-// ServerCapabilitiesLogging is generated from the vendored schema: Present if the server supports sending log messages to the client.
-type ServerCapabilitiesLogging struct {
+// MarshalJSON encodes the named members, then Extra.
+func (v ServerCapabilities) MarshalJSON() ([]byte, error) {
+	type plain ServerCapabilities
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ServerCapabilitiesPrompts is generated from the vendored schema: Present if the server offers any prompt templates.
 type ServerCapabilitiesPrompts struct {
 	ListChanged *bool `json:"listChanged,omitempty"` // Whether this server supports notifications for changes to the prompt list.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ServerCapabilitiesPrompts) UnmarshalJSON(data []byte) error {
+	type plain ServerCapabilitiesPrompts
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ServerCapabilitiesPrompts) MarshalJSON() ([]byte, error) {
+	type plain ServerCapabilitiesPrompts
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ServerCapabilitiesResources is generated from the vendored schema: Present if the server offers any resources to read.
 type ServerCapabilitiesResources struct {
 	ListChanged *bool `json:"listChanged,omitempty"` // Whether this server supports notifications for changes to the resource list.
 	Subscribe   *bool `json:"subscribe,omitempty"`   // Whether this server supports subscribing to resource updates.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ServerCapabilitiesResources) UnmarshalJSON(data []byte) error {
+	type plain ServerCapabilitiesResources
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ServerCapabilitiesResources) MarshalJSON() ([]byte, error) {
+	type plain ServerCapabilitiesResources
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ServerCapabilitiesTasks is generated from the vendored schema: Present if the server supports task-augmented requests.
 type ServerCapabilitiesTasks struct {
-	Cancel   *ServerCapabilitiesTasksCancel   `json:"cancel,omitempty"`   // Whether this server supports tasks/cancel.
-	List     *ServerCapabilitiesTasksList     `json:"list,omitempty"`     // Whether this server supports tasks/list.
+	Cancel   *map[string]any                  `json:"cancel,omitempty"`   // Whether this server supports tasks/cancel.
+	List     *map[string]any                  `json:"list,omitempty"`     // Whether this server supports tasks/list.
 	Requests *ServerCapabilitiesTasksRequests `json:"requests,omitempty"` // Specifies which request types can be augmented with tasks.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ServerCapabilitiesTasksCancel is generated from the vendored schema: Whether this server supports tasks/cancel.
-type ServerCapabilitiesTasksCancel struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ServerCapabilitiesTasks) UnmarshalJSON(data []byte) error {
+	type plain ServerCapabilitiesTasks
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
 }
 
-// ServerCapabilitiesTasksList is generated from the vendored schema: Whether this server supports tasks/list.
-type ServerCapabilitiesTasksList struct {
+// MarshalJSON encodes the named members, then Extra.
+func (v ServerCapabilitiesTasks) MarshalJSON() ([]byte, error) {
+	type plain ServerCapabilitiesTasks
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ServerCapabilitiesTasksRequests is generated from the vendored schema: Specifies which request types can be augmented with tasks.
 type ServerCapabilitiesTasksRequests struct {
 	Tools *ServerCapabilitiesTasksRequestsTools `json:"tools,omitempty"` // Task support for tool-related requests.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ServerCapabilitiesTasksRequests) UnmarshalJSON(data []byte) error {
+	type plain ServerCapabilitiesTasksRequests
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ServerCapabilitiesTasksRequests) MarshalJSON() ([]byte, error) {
+	type plain ServerCapabilitiesTasksRequests
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ServerCapabilitiesTasksRequestsTools is generated from the vendored schema: Task support for tool-related requests.
 type ServerCapabilitiesTasksRequestsTools struct {
-	Call *ServerCapabilitiesTasksRequestsToolsCall `json:"call,omitempty"` // Whether the server supports task-augmented tools/call requests.
+	Call *map[string]any `json:"call,omitempty"` // Whether the server supports task-augmented tools/call requests.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ServerCapabilitiesTasksRequestsToolsCall is generated from the vendored schema: Whether the server supports task-augmented tools/call requests.
-type ServerCapabilitiesTasksRequestsToolsCall struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ServerCapabilitiesTasksRequestsTools) UnmarshalJSON(data []byte) error {
+	type plain ServerCapabilitiesTasksRequestsTools
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ServerCapabilitiesTasksRequestsTools) MarshalJSON() ([]byte, error) {
+	type plain ServerCapabilitiesTasksRequestsTools
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ServerCapabilitiesTools is generated from the vendored schema: Present if the server offers any tools to call.
 type ServerCapabilitiesTools struct {
 	ListChanged *bool `json:"listChanged,omitempty"` // Whether this server supports notifications for changes to the tool list.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ServerCapabilitiesTools) UnmarshalJSON(data []byte) error {
+	type plain ServerCapabilitiesTools
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ServerCapabilitiesTools) MarshalJSON() ([]byte, error) {
+	type plain ServerCapabilitiesTools
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // TaskMetadata is generated from the vendored schema: Metadata for augmenting a request with task execution.
 type TaskMetadata struct {
 	Ttl *int64 `json:"ttl,omitempty"` // Requested duration in milliseconds to retain task from creation.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *TaskMetadata) UnmarshalJSON(data []byte) error {
+	type plain TaskMetadata
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v TaskMetadata) MarshalJSON() ([]byte, error) {
+	type plain TaskMetadata
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // TextContent is generated from the vendored schema: Text provided to or from an LLM.
 type TextContent struct {
-	Meta        map[string]any `json:"_meta,omitempty"`       // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
-	Annotations *Annotations   `json:"annotations,omitempty"` // Optional annotations for the client.
-	Text        string         `json:"text"`                  // The text content of the message.
-	Type        string         `json:"type"`                  // always "text"
+	Meta        *map[string]any `json:"_meta,omitempty"`       // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
+	Annotations *Annotations    `json:"annotations,omitempty"` // Optional annotations for the client.
+	Text        string          `json:"text"`                  // The text content of the message.
+	Type        string          `json:"type"`                  // always "text"
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *TextContent) UnmarshalJSON(data []byte) error {
+	type plain TextContent
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v TextContent) MarshalJSON() ([]byte, error) {
+	type plain TextContent
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // Tool is generated from the vendored schema: Definition for a tool the client can call.
 type Tool struct {
-	Meta         map[string]any    `json:"_meta,omitempty"`        // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
+	Meta         *map[string]any   `json:"_meta,omitempty"`        // See [General fields: `_meta`](/specification/2025-11-25/basic/index#meta) for notes on `_meta` usage...
 	Annotations  *ToolAnnotations  `json:"annotations,omitempty"`  // Optional additional tool information.
 	Description  *string           `json:"description,omitempty"`  // A human-readable description of the tool.
 	Execution    *ToolExecution    `json:"execution,omitempty"`    // Execution-related properties for this tool.
@@ -321,6 +727,20 @@ type Tool struct {
 	Name         string            `json:"name"`                   // Intended for programmatic or logical use, but used as a display name in past specs or fallback (if t...
 	OutputSchema *ToolOutputSchema `json:"outputSchema,omitempty"` // An optional JSON Schema object defining the structure of the tool's output returned in the structure...
 	Title        *string           `json:"title,omitempty"`        // Intended for UI and end-user contexts — optimized to be human-readable and easily understood, even...
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *Tool) UnmarshalJSON(data []byte) error {
+	type plain Tool
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v Tool) MarshalJSON() ([]byte, error) {
+	type plain Tool
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ToolAnnotations is generated from the vendored schema: Additional properties describing a Tool to clients.
@@ -330,33 +750,81 @@ type ToolAnnotations struct {
 	OpenWorldHint   *bool   `json:"openWorldHint,omitempty"`   // If true, this tool may interact with an "open world" of external entities.
 	ReadOnlyHint    *bool   `json:"readOnlyHint,omitempty"`    // If true, the tool does not modify its environment.
 	Title           *string `json:"title,omitempty"`           // A human-readable title for the tool.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ToolAnnotations) UnmarshalJSON(data []byte) error {
+	type plain ToolAnnotations
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ToolAnnotations) MarshalJSON() ([]byte, error) {
+	type plain ToolAnnotations
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ToolExecution is generated from the vendored schema: Execution-related properties for a tool.
 type ToolExecution struct {
 	TaskSupport *string `json:"taskSupport,omitempty"` // Indicates whether this tool supports task-augmented execution.
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ToolExecution) UnmarshalJSON(data []byte) error {
+	type plain ToolExecution
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ToolExecution) MarshalJSON() ([]byte, error) {
+	type plain ToolExecution
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ToolInputSchema is generated from the vendored schema: A JSON Schema object defining the expected parameters for the tool.
 type ToolInputSchema struct {
-	Schema     *string                                   `json:"$schema,omitempty"`
-	Properties map[string]ToolInputSchemaPropertiesValue `json:"properties,omitempty"`
-	Required   []string                                  `json:"required,omitempty"`
-	Type       string                                    `json:"type"` // always "object"
+	Schema     *string                    `json:"$schema,omitempty"`
+	Properties *map[string]map[string]any `json:"properties,omitempty"`
+	Required   []string                   `json:"required,omitempty"`
+	Type       string                     `json:"type"` // always "object"
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ToolInputSchemaPropertiesValue is generated from the vendored schema.
-type ToolInputSchemaPropertiesValue struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ToolInputSchema) UnmarshalJSON(data []byte) error {
+	type plain ToolInputSchema
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ToolInputSchema) MarshalJSON() ([]byte, error) {
+	type plain ToolInputSchema
+	return wirejson.Encode(plain(v), v.Extra)
 }
 
 // ToolOutputSchema is generated from the vendored schema: An optional JSON Schema object defining the structure of the tool's output returned in the structure...
 type ToolOutputSchema struct {
-	Schema     *string                                    `json:"$schema,omitempty"`
-	Properties map[string]ToolOutputSchemaPropertiesValue `json:"properties,omitempty"`
-	Required   []string                                   `json:"required,omitempty"`
-	Type       string                                     `json:"type"` // always "object"
+	Schema     *string                    `json:"$schema,omitempty"`
+	Properties *map[string]map[string]any `json:"properties,omitempty"`
+	Required   []string                   `json:"required,omitempty"`
+	Type       string                     `json:"type"` // always "object"
+	// Extra holds the members the schema does not name, kept verbatim.
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
-// ToolOutputSchemaPropertiesValue is generated from the vendored schema.
-type ToolOutputSchemaPropertiesValue struct {
+// UnmarshalJSON decodes the named members and keeps the others in Extra.
+func (v *ToolOutputSchema) UnmarshalJSON(data []byte) error {
+	type plain ToolOutputSchema
+	return wirejson.Decode(data, (*plain)(v), &v.Extra)
+}
+
+// MarshalJSON encodes the named members, then Extra.
+func (v ToolOutputSchema) MarshalJSON() ([]byte, error) {
+	type plain ToolOutputSchema
+	return wirejson.Encode(plain(v), v.Extra)
 }

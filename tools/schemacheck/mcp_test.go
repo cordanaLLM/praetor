@@ -17,7 +17,7 @@ const mcpSchemaPath = "mcp/schema.json"
 
 func mcpDefinition(t *testing.T, def string) *Schema {
 	t.Helper()
-	raw, err := loadManifest(t).Schema(mcpSchemaPath)
+	raw, err := loadManifest(t).Schema(vendorDir, mcpSchemaPath)
 	if err != nil {
 		t.Fatal(err)
 	}

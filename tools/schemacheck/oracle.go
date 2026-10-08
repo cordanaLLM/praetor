@@ -127,6 +127,12 @@ func Compile(name string, raw []byte, external External) (*Schema, error) {
 	return &Schema{name: name, schema: compiled}, nil
 }
 
+// repoRoot is the repository root seen from this package's directory, where go test runs.
+const repoRoot = "../.."
+
+// vendorDir is the vendor directory of internal/clientschema in this checkout.
+var vendorDir = clientschema.VendorDir(repoRoot)
+
 // CompileVendored compiles the vendored file at relPath, a Path of the manifest, after the pin
 // check of clientschema.Read. external is nil where the schema is self-contained.
 func CompileVendored(relPath string, external External) (*Schema, error) {
@@ -134,7 +140,7 @@ func CompileVendored(relPath string, external External) (*Schema, error) {
 	if err != nil {
 		return nil, err
 	}
-	raw, err := manifest.Schema(relPath)
+	raw, err := manifest.Schema(vendorDir, relPath)
 	if err != nil {
 		return nil, err
 	}

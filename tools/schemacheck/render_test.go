@@ -11,10 +11,9 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/clientjson"
+	"github.com/cordanaLLM/praetor/internal/clientschema"
 	"github.com/cordanaLLM/praetor/internal/clientsetup"
 )
-
-const repoRoot = "../.."
 
 // modelsDev is the one external reference of the vendored opencode schema. Praetor renders no
 // model catalog entry, so the referenced Model definition is replaced by an accept-all schema
@@ -150,17 +149,7 @@ func TestEachSchemaRefusesAMutatedDocument(t *testing.T) {
 
 func vendoredPaths(t *testing.T) []string {
 	t.Helper()
-	var paths []string
-	err := filepath.WalkDir(filepath.Join(repoRoot, "internal", "clientschema", "vendor"), func(p string, entry os.DirEntry, walkErr error) error {
-		if walkErr == nil && !entry.IsDir() && entry.Name() != "manifest.json" {
-			rel, relErr := filepath.Rel(filepath.Join(repoRoot, "internal", "clientschema", "vendor"), p)
-			if relErr != nil {
-				return relErr
-			}
-			paths = append(paths, filepath.ToSlash(rel))
-		}
-		return walkErr
-	})
+	paths, err := clientschema.VendoredPaths(vendorDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +160,7 @@ func vendoredPaths(t *testing.T) []string {
 func mutate(t *testing.T, relPath string, edit func(root map[string]any)) *Schema {
 	t.Helper()
 	manifest := loadManifest(t)
-	raw, err := manifest.Schema(relPath)
+	raw, err := manifest.Schema(vendorDir, relPath)
 	if err != nil {
 		t.Fatal(err)
 	}
