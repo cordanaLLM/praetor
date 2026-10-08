@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -58,11 +59,9 @@ type rpcLine struct {
 	Error  json.RawMessage `json:"error"`
 }
 
-// session drives standards-mcp over stdio and returns the raw response lines in request order.
-func session(t *testing.T, requests []string) [][]byte {
+// buildServer compiles standards-mcp from this repository into a temporary directory.
+func buildServer(ctx context.Context, t *testing.T) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
-	defer cancel()
 	binary := filepath.Join(t.TempDir(), "standards-mcp")
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
@@ -72,6 +71,12 @@ func session(t *testing.T, requests []string) [][]byte {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build standards-mcp: %v\n%s", err, out)
 	}
+	return binary
+}
+
+// startServer starts the binary over stdio pipes and stops it when the test ends.
+func startServer(ctx context.Context, t *testing.T, binary string) (io.WriteCloser, io.Reader) {
+	t.Helper()
 	server := exec.CommandContext(ctx, binary, "-root", t.TempDir())
 	stdin, err := server.StdinPipe()
 	if err != nil {
@@ -84,7 +89,23 @@ func session(t *testing.T, requests []string) [][]byte {
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = server.Process.Kill(); _ = server.Wait() }()
+	t.Cleanup(func() {
+		if err := server.Process.Kill(); err != nil {
+			t.Logf("kill standards-mcp: %v", err)
+		}
+		if err := server.Wait(); err != nil {
+			t.Logf("standards-mcp ended after the kill: %v", err) // a killed process reports a signal
+		}
+	})
+	return stdin, stdout
+}
+
+// session drives standards-mcp over stdio and returns the raw response lines in request order.
+func session(t *testing.T, requests []string) [][]byte {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	defer cancel()
+	stdin, stdout := startServer(ctx, t, buildServer(ctx, t))
 	reader := bufio.NewReaderSize(stdout, 1<<20)
 	var responses [][]byte
 	for _, request := range requests {

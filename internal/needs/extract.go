@@ -107,6 +107,9 @@ type goModFile struct {
 	modulePath string
 	goVersion  string
 	directDeps map[string]string
+	// localModules are the modules the file replaces with a directory of the same checkout;
+	// neither a requirement on them nor an import of them is a third-party dependency.
+	localModules map[string]bool
 	// ignore holds the directories the module's ignore directives (Go 1.25+) remove from
 	// the go command's "./..." pattern; the import scan does not enter them.
 	ignore gomanifest.IgnoreSet
@@ -133,6 +136,12 @@ func parseGoMod(goModPath string) (*goModFile, error) {
 		return nil, scanErr
 	}
 	state.ignore = gomanifest.NewIgnoreSet(state.ignorePaths)
+	// A requirement the file replaces with a directory of the same checkout is its own module,
+	// not a third-party dependency.
+	state.localModules = gomanifest.LocalReplaces(data)
+	for module := range state.localModules {
+		delete(state.directDeps, module)
+	}
 	return &state.goModFile, nil
 }
 
@@ -606,4 +615,18 @@ func WriteNeedsManifest(repoPath string, repoNeeds *RepoNeeds) error {
 		return fmt.Errorf("failed to write %s: %w", targetFile, err)
 	}
 	return nil
+}
+
+// dropLocalModuleImports removes from imports every path inside one of the local modules, the
+// modules a go.mod replaces with a directory of the same checkout (a nested test-only module
+// imports its parent module this way).
+func dropLocalModuleImports(imports map[string]struct{}, localModules map[string]bool) {
+	for importPath := range imports {
+		for module := range localModules {
+			if importPath == module || strings.HasPrefix(importPath, module+"/") {
+				delete(imports, importPath)
+				break
+			}
+		}
+	}
 }

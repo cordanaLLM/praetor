@@ -10,9 +10,16 @@ import (
 	"time"
 )
 
+func writeBody(t *testing.T, w http.ResponseWriter, body []byte) {
+	t.Helper()
+	if _, err := w.Write(body); err != nil {
+		t.Errorf("write response: %v", err)
+	}
+}
+
 func TestFetchPositive(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"type":"string"}`))
+		writeBody(t, w, []byte(`{"type":"string"}`))
 	}))
 	defer server.Close()
 	data, err := Fetch(context.Background(), server.URL)
@@ -41,14 +48,14 @@ func TestFetchNegative(t *testing.T) {
 
 func TestFetchBoundary(t *testing.T) {
 	big := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(strings.Repeat("a", MaxFetchBytes+1)))
+		writeBody(t, w, []byte(strings.Repeat("a", MaxFetchBytes+1)))
 	}))
 	defer big.Close()
 	if _, err := Fetch(context.Background(), big.URL); err == nil || !strings.Contains(err.Error(), "more than") {
 		t.Errorf("oversize = %v", err)
 	}
 	exact := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(strings.Repeat("a", MaxFetchBytes)))
+		writeBody(t, w, []byte(strings.Repeat("a", MaxFetchBytes)))
 	}))
 	defer exact.Close()
 	if data, err := Fetch(context.Background(), exact.URL); err != nil || len(data) != MaxFetchBytes {

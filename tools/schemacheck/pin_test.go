@@ -78,26 +78,33 @@ func copyVendor(t *testing.T) string {
 	return dst
 }
 
+// pinnedFetcher serves the vendored bytes for every pinned URL, and for the file at changedPath
+// (when not empty) the same bytes plus a newline, as an upstream that moved by one byte.
+func pinnedFetcher(manifest *clientschema.Manifest, changedPath string) Fetcher {
+	return func(_ context.Context, url string) ([]byte, error) {
+		for _, source := range manifest.Sources {
+			for _, file := range source.Files {
+				if source.URL(file) != url {
+					continue
+				}
+				data, err := clientschema.Read(file)
+				if file.Path == changedPath {
+					data = append(data, '\n')
+				}
+				return data, err
+			}
+		}
+		return nil, errors.New("unexpected URL " + url)
+	}
+}
+
 // TestRefreshRewritesFilesAndDigests drives Refresh through a fake fetcher: a changed upstream
 // byte moves the file and its digest, and the manifest still parses.
 func TestRefreshRewritesFilesAndDigests(t *testing.T) {
 	dir := copyVendor(t)
 	manifest := loadManifest(t)
 	changed := manifest.Sources[0].Files[0]
-	fetch := func(_ context.Context, url string) ([]byte, error) {
-		for _, source := range manifest.Sources {
-			for _, file := range source.Files {
-				if source.URL(file) == url {
-					data, err := clientschema.Read(file)
-					if file.Path == changed.Path {
-						data = append(data, '\n')
-					}
-					return data, err
-				}
-			}
-		}
-		return nil, errors.New("unexpected URL " + url)
-	}
+	fetch := pinnedFetcher(manifest, changed.Path)
 	if err := Refresh(context.Background(), dir, fetch); err != nil {
 		t.Fatal(err)
 	}
@@ -157,21 +164,18 @@ func TestRefreshWritesNothingWhenOneFetchFails(t *testing.T) {
 func TestRefreshWithUnchangedUpstreamLeavesTheManifestByteIdentical(t *testing.T) {
 	dir := copyVendor(t)
 	manifest := loadManifest(t)
-	fetch := func(_ context.Context, url string) ([]byte, error) {
-		for _, source := range manifest.Sources {
-			for _, file := range source.Files {
-				if source.URL(file) == url {
-					return clientschema.Read(file)
-				}
-			}
-		}
-		return nil, errors.New("unexpected URL " + url)
-	}
+	fetch := pinnedFetcher(manifest, "")
 	if err := Refresh(context.Background(), dir, fetch); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.ReadFile(filepath.Join(vendorDir, clientschema.ManifestFile))
-	after, _ := os.ReadFile(filepath.Join(dir, clientschema.ManifestFile))
+	before, err := os.ReadFile(filepath.Join(vendorDir, clientschema.ManifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, clientschema.ManifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(before) != string(after) {
 		t.Fatal("an unchanged refresh rewrote the manifest")
 	}

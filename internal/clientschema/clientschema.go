@@ -156,17 +156,11 @@ func (m *Manifest) check() error {
 }
 
 func (s *Source) check() error {
-	if s.ID == "" || s.Client == "" || s.Kind == "" || s.Repo == "" || s.Pin == "" || s.Version == "" {
-		return errors.New("id, client, kind, repo, pin and version are required")
+	if err := s.checkIdentity(); err != nil {
+		return err
 	}
-	if s.License == "" || s.Copyright == "" || !strings.HasPrefix(s.URLBase, "https://") {
-		return errors.New("licence, copyright and an https URL base are required")
-	}
-	if !slices.Contains([]string{PinTag, PinCommit, PinHosted}, s.PinKind) {
-		return fmt.Errorf("unknown pin kind %q", s.PinKind)
-	}
-	if s.PinKind == PinCommit && (len(s.Pin) != 40 || s.Branch == "") {
-		return errors.New("a commit pin needs 40 hex digits and a branch")
+	if err := s.checkPin(); err != nil {
+		return err
 	}
 	if len(s.Files) == 0 || len(s.Files) > MaxFilesPerSource {
 		return errors.New("1..128 files required")
@@ -175,6 +169,28 @@ func (s *Source) check() error {
 		if err := file.check(); err != nil {
 			return fmt.Errorf("file %q: %w", file.Path, err)
 		}
+	}
+	return nil
+}
+
+func (s *Source) checkIdentity() error {
+	for _, text := range []string{s.ID, s.Client, s.Kind, s.Repo, s.Pin, s.Version} {
+		if text == "" {
+			return errors.New("id, client, kind, repo, pin and version are required")
+		}
+	}
+	if s.License == "" || s.Copyright == "" || !strings.HasPrefix(s.URLBase, "https://") {
+		return errors.New("licence, copyright and an https URL base are required")
+	}
+	return nil
+}
+
+func (s *Source) checkPin() error {
+	if !slices.Contains([]string{PinTag, PinCommit, PinHosted}, s.PinKind) {
+		return fmt.Errorf("unknown pin kind %q", s.PinKind)
+	}
+	if s.PinKind == PinCommit && (len(s.Pin) != 40 || s.Branch == "") {
+		return errors.New("a commit pin needs 40 hex digits and a branch")
 	}
 	return nil
 }

@@ -25,6 +25,7 @@ type Fetcher func(ctx context.Context, url string) ([]byte, error)
 // branch name every field the new schema no longer accepts.
 func Refresh(ctx context.Context, dir string, fetch Fetcher) error {
 	manifestPath := filepath.Join(dir, clientschema.ManifestFile)
+	// #nosec G304 -- dir is the vendor directory the caller names; the manifest name is fixed.
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("read manifest: %w", err)
@@ -49,7 +50,7 @@ func Refresh(ctx context.Context, dir string, fetch Fetcher) error {
 	}
 	for path, data := range fetched {
 		target := filepath.Join(dir, filepath.FromSlash(path))
-		if err := os.WriteFile(target, data, 0o644); err != nil {
+		if err := os.WriteFile(target, data, 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 	}
@@ -60,7 +61,7 @@ func Refresh(ctx context.Context, dir string, fetch Fetcher) error {
 	if err := encoder.Encode(manifest); err != nil {
 		return fmt.Errorf("encode manifest: %w", err)
 	}
-	if err := os.WriteFile(manifestPath, out.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(manifestPath, out.Bytes(), 0o600); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 	return nil

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"go/format"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -251,9 +252,9 @@ func enumDecl(name string, node map[string]any, values []string) string {
 }
 
 func (g *generator) structDecl(name string, node map[string]any) (string, error) {
-	properties := node["properties"].(map[string]any)
-	if len(properties) > maxFields {
-		return "", fmt.Errorf("more than %d properties", maxFields)
+	properties, ok := node["properties"].(map[string]any)
+	if !ok || len(properties) > maxFields {
+		return "", fmt.Errorf("no properties object, or more than %d properties", maxFields)
 	}
 	required := map[string]bool{}
 	if list, ok := node["required"].([]any); ok {
@@ -332,8 +333,8 @@ func (g *generator) expr(node map[string]any, hint string) (string, bool, error)
 			return prefix + name, nullable, err
 		}
 		if kind := typeOf(node); kind == "array" {
-			items, _ := node["items"].(map[string]any)
-			if items == nil {
+			items, isObject := node["items"].(map[string]any)
+			if !isObject {
 				return prefix + "[]json.RawMessage", nullable, nil
 			}
 			prefix += "[]"
@@ -432,20 +433,29 @@ func nullBranch(node map[string]any) (map[string]any, bool) {
 	if !ok || len(branches) != 2 {
 		return node, false
 	}
-	var other map[string]any
-	null := false
-	for _, branch := range branches {
-		entry, _ := branch.(map[string]any)
-		if entry["type"] == "null" {
-			null = true
-		} else {
-			other = entry
-		}
-	}
-	if null && other != nil {
+	if other, found := nonNullBranch(branches); found {
 		return other, true
 	}
 	return node, false
+}
+
+// nonNullBranch returns the one object branch of a two-branch anyOf whose other branch is the
+// null type.
+func nonNullBranch(branches []any) (map[string]any, bool) {
+	var other map[string]any
+	null := false
+	for _, branch := range branches {
+		entry, isObject := branch.(map[string]any)
+		switch {
+		case !isObject:
+			return nil, false
+		case entry["type"] == "null":
+			null = true
+		default:
+			other = entry
+		}
+	}
+	return other, null && other != nil
 }
 
 func goName(text string) string {
@@ -471,26 +481,33 @@ func goName(text string) string {
 }
 
 func quote(text string) string {
-	encoded, _ := json.Marshal(text)
-	return string(encoded)
+	return strconv.Quote(text)
 }
 
 func comment(name string, node map[string]any) string {
-	description, _ := node["description"].(string)
-	if description = oneLine(description); description != "" {
+	if description := oneLine(stringMember(node, "description")); description != "" {
 		return "// " + name + " is generated from the vendored schema: " + description + "\n"
 	}
 	return "// " + name + " is generated from the vendored schema.\n"
 }
 
 func trail(prop map[string]any) string {
-	if description, _ := prop["description"].(string); description != "" {
+	if description := stringMember(prop, "description"); description != "" {
 		return " // " + oneLine(description)
 	}
 	if constant, ok := prop["const"].(string); ok {
 		return " // always " + quote(constant)
 	}
 	return ""
+}
+
+// stringMember returns the string member key of node, or "" when it is absent or not a string.
+func stringMember(node map[string]any, key string) string {
+	text, ok := node[key].(string)
+	if !ok {
+		return ""
+	}
+	return text
 }
 
 // oneLine reduces a description to its first sentence on one line, bounded.

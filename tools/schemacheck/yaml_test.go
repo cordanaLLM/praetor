@@ -75,7 +75,11 @@ func TestReadYAMLAnchorsResolveAndBombsAreBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := value.(map[string]any)["use"]; !reflect.DeepEqual(got, map[string]any{"x": 1.0}) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("value %T", value)
+	}
+	if got := object["use"]; !reflect.DeepEqual(got, map[string]any{"x": 1.0}) {
 		t.Errorf("alias resolved to %#v", got)
 	}
 	var bomb strings.Builder

@@ -152,23 +152,24 @@ func Write(root string) error {
 	}
 	for _, target := range Targets() {
 		path := filepath.Join(root, filepath.FromSlash(target.Path))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 		}
-		if err := os.WriteFile(path, rendered[target.Path], 0o644); err != nil {
+		if err := os.WriteFile(path, rendered[target.Path], 0o600); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 	}
 	return nil
 }
 
-func readBounded(path string) ([]byte, error) {
+func readBounded(path string) (data []byte, err error) {
+	// #nosec G304 -- path joins the repository root the caller names with a fixed Targets path.
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxGeneratedBytes+1))
+	defer func() { err = errors.Join(err, file.Close()) }()
+	data, err = io.ReadAll(io.LimitReader(file, maxGeneratedBytes+1))
 	if err != nil {
 		return nil, err
 	}

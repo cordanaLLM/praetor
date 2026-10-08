@@ -28,13 +28,12 @@ var ErrOffline = errors.New("network unreachable")
 // repository: the caller validates against the fetched bytes and never commits them. A schema
 // published under a permissive licence is vendored instead (internal/clientschema).
 func Fetch(ctx context.Context, rawURL string) ([]byte, error) {
-	return fetchWith(ctx, http.DefaultClient, rawURL)
+	return fetchWith(ctx, &http.Client{Timeout: FetchTimeout}, rawURL)
 }
 
-func fetchWith(ctx context.Context, client *http.Client, rawURL string) ([]byte, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
-		return nil, fmt.Errorf("fetch %q: an http(s) URL with a host is required", rawURL)
+func fetchWith(ctx context.Context, client *http.Client, rawURL string) (data []byte, err error) {
+	if err = checkURL(rawURL); err != nil {
+		return nil, err
 	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
@@ -49,11 +48,11 @@ func fetchWith(ctx context.Context, client *http.Client, rawURL string) ([]byte,
 	if err != nil {
 		return nil, classify(rawURL, err)
 	}
-	defer response.Body.Close()
+	defer func() { err = errors.Join(err, response.Body.Close()) }()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch %s: HTTP %d", rawURL, response.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, MaxFetchBytes+1))
+	data, err = io.ReadAll(io.LimitReader(response.Body, MaxFetchBytes+1))
 	if err != nil {
 		return nil, classify(rawURL, err)
 	}
@@ -63,11 +62,19 @@ func fetchWith(ctx context.Context, client *http.Client, rawURL string) ([]byte,
 	return data, nil
 }
 
+func checkURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+		return fmt.Errorf("fetch %q: an http(s) URL with a host is required", rawURL)
+	}
+	return nil
+}
+
 func classify(rawURL string, err error) error {
 	var dns *net.DNSError
 	var op *net.OpError
 	if errors.As(err, &dns) || errors.As(err, &op) || errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("fetch %s: %w: %v", rawURL, ErrOffline, err)
+		return fmt.Errorf("fetch %s: %w: %w", rawURL, ErrOffline, err)
 	}
 	return fmt.Errorf("fetch %s: %w", rawURL, err)
 }

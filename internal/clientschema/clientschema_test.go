@@ -150,9 +150,10 @@ func TestLookups(t *testing.T) {
 	}
 }
 
-// TestRenovateTracksEveryPin matches each source's pin lines with the regex custom managers of
-// renovate.json, read with the duplicate-refusing reader, so a pin Renovate cannot see fails.
-func TestRenovateTracksEveryPin(t *testing.T) {
+// renovateExpressions reads renovate.json with the duplicate-refusing reader and returns the
+// regular expressions of the custom managers that watch the client schema manifest.
+func renovateExpressions(t *testing.T) []*regexp.Regexp {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +180,13 @@ func TestRenovateTracksEveryPin(t *testing.T) {
 			expressions = append(expressions, regexp.MustCompile(match))
 		}
 	}
+	return expressions
+}
+
+// TestRenovateTracksEveryPin matches each source's pin lines with the regex custom managers of
+// renovate.json, so a pin Renovate cannot see fails.
+func TestRenovateTracksEveryPin(t *testing.T) {
+	expressions := renovateExpressions(t)
 	if len(expressions) != 2 {
 		t.Fatalf("renovate.json has %d client schema expressions, want 2 (tag and commit)", len(expressions))
 	}

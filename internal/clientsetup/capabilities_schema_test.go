@@ -19,17 +19,22 @@ func TestCapabilitiesReportThePinnedSchemaPerClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, item := range report.Clients {
-		key, hasSchema := schemaClients[item.Client]
-		if !hasSchema {
-			if item.Schema.State != "none" || item.Schema.Reason == "" || item.Schema.Version != "" || len(item.Schema.Sources) != 0 {
-				t.Errorf("%s has no schema but reports %+v", item.Client, item.Schema)
-			}
-			continue
+		checkSchemaPin(t, manifest, item)
+	}
+}
+
+func checkSchemaPin(t *testing.T, manifest *clientschema.Manifest, item Capability) {
+	t.Helper()
+	key, hasSchema := schemaClients[item.Client]
+	if !hasSchema {
+		if item.Schema.State != "none" || item.Schema.Reason == "" || item.Schema.Version != "" || len(item.Schema.Sources) != 0 {
+			t.Errorf("%s has no schema but reports %+v", item.Client, item.Schema)
 		}
-		want := manifest.PinnedVersion(key)
-		if want == "" || item.Schema.State != "pinned" || item.Schema.Version != want || len(item.Schema.Sources) != len(manifest.ForClient(key)) {
-			t.Errorf("%s reports %+v, want version %q from the manifest", item.Client, item.Schema, want)
-		}
+		return
+	}
+	want := manifest.PinnedVersion(key)
+	if want == "" || item.Schema.State != "pinned" || item.Schema.Version != want || len(item.Schema.Sources) != len(manifest.ForClient(key)) {
+		t.Errorf("%s reports %+v, want version %q from the manifest", item.Client, item.Schema, want)
 	}
 }
 

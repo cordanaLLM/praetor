@@ -85,14 +85,6 @@ func TestCreditInventoryReadersBoundary(t *testing.T) {
 	if err != nil || len(items) != 0 {
 		t.Fatalf("go.mod: %v %v", inventoryIDs(items), err)
 	}
-	items, err = goModInventory("g", "module m\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/lib v1.0.0\n\texample.com/pinned v1.0.0\n)\n\nreplace example.com/self => ../..\n\nreplace (\n\texample.com/pinned v1.0.0 => example.com/fork v1.0.1\n)\n")
-	if err != nil || !slices.Equal(inventoryIDs(items), []string{"Go module example.com/lib", "Go module example.com/pinned"}) {
-		t.Fatalf("go.mod with replaces: %v %v, want only the local replacement skipped", inventoryIDs(items), err)
-	}
-	items, err = goModInventory("g", "module m\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/blk v0.0.0\n)\n\nreplace (\n\texample.com/blk => ./vendor/blk // local\n)\n")
-	if err != nil || !slices.Equal(inventoryIDs(items), []string{"Go module example.com/self"}) {
-		t.Fatalf("go.mod with a replace block: %v %v", inventoryIDs(items), err)
-	}
 	items, err = pypiInventory("r", "-r base.in\n\n# only options\n")
 	if err != nil || len(items) != 0 {
 		t.Fatalf("requirements.in: %v %v", inventoryIDs(items), err)
@@ -150,5 +142,20 @@ func TestReadCreditInventory(t *testing.T) {
 	cancel()
 	if _, err := ReadCreditInventory(ctx, root); err == nil {
 		t.Fatal("a cancelled context walked the repository")
+	}
+}
+
+// A requirement the same go.mod replaces with a local directory is this repository's own module,
+// not a third-party one; a replacement by another module, or none, leaves it listed.
+func TestGoModInventorySkipsLocalReplaces(t *testing.T) {
+	var items []InventoryItem
+	var err error
+	items, err = goModInventory("g", "module m\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/lib v1.0.0\n\texample.com/pinned v1.0.0\n)\n\nreplace example.com/self => ../..\n\nreplace (\n\texample.com/pinned v1.0.0 => example.com/fork v1.0.1\n)\n")
+	if err != nil || !slices.Equal(inventoryIDs(items), []string{"Go module example.com/lib", "Go module example.com/pinned"}) {
+		t.Fatalf("go.mod with replaces: %v %v, want only the local replacement skipped", inventoryIDs(items), err)
+	}
+	items, err = goModInventory("g", "module m\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/blk v0.0.0\n)\n\nreplace (\n\texample.com/blk => ./vendor/blk // local\n)\n")
+	if err != nil || !slices.Equal(inventoryIDs(items), []string{"Go module example.com/self"}) {
+		t.Fatalf("go.mod with a replace block: %v %v", inventoryIDs(items), err)
 	}
 }

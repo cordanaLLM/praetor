@@ -47,3 +47,25 @@ func ParseManifest(manifest []byte) Manifest {
 	}
 	return parsed
 }
+
+// LocalReplaces returns the module paths a whole go.mod replaces with a directory ("old =>
+// ../.."): a replacement that names no version. A requirement on such a module is the module of
+// the same checkout, not a third-party package, so the credits inventory and the needs scan skip
+// it (HISS-19: both read it here). A trailing comment is ignored and a leading byte-order mark
+// dropped; a versioned replacement ("old => fork v1.2.3") is not local.
+func LocalReplaces(manifest []byte) map[string]bool {
+	lines := strings.Split(string(TrimBOM(manifest)), "\n")
+	local := map[string]bool{}
+	inBlock := false
+	for i := 0; i < len(lines) && i < maxManifestLines; i++ {
+		line, replaced := ReplaceLine(lines[i], &inBlock)
+		if !replaced {
+			continue
+		}
+		code, _, _ := strings.Cut(line, "//")
+		if directive, ok := ParseReplaceDirective(code); ok && directive.NewVersion == "" {
+			local[directive.OldPath] = true
+		}
+	}
+	return local
+}

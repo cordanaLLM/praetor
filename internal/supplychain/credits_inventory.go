@@ -120,23 +120,6 @@ func inventoryReaders(rel string, listed map[string]bool) []inventoryReader {
 	return readers
 }
 
-// localReplaces returns the modules a go.mod replaces with a directory of the same checkout
-// ("old => ../.."): a requirement on one of them is this repository's own module, not a
-// third-party one, as a file: or workspace: npm dependency is not.
-func localReplaces(lines []string) map[string]bool {
-	local := map[string]bool{}
-	inBlock := false
-	for _, line := range lines {
-		if replace, replaced := gomanifest.ReplaceLine(line, &inBlock); replaced {
-			code, _, _ := strings.Cut(replace, "//")
-			if directive, ok := gomanifest.ParseReplaceDirective(code); ok && directive.NewVersion == "" {
-				local[directive.OldPath] = true
-			}
-		}
-	}
-	return local
-}
-
 // goModInventory lists every direct requirement and every tool directive of a go.mod, except a
 // requirement the same file replaces with a local directory.
 func goModInventory(rel, text string) ([]InventoryItem, error) {
@@ -144,7 +127,7 @@ func goModInventory(rel, text string) ([]InventoryItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", rel, err)
 	}
-	local := localReplaces(lines)
+	local := gomanifest.LocalReplaces([]byte(text))
 	var items []InventoryItem
 	inRequire, inTool := false, false
 	for _, line := range lines {
