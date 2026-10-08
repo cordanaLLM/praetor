@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: EUPL-1.2
 name: caveman
-description: Caveman form for internal agent traffic (briefs, agent returns, research fan-outs, workflow returns, tool-call notes). Fragments, one fact per line, code/paths/errors verbatim, nothing a reader pays for twice. The `internal` text register; forge text uses social-text, docs and human replies use full prose.
+description: Caveman form for internal agent traffic (briefs, agent returns, research fan-outs, workflow returns, tool-call notes). Fragments, one fact per line, code, paths, errors verbatim, nothing a reader pays for twice. The `internal` text register; forge text uses social-text, docs and human replies use full prose.
 metadata:
   derived_from: "https://github.com/JuliusBrussee/caveman (MIT)"
 ---
@@ -27,7 +27,7 @@ Caveman covers text another agent reads:
 - tool-call notes, progress lines between agents.
 
 Human-facing text keeps its own register: forge text (issues, PR bodies, review comments,
-commit bodies, changelog titles) -> `social-text`; `docs/`, READMEs, ADR bodies -> docs
+commit bodies, changelog titles) -> `social-text`; documentation tree (`docs`), READMEs, ADR bodies -> docs
 register; reply to human operator -> full prose.
 
 ## Rules
@@ -64,7 +64,7 @@ register; reply to human operator -> full prose.
 7. **Return shape** follows register block: verdict, changed paths, commands run, evidence
    pointers, open questions.
 8. **Evidence** follows register block, same wording: evidence above 58 lines or 1500
-   tokens -> file under `.workingdir/evidence/`; return
+   tokens -> file in the evidence directory the block names; return
    `evidence: <path> sha256:<12 hex> lines:<n>`, fetch only when decision needs it.
    Manifest may tighten both numbers; block in AGENTS.md prints values in force.
 
@@ -103,16 +103,16 @@ Real return from a praetor lane:
 Test return:
 
 <!-- caveman:off -->
-- Before: "I ran the tests for the internal/compiler package with the race detector and all
+- Before: "I ran the tests for the compiler package with the race detector and all
   of them passed. go vet did not report any issues. The only file I changed was
-  internal/compiler/register.go, where I added an error for a missing end marker."
+  register.go, where I added an error for a missing end marker."
 <!-- caveman:on -->
 - After:
 
   ```text
   verdict: pass
-  changed: internal/compiler/register.go (missing end marker -> error)
-  ran: go test -race -count=1 ./internal/compiler/ = pass; go vet = clean
+  changed: register.go (missing end marker -> error)
+  ran: go test -race -count=1, compiler package = pass; go vet = clean
   evidence: none
   open: none
   ```
@@ -121,7 +121,7 @@ Clarity floor in action:
 
 <!-- caveman:off -->
 - Before: "The dedupe scan reported two clones. Only one of them comes from this change; the
-  other one is in internal/milestone and was already present on main, so I left it alone."
+  other one is in the milestone package and was already present on main, so I left it alone."
 <!-- caveman:on -->
 - Too far: `dedupe: 2 clones.` Reader cannot tell whether change is blocked.
-- After: `dedupe scan: 2 clones. 1 new (this change), 1 pre-existing on main (internal/milestone), left as is.`
+- After: `dedupe scan: 2 clones. 1 new (this change), 1 pre-existing on main (milestone package), left as is.`

@@ -113,7 +113,7 @@ func agentSurfaceDigests(files []compiler.TargetFile) priorVendorProjections {
 // pendingSkills), so the preview names every copy the run projects and every hand edit it
 // replaces (#366).
 func projectAgentSurfaces(ctx context.Context, s *adoptSession, prior priorVendorProjections) error {
-	pending := compiler.PendingSources{Personas: s.pendingPersonas(), Skills: s.pendingSkills()}
+	pending := compiler.PendingSources{Personas: s.pendingPersonas(), Skills: s.pendingSkills(), Licenses: s.pendingLicenses()}
 	files, err := plannedAgentSurfaces(ctx, s.repoPath, pending)
 	if err != nil {
 		return err

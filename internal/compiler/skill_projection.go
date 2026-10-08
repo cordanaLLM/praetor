@@ -1,13 +1,11 @@
 package compiler
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -78,10 +76,16 @@ func skillDirNames(dir string, entries []os.DirEntry) ([]string, error) {
 // projections, the register block (AbsentRegisterSkills) and adoption, which reads the skills
 // it installs from a Praetor checkout, all read through it.
 func ReadCanonicalSkill(ctx context.Context, root, name string) ([]byte, bool, error) {
-	rel := CanonicalSkillRel(name)
+	return readSkillFile(ctx, root, CanonicalSkillRel(name), "skill "+name)
+}
+
+// readSkillFile is the one reader of a skill file, SKILL.md and LICENSE alike: it reads rel below
+// root without following a symlink at any component and reports whether the file exists. what
+// names the file in the error.
+func readSkillFile(ctx context.Context, root, rel, what string) ([]byte, bool, error) {
 	data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, filepath.FromSlash(rel))
 	if err != nil {
-		return nil, false, fmt.Errorf("read canonical skill %s: %w", name, err)
+		return nil, false, fmt.Errorf("read canonical %s: %w", what, err)
 	}
 	return data, exists, nil
 }
@@ -110,282 +114,54 @@ func CanonicalSkillRel(name string) string {
 	return SkillEntryRel(CanonicalSkillsRel, name)
 }
 
-// SkillNoticeName is the notice file name where an upstream license requires notices to travel
-// with copies.
-const SkillNoticeName = "NOTICE"
+// SkillLicenseName is the file name of the upstream licence text that travels beside a derived
+// skill. The name is the one REUSE tooling and licence scanners read as a licence file, so the
+// MIT text needs no header of its own in an adopter repository.
+const SkillLicenseName = "LICENSE"
 
-// SkillNoticeRel is the declared slash path of one skill's NOTICE file below dir.
-func SkillNoticeRel(dir, name string) string {
-	return dir + "/" + name + "/" + SkillNoticeName
+// SkillLicenseRel is the declared slash path of one skill's LICENSE file below dir.
+func SkillLicenseRel(dir, name string) string {
+	return dir + "/" + name + "/" + SkillLicenseName
 }
 
-// CanonicalSkillNoticeRel is the declared slash path of the NOTICE file of skill name under
+// CanonicalSkillLicenseRel is the declared slash path of the LICENSE file of skill name under
 // CanonicalSkillsRel.
-func CanonicalSkillNoticeRel(name string) string {
-	return SkillNoticeRel(CanonicalSkillsRel, name)
+func CanonicalSkillLicenseRel(name string) string {
+	return SkillLicenseRel(CanonicalSkillsRel, name)
 }
 
-// ReadCanonicalSkillNotice reads the NOTICE file of skill name under .agents/skills below root
-// without following a symlink at any component, and reports whether it exists.
-func ReadCanonicalSkillNotice(ctx context.Context, root, name string) ([]byte, bool, error) {
-	rel := CanonicalSkillNoticeRel(name)
-	data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, filepath.FromSlash(rel))
-	if err != nil {
-		return nil, false, fmt.Errorf("read canonical skill notice %s: %w", name, err)
-	}
-	return data, exists, nil
+// ReadCanonicalSkillLicense reads the LICENSE file of skill name under .agents/skills below root
+// through readSkillFile, and reports whether it exists.
+func ReadCanonicalSkillLicense(ctx context.Context, root, name string) ([]byte, bool, error) {
+	return readSkillFile(ctx, root, CanonicalSkillLicenseRel(name), "skill licence "+name)
 }
 
-// SkillRequiresNotice reports whether data indicates an upstream license (such as MIT)
-// that requires its copyright and permission notice to travel with copies.
-func SkillRequiresNotice(data []byte) bool {
-	return bytes.Contains(data, []byte("MIT")) || bytes.Contains(data, []byte("Apache-2.0")) || bytes.Contains(data, []byte("BSD-3-Clause"))
-}
+// licenseFileLicenses are the SPDX identifiers whose terms require the licence text to travel
+// with copies of the work.
+var licenseFileLicenses = []string{"MIT", "ISC", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0"}
 
-var (
-	skillMarkdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)]+)\)`)
-	skillMarkdownRefRe  = regexp.MustCompile(`(?m)^\[[^\]]+\]:\s*(\S+)`)
-	skillHtmlLinkRe     = regexp.MustCompile(`(?i)<a\s+[^>]*href=["']([^"']+)["']`)
-	skillCodeSpanRe     = regexp.MustCompile("`([^`\r\n]+)`")
-	skillPlainPathRe    = regexp.MustCompile(`(?:^|[\s(])((?:[a-zA-Z0-9_.-]+/)+[a-zA-Z0-9_.-]+(?:\.[a-zA-Z0-9]+)?|docs/\S+)(?:[\s),;:]|$)`)
-)
+// errSkillLicenseUndeclared refuses a skill that names an upstream without the licence it took.
+var errSkillLicenseUndeclared = errors.New("metadata.derived_from names no licence in trailing parentheses")
 
-// CheckShippedSkillReferences refuses a shipped skill text referencing a repository-relative path
-// that the adopter does not receive. It protects by default, allowing only absolute URLs, paths
-// inside the shipped skill set (the skill's own directory or sibling shipped skills), and paths
-// that Praetor adoption writes in adopter repositories.
-func CheckShippedSkillReferences(skillName string, data []byte) error {
-	if err := checkMarkdownLinks(skillName, data); err != nil {
-		return err
+// SkillRequiresLicense reports whether the skill text in data declares an upstream
+// (metadata.derived_from, AssetDerivedFrom) under a licence that requires its text to travel
+// with copies (licenseFileLicenses). A skill that declares no upstream needs none; one that
+// declares an upstream without a licence is an error, never a skill that needs nothing.
+func SkillRequiresLicense(data []byte) (bool, error) {
+	derived, err := AssetDerivedFrom(data)
+	if err != nil || derived == "" {
+		return false, err
 	}
-	if err := checkReferenceDefs(skillName, data); err != nil {
-		return err
+	open, end := strings.LastIndex(derived, "("), strings.LastIndex(derived, ")")
+	if open < 0 || end < open {
+		return false, fmt.Errorf("%w: %q", errSkillLicenseUndeclared, derived)
 	}
-	if err := checkHtmlLinks(skillName, data); err != nil {
-		return err
-	}
-	if err := checkCodeSpans(skillName, data); err != nil {
-		return err
-	}
-	return checkPlainTextPaths(skillName, data)
-}
-
-func checkMarkdownLinks(skillName string, data []byte) error {
-	links := skillMarkdownLinkRe.FindAllSubmatch(data, -1)
-	for i := 0; i < len(links) && i < maxSkillProjections; i++ {
-		raw := strings.TrimSpace(string(links[i][1]))
-		raw = strings.TrimPrefix(raw, "<")
-		raw = strings.TrimSuffix(raw, ">")
-		target := strings.TrimSpace(raw)
-		if idx := strings.IndexAny(target, " \t\r\n"); idx != -1 {
-			target = strings.TrimSpace(target[:idx])
-		}
-		if err := validateSkillReferenceTarget(skillName, target); err != nil {
-			return err
+	for _, word := range strings.Fields(derived[open+1 : end]) {
+		if slices.Contains(licenseFileLicenses, word) {
+			return true, nil
 		}
 	}
-	return nil
-}
-
-func checkReferenceDefs(skillName string, data []byte) error {
-	refs := skillMarkdownRefRe.FindAllSubmatch(data, -1)
-	for i := 0; i < len(refs) && i < maxSkillProjections; i++ {
-		raw := strings.TrimSpace(string(refs[i][1]))
-		raw = strings.TrimPrefix(raw, "<")
-		raw = strings.TrimSuffix(raw, ">")
-		if err := validateSkillReferenceTarget(skillName, strings.TrimSpace(raw)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkHtmlLinks(skillName string, data []byte) error {
-	matches := skillHtmlLinkRe.FindAllSubmatch(data, -1)
-	for i := 0; i < len(matches) && i < maxSkillProjections; i++ {
-		target := strings.TrimSpace(string(matches[i][1]))
-		if err := validateSkillReferenceTarget(skillName, target); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func checkCodeSpans(skillName string, data []byte) error {
-	matches := skillCodeSpanRe.FindAllSubmatch(data, -1)
-	for i := 0; i < len(matches) && i < maxSkillProjections; i++ {
-		fields := strings.Fields(string(matches[i][1]))
-		for j := 0; j < len(fields) && j < maxSkillProjections; j++ {
-			tok := strings.Trim(fields[j], "(),;\"'")
-			if !isPathCandidate(tok) {
-				continue
-			}
-			if err := validateSkillReferenceTarget(skillName, tok); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func checkPlainTextPaths(skillName string, data []byte) error {
-	matches := skillPlainPathRe.FindAllSubmatch(data, -1)
-	for i := 0; i < len(matches) && i < maxSkillProjections; i++ {
-		tok := strings.Trim(string(matches[i][1]), "(),;\"'")
-		if !isPathCandidate(tok) {
-			continue
-		}
-		if err := validateSkillReferenceTarget(skillName, tok); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func hasRelativeOrDirPrefix(tok string) bool {
-	return strings.HasPrefix(tok, "./") || strings.HasPrefix(tok, "../") || strings.HasPrefix(tok, "/")
-}
-
-var knownCandidatePrefixes = []string{
-	"docs/", "internal/", ".github/", ".config/", "changelog.d/", ".workingdir/",
-}
-
-func hasKnownCandidatePrefix(tok string) bool {
-	for _, p := range knownCandidatePrefixes {
-		if strings.HasPrefix(tok, p) {
-			return true
-		}
-	}
-	return false
-}
-
-var candidateExtensions = []string{
-	".md", ".yaml", ".yml", ".json", ".toml", ".go", ".py", ".sh", ".txt",
-}
-
-func hasCandidateExtension(tok string) bool {
-	for _, ext := range candidateExtensions {
-		if strings.HasSuffix(tok, ext) {
-			return true
-		}
-	}
-	return false
-}
-
-func isCandidateFileToken(tok string) bool {
-	switch tok {
-	case SkillNoticeName, SkillEntryName, "AGENTS.md", ".standards.yaml", "CHANGELOG.md", ".standards-receipt.json":
-		return true
-	default:
-		return false
-	}
-}
-
-func isPathCandidate(tok string) bool {
-	if isExternalOrAnchorTarget(tok) {
-		return false
-	}
-	if hasRelativeOrDirPrefix(tok) || hasKnownCandidatePrefix(tok) || strings.HasSuffix(tok, "/") {
-		return true
-	}
-	return isCandidateFileToken(tok) || hasCandidateExtension(tok)
-}
-
-func isExternalOrAnchorTarget(target string) bool {
-	if target == "" || strings.HasPrefix(target, "#") {
-		return true
-	}
-	for _, scheme := range []string{"https://", "http://", "mailto:", "git://"} {
-		if strings.HasPrefix(target, scheme) {
-			return true
-		}
-	}
-	return strings.HasPrefix(target, "github.com/")
-}
-
-func isSiblingSkillTarget(clean string) bool {
-	bundle := config.RegisterSkillBundle()
-	for i := 0; i < len(bundle) && i < maxSkillProjections; i++ {
-		sibling := bundle[i]
-		if clean == "../"+sibling || clean == "../"+sibling+"/" ||
-			clean == "../"+sibling+"/"+SkillEntryName || clean == "../"+sibling+"/"+SkillNoticeName {
-			return true
-		}
-	}
-	return false
-}
-
-func isAllowedLocalTarget(clean string) bool {
-	if strings.HasPrefix(clean, "../") || clean == ".." || strings.HasPrefix(clean, "/") {
-		return false
-	}
-	return clean == SkillNoticeName || clean == SkillEntryName
-}
-
-func isStandardAdoptedTarget(target string) bool {
-	switch target {
-	case "AGENTS.md", ".standards.yaml", "CHANGELOG.md", ".standards-receipt.json",
-		".paperclip/harness.json", "Makefile", "changelog.d", "docs", "docs/",
-		CanonicalSkillsRel, ".claude/skills":
-		return true
-	default:
-		return false
-	}
-}
-
-func isAdoptedSkillTarget(target string) bool {
-	bundle := config.RegisterSkillBundle()
-	for i := 0; i < len(bundle) && i < maxSkillProjections; i++ {
-		sibling := bundle[i]
-		switch target {
-		case CanonicalSkillRel(sibling), CanonicalSkillNoticeRel(sibling),
-			SkillEntryRel(".claude/skills", sibling), SkillNoticeRel(".claude/skills", sibling),
-			CanonicalSkillsRel + "/" + sibling, ".claude/skills/" + sibling:
-			return true
-		}
-	}
-	return false
-}
-
-var adoptedDirPrefixes = []string{
-	".github/", ".config/lefthook/", "changelog.d/", ".workingdir/", "internal/",
-}
-
-func isAdoptedDirectoryTarget(target string) bool {
-	for _, p := range adoptedDirPrefixes {
-		if strings.HasPrefix(target, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func isAllowedAdoptedRepoPath(clean string) bool {
-	target := clean
-	if idx := strings.Index(target, ":"); idx != -1 {
-		target = target[:idx]
-	}
-	target = strings.TrimPrefix(target, "./")
-	if isStandardAdoptedTarget(target) {
-		return true
-	}
-	if isAdoptedSkillTarget(target) {
-		return true
-	}
-	return isAdoptedDirectoryTarget(target)
-}
-
-// validateSkillReferenceTarget validates one link target from a shipped skill text.
-func validateSkillReferenceTarget(skillName, target string) error {
-	target = strings.TrimSpace(target)
-	if isExternalOrAnchorTarget(target) {
-		return nil
-	}
-	clean := filepath.ToSlash(filepath.Clean(target))
-	if isSiblingSkillTarget(clean) || isAllowedLocalTarget(clean) || isAllowedAdoptedRepoPath(clean) {
-		return nil
-	}
-	return fmt.Errorf("skill %s references repository path %q, which an adopter does not receive", skillName, target)
+	return false, nil
 }
 
 // pluginSkillProjections reads every canonical skill once (readCanonicalSkill) and returns its
@@ -398,13 +174,20 @@ func pluginSkillProjections(ctx context.Context, rootDir string) ([]projectionFi
 	if err != nil {
 		return nil, err
 	}
-	files := make([]projectionFile, 0, len(names))
+	files := make([]projectionFile, 0, len(names)*2)
 	for i := 0; i < len(names); i++ {
 		data, err := readCanonicalSkill(ctx, rootDir, names[i])
 		if err != nil {
 			return nil, err
 		}
 		files = append(files, projectionFile{rel: SkillEntryRel(PluginSkillsRel, names[i]), data: data})
+		license, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, names[i])
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			files = append(files, projectionFile{rel: SkillLicenseRel(PluginSkillsRel, names[i]), data: license})
+		}
 	}
 	return files, nil
 }
@@ -423,16 +206,29 @@ func VerifyPluginSkills(ctx context.Context, rootDir string) (int, error) {
 	}
 	verified := 0
 	for i := 0; i < len(names); i++ {
-		want, err := readCanonicalSkill(ctx, rootDir, names[i])
-		if err != nil {
-			return verified, err
-		}
-		if err := verifyProjection(ctx, rootDir, SkillEntryRel(PluginSkillsRel, names[i]), want); err != nil {
+		if err := verifyPluginSkill(ctx, rootDir, names[i]); err != nil {
 			return verified, err
 		}
 		verified++
 	}
 	return verified, rejectOrphanSkills(ctx, rootDir, names)
+}
+
+// verifyPluginSkill checks the plugin copy of one canonical skill: its SKILL.md and, when the
+// canonical skill carries one, its LICENSE.
+func verifyPluginSkill(ctx context.Context, rootDir, name string) error {
+	want, err := readCanonicalSkill(ctx, rootDir, name)
+	if err != nil {
+		return err
+	}
+	if err := verifyProjection(ctx, rootDir, SkillEntryRel(PluginSkillsRel, name), want); err != nil {
+		return err
+	}
+	license, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, name)
+	if err != nil || !exists {
+		return err
+	}
+	return verifyProjection(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, name), license)
 }
 
 // rejectOrphanSkills fails when the plugin ships a skill the repository does not declare.
@@ -463,15 +259,18 @@ func rejectOrphanSkills(ctx context.Context, rootDir string, names []string) err
 // are not projected, and a skill directory may hold skills of its own: the projection names no
 // orphan there.
 
-// clientSkillProjections returns the copy of every bundle skill in each of dirs: the bundle skills
-// the repository carries, and those in pending, the bundle skills a caller writes before it
-// projects, with their pending bytes (PlanAgentSurfacesOver). A pending name that is no bundle
-// skill is refused. It writes nothing.
-func clientSkillProjections(ctx context.Context, rootDir string, dirs []string, pending map[string][]byte) ([]projectionFile, error) {
+// clientSkillProjections returns the copy of every bundle skill in each of dirs, SKILL.md and
+// LICENSE: the bundle skills the repository carries, and those in pending, the bundle skills a
+// caller writes before it projects, with their pending bytes (PlanAgentSurfacesOver). A pending
+// name that is no bundle skill is refused. A skill without a LICENSE projects none. It writes
+// nothing.
+func clientSkillProjections(ctx context.Context, rootDir string, dirs []string, pending PendingSources) ([]projectionFile, error) {
 	names := config.RegisterSkillBundle()
-	for name := range pending {
-		if !slices.Contains(names, name) {
-			return nil, fmt.Errorf("pending skill %q is not one Praetor ships (%s)", name, strings.Join(names, ", "))
+	for _, set := range []map[string][]byte{pending.Skills, pending.Licenses} {
+		for name := range set {
+			if !slices.Contains(names, name) {
+				return nil, fmt.Errorf("pending skill %q is not one Praetor ships (%s)", name, strings.Join(names, ", "))
+			}
 		}
 	}
 	if len(dirs) == 0 {
@@ -479,25 +278,44 @@ func clientSkillProjections(ctx context.Context, rootDir string, dirs []string, 
 	}
 	var files []projectionFile
 	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
-		data, present, err := bundleSkillText(ctx, rootDir, names[i], pending)
+		copies, err := bundleSkillCopies(ctx, rootDir, names[i], dirs, pending)
 		if err != nil {
 			return nil, err
 		}
-		for j := 0; present && j < len(dirs); j++ {
-			files = append(files, projectionFile{rel: SkillEntryRel(dirs[j], names[i]), data: data})
+		files = append(files, copies...)
+	}
+	return files, nil
+}
+
+// bundleSkillCopies returns the copies of the bundle skill name in dirs, as the caller leaves the
+// repository: the SKILL.md and LICENSE bytes in pending when they are there, otherwise what
+// .agents/skills holds (ReadCanonicalSkill, ReadCanonicalSkillLicense). A file neither has is
+// not copied.
+func bundleSkillCopies(ctx context.Context, rootDir, name string, dirs []string, pending PendingSources) ([]projectionFile, error) {
+	text, present, err := pendingOr(pending.Skills, name, func() ([]byte, bool, error) { return ReadCanonicalSkill(ctx, rootDir, name) })
+	if err != nil || !present {
+		return nil, err
+	}
+	license, hasLicense, err := pendingOr(pending.Licenses, name, func() ([]byte, bool, error) { return ReadCanonicalSkillLicense(ctx, rootDir, name) })
+	if err != nil {
+		return nil, err
+	}
+	files := make([]projectionFile, 0, 2*len(dirs))
+	for j := 0; j < len(dirs) && j < maxSkillProjections; j++ {
+		files = append(files, projectionFile{rel: SkillEntryRel(dirs[j], name), data: text})
+		if hasLicense {
+			files = append(files, projectionFile{rel: SkillLicenseRel(dirs[j], name), data: license})
 		}
 	}
 	return files, nil
 }
 
-// bundleSkillText returns the SKILL.md of the bundle skill name as the caller leaves the
-// repository: its bytes in pending when it is there, otherwise what .agents/skills holds
-// (ReadCanonicalSkill), and whether either has it.
-func bundleSkillText(ctx context.Context, rootDir, name string, pending map[string][]byte) ([]byte, bool, error) {
+// pendingOr returns the bytes pending holds for name, or what read returns when it holds none.
+func pendingOr(pending map[string][]byte, name string, read func() ([]byte, bool, error)) ([]byte, bool, error) {
 	if data, ok := pending[name]; ok {
 		return data, true, nil
 	}
-	return ReadCanonicalSkill(ctx, rootDir, name)
+	return read()
 }
 
 // VerifyClientSkills checks that every bundle skill the repository carries has its copy in the
@@ -509,7 +327,7 @@ func VerifyClientSkills(ctx context.Context, rootDir string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	files, err := clientSkillProjections(ctx, rootDir, dirs, nil)
+	files, err := clientSkillProjections(ctx, rootDir, dirs, PendingSources{})
 	if err != nil {
 		return 0, err
 	}

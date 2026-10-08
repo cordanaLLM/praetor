@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
-	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -74,16 +73,10 @@ func LintCanonicalSkillFiles(ctx context.Context, rootDir string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	shippedBundle := config.RegisterSkillBundle()
 	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
 		data, err := readCanonicalSkill(ctx, rootDir, names[i])
 		if err != nil {
 			return 0, err
-		}
-		if slices.Contains(shippedBundle, names[i]) {
-			if err := CheckShippedSkillReferences(names[i], data); err != nil {
-				return 0, err
-			}
 		}
 		label := filepath.Join(CanonicalSkillsRel, names[i], SkillEntryName)
 		if _, err := LintAgentText(label, string(data)); err != nil {
