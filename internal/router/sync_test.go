@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -163,7 +164,7 @@ func TestSyncCatalogPruneRemovesUnownedEntriesOnlyWhenAsked(t *testing.T) {
 		"lightweight": {Models: []ModelDescriptor{
 			syncModel("qwen2.5-coder:7b", SourceLocal),
 			syncModel("hand-added", SourceOperator),
-			syncModel("retired-seed-preview", SourceSeed),
+			syncModel("retired-seed-model", SourceSeed),
 		}},
 	})
 	path := writeSyncCatalog(t, fixture)
@@ -174,7 +175,7 @@ func TestSyncCatalogPruneRemovesUnownedEntriesOnlyWhenAsked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(result.Removed, []string{"retired-seed-preview"}) {
+	if !reflect.DeepEqual(result.Removed, []string{"retired-seed-model"}) {
 		t.Fatalf("prune result %+v", result)
 	}
 	cfg := loadSynced(t, path)
@@ -188,11 +189,11 @@ func TestSyncCatalogPruneRemovesUnownedEntriesOnlyWhenAsked(t *testing.T) {
 
 func TestSyncCatalogRefusesRemovalWithoutPrune(t *testing.T) {
 	path := writeSyncCatalog(t, syncFixture(map[string]Tier{
-		"nano": {Models: []ModelDescriptor{syncModel("retired-seed-preview", SourceSeed), syncModel("qwen2.5:0.5b", SourceLocal)}},
+		"nano": {Models: []ModelDescriptor{syncModel("retired-seed-model", SourceSeed), syncModel("qwen2.5:0.5b", SourceLocal)}},
 	}))
 	requireRefused(t, path, SyncOptions{}, nil, ErrSyncWouldRemove)
 	result, err := syncCatalog(context.Background(), path, SyncOptions{Prune: true, DiscoverLocal: true}, nil)
-	if err != nil || !reflect.DeepEqual(result.Removed, []string{"retired-seed-preview"}) {
+	if err != nil || !reflect.DeepEqual(result.Removed, []string{"retired-seed-model"}) {
 		t.Fatalf("prune without endpoints: result=%+v err=%v", result, err)
 	}
 	cfg := loadSynced(t, path)
@@ -435,5 +436,36 @@ func TestSyncPruneRemovesOnlyFlaggedSeedEntries(t *testing.T) {
 	}
 	if _, _, ok := findSynced(cfg, "hand-entry"); !ok {
 		t.Fatal("prune dropped hand entry")
+	}
+}
+
+func TestSyncCatalogRefreshesDiscoveredLocalAsOfDate(t *testing.T) {
+	day1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	day212 := day1.AddDate(0, 0, 212)
+	discovered := []ModelDescriptor{syncModel("qwen3:8b", SourceLocal)}
+	path := writeSyncCatalog(t, syncFixture(map[string]Tier{"nano": {TargetTasks: []string{"implement"}}}))
+	opts1 := discoverOpts
+	opts1.Now = day1
+	if _, err := syncCatalog(context.Background(), path, opts1, stubDiscovery(discovered...)); err != nil {
+		t.Fatal(err)
+	}
+	cfg := loadSynced(t, path)
+	_, model, ok := findSynced(cfg, "qwen3:8b")
+	if !ok || model.AsOf != "2026-01-01" {
+		t.Fatalf("first discovery: ok=%v model=%+v", ok, model)
+	}
+	opts2 := discoverOpts
+	opts2.Now = day212
+	if _, err := syncCatalog(context.Background(), path, opts2, stubDiscovery(discovered...)); err != nil {
+		t.Fatal(err)
+	}
+	cfg = loadSynced(t, path)
+	_, model, ok = findSynced(cfg, "qwen3:8b")
+	if !ok || model.AsOf != day212.Format(time.DateOnly) {
+		t.Fatalf("rediscovery as_of = %q, want %q", model.AsOf, day212.Format(time.DateOnly))
+	}
+	findings := CatalogFindings(cfg, day212)
+	if len(findings) != 0 {
+		t.Fatalf("rediscovered model aged out: %v", findings)
 	}
 }

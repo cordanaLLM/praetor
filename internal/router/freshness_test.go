@@ -186,3 +186,21 @@ func TestEntryFindingsIgnoresSeedSourceAsOf(t *testing.T) {
 		t.Fatalf("a seed preview entry must still be flagged: %v", got)
 	}
 }
+
+func TestCatalogFindingsReportsRetiredSeedEntry(t *testing.T) {
+	cfg := &RoutingConfig{
+		Version: 1,
+		Tiers: map[string]Tier{
+			"work": {
+				TargetTasks: []string{"implement"},
+				Models: []ModelDescriptor{
+					{ID: "retired-seed-model", Source: SourceSeed, CostRatesDeclared: true, CostPerMIn: 1, CostPerMOut: 1},
+				},
+			},
+		},
+	}
+	findings := CatalogFindings(cfg, freshnessNow)
+	if len(findings) != 1 || findings[0].Model != "retired-seed-model" || findings[0].Reason != "retired seed entry" {
+		t.Fatalf("want retired seed entry finding, got: %v", findings)
+	}
+}

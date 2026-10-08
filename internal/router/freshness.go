@@ -37,16 +37,21 @@ func IsPreviewModel(model ModelDescriptor) bool {
 	return model.Preview || strings.Contains(strings.ToLower(model.ID), "preview")
 }
 
-// CatalogFindings lists, sorted by model ID, the entries that are marked preview or whose
-// as_of date is older than the freshness window at now. An entry without an as_of date, and an
-// entry owned by the seed list, is not judged on age: nothing says when its data was written. The result is empty for a fresh
+// CatalogFindings lists, sorted by model ID, the entries that are marked preview,
+// retired from the seed list, or whose as_of date is older than the freshness
+// window at now. An entry without an as_of date, and an entry owned by the seed list,
+// is not judged on age: nothing says when its data was written. The result is empty for a fresh
 // catalog, never nil-versus-empty significant.
 func CatalogFindings(cfg *RoutingConfig, now time.Time) []CatalogFinding {
 	window := CatalogMaxAge(cfg)
 	findings := make([]CatalogFinding, 0)
 	for _, tier := range cfg.Tiers {
 		for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
-			findings = append(findings, entryFindings(tier.Models[i], now, window)...)
+			model := tier.Models[i]
+			if model.Source == SourceSeed && !isSeedModel(model.ID) {
+				findings = append(findings, CatalogFinding{Model: model.ID, Reason: "retired seed entry"})
+			}
+			findings = append(findings, entryFindings(model, now, window)...)
 		}
 	}
 	slices.SortFunc(findings, func(a, b CatalogFinding) int {

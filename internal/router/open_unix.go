@@ -14,6 +14,6 @@ func openRoutingInput(path string) (*os.File, error) {
 }
 
 func openOutcomeAppend(path string) (*os.File, error) {
-	// #nosec G304 -- path is the operator's own outcome log location; opened with O_NOFOLLOW to avoid symlink traversal.
-	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600)
+	// #nosec G304 -- path is the operator's own outcome log location; opened with O_NOFOLLOW to avoid symlink traversal and O_NONBLOCK to prevent FIFO hangs.
+	return os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0o600)
 }

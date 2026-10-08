@@ -60,7 +60,7 @@ func auditRemedy(cfg *router.RoutingConfig, findings []router.CatalogFinding) st
 		parts = append(parts, "refresh (as_of) or remove by hand: "+strings.Join(handOrAlias, ", "))
 	}
 	if hasSeed {
-		parts = append(parts, "retired seed entries leave with praetorctl models sync --prune, or by hand")
+		parts = append(parts, "retired seed entries leave with praetorctl models sync --prune --discover-local=false, or by hand")
 	}
 	if len(parts) == 0 {
 		return "delete or replace the entries it reports"

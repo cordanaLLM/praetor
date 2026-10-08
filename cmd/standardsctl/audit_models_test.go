@@ -94,6 +94,17 @@ func TestAuditModelCatalogFailsOnUnloadableCatalog(t *testing.T) {
 	}
 }
 
+func TestAuditModelCatalogRemedyNamesOfflinePruneForRetiredSeed(t *testing.T) {
+	root := writeAuditCatalog(t, auditModelEntry("retired-seed-model", `, source: "seed"`))
+	out, err := runModelCatalogAudit(t, root)
+	if err == nil {
+		t.Fatal("retired seed entry must fail the audit")
+	}
+	if !strings.Contains(err.Error(), "retired seed entries leave with praetorctl models sync --prune --discover-local=false, or by hand") {
+		t.Fatalf("unexpected remedy in error: %v (stdout: %q)", err, out)
+	}
+}
+
 func TestModelsSyncCLIReportsPreviewEntryAndSkipsProbeWhenAsked(t *testing.T) {
 	root := writeAuditCatalog(t, auditModelEntry("kept-preview", ", preview: true"))
 	path := filepath.Join(root, filepath.FromSlash(router.DefaultConfigPath))
