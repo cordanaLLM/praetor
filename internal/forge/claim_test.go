@@ -481,6 +481,83 @@ func TestClaim_Negative_InterleavedClaimersOnStaleCommentExactlyOneHolds(t *test
 	requireWinnerAndLoser(t, resA, errA, resB, errB)
 }
 
+func requireClaimHeldBy(t *testing.T, err error, session string) {
+	t.Helper()
+	var held *forge.ClaimHeldError
+	if !errors.As(err, &held) || held.Holder.Session != session {
+		t.Fatalf("expected claim held by %s, got: %v", session, err)
+	}
+}
+
+func requireLiveClaim(t *testing.T, d *forge.ClaimDesk, session string) {
+	t.Helper()
+	live, err := d.LiveClaim(context.Background(), testRef())
+	if err != nil || live == nil || live.Session != session {
+		t.Fatalf("LiveClaim must be %s, got: %+v %v", session, live, err)
+	}
+}
+
+func TestClaim_Negative_StaleHolderEditRacingTakeover_TakeoverWins(t *testing.T) {
+	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+	d := newTestDesk(f, clock)
+	f.Seed(t, claimAt("session-S", claimEpoch.Add(-8*time.Hour)), "OWNER")
+
+	f.AfterList = func(fake *forgetest.ClaimFake, call int) {
+		if call == 1 {
+			fake.AfterList = nil
+			resB, errB := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
+				Session: "session-B", Lane: "agy", Branch: "feat/b",
+			})
+			if errB != nil || resB.Action != "took-over" {
+				t.Fatalf("takeover by session-B failed: %+v %v", resB, errB)
+			}
+		}
+	}
+
+	resS, errS := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
+		Session: "session-S", Lane: "agy", Branch: "feat/s",
+	})
+	if errS == nil {
+		t.Fatalf("session-S resume must be refused, got success: %+v", resS)
+	}
+	requireClaimHeldBy(t, errS, "session-B")
+	requireLiveClaim(t, d, "session-B")
+
+	statusRes, err := d.Status(context.Background(), testRef(), forge.StatusRequest{
+		Session: "session-B", Stage: "implementing",
+	})
+	if err != nil || statusRes.Claim.Stage != "implementing" {
+		t.Fatalf("session-B next status must succeed: %+v %v", statusRes, err)
+	}
+}
+
+func TestClaim_Negative_StaleHolderEditRacingTakeover_ResumeWins(t *testing.T) {
+	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+	d := newTestDesk(f, clock)
+	f.Seed(t, claimAt("session-S", claimEpoch.Add(-8*time.Hour)), "OWNER")
+
+	f.AfterList = func(fake *forgetest.ClaimFake, call int) {
+		if call == 1 {
+			fake.AfterList = nil
+			resS, errS := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
+				Session: "session-S", Lane: "agy", Branch: "feat/s",
+			})
+			if errS != nil || resS.Action != "resumed" {
+				t.Fatalf("resume by session-S failed: %+v %v", resS, errS)
+			}
+		}
+	}
+
+	resB, errB := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
+		Session: "session-B", Lane: "agy", Branch: "feat/b",
+	})
+	if errB == nil {
+		t.Fatalf("session-B takeover must be refused, got success: %+v", resB)
+	}
+	requireClaimHeldBy(t, errB, "session-S")
+	requireLiveClaim(t, d, "session-S")
+}
+
 func TestClaim_Negative_TakeoverConfirmHoldFailureClearsLabels(t *testing.T) {
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
 	d := newTestDesk(f, clock)
@@ -562,36 +639,45 @@ func TestClaim_Negative_AbandonedClaimLeavesNoStatusLabel(t *testing.T) {
 	}
 }
 
+func assertResumeFailureLeavesClaimLive(t *testing.T, setup func(f *forgetest.ClaimFake)) {
+	t.Helper()
+	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+	d := newTestDesk(f, clock)
+	mustClaim(t, d, "s1")
+	clock.now = claimEpoch.Add(time.Hour)
+	setup(f)
+	if _, err := d.Claim(context.Background(), testRef(), forge.ClaimRequest{Session: "s1", Lane: "agy", Branch: "feat/s1"}); err == nil {
+		t.Fatal("a transient forge failure must surface")
+	}
+	f.FailOn = ""
+	f.BeforeList = nil
+	holder, err := d.LiveClaim(context.Background(), testRef())
+	if err != nil || holder == nil || holder.Session != "s1" || holder.Released() {
+		t.Fatalf("the earlier valid claim must stay live: %+v %v", holder, err)
+	}
+	if !f.OnIssue[forge.LabelInProgress] {
+		t.Fatalf("labels of a live claim must stay, have %v", f.OnIssue)
+	}
+}
+
 func TestClaim_Negative_FailedResumeKeepsTheClaimLive(t *testing.T) {
-	for _, failing := range []string{"AddLabels", "AddAssignees", "ListIssueComments"} {
+	for _, failing := range []string{"AddLabels", "AddAssignees"} {
 		t.Run(failing, func(t *testing.T) {
-			f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
-			d := newTestDesk(f, clock)
-			mustClaim(t, d, "s1")
-			clock.now = claimEpoch.Add(time.Hour)
-			if failing == "ListIssueComments" {
-				f.BeforeList = func(fake *forgetest.ClaimFake, call int) {
-					if call >= 4 {
-						fake.FailOn = "ListIssueComments"
-					}
-				}
-			} else {
+			assertResumeFailureLeavesClaimLive(t, func(f *forgetest.ClaimFake) {
 				f.FailOn = failing
-			}
-			if _, err := d.Claim(context.Background(), testRef(), forge.ClaimRequest{Session: "s1", Lane: "agy", Branch: "feat/s1"}); err == nil {
-				t.Fatal("a transient forge failure must surface")
-			}
-			f.FailOn = ""
-			f.BeforeList = nil
-			holder, err := d.LiveClaim(context.Background(), testRef())
-			if err != nil || holder == nil || holder.Session != "s1" || holder.Released() {
-				t.Fatalf("the earlier valid claim must stay live: %+v %v", holder, err)
-			}
-			if !f.OnIssue[forge.LabelInProgress] {
-				t.Fatalf("labels of a live claim must stay, have %v", f.OnIssue)
-			}
+			})
 		})
 	}
+}
+
+func TestClaim_Negative_FailedResumeListCommentsFailureKeepsTheClaimLive(t *testing.T) {
+	assertResumeFailureLeavesClaimLive(t, func(f *forgetest.ClaimFake) {
+		f.BeforeList = func(fake *forgetest.ClaimFake, call int) {
+			if call >= 4 {
+				fake.FailOn = "ListIssueComments"
+			}
+		}
+	})
 }
 
 func TestRelease_Negative_LabelFailureKeepsClaimReleasable(t *testing.T) {

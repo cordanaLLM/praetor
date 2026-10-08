@@ -30,7 +30,9 @@ type ClaimFake struct {
 	Calls     []string
 	// BeforeList runs before ListIssueComments answers, to stage a concurrent writer.
 	BeforeList func(f *ClaimFake, call int)
-	listCalls  int
+	// AfterList runs after ListIssueComments captures comments, before answering, to stage a concurrent writer.
+	AfterList func(f *ClaimFake, call int)
+	listCalls int
 }
 
 var _ forge.ClaimForge = (*ClaimFake)(nil)
@@ -83,7 +85,11 @@ func (f *ClaimFake) ListIssueComments(context.Context, int) ([]forge.IssueCommen
 	if err := f.record("ListIssueComments"); err != nil {
 		return nil, err
 	}
-	return append([]forge.IssueComment(nil), f.Comments...), nil
+	comments := append([]forge.IssueComment(nil), f.Comments...)
+	if f.AfterList != nil {
+		f.AfterList(f, f.listCalls)
+	}
+	return comments, nil
 }
 
 // CreateIssueComment appends a comment authored by an OWNER.

@@ -319,9 +319,14 @@ func (d *ClaimDesk) Claim(ctx context.Context, ref ClaimRef, req ClaimRequest) (
 func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, req ClaimRequest, found []claimComment) (ClaimResult, error) {
 	now := d.Now().UTC().Truncate(time.Second)
 	claim := Claim{Session: req.Session, Lane: req.Lane, Branch: req.Branch, Stage: "claimed", Started: now, Updated: now}
-	target, hasTarget := pickClaimTarget(found, req.Session)
+	target, hasTarget := d.pickClaimTarget(found, req.Session)
 	action, tookOver, takeover := resolveClaimAction(target, hasTarget, req.Session)
 	if action == "resumed" {
+		current, err := d.resumeTarget(ctx, f, ref, req.Session, target)
+		if err != nil {
+			return ClaimResult{}, err
+		}
+		target = current
 		claim.Started, claim.Stage = target.claim.Started, target.claim.Stage
 	}
 	body, err := renderClaimBody(claim, takeover)
@@ -335,8 +340,8 @@ func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, 
 	}
 	claim.CommentID = id
 	if isTakeover {
-		if err := d.finalise(ctx, f, *tookOver, "abandoned"); err != nil {
-			return ClaimResult{}, errors.Join(d.abandon(ctx, f, claim, err), d.clearLabels(ctx, f, ref.Number))
+		if err := d.handleTakeoverFinalise(ctx, f, ref, req.Session, target, claim); err != nil {
+			return ClaimResult{}, err
 		}
 	}
 	if err := d.confirmHold(ctx, f, ref, claim, resumed, isTakeover); err != nil {
@@ -350,6 +355,76 @@ func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, 
 		return ClaimResult{}, errors.Join(d.abandon(ctx, f, claim, err), d.clearLabels(ctx, f, ref.Number))
 	}
 	return ClaimResult{Ref: ref.String(), Action: action, Claim: claim, TookOver: tookOver}, nil
+}
+
+func (d *ClaimDesk) resumeTarget(ctx context.Context, f ClaimForge, ref ClaimRef, session string, target claimComment) (claimComment, error) {
+	current, err := readClaims(ctx, f, ref.Number)
+	if err != nil {
+		return claimComment{}, err
+	}
+	if other, held := d.holder(current); held && other.Session != session {
+		return claimComment{}, &ClaimHeldError{Ref: ref, Holder: other}
+	}
+	cur, ok := findClaimComment(current, target.claim.CommentID)
+	if !ok || cur.claim.Released() || cur.claim.Session != session {
+		if other, held := d.holder(current); held {
+			return claimComment{}, &ClaimHeldError{Ref: ref, Holder: other}
+		}
+		return claimComment{}, fmt.Errorf("%w: %s (claim it first)", ErrNoClaim, ref)
+	}
+	return cur, nil
+}
+
+func (d *ClaimDesk) finaliseStaleTarget(ctx context.Context, f ClaimForge, ref ClaimRef, session string, target claimComment) error {
+	found, err := readClaims(ctx, f, ref.Number)
+	if err != nil {
+		return err
+	}
+	cur, ok := findClaimComment(found, target.claim.CommentID)
+	if !ok {
+		return unverifiable("finalise claim comment", fmt.Errorf("stale claim comment %d not found", target.claim.CommentID))
+	}
+	if !markersEqual(target.claim, cur.claim) {
+		if holder, held := d.holder(found); held {
+			if holder.Session != session {
+				return &ClaimHeldError{Ref: ref, Holder: holder}
+			}
+			if cur.claim.Released() {
+				return nil
+			}
+		}
+		return unverifiable("finalise claim comment", errors.New("stale claim comment modified before finalise"))
+	}
+	return d.finalise(ctx, f, target.claim, "abandoned")
+}
+
+func (d *ClaimDesk) handleTakeoverFinalise(ctx context.Context, f ClaimForge, ref ClaimRef, session string, target claimComment, claim Claim) error {
+	if err := d.finaliseStaleTarget(ctx, f, ref, session, target); err != nil {
+		if errors.Is(err, ErrClaimHeld) {
+			return errors.Join(err, d.abandon(ctx, f, claim, nil))
+		}
+		return errors.Join(d.abandon(ctx, f, claim, err), d.clearLabels(ctx, f, ref.Number))
+	}
+	return nil
+}
+
+func markersEqual(a, b Claim) bool {
+	return a.Session == b.Session &&
+		a.Lane == b.Lane &&
+		a.Branch == b.Branch &&
+		a.Stage == b.Stage &&
+		a.Outcome == b.Outcome &&
+		a.Started.Equal(b.Started) &&
+		a.Updated.Equal(b.Updated)
+}
+
+func findClaimComment(comments []claimComment, id int64) (claimComment, bool) {
+	for i := range comments {
+		if comments[i].claim.CommentID == id {
+			return comments[i], true
+		}
+	}
+	return claimComment{}, false
 }
 
 func resolveClaimAction(target claimComment, hasTarget bool, session string) (string, *Claim, string) {
@@ -370,7 +445,10 @@ func resolveClaimAction(target claimComment, hasTarget bool, session string) (st
 // pickClaimTarget finds an existing claim to resume (the session's own live claim) or to
 // take over (a stale live claim). Released claims are never reused; every new claim writes
 // a new comment.
-func pickClaimTarget(found []claimComment, session string) (claimComment, bool) {
+func (d *ClaimDesk) pickClaimTarget(found []claimComment, session string) (claimComment, bool) {
+	if other, held := d.holder(found); held && other.Session != session {
+		return claimComment{}, false
+	}
 	var stale *claimComment
 	for i := range found {
 		switch {
@@ -487,13 +565,20 @@ func (d *ClaimDesk) applyClaimLabels(ctx context.Context, f ClaimForge, number i
 
 // ownClaim returns the session's live claim, or the error that says why there is none.
 func (d *ClaimDesk) ownClaim(ref ClaimRef, found []claimComment, session string) (claimComment, error) {
+	if other, held := d.holder(found); held {
+		if other.Session != session {
+			return claimComment{}, &ClaimHeldError{Ref: ref, Holder: other}
+		}
+		for _, entry := range found {
+			if entry.claim.CommentID == other.CommentID {
+				return entry, nil
+			}
+		}
+	}
 	for _, entry := range found {
 		if entry.claim.Session == session && !entry.claim.Released() {
 			return entry, nil
 		}
-	}
-	if other, held := d.holder(found); held {
-		return claimComment{}, &ClaimHeldError{Ref: ref, Holder: other}
 	}
 	return claimComment{}, fmt.Errorf("%w: %s (claim it first)", ErrNoClaim, ref)
 }
@@ -537,6 +622,9 @@ func (d *ClaimDesk) recordStage(ctx context.Context, f ClaimForge, ref ClaimRef,
 	}
 	if err := f.EditIssueComment(ctx, claim.CommentID, body); err != nil {
 		return ClaimResult{}, unverifiable("edit claim comment", err)
+	}
+	if err := d.confirmHold(ctx, f, ref, claim, true, false); err != nil {
+		return ClaimResult{}, err
 	}
 	if err := d.syncBlocked(ctx, f, ref.Number, req.Stage == claimBlockedStage); err != nil {
 		return ClaimResult{}, err

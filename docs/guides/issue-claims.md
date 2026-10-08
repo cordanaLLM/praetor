@@ -102,7 +102,9 @@ at the same moment, both write a comment; each reads the comments back after wri
 claim with the lower comment identifier holds. Any loser finalises its own comment as `abandoned`
 and is refused naming the winner (`TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID`,
 `TestClaim_Negative_InterleavedClaimersOnReleasedCommentExactlyOneHolds`,
-`TestClaim_Negative_InterleavedClaimersOnStaleCommentExactlyOneHolds`).
+`TestClaim_Negative_InterleavedClaimersOnStaleCommentExactlyOneHolds`,
+`TestClaim_Negative_StaleHolderEditRacingTakeover_TakeoverWins`,
+`TestClaim_Negative_StaleHolderEditRacingTakeover_ResumeWins`).
 
 ## Release
 
