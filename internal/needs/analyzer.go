@@ -251,18 +251,25 @@ func mergeRepoNeeds(dst, src *RepoNeeds) {
 	for _, deprecation := range src.Deprecations {
 		dst.Deprecations = appendUniqueStr(dst.Deprecations, deprecation)
 	}
+	mergeProjectImports(dst, src)
+	calculateReadiness(dst)
+}
+
+// mergeProjectImports adds src's imports to dst and copies src's per-project import lists,
+// replacing a project dst already lists.
+func mergeProjectImports(dst, src *RepoNeeds) {
 	for _, imp := range src.Imports {
 		dst.Imports = appendUniqueStr(dst.Imports, imp)
 	}
-	if src.ProjectImports != nil {
-		if dst.ProjectImports == nil {
-			dst.ProjectImports = make(map[string][]string, len(src.ProjectImports))
-		}
-		for p, imps := range src.ProjectImports {
-			dst.ProjectImports[p] = slices.Clone(imps)
-		}
+	if src.ProjectImports == nil {
+		return
 	}
-	calculateReadiness(dst)
+	if dst.ProjectImports == nil {
+		dst.ProjectImports = make(map[string][]string, len(src.ProjectImports))
+	}
+	for p, imps := range src.ProjectImports {
+		dst.ProjectImports[p] = slices.Clone(imps)
+	}
 }
 
 // appendNewDemands appends every demand in src whose demandIdentity neither dst nor an
