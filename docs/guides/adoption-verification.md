@@ -217,9 +217,10 @@ line (file and line number) and its shape in the message:
     is not a GNU Make special variable (the Special Variables list of the GNU Make manual section 6.14,
     plus `VPATH`, `SHELL`, `MAKESHELL`, `MAKEFILES`, `MAKEFLAGS`, `GNUMAKEFLAGS`, `MAKEOVERRIDES`,
     `MFLAGS`, `SUFFIXES`) and whose value contains no `$`;
-  - an explicit rule whose targets and prerequisites contain no `$`, `%`, `&:` or `::` and whose
-    targets are not a followed operand, `Makefile`, `makefile`, `GNUmakefile`, or a dot special
-    target other than `.PHONY`;
+  - an explicit rule whose targets and prerequisites contain no `$`, `%`, `&:` or `::`, whose targets
+    and prerequisites contain no followed operand's base name (other than the operand itself) and no
+    `RCS` or `SCCS` path element, and whose targets are not a followed operand, `Makefile`, `makefile`,
+    `GNUmakefile`, or a dot special target other than `.PHONY`;
   - a conditional (`ifeq`, `ifneq`, `ifdef`, `ifndef`, `else`, `endif`) whose arguments contain
     no `$`.
 
@@ -233,7 +234,8 @@ line (file and line number) and its shape in the message:
 - No entry in the include's directory has a name that contains the include's base name other than
   the file itself, and the directory holds no `RCS` or `SCCS` entry. That covers the built-in
   rules that build `gen.mk` from `gen.mk.sh`, `gen.mk.c`, `gen.mk,v` or `s.gen.mk`, and chains
-  of them. An unreadable directory or one with more than 4096 entries counts as holding one.
+  of them, covering sources named by rules as well as files on disk. An unreadable directory or one
+  with more than 4096 entries counts as holding one.
 
 Each rejected case was replayed against GNU Make 4.4.1
 (`TestRemadeIncludeCasesMatchGNUMake` in `internal/adopt/makefile_include_test.go`). Each fragment

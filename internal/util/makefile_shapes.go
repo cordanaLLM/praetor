@@ -1,6 +1,7 @@
 package util
 
 import (
+	"path"
 	"slices"
 	"strings"
 )
@@ -241,13 +242,13 @@ func makefileAllowedRule(line string, colon int, operands map[string]struct{}) b
 	if strings.HasPrefix(rest, "::") || strings.Contains(head, "&") || strings.ContainsAny(head, "$%") {
 		return false
 	}
-	if !makefileAllowedPrerequisites(line, colon) {
+	if !makefileAllowedPrerequisites(line, colon, operands) {
 		return false
 	}
 	return makefileAllowedTargets(head, operands)
 }
 
-func makefileAllowedPrerequisites(line string, colon int) bool {
+func makefileAllowedPrerequisites(line string, colon int, operands map[string]struct{}) bool {
 	endPrereq := len(line)
 	for i := colon + 1; i < len(line); {
 		kind, width := makefileOperatorAt(line, i)
@@ -260,6 +261,12 @@ func makefileAllowedPrerequisites(line string, colon int) bool {
 	prereqs := line[colon+1 : endPrereq]
 	if strings.ContainsAny(prereqs, "$%=") || strings.Contains(prereqs, "&:") || strings.Contains(prereqs, "::") {
 		return false
+	}
+	for _, field := range strings.Fields(prereqs) {
+		name := makefileNormalizeName(field)
+		if makefileImplicitRuleTargetOrPrereq(name, operands) {
+			return false
+		}
 	}
 	return true
 }
@@ -280,8 +287,47 @@ func makefileAllowedTargets(head string, operands map[string]struct{}) bool {
 		if strings.HasPrefix(name, ".") && name != ".PHONY" {
 			return false
 		}
+		if makefileImplicitRuleTargetOrPrereq(name, operands) {
+			return false
+		}
 	}
 	return true
+}
+
+func makefileImplicitRuleTargetOrPrereq(norm string, operands map[string]struct{}) bool {
+	if makefileHasRCSSCCS(norm) {
+		return true
+	}
+	for operand := range operands {
+		if norm == operand {
+			continue
+		}
+		base := path.Base(operand)
+		if norm == base || MakefileImplicitSourceName(norm, base) {
+			return true
+		}
+	}
+	return false
+}
+
+// MakefileImplicitSourceName reports whether name is a file, path or directory a built-in rule
+// may build base from: any normalised name containing base other than base itself, or that has an
+// RCS or SCCS path element.
+func MakefileImplicitSourceName(name, base string) bool {
+	norm := makefileNormalizeName(name)
+	if makefileHasRCSSCCS(norm) {
+		return true
+	}
+	return base != "" && norm != base && strings.Contains(norm, base)
+}
+
+func makefileHasRCSSCCS(norm string) bool {
+	for _, part := range strings.Split(norm, "/") {
+		if part == "RCS" || part == "SCCS" {
+			return true
+		}
+	}
+	return false
 }
 
 var makefileTextParsingFunctions = []string{"eval", "guile", "shell", "file", "call"}
@@ -417,13 +463,13 @@ func makefileRuleShape(head, rest string, operands map[string]struct{}) string {
 			return shape
 		}
 	}
-	if shape := makefilePrerequisiteShape(rest); shape != "" {
+	if shape := makefilePrerequisiteShape(rest, operands); shape != "" {
 		return shape
 	}
 	return "rule"
 }
 
-func makefilePrerequisiteShape(rest string) string {
+func makefilePrerequisiteShape(rest string, operands map[string]struct{}) string {
 	endPrereq := len(rest)
 	for i := 1; i < len(rest); {
 		kind, width := makefileOperatorAt(rest, i)
@@ -443,9 +489,14 @@ func makefilePrerequisiteShape(rest string) string {
 		return "grouped target"
 	case strings.Contains(prereqs, "::"):
 		return "double-colon rule"
-	default:
-		return ""
 	}
+	for _, field := range strings.Fields(prereqs) {
+		name := makefileNormalizeName(field)
+		if makefileImplicitRuleTargetOrPrereq(name, operands) {
+			return "rule remakes " + name
+		}
+	}
+	return ""
 }
 
 func makefileRuleTargetShape(field string, operands map[string]struct{}) string {
@@ -470,6 +521,9 @@ func makefileRuleTargetShape(field string, operands map[string]struct{}) string 
 	}
 	if strings.HasPrefix(name, ".") && !makefileSpecialTargets[name] {
 		return makefileSpecialDotTargetShape(name)
+	}
+	if makefileImplicitRuleTargetOrPrereq(name, operands) {
+		return "rule remakes " + name
 	}
 	return ""
 }

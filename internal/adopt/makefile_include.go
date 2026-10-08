@@ -8,7 +8,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -63,7 +62,7 @@ func makefileImplicitSourceNear(ctx context.Context, root, rel string) error {
 		return fmt.Errorf("directory of %s holds more than %d entries", rel, maxImplicitSourceEntries)
 	}
 	for i := 0; i < len(entries) && i < maxImplicitSourceEntries; i++ {
-		if name := entries[i].Name(); makefileImplicitSourceName(name, base) {
+		if name := entries[i].Name(); util.MakefileImplicitSourceName(name, base) {
 			return fmt.Errorf("%s sits beside %s, which Make may build it from", rel, name)
 		}
 	}
@@ -79,12 +78,6 @@ func listRootDirectory(scope *os.Root) ([]fs.DirEntry, error) {
 	}
 	entries, err := top.ReadDir(maxImplicitSourceEntries + 1)
 	return entries, errors.Join(err, top.Close(), scope.Close())
-}
-
-// makefileImplicitSourceName reports whether name is a file or directory a built-in rule may build
-// base from: any other name containing base, or an RCS or SCCS directory.
-func makefileImplicitSourceName(name, base string) bool {
-	return (name != base && strings.Contains(name, base)) || name == "RCS" || name == "SCCS"
 }
 
 // readTrackedFragment returns the text of the file rel names below root when git tracks it under

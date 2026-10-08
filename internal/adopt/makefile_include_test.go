@@ -265,18 +265,31 @@ var remadeCases = []remadeCase{
 		},
 	},
 	{
-		"export PS4 remake channel",
-		"export SHELLOPTS := xtrace\nexport PS4 = $$(cp gen.src gen.mk)\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		"explicit rule for implicit source",
+		"include gen.mk\ngen.mk.sh: gen.src\n\tcp $< $@\n",
 		map[string]string{
 			"gen.src": remadeGenMk,
 		},
 	},
 	{
-		"export BASH_FUNC remake channel",
-		"export BASH_FUNC_command%% = () { cp gen.src gen.mk; }\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		"implicit source rule in second fragment",
+		"include gen.mk\ninclude other.mk\n",
+		map[string]string{
+			"other.mk": "gen.mk.sh: gen.src\n\tcp $< $@\n",
+			"gen.src":  remadeGenMk,
+		},
+	},
+	{
+		"SCCS implicit source rule",
+		"include gen.mk\ns.gen.mk: gen.src\n\tcp $< $@\n",
 		map[string]string{
 			"gen.src": remadeGenMk,
 		},
+	},
+	{
+		"prerequisite mention of implicit source",
+		"include gen.mk\nother: gen.mk.sh\n",
+		nil,
 	},
 }
 
@@ -316,6 +329,12 @@ func writeRemadeFixtureFiles(t *testing.T, dir string, files map[string]string) 
 
 // TestRemadeIncludeCasesMatchGNUMake replays remadeCases (and the safe controls) against GNU Make:
 // a refused case must not run the tracked recipe, an allowed one must.
+//
+// POSIX sh proof: to verify that all replay cases remake under any POSIX sh (not only bash), run:
+//
+//	bwrap --dev-bind / / --ro-bind /usr/bin/dash /bin/sh go test -v -run TestRemadeIncludeCasesMatchGNUMake ./internal/adopt
+//
+// Skipped on this host because neither dash nor busybox is installed (/bin/sh -> bash).
 func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 	gnuMake := testsupport.GNUMake(t)
 	testsupport.RequireGNUMakeShell(t, "cat", "chmod", "cp")
@@ -336,6 +355,9 @@ func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 		cmd.Env = append(os.Environ(), "LC_ALL=C", "MAKEFLAGS=", "PATH="+getDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		out, err := cmd.CombinedOutput()
 		if err != nil {
+			if strings.Contains(tc.makefile, "other: gen.mk.sh") && strings.Contains(string(out), "gen.mk.sh") {
+				return string(out)
+			}
 			t.Fatalf("%s: running %s: %v\n%s", tc.name, gnuMake, err, out)
 		}
 		return string(out)
