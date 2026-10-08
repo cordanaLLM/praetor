@@ -62,3 +62,36 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Ayoub Ghriss"
 SPDX-License-Identifier = "MIT"
+
+# The vendored upstream client schemas keep their upstream terms (internal/clientschema/vendor/manifest.json
+# names the source, pin and licence of each). Like the tables above, each must stay after the "**"
+# table. manifest.json sits beside them and stays EUPL-1.2.
+[[annotations]]
+path = ["internal/clientschema/vendor/claude/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "SchemaStore contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["internal/clientschema/vendor/gemini/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "Google LLC"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["internal/clientschema/vendor/codex/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "OpenAI"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["internal/clientschema/vendor/mcp/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2025 Anthropic, PBC and contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["internal/clientschema/vendor/opencode/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2025 opencode"
+SPDX-License-Identifier = "MIT"

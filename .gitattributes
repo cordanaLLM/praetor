@@ -187,3 +187,8 @@ docs/figures/*.ts text eol=lf
 docs/assets/figures/* text eol=lf
 tools/figures/third_party/interfig/upstream/** -text
 # END praetor managed attributes
+
+# Vendored upstream schemas are pinned by sha256 (internal/clientschema/vendor/manifest.json), so
+# their bytes must reach every checkout exactly as upstream published them: no line-ending
+# conversion, and no whitespace check on an upstream file that ends in a blank line.
+internal/clientschema/vendor/** -text -whitespace
