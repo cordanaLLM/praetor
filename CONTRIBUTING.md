@@ -24,32 +24,9 @@ Probity is an optional client-side edit guard for contributors using AI coding a
 
 The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/`. Contributors without the hook installed are unaffected.
 
-To enable Probity in Claude Code, install the plugin:
+Probity fails closed when no config file is found. To avoid blocking work across other repositories, the hook must be configured locally (`--scope local` or `.claude/settings.local.json`) rather than globally.
 
-```bash
-/plugin marketplace add nizos/probity
-/plugin install probity@probity
-```
-
-or add a `PreToolUse` hook in `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Write|Edit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "npx @nizos/probity --agent claude-code"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+See [Optional: Probity Test-First Guard](docs/guides/contributing.md#optional-probity-test-first-guard) in the contributor guide for setup instructions and hook configuration.
 
 Before submitting any Pull Request, ensure local verification passes completely:
 

@@ -61,14 +61,19 @@ Probity is an optional client-side edit guard for contributors using AI coding a
 
 The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/`. Contributors without the hook installed are unaffected.
 
-To enable Probity in Claude Code, install the plugin:
+<!-- praetor:docs-references:off an untracked local settings file not present in repository source -->
+Fail-closed warning: Probity fails closed when no configuration file is found. Installing the plugin at global (user) scope will block edits across other repositories that lack a `probity.config.ts`. Always install with local scope (`--scope local`) or configure project-local hooks in `.claude/settings.local.json`.
+
+To enable Probity in Claude Code via the marketplace plugin:
 
 ```bash
 /plugin marketplace add nizos/probity
-/plugin install probity@probity
+/plugin install --scope local probity@probity
 ```
 
-or add a `PreToolUse` hook in `.claude/settings.json`:
+Note that the marketplace plugin tracks upstream HEAD.
+
+Alternatively, configure a pinned `PreToolUse` hook in `.claude/settings.local.json` (do not edit the tracked, Praetor-owned `.claude/settings.json`):
 
 ```json
 {
@@ -79,7 +84,7 @@ or add a `PreToolUse` hook in `.claude/settings.json`:
         "hooks": [
           {
             "type": "command",
-            "command": "npx @nizos/probity --agent claude-code"
+            "command": "ANTHROPIC_MODEL=claude-haiku-5-5 npx --yes @nizos/probity@1.10.1 --agent claude-code"
           }
         ]
       }
@@ -87,6 +92,9 @@ or add a `PreToolUse` hook in `.claude/settings.json`:
   }
 }
 ```
+<!-- praetor:docs-references:on -->
+
+The `ANTHROPIC_MODEL=claude-haiku-5-5` environment variable pins the validation judge model in Claude Code. Contributors who installed `@nizos/probity` globally on their `PATH` may substitute `probity` for `npx --yes @nizos/probity@1.10.1`.
 
 ---
 

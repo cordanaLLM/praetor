@@ -4,9 +4,11 @@
 
 import { defineConfig, enforceTdd } from '@nizos/probity'
 
-// Note: In @nizos/probity 1.10.1, the AI validator pairs with the host agent CLI flag
-// (--agent claude-code) and neither defineConfig nor enforceTdd exposes a documented
-// option to select or pin the judge model (e.g. claude-haiku-5-5).
+// Note: Probity 1.10.1 supports an `ai` override (Config.ai?: Agent), but importing
+// @anthropic-ai/claude-agent-sdk here fails because jiti cannot resolve the SDK
+// from a repository root without node_modules. Instead, the judge model is pinned
+// to claude-haiku-5-5 via ANTHROPIC_MODEL=claude-haiku-5-5 in the hook command,
+// which the Claude Agent SDK query process inherits when no model option is passed.
 export default defineConfig({
   rules: [
     {
