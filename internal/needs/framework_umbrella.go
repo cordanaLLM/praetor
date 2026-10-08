@@ -71,15 +71,8 @@ func validateUmbrellas(umbrellas []contractUmbrella, ecosystem, framework string
 }
 
 func (u *contractUmbrella) validate(framework string, declared, seen map[string]bool) error {
-	if u.Import != framework && !isNestedModule(u.Import, framework) {
-		return fmt.Errorf("umbrella %q is outside %s", u.Import, framework)
-	}
-	if seen[u.Import] {
-		return fmt.Errorf("umbrella %q is described twice", u.Import)
-	}
-	seen[u.Import] = true
-	if u.Name != "" && (u.Name == "_" || !token.IsIdentifier(u.Name)) {
-		return fmt.Errorf("umbrella %q declares name %q, which is not a Go package name", u.Import, u.Name)
+	if err := u.validateIdentity(framework, seen); err != nil {
+		return err
 	}
 	if len(u.Groupings) == 0 || len(u.Groupings) > maxContractGroupings {
 		return fmt.Errorf("umbrella %q needs 1..%d groupings", u.Import, maxContractGroupings)
@@ -89,6 +82,22 @@ func (u *contractUmbrella) validate(framework string, declared, seen map[string]
 		if err := u.Groupings[i].validate(u.Import, declared, names); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateIdentity checks the umbrella's import path and package name, recording the path in
+// seen.
+func (u *contractUmbrella) validateIdentity(framework string, seen map[string]bool) error {
+	if u.Import != framework && !isNestedModule(u.Import, framework) {
+		return fmt.Errorf("umbrella %q is outside %s", u.Import, framework)
+	}
+	if seen[u.Import] {
+		return fmt.Errorf("umbrella %q is described twice", u.Import)
+	}
+	seen[u.Import] = true
+	if u.Name != "" && (u.Name == "_" || !token.IsIdentifier(u.Name)) {
+		return fmt.Errorf("umbrella %q declares name %q, which is not a Go package name", u.Import, u.Name)
 	}
 	return nil
 }
