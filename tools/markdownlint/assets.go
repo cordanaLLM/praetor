@@ -76,7 +76,7 @@ jobs:
           fetch-depth: 0
       - name: Setup Node.js` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
@@ -115,6 +115,8 @@ var priorDigests = map[string]string{
 	"5a8932a0b5535c934f5eb00bf097e7f9cdcfe94053f82941aa2ff7a6bd4f7803": WorkflowFile,
 	// The gate in the draft skip shape before it ran on merge_group (#893).
 	"51b53cde08a626fc77eae5c4f1134cff81fc7038baeb7b4e673129d6629da0fe": WorkflowFile,
+	// The hosted documentation gate on actions/setup-node v7.0.0 before the v7.1.0 update.
+	"9b91f7cbcd861ea9844ad498ad727c2fcdce091f74d5a7f2a156ce0b7bbe6332": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked
