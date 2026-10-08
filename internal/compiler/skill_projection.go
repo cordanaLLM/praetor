@@ -423,73 +423,104 @@ func verifyStaleLicense(ctx context.Context, rootDir, rel string) error {
 }
 
 // verifyStaleClientLicenses checks that no selected client directory retains a LICENSE for a
-// bundle skill that carries no canonical LICENSE.
+// skill Praetor ships whose canonical skill carries none (staleClientLicenses). A client copy of
+// a skill the repository does not carry belongs to the adopter and is never read.
 func verifyStaleClientLicenses(ctx context.Context, rootDir string, dirs []string) error {
-	names := config.RegisterSkillBundle()
-	for i := 0; i < len(names); i++ {
-		_, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, names[i])
-		if err != nil {
-			return err
-		}
-		if !exists {
-			for j := 0; j < len(dirs); j++ {
-				if err := verifyStaleLicense(ctx, rootDir, SkillLicenseRel(dirs[j], names[i])); err != nil {
-					return err
-				}
-			}
-		}
+	stale, err := staleClientLicenses(ctx, rootDir, dirs, PendingSources{})
+	if err != nil {
+		return err
+	}
+	if len(stale) > 0 {
+		return fmt.Errorf("%w: %s exists but canonical skill carries no LICENSE (run 'praetorctl compile-context' to remove it)", ErrAgentProjectionDrift, stale[0])
 	}
 	return nil
 }
 
-// removeStaleSkillLicenses removes any projected LICENSE copy in the plugin and selected client
-// directories for which the canonical skill declares no LICENSE.
-func removeStaleSkillLicenses(ctx context.Context, rootDir string) error {
-	if err := removeStalePluginSkillLicenses(ctx, rootDir); err != nil {
-		return err
+// staleClientLicenses is the one selector of the client LICENSE copies to remove: those that
+// exist in dirs for a skill Praetor ships (config.RegisterSkillBundle) that the repository
+// carries (its canonical SKILL.md, or the pending one) and whose canonical LICENSE is absent.
+// verify, plan and removal all read it, so they name the same files. A client copy of a skill
+// without a canonical SKILL.md belongs to the adopter and is never selected, observed or
+// refused; the copy of a skill Praetor ships is observed without following a symlink, so a
+// symlinked skill directory is an error naming it.
+func staleClientLicenses(ctx context.Context, rootDir string, dirs []string, pending PendingSources) ([]string, error) {
+	names := config.RegisterSkillBundle()
+	var stale []string
+	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
+		_, shipped, err := pendingOr(pending.Skills, names[i], func() ([]byte, bool, error) { return ReadCanonicalSkill(ctx, rootDir, names[i]) })
+		if err != nil {
+			return nil, err
+		}
+		if !shipped {
+			continue
+		}
+		_, hasLicense, err := pendingOr(pending.Licenses, names[i], func() ([]byte, bool, error) { return ReadCanonicalSkillLicense(ctx, rootDir, names[i]) })
+		if err != nil {
+			return nil, err
+		}
+		if hasLicense {
+			continue
+		}
+		found, err := existingLicenses(ctx, rootDir, dirs, names[i])
+		if err != nil {
+			return nil, err
+		}
+		stale = append(stale, found...)
 	}
-	return removeStaleClientSkillLicenses(ctx, rootDir)
+	return stale, nil
 }
 
-func removeStalePluginSkillLicenses(ctx context.Context, rootDir string) error {
+// existingLicenses returns the LICENSE copies of skill name that exist in dirs, observed without
+// following a symlink at any component.
+func existingLicenses(ctx context.Context, rootDir string, dirs []string, name string) ([]string, error) {
+	var found []string
+	for j := 0; j < len(dirs) && j < maxSkillProjections; j++ {
+		rel := SkillLicenseRel(dirs[j], name)
+		_, exists, err := contextopt.ObserveSnapshotIn(ctx, rootDir, filepath.FromSlash(rel))
+		if err != nil {
+			return nil, fmt.Errorf("skill %s is one Praetor ships, so %s is checked: %w", name, rel, err)
+		}
+		if exists {
+			found = append(found, rel)
+		}
+	}
+	return found, nil
+}
+
+// stalePluginLicenses returns the plugin LICENSE copies that exist for a canonical skill that
+// carries no LICENSE. A repository that does not ship the plugin has none.
+func stalePluginLicenses(ctx context.Context, rootDir string) ([]string, error) {
 	if !shipsPlugin(rootDir) {
-		return nil
+		return nil, nil
 	}
 	names, err := listCanonicalSkills(ctx, rootDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for i := 0; i < len(names); i++ {
-		_, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, names[i])
+	var stale []string
+	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
+		_, hasLicense, err := ReadCanonicalSkillLicense(ctx, rootDir, names[i])
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if !exists {
-			if err := removeConfinedFile(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, names[i])); err != nil {
-				return err
-			}
+		if hasLicense {
+			continue
 		}
+		found, err := existingLicenses(ctx, rootDir, []string{PluginSkillsRel}, names[i])
+		if err != nil {
+			return nil, err
+		}
+		stale = append(stale, found...)
 	}
-	return nil
+	return stale, nil
 }
 
-func removeStaleClientSkillLicenses(ctx context.Context, rootDir string) error {
-	dirs, _, err := SelectSkillDirs(ctx, rootDir)
-	if err != nil {
-		return err
-	}
-	names := config.RegisterSkillBundle()
-	for i := 0; i < len(names); i++ {
-		_, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, names[i])
-		if err != nil {
+// removeStaleSkillLicenses removes the stale LICENSE copies a checked plan selected
+// (planAgentSurfaces), the plugin and the selected client directories alike.
+func removeStaleSkillLicenses(ctx context.Context, rootDir string, stale []string) error {
+	for i := 0; i < len(stale) && i < maxSkillProjections*maxSkillProjections; i++ {
+		if err := removeConfinedFile(ctx, rootDir, stale[i]); err != nil {
 			return err
-		}
-		if !exists {
-			for j := 0; j < len(dirs); j++ {
-				if err := removeConfinedFile(ctx, rootDir, SkillLicenseRel(dirs[j], names[i])); err != nil {
-					return err
-				}
-			}
 		}
 	}
 	return nil

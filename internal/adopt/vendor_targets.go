@@ -128,7 +128,7 @@ func observeVendorTargets(ctx context.Context, repoPath string, files []compiler
 // replacesEdit reports whether writing t drops a hand edit: t existed and holds neither its
 // new projection nor the prior one, in one consistent line-ending style.
 func (t vendorTarget) replacesEdit(prior priorVendorProjections) bool {
-	if !t.exists {
+	if !t.exists || t.file.Remove {
 		return false
 	}
 	if same, err := util.CanonicalTextEquivalent(t.before, []byte(t.file.Content)); err == nil && same {
@@ -177,6 +177,9 @@ func recordProjections(report *AdoptReport, targets []vendorTarget, prior priorV
 	for i := 0; i < len(targets) && i < maxProjectionTargets; i++ {
 		target := targets[i]
 		switch {
+		case target.file.Remove:
+			report.recordReconciledAs(target.file.RelativePath, actionRemove,
+				"Removed the stale skill licence copy: the canonical skill carries no LICENSE")
 		case target.replacesEdit(prior):
 			continue
 		case target.exists:

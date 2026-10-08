@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/compiler"
 )
 
 // priorPersonaFixtures holds, per canonical persona, every text a Praetor release wrote at it,
@@ -125,5 +127,31 @@ func TestReconcileAgentDefinitions_Boundary_CRLFPriorKeepsCRLFAndSymlinkNotWritt
 	}
 	if got := mustRead(t, target); got != prior {
 		t.Fatal("the refresh wrote through a symlinked persona")
+	}
+}
+
+// Positive, negative and boundary: a planned removal of a stale skill licence copy (Remove) is
+// reported as a removal, never as a hand edit that needs a backup, and it records no prior digest.
+func TestRecordProjections_RemovalOfAStaleSkillLicence(t *testing.T) {
+	rel := ".claude/skills/caveman/LICENSE"
+	removal := compiler.TargetFile{RelativePath: rel, Remove: true}
+	target := vendorTarget{file: removal, before: []byte("MIT License\n"), exists: true}
+	prior := agentSurfaceDigests([]compiler.TargetFile{removal})
+	if len(prior) != 0 {
+		t.Fatalf("a removal recorded a prior digest: %v", prior)
+	}
+	if target.replacesEdit(prior) {
+		t.Fatal("a removal counted as a hand edit that needs a backup")
+	}
+	if got := projectionReplacements([]vendorTarget{target}, prior, agentSurfaceLabels); len(got) != 0 {
+		t.Fatalf("a removal planned a replacement: %v", got)
+	}
+	var report AdoptReport
+	recordProjections(&report, []vendorTarget{target}, prior, agentSurfaceLabels)
+	if !hasAction(&report, rel, actionRemove) {
+		t.Fatalf("the removal is not reported: %+v", report.ActionDetails)
+	}
+	if len(report.CreatedFiles) != 0 {
+		t.Fatalf("a removal was reported created: %v", report.CreatedFiles)
 	}
 }

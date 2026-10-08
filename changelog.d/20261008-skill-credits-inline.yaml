@@ -1,4 +1,4 @@
 type: fixed
-title: Ship the upstream MIT licence beside each derived register skill, in the checkout, the plugin and the client copies, and keep Praetor-only paths out of the skill credits; the path check runs on the source bundle only, never on a copy an adopter holds
+title: Ship the upstream MIT licence beside each derived register skill, in the checkout, the plugin and the client copies, and keep Praetor-only paths out of the skill credits; the path check runs on the source bundle only, never on a copy an adopter holds, and a stale client LICENSE is removed only for a skill Praetor ships
 issue: "#850"
 breaking: false

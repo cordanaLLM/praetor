@@ -136,33 +136,23 @@ func TestCheckShippedSkillReferences_Positive_PraetorBundleIsClean(t *testing.T)
 	}
 }
 
-// Positive: absolute URLs, anchors, shipped files and sibling skills pass, however wrapped.
+// Positive: absolute URLs, anchors, shipped files, sibling skills and the listed tokens pass,
+// however wrapped.
 func TestCheckShippedSkillReferences_Positive_AllowedTargets(t *testing.T) {
 	cases := map[string]string{
-		"own licence link":       "See [licence](LICENSE).",
-		"own skill link":         "See [skill](./SKILL.md).",
-		"sibling skill":          "Derived from [adhd-format](../adhd-format/SKILL.md).",
-		"sibling licence":        "See [licence](../adhd-format/LICENSE).",
-		"absolute URL":           "Adapted from [caveman](https://github.com/JuliusBrussee/caveman).",
-		"URL with a path query":  "See https://example.org/a?next=docs/credits.md for it.",
-		"anchor":                 "See [section](#features).",
-		"adopted files by name":  "See `AGENTS.md` and `.standards.yaml`; edit CHANGELOG.md never.",
-		"canonical skill path":   "Read `.agents/skills/caveman/SKILL.md` first.",
-		"client skill licence":   "Read `.claude/skills/caveman/LICENSE`.",
-		"skill directories":      "Skills live in .agents/skills/ and .claude/skills.",
-		"slash between letters":  "x and / or y",
-		"mail address":           "Write lusoris@example.org.",
-		"reference to a mailbox": "[mail]: mailto:lusoris@example.org",
-		"and/or prose":           "Use and/or here.",
-		"I/O acronym":            "Network I/O operations.",
-		"CI/CD acronym":          "Runs in CI/CD pipeline.",
-		"pass/fail verdict":      "Reports pass/fail status.",
-		"fraction":               "Ratio 1/2 of items.",
-		"date in prose":          "Released on 2026/10/08.",
-		"unit rate":              "Handles 100 req/s.",
-		"html tags":              "<details><summary>Details</summary><br/>Content</details>",
-		"markdown escapes":       `Use snake\_case and 1\. here.`,
-		"fragment link":          "See [rules](../caveman/SKILL.md#rules).",
+		"own licence link":      "See [licence](LICENSE).",
+		"own skill link":        "See [skill](./SKILL.md).",
+		"sibling skill":         "Derived from [adhd-format](../adhd-format/SKILL.md).",
+		"sibling licence":       "See [licence](../adhd-format/LICENSE).",
+		"absolute URL":          "Adapted from [caveman](https://github.com/JuliusBrussee/caveman).",
+		"URL with a path query": "See https://example.org/a?next=docs/credits.md for it.",
+		"anchor":                "See [section](#features).",
+		"adopted files by name": "See `AGENTS.md` and `.standards.yaml`; edit CHANGELOG.md never.",
+		"canonical skill path":  "Read `.agents/skills/caveman/SKILL.md` first.",
+		"client skill licence":  "Read `.claude/skills/caveman/LICENSE`.",
+		"skill directories":     "Skills live in .agents/skills/ and .claude/skills.",
+		"slash between letters": "x and / or y",
+		"fragment link":         "See [rules](../caveman/SKILL.md#rules).",
 	}
 	for name, text := range cases {
 		if err := CheckShippedSkillReferences("caveman", []byte(text)); err != nil {
@@ -217,6 +207,34 @@ func TestCheckShippedSkillReferences_Negative_UnshippedPathsRefused(t *testing.T
 		"indented reference":      "   [r]: docs/credits.md\nSee [r].",
 		"html image":              `<img src="credits.png">`,
 		"nested bracket link":     "[a [b] c](docs/credits.md)",
+		// Forms an earlier round let through (the HTML tag strip and the unit suffixes).
+		"html anchor unquoted":     "<a href=docs/credits.md>credits</a>",
+		"html anchor with spaces":  `<a href = "docs/credits.md">credits</a>`,
+		"html link element":        `<link href="docs/credits.md">`,
+		"html iframe":              `<iframe src="docs/credits.html"></iframe>`,
+		"html image alt then src":  `<img alt=x src=docs/a.png>`,
+		"html span title":          `<span title="docs/credits.md">x</span>`,
+		"unknown tag":              "Credit <see docs/credits.md>",
+		"lone angle before a path": "Compare a < b and see docs/credits.md -> done",
+		"open tag then next line":  "Compare a <b\ndocs/credits.md\nlater > done",
+		"path ending in /s":        "See docs/credits/s",
+		"path ending in /min":      "Run scripts/bench/min",
+		"unit rate":                "Handles 100 req/s.",
+		"entity hex slash":         "See docs&#x2F;credits.md",
+		"entity decimal slash":     "See docs&#47;credits.md.",
+		"entity of a dot":          "See docs/credits&#46;md",
+		"split code spans":         "See `docs`/`credits.md`",
+		"split code spans spaced":  "See `docs` / `credits.md` and `docs`/`credits`",
+		"attribute then path":      "href=docs/credits.md",
+		"markdown escape":          `Use snake\_case here.`,
+		"url glued to a path":      "https://example.org|docs/credits.md",
+		"mail address":             "Write lusoris@example.org.",
+		"mailto destination":       "[mail]: mailto:lusoris@example.org",
+		"closing tag":              "<details>x</details>",
+		"fraction":                 "Ratio 1/2 of items.",
+		"slash word":               "Use and/or here.",
+		"ci word":                  "Runs in CI/CD pipeline.",
+		"io word":                  "Network I/O operations.",
 	}
 	for name, text := range cases {
 		if err := CheckShippedSkillReferences("caveman", []byte(text)); err == nil {
