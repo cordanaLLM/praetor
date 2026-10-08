@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -26,13 +29,22 @@ type FileLocation struct {
 	Path     string `json:"path"`
 	Line     int    `json:"line"`
 	FuncName string `json:"func_name"`
+	Expired  string `json:"expired,omitempty"`
+}
+
+// ExceptionEntry records one manifest exception that excuses a duplicate block.
+type ExceptionEntry struct {
+	Path    string `json:"path"`
+	Reason  string `json:"reason"`
+	Expires string `json:"expires"`
 }
 
 // DuplicateGroup contains instances of duplicated code.
 type DuplicateGroup struct {
-	Hash      string         `json:"hash"`
-	LOC       int            `json:"loc"`
-	Locations []FileLocation `json:"locations"`
+	Hash       string           `json:"hash"`
+	LOC        int              `json:"loc"`
+	Locations  []FileLocation   `json:"locations"`
+	Exceptions []ExceptionEntry `json:"exceptions,omitempty"`
 }
 
 // SprawlItem highlights ad-hoc utility implementations that should use centralized utils.
@@ -48,6 +60,7 @@ type DedupeReport struct {
 	TotalFilesScanned int              `json:"total_files_scanned"`
 	TotalFuncsScanned int              `json:"total_funcs_scanned"`
 	Duplicates        []DuplicateGroup `json:"duplicates"`
+	Excepted          []DuplicateGroup `json:"excepted,omitempty"`
 	SprawlItems       []SprawlItem     `json:"sprawl_items"`
 	CleanlinessScore  float64          `json:"cleanliness_score"`
 	Passed            bool             `json:"passed"`
@@ -75,6 +88,16 @@ func (r *DedupeReport) UnscannedLanguages() []string {
 	return languages
 }
 
+// ScanOptions configures a repository scan for AST clones and utility sprawl.
+type ScanOptions struct {
+	// RepoPath is the root of the repository to scan.
+	RepoPath string
+	// Exceptions are HISS-19 exception entries. If nil, they are loaded from .standards.yaml in RepoPath.
+	Exceptions []config.Exception
+	// Today is the date against which exception expiry is judged. If zero, time.Now() is used.
+	Today time.Time
+}
+
 // ScanRepo scans a repository for function-level clones and utility sprawl.
 func ScanRepo(repoPath string) (*DedupeReport, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -86,12 +109,38 @@ func ScanRepo(repoPath string) (*DedupeReport, error) {
 // files in other languages it cannot read (DedupeReport.Unscanned). Non-Git directories
 // retain a filesystem scan. Incomplete scans return an error.
 func ScanRepoContext(ctx context.Context, repoPath string) (*DedupeReport, error) {
+	return ScanRepoWithOptions(ctx, ScanOptions{RepoPath: repoPath})
+}
+
+// ScanRepoWithOptions scans tracked and nonignored working tree Go sources with explicit scan options.
+func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, error) {
+	repoPath := opts.RepoPath
+	if repoPath == "" {
+		repoPath = "."
+	}
+	today := opts.Today
+	if today.IsZero() {
+		today = time.Now()
+	}
+	exceptions := opts.Exceptions
+	if exceptions == nil {
+		var err error
+		exceptions, err = loadDedupeExceptions(repoPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := ValidateExceptions(repoPath, exceptions, today); err != nil {
+		return nil, fmt.Errorf("validate dedupe exceptions: %w", err)
+	}
+
 	scope, err := sourceFiles(ctx, repoPath)
 	if err != nil {
 		return nil, err
 	}
 	report := &DedupeReport{
 		Duplicates:  make([]DuplicateGroup, 0),
+		Excepted:    make([]DuplicateGroup, 0),
 		SprawlItems: make([]SprawlItem, 0),
 		Unscanned:   scope.unscanned,
 	}
@@ -110,9 +159,47 @@ func ScanRepoContext(ctx context.Context, repoPath string) (*DedupeReport, error
 		}
 	}
 
-	collectDuplicates(funcHashMap, funcLocMap, report)
+	collectDuplicates(funcHashMap, funcLocMap, exceptions, today, report)
 	calculateScore(report)
 	return report, nil
+}
+
+func loadDedupeExceptions(repoPath string) ([]config.Exception, error) {
+	manifestPath := filepath.Join(repoPath, config.ManifestFileName)
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read manifest for dedupe exceptions: %w", err)
+	}
+	return config.ExceptionsFor(manifest.Exceptions, config.ExceptionRuleDedupe), nil
+}
+
+// ValidateExceptions validates the HISS-19 exceptions against the repository at repoPath:
+// each entry must pass config.ValidateExceptions, and its target must name an existing regular file.
+func ValidateExceptions(repoPath string, exceptions []config.Exception, today time.Time) error {
+	if err := config.ValidateExceptions(exceptions, today); err != nil {
+		return err
+	}
+	for index := 0; index < len(exceptions) && index < config.MaxExceptions; index++ {
+		entry := exceptions[index]
+		target := filepath.Join(repoPath, entry.Path)
+		info, err := os.Stat(target)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("exceptions entry %s (%s): target file does not exist: missing file",
+					entry.Path, config.ExceptionRuleDedupe)
+			}
+			return fmt.Errorf("exceptions entry %s (%s): inspect target %s: %w",
+				entry.Path, config.ExceptionRuleDedupe, entry.Path, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("exceptions entry %s (%s): target %s is not a regular file",
+				entry.Path, config.ExceptionRuleDedupe, entry.Path)
+		}
+	}
+	return nil
 }
 
 // shouldSkipDir excludes directories whose contents are not this repository's own source.
@@ -400,19 +487,64 @@ func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeR
 	})
 }
 
-func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int, report *DedupeReport) {
+func collectDuplicates(hashMap map[string][]FileLocation, locMap map[string]int, exceptions []config.Exception, today time.Time, report *DedupeReport) {
+	used := make([]bool, len(exceptions))
 	for hash, locs := range hashMap {
-		if len(locs) > 1 {
-			report.Duplicates = append(report.Duplicates, DuplicateGroup{
-				Hash:      hash,
-				LOC:       locMap[hash],
-				Locations: locs,
-			})
+		if len(locs) <= 1 {
+			continue
+		}
+		group, allExcepted := classifyDuplicateGroup(hash, locMap[hash], locs, exceptions, today, used)
+		if allExcepted {
+			report.Excepted = append(report.Excepted, group)
+		} else {
+			report.Duplicates = append(report.Duplicates, group)
 		}
 	}
 	sort.Slice(report.Duplicates, func(i, j int) bool {
 		return report.Duplicates[i].Hash < report.Duplicates[j].Hash
 	})
+	sort.Slice(report.Excepted, func(i, j int) bool {
+		return report.Excepted[i].Hash < report.Excepted[j].Hash
+	})
+}
+
+func classifyDuplicateGroup(hash string, loc int, locs []FileLocation, exceptions []config.Exception, today time.Time, used []bool) (DuplicateGroup, bool) {
+	group := DuplicateGroup{
+		Hash:      hash,
+		LOC:       loc,
+		Locations: append([]FileLocation(nil), locs...),
+	}
+	allExcepted := true
+	var groupExceptions []ExceptionEntry
+	seen := make(map[string]bool)
+
+	for i := range group.Locations {
+		live, _ := judgeLocation(&group.Locations[i], exceptions, today, used)
+		if live != nil {
+			if !seen[live.Path] {
+				seen[live.Path] = true
+				groupExceptions = append(groupExceptions, ExceptionEntry{
+					Path:    live.Path,
+					Reason:  live.Reason,
+					Expires: live.Expires,
+				})
+			}
+		} else {
+			allExcepted = false
+		}
+	}
+	if allExcepted {
+		group.Exceptions = groupExceptions
+	}
+	return group, allExcepted
+}
+
+func judgeLocation(loc *FileLocation, exceptions []config.Exception, today time.Time, used []bool) (*config.Exception, *config.Exception) {
+	live, expired := config.ExceptionFor(exceptions, loc.Path, today, used)
+	if live == nil && expired != nil {
+		loc.Expired = expired.Expires
+	}
+	return live, expired
 }
 
 func calculateScore(report *DedupeReport) {

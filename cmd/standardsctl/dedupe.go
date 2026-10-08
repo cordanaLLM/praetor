@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dedupe"
 )
 
@@ -118,23 +119,55 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		fmt.Printf("  Passed:            %v\n", report.Passed)
 	}
 
-	if len(report.Duplicates) > 0 {
-		fmt.Printf("\nDuplicate Function Blocks (%d):\n", len(report.Duplicates))
-		for i, d := range report.Duplicates {
-			fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
-			for _, loc := range d.Locations {
+	printDuplicateBlocks(report.Duplicates)
+	printExceptedBlocks(report.Excepted)
+	printSprawlInfractions(report.SprawlItems)
+	return dedupeVerdict(report)
+}
+
+func printDuplicateBlocks(duplicates []dedupe.DuplicateGroup) {
+	if len(duplicates) == 0 {
+		return
+	}
+	fmt.Printf("\nDuplicate Function Blocks (%d):\n", len(duplicates))
+	for i, d := range duplicates {
+		fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
+		for _, loc := range d.Locations {
+			if loc.Expired != "" {
+				fmt.Printf("      - %s:%d in %s() (its %s exception expired on %s)\n",
+					loc.Path, loc.Line, loc.FuncName, config.ExceptionRuleDedupe, loc.Expired)
+			} else {
 				fmt.Printf("      - %s:%d in %s()\n", loc.Path, loc.Line, loc.FuncName)
 			}
 		}
 	}
+}
 
-	if len(report.SprawlItems) > 0 {
-		fmt.Printf("\nUtility Sprawl Infractions (%d):\n", len(report.SprawlItems))
-		for _, sp := range report.SprawlItems {
-			fmt.Printf("  - %s:%d: uses %s (should use %s)\n", sp.File, sp.Line, sp.Pattern, sp.Replacement)
+func printExceptedBlocks(excepted []dedupe.DuplicateGroup) {
+	if len(excepted) == 0 {
+		return
+	}
+	fmt.Printf("\nExcepted Duplicate Function Blocks (%d):\n", len(excepted))
+	for i, d := range excepted {
+		fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
+		for _, loc := range d.Locations {
+			fmt.Printf("      - %s:%d in %s()\n", loc.Path, loc.Line, loc.FuncName)
+		}
+		for _, exc := range d.Exceptions {
+			fmt.Printf("      excepted until %s by the exceptions entry (rule %s, %s): %s\n",
+				exc.Expires, config.ExceptionRuleDedupe, exc.Path, exc.Reason)
 		}
 	}
-	return dedupeVerdict(report)
+}
+
+func printSprawlInfractions(sprawl []dedupe.SprawlItem) {
+	if len(sprawl) == 0 {
+		return
+	}
+	fmt.Printf("\nUtility Sprawl Infractions (%d):\n", len(sprawl))
+	for _, sp := range sprawl {
+		fmt.Printf("  - %s:%d: uses %s (should use %s)\n", sp.File, sp.Line, sp.Pattern, sp.Replacement)
+	}
 }
 
 // printUnscannedLanguages names the source languages the scan found but cannot read, with

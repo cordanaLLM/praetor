@@ -241,7 +241,18 @@ One behavior has exactly one implementation:
 - The scan reads Go only. It counts the repository's source files in other languages (`util.SourceLanguage` in `internal/util/sourcelang.go`), lists them under `Not Scanned`, and marks the verdict `partial: Go sources only`, because HISS-19 is not measured for those files. A repository with no Go source gets no verdict at all (`Unscanned` and `Partial` in `internal/dedupe/dedupe.go`; `TestScanRepo_Positive_PolyglotVerdictIsPartial` in `internal/dedupe/coverage_test.go`). `--json` prints the same report as JSON.
 - The clone key renames a function's parameters, receiver, results and locals by first use before hashing (`cloneKey` in `internal/dedupe/dedupe.go`), so a copy whose locals were renamed still matches, while a body that reads a different local or field does not. Bodies under three statements or five printed lines are not hashed.
 - `praetorctl dedupe cadence` makes a sweep due after 20 commits, or once 1,000 Go production lines or 10 Go production files have been added since the recorded sweep, whichever comes first (`--threshold`, `--added-lines`, `--added-files`; `CheckCadence` in `internal/dedupe/cadence.go`).
-- Duplication that is genuinely unavoidable is justified in the commit body, not left silent.
+- Duplication that is genuinely unavoidable (such as toolchain-generated boilerplate that cannot be unified) is declared in the top-level `exceptions` list of `.standards.yaml` with rule `HISS-19`. The entry names one repository file by `path` (a glob is refused), a reason, and an expiry at most 90 days ahead (`config.ExceptionRuleDedupe` in `internal/config/exceptions.go`):
+
+```yaml
+exceptions:
+  - rule: "HISS-19"
+    path: "api/v1alpha1/zz_generated.deepcopy.go"
+    reason: "controller-gen produces near-identical DeepCopyInto methods per type"
+    expires: "2026-11-01"
+```
+
+  A clone group whose members all sit in declared, unexpired files does not fail the scan and is reported under `Excepted Duplicate Function Blocks` with each entry's reason and expiry. A group with any member outside excepted files still fails. An expired entry fails like a missing one, naming the entry. The target must exist and be a regular repository file; no skip is applied on generated-code headers or file names alone.
+- Unexcused duplication is justified in the commit body, not left silent.
 
 ### HISS-20: Replayable Enforcement Evidence
 

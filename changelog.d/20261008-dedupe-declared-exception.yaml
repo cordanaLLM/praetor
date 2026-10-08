@@ -1,0 +1,4 @@
+type: added
+title: "praetorctl dedupe scan reads the exceptions list under rule HISS-19, excusing clone groups whose members all sit in declared, unexpired files"
+issue: "#891"
+breaking: false
