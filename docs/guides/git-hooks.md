@@ -332,6 +332,56 @@ a hosted check by its latest run on the head, and on a draft reads a hosted gate
 carries exactly the draft annotation as `draft_pending` rather than `failed`;
 [checkpoint cadence](checkpoint-cadence.md) states both rules.
 
+## The engine the hooks run
+
+Every governance job of the generated `lefthook.yml` and the fallback `pre-commit` hook run
+`sh .config/lefthook/engine.sh <arguments>` instead of a `praetorctl` found on `PATH`
+(`lefthookGovernedCommand` in `internal/adopt/hooks.go`; the script is
+`internal/adopt/engine_launcher.sh`, installed by `praetorctl adopt`). A newer binary on
+`PATH` therefore never judges a repository that pins an older engine: the hook runs the engine
+the repository declares, the one its hosted Standards job installs.
+
+**The pin** is the value of `PRAETOR_REF` declared in any file under `.github/workflows`, as
+`PRAETOR_REF: <ref>` or `PRAETOR_REF=<ref>` (quotes, a trailing comment and CRLF line endings
+are read past). A ref is a commit id of 7 to 40 hexadecimal digits or a release tag such as
+`v1.2.3`; a branch name moves, so it is no pin. Declaring two different values pins nothing.
+
+**The cache** is `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>`, one directory per pin.
+The first hook run with a pin that is not cached installs it:
+
+```sh
+GOBIN=<cache>/<pin> go install github.com/cordanaLLM/praetor/cmd/standardsctl@<pin>
+```
+
+The install goes through a scratch directory renamed into place, so an interrupted run leaves no
+half-written engine, and it is bounded by `PRAETOR_ENGINE_INSTALL_TIMEOUT` seconds (default
+300). Later runs find the cached binary and install nothing. Changing the pin selects, and
+installs when needed, another directory; old directories stay until you delete them.
+
+**Without a pin** the hook runs the binary on `PATH`, `praetorctl` before `standardsctl`, as
+before, and prints `praetor hooks: no PRAETOR_REF pin under .github/workflows; running the
+engine on PATH: <path>` on standard error.
+
+**It never falls back.** A pin that is unusable, declared twice with different values, or that
+cannot be installed (no Go toolchain, no network, a timeout) fails the hook with one message
+that names the pin, the cache directory and the command that fixes it, for example:
+
+```text
+praetor hooks: installing the engine pinned by PRAETOR_REF=492a00f930e1 (declared in .github/workflows/standards-gate.yml), engine cache /home/me/.cache/praetor/engine/492a00f930e1 failed (exit 1, timeout 300 seconds); run: GOBIN=/home/me/.cache/praetor/engine/492a00f930e1 go install github.com/cordanaLLM/praetor/cmd/standardsctl@492a00f930e1
+```
+
+The launcher is a POSIX shell script that runs under Git Bash on Windows, and every line ends
+in a comment sign for the reason given for the [Python launcher](#the-launcher-adoption-writes).
+The hosted job and the `Makefile` are not changed: the `Makefile` resolves `PRAETORCTL` from
+`PATH`, as it did.
+
+Tests (`internal/adopt/engine_launcher_test.go`): `TestEngineLauncher_Positive_PinnedEngineWinsOverPath`
+runs stub binaries that print their identity with a different `praetorctl` first on `PATH`;
+`TestEngineLauncher_Positive_InstallsOncePerPin`, `TestEngineLauncher_Negative_UninstallablePinFailsClosed`,
+`TestEngineLauncher_Negative_NoGoToolchainFailsClosed`, `TestEngineLauncher_Boundary_InstallTimeout`,
+`TestEngineLauncher_Negative_UnusablePinsFailClosed` and `TestEngineLauncher_Negative_ConflictingPinsFailClosed`
+cover the cache and the refusals; `TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo` the unpinned case.
+
 ## The make the hooks run
 
 The hooks need GNU Make on every platform. `pre-commit`, `commit-msg`, `pre-push` and the
@@ -639,6 +689,7 @@ in its own line endings. An edited one is kept, `--force` included, with a warni
 | --- | --- | --- | --- |
 | `.config/agent/hooks/block_evasion.py` | refreshed to the current rendering (`priorEvasionHookDigests`, `testdata/evasion`) | kept | `TestAdopt_Positive_PriorEvasionHookRefreshedOnPlainRun`, `TestAdopt_Negative_EditedEvasionHookKeptUnderForce` |
 | `.config/lefthook/scripts/checkpoint.py` and `common.py`, and `.config/lefthook/python.sh` | refreshed to the `--lock-source-root` bundle (`priorCheckpointDigests`, `testdata/checkpoint`) | kept; the checkpoint lifecycle is unavailable and no other bundle file is written | `TestReconcileCheckpointBundle_Positive_PriorScriptRefreshedOnPlainRun`, `TestReconcileCheckpointBundle_Negative_NoHalfRefreshBesideAKeptFile`, `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable` |
+| `.config/lefthook/engine.sh` ([the engine the hooks run](#the-engine-the-hooks-run)) | refreshed to the current text (`priorEngineLauncherDigests`) | kept | `TestAdopt_EngineLauncher_InstalledAndRefreshed`, `TestAdopt_EngineLauncher_EditedCopyKept`, `TestPriorEngineLauncherDigests_Boundary_CurrentTextRecorded` |
 | the `pre-commit` hook in the directory git reports, written only when lefthook cannot install | not applicable | a hook praetor did not write is kept; the audit accepts it only when lefthook or the pre-commit framework wrote it ([the hook runner the audit accepts](#the-hook-runner-the-audit-accepts)) | `TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce` |
 
 Beside a `lefthook.yml` that extends the canonical policy, the interceptor and the checkpoint

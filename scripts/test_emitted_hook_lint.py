@@ -116,6 +116,7 @@ EMITTED_CONSTANTS = (
     ("internal/adopt/lefthook_identity.go", "canonicalLefthookPolicy", ""),
     ("internal/adopt/hooks.go", "lefthookFile", RENDERED),
     ("internal/adopt/hooks.go", "evasionHookFile", RENDERED),
+    ("internal/adopt/engine_launcher.go", "engineLauncherFile", RENDERED),
 )
 VERSION = re.compile(r"(\d+(?:\.\d+)+)")
 
@@ -382,6 +383,9 @@ class EmittedSourcesTest(LintCase):
     def test_yamllint_accepts_hook_yaml(self):
         self.assertLintPasses("yamllint", self.hooks((".yml", ".yaml")))
 
+    def test_shellcheck_accepts_the_engine_launcher(self):
+        self.assertLintPasses("shellcheck", self.hooks(("engine.sh",)))
+
 
 class ManagedAssetsTest(LintCase):
     """Positive: every managed asset the registry lists passes the linters of its language."""
@@ -539,6 +543,14 @@ class RenderedTemplateTest(LintCase):
         long_job = f"    unfolded:\n      run: echo {'x' * YAMLLINT_MAX_LINE}\n"
         self.assertLintFails("yamllint", {"lefthook.yml": files["lefthook.yml"] + long_job},
                              "line-length")
+
+    def test_shellcheck_rejects_an_unquoted_expansion_in_the_rendered_engine_launcher(self):
+        files = only(hook_files(), ("engine.sh",))
+        self.assertEqual(sorted(files), [".config/lefthook/engine.sh"])
+        path, text = next(iter(files.items()))
+        self.assertIn("  pin=$1 #\n", text)
+        self.assertLintFails("shellcheck", {path: text.replace("  pin=$1 #\n", "  pin=$1 #\n  ls $pin #\n", 1)},
+                             "SC2086")
 
     def test_flake8_rejects_a_long_line_in_the_rendered_interceptor(self):
         files = only(hook_files(), ("block_evasion.py",))

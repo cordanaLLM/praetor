@@ -2334,8 +2334,8 @@ func TestBuildLefthookYAML_FailsClosed(t *testing.T) {
 	if !isString || run != lefthookGovernedCommand(preCommitAuditArgs) {
 		t.Fatalf("run line must survive YAML parsing verbatim, got %q", run)
 	}
-	if !strings.Contains(lefthookGovernedCommand("audit"), "exit 1; fi") {
-		t.Fatal("governed command must fail closed when no binary is installed")
+	if got, want := lefthookGovernedCommand("audit"), "sh "+engineLauncherFile+" audit"; got != want {
+		t.Fatalf("governed command = %q, want the engine launcher, which fails closed (engine_launcher_test.go): %q", got, want)
 	}
 	if strings.Contains(optionalToolCommand("govulncheck", "./..."), "exit 1") {
 		t.Fatal("optional tools skip when absent")

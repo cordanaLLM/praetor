@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -41,6 +42,7 @@ func emittedHookRenderings(t *testing.T) map[string]string {
 		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true}, true),
 		reuseWorkflowFile:    reuseWorkflow(forge.FallbackDefaultBranch),
 		evasionHookFile:      buildBlockEvasionPY(),
+		engineLauncherFile:   engineLauncherScript,
 		manifestFile:         renderedPriorManifest(t),
 		actionlintConfigFile: string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
 	}
@@ -72,11 +74,15 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 // which now runs the Go vulnerability gate (govulnGateArgs), and the two checkpoint jobs, which now
 // start their interpreter through the launcher (lefthookPythonCommand); the unfolded renderings ran
 // the first two without, ran govulncheck ./... and named python3, and nothing else differs.
+//
+// The unfolded renderings resolved the engine from PATH in every governance job; the launcher now
+// does (#906), so pathResolvedCommand rewrites each of those lines to its launcher line first, and
+// nothing else about them changes.
 func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 	fixtures := readPriorLefthookFixtures(t)
 	for name, checkpoint := range map[string]bool{"unfolded.lefthook.yml": false, "unfolded-checkpoint.lefthook.yml": true} {
 		var prior, current map[string]any
-		if err := yaml.Unmarshal(fixtures[name], &prior); err != nil {
+		if err := yaml.Unmarshal([]byte(pathResolvedCommand.ReplaceAllString(string(fixtures[name]), "sh "+engineLauncherFile+" $1")), &prior); err != nil {
 			t.Fatalf("decode %s: %v", name, err)
 		}
 		if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(lefthookShape{languages: hisscatalog.LanguageGo}, checkpoint)), &current); err != nil {
@@ -110,6 +116,13 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 		}
 	}
 }
+
+// pathResolvedCommand matches the run line every governance job had before the engine launcher: the
+// engine under either name on PATH, and a refusal when neither is installed. Group 1 is the
+// arguments.
+var pathResolvedCommand = regexp.MustCompile(`if praetor_cli=\$\(command -v praetorctl 2>/dev/null \|\| command -v standardsctl 2>/dev/null\); ` +
+	`then "\$praetor_cli" (.*?); else echo HISS governance hook cannot run because neither praetorctl ` +
+	`nor standardsctl is installed >&2; exit 1; fi`)
 
 // checkpointEvents names the lifecycle events a rendering carries checkpoint jobs for.
 func checkpointEvents(checkpoint bool) []string {

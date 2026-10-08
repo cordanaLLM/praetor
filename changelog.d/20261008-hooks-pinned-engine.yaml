@@ -1,0 +1,3 @@
+type: fixed
+title: Run the hooks with the engine the repository pins, installed once per pin, and fail closed when the pin cannot be resolved
+breaking: false

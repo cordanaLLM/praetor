@@ -41,7 +41,7 @@ func TestLefthookSecurityJob_Positive_RunsTheVulnerabilityGate(t *testing.T) {
 				continue
 			}
 			run, isString := decodedJob(t, decoded, "pre-push", "security")["run"].(string)
-			if !isString || !strings.Contains(run, `"$praetor_cli" `+govulnGateArgs+";") || strings.Contains(run, "govulncheck ./...") {
+			if !isString || !strings.Contains(run, "sh "+engineLauncherFile+" "+govulnGateArgs+";") || strings.Contains(run, "govulncheck ./...") {
 				t.Errorf("languages=%v checkpoint=%v: security job runs %q", languages, checkpoint, run)
 			}
 		}
