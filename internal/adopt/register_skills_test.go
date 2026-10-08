@@ -26,6 +26,10 @@ import (
 // canonical path, in a directory named after the skill.
 const priorSkillFixtures = "testdata/skills"
 
+// priorSkillNoticeFixtures holds, per skill of the bundle, every notice text a Praetor release shipped at its
+// canonical notice path, in a directory named after the skill.
+const priorSkillNoticeFixtures = "testdata/skill-notices"
+
 // claudeSkillRel is the copy of skill name in the skill directory Claude Code reads.
 func claudeSkillRel(name string) string {
 	return compiler.SkillEntryRel(".claude/skills", name)
@@ -35,6 +39,12 @@ func claudeSkillRel(name string) string {
 func sourceSkillText(t *testing.T, name string) string {
 	t.Helper()
 	return mustRead(t, filepath.Join(sourceCheckout, filepath.FromSlash(compiler.CanonicalSkillRel(name))))
+}
+
+// sourceSkillNoticeText is the NOTICE of skill name this repository ships.
+func sourceSkillNoticeText(t *testing.T, name string) string {
+	t.Helper()
+	return mustRead(t, filepath.Join(sourceCheckout, filepath.FromSlash(compiler.CanonicalSkillNoticeRel(name))))
 }
 
 // repoText reads the slash path rel below repoPath.
@@ -104,6 +114,29 @@ func TestPriorSkillDigests_Boundary_CurrentSourcesRecorded(t *testing.T) {
 		data := []byte(sourceSkillText(t, name))
 		if !isPriorRendering(data, priorSkillDigests[compiler.CanonicalSkillRel(name)]) {
 			t.Errorf("the shipped %s (%s) is not in priorSkillDigests", name, fixtureDigest(t, name, data))
+		}
+	}
+}
+
+// Each skill notice's digest set is replayable in both directions against its fixtures.
+func TestPriorSkillNoticeDigests_Positive_ReproducedByFixtures(t *testing.T) {
+	for _, name := range config.RegisterSkillBundle() {
+		assertPriorDigestsReproduced(t, filepath.Join(priorSkillNoticeFixtures, name), priorSkillNoticeDigests[compiler.CanonicalSkillNoticeRel(name)])
+	}
+}
+
+// Boundary: the skill notices this repository ships are recorded, so the release that changes one still
+// refreshes the unedited copy an adopter holds. After changing a notice, copy it under
+// testdata/skill-notices/<name> and add its digest to priorSkillNoticeDigests.
+func TestPriorSkillNoticeDigests_Boundary_CurrentSourcesRecorded(t *testing.T) {
+	bundle := config.RegisterSkillBundle()
+	if len(priorSkillNoticeDigests) != len(bundle) {
+		t.Fatalf("priorSkillNoticeDigests covers %d paths, want the %d skills of the bundle", len(priorSkillNoticeDigests), len(bundle))
+	}
+	for _, name := range bundle {
+		data := []byte(sourceSkillNoticeText(t, name))
+		if !isPriorRendering(data, priorSkillNoticeDigests[compiler.CanonicalSkillNoticeRel(name)]) {
+			t.Errorf("the shipped notice for %s (%s) is not in priorSkillNoticeDigests", name, fixtureDigest(t, name, data))
 		}
 	}
 }
@@ -297,7 +330,7 @@ func TestInstallRegisterSkills_SourceBundle(t *testing.T) {
 // Positive: each shipped register skill names its credit (upstream author, upstream URL, licence
 // identifier) in one line in its text, and has its required licence notice file next to it.
 func TestShippedSkills_CreditAndNotice(t *testing.T) {
-	creditPattern := regexp.MustCompile(`(?m)^Adapted from .*https://.*MIT licence\.\r?$`)
+	creditPattern := regexp.MustCompile(`(?m)^Adapted from .*https://.*MIT (?:licence|terms at adaptation \(2026-09-18\))\.\r?$`)
 	bundle := config.RegisterSkillBundle()
 	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
 		name := bundle[i]
@@ -393,5 +426,62 @@ func TestAdopt_Negative_HandEditedSkillRefusedOnPlainRun(t *testing.T) {
 	}
 	if contains(rep.CreatedFiles, compiler.CanonicalSkillRel("caveman")) || hasAction(rep, compiler.CanonicalSkillRel("caveman"), actionReplace) {
 		t.Errorf("hand-edited skill reported created or replaced: created=%v actions=%+v", rep.CreatedFiles, rep.ActionDetails)
+	}
+}
+
+// Positive: unedited earlier skill notice texts held by an adopter refresh on a plain adoption run
+// without --force.
+func TestAdopt_Positive_PriorNoticeRefreshedOnPlainRun(t *testing.T) {
+	repoPath := newTestRepo(t, "register-skills-prior-notice-refresh")
+	bundle := config.RegisterSkillBundle()
+	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
+		name := bundle[i]
+		rel := compiler.CanonicalSkillRel(name)
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(rel)), sourceSkillText(t, name))
+
+		noticeRel := compiler.CanonicalSkillNoticeRel(name)
+		priorNoticeText := "MIT License\n\nCopyright (c) 2026 Test Prior Author\n\nearlier unedited notice fixture\n"
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(noticeRel)), priorNoticeText)
+		digest, _, err := util.CanonicalTextDigest([]byte(priorNoticeText))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if priorSkillNoticeDigests[noticeRel] == nil {
+			priorSkillNoticeDigests[noticeRel] = make(map[string]string)
+		}
+		priorSkillNoticeDigests[noticeRel][digest] = "earlier unedited notice fixture"
+		t.Cleanup(func() {
+			delete(priorSkillNoticeDigests[noticeRel], digest)
+		})
+	}
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
+		name := bundle[i]
+		noticeRel := compiler.CanonicalSkillNoticeRel(name)
+		if got := repoText(t, repoPath, noticeRel); got != sourceSkillNoticeText(t, name) {
+			t.Errorf("%s was not refreshed to current notice text", noticeRel)
+		}
+		if got := findActionDetail(rep.ActionDetails, noticeRel); !strings.Contains(got, "Refreshed the unedited earlier Praetor notice") {
+			t.Errorf("%s action detail %q, want notice refresh", noticeRel, got)
+		}
+	}
+}
+
+// Negative: a hand-edited skill notice in an adopter repository is preserved (refused overwrite)
+// on a plain run without --force and reported with a warning.
+func TestAdopt_Negative_HandEditedNoticeRefusedOnPlainRun(t *testing.T) {
+	repoPath := newTestRepo(t, "register-skills-hand-edited-notice")
+	noticeRel := compiler.CanonicalSkillNoticeRel("caveman")
+	edited := sourceSkillNoticeText(t, "caveman") + "\n# custom adopter notice modification\n"
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(noticeRel)), edited)
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	if got := repoText(t, repoPath, noticeRel); got != edited {
+		t.Fatal("plain run replaced a hand-edited caveman notice")
+	}
+	if warningNaming(rep, noticeRel) == "" {
+		t.Errorf("the kept hand-edited caveman notice is not reported in warnings: %v", rep.Warnings)
+	}
+	if contains(rep.CreatedFiles, noticeRel) || hasAction(rep, noticeRel, actionReplace) {
+		t.Errorf("hand-edited notice reported created or replaced: created=%v actions=%+v", rep.CreatedFiles, rep.ActionDetails)
 	}
 }

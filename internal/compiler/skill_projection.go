@@ -145,51 +145,170 @@ func SkillRequiresNotice(data []byte) bool {
 var (
 	skillMarkdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)]+)\)`)
 	skillMarkdownRefRe  = regexp.MustCompile(`(?m)^\[[^\]]+\]:\s*(\S+)`)
+	skillHtmlLinkRe     = regexp.MustCompile(`(?i)<a\s+[^>]*href=["']([^"']+)["']`)
+	skillCodeSpanRe     = regexp.MustCompile("`([^`\r\n]+)`")
+	skillPlainPathRe    = regexp.MustCompile(`(?:^|[\s(])((?:[a-zA-Z0-9_.-]+/)+[a-zA-Z0-9_.-]+(?:\.[a-zA-Z0-9]+)?|docs/\S+)(?:[\s),;:]|$)`)
 )
 
 // CheckShippedSkillReferences refuses a shipped skill text referencing a repository-relative path
-// that the adopter does not receive. It protects by default, allowing only absolute URLs and paths
-// inside the shipped skill set (the skill's own directory or sibling shipped skills).
+// that the adopter does not receive. It protects by default, allowing only absolute URLs, paths
+// inside the shipped skill set (the skill's own directory or sibling shipped skills), and paths
+// that Praetor adoption writes in adopter repositories.
 func CheckShippedSkillReferences(skillName string, data []byte) error {
-	if bytes.Contains(data, []byte("docs/credits.md")) {
-		return fmt.Errorf("skill %s references repository path docs/credits.md, which an adopter does not receive", skillName)
+	if err := checkMarkdownLinks(skillName, data); err != nil {
+		return err
 	}
+	if err := checkReferenceDefs(skillName, data); err != nil {
+		return err
+	}
+	if err := checkHtmlLinks(skillName, data); err != nil {
+		return err
+	}
+	if err := checkCodeSpans(skillName, data); err != nil {
+		return err
+	}
+	return checkPlainTextPaths(skillName, data)
+}
+
+func checkMarkdownLinks(skillName string, data []byte) error {
 	links := skillMarkdownLinkRe.FindAllSubmatch(data, -1)
 	for i := 0; i < len(links) && i < maxSkillProjections; i++ {
-		target := string(links[i][1])
-		if idx := strings.IndexAny(target, " \t"); idx != -1 {
-			target = target[:idx]
+		raw := strings.TrimSpace(string(links[i][1]))
+		raw = strings.TrimPrefix(raw, "<")
+		raw = strings.TrimSuffix(raw, ">")
+		target := strings.TrimSpace(raw)
+		if idx := strings.IndexAny(target, " \t\r\n"); idx != -1 {
+			target = strings.TrimSpace(target[:idx])
 		}
 		if err := validateSkillReferenceTarget(skillName, target); err != nil {
-			return err
-		}
-	}
-	refs := skillMarkdownRefRe.FindAllSubmatch(data, -1)
-	for i := 0; i < len(refs) && i < maxSkillProjections; i++ {
-		if err := validateSkillReferenceTarget(skillName, string(refs[i][1])); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func isExternalOrAnchorTarget(target string) bool {
-	if target == "" || strings.HasPrefix(target, "#") {
-		return true
+func checkReferenceDefs(skillName string, data []byte) error {
+	refs := skillMarkdownRefRe.FindAllSubmatch(data, -1)
+	for i := 0; i < len(refs) && i < maxSkillProjections; i++ {
+		raw := strings.TrimSpace(string(refs[i][1]))
+		raw = strings.TrimPrefix(raw, "<")
+		raw = strings.TrimSuffix(raw, ">")
+		if err := validateSkillReferenceTarget(skillName, strings.TrimSpace(raw)); err != nil {
+			return err
+		}
 	}
-	for _, scheme := range []string{"https://", "http://", "mailto:"} {
-		if strings.HasPrefix(target, scheme) {
+	return nil
+}
+
+func checkHtmlLinks(skillName string, data []byte) error {
+	matches := skillHtmlLinkRe.FindAllSubmatch(data, -1)
+	for i := 0; i < len(matches) && i < maxSkillProjections; i++ {
+		target := strings.TrimSpace(string(matches[i][1]))
+		if err := validateSkillReferenceTarget(skillName, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkCodeSpans(skillName string, data []byte) error {
+	matches := skillCodeSpanRe.FindAllSubmatch(data, -1)
+	for i := 0; i < len(matches) && i < maxSkillProjections; i++ {
+		fields := strings.Fields(string(matches[i][1]))
+		for j := 0; j < len(fields) && j < maxSkillProjections; j++ {
+			tok := strings.Trim(fields[j], "(),;\"'")
+			if !isPathCandidate(tok) {
+				continue
+			}
+			if err := validateSkillReferenceTarget(skillName, tok); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func checkPlainTextPaths(skillName string, data []byte) error {
+	matches := skillPlainPathRe.FindAllSubmatch(data, -1)
+	for i := 0; i < len(matches) && i < maxSkillProjections; i++ {
+		tok := strings.Trim(string(matches[i][1]), "(),;\"'")
+		if !isPathCandidate(tok) {
+			continue
+		}
+		if err := validateSkillReferenceTarget(skillName, tok); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func hasRelativeOrDirPrefix(tok string) bool {
+	return strings.HasPrefix(tok, "./") || strings.HasPrefix(tok, "../") || strings.HasPrefix(tok, "/")
+}
+
+var knownCandidatePrefixes = []string{
+	"docs/", "internal/", ".github/", ".config/", "changelog.d/", ".workingdir/",
+}
+
+func hasKnownCandidatePrefix(tok string) bool {
+	for _, p := range knownCandidatePrefixes {
+		if strings.HasPrefix(tok, p) {
 			return true
 		}
 	}
 	return false
 }
 
+var candidateExtensions = []string{
+	".md", ".yaml", ".yml", ".json", ".toml", ".go", ".py", ".sh", ".txt",
+}
+
+func hasCandidateExtension(tok string) bool {
+	for _, ext := range candidateExtensions {
+		if strings.HasSuffix(tok, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCandidateFileToken(tok string) bool {
+	switch tok {
+	case SkillNoticeName, SkillEntryName, "AGENTS.md", ".standards.yaml", "CHANGELOG.md", ".standards-receipt.json":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPathCandidate(tok string) bool {
+	if isExternalOrAnchorTarget(tok) {
+		return false
+	}
+	if hasRelativeOrDirPrefix(tok) || hasKnownCandidatePrefix(tok) || strings.HasSuffix(tok, "/") {
+		return true
+	}
+	return isCandidateFileToken(tok) || hasCandidateExtension(tok)
+}
+
+func isExternalOrAnchorTarget(target string) bool {
+	if target == "" || strings.HasPrefix(target, "#") {
+		return true
+	}
+	for _, scheme := range []string{"https://", "http://", "mailto:", "git://"} {
+		if strings.HasPrefix(target, scheme) {
+			return true
+		}
+	}
+	return strings.HasPrefix(target, "github.com/")
+}
+
 func isSiblingSkillTarget(clean string) bool {
 	bundle := config.RegisterSkillBundle()
 	for i := 0; i < len(bundle) && i < maxSkillProjections; i++ {
-		prefix := "../" + bundle[i] + "/"
-		if strings.HasPrefix(clean, prefix) || clean == "../"+bundle[i] {
+		sibling := bundle[i]
+		if clean == "../"+sibling || clean == "../"+sibling+"/" ||
+			clean == "../"+sibling+"/"+SkillEntryName || clean == "../"+sibling+"/"+SkillNoticeName {
 			return true
 		}
 	}
@@ -200,16 +319,60 @@ func isAllowedLocalTarget(clean string) bool {
 	if strings.HasPrefix(clean, "../") || clean == ".." || strings.HasPrefix(clean, "/") {
 		return false
 	}
-	base := clean
-	if idx := strings.Index(clean, "/"); idx != -1 {
-		base = clean[:idx]
-	}
-	switch base {
-	case SkillNoticeName, "LICENSE", SkillEntryName, "references", "scripts":
+	return clean == SkillNoticeName || clean == SkillEntryName
+}
+
+func isStandardAdoptedTarget(target string) bool {
+	switch target {
+	case "AGENTS.md", ".standards.yaml", "CHANGELOG.md", ".standards-receipt.json",
+		".paperclip/harness.json", "Makefile", "changelog.d", "docs", "docs/",
+		CanonicalSkillsRel, ".claude/skills":
 		return true
 	default:
 		return false
 	}
+}
+
+func isAdoptedSkillTarget(target string) bool {
+	bundle := config.RegisterSkillBundle()
+	for i := 0; i < len(bundle) && i < maxSkillProjections; i++ {
+		sibling := bundle[i]
+		switch target {
+		case CanonicalSkillRel(sibling), CanonicalSkillNoticeRel(sibling),
+			SkillEntryRel(".claude/skills", sibling), SkillNoticeRel(".claude/skills", sibling),
+			CanonicalSkillsRel + "/" + sibling, ".claude/skills/" + sibling:
+			return true
+		}
+	}
+	return false
+}
+
+var adoptedDirPrefixes = []string{
+	".github/", ".config/lefthook/", "changelog.d/", ".workingdir/", "internal/",
+}
+
+func isAdoptedDirectoryTarget(target string) bool {
+	for _, p := range adoptedDirPrefixes {
+		if strings.HasPrefix(target, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedAdoptedRepoPath(clean string) bool {
+	target := clean
+	if idx := strings.Index(target, ":"); idx != -1 {
+		target = target[:idx]
+	}
+	target = strings.TrimPrefix(target, "./")
+	if isStandardAdoptedTarget(target) {
+		return true
+	}
+	if isAdoptedSkillTarget(target) {
+		return true
+	}
+	return isAdoptedDirectoryTarget(target)
 }
 
 // validateSkillReferenceTarget validates one link target from a shipped skill text.
@@ -219,7 +382,7 @@ func validateSkillReferenceTarget(skillName, target string) error {
 		return nil
 	}
 	clean := filepath.ToSlash(filepath.Clean(target))
-	if isSiblingSkillTarget(clean) || isAllowedLocalTarget(clean) {
+	if isSiblingSkillTarget(clean) || isAllowedLocalTarget(clean) || isAllowedAdoptedRepoPath(clean) {
 		return nil
 	}
 	return fmt.Errorf("skill %s references repository path %q, which an adopter does not receive", skillName, target)

@@ -248,11 +248,16 @@ splice the block before their first compile for the same reason.
 Adoption ships the skills the block names. With `--lock-source-root`, the agent-harness step
 installs `social-text`, `caveman` and `adhd-format`, which `social-text` inherits from, into
 `.agents/skills/` from that checkout (`config.RegisterSkillBundle`). Each carries its REUSE
-header, and `caveman` its `metadata.derived_from` credit ([credits](../credits.md)). The
-bundle is one unit: a source that lacks one skill installs none. An edited skill is kept and
-reported, `--force` included; an unedited earlier Praetor text is refreshed
-(`priorSkillDigests` in `internal/adopt/register_skills.go`,
-`TestAdopt_Negative_EditedSkillIsKeptAndReported`).
+header, its `metadata.derived_from` credit, an inline credit line naming the upstream author,
+repository and licence terms, and an accompanying MIT `NOTICE` file
+(`.agents/skills/<name>/NOTICE`). Adoption and compiler/audit validate that shipped skills do not
+reference repository-relative paths that an adopter does not receive
+(`compiler.CheckShippedSkillReferences` in `internal/compiler/skill_projection.go`). The
+bundle is one unit: a source that lacks one skill or notice installs none. An edited skill or
+notice is kept and reported, `--force` included; unedited earlier Praetor texts are refreshed
+(`priorSkillDigests` and `priorSkillNoticeDigests` in `internal/adopt/register_skills.go`,
+`TestAdopt_Positive_PriorSkillRefreshedOnPlainRun`,
+`TestAdopt_Positive_PriorNoticeRefreshedOnPlainRun`).
 
 Codex, Gemini CLI, Cursor, Copilot and Windsurf read `.agents/skills/`; Claude Code reads
 `.claude/skills/` only (`agentcontext.SkillDirs`). When `agent_clients` selects Claude Code,
