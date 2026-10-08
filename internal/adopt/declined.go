@@ -308,10 +308,10 @@ func declaredManifest(ctx context.Context, repoPath string) (manifest *config.Ma
 }
 
 // loadDeclaredManifest reads and strictly decodes the repository's manifest (one bounded
-// document, BUG-857) and applies every manifest validation, as config.LoadManifest does. A missing manifest is (nil, nil). A manifest that exists but cannot be
-// resolved, read or decoded is an error, so a caller that writes on the strength of "not
-// declined" (EnsurePrivateIgnore) fails closed instead of treating an unreadable decision as
-// no decision.
+// document, BUG-857) and applies every manifest validation, as config.LoadManifest does. A
+// missing manifest is (nil, nil). A manifest that exists but cannot be resolved, read or decoded
+// is an error, so a caller that writes on the strength of "not declined" (EnsurePrivateIgnore)
+// fails closed instead of treating an unreadable decision as no decision.
 func loadDeclaredManifest(ctx context.Context, repoPath string) (*config.Manifest, error) {
 	full, err := repoFile(repoPath, manifestFile)
 	if err != nil {

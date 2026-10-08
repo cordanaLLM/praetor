@@ -85,8 +85,29 @@ func (e Exception) apiModuleTargetProblem() string {
 	if e.Path == "" || (e.Path != "go.mod" && !strings.HasSuffix(e.Path, "/go.mod")) {
 		return "rule " + ExceptionRuleAPICompatibility + " must name the go.mod of one module by path, such as hw/udev/go.mod"
 	}
+	if !apiPathSafe(e.Path) {
+		return "path of rule " + ExceptionRuleAPICompatibility + " must be a repository path of letters, digits and . _ - / only: the path is written into a workflow"
+	}
 	if strings.Contains(e.Reason, "${{") {
 		return "reason of rule " + ExceptionRuleAPICompatibility + " must not contain \"${{\": the reason is written into a workflow"
 	}
 	return ""
+}
+
+// apiPathSafe reports whether path is a repository path made only of ASCII letters, digits and
+// . _ - / : the grammar the rendered APICOMPAT_EXCEPTIONS line carries without an expression
+// ("${{"), a quote, a space or a shell metacharacter.
+func apiPathSafe(path string) bool {
+	if !ValidRepositoryPath(path) {
+		return false
+	}
+	for _, char := range path {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9':
+		case char == '.', char == '_', char == '-', char == '/':
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -175,6 +175,15 @@ the build failure fails the gate with status 2 as before, naming the expired ent
 A damaged `APICOMPAT_EXCEPTIONS` fails the run instead of reading as no exceptions
 (`TestGate_Boundary_DamagedExceptionsFailTheRun`).
 
+Adding, renewing or editing an `api-compatibility` entry changes the rendered workflow, because the
+entries travel in its `APICOMPAT_EXCEPTIONS` line. Run `praetorctl adopt` and commit the refreshed
+`.github/workflows/praetor-api.yml` with the manifest change: until then audit fails naming plain
+adoption (`TestAuditLocksTheAPIWorkflowToTheExceptionsAlone` in
+`cmd/standardsctl/audit_api_system_packages_test.go`,
+`TestAdoptRefreshesTheWorkflowWhenOnlyAnExceptionChanges` in
+`internal/adopt/api_system_packages_test.go`). The path of an entry is limited to letters, digits and
+`. _ - /` for the same reason (`TestExceptions_APICompatibilityRuleNamesAModule`).
+
 ## Run it locally
 
 From a clean checkout, with `git` and `go` on `PATH`:

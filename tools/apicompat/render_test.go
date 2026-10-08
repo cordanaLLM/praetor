@@ -117,7 +117,7 @@ func TestRenderWorkflow_Negative_RefusesWhatItCannotRender(t *testing.T) {
 	if _, err := RenderWorkflow("name: other\n", Settings{SystemPackages: []string{"libudev-dev"}}); err == nil {
 		t.Fatal("a workflow without the gate step took settings")
 	}
-	tooMany := make([]string, MaxRenderedPackages+1)
+	tooMany := make([]string, config.MaxAPISystemPackages+1)
 	for index := range tooMany {
 		tooMany[index] = "libx-dev"
 	}

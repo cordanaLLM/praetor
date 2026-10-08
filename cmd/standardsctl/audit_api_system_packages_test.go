@@ -62,3 +62,36 @@ func TestAuditLocksTheAPIWorkflowToTheManifestRendering(t *testing.T) {
 		t.Fatalf("no api settings must keep the canonical bytes: %v", err)
 	}
 }
+
+// Negative: with no system packages declared, adding or renewing an api-compatibility entry
+// changes the rendering, so audit fails naming plain adoption until the rendered workflow is
+// committed. Positive: the rendering for the changed list passes.
+func TestAuditLocksTheAPIWorkflowToTheExceptionsAlone(t *testing.T) {
+	var family managedasset.Family
+	for _, candidate := range managedasset.Families() {
+		if candidate.Facet == managedasset.APIContractFacet {
+			family = candidate
+		}
+	}
+	entry := func(expires string) string {
+		return "version: 1\nexceptions:\n  - rule: api-compatibility\n    path: hw/go.mod\n    reason: needs a vendor SDK\n    expires: \"" + expires + "\"\n"
+	}
+	root := t.TempDir()
+	earlier := "holds an earlier Praetor text; run 'praetorctl adopt'"
+	writeFixtureFile(t, root, ".standards.yaml", "version: 1\n")
+	writeFamilyFixture(t, root, family, func(text string) string { return text })
+	for _, days := range []int{30, 60} {
+		writeFixtureFile(t, root, ".standards.yaml", entry(time.Now().UTC().AddDate(0, 0, days).Format("2006-01-02")))
+		if _, err := auditManagedFamily(t.Context(), root, family); err == nil || !strings.Contains(err.Error(), earlier) {
+			t.Fatalf("a workflow rendered before the entry (days %d) passed: %v", days, err)
+		}
+		custom, err := adopt.FamilyForRepository(t.Context(), root, family)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFixtureFile(t, root, family.WorkflowFile, custom.Workflow)
+		if _, err := auditManagedFamily(t.Context(), root, family); err != nil {
+			t.Fatalf("the rendering for the entry (days %d) failed audit: %v", days, err)
+		}
+	}
+}

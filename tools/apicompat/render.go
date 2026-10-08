@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
@@ -24,9 +25,6 @@ const (
 	InstallStepName = "Install system packages for the Go build"
 	// InstallTimeoutMinutes bounds the install step.
 	InstallTimeoutMinutes = 15
-	// MaxRenderedPackages and MaxRenderedExceptions bound what one rendering carries (HISS-02).
-	MaxRenderedPackages   = 64
-	MaxRenderedExceptions = 1024
 )
 
 const (
@@ -97,8 +95,8 @@ func RenderWorkflow(plain string, settings Settings) (string, error) {
 	if settings.Empty() {
 		return plain, nil
 	}
-	if len(settings.SystemPackages) > MaxRenderedPackages || len(settings.Exceptions) > MaxRenderedExceptions {
-		return "", fmt.Errorf("the workflow carries at most %d packages and %d exceptions", MaxRenderedPackages, MaxRenderedExceptions)
+	if len(settings.SystemPackages) > config.MaxAPISystemPackages || len(settings.Exceptions) > config.MaxExceptions {
+		return "", fmt.Errorf("the workflow carries at most %d packages and %d exceptions", config.MaxAPISystemPackages, config.MaxExceptions)
 	}
 	if strings.Count(plain, compareStepMarker) != 1 || strings.Count(plain, envMarker) != 1 {
 		return "", errors.New("the API compatibility workflow lacks the single gate step the settings are rendered into")

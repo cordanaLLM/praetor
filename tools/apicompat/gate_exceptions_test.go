@@ -6,10 +6,16 @@ package apicompat
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // brokenLib is a source file of the nested lib module that does not compile, standing in for a
@@ -111,5 +117,21 @@ func TestGate_Boundary_DamagedExceptionsFailTheRun(t *testing.T) {
 	empty := h.run(t, f.dir, []string{ExceptionsEnv + "="}, "-base="+base)
 	if empty.status != 0 || !slices.Contains(h.checked(t), ". "+base+" "+strings.TrimSpace(f.git("rev-parse", "HEAD"))) {
 		t.Fatalf("an empty variable is no exception: status %d:\n%s", empty.status, empty.stderr)
+	}
+}
+
+// Boundary: the standalone gate restates config.MaxExceptions because it cannot import the
+// engine; the two must stay equal, or the gate would refuse a list the manifest admits.
+func TestGate_Boundary_ExceptionBoundMatchesConfig(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("gate", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`(?m)^\s*maxExceptions\s*=\s*(\d+)\s*$`).FindSubmatch(source)
+	if match == nil {
+		t.Fatal("gate/main.go declares no maxExceptions constant")
+	}
+	if got := string(match[1]); got != strconv.Itoa(config.MaxExceptions) {
+		t.Errorf("gate maxExceptions = %s, want config.MaxExceptions = %d", got, config.MaxExceptions)
 	}
 }

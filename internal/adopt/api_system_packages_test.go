@@ -120,6 +120,31 @@ func TestAdoptRefreshesUneditedRenderingsWhenTheManifestChanges(t *testing.T) {
 	}
 }
 
+// Positive: adding, then renewing, an api-compatibility entry with no packages declared changes
+// the rendered workflow, and an unedited copy refreshes without --force. Negative: the entry
+// reaches the workflow's environment line, so a stale copy would carry the old expiry.
+func TestAdoptRefreshesTheWorkflowWhenOnlyAnExceptionChanges(t *testing.T) {
+	family := apiManagedFamily(t)
+	s := familySession(t, false)
+	declareAPIPackages(t, s, "")
+	if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
+		t.Fatal(err)
+	}
+	first := time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02")
+	renewed := time.Now().UTC().AddDate(0, 0, 60).Format("2006-01-02")
+	for _, expires := range []string{first, renewed} {
+		before := workflowOf(t, s)
+		declareAPIPackages(t, s, expires)
+		if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
+			t.Fatalf("expires %s: %v", expires, err)
+		}
+		after := workflowOf(t, s)
+		if after == before || !strings.Contains(after, expires) || strings.Contains(after, apiassets.InstallStepName) {
+			t.Fatalf("expires %s: the workflow did not follow the exception alone:\n%s", expires, after)
+		}
+	}
+}
+
 // Negative: a manifest with an invalid package name stops adoption naming api.system_packages
 // before the workflow is written.
 func TestAdoptRefusesAnInvalidSystemPackage(t *testing.T) {

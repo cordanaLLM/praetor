@@ -87,6 +87,7 @@ func TestExceptions_APICompatibilityRuleNamesAModule(t *testing.T) {
 		entry("go.mod", "", "needs libudev.h", "2026-12-01"),
 		entry("hw/udev/go.mod", "", "needs libudev.h", "2026-12-01"),
 		entry("hw/udev/go.mod", "", "needs libudev.h", "2026-01-01"),
+		entry("a_b/C-d.1/go.mod", "", "needs libudev.h", "2026-12-01"),
 	} {
 		if err := ValidateExceptions(valid, today); err != nil {
 			t.Errorf("%+v refused: %v", valid, err)
@@ -98,6 +99,9 @@ func TestExceptions_APICompatibilityRuleNamesAModule(t *testing.T) {
 		"directory":   entry("hw/udev", "", "r", "2026-12-01"),
 		"lookalike":   entry("hw/mygo.mod", "", "r", "2026-12-01"),
 		"expression":  entry("hw/udev/go.mod", "", "see ${{ secrets.X }}", "2026-12-01"),
+		"path expr":   entry("hw/${{ github.actor }}/go.mod", "", "r", "2026-12-01"),
+		"path space":  entry("hw/a b/go.mod", "", "r", "2026-12-01"),
+		"path quote":  entry("hw/a\"b/go.mod", "", "r", "2026-12-01"),
 		"too far out": entry("hw/udev/go.mod", "", "r", "2027-12-01"),
 	} {
 		if err := ValidateExceptions(invalid, today); err == nil {
