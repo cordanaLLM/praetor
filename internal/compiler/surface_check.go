@@ -71,5 +71,9 @@ func CheckSkillTargets(ctx context.Context, root string, added []string) error {
 	if err != nil {
 		return err
 	}
-	return checkProjectionFiles(ctx, root, append(files, copies...))
+	stale, err := staleClientLicenses(ctx, root, dirs, pending)
+	if err != nil {
+		return err
+	}
+	return checkProjectionFiles(ctx, root, slices.Concat(files, copies, removalFiles(stale)))
 }

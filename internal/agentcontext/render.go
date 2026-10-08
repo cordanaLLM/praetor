@@ -24,6 +24,8 @@ type TargetFile struct {
 	RelativePath string
 	Content      string
 	LineCount    int
+	// Remove marks a file the write deletes instead of writing: Content is empty.
+	Remove bool
 }
 
 // CompileResult contains the output of context transpilation.
