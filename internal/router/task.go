@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // MaxTaskTokens bounds each supplied token estimate; estimates do not claim a
@@ -16,7 +17,8 @@ const MaxTaskTokens = 1_000_000_000
 // and available recorded-capacity constraints. It never triggers a silent downgrade.
 var ErrNoEligibleModel = errors.New("no eligible model for declared task and capabilities")
 
-// TaskRequest states an explicit task class and token estimates for cost and quota.
+// TaskRequest states an explicit task class and optional token estimates for cost and quota.
+// Both estimates zero asks for a tier-only route: candidates then rank by configured rates.
 type TaskRequest struct {
 	Task                    string   `json:"task"`
 	Capabilities            []string `json:"capabilities,omitempty"`
@@ -37,6 +39,43 @@ type TaskRoute struct {
 	ProjectedHeadroom *float64        `json:"projected_headroom,omitempty"`
 	QuotaLimitsKnown  bool            `json:"quota_limits_known"`
 	Basis             string          `json:"basis"`
+	// Lane is the executable lane of the pick; LaneNote says why there is none.
+	Lane     *LaneRoute `json:"lane,omitempty"`
+	LaneNote string     `json:"lane_note,omitempty"`
+	// Skipped lists candidates of the task's tiers the gateway rules excluded, with the reason.
+	Skipped []RouteSkip `json:"skipped,omitempty"`
+	// rank orders candidates: the estimated cost, or the summed per-million rates without estimates.
+	rank float64
+}
+
+// RouteSkip is one candidate excluded from a route and why.
+type RouteSkip struct {
+	Model  string `json:"model"`
+	Reason string `json:"reason"`
+}
+
+// admit reports whether the gateway rules keep a candidate; an excluded one is recorded.
+func (p *taskPass) admit(model ModelDescriptor) bool {
+	reason := gatewayExclusion(model, p.serves)
+	if reason == "" {
+		return true
+	}
+	if len(p.skips) < MaxRoutingModels {
+		p.skips = append(p.skips, RouteSkip{Model: model.ID, Reason: reason})
+	}
+	return false
+}
+
+// maxErrorSkips bounds the skip reasons quoted in a no-eligible-model error.
+const maxErrorSkips = 8
+
+// taskPass is the state of one selection: the request, whether a reservation filters
+// candidates, whether the gateway serves answering aliases, and the candidates skipped.
+type taskPass struct {
+	request   TaskRequest
+	reserving bool
+	serves    bool
+	skips     []RouteSkip
 }
 
 // SelectForTask considers only tiers declaring the exact task and models declaring
@@ -58,12 +97,13 @@ func (a *ModelCapacityArbiter) selectTaskLocked(ctx context.Context, request Tas
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	pass := &taskPass{request: request, reserving: reserving, serves: gatewayServesAliases(a.Config)}
 	var best *TaskRoute
 	for i := 0; i < len(names) && i < MaxRoutingTiers; i++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		candidate, err := a.selectTaskTier(request, names[i], reserving)
+		candidate, err := a.selectTaskTier(pass, names[i])
 		if err != nil {
 			return nil, err
 		}
@@ -72,9 +112,26 @@ func (a *ModelCapacityArbiter) selectTaskLocked(ctx context.Context, request Tas
 		}
 	}
 	if best == nil {
-		return nil, fmt.Errorf("%w: %s", ErrNoEligibleModel, request.Task)
+		return nil, fmt.Errorf("%w: %s%s", ErrNoEligibleModel, request.Task, describeSkips(pass.skips))
+	}
+	best.Skipped = pass.skips
+	if lane, ok := ResolveLane(a.Config, best.Tier, best.Model, request.Task); ok {
+		best.Lane = lane
+	} else {
+		best.LaneNote = "no lane declared for the model or its tier " + best.Tier
 	}
 	return best, nil
+}
+
+func describeSkips(skips []RouteSkip) string {
+	if len(skips) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, maxErrorSkips)
+	for i := 0; i < len(skips) && i < maxErrorSkips; i++ {
+		parts = append(parts, skips[i].Model+": "+skips[i].Reason)
+	}
+	return " (skipped: " + strings.Join(parts, "; ") + ")"
 }
 
 func (a *ModelCapacityArbiter) validateTaskRoute(ctx context.Context, request TaskRequest) error {
@@ -103,13 +160,11 @@ func validateTaskRequest(request TaskRequest) error {
 	if request.InputTokens < 0 || request.InputTokens > MaxTaskTokens || request.OutputTokens < 0 || request.OutputTokens > MaxTaskTokens {
 		return fmt.Errorf("token estimates must be between 0 and %d", MaxTaskTokens)
 	}
-	if request.InputTokens+request.OutputTokens == 0 {
-		return errors.New("at least one token estimate must be positive")
-	}
 	return validateRoutingTags(request.Capabilities)
 }
 
-func (a *ModelCapacityArbiter) selectTaskTier(request TaskRequest, name string, reserving bool) (*TaskRoute, error) {
+func (a *ModelCapacityArbiter) selectTaskTier(pass *taskPass, name string) (*TaskRoute, error) {
+	request, reserving := pass.request, pass.reserving
 	tier := a.Config.Tiers[name]
 	if !hasRoutingTag(tier.TargetTasks, request.Task) {
 		return nil, nil
@@ -118,6 +173,9 @@ func (a *ModelCapacityArbiter) selectTaskTier(request TaskRequest, name string, 
 	for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
 		model := tier.Models[i]
 		if !hasTaskCapabilities(model.Capabilities, request.Capabilities) {
+			continue
+		}
+		if !pass.admit(model) {
 			continue
 		}
 		if reserving && !a.reservationAvailableLocked(model.ID) {
@@ -153,9 +211,17 @@ func newTaskRoute(request TaskRequest, tier string, model ModelDescriptor, capac
 	knownLimits := model.RPMLimit > 0 && model.TPMLimit > 0
 	request.Capabilities = append([]string(nil), request.Capabilities...)
 	model.Capabilities = append([]string(nil), model.Capabilities...)
-	result := &TaskRoute{Request: request, Tier: tier, Model: model, EstimatedCost: cost, CapacityObserved: capacity.observed,
+	rank := cost
+	tierOnly := request.InputTokens+request.OutputTokens == 0
+	if tierOnly {
+		rank = model.CostPerMIn + model.CostPerMOut
+	}
+	result := &TaskRoute{Request: request, rank: rank, Tier: tier, Model: model, EstimatedCost: cost, CapacityObserved: capacity.observed,
 		QuotaLimitsKnown: knownLimits,
 		Basis:            "lowest configured token cost among explicitly eligible candidates after projected request checks; unknown counters or limits remain provisional; no live availability, quota reservation or dispatch"}
+	if tierOnly {
+		result.Basis += "; no token estimates, so candidates rank by configured per-million rates"
+	}
 	if capacity.observed {
 		headroom := usageHeadroom(capacity.recorded, model)
 		result.RecordedHeadroom = &headroom
@@ -192,8 +258,8 @@ func betterTaskRoute(candidate, best *TaskRoute) bool {
 	if best == nil {
 		return true
 	}
-	if candidate.EstimatedCost != best.EstimatedCost {
-		return candidate.EstimatedCost < best.EstimatedCost
+	if candidate.rank != best.rank {
+		return candidate.rank < best.rank
 	}
 	if candidate.Model.ID != best.Model.ID {
 		return candidate.Model.ID < best.Model.ID

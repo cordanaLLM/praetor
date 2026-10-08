@@ -14,11 +14,13 @@ import (
 
 func runModels(args []string) error {
 	fs := flag.NewFlagSet("models", flag.ContinueOnError)
-	configPath := fs.String("config", ".config/models/routing.yaml", "Path to model routing config")
+	configPath := fs.String("config", router.DefaultConfigPath, "Path to model routing config")
 	discoverLocal := fs.Bool("discover-local", true, "Auto-discover local Ollama/vLLM models")
 	endpoints := fs.String("local-endpoints", "http://localhost:11434,http://localhost:8000", "Comma-separated local runtime endpoints")
 	prune := fs.Bool("prune", false, "models sync: rebuild the catalog from the seed list and this run's local discovery, removing every other entry")
+	probeAliases := fs.Bool("probe-aliases", true, "models sync: probe each gateway alias entry once and record whether it answers")
 	route := addModelRouteFlags(fs)
+	outcome := addModelOutcomeFlags(fs)
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -32,20 +34,27 @@ func runModels(args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), modelsTimeout)
 	defer cancel()
 
 	switch action {
 	case "sync":
-		return handleModelsSync(ctx, *configPath, modelSyncOptions(*endpoints, *discoverLocal, *prune))
+		opts := modelSyncOptions(*endpoints, *discoverLocal, *prune)
+		opts.ProbeAliases = *probeAliases
+		return handleModelsSync(ctx, *configPath, opts)
 	case "list":
 		return handleModelsList(*configPath)
 	case "route":
 		return handleModelsRoute(ctx, *configPath, route)
+	case "outcome":
+		return handleModelsOutcome(ctx, *route.task, outcome)
 	default:
-		return fmt.Errorf("unknown action: %s (supported: sync, list, route)", action)
+		return fmt.Errorf("unknown action: %s (supported: sync, list, route, outcome)", action)
 	}
 }
+
+// modelsTimeout bounds one models invocation, including every alias probe a sync makes.
+const modelsTimeout = 60 * time.Second
 
 func modelSyncOptions(endpoints string, discoverLocal, prune bool) router.SyncOptions {
 	var localList []string
@@ -88,7 +97,49 @@ func handleModelsSync(ctx context.Context, configPath string, opts router.SyncOp
 	for _, failure := range res.DiscoveryFailures {
 		fmt.Printf("  - Endpoint skipped:    %s\n", failure)
 	}
+	printAliasProbes(res.AliasProbes)
+	printCatalogFindings(res.Findings)
 	return nil
+}
+
+// printAliasProbes states, per alias entry, whether the gateway answered and why not.
+func printAliasProbes(probes []router.AliasProbe) {
+	for _, probe := range probes {
+		switch probe.Status {
+		case router.AliasAnswers:
+			fmt.Printf("  - Alias answers:       %s (%s)\n", probe.Model, probe.Alias)
+		case router.AliasUnanswered:
+			fmt.Printf("  - Alias skipped:       %s (%s): %s\n", probe.Model, probe.Alias, probe.Reason)
+		default:
+			fmt.Printf("  - Alias not probed:    %s (%s): %s\n", probe.Model, probe.Alias, probe.Reason)
+		}
+	}
+}
+
+// printCatalogFindings lists every stale or preview entry; the audit fails on the same findings.
+func printCatalogFindings(findings []router.CatalogFinding) {
+	for _, finding := range findings {
+		fmt.Printf("  - Catalog stale:       %s\n", finding)
+	}
+}
+
+// modelListNotes marks the alias, probe status and preview flag of a listed entry.
+func modelListNotes(m router.ModelDescriptor) string {
+	var notes []string
+	if m.Alias != "" {
+		status := string(m.AliasStatus)
+		if status == "" {
+			status = "not probed"
+		}
+		notes = append(notes, "alias "+m.Alias+": "+status)
+	}
+	if router.IsPreviewModel(m) {
+		notes = append(notes, "preview")
+	}
+	if len(notes) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(notes, ", ") + "]"
 }
 
 func handleModelsList(configPath string) error {
@@ -104,8 +155,8 @@ func handleModelsList(configPath string) error {
 	for tierName, tier := range cfg.Tiers {
 		fmt.Printf("\n[TIER: %s] (%s)\n", strings.ToUpper(tierName), tier.Description)
 		for _, m := range tier.Models {
-			fmt.Printf("  - %-32s [%-12s] RPM: %-5d TPM: %-8d ($%.2f/M in, $%.2f/M out)\n",
-				m.ID, m.Family, m.RPMLimit, m.TPMLimit, m.CostPerMIn, m.CostPerMOut)
+			fmt.Printf("  - %-32s [%-12s] RPM: %-5d TPM: %-8d ($%.2f/M in, $%.2f/M out)%s\n",
+				m.ID, m.Family, m.RPMLimit, m.TPMLimit, m.CostPerMIn, m.CostPerMOut, modelListNotes(m))
 		}
 	}
 	return nil

@@ -55,9 +55,12 @@ cost_per_m_in * input_tokens / 1,000,000
 
 Both prices must be explicit finite nonnegative numbers. Explicit zero is allowed;
 missing or null rates cannot win as free models. Rates must use a common currency
-or unit; no currency conversion is implemented. At least one token estimate must
-be positive. Equal estimates resolve by lexicographic model ID, then tier name,
-independently of map or list iteration order.
+or unit; no currency conversion is implemented. Token estimates are optional. With
+neither given, the route is tier-only: `estimated_cost` is 0 and candidates rank by
+the sum of their two per-million rates (`basis` says so), pinned by
+`TestTierOnlyRouteRanksByRatesWithoutEstimates`. Each given estimate still drives
+cost and the quota checks. Equal ranks resolve by lexicographic model ID, then tier
+name, independently of map or list iteration order.
 
 The JSON result includes the exact loaded configuration SHA256, selected model,
 task/capabilities, token estimates, configured cost and capacity observation status.
@@ -222,7 +225,7 @@ being lost, apart from a writer that races that final check.
 
 Governance and the default tiers' metadata follow the same ownership rule as model
 entries, with or without `--prune`: each `governance` key and each default tier's
-`description`, `target_tasks` and `fallback_tier` that the file declares is kept, an
+`description`, `target_tasks`, `fallback_tier` and `lane` that the file declares is kept, an
 explicit `false`, zero or empty list included, and only an undeclared key takes the
 built-in default (`internal/router/sync_settings.go`). To return a setting to its
 default, delete the key and sync. A `--prune` run keeps a declared `fallback_tier`
@@ -239,6 +242,100 @@ never commits. `main` requires a pull request, signed commits and passing checks
 no bypass actor, so a bot push cannot land there, and this repository does not let
 `GITHUB_TOKEN` open pull requests. To clear the failure, run `praetorctl models sync`
 and land the result in a pull request.
+
+## Gateway aliases
+
+An OpenAI-compatible gateway can serve router aliases (classes such as light, coding,
+reasoning or auto) and refuse the concrete model IDs its key cannot use, so a pinned ID
+the catalog lists may fail there. A catalog entry can therefore name an alias instead:
+
+```yaml
+gateway:
+  address: https://gateway.example.com/v1   # yours; the repository ships none
+  key_env: GATEWAY_API_KEY                  # variable holding the bearer key; never stored
+tiers:
+  lightweight:
+    models:
+      - {id: gateway-light, family: openai, provider: gateway, alias: light,
+         cost_per_m_in: 0, cost_per_m_out: 0}
+```
+
+`provider` and `alias` come together, an alias entry needs a `gateway` section, and
+`id` stays the unique catalog key (`internal/router/gateway.go`). Nothing in code,
+defaults or docs names a gateway: the adopter configures its address and aliases.
+
+`models sync` makes one bounded call per alias entry (a one-token chat completion, 10
+second deadline) and records `alias_status: answers` or `unanswered` with the gateway's
+refusal in `alias_reason`. It does not trust the gateway's model listing, which can list
+more than the key may use. A probe that cannot run, such as an unset `key_env` variable,
+changes nothing and is reported as `Alias not probed`. `--probe-aliases=false` skips the
+calls. The route then applies three rules:
+
+- An alias entry is a candidate only while its status is `answers`. An `unanswered` or
+  never probed alias is skipped and listed in the result's `skipped` array with the
+  reason.
+- Once any alias answers, a pinned model is excluded too, however cheap, because the
+  gateway refuses concrete IDs; only models from a local runtime (`source: local`)
+  stay, since they never pass through the gateway. With no answering alias the
+  declared pinned models remain the only candidates. No eligible model is an error
+  that quotes the skipped reasons.
+- The harness is told the alias, never a model ID behind it.
+
+`TestRouteNeverFallsBackToPinnedModelWhenGatewayServesAliases`,
+`TestRouteSkipsUnprobedAliasAndKeepsPinnedWhenNoAliasAnswers` and
+`TestProbeAliasesRecordsAnswerAndReason` pin these.
+
+## Lanes and outcomes
+
+A lane says how a pick is executed. One `lanes` table in `routing.yaml`, read by the
+same loader as the rest, maps a lane name to its harness and headless command, and a
+tier or model names its lane (`lane:`; a model's own lane wins):
+
+```yaml
+lanes:
+  gateway-coding:
+    harness: coding-harness
+    command: [coding-harness, run, --model, "{target}", --task, "{task}"]
+tiers:
+  lightweight:
+    lane: gateway-coding
+```
+
+The command is an argument vector, never a shell line. `{target}` expands to the
+alias of an alias entry or the model ID, `{task}` to the label; each stays one
+argument whatever it contains, and any other `{name}` is refused at load. The
+harness may be a local or gateway model through a headless coding harness, a
+free-tier CLI or the frontier agent; Praetor ships no lane, because the command lines
+are the adopter's.
+
+`models route --task <label>` returns `lane` with `name`, `harness`, `target` and the
+exact `command`. A pick with no lane declared returns `lane_note` instead of a guess.
+`TestEveryDeclaredLabelRoutesToAnExecutableLane` routes every declared label.
+
+`praetorctl models outcome --task <label> --target <t> --result ok|fail|timeout
+[--lane <name>] [--duration-ms n] [--note text]` appends one record to
+`.workingdir/routing/outcomes.jsonl` (`--outcome-log` changes it), a private JSON Lines
+log that is never rewritten. It is the measured routing data the efficiency ledger reads
+through `router.ReadOutcomes`, which fails on a record it cannot decode instead of
+averaging over the rest. The router does not dispatch: the caller that runs the command
+records how it ended.
+
+## Catalog freshness
+
+Every entry may carry `preview: true` and an `as_of` date (YYYY-MM-DD) for when its data
+was written or confirmed; a model ID containing `preview` counts as preview. `models
+sync` lists each preview entry and each entry whose `as_of` is older than
+`governance.catalog_max_age_days` (default 180) as `Catalog stale`. An answering alias
+probe sets `as_of` to the sync date, a discovered local model gets the sync date, and a
+seed entry gets `router.SeedListDate`, the date the seed list was last edited: it dates
+the list and does not claim a provider confirmed the price. An entry without `as_of` is
+not judged on age.
+
+`praetorctl audit` runs the same check over `.config/models/routing.yaml`
+(`auditModelCatalog`) and fails on any finding; a repository without that file skips it,
+saying so, and a file that does not load fails. The seed list no longer carries the three
+preview models it once did. Tests: `TestAuditModelCatalogFailsStaleAndPreviewEntries`,
+`TestAuditModelCatalogWindowBoundary`, `TestSyncProbesAliasesAndReportsStalePreviewEntries`.
 
 ## Bounds and configuration migration
 
@@ -277,8 +374,8 @@ enforce concurrency.
 
 ## Remaining dispatch and feedback work
 
-Automatic agent dispatch, shared fleet reservations, observed latency/success
-feedback, quality calibration, retry/escalation policy and
+Automatic agent dispatch, shared fleet reservations, feeding the
+[outcome log](#lanes-and-outcomes) back into selection, quality calibration, retry/escalation policy and
 cross-model review orchestration remain unimplemented integrations. The declared
 `orthogonal_audit_required` setting does not establish scheduler enforcement.
 The concurrency setting is enforced only by callers using the shared tracker
