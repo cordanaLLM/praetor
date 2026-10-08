@@ -122,6 +122,10 @@ func (s *reuseScan) read(line string) error {
 func (s *reuseScan) header(line string) error {
 	clean, _, _ := strings.Cut(line, "#")
 	clean = strings.TrimSpace(clean)
+	if strings.Contains(clean, `\`) {
+		return fmt.Errorf("the table header %s is not one this read follows: write each annotation as a table of its own, "+
+			"opened by a [[annotations]] line", line)
+	}
 	isArray := strings.HasPrefix(clean, "[[") && strings.HasSuffix(clean, "]]")
 	name := util.TOMLTableName(line)
 	inner := strings.Trim(strings.TrimSuffix(strings.TrimPrefix(name, "["), "]"), `"'`)
@@ -158,8 +162,8 @@ func (s *reuseScan) assign(line string) error {
 	firstSegment, _, hasDot := strings.Cut(s.listKey, ".")
 	firstSegment = strings.Trim(firstSegment, `"'`)
 	if !s.inTable {
-		if !s.ignoredTable && firstSegment == "annotations" {
-			return reuseTopLevelKeyError(s.listKey)
+		if !s.ignoredTable && (firstSegment == "annotations" || strings.Contains(key, `\`)) {
+			return reuseTopLevelKeyError(key)
 		}
 		s.skip = util.TOMLValueScan{}
 		return s.skipValue(value)
@@ -170,6 +174,9 @@ func (s *reuseScan) assign(line string) error {
 // assignTableKey handles a key assignment inside an [[annotations]] table.
 func (s *reuseScan) assignTableKey(firstSegment string, hasDot bool, value string) error {
 	switch {
+	case strings.Contains(s.listKey, `\`):
+		return fmt.Errorf("the key %s of an [[annotations]] table is not one this read follows: assign %s, %s and %s "+
+			"each on a line of its own, with no dotted key", s.listKey, reusePathKey, reuseLicenseKey, strings.Join(reuseSteppedKeys, ", "))
 	case hasDot && isAnnotationSegment(firstSegment):
 		return fmt.Errorf("the key %s of an [[annotations]] table is not one this read follows: assign %s, %s and %s "+
 			"each on a line of its own, with no dotted key", s.listKey, reusePathKey, reuseLicenseKey, strings.Join(reuseSteppedKeys, ", "))

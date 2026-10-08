@@ -95,6 +95,13 @@ func TestReuseLabelsNegative(t *testing.T) {
 // escape sequences decode, so a path written with the escaped star of the REUSE specification
 // keeps its backslash for the glob dialect, as a literal string does.
 func TestReuseAnnotationTablesPositive(t *testing.T) {
+	checkAnnotationTablesBasic(t)
+	checkAnnotationTablesStepped(t)
+	checkAnnotationTablesEscaped(t)
+}
+
+func checkAnnotationTablesBasic(t *testing.T) {
+	t.Helper()
 	text := "version = 1\r\n# path = [\"comment/**\"]\n" +
 		"[[annotations]]\npath = 'a/**' # \"**\"\nprecedence = \"override\"\nSPDX-FileCopyrightText = [\n  \"2026 A = B\",\n  # path = \"x\"\n]\n" +
 		"SPDX-License-Identifier = [\"MIT\", 'EUPL-1.2 AND MIT']\n\n[[ annotations ]]\npath = [\n  \"b/*.md\", # x\n  \"c\"\n]\n"
@@ -103,6 +110,10 @@ func TestReuseAnnotationTablesPositive(t *testing.T) {
 		strings.Join(tables[1].Paths, " ") != "b/*.md c" || len(tables[1].Licenses) != 0 {
 		t.Fatalf("tables = %+v", tables)
 	}
+}
+
+func checkAnnotationTablesStepped(t *testing.T) {
+	t.Helper()
 	stepped := `version = 1
 [[annotations]]
 path = "a/**"
@@ -117,10 +128,14 @@ path = "ghost/**"
 '''
 SPDX-License-Identifier = "MIT"
 `
-	tables = reuseTables(t, stepped)
+	tables := reuseTables(t, stepped)
 	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "a/**" || strings.Join(tables[0].Licenses, " ") != "MIT" {
 		t.Fatalf("values of other keys stepped over: tables = %+v", tables)
 	}
+}
+
+func checkAnnotationTablesEscaped(t *testing.T) {
+	t.Helper()
 	escaped := reuseTables(t, "[[annotations]]\npath = [\"a\\\\*\", 'b\\*', \"caf\\u00e9.md\"]\nSPDX-License-Identifier = \"MIT\"\n")
 	if want := []string{`a\*`, `b\*`, "café.md"}; len(escaped) != 1 || !slices.Equal(escaped[0].Paths, want) {
 		t.Fatalf("escaped paths: %+v, want %q", escaped, want)
@@ -195,6 +210,37 @@ func TestReuseOtherKeysAndTablesPositive(t *testing.T) {
 		"[[annotations]]\npath = [\"**\"]\nSPDX-License-Identifier = \"MIT\"\n\n"+
 		"[[contributors]]\nname = \"Alice\"\n[[contributors]]\nname = \"Bob\"\n")
 
+	assertSingleTable(t, "quoted annotations header", "version = 1\n\n[[\"annotations\"]]\npath = [\"**\"]\nSPDX-License-Identifier = \"MIT\"\n")
+	assertSingleTable(t, "literal quoted annotations header", "version = 1\n\n[['annotations']]\npath = [\"**\"]\nSPDX-License-Identifier = \"MIT\"\n")
+
+	ignoredAfterAnnotation := `version = 1
+[[annotations]]
+path = "a"
+SPDX-License-Identifier = "MIT"
+
+[other]
+path = "**"
+SPDX-License-Identifier = "EUPL-1.2"
+`
+	tables := reuseTables(t, ignoredAfterAnnotation)
+	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "a" || strings.Join(tables[0].Licenses, " ") != "MIT" {
+		t.Fatalf("ignored table keys recorded on previous annotation: %+v", tables)
+	}
+
+	ignoredWithAnnotationsKey := `version = 1
+[[annotations]]
+path = "a"
+SPDX-License-Identifier = "MIT"
+
+[other]
+annotations = "stepped over"
+annotations.x = "also stepped over"
+`
+	tables = reuseTables(t, ignoredWithAnnotationsKey)
+	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "a" || strings.Join(tables[0].Licenses, " ") != "MIT" {
+		t.Fatalf("annotations key in ignored table not stepped over: %+v", tables)
+	}
+
 	checkReuseToolLint(t, "version = 1\n"+
 		"SPDX-PackageName = \"fixture-pkg\"\n"+
 		"SPDX-PackageSupplier = \"Supplier <supplier@example.com>\"\n"+
@@ -243,6 +289,50 @@ func TestReuseAnnotationTablesNegative(t *testing.T) {
 		"array sub-table header": {"[[annotations]]\npath = \"a\"\n[[annotations.more]]\n", "the table header [[annotations.more]] is not one this read follows"},
 		"dotted table key":       {"[[annotations]]\npath.glob = \"a\"\n", "the key path.glob of an [[annotations]] table is not one this read follows"},
 		"dotted table key x":     {"[[annotations]]\npath.x = \"a\"\n", "the key path.x of an [[annotations]] table is not one this read follows"},
+		"dotted table precedence": {
+			"[[annotations]]\npath = \"a\"\nprecedence.x = \"override\"\n",
+			"the key precedence.x of an [[annotations]] table is not one this read follows",
+		},
+		"dotted table copyright": {
+			"[[annotations]]\npath = \"a\"\nSPDX-FileCopyrightText.x = \"2026 Author\"\n",
+			"the key SPDX-FileCopyrightText.x of an [[annotations]] table is not one this read follows",
+		},
+		"dotted table license": {
+			"[[annotations]]\npath = \"a\"\nSPDX-License-Identifier.x = \"MIT\"\n",
+			"the key SPDX-License-Identifier.x of an [[annotations]] table is not one this read follows",
+		},
+		"quoted annotations table header": {
+			"version = 1\n[\"annotations\"]\npath = \"**\"\n",
+			"the table header [\"annotations\"] is not one this read follows",
+		},
+		"literal quoted annotations table header": {
+			"version = 1\n['annotations']\npath = \"**\"\n",
+			"the table header ['annotations'] is not one this read follows",
+		},
+		"quoted annotations dotted top-level key": {
+			"version = 1\n\"annotations\".path = \"**\"\n",
+			"the top-level key \"annotations\".path is not one this read follows",
+		},
+		"empty table header": {
+			"[]\n",
+			"the table header [] is not one this read follows",
+		},
+		"empty quoted table header": {
+			"[\"\"]\n",
+			"the table header [\"\"] is not one this read follows",
+		},
+		"escaped annotations header": {
+			"[[\"annot\\u0061tions\"]]\npath = \"**\"\nSPDX-License-Identifier = \"MIT\"\n",
+			"the table header [[\"annot\\u0061tions\"]] is not one this read follows",
+		},
+		"escaped top-level annotations key": {
+			"version = 1\n\"annot\\u0061tions\" = [{ path = \"**\", SPDX-License-Identifier = \"MIT\" }]\n",
+			"the top-level key \"annot\\u0061tions\" is not one this read follows",
+		},
+		"escaped path key": {
+			"[[annotations]]\n\"p\\u0061th\" = \"**\"\nSPDX-License-Identifier = \"MIT\"\n",
+			"the key p\\u0061th of an [[annotations]] table is not one this read follows",
+		},
 	} {
 		if _, err := ReuseAnnotationTables(test.text); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%s: err = %v, want %q", name, err, test.want)

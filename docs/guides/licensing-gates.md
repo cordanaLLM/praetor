@@ -80,21 +80,27 @@ in `internal/supplychain/reuse_shadow_test.go`, and `TestAuditReuseRecords_3D` i
 
 ### What the audit reads
 
-Both audit checks read `REUSE.toml` against an allow-list, the keys the reuse tool reads
-(`ReuseTOML.from_dict` and `AnnotationsItem.from_dict` in `reuse/global_licensing.py`), and fail
-on anything else rather than pass over it:
+Both audit checks read `REUSE.toml` against an allow-list, following what the reuse tool parses
+(`ReuseTOML.from_dict` and `AnnotationsItem.from_dict` in `reuse/global_licensing.py`), stepping over
+metadata keys and tables while refusing shapes that could define untracked annotations
+(`TestReuseOtherKeysAndTablesPositive` in
+[`internal/supplychain/reuse_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse_test.go)
+and `TestAuditLicensing_Issue896` in
+[`cmd/standardsctl/audit_reuse_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/audit_reuse_test.go)):
 
-- the top-level `version` key;
-- `[[annotations]]` tables, each opened by a `[[annotations]]` line of its own;
-- in each table, `path` and `SPDX-License-Identifier`, each a single-line string or an array of
-  them, and `precedence` and `SPDX-FileCopyrightText`, whose values are stepped over whatever they
-  hold, such as an array with escaped quotes or a multi-line copyright string
-  (`util.TOMLValueScan` in
+- the top-level `version` key is read, while other top-level keys and tables are stepped over;
+- `[[annotations]]` is recognised to open an annotation table, while other table headers are opened
+  and ignored;
+- inside each `[[annotations]]` table, `path` and `SPDX-License-Identifier` are read (each a
+  single-line string or an array of them), while `precedence`, `SPDX-FileCopyrightText` and other
+  keys are stepped over whatever they hold (`util.TOMLValueScan` in
   [`internal/util/toml.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/toml.go)).
 
-Any other top-level key, table header or table key fails both checks with the line and the key,
-and says how to write it. Annotations written as an inline array of tables, which REUSE accepts,
-fail this way:
+Refused shapes fail both checks with the line and the key or header, stating how to write them:
+`annotations` and `annotations.*` at top level; `[annotations]`, `[annotations.x]` and
+`[[annotations.x]]`; table headers and keys whose quoted segments contain TOML escapes; and dotted
+`path`, `precedence`, `SPDX-FileCopyrightText` or `SPDX-License-Identifier` keys inside a table.
+Annotations written as an inline array of tables, which REUSE accepts, fail this way:
 
 ```text
 [FAIL] REUSE.toml annotation order not checked: REUSE.toml:2: the top-level key annotations is not one this read follows: write each annotation as a table of its own, opened by a [[annotations]] line and holding one key = value per line, not as an inline array of tables or dotted keys
