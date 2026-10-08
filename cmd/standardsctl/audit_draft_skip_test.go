@@ -36,6 +36,7 @@ func TestAuditLocksTheDraftSkipRendering(t *testing.T) {
 		if _, err := auditManagedFamily(t.Context(), root, family); err != nil {
 			t.Fatalf("%s: the skip rendering is refused: %v", family.Name, err)
 		}
+		failedOnly := "needs." + gate + ".result == 'failure' || needs." + gate + ".result == 'cancelled'"
 		withoutResult := skip.Workflow[:strings.Index(skip.Workflow, "  "+result+":")]
 		cases := map[string]struct{ text, want string }{
 			"the fail-closed text": {family.Workflow, "does not carry the draft skip condition"},
@@ -44,8 +45,10 @@ func TestAuditLocksTheDraftSkipRendering(t *testing.T) {
 				"is the gate job " + gate + " itself, whose draft skip reports success",
 			},
 			"an aggregate passing on a skip": {
-				strings.Replace(skip.Workflow, "if: needs."+gate+".result != 'success'",
-					"if: needs."+gate+".result == 'failure' || needs."+gate+".result == 'cancelled'", 1),
+				strings.NewReplacer(
+					"if: needs."+gate+".result == 'skipped'", "if: "+failedOnly,
+					"if: needs."+gate+".result != 'success'", "if: "+failedOnly,
+				).Replace(skip.Workflow),
 				"passes while " + gate + " is skipped",
 			},
 			"a hand edit": {

@@ -55,7 +55,11 @@ message (`DRAFT_GATE_TITLE` and `DRAFT_GATE_MESSAGE` in
 by `TestHostedGateDraftMarker_Boundary`). Any other conclusion, annotation or
 unmarked run, and the same marker on a pull request that is not a draft, stay
 `failed`. `draft_pending` keeps the work `due`: it says the draft has not run its
-hosted gates yet, not that they passed.
+hosted gates yet, not that they passed. The opt-in draft skip (`hosted_gates.draft: skip`) reports
+the same marker: its result job runs a first step, only when the gate job was skipped, that prints
+the same annotation and exits 1 (`ghworkflow.RenderDraftSkip`,
+`TestRenderDraftSkip_Boundary_CarriesTheDraftMarker`), so a draft reads as `draft_pending` in either
+shape.
 
 The check observer uses `gh pr list --json statusCheckRollup`, verified against
 GitHub CLI 2.100.0. It rejects 100 or more contexts as incomplete because that

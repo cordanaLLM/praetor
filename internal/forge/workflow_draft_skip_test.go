@@ -35,11 +35,33 @@ func replaceOnce(t *testing.T, text, old, replacement string) string {
 	return strings.Replace(text, old, replacement, 1)
 }
 
+// passingOnSkip returns text with the result job's two conditions narrowed to a failure or a
+// cancellation, so the job passes while the gate job is skipped.
+func passingOnSkip(t *testing.T, text string) string {
+	t.Helper()
+	failed := "needs.api-compatibility.result == 'failure' || needs.api-compatibility.result == 'cancelled'"
+	text = replaceOnce(t, text, "if: needs.api-compatibility.result == 'skipped'", "if: "+failed)
+	return replaceOnce(t, text, "if: needs.api-compatibility.result != 'success'", "if: "+failed)
+}
+
 // Positive (#857): the managed gates rendered in the draft skip shape pass the guard, because
 // the result job reporting the required context is a proven aggregate that fails on the skip.
 func TestDraftSkipFaultAcceptsTheRenderedShape(t *testing.T) {
 	if err := DraftSkipFault([]byte(skipRendering(t)), skipGateJob, apiassets.StatusContext); err != nil {
 		t.Fatalf("the rendered skip shape is refused: %v", err)
+	}
+}
+
+// Boundary (#857): the result job's draft step carries the annotation the checkpoint planner
+// reads as draft pending, and runs only when the gate job was skipped.
+func TestDraftSkipResultJobCarriesTheDraftAnnotation(t *testing.T) {
+	rendered := skipRendering(t)
+	annotation := `echo "::error title=` + ghworkflow.HostedGateDraftTitle + "::" + ghworkflow.HostedGateDraftMessage + `"`
+	if strings.Count(rendered, annotation) != 1 {
+		t.Fatalf("the skip shape lacks the draft annotation %q once:\n%s", annotation, rendered)
+	}
+	if strings.Count(rendered, "result == 'skipped'") != 1 {
+		t.Fatal("the annotation is not tied to the skipped gate job")
 	}
 }
 
@@ -59,12 +81,11 @@ func TestDraftSkipFaultRefusesWhatLetsADraftPass(t *testing.T) {
 			want: `no job of the workflow reports the required check "Go API Compatibility"`,
 		},
 		"aggregate passes while skipped": {
-			text: replaceOnce(t, rendered, "if: needs.api-compatibility.result != 'success'",
-				"if: needs.api-compatibility.result == 'failure' || needs.api-compatibility.result == 'cancelled'"),
+			text: passingOnSkip(t, rendered),
 			want: "passes while api-compatibility is skipped",
 		},
 		"aggregate only echoes": {
-			text: replaceOnce(t, rendered, "          exit 1\n", ""),
+			text: strings.TrimSuffix(rendered, resultJob) + strings.ReplaceAll(resultJob, "          exit 1\n", ""),
 			want: "is not a proven aggregate covering api-compatibility",
 		},
 		"aggregate not under always": {
@@ -101,8 +122,7 @@ func TestAuditWorkflowTriggersAcceptsTheDraftSkipOnlyBehindItsAggregate(t *testi
 		t.Fatalf("the rendered skip shape:\n%s\nwant:\n%s", out, passes)
 	}
 	bare := replaceOnce(t, rendered, "    if: always()\n", "")
-	passing := replaceOnce(t, rendered, "if: needs.api-compatibility.result != 'success'",
-		"if: needs.api-compatibility.result == 'failure' || needs.api-compatibility.result == 'cancelled'")
+	passing := passingOnSkip(t, rendered)
 	for name, text := range map[string]string{"aggregate not under always": bare, "aggregate passing on a skip": passing} {
 		out := auditTriggers(t, triggerRepository(t, map[string]string{"api.yml": text}))
 		if !strings.Contains(out, "skips a draft with the job condition") {

@@ -558,6 +558,9 @@ func (f Family) basePriorRendering(rel string, actual []byte) (known, crlf, dire
 	if f.priorOtherBranchRendering(rel, actual) {
 		return true, crlf, true
 	}
+	if skipKnown, skipCRLF := f.priorSkipRendering(rel, actual); skipKnown {
+		return true, skipCRLF, true
+	}
 	return false, crlf, false
 }
 
@@ -597,6 +600,31 @@ func (f Family) strippedVariant(rel string, actual []byte) (plain string, crlf, 
 		return "", false, false
 	}
 	return plain, crlf, true
+}
+
+// priorSkipRendering reports whether actual, the family's workflow file, is the draft skip
+// rendering (ghworkflow.RenderDraftSkip) of a text Prior records, or of such a text rendered for
+// another default branch, and whether it is a CRLF checkout. Prior records the fail-closed text
+// of each earlier workflow only, so an unedited skip copy is read back to that text
+// (ghworkflow.UnrenderDraftSkip) and looked up like any other earlier text: it then refreshes
+// without --force after the gate text changes, whichever shape the repository selects.
+func (f Family) priorSkipRendering(rel string, actual []byte) (known, crlf bool) {
+	if f.WorkflowFile == "" || rel != f.WorkflowFile {
+		return false, false
+	}
+	text, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
+	if err != nil {
+		return false, false
+	}
+	restored, ok := ghworkflow.UnrenderDraftSkip(text)
+	if !ok {
+		return false, false
+	}
+	owner, known, _ := util.LookupCanonicalText([]byte(restored), f.Prior)
+	if known && owner == rel {
+		return true, crlf
+	}
+	return f.priorOtherBranchRendering(rel, []byte(restored)), crlf
 }
 
 // priorOtherBranchRendering reports whether actual, the family's workflow file, is a Prior text

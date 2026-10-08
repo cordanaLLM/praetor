@@ -167,7 +167,8 @@ from the same hosted gate definition with the draft step replaced by a job-level
 `github.event_name != 'pull_request' || github.event.pull_request.draft == false`, on the gate
 job. The gate job, now named `<context> gate`, no longer reports the required check. A second job,
 `<job id>-result`, reports the original context: it needs the gate job, runs under `always()`,
-and fails unless the gate job succeeded, so a draft that skipped the gate job fails the required
+and fails unless the gate job succeeded (when the gate job was skipped it first prints the draft
+annotation the checkpoint planner reads), so a draft that skipped the gate job fails the required
 check until the `ready_for_review` run reports (`ghworkflow.RenderDraftSkip`,
 `TestRenderDraftSkipPositive`). The audit accepts the opt-in only while the job reporting the
 required check is a proven aggregate (the rule above) that needs the gate job and fails when it
@@ -176,7 +177,8 @@ that passes on a skip, or one the proof cannot read (`forge.DraftSkipFault`,
 `TestDraftSkipFaultRefusesWhatLetsADraftPass`). It then locks the rendering byte for byte
 (`TestAuditLocksTheDraftSkipRendering`). The fail-closed text and the skip text refresh into one
 another with a plain `praetorctl adopt`, without `--force`, and an edited copy of either is kept
-(`TestAdoptRendersTheSelectedDraftShape`). The skip shape is accepted by the HISS-18 workflow
+(`TestAdoptRendersTheSelectedDraftShape`). The skip text of an earlier gate text refreshes too, once
+that text is in the family's `Prior` (`TestPriorRenderingReadsASkipCopyOfAnOutgoingText`). The skip shape is accepted by the HISS-18 workflow
 trigger audit only under the same guard
 ([Workflow triggers](guides/workflow-triggers.md#the-opt-in-draft-skip)).
 

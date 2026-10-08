@@ -38,9 +38,22 @@ const (
 	// hostedGateSkipMessage is the line the result job's step prints before it exits. It holds
 	// only what the aggregate proof reads as a message line (internal/forge gateScript).
 	hostedGateSkipMessage = "The gate did not pass or was skipped on a draft."
-	hostedGateJobsMarker  = "\njobs:\n  "
-	hostedGateNameMarker  = ":\n    name: "
-	hostedGateRunsOn      = "\n    runs-on: "
+	// hostedGateSkipDraftStepName names the result job's step that runs when a draft skipped the
+	// gate job.
+	hostedGateSkipDraftStepName = "Report the draft"
+	// hostedGateSkipAnnotation is that step's one message line: the error annotation the
+	// checkpoint planner reads as draft pending (HostedGateDraftTitle, HostedGateDraftMessage). It
+	// is a plain echo line, so the aggregate proof reads the step as an exit step. It is longer
+	// than yamllint's 80 columns and a block scalar cannot fold it, so the step sits between
+	// yamllint comments.
+	hostedGateSkipAnnotation = "::error title=" + HostedGateDraftTitle + "::" + HostedGateDraftMessage
+	hostedGateStepsLine      = "    steps:\n"
+	hostedGateStepNamePrefix = "      - name: "
+	// maxUnrenderLines bounds the lines UnrenderDraftSkip restores (HISS-02).
+	maxUnrenderLines     = 4096
+	hostedGateJobsMarker = "\njobs:\n  "
+	hostedGateNameMarker = ":\n    name: "
+	hostedGateRunsOn     = "\n    runs-on: "
 )
 
 // hostedGateSkipGateIf is the gate job's condition as a folded scalar, so the line stays within
@@ -83,7 +96,61 @@ func RenderDraftSkip(text string) (rendered, gateID string, err error) {
 func resultJob(gateID, context, runner string) string {
 	_, id := DraftSkipJobs(gateID)
 	return fmt.Sprintf("  %s:\n    name: %s\n    needs: [%s]\n    if: always()\n    runs-on: %s\n"+
-		"    timeout-minutes: %d\n    steps:\n      - name: %s\n        if: needs.%s.result != 'success'\n"+
+		"    timeout-minutes: %d\n    steps:\n"+
+		"      # yamllint disable rule:line-length\n"+
+		"      - name: %s\n        if: needs.%s.result == 'skipped'\n"+
+		"        run: |\n          echo \"%s\"\n          exit 1\n"+
+		"      # yamllint enable rule:line-length\n"+
+		"      - name: %s\n        if: needs.%s.result != 'success'\n"+
 		"        run: |\n          echo \"%s\"\n          exit 1\n",
-		id, context, gateID, runner, hostedGateSkipResultTimeout, hostedGateSkipStepName, gateID, hostedGateSkipMessage)
+		id, context, gateID, runner, hostedGateSkipResultTimeout,
+		hostedGateSkipDraftStepName, gateID, hostedGateSkipAnnotation,
+		hostedGateSkipStepName, gateID, hostedGateSkipMessage)
+}
+
+// UnrenderDraftSkip is the inverse of RenderDraftSkip: it returns the fail-closed gate text a skip
+// rendering was derived from, or false for any other text. Adoption reads a skip copy as the
+// fail-closed text it came from, so one list of earlier texts (managedasset Prior) covers both
+// shapes. The result must render back to text byte for byte, so a text that is not exactly a
+// rendering returns false.
+func UnrenderDraftSkip(text string) (failClosed string, ok bool) {
+	head, jobs, found := strings.Cut(text, hostedGateJobsMarker)
+	gateID, afterID, named := strings.Cut(jobs, hostedGateNameMarker)
+	if !found || !named || gateID == "" || strings.ContainsAny(gateID, " \n") {
+		return "", false
+	}
+	nameLine, afterName, _ := strings.Cut(afterID, "\n")
+	context, suffixed := strings.CutSuffix(nameLine, HostedGateSkipGateSuffix)
+	body, hasIf := strings.CutPrefix(afterName, hostedGateSkipGateIf)
+	_, result := DraftSkipJobs(gateID)
+	body, _, hasResult := strings.Cut(body, "\n  "+result+":\n")
+	if !suffixed || !hasIf || !hasResult {
+		return "", false
+	}
+	steps, hasSteps := restoreGateSteps(body + "\n")
+	if !hasSteps {
+		return "", false
+	}
+	restored := head + hostedGateJobsMarker + gateID + hostedGateNameMarker + context + "\n" + steps
+	if again, _, err := RenderDraftSkip(restored); err != nil || again != text {
+		return "", false
+	}
+	return restored, true
+}
+
+// restoreGateSteps puts the draft step and the step conditions back into the body of a gate job
+// in the skip shape: the draft step opens the steps block, and every step after it carries
+// HostedGateStepIf. It returns false for a body with no steps block.
+func restoreGateSteps(body string) (string, bool) {
+	before, after, found := strings.Cut(body, hostedGateStepsLine)
+	if !found {
+		return "", false
+	}
+	lines := strings.Split(after, "\n")
+	for i := 0; i < len(lines) && i < maxUnrenderLines; i++ {
+		if strings.HasPrefix(lines[i], hostedGateStepNamePrefix) {
+			lines[i] += HostedGateStepIf
+		}
+	}
+	return before + hostedGateStepsLine + HostedGateDraftStep + strings.Join(lines, "\n"), true
 }

@@ -10,12 +10,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 // fixtureFamily is a second family shaped like the figure engine: nested asset paths, its own
@@ -564,6 +567,51 @@ func TestFamilyPriorRenderingBoundaryMixedEndings(t *testing.T) {
 	for _, text := range []string{"name: Fixture Gate\r\non: push\n", "name: Fixture Gate\ron: push\n"} {
 		if known, crlf := family.PriorRendering(family.WorkflowFile, []byte(text)); known || crlf {
 			t.Fatalf("%q: known=%v crlf=%v, want neither", text, known, crlf)
+		}
+	}
+}
+
+// Positive (#857): a skip copy of a gate text that was later replaced is still an earlier text.
+// Prior records the fail-closed text of each outgoing workflow only, so the skip rendering of it
+// is read back to that text; it then refreshes without --force whichever shape the family
+// selects, for LF, CRLF and another default branch. Negative: an edited skip copy, or a skip copy
+// of a text Prior does not record, is no earlier text.
+func TestPriorRenderingReadsASkipCopyOfAnOutgoingText(t *testing.T) {
+	for _, family := range Families() {
+		if family.WorkflowFile == "" {
+			continue
+		}
+		outgoing, _, err := ghworkflow.RenderDraftSkip(family.Workflow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		moved := family
+		moved.Prior = maps.Clone(family.Prior)
+		moved.Prior[sha256Hex(family.Workflow)] = family.WorkflowFile
+		moved.Workflow += "# a pin moved\n"
+		for _, skip := range []bool{false, true} {
+			shaped, err := moved.WithDraftShape(skip)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, text := range map[string]string{
+				"LF":     outgoing,
+				"CRLF":   strings.ReplaceAll(outgoing, "\n", "\r\n"),
+				"master": strings.Replace(outgoing, pushBranchesLine(WorkflowBranch), pushBranchesLine("master"), 1),
+			} {
+				if known, _ := shaped.PriorRendering(family.WorkflowFile, []byte(text)); !known {
+					t.Errorf("%s (skip=%v, %s): the skip copy of the outgoing text is not an earlier text", family.WorkflowFile, skip, name)
+				}
+			}
+			if known, _ := shaped.PriorRendering(family.WorkflowFile, []byte(outgoing+"# edit\n")); known {
+				t.Errorf("%s (skip=%v): an edited skip copy was claimed", family.WorkflowFile, skip)
+			}
+		}
+		unrecorded := family
+		unrecorded.Prior = maps.Clone(family.Prior)
+		unrecorded.Workflow += "# a pin moved\n"
+		if known, _ := unrecorded.PriorRendering(family.WorkflowFile, []byte(outgoing)); known {
+			t.Errorf("%s: a skip copy of a text Prior does not record was claimed", family.WorkflowFile)
 		}
 	}
 }
