@@ -103,16 +103,16 @@ Real return from a praetor lane:
 Test return:
 
 <!-- caveman:off -->
-- Before: "I ran the tests for the compiler package with the race detector and all
+- Before: "I ran the tests for the repository with the race detector and all
   of them passed. go vet did not report any issues. The only file I changed was
-  register.go, where I added an error for a missing end marker."
+  .agents/skills/caveman/SKILL.md, where I added an error for a missing end marker."
 <!-- caveman:on -->
 - After:
 
   ```text
   verdict: pass
-  changed: register.go (missing end marker -> error)
-  ran: go test -race -count=1, compiler package = pass; go vet = clean
+  changed: .agents/skills/caveman/SKILL.md (missing end marker -> error)
+  ran: go test -race -count=1 ./... = pass; go vet = clean
   evidence: none
   open: none
   ```
@@ -121,7 +121,7 @@ Clarity floor in action:
 
 <!-- caveman:off -->
 - Before: "The dedupe scan reported two clones. Only one of them comes from this change; the
-  other one is in the milestone package and was already present on main, so I left it alone."
+  other one is in .agents/skills/social-text/SKILL.md and was already present on main, so I left it alone."
 <!-- caveman:on -->
 - Too far: `dedupe: 2 clones.` Reader cannot tell whether change is blocked.
-- After: `dedupe scan: 2 clones. 1 new (this change), 1 pre-existing on main (milestone package), left as is.`
+- After: `dedupe scan: 2 clones. 1 new (this change), 1 pre-existing on main (.agents/skills/social-text/SKILL.md), left as is.`

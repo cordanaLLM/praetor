@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -136,32 +137,93 @@ func ReadCanonicalSkillLicense(ctx context.Context, root, name string) ([]byte, 
 	return readSkillFile(ctx, root, CanonicalSkillLicenseRel(name), "skill licence "+name)
 }
 
-// licenseFileLicenses are the SPDX identifiers whose terms require the licence text to travel
-// with copies of the work.
-var licenseFileLicenses = []string{"MIT", "ISC", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0"}
+// noNoticeLicenses are the SPDX identifiers whose terms require no licence text or notice
+// to travel with copies of the work.
+var noNoticeLicenses = []string{"0BSD", "CC0-1.0", "MIT-0", "Unlicense"}
 
 // errSkillLicenseUndeclared refuses a skill that names an upstream without the licence it took.
 var errSkillLicenseUndeclared = errors.New("metadata.derived_from names no licence in trailing parentheses")
 
+// errSkillLicenseUnparseable indicates an invalid licence expression in metadata.derived_from.
+var errSkillLicenseUnparseable = errors.New("unparseable licence expression in metadata.derived_from")
+
 // SkillRequiresLicense reports whether the skill text in data declares an upstream
 // (metadata.derived_from, AssetDerivedFrom) under a licence that requires its text to travel
-// with copies (licenseFileLicenses). A skill that declares no upstream needs none; one that
-// declares an upstream without a licence is an error, never a skill that needs nothing.
+// with copies. It protects by default: every licence requires notice except the explicit
+// no-notice set (noNoticeLicenses). A skill that declares no upstream needs none; one that
+// declares an upstream without a licence or with an unparseable expression is an error.
 func SkillRequiresLicense(data []byte) (bool, error) {
 	derived, err := AssetDerivedFrom(data)
 	if err != nil || derived == "" {
 		return false, err
 	}
-	open, end := strings.LastIndex(derived, "("), strings.LastIndex(derived, ")")
-	if open < 0 || end < open {
+	expr, err := extractLicenseExpression(derived)
+	if err != nil {
+		return false, err
+	}
+	words := strings.Fields(expr)
+	if len(words) == 0 {
 		return false, fmt.Errorf("%w: %q", errSkillLicenseUndeclared, derived)
 	}
-	for _, word := range strings.Fields(derived[open+1 : end]) {
-		if slices.Contains(licenseFileLicenses, word) {
-			return true, nil
+	return parseLicenseWords(words, expr)
+}
+
+func extractLicenseExpression(derived string) (string, error) {
+	trimmed := strings.TrimSpace(derived)
+	if !strings.HasSuffix(trimmed, ")") {
+		return "", fmt.Errorf("%w: %q", errSkillLicenseUndeclared, derived)
+	}
+	open := strings.LastIndex(trimmed, "(")
+	if open < 0 {
+		return "", fmt.Errorf("%w: %q", errSkillLicenseUndeclared, derived)
+	}
+	expr := strings.TrimSpace(trimmed[open+1 : len(trimmed)-1])
+	if expr == "" {
+		return "", fmt.Errorf("%w: %q", errSkillLicenseUndeclared, derived)
+	}
+	if strings.ContainsAny(expr, "()") {
+		return "", fmt.Errorf("%w: nested parentheses in %q", errSkillLicenseUnparseable, derived)
+	}
+	if strings.ContainsAny(expr, "/,;\\|") {
+		return "", fmt.Errorf("%w: invalid delimiter in %q", errSkillLicenseUnparseable, expr)
+	}
+	return expr, nil
+}
+
+func parseLicenseWords(words []string, expr string) (bool, error) {
+	if isSPDXOperator(words[0]) || isSPDXOperator(words[len(words)-1]) {
+		return false, fmt.Errorf("%w: misplaced operator in %q", errSkillLicenseUnparseable, expr)
+	}
+	needsLicense := false
+	for i := 0; i < len(words); i++ {
+		word := words[i]
+		if isSPDXOperator(word) {
+			continue
+		}
+		if !isSPDXIdentifier(word) {
+			return false, fmt.Errorf("%w: invalid identifier %q", errSkillLicenseUnparseable, word)
+		}
+		if !slices.Contains(noNoticeLicenses, word) {
+			needsLicense = true
 		}
 	}
-	return false, nil
+	return needsLicense, nil
+}
+
+func isSPDXOperator(w string) bool {
+	return w == "AND" || w == "OR" || w == "WITH"
+}
+
+func isSPDXIdentifier(w string) bool {
+	if w == "" {
+		return false
+	}
+	for _, r := range w {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '.' && r != '-' && r != '+' {
+			return false
+		}
+	}
+	return true
 }
 
 // pluginSkillProjections reads every canonical skill once (readCanonicalSkill) and returns its
@@ -215,7 +277,8 @@ func VerifyPluginSkills(ctx context.Context, rootDir string) (int, error) {
 }
 
 // verifyPluginSkill checks the plugin copy of one canonical skill: its SKILL.md and, when the
-// canonical skill carries one, its LICENSE.
+// canonical skill carries one, its LICENSE. When canonical carries no LICENSE, it verifies that
+// no stale LICENSE copy remains in the plugin.
 func verifyPluginSkill(ctx context.Context, rootDir, name string) error {
 	want, err := readCanonicalSkill(ctx, rootDir, name)
 	if err != nil {
@@ -225,10 +288,13 @@ func verifyPluginSkill(ctx context.Context, rootDir, name string) error {
 		return err
 	}
 	license, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, name)
-	if err != nil || !exists {
+	if err != nil {
 		return err
 	}
-	return verifyProjection(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, name), license)
+	if exists {
+		return verifyProjection(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, name), license)
+	}
+	return verifyStaleLicense(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, name))
 }
 
 // rejectOrphanSkills fails when the plugin ships a skill the repository does not declare.
@@ -320,8 +386,9 @@ func pendingOr(pending map[string][]byte, name string, read func() ([]byte, bool
 
 // VerifyClientSkills checks that every bundle skill the repository carries has its copy in the
 // skill directory of each agent client agent_clients selects (SelectSkillDirs), matching its
-// canonical SKILL.md (verifyProjection). It returns the number of copies verified. A directory
-// the selection leaves out is neither required nor read.
+// canonical SKILL.md and LICENSE (verifyProjection), and that no stale LICENSE copy remains.
+// It returns the number of copies verified. A directory the selection leaves out is neither
+// required nor read.
 func VerifyClientSkills(ctx context.Context, rootDir string) (int, error) {
 	dirs, _, err := SelectSkillDirs(ctx, rootDir)
 	if err != nil {
@@ -336,5 +403,94 @@ func VerifyClientSkills(ctx context.Context, rootDir string) (int, error) {
 			return i, err
 		}
 	}
+	if err := verifyStaleClientLicenses(ctx, rootDir, dirs); err != nil {
+		return len(files), err
+	}
 	return len(files), nil
+}
+
+// verifyStaleLicense checks that rel below rootDir does not exist. An existing copy is a drift:
+// the canonical skill carries no LICENSE, so any projected copy is stale.
+func verifyStaleLicense(ctx context.Context, rootDir, rel string) error {
+	_, exists, err := contextopt.ObserveSnapshotIn(ctx, rootDir, filepath.FromSlash(rel))
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("%w: %s exists but canonical skill carries no LICENSE (run 'praetorctl compile-context' to remove it)", ErrAgentProjectionDrift, rel)
+	}
+	return nil
+}
+
+// verifyStaleClientLicenses checks that no selected client directory retains a LICENSE for a
+// bundle skill that carries no canonical LICENSE.
+func verifyStaleClientLicenses(ctx context.Context, rootDir string, dirs []string) error {
+	names := config.RegisterSkillBundle()
+	for i := 0; i < len(names); i++ {
+		_, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, names[i])
+		if err != nil {
+			return err
+		}
+		if !exists {
+			for j := 0; j < len(dirs); j++ {
+				if err := verifyStaleLicense(ctx, rootDir, SkillLicenseRel(dirs[j], names[i])); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// removeStaleSkillLicenses removes any projected LICENSE copy in the plugin and selected client
+// directories for which the canonical skill declares no LICENSE.
+func removeStaleSkillLicenses(ctx context.Context, rootDir string) error {
+	if err := removeStalePluginSkillLicenses(ctx, rootDir); err != nil {
+		return err
+	}
+	return removeStaleClientSkillLicenses(ctx, rootDir)
+}
+
+func removeStalePluginSkillLicenses(ctx context.Context, rootDir string) error {
+	if !shipsPlugin(rootDir) {
+		return nil
+	}
+	names, err := listCanonicalSkills(ctx, rootDir)
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(names); i++ {
+		_, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, names[i])
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if err := removeConfinedFile(ctx, rootDir, SkillLicenseRel(PluginSkillsRel, names[i])); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func removeStaleClientSkillLicenses(ctx context.Context, rootDir string) error {
+	dirs, _, err := SelectSkillDirs(ctx, rootDir)
+	if err != nil {
+		return err
+	}
+	names := config.RegisterSkillBundle()
+	for i := 0; i < len(names); i++ {
+		_, exists, err := ReadCanonicalSkillLicense(ctx, rootDir, names[i])
+		if err != nil {
+			return err
+		}
+		if !exists {
+			for j := 0; j < len(dirs); j++ {
+				if err := removeConfinedFile(ctx, rootDir, SkillLicenseRel(dirs[j], names[i])); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }

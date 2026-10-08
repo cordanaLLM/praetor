@@ -22,13 +22,15 @@ import (
 const maxSkillReferenceTokens = 16384
 
 var (
-	skillURLRe = regexp.MustCompile("(?i)https?://[^\\s<>\"'`*,;()\\[\\]]+")
-	// skillBackslashRe finds a backslash between two path characters, which reads as a slash:
-	// docs\credits.md is the path docs/credits.md. A backslash escape (\le, \|) is not one.
-	skillBackslashRe    = regexp.MustCompile(`([A-Za-z0-9_.-])\\([A-Za-z0-9_.-])`)
-	skillMarkdownLinkRe = regexp.MustCompile(`\[[^\]]*\]\(([^)]*)\)`)
-	skillMarkdownRefRe  = regexp.MustCompile(`(?m)^\[[^\]]+\]:\s*(\S+)`)
-	skillHTMLLinkRe     = regexp.MustCompile(`(?i)<a\s+[^>]*href=["']([^"']+)["']`)
+	skillURLRe = regexp.MustCompile("(?i)https?://[^\\s<>\"'`*,;()|\\[\\]]+")
+	// skillBackslashRe finds backslashes between two path characters, which reads as a slash:
+	// docs\credits.md or docs\\credits.md is the path docs/credits.md.
+	skillBackslashRe   = regexp.MustCompile(`([A-Za-z0-9_.-])\\+([A-Za-z0-9_.-])`)
+	skillMarkdownRefRe = regexp.MustCompile(`(?m)^\s*\[[^\]]+\]:\s*(\S+)`)
+	skillHTMLLinkRe    = regexp.MustCompile(`(?i)<a\s+[^>]*href=["']([^"']+)["']`)
+	skillHTMLImageRe   = regexp.MustCompile(`(?i)<img\s+[^>]*src=["']([^"']+)["']`)
+	markdownEscapeRe   = regexp.MustCompile("\\\\([_.*[\\]()#+\\-!~`])")
+	htmlTagRe          = regexp.MustCompile(`(?i)</?[a-z][a-z0-9_-]*(\s+[^>]*)?/?>`)
 )
 
 // CheckShippedSkillReferences refuses the text of a skill Praetor ships when it names a
@@ -44,6 +46,8 @@ var (
 // unsafe would never converge with the ways a path can be written; naming the safe ones does.
 func CheckShippedSkillReferences(skillName string, data []byte) error {
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	text = strings.ReplaceAll(text, "&#47;", "/")
+	text = strings.ReplaceAll(text, "&sol;", "/")
 	targets, err := shippedSkillTargets()
 	if err != nil {
 		return err
@@ -100,7 +104,10 @@ func skillPathTokens(skillName, text string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	flat = skillBackslashRe.ReplaceAllString(skillURLRe.ReplaceAllString(flat, " "), "$1/$2")
+	flat = htmlTagRe.ReplaceAllString(flat, " ")
+	flat = skillURLRe.ReplaceAllString(flat, " ")
+	flat = markdownEscapeRe.ReplaceAllString(flat, "$1")
+	flat = skillBackslashRe.ReplaceAllString(flat, "$1/$2")
 	fields := strings.FieldsFunc(flat, isSkillSeparator)
 	if len(fields) > maxSkillReferenceTokens {
 		return nil, fmt.Errorf("skill %s holds more than %d tokens to check", skillName, maxSkillReferenceTokens)
@@ -109,10 +116,69 @@ func skillPathTokens(skillName, text string) ([]string, error) {
 	for i := 0; i < len(fields) && i < maxSkillReferenceTokens; i++ {
 		token := strings.TrimRight(strings.Trim(fields[i], "_"), ".")
 		if strings.Contains(token, "/") && strings.IndexFunc(token, isLetterOrDigit) >= 0 {
-			tokens = append(tokens, token)
+			if !isNonPathToken(token) {
+				tokens = append(tokens, token)
+			}
 		}
 	}
 	return tokens, nil
+}
+
+// nonPathProse are common abbreviations, alternatives and acronyms that use a slash but are
+// not repository paths.
+var nonPathProse = map[string]bool{
+	"and/or":     true,
+	"i/o":        true,
+	"ci/cd":      true,
+	"pass/fail":  true,
+	"true/false": true,
+	"either/or":  true,
+	"yes/no":     true,
+	"on/off":     true,
+	"read/write": true,
+	"in/out":     true,
+}
+
+// isNonPathToken reports whether token is standard non-path prose: a common slash word,
+// a fraction or date, or a unit.
+func isNonPathToken(token string) bool {
+	lower := strings.ToLower(token)
+	if nonPathProse[lower] || isNumericSlash(token) {
+		return true
+	}
+	if strings.HasSuffix(lower, "/s") || strings.HasSuffix(lower, "/sec") || strings.HasSuffix(lower, "/min") || strings.HasSuffix(lower, "/hr") {
+		idx := strings.Index(token, "/")
+		if isAllLetters(token[:idx]) {
+			return true
+		}
+	}
+	return false
+}
+
+// isNumericSlash reports whether s consists solely of digits and slashes with at least one digit.
+func isNumericSlash(s string) bool {
+	hasDigit := false
+	for _, r := range s {
+		if unicode.IsDigit(r) {
+			hasDigit = true
+		} else if r != '/' {
+			return false
+		}
+	}
+	return hasDigit
+}
+
+// isAllLetters reports whether s is non-empty and consists solely of unicode letters.
+func isAllLetters(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // withoutCodeSpanDelimiters returns text with every code span replaced by its content, so a
@@ -137,7 +203,7 @@ func withoutCodeSpanDelimiters(skillName, text string) (string, error) {
 // emphasis marks and punctuation that wrap a path in Markdown or prose. A colon separates too,
 // so Credit:docs/credits.md is two tokens (absolute URLs are set aside before this runs).
 func isSkillSeparator(r rune) bool {
-	return unicode.IsSpace(r) || strings.ContainsRune("()[]<>{}\"'`*,;|=!?:~", r)
+	return unicode.IsSpace(r) || strings.ContainsRune("()[]<>{}\"'`*,;|=!?:~#", r)
 }
 
 func isLetterOrDigit(r rune) bool {
@@ -145,18 +211,23 @@ func isLetterOrDigit(r rune) bool {
 }
 
 // checkLinkDestinations checks the destination of every Markdown link, reference definition and
-// HTML anchor in text, which unlike a prose token may be a bare file name.
+// HTML anchor or image in text, which unlike a prose token may be a bare file name.
 func checkLinkDestinations(skillName, text string, targets map[string]bool) error {
-	var found [][][]string
-	for _, re := range []*regexp.Regexp{skillMarkdownLinkRe, skillMarkdownRefRe, skillHTMLLinkRe} {
+	mdMatches := util.MarkdownLinkRe.FindAllStringSubmatch(text, maxSkillReferenceTokens+1)
+	if len(mdMatches) > maxSkillReferenceTokens {
+		return fmt.Errorf("skill %s holds more than %d links to check", skillName, maxSkillReferenceTokens)
+	}
+	for i := 0; i < len(mdMatches); i++ {
+		if !linkDestinationShipped(mdMatches[i][2], targets) {
+			return unshippedReference(skillName, strings.TrimSpace(mdMatches[i][2]))
+		}
+	}
+	for _, re := range []*regexp.Regexp{skillMarkdownRefRe, skillHTMLLinkRe, skillHTMLImageRe} {
 		matches := re.FindAllStringSubmatch(text, maxSkillReferenceTokens+1)
 		if len(matches) > maxSkillReferenceTokens {
 			return fmt.Errorf("skill %s holds more than %d links to check", skillName, maxSkillReferenceTokens)
 		}
-		found = append(found, matches)
-	}
-	for _, matches := range found {
-		for i := 0; i < len(matches) && i < maxSkillReferenceTokens; i++ {
+		for i := 0; i < len(matches); i++ {
 			if !linkDestinationShipped(matches[i][1], targets) {
 				return unshippedReference(skillName, strings.TrimSpace(matches[i][1]))
 			}

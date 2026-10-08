@@ -367,6 +367,16 @@ func planPersonaCopies(ctx context.Context, targetDir string, pending map[string
 
 // writeAgentSurfaces writes a checked plan and reports each surface it wrote.
 func writeAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string, plan agentSurfacePlan) error {
+	if err := removeStaleSkillLicenses(ctx, targetDir); err != nil {
+		return fmt.Errorf("stale skill licence removal failed: %w", err)
+	}
+	if err := writePersonaSurfaces(ctx, sw, targetDir, plan); err != nil {
+		return err
+	}
+	return writeSkillSurfaces(ctx, sw, targetDir, plan)
+}
+
+func writePersonaSurfaces(ctx context.Context, sw *syncWriter, targetDir string, plan agentSurfacePlan) error {
 	if err := writeProjectionFiles(ctx, targetDir, plan.personas); err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
@@ -376,17 +386,21 @@ func writeAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string, p
 	if err := printNotApplicablePersonaDirs(ctx, sw.w, targetDir); err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
-	if err := writeProjectionFiles(ctx, targetDir, plan.clientSkills); err != nil {
-		return fmt.Errorf("client skill projection failed: %w", err)
-	}
-	if n := len(plan.clientSkills); n > 0 {
-		sw.printf("  [COMPILED] %d client skill projections of %s.\n", n, CanonicalSkillsRel)
-	}
 	if err := writeProjectionFiles(ctx, targetDir, plan.pluginPersonas); err != nil {
 		return fmt.Errorf("plugin agent projection failed: %w", err)
 	}
 	if n := len(plan.pluginPersonas); n > 0 {
 		sw.printf("  [COMPILED] %d plugin agent projections (%s).\n", n, PluginAgentsRel)
+	}
+	return nil
+}
+
+func writeSkillSurfaces(ctx context.Context, sw *syncWriter, targetDir string, plan agentSurfacePlan) error {
+	if err := writeProjectionFiles(ctx, targetDir, plan.clientSkills); err != nil {
+		return fmt.Errorf("client skill projection failed: %w", err)
+	}
+	if n := len(plan.clientSkills); n > 0 {
+		sw.printf("  [COMPILED] %d client skill projections of %s.\n", n, CanonicalSkillsRel)
 	}
 	if err := writeProjectionFiles(ctx, targetDir, plan.pluginSkills); err != nil {
 		return fmt.Errorf("plugin skill projection failed: %w", err)

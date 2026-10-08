@@ -39,11 +39,11 @@ import (
 var priorSkillDigests = map[string]map[string]string{
 	compiler.CanonicalSkillRel("social-text"): {
 		"a128a86ad170bfaf89012567e1405693006627e260cd18c420f3abb500dd6d9e": "first shipped, REUSE header and upstream credit (#235)",
-		"66c09c5a6102bdd5b8bf81859fd4896f9627d29e3795b54b0623320dccd11a38": "inline credit, no repository path an adopter lacks (#850)",
+		"5f142b7db4b084bd6168bcad862e7860688b4b8e43f3ed997dd5ed0cc77b05f2": "inline credit, no repository path an adopter lacks (#850)",
 	},
 	compiler.CanonicalSkillRel("caveman"): {
 		"c0ab6d15d42d9dab2640eb53abf7865495ab99979931cd463540646974d59b49": "first shipped, REUSE header and upstream credit (#235)",
-		"8709bb0106e84d6ce2ead7d708b23d0335fb6a072ddce893837faee8ebcbd7bd": "inline credit, no repository path an adopter lacks (#850)",
+		"7f76820594f9792d620eb1aa9fbe5f5b9e67c7fe0dbd256d46dd329078862cef": "inline credit, no repository path an adopter lacks (#850)",
 	},
 	compiler.CanonicalSkillRel("adhd-format"): {
 		"1db3a6e0ec137143cb81002491bab5f5ae6a9331333126423de199a1c66edb44": "first shipped, REUSE header and upstream credit (#235)",

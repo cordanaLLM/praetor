@@ -27,7 +27,7 @@ Overrides rest of adhd-format for humans: at most 1 GitHub alert per text; no Me
 ## Voice
 
 - Full sentences, plain words. Maintainer must act on text without opening diff.
-- One idea per paragraph or bullet. Name file and line (`register.go`, line 42) when reader will look there.
+- One idea per paragraph or bullet. Name file and line (`.agents/skills/caveman/SKILL.md:42`) when reader will look there.
 - Say 4 things, then stop: what changed, why, how verified, what reviewer must decide. Pull-request summary stays around 250 words before evidence links.
 - No meta-commentary (`as requested`, `based on my analysis`), no hedging filler, no code restatement diff already shows.
 - Quote operator paraphrased in neutral English; never verbatim colloquial line.

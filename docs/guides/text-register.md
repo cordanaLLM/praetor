@@ -257,11 +257,12 @@ compile-context copies the `LICENSE` beside every `SKILL.md` it projects: into t
 `.claude/skills/<name>/`.
 
 The source bundle is checked where the defect starts. Adoption reads the bundle through
-`compiler.CheckShippedSkillReferences`, and Praetor's own tests read its tree through it: every
-path-shaped token of a skill, in a code span or in plain text, must be an absolute URL or a file
-adoption writes for the shipped skills, and a text past the token bound fails closed. The check is
-no gate of compile-context, `--verify` or audit, so a copy an adopter already holds, edited or
-not, is never refused by it. The bundle is one unit: a source that lacks one skill or one
+`compiler.CheckShippedSkillReferences`, and Praetor's own tests read its tree through it:
+every path-shaped token of a skill (in Markdown links, image sources, HTML references, code
+spans or plain text, excluding standard non-path prose, dates and units) must be an absolute URL
+or a file adoption writes for the shipped skills, and a text past the token bound fails closed.
+The check is no gate of compile-context, `--verify` or audit, so a copy an adopter already holds,
+edited or not, is never refused by it. The bundle is one unit: a source that lacks one skill or one
 required `LICENSE` installs none. An edited skill or licence is kept and reported, `--force`
 included; an unedited earlier Praetor text is refreshed (`priorSkillDigests` and
 `priorSkillLicenseDigests` in `internal/adopt/register_skills.go`,

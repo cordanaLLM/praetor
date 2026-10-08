@@ -153,6 +153,16 @@ func TestCheckShippedSkillReferences_Positive_AllowedTargets(t *testing.T) {
 		"slash between letters":  "x and / or y",
 		"mail address":           "Write lusoris@example.org.",
 		"reference to a mailbox": "[mail]: mailto:lusoris@example.org",
+		"and/or prose":           "Use and/or here.",
+		"I/O acronym":            "Network I/O operations.",
+		"CI/CD acronym":          "Runs in CI/CD pipeline.",
+		"pass/fail verdict":      "Reports pass/fail status.",
+		"fraction":               "Ratio 1/2 of items.",
+		"date in prose":          "Released on 2026/10/08.",
+		"unit rate":              "Handles 100 req/s.",
+		"html tags":              "<details><summary>Details</summary><br/>Content</details>",
+		"markdown escapes":       `Use snake\_case and 1\. here.`,
+		"fragment link":          "See [rules](../caveman/SKILL.md#rules).",
 	}
 	for name, text := range cases {
 		if err := CheckShippedSkillReferences("caveman", []byte(text)); err != nil {
@@ -166,40 +176,47 @@ func TestCheckShippedSkillReferences_Positive_AllowedTargets(t *testing.T) {
 // closing a sentence, without an extension, in a fence, with backslashes, or as a link target.
 func TestCheckShippedSkillReferences_Negative_UnshippedPathsRefused(t *testing.T) {
 	cases := map[string]string{
-		"credit line":            "Credit: docs/credits.md",
-		"italic":                 "Credit: *docs/credits.md*",
-		"bold":                   "Credit: **docs/credits.md**",
-		"underscore emphasis":    "Credit: _docs/credits.md_",
-		"double quoted":          `Credit: "docs/credits.md"`,
-		"single quoted":          "Credit: 'docs/credits.md'",
-		"angle brackets":         "Credit: <docs/credits.md>",
-		"square brackets":        "Credit: [docs/credits.md]",
-		"glued to the label":     "Credit:docs/credits.md",
-		"code span":              "Credit: `docs/credits.md`",
-		"double backtick span":   "Credit: ``docs/credits.md``",
-		"second path on a line":  "see .agents/skills/caveman/SKILL.md docs/credits.md",
-		"sentence final dot":     "Run scripts/foo.sh.",
-		"sentence final dots":    "Run tools/figures/README.md...",
-		"extensionless":          "Build cmd/standardsctl first",
-		"fence":                  "```sh\ncat docs/credits.md\n```",
-		"backslashes":            `Read docs\credits.md`,
-		"flag value":             "Pass --out=docs/credits.md",
-		"internal package":       "Edit `internal/compiler/register.go`",
-		"workingdir":             "Write .workingdir/evidence/run.txt",
-		"github directory":       "Fill .github/pull_request_template.md",
-		"changelog fragments":    "Add changelog.d/x.yaml",
-		"parent escape":          "See ../../README.md",
-		"absolute path":          "See /etc/passwd",
-		"unknown sibling":        "See ../unknown-skill/SKILL.md",
-		"unshipped sibling file": "See ../adhd-format/other.md",
-		"link":                   "See [credits](docs/credits.md).",
-		"reference definition":   "[credits]: docs/credits.md\nSee [credits].",
-		"html anchor":            `<a href="docs/credits.yaml">credits</a>`,
-		"padded link":            "[x]( docs/credits.yaml )",
-		"bare link target":       "See [readme](README.md).",
-		"notice link":            "See [notice](NOTICE).",
-		"link with a title":      `See [x](docs/credits.md "credits").`,
-		"link to an own parent":  "See [x](..).",
+		"credit line":             "Credit: docs/credits.md",
+		"italic":                  "Credit: *docs/credits.md*",
+		"bold":                    "Credit: **docs/credits.md**",
+		"underscore emphasis":     "Credit: _docs/credits.md_",
+		"double quoted":           `Credit: "docs/credits.md"`,
+		"single quoted":           "Credit: 'docs/credits.md'",
+		"angle brackets":          "Credit: <docs/credits.md>",
+		"square brackets":         "Credit: [docs/credits.md]",
+		"glued to the label":      "Credit:docs/credits.md",
+		"code span":               "Credit: `docs/credits.md`",
+		"double backtick span":    "Credit: ``docs/credits.md``",
+		"second path on a line":   "see .agents/skills/caveman/SKILL.md docs/credits.md",
+		"sentence final dot":      "Run scripts/foo.sh.",
+		"sentence final dots":     "Run tools/figures/README.md...",
+		"extensionless":           "Build cmd/standardsctl first",
+		"fence":                   "```sh\ncat docs/credits.md\n```",
+		"backslashes":             `Read docs\credits.md`,
+		"flag value":              "Pass --out=docs/credits.md",
+		"internal package":        "Edit `internal/compiler/register.go`",
+		"workingdir":              "Write .workingdir/evidence/run.txt",
+		"github directory":        "Fill .github/pull_request_template.md",
+		"changelog fragments":     "Add changelog.d/x.yaml",
+		"parent escape":           "See ../../README.md",
+		"absolute path":           "See /etc/passwd",
+		"unknown sibling":         "See ../unknown-skill/SKILL.md",
+		"unshipped sibling file":  "See ../adhd-format/other.md",
+		"link":                    "See [credits](docs/credits.md).",
+		"reference definition":    "[credits]: docs/credits.md\nSee [credits].",
+		"html anchor":             `<a href="docs/credits.yaml">credits</a>`,
+		"padded link":             "[x]( docs/credits.yaml )",
+		"bare link target":        "See [readme](README.md).",
+		"notice link":             "See [notice](NOTICE).",
+		"link with a title":       `See [x](docs/credits.md "credits").`,
+		"link to an own parent":   "See [x](..).",
+		"url with pipe separator": "|https://x.org|docs/credits.md|",
+		"html entity slash":       "See docs&#47;credits.md",
+		"html entity sol":         "See docs&sol;credits.md",
+		"double backslash":        `Read docs\\credits.md`,
+		"indented reference":      "   [r]: docs/credits.md\nSee [r].",
+		"html image":              `<img src="credits.png">`,
+		"nested bracket link":     "[a [b] c](docs/credits.md)",
 	}
 	for name, text := range cases {
 		if err := CheckShippedSkillReferences("caveman", []byte(text)); err == nil {
@@ -245,7 +262,8 @@ func TestLintCanonicalSkillFiles_Positive_AdopterCopyNeverRefused(t *testing.T) 
 }
 
 // Positive, negative and boundary: whether a skill needs its licence file follows the licence its
-// metadata.derived_from declares, never a word elsewhere in the text.
+// metadata.derived_from declares, never a word elsewhere in the text. Protect by default: every
+// licence requires its text except the explicit no-notice set (noNoticeLicenses).
 func TestSkillRequiresLicense(t *testing.T) {
 	front := func(derived string) string {
 		return "---\nname: x\nmetadata:\n  derived_from: \"" + derived + "\"\n---\n\nBody.\n"
@@ -258,9 +276,16 @@ func TestSkillRequiresLicense(t *testing.T) {
 		{"MIT upstream", front("https://example.org/a (MIT)"), true},
 		{"Apache upstream", front("https://example.org/a (Apache-2.0)"), true},
 		{"BSD upstream", front("https://example.org/a (BSD-3-Clause)"), true},
+		{"GPL upstream", front("https://example.org/a (GPL-3.0-only)"), true},
+		{"LGPL upstream", front("https://example.org/a (LGPL-2.1)"), true},
+		{"MPL upstream", front("https://example.org/a (MPL-2.0)"), true},
+		{"EUPL upstream", front("https://example.org/a (EUPL-1.2)"), true},
+		{"CC-BY upstream", front("https://example.org/a (CC-BY-4.0)"), true},
 		{"either licence of two", front("https://example.org/a (EUPL-1.2 OR MIT)"), true},
-		{"public domain upstream", front("https://example.org/a (CC0-1.0)"), false},
-		{"look-alike identifier", front("https://example.org/a (MITX)"), false},
+		{"0BSD no-notice", front("https://example.org/a (0BSD)"), false},
+		{"CC0 no-notice", front("https://example.org/a (CC0-1.0)"), false},
+		{"MIT-0 no-notice", front("https://example.org/a (MIT-0)"), false},
+		{"Unlicense no-notice", front("https://example.org/a (Unlicense)"), false},
 		{"no upstream", "---\nname: x\n---\n\nBody.\n", false},
 		{"MIT in the body only", "---\nname: x\n---\n\nUnder MIT terms and Apache-2.0.\n", false},
 		{"no front matter", "MIT", false},
@@ -271,7 +296,25 @@ func TestSkillRequiresLicense(t *testing.T) {
 			t.Errorf("%s: SkillRequiresLicense = %v, %v; want %v", tc.name, got, err, tc.want)
 		}
 	}
-	if _, err := SkillRequiresLicense([]byte(front("https://example.org/a"))); !errors.Is(err, errSkillLicenseUndeclared) {
-		t.Errorf("an upstream without a licence: err = %v, want errSkillLicenseUndeclared", err)
+	for _, undeclared := range []string{
+		"https://example.org/a",
+		"https://example.org/a ()",
+		"https://example.org/a (   )",
+	} {
+		if _, err := SkillRequiresLicense([]byte(front(undeclared))); !errors.Is(err, errSkillLicenseUndeclared) {
+			t.Errorf("undeclared %q: err = %v, want errSkillLicenseUndeclared", undeclared, err)
+		}
+	}
+	for _, unparseable := range []string{
+		"https://example.org/a (MIT/Apache-2.0)",
+		"https://example.org/a (MIT, Apache-2.0)",
+		"https://example.org/a ((MIT))",
+		"https://example.org/a (AND MIT)",
+		"https://example.org/a (MIT AND)",
+		"https://example.org/a (MIT; Apache-2.0)",
+	} {
+		if _, err := SkillRequiresLicense([]byte(front(unparseable))); !errors.Is(err, errSkillLicenseUnparseable) {
+			t.Errorf("unparseable %q: err = %v, want errSkillLicenseUnparseable", unparseable, err)
+		}
 	}
 }

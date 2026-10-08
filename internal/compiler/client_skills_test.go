@@ -232,6 +232,42 @@ func TestSkillLicenseProjection_Negative_MissingCopy(t *testing.T) {
 	}
 }
 
+// Negative: a stale licence copy fails verification when the canonical skill has no LICENSE,
+// and CompileAgentSurfaces removes it.
+func TestSkillLicenseProjection_Negative_StaleCopy(t *testing.T) {
+	root := writeClientSkillFixture(t, "")
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	if _, err := CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
+		t.Fatal(err)
+	}
+	assertLicensesVerified(t, root)
+
+	writeRegisterFixture(t, root, SkillLicenseRel(".claude/skills", "caveman"), licenseFixture)
+	writeRegisterFixture(t, root, SkillLicenseRel(PluginSkillsRel, "caveman"), licenseFixture)
+
+	if _, err := VerifyClientSkills(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || !strings.Contains(err.Error(), ".claude/skills/caveman/LICENSE") {
+		t.Fatalf("stale client licence: err = %v", err)
+	}
+	if _, err := VerifyPluginSkills(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || !strings.Contains(err.Error(), PluginSkillsRel+"/caveman/LICENSE") {
+		t.Fatalf("stale plugin licence: err = %v", err)
+	}
+
+	if _, err := CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
+		t.Fatalf("CompileAgentSurfaces failed to clean stale licences: %v", err)
+	}
+	assertLicensesVerified(t, root)
+}
+
+func assertLicensesVerified(t *testing.T, root string) {
+	t.Helper()
+	if _, err := VerifyClientSkills(t.Context(), root); err != nil {
+		t.Fatalf("VerifyClientSkills failed: %v", err)
+	}
+	if _, err := VerifyPluginSkills(t.Context(), root); err != nil {
+		t.Fatalf("VerifyPluginSkills failed: %v", err)
+	}
+}
+
 // Boundary: a pending licence is planned before it exists, a pending licence for a skill Praetor
 // does not ship is refused, and CheckSkillTargets covers the licence targets.
 func TestSkillLicenseProjection_Boundary_PendingAndTargets(t *testing.T) {
