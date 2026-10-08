@@ -218,7 +218,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `@types/ms` | 2.1.0 | MIT | `Copyright (c) Microsoft Corporation.` |
 | `@types/unist` | 2.0.11 | MIT | `Copyright (c) Microsoft Corporation.` |
 | `@types/unist` | 3.0.3 | MIT | `Copyright (c) Microsoft Corporation.` |
-| `acorn` | 8.18.0 | MIT | `Copyright (C) 2012-2022 by various contributors (see AUTHORS)` |
+| `acorn` | 8.19.0 | MIT | `Copyright (C) 2012-2022 by various contributors (see AUTHORS)` |
 | `acorn-jsx` | 5.3.2 | MIT | `Copyright (C) 2012-2017 by Ingvar Stepanyan` |
 | `ansi-regex` | 6.4.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `argparse` | 2.0.1 | Python-2.0 | `Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020 Python Software Foundation; All Rights Reserved` |
