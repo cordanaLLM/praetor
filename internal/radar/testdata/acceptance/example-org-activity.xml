@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>example-org activity</title>
+  <id>https://example.org/example-org/activity.atom</id>
+  <updated>2026-10-05T08:00:00Z</updated>
+  <entry>
+    <id>tag:example.org,2026:create-1</id>
+    <title>example-org created repository example-org/new-parser</title>
+    <link rel="alternate" href="https://github.com/example-org/new-parser"/>
+    <published>2026-10-05T08:00:00Z</published>
+    <updated>2026-10-05T08:00:00Z</updated>
+  </entry>
+  <entry>
+    <id>tag:example.org,2026:push-1</id>
+    <title>example-org pushed to main in example-org/tokenizer</title>
+    <link rel="alternate" href="https://github.com/example-org/tokenizer/compare/1111111...2222222"/>
+    <published>2026-10-03T17:45:00Z</published>
+    <updated>2026-10-03T17:45:00Z</updated>
+  </entry>
+  <entry>
+    <id>tag:example.org,2026:push-0</id>
+    <title>example-org pushed to main in example-org/tokenizer (last week)</title>
+    <link rel="alternate" href="https://github.com/example-org/tokenizer/compare/0000000...1111111"/>
+    <published>2026-09-29T23:59:59Z</published>
+    <updated>2026-09-29T23:59:59Z</updated>
+  </entry>
+</feed>

@@ -308,6 +308,15 @@ docs_surfaces:
       - "internal/generated/*_test.go"
     docs:
       - "docs/guides/generated-artefacts.md"
+  - name: "research and upstream radar"
+    paths:
+      - "internal/radar/*.go"
+      - "internal/config/radar_policy.go"
+      - "cmd/standardsctl/radar.go"
+    exclude:
+      - "internal/radar/*_test.go"
+    docs:
+      - "docs/guides/radar.md"
 
 # Framework capability demand declarations
 needs:

@@ -1,0 +1,18 @@
+---
+# Acceptance fixture for #818: one feed of organisation activity (a new repository and a push),
+# one paper feed and one repository's releases. Collect it with --fixture pointing at this
+# directory, --now 2026-10-07 and --days 7.
+version: 1
+sources:
+  - id: example-org-activity
+    kind: feed
+    url: https://example.org/example-org/activity.atom
+    why: Activity of the organisation that maintains our parser
+  - id: example-papers
+    kind: feed
+    url: https://example.org/papers/tokenizers.rss
+    why: Papers on tokenizer performance
+  - id: example-project
+    kind: github_repo
+    url: https://github.com/example-org/example-project
+    why: Upstream of the tokenizer we port

@@ -144,6 +144,7 @@ nav:
           - Wishes and Polls: guides/wishes-and-polls.md
           - Issue Sync Integrity: guides/issue-sync-integrity.md
           - Garbage Collection: guides/garbage-collection.md
+          - Research and Upstream Radar: guides/radar.md
       - Dogfooding:
           - guides/dogfood/index.md
           - Fleet Dogfooding: dogfooding.md

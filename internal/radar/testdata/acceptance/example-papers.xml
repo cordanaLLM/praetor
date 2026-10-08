@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Tokenizer papers</title>
+    <link>https://example.org/papers/</link>
+    <description>Papers on tokenizer performance</description>
+    <item>
+      <title>Linear-time byte-pair merging for tokenizers</title>
+      <link>https://example.org/papers/abs/2610.00001</link>
+      <pubDate>Fri, 2 Oct 2026 00:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>An older survey of subword segmentation</title>
+      <link>https://example.org/papers/abs/2609.00042</link>
+      <pubDate>Mon, 14 Sep 2026 00:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

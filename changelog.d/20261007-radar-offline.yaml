@@ -1,0 +1,4 @@
+type: added
+title: "praetorctl radar validate checks a research and upstream source registry that .standards.yaml names in radar.registry, refusing duplicate ids, unsupported kinds, non-HTTPS and account URLs, and radar collect turns one window of planted feed and release files into a Markdown digest whose untrusted titles are neutralised, naming every failed source and failing only when all failed"
+issue: "#818"
+breaking: false
