@@ -21,6 +21,7 @@ var (
 	priorRustCIDigests = map[string]string{
 		"f66a2652591c6a3a1236a581b1d23dc92110d7d8b2f9164e4b8d0846c10357a4": "the first embedded Rust CI job, an unquoted 'on' key (#463)",
 		"b850058606140c1e50ef0b27ba7f94c73d77ef3fb53b0c39b7f716fc6f5f517a": "the Rust CI job on every push to main and every draft pull request (#520 to #817)",
+		"6f52fae7deba2f315727c6dab6051c8168b110852878394f903788079b15b32c": "the Rust CI job with build warnings as errors (#816)",
 	}
 	// priorFlutterCIDigests are the earlier texts of flutter/ci-flutter.yml.tmpl.
 	priorFlutterCIDigests = map[string]string{
