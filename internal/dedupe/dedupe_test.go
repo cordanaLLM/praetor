@@ -865,7 +865,8 @@ func writeStandardsManifest(t *testing.T, dir string, content string) {
 	}
 }
 
-func TestScanRepo_Positive_DeepCopyIntoClonesInExceptedFilePassAndAreListedAsExcepted(t *testing.T) {
+func setupExceptedDeepCopyFixture(t *testing.T) string {
+	t.Helper()
 	tmp := t.TempDir()
 	sourcePath := filepath.Join(tmp, "zz_generated.deepcopy.go")
 	if err := os.WriteFile(sourcePath, []byte(deepCopyGeneratedClonesSource), 0o600); err != nil {
@@ -879,15 +880,18 @@ func TestScanRepo_Positive_DeepCopyIntoClonesInExceptedFilePassAndAreListedAsExc
     expires: 2026-11-01
 `
 	writeStandardsManifest(t, tmp, manifest)
+	return tmp
+}
 
-	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
-	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
-		RepoPath: tmp,
-		Today:    today,
-	})
-	if err != nil {
-		t.Fatalf("scan repo failed: %v", err)
+func assertDeepCopyExceptionEntry(t *testing.T, exc dedupe.ExceptionEntry) {
+	t.Helper()
+	if exc.Path != "zz_generated.deepcopy.go" || exc.Reason != "controller-gen DeepCopyInto clones" || exc.Expires != "2026-11-01" {
+		t.Fatalf("unexpected exception entry in report: %+v", exc)
 	}
+}
+
+func assertExceptedDeepCopyReport(t *testing.T, report *dedupe.DedupeReport) {
+	t.Helper()
 	if !report.Passed {
 		t.Fatalf("expected report to pass with excepted clones, score: %.1f", report.CleanlinessScore)
 	}
@@ -903,13 +907,24 @@ func TestScanRepo_Positive_DeepCopyIntoClonesInExceptedFilePassAndAreListedAsExc
 	if len(report.Excepted[0].Exceptions) != 1 {
 		t.Fatalf("expected 1 exception entry in excepted group, got %d", len(report.Excepted[0].Exceptions))
 	}
-	exc := report.Excepted[0].Exceptions[0]
-	if exc.Path != "zz_generated.deepcopy.go" || exc.Reason != "controller-gen DeepCopyInto clones" || exc.Expires != "2026-11-01" {
-		t.Fatalf("unexpected exception entry in report: %+v", exc)
-	}
+	assertDeepCopyExceptionEntry(t, report.Excepted[0].Exceptions[0])
 	if report.CleanlinessScore != 100.0 {
 		t.Fatalf("expected 100.0 score with excepted clones, got %.1f", report.CleanlinessScore)
 	}
+}
+
+func TestScanRepo_Positive_DeepCopyIntoClonesInExceptedFilePassAndAreListedAsExcepted(t *testing.T) {
+	tmp := setupExceptedDeepCopyFixture(t)
+
+	today := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	report, err := dedupe.ScanRepoWithOptions(t.Context(), dedupe.ScanOptions{
+		RepoPath: tmp,
+		Today:    today,
+	})
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	assertExceptedDeepCopyReport(t, report)
 }
 
 func TestScanRepo_Negative_DeepCopyIntoClonesWithoutEntryFail(t *testing.T) {
