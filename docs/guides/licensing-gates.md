@@ -16,6 +16,8 @@ whatever the profile.
 
 ## `reuse lint` in hooks and CI
 
+The `reuse.yml` the workflow also triggers on `merge_group`, so its check reports for a merge group when the repository declares a merge queue ([Merge queue](../adoption.md#merge-queue)); an unedited copy without the trigger refreshes without `--force`.
+
 Adoption writes two jobs, both at the one REUSE pin, `supplychain.ReuseActionVersion` in
 [`internal/supplychain/reuse_lint.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse_lint.go):
 
