@@ -45,16 +45,6 @@
 // removed function of a canary module (verifyChecker), that exits with any status but 0 or 1,
 // or that prints an error.
 //
-// A module whose packages cannot be built even with the system packages the manifest declares
-// (api.system_packages, installed by the workflow before this program runs) takes an exception
-// from the manifest's exceptions list (rule api-compatibility, path <module dir>/go.mod). The
-// workflow passes the entries in the environment variable APICOMPAT_EXCEPTIONS as a JSON list of
-// {path, reason, expires} objects, because this program reads no manifest. While an entry holds
-// (until the end of its expires day, UTC), the module is reported as not compared, with the
-// entry's reason and expiry, and the gate goes on; once it expired, or with no entry, the
-// build failure fails the gate as before. A module that builds is compared whatever the list
-// says. The program never sets CGO_ENABLED.
-//
 // Exit status: 0 compatible, or incompatible under the warn policy; 1 incompatible under the
 // reject policy; 2 the comparison did not run. The checker checks each revision out in the
 // working tree, restores HEAD afterwards and refuses a dirty tree, so run the gate in a clean
@@ -67,7 +57,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -110,12 +99,6 @@ const (
 	maxPathElements  = 256
 	maxDiagnostics   = 1 << 20
 	maxRevisionBytes = 4096
-
-	// exceptionsEnv carries the manifest's api-compatibility exceptions, as the workflow renders
-	// them (internal/apicompat render).
-	exceptionsEnv  = "APICOMPAT_EXCEPTIONS"
-	maxExceptions  = 1024
-	exceptionsDate = "2006-01-02"
 
 	runTimeout     = 3 * time.Hour
 	gitTimeout     = 2 * time.Minute
@@ -181,9 +164,6 @@ func runGate(ctx context.Context, args []string, stdout, stderr *printer) (int, 
 	if err != nil {
 		return exitNotRun, err
 	}
-	if opts.exceptions, err = parseExceptions(os.Getenv(exceptionsEnv)); err != nil {
-		return exitNotRun, err
-	}
 	return gate(ctx, opts, stdout, stderr)
 }
 
@@ -212,62 +192,6 @@ func (p *printer) annotate(level, message string) {
 // options are the gate's flags.
 type options struct {
 	repo, base, policy, checker string
-	exceptions                  []exception
-}
-
-// exception is one live-or-expired entry of the manifest's api-compatibility exceptions: the
-// go.mod of a module whose build failure is excused until the end of the day expires.
-type exception struct {
-	Path    string `json:"path"`
-	Reason  string `json:"reason"`
-	Expires string `json:"expires"`
-}
-
-// parseExceptions reads the JSON list in exceptionsEnv. An empty value is no exception; a value
-// that is not a bounded list of well-formed entries fails the run, so a damaged workflow never
-// reads as "no exceptions" by accident.
-func parseExceptions(raw string) ([]exception, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var entries []exception
-	if err := decoder.Decode(&entries); err != nil {
-		return nil, fmt.Errorf("%s is not a JSON list of {path, reason, expires}: %w", exceptionsEnv, err)
-	}
-	if len(entries) > maxExceptions {
-		return nil, fmt.Errorf("%s lists %d exceptions, want at most %d", exceptionsEnv, len(entries), maxExceptions)
-	}
-	for index := 0; index < len(entries) && index < maxExceptions; index++ {
-		entry := entries[index]
-		if path.Base(entry.Path) != "go.mod" || path.Clean(entry.Path) != entry.Path || strings.TrimSpace(entry.Reason) == "" {
-			return nil, fmt.Errorf("%s entry %d must name a module's go.mod and give a reason", exceptionsEnv, index)
-		}
-		if _, err := time.Parse(exceptionsDate, entry.Expires); err != nil {
-			return nil, fmt.Errorf("%s entry %d: expires %q is not a YYYY-MM-DD date", exceptionsEnv, index, entry.Expires)
-		}
-	}
-	return entries, nil
-}
-
-// exceptionFor returns what entries say about the module in dir ("." for the root module) on
-// today: the last entry that still holds, or else the first expired one. Both are nil without an
-// entry for the module.
-func exceptionFor(entries []exception, dir string, today time.Time) (live, expired *exception) {
-	for index := 0; index < len(entries) && index < maxExceptions; index++ {
-		if path.Dir(entries[index].Path) != dir {
-			continue
-		}
-		until, err := time.Parse(exceptionsDate, entries[index].Expires)
-		switch {
-		case err == nil && !until.Before(today):
-			live = &entries[index]
-		case expired == nil:
-			expired = &entries[index]
-		}
-	}
-	return live, expired
 }
 
 func parseOptions(args []string, stderr io.Writer) (options, error) {
@@ -300,9 +224,6 @@ func gate(ctx context.Context, opts options, stdout, stderr *printer) (int, erro
 	if err != nil {
 		return exitNotRun, err
 	}
-	repo.exceptions = opts.exceptions
-	year, month, day := time.Now().UTC().Date()
-	repo.today = time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 	if repo.base == "" {
 		stdout.printf("No root release tag vMAJOR.MINOR.PATCH is merged into HEAD %s and -base is unset: "+
 			"no published API to compare.\n", short(repo.head))
@@ -330,9 +251,6 @@ type repository struct {
 	base     string
 	baseName string
 	policy   policy
-	// exceptions are the manifest's module exceptions and today the UTC day they are judged on.
-	exceptions []exception
-	today      time.Time
 }
 
 // policy is the compatibility policy: whether an incompatible change fails the gate, and why.
@@ -641,9 +559,6 @@ func unquotedModulePath(value string) (string, error) {
 type result struct {
 	module       module
 	incompatible bool
-	// notCompared, when set, says why the module was not compared: the exception that excuses
-	// its build failure.
-	notCompared string
 }
 
 // compareModules verifies the checker, then builds and compares each compared module in
@@ -680,16 +595,7 @@ func compareEach(
 	for index := 0; index < len(plan.compared) && index < maxModules; index++ {
 		target := plan.compared[index]
 		stdout.printf("Comparing %s (%s) from %s to %s\n", target.dir, target.path, short(repo.base), short(repo.head))
-		buildErr := buildModule(ctx, repo.root, target.dir, stderr.w)
-		if buildErr != nil {
-			note, err := excuseBuildFailure(repo, target, buildErr, stderr)
-			if err != nil {
-				return nil, err
-			}
-			results = append(results, result{module: target, notCompared: note})
-			continue
-		}
-		incompatible, err := compareModule(ctx, checker, sites.of(target.dir), target.dir, stdout.w, stderr.w)
+		incompatible, err := compareModule(ctx, checker, repo.root, sites.of(target.dir), target.dir, stdout.w, stderr.w)
 		if err != nil {
 			return nil, fmt.Errorf("module %s (%s): %w", target.dir, target.path, err)
 		}
@@ -698,41 +604,17 @@ func compareEach(
 	return results, nil
 }
 
-// buildModule builds the module's packages at HEAD in the repository at root. The checker reads
-// a package it cannot type-check as empty without saying so, so a module that does not build
-// would otherwise read as compatible; go list -export builds what the checker loads and writes
-// nothing into the working tree.
-func buildModule(ctx context.Context, root, dir string, stderr io.Writer) error {
+// compareModule builds the module's packages at HEAD in the repository at root, then runs the
+// checker on the module's directory in site. The checker reads a package it cannot type-check
+// as empty without saying so, so a module that does not build would otherwise read as
+// compatible; go list -export builds what the checker loads and writes nothing into the working
+// tree. A vendor-free clone has no checkout, so the module's directory is created there for the
+// checker to start in.
+func compareModule(ctx context.Context, checker, root string, site checkerSite, dir string, stdout, stderr io.Writer) (bool, error) {
 	moduleDir := filepath.Join(root, filepath.FromSlash(dir))
 	if err := runTool(ctx, moduleDir, io.Discard, stderr, "go", "list", "-export", "./..."); err != nil {
-		return fmt.Errorf("its packages do not build at HEAD, so the checker cannot read them: %w", err)
+		return false, fmt.Errorf("its packages do not build at HEAD, so the checker cannot read them: %w", err)
 	}
-	return nil
-}
-
-// excuseBuildFailure returns the note that reports target as not compared when a live exception
-// names its go.mod, and the failure otherwise, naming an expired exception when there is one.
-// The module is never compared in place of a build the exception excuses.
-func excuseBuildFailure(repo repository, target module, buildErr error, stderr *printer) (string, error) {
-	live, expired := exceptionFor(repo.exceptions, target.dir, repo.today)
-	if live == nil {
-		failure := fmt.Errorf("module %s (%s): %w", target.dir, target.path, buildErr)
-		if expired != nil {
-			failure = fmt.Errorf("%w; the exception for %s expired on %s (%s), so it excuses nothing",
-				failure, expired.Path, expired.Expires, expired.Reason)
-		}
-		return "", failure
-	}
-	note := fmt.Sprintf("excepted until %s: %s", live.Expires, live.Reason)
-	stderr.annotate("warning", fmt.Sprintf("module %s (%s) was not compared: %s; build failure: %v",
-		target.dir, target.path, note, buildErr))
-	return note, nil
-}
-
-// compareModule runs the checker on the module's directory in site, after buildModule built the
-// module. A vendor-free clone has no checkout, so the module's directory is created there for the
-// checker to start in.
-func compareModule(ctx context.Context, checker string, site checkerSite, dir string, stdout, stderr io.Writer) (bool, error) {
 	checkerDir := filepath.Join(site.root, filepath.FromSlash(dir))
 	if err := os.MkdirAll(checkerDir, 0o700); err != nil {
 		return false, fmt.Errorf("create the checker's directory: %w", err)
@@ -1011,10 +893,6 @@ func verdict(repo repository, plan modulePlan, results []result, stdout, stderr 
 	stdout.printf("\nGo API compatibility from %s (%s) to HEAD %s:\n", repo.baseName, short(repo.base), short(repo.head))
 	incompatible := len(plan.removed)
 	for index := 0; index < len(results) && index < maxModules; index++ {
-		if results[index].notCompared != "" {
-			printModule(stdout, "not compared", results[index].module, results[index].notCompared)
-			continue
-		}
 		state := "compatible"
 		if results[index].incompatible {
 			state = "incompatible"
