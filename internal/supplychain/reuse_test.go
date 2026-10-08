@@ -419,14 +419,21 @@ func TestRepositoryReuseLabels(t *testing.T) {
 			t.Errorf("%s is not labelled MIT", subject)
 		}
 	}
+	assertSkillLicenseLabels(t, tables)
+}
+
+// assertSkillLicenseLabels checks that each shipped upstream licence text is labelled MIT alone and that
+// a skill without an upstream licence has no such label.
+func assertSkillLicenseLabels(t *testing.T, tables []ReuseAnnotation) {
+	t.Helper()
 	for _, dir := range []string{".agents/skills", ".agents/plugins/praetor/skills", ".claude/skills"} {
 		for _, name := range []string{"caveman", "adhd-format", "social-text"} {
 			rel := dir + "/" + name + "/LICENSE"
-			if !ReuseLabels(tables, rel, "MIT") || ReuseLabels(tables, rel, "EUPL-1.2") {
+			if !labelled(t, tables, rel, "MIT") || labelled(t, tables, rel, "EUPL-1.2") {
 				t.Errorf("%s is not labelled MIT alone: the upstream licence text keeps its terms", rel)
 			}
 		}
-		if rel := dir + "/hiss-audit/LICENSE"; ReuseLabels(tables, rel, "MIT") {
+		if rel := dir + "/hiss-audit/LICENSE"; labelled(t, tables, rel, "MIT") {
 			t.Errorf("%s is labelled MIT, though no upstream licence ships beside that skill", rel)
 		}
 	}
