@@ -6,6 +6,7 @@ package supplychain
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -126,12 +127,96 @@ SPDX-License-Identifier = "MIT"
 	}
 }
 
+// assertSingleTable checks that text parses to one table covering "**" with "MIT".
+func assertSingleTable(t *testing.T, name, text string) {
+	t.Helper()
+	tables := reuseTables(t, text)
+	if len(tables) != 1 {
+		t.Fatalf("%s: len(tables) = %d, want 1", name, len(tables))
+	}
+	if got := strings.Join(tables[0].Paths, " "); got != "**" {
+		t.Fatalf("%s: paths = %q, want **", name, got)
+	}
+	if got := strings.Join(tables[0].Licenses, " "); got != "MIT" {
+		t.Fatalf("%s: licenses = %q, want MIT", name, got)
+	}
+}
+
+// checkReuseToolLint runs reuse lint on fixture where installed.
+func checkReuseToolLint(t *testing.T, fixture string) {
+	t.Helper()
+	reusePath, err := exec.LookPath("reuse")
+	if err != nil {
+		return
+	}
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "LICENSES"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "LICENSES", "MIT.txt"), []byte("MIT License\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ReuseFile), []byte(fixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Fixture\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(t.Context(), reusePath, "--root", root, "lint")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("reuse lint failed on fixture: %v\n%s", err, string(output))
+	}
+}
+
+// Positive: REUSE 3.3 allows other keys and tables. The read steps over top-level keys other than
+// annotations, keys inside an [[annotations]] table other than path and SPDX-License-Identifier,
+// multi-line arrays of unknown keys, and unknown tables and arrays of tables. Where the reuse
+// tool is installed, reuse lint confirms compliance on the fixture.
+func TestReuseOtherKeysAndTablesPositive(t *testing.T) {
+	assertSingleTable(t, "issue #896", "version = 1\n"+
+		"SPDX-PackageName = \"my-package\"\n"+
+		"SPDX-PackageSupplier = \"Supplier <supplier@example.com>\"\n"+
+		"SPDX-PackageDownloadLocation = \"https://github.com/example/repo\"\n\n"+
+		"[[annotations]]\npath = [\"**\"]\nSPDX-License-Identifier = \"MIT\"\n")
+
+	assertSingleTable(t, "SPDX-FileComment / Contributor", "version = 1\n\n[[annotations]]\npath = [\"**\"]\n"+
+		"SPDX-FileComment = \"a file comment\"\n"+
+		"SPDX-FileContributor = \"Contributor <contrib@example.com>\"\n"+
+		"SPDX-License-Identifier = \"MIT\"\n")
+
+	assertSingleTable(t, "multi-line array value", "version = 1\n"+
+		"custom_top_array = [\n  \"top1\",\n  \"top2\",\n]\n\n"+
+		"[[annotations]]\npath = [\"**\"]\nSPDX-License-Identifier = \"MIT\"\n"+
+		"table_unknown_array = [\n  \"sub1\",\n  \"sub2\",\n]\n")
+
+	assertSingleTable(t, "unknown tables", "version = 1\n\n"+
+		"[metadata]\nname = \"package-name\"\nversion = \"2.0.0\"\n\n"+
+		"[[annotations]]\npath = [\"**\"]\nSPDX-License-Identifier = \"MIT\"\n\n"+
+		"[[contributors]]\nname = \"Alice\"\n[[contributors]]\nname = \"Bob\"\n")
+
+	checkReuseToolLint(t, "version = 1\n"+
+		"SPDX-PackageName = \"fixture-pkg\"\n"+
+		"SPDX-PackageSupplier = \"Supplier <supplier@example.com>\"\n"+
+		"SPDX-PackageDownloadLocation = \"https://example.com\"\n"+
+		"custom_tags = [\n  \"tag1\",\n  \"tag2\",\n]\n\n"+
+		"[metadata]\nowner = \"team\"\n\n"+
+		"[[annotations]]\npath = [\"**\"]\n"+
+		"SPDX-FileComment = \"comment\"\n"+
+		"SPDX-FileContributor = \"contributor\"\n"+
+		"SPDX-FileCopyrightText = \"2026 Test Author\"\n"+
+		"SPDX-License-Identifier = \"MIT\"\n"+
+		"extra = [\n  \"a\",\n  \"b\",\n]\n\n"+
+		"[[contributors]]\nname = \"Alice\"\n")
+}
+
 // Negative: a line the read cannot follow is an error naming its line, not a table read past. A
 // path or license value the read cannot take as single-line strings fails, and so does another
 // key's value whose end it cannot find. The read is an allow-list: annotations written as an
-// inline array of tables, on one line or several, which REUSE reads and earlier read as no table
-// at all, a dotted key, any other top-level key, table header or annotation key fail closed,
-// naming the key and the form to write it in.
+// inline array of tables, on one line or several, a dotted key whose first segment is annotations
+// at top level, [annotations], [annotations.x], [[annotations.x]], and a dotted key whose first
+// segment is path, precedence, SPDX-FileCopyrightText or SPDX-License-Identifier inside an
+// [[annotations]] table fail closed, naming the key or header and the form to write it in.
 func TestReuseAnnotationTablesNegative(t *testing.T) {
 	for name, test := range map[string]struct{ text, want string }{
 		"not a key":            {"[[annotations]]\npath\n", "REUSE.toml:2: \"path\" is not a table header"},
@@ -152,14 +237,12 @@ func TestReuseAnnotationTablesNegative(t *testing.T) {
 			"version = 1\nannotations = [\n  { path = \"vendor/**\", SPDX-License-Identifier = \"MIT\" },\n  { path = \"**\", SPDX-License-Identifier = \"EUPL-1.2\" },\n]\n",
 			"REUSE.toml:2: the top-level key annotations is not one this read follows",
 		},
-		"dotted top-level key": {"version = 1\nannotations.path = \"**\"\n", "the top-level key annotations.path is not one this read follows: write each annotation"},
-		"unknown top-level":    {"version = 1\nlicense = \"MIT\"\n", "the top-level key license is not one this read follows: REUSE.toml holds the version key and [[annotations]] tables"},
-		"plain table header":   {"version = 1\n[annotations]\npath = \"**\"\n", "the table header [annotations] is not one this read follows"},
-		"other table header":   {"[[annotations]]\npath = \"a\"\n[other]\npath = \"**\"\n", "REUSE.toml:3: the table header [other] is not one this read follows"},
-		"sub-table header":     {"[[annotations]]\npath = \"a\"\n[[annotations.more]]\n", "the table header [[annotations.more]] is not one this read follows"},
-		"unknown table key":    {"[[annotations]]\npath = \"a\"\nnote = \"x\"\n", "the key note of an [[annotations]] table is not one this read follows: a table holds path, SPDX-License-Identifier and precedence, SPDX-FileCopyrightText"},
-		"dotted table key":     {"[[annotations]]\npath.glob = \"a\"\n", "the key path.glob of an [[annotations]] table is not one this read follows"},
-		"version in a table":   {"[[annotations]]\nversion = 1\n", "the key version of an [[annotations]] table"},
+		"dotted top-level key":   {"version = 1\nannotations.path = \"**\"\n", "the top-level key annotations.path is not one this read follows: write each annotation"},
+		"plain table header":     {"version = 1\n[annotations]\npath = \"**\"\n", "the table header [annotations] is not one this read follows"},
+		"plain sub-table header": {"version = 1\n[annotations.x]\npath = \"**\"\n", "the table header [annotations.x] is not one this read follows"},
+		"array sub-table header": {"[[annotations]]\npath = \"a\"\n[[annotations.more]]\n", "the table header [[annotations.more]] is not one this read follows"},
+		"dotted table key":       {"[[annotations]]\npath.glob = \"a\"\n", "the key path.glob of an [[annotations]] table is not one this read follows"},
+		"dotted table key x":     {"[[annotations]]\npath.x = \"a\"\n", "the key path.x of an [[annotations]] table is not one this read follows"},
 	} {
 		if _, err := ReuseAnnotationTables(test.text); err == nil || !strings.Contains(err.Error(), test.want) {
 			t.Errorf("%s: err = %v, want %q", name, err, test.want)

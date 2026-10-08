@@ -16,25 +16,26 @@ import (
 // The REUSE.toml reads: praetorctl audit's licensing gates and vendored license warning
 // (cmd/standardsctl, audit_reuse.go) and the label a copied upstream file must carry
 // (CheckUpstreamCredits). They read the file's shape, not TOML: the module carries no TOML
-// library (util.TOMLTableName). The read mirrors what the reuse tool parses
-// (reuse/global_licensing.py, ReuseTOML.from_dict and AnnotationsItem.from_dict), so it follows
-// an allow-list and refuses everything else, naming the line: the version key, [[annotations]]
-// table headers, and in each table the four keys REUSE reads, one per line. Only the values of
-// path and SPDX-License-Identifier count; the values of version, precedence and
-// SPDX-FileCopyrightText are stepped over whatever they hold (util.TOMLValueScan). Any other
-// top-level key, such as annotations written as an inline array of tables, any dotted key, any
-// other table header and any other key of a table fail closed, since REUSE may read them as
-// annotations this read never sees.
+// library (util.TOMLTableName). REUSE 3.3 allows other keys and tables to convey additional
+// information. The read mirrors what the reuse tool parses (reuse/global_licensing.py,
+// ReuseTOML.from_dict and AnnotationsItem.from_dict), so it follows an allow-list and refuses
+// shapes that can define annotations this read never sees, naming the line:
+// (1) at top level, read the version key and step over the value of every other key whatever it
+// holds (util.TOMLValueScan), but refuse the key annotations and any dotted key whose first segment
+// is annotations;
+// (2) table headers: [[annotations]] opens an annotation table, any other table or array-of-tables
+// header opens an ignored table whose keys are all stepped over, and [annotations], [annotations.x]
+// and [[annotations.x]] are refused;
+// (3) inside an [[annotations]] table, read path and SPDX-License-Identifier, step over precedence,
+// SPDX-FileCopyrightText and any other key, but refuse a dotted key whose first segment is path,
+// precedence, SPDX-FileCopyrightText or SPDX-License-Identifier.
+// Protect by default stays: only shapes that cannot define annotations are stepped over.
 
 const (
 	// ReuseFile is the REUSE configuration a repository may declare its licensing in.
 	ReuseFile = "REUSE.toml"
 	// MaxReuseLines bounds one REUSE.toml read (HISS-02).
 	MaxReuseLines = 4096
-	// reuseAnnotationsTable is the array-of-tables name util.TOMLTableName gives [[annotations]].
-	reuseAnnotationsTable = "[annotations]"
-	// reuseVersionKey is the one top-level key of a REUSE.toml.
-	reuseVersionKey = "version"
 	// reusePathKey holds the globs an annotation table covers, a string or an array of strings.
 	reusePathKey = "path"
 	// reuseLicenseKey holds the SPDX license expressions of a table, a string or an array.
@@ -58,6 +59,8 @@ type reuseScan struct {
 	tables []ReuseAnnotation
 	// inTable is whether the lines read belong to an [[annotations]] table.
 	inTable bool
+	// ignoredTable is whether the lines read belong to an ignored table or array of tables.
+	ignoredTable bool
 	// listOpen is whether the value of listKey is an array not yet closed.
 	listOpen  bool
 	listKey   string
@@ -114,47 +117,81 @@ func (s *reuseScan) read(line string) error {
 	return s.assign(line)
 }
 
-// header opens the [[annotations]] table line starts, and refuses any other table header.
+// header opens the [[annotations]] table line starts, opens an ignored table for any other table
+// header, and refuses [annotations], [annotations.x] and [[annotations.x]].
 func (s *reuseScan) header(line string) error {
-	if !strings.HasPrefix(line, "[[") || util.TOMLTableName(line) != reuseAnnotationsTable {
-		return fmt.Errorf("the table header %s is not one this read follows: %s holds the %s key and [[annotations]] tables, "+
-			"each opened by a [[annotations]] line of its own", line, ReuseFile, reuseVersionKey)
+	clean, _, _ := strings.Cut(line, "#")
+	clean = strings.TrimSpace(clean)
+	isArray := strings.HasPrefix(clean, "[[") && strings.HasSuffix(clean, "]]")
+	name := util.TOMLTableName(line)
+	inner := strings.Trim(strings.TrimSuffix(strings.TrimPrefix(name, "["), "]"), `"'`)
+	first, _, _ := strings.Cut(inner, ".")
+	first = strings.Trim(first, `"'`)
+	if first == "annotations" {
+		if !isArray || inner != "annotations" {
+			return fmt.Errorf("the table header %s is not one this read follows: write each annotation as a table of its own, "+
+				"opened by a [[annotations]] line, not [annotations] or a sub-table", line)
+		}
+		s.inTable = true
+		s.ignoredTable = false
+		s.tables = append(s.tables, ReuseAnnotation{})
+		return nil
 	}
-	s.inTable = true
-	s.tables = append(s.tables, ReuseAnnotation{})
+	if inner == "" {
+		return fmt.Errorf("the table header %s is not one this read follows: write each annotation as a table of its own, "+
+			"opened by a [[annotations]] line", line)
+	}
+	s.inTable = false
+	s.ignoredTable = true
 	return nil
 }
 
-// assign reads the key line assigns: it records the strings of path and SPDX-License-Identifier,
-// steps over the value of another key the allow-list holds, and refuses any other key.
+// assign reads the key line assigns: it records the strings of path and SPDX-License-Identifier
+// inside an [[annotations]] table, steps over the value of another key, and refuses annotations
+// keys at top level and dotted annotation keys inside a table.
 func (s *reuseScan) assign(line string) error {
 	key, value, ok := util.TOMLKeyValue(line)
 	if !ok {
 		return fmt.Errorf("%q is not a table header, a key or a comment", line)
 	}
 	s.listKey, s.listItems = strings.Trim(key, `"'`), nil
-	switch {
-	case !s.inTable && s.listKey == reuseVersionKey, s.inTable && slices.Contains(reuseSteppedKeys, s.listKey):
+	firstSegment, _, hasDot := strings.Cut(s.listKey, ".")
+	firstSegment = strings.Trim(firstSegment, `"'`)
+	if !s.inTable {
+		if !s.ignoredTable && firstSegment == "annotations" {
+			return reuseTopLevelKeyError(s.listKey)
+		}
 		s.skip = util.TOMLValueScan{}
 		return s.skipValue(value)
-	case !s.inTable:
-		return reuseTopLevelKeyError(s.listKey)
-	case s.listKey != reusePathKey && s.listKey != reuseLicenseKey:
-		return fmt.Errorf("the key %s of an [[annotations]] table is not one this read follows: a table holds %s, %s and %s, "+
-			"each assigned on a line of its own, with no dotted key", s.listKey, reusePathKey, reuseLicenseKey, strings.Join(reuseSteppedKeys, ", "))
 	}
-	return s.readValue(value)
+	return s.assignTableKey(firstSegment, hasDot, value)
 }
 
-// reuseTopLevelKeyError refuses key, a key outside every table other than version: annotations
-// written as an inline array of tables or with dotted keys, which REUSE reads and this read does
-// not follow, or a key REUSE.toml does not hold.
-func reuseTopLevelKeyError(key string) error {
-	if key == "annotations" || strings.HasPrefix(key, "annotations.") {
-		return fmt.Errorf("the top-level key %s is not one this read follows: write each annotation as a table of its own, "+
-			"opened by a [[annotations]] line and holding one key = value per line, not as an inline array of tables or dotted keys", key)
+// assignTableKey handles a key assignment inside an [[annotations]] table.
+func (s *reuseScan) assignTableKey(firstSegment string, hasDot bool, value string) error {
+	switch {
+	case hasDot && isAnnotationSegment(firstSegment):
+		return fmt.Errorf("the key %s of an [[annotations]] table is not one this read follows: assign %s, %s and %s "+
+			"each on a line of its own, with no dotted key", s.listKey, reusePathKey, reuseLicenseKey, strings.Join(reuseSteppedKeys, ", "))
+	case s.listKey == reusePathKey || s.listKey == reuseLicenseKey:
+		return s.readValue(value)
+	default:
+		s.skip = util.TOMLValueScan{}
+		return s.skipValue(value)
 	}
-	return fmt.Errorf("the top-level key %s is not one this read follows: %s holds the %s key and [[annotations]] tables", key, ReuseFile, reuseVersionKey)
+}
+
+// isAnnotationSegment reports whether segment is one of the four keys an [[annotations]] table reads.
+func isAnnotationSegment(segment string) bool {
+	return segment == reusePathKey || segment == reuseLicenseKey || slices.Contains(reuseSteppedKeys, segment)
+}
+
+// reuseTopLevelKeyError refuses key, a top-level key that is annotations or whose first segment is
+// annotations: annotations written as an inline array of tables or with dotted keys, which REUSE
+// reads and this read does not follow.
+func reuseTopLevelKeyError(key string) error {
+	return fmt.Errorf("the top-level key %s is not one this read follows: write each annotation as a table of its own, "+
+		"opened by a [[annotations]] line and holding one key = value per line, not as an inline array of tables or dotted keys", key)
 }
 
 // readValue records the value of the path or license key, which is a single-line string or an

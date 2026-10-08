@@ -258,3 +258,28 @@ func TestAuditLicensing_3D(t *testing.T) {
 		t.Fatalf("no licensing: %v\n%s", err, output)
 	}
 }
+
+// The issue #896 REUSE.toml (version plus SPDX-PackageName, SPDX-PackageSupplier,
+// SPDX-PackageDownloadLocation, then [[annotations]]) passes both licence gates.
+func TestAuditLicensing_Issue896(t *testing.T) {
+	today := time.Date(2026, time.October, 8, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	writeFixtureFile(t, root, "LICENSES/MIT.txt", "MIT License\n")
+	writeFixtureFile(t, root, supplychain.RootLicenseFile, "MIT License\n")
+	issueReuse := "version = 1\n" +
+		"SPDX-PackageName = \"my-package\"\n" +
+		"SPDX-PackageSupplier = \"Supplier <supplier@example.com>\"\n" +
+		"SPDX-PackageDownloadLocation = \"https://github.com/example/repo\"\n\n" +
+		"[[annotations]]\npath = [\"**\"]\nSPDX-License-Identifier = \"MIT\"\n"
+	writeFixtureFile(t, root, supplychain.ReuseFile, issueReuse)
+	output, err := captureStdout(t, func() error {
+		return auditLicensing(t.Context(), &config.Manifest{}, root, today)
+	})
+	if err != nil {
+		t.Fatalf("issue #896 REUSE.toml failed licence gates: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "[PASS] REUSE.toml annotation order") ||
+		!strings.Contains(output, "[PASS] root licence") {
+		t.Fatalf("issue #896 REUSE.toml did not pass both licence gates:\n%s", output)
+	}
+}

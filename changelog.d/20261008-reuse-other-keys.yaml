@@ -1,0 +1,4 @@
+type: fixed
+title: "The REUSE.toml reader steps over other keys and tables allowed by REUSE 3.3 while continuing to refuse shapes that can define annotations"
+issue: "#896"
+breaking: false
