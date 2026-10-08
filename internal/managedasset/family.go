@@ -132,6 +132,12 @@ type Family struct {
 	branch string
 	// plain is Workflow before Customize rendered it; empty while it was not rendered.
 	plain string
+	// draftSkip is true while Workflow is the opt-in draft skip shape (WithDraftShape), and
+	// gateJob then names its gate job. shapeAlt is the other shape's text, rendered for the same
+	// branch, which adoption refreshes without --force; both are empty until WithDraftShape ran.
+	draftSkip bool
+	gateJob   string
+	shapeAlt  string
 }
 
 // Families returns the registry in its fixed order: the order adoption emits and audit
@@ -345,6 +351,7 @@ func (f Family) ForBranch(branch string) (Family, error) {
 	}
 	f.Workflow = strings.Replace(f.Workflow, pushBranchesLine(f.Branch()), pushBranchesLine(branch), 1)
 	f.plain = strings.Replace(f.plain, pushBranchesLine(f.Branch()), pushBranchesLine(branch), 1)
+	f.shapeAlt = strings.Replace(f.shapeAlt, pushBranchesLine(f.Branch()), pushBranchesLine(branch), 1)
 	f.branch = branch
 	return f, nil
 }
@@ -377,6 +384,77 @@ func (f Family) plainWorkflow() string {
 		return f.plain
 	}
 	return f.Workflow
+}
+
+// WithDraftShape returns the family with its workflow in the draft shape the repository selects
+// (hosted_gates.draft): the fail-closed step it is declared in, or, for skip, the job-level skip
+// rendered from it by ghworkflow.RenderDraftSkip (#857). Either way the other shape is kept as
+// the text adoption refreshes without --force (PriorRendering). A family without a workflow is
+// returned unchanged, and so is one already given a shape; a workflow that is not in the
+// fail-closed shape is an error when skip is asked for.
+func (f Family) WithDraftShape(skip bool) (Family, error) {
+	if f.WorkflowFile == "" || f.draftSkip || f.shapeAlt != "" {
+		return f, nil
+	}
+	rendered, gate, err := ghworkflow.RenderDraftSkip(f.Workflow)
+	if err != nil {
+		if !skip {
+			return f, nil
+		}
+		return Family{}, fmt.Errorf("managed asset family %q workflow cannot be rendered with the draft skip: %w", f.Name, err)
+	}
+	f.gateJob = gate
+	if skip {
+		f.Workflow, f.shapeAlt, f.draftSkip = rendered, f.Workflow, true
+		return f, nil
+	}
+	f.shapeAlt = rendered
+	return f, nil
+}
+
+// DraftSkipJobs returns the ids of the gate job and the result job of the family's workflow when
+// it is in the draft skip shape, and false otherwise. The result job reports StatusContext.
+func (f Family) DraftSkipJobs() (gate, result string, skipping bool) {
+	if !f.draftSkip {
+		return "", "", false
+	}
+	gate, result = ghworkflow.DraftSkipJobs(f.gateJob)
+	return gate, result, true
+}
+
+// alternateShape reports whether actual, in one consistent line-ending style, is the family's
+// workflow at rel in the draft shape the family does not select, and whether it is CRLF. The
+// alternate is rendered for Branch, or for the one other default branch actual names, so a file
+// of the other shape stays recognised after a branch rename. A family WithDraftShape was not
+// called on selects the fail-closed shape, so the skip shape is its alternate: a disabled facet
+// claims either.
+func (f Family) alternateShape(rel string, actual []byte) (known, crlf bool) {
+	alternate := f.alternateText()
+	text, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
+	if rel != f.WorkflowFile || alternate == "" || err != nil {
+		return false, false
+	}
+	if text == alternate {
+		return true, crlf
+	}
+	branch, found := pushBranch(text)
+	if !found || branch == f.Branch() || !config.ValidBranchName(branch) {
+		return false, false
+	}
+	return text == strings.Replace(alternate, pushBranchesLine(f.Branch()), pushBranchesLine(branch), 1), crlf
+}
+
+// alternateText returns the workflow text of the draft shape the family does not select, for
+// Branch, or "" when the family has no workflow or its workflow has no such shape.
+func (f Family) alternateText() string {
+	if f.WorkflowFile == "" || f.shapeAlt != "" || f.draftSkip {
+		return f.shapeAlt
+	}
+	rendered, _, err := ghworkflow.RenderDraftSkip(f.Workflow)
+	if err != nil {
+		return ""
+	}
+	return rendered
 }
 
 // OtherBranch returns the default branch other than Branch that actual, the family's file at rel,
@@ -470,6 +548,9 @@ func (f Family) basePriorRendering(rel string, actual []byte) (known, crlf, dire
 	owner, found, crlf := util.LookupCanonicalText(actual, f.Prior)
 	if found && owner == rel {
 		return true, crlf, true
+	}
+	if alternate, alternateCRLF := f.alternateShape(rel, actual); alternate {
+		return true, alternateCRLF, true
 	}
 	if branch, renderedCRLF := f.otherBranchRendering(rel, actual); branch != "" {
 		return true, renderedCRLF, true

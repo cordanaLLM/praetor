@@ -160,6 +160,26 @@ instead: on a draft the job reports a failed check by design, and the `ready_for
 reports the same check on the same head commit, which replaces the failure
 ([When the workflow runs](guides/api-compatibility.md#when-the-workflow-runs)).
 
+A repository that prefers a skipped draft to a red one can opt in with `hosted_gates.draft: skip`
+in `.standards.yaml` (`fail` is the default and the only other value;
+`internal/config/hosted_gates.go`). Adoption then renders `praetor-api.yml` and `praetor-docs.yml`
+from the same hosted gate definition with the draft step replaced by a job-level skip,
+`github.event_name != 'pull_request' || github.event.pull_request.draft == false`, on the gate
+job. The gate job, now named `<context> gate`, no longer reports the required check. A second job,
+`<job id>-result`, reports the original context: it needs the gate job, runs under `always()`,
+and fails unless the gate job succeeded, so a draft that skipped the gate job fails the required
+check until the `ready_for_review` run reports (`ghworkflow.RenderDraftSkip`,
+`TestRenderDraftSkipPositive`). The audit accepts the opt-in only while the job reporting the
+required check is a proven aggregate (the rule above) that needs the gate job and fails when it
+is skipped; otherwise it refuses and names the missing condition: no aggregate, an aggregate
+that passes on a skip, or one the proof cannot read (`forge.DraftSkipFault`,
+`TestDraftSkipFaultRefusesWhatLetsADraftPass`). It then locks the rendering byte for byte
+(`TestAuditLocksTheDraftSkipRendering`). The fail-closed text and the skip text refresh into one
+another with a plain `praetorctl adopt`, without `--force`, and an edited copy of either is kept
+(`TestAdoptRendersTheSelectedDraftShape`). The skip shape is accepted by the HISS-18 workflow
+trigger audit only under the same guard
+([Workflow triggers](guides/workflow-triggers.md#the-opt-in-draft-skip)).
+
 A repository guard is judged against the manifest identity. An operational fork resolves that
 identity to its `repository.source`, so the ruleset the fork commits equals the canonical one.
 On the fork's forge the guard is false, and a guarded matrix job is skipped before its legs

@@ -37,7 +37,7 @@ const (
 	hostedGateSkipStepName = "Fail unless the gate passed"
 	// hostedGateSkipMessage is the line the result job's step prints before it exits. It holds
 	// only what the aggregate proof reads as a message line (internal/forge gateScript).
-	hostedGateSkipMessage = "The gate did not pass: it failed, was cancelled or was skipped on a draft pull request."
+	hostedGateSkipMessage = "The gate did not pass or was skipped on a draft."
 	hostedGateJobsMarker  = "\njobs:\n  "
 	hostedGateNameMarker  = ":\n    name: "
 	hostedGateRunsOn      = "\n    runs-on: "

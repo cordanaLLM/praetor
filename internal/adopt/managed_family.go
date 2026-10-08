@@ -66,29 +66,34 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 
 // FamilyForRepository returns family with its hosted workflow rendered for the repository at
 // repoPath: for its default branch (managedasset.Family.ForBranch), the branch the branch ruleset
-// protects, resolved as forge.RepositoryDefaultBranch resolves it for the ruleset, and for the
-// settings its manifest declares (managedasset.Family.ForManifest), such as api.system_packages.
-// Adoption writes this rendering and audit locks a copy to it, so the two resolve one branch and
-// one manifest. A family whose workflow names no default branch and takes no manifest settings
-// is returned unchanged without reading anything.
+// protects, resolved as forge.RepositoryDefaultBranch resolves it for the ruleset; for the
+// settings its manifest declares (managedasset.Family.ForManifest), such as api.system_packages;
+// and in the draft shape its manifest selects (hosted_gates.draft,
+// managedasset.Family.WithDraftShape). Adoption writes this rendering and audit locks a copy to
+// it, so the two resolve one branch, one manifest and one shape. A family without a hosted
+// workflow is returned unchanged without reading anything.
 func FamilyForRepository(ctx context.Context, repoPath string, family managedasset.Family) (managedasset.Family, error) {
-	if !family.BranchDependent() && family.Customize == nil {
+	if family.WorkflowFile == "" {
 		return family, nil
 	}
 	manifest, err := loadDeclaredManifest(ctx, repoPath)
 	if err != nil {
 		return managedasset.Family{}, fmt.Errorf("render the %s workflow %s: %w", family.Kind, family.WorkflowFile, err)
 	}
-	if family.BranchDependent() {
-		branch, err := forge.RepositoryDefaultBranch(ctx, repoPath, manifest)
-		if err != nil {
-			return managedasset.Family{}, fmt.Errorf("render the %s workflow %s: %w", family.Kind, family.WorkflowFile, err)
-		}
-		if family, err = family.ForBranch(branch); err != nil {
-			return managedasset.Family{}, err
-		}
+	if family, err = family.ForManifest(manifest); err != nil {
+		return managedasset.Family{}, err
 	}
-	return family.ForManifest(manifest)
+	if family, err = family.WithDraftShape(manifest != nil && manifest.HostedGates.DraftSkip()); err != nil {
+		return managedasset.Family{}, err
+	}
+	if !family.BranchDependent() {
+		return family, nil
+	}
+	branch, err := forge.RepositoryDefaultBranch(ctx, repoPath, manifest)
+	if err != nil {
+		return managedasset.Family{}, fmt.Errorf("render the %s workflow %s: %w", family.Kind, family.WorkflowFile, err)
+	}
+	return family.ForBranch(branch)
 }
 
 func reconcileManagedFamilyFile(ctx context.Context, s *adoptSession, family managedasset.Family, sc scaffold) (scaffoldState, error) {

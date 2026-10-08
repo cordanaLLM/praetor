@@ -82,7 +82,9 @@ func (f workflowTriggerFinding) String() string {
 //     a verdict, and jobs whose needs form or follow a cycle are reported undecided;
 //   - a job that skips a draft with a job-level condition, or stops a draft and continues on
 //     error: GitHub reports either as successful, which a required check accepts, so the hosted
-//     gate shape fails a draft in a step instead (ghworkflow.HostedGateDraftStep);
+//     gate shape fails a draft in a step instead (ghworkflow.HostedGateDraftStep). The one
+//     accepted job condition is the opt-in ghworkflow.HostedGateSkipCondition (#857), and only
+//     while a proven aggregate of the same workflow fails on the skip it leaves (DraftSkipFault);
 //   - a pull_request trigger whose jobs stop on a draft but that does not run on
 //     ready_for_review, so the failed draft check stands until the next push.
 //
@@ -305,6 +307,11 @@ const (
 	// pull_request run starts, so nothing runs on a draft. The check does not read how GitHub
 	// reports such a calling job, so it holds back no job that needs it.
 	draftCallsIdle
+	// draftProvenSkip: the job is a gate job that skips a draft with the opt-in job condition,
+	// or the aggregate that fails on that skip (provenDraftSkips, #857). It is a work marker only
+	// (decideJob decides draftStops from it): the aggregate keeps the required check failing on
+	// the draft, so the skipped gate job does not let it pass.
+	draftProvenSkip
 )
 
 // jobDecision is what one job does on a draft (handling) and, for a job its needs decide, the need
@@ -328,9 +335,13 @@ func heldOnDraft(h draftHandling) bool {
 func (w *triggerWorkflow) draftDecisions(callees map[string]*workflowSpec) (map[string]jobDecision, []string) {
 	ids := sortedJobIDs(w.spec.Jobs)
 	work := make(map[string]draftHandling, len(ids))
+	proven := provenDraftSkips(&w.spec)
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := w.spec.Jobs[ids[i]]
 		work[ids[i]] = workOnDraft(&job, callees)
+		if proven[ids[i]] {
+			work[ids[i]] = draftProvenSkip
+		}
 	}
 	return jobDraftDecisions(w.spec.Jobs, ids, work)
 }
@@ -382,6 +393,9 @@ func ownDraftHandling(job *workflowJob, work draftHandling) draftHandling {
 // TODO(#821): pass the proven always() aggregate job (internal/forge/workflow_aggregate.go) once
 // it is on main; until then such a workflow is declared in the exceptions list.
 func decideJob(job *workflowJob, work draftHandling, decided map[string]jobDecision) jobDecision {
+	if work == draftProvenSkip {
+		return jobDecision{handling: draftStops}
+	}
 	own := ownDraftHandling(job, work)
 	if own == draftUnreached || own == draftConditionSkip || own == draftCallsIdle {
 		return jobDecision{handling: own}
