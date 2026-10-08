@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -56,14 +57,35 @@ func validateGateway(cfg *RoutingConfig) error {
 	if gw == nil {
 		return requireNoAliases(cfg)
 	}
-	parsed, err := url.Parse(gw.Address)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || len(gw.Address) > maxRoutingNameBytes {
-		return fmt.Errorf("%w: gateway address must be an http(s) URL", ErrInvalidRoutingConfig)
+	if err := validateGatewayAddress(gw.Address); err != nil {
+		return err
 	}
 	if gw.KeyEnv != "" && (len(gw.KeyEnv) > maxEnvNameBytes || !envNameShape.MatchString(gw.KeyEnv)) {
 		return fmt.Errorf("%w: gateway key_env must be an environment variable name", ErrInvalidRoutingConfig)
 	}
 	return nil
+}
+
+// validateGatewayAddress accepts an https URL, or an http URL only on a loopback host, because
+// the probe sends the key from key_env to this address.
+func validateGatewayAddress(address string) error {
+	parsed, err := url.Parse(address)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || len(address) > maxRoutingNameBytes {
+		return fmt.Errorf("%w: gateway address must be an http(s) URL", ErrInvalidRoutingConfig)
+	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return fmt.Errorf("%w: gateway address must use https unless it is a loopback host, because the probe sends the key", ErrInvalidRoutingConfig)
+	}
+	return nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP address.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	return err == nil && addr.IsLoopback()
 }
 
 // requireNoAliases refuses an alias entry in a catalog that declares no gateway: nothing could
@@ -79,11 +101,15 @@ func requireNoAliases(cfg *RoutingConfig) error {
 	return nil
 }
 
-// gatewayServesAliases reports whether any alias entry answered its probe.
+// gatewayServesAliases reports whether the catalog declares a gateway with at least one alias
+// entry, whatever the probes said: a gateway outage must not bring pinned models back.
 func gatewayServesAliases(cfg *RoutingConfig) bool {
+	if cfg.Gateway == nil {
+		return false
+	}
 	for _, tier := range cfg.Tiers {
 		for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
-			if tier.Models[i].Alias != "" && tier.Models[i].AliasStatus == AliasAnswers {
+			if tier.Models[i].Alias != "" {
 				return true
 			}
 		}
@@ -92,8 +118,8 @@ func gatewayServesAliases(cfg *RoutingConfig) bool {
 }
 
 // gatewayExclusion returns why the gateway rules exclude a candidate, or "" when it stays.
-// An alias entry stays only once its probe answered. When the gateway serves aliases, a
-// pinned model is excluded too, because the gateway refuses concrete IDs its key cannot use;
+// An alias entry stays only once its probe answered. When the catalog declares a gateway with
+// alias entries, a pinned model is excluded too, answering or not, because the gateway refuses concrete IDs its key cannot use;
 // a model from a local runtime never passes through the gateway and stays.
 func gatewayExclusion(model ModelDescriptor, serves bool) string {
 	if model.Alias != "" {
@@ -182,17 +208,26 @@ func probeAlias(ctx context.Context, client *http.Client, gw GatewayConfig, alia
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("gateway unreachable: %w", err)
+		return fmt.Errorf("%w: gateway unreachable: %w", ErrProbeNotRun, err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes))
 	if err != nil {
 		return fmt.Errorf("read probe response: %w", err)
 	}
+	if transientStatus(resp.StatusCode) {
+		return fmt.Errorf("%w: HTTP %d: %s", ErrProbeNotRun, resp.StatusCode, gatewayMessage(data))
+	}
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, gatewayMessage(data))
 	}
 	return nil
+}
+
+// transientStatus reports an HTTP status that says nothing about the alias: a timeout, a rate
+// limit or a gateway-side failure. The recorded status then stays as it was.
+func transientStatus(code int) bool {
+	return code == http.StatusRequestTimeout || code == http.StatusTooManyRequests || code >= 500
 }
 
 // gatewayMessage extracts the error message of an OpenAI-style error body, else the bare text.
