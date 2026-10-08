@@ -18,7 +18,10 @@ function resolveRequired(req: NodeRequire, id: string): string {
   }
 }
 
-function createHaikuAgent(): Agent {
+// The judge's modules resolve inside reason(), not at config load: a failed
+// resolve then blocks only the judged write it applies to, with the reinstall
+// reason, while shell commands and docs writes keep working.
+function resolveJudgeModules(): { sdkPath: string; toVerdictPath: string } {
   let probityEntry: string
   try {
     probityEntry = import.meta.resolve('@nizos/probity')
@@ -29,11 +32,16 @@ function createHaikuAgent(): Agent {
   }
 
   const req = createRequire(probityEntry)
-  const sdkPath = resolveRequired(req, '@anthropic-ai/claude-agent-sdk')
-  const toVerdictPath = resolveRequired(req, './vendors/to-verdict.js')
+  return {
+    sdkPath: resolveRequired(req, '@anthropic-ai/claude-agent-sdk'),
+    toVerdictPath: resolveRequired(req, './vendors/to-verdict.js'),
+  }
+}
 
+function createHaikuAgent(): Agent {
   return {
     async reason(prompt: string): Promise<Verdict> {
+      const { sdkPath, toVerdictPath } = resolveJudgeModules()
       const [{ query }, { toVerdict }] = await Promise.all([
         import(sdkPath),
         import(toVerdictPath),
