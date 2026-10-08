@@ -12,15 +12,17 @@ const (
 	NotMeasured = "not measured"
 
 	// FollowUpRefs is the pointer string for fact-hit ratio and checks-before-reviews in Slice 1.
-	FollowUpRefs = "not measured (Refs #881)"
+	FollowUpRefs = "not measured (see #897)"
 
-	// MaxSourceFiles bounds directory file traversal (HISS-02).
-	MaxSourceFiles = 1000
+	// MaxSourceFiles bounds directory file traversal (HISS-02). One agent project directory
+	// holds thousands of session files (4800 in the largest measured), so the bound sits well above.
+	MaxSourceFiles = 20000
 
-	// MaxSourceLines bounds lines parsed per file (HISS-02).
-	MaxSourceLines = 100000
+	// MaxSourceLines bounds lines read per file (HISS-02). Long sessions reach 70000 lines.
+	MaxSourceLines = 1000000
 
-	// MaxFileBytes bounds the size of a single source file read into memory (HISS-02).
+	// MaxFileBytes bounds the bytes read from a single source file (HISS-02). The largest
+	// measured session is 113 MB. Exceeding any of these bounds fails the run.
 	MaxFileBytes = 256 * 1024 * 1024
 )
 
@@ -61,6 +63,9 @@ type MilestoneSummary struct {
 	UnattributedSpendNum *float64 `json:"unattributed_spend_num,omitempty"`
 	TotalSpend           string   `json:"total_spend"`
 	TotalSpendNum        *float64 `json:"total_spend_num,omitempty"`
+	OtherUnitsSpend      string   `json:"other_units_spend"`
+	OtherUnitsSpendNum   *float64 `json:"other_units_spend_num,omitempty"`
+	IssueToMergeUnits    int      `json:"issue_to_merge_units"`
 	AvgIssueToMerge      string   `json:"avg_issue_to_merge"`
 	AvgIssueToMergeSecs  *int64   `json:"avg_issue_to_merge_secs,omitempty"`
 	OperatorTouches      string   `json:"operator_touches"`
@@ -85,4 +90,5 @@ type Report struct {
 	Units            []UnitReport     `json:"units"`
 	MilestoneSummary MilestoneSummary `json:"milestone_summary"`
 	Sources          SourcesMeasured  `json:"sources_measured"`
+	Notes            []string         `json:"notes,omitempty"`
 }

@@ -41,8 +41,37 @@ type ClosingIssue struct {
 	ClosedAt  *time.Time `json:"closed_at,omitempty"`
 }
 
+// MergedPullRequestQuery selects landed pull requests. Milestone filters before Limit applies.
+type MergedPullRequestQuery struct {
+	Limit     int
+	Milestone string
+}
+
+// MergedPullRequestList is a listing result. Truncated is non-empty when the listing is
+// incomplete and says why; Warnings name pull requests or issues that could not be read.
+type MergedPullRequestList struct {
+	PullRequests []MergedPullRequest
+	Truncated    string
+	Warnings     []string
+}
+
 // closingKeywordRegex matches closing keywords like "closes #123", "fixes #123", "resolves #123".
 var closingKeywordRegex = regexp.MustCompile(`(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+(?:([a-zA-Z0-9_\-\.]+)/)?([a-zA-Z0-9_\-\.]+)?#(\d+)`)
+
+// localClosingNumbers returns the issue numbers one line closes in this repository.
+func localClosingNumbers(line string) []int {
+	var nums []int
+	for _, m := range closingKeywordRegex.FindAllStringSubmatch(line, -1) {
+		// owner/repo#N points at another repository; its number means nothing here.
+		if m[1] != "" || m[2] != "" {
+			continue
+		}
+		if num, err := strconv.Atoi(m[3]); err == nil && num > 0 {
+			nums = append(nums, num)
+		}
+	}
+	return nums
+}
 
 // ParseClosingIssueNumbers extracts closing issue numbers from a pull request body.
 func ParseClosingIssueNumbers(body string) []int {
@@ -53,18 +82,12 @@ func ParseClosingIssueNumbers(body string) []int {
 	var nums []int
 	seen := make(map[int]bool)
 	for i := 0; i < len(lines) && i < MaxLinesLimit; i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		matches := closingKeywordRegex.FindAllStringSubmatch(line, -1)
-		for _, m := range matches {
+		for _, num := range localClosingNumbers(strings.TrimSpace(lines[i])) {
+			if seen[num] {
+				continue
+			}
 			if len(nums) >= MaxDependenciesLimit {
 				return nums
-			}
-			num, err := strconv.Atoi(m[3])
-			if err != nil || num <= 0 || seen[num] {
-				continue
 			}
 			seen[num] = true
 			nums = append(nums, num)

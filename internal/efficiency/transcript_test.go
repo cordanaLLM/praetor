@@ -4,237 +4,196 @@
 package efficiency
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/harvester"
 )
 
-func TestReadTranscriptStream_Positive_BranchJoinAndTouches(t *testing.T) {
-	ctx := context.Background()
-	classifier := NewClassifier(&config.EfficiencyPolicy{})
-
-	// Transcript fixture with:
-	// 1. Human user input on feat/target (operator touch = 1)
-	// 2. Task-notification user entry on feat/target (origin.kind=task-notification, NOT touch)
-	// 3. Peer agent user entry on feat/target (origin.kind=peer, NOT touch)
-	// 4. Meta message on feat/target (isMeta=true, NOT touch)
-	// 5. Compact summary on feat/target (isCompactSummary=true, NOT touch)
-	// 6. Sidechain message on feat/target (isSidechain=true, NOT touch)
-	// 7. Assistant response on feat/target with usage (frontier model)
-	// 8. Tool result on feat/target (NOT operator touch)
-	// 9. Hook attachment on feat/target (NOT operator touch)
-	// 10. User entry on unrelated feat/other (must NOT join to feat/target)
-	// 11. Assistant response on feat/target with local model (local request = 1)
-	transcriptJSONL := `
-{"type":"user","gitBranch":"feat/target","message":{"role":"user","content":[{"type":"text","text":"Implement feature"}]},"origin":{"kind":"human"}}
-{"type":"user","gitBranch":"feat/target","message":{"role":"user","content":[{"type":"text","text":"Task updated"}]},"origin":{"kind":"task-notification"}}
-{"type":"user","gitBranch":"feat/target","message":{"role":"user","content":[{"type":"text","text":"Message from reviewer"}]},"origin":{"kind":"peer"}}
-{"type":"user","gitBranch":"feat/target","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Meta injection"}]}}
-{"type":"user","gitBranch":"feat/target","isCompactSummary":true,"message":{"role":"user","content":[{"type":"text","text":"Summary"}]}}
-{"type":"user","gitBranch":"feat/target","isSidechain":true,"message":{"role":"user","content":[{"type":"text","text":"Sidechain"}]}}
-{"type":"assistant","gitBranch":"feat/target","requestId":"req-1","message":{"id":"msg-1","model":"claude-3-7-sonnet","role":"assistant","usage":{"input_tokens":100,"cache_creation_input_tokens":50,"cache_read_input_tokens":150,"output_tokens":40}}}
-{"type":"user","gitBranch":"feat/target","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool_1","content":"file content"}]}}
-{"type":"attachment","gitBranch":"feat/target","hookName":"SessionStart"}
-{"type":"user","gitBranch":"feat/other","message":{"role":"user","content":[{"type":"text","text":"Other branch prompt"}]},"origin":{"kind":"human"}}
-{"type":"assistant","gitBranch":"feat/target","requestId":"req-2","message":{"id":"msg-2","model":"ollama/llama3","role":"assistant","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":50,"output_tokens":20}}}
-`
-
-	byBranch := make(map[string]*BranchTranscriptStats)
-	err := ReadTranscriptStream(ctx, strings.NewReader(transcriptJSONL), classifier, byBranch)
+func readFixture(t *testing.T) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "session_real_shapes.jsonl"))
 	if err != nil {
-		t.Fatalf("unexpected error reading transcript stream: %v", err)
+		t.Fatal(err)
 	}
+	return data
+}
 
-	targetStats := byBranch["feat/target"]
-	if targetStats == nil {
-		t.Fatal("expected stats for feat/target")
+func writeFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
 	}
-
-	// Exactly 1 operator touch (all non-human kinds, isMeta, isCompactSummary, isSidechain excluded)
-	if targetStats.OperatorTouches != 1 {
-		t.Errorf("expected 1 operator touch on feat/target, got %d", targetStats.OperatorTouches)
-	}
-
-	// 2 requests total (1 frontier, 1 local)
-	if targetStats.TotalRequests != 2 {
-		t.Errorf("expected 2 total requests, got %d", targetStats.TotalRequests)
-	}
-	if targetStats.LocalRequests != 1 {
-		t.Errorf("expected 1 local request, got %d", targetStats.LocalRequests)
-	}
-
-	// Frontier tokens: only from claude-3-7-sonnet = 100 + 50 + 150 + 40 = 340
-	if targetStats.FrontierTokens != 340 {
-		t.Errorf("expected 340 frontier tokens, got %d", targetStats.FrontierTokens)
-	}
-
-	// Prompt cache hit rate:
-	// Total cache_read = 150 + 50 = 200
-	// Total cache_creation = 50 + 0 = 50
-	// Total input = 100 + 50 = 150
-	// Denom = 200 + 50 + 150 = 400
-	// Hit rate = 200 / 400 = 0.50 (50.0%)
-	rate, ok := targetStats.PromptCacheHitRate()
-	if !ok || rate != 0.5 {
-		t.Errorf("expected cache hit rate 0.5 (50%%), got %v (ok=%v)", rate, ok)
-	}
-
-	// Local-first ratio = 1 / 2 = 0.50 (50.0%)
-	ratio, ok := targetStats.LocalFirstRatio()
-	if !ok || ratio != 0.5 {
-		t.Errorf("expected local-first ratio 0.5 (50%%), got %v (ok=%v)", ratio, ok)
-	}
-
-	// Branch feat/other is in byBranch under its own name
-	otherStats := byBranch["feat/other"]
-	if otherStats == nil || otherStats.OperatorTouches != 1 {
-		t.Errorf("expected feat/other to have 1 operator touch under its own branch, got %+v", otherStats)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestReadTranscriptStream_Positive_DeduplicateMultiBlockResponses(t *testing.T) {
-	ctx := context.Background()
-	classifier := NewClassifier(&config.EfficiencyPolicy{})
-
-	// 3 lines representing 3 content blocks of the same response:
-	// repeating the same requestId, message.id and usage (105 tokens total)
-	multiBlockJSONL := `
-{"type":"assistant","gitBranch":"feat/dedupe","requestId":"req-multi","message":{"id":"msg-multi","model":"claude-3-7-sonnet","role":"assistant","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":55}}}
-{"type":"assistant","gitBranch":"feat/dedupe","requestId":"req-multi","message":{"id":"msg-multi","model":"claude-3-7-sonnet","role":"assistant","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":55}}}
-{"type":"assistant","gitBranch":"feat/dedupe","requestId":"req-multi","message":{"id":"msg-multi","model":"claude-3-7-sonnet","role":"assistant","usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":55}}}
-`
-
-	byBranch := make(map[string]*BranchTranscriptStats)
-	err := ReadTranscriptStream(ctx, strings.NewReader(multiBlockJSONL), classifier, byBranch)
+// The fixture carries the record shapes of a real session: stop_hook_summary with toolUseID,
+// task-notification and peer origins, isMeta, isCompactSummary, a human sidechain prompt, a
+// tool result, an attachment and a three-block response sharing message.id and requestId.
+func TestReadTranscriptStream_Positive_RealShapes(t *testing.T) {
+	byBranch := map[string]*BranchTranscriptStats{}
+	notes, err := ReadTranscriptStream(context.Background(), "fixture", bytes.NewReader(readFixture(t)), NewClassifier(nil), byBranch)
 	if err != nil {
-		t.Fatalf("unexpected error reading multi-block response stream: %v", err)
+		t.Fatal(err)
 	}
+	if notes.SkippedLines != 0 {
+		t.Fatalf("real shapes must all decode: %v", notes.Lines())
+	}
+	s := byBranch["feat/x"]
+	if s == nil {
+		t.Fatal("branch not joined")
+	}
+	checkRealShapeCounts(t, s)
+	checkRealShapeTokens(t, s)
+}
 
-	stats := byBranch["feat/dedupe"]
-	if stats == nil {
-		t.Fatal("expected stats for feat/dedupe")
+func checkRealShapeCounts(t *testing.T, s *BranchTranscriptStats) {
+	t.Helper()
+	if s.OperatorTouches != 2 {
+		t.Errorf("touches = %d, want 2 (two human prompts; meta, compact, sidechain, task-notification, peer, tool result excluded)", s.OperatorTouches)
 	}
-
-	// Total requests must be 1, not 3!
-	if stats.TotalRequests != 1 {
-		t.Errorf("expected TotalRequests = 1, got %d", stats.TotalRequests)
+	if s.TotalRequests != 2 {
+		t.Errorf("requests = %d, want 2 (three lines of msg_1 count once)", s.TotalRequests)
 	}
-	// Frontier tokens must be 105, not 315!
-	if stats.FrontierTokens != 105 {
-		t.Errorf("expected FrontierTokens = 105, got %d", stats.FrontierTokens)
+	if s.LocalRequests != 0 {
+		t.Errorf("local requests = %d", s.LocalRequests)
 	}
 }
 
-func TestReadTranscriptsDir_Positive_SubagentsDescended(t *testing.T) {
-	ctx := context.Background()
-	classifier := NewClassifier(nil)
+func checkRealShapeTokens(t *testing.T, s *BranchTranscriptStats) {
+	t.Helper()
+	if s.FrontierTokens != 10+100+1000+40 {
+		t.Errorf("frontier tokens = %d, want 1150 (msg_1 once, final output count)", s.FrontierTokens)
+	}
+	if s.InputTokens != 17 || s.CacheCreationTokens != 100 || s.CacheReadTokens != 1000 || s.OutputTokens != 43 {
+		t.Errorf("token split: %+v", s)
+	}
+	if rate, ok := s.PromptCacheHitRate(); !ok || rate < 0.895 || rate > 0.896 {
+		t.Errorf("cache rate %v %v", rate, ok)
+	}
+}
+
+func TestReadTranscriptStream_Positive_UsageGrowsAcrossLinesOfOneResponse(t *testing.T) {
+	line := func(out int) string {
+		return fmt.Sprintf(`{"type":"assistant","requestId":"r","sessionId":"s","gitBranch":"b","message":{"id":"m","model":"claude-opus-4-1","usage":{"input_tokens":1,"output_tokens":%d}}}`, out)
+	}
+	byBranch := map[string]*BranchTranscriptStats{}
+	data := line(5) + "\n" + line(40) + "\n" + line(40) + "\n"
+	if _, err := ReadTranscriptStream(context.Background(), "s", strings.NewReader(data), NewClassifier(nil), byBranch); err != nil {
+		t.Fatal(err)
+	}
+	s := byBranch["b"]
+	if s.OutputTokens != 40 || s.FrontierTokens != 41 || s.TotalRequests != 1 {
+		t.Fatalf("a response is its final usage once: %+v", s)
+	}
+}
+
+func TestReadTranscriptStream_Negative_UndecodableLinesAreReported(t *testing.T) {
+	good := `{"type":"user","origin":{"kind":"human"},"sessionId":"s","gitBranch":"b"}`
+	data := good + "\n" + `{"type":"user","x":"\ud800","gitBranch":"b"}` + "\n" + `not json` + "\n" + good + "\n"
+	byBranch := map[string]*BranchTranscriptStats{}
+	notes, err := ReadTranscriptStream(context.Background(), "sess.jsonl", strings.NewReader(data), NewClassifier(nil), byBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if byBranch["b"].OperatorTouches != 2 || notes.SkippedLines != 2 {
+		t.Fatalf("touches %d skipped %d", byBranch["b"].OperatorTouches, notes.SkippedLines)
+	}
+	lines := strings.Join(notes.Lines(), "\n")
+	if !strings.Contains(lines, "sess.jsonl:2:") || !strings.Contains(lines, "sess.jsonl:3:") {
+		t.Fatalf("notes must name source and line: %s", lines)
+	}
+}
+
+func TestReadTranscriptStream_Negative_NonMatchingBranchAndNoBranch(t *testing.T) {
+	data := `{"type":"user","origin":{"kind":"human"},"gitBranch":"other"}` + "\n" + `{"type":"user","origin":{"kind":"human"}}` + "\n"
+	byBranch := map[string]*BranchTranscriptStats{}
+	if _, err := ReadTranscriptStream(context.Background(), "s", strings.NewReader(data), NewClassifier(nil), byBranch); err != nil {
+		t.Fatal(err)
+	}
+	if len(byBranch) != 1 || byBranch["other"] == nil {
+		t.Fatalf("only lines with a branch join: %v", byBranch)
+	}
+}
+
+func TestReadTranscriptsDir_Positive_SubagentsDescendedAndHiddenSkipped(t *testing.T) {
 	dir := t.TempDir()
-
-	// Top-level session
-	topLevel := filepath.Join(dir, "session-root.jsonl")
-	if err := os.WriteFile(topLevel, []byte(`{"type":"user","gitBranch":"main","origin":{"kind":"human"}}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
+	writeFile(t, filepath.Join(dir, "a.jsonl"), readFixture(t))
+	writeFile(t, filepath.Join(dir, "a", "subagents", "agent-1.jsonl"), []byte(`{"type":"user","origin":{"kind":"human"},"gitBranch":"fix/sub"}`+"\n"))
+	writeFile(t, filepath.Join(dir, ".hidden", "x.jsonl"), []byte(`{"type":"user","origin":{"kind":"human"},"gitBranch":"hidden"}`+"\n"))
+	writeFile(t, filepath.Join(dir, "notes.txt"), []byte("ignored"))
+	byBranch, notes, err := ReadTranscriptsDir(context.Background(), dir, NewClassifier(nil))
+	if err != nil || notes.SkippedLines != 0 {
+		t.Fatalf("%v %v", err, notes)
 	}
-
-	// Subagent subdirectories
-	subagentDir := filepath.Join(dir, "session-root", "subagents")
-	if err := os.MkdirAll(subagentDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	subagent1 := filepath.Join(subagentDir, "agent-1.jsonl")
-	if err := os.WriteFile(subagent1, []byte(`{"type":"user","gitBranch":"fix/figures-engine","origin":{"kind":"human"}}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	subagent2 := filepath.Join(subagentDir, "agent-2.jsonl")
-	if err := os.WriteFile(subagent2, []byte(`{"type":"user","gitBranch":"fix/docs-strict-build-gate","origin":{"kind":"human"}}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	stats, err := ReadTranscriptsDir(ctx, dir, classifier)
-	if err != nil {
-		t.Fatalf("unexpected error reading transcripts dir with subagents: %v", err)
-	}
-
-	if stats["fix/figures-engine"] == nil || stats["fix/figures-engine"].OperatorTouches != 1 {
-		t.Errorf("expected fix/figures-engine subagent to be found with 1 touch, got %+v", stats["fix/figures-engine"])
-	}
-	if stats["fix/docs-strict-build-gate"] == nil || stats["fix/docs-strict-build-gate"].OperatorTouches != 1 {
-		t.Errorf("expected fix/docs-strict-build-gate subagent to be found with 1 touch, got %+v", stats["fix/docs-strict-build-gate"])
+	if byBranch["fix/sub"] == nil || byBranch["feat/x"] == nil || byBranch["hidden"] != nil {
+		t.Fatalf("branches: %v", byBranch)
 	}
 }
 
-func TestReadTranscriptStream_Negative_NonMatchingBranchNotJoined(t *testing.T) {
-	ctx := context.Background()
-	classifier := NewClassifier(nil)
-
-	// Session file on feat/unrelated
-	unrelatedJSONL := `{"type":"user","gitBranch":"feat/unrelated","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`
-
-	byBranch := make(map[string]*BranchTranscriptStats)
-	if err := ReadTranscriptStream(ctx, strings.NewReader(unrelatedJSONL), classifier, byBranch); err != nil {
-		t.Fatal(err)
+func TestReadTranscriptsDir_Negative_EmptyMissingAndCancelled(t *testing.T) {
+	if _, _, err := ReadTranscriptsDir(context.Background(), "  ", NewClassifier(nil)); err == nil {
+		t.Error("empty dir must fail")
 	}
-
-	// PR branch is "feat/target" -> must not be joined!
-	if byBranch["feat/target"] != nil {
-		t.Errorf("feat/target should not be populated by feat/unrelated transcript")
+	if _, _, err := ReadTranscriptsDir(context.Background(), filepath.Join(t.TempDir(), "missing"), NewClassifier(nil)); err == nil {
+		t.Error("missing dir must fail")
 	}
-}
-
-func TestReadTranscriptsDir_Negative_EmptyDirAndMissing(t *testing.T) {
-	ctx := context.Background()
-	classifier := NewClassifier(nil)
-
-	// Empty dir string
-	if _, err := ReadTranscriptsDir(ctx, "", classifier); err == nil {
-		t.Error("expected error for empty dir path")
-	}
-
-	// Missing dir
-	if _, err := ReadTranscriptsDir(ctx, "/path/that/does/not/exist", classifier); err == nil {
-		t.Error("expected error for nonexistent directory")
-	}
-
-	// Directory with no jsonl files
-	emptyDir := t.TempDir()
-	stats, err := ReadTranscriptsDir(ctx, emptyDir, classifier)
-	if err != nil {
-		t.Fatalf("unexpected error for empty directory: %v", err)
-	}
-	if len(stats) != 0 {
-		t.Errorf("expected empty stats for empty dir, got %d entries", len(stats))
-	}
-}
-
-func TestReadTranscriptsDir_Boundary_CapsAndCancelledContext(t *testing.T) {
-	classifier := NewClassifier(nil)
-
-	// Context cancellation
-	cancellingCtx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := ReadTranscriptsDir(cancellingCtx, t.TempDir(), classifier); err == nil {
-		t.Error("expected error with cancelled context")
+	if _, _, err := ReadTranscriptsDir(ctx, t.TempDir(), NewClassifier(nil)); err == nil {
+		t.Error("cancelled context must fail")
 	}
+	unreadable := t.TempDir()
+	writeFile(t, filepath.Join(unreadable, "a.jsonl"), []byte("{}\n"))
+	if err := os.Chmod(filepath.Join(unreadable, "a.jsonl"), 0); err == nil && os.Getuid() != 0 {
+		if _, _, err := ReadTranscriptsDir(context.Background(), unreadable, NewClassifier(nil)); err == nil {
+			t.Error("an unreadable file must fail the read, not be skipped")
+		}
+	}
+}
 
+func TestReadTranscriptsDir_Boundary_CapsFailTheRead(t *testing.T) {
 	dir := t.TempDir()
-	filePath := filepath.Join(dir, "session.jsonl")
-	var sb strings.Builder
-	for i := 0; i < 50; i++ {
-		sb.WriteString(`{"type":"user","gitBranch":"feat/test","message":{"role":"user","content":[{"type":"text","text":"prompt"}]},"origin":{"kind":"human"}}` + "\n")
+	for i := 0; i < 3; i++ {
+		writeFile(t, filepath.Join(dir, fmt.Sprintf("f%d.jsonl", i)), []byte("{}\n{}\n"))
 	}
-	if err := os.WriteFile(filePath, []byte(sb.String()), 0o600); err != nil {
-		t.Fatal(err)
+	c := NewClassifier(nil)
+	cases := map[string]struct {
+		limits sourceLimits
+		want   string
+	}{
+		"files at the cap pass": {sourceLimits{Files: 3, Lines: 2, Bytes: 6}, ""},
+		"file count over cap":   {sourceLimits{Files: 2, Lines: 10, Bytes: 100}, "exceeds 2 files limit"},
+		"line count over cap":   {sourceLimits{Files: 10, Lines: 1, Bytes: 100}, "exceeds 1 record bound"},
+		"byte count over cap":   {sourceLimits{Files: 10, Lines: 10, Bytes: 5}, "exceeds 5 byte bound"},
 	}
+	for name, tc := range cases {
+		_, _, err := readTranscriptsDir(context.Background(), dir, c, tc.limits)
+		if tc.want == "" && err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+}
 
-	byBranch := make(map[string]*BranchTranscriptStats)
-	if err := ReadTranscriptFile(context.Background(), filePath, classifier, byBranch); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestReadTranscriptStream_Boundary_LineOverEightMiBFails(t *testing.T) {
+	long := bytes.Repeat([]byte("a"), harvester.MaxTranscriptLineBytes+16)
+	_, err := ReadTranscriptStream(context.Background(), "big", bytes.NewReader(long), NewClassifier(nil), map[string]*BranchTranscriptStats{})
+	if err == nil || !strings.Contains(err.Error(), "big") {
+		t.Fatalf("an oversized line is an error naming the source: %v", err)
 	}
-	if byBranch["feat/test"] == nil || byBranch["feat/test"].OperatorTouches != 50 {
-		t.Errorf("expected 50 operator touches, got %+v", byBranch["feat/test"])
+	line := `{"type":"user","gitBranch":"b","pad":"` + strings.Repeat("a", 2*1024*1024) + `"}`
+	byBranch := map[string]*BranchTranscriptStats{}
+	if _, err := ReadTranscriptStream(context.Background(), "wide", strings.NewReader(line+"\n"), NewClassifier(nil), byBranch); err != nil || byBranch["b"] == nil {
+		t.Fatalf("a 2 MiB line (over the old 1 MiB cap) must read: %v", err)
 	}
 }

@@ -319,7 +319,7 @@ type Manifest struct {
 	// modules: api.system_packages, the Debian packages it installs first (#849). It is
 	// repository-only, like Documentation.
 	API *APIPolicy `yaml:"api,omitempty"`
-	// Efficiency configures the efficiency ledger sources and model classifications (ADR-0030, #870).
+	// Efficiency configures the efficiency ledger sources and model classifications (#870).
 	// It is repository-only, like Documentation and Radar.
 	Efficiency *EfficiencyPolicy `yaml:"efficiency,omitempty"`
 }

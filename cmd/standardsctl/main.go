@@ -100,6 +100,7 @@ func printCoreCommands() {
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
+	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
 	fmt.Println("  hiss               Inspect and verify declared HISS enforcement evidence")
 	fmt.Println("  hook               Serve one agent-hook event: praetorctl hook <client> <event>")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
@@ -111,7 +112,6 @@ func printCoreCommands() {
 	fmt.Println("  security govuln    Run govulncheck at symbol level and judge its findings against the OpenVEX document")
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
-	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
 }
 

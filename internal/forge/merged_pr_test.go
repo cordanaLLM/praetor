@@ -26,7 +26,8 @@ Resolves other-repo#99
 Also fixed #100 and closed #101.
 `
 	nums := ParseClosingIssueNumbers(body)
-	want := []int{12, 42, 99, 100, 101}
+	// Repository-qualified references (42, 99) name another repository and are skipped.
+	want := []int{12, 100, 101}
 	if len(nums) != len(want) {
 		t.Fatalf("expected %d closing issue numbers, got %d: %v", len(want), len(nums), nums)
 	}
@@ -117,7 +118,7 @@ func TestParseGitHubMergedPulls_Positive(t *testing.T) {
 			"head": {"ref": "feat/abandoned"}
 		}
 	]`
-	prs, rawCount, err := parseGitHubMergedPulls([]byte(raw))
+	prs, rawCount, _, err := parseGitHubMergedPulls([]byte(raw))
 	if err != nil {
 		t.Fatalf("unexpected error parsing github pulls: %v", err)
 	}
@@ -189,7 +190,7 @@ func TestReadAndParseMergedPullRequests_Negative(t *testing.T) {
 	}
 
 	// GitHub null body
-	if _, _, err := parseGitHubMergedPulls([]byte("null")); err == nil {
+	if _, _, _, err := parseGitHubMergedPulls([]byte("null")); err == nil {
 		t.Error("expected error for null github pulls listing")
 	}
 }
