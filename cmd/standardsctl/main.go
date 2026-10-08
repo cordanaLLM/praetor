@@ -111,6 +111,7 @@ func printCoreCommands() {
 	fmt.Println("  security govuln    Run govulncheck at symbol level and judge its findings against the OpenVEX document")
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
+	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
 }
 
@@ -254,6 +255,8 @@ func coreCommandTable() map[string]commandFunc {
 		"security":                 runSecurity,
 		"seo":                      runSEO,
 		"sentinel":                 runSentinel,
+		"efficiency":               runEfficiency,
+		"efficiency-ledger":        runEfficiency,
 		"worktree":                 runWorktree,
 	}
 }

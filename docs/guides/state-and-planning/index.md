@@ -19,3 +19,5 @@ Read [State ledger integrity](../state-ledger-integrity.md) first to understand 
   by default and removes only resources their owner released.
 - [Research and upstream radar](../radar.md): `praetorctl radar` validates a source registry
   and collects a window of upstream releases and feeds into a neutralised digest.
+- [Efficiency ledger](../efficiency-ledger.md): `praetorctl efficiency` measures and reports
+  engineering efficiency across landed pull requests and milestone summaries.

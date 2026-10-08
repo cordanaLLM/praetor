@@ -148,6 +148,7 @@ nav:
           - Issue Sync Integrity: guides/issue-sync-integrity.md
           - Garbage Collection: guides/garbage-collection.md
           - Research and Upstream Radar: guides/radar.md
+          - Efficiency Ledger: guides/efficiency-ledger.md
       - Dogfooding:
           - guides/dogfood/index.md
           - Fleet Dogfooding: dogfooding.md

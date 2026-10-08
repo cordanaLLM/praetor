@@ -933,3 +933,94 @@ func (g *GitHubDriver) RemoveLabel(ctx context.Context, number int, label string
 	}
 	return nil
 }
+
+type ghPullRaw struct {
+	Number    int     `json:"number"`
+	Title     string  `json:"title"`
+	Body      string  `json:"body"`
+	CreatedAt string  `json:"created_at"`
+	MergedAt  *string `json:"merged_at"`
+	Head      struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Milestone *struct {
+		Title string `json:"title"`
+	} `json:"milestone"`
+}
+
+func parseGitHubMergedPulls(body []byte) ([]MergedPullRequest, int, error) {
+	var raw []ghPullRaw
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, 0, fmt.Errorf("failed parsing pull requests list: %w", err)
+	}
+	if raw == nil {
+		return nil, 0, errors.New("GitHub pull request listing must be an array, not null")
+	}
+	prs := make([]MergedPullRequest, 0, len(raw))
+	for _, r := range raw {
+		if r.MergedAt == nil || *r.MergedAt == "" {
+			continue
+		}
+		mergedAt, err := time.Parse(time.RFC3339, *r.MergedAt)
+		if err != nil {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339, r.CreatedAt)
+		if err != nil {
+			continue
+		}
+		ms := ""
+		if r.Milestone != nil {
+			ms = r.Milestone.Title
+		}
+		closingNums := ParseClosingIssueNumbers(r.Body)
+		closingIssues := make([]ClosingIssue, 0, len(closingNums))
+		for _, n := range closingNums {
+			closingIssues = append(closingIssues, ClosingIssue{Number: n})
+		}
+		prs = append(prs, MergedPullRequest{
+			Number:        r.Number,
+			HeadBranch:    r.Head.Ref,
+			Title:         r.Title,
+			Milestone:     ms,
+			CreatedAt:     createdAt,
+			MergedAt:      mergedAt,
+			ClosingIssues: closingIssues,
+		})
+	}
+	return prs, len(raw), nil
+}
+
+// ListMergedPullRequests fetches merged pull requests up to limit, along with their closing issues.
+func (g *GitHubDriver) ListMergedPullRequests(ctx context.Context, limit int) ([]MergedPullRequest, error) {
+	if err := g.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > MaxMergedPRsLimit {
+		limit = MaxMergedPRsLimit
+	}
+	base, err := g.repoPath("pulls")
+	if err != nil {
+		return nil, fmt.Errorf("list merged pull requests: %w", err)
+	}
+
+	all := make([]MergedPullRequest, 0, issuesPerPage)
+	query := "state=closed&sort=updated&direction=desc&"
+	err = g.walkPages(ctx, base, query, "pulls", maxIssuePages, func(body []byte) (int, bool, error) {
+		prs, rawCount, parseErr := parseGitHubMergedPulls(body)
+		if parseErr != nil {
+			return 0, false, parseErr
+		}
+		for _, pr := range prs {
+			all = append(all, pr)
+			if len(all) >= limit {
+				return rawCount, true, nil
+			}
+		}
+		return rawCount, false, nil
+	})
+	if err != nil && !errors.Is(err, errPageCeiling) {
+		return nil, err
+	}
+	return all, nil
+}
