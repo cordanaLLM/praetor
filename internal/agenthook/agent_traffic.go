@@ -142,6 +142,9 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 	if err != nil {
 		return trafficDenied(err)
 	}
+	if verdict := evaluateBriefClaims(ctx, canonical.Briefs, in.IssueClaims); verdict.Outcome != Allow {
+		return verdict
+	}
 	verdict, prompt, err := readOnlyDelivery(ctx, row.Client, root, canonical)
 	if err != nil {
 		return trafficDenied(err)

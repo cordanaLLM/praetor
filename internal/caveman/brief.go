@@ -96,3 +96,78 @@ func IsBriefReadOnly(text string) bool {
 	val, err := ExtractBriefReadOnly(text)
 	return err == nil && val
 }
+
+// MaxBriefClaimIssues bounds the issues one brief may name.
+const MaxBriefClaimIssues = 16
+
+var (
+	claimFieldRe   = regexp.MustCompile(`(?i)^(?:[-*+]\s+)?(issue|session):\s*(.*?)\s*$`)
+	claimIssueRe   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}/([A-Za-z0-9_.-]{1,100})#[0-9]{1,9}$`)
+	claimSessionRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:+@-]{0,127}$`)
+)
+
+// BriefClaim is what a brief says about the forge issues it works on: the issue references
+// of its `issue:` lines and the session of its `session:` line, the session that holds the
+// claim on them.
+type BriefClaim struct {
+	Issues  []string
+	Session string
+}
+
+// ExtractBriefClaim reads the `issue:` and `session:` fields of a brief with the scanner and
+// field grammar ExtractBriefTask uses, so fenced code and caveman:off regions are skipped. An
+// issue line holds references written <owner>/<repo>#<number>, separated by commas or spaces;
+// a token of any other shape is an error, not skipped, so a malformed reference cannot hide an
+// issue from the dispatch gate. A brief without either field returns the zero BriefClaim.
+func ExtractBriefClaim(text string) (BriefClaim, error) {
+	lines, _ := scan(text)
+	var claim BriefClaim
+	for _, line := range lines {
+		if !shapeContent(line) {
+			continue
+		}
+		match := claimFieldRe.FindStringSubmatch(strings.TrimSpace(maskQuoted(proseOf(line))))
+		if len(match) != 3 {
+			continue
+		}
+		var err error
+		if strings.EqualFold(match[1], "session") {
+			err = claim.setSession(match[2])
+		} else {
+			err = claim.addIssues(match[2])
+		}
+		if err != nil {
+			return BriefClaim{}, err
+		}
+	}
+	return claim, nil
+}
+
+func (c *BriefClaim) setSession(value string) error {
+	if c.Session != "" {
+		return errors.New("brief session field is duplicated")
+	}
+	if !claimSessionRe.MatchString(value) {
+		return errors.New("brief session field must be 1..128 characters of letters, digits and . _ / : + @ -")
+	}
+	c.Session = value
+	return nil
+}
+
+func (c *BriefClaim) addIssues(value string) error {
+	tokens := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
+	if len(tokens) == 0 {
+		return errors.New("brief issue field must name an issue as <owner>/<repo>#<number>")
+	}
+	for _, token := range tokens {
+		match := claimIssueRe.FindStringSubmatch(token)
+		if match == nil || match[1] == "." || match[1] == ".." {
+			return errors.New("brief issue " + token + " is not <owner>/<repo>#<number>")
+		}
+		if len(c.Issues) >= MaxBriefClaimIssues {
+			return errors.New("brief names more issues than the limit")
+		}
+		c.Issues = append(c.Issues, token)
+	}
+	return nil
+}
