@@ -10,9 +10,25 @@ import (
 // does not count it as a third-party dependency; a requirement replaced by another module, or
 // not replaced, stays (nested test-only modules such as tools/schemacheck require this module).
 func TestParseGoMod_LocalReplaceIsNotAThirdPartyDependency(t *testing.T) {
-	dir := t.TempDir()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/self\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "tools", "nested")
+	if err := os.MkdirAll(filepath.Join(root, "third_party", "dep"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "third_party", "dep", "go.mod"), []byte("module example.com/other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "go.mod")
-	manifest := "module example.com/nested\n\ngo 1.27\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/lib v1.0.0\n\texample.com/forked v1.0.0\n)\n\nreplace example.com/self => ../..\n\nreplace example.com/forked => example.com/fork v1.0.1\n"
+	manifest := "module example.com/nested\n\ngo 1.27\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/lib v1.0.0\n\texample.com/forked v1.0.0\n\texample.com/dep v0.0.0\n)\n\nreplace example.com/self => ../..\n\nreplace example.com/forked => example.com/fork v1.0.1\n\nreplace example.com/dep => ../../third_party/dep\n"
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +39,7 @@ func TestParseGoMod_LocalReplaceIsNotAThirdPartyDependency(t *testing.T) {
 	if _, present := parsed.directDeps["example.com/self"]; present {
 		t.Errorf("the locally replaced module is counted as a dependency: %v", parsed.directDeps)
 	}
-	for _, kept := range []string{"example.com/lib", "example.com/forked"} {
+	for _, kept := range []string{"example.com/lib", "example.com/forked", "example.com/dep"} {
 		if _, present := parsed.directDeps[kept]; !present {
 			t.Errorf("%s was dropped: %v", kept, parsed.directDeps)
 		}

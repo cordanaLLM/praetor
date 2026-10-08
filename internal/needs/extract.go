@@ -136,9 +136,10 @@ func parseGoMod(goModPath string) (*goModFile, error) {
 		return nil, scanErr
 	}
 	state.ignore = gomanifest.NewIgnoreSet(state.ignorePaths)
-	// A requirement the file replaces with a directory of the same checkout is its own module,
-	// not a third-party dependency.
-	state.localModules = gomanifest.LocalReplaces(data)
+	// A requirement the file replaces with a directory of the same checkout, one whose go.mod
+	// declares that module, is its own module, not a third-party dependency.
+	modDir := filepath.Dir(goModPath)
+	state.localModules = gomanifest.LocalReplaces(data, modDir, checkoutRoot(modDir))
 	for module := range state.localModules {
 		delete(state.directDeps, module)
 	}
@@ -629,4 +630,25 @@ func dropLocalModuleImports(imports map[string]struct{}, localModules map[string
 			}
 		}
 	}
+}
+
+// maxCheckoutDepth bounds the climb checkoutRoot makes (HISS-02).
+const maxCheckoutDepth = 64
+
+// checkoutRoot returns the nearest ancestor of dir, dir included, that holds a .git entry (a
+// directory, or the file of a worktree or submodule), the root a local module replacement must
+// stay inside. A tree without one is its own root, so no replacement leaves it.
+func checkoutRoot(dir string) string {
+	current := dir
+	for i := 0; i < maxCheckoutDepth; i++ {
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return dir
 }

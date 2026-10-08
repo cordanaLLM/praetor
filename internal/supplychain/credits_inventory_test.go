@@ -30,7 +30,7 @@ func TestCreditInventoryReadersPositive(t *testing.T) {
 		text string
 		want []string
 	}{
-		"go.mod": {goModInventory, "module m\n\ngo 1.27\n\ntool (\n\texample.com/lint/cmd/lint\n)\n\ntool example.com/vet // vet\n\nrequire (\n\texample.com/lib v1.0.0\n\texample.com/dep v1.0.0 // indirect\n)\n",
+		"go.mod": {goModInventory0, "module m\n\ngo 1.27\n\ntool (\n\texample.com/lint/cmd/lint\n)\n\ntool example.com/vet // vet\n\nrequire (\n\texample.com/lib v1.0.0\n\texample.com/dep v1.0.0 // indirect\n)\n",
 			[]string{"Go tool example.com/lint/cmd/lint", "Go tool example.com/vet", "Go module example.com/lib"}},
 		"package.json": {npmInventory, `{"name":"x","dependencies":{"b":"1"},"devDependencies":{"a":"2"},"peerDependencies":{"c":">=1"},"optionalDependencies":{"d":"1"}}`,
 			[]string{"npm package a", "npm package b", "npm package c", "npm package d"}},
@@ -61,7 +61,7 @@ func TestCreditInventoryReadersNegative(t *testing.T) {
 		"package.json, repeated key":   {npmInventory, `{"dependencies":{"a":"1"},"dependencies":{"b":"1"}}`},
 		"package.json, wrong type":     {npmInventory, `{"dependencies":["a"]}`},
 		"devcontainer.json, not JSONC": {featureInventory, "{\"features\": }"},
-		"go.mod past its bound":        {goModInventory, strings.Repeat("\n", maxNoticeLines)},
+		"go.mod past its bound":        {goModInventory0, strings.Repeat("\n", maxNoticeLines)},
 	} {
 		if _, err := test.read("manifest", test.text); err == nil || !strings.Contains(err.Error(), "manifest") {
 			t.Errorf("%s: err = %v, want one naming the file", name, err)
@@ -81,7 +81,7 @@ func TestCreditInventoryReadersBoundary(t *testing.T) {
 	if err != nil || !slices.Equal(inventoryIDs(items), []string{"image golang"}) {
 		t.Fatalf("docker: %v %v", inventoryIDs(items), err)
 	}
-	items, err = goModInventory("g", "require example.com/a v1.0.0 // indirect\ntoolchain go1.27.0\n")
+	items, err = goModInventory("", "g", "require example.com/a v1.0.0 // indirect\ntoolchain go1.27.0\n")
 	if err != nil || len(items) != 0 {
 		t.Fatalf("go.mod: %v %v", inventoryIDs(items), err)
 	}
@@ -145,17 +145,30 @@ func TestReadCreditInventory(t *testing.T) {
 	}
 }
 
-// A requirement the same go.mod replaces with a local directory is this repository's own module,
-// not a third-party one; a replacement by another module, or none, leaves it listed.
-func TestGoModInventorySkipsLocalReplaces(t *testing.T) {
-	var items []InventoryItem
-	var err error
-	items, err = goModInventory("g", "module m\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/lib v1.0.0\n\texample.com/pinned v1.0.0\n)\n\nreplace example.com/self => ../..\n\nreplace (\n\texample.com/pinned v1.0.0 => example.com/fork v1.0.1\n)\n")
-	if err != nil || !slices.Equal(inventoryIDs(items), []string{"Go module example.com/lib", "Go module example.com/pinned"}) {
-		t.Fatalf("go.mod with replaces: %v %v, want only the local replacement skipped", inventoryIDs(items), err)
+// A requirement the same go.mod replaces with a directory of the checkout whose go.mod declares
+// that module is this repository's own module. A replacement by another module, none, a fork
+// directory under the checkout, a directory outside it or one declaring another module leaves the
+// requirement listed.
+func TestGoModInventorySkipsOnlyOwnModuleReplaces(t *testing.T) {
+	root := t.TempDir()
+	writeRepoFile(t, root, "go.mod", "module example.com/self\n")
+	writeRepoFile(t, root, "third_party/fork/go.mod", "module example.com/fork\n")
+	writeRepoFile(t, root, "third_party/same/go.mod", "module example.com/same\n")
+	writeRepoFile(t, root, "tools/nested/go.mod", "module example.com/nested\n")
+	const text = "module example.com/nested\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/lib v1.0.0\n\texample.com/pinned v1.0.0\n\texample.com/blk v0.0.0\n\texample.com/same v0.0.0\n\texample.com/away v0.0.0\n)\n\n" +
+		"replace example.com/self => ../..\n\nreplace (\n\texample.com/pinned v1.0.0 => example.com/fork v1.0.1\n\texample.com/blk => ../../third_party/fork // names another module\n\texample.com/same => ../../third_party/same\n\texample.com/away => ../../../away\n)\n"
+	items, err := goModInventory(root, "tools/nested/go.mod", text)
+	want := []string{"Go module example.com/lib", "Go module example.com/pinned", "Go module example.com/blk", "Go module example.com/away"}
+	if err != nil || !slices.Equal(inventoryIDs(items), want) {
+		t.Fatalf("inventory = %v %v, want %v (own module and same-module directory skipped)", inventoryIDs(items), err, want)
 	}
-	items, err = goModInventory("g", "module m\n\nrequire (\n\texample.com/self v0.0.0\n\texample.com/blk v0.0.0\n)\n\nreplace (\n\texample.com/blk => ./vendor/blk // local\n)\n")
-	if err != nil || !slices.Equal(inventoryIDs(items), []string{"Go module example.com/self"}) {
-		t.Fatalf("go.mod with a replace block: %v %v", inventoryIDs(items), err)
+	items, err = goModInventory("", "g", "module m\n\nrequire example.com/self v0.0.0\n\nreplace example.com/self => ../..\n")
+	if err != nil || len(items) != 1 {
+		t.Fatalf("with no checkout root nothing is local: %v %v", inventoryIDs(items), err)
 	}
+}
+
+// goModInventory0 reads a go.mod with no checkout root, so no replacement is local.
+func goModInventory0(rel, text string) ([]InventoryItem, error) {
+	return goModInventory("", rel, text)
 }
