@@ -801,3 +801,15 @@ replaces a populated `.workingdir/memory/distilled.json`.
 
 Tests: `internal/hindsight/distiller_warnings_test.go`, `TestServer_HindsightOptimizeNamesFailedSources`
 (`cmd/standards-mcp/tools_test.go`) and `cmd/standardsctl/hindsight_cli_test.go`.
+
+## Issue claim tools write to the forge
+
+`standards_issue_claim`, `standards_issue_status` and `standards_issue_release` are open-world,
+non-read-only tools: they edit a claim comment, labels and assignees on a GitHub issue. They
+decode their arguments into the `forge.ClaimCommand` that `praetorctl issue claim`, `status`
+and `release` build and run it on the same `forge.ClaimDesk`, so a probe through the tool and
+a CLI call give the same result. The token comes from `GITHUB_TOKEN` or `gh auth token`; the
+stale window comes from `forge.claim_stale` in the operator settings. Never point a probe at a
+live issue: exercise them through the test seam (`newClaimDesk`, a fake forge) as
+`cmd/standards-mcp/tools_issue_claims_test.go` does. The protocol is in
+[issue claims](issue-claims.md).
