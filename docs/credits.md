@@ -295,6 +295,7 @@ outside a manifest. None of them ships in the binaries.
 | [Renovate](https://github.com/renovatebot/renovate) | Dependency update proposals; `renovate.json` extends its built-in presets `config:recommended`, `:dependencyDashboard`, `:semanticCommits` and `:maintainLockFilesWeekly`, and CI installs it to validate the configuration | tool, used by CI | AGPL-3.0-only |
 | [REUSE](https://reuse.software) | License compliance check, run by the reuse-action | tool, used by CI | GPL-3.0-or-later |
 | [Chromium](https://www.chromium.org) | The browser Playwright downloads in CI to render and check the documentation figures | tool, used by CI | BSD-3-Clause, © 2015 The Chromium Authors |
+| [Probity](https://github.com/nizos/probity) | Optional test-first edit guard for AI coding assistants | tool, used by CI | MIT |
 
 ## Development dependencies
 

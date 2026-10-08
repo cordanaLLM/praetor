@@ -57,23 +57,22 @@ builds and scans this repository on the host and in CI:
 
 ### Optional: Probity Test-First Guard
 
-Probity is an optional client-side edit guard for contributors using AI coding assistants. When enabled, it enforces a test-first workflow by requiring an observed failing test before an implementation edit is allowed.
+Probity is an optional client-side edit guard for contributors using AI coding assistants. When enabled, it enforces a test-first workflow by requiring an observed failing test before an implementation edit is allowed. Probity is an open-source tool created by [nizos/probity](https://github.com/nizos/probity) and licensed under the MIT license. Running Probity requires Node.js >= 22.
 
-The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/`. Contributors without the hook installed are unaffected.
+The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/` (excluding `**/testdata/**`). The configuration pins the validation judge model to `claude-haiku-5-5` through the `ai` override using the Claude Agent SDK resolved from the pinned package install. Each judged write costs approximately 2,200 tokens (~2,194 input tokens plus the response). Contributors without the hook installed are unaffected.
 
-<!-- praetor:docs-references:off an untracked local settings file not present in repository source -->
-Fail-closed warning: Probity fails closed when no configuration file is found. Installing the plugin at global (user) scope will block edits across other repositories that lack a `probity.config.ts`. Always install with local scope (`--scope local`) or configure project-local hooks in `.claude/settings.local.json`.
+Fail-closed warning: Probity fails closed when no configuration file is found. Installing the plugin at global (user) scope will block edits across every other repository on the machine that lacks a `probity.config.ts`. Always install with local scope (`--scope local`) or configure project-local hooks in `.claude/settings.local.json`. Never edit the tracked, Praetor-owned `.claude/settings.json`.
 
-To enable Probity in Claude Code via the marketplace plugin:
+To enable Probity in Claude Code via the CLI:
 
 ```bash
-/plugin marketplace add nizos/probity
-/plugin install --scope local probity@probity
+claude plugin marketplace add nizos/probity
+claude plugin install --scope local probity@probity
 ```
 
-Note that the marketplace plugin tracks upstream HEAD.
+Note that the marketplace plugin tracks upstream HEAD because its hook executes unpinned `npx @nizos/probity`.
 
-Alternatively, configure a pinned `PreToolUse` hook in `.claude/settings.local.json` (do not edit the tracked, Praetor-owned `.claude/settings.json`):
+Alternatively, configure a pinned `PreToolUse` hook in `.claude/settings.local.json`:
 
 ```json
 {
@@ -84,7 +83,7 @@ Alternatively, configure a pinned `PreToolUse` hook in `.claude/settings.local.j
         "hooks": [
           {
             "type": "command",
-            "command": "ANTHROPIC_MODEL=claude-haiku-5-5 npx --yes @nizos/probity@1.10.1 --agent claude-code"
+            "command": "npx --yes @nizos/probity@1.10.1 --agent claude-code"
           }
         ]
       }
@@ -92,9 +91,8 @@ Alternatively, configure a pinned `PreToolUse` hook in `.claude/settings.local.j
   }
 }
 ```
-<!-- praetor:docs-references:on -->
 
-The `ANTHROPIC_MODEL=claude-haiku-5-5` environment variable pins the validation judge model in Claude Code. Contributors who installed `@nizos/probity` globally on their `PATH` may substitute `probity` for `npx --yes @nizos/probity@1.10.1`.
+Contributors who installed `@nizos/probity` globally on their `PATH` may substitute `probity` for `npx --yes @nizos/probity@1.10.1`.
 
 ---
 

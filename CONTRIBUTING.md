@@ -18,16 +18,6 @@ All contributors are expected to uphold deterministic, high-integrity engineerin
 
 Run `make hooks` and `make hooks-check` after cloning. The [Git hooks guide](docs/guides/git-hooks.md) describes staged checks, push scope, required tools and the explicit sandbox gate. Commit with a conventional subject and `git commit -s` for DCO. Hooks preserve unstaged work; run `praetorctl state sync .` explicitly at turn end.
 
-### Optional: Probity Test-First Guard
-
-Probity is an optional client-side edit guard for contributors using AI coding assistants. When enabled, it enforces a test-first workflow by requiring an observed failing test before an implementation edit is allowed.
-
-The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/`. Contributors without the hook installed are unaffected.
-
-Probity fails closed when no config file is found. To avoid blocking work across other repositories, the hook must be configured locally (`--scope local` or `.claude/settings.local.json`) rather than globally.
-
-See [Optional: Probity Test-First Guard](docs/guides/contributing.md#optional-probity-test-first-guard) in the contributor guide for setup instructions and hook configuration.
-
 Before submitting any Pull Request, ensure local verification passes completely:
 
 ```bash
@@ -43,6 +33,16 @@ go run ./cmd/standardsctl audit
 # 4. Run all verification gates
 make verify-all
 ```
+
+### Optional: Probity Test-First Guard
+
+Probity is an optional client-side edit guard for contributors using AI coding assistants. When enabled, it enforces a test-first workflow by requiring an observed failing test before an implementation edit is allowed.
+
+The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/` (excluding `**/testdata/**`). Contributors without the hook installed are unaffected.
+
+Probity fails closed when no config file is found. To avoid blocking work across other repositories, the hook must be configured locally (`--scope local` or `.claude/settings.local.json`) rather than globally.
+
+See [Optional: Probity Test-First Guard](docs/guides/contributing.md#optional-probity-test-first-guard) in the contributor guide for setup instructions and hook configuration.
 
 ---
 
