@@ -419,6 +419,9 @@ func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) || text == buildMakefile(plan) {
 		return
 	}
+	if hasKnownAppendedVerificationBlock(text) {
+		return
+	}
 	if normalized, _ := util.NormalizeLineEndings(text); strings.Contains(normalized, unavailableVerificationRecipe) {
 		plan.Status = verificationUnavailable
 		plan.unavailable("The Makefile still holds the failing placeholder recipe adoption writes; replace it with the project's build and test commands.")
@@ -443,14 +446,111 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 	return appendVerificationTargetsWithLauncher(existing, plan, true)
 }
 
+const verificationAppendedMarker = "# Praetor declared verification; existing project recipes remain unchanged."
+
+// priorAppendedCLIVariables are the exact Makefile variable lines an earlier Praetor wrote
+// following verificationAppendedMarker when appending verification targets.
+var priorAppendedCLIVariables = []string{
+	util.MakefileCLIVariable,
+}
+
+// knownAppendedCLIVariables returns the allow-list of known variable line renderings following
+// verificationAppendedMarker: the prior lines resolving from PATH, and the current launcher line.
+func knownAppendedCLIVariables() []string {
+	return append([]string{makefileCLIVariableLine(true)}, priorAppendedCLIVariables...)
+}
+
+type appendedBlockState struct {
+	hasMarker   bool
+	known       bool
+	matchedVar  string
+	lineNum     int
+	lineContent string
+}
+
+func inspectAppendedVerificationBlock(normalized string) appendedBlockState {
+	if strings.Count(normalized, verificationAppendedMarker) != 1 {
+		return appendedBlockState{}
+	}
+	idx := strings.Index(normalized, verificationAppendedMarker)
+	before := normalized[:idx]
+	if before != "" && !strings.HasSuffix(before, "\n") {
+		return appendedBlockState{}
+	}
+	if mayDefineVerificationTarget(withoutDocumentationMakefileBlock(before)) {
+		return appendedBlockState{}
+	}
+	after := normalized[idx+len(verificationAppendedMarker):]
+	if !strings.HasPrefix(after, "\n") {
+		return appendedBlockState{}
+	}
+	after = after[1:]
+	state := appendedBlockState{hasMarker: true}
+	for _, known := range knownAppendedCLIVariables() {
+		if strings.HasPrefix(after, known) {
+			state.known = true
+			state.matchedVar = known
+			return state
+		}
+	}
+	state.lineNum, state.lineContent = findEditedCLIVariableLine(before, after)
+	return state
+}
+
+func findEditedCLIVariableLine(before, afterMarker string) (int, string) {
+	markerLine := strings.Count(before, "\n") + 1
+	lines := strings.Split(afterMarker, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "PRAETORCTL") || strings.HasPrefix(trimmed, "PRAETOR_") {
+			return markerLine + 1 + i, line
+		}
+		if strings.HasPrefix(trimmed, "verify-all:") || strings.HasPrefix(trimmed, ".PHONY:") {
+			break
+		}
+	}
+	firstLine := ""
+	if len(lines) > 0 {
+		firstLine = lines[0]
+	}
+	return markerLine + 1, firstLine
+}
+
+func hasKnownAppendedVerificationBlock(normalized string) bool {
+	return inspectAppendedVerificationBlock(normalized).known
+}
+
+func editedAppendedVerificationBlock(normalized string) (bool, int, string) {
+	state := inspectAppendedVerificationBlock(normalized)
+	return state.hasMarker && !state.known, state.lineNum, state.lineContent
+}
+
+func swapAppendedVerificationLauncher(normalized string, launcher bool) (string, bool) {
+	state := inspectAppendedVerificationBlock(normalized)
+	if !state.known {
+		return "", false
+	}
+	targetVar := makefileCLIVariableLine(launcher)
+	if state.matchedVar == targetVar {
+		return normalized, true
+	}
+	idx := strings.Index(normalized, verificationAppendedMarker)
+	prefixLen := idx + len(verificationAppendedMarker) + 1
+	rest := normalized[prefixLen+len(state.matchedVar):]
+	return normalized[:prefixLen] + targetVar + rest, true
+}
+
 func appendVerificationTargetsWithLauncher(existing string, plan *VerificationPlan, launcher bool) (string, error) {
 	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
 	if err != nil {
 		return "", fmt.Errorf("makefile line endings are inconsistent: %w", err)
 	}
+	if swapped, ok := swapAppendedVerificationLauncher(normalized, launcher); ok {
+		return util.RestoreLineEndings(swapped, crlf), nil
+	}
 	var result strings.Builder
 	result.WriteString(normalized)
-	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
+	result.WriteString("\n" + verificationAppendedMarker + "\n" +
 		makefileCLIVariableLine(launcher) + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
 	// One recipe for the build and test commands together: rendered once for each, an
 	// unavailable plan wrote its failing pair twice (#594).

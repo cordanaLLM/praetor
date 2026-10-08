@@ -3,6 +3,7 @@ package adopt
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -223,4 +224,80 @@ func TestVerificationDeclinedGitHooksResolvesFromPath(t *testing.T) {
 	if !strings.Contains(got, util.MakefileCLIVariable) || strings.Contains(got, engineLauncherFile) {
 		t.Fatalf("declined git-hooks did not resolve from PATH:\n%s", got)
 	}
+}
+
+// Positive: a repository with its own Makefile plus the main-era appended block ends with
+// the launcher line after adopt.
+func TestVerificationAppendedBlock_Positive_MainEraAppendedBlockSwapsLauncher(t *testing.T) {
+	root := newTestRepo(t, "appended-main-era")
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+	plan, err := resolveVerificationPlan(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownMakefile := "all: build\nbuild:\n\t@cargo build\ntest:\n\t@cargo test\n"
+	appended, err := appendVerificationTargetsWithLauncher(ownMakefile, plan, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(root, "Makefile"), appended)
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mustRead(t, filepath.Join(root, "Makefile"))
+	launcherLine := "PRAETORCTL ?= " + lefthookGovernedCommand("")
+	if !strings.Contains(got, launcherLine) {
+		t.Fatalf("Makefile does not contain launcher line:\n%s", got)
+	}
+	if strings.Contains(got, util.MakefileCLIVariable) {
+		t.Fatalf("Makefile still contains path-resolved MakefileCLIVariable line:\n%s", got)
+	}
+	if report.Verification.Status != verificationDeclared {
+		t.Fatalf("status = %v, want %v", report.Verification.Status, verificationDeclared)
+	}
+}
+
+// Negative: a hand-edited appended block is kept and a warning naming the line to change is emitted.
+func TestVerificationAppendedBlock_Negative_HandEditedBlockKeptAndWarningEmitted(t *testing.T) {
+	root := newTestRepo(t, "appended-hand-edited")
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+	plan, err := resolveVerificationPlan(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownMakefile := "all: build\nbuild:\n\t@cargo build\ntest:\n\t@cargo test\n"
+	appended, err := appendVerificationTargetsWithLauncher(ownMakefile, plan, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(appended, util.MakefileCLIVariable, "PRAETORCTL ?= /usr/local/bin/praetorctl\n", 1)
+	if edited == appended {
+		t.Fatal("failed to hand-edit Makefile fixture")
+	}
+	mustWrite(t, filepath.Join(root, "Makefile"), edited)
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := mustRead(t, filepath.Join(root, "Makefile"))
+	if !strings.Contains(got, "PRAETORCTL ?= /usr/local/bin/praetorctl") {
+		t.Fatalf("hand-edited block was not kept:\n%s", got)
+	}
+	launcherLine := "PRAETORCTL ?= " + lefthookGovernedCommand("")
+	if strings.Contains(got, launcherLine) {
+		t.Fatalf("hand-edited line was overwritten with launcher line:\n%s", got)
+	}
+	if !hasWarningMatching(report.Warnings, "Makefile line", launcherLine) {
+		t.Fatalf("expected warning naming line to change to %q, got warnings: %v", launcherLine, report.Warnings)
+	}
+	if report.Verification.Status != verificationPreserved {
+		t.Fatalf("status = %v, want %v", report.Verification.Status, verificationPreserved)
+	}
+}
+
+func hasWarningMatching(warnings []string, prefix, substr string) bool {
+	return slices.ContainsFunc(warnings, func(w string) bool {
+		return strings.Contains(w, prefix) && strings.Contains(w, substr)
+	})
 }

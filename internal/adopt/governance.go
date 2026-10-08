@@ -242,6 +242,25 @@ func reconcileExistingVerificationMakefile(
 	if !exists || !mayDefineVerificationTarget(data) || generated {
 		return false, nil
 	}
+	normalized, _, err := util.NormalizeLineEndingsStrict(data)
+	if err != nil {
+		return false, err
+	}
+	if launcherInstalled(ctx, s) {
+		if edited, lineNum, lineContent := editedAppendedVerificationBlock(normalized); edited {
+			targetLine := "PRAETORCTL ?= " + lefthookGovernedCommand("")
+			s.report.addWarning("%s line %d: verification block was edited; change %q to %q to resolve the engine launcher",
+				makefileName, lineNum, strings.TrimSpace(lineContent), targetLine)
+			if documentationEnabled {
+				return true, reconcileDocumentationMakefile(ctx, s)
+			}
+			s.report.recordReconciled(makefileName, "Existing verify-all preserved; execution has not been verified by adoption")
+			return true, nil
+		}
+	}
+	if hasKnownAppendedVerificationBlock(normalized) {
+		return false, nil
+	}
 	if documentationEnabled {
 		return true, reconcileDocumentationMakefile(ctx, s)
 	}
