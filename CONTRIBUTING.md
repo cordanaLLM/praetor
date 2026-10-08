@@ -18,6 +18,39 @@ All contributors are expected to uphold deterministic, high-integrity engineerin
 
 Run `make hooks` and `make hooks-check` after cloning. The [Git hooks guide](docs/guides/git-hooks.md) describes staged checks, push scope, required tools and the explicit sandbox gate. Commit with a conventional subject and `git commit -s` for DCO. Hooks preserve unstaged work; run `praetorctl state sync .` explicitly at turn end.
 
+### Optional: Probity Test-First Guard
+
+Probity is an optional client-side edit guard for contributors using AI coding assistants. When enabled, it enforces a test-first workflow by requiring an observed failing test before an implementation edit is allowed.
+
+The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/`. Contributors without the hook installed are unaffected.
+
+To enable Probity in Claude Code, install the plugin:
+
+```bash
+/plugin marketplace add nizos/probity
+/plugin install probity@probity
+```
+
+or add a `PreToolUse` hook in `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx @nizos/probity --agent claude-code"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
 Before submitting any Pull Request, ensure local verification passes completely:
 
 ```bash

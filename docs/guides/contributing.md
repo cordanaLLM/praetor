@@ -55,6 +55,39 @@ builds and scans this repository on the host and in CI:
 - Renovate's `gomod` manager proposes updates to the directive by default, so a Go security
   release arrives as a dependency pull request, not as a CI change.
 
+### Optional: Probity Test-First Guard
+
+Probity is an optional client-side edit guard for contributors using AI coding assistants. When enabled, it enforces a test-first workflow by requiring an observed failing test before an implementation edit is allowed.
+
+The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/`. Contributors without the hook installed are unaffected.
+
+To enable Probity in Claude Code, install the plugin:
+
+```bash
+/plugin marketplace add nizos/probity
+/plugin install probity@probity
+```
+
+or add a `PreToolUse` hook in `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx @nizos/probity --agent claude-code"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
 ---
 
 ## Pull Request Lifecycle
