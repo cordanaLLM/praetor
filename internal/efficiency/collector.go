@@ -131,7 +131,7 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 	}
 	owners := branchOwners(prs.all)
 	for _, pr := range prs.units {
-		report.Units = append(report.Units, c.buildUnitReport(pr, owners, transStats, spend, report.Sources))
+		report.Units = append(report.Units, c.buildUnitReport(pr, owners, transStats, spend, report.Sources, report))
 	}
 	c.buildMilestoneSummary(report, spend)
 	return report, nil
@@ -183,6 +183,13 @@ func (c *Collector) transcriptsConfigured() string {
 		return ""
 	}
 	return c.opts.Policy.Sources.Transcripts.Directory()
+}
+
+func (c *Collector) transcriptsViaGateway() bool {
+	if c.opts.Policy == nil {
+		return false
+	}
+	return c.opts.Policy.Sources.TranscriptsViaGateway
 }
 
 func (c *Collector) spendConfigured() string {

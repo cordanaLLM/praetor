@@ -43,6 +43,7 @@ func sampleReport() *Report {
 				LocalRatio:          &localRate1,
 				FactHitRatio:        FollowUpRefs,
 				ChecksBeforeReviews: FollowUpRefs,
+				Sources:             "transcripts+gateway",
 			},
 		},
 		MilestoneSummary: MilestoneSummary{
@@ -93,6 +94,9 @@ func TestRenderJSON_Positive_Schema(t *testing.T) {
 	if len(parsed.Units) != 1 || parsed.Units[0].PullRequestNumber != 101 {
 		t.Errorf("unexpected units in parsed JSON: %+v", parsed.Units)
 	}
+	if parsed.Units[0].Sources != "transcripts+gateway" {
+		t.Errorf("expected sources transcripts+gateway, got %q", parsed.Units[0].Sources)
+	}
 	if parsed.MilestoneSummary.Milestone != "1.0" {
 		t.Errorf("unexpected milestone in parsed JSON: %s", parsed.MilestoneSummary.Milestone)
 	}
@@ -109,10 +113,10 @@ func TestRenderTable_Positive(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "ISSUE-TO-MERGE") || !strings.Contains(output, "FRONTIER TOKENS") {
+	if !strings.Contains(output, "ISSUE-TO-MERGE") || !strings.Contains(output, "FRONTIER TOKENS") || !strings.Contains(output, "SOURCES") {
 		t.Error("table header missing expected columns")
 	}
-	if !strings.Contains(output, "#101") || !strings.Contains(output, "feat/alpha") {
+	if !strings.Contains(output, "#101") || !strings.Contains(output, "feat/alpha") || !strings.Contains(output, "transcripts+gateway") {
 		t.Error("table row missing unit data")
 	}
 	if !strings.Contains(output, "Milestone Summary: 1.0") {

@@ -62,37 +62,81 @@ func newUnit(pr forge.MergedPullRequest) UnitReport {
 		LocalFirstRatio:     NotMeasured,
 		FactHitRatio:        FollowUpRefs,
 		ChecksBeforeReviews: FollowUpRefs,
+		Sources:             NotMeasured,
 	}
 }
 
 // unitUsage is the request and frontier-token count of one unit and where it came from.
 type unitUsage struct {
-	requests       int
-	localRequests  int
-	frontierTokens int64
-	measured       bool
+	requests                  int
+	localRequests             int
+	frontierTokens            int64
+	measured                  bool
+	sources                   string
+	omittedTranscriptRequests int
 }
 
-// usageFor picks one source for requests, local-first and frontier tokens: gateway entries
-// attributed to the pull request when there are any (they hold local models and cover every
-// request), else the joined transcripts. The two never add, because agent requests that go
-// through the gateway appear in both.
-func usageFor(prNum int, stats *BranchTranscriptStats, spend *SpendReport) unitUsage {
-	if spend != nil && spend.RequestsByPRNumber[prNum] > 0 {
-		return unitUsage{
-			requests:       spend.RequestsByPRNumber[prNum],
-			localRequests:  spend.LocalRequestsByPRNumber[prNum],
-			frontierTokens: spend.FrontierTokensByPRNumber[prNum],
-			measured:       true,
-		}
+func combinedUsage(prNum int, stats *BranchTranscriptStats, spend *SpendReport, viaGateway bool) unitUsage {
+	if viaGateway {
+		u := gatewayUsage(prNum, spend)
+		u.omittedTranscriptRequests = stats.TotalRequests
+		return u
 	}
-	if stats != nil && stats.TotalRequests > 0 {
-		return unitUsage{requests: stats.TotalRequests, localRequests: stats.LocalRequests, frontierTokens: stats.FrontierTokens, measured: true}
+	return unitUsage{
+		requests:       spend.RequestsByPRNumber[prNum] + stats.TotalRequests,
+		localRequests:  spend.LocalRequestsByPRNumber[prNum] + stats.LocalRequests,
+		frontierTokens: spend.FrontierTokensByPRNumber[prNum] + stats.FrontierTokens,
+		measured:       true,
+		sources:        "transcripts+gateway",
 	}
-	return unitUsage{}
+}
+
+func gatewayUsage(prNum int, spend *SpendReport) unitUsage {
+	return unitUsage{
+		requests:       spend.RequestsByPRNumber[prNum],
+		localRequests:  spend.LocalRequestsByPRNumber[prNum],
+		frontierTokens: spend.FrontierTokensByPRNumber[prNum],
+		measured:       true,
+		sources:        "gateway",
+	}
+}
+
+func transcriptUsage(stats *BranchTranscriptStats) unitUsage {
+	return unitUsage{
+		requests:       stats.TotalRequests,
+		localRequests:  stats.LocalRequests,
+		frontierTokens: stats.FrontierTokens,
+		measured:       true,
+		sources:        "transcripts",
+	}
+}
+
+// usageFor determines requests, local-first ratio and frontier tokens according to
+// transcripts_via_gateway. When false (default), transcript requests and gateway entries
+// both count in full. When true, gateway entries count and transcript usage for joined
+// units is not added, with unadded transcript requests reported.
+func usageFor(prNum int, stats *BranchTranscriptStats, spend *SpendReport, viaGateway bool) unitUsage {
+	hasGateway := spend != nil && spend.RequestsByPRNumber[prNum] > 0
+	hasTranscripts := stats != nil && stats.TotalRequests > 0
+
+	if hasGateway && hasTranscripts {
+		return combinedUsage(prNum, stats, spend, viaGateway)
+	}
+	if hasGateway {
+		return gatewayUsage(prNum, spend)
+	}
+	if hasTranscripts {
+		return transcriptUsage(stats)
+	}
+	return unitUsage{sources: NotMeasured}
 }
 
 func (u unitUsage) apply(unit *UnitReport) {
+	unit.Sources = u.sources
+	if u.omittedTranscriptRequests > 0 {
+		omitted := u.omittedTranscriptRequests
+		unit.TranscriptRequestsNotAdded = &omitted
+	}
 	if !u.measured {
 		return
 	}
@@ -104,7 +148,7 @@ func (u unitUsage) apply(unit *UnitReport) {
 	unit.LocalRatio = &ratio
 }
 
-func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, owners map[string]int, transStats map[string]*BranchTranscriptStats, spend *SpendReport, sources SourcesMeasured) UnitReport {
+func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, owners map[string]int, transStats map[string]*BranchTranscriptStats, spend *SpendReport, sources SourcesMeasured, report *Report) UnitReport {
 	unit := newUnit(pr)
 	var stats *BranchTranscriptStats
 	// A reused branch name belongs to the pull request merged last; the others get no transcript join.
@@ -125,6 +169,10 @@ func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, owners map[strin
 		unit.Spend = formatSpend(amount)
 		unit.SpendAmount = &amount
 	}
-	usageFor(pr.Number, stats, spend).apply(&unit)
+	usage := usageFor(pr.Number, stats, spend, c.transcriptsViaGateway())
+	usage.apply(&unit)
+	if usage.omittedTranscriptRequests > 0 && report != nil {
+		report.Notes = append(report.Notes, fmt.Sprintf("unit #%d: %d transcript requests not added (transcripts_via_gateway=true)", pr.Number, usage.omittedTranscriptRequests))
+	}
 	return unit
 }

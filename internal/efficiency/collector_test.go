@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
@@ -156,29 +157,130 @@ func TestCollector_Negative_ZeroDenominatorsPrintNotMeasured(t *testing.T) {
 	}
 }
 
-func TestCollector_Positive_GatewayWinsOverTranscriptsWithoutDoubleCount(t *testing.T) {
+func assertUnaddedNote(t *testing.T, notes []string, want string) {
+	t.Helper()
+	for _, n := range notes {
+		if strings.Contains(n, want) {
+			return
+		}
+	}
+	t.Errorf("expected note %q in %v", want, notes)
+}
+
+func assertNoUnaddedNote(t *testing.T, notes []string) {
+	t.Helper()
+	for _, n := range notes {
+		if strings.Contains(n, "transcript requests not added") {
+			t.Errorf("unexpected unadded transcripts note when false: %q", n)
+		}
+	}
+}
+
+func assertFalseGatewayUnit(t *testing.T, u UnitReport) {
+	t.Helper()
+	if u.FrontierTokens != "1150" {
+		t.Errorf("expected 1150 frontier tokens, got %s", u.FrontierTokens)
+	}
+	if u.LocalFirstRatio != "33.3%" {
+		t.Errorf("expected 33.3%% local-first, got %s", u.LocalFirstRatio)
+	}
+	if u.Sources != "transcripts+gateway" {
+		t.Errorf("expected sources transcripts+gateway, got %q", u.Sources)
+	}
+	if u.OperatorTouches != "2" || u.PromptCacheHitRate == NotMeasured {
+		t.Errorf("touches and cache hit still come from transcripts: %+v", u)
+	}
+	if u.TranscriptRequestsNotAdded != nil {
+		t.Errorf("expected nil TranscriptRequestsNotAdded when false, got %v", *u.TranscriptRequestsNotAdded)
+	}
+}
+
+func assertTrueGatewayUnit(t *testing.T, u UnitReport) {
+	t.Helper()
+	if u.FrontierTokens != "0" {
+		t.Errorf("expected 0 frontier tokens, got %s", u.FrontierTokens)
+	}
+	if u.LocalFirstRatio != "100.0%" {
+		t.Errorf("expected 100.0%% local-first, got %s", u.LocalFirstRatio)
+	}
+	if u.Sources != "gateway" {
+		t.Errorf("expected sources gateway, got %q", u.Sources)
+	}
+	if u.OperatorTouches != "2" || u.PromptCacheHitRate == NotMeasured {
+		t.Errorf("touches and cache hit still come from transcripts: %+v", u)
+	}
+	if u.TranscriptRequestsNotAdded == nil || *u.TranscriptRequestsNotAdded != 2 {
+		t.Errorf("expected TranscriptRequestsNotAdded to be 2, got %v", u.TranscriptRequestsNotAdded)
+	}
+}
+
+func TestCollector_Positive_TranscriptsViaGatewayFalseCombinesBoth(t *testing.T) {
 	dir := t.TempDir()
 	prs := filepath.Join(dir, "prs.json")
 	writeFile(t, prs, []byte(forgeRecords))
 	tr := filepath.Join(dir, "tr")
 	writeFile(t, filepath.Join(tr, "s.jsonl"), readFixture(t))
 	spend := filepath.Join(dir, "spend.jsonl")
-	writeFile(t, spend, []byte(`{"request_id":"a","model":"claude-opus-4-1","spend":1.5,"total_tokens":500,"request_tags":["branch:feat/x"]}
-{"request_id":"b","model":"ollama/q","model_group":"local","spend":0,"total_tokens":50,"request_tags":["branch:feat/x"]}
-{"request_id":"c","model":"claude-opus-4-1","spend":0.5,"total_tokens":5,"request_tags":["branch:feat/o"]}
-{"request_id":"d","model":"claude-opus-4-1","spend":0.25,"total_tokens":5}
+	writeFile(t, spend, []byte(`{"request_id":"b","model":"ollama/q","model_group":"local","spend":0,"total_tokens":50,"request_tags":["branch:feat/x"]}
 `))
 	report := collect(t, CollectorOptions{ForgeJSONPath: prs, TranscriptsDir: tr, SpendLogPath: spend, Milestone: "M1"})
 	u := unitByNumber(t, report, 1)
-	if u.FrontierTokens != "500" || u.LocalFirstRatio != "50.0%" || u.Spend != "$1.50" {
-		t.Errorf("gateway entries decide tokens and local-first: %+v", u)
+	assertFalseGatewayUnit(t, u)
+	assertNoUnaddedNote(t, report.Notes)
+}
+
+func TestCollector_Positive_TranscriptsViaGatewayTrueGatewayCounts(t *testing.T) {
+	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	tr := filepath.Join(dir, "tr")
+	writeFile(t, filepath.Join(tr, "s.jsonl"), readFixture(t))
+	spend := filepath.Join(dir, "spend.jsonl")
+	writeFile(t, spend, []byte(`{"request_id":"b","model":"ollama/q","model_group":"local","spend":0,"total_tokens":50,"request_tags":["branch:feat/x"]}
+`))
+	policy := &config.EfficiencyPolicy{
+		Sources: config.EfficiencySources{
+			TranscriptsViaGateway: true,
+		},
 	}
-	if u.OperatorTouches != "2" || u.PromptCacheHitRate == NotMeasured {
-		t.Errorf("touches and cache hit still come from transcripts: %+v", u)
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, TranscriptsDir: tr, SpendLogPath: spend, Milestone: "M1", Policy: policy})
+	u := unitByNumber(t, report, 1)
+	assertTrueGatewayUnit(t, u)
+	assertUnaddedNote(t, report.Notes, "unit #1: 2 transcript requests not added (transcripts_via_gateway=true)")
+}
+
+func TestCollector_Boundary_NoGatewayEntries(t *testing.T) {
+	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	tr := filepath.Join(dir, "tr")
+	writeFile(t, filepath.Join(tr, "s.jsonl"), readFixture(t))
+	spend := filepath.Join(dir, "spend.jsonl")
+	writeFile(t, spend, []byte(""))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, TranscriptsDir: tr, SpendLogPath: spend, Milestone: "M1"})
+	u := unitByNumber(t, report, 1)
+	if u.FrontierTokens != "1150" || u.LocalFirstRatio != "0.0%" || u.Spend != NotMeasured {
+		t.Errorf("transcripts feed tokens without gateway entries: %+v", u)
 	}
-	ms := report.MilestoneSummary
-	if ms.AttributedSpend != "$1.50" || ms.OtherUnitsSpend != "$0.50" || ms.UnattributedSpend != "$0.25" || ms.TotalSpend != "$2.25" {
-		t.Errorf("spend scopes must add up: %+v", ms)
+	if u.Sources != "transcripts" {
+		t.Errorf("expected sources transcripts, got %q", u.Sources)
+	}
+	if u.TranscriptRequestsNotAdded != nil {
+		t.Errorf("expected nil TranscriptRequestsNotAdded, got %v", *u.TranscriptRequestsNotAdded)
+	}
+}
+
+func TestCollector_Negative_NoRequestsYieldsNotMeasuredSources(t *testing.T) {
+	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, Milestone: "M1"})
+	u := unitByNumber(t, report, 2)
+	if u.Sources != NotMeasured {
+		t.Errorf("expected sources %q, got %q", NotMeasured, u.Sources)
+	}
+	if u.FrontierTokens != NotMeasured || u.LocalFirstRatio != NotMeasured {
+		t.Errorf("expected not measured tokens and local-first: %+v", u)
 	}
 }
 
