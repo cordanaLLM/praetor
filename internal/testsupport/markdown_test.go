@@ -79,3 +79,26 @@ func TestMarkdownFindingsBoundaries(t *testing.T) {
 		t.Errorf("oversized document: %v", findings)
 	}
 }
+
+// Positive: a four-backtick fence holds a three-backtick one as content, so only the outer
+// fence needs blank lines around it. Negative: the shorter run does not close the outer fence,
+// so the line after the outer fence's real closer is still checked (MD031). Boundary: a longer
+// closing run closes, and a different character does not.
+func TestMarkdownFindingsNestedFences(t *testing.T) {
+	nested := "# T\n\n````markdown\n```figure\nname\n```\n````\n\ntext\n"
+	if findings := MarkdownFindings(nested); len(findings) != 0 {
+		t.Errorf("nested fences reported %v", findings)
+	}
+	unclosed := "# T\n\n````markdown\n```figure\nname\n```\n````\ntext\n"
+	if findings := MarkdownFindings(unclosed); !strings.Contains(strings.Join(findings, "\n"), "MD031") {
+		t.Errorf("a text line right after the outer fence was not reported: %v", findings)
+	}
+	longer := "# T\n\n```bash\nx\n`````\n\ntext\n"
+	if findings := MarkdownFindings(longer); len(findings) != 0 {
+		t.Errorf("a longer closing run did not close the fence: %v", findings)
+	}
+	tilde := "# T\n\n```bash\nx\n~~~\ny\n```\n\ntext\n"
+	if findings := MarkdownFindings(tilde); len(findings) != 0 {
+		t.Errorf("a tilde run closed or broke a backtick fence: %v", findings)
+	}
+}

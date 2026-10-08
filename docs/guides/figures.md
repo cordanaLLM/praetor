@@ -86,6 +86,26 @@ unedited copy. The family holds at most 64 earlier texts; a React bump costs two
 `dist/player.js` and one for `dist/THIRD-PARTY-LICENSES.txt`, and an esbuild bump two, one for
 each bundle under `dist/`.
 
+### Locked assets and linters
+
+Audit locks the engine files byte for byte, so an adopter that runs a linter over every tracked
+file cannot fix a finding in one. `TestManagedAssetsAreLintClean` in
+`internal/managedasset/lint_clean_test.go` therefore reads every file of every registered family
+(`managedasset.Families`, not a list of its own) and runs, per language, the linters at the
+settings Praetor's own templates use:
+
+| Language | Check |
+| :-- | :-- |
+| Go | `gofmt -l`, `gofumpt -l`, and `go vet` per package directory, in a scratch module |
+| Python | `ruff check` at the rules of `templates/python/ruff.toml.tmpl` plus `RUF100`, and `ruff format --check`, both at 100 columns |
+| Markdown | markdownlint's default rules (MD013 at 80 columns included), in process and, when installed, with `markdownlint-cli2` |
+| Shell | `shellcheck` |
+
+A linter that is not installed skips its subtest and says so; it never passes silently.
+`TestManagedAssetsLintRefusesPlantedDefects` plants one defect per language and fails when a
+linter accepts it. When a change to a managed file makes it unclean, fix the file and record its
+outgoing text as above; do not exclude it.
+
 ## Mermaid is retired
 
 Every diagram the root site builds is a figure, the generated wiki pages included, so the root

@@ -24,11 +24,13 @@ import (
 // Negative: an unknown name is refused. Boundary: the returned inventory is a private copy.
 func TestLockedAssetInventory(t *testing.T) {
 	names := Names()
-	if !slices.Equal(names, []string{GateFile}) {
-		t.Fatalf("asset names = %v, want [%s]", names, GateFile)
+	if !slices.Equal(names, []string{GateFile, PlaceholderFile}) {
+		t.Fatalf("asset names = %v, want [%s %s]", names, GateFile, PlaceholderFile)
 	}
-	if _, err := Read(GateFile); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{GateFile, PlaceholderFile} {
+		if _, err := Read(name); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := Read("gate/other.go"); err == nil {
 		t.Fatal("unknown asset accepted")
@@ -157,9 +159,18 @@ func TestPriorDigests(t *testing.T) {
 		t.Fatal(err)
 	}
 	digests := PriorDigests()
-	if len(entries) != len(digests) {
-		t.Fatalf("testdata/prior holds %d texts for %d digests", len(entries), len(digests))
+	workflowTexts := 0
+	for _, rel := range digests {
+		if rel == WorkflowFile {
+			workflowTexts++
+		}
 	}
+	// The gate program's earlier texts are kept beside the registry's other lint-clean priors
+	// (internal/managedasset/testdata/prior), which internal/adopt replays.
+	if len(entries) != workflowTexts {
+		t.Fatalf("testdata/prior holds %d texts for %d workflow digests", len(entries), workflowTexts)
+	}
+	total := len(digests)
 	for _, entry := range entries {
 		data, err := os.ReadFile(filepath.Join("testdata", "prior", entry.Name()))
 		if err != nil {
@@ -177,7 +188,40 @@ func TestPriorDigests(t *testing.T) {
 		t.Fatalf("the current workflow is listed as a Prior text (%v)", err)
 	}
 	digests["x"] = WorkflowFile
-	if len(PriorDigests()) != len(entries) {
+	if len(PriorDigests()) != total {
 		t.Fatal("PriorDigests exposed the map for mutation")
+	}
+}
+
+// Positive: the placeholder holds exactly the negation of the gate's constraint, so with the
+// tag off the gate directory has one buildable file, which a directory-level vet or lint finds,
+// and with it on only the gate is built. Negative: it does not hold with the tag, and it is not
+// the gate. Boundary: it holds without any tag, and it exits nonzero, so a run of the directory
+// is never a silent success.
+func TestPlaceholderStandsInOnlyWithoutTheGateTag(t *testing.T) {
+	source, err := Read(PlaceholderFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := bytes.Cut(source, []byte("\n"))
+	expr, err := constraint.Parse(string(first))
+	if err != nil {
+		t.Fatalf("the placeholder does not open with a build constraint: %v", err)
+	}
+	if !expr.Eval(func(string) bool { return false }) {
+		t.Fatalf("constraint %q does not hold without a tag", first)
+	}
+	if expr.Eval(func(tag string) bool { return tag == BuildTag }) {
+		t.Fatalf("constraint %q holds with %s, so the directory would hold two main functions", first, BuildTag)
+	}
+	if !bytes.Contains(source, []byte("os.Exit(1)")) || !bytes.Contains(source, []byte(Directory+"/"+GateFile)) {
+		t.Fatal("the placeholder neither fails nor names the file that runs the gate")
+	}
+	gate, err := Read(GateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(gate, source) {
+		t.Fatal("the placeholder is the gate")
 	}
 }

@@ -42,7 +42,7 @@ func withBundleFixturePaths(paths []string) []string {
 const ownDevContainer = "{\n  \"image\": \"ghcr.io/acme/dev:1\"\n}\n"
 
 // apiCompatibilityFixturePaths are the managed paths of the api:public-contract family.
-var apiCompatibilityFixturePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go"}
+var apiCompatibilityFixturePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go", "tools/apicompat/gate/placeholder.go"}
 
 // documentationFixturePaths are the managed paths of the docs:seo-portal families.
 var documentationFixturePaths = []string{

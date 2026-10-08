@@ -9,8 +9,12 @@
 // The gate is one Go program, gate/main.go. Its build constraint (BuildTag) keeps it out of
 // every ./... pattern, so an adopting module neither builds, tests, lints nor publishes it as
 // API, while "go run tools/apicompat/gate/main.go", which names the file, still builds it.
-// Praetor lints and vets it with that tag (Makefile lint, .golangci.yml) and tests it by
-// building the embedded bytes (gate_test.go).
+// A second file, gate/placeholder.go, holds the opposite constraint and a main that says how to
+// run the gate, so the directory is a buildable package without the tag: a hook that vets or
+// lints it by directory finds Go files instead of failing on a package whose files the
+// constraint excludes (#842). Praetor lints and vets the program with the tag (Makefile lint,
+// .golangci.yml) and tests it by building the embedded bytes (gate_test.go). Both files are
+// kept clean under gofmt, gofumpt and go vet (internal/managedasset/lint_clean_test.go).
 package apicompat
 
 import (
@@ -30,14 +34,17 @@ const (
 	SourceFile = Directory + "/assets.go"
 	// GateFile is the gate program, relative to Directory.
 	GateFile = "gate/main.go"
-	// BuildTag is the build constraint that keeps GateFile out of ./... patterns.
+	// PlaceholderFile is the Go file that stands in for GateFile in a build without BuildTag.
+	PlaceholderFile = "gate/placeholder.go"
+	// BuildTag is the build constraint that keeps GateFile out of ./... patterns; PlaceholderFile
+	// holds its negation.
 	BuildTag = "apicompatgate"
 	// WorkflowFile is the repository-relative hosted API compatibility gate.
 	WorkflowFile = ".github/workflows/praetor-api.yml"
 	// StatusContext is the exact required check emitted by WorkflowFile.
 	StatusContext = "Go API Compatibility"
 	// MaxAssets bounds all asset iteration.
-	MaxAssets = 1
+	MaxAssets = 2
 )
 
 // Workflow is the hosted gate adoption writes to WorkflowFile, rendered for a repository whose
@@ -121,11 +128,14 @@ var priorDigests = map[string]string{
 	// The first gate, which ran on every push to every branch and tag and on every draft pull
 	// request (#815).
 	"a123aa00616a9ee913dda943e288a64f8f3e3518b7777a4f8ed866c10c47f37e": WorkflowFile,
+	// The gate before it was gofumpt-formatted and before its header comment said that pushes run
+	// on the default branch only and a draft fails without running it (#842, #824).
+	"0f1a48dcdccd12c57c7c8cc80dfd7718339272b66c546bf6f80a19336bb74554": Directory + "/" + GateFile,
 }
 
-var assetNames = [...]string{GateFile}
+var assetNames = [...]string{GateFile, PlaceholderFile}
 
-//go:embed gate/main.go
+//go:embed gate/main.go gate/placeholder.go
 var assets embed.FS
 
 // FS returns the embedded asset tree. It is read-only; Read is the bounded accessor.
