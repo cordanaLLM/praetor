@@ -30,7 +30,8 @@
   "github-actions": {
     "managerFilePatterns": [
       "/^tools/markdownlint/assets\\.go$/",
-      "/^tools/apicompat/assets\\.go$/"
+      "/^tools/apicompat/assets\\.go$/",
+      "/^internal/supplychain/reuse_lint\\.go$/"
     ]
   },
   "customManagers": [
@@ -120,6 +121,12 @@
       "matchFileNames": ["tools/apicompat/gate/main.go"],
       "matchPackageNames": ["github.com/joelanford/go-apidiff", "golang.org/x/tools"],
       "groupName": "API compatibility checker"
+    },
+    {
+      "description": "REUSE gate actions: keep the hook job and workflow pin synchronized.",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": [".github/workflows/compliance.yml", "internal/supplychain/reuse_lint.go"],
+      "groupName": "REUSE gate actions"
     },
     {
       "description": "Starlight preset: package.json stays on exact versions, package-lock.json moves with them, and CI builds the preset from the lock with npm ci.",

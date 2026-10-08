@@ -15,8 +15,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
 // The REUSE gate adoption emits into a repository that declares its licensing the REUSE way
@@ -42,6 +44,25 @@ const (
 var priorReuseWorkflowDigests = map[string]string{
 	"c8b2b85f7d8f3be75dc21737409a7583e159adca329ba91c9578f180ccf17b25": "reuse-action v6, checkout v7, hosted gate shape, default branch main, 10-minute timeout",
 	"8edae714aaca03bb34c9069cf294950a566f65d92b5c076be3dee6c98537d210": "reuse-action v6, checkout v7, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
+	"8d5902c19f49ab5a997e55d5862cb003507552450b5c012e67919559e927c5dc": "reuse-action v6 and checkout pinned by commit digest, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
+}
+
+// defaultCheckoutPinnedRef is the fallback actions/checkout reference when parsing markdownassets.Workflow fails.
+const defaultCheckoutPinnedRef = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"
+
+// reuseCheckoutRef returns the actions/checkout reference pinned by digest with its version comment,
+// taking the SHA and version from markdownassets.Workflow, the same source praetor-docs.yml uses (HISS-19).
+func reuseCheckoutRef() string {
+	_, uses, err := util.ScanActionUses(markdownassets.Workflow, managedasset.MaxWorkflowLines)
+	if err != nil {
+		return defaultCheckoutPinnedRef
+	}
+	for _, use := range uses {
+		if use.Pin.Action == "actions/checkout" && use.Pinned {
+			return use.Ref
+		}
+	}
+	return defaultCheckoutPinnedRef
 }
 
 // reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
@@ -49,8 +70,8 @@ var priorReuseWorkflowDigests = map[string]string{
 // timeout, in the hosted gate shape every hosted gate shares (ghworkflow.HostedGateOn: pull
 // request activity and a push to the default branch only; ghworkflow.HostedGateDraftStep first,
 // so a draft run fails by design; ghworkflow.HostedGateStepIf on every later step). It checks the
-// commit out without keeping the token and runs supplychain.ReuseActionRef, which runs reuse lint
-// over the checkout.
+// commit out without keeping the token and runs supplychain.ReuseActionPinnedRef, both pinned by
+// full commit SHA with their version comment (HISS-11).
 func reuseWorkflow(branch string) string {
 	on := strings.Replace(ghworkflow.HostedGateOn,
 		ghworkflow.HostedGatePushBranchesPrefix+ghworkflow.HostedGateDefaultBranch+"']",
@@ -74,11 +95,13 @@ func reuseWorkflow(branch string) string {
 		"    steps:\n" +
 		ghworkflow.HostedGateDraftStep +
 		"      - name: Check out the source" + ghworkflow.HostedGateStepIf + "\n" +
-		"        uses: actions/checkout@v7\n" +
+		"        # yamllint disable-line rule:line-length\n" +
+		"        uses: " + reuseCheckoutRef() + "\n" +
 		"        with:\n" +
 		"          persist-credentials: false\n" +
 		"      - name: reuse lint" + ghworkflow.HostedGateStepIf + "\n" +
-		"        uses: " + supplychain.ReuseActionRef() + "\n"
+		"        # yamllint disable-line rule:line-length\n" +
+		"        uses: " + supplychain.ReuseActionPinnedRef() + "\n"
 }
 
 // reuseRenderingBranch returns the default branch data is the hosted REUSE gate rendered for

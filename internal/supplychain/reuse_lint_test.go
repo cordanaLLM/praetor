@@ -12,13 +12,32 @@ import (
 	"testing"
 )
 
-// Positive: the pin reads as the action at its tag and the reuse major that tag runs.
+// Positive: the pin reads as the action at its tag and the reuse major that tag runs, and
+// the digest-pinned reference combines the full commit SHA with the version comment.
 func TestReuseActionPin(t *testing.T) {
 	if got := ReuseActionRef(); got != "fsfe/reuse-action@"+ReuseActionVersion {
 		t.Errorf("ReuseActionRef = %q", got)
 	}
+	if got := ReuseActionPinnedRef(); got != "fsfe/reuse-action@"+ReuseActionCommit+"  # "+ReuseActionVersion {
+		t.Errorf("ReuseActionPinnedRef = %q", got)
+	}
+	checkHexSHA(t, ReuseActionCommit)
 	if got := ReuseMajor(); got == "" || got == ReuseActionVersion || got[0] < '0' || got[0] > '9' {
 		t.Errorf("ReuseMajor = %q, want the digits of %s", got, ReuseActionVersion)
+	}
+}
+
+func checkHexSHA(t *testing.T, sha string) {
+	t.Helper()
+	if len(sha) != 40 {
+		t.Errorf("commit SHA length = %d, want 40", len(sha))
+		return
+	}
+	for _, c := range sha {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Errorf("commit SHA %q contains non-hex character %q", sha, c)
+			return
+		}
 	}
 }
 
