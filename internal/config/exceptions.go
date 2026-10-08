@@ -44,10 +44,25 @@ const ExceptionRuleWorkflowTriggers = "HISS-18"
 // expiry and passes, so the lanes stay visible until the entry expires.
 const ExceptionRuleBuildWarnings = "HISS-10"
 
+// ExceptionRuleRootLicenseNotice is the rule of the one-root-licence gate
+// (supplychain.CheckRootLicense): an entry keeps one file at the repository root that is named
+// like a licence, such as an upstream COPYING, beside the root LICENSE. It names that file by
+// path, one entry per file.
+const ExceptionRuleRootLicenseNotice = "root-license-notice"
+
+// ExceptionRuleReuseAnnotationOrder is the rule of the REUSE.toml annotation order gate
+// (praetorctl audit, supplychain.ReuseShadowedPaths): an entry names the root REUSE.toml whose
+// path globs need more comparison steps than the gate's bound, so the gate reports the order as
+// not checked, with the entry's reason and expiry, instead of failing. A file the gate checks in
+// full makes the entry stale.
+const ExceptionRuleReuseAnnotationOrder = "reuse-annotation-order"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
-var exceptionRules = []string{ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
-	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers}
+var exceptionRules = []string{
+	ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings,
+	ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
+}
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
 // workflow a refusal names as an example.
@@ -200,6 +215,9 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.workflowTargetProblem(); problem != "" {
 		return problem
 	}
+	if problem := e.rootLicenseTargetProblem(); problem != "" {
+		return problem
+	}
 	if problem := exceptionReasonProblem(e.Reason); problem != "" {
 		return "reason " + problem
 	}
@@ -218,6 +236,17 @@ func (e Exception) targetProblem() string {
 		if problem := StyleExclusionProblem(e.Glob); problem != "" {
 			return fmt.Sprintf("glob %q %s", e.Glob, problem)
 		}
+	}
+	return ""
+}
+
+// rootLicenseTargetProblem requires a root-license-notice or reuse-annotation-order entry to name
+// one file at the repository root by path, the file the root licence gate keeps or the REUSE.toml
+// the order gate excuses, one entry per file.
+func (e Exception) rootLicenseTargetProblem() string {
+	if (e.Rule == ExceptionRuleRootLicenseNotice || e.Rule == ExceptionRuleReuseAnnotationOrder) &&
+		(e.Glob != "" || strings.Contains(e.Path, "/")) {
+		return "rule " + e.Rule + " must name one file at the repository root by path, one entry per file"
 	}
 	return ""
 }

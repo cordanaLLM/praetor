@@ -161,7 +161,7 @@ var withheldRustfmtWorkspaces = map[string]struct {
 	"negated-class-glob":        {map[string]string{"Cargo.toml": "[workspace]\nmembers = [\"crates/[!a]\"]\n"}, `the workspace member pattern "crates/[!a]"`},
 	"glob-outside-the-root":     {map[string]string{"Cargo.toml": "[workspace]\nmembers = [\"../*\"]\n"}, `the workspace member pattern "../*"`},
 	"members-never-closed":      {map[string]string{"Cargo.toml": "[workspace]\nmembers = [\n  \"a\",\n"}, "workspace.members in Cargo.toml never closes its array"},
-	"members-not-plain-strings": {map[string]string{"Cargo.toml": "[workspace]\nmembers = [\"a\\u0062\"]\n"}, "workspace.members in Cargo.toml is not an array of plain strings"},
+	"members-not-plain-strings": {map[string]string{"Cargo.toml": "[workspace]\nmembers = [\"a\\qb\"]\n"}, "workspace.members in Cargo.toml is not an array of plain strings"},
 }
 
 // Negative: where no edition holds for every crate, apply writes no rustfmt.toml, --force

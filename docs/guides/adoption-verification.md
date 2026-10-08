@@ -522,6 +522,7 @@ name fails adoption and each of those gates.
 | `security-policy` | none |
 | `adr` | none |
 | `readme` | skipped: the README governance block is not required |
+| `reuse-gate` | none |
 | `working-dir-and-flavor` | none |
 | `branch-ruleset` | skipped, in both audits |
 | `labels` | skipped, in both audits: `.config/labels.yaml` is not required |

@@ -37,9 +37,6 @@ import (
 //     unexpired entry of the declared exceptions list under config.ExceptionRuleCredits that
 //     names one of its paths; an expired or a stale exception fails.
 
-// licensesDir holds the full text of every license REUSE names, one <id>.txt each.
-const licensesDir = "LICENSES"
-
 // derivedFromValue is the declaration form: an https URL, one space and a parenthesised SPDX
 // license expression.
 var derivedFromValue = regexp.MustCompile(`^(https://[^\s()]+) \((.+)\)$`)
@@ -125,9 +122,9 @@ func readLicenseTexts(ctx context.Context, root string, assets []compiler.AssetU
 			if _, seen := texts[id]; seen {
 				continue
 			}
-			_, exists, err := contextopt.ObserveSnapshotIn(ctx, root, licensesDir+"/"+id+".txt")
+			_, exists, err := contextopt.ObserveSnapshotIn(ctx, root, LicensesDir+"/"+id+".txt")
 			if err != nil {
-				return nil, fmt.Errorf("read %s/%s.txt: %w", licensesDir, id, err)
+				return nil, fmt.Errorf("read %s/%s.txt: %w", LicensesDir, id, err)
 			}
 			texts[id] = exists
 		}
@@ -257,9 +254,12 @@ func checkCopiedLicense(parsed derivation, tables []ReuseAnnotation, texts map[s
 	for _, id := range licenseTerms(parsed.license) {
 		if !texts[id] {
 			findings = append(findings, fmt.Errorf("%s copies upstream text under %s, and %s/%s.txt does not exist; add the license text",
-				parsed.rel, id, licensesDir, id))
+				parsed.rel, id, LicensesDir, id))
 		}
-		if !ReuseLabels(tables, parsed.rel, id) {
+		labelled, err := ReuseLabels(tables, parsed.rel, id)
+		if err != nil {
+			findings = append(findings, fmt.Errorf("%s copies upstream text under %s: %w", parsed.rel, id, err))
+		} else if !labelled {
 			findings = append(findings, fmt.Errorf("%s copies upstream text under %s, and %s does not label it %s; add an override annotation with the upstream copyright after every table that covers it",
 				parsed.rel, id, ReuseFile, id))
 		}

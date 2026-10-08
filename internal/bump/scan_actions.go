@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/semver"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -19,7 +20,8 @@ var workflowActionRegex = regexp.MustCompile(`uses:\s*([a-zA-Z0-9\-_/]+)@([a-zA-
 
 // Known canonical latest versions for standard CI actions: the newest upstream release
 // major, or the exact tag for actions consumed by tag. The deprecation warning names its
-// upgrade target from this map, so a bump moves in one place.
+// upgrade target from this map, so a bump moves in one place. The REUSE action's tag is the
+// pin the emitted REUSE gate runs too (supplychain.ReuseActionVersion), so it is read from there.
 var knownActionLatest = map[string]string{
 	"actions/checkout":                  "v7",
 	"actions/cache":                     "v6",
@@ -31,7 +33,7 @@ var knownActionLatest = map[string]string{
 	"actions/upload-pages-artifact":     "v5",
 	"actions/deploy-pages":              "v5",
 	"actions/configure-pages":           "v6",
-	"fsfe/reuse-action":                 "v6",
+	supplychain.ReuseAction:             supplychain.ReuseActionVersion,
 	"goreleaser/goreleaser-action":      "v7",
 	"sigstore/cosign-installer":         "v4.1.2",
 	"anchore/sbom-action/download-syft": "v0.24.3",

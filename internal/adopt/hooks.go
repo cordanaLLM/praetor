@@ -15,6 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -116,8 +117,15 @@ func optionalToolGuard(tool, command string) string {
 // touching a .go file on go vet (#242). The reason avoids ": " so the line stays one plain YAML
 // scalar.
 func rootMarkerCommand(marker, skipped, command string) string {
-	return "if [ -f " + marker + " ]; then " + command +
-		"; else echo no " + marker + " at the repository root, skipping " + skipped + " >&2; fi"
+	return rootGuardCommand("[ -f "+marker+" ]", marker, skipped, command)
+}
+
+// rootGuardCommand renders a lefthook run line that runs command only where test, a shell test of
+// the repository root, holds, and otherwise skips naming markers, what the root lacks, and
+// skipped, what it does not run. rootMarkerCommand and reuseLintCommand share it.
+func rootGuardCommand(test, markers, skipped, command string) string {
+	return "if " + test + "; then " + command +
+		"; else echo no " + markers + " at the repository root, skipping " + skipped + " >&2; fi"
 }
 
 // goModuleCommand is rootMarkerCommand for a Go module tool.
@@ -186,10 +194,47 @@ func lefthookPrePushJobs(languages hisscatalog.Language) string {
 		optionalToolGuard(govuln.DefaultScanner, lefthookGovernedCommand(govulnGateArgs))))
 }
 
+// reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line
+// praetor pins for REUSE (supplychain.ReuseActionVersion), the one the step of the emitted
+// workflow runs (reuseWorkflow). It runs only where the root still carries REUSE.toml or
+// LICENSES/ (rootGuardCommand), is skipped with the reason where reuse is not installed, as every
+// third-party tool is (optionalToolGuard), and fails, naming the pin, on another reuse major. The
+// line holds no quote (lefthookPythonCommand) and no ": ": the version reads as its digits and
+// dots alone, so the comparison needs neither.
+func reuseLintCommand() string {
+	major := supplychain.ReuseMajor()
+	pinned := "if [ x$(reuse --version | head -n 1 | tr -dc 0-9. | cut -d . -f 1) = x" + major +
+		" ]; then reuse lint; else echo reuse " + major + ".x is required, the release line " +
+		supplychain.ReuseActionRef() + " runs in CI >&2; exit 1; fi"
+	return rootGuardCommand("[ -f "+supplychain.ReuseFile+" ] || [ -d "+supplychain.LicensesDir+" ]",
+		supplychain.ReuseFile+" or "+supplychain.LicensesDir+"/", "reuse lint", optionalToolGuard("reuse", pinned))
+}
+
+// lefthookReuseJob renders the reuse-lint pre-commit job when shape carries it.
+func lefthookReuseJob(shape lefthookShape) string {
+	if !shape.reuse {
+		return ""
+	}
+	return "    " + reuseLintJob + ":\n" + lefthookRun(reuseLintCommand())
+}
+
+// reuseLintJob is the name of the pre-commit job that runs reuse lint.
+const reuseLintJob = "reuse-lint"
+
+// lefthookReuseNote is the header lines of a rendering carrying the reuse-lint job.
+func lefthookReuseNote(shape lefthookShape) string {
+	if !shape.reuse {
+		return ""
+	}
+	return "# REUSE.toml or LICENSES/ was present at adoption: the reuse-lint job runs\n" +
+		"# reuse lint at the release line " + supplychain.ReuseActionRef() + " runs in CI.\n" +
+		"# It skips where reuse is not installed and fails on another reuse major.\n"
+}
+
 // lefthookHeader is the rendering's leading comment, naming the languages it carries jobs for.
-func lefthookHeader(languages hisscatalog.Language) string {
+func lefthookHeader(shape lefthookShape) string {
 	scope := "HISS Governance"
-	if names := lefthookLanguageNames(languages); names != "" {
+	if names := lefthookLanguageNames(shape.languages); names != "" {
 		scope = names + " & " + scope
 	}
 	return "# Lefthook Configuration (" + scope + ")\n" +
@@ -200,14 +245,32 @@ func lefthookHeader(languages hisscatalog.Language) string {
 		"# are present. The pre-push gate job signs a receipt only after a Go\n" +
 		"# (go.mod) or Cargo (Cargo.lock) toolchain stage ran. A root with neither\n" +
 		"# gets no receipt: the job names the languages it could not verify and\n" +
-		"# admits the push; a root with either fails when its stages did not run.\n"
+		"# admits the push; a root with either fails when its stages did not run.\n" +
+		lefthookReuseNote(shape)
 }
 
-// buildLefthookYAMLFor renders lefthook.yml with the jobs of languages (lefthookLanguages), and
-// with the checkpoint lifecycle jobs when checkpoint is set. It opens with a document start and
-// folds every run line longer than yamllint's default limit (lefthookRun), so an adopter whose
-// hooks lint the whole tree with yamllint's defaults accepts it (BUG-782).
-func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) string {
+// lefthookShape is what one lefthook.yml rendering carries jobs for: the languages
+// (lefthookLanguages) and, with reuse set, the reuse-lint pre-commit job of a repository that
+// declares its licensing the REUSE way (supplychain.ReuseDeclared). A rendering without the job
+// is byte for byte the one adoption wrote before the job existed.
+type lefthookShape struct {
+	languages hisscatalog.Language
+	reuse     bool
+}
+
+// otherReuse is shape with the reuse-lint job switched: the rendering adoption wrote while the
+// repository did, or did not, declare REUSE. It is Praetor's own text, which adoption migrates
+// like an earlier rendering (classifyLefthookConfig).
+func (shape lefthookShape) otherReuse() lefthookShape {
+	return lefthookShape{languages: shape.languages, reuse: !shape.reuse}
+}
+
+// buildLefthookYAMLFor renders lefthook.yml with the jobs of shape (the languages, and the
+// reuse-lint job for a REUSE repository), and with the checkpoint lifecycle jobs when checkpoint
+// is set. It opens with a document start and folds every run line longer than yamllint's default
+// limit (lefthookRun), so an adopter whose hooks lint the whole tree with yamllint's defaults
+// accepts it (BUG-782).
+func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 	governed := lefthookGovernedCommand
 	checkpointJobs := ""
 	if checkpoint {
@@ -216,12 +279,12 @@ func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) strin
 			"agent-checkpoint-stop:\n  commands:\n    checkpoint:\n" +
 			lefthookRun(lefthookPythonCommand("-B "+checkpointScript+" --event stop --json --marker"))
 	}
-	return lefthookHeader(languages) +
+	return lefthookHeader(shape) +
 		"---\n" +
 		checkpointJobs + "pre-commit:\n" +
 		"  parallel: true\n" +
 		"  commands:\n" +
-		lefthookPreCommitJobs(languages) +
+		lefthookPreCommitJobs(shape.languages) + lefthookReuseJob(shape) +
 		"    context-check:\n" + lefthookRun(governed("compile-context --verify")) +
 		"    hiss-audit:\n" + lefthookRun(governed(preCommitAuditArgs)) +
 		"\n" +
@@ -233,7 +296,7 @@ func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) strin
 		"pre-push:\n" +
 		"  parallel: false\n" +
 		"  commands:\n" +
-		lefthookPrePushJobs(languages) +
+		lefthookPrePushJobs(shape.languages) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
 		"    audit:\n" + lefthookRun(governed(prePushAuditArgs)) +
 		"    gate:\n" + lefthookRun(governed(prePushGateArgs))
@@ -476,10 +539,13 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	languages := s.lefthookLanguages()
+	shape, err := s.lefthookShape(ctx)
+	if err != nil {
+		return err
+	}
 	var identity lefthookIdentity
 	if exists {
-		identity = classifyLefthookConfig(existing, languages)
+		identity = classifyLefthookConfig(existing, shape)
 	}
 	if identity.reason != "" {
 		return keepLefthookConfig(ctx, s, identity)
@@ -488,7 +554,7 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	lefthookWritten, err := s.writeLefthookConfig(ctx, lefthookTarget{languages: languages, checkpoint: checkpointReady}, existing, identity.prior)
+	lefthookWritten, err := s.renderLefthook(ctx, lefthookTarget{shape: shape, checkpoint: checkpointReady}, existing, identity.prior)
 	if err != nil {
 		return err
 	}
@@ -500,6 +566,17 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
+}
+
+// renderLefthook writes lefthook.yml for target and reports whether it did: the configuration an
+// earlier adoption wrote under the other REUSE switch is migrated (migrateReuseSwitch), and any
+// other is rendered as writeLefthookConfig decides, prior marking an exact earlier rendering.
+func (s *adoptSession) renderLefthook(ctx context.Context, target lefthookTarget, existing []byte, prior bool) (bool, error) {
+	written, err := s.migrateReuseSwitch(target, existing)
+	if err != nil || written {
+		return written, err
+	}
+	return s.writeLefthookConfig(ctx, target, existing, prior)
 }
 
 // keepLefthookConfig records why adoption keeps lefthook.yml and installs beside it only what
@@ -515,21 +592,23 @@ func keepLefthookConfig(ctx context.Context, s *adoptSession, identity lefthookI
 	return reconcileEvasionHook(ctx, s, identity.canonical)
 }
 
-// lefthookTarget is the rendering this run writes: the jobs of languages, and the checkpoint
+// lefthookTarget is the rendering this run writes: the jobs of shape, and the checkpoint
 // lifecycle jobs when checkpoint is set.
 type lefthookTarget struct {
-	languages  hisscatalog.Language
+	shape      lefthookShape
 	checkpoint bool
 }
 
 // writeLefthookConfig writes target's rendering over an earlier Praetor rendering, and otherwise
 // scaffolds it. It reports whether it wrote. classifyLefthookConfig has kept every other
-// configuration, so existing is absent, prior, or a current rendering for target's languages,
-// line endings aside:
+// configuration, so existing is absent, prior, or a current rendering for target's shape, line
+// endings aside:
 //
 //   - A migration writes the rendering's own LF bytes even over a CRLF checkout of an earlier
 //     one: activation trusts only those exact bytes (lefthookConfigIsPraetor), and git stores the
 //     working-tree LF text unchanged under core.autocrlf.
+//   - The rendering for the other REUSE switch is migrated before this runs (migrateReuseSwitch),
+//     so a prior existing here is an earlier template.
 //   - The current rendering without checkpoint jobs gains them once the lifecycle is installed.
 //     The one with them is kept when this run did not install the lifecycle, so a run without
 //     --lock-source-root does not strip them.
@@ -539,8 +618,8 @@ type lefthookTarget struct {
 // The scaffold reads lefthook.yml only as a regular file, so a symlinked one is kept and
 // reported unverified, --force included.
 func (s *adoptSession) writeLefthookConfig(ctx context.Context, target lefthookTarget, existing []byte, prior bool) (bool, error) {
-	current := buildLefthookYAMLFor(target.languages, target.checkpoint)
-	match := matchCurrentLefthook(existing, target.languages)
+	current := buildLefthookYAMLFor(target.shape, target.checkpoint)
+	match := matchCurrentLefthook(existing, target.shape)
 	switch {
 	case prior:
 		return true, s.migrateLefthookConfig(current, "Migrated an earlier Praetor-generated Lefthook configuration to the current template")
@@ -661,7 +740,7 @@ func reconcileEvasionHook(ctx context.Context, s *adoptSession, vendored bool) e
 // commands are shell executed at the adopter's next commit. A dry run installs nothing and
 // records the hook the run would install (planHookActivation).
 func (s *adoptSession) activateGitHooks(ctx context.Context, lefthookWritten bool) error {
-	if !lefthookWritten && !s.lefthookConfigIsPraetor() {
+	if !lefthookWritten && !s.lefthookConfigIsPraetor(ctx) {
 		s.report.recordSkipped(lefthookFile, "existing lefthook.yml is not byte for byte a Praetor rendering adoption can activate; "+
 			"hooks were not activated. Review its run: commands and run 'lefthook install' yourself, or "+lefthookRegenerateHint)
 		return nil
@@ -713,14 +792,18 @@ func (s *adoptSession) recordLefthookInstall(hookPath string, installed bool) {
 }
 
 // lefthookConfigIsPraetor reports whether the existing lefthook.yml is byte-identical to a
-// configuration praetor scaffolds for this repository's languages, i.e. safe to activate
-// without review.
-func (s *adoptSession) lefthookConfigIsPraetor() bool {
+// configuration praetor scaffolds for this repository's shape, i.e. safe to activate without
+// review. A shape it cannot read activates nothing.
+func (s *adoptSession) lefthookConfigIsPraetor(ctx context.Context) bool {
 	data, exists, err := s.readExistingLefthook()
 	if err != nil || !exists {
 		return false
 	}
-	match := matchCurrentLefthook(data, s.lefthookLanguages())
+	shape, err := s.lefthookShape(ctx)
+	if err != nil {
+		return false
+	}
+	match := matchCurrentLefthook(data, shape)
 	return match.exact && (!match.checkpoint || checkpointFilesPresent(s.repoPath))
 }
 

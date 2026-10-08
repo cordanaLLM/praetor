@@ -455,6 +455,22 @@ Tests: `internal/adopt/large_repo_bounds_test.go`,
     untouched, with a warning naming the labels
     ([actionlint runner labels](guides/documentation-governance.md#adoption-audit-and-ci),
     `internal/adopt/actionlint.go`). Decline `actionlint-labels` to opt out.
+11. **REUSE gate**: when the repository root carries `REUSE.toml` or a `LICENSES/` directory,
+    adoption writes `.github/workflows/reuse.yml`, whose **REUSE lint** job runs
+    `fsfe/reuse-action@v6` within a 10-minute timeout in the shared hosted gate shape (`internal/ghworkflow/hostedgate.go`:
+    pull request activity and a push to the default branch the branch ruleset protects, a first
+    step that fails a draft run by design, and a not-draft condition on every later step). That
+    branch is `repository.default_branch`, else the origin HEAD, else `main`, and adds a `reuse-lint` pre-commit job to `lefthook.yml` that runs
+    `reuse lint` with reuse 6.x, skips where reuse is not installed, and fails on another major.
+    The action tag is the one pin both read (`supplychain.ReuseActionVersion` in
+    `internal/supplychain/reuse_lint.go`, also the tag `praetorctl bump` expects). A root with
+    neither marker gets neither. When the root loses both markers, adoption removes its unedited
+    `reuse.yml`, so the ruleset stops requiring a check that cannot pass, and migrates
+    `lefthook.yml` to the matching rendering; it does the same in reverse when the root gains
+    them. An unedited `reuse.yml` rendered for another default branch is refreshed. An edited
+    `reuse.yml` is kept, `--force` included, with a warning when the root no longer declares
+    REUSE (`internal/adopt/reuse_gate_test.go`). Decline `reuse-gate` to skip the workflow; the
+    hook job follows the `git-hooks` step.
 
 ### The baseline on a re-adoption
 

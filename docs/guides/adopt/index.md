@@ -30,6 +30,9 @@ Read [Fast adoption](../../adoption.md) first for the one-step path, then
 - [Workflow trigger audit](../workflow-triggers.md): the HISS-18 warnings the audit prints for a
   push that runs on every branch and a pull request job that runs on drafts, and the `exceptions`
   entry that declares a workflow which must run everywhere.
+- [Licensing gates](../licensing-gates.md): the `reuse lint` jobs adoption writes into a
+  repository that declares REUSE, and the audit's `REUSE.toml` annotation order and root licence
+  checks.
 - [Generated artefacts](../generated-artefacts.md): declaring the files a repository renders
   from other files, why a pull request leaves them alone, and the one regeneration change per
   batch that renders them.

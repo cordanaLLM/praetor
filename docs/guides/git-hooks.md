@@ -390,6 +390,17 @@ gets the Rust jobs. The header comment names the languages the file carries jobs
 `internal/adopt/lefthook_languages_test.go`, and the `TestCargoJobs_*` and `TestGoModuleJobs_*`
 cases in `internal/adopt/hooks_gomod_test.go`, which run the job lines against stub tools.
 
+A root that carries `REUSE.toml` or a `LICENSES/` directory also gets a `reuse-lint` pre-commit
+job (`reuseLintCommand`): `reuse lint` with the reuse major that `fsfe/reuse-action@v6` runs in
+the hosted REUSE gate adoption writes beside it
+([what adoption scaffolds](../adoption.md#what-adoption-scaffolds-automatically)). It skips,
+saying why, where reuse is not installed or the root has lost both markers, and fails, naming the
+pin, on another reuse major. A `lefthook.yml` adoption wrote before the root gained or lost the
+markers is migrated without `--force`, keeping its checkpoint jobs.
+`TestReuseLintCommand_RunsTheLintAtThePinnedMajor` in `internal/adopt/reuse_gate_test.go` runs
+the line against a stub reuse, and `TestReuseLintCommand_Negative_UnlabelledFileFailsTheJob`
+against the installed one.
+
 The pre-push `gate` job runs `gate run --path=. --admit-unsupported` (`prePushGateArgs`). A root
 with neither `go.mod` nor `Cargo.lock`, such as a Meson, CMake, npm or Python repository, gets no
 receipt, because the gate runs no toolchain for it: the job runs every other stage, names the

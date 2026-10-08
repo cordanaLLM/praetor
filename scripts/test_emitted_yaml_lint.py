@@ -54,6 +54,7 @@ CATALOG = ("internal/config/lockdigest.go", "archetypeDirName")
 RENDERINGS = (
     ("internal/config/repository_policy.go", "ManifestFileName"),
     ("internal/adopt/actionlint.go", "actionlintConfigFile"),
+    ("internal/adopt/reuse_gate.go", "reuseWorkflowFile"),
 )
 # The Go constants naming the embedded template directory and its go:embed pattern, and the
 # file declaring them.

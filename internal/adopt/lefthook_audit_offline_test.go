@@ -36,7 +36,7 @@ func TestLefthookAudit_Positive_PreCommitOfflinePrePushOnline(t *testing.T) {
 	for _, languages := range lefthookLanguageSets {
 		for _, checkpoint := range []bool{false, true} {
 			var decoded map[string]any
-			if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(languages, checkpoint)), &decoded); err != nil {
+			if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(lefthookShape{languages: languages}, checkpoint)), &decoded); err != nil {
 				t.Fatalf("languages=%v checkpoint=%v: %v", languages, checkpoint, err)
 			}
 			if got := decodedJob(t, decoded, "pre-commit", "hiss-audit")["run"]; got != lefthookGovernedCommand("audit --offline") {
@@ -76,14 +76,14 @@ func TestClassifyLefthookConfig_Negative_OnlinePreCommitAuditIsNotCurrent(t *tes
 			if !ok {
 				t.Fatalf("missing fixture %s", name)
 			}
-			if matchCurrentLefthook(data, rendering.languages).found {
+			if matchCurrentLefthook(data, lefthookShape{languages: rendering.languages}).found {
 				t.Errorf("%s: an online pre-commit audit matched the current rendering", name)
 			}
-			if got := classifyLefthookConfig(data, rendering.languages); got != (lefthookIdentity{prior: true}) {
+			if got := classifyLefthookConfig(data, lefthookShape{languages: rendering.languages}); got != (lefthookIdentity{prior: true}) {
 				t.Errorf("%s: classified %+v, want an earlier rendering", name, got)
 			}
 			edited := append(append([]byte{}, data...), "# local edit\n"...)
-			if got := classifyLefthookConfig(edited, rendering.languages); got.prior || got.reason == "" {
+			if got := classifyLefthookConfig(edited, lefthookShape{languages: rendering.languages}); got.prior || got.reason == "" {
 				t.Errorf("%s: an edited copy classified %+v, want kept with a reason", name, got)
 			}
 		}
@@ -98,7 +98,7 @@ func TestAdopt_Boundary_OnlinePreCommitAuditMigratesWithoutForce(t *testing.T) {
 	for _, rendering := range onlineAuditRenderings {
 		for _, name := range onlineAuditFixtureNames(rendering.fixture) {
 			repoPath, rep := adoptMarkedRepo(t, rendering.fixture, rendering.markers, string(fixtures[name]))
-			if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(rendering.languages, false) {
+			if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: rendering.languages}, false) {
 				t.Errorf("%s: not migrated to the current rendering:\n%s", name, got)
 			}
 			if !hasAction(rep, lefthookFile, actionReconcile) || hasAction(rep, lefthookFile, actionReplace) {

@@ -84,6 +84,7 @@ var declineContracts = map[string]declineContract{
 	"security-policy":        {audit: DeclineAuditNone},
 	"adr":                    {audit: DeclineAuditNone},
 	"readme":                 {audit: DeclineAuditSkipped},
+	reuseGateStep:            {audit: DeclineAuditNone},
 	"working-dir-and-flavor": {audit: DeclineAuditNone},
 	"branch-ruleset":         {audit: DeclineAuditSkipped, mcp: true},
 	"labels":                 {audit: DeclineAuditSkipped, mcp: true},

@@ -248,7 +248,7 @@ func TestReadUpstreamCreditSources(t *testing.T) {
 	writeRepoFile(t, root, AcknowledgementsList, creditsFixture)
 	writeRepoFile(t, root, upstreamSkill, "---\nname: shout\nmetadata:\n  derived_from: \""+upstreamURL+" (MIT AND Apache-2.0)\"\n---\n")
 	writeRepoFile(t, root, originalSkill, "---\nname: plain\n---\n")
-	writeRepoFile(t, root, licensesDir+"/MIT.txt", "MIT License\n")
+	writeRepoFile(t, root, LicensesDir+"/MIT.txt", "MIT License\n")
 	writeRepoFile(t, root, "package.json", `{"name":"x","dependencies":{"left-pad":"1.3.0"}}`)
 	writeRepoFile(t, root, config.ManifestFileName, "version: 1\nexceptions:\n  - rule: credits\n    path: package.json\n    reason: no license in the registry entry\n    expires: \""+
 		config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)+"\"\n  - rule: clang-tidy-coverage\n    path: a.c\n    reason: r\n    expires: \"2020-01-01\"\n")

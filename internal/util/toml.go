@@ -4,7 +4,12 @@
 
 package util
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
 
 // TOMLTableName normalizes a TOML table header line to its name with the spaces TOML permits
 // removed and a trailing comment dropped: "[ extend ]" is "extend" and "[[ rules ]]  # x" is
@@ -58,10 +63,10 @@ func TOMLInlineTableFields(value string, visit func(key, fieldValue string)) boo
 }
 
 // TOMLStringValue returns the text of the single-line string value holds, value being what
-// TOMLKeyValue returns after the equals sign: a basic ("...") or literal ('...') string followed
-// by nothing or a comment. Anything else is refused rather than guessed at: a number, a boolean,
-// an inline table, a multi-line string, and a basic string holding an escape sequence, which is
-// not decoded.
+// TOMLKeyValue returns after the equals sign: a basic ("...") string, its escape sequences
+// decoded (decodeTOMLEscape), or a literal ('...') one, followed by nothing or a comment.
+// Anything else is refused rather than guessed at: a number, a boolean, an inline table, a
+// multi-line string, and a basic string holding an escape sequence TOML does not define.
 func TOMLStringValue(value string) (string, bool) {
 	text, rest, ok := cutTOMLString(value)
 	rest = strings.TrimSpace(rest)
@@ -119,16 +124,168 @@ func skipTOMLArraySeparators(rest string) string {
 }
 
 // cutTOMLString cuts the single-line basic ("...") or literal ('...') string that opens value
-// and returns its text and what follows it. A basic string holding an escape sequence, which is
-// not decoded, and a string running past the end of its line are refused.
+// and returns its text, a basic string's escape sequences decoded, and what follows it. A string
+// running past the end of its line, and a basic string holding an escape sequence TOML does not
+// define, are refused.
 func cutTOMLString(value string) (text, rest string, ok bool) {
-	if value == "" || (value[0] != '"' && value[0] != '\'') {
+	switch {
+	case strings.HasPrefix(value, `"`):
+		return cutTOMLBasicString(value[1:])
+	case !strings.HasPrefix(value, "'"):
 		return "", "", false
 	}
-	quote := value[:1]
-	text, rest, closed := strings.Cut(value[1:], quote)
-	if !closed || strings.Contains(text, "\n") || (quote == `"` && strings.Contains(text, `\`)) {
+	text, rest, closed := strings.Cut(value[1:], "'")
+	if !closed || strings.Contains(text, "\n") {
 		return "", "", false
 	}
 	return text, rest, true
+}
+
+// cutTOMLBasicString reads body, what follows the opening quote of a single-line basic string,
+// to its closing quote, and returns the string's text with every escape sequence decoded and what
+// follows the quote.
+func cutTOMLBasicString(body string) (text, rest string, ok bool) {
+	var decoded strings.Builder
+	// Every pass consumes at least one byte, so len(body) passes read the whole body.
+	for index := 0; index < len(body); {
+		switch body[index] {
+		case '"':
+			return decoded.String(), body[index+1:], true
+		case '\n':
+			return "", "", false
+		case '\\':
+			char, width, good := decodeTOMLEscape(body[index:])
+			if !good {
+				return "", "", false
+			}
+			decoded.WriteString(char)
+			index += width
+		default:
+			decoded.WriteByte(body[index])
+			index++
+		}
+	}
+	return "", "", false
+}
+
+// tomlEscapes are the escape sequences of one letter after the backslash a TOML basic string may
+// hold, with the text each stands for.
+var tomlEscapes = map[byte]string{'b': "\b", 't': "\t", 'n': "\n", 'f': "\f", 'r': "\r", 'e': "\x1b", '"': `"`, '\\': `\`}
+
+// tomlCodeEscapes are the escape letters a fixed number of hexadecimal digits follows, naming a
+// Unicode scalar value: \xHH, \uHHHH and \UHHHHHHHH.
+var tomlCodeEscapes = map[byte]int{'x': 2, 'u': 4, 'U': 8}
+
+// decodeTOMLEscape decodes the escape sequence that opens rest, a backslash first, and returns its
+// text and the bytes it spans. It takes the escapes TOML 1.0 defines and the \e and \xHH that
+// tomlkit 0.15, the TOML library of the reuse tool, decodes too (tomlEscapes, tomlCodeEscapes),
+// and refuses any other, a code that is no Unicode scalar value included.
+func decodeTOMLEscape(rest string) (text string, width int, ok bool) {
+	if len(rest) < 2 {
+		return "", 0, false
+	}
+	if decoded, simple := tomlEscapes[rest[1]]; simple {
+		return decoded, 2, true
+	}
+	digits := tomlCodeEscapes[rest[1]]
+	if digits == 0 || len(rest) < 2+digits {
+		return "", 0, false
+	}
+	code, err := strconv.ParseUint(rest[2:2+digits], 16, 32)
+	if err != nil || code > unicode.MaxRune {
+		return "", 0, false
+	}
+	char := rune(code)
+	if !utf8.ValidRune(char) {
+		return "", 0, false
+	}
+	return string(char), 2 + digits, true
+}
+
+// TOMLValueScan follows the extent of one TOML value across lines without decoding it, so a
+// reader of a file's shape can step over a value it does not read: it tracks basic and literal
+// strings with their escapes, multi-line strings, and the nesting of arrays and inline tables,
+// and drops comments. The zero value is ready for a value's first line. The REUSE.toml read of
+// internal/supplychain steps over the keys it does not keep with it.
+type TOMLValueScan struct {
+	// depth counts the arrays and inline tables open.
+	depth int
+	// multiline is the delimiter of the multi-line string open, `"""` or "'''", or "".
+	multiline string
+}
+
+// Feed reads one more line of the value, the first being what TOMLKeyValue returns after the
+// equals sign, and reports whether the value ends on it. ok is false for a line the scan cannot
+// follow: a single-line string left open, or a closing bracket or brace with nothing open.
+func (s *TOMLValueScan) Feed(line string) (done, ok bool) {
+	// Every token spans at least one byte, so len(line) passes read the whole line.
+	for index := 0; index < len(line); {
+		width, comment, good := s.next(line[index:])
+		if !good {
+			return false, false
+		}
+		if comment {
+			break
+		}
+		index += width
+	}
+	return s.depth == 0 && s.multiline == "", true
+}
+
+// next reads the token rest opens and returns the bytes it spans; comment is a comment, which
+// runs to the end of the line. rest is not empty.
+func (s *TOMLValueScan) next(rest string) (width int, comment, ok bool) {
+	if s.multiline != "" {
+		return s.inMultiline(rest), false, true
+	}
+	switch rest[0] {
+	case '#':
+		return 0, true, true
+	case '[', '{':
+		s.depth++
+	case ']', '}':
+		if s.depth == 0 {
+			return 0, false, false
+		}
+		s.depth--
+	case '"', '\'':
+		width, ok = s.openString(rest)
+		return width, false, ok
+	}
+	return 1, false, true
+}
+
+// openString reads the string rest opens: a single-line string to its closing quote, or the
+// opening delimiter of a multi-line one, which stays open. A single-line string the line does not
+// close is refused.
+func (s *TOMLValueScan) openString(rest string) (int, bool) {
+	quote := rest[0]
+	if delimiter := strings.Repeat(rest[:1], 3); strings.HasPrefix(rest, delimiter) {
+		s.multiline = delimiter
+		return len(delimiter), true
+	}
+	for index := 1; index < len(rest); index++ {
+		switch {
+		case quote == '"' && rest[index] == '\\':
+			index++
+		case rest[index] == quote:
+			return index + 1, true
+		}
+	}
+	return 0, false
+}
+
+// inMultiline reads one token of the multi-line string open: an escape of a basic one, the run
+// of quotes that closes it (up to two quotes of the text may precede the delimiter), or one byte
+// of its text.
+func (s *TOMLValueScan) inMultiline(rest string) int {
+	switch {
+	case s.multiline == `"""` && rest[0] == '\\':
+		return min(2, len(rest))
+	case strings.HasPrefix(rest, s.multiline):
+		run := len(rest) - len(strings.TrimLeft(rest, s.multiline[:1]))
+		s.multiline = ""
+		return run
+	}
+	return 1
 }

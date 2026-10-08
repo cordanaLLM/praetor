@@ -21,10 +21,12 @@ import (
 const maxScaffoldedWorkflows = 64
 
 // scaffoldedWorkflow is one CI workflow this adoption run leaves as its own rendering, and what
-// it runs as read from the file (forge.WorkflowRuns).
+// it runs as read from the file (forge.WorkflowRuns), with the actions it uses (workflowActions),
+// named for a workflow that runs no command of its own.
 type scaffoldedWorkflow struct {
-	path string
-	runs []forge.WorkflowRun
+	path    string
+	runs    []forge.WorkflowRun
+	actions []string
 }
 
 // scaffoldedWorkflows lists the CI workflows this run leaves as adoption's rendering
@@ -42,11 +44,16 @@ func (s *adoptSession) scaffoldedWorkflows(ctx context.Context, families []manag
 // adoptedWorkflowFiles lists the CI workflows this run leaves as adoption's rendering, with
 // their bodies: the hosted workflow of every managed asset family the active facets enable
 // (families), which the family's step writes whenever its facet is declared (the step cannot be
-// declined; only the facet turns it off), and the workflows of the detected flavor that flavor
-// apply leaves as its own (plannedFlavorWorkflows), unless the flavor step is declined. The
-// harness names what they run and the actionlint-labels step declares the runner labels they
-// need, both from this one list.
+// declined; only the facet turns it off), the hosted REUSE gate of a repository that declares
+// REUSE (plannedReuseWorkflow), and the workflows of the detected flavor that flavor apply
+// leaves as its own (plannedFlavorWorkflows), unless the flavor step is declined. The harness
+// names what they run and the actionlint-labels step declares the runner labels they need, both
+// from this one list.
 func (s *adoptSession) adoptedWorkflowFiles(ctx context.Context, families []managedasset.Family) ([]flavor.PlannedTemplate, error) {
+	reuse, err := s.plannedReuseWorkflow(ctx)
+	if err != nil {
+		return nil, err
+	}
 	planned, err := s.plannedFlavorWorkflows(ctx)
 	if err != nil {
 		return nil, err
@@ -55,7 +62,7 @@ func (s *adoptSession) adoptedWorkflowFiles(ctx context.Context, families []mana
 	if err != nil {
 		return nil, err
 	}
-	return append(hosted, planned...), nil
+	return append(append(hosted, reuse...), planned...), nil
 }
 
 // familyWorkflows returns the hosted workflow of each of families that has one, in their order,
@@ -104,7 +111,11 @@ func workflowRuns(files []flavor.PlannedTemplate) ([]scaffoldedWorkflow, error) 
 		if err != nil {
 			return nil, fmt.Errorf("read scaffolded workflow %s: %w", files[i].Path, err)
 		}
-		workflows = append(workflows, scaffoldedWorkflow{path: files[i].Path, runs: runs})
+		actions, err := workflowActions(files[i].Content)
+		if err != nil {
+			return nil, fmt.Errorf("read the actions of scaffolded workflow %s: %w", files[i].Path, err)
+		}
+		workflows = append(workflows, scaffoldedWorkflow{path: files[i].Path, runs: runs, actions: actions})
 	}
 	return workflows, nil
 }
@@ -120,7 +131,7 @@ func ciClaim(workflows []scaffoldedWorkflow) string {
 	parts := make([]string, 0, len(workflows))
 	praetorInCI := false
 	for _, workflow := range workflows {
-		parts = append(parts, "`"+workflow.path+"` runs "+codeList(workflow.runs))
+		parts = append(parts, "`"+workflow.path+"` runs "+workflowClaim(workflow))
 		praetorInCI = praetorInCI || runsPraetor(workflow.runs)
 	}
 	lead := "Adoption adds no server-side `praetorctl` gate run. Scaffolded CI: "
@@ -128,6 +139,36 @@ func ciClaim(workflows []scaffoldedWorkflow) string {
 		lead = "Scaffolded CI: "
 	}
 	return lead + strings.Join(parts, "; ") + ".\n\n"
+}
+
+// workflowActions lists the uses: value of every line of workflow that declares one, in file
+// order and without its trailing comment or quotes, through util.ScanActionUses, the scan bump
+// and the managed asset families read a workflow's actions with.
+func workflowActions(workflow string) ([]string, error) {
+	_, uses, err := util.ScanActionUses(workflow, managedasset.MaxWorkflowLines)
+	if err != nil {
+		return nil, err
+	}
+	actions := make([]string, 0, len(uses))
+	for _, use := range uses {
+		if fields := strings.Fields(use.Ref); len(fields) > 0 {
+			actions = append(actions, strings.Trim(fields[0], `"'`))
+		}
+	}
+	return actions, nil
+}
+
+// workflowClaim renders what one workflow runs: its commands (codeList), or, for a workflow
+// whose steps run none of their own, such as the hosted REUSE gate, the actions they use.
+func workflowClaim(workflow scaffoldedWorkflow) string {
+	if len(workflow.runs) > 0 || len(workflow.actions) == 0 {
+		return codeList(workflow.runs)
+	}
+	spans := make([]string, 0, len(workflow.actions))
+	for _, action := range workflow.actions {
+		spans = append(spans, "`"+strings.ReplaceAll(action, "`", "'")+"`")
+	}
+	return "no command of its own, only the actions " + strings.Join(spans, ", ")
 }
 
 // codeList renders what the steps run as a comma-separated list of code spans, a multi-line

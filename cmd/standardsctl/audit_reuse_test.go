@@ -5,12 +5,15 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
@@ -116,5 +119,142 @@ func TestVendoredLicenseWarningsBoundary(t *testing.T) {
 	}
 	if warnings := vendoredLicenseWarnings(t.Context(), root, []managedasset.Family{families[0]}); len(warnings) != 0 {
 		t.Fatalf("a family that vendors nothing read REUSE.toml: %v", warnings)
+	}
+}
+
+// reuseOrderToday is the day the annotation order tests judge exceptions entries against.
+var reuseOrderToday = time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC)
+
+// auditReuseOrder runs the REUSE.toml annotation order gate over a repository whose REUSE.toml
+// is text, or that has none for a nil text, under a manifest with entries as its exceptions, and
+// returns what it printed and its verdict.
+func auditReuseOrder(t *testing.T, text *string, entries ...config.Exception) (string, error) {
+	t.Helper()
+	root := t.TempDir()
+	if text != nil {
+		writeFixtureFile(t, root, supplychain.ReuseFile, *text)
+	}
+	manifest := &config.Manifest{Exceptions: entries}
+	return captureStdout(t, func() error { return auditReuseRecords(t.Context(), manifest, root, reuseOrderToday) })
+}
+
+// The annotation order gate holds an override to the record REUSE resolves for its files.
+// Positive: the default table first and the override after it passes, as praetor's own
+// REUSE.toml does. Negative: the default table after the override fails, naming each override
+// path and the default. Boundary: no REUSE.toml skips, saying why, and one the read cannot follow
+// fails instead of passing unchecked.
+func TestAuditReuseRecords_3D(t *testing.T) {
+	correct := "version = 1\n\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n" + reuseOverrideTable
+	if output, err := auditReuseOrder(t, &correct); err != nil || !strings.Contains(output, "[PASS] REUSE.toml annotation order") {
+		t.Fatalf("default then override: %v\n%s", err, output)
+	}
+	own, err := os.ReadFile(filepath.Join("..", "..", supplychain.ReuseFile))
+	if err != nil {
+		t.Fatalf("read praetor's own %s: %v", supplychain.ReuseFile, err)
+	}
+	ownText := string(own)
+	if output, err := auditReuseOrder(t, &ownText); err != nil {
+		t.Fatalf("praetor's own %s: %v\n%s", supplychain.ReuseFile, err, output)
+	}
+	reversed := "version = 1\n" + reuseOverrideTable + "\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n"
+	output, err := auditReuseOrder(t, &reversed)
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml annotation order: 1 path(s)") ||
+		!strings.Contains(output, `annotation 1 path "tools/figures/third_party/interfig/upstream/**" never takes effect: annotation 2 path "**"`) {
+		t.Fatalf("default after override: %v\n%s", err, output)
+	}
+	if output, err := auditReuseOrder(t, nil); err != nil || !strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") {
+		t.Fatalf("no REUSE.toml: %v\n%s", err, output)
+	}
+	unreadable := "version = 1\n[[annotations]]\npath = \"\"\"\n**\n\"\"\"\n"
+	if _, err := auditReuseOrder(t, &unreadable); err == nil || !strings.Contains(err.Error(), "not checked") {
+		t.Fatalf("a REUSE.toml the read cannot follow passed: %v", err)
+	}
+	// The reversed order written as an inline array of tables, which REUSE reads, fails closed
+	// instead of passing over no annotation.
+	inline := "version = 1\nannotations = [\n  { path = \"tools/figures/third_party/interfig/upstream/**\", SPDX-License-Identifier = \"MIT\" },\n" +
+		"  { path = \"**\", SPDX-License-Identifier = \"EUPL-1.2\" },\n]\n"
+	if output, err := auditReuseOrder(t, &inline); err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml annotation order not checked") ||
+		!strings.Contains(err.Error(), "top-level key annotations") || strings.Contains(output, "[PASS]") {
+		t.Fatalf("annotations as an inline array of tables: %v\n%s", err, output)
+	}
+}
+
+// reuseOrderEntry is an exceptions entry of the annotation order rule naming REUSE.toml, expiring
+// on expires.
+func reuseOrderEntry(expires string) config.Exception {
+	return config.Exception{Rule: config.ExceptionRuleReuseAnnotationOrder, Path: supplychain.ReuseFile,
+		Reason: "4000 vendored file globs", Expires: expires}
+}
+
+// A REUSE.toml whose comparisons pass the step bound is not checked. Negative: without an
+// exceptions entry the gate fails, naming the bound and the rule that would excuse it, and an
+// expired entry excuses nothing. Positive: a live entry excuses it, printing the entry's reason
+// and expiry as not checked, never as a pass. Boundary: an entry for a file the gate checks in
+// full is stale and fails the gate.
+func TestAuditReuseRecords_Bound(t *testing.T) {
+	bound := fmt.Errorf("REUSE.toml annotation 1 path \"**\": %w of 16777216", supplychain.ErrReuseGlobBound)
+	err := reuseOrderBound(nil, bound, reuseOrderToday)
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml annotation order not checked") || !strings.Contains(err.Error(), "of 16777216") ||
+		!strings.Contains(err.Error(), "exceptions entry of rule reuse-annotation-order naming REUSE.toml") {
+		t.Fatalf("no entry: %v", err)
+	}
+	if err := reuseOrderBound([]config.Exception{reuseOrderEntry("2026-10-06")}, bound, reuseOrderToday); err == nil ||
+		!strings.Contains(err.Error(), "its reuse-annotation-order exception expired on 2026-10-06") {
+		t.Fatalf("expired entry: %v", err)
+	}
+	output, err := captureStdout(t, func() error {
+		return reuseOrderBound([]config.Exception{reuseOrderEntry("2026-12-31")}, bound, reuseOrderToday)
+	})
+	if err != nil || !strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") ||
+		!strings.Contains(output, "until 2026-12-31: 4000 vendored file globs") || strings.Contains(output, "[PASS]") {
+		t.Fatalf("live entry: %v\n%s", err, output)
+	}
+	correct := "version = 1\n\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"EUPL-1.2\"\n" + reuseOverrideTable
+	output, err = auditReuseOrder(t, &correct, reuseOrderEntry("2026-12-31"))
+	if err == nil || !strings.Contains(err.Error(), "reuse-annotation-order exceptions entries excuse nothing") ||
+		!strings.Contains(output, "exceptions entry REUSE.toml (reuse-annotation-order): the annotation order was checked in full") {
+		t.Fatalf("stale entry: %v\n%s", err, output)
+	}
+}
+
+// auditLicensing runs both licensing gates and prints both verdicts. Positive: a root whose
+// LICENSE holds the one LICENSES text passes, and an upstream COPYING the manifest keeps is named;
+// so does one whose REUSE.toml spells the whole-tree default as a union of globs and writes its
+// copyright as an array of escaped strings and as a multi-line string, which neither gate reads.
+// Negative: the same COPYING without the exception fails the root licence gate while the
+// annotation order gate still prints its verdict. Boundary: a root with neither LICENSES/ nor
+// REUSE.toml skips both, saying why.
+func TestAuditLicensing_3D(t *testing.T) {
+	today := time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC)
+	run := func(manifest *config.Manifest, root string) (string, error) {
+		return captureStdout(t, func() error { return auditLicensing(t.Context(), manifest, root, today) })
+	}
+	root := t.TempDir()
+	writeFixtureFile(t, root, "LICENSES/MIT.txt", "MIT License\n")
+	writeFixtureFile(t, root, supplychain.RootLicenseFile, "MIT License\n")
+	writeFixtureFile(t, root, "COPYING", "upstream notice\n")
+	kept := &config.Manifest{Exceptions: []config.Exception{{Rule: config.ExceptionRuleRootLicenseNotice, Path: "COPYING",
+		Reason: "upstream notice kept verbatim", Expires: "2026-12-31"}}}
+	output, err := run(kept, root)
+	if err != nil || !strings.Contains(output, "[PASS] root licence: LICENSE holds the text of LICENSES/MIT.txt; kept upstream notices COPYING.") ||
+		!strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") {
+		t.Fatalf("kept COPYING: %v\n%s", err, output)
+	}
+	writeFixtureFile(t, root, supplychain.ReuseFile, "version = 1\n\n[[annotations]]\npath = [\"*\", \".*\", \"*/**\", \".*/**\"]\n"+
+		"SPDX-FileCopyrightText = [\"2024 A \\\"B\\\" C\", \"x\"]\nSPDX-FileCopyrightText = \"\"\"\n2024 A\n2025 B\n\"\"\"\n"+
+		"SPDX-License-Identifier = \"MIT\"\n")
+	output, err = run(kept, root)
+	if err != nil || !strings.Contains(output, "[PASS] REUSE.toml annotation order") ||
+		!strings.Contains(output, "[PASS] root licence: LICENSE holds the text of LICENSES/MIT.txt") {
+		t.Fatalf("a union default with escaped and multi-line copyright values: %v\n%s", err, output)
+	}
+	output, err = run(&config.Manifest{}, root)
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] root licence: 1 problem(s)") ||
+		!strings.Contains(output, "COPYING: a second root licence file beside LICENSE") || !strings.Contains(output, "REUSE.toml annotation order") {
+		t.Fatalf("unkept COPYING: %v\n%s", err, output)
+	}
+	output, err = run(&config.Manifest{}, t.TempDir())
+	if err != nil || !strings.Contains(output, "[SKIP] root licence not checked: the repository keeps no LICENSES/ directory.") {
+		t.Fatalf("no licensing: %v\n%s", err, output)
 	}
 }
