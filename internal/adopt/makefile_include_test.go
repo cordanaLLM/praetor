@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // mergeDocumentationMakefile is mergeDocumentationMakefileWith where no include is followed; the
@@ -224,6 +225,7 @@ var remadeCases = []remadeCase{
 	{"computed VPATH name", "X := VP\n$(X)ATH := src\ninclude gen.mk\n", map[string]string{"src/gen.mk.sh": remadeGenMk}},
 	{"computed SUFFIXES name", "S := .SUFF\n$(S)IXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.in": remadeGenMk}},
 	{"custom suffix rule", ".SUFFIXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.in": remadeGenMk}},
+	{"makefile target remade", "include gen.mk\nMakefile: stamp\n\t@touch Makefile\nstamp:\n\t@cp gen.src gen.mk\n", map[string]string{"gen.src": remadeGenMk}},
 }
 
 // files2 is every file of the case including the tracked gen.mk, whose text is genMk: the GNU
@@ -306,20 +308,32 @@ func TestMergeDocumentationMakefileAllowListFollowsSafeIncludes(t *testing.T) {
 // TestReconcileMakefileFollowsTrackedIncludeThroughSession drives the production entry point
 // (reconcileMakefile, the adopt path) so a regression in the wiring of the expander is caught.
 func TestReconcileMakefileFollowsTrackedIncludeThroughSession(t *testing.T) {
-	makefile := "include shared.mk\n\n.PHONY: verify-all\nverify-all: lint\n"
-	s := includeDocsSession(t, map[string]string{makefileName: makefile, "shared.mk": "lint:\n\t@true\n"}, AdoptOptions{})
+	makefile := "include tools/Makefile.shared\ninclude tools/tool-versions.env\n\n" +
+		util.MakefileCLIVariable +
+		".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n"
+	files := map[string]string{
+		makefileName:              makefile,
+		"tools/Makefile.shared":   "help:\n\t@echo help\nlint:\n\t@true\ntest:\n\t@true\n",
+		"tools/tool-versions.env": "NAME=value\n",
+	}
+	s := includeDocsSession(t, files, AdoptOptions{})
 	if err := reconcileMakefile(t.Context(), s); err != nil {
 		t.Fatalf("tracked include refused through the session: %v", err)
 	}
 	if got := mustRead(t, filepath.Join(s.repoPath, makefileName)); !strings.Contains(got, DocumentationMakefileBlock()) || !strings.HasPrefix(got, makefile) {
 		t.Fatalf("block not attached:\n%s", got)
 	}
-	bad := includeDocsSession(t, map[string]string{makefileName: makefile, "shared.mk": "docs-lint:\n\t@true\n"}, AdoptOptions{})
+	bad := includeDocsSession(t, map[string]string{
+		makefileName:              makefile,
+		"tools/Makefile.shared":   "docs-lint:\n\t@true\n",
+		"tools/tool-versions.env": "NAME=value\n",
+	}, AdoptOptions{})
 	if err := reconcileMakefile(t.Context(), bad); err == nil {
 		t.Fatal("fragment defining docs-lint accepted through the session")
 	}
 	untracked := includeDocsSession(t, map[string]string{makefileName: makefile}, AdoptOptions{})
-	mustWrite(t, filepath.Join(untracked.repoPath, "shared.mk"), "lint:\n")
+	mustWrite(t, filepath.Join(untracked.repoPath, "tools", "Makefile.shared"), "lint:\n")
+	mustWrite(t, filepath.Join(untracked.repoPath, "tools", "tool-versions.env"), "NAME=value\n")
 	if err := reconcileMakefile(t.Context(), untracked); err == nil {
 		t.Fatal("untracked include accepted through the session")
 	}

@@ -20,33 +20,89 @@ var makefileSpecialTargets = map[string]bool{
 // member, an escape, a quote or a redirect.
 const makefileTargetForbidden = "$%&()[]{}*?~\\\"'`<>|"
 
-// makefileLiteralShapes reports whether every line of data, the Makefile with the followed
-// fragments spliced in, is a literal shape the reader fully understands, and no rule target
-// equals a followed operand. The shapes are a comment or blank line, a recipe line, a conditional
-// whose branches hold allowed shapes, an include line, a variable assignment (makefileAllowedAssignment)
-// and an explicit rule with literal targets (makefileAllowedRule). A define, an export of a name
-// without a value, a vpath directive, a bare expansion, a load, a call that parses text, and any
-// line the scanner cannot place make the text ambiguous, as on a Makefile with an unread include.
-func makefileLiteralShapes(data string, followed []string) bool {
-	lines, whole := makefileLogicalLines(data)
-	if !whole {
-		return false
+// makefileCLIVariableLines holds the lines of MakefileCLIVariable after line-ending normalisation
+// and trailing-space trimming.
+var makefileCLIVariableLines = func() []string {
+	normalized := strings.ReplaceAll(MakefileCLIVariable, "\r\n", "\n")
+	raw := strings.Split(normalized, "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		trimmed := strings.TrimRight(line, " \t\r")
+		if trimmed != "" {
+			lines = append(lines, trimmed)
+		}
 	}
+	return lines
+}()
+
+// makefileIsCLIVariableLine reports whether line matches one of the lines of MakefileCLIVariable
+// by exact comparison after line-ending normalisation and trailing-space trim.
+func makefileIsCLIVariableLine(line string) bool {
+	norm := strings.TrimRight(strings.ReplaceAll(line, "\r", ""), " \t")
+	for _, expected := range makefileCLIVariableLines {
+		if norm == expected {
+			return true
+		}
+	}
+	return false
+}
+
+// makefileIsMakefileName reports whether name is one of the names Make treats as its makefile.
+// Make remakes its own makefile and re-execs, so a rule for any of these names can rewrite an include.
+func makefileIsMakefileName(name string) bool {
+	return name == "Makefile" || name == "makefile" || name == "GNUmakefile"
+}
+
+// makefileTrackedLine records one logical line together with the file and 1-indexed line number
+// where it appeared, so a refusal note can name the exact location that caused it.
+type makefileTrackedLine struct {
+	text string
+	file string
+	line int
+}
+
+// makefileTrackedLogicalLines returns the logical lines of data with each line's file and 1-based
+// start line recorded, and false when the file exceeds the line bound.
+func makefileTrackedLogicalLines(data, file string) ([]makefileTrackedLine, bool) {
+	physical := strings.Split(data, "\n")
+	lines := make([]makefileTrackedLine, 0, min(len(physical), MaxMakefileLines))
+	for start := 0; start < len(physical) && start < MaxMakefileLines; {
+		line, next, whole := makefileJoin(physical, start)
+		if !whole {
+			return lines, false
+		}
+		lines = append(lines, makefileTrackedLine{
+			text: strings.TrimSuffix(line, "\r"),
+			file: file,
+			line: start + 1,
+		})
+		start = next
+	}
+	return lines, len(physical) <= MaxMakefileLines
+}
+
+// makefileTrackedLiteralShapes reports whether every line in lines is an allowed literal shape.
+// When a line is refused, it returns false, the file and line number of the first refused line,
+// and a description of its shape.
+func makefileTrackedLiteralShapes(lines []makefileTrackedLine, followed []string) (bool, string, int, string) {
 	operands := make(map[string]struct{}, len(followed))
 	for _, operand := range followed {
 		operands[makefileNormalizeName(operand)] = struct{}{}
 	}
 	var scanner makefileScanner
 	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
-		kind := scanner.next(lines[index])
+		tl := lines[index]
+		kind := scanner.next(tl.text)
 		if scanner.lost || kind == makefileDefineLine || kind == makefileUnsureLine {
-			return false
+			shape := makefileRefusedShape(tl.text, kind, scanner.lost, operands)
+			return false, tl.file, tl.line, shape
 		}
-		if kind == makefileSyntaxLine && !makefileAllowedShape(strings.TrimSpace(lines[index]), operands) {
-			return false
+		if kind == makefileSyntaxLine && !makefileAllowedShape(strings.TrimSpace(tl.text), operands) {
+			shape := makefileRefusedShape(strings.TrimSpace(tl.text), kind, false, operands)
+			return false, tl.file, tl.line, shape
 		}
 	}
-	return true
+	return true, "", 0, ""
 }
 
 // makefileParsesText reports whether line holds a call that parses text, runs a command or writes
@@ -67,19 +123,29 @@ func makefileAllowedShape(line string, operands map[string]struct{}) bool {
 	if line == "" || strings.HasPrefix(line, "#") {
 		return true
 	}
-	if makefileParsesText(line) {
+	if makefileParsesText(line) && !makefileIsCLIVariableLine(line) {
 		return false
 	}
-	fields := strings.Fields(line)
-	if makefileConditionalLine(line, fields) {
+	if makefileAllowedDirective(line) {
 		return true
 	}
 	assign, colon, _ := makefileSplit(line)
-	switch {
-	case assign >= 0 && (colon < 0 || assign < colon):
+	if assign >= 0 && (colon < 0 || assign < colon) {
 		return makefileAllowedAssignment(line, assign)
-	case colon >= 0:
+	}
+	if colon >= 0 {
 		return makefileAllowedRule(line[:colon], line[colon:], operands)
+	}
+	return false
+}
+
+func makefileAllowedDirective(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	if makefileConditionalLine(line, fields) {
+		return true
 	}
 	switch fields[0] {
 	case "include", "-include", "sinclude":
@@ -116,7 +182,7 @@ func makefileAllowedRule(head, rest string, operands map[string]struct{}) bool {
 			return false
 		}
 		name := makefileNormalizeName(field)
-		if _, followed := operands[name]; followed {
+		if _, followed := operands[name]; followed || makefileIsMakefileName(name) {
 			return false
 		}
 		if strings.HasPrefix(name, ".") && !makefileSpecialTargets[name] {
@@ -124,4 +190,150 @@ func makefileAllowedRule(head, rest string, operands map[string]struct{}) bool {
 		}
 	}
 	return true
+}
+
+// makefileRefusedShape classifies the shape of a line that was refused by makefileTrackedLiteralShapes.
+func makefileRefusedShape(line string, kind int, lost bool, operands map[string]struct{}) string {
+	if s := makefileScannerStateShape(kind, lost); s != "" {
+		return s
+	}
+	if makefileParsesText(line) {
+		return makefileParsesTextShape(line)
+	}
+	if s := makefileDirectiveShape(strings.Fields(line)); s != "" {
+		return s
+	}
+	return makefileGrammarShape(line, operands)
+}
+
+func makefileScannerStateShape(kind int, lost bool) string {
+	if lost {
+		return "unbalanced conditional"
+	}
+	if kind == makefileDefineLine {
+		return "define block"
+	}
+	if kind == makefileUnsureLine {
+		return "unrecognized directive"
+	}
+	return ""
+}
+
+func makefileGrammarShape(line string, operands map[string]struct{}) string {
+	assign, colon, _ := makefileSplit(line)
+	if assign >= 0 && (colon < 0 || assign < colon) {
+		return makefileAssignmentShape(line, assign)
+	}
+	if colon >= 0 {
+		return makefileRuleShape(line[:colon], line[colon:], operands)
+	}
+	if strings.Contains(line, "$") {
+		return "bare expansion"
+	}
+	return "unsupported syntax"
+}
+
+func makefileDirectiveShape(fields []string) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	switch fields[0] {
+	case "vpath":
+		return "vpath directive"
+	case "load":
+		return "load directive"
+	case "export":
+		return "bare export"
+	case "unexport":
+		return "unexport directive"
+	}
+	return ""
+}
+
+func makefileParsesTextShape(line string) string {
+	var called string
+	makefileCallsFunction(line, func(name, _ string) bool {
+		switch name {
+		case "eval", "guile", "shell", "file", "call":
+			called = name
+			return true
+		}
+		return false
+	})
+	if called != "" {
+		return "call to $(" + called + ")"
+	}
+	return "parses makefile text"
+}
+
+func makefileAssignmentShape(line string, assign int) string {
+	if line[assign] == '!' {
+		return "command assignment"
+	}
+	words := makefileNameWords(line[:assign])
+	if len(words) != 1 {
+		return "bare export"
+	}
+	if strings.ContainsAny(words[0], "$\\") {
+		return "computed variable name"
+	}
+	if words[0] == "VPATH" {
+		return "VPATH assignment"
+	}
+	if strings.HasPrefix(words[0], ".") {
+		return "special variable assignment"
+	}
+	return "assignment"
+}
+
+func makefileRuleShape(head, rest string, operands map[string]struct{}) string {
+	if strings.HasPrefix(rest, "::") {
+		return "double-colon rule"
+	}
+	fields := strings.Fields(head)
+	for _, field := range fields {
+		if shape := makefileRuleTargetShape(field, operands); shape != "" {
+			return shape
+		}
+	}
+	return "rule"
+}
+
+func makefileRuleTargetShape(field string, operands map[string]struct{}) string {
+	if strings.Contains(field, "$") {
+		return "computed target"
+	}
+	if strings.Contains(field, "%") {
+		return "pattern rule"
+	}
+	if strings.Contains(field, "&") {
+		return "grouped target"
+	}
+	if strings.ContainsAny(field, makefileTargetForbidden) {
+		return "unsupported target syntax"
+	}
+	name := makefileNormalizeName(field)
+	if _, followed := operands[name]; followed {
+		return "rule remakes " + name
+	}
+	if makefileIsMakefileName(name) {
+		return "rule remakes " + name
+	}
+	if strings.HasPrefix(name, ".") && !makefileSpecialTargets[name] {
+		return makefileSpecialDotTargetShape(name)
+	}
+	return ""
+}
+
+func makefileSpecialDotTargetShape(name string) string {
+	if name == ".SUFFIXES" {
+		return ".SUFFIXES target"
+	}
+	if name == ".DEFAULT" {
+		return ".DEFAULT target"
+	}
+	if strings.Count(name, ".") >= 2 {
+		return "suffix rule"
+	}
+	return "special target " + name
 }

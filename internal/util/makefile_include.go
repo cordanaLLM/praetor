@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"path"
 	"strings"
 )
@@ -34,26 +35,58 @@ func MakefileExpandIncludes(data string, read MakefileIncludeReader) string {
 }
 
 // MakefileExpandIncludesReport is MakefileExpandIncludes that also returns a note when it
-// discards the expansion because Make may remake a followed include, naming the includes, so the
-// caller's refusal can say why an include it expected to follow stayed ambiguous.
+// discards the expansion because Make may remake a followed include or a line has an unallowed shape,
+// naming the includes, the first refused line and its shape, so the caller's refusal can say why
+// an include it expected to follow stayed ambiguous.
 func MakefileExpandIncludesReport(data string, read MakefileIncludeReader) (string, []string) {
 	if read == nil {
 		return data, nil
 	}
+	lines, whole := makefileTrackedLogicalLines(data, "Makefile")
+	if !whole {
+		return data, nil
+	}
 	files := 0
 	followed := make([]string, 0, MaxMakefileIncludeFiles)
+	includeLoc := make(map[string]string)
 	original := data
 	for level := 0; level < MaxMakefileIncludeDepth; level++ {
-		expanded, changed := makefileExpandLevel(data, read, &files, &followed)
-		if !changed {
+		expanded, changed, ok := makefileExpandLevel(lines, read, &files, &followed, includeLoc)
+		if !ok || !changed {
 			break
 		}
-		data = expanded
+		lines = expanded
 	}
-	if makefileMayRemakeIncluded(data, followed) {
-		return original, []string{"includes " + strings.Join(followed, ", ") + " not followed: Make may remake them before reading"}
+	if len(followed) == 0 {
+		return data, nil
 	}
-	return data, nil
+	if note := makefileDefaultSuffixNote(followed, includeLoc); note != "" {
+		return original, []string{note}
+	}
+	ok, file, line, shape := makefileTrackedLiteralShapes(lines, followed)
+	if !ok {
+		return original, []string{fmt.Sprintf("includes %s not followed: %s:%d: %s", strings.Join(followed, ", "), file, line, shape)}
+	}
+	texts := make([]string, len(lines))
+	for i, l := range lines {
+		texts[i] = l.text
+	}
+	return strings.Join(texts, "\n"), nil
+}
+
+func makefileDefaultSuffixNote(followed []string, includeLoc map[string]string) string {
+	for _, operand := range followed {
+		clean := path.Clean(operand)
+		if makefileHasDefaultSuffix(clean) {
+			loc := includeLoc[operand]
+			if loc == "" {
+				loc = operand
+			}
+			return fmt.Sprintf("includes %s not followed: %s: operand ends in default suffix %s",
+				strings.Join(followed, ", "), loc, path.Ext(clean))
+		}
+	}
+	return ""
 }
 
 // makefileDefaultSuffixes is GNU Make's default .SUFFIXES list. A file ending in one can be built
@@ -63,24 +96,6 @@ var makefileDefaultSuffixes = []string{
 	".out", ".a", ".ln", ".o", ".c", ".cc", ".C", ".cpp", ".p", ".f", ".F", ".m", ".r", ".y", ".l",
 	".ym", ".yl", ".s", ".S", ".mod", ".sym", ".def", ".h", ".info", ".dvi", ".tex", ".texinfo",
 	".texi", ".txinfo", ".w", ".ch", ".web", ".sh", ".elc", ".el",
-}
-
-// makefileMayRemakeIncluded reports whether Make may remake any followed include before reading it.
-// It is an allow-list (makefileLiteralShapes): an include is trusted only when every line of the
-// combined text is a shape the reader fully understands, and no operand ends in one of Make's
-// default suffixes. Guessing at spellings of a remaking rule is not enough: a computed target, a
-// computed VPATH or .SUFFIXES name, a grouped or static-pattern rule each remade a followed
-// include in measured runs against GNU Make 4.4.1.
-func makefileMayRemakeIncluded(data string, followed []string) bool {
-	if len(followed) == 0 {
-		return false
-	}
-	for _, operand := range followed {
-		if makefileHasDefaultSuffix(path.Clean(operand)) {
-			return true
-		}
-	}
-	return !makefileLiteralShapes(data, followed)
 }
 
 // makefileHasDefaultSuffix reports whether name ends in a suffix of Make's default .SUFFIXES list.
@@ -111,58 +126,70 @@ func makefileNormalizeName(name string) string {
 // parses it as makefile syntax (measured against GNU Make 4.4.1).
 const makefileIncludeBoundary = ".PRAETOR_INCLUDE_BOUNDARY := 1"
 
-// makefileExpandLevel replaces the literal include lines of data once. Nested includes the
-// fragments bring are left for the next level. When the scanner loses its place anywhere in data
-// the whole level is discarded and data comes back unchanged, so nothing is expanded.
-func makefileExpandLevel(data string, read MakefileIncludeReader, files *int, followed *[]string) (string, bool) {
-	lines, whole := makefileLogicalLines(data)
-	if !whole {
-		return data, false
-	}
+// makefileExpandLevel replaces the literal include lines of lines once. Nested includes the
+// fragments bring are left for the next level. When the scanner loses its place anywhere in lines
+// the whole level is discarded and lines comes back unchanged, so nothing is expanded.
+func makefileExpandLevel(lines []makefileTrackedLine, read MakefileIncludeReader, files *int, followed *[]string, includeLoc map[string]string) ([]makefileTrackedLine, bool, bool) {
 	var scanner makefileScanner
-	out := make([]string, 0, len(lines))
+	out := make([]makefileTrackedLine, 0, len(lines))
 	changed := false
 	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
-		line := lines[index]
-		kind := scanner.next(line)
+		tl := lines[index]
+		kind := scanner.next(tl.text)
 		if scanner.lost {
-			return data, false
+			return lines, false, false
 		}
 		if kind == makefileSyntaxLine {
-			if text, ok := makefileIncludeText(line, read, files, followed); ok {
-				line, changed = text, true
+			if replacement, ok := makefileIncludeText(tl, read, files, followed, includeLoc); ok {
+				out = append(out, replacement...)
+				changed = true
+				continue
 			}
 		}
-		out = append(out, line)
+		out = append(out, tl)
 	}
-	return strings.Join(out, "\n"), changed
+	return out, changed, true
 }
 
-// makefileIncludeText returns the fragment text an include line stands for, and false when line is
-// no include of literal paths all of which read vouches for.
-func makefileIncludeText(line string, read MakefileIncludeReader, files *int, followed *[]string) (string, bool) {
-	fields := strings.Fields(line)
-	if len(fields) < 2 || fields[0] != "include" || strings.HasPrefix(line, "\t") {
-		return "", false
+// makefileIncludeText returns the replacement lines an include line stands for, and false when
+// line is no include of literal paths all of which read vouches for.
+func makefileIncludeText(tl makefileTrackedLine, read MakefileIncludeReader, files *int, followed *[]string, includeLoc map[string]string) ([]makefileTrackedLine, bool) {
+	fields := strings.Fields(tl.text)
+	if len(fields) < 2 || fields[0] != "include" || strings.HasPrefix(tl.text, "\t") {
+		return nil, false
 	}
-	parts := make([]string, 0, 2*len(fields))
+	parts := make([]makefileTrackedLine, 0, 2*len(fields))
 	operands := make([]string, 0, len(fields)-1)
-	parts = append(parts, makefileIncludeBoundary)
+	parts = append(parts, makefileTrackedLine{text: makefileIncludeBoundary, file: tl.file, line: tl.line})
 	for _, operand := range fields[1:] {
-		if !makefileLiteralPath(operand) || *files >= MaxMakefileIncludeFiles {
-			return "", false
+		fragLines, ok := makefileReadTrackedFragment(operand, read, files)
+		if !ok {
+			return nil, false
 		}
-		*files++
-		text, ok := read(operand)
-		if !ok || !makefileSpliceable(text) {
-			return "", false
-		}
-		parts = append(parts, strings.TrimSuffix(strings.ReplaceAll(text, "\r\n", "\n"), "\n"))
-		parts = append(parts, makefileIncludeBoundary)
+		parts = append(parts, fragLines...)
+		parts = append(parts, makefileTrackedLine{text: makefileIncludeBoundary, file: tl.file, line: tl.line})
 		operands = append(operands, operand)
+		includeLoc[operand] = fmt.Sprintf("%s:%d", tl.file, tl.line)
 	}
 	*followed = append(*followed, operands...)
-	return strings.Join(parts, "\n"), true
+	return parts, true
+}
+
+func makefileReadTrackedFragment(operand string, read MakefileIncludeReader, files *int) ([]makefileTrackedLine, bool) {
+	if !makefileLiteralPath(operand) || *files >= MaxMakefileIncludeFiles {
+		return nil, false
+	}
+	*files++
+	text, ok := read(operand)
+	if !ok || !makefileSpliceable(text) {
+		return nil, false
+	}
+	normalized := strings.TrimSuffix(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	fragLines, whole := makefileTrackedLogicalLines(normalized, operand)
+	if !whole {
+		return nil, false
+	}
+	return fragLines, true
 }
 
 // makefileLiteralPath reports whether operand is a path Make uses as written: no variable

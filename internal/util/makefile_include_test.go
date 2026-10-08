@@ -205,6 +205,9 @@ func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 		"bare export":             "include gen.mk\nexport X\n",
 		"load":                    "include gen.mk\nload x.so\n",
 		"computed in conditional": "include gen.mk\nifdef X\n$(G): s\nendif\n",
+		"changed PRAETORCTL line": strings.TrimSuffix(util.MakefileCLIVariable, "\n") + " extra\ninclude gen.mk\n",
+		"shell command":           "X := $(shell cp gen.src gen.mk)\ninclude gen.mk\n",
+		"makefile target rule":    "include gen.mk\nMakefile: stamp\n\t@touch Makefile\nstamp:\n\t@cp gen.src gen.mk\n",
 	} {
 		got := util.MakefileExpandIncludes(data, read)
 		if strings.Contains(name, "default suffix") {
@@ -222,6 +225,7 @@ func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 		"percent in a recipe":     "include gen.mk\nother:\n\t@printf '%s: x' y\n",
 		"percent after semicolon": "include gen.mk\nother: x ; @printf '%s: x' y\n",
 		"shared fragment shape":   "include gen.mk\nNAME := x\nexport V := 1\nifeq ($(NAME),x)\nT = y\nendif\n.PHONY: other\n.DEFAULT_GOAL := other\nother: gen.mk.txt\n\t@true\n",
+		"MakefileCLIVariable":     util.MakefileCLIVariable + "include gen.mk\n",
 	} {
 		plain := util.MakefileExpandIncludes(data, read)
 		if strings.Contains(plain, "include") || util.MakefileMayDefineTarget(plain, "docs-lint") {
@@ -231,12 +235,34 @@ func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 }
 
 func TestMakefileExpandIncludesReportNamesRemadeIncludes(t *testing.T) {
-	read := fragmentReader(map[string]string{"gen.mk": "help:\n"})
-	_, notes := util.MakefileExpandIncludesReport("include gen.mk\nvpath %.sh src\n", read)
-	if len(notes) != 1 || !strings.Contains(notes[0], "gen.mk") || !strings.Contains(notes[0], "remake") {
-		t.Fatalf("notes %q", notes)
-	}
-	if _, notes := util.MakefileExpandIncludesReport("include gen.mk\n", read); len(notes) != 0 {
-		t.Fatalf("followed include noted: %q", notes)
-	}
+	read := fragmentReader(map[string]string{
+		"gen.mk":    "help:\n",
+		"nested.mk": "help:\n\t@true\nvpath %.sh src\n",
+	})
+	t.Run("vpath not remake", func(t *testing.T) {
+		_, notes := util.MakefileExpandIncludesReport("include gen.mk\nvpath %.sh src\n", read)
+		if len(notes) != 1 || !strings.Contains(notes[0], "Makefile:2: vpath directive") {
+			t.Fatalf("notes %q", notes)
+		}
+		if strings.Contains(notes[0], "remake") {
+			t.Fatalf("vpath note made generic remake claim: %q", notes[0])
+		}
+	})
+	t.Run("remake rule", func(t *testing.T) {
+		_, notes := util.MakefileExpandIncludesReport("include gen.mk\ngen.mk: gen.src\n", read)
+		if len(notes) != 1 || !strings.Contains(notes[0], "Makefile:2: rule remakes gen.mk") {
+			t.Fatalf("remake notes %q", notes)
+		}
+	})
+	t.Run("nested include", func(t *testing.T) {
+		_, notes := util.MakefileExpandIncludesReport("include nested.mk\n", read)
+		if len(notes) != 1 || !strings.Contains(notes[0], "nested.mk:3: vpath directive") {
+			t.Fatalf("nested notes %q", notes)
+		}
+	})
+	t.Run("clean include", func(t *testing.T) {
+		if _, notes := util.MakefileExpandIncludesReport("include gen.mk\n", read); len(notes) != 0 {
+			t.Fatalf("followed include noted: %q", notes)
+		}
+	})
 }
