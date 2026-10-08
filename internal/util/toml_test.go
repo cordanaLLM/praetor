@@ -6,6 +6,7 @@ package util_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -280,5 +281,39 @@ func TestTOMLValueScanBoundary(t *testing.T) {
 		if ends, ok := feedTOMLValue(lines...); !ok || slices.Contains(ends, true) {
 			t.Errorf("%s: ends %v, ok %v; want still open", name, ends, ok)
 		}
+	}
+}
+
+func TestTOMLKeyPathPositive(t *testing.T) {
+	for _, test := range []struct {
+		text, rest string
+		want       []string
+	}{
+		{"annotations]]", "]]", []string{"annotations"}},
+		{"\t a-b_1 \t. \"q x\" .'l' = 1", "= 1", []string{"a-b_1", "q x", "l"}},
+		{`"" = 1`, "= 1", []string{""}},
+	} {
+		got, rest, err := util.TOMLKeyPath(test.text)
+		if err != nil || rest != test.rest || !slices.Equal(got, test.want) {
+			t.Errorf("TOMLKeyPath(%q) = %q, %q, %v; want %q, %q", test.text, got, rest, err, test.want, test.rest)
+		}
+	}
+}
+
+func TestTOMLKeyPathNegative(t *testing.T) {
+	for _, text := range []string{"", " ", "a.", ".a", "a..b", `"a\nb"`, `"a\\b"`, `"open`, "=1", "\va"} {
+		if got, _, err := util.TOMLKeyPath(text); err == nil {
+			t.Errorf("TOMLKeyPath(%q) = %q, want an error", text, got)
+		}
+	}
+}
+
+func TestTOMLKeyPathBoundary(t *testing.T) {
+	long := strings.Repeat("a.", 5000) + "a"
+	if got, rest, err := util.TOMLKeyPath(long); err != nil || len(got) != 5001 || rest != "" {
+		t.Errorf("long key: %d segments, %q, %v", len(got), rest, err)
+	}
+	if got, rest, err := util.TOMLKeyPath("a b!"); err != nil || len(got) != 1 || rest != "b!" {
+		t.Errorf("a space ends a bare key: %q, %q, %v", got, rest, err)
 	}
 }

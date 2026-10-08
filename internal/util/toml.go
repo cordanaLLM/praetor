@@ -5,6 +5,8 @@
 package util
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
@@ -38,6 +40,68 @@ func TOMLKeyValue(line string) (key, value string, ok bool) {
 		return "", "", false
 	}
 	return key, strings.TrimSpace(value), true
+}
+
+// TOMLKeyPath tokenizes the TOML 1.0 key that opens text (the key ABNF of toml.io/en/v1.0.0): one
+// or more segments joined by dots, each a bare key ([A-Za-z0-9_-]+), a basic string without any
+// backslash or a literal string. Spaces and tabs are allowed only between tokens, never inside a
+// bare key or a quoted one. It returns the decoded segments, so "annotations" and annotations
+// are the same segment, and the text after the key with its leading spaces and tabs dropped. A
+// text that does not open with such a key is an error, never a guess: a segment it cannot
+// tokenize exactly (an escape sequence, an unclosed quote, an empty bare key) fails closed.
+// TOMLTableName and TOMLKeyValue read a line's shape and strip spaces inside quotes; readers
+// that must agree with a TOML parser on which key a line names, such as the REUSE.toml read of
+// internal/supplychain, use this one.
+func TOMLKeyPath(text string) (segments []string, rest string, err error) {
+	const blanks = " \t"
+	rest = text
+	// Every pass consumes at least one byte of a segment, so len(text)+1 passes read the key.
+	for range len(text) + 1 {
+		segment, after, cutErr := cutTOMLKeySegment(strings.TrimLeft(rest, blanks))
+		if cutErr != nil {
+			return nil, "", cutErr
+		}
+		segments = append(segments, segment)
+		rest = strings.TrimLeft(after, blanks)
+		next, dotted := strings.CutPrefix(rest, ".")
+		if !dotted {
+			return segments, rest, nil
+		}
+		rest = next
+	}
+	return nil, "", errTOMLKeyBound
+}
+
+var errTOMLKeyBound = errors.New("key longer than the read bound")
+
+// cutTOMLKeySegment cuts the bare or quoted key segment that opens text.
+func cutTOMLKeySegment(text string) (segment, rest string, err error) {
+	if text == "" {
+		return "", "", errors.New("a key segment is missing")
+	}
+	if quote := text[0]; quote == '"' || quote == '\'' {
+		body, after, closed := strings.Cut(text[1:], string(quote))
+		switch {
+		case !closed:
+			return "", "", errors.New("a quoted key is not closed")
+		case strings.ContainsAny(body, "\\\n"):
+			return "", "", errors.New("a quoted key holds a backslash or a line break")
+		}
+		return body, after, nil
+	}
+	end := strings.IndexFunc(text, func(r rune) bool { return !isTOMLBareKeyRune(r) })
+	if end < 0 {
+		end = len(text)
+	}
+	if end == 0 {
+		return "", "", fmt.Errorf("%q is not a bare key character (A-Z a-z 0-9 _ -)", text[:1])
+	}
+	return text[:end], text[end:], nil
+}
+
+// isTOMLBareKeyRune reports whether r may appear in a bare key.
+func isTOMLBareKeyRune(r rune) bool {
+	return r == '_' || r == '-' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 }
 
 // TOMLInlineTableFields calls visit with the key and the value text of each field of the inline

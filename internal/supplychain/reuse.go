@@ -16,12 +16,16 @@ import (
 // The REUSE.toml reads: praetorctl audit's licensing gates and vendored license warning
 // (cmd/standardsctl, audit_reuse.go) and the label a copied upstream file must carry
 // (CheckUpstreamCredits). They read the file's shape, not TOML: the module carries no TOML
-// library (util.TOMLTableName). REUSE 3.3 allows other keys and tables to convey additional
+// library; keys and table headers are tokenized exactly by util.TOMLKeyPath. REUSE 3.3 allows other keys and tables to convey additional
 // information. The read mirrors what the reuse tool parses (reuse/global_licensing.py,
 // ReuseTOML.from_dict and AnnotationsItem.from_dict), so it follows an allow-list and refuses
-// shapes that can define annotations this read never sees, naming the line:
-// (1) at top level, read the version key and step over the value of every other key whatever it
-// holds (util.TOMLValueScan), but refuse the key annotations and any dotted key whose first segment
+// shapes that can define annotations this read never sees, naming the line.
+// A header or key line that util.TOMLKeyPath cannot tokenize (a bare key outside A-Za-z0-9_-,
+// whitespace other than space and tab, a quoted key with a backslash, an unclosed bracket or
+// quote, trailing text after a header) is refused. The decoded first segment is compared
+// exactly, so "annotations" and annotations are one key, and "annota tions" is another:
+// (1) at top level, step over the value of every key, version included, whatever it holds
+// (util.TOMLValueScan), but refuse the key annotations and any dotted key whose first segment
 // is annotations;
 // (2) table headers: [[annotations]] opens an annotation table, any other table or array-of-tables
 // header opens an ignored table whose keys are all stepped over, and [annotations], [annotations.x]
@@ -87,7 +91,7 @@ func ReuseAnnotationTables(text string) ([]ReuseAnnotation, error) {
 	}
 	scan := reuseScan{}
 	for index := 0; index < len(lines) && index < MaxReuseLines; index++ {
-		if err := scan.read(strings.TrimSpace(lines[index])); err != nil {
+		if err := scan.read(strings.Trim(lines[index], " \t")); err != nil {
 			return nil, fmt.Errorf("%s:%d: %w", ReuseFile, index+1, err)
 		}
 	}
@@ -117,22 +121,21 @@ func (s *reuseScan) read(line string) error {
 	return s.assign(line)
 }
 
+// reuseKeyShape names the key shape the read follows, for error texts.
+const reuseKeyShape = "a key is one or more segments joined by dots, each a bare key of A-Z a-z 0-9 _ - or a quoted key " +
+	"without a backslash, with only spaces and tabs between tokens"
+
 // header opens the [[annotations]] table line starts, opens an ignored table for any other table
-// header, and refuses [annotations], [annotations.x] and [[annotations.x]].
+// header, and refuses [annotations], [annotations.x] and [[annotations.x]]. The header is
+// tokenized exactly (util.TOMLKeyPath), so the first segment compared is the key TOML reads.
 func (s *reuseScan) header(line string) error {
-	clean, _, _ := strings.Cut(line, "#")
-	clean = strings.TrimSpace(clean)
-	if strings.Contains(clean, `\`) {
-		return fmt.Errorf("the table header %s is not one this read follows: write each annotation as a table of its own, "+
-			"opened by a [[annotations]] line", line)
+	segments, isArray, err := reuseHeaderKey(line)
+	if err != nil {
+		return fmt.Errorf("the table header %s is not one this read follows (%w): write [key] or [[key]] with %s, "+
+			"and only a comment after it", line, err, reuseKeyShape)
 	}
-	isArray := strings.HasPrefix(clean, "[[") && strings.HasSuffix(clean, "]]")
-	name := util.TOMLTableName(line)
-	inner := strings.Trim(strings.TrimSuffix(strings.TrimPrefix(name, "["), "]"), `"'`)
-	first, _, _ := strings.Cut(inner, ".")
-	first = strings.Trim(first, `"'`)
-	if first == "annotations" {
-		if !isArray || inner != "annotations" {
+	if segments[0] == "annotations" {
+		if !isArray || len(segments) != 1 {
 			return fmt.Errorf("the table header %s is not one this read follows: write each annotation as a table of its own, "+
 				"opened by a [[annotations]] line, not [annotations] or a sub-table", line)
 		}
@@ -141,43 +144,62 @@ func (s *reuseScan) header(line string) error {
 		s.tables = append(s.tables, ReuseAnnotation{})
 		return nil
 	}
-	if inner == "" {
-		return fmt.Errorf("the table header %s is not one this read follows: write each annotation as a table of its own, "+
-			"opened by a [[annotations]] line", line)
-	}
 	s.inTable = false
 	s.ignoredTable = true
 	return nil
 }
 
+// reuseHeaderKey tokenizes a table header line: [ key ] or [[ key ]] with optional spaces and
+// tabs inside the brackets, then nothing or a comment.
+func reuseHeaderKey(line string) (segments []string, isArray bool, err error) {
+	body, isArray := strings.CutPrefix(line, "[[")
+	if !isArray {
+		body = strings.TrimPrefix(line, "[")
+	}
+	segments, rest, err := util.TOMLKeyPath(body)
+	if err != nil {
+		return nil, false, err
+	}
+	closer := "]"
+	if isArray {
+		closer = "]]"
+	}
+	rest, closed := strings.CutPrefix(rest, closer)
+	if !closed {
+		return nil, false, fmt.Errorf("the closing %s is missing", closer)
+	}
+	if rest = strings.TrimLeft(rest, " \t"); rest != "" && !strings.HasPrefix(rest, "#") {
+		return nil, false, fmt.Errorf("%q follows the header", rest)
+	}
+	return segments, isArray, nil
+}
+
 // assign reads the key line assigns: it records the strings of path and SPDX-License-Identifier
 // inside an [[annotations]] table, steps over the value of another key, and refuses annotations
-// keys at top level and dotted annotation keys inside a table.
+// keys at top level and dotted annotation keys inside a table. The key is tokenized exactly
+// (util.TOMLKeyPath).
 func (s *reuseScan) assign(line string) error {
-	key, value, ok := util.TOMLKeyValue(line)
-	if !ok {
-		return fmt.Errorf("%q is not a table header, a key or a comment", line)
+	segments, rest, err := util.TOMLKeyPath(line)
+	value, assigned := strings.CutPrefix(rest, "=")
+	if err != nil || !assigned {
+		return fmt.Errorf("%q is not a table header, a key or a comment: write key = value, where %s", line, reuseKeyShape)
 	}
-	s.listKey, s.listItems = strings.Trim(key, `"'`), nil
-	firstSegment, _, hasDot := strings.Cut(s.listKey, ".")
-	firstSegment = strings.Trim(firstSegment, `"'`)
+	value = strings.TrimSpace(value)
+	s.listKey, s.listItems = strings.Join(segments, "."), nil
 	if !s.inTable {
-		if !s.ignoredTable && (firstSegment == "annotations" || strings.Contains(key, `\`)) {
-			return reuseTopLevelKeyError(key)
+		if !s.ignoredTable && segments[0] == "annotations" {
+			return reuseTopLevelKeyError(s.listKey)
 		}
 		s.skip = util.TOMLValueScan{}
 		return s.skipValue(value)
 	}
-	return s.assignTableKey(firstSegment, hasDot, value)
+	return s.assignTableKey(segments, value)
 }
 
 // assignTableKey handles a key assignment inside an [[annotations]] table.
-func (s *reuseScan) assignTableKey(firstSegment string, hasDot bool, value string) error {
+func (s *reuseScan) assignTableKey(segments []string, value string) error {
 	switch {
-	case strings.Contains(s.listKey, `\`):
-		return fmt.Errorf("the key %s of an [[annotations]] table is not one this read follows: assign %s, %s and %s "+
-			"each on a line of its own, with no dotted key", s.listKey, reusePathKey, reuseLicenseKey, strings.Join(reuseSteppedKeys, ", "))
-	case hasDot && isAnnotationSegment(firstSegment):
+	case len(segments) > 1 && isAnnotationSegment(segments[0]):
 		return fmt.Errorf("the key %s of an [[annotations]] table is not one this read follows: assign %s, %s and %s "+
 			"each on a line of its own, with no dotted key", s.listKey, reusePathKey, reuseLicenseKey, strings.Join(reuseSteppedKeys, ", "))
 	case s.listKey == reusePathKey || s.listKey == reuseLicenseKey:

@@ -157,31 +157,49 @@ func assertSingleTable(t *testing.T, name, text string) {
 	}
 }
 
-// checkReuseToolLint runs reuse lint on fixture where installed.
-func checkReuseToolLint(t *testing.T, fixture string) {
+// reuseToolLint runs reuse lint on a fixture REUSE.toml beside LICENSES/MIT.txt and README.md,
+// and returns its output and whether it passed. It skips the calling subtest, stating why, where
+// the reuse tool is not installed (HISS-21, rule 15).
+func reuseToolLint(t *testing.T, fixture string) (output string, passed bool) {
 	t.Helper()
 	reusePath, err := exec.LookPath("reuse")
 	if err != nil {
-		return
+		t.Skip("reuse is not installed on PATH: the fixture is not confirmed against the reuse tool")
 	}
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "LICENSES"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "LICENSES", "MIT.txt"), []byte("MIT License\n"), 0o644); err != nil {
-		t.Fatal(err)
+	files := map[string]string{filepath.Join("LICENSES", "MIT.txt"): "MIT License\n", ReuseFile: fixture, "README.md": "# Fixture\n"}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(root, ReuseFile), []byte(fixture), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Fixture\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.CommandContext(t.Context(), reusePath, "--root", root, "lint")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("reuse lint failed on fixture: %v\n%s", err, string(output))
-	}
+	out, err := exec.CommandContext(t.Context(), reusePath, "--root", root, "lint").CombinedOutput()
+	return string(out), err == nil
+}
+
+// checkReuseToolLint runs reuse lint on fixture in a subtest and requires it to pass: REUSE
+// applies the fixture's annotation table to README.md.
+func checkReuseToolLint(t *testing.T, fixture string) {
+	t.Helper()
+	t.Run("reuse lint accepts", func(t *testing.T) {
+		if output, passed := reuseToolLint(t, fixture); !passed {
+			t.Fatalf("reuse lint failed on fixture:\n%s", output)
+		}
+	})
+}
+
+// checkReuseToolIgnores runs reuse lint on fixture in a subtest and requires it to fail: REUSE
+// ignores the fixture's table, so README.md stays unlicensed.
+func checkReuseToolIgnores(t *testing.T, fixture string) {
+	t.Helper()
+	t.Run("reuse lint ignores the table", func(t *testing.T) {
+		if output, passed := reuseToolLint(t, fixture); passed {
+			t.Fatalf("reuse lint applied a table this read ignores:\n%s", output)
+		}
+	})
 }
 
 // Positive: REUSE 3.3 allows other keys and tables. The read steps over top-level keys other than
@@ -311,15 +329,11 @@ func TestReuseAnnotationTablesNegative(t *testing.T) {
 		},
 		"quoted annotations dotted top-level key": {
 			"version = 1\n\"annotations\".path = \"**\"\n",
-			"the top-level key \"annotations\".path is not one this read follows",
+			"the top-level key annotations.path is not one this read follows",
 		},
 		"empty table header": {
 			"[]\n",
 			"the table header [] is not one this read follows",
-		},
-		"empty quoted table header": {
-			"[\"\"]\n",
-			"the table header [\"\"] is not one this read follows",
 		},
 		"escaped annotations header": {
 			"[[\"annot\\u0061tions\"]]\npath = \"**\"\nSPDX-License-Identifier = \"MIT\"\n",
@@ -327,11 +341,11 @@ func TestReuseAnnotationTablesNegative(t *testing.T) {
 		},
 		"escaped top-level annotations key": {
 			"version = 1\n\"annot\\u0061tions\" = [{ path = \"**\", SPDX-License-Identifier = \"MIT\" }]\n",
-			"the top-level key \"annot\\u0061tions\" is not one this read follows",
+			"is not a table header, a key or a comment: write key = value, where a key is one or more segments",
 		},
 		"escaped path key": {
 			"[[annotations]]\n\"p\\u0061th\" = \"**\"\nSPDX-License-Identifier = \"MIT\"\n",
-			"the key p\\u0061th of an [[annotations]] table is not one this read follows",
+			"is not a table header, a key or a comment: write key = value, where a key is one or more segments",
 		},
 	} {
 		if _, err := ReuseAnnotationTables(test.text); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -404,5 +418,94 @@ func TestRepositoryReuseLabels(t *testing.T) {
 		if !labelled(t, tables, subject, "MIT") {
 			t.Errorf("%s is not labelled MIT", subject)
 		}
+	}
+}
+
+// reuseFixture is a REUSE.toml with one table opened by header covering "**" with MIT.
+func reuseFixture(header string) string {
+	return "version = 1\n\n" + header + "\npath = [\"**\"]\nSPDX-FileCopyrightText = \"2026 Test\"\nSPDX-License-Identifier = \"MIT\"\n"
+}
+
+// Positive (issue #896 review): a header with tabs or spaces around the key, or a quoted
+// annotations key, opens an annotation table, as REUSE reads it; a quoted key holding a space is
+// another key, so its table is ignored, as REUSE ignores it. Where reuse is installed it confirms
+// each fixture.
+func TestReuseHeaderTokenizerPositive(t *testing.T) {
+	for name, header := range map[string]string{
+		"tab after":      "[[annotations\t]]",
+		"tab before":     "[[\tannotations]]",
+		"quoted, tab":    "[[\"annotations\"\t]]",
+		"spaces inside":  "[[ annotations ]]",
+		"literal quoted": "[['annotations']]",
+		"comment":        "[[annotations]] # x",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := reuseFixture(header)
+			if tables := reuseTables(t, fixture); len(tables) != 1 || strings.Join(tables[0].Licenses, " ") != "MIT" {
+				t.Fatalf("%q is no annotation table: %+v", header, tables)
+			}
+			checkReuseToolLint(t, fixture)
+		})
+	}
+	for name, header := range map[string]string{
+		"space in quotes":       "[[\"annota tions\"]]",
+		"leading space, quoted": "[[\" annotations\"]]",
+		"other name":            "[[other]]",
+	} {
+		t.Run("ignored "+name, func(t *testing.T) {
+			fixture := reuseFixture(header)
+			if tables := reuseTables(t, fixture); len(tables) != 0 {
+				t.Fatalf("%q read as an annotation table: %+v", header, tables)
+			}
+			checkReuseToolIgnores(t, fixture)
+		})
+	}
+}
+
+// Negative (issue #896 review): headers and keys that do not tokenize exactly fail closed, naming
+// the line and the allowed shape; REUSE-reachable annotations spellings are refused.
+func TestReuseHeaderTokenizerNegative(t *testing.T) {
+	for name, text := range map[string]string{
+		"quoted first segment":        "[\"annotations\".x]\n",
+		"quoted first segment, array": "[[\"annotations\".x]]\n",
+		"literal first segment":       "['annotations'.x]\n",
+		"escape in quoted header":     "[[\"annot\\u0061tions\"]]\n",
+		"unclosed":                    "[foo\n",
+		"unclosed array":              "[[annotations]\n",
+		"trailing junk":               "[[annotations]] path = \"x\"\n",
+		"extra bracket":               "[annotations]]\n",
+		"empty":                       "[]\n",
+		"bare key character":          "[a!b]\n",
+		"unclosed quote":              "[\"foo]\n",
+		"escaped top-level key":       "\"annot\\u0061tions\" = 1\n",
+		"dotted precedence":           "[[annotations]]\nprecedence.x = \"override\"\n",
+		"dotted copyright":            "[[annotations]]\nSPDX-FileCopyrightText.x = \"a\"\n",
+		"dotted license":              "[[annotations]]\nSPDX-License-Identifier.x = \"MIT\"\n",
+		"quoted dotted path":          "[[annotations]]\n\"path\".x = \"a\"\n",
+		"space inside bare key":       "[[annotations]]\nSPDX License = \"MIT\"\n",
+		"key without equals":          "[[annotations]]\npath \"x\"\n",
+	} {
+		if _, err := ReuseAnnotationTables(text); err == nil || !strings.Contains(err.Error(), "REUSE.toml:") {
+			t.Errorf("%s: err = %v, want a refusal naming the line", name, err)
+		}
+	}
+	_, err := ReuseAnnotationTables("[[annotations]]\n[foo\n")
+	if err == nil || !strings.Contains(err.Error(), "bare key of A-Z a-z 0-9 _ -") {
+		t.Errorf("error does not name the allowed shape: %v", err)
+	}
+}
+
+// Boundary (issue #896 review): keys and tables of an ignored table, stepped over, never reach the
+// annotation table before it; a quoted path key is the path key.
+func TestReuseHeaderTokenizerBoundary(t *testing.T) {
+	tables := reuseTables(t, "[[annotations]]\npath = \"a\"\nSPDX-License-Identifier = \"MIT\"\n"+
+		"[other]\npath = \"**\"\nSPDX-License-Identifier = \"GPL-3.0-or-later\"\nannotations = 1\nannotations.x = 2\n"+
+		"\t[ \"quoted\" . sub ]\n\"path\" = \"z\"\n")
+	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "a" || strings.Join(tables[0].Licenses, " ") != "MIT" {
+		t.Fatalf("ignored tables changed the annotation: %+v", tables)
+	}
+	tables = reuseTables(t, "[[annotations]]\n\"path\" = \"q\"\n'SPDX-License-Identifier' = \"MIT\"\n")
+	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "q" || strings.Join(tables[0].Licenses, " ") != "MIT" {
+		t.Fatalf("quoted keys not read: %+v", tables)
 	}
 }
