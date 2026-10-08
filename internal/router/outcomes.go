@@ -76,13 +76,18 @@ func AppendOutcome(ctx context.Context, path string, o Outcome) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create outcome log directory: %w", err)
 	}
-	if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
-		return errors.New("outcome log must be a regular file")
-	}
-	// #nosec G304 -- path is the operator's own outcome log location (a flag), checked to be a regular file above.
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	file, err := openOutcomeAppend(path)
 	if err != nil {
 		return fmt.Errorf("open outcome log: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		closeErr := file.Close()
+		return errors.Join(fmt.Errorf("stat outcome log: %w", err), closeErr)
+	}
+	if !info.Mode().IsRegular() {
+		closeErr := file.Close()
+		return errors.Join(errors.New("outcome log must be a regular file"), closeErr)
 	}
 	_, writeErr := file.Write(append(line, '\n'))
 	return errors.Join(writeErr, file.Close())
@@ -95,19 +100,39 @@ func ReadOutcomes(ctx context.Context, path string) (outcomes []Outcome, err err
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// #nosec G304 -- path is the operator's own outcome log location; records are decoded and validated, never executed.
-	file, err := os.Open(path)
+	before, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return []Outcome{}, nil
 	}
 	if err != nil {
+		return nil, fmt.Errorf("inspect outcome log: %w", err)
+	}
+	if !before.Mode().IsRegular() {
+		return nil, errors.New("outcome log must be a regular file")
+	}
+	file, err := openRoutingInput(path)
+	if err != nil {
 		return nil, fmt.Errorf("open outcome log: %w", err)
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
+	actual, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !actual.Mode().IsRegular() || !os.SameFile(before, actual) {
+		return nil, errors.New("outcome log changed while opening")
+	}
+	return scanOutcomeRecords(ctx, file)
+}
+
+func scanOutcomeRecords(ctx context.Context, file *os.File) ([]Outcome, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, maxOutcomeLineBytes), maxOutcomeLineBytes)
-	outcomes = make([]Outcome, 0)
+	outcomes := make([]Outcome, 0)
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(outcomes) >= MaxOutcomeLines {
 			return nil, fmt.Errorf("outcome log holds more than %d records", MaxOutcomeLines)
 		}

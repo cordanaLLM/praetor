@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/router"
@@ -34,6 +36,45 @@ func auditModelCatalog(ctx context.Context, rootDir string, now time.Time) error
 	for _, finding := range findings {
 		fmt.Printf("  - %s\n", finding)
 	}
-	return fmt.Errorf("[FAIL] model catalog %s is stale: %d finding(s); delete or replace the entries it reports; a retired seed entry leaves only with praetorctl models sync --prune on a machine that can run local discovery, or by hand",
-		router.DefaultConfigPath, len(findings))
+	remedy := auditRemedy(cfg, findings)
+	return fmt.Errorf("[FAIL] model catalog %s is stale: %d finding(s); %s",
+		router.DefaultConfigPath, len(findings), remedy)
+}
+
+func auditRemedy(cfg *router.RoutingConfig, findings []router.CatalogFinding) string {
+	var handOrAlias []string
+	var hasSeed bool
+	for _, finding := range findings {
+		model, ok := findCatalogModel(cfg, finding.Model)
+		if ok && model.Source == router.SourceSeed {
+			hasSeed = true
+		} else {
+			if !slices.Contains(handOrAlias, finding.Model) {
+				handOrAlias = append(handOrAlias, finding.Model)
+			}
+		}
+	}
+	slices.Sort(handOrAlias)
+	var parts []string
+	if len(handOrAlias) > 0 {
+		parts = append(parts, "refresh (as_of) or remove by hand: "+strings.Join(handOrAlias, ", "))
+	}
+	if hasSeed {
+		parts = append(parts, "retired seed entries leave with praetorctl models sync --prune, or by hand")
+	}
+	if len(parts) == 0 {
+		return "delete or replace the entries it reports"
+	}
+	return strings.Join(parts, "; ")
+}
+
+func findCatalogModel(cfg *router.RoutingConfig, id string) (router.ModelDescriptor, bool) {
+	for _, tier := range cfg.Tiers {
+		for _, m := range tier.Models {
+			if m.ID == id {
+				return m, true
+			}
+		}
+	}
+	return router.ModelDescriptor{}, false
 }

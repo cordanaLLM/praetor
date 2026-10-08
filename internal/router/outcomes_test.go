@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -28,7 +29,15 @@ func TestOutcomeLogAppendsAndReadsBackInOrder(t *testing.T) {
 	if len(got) != 3 || got[0].Result != OutcomeOK || got[1].Task != "synthesis" || got[2].Result != OutcomeTimeout || got[0].DurationMS != 1200 {
 		t.Fatalf("readback wrong: %+v", got)
 	}
-	if info, err := os.Stat(path); err != nil || (info.Mode().Perm()&0o077 != 0 && os.PathSeparator == '/') {
+}
+
+func TestOutcomeLogPermissionsArePrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "outcomes.jsonl")
+	if err := AppendOutcome(context.Background(), path, sampleOutcome("stubs", OutcomeOK)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || (info.Mode().Perm()&0o077 != 0 && os.PathSeparator == '/') {
 		t.Fatalf("log must be private: %v %v", info, err)
 	}
 }
@@ -97,5 +106,25 @@ func TestOutcomeLogCorruptLineIsAnError(t *testing.T) {
 	}
 	if _, err := ReadOutcomes(context.Background(), path); err == nil || !strings.Contains(err.Error(), "line 2") {
 		t.Fatalf("corrupt record must fail the read, naming its line: %v", err)
+	}
+}
+
+func TestReadOutcomesRefusesFIFOWithoutBlocking(t *testing.T) {
+	fifoPath := filepath.Join(t.TempDir(), "test.fifo")
+	if err := syscall.Mkfifo(fifoPath, 0o600); err != nil {
+		t.Skip("mkfifo not supported")
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReadOutcomes(context.Background(), fifoPath)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "regular file") {
+			t.Fatalf("expected regular file error for FIFO, got: %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("ReadOutcomes blocked on FIFO")
 	}
 }

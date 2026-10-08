@@ -252,7 +252,7 @@ the catalog lists may fail there. A catalog entry can therefore name an alias in
 ```yaml
 gateway:
   address: https://gateway.example.com/v1   # yours; the repository ships none
-  key_env: GATEWAY_API_KEY                  # variable holding the bearer key; never stored
+  key_env: PRAETOR_GATEWAY_API_KEY          # variable holding the bearer key; never stored
 tiers:
   lightweight:
     models:
@@ -260,9 +260,16 @@ tiers:
          cost_per_m_in: 0, cost_per_m_out: 0}
 ```
 
-`provider` and `alias` come together, an alias entry needs a `gateway` section, and
-`id` stays the unique catalog key (`internal/router/gateway.go`). Nothing in code,
-defaults or docs names a gateway: the adopter configures its address and aliases.
+An alias entry needs a `gateway` section, and `id` stays the unique catalog key
+(`internal/router/gateway.go`). The `provider` field is optional metadata; the router
+sends the alias verbatim as the model name in gateway chat completions and expands
+`{target}` to the bare alias in lane commands. A model declaring `provider` without an
+alias is refused at config load.
+
+The `key_env` setting must name an environment variable starting with `PRAETOR_GATEWAY_`
+followed by at least one character of `[A-Z0-9_]`. A single constant validated at config load
+enforces this allow-list and the refusal names the rule (e.g. `GITHUB_TOKEN` is refused).
+Nothing in code, defaults or docs names a gateway: the adopter configures its address and aliases.
 
 `models sync` makes one bounded call per alias entry (a one-token chat completion, 10
 second deadline) and records `alias_status: answers` or `unanswered` with the gateway's
@@ -277,12 +284,12 @@ same review as a change to a CI secret binding. The route then applies three rul
 
 - An alias entry is a candidate only while its status is `answers`. An `unanswered` or
   never probed alias is skipped and listed in the result's `skipped` array with the
-  reason.
-- A catalog that declares a gateway with alias entries excludes every pinned model, however
-  cheap and whatever the probes said, because the gateway refuses concrete IDs; only
-  models from a local runtime (`source: local`) stay, since they never pass through the
-  gateway. A gateway outage therefore fails closed: no eligible model is an error that
-  quotes the skipped reasons.
+  reason (`alias has not been probed; run models sync --probe-aliases`).
+- Alias exclusion is per tier. A tier holding at least one alias entry excludes its pinned
+  non-local models, however cheap and whatever the probes said, because the gateway refuses
+  concrete IDs; only models from a local runtime (`source: local`) stay, since they never
+  pass through the gateway. A tier with no alias entry keeps its pinned models. When none
+  of the aliases in an alias-holding tier answers, that tier fails closed with the skipped reasons.
 - The harness is told the alias, never a model ID behind it.
 
 `TestRouteNeverFallsBackToPinnedModelWhenGatewayServesAliases`,
@@ -338,20 +345,23 @@ every entry, seed included, so the seed prices are only as current as the binary
 
 `praetorctl audit` runs the same check over `.config/models/routing.yaml`
 (`auditModelCatalog`) and fails on any finding; a repository without that file skips it,
-saying so, and a file that does not load fails. A retired seed entry that an older
-`models sync` wrote (for example a preview model) is removed by `praetorctl models sync
---prune` on a machine that can run local discovery, since `--prune` drops local entries
-discovery does not find, or by deleting the entry by hand; a plain `models sync` refuses
-to remove it. The seed list no longer carries the three
+saying so, and a file that does not load fails. Under the operator-data rule (operator data
+is configured, never deleted), `praetorctl models sync --prune` removes only entries with
+`source: seed` that the freshness check flags (for example retired preview models); it never
+removes hand-declared or alias entries, and never touches the gateway or lanes sections. A
+plain `models sync` refuses to remove flagged seed entries without `--prune`. The audit
+remedy names each flagged hand or alias entry for the operator to refresh (`as_of`) or remove
+by hand. The seed list no longer carries the three
 preview models it once did. Tests: `TestAuditModelCatalogFailsStaleAndPreviewEntries`,
-`TestAuditModelCatalogWindowBoundary`, `TestSyncProbesAliasesAndReportsStalePreviewEntries`.
+`TestAuditModelCatalogWindowBoundary`, `TestSyncProbesAliasesAndReportsStalePreviewEntries`,
+`TestSyncPruneRemovesOnlyFlaggedSeedEntries`.
 
 ## Bounds and configuration migration
 
 Configuration and snapshot files must be regular files no larger than 1 MiB.
 Routing accepts version 1, up to 16 tiers, 64 models per tier, 64 task/capability
 labels per list, 256 bytes per name and 1,024 snapshot model entries. Model IDs are
-globally unique. Each token estimate is bounded at 1,000,000,000; that is an input
+globually unique. Each token estimate is bounded at 1,000,000,000; that is an input
 safety bound, not an asserted model context-window limit. Overflowing cost
 calculations fail. Reads and task selection accept caller cancellation.
 
@@ -363,6 +373,16 @@ shipped routing data and `models sync` output already include both prices. This
 shared validation prevents listing one ambiguous file as free while routing treats
 it differently. Programmatically constructed task-routing descriptors must set
 `CostRatesDeclared` when both configured rates are intentional.
+
+Migration: gateway `key_env` must begin with the `PRAETOR_GATEWAY_` prefix followed
+by at least one character of `[A-Z0-9_]`. Alias exclusion is scoped per tier rather
+than catalog-wide, so tiers without alias entries retain their pinned models while
+tiers holding aliases fail closed if none answer. The `provider` field on alias entries
+is optional metadata, and `alias` is sent verbatim as the model target. `models sync --prune`
+removes only flagged seed entries (`source: seed`); hand-declared entries, alias entries,
+local models, and gateway/lanes configurations are preserved as operator data. Flagged
+hand or alias entries must be refreshed (`as_of`) or removed by hand as reported by
+`praetorctl audit`.
 
 Migration: model entries accept an optional `source` field whose only values are
 `seed` and `local`; any other value is rejected. `models sync` now merges instead of

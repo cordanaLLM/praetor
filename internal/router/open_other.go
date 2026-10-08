@@ -29,3 +29,22 @@ func openRoutingInput(path string) (file *os.File, err error) {
 	}
 	return file, err
 }
+
+func openOutcomeAppend(path string) (file *os.File, err error) {
+	if runtime.GOOS != "windows" {
+		return nil, fmt.Errorf("outcome log writes require Unix or Windows")
+	}
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	file, err = root.OpenFile(filepath.Base(path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if closeErr := root.Close(); closeErr != nil {
+		if file != nil {
+			err = errors.Join(err, file.Close())
+			file = nil
+		}
+		err = errors.Join(err, closeErr)
+	}
+	return file, err
+}

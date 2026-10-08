@@ -11,7 +11,7 @@ import (
 const laneCatalog = `version: 1
 gateway:
   address: https://gateway.example.invalid/v1
-  key_env: GATEWAY_KEY
+  key_env: PRAETOR_GATEWAY_KEY
 lanes:
   gateway-coding:
     harness: coding-harness
@@ -135,5 +135,30 @@ func TestLoadedAliasCatalogRoutesOnlyAnsweringAliases(t *testing.T) {
 	}
 	if _, err := NewModelCapacityArbiter(cfg, nil).SelectForTask(context.Background(), TaskRequest{Task: "audits", Capabilities: []string{"none-declared"}}); !errors.Is(err, ErrNoEligibleModel) {
 		t.Fatalf("capability filter lost: %v", err)
+	}
+}
+
+func TestModelTarget(t *testing.T) {
+	cases := map[string]struct {
+		model ModelDescriptor
+		want  string
+	}{
+		"alias with provider": {
+			model: ModelDescriptor{ID: "gw-light", Provider: "gw", Alias: "light"},
+			want:  "light",
+		},
+		"alias without provider": {
+			model: ModelDescriptor{ID: "gw-light", Alias: "light"},
+			want:  "light",
+		},
+		"non-alias model": {
+			model: ModelDescriptor{ID: "claude-3-opus"},
+			want:  "claude-3-opus",
+		},
+	}
+	for name, tc := range cases {
+		if got := ModelTarget(tc.model); got != tc.want {
+			t.Errorf("%s: got %q, want %q", name, got, tc.want)
+		}
 	}
 }

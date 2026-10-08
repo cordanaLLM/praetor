@@ -15,7 +15,6 @@ tiers:
               tpm_limit: 80000
               cost_per_m_in: 3
               cost_per_m_out: 15
-              as_of: "2026-10-08"
             - id: claude-3-5-sonnet-20241022
               family: anthropic
               source: seed
@@ -23,7 +22,6 @@ tiers:
               tpm_limit: 80000
               cost_per_m_in: 3
               cost_per_m_out: 15
-              as_of: "2026-10-08"
             - id: claude-3-opus-20240229
               family: anthropic
               source: seed
@@ -31,7 +29,6 @@ tiers:
               tpm_limit: 40000
               cost_per_m_in: 15
               cost_per_m_out: 75
-              as_of: "2026-10-08"
             - id: gemini-2.0-flash
               family: google
               source: seed
@@ -39,7 +36,6 @@ tiers:
               tpm_limit: 4000000
               cost_per_m_in: 0.1
               cost_per_m_out: 0.4
-              as_of: "2026-10-08"
             - id: o3-mini
               family: openai
               source: seed
@@ -47,7 +43,6 @@ tiers:
               tpm_limit: 1000000
               cost_per_m_in: 1.1
               cost_per_m_out: 4.4
-              as_of: "2026-10-08"
             - id: o1
               family: openai
               source: seed
@@ -55,7 +50,6 @@ tiers:
               tpm_limit: 100000
               cost_per_m_in: 15
               cost_per_m_out: 60
-              as_of: "2026-10-08"
             - id: gpt-4o-2024-11-20
               family: openai
               source: seed
@@ -63,7 +57,6 @@ tiers:
               tpm_limit: 450000
               cost_per_m_in: 2.5
               cost_per_m_out: 10
-              as_of: "2026-10-08"
             - id: grok-3
               family: xai
               source: seed
@@ -71,7 +64,6 @@ tiers:
               tpm_limit: 200000
               cost_per_m_in: 5
               cost_per_m_out: 15
-              as_of: "2026-10-08"
             - id: grok-3-mini
               family: xai
               source: seed
@@ -79,7 +71,6 @@ tiers:
               tpm_limit: 500000
               cost_per_m_in: 0.5
               cost_per_m_out: 2
-              as_of: "2026-10-08"
             - id: deepseek-reasoner
               family: deepseek
               source: seed
@@ -87,7 +78,6 @@ tiers:
               tpm_limit: 5000000
               cost_per_m_in: 0.55
               cost_per_m_out: 2.19
-              as_of: "2026-10-08"
             - id: deepseek-chat
               family: deepseek
               source: seed
@@ -95,7 +85,6 @@ tiers:
               tpm_limit: 10000000
               cost_per_m_in: 0.14
               cost_per_m_out: 0.28
-              as_of: "2026-10-08"
             - id: mistral-large-2411
               family: mistral
               source: seed
@@ -103,7 +92,6 @@ tiers:
               tpm_limit: 250000
               cost_per_m_in: 2
               cost_per_m_out: 6
-              as_of: "2026-10-08"
             - id: qwen-2.5-max
               family: qwen
               source: seed
@@ -111,7 +99,6 @@ tiers:
               tpm_limit: 1000000
               cost_per_m_in: 1.6
               cost_per_m_out: 6.4
-              as_of: "2026-10-08"
             - id: meta-llama/llama-3.3-70b-instruct
               family: open-weights
               source: seed
@@ -119,7 +106,6 @@ tiers:
               tpm_limit: 5000000
               cost_per_m_in: 0.35
               cost_per_m_out: 0.4
-              as_of: "2026-10-08"
         fallback_tier: midweight
     lightweight:
         description: 'Tier 1 Lightweight Models (5B-16B: 9B Qwythos/Gemma, 7B/14B Qwen, Phi-4, Haiku)'
@@ -136,7 +122,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: gemma-2-9b
               family: google
               source: seed
@@ -144,7 +129,6 @@ tiers:
               tpm_limit: 2000000
               cost_per_m_in: 0.2
               cost_per_m_out: 0.2
-              as_of: "2026-10-08"
             - id: qwen-2.5-coder-7b-instruct
               family: qwen
               source: seed
@@ -152,7 +136,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: qwen-2.5-coder-14b-instruct
               family: qwen
               source: seed
@@ -160,7 +143,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: meta-llama/llama-3.1-8b-instruct
               family: open-weights
               source: seed
@@ -168,7 +150,6 @@ tiers:
               tpm_limit: 5000000
               cost_per_m_in: 0.15
               cost_per_m_out: 0.15
-              as_of: "2026-10-08"
             - id: phi-4:14b
               family: open-weights
               source: seed
@@ -176,7 +157,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: claude-3-5-haiku-20241022
               family: anthropic
               source: seed
@@ -184,7 +164,6 @@ tiers:
               tpm_limit: 100000
               cost_per_m_in: 0.8
               cost_per_m_out: 4
-              as_of: "2026-10-08"
         fallback_tier: nano
     midweight:
         description: 'Tier 2 Mid-Weight Workhorses (20B-35B: 27B Qwen3.8, 30B Qwen3, 32B Coder, Codestral)'
@@ -201,7 +180,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: qwen-2.5-coder-32b-instruct
               family: qwen
               source: seed
@@ -209,7 +187,6 @@ tiers:
               tpm_limit: 5000000
               cost_per_m_in: 0.2
               cost_per_m_out: 0.6
-              as_of: "2026-10-08"
             - id: codestral-2501
               family: mistral
               source: seed
@@ -217,7 +194,6 @@ tiers:
               tpm_limit: 500000
               cost_per_m_in: 0.3
               cost_per_m_out: 0.9
-              as_of: "2026-10-08"
             - id: gpt-oss-small
               family: openai
               source: seed
@@ -225,7 +201,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
         fallback_tier: lightweight
     nano:
         description: 'Tier 0 Micro & Nano Models (<= 4B: SmolLM2, 1.5B/3B Qwen, Phi-3.5-mini, Llama 3.2)'
@@ -242,7 +217,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: qwen2.5-coder:1.5b
               family: qwen
               source: seed
@@ -250,7 +224,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: qwen2.5:3b
               family: qwen
               source: seed
@@ -258,7 +231,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: phi-3.5-mini:3.8b
               family: open-weights
               source: seed
@@ -266,7 +238,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: llama-3.2:1b
               family: open-weights
               source: seed
@@ -274,7 +245,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: llama-3.2:3b
               family: open-weights
               source: seed
@@ -282,7 +252,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
             - id: gemma-2-2b
               family: google
               source: seed
@@ -290,7 +259,6 @@ tiers:
               tpm_limit: 20000000
               cost_per_m_in: 0
               cost_per_m_out: 0
-              as_of: "2026-10-08"
         fallback_tier: ""
 governance:
     max_concurrent_same_model: 2
