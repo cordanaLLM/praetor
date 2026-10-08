@@ -26,7 +26,10 @@ func rulesetNote(t *testing.T, report *flavor.ApplyReport) string {
 // Positive: with a declared merge queue, apply names each workflow the queue ruleset leaves out
 // because it lacks merge_group. Negative: without a queue the note names none.
 func TestApplyFlavor_MergeQueueNamesOmittedWorkflows(t *testing.T) {
-	files := map[string]string{"go.mod": "module example.com/svc\n", "cmd/svc/main.go": "package main\n"}
+	files := map[string]string{
+		"go.mod": "module example.com/svc\n", "cmd/svc/main.go": "package main\n",
+		".github/workflows/deploy.yml": "on: pull_request\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
+	}
 	queued := map[string]string{".standards.yaml": "overrides:\n  branch_protection:\n    merge_queue: true\n"}
 	for name, value := range files {
 		queued[name] = value

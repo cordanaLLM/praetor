@@ -142,6 +142,9 @@ var priorDigests = map[string]string{
 	// The gate that installed the checker as module@version, whose x/tools cannot read Go 1.27.2
 	// export data (#1049).
 	"10c868a450275a43abc625176bd27cdf5e148f509f8704019940ca01076ee5f8": Directory + "/" + GateFile,
+	// The gate before it ran on merge_group, so a merge queue never got its Go API Compatibility
+	// context (#893).
+	"d64b71821e056174c3127244483c916a3baa646b6f37f419eac44102c8c30dbd": WorkflowFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

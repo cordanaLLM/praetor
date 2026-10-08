@@ -42,6 +42,7 @@ const (
 var priorReuseWorkflowDigests = map[string]string{
 	"c8b2b85f7d8f3be75dc21737409a7583e159adca329ba91c9578f180ccf17b25": "reuse-action v6, checkout v7, hosted gate shape, default branch main, 10-minute timeout",
 	"8edae714aaca03bb34c9069cf294950a566f65d92b5c076be3dee6c98537d210": "reuse-action v6, checkout v7, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
+	"c20f118f20de38aa547894de8b1ff070ea76619051f9cfabcb9a778905cb4840": "reuse-action v6, checkout v7, hosted gate shape with merge_group, default branch main, 10-minute timeout",
 }
 
 // reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
