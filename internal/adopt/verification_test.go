@@ -183,7 +183,10 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 	}
 	for _, failure := range []string{"none", "build", "test", "audit", "caveman"} {
 		t.Run(failure, func(t *testing.T) {
-			root, plan := verificationFixture(t, map[string]string{"go.mod": "module fixture\n"})
+			root, plan := verificationFixture(t, map[string]string{
+				"go.mod":                               "module fixture\n",
+				filepath.FromSlash(engineLauncherFile): engineLauncherScript,
+			})
 			stubs := t.TempDir()
 			writeStub(t, stubs, "go", "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
 			// The scaffold resolves praetorctl before standardsctl (util.ShellCLIResolution), and

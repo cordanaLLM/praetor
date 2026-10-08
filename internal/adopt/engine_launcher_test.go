@@ -241,7 +241,7 @@ func TestEngineLauncher_Boundary_InstallTimeout(t *testing.T) {
 // Negative: a declaration that is no commit id or release tag is no pin. A branch name moves, a
 // path walks out of the cache, an expression is not a value; each fails closed naming the file.
 func TestEngineLauncher_Negative_UnusablePinsFailClosed(t *testing.T) {
-	for _, bad := range []string{"main", "../escape", "${{ vars.REF }}", "abc123", strings.Repeat("a", 41), "", "-flag", "v1/../x"} {
+	for _, bad := range []string{"main", "../escape", "${{ vars.REF }}", "abc123", strings.Repeat("a", 41), "", "-flag", "v1/../x", "v1", "v1.2"} {
 		f := newEngineFixture(t)
 		f.pathEngine()
 		f.declare("gate.yml", "env:\n  PRAETOR_REF: "+bad+"\n")
@@ -277,6 +277,129 @@ func TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo(t *testing.T) 
 	f.pathEngine()
 	if out, code := f.run(); code != 0 || !strings.Contains(out, "path-engine audit --offline") || strings.Contains(out, "legacy-engine") {
 		t.Fatalf("both names: exit %d, output %q", code, out)
+	}
+}
+
+// Positive: uses refs of praetor-adopt and reusable workflows pin the engine too (#906).
+func TestEngineLauncher_Positive_UsesRefPinsEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+	}{
+		{"action", "jobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@" + enginePin + "\n"},
+		{"workflow", "jobs:\n  call:\n    uses: cordanaLLM/praetor/.github/workflows/standards-gate.yml@" + enginePin + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEngineFixture(t)
+			f.pathEngine()
+			f.cached(enginePin)
+			f.declare("gate.yml", tc.content)
+			out, code := f.run()
+			if code != 0 || strings.TrimSpace(out) != "pinned-engine audit --offline" {
+				t.Fatalf("exit %d, output %q, want the pinned engine", code, out)
+			}
+		})
+	}
+}
+
+// Boundary: a non-pin uses ref such as @main is treated as unpinned (falling back to PATH with notice).
+func TestEngineLauncher_Boundary_NonPinUsesRefRunsOnPath(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.declare("gate.yml", "jobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main\n")
+	out, code := f.run()
+	if code != 0 || !strings.Contains(out, "path-engine audit --offline") || !strings.Contains(out, "no PRAETOR_REF pin") {
+		t.Fatalf("exit %d, output %q, want fallback to PATH engine with stderr notice", code, out)
+	}
+}
+
+// Negative: an unreadable workflow file fails closed and names the file.
+func TestEngineLauncher_Negative_UnreadableWorkflowFailsClosed(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("POSIX shell stubs required: the toolbox links MSYS tools, which do not start from a link, and the stubs are shell scripts")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores read permissions")
+	}
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.declare("unreadable.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n")
+	path := filepath.Join(f.work, ".github", "workflows", "unreadable.yml")
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if chmodErr := os.Chmod(path, 0o644); chmodErr != nil && !os.IsNotExist(chmodErr) {
+			t.Log(chmodErr)
+		}
+	})
+	out, code := f.run()
+	if code != 1 || !strings.Contains(out, "unreadable.yml is not readable") {
+		t.Fatalf("exit %d, output %q, want refusal naming the unreadable file", code, out)
+	}
+}
+
+// Positive: --print-path prints only the path of the resolved binary and exits 0.
+func TestEngineLauncher_Positive_PrintPath(t *testing.T) {
+	f := newEngineFixture(t)
+	f.cached(enginePin)
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n")
+	wantPinned := filepath.Join(f.cache, "praetor", "engine", enginePin, "standardsctl")
+	out, code := f.runLine("sh " + engineLauncherFile + " --print-path")
+	if code != 0 || strings.TrimSpace(out) != wantPinned {
+		t.Fatalf("pinned: exit %d, output %q, want %q", code, out, wantPinned)
+	}
+
+	fUnpinned := newEngineFixture(t)
+	fUnpinned.pathEngine()
+	wantPath := filepath.Join(fUnpinned.stubs, util.PraetorCLI)
+	out, code = fUnpinned.runLine("sh " + engineLauncherFile + " --print-path")
+	if code != 0 || strings.TrimSpace(out) != wantPath {
+		t.Fatalf("unpinned: exit %d, output %q, want %q", code, out, wantPath)
+	}
+}
+
+// Negative: --print-path with an unusable pin fails closed with exit 1.
+func TestEngineLauncher_Negative_PrintPathFailsClosedOnUnusablePin(t *testing.T) {
+	f := newEngineFixture(t)
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: main\n")
+	out, code := f.runLine("sh " + engineLauncherFile + " --print-path")
+	if code != 1 || !strings.Contains(out, "no usable pin") {
+		t.Fatalf("exit %d, output %q, want exit 1", code, out)
+	}
+}
+
+// Boundary: timeout of 0 or invalid integer fails closed.
+func TestEngineLauncher_Boundary_InstallTimeoutZeroFailsClosed(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n")
+	for _, bad := range []string{"0", "00", "-1", "abc"} {
+		out, code := f.run("PRAETOR_ENGINE_INSTALL_TIMEOUT=" + bad)
+		if code != 1 || !strings.Contains(out, "must be an integer >= 1") {
+			t.Fatalf("timeout %q: exit %d, output %q", bad, code, out)
+		}
+	}
+}
+
+// Boundary: a successful cold install leaves no orphaned sleep watchdog process behind (#906).
+func TestEngineLauncher_Boundary_NoSleepSurvivesInstall(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("POSIX shell stubs required: the toolbox links MSYS tools, which do not start from a link, and the stubs are shell scripts")
+	}
+	f := newEngineFixture(t)
+	f.goStub(installingGo)
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n")
+	out, code := f.run("PRAETOR_ENGINE_INSTALL_TIMEOUT=299")
+	if code != 0 || !strings.Contains(out, "installed-engine audit --offline") {
+		t.Fatalf("exit %d, output %q", code, out)
+	}
+	// Check that no sleep process with timeout 299 survived.
+	pgrep, err := exec.LookPath("pgrep")
+	if err == nil {
+		pgrepOut, pgrepErr := exec.CommandContext(t.Context(), pgrep, "-f", "sleep 299").Output()
+		if pgrepErr == nil && len(strings.TrimSpace(string(pgrepOut))) > 0 {
+			t.Fatalf("orphaned sleep process survived install: %s", pgrepOut)
+		}
 	}
 }
 

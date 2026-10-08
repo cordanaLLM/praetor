@@ -342,9 +342,13 @@ A newer binary on `PATH` therefore never judges a repository that pins an older 
 the repository declares, the one its hosted Standards job installs.
 
 **The pin** is the value of `PRAETOR_REF` declared in any file under `.github/workflows`, as
-`PRAETOR_REF: <ref>` or `PRAETOR_REF=<ref>` (quotes, a trailing comment and CRLF line endings
-are read past). A ref is a commit id of 7 to 40 hexadecimal digits or a release tag such as
-`v1.2.3`; a branch name moves, so it is no pin. Declaring two different values pins nothing.
+`PRAETOR_REF: <ref>` or `PRAETOR_REF=<ref>`, or the `uses:` reference of `praetor-adopt`
+(`uses: cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>`) or a reusable workflow under
+`cordanaLLM/praetor/.github/workflows/` (quotes, a trailing comment and CRLF line endings
+are read past). A ref is a commit id of 7 to 40 hexadecimal digits or a full release tag such as
+`v1.2.3` (a tag without patch digits like `v1` or `v1.2` moves under `go install`, and a branch
+name moves, so they are no pin). A non-pin `uses:` ref such as `@main` is treated as unpinned (running
+the engine on `PATH`). Declaring two different pin values pins nothing.
 
 **The cache** is `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>`, one directory per pin.
 The first hook run with a pin that is not cached installs it:
@@ -356,15 +360,15 @@ GOBIN=<cache>/<pin> go install github.com/cordanaLLM/praetor/cmd/standardsctl@<p
 The install goes through a scratch directory whose files are renamed into place, so an interrupted run leaves no
 half-written engine and parallel jobs on a cold cache cannot remove each other's engine
 (`TestEngineLauncher_Boundary_ConcurrentColdInstalls`), and it is bounded by `PRAETOR_ENGINE_INSTALL_TIMEOUT` seconds (default
-300). Later runs find the cached binary and install nothing. Changing the pin selects, and
+300, must be an integer >= 1). Later runs find the cached binary and install nothing. Changing the pin selects, and
 installs when needed, another directory; old directories stay until you delete them.
 
 **Without a pin** the hook runs the binary on `PATH`, `praetorctl` before `standardsctl`, as
 before, and prints `praetor hooks: no PRAETOR_REF pin under .github/workflows; running the
 engine on PATH: <path>` on standard error.
 
-**It never falls back.** A pin that is unusable, declared twice with different values, or that
-cannot be installed (no Go toolchain, no network, a timeout) fails the hook with one message
+**It never falls back.** A pin that is unusable, declared twice with different values, an unreadable workflow file, or an install that
+cannot complete (no Go toolchain, no network, a timeout) fails the hook with one message
 that names the pin, the cache directory and the command that fixes it, for example:
 
 ```text
@@ -373,20 +377,29 @@ praetor hooks: installing the engine pinned by PRAETOR_REF=492a00f930e1 (declare
 
 The launcher is a POSIX shell script that runs under Git Bash on Windows, and every line ends
 in a comment sign for the reason given for the [Python launcher](#the-launcher-adoption-writes).
-The hosted job and the `Makefile` are not changed: the `Makefile` resolves `PRAETORCTL` from
-`PATH`, as it did.
+Generated `Makefile`s wire `PRAETORCTL ?= sh .config/lefthook/engine.sh` so make and hooks resolve
+the exact same engine binary (#906, HISS-19).
 
 **One pin reader.** `.config/lefthook/engine.sh` is also a standalone entry point: an adopter
 `Makefile` target or script runs `sh .config/lefthook/engine.sh <arguments>` from the repository
 root to get the same pin resolution, cache and refusals as the hooks, and needs no second reader
-of `PRAETOR_REF`.
+of `PRAETOR_REF`. When a recipe or rule needs the binary path directly, `--print-path` prints
+only the path of the resolved binary:
+
+```makefile
+PRAETORCTL ?= $(shell sh .config/lefthook/engine.sh --print-path)
+```
 
 Tests (`internal/adopt/engine_launcher_test.go`): `TestEngineLauncher_Positive_PinnedEngineWinsOverPath`
 runs stub binaries that print their identity with a different `praetorctl` first on `PATH`;
 `TestEngineLauncher_Positive_InstallsOncePerPin`, `TestEngineLauncher_Negative_UninstallablePinFailsClosed`,
 `TestEngineLauncher_Negative_NoGoToolchainFailsClosed`, `TestEngineLauncher_Boundary_InstallTimeout`,
-`TestEngineLauncher_Negative_UnusablePinsFailClosed` and `TestEngineLauncher_Negative_ConflictingPinsFailClosed`
-cover the cache and the refusals; `TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo` the unpinned case.
+`TestEngineLauncher_Negative_UnusablePinsFailClosed`, `TestEngineLauncher_Negative_ConflictingPinsFailClosed`,
+`TestEngineLauncher_Positive_UsesRefPinsEngine`, `TestEngineLauncher_Boundary_NonPinUsesRefRunsOnPath`,
+`TestEngineLauncher_Negative_UnreadableWorkflowFailsClosed`, `TestEngineLauncher_Positive_PrintPath`,
+`TestEngineLauncher_Negative_PrintPathFailsClosedOnUnusablePin`, `TestEngineLauncher_Boundary_InstallTimeoutZeroFailsClosed`
+and `TestEngineLauncher_Boundary_NoSleepSurvivesInstall` cover the cache, the pin sources, `--print-path` and the refusals;
+`TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo` the unpinned case.
 
 ## The make the hooks run
 

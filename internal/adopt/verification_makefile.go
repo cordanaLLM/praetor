@@ -353,8 +353,9 @@ func isLegacyVerificationMakefile(data string) bool {
 // Where both renderings coincide -- a plan with no runnable commands -- the file is already current.
 func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
 	data = withoutDocumentationMakefileBlock(data)
-	prior := buildMakefileWith(plan, priorVerificationRecipePrefix)
-	return data == prior && prior != buildMakefile(plan)
+	priorWithLauncher := buildMakefileWithSourceGateAndLauncher(plan, priorVerificationRecipePrefix, true, true)
+	priorWithoutLauncher := buildMakefileWithSourceGateAndLauncher(plan, priorVerificationRecipePrefix, true, false)
+	return (data == priorWithLauncher || data == priorWithoutLauncher) && data != buildMakefile(plan)
 }
 
 // isPlaceholderVerificationMakefile reports whether data is exactly the placeholder Makefile
@@ -371,7 +372,9 @@ func isPlaceholderVerificationMakefile(data string, plan *VerificationPlan) bool
 		return false
 	}
 	placeholder := &VerificationPlan{Status: verificationUnavailable}
-	return data == buildMakefile(placeholder) || data == priorSourceGateMakefile(placeholder)
+	return data == buildMakefile(placeholder) ||
+		data == priorSourceGateMakefile(placeholder) ||
+		data == priorPathResolvedMakefile(placeholder)
 }
 
 // isReplaceableVerificationMakefile reports whether data is earlier Praetor output that adoption
@@ -383,7 +386,10 @@ func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool
 	if err != nil {
 		return false
 	}
-	return isLegacyVerificationMakefile(normalized) || isPriorGeneratedMakefile(normalized, plan) || normalized == priorSourceGateMakefile(plan) ||
+	return isLegacyVerificationMakefile(normalized) ||
+		isPriorGeneratedMakefile(normalized, plan) ||
+		normalized == priorSourceGateMakefile(plan) ||
+		normalized == priorPathResolvedMakefile(plan) ||
 		isPlaceholderVerificationMakefile(normalized, plan)
 }
 
@@ -434,6 +440,10 @@ func withoutDocumentationMakefileBlock(data string) string {
 }
 
 func appendVerificationTargets(existing string, plan *VerificationPlan) (string, error) {
+	return appendVerificationTargetsWithLauncher(existing, plan, true)
+}
+
+func appendVerificationTargetsWithLauncher(existing string, plan *VerificationPlan, launcher bool) (string, error) {
 	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
 	if err != nil {
 		return "", fmt.Errorf("makefile line endings are inconsistent: %w", err)
@@ -441,7 +451,7 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 	var result strings.Builder
 	result.WriteString(normalized)
 	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
-		util.MakefileCLIVariable + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
+		makefileCLIVariableLine(launcher) + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
 	// One recipe for the build and test commands together: rendered once for each, an
 	// unavailable plan wrote its failing pair twice (#594).
 	result.WriteString(verificationRecipe(plan, plan.commands()))

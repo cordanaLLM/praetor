@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestVerificationLegacyMigrationAndCustomPreservation(t *testing.T) {
@@ -149,5 +151,76 @@ func TestVerificationPriorGeneratedRecipesAreStillPraetorOwned(t *testing.T) {
 		if got != want || report.Verification.Status != verificationDeclared {
 			t.Fatalf("a prior generated Makefile was not regenerated: %+v %q", report.Verification, got)
 		}
+	}
+}
+
+// Positive: a Makefile generated before PRAETORCTL resolved through the engine launcher
+// (priorPathResolvedMakefile, resolving from PATH) is regenerated to resolve through
+// the engine launcher, while an edited one is preserved.
+func TestVerificationPriorPathResolvedMakefileIsRegenerated(t *testing.T) {
+	t.Run("unedited", func(t *testing.T) {
+		root, plan, existing := preparePriorPathResolvedRepo(t)
+		mustWrite(t, filepath.Join(root, "Makefile"), existing)
+		report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := mustRead(t, filepath.Join(root, "Makefile"))
+		want, mergeErr := mergeDocumentationMakefile(buildMakefile(plan), false)
+		if mergeErr != nil {
+			t.Fatal(mergeErr)
+		}
+		if got != want || report.Verification.Status != verificationDeclared {
+			t.Fatalf("a prior path-resolved Makefile was not regenerated: %+v %q", report.Verification, got)
+		}
+	})
+	t.Run("edited", func(t *testing.T) {
+		root, _, existing := preparePriorPathResolvedRepo(t)
+		existing = "# operator changes\n" + existing
+		mustWrite(t, filepath.Join(root, "Makefile"), existing)
+		report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := mustRead(t, filepath.Join(root, "Makefile"))
+		want, mergeErr := mergeDocumentationMakefile(existing, false)
+		if mergeErr != nil {
+			t.Fatal(mergeErr)
+		}
+		if got != want || report.Verification.Status != verificationPreserved {
+			t.Fatalf("an edited Makefile was not preserved: %+v %q", report.Verification, got)
+		}
+	})
+}
+
+func preparePriorPathResolvedRepo(t *testing.T) (string, *VerificationPlan, string) {
+	t.Helper()
+	root := newTestRepo(t, "prior-path-resolved")
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+	plan, err := resolveVerificationPlan(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := priorPathResolvedMakefile(plan)
+	if existing == buildMakefile(plan) || !strings.Contains(existing, util.MakefileCLIVariable) {
+		t.Fatalf("fixture is not the prior path-resolved rendering: %q", existing)
+	}
+	return root, plan, existing
+}
+
+// Boundary: when git-hooks is declined in the manifest, the generated Makefile keeps
+// the existing contract and resolves PRAETORCTL from PATH (util.MakefileCLIVariable).
+func TestVerificationDeclinedGitHooksResolvesFromPath(t *testing.T) {
+	root := newTestRepo(t, "declined-hooks-makefile")
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+	mustWrite(t, filepath.Join(root, ".standards.yaml"), "version: 1\nadoption:\n  decline:\n    - git-hooks\n")
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+	got := mustRead(t, filepath.Join(root, "Makefile"))
+	if !strings.Contains(got, util.MakefileCLIVariable) || strings.Contains(got, engineLauncherFile) {
+		t.Fatalf("declined git-hooks did not resolve from PATH:\n%s", got)
 	}
 }

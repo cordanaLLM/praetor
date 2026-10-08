@@ -74,15 +74,18 @@ func ResolveGitHooksDir(ctx context.Context, repoPath string) (string, error) {
 	return filepath.Clean(hooksDir), nil
 }
 
-// lefthookGovernedCommand renders a lefthook run line that executes a praetor subcommand
-// through the engine launcher (engineLauncherFile), which fails closed: a failing command
-// blocks, and so does an engine that cannot be resolved. The launcher runs the engine the
-// repository pins and, only where it pins none, the binary on PATH under either installed
-// name, the resolution generated Makefiles use (util.ShellCLIResolution, BUG-805), so a newer
-// binary on PATH never judges a repository pinned to an older engine (#906). Like
-// lefthookPythonCommand, the line holds a path to a script and plain arguments: no quote and
-// no expansion, which lefthook's Windows executor cannot split wrongly.
+// lefthookGovernedCommand renders a lefthook run line or make variable value that executes
+// a praetor subcommand through the engine launcher (engineLauncherFile), which fails closed:
+// a failing command blocks, and so does an engine that cannot be resolved. The launcher runs the
+// engine the repository pins and, only where it pins none, the binary on PATH under either installed
+// name (util.ShellCLIResolution, BUG-805), so a newer binary on PATH never judges a repository
+// pinned to an older engine (#906). Like lefthookPythonCommand, the line holds a path to a script
+// and plain arguments: no quote and no expansion, which lefthook's Windows executor cannot split
+// wrongly.
 func lefthookGovernedCommand(args string) string {
+	if args == "" {
+		return "sh " + engineLauncherFile
+	}
 	return "sh " + engineLauncherFile + " " + args
 }
 

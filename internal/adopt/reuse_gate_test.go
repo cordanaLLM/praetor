@@ -91,16 +91,7 @@ func reuseJobTools(t *testing.T) (shell, dir string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the reuse-lint line is POSIX sh; lefthook runs it through Git's sh on Windows, which this host need not provide")
 	}
-	dir = t.TempDir()
-	for _, tool := range []string{"sh", "head", "tr", "cut"} {
-		path, err := exec.LookPath(tool)
-		if err != nil {
-			t.Skipf("%s required to run the reuse-lint line: %v", tool, err)
-		}
-		if err := os.Symlink(path, filepath.Join(dir, tool)); err != nil {
-			t.Fatalf("link %s: %v", tool, err)
-		}
-	}
+	dir = linkTools(t, "sh", "head", "tr", "cut")
 	return filepath.Join(dir, "sh"), dir
 }
 

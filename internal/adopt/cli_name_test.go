@@ -105,11 +105,11 @@ func runHookLine(t *testing.T, shell, line, stubDir, workDir string) (string, in
 // can never answer for an absent one.
 var hookToolNames = []string{"sh", "bash", "sed", "tr", "cut", "sort", "wc", "head", "env", "mkdir", "rm", "mv", "sleep", "cat", "chmod"}
 
-// hookToolbox links hookToolNames into a fresh directory and returns it.
-func hookToolbox(t *testing.T) string {
+// linkTools links named tools into a fresh directory and returns it.
+func linkTools(t *testing.T, names ...string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range hookToolNames {
+	for _, name := range names {
 		path, err := exec.LookPath(name)
 		if err != nil {
 			t.Skipf("%s required", name)
@@ -121,6 +121,12 @@ func hookToolbox(t *testing.T) string {
 	return dir
 }
 
+// hookToolbox links hookToolNames into a fresh directory and returns it.
+func hookToolbox(t *testing.T) string {
+	t.Helper()
+	return linkTools(t, hookToolNames...)
+}
+
 // runHookLineEnv is runHookLine with extra environment entries. It installs the engine launcher
 // into workDir first, as adoption does beside the lefthook.yml whose jobs run it.
 func runHookLineEnv(t *testing.T, shellPath, line, stubDir, workDir string, env []string) (string, int) {
@@ -129,7 +135,7 @@ func runHookLineEnv(t *testing.T, shellPath, line, stubDir, workDir string, env 
 	if !fileExists(launcher) {
 		mustWrite(t, launcher, engineLauncherScript)
 	}
-	cmd := exec.Command(shellPath, "-c", line)
+	cmd := exec.CommandContext(t.Context(), shellPath, "-c", line)
 	cmd.Dir = workDir
 	cmd.Env = append([]string{"PATH=" + stubDir + string(os.PathListSeparator) + hookToolbox(t)}, env...)
 	out, err := cmd.CombinedOutput()
