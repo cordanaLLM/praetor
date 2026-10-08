@@ -45,6 +45,25 @@ func readConfinedText(ctx context.Context, root, rel string) (data []byte, err e
 	return contextopt.ReadRootSnapshot(ctx, dir, leaf)
 }
 
+// removeConfinedFile removes the regular file rel below root without following a symlink at
+// any component of rel. An absent file or parent is ignored (returns nil).
+func removeConfinedFile(ctx context.Context, root, rel string) (err error) {
+	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	defer cancel()
+	dir, leaf, err := openOutputParent(ctx, root, rel)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	if rmErr := dir.Remove(leaf); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+		return rmErr
+	}
+	return nil
+}
+
 // readConfinedDir lists the directory rel below root without following a symlink at any
 // component of rel, bounded by contextopt.MaxDuration (HISS-02). It reads at most limit+1
 // entries, so a caller can refuse a directory above its cap, and returns them by name. A

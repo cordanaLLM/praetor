@@ -452,6 +452,45 @@ func TestAdopt_Positive_PriorSkillRefreshedOnPlainRun(t *testing.T) {
 	}
 }
 
+// Positive: an adopter repository holding the real ship-235 skill texts (#850 scenario)
+// refreshes the 3 skills to current text without --force, installs and projects their LICENSE
+// files into .claude/skills, and passes verifyAdoptedContext.
+func TestAdopt_Positive_Ship235PriorSkillsRefreshedAndLicensesProjected(t *testing.T) {
+	repoPath := newTestRepo(t, "register-skills-ship-235-refresh")
+	bundle := config.RegisterSkillBundle()
+	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
+		name := bundle[i]
+		fixturePath := filepath.Join(priorSkillFixtures, name, "ship-235.SKILL.md.prior")
+		ship235Text := mustRead(t, fixturePath)
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.CanonicalSkillRel(name))), ship235Text)
+	}
+
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+
+	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
+		name := bundle[i]
+		rel := compiler.CanonicalSkillRel(name)
+		if got := repoText(t, repoPath, rel); got != sourceSkillText(t, name) {
+			t.Errorf("%s was not refreshed to current text", rel)
+		}
+		if got := findActionDetail(rep.ActionDetails, rel); !strings.Contains(got, "Refreshed the unedited earlier") {
+			t.Errorf("%s action detail %q, want refresh", rel, got)
+		}
+		if skillNeedsLicense(t, sourceSkillText(t, name)) {
+			wantLicense := sourceSkillLicenseText(t, name)
+			canonicalLicRel := compiler.CanonicalSkillLicenseRel(name)
+			if got := repoText(t, repoPath, canonicalLicRel); got != wantLicense {
+				t.Errorf("%s differs from shipped licence", canonicalLicRel)
+			}
+			claudeLicRel := compiler.SkillLicenseRel(".claude/skills", name)
+			if got := repoText(t, repoPath, claudeLicRel); got != wantLicense {
+				t.Errorf("%s differs from shipped licence", claudeLicRel)
+			}
+		}
+	}
+	verifyAdoptedContext(t, repoPath)
+}
+
 // Negative: a hand-edited skill in an adopter repository is preserved (refused overwrite)
 // on a plain run without --force and reported with a warning.
 func TestAdopt_Negative_HandEditedSkillRefusedOnPlainRun(t *testing.T) {

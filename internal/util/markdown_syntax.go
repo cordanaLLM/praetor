@@ -1,6 +1,14 @@
 package util
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+// MarkdownLinkRe matches an inline Markdown link and captures its text, which alone counts
+// when a table row names a package, and its destination. It handles single-level nested
+// brackets in link text, e.g. [a [b] c](url).
+var MarkdownLinkRe = regexp.MustCompile(`\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)]*)\)`)
 
 // MarkdownCodeSpan locates one inline code span in a text: Start is the index of the first
 // backtick of its opening run, End the index just past its closing run, and Run the length

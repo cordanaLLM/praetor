@@ -130,3 +130,29 @@ func TestMarkdownShellCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkdownLinkRe(t *testing.T) {
+	cases := []struct {
+		input       string
+		wantText    string
+		wantDest    string
+		shouldMatch bool
+	}{
+		{"[standard](https://example.org)", "standard", "https://example.org", true},
+		{"[nested [bracket] text](credits.md)", "nested [bracket] text", "credits.md", true},
+		{"not a link", "", "", false},
+	}
+	for _, tc := range cases {
+		matches := util.MarkdownLinkRe.FindStringSubmatch(tc.input)
+		if tc.shouldMatch {
+			if len(matches) < 3 {
+				t.Fatalf("%q failed to match MarkdownLinkRe", tc.input)
+			}
+			if matches[1] != tc.wantText || matches[2] != tc.wantDest {
+				t.Errorf("%q = text:%q dest:%q, want text:%q dest:%q", tc.input, matches[1], matches[2], tc.wantText, tc.wantDest)
+			}
+		} else if len(matches) > 0 {
+			t.Errorf("%q unexpectedly matched MarkdownLinkRe: %v", tc.input, matches)
+		}
+	}
+}

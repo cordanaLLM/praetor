@@ -6,9 +6,9 @@ package supplychain
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 )
 
@@ -20,10 +20,6 @@ const AcknowledgementsFile = "docs/credits.md"
 
 // creditsPlayerAnchor marks that row: the player it names as the packages' use.
 var creditsPlayerAnchor = "`" + figureassets.Directory + "/dist/player.js`"
-
-// creditsLink matches a Markdown link and captures its text, which alone counts when a row
-// names a package, and its target, which CheckUpstreamCredits matches a declared upstream to.
-var creditsLink = regexp.MustCompile(`\[([^\]]*)\]\(([^)]*)\)`)
 
 // CheckCredits fails when the credits row of the figure player does not name every npm package
 // the committed player bundles as "<name> <version>", at the version the figure lock installs
@@ -39,7 +35,7 @@ func CheckCredits(credits string, sources NoticeSources) error {
 	if err != nil {
 		return err
 	}
-	named := strings.ToLower(creditsLink.ReplaceAllString(tableCells(row)[0], "$1"))
+	named := strings.ToLower(util.MarkdownLinkRe.ReplaceAllString(tableCells(row)[0], "$1"))
 	var missing []string
 	for _, component := range components {
 		if !namesTerm(named, strings.ToLower(component.name+" "+component.version), termByte) {
