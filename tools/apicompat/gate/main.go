@@ -5,7 +5,9 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 // Command gate is the Go API compatibility gate of the api:public-contract facet. The
-// workflow .github/workflows/praetor-api.yml runs it on every pull request and push:
+// workflow .github/workflows/praetor-api.yml runs it on every pull request that is ready for
+// review and on every push to the default branch; on a draft pull request it fails without
+// running the gate, and a push to another branch or a tag starts no run:
 //
 //	go run tools/apicompat/gate/main.go [-base=<rev>] [-policy=auto|warn|reject] [-checker=<path>]
 //
@@ -749,8 +751,10 @@ func emptyHead(ctx context.Context, clone string, config []string) error {
 // and the vendor-free clone: a fixed identity, no signing and a hooks directory that does not
 // exist, so no configuration of the machine changes or blocks them.
 func scratchGitConfig(hooks string) []string {
-	return []string{"-c", "user.name=apicompat", "-c", "user.email=apicompat@example.invalid",
-		"-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + hooks}
+	return []string{
+		"-c", "user.name=apicompat", "-c", "user.email=apicompat@example.invalid",
+		"-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + hooks,
+	}
 }
 
 // resolveChecker returns the checker binary: the -checker path, or checkerModule installed into
