@@ -303,8 +303,13 @@ func printPlanActionsPermissions(ctx context.Context, manifest *config.Manifest,
 // liveMergeQueueVerdict fails a branch the forge protects with a merge queue and a required
 // status check whose workflow lacks the merge_group trigger (#893): no group reports it, so
 // every queued group waits for it until the queue's check timeout. It passes silently for a
-// branch without a merge_queue rule, and names the workflow path and the missing trigger.
+// branch without a merge_queue rule, and names the workflow path and the missing trigger. A queue
+// the policy does not declare fails first: the declared key alone selects the merge_group
+// contexts, so the branch is not judged against a selection the policy never made.
 func liveMergeQueueVerdict(ctx context.Context, rootDir string, target protectionTarget, live *forge.LiveBranchProtection) error {
+	if !target.policy.MergeQueue && live != nil && live.HasActiveRule(forge.MergeQueueRule) {
+		return errors.New("[FAIL] " + forge.UndeclaredMergeQueueFailure(target.branch))
+	}
 	findings, err := forge.LiveMergeQueueFindings(ctx, rootDir, live)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Live branch protection of %s: read the merge_group triggers: %w", target.branch, err)

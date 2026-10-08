@@ -639,3 +639,30 @@ func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t
 		"), so the status checks are compared with the ones this checkout's workflows report.",
 		"[PASS] Live branch protection of main compared with the forge")
 }
+
+// Negative (rule 13, #893): auditLiveBranchProtection fails a branch whose live rulesets hold an
+// active merge_queue rule while the policy does not declare one, naming the branch and the
+// remedy; with the declaration it fails a required check whose workflow lacks merge_group; and a
+// branch without a queue passes. Dropping the liveMergeQueueVerdict term makes the first two fail.
+func TestAuditLiveBranchProtection_MergeQueueWiring(t *testing.T) {
+	queued := declaredProtection(false)
+	queued.MergeQueue = true
+	stub := &forgeStub{rulesets: liveRuleset(t, queued, []string{"CI"}, "active")}
+	f := protectedFixture(t, false, "", stub)
+
+	_, err := liveProtectionAudit(t, f, config.DefaultPolicy())
+	mustErrContain(t, err, "carries an active merge_queue rule that the policy does not declare")
+	mustErrContain(t, err, "overrides.branch_protection.merge_queue: true")
+	mustErrContain(t, err, "main")
+
+	declared := config.DefaultPolicy()
+	declared.BranchProtection.MergeQueue = true
+	_, err = liveProtectionAudit(t, f, declared)
+	mustErrContain(t, err, ".github/workflows/ci.yml: no merge_group trigger")
+
+	plain := &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")}
+	f = protectedFixture(t, false, "", plain)
+	if out, err := liveProtectionAudit(t, f, config.DefaultPolicy()); err != nil {
+		t.Fatalf("a branch without a queue failed: %v\n%s", err, out)
+	}
+}

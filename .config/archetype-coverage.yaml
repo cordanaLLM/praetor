@@ -475,6 +475,40 @@ fields:
         effect: >-
           compares the live branch protection with the merge_group selection
           of the default branch's workflows
+      - func: cmd/standardsctl.verifySyncLocal
+        kind: reports
+        effect: >-
+          names the workflows the declared queue leaves out of the required
+          checks (sync, local)
+      - func: cmd/standardsctl.liveMergeQueueVerdict
+        kind: reports
+        effect: >-
+          fails the audit for a live merge_queue rule the policy does not
+          declare
+      - func: internal/adopt.reconcileBranchRuleset
+        kind: reports
+        effect: >-
+          warns about the workflows the declared queue leaves out of the
+          ruleset
+      - func: internal/flavor.applyRuleset
+        kind: reports
+        effect: >-
+          names the workflows the declared queue leaves out of the ruleset
+      - func: internal/forge.RenderRepositoryRuleset
+        kind: acts
+        effect: >-
+          targets the ruleset that carries the merge_queue rule at the
+          default branch alone
+      - func: internal/forge.protectionDocument
+        kind: acts
+        effect: >-
+          drops the CodeQL default setup contexts from the required checks
+          under a merge queue
+      - func: internal/forge.PriorRulesetDigests
+        kind: acts
+        effect: >-
+          accepts the queue rendering as the prior of the queue-less one and
+          the reverse, so toggling the key refreshes an unedited file
   - key: branch_protection.codeql_default_setup
     go: [BranchProtectionPolicy.CodeQLDefaultSetup]
     state: refused
@@ -489,6 +523,11 @@ fields:
         effect: >-
           renders a code_scanning rule for CodeQL under a merge queue, where
           default setup reports no status context for a merge group
+      - func: internal/forge.protectionDocument
+        kind: acts
+        effect: >-
+          drops the CodeQL default setup contexts from the required checks
+          under a merge queue
   - key: supply_chain.slsa_level
     go: [SupplyChainPolicy.SLSALevel]
     state: consumed

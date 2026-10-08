@@ -52,8 +52,13 @@ func TestRepositoryDefaultBranch_Positive_MainMasterAndACustomName(t *testing.T)
 	if got := mustDefaultBranch(t, custom, nil); got != "release/stable" {
 		t.Fatalf("a declared custom branch resolved %q", got)
 	}
-	if refs := RepositoryRulesetRefs("master"); !slices.Equal(refs, []string{"refs/heads/master", "refs/heads/lts-*"}) {
+	if refs := RepositoryRulesetRefs("master", false); !slices.Equal(refs, []string{"refs/heads/master", "refs/heads/lts-*"}) {
 		t.Fatalf("ruleset refs for master = %v", refs)
+	}
+	// A ruleset with a merge_queue rule targets the default branch alone: a wildcard include is
+	// unverified next to the queue rule.
+	if refs := RepositoryRulesetRefs("master", true); !slices.Equal(refs, []string{"refs/heads/master"}) {
+		t.Fatalf("queue ruleset refs for master = %v", refs)
 	}
 }
 

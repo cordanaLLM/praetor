@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -93,7 +94,17 @@ const rulesetEnforcementActive = "active"
 // default branch (RepositoryDefaultBranch) is branch: that branch and every lts-* branch, the
 // release line .config/flavors.yaml tracks. The local file and a remote sync share it, so neither
 // narrows the other.
-func RepositoryRulesetRefs(branch string) []string {
+//
+// A ruleset that carries a merge_queue rule (mergeQueue) targets the default branch alone: GitHub
+// documents that a merge queue cannot be enabled with branch protection rules that use wildcard
+// characters in the branch name pattern, and says nothing on rulesets, so a wildcard include is
+// unverified there and is not rendered next to the queue rule
+// (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue,
+// read 2026-10-08). The lts-* branches are then not covered by this ruleset.
+func RepositoryRulesetRefs(branch string, mergeQueue bool) []string {
+	if mergeQueue {
+		return []string{"refs/heads/" + branch}
+	}
 	return []string{"refs/heads/" + branch, "refs/heads/lts-*"}
 }
 
@@ -104,7 +115,7 @@ func RenderRepositoryRuleset(branch string, policy config.BranchProtectionPolicy
 	if !config.ValidBranchName(branch) {
 		return nil, fmt.Errorf("ruleset default branch %q is not a branch name", branch)
 	}
-	doc, err := protectionRuleset(RepositoryRulesetName, RepositoryRulesetRefs(branch), policy, contexts, true)
+	doc, err := protectionRuleset(RepositoryRulesetName, RepositoryRulesetRefs(branch, policy.MergeQueue), policy, contexts, true)
 	if err != nil {
 		return nil, err
 	}
@@ -152,6 +163,13 @@ type RulesetBaseline struct {
 	// queue (Contexts then holds the merge_group workflows alone): with the policy minus its queue
 	// they render the ruleset the repository carried before the queue was declared.
 	UnqueuedContexts []string
+	// QueuedContexts are the contexts of the merge_group workflows alone, read only when Policy
+	// declares no queue (Contexts then holds every workflow): with the policy plus a queue they
+	// render the ruleset the repository carried before the operator removed the declaration.
+	QueuedContexts []string
+	// queuedRead records that QueuedContexts was read (it may be empty), so a baseline built
+	// without it yields no queue prior.
+	queuedRead bool
 }
 
 // ReadRulesetBaseline reads the baseline of the repository at repoPath as it stands. A writer
@@ -176,7 +194,12 @@ func ReadRulesetBaseline(ctx context.Context, repoPath string) (RulesetBaseline,
 		if baseline.UnqueuedContexts, err = RequiredStatusContexts(ctx, repoPath); err != nil {
 			return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
 		}
+		return baseline, nil
 	}
+	if baseline.QueuedContexts, err = RequiredStatusContexts(ctx, repoPath, ForMergeQueue(true)); err != nil {
+		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
+	}
+	baseline.queuedRead = true
 	return baseline, nil
 }
 
@@ -215,6 +238,14 @@ func RepositoryBranchPolicy(ctx context.Context, repoPath string) (config.Branch
 func PriorRulesetDigests(baseline RulesetBaseline, current []byte) map[string]string {
 	priors := make(map[string]string, 4)
 	addPriorBranches(priors, baseline, current, "the ruleset of the repository's policy and workflows before this run")
+	if !baseline.Policy.MergeQueue && baseline.queuedRead {
+		// The operator removed the queue declaration: the ruleset on disk is still the queue
+		// rendering, which is Praetor's too, and the run that removes the queue refreshes it.
+		queued := baseline
+		queued.Policy.MergeQueue = true
+		queued.Contexts = baseline.QueuedContexts
+		addPriorBranches(priors, queued, current, "the ruleset of the repository's policy before it removed its merge queue")
+	}
 	if baseline.Policy.MergeQueue {
 		// The policy is read after the operator declared the queue, so the ruleset on disk is
 		// still the queue-less one: it is Praetor's too, and the run that adds the queue refreshes it.
@@ -338,6 +369,9 @@ func protectionDocument(name string, refs []string, policy config.BranchProtecti
 		return nil, err
 	}
 	rules := protectionRules(policy, reviewCount, requireCodeOwner)
+	if policy.MergeQueue && policy.CodeQLDefaultSetup {
+		contexts = slices.DeleteFunc(slices.Clone(contexts), IsDefaultSetupContext)
+	}
 	if len(contexts) > 0 {
 		checks := make([]map[string]string, 0, len(contexts))
 		for i := 0; i < len(contexts) && i < maxRulesetContexts; i++ {

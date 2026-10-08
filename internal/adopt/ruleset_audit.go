@@ -122,7 +122,7 @@ func auditMergeQueueContexts(ctx context.Context, rootDir string, ruleset []byte
 // document is no queue ruleset here: the content check that follows
 // (forge.ValidateRepositoryRuleset) reports it.
 func queueRequiredContexts(ruleset []byte, policy config.BranchProtectionPolicy) (required []string, queued bool) {
-	has, hasErr := forge.RulesetHasRule(ruleset, "merge_queue")
+	has, hasErr := forge.RulesetHasRule(ruleset, forge.MergeQueueRule)
 	contexts, contextsErr := forge.RulesetStatusContexts(ruleset)
 	if hasErr != nil || contextsErr != nil {
 		return nil, false

@@ -202,3 +202,109 @@ func TestReadRulesetBaselineQueuelessContexts(t *testing.T) {
 		t.Fatalf("no queue must read no queue-less contexts: %v %v", baseline.UnqueuedContexts, err)
 	}
 }
+
+// Positive: removing the queue declaration leaves the queue rendering on disk, which is Praetor's
+// too, so the run that removes it refreshes the file without --force. Negative: an edited queue
+// rendering matches nothing, and a baseline that read no queued contexts (queuedRead false) yields no queue prior.
+func TestPriorRulesetDigestsAcceptTheQueueRendering(t *testing.T) {
+	policy := config.BranchProtectionPolicy{EnforceLinearHistory: true, RequiredApprovingReviewers: 1}
+	all := []string{"Build", "Documentation Governance"}
+	queued := policy
+	queued.MergeQueue = true
+	onDisk, err := RenderRepositoryRuleset("main", queued, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := RenderRepositoryRuleset("main", policy, all)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := RulesetBaseline{Branch: "main", Policy: policy, Contexts: all, QueuedContexts: []string{"Build"}, queuedRead: true}
+	if _, known, _ := util.LookupCanonicalText(onDisk, PriorRulesetDigests(baseline, current)); !known {
+		t.Fatalf("the queue rendering is not a prior of the queue-less one:\n%s", onDisk)
+	}
+	edited := queued
+	edited.RequiredApprovingReviewers = 3
+	editedData, err := RenderRepositoryRuleset("main", edited, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, known, _ := util.LookupCanonicalText(editedData, PriorRulesetDigests(baseline, current)); known {
+		t.Fatal("an edited queue ruleset must keep the --force contract")
+	}
+	baseline.queuedRead = false
+	if _, known, _ := util.LookupCanonicalText(onDisk, PriorRulesetDigests(baseline, current)); known {
+		t.Fatal("a baseline without queued contexts must not accept the queue rendering")
+	}
+}
+
+// ReadRulesetBaseline reads the merge_group contexts for a policy without a queue.
+func TestReadRulesetBaselineQueuedContexts(t *testing.T) {
+	baseline, err := ReadRulesetBaseline(t.Context(), queueFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(baseline.QueuedContexts, []string{"Build"}) {
+		t.Fatalf("queued contexts = %v", baseline.QueuedContexts)
+	}
+}
+
+// Positive: with CodeQL default setup under a queue, a CodeQL context handed to the renderer is
+// dropped, and so is one a live ruleset requires and the union merge would keep. Negative: the
+// same contexts stay without a queue, and an ordinary live context is kept.
+func TestMergeQueueDropsCodeQLDefaultSetupContexts(t *testing.T) {
+	contexts := []string{"Build", "CodeQL / Analyze (go)", "Analyze (go)", "CodeQL"}
+	policy := config.BranchProtectionPolicy{RequiredApprovingReviewers: 1, MergeQueue: true, CodeQLDefaultSetup: true}
+	data, err := RenderRepositoryRuleset(FallbackDefaultBranch, policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RulesetStatusContexts(data)
+	if err != nil || !slices.Equal(got, []string{"Build"}) {
+		t.Fatalf("queue contexts = %v, %v", got, err)
+	}
+	policy.MergeQueue = false
+	data, err = RenderRepositoryRuleset(FallbackDefaultBranch, policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err = RulesetStatusContexts(data); err != nil || !slices.Equal(got, contexts) {
+		t.Fatalf("queue-less contexts = %v, %v", got, err)
+	}
+
+	policy.MergeQueue = true
+	desiredData, err := RenderRepositoryRuleset(FallbackDefaultBranch, policy, []string{"Build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := jsonObject(desiredData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := map[string]any{"rules": []any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{
+		"required_status_checks": []any{
+			map[string]any{"context": "CodeQL / Analyze (go)"}, map[string]any{"context": "Legacy Gate"},
+		},
+	}}}}
+	merged, _, err := mergeRuleset(live, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, ok := mergedRuleParams(t, merged, "required_status_checks")["required_status_checks"].([]any)
+	if !ok {
+		t.Fatal("merged ruleset has no required status checks")
+	}
+	var names []string
+	for _, check := range checks {
+		entry, isObject := check.(map[string]any)
+		name, isString := entry["context"].(string)
+		if !isObject || !isString {
+			t.Fatalf("malformed merged check %v", check)
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	if !slices.Equal(names, []string{"Build", "Legacy Gate"}) {
+		t.Fatalf("merged contexts = %v, want the live CodeQL context dropped and Legacy Gate kept", names)
+	}
+}

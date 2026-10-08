@@ -19,8 +19,8 @@ const (
 	// mergeGroupEvent is the event GitHub raises for a merge group. A required check reports for
 	// a group only when its workflow triggers on it (#893).
 	mergeGroupEvent = ghworkflow.HostedGateMergeGroup
-	// mergeQueueRule and codeScanningRule are the ruleset rule types a merge queue renders.
-	mergeQueueRule   = "merge_queue"
+	// MergeQueueRule and codeScanningRule are the ruleset rule types a merge queue renders.
+	MergeQueueRule   = "merge_queue"
 	codeScanningRule = "code_scanning"
 	// Parameters of the merge_queue rule. GitHub requires all seven (REST reference, schema
 	// repository-rule-merge-queue, read 2026-10-08); these are its documented defaults, except
@@ -190,7 +190,7 @@ func queueMergeMethod(linearHistory bool) string {
 // mergeQueueRuleOf is the merge_queue rule: all seven parameters GitHub requires, set to their
 // documented defaults.
 func mergeQueueRuleOf(linearHistory bool) map[string]any {
-	return map[string]any{"type": mergeQueueRule, "parameters": map[string]any{
+	return map[string]any{"type": MergeQueueRule, "parameters": map[string]any{
 		"check_response_timeout_minutes":    queueCheckTimeoutMinutes,
 		"grouping_strategy":                 "ALLGREEN",
 		"max_entries_to_build":              queueMaxEntriesToBuild,
@@ -261,7 +261,7 @@ func (l *LiveBranchProtection) HasActiveRule(ruleType string) bool {
 // check the branch requires: no group ever reports it, so every queued group waits for it until
 // the queue's check timeout. It is empty for a branch without an active merge_queue rule.
 func LiveMergeQueueFindings(ctx context.Context, repoPath string, live *LiveBranchProtection) ([]MergeQueueFinding, error) {
-	if live == nil || !live.HasActiveRule(mergeQueueRule) {
+	if live == nil || !live.HasActiveRule(MergeQueueRule) {
 		return nil, nil
 	}
 	enforcement, err := collectEnforcement(live)
@@ -294,4 +294,14 @@ func MergeQueueFailure(subject string, findings []MergeQueueFinding) string {
 	return fmt.Sprintf("%s requires status checks on a branch protected by a merge queue whose workflows lack the "+
 		"%s trigger; add `%s:` to each workflow or drop the check:\n%s", subject, mergeGroupEvent, mergeGroupEvent,
 		strings.Join(lines, "\n"))
+}
+
+// UndeclaredMergeQueueFailure is the audit failure for a branch on which an active merge_queue
+// rule applies while the policy does not declare one: the declared key
+// branch_protection.merge_queue alone selects the merge_group contexts, so a sync would still
+// require checks no merge group reports. It names the branch and the remedy.
+func UndeclaredMergeQueueFailure(branch string) string {
+	return fmt.Sprintf("Live branch protection of %s carries an active merge_queue rule that the policy does not declare; "+
+		"declare `overrides.branch_protection.merge_queue: true` in .standards.yaml and run 'praetorctl sync --remote' "+
+		"so the required status checks are those of the workflows that trigger on %s", branch, mergeGroupEvent)
 }

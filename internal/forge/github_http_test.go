@@ -394,7 +394,7 @@ func liveProtectionRuleset() map[string]any {
 func TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing(t *testing.T) {
 	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{liveProtectionRuleset()}})
 	gh.RulesetName = RepositoryRulesetName
-	gh.ProtectedRefs = RepositoryRulesetRefs("main")
+	gh.ProtectedRefs = RepositoryRulesetRefs("main", false)
 	gh.RequiredStatusChecks = []string{"CI"}
 
 	lowered, err := gh.ReconcileProtectionReport(context.Background(), "main", &config.BranchProtectionPolicy{RequiredApprovingReviewers: 1})
@@ -475,7 +475,7 @@ func TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset(t *tes
 			writeJSON(t, w, http.StatusOK, map[string]any{"id": 42})
 		}
 	})
-	gh.RulesetName, gh.ProtectedRefs = RepositoryRulesetName, RepositoryRulesetRefs("main")
+	gh.RulesetName, gh.ProtectedRefs = RepositoryRulesetName, RepositoryRulesetRefs("main", false)
 	lowered, err := gh.ReconcileProtectionReport(context.Background(), "main", policy)
 	if err == nil || !strings.Contains(err.Error(), "did not converge") || !strings.Contains(err.Error(), "refs/heads/lts-*") {
 		t.Fatalf("expected a non-converged readback naming lts-*, got %v", err)
@@ -516,7 +516,7 @@ func TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset(t *tes
 func TestGitHubDriver_ReconcileProtection_Boundary_BareLiveRuleset(t *testing.T) {
 	// A live ruleset with no conditions and no rules merges to exactly the desired one.
 	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{{"id": 7, "name": RepositoryRulesetName}}})
-	gh.RulesetName, gh.ProtectedRefs = RepositoryRulesetName, RepositoryRulesetRefs("main")
+	gh.RulesetName, gh.ProtectedRefs = RepositoryRulesetName, RepositoryRulesetRefs("main", false)
 	if err := gh.ReconcileProtection(context.Background(), "main", &config.BranchProtectionPolicy{}); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}

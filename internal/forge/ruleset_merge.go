@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"strings"
 )
 
 // maxRulesetRefs bounds the ref patterns of one ruleset condition (HISS-02).
@@ -123,6 +124,9 @@ func mergeRules(liveRaw, desiredRaw any) ([]any, []LoweredParameter, error) {
 			merged.rules = append(merged.rules, live[i])
 		}
 	}
+	if hasRuleType(desired, codeScanningRule) {
+		dropDefaultSetupChecks(merged.rules)
+	}
 	if len(merged.rules) > maxRulesetRules {
 		return nil, nil, fmt.Errorf("merged ruleset exceeds %d rules", maxRulesetRules)
 	}
@@ -195,7 +199,7 @@ func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, [
 func mergeRuleParameters(ruleType string, liveParams, desiredParams map[string]any) (map[string]any, error) {
 	params := make(map[string]any, len(liveParams)+len(desiredParams))
 	switch ruleType {
-	case mergeQueueRule:
+	case MergeQueueRule:
 		maps.Copy(params, desiredParams)
 		maps.Copy(params, liveParams)
 		return params, nil
@@ -589,4 +593,58 @@ func toAnyList(values []string) []any {
 		out = append(out, values[i])
 	}
 	return out
+}
+
+// hasRuleType reports whether rules holds a rule of type ruleType.
+func hasRuleType(rules []map[string]any, ruleType string) bool {
+	for i := 0; i < len(rules) && i < maxRulesetRules; i++ {
+		if rules[i]["type"] == ruleType {
+			return true
+		}
+	}
+	return false
+}
+
+// IsDefaultSetupContext reports whether a status context is one CodeQL default setup reports,
+// "CodeQL" or "CodeQL / Analyze (<language>)" or "Analyze (<language>)": default setup never
+// runs for a merge group, so a queue-protected branch must not require it as a status check (it
+// requires the results through a code_scanning rule instead).
+func IsDefaultSetupContext(context string) bool {
+	return context == "CodeQL" || strings.HasPrefix(context, "CodeQL / ") || strings.HasPrefix(context, "Analyze (")
+}
+
+// dropDefaultSetupChecks removes, in place, every CodeQL default setup context (IsDefaultSetupContext)
+// from the required_status_checks rules among rules. The union merge keeps every live required
+// check, so a context an earlier sync wrote would otherwise stay required and stall the queue.
+func dropDefaultSetupChecks(rules []any) {
+	for i := 0; i < len(rules) && i < maxRulesetRules; i++ {
+		rule, ok := rules[i].(map[string]any)
+		if !ok || rule["type"] != statusChecksParameter {
+			continue
+		}
+		params, ok := rule["parameters"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if checks, isList := params[statusChecksParameter].([]any); isList {
+			params[statusChecksParameter] = withoutDefaultSetupChecks(checks)
+		}
+	}
+}
+
+// withoutDefaultSetupChecks returns checks less the entries whose context is a CodeQL default
+// setup context.
+func withoutDefaultSetupChecks(checks []any) []any {
+	kept := make([]any, 0, len(checks))
+	for j := 0; j < len(checks) && j < maxRulesetContexts; j++ {
+		check, isObject := checks[j].(map[string]any)
+		name, isString := "", false
+		if isObject {
+			name, isString = check["context"].(string)
+		}
+		if !isString || !IsDefaultSetupContext(name) {
+			kept = append(kept, checks[j])
+		}
+	}
+	return kept
 }

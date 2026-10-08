@@ -107,7 +107,7 @@ func TestNoMergeQueueRendersTheOldRuleset(t *testing.T) {
 // Positive: CodeQL default setup, which no merge group runs, becomes a code_scanning rule and
 // never a required status context. Negative: a queue without it renders no code_scanning rule.
 func TestMergeQueueRendersCodeScanningForDefaultSetup(t *testing.T) {
-	contexts := []string{"Build"}
+	contexts := []string{"Build", "CodeQL / Analyze (go)", "Analyze (go)", "CodeQL"}
 	policy := config.BranchProtectionPolicy{RequiredApprovingReviewers: 1, MergeQueue: true, CodeQLDefaultSetup: true}
 	data, err := RenderRepositoryRuleset(FallbackDefaultBranch, policy, contexts)
 	if err != nil {

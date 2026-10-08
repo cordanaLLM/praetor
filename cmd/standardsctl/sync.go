@@ -275,19 +275,13 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 		return errors.New("reconcile branch protection: no resolved policy")
 	}
 	repository := gh.Owner + "/" + gh.Repo
-	queued, err := branchUsesMergeQueue(ctx, gh, in.branch, in.policy.MergeQueue)
-	if err != nil {
-		return err
-	}
+	queued := in.policy.MergeQueue
 	contexts, omitted, err := remoteStatusContexts(ctx, rootDir, repository, queued, in.contexts)
 	if err != nil {
 		return err
 	}
-	if err := printQueueOmissions(ctx, rootDir, queued); err != nil {
-		return err
-	}
 	gh.RulesetName = forge.RepositoryRulesetName
-	gh.ProtectedRefs = forge.RepositoryRulesetRefs(in.branch)
+	gh.ProtectedRefs = forge.RepositoryRulesetRefs(in.branch, queued)
 	gh.RequiredStatusChecks = contexts
 	gh.StrictStatusChecks = true
 	target := protectionTarget{repository: repository, branch: in.branch, policy: *in.policy, contexts: contexts}
@@ -309,23 +303,54 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 			"another ruleset, legacy branch protection or the repository's plan overrides it",
 			forge.RepositoryRulesetName, in.branch, strings.Join(drifted, ", "))
 	}
-	fmt.Printf("  [OK] Remote branch protection synchronized on GitHub (%s and lts-*, read back; live rules praetor does not render kept)\n", in.branch)
+	stale, err := staleQueueChecks(ctx, rootDir, gh, in.branch, queued)
+	if err != nil {
+		return err
+	}
+	if len(stale) > 0 {
+		printStaleQueueChecks(in.branch, stale)
+	} else {
+		fmt.Printf("  [OK] Remote branch protection synchronized on GitHub (%s, read back; live rules praetor does not render kept)\n", protectedRefsSummary(in.branch, queued))
+	}
 	return reportOmittedStatusChecks(ctx, gh, in.branch, omitted)
 }
 
-// branchUsesMergeQueue reports whether branch merges through a merge queue: the declared policy
-// says so, or an active merge_queue rule of any ruleset applies to the branch on GitHub (#893).
-// A queue only the forge carries still stalls on a required check no merge group reports, so the
-// checks a sync writes are selected for it. The forge is not read when the policy declares one.
-func branchUsesMergeQueue(ctx context.Context, gh *forge.GitHubDriver, branch string, declared bool) (bool, error) {
-	if declared {
-		return true, nil
+// protectedRefsSummary names the branches the written ruleset protects: the default branch and
+// lts-*, or the default branch alone while a merge queue is declared (forge.RepositoryRulesetRefs).
+func protectedRefsSummary(branch string, queued bool) string {
+	if queued {
+		return branch + " only"
+	}
+	return branch + " and lts-*"
+}
+
+// staleQueueChecks compares, for a declared merge queue, the workflows the queue leaves out
+// (forge.MergeQueueFindings) with what GitHub requires of branch after the write: the merge never
+// removes a live required check, so a check an earlier sync wrote for a workflow without the
+// merge_group trigger stays required and stalls the queue. It is empty without a declared queue.
+func staleQueueChecks(ctx context.Context, rootDir string, gh *forge.GitHubDriver, branch string, queued bool) ([]forge.MergeQueueFinding, error) {
+	if !queued {
+		return nil, nil
 	}
 	live, err := gh.ReadBranchProtection(ctx, branch)
 	if err != nil {
-		return false, fmt.Errorf("read the live branch protection of %s: %w", branch, err)
+		return nil, fmt.Errorf("read back the merge queue checks of %s: %w", branch, err)
 	}
-	return live.HasActiveRule("merge_queue"), nil
+	stale, err := forge.LiveMergeQueueFindings(ctx, rootDir, live)
+	if err != nil {
+		return nil, fmt.Errorf("compare the merge queue checks of %s with the merge_group triggers: %w", branch, err)
+	}
+	return stale, nil
+}
+
+// printStaleQueueChecks warns, instead of reporting the ruleset as synchronized, about each
+// check GitHub still requires on branch although its workflow lacks merge_group.
+func printStaleQueueChecks(branch string, stale []forge.MergeQueueFinding) {
+	fmt.Printf("  [WARN] Remote branch protection written, but %s still requires checks the merge queue never receives; "+
+		"sync --remote never removes a live required check, so remove them from the ruleset by hand or add the merge_group trigger:\n", branch)
+	for i := 0; i < len(stale) && i < maxQueueOmissionLines; i++ {
+		fmt.Println("    " + stale[i].String())
+	}
 }
 
 // printQueueOmissions names, for a branch protected by a merge queue, each workflow whose checks
