@@ -266,6 +266,10 @@ type Manifest struct {
 	// inventory bounds and style exclusions for partial, generated and fixture Markdown. The
 	// gate reads it from this file at run time (#532, #534).
 	Documentation *DocumentationPolicy `yaml:"documentation,omitempty"`
+	// HostedGates selects how the managed hosted gates treat a draft pull request: the
+	// fail-closed step by default, or the job-level skip the audit accepts only behind a proven
+	// aggregate (#857). It is repository-only, like Documentation.
+	HostedGates *HostedGatesPolicy `yaml:"hosted_gates,omitempty"`
 	// Verification raises the bounds of the discovery walk that reads the repository's languages
 	// and build markers (VerificationPolicy), for every run that walks it: adoption, `praetorctl
 	// paperclip harness` and the audit's Paperclip gate. It is repository-only, like Documentation.
@@ -379,6 +383,7 @@ var manifestValidators = [...]func(*Manifest) error{
 	validateManifestRepository,
 	func(m *Manifest) error { return m.HISS.validate() },
 	validateManifestDocumentation,
+	validateManifestHostedGates,
 	func(m *Manifest) error { return ValidateDocsSurfaces(m.DocsSurfaces) },
 	validateManifestActions,
 	validateManifestDevContainer,
