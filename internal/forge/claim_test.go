@@ -455,3 +455,55 @@ func TestClaimMarker_RoundTripAndBounds(t *testing.T) {
 		t.Fatal("an over-long first line is never a claim")
 	}
 }
+
+func TestClaim_Negative_AbandonedClaimLeavesNoStatusLabel(t *testing.T) {
+	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+	f.FailOn = "AddAssignees"
+	if _, err := newTestDesk(f, clock).Claim(context.Background(), testRef(), forge.ClaimRequest{Session: "s1", Lane: "l", Branch: "b"}); err == nil {
+		t.Fatal("expected an error")
+	}
+	if len(f.OnIssue) != 0 {
+		t.Fatalf("an abandoned claim must not leave status labels, left %v", f.OnIssue)
+	}
+}
+
+func TestClaim_Negative_FailedResumeKeepsTheClaimLive(t *testing.T) {
+	for _, failing := range []string{"AddLabels", "AddAssignees", "ListIssueComments"} {
+		t.Run(failing, func(t *testing.T) {
+			f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+			d := newTestDesk(f, clock)
+			mustClaim(t, d, "s1")
+			clock.now = claimEpoch.Add(time.Hour)
+			f.FailOn = failing
+			if _, err := d.Claim(context.Background(), testRef(), forge.ClaimRequest{Session: "s1", Lane: "agy", Branch: "feat/s1"}); err == nil {
+				t.Fatal("a transient forge failure must surface")
+			}
+			f.FailOn = ""
+			holder, err := d.LiveClaim(context.Background(), testRef())
+			if err != nil || holder == nil || holder.Session != "s1" || holder.Released() {
+				t.Fatalf("the earlier valid claim must stay live: %+v %v", holder, err)
+			}
+			if !f.OnIssue[forge.LabelInProgress] {
+				t.Fatalf("labels of a live claim must stay, have %v", f.OnIssue)
+			}
+		})
+	}
+}
+
+func TestRelease_Negative_LabelFailureKeepsClaimReleasable(t *testing.T) {
+	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+	d := newTestDesk(f, clock)
+	mustClaim(t, d, "s1")
+	f.FailOn = "RemoveLabel"
+	req := forge.ReleaseRequest{Session: "s1", Outcome: "landed"}
+	if _, err := d.Release(context.Background(), testRef(), req); err == nil {
+		t.Fatal("a label failure must surface")
+	}
+	f.FailOn = ""
+	if res, err := d.Release(context.Background(), testRef(), req); err != nil || res.Action != "released" {
+		t.Fatalf("retried release must succeed, got %+v %v", res, err)
+	}
+	if len(f.OnIssue) != 0 {
+		t.Fatalf("labels left after the retried release: %v", f.OnIssue)
+	}
+}

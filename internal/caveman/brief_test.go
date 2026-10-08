@@ -131,7 +131,7 @@ func TestExtractBriefReadOnly_Boundary(t *testing.T) {
 }
 
 func TestExtractBriefClaimPositive(t *testing.T) {
-	brief := "goal: patch hook\ntask: feature_implementation\n- issue: acme/widgets#7, other/lib#9\nissue: acme/widgets#8\n- session: s-1\n"
+	brief := "goal: patch hook\ntask: feature_implementation\nissue: acme/widgets#7, other/lib#9\nissue: acme/widgets#8\nsession: s-1\n"
 	got, err := ExtractBriefClaim(brief)
 	want := []string{"acme/widgets#7", "other/lib#9", "acme/widgets#8"}
 	if err != nil || got.Session != "s-1" || strings.Join(got.Issues, " ") != strings.Join(want, " ") {
@@ -139,6 +139,21 @@ func TestExtractBriefClaimPositive(t *testing.T) {
 	}
 	if none, err := ExtractBriefClaim("goal: x\ntask: ci_debugging\n"); err != nil || len(none.Issues) != 0 || none.Session != "" {
 		t.Fatalf("a brief without the fields is the zero claim, got %+v, %v", none, err)
+	}
+	// Prose that only resembles a field is not a field: no bullet, no indent, no capitals,
+	// and a session line alone (no issue named) is never validated.
+	for name, prose := range map[string]string{
+		"bullet":         "- Issue: parser drops trailing field\n",
+		"bullet lower":   "- issue: parser drops trailing field\n",
+		"indented":       "  issue: #937\n",
+		"capitalised":    "Issue: #937\n",
+		"session prose":  "session: two hour pairing slot\n",
+		"session dup":    "session: a\nsession: b\n",
+		"session bullet": "- session: a b\n",
+	} {
+		if got, err := ExtractBriefClaim(prose); err != nil || len(got.Issues) != 0 || got.Session != "" {
+			t.Fatalf("%s: %+v, %v, want the zero claim", name, got, err)
+		}
 	}
 	if fenced, err := ExtractBriefClaim("```text\nissue: acme/widgets#7\n```\n"); err != nil || len(fenced.Issues) != 0 {
 		t.Fatalf("fenced code is not a field: %+v, %v", fenced, err)
@@ -154,9 +169,8 @@ func TestExtractBriefClaimNegative(t *testing.T) {
 		"one bad of two":     "issue: acme/widgets#7, nonsense\n",
 		"traversal":          "issue: ../x#7\n",
 		"ten digits":         "issue: acme/widgets#1234567890\n",
-		"duplicate session":  "session: a\nsession: b\n",
-		"session with space": "session: a b\n",
-		"empty session":      "session:   \n",
+		"session no valid":   "issue: acme/widgets#7\nsession: a b\n",
+		"duplicate with iss": "issue: acme/widgets#7\nsession: a\nsession: b\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got, err := ExtractBriefClaim(brief); err == nil {
@@ -177,10 +191,10 @@ func TestExtractBriefClaimBoundary(t *testing.T) {
 	if _, err := ExtractBriefClaim("issue: " + strings.Join(refs, " ") + " acme/widgets#99\n"); err == nil {
 		t.Fatal("one issue over the limit must be refused")
 	}
-	if got, err := ExtractBriefClaim("session: " + strings.Repeat("s", 128) + "\n"); err != nil || len(got.Session) != 128 {
+	if got, err := ExtractBriefClaim("issue: acme/widgets#7\nsession: " + strings.Repeat("s", 128) + "\n"); err != nil || len(got.Session) != 128 {
 		t.Fatalf("128-character session: %v", err)
 	}
-	if _, err := ExtractBriefClaim("session: " + strings.Repeat("s", 129) + "\n"); err == nil {
+	if _, err := ExtractBriefClaim("issue: acme/widgets#7\nsession: " + strings.Repeat("s", 129) + "\n"); err == nil {
 		t.Fatal("129-character session must be refused")
 	}
 }

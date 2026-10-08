@@ -102,10 +102,11 @@ own comment as `abandoned` and is refused naming the winner
 
 ## Release
 
-`release` rewrites the comment with stage `released` and the outcome, removes
-`status:in-progress` and `status:blocked`, and leaves the issue open. The pull request closes
+`release` removes `status:in-progress` and `status:blocked`, then rewrites the comment with
+stage `released` and the outcome, and leaves the issue open. The pull request closes
 the issue. The released comment is reused by the next claim on the same issue, so the one
-comment per issue rule holds across claims.
+comment per issue rule holds across claims. Labels go first, so a label failure leaves the claim
+live and a retried release succeeds (`TestRelease_Negative_LabelFailureKeepsClaimReleasable`).
 
 ## Failure behaviour
 
@@ -115,8 +116,11 @@ unreadable comment thread or a thread longer than 1,000 comments, returns an err
 `forge.ErrClaimUnverifiable`. A claim that could not be verified is never reported as held,
 and a hold that could not be checked is never reported as absent. When the comment was written
 but the labels or the read-back failed, the claim is finalised as `abandoned` so a half-made
-claim does not hold the issue (`TestClaim_Negative_ForgeErrorsFailClosed`,
-`TestClaim_Negative_LabelFailureAbandonsTheComment`).
+claim does not hold the issue and its status labels are removed again
+(`TestClaim_Negative_ForgeErrorsFailClosed`, `TestClaim_Negative_LabelFailureAbandonsTheComment`,
+`TestClaim_Negative_AbandonedClaimLeavesNoStatusLabel`). A session that re-runs `claim` on its
+own live claim and hits a transient failure keeps that claim live; it is never finalised as
+`abandoned` (`TestClaim_Negative_FailedResumeKeepsTheClaimLive`).
 
 ## Dispatch enforcement
 
@@ -140,7 +144,7 @@ then decides per issue:
 | The brief names an issue but no `session:` | Deny. |
 | The claim cannot be read, or no lookup is wired | Deny. |
 
-A brief that names no issue is not touched and needs no token or network. The brief is also
+A brief that names no issue is not touched and needs no token or network. A field is a line that starts at column 0 with the lowercase word `issue:` or `session:`; bulleted, indented or capitalised lines are prose and never match. A `session:` line is validated only when the brief also names an issue. Test: `TestExtractBriefClaimPositive`. The brief is also
 judged by the text register gate, so a session identifier must pass it: tokens such as `a` or
 `mine` inside the identifier are rejected as grammar words. Tests:
 `TestBriefClaims_Negative_ForeignLiveClaimRefusesDispatchNamingIt`,

@@ -93,10 +93,10 @@ func (s *claimHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *claimHTTPServer) read(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.URL.Path == "/repos/other/lib/issues/9":
+	switch r.URL.Path {
+	case "/repos/other/lib/issues/9":
 		reply(s.t, w, http.StatusOK, map[string]any{"number": 9, "state": "open"})
-	case r.URL.Path == "/user":
+	case "/user":
 		reply(s.t, w, http.StatusOK, map[string]any{"login": "op"})
 	default:
 		reply(s.t, w, http.StatusOK, map[string]any{})

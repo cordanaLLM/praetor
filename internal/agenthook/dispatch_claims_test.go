@@ -113,3 +113,20 @@ func TestBriefClaims_Boundary_SharedIssueIsLookedUpOnce(t *testing.T) {
 		t.Fatalf("no briefs, no claims: %+v", verdict)
 	}
 }
+
+func TestBriefClaims_Positive_ProseResemblingFieldsIsNotTouched(t *testing.T) {
+	for name, prose := range map[string]string{
+		"bulleted issue":       "- Issue: parser drops trailing field\n",
+		"issue without owner":  "  issue: #937\n",
+		"session prose alone":  "session: pairing slot\n",
+		"bulleted bad session": "- session: unit7 unit8\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			response := runClaimDispatch(t, validBrief+prose, lookupOf(nil, &calls))
+			if response.ExitCode != 0 || calls != 0 {
+				t.Fatalf("prose must not reach the claim gate: exit %d, %d lookups, %s", response.ExitCode, calls, deniedText(response))
+			}
+		})
+	}
+}

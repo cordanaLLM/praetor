@@ -101,7 +101,7 @@ func IsBriefReadOnly(text string) bool {
 const MaxBriefClaimIssues = 16
 
 var (
-	claimFieldRe   = regexp.MustCompile(`(?i)^(?:[-*+]\s+)?(issue|session):\s*(.*?)\s*$`)
+	claimFieldRe   = regexp.MustCompile(`^(issue|session):[ \t]*(.*?)\s*$`)
 	claimIssueRe   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}/([A-Za-z0-9_.-]{1,100})#[0-9]{1,9}$`)
 	claimSessionRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:+@-]{0,127}$`)
 )
@@ -122,21 +122,33 @@ type BriefClaim struct {
 func ExtractBriefClaim(text string) (BriefClaim, error) {
 	lines, _ := scan(text)
 	var claim BriefClaim
+	sessions := 0
+	rawSession := ""
 	for _, line := range lines {
 		if !shapeContent(line) {
 			continue
 		}
-		match := claimFieldRe.FindStringSubmatch(strings.TrimSpace(maskQuoted(proseOf(line))))
+		match := claimFieldRe.FindStringSubmatch(maskQuoted(proseOf(line)))
 		if len(match) != 3 {
 			continue
 		}
-		var err error
-		if strings.EqualFold(match[1], "session") {
-			err = claim.setSession(match[2])
-		} else {
-			err = claim.addIssues(match[2])
+		if match[1] == "session" {
+			sessions++
+			rawSession = match[2]
+			continue
 		}
-		if err != nil {
+		if err := claim.addIssues(match[2]); err != nil {
+			return BriefClaim{}, err
+		}
+	}
+	if len(claim.Issues) == 0 {
+		return BriefClaim{}, nil
+	}
+	if sessions > 1 {
+		return BriefClaim{}, errors.New("brief session field is duplicated")
+	}
+	if sessions == 1 {
+		if err := claim.setSession(rawSession); err != nil {
 			return BriefClaim{}, err
 		}
 	}
@@ -144,9 +156,6 @@ func ExtractBriefClaim(text string) (BriefClaim, error) {
 }
 
 func (c *BriefClaim) setSession(value string) error {
-	if c.Session != "" {
-		return errors.New("brief session field is duplicated")
-	}
 	if !claimSessionRe.MatchString(value) {
 		return errors.New("brief session field must be 1..128 characters of letters, digits and . _ / : + @ -")
 	}

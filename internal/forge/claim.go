@@ -331,11 +331,16 @@ func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, 
 		return ClaimResult{}, err
 	}
 	claim.CommentID = id
-	if err := d.confirmHold(ctx, f, ref, claim); err != nil {
+	resumed := result.Action == "resumed"
+	if err := d.confirmHold(ctx, f, ref, claim, resumed); err != nil {
 		return ClaimResult{}, err
 	}
 	if err := d.applyClaimLabels(ctx, f, ref.Number, claim.Stage == claimBlockedStage); err != nil {
-		return ClaimResult{}, d.abandon(ctx, f, claim, err)
+		if resumed {
+			// The session's earlier claim was valid and stays live; a retry repairs the labels.
+			return ClaimResult{}, err
+		}
+		return ClaimResult{}, errors.Join(d.abandon(ctx, f, claim, err), d.clearLabels(ctx, f, ref.Number))
 	}
 	result.Claim = claim
 	return result, nil
@@ -381,9 +386,12 @@ func (d *ClaimDesk) putClaim(ctx context.Context, f ClaimForge, number int, targ
 // confirmHold reads the comments back after the write. When two sessions claimed at once the
 // lowest comment id holds; a loser finalises its own comment as abandoned and is refused,
 // naming the winner.
-func (d *ClaimDesk) confirmHold(ctx context.Context, f ClaimForge, ref ClaimRef, mine Claim) error {
+func (d *ClaimDesk) confirmHold(ctx context.Context, f ClaimForge, ref ClaimRef, mine Claim, resumed bool) error {
 	found, err := readClaims(ctx, f, ref.Number)
 	if err != nil {
+		if resumed {
+			return err
+		}
 		return d.abandon(ctx, f, mine, err)
 	}
 	winner, held := d.holder(found)
@@ -391,7 +399,11 @@ func (d *ClaimDesk) confirmHold(ctx context.Context, f ClaimForge, ref ClaimRef,
 		return nil
 	}
 	if !held {
-		return d.abandon(ctx, f, mine, fmt.Errorf("%w: claim comment %d not found on read-back", ErrClaimUnverifiable, mine.CommentID))
+		cause := fmt.Errorf("%w: claim comment %d not found on read-back", ErrClaimUnverifiable, mine.CommentID)
+		if resumed {
+			return cause
+		}
+		return d.abandon(ctx, f, mine, cause)
 	}
 	refusal := &ClaimHeldError{Ref: ref, Holder: winner}
 	if winner.CommentID != mine.CommentID {
@@ -404,6 +416,17 @@ func (d *ClaimDesk) confirmHold(ctx context.Context, f ClaimForge, ref ClaimRef,
 // hold the issue, and returns cause together with any failure of that cleanup.
 func (d *ClaimDesk) abandon(ctx context.Context, f ClaimForge, mine Claim, cause error) error {
 	return errors.Join(cause, d.finalise(ctx, f, mine, "abandoned"))
+}
+
+// clearLabels removes both status labels, reporting every failure.
+func (d *ClaimDesk) clearLabels(ctx context.Context, f ClaimForge, number int) error {
+	var errs []error
+	for _, name := range []string{LabelInProgress, LabelBlocked} {
+		if err := f.RemoveLabel(ctx, number, name); err != nil {
+			errs = append(errs, unverifiable("remove label "+name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (d *ClaimDesk) finalise(ctx context.Context, f ClaimForge, c Claim, outcome string) error {
@@ -556,13 +579,13 @@ func (d *ClaimDesk) Release(ctx context.Context, ref ClaimRef, req ReleaseReques
 	if err != nil {
 		return ClaimResult{}, err
 	}
+	// Labels go first: when the label removal fails the claim stays live and a retried release
+	// finds it, instead of ErrNoClaim with labels left behind.
+	if err := d.clearLabels(ctx, f, ref.Number); err != nil {
+		return ClaimResult{}, err
+	}
 	if err := f.EditIssueComment(ctx, claim.CommentID, body); err != nil {
 		return ClaimResult{}, unverifiable("finalise claim comment", err)
-	}
-	for _, name := range []string{LabelInProgress, LabelBlocked} {
-		if err := f.RemoveLabel(ctx, ref.Number, name); err != nil {
-			return ClaimResult{}, unverifiable("remove label "+name, err)
-		}
 	}
 	return ClaimResult{Ref: ref.String(), Claim: claim, Action: "released"}, nil
 }
