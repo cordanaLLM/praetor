@@ -13,6 +13,7 @@ Read [State ledger integrity](../state-ledger-integrity.md) first to understand 
 - [Wishes and polls](../wishes-and-polls.md): the local, bounded ledger for collecting and
   reviewing ideas.
 - [Issue inventory and synchronization integrity](../issue-sync-integrity.md): why issue
-  synchronization needs a complete inventory before it changes any issue.
+  synchronization needs a complete inventory before it changes any issue, and the planning
+  sync that ticks parents' boxes and closes finished epics and milestones.
 - [Released-resource garbage collection](../garbage-collection.md): `praetorctl gc` dry-runs
   by default and removes only resources their owner released.

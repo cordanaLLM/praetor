@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/cordanaLLM/praetor/internal/buildid"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // version is written with -X main.version: by the release config (.goreleaser.yaml) for a
@@ -57,7 +57,7 @@ func main() {
 		AllowOutsideRoot:      *allowOutside,
 		AllowRemoteBenchmarks: *allowRemote,
 		AuthToken:             token,
-		AllowedOrigins:        splitOrigins(*origins),
+		AllowedOrigins:        util.SplitCSV(*origins),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize standards-mcp server: %v\n", err)
@@ -68,18 +68,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "standards-mcp server error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-// splitOrigins parses the comma-separated -allowed-origins value, dropping blanks.
-func splitOrigins(raw string) []string {
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if trimmed := strings.TrimSpace(p); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
 }
 
 // runTransport delegates execution to the selected transport runner.

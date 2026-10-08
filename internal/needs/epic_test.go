@@ -30,6 +30,28 @@ type fakeForge struct {
 	next     int
 	failOn   int // 1-based index of the CreateIssue call that fails; 0 never fails
 	listErr  error
+	edits    []bodyEdit // every EditIssueBody request, applied to the inventory
+	editErr  error
+}
+
+// bodyEdit is one EditIssueBody request the fake received.
+type bodyEdit struct {
+	number int
+	body   string
+}
+
+func (f *fakeForge) EditIssueBody(_ context.Context, number int, body string) error {
+	if f.editErr != nil {
+		return f.editErr
+	}
+	f.edits = append(f.edits, bodyEdit{number: number, body: body})
+	for i := range f.existing {
+		if f.existing[i].ID == number {
+			f.existing[i].Body = body
+			return nil
+		}
+	}
+	return fmt.Errorf("fake forge: issue #%d does not exist", number)
 }
 
 func (f *fakeForge) Name() string                       { return "fake" }
@@ -71,7 +93,7 @@ func (f *fakeForge) CreateIssue(_ context.Context, spec forge.IssueSpec) (*forge
 		return nil, errors.New("fake forge: create refused")
 	}
 	f.next += 100
-	f.existing = append(f.existing, forge.IssueSpec{ID: f.next, Title: spec.Title, State: "open"})
+	f.existing = append(f.existing, forge.IssueSpec{ID: f.next, Title: spec.Title, Body: spec.Body, State: "open"})
 	return &forge.IssueResponse{
 		Number: f.next,
 		URL:    fmt.Sprintf("https://forge.test/issues/%d", f.next),
@@ -435,8 +457,9 @@ func TestPublishPreMigrationEpic_ResumesPartialPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume failed: %v", err)
 	}
-	if resumed.Number != parent.Number || resumed.Outcome != forge.IssueUnchanged {
-		t.Fatalf("resume did not reuse parent #%d: %+v", parent.Number, resumed)
+	// The reused parent gains its child task lines once every child exists (#837).
+	if resumed.Number != parent.Number || resumed.Outcome != forge.IssueUpdated {
+		t.Fatalf("resume did not reuse and link parent #%d: %+v", parent.Number, resumed)
 	}
 	if len(resumedChildren) != 3 || resumedChildren[0].Number != children[0].Number || resumedChildren[0].Outcome != forge.IssueUnchanged {
 		t.Fatalf("resume did not reuse task #%d: %+v", children[0].Number, resumedChildren)
@@ -757,13 +780,18 @@ func newFakeIssueForge(t *testing.T) *forge.GitHubDriver {
 			}
 			return
 		}
+		if r.Method == http.MethodPatch {
+			editFakeIssue(t, w, r, issues)
+			return
+		}
 		var req struct {
 			Title string `json:"title"`
+			Body  string `json:"body"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Errorf("failed decoding create request: %v", err)
 		}
-		payload := map[string]any{"number": len(issues) + 1, "title": req.Title, "url": "https://forge.invalid/issues", "state": "open"}
+		payload := map[string]any{"number": len(issues) + 1, "title": req.Title, "body": req.Body, "url": "https://forge.invalid/issues", "state": "open"}
 		issues = append(issues, payload)
 		w.WriteHeader(http.StatusCreated)
 		if err := json.NewEncoder(w).Encode(payload); err != nil {
@@ -774,6 +802,26 @@ func newFakeIssueForge(t *testing.T) *forge.GitHubDriver {
 	gh := forge.NewGitHubDriver("forge-token", srv.URL)
 	gh.SetRepository("test", "repo")
 	return gh
+}
+
+// editFakeIssue applies a PATCH of /repos/test/repo/issues/<n> to the fake inventory.
+func editFakeIssue(t *testing.T, w http.ResponseWriter, r *http.Request, issues []map[string]any) {
+	t.Helper()
+	var number int
+	if _, err := fmt.Sscanf(r.URL.Path, "/repos/test/repo/issues/%d", &number); err != nil || number < 1 || number > len(issues) {
+		http.NotFound(w, r)
+		return
+	}
+	var req map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		t.Errorf("failed decoding edit request: %v", err)
+	}
+	for key, value := range req {
+		issues[number-1][key] = value
+	}
+	if err := json.NewEncoder(w).Encode(issues[number-1]); err != nil {
+		t.Errorf("failed encoding fake edit response: %v", err)
+	}
 }
 
 func TestPublishPreMigrationEpic_HTTP(t *testing.T) {

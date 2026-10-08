@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -14,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/milestone"
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -53,6 +56,10 @@ type PreMigrationEpic struct {
 	// OutputPath is the file fleet regeneration wrote, or - under FleetEpicOptions.DryRun
 	// - would have written. It is empty for a single-repository generation.
 	OutputPath string `json:"output_path,omitempty"`
+	// Milestone is the title of the repository's active milestone
+	// (milestone.ActiveMilestone), which the parent and every task carry; empty when the
+	// repository has none.
+	Milestone string `json:"milestone,omitempty"`
 }
 
 // OmittedEpicTask names one of the epic's task slots that plans no issue, and why: the
@@ -110,7 +117,30 @@ func epicFromAnalysis(ctx context.Context, repoPath string, analysis *migrationA
 		kubernetes:      (&flavor.InfraK8sFlavor{}).Detect(repoPath),
 		runnerRouting:   routing,
 	}
-	return buildEpicStructure(analysis.report, migrationPlan, facts)
+	epic, err := buildEpicStructure(analysis.report, migrationPlan, facts)
+	if err != nil {
+		return nil, err
+	}
+	if err := assignActiveMilestone(ctx, repoPath, epic); err != nil {
+		return nil, fmt.Errorf("resolve pre-migration epic milestone: %w", err)
+	}
+	return epic, nil
+}
+
+// assignActiveMilestone files the epic and every task under the repository's active
+// milestone (milestone.ActiveMilestone) when it has one (#837). An unreadable milestone
+// store is an error, never an epic without a milestone.
+func assignActiveMilestone(ctx context.Context, repoPath string, epic *PreMigrationEpic) error {
+	active, found, err := milestone.ActiveMilestone(ctx, repoPath)
+	if err != nil || !found {
+		return err
+	}
+	epic.Milestone = active.Title
+	epic.ParentEpic.Milestone = active.Title
+	for i := range epic.ChildIssues {
+		epic.ChildIssues[i].Milestone = active.Title
+	}
+	return nil
 }
 
 // buildEpicStructure lays out the epic of a scanned row. The row's name is the scan's
@@ -567,11 +597,17 @@ func writeEpicTaskChecklist(sb *strings.Builder, tasks []epicTask) {
 // existed. Every title is checked against the inventory before the first write; a
 // duplicate or ambiguous title fails the publish with nothing created.
 //
-// Publishing does not synchronize existing issues. Their body, labels, dependency
-// references and state are never converged onto the regenerated epic, so a task the
-// operator closed or relabelled stays that way, and an epic republished after its
-// readiness changed keeps the body it was first published with. No result is ever
-// forge.IssueUpdated.
+// Once every child exists, the parent's body names each of them in a task-list line,
+// "- [ ] #N", ticked when the child is already closed (linkEpicChildren), so the planning
+// sync and the forge can tick the box when the child closes (#837). That edit is the only
+// change publishing makes to an existing issue, and a parent that already names every
+// child is not edited: an existing parent that gained child lines is the only
+// forge.IssueUpdated result.
+//
+// Publishing does not otherwise synchronize existing issues. Their labels, dependency
+// references and state, and the rest of their body, are never converged onto the
+// regenerated epic, so a task the operator closed or relabelled stays that way, and an
+// epic republished after its readiness changed keeps the text it was first published with.
 func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrationEpic) (*forge.IssueUpsertResult, []*forge.IssueUpsertResult, error) {
 	if f == nil {
 		return nil, nil, ErrNilForge
@@ -596,20 +632,163 @@ func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrat
 		return nil, nil, fmt.Errorf("failed to publish parent epic issue: %w", err)
 	}
 
+	childResults, err := ensureEpicChildren(ctx, batch, epic, parentRes)
+	if err != nil {
+		return parentRes, childResults, err
+	}
+	if err := linkEpicChildren(ctx, f, batch, epic, parentRes, childResults); err != nil {
+		return parentRes, childResults, fmt.Errorf("write the child task lines into parent epic #%d: %w", parentRes.Number, err)
+	}
+	return parentRes, childResults, nil
+}
+
+// ensureEpicChildren publishes the epic's tasks in order, each chained onto the real number
+// of the task before it (chainChildTask). On an error it returns the tasks published so far
+// with the error, so the caller reports a partial publish as one.
+func ensureEpicChildren(ctx context.Context, batch *forge.IssueBatch, epic *PreMigrationEpic,
+	parentRes *forge.IssueUpsertResult) ([]*forge.IssueUpsertResult, error) {
 	childResults := make([]*forge.IssueUpsertResult, 0, len(epic.ChildIssues))
 	for i := range epic.ChildIssues {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return parentRes, childResults, ctxErr
+			return childResults, ctxErr
 		}
 		spec := chainChildTask(epic, parentRes, epic.ChildIssues[i], childResults)
 		res, cErr := batch.Ensure(ctx, spec)
 		if cErr != nil {
-			return parentRes, childResults, fmt.Errorf("failed to publish child task %d: %w", i+1, cErr)
+			return childResults, fmt.Errorf("failed to publish child task %d: %w", i+1, cErr)
 		}
 		childResults = append(childResults, res)
 	}
+	return childResults, nil
+}
 
-	return parentRes, childResults, nil
+// legacyTaskLine is a task slot of the checklist an epic is first published with:
+// "- [ ] **Task <n>**: <title>".
+var legacyTaskLine = regexp.MustCompile(`^- \[([ xX])\] \*\*Task (\d+)\*\*:`)
+
+// epicChildLink is one published child: the task slot it fills, its issue number and
+// whether the forge reports it closed.
+type epicChildLink struct {
+	slot, number int
+	closed       bool
+}
+
+// linkEpicChildren writes a task-list line naming each published child into the parent's
+// body: a slot line of the checklist the parent was first published with becomes the line
+// naming the slot's issue, and a child the body names nowhere is appended under a
+// "## Child Issues" heading. A parent that already names every child is left untouched.
+// An existing parent that gained child lines is reported as forge.IssueUpdated.
+func linkEpicChildren(ctx context.Context, f forge.Forge, batch *forge.IssueBatch, epic *PreMigrationEpic,
+	parent *forge.IssueUpsertResult, children []*forge.IssueUpsertResult) error {
+	current, found, err := batch.Existing(epic.ParentEpic)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("parent epic %q is not resolved in the issue batch", epic.ParentEpic.Title)
+	}
+	body, changed, err := withChildTaskLines(current.Body, epicChildLinks(epic, children))
+	if err != nil || !changed {
+		return err
+	}
+	if err := f.EditIssueBody(ctx, parent.Number, body); err != nil {
+		return err
+	}
+	if parent.Outcome == forge.IssueUnchanged {
+		parent.Outcome = forge.IssueUpdated
+	}
+	return nil
+}
+
+// epicChildLinks pairs each published child with its task slot: the children fill the
+// slots the epic does not omit, in order.
+func epicChildLinks(epic *PreMigrationEpic, children []*forge.IssueUpsertResult) []epicChildLink {
+	omitted := make(map[int]bool, len(epic.OmittedTasks))
+	for _, task := range epic.OmittedTasks {
+		omitted[task.Task] = true
+	}
+	links := make([]epicChildLink, 0, len(children))
+	slot := 0
+	for _, child := range children {
+		slot++
+		for omitted[slot] && slot <= totalEpicTasks {
+			slot++
+		}
+		links = append(links, epicChildLink{slot: slot, number: child.Number, closed: strings.EqualFold(child.State, "closed")})
+	}
+	return links
+}
+
+// withChildTaskLines returns body with a task-list line naming every child in links, and
+// whether that changed it. A child the body already names in a task item keeps its line
+// and its box as they are.
+func withChildTaskLines(body string, links []epicChildLink) (string, bool, error) {
+	items, complete := forge.ParseTaskItems(body)
+	if !complete {
+		return "", false, fmt.Errorf("the parent body exceeds the task-list bounds (%d lines, %d children)",
+			forge.MaxLinesLimit, forge.MaxDependenciesLimit)
+	}
+	named := make(map[int]bool, len(items))
+	for _, item := range items {
+		if item.Ref.Owner == "" && item.Ref.Repo == "" {
+			named[item.Ref.Number] = true
+		}
+	}
+	linked := appendMissingChildren(replaceSlotLines(body, links, named), links, named)
+	return linked, linked != body, nil
+}
+
+// replaceSlotLines replaces each slot line of the first-published checklist whose child
+// the body does not name yet with the line naming that child, keeping its tick.
+func replaceSlotLines(body string, links []epicChildLink, named map[int]bool) string {
+	bySlot := make(map[int]epicChildLink, len(links))
+	for _, link := range links {
+		bySlot[link.slot] = link
+	}
+	lines := strings.Split(body, "\n")
+	for i := 0; i < len(lines) && i < forge.MaxLinesLimit; i++ {
+		m := legacyTaskLine.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
+		}
+		slot, err := strconv.Atoi(m[2])
+		link, ok := bySlot[slot]
+		if err != nil || !ok || named[link.number] {
+			continue
+		}
+		lines[i] = childTaskLine(link, m[1] != " ")
+		named[link.number] = true
+	}
+	return strings.Join(lines, "\n")
+}
+
+// appendMissingChildren appends a "## Child Issues" section naming every child of links
+// the body does not name yet.
+func appendMissingChildren(body string, links []epicChildLink, named map[int]bool) string {
+	var missing []string
+	for _, link := range links {
+		if !named[link.number] {
+			missing = append(missing, childTaskLine(link, false))
+			named[link.number] = true
+		}
+	}
+	if len(missing) == 0 {
+		return body
+	}
+	if body != "" && !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return body + "\n## Child Issues\n\n" + strings.Join(missing, "\n") + "\n"
+}
+
+// childTaskLine is the task-list line naming one child, ticked when the child is closed or
+// its slot line already was.
+func childTaskLine(link epicChildLink, ticked bool) string {
+	box := " "
+	if ticked || link.closed {
+		box = "x"
+	}
+	return fmt.Sprintf("- [%s] #%d", box, link.number)
 }
 
 // chainChildTask renders one child task for publishing, chaining it onto the task

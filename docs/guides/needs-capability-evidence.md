@@ -641,12 +641,33 @@ issues sharing a planned title, or an incomplete inventory stops the publish
 before the first issue is created. The command prints `created` or
 `already published` for each issue.
 
-Publishing creates missing issues; it does not synchronize existing ones. An
-issue that already exists keeps its body, labels, dependency references and
-state, so an epic republished after its readiness changed still shows the body
-it was first published with, and a task the operator closed stays closed.
-Identity is the trimmed title, not a machine marker: renaming a published
-issue makes the next publish create a new one under the generated title.
+Once every task exists, the parent's body names each one in a task-list line,
+`- [ ] #N`, ticked when the task is already closed (`linkEpicChildren`). A slot
+line of the checklist the parent was first published with
+(`- [ ] **Task n**: ...`) becomes the line naming its task, keeping its tick; a
+task the body names nowhere is appended under a `## Child Issues` heading. The
+planning sync of `praetorctl issue reconcile` then ticks a box when its task
+closes and closes the epic once every task is closed
+([planning sync](issue-sync-integrity.md#planning-sync-parents-epics-and-milestones)).
+A parent that already names every task is not edited; an existing parent that
+gained its lines is printed as `already published (updated)`
+(`TestPublishPreMigrationEpic_Positive_ParentNamesChildIssues` and
+`TestPublishPreMigrationEpic_Boundary_AppendsUnnamedChildren` in
+`internal/needs/epic_children_test.go`).
+
+The epic, its parent and every task carry the repository's active milestone:
+the open milestone in `.workingdir/milestones.json` that is published to the
+forge and due first, an undated one after every dated one
+(`milestone.ActiveMilestone`). A repository without one publishes no milestone,
+and an unreadable store fails the generation.
+
+Apart from those child lines, publishing creates missing issues and does not
+synchronize existing ones. An issue that already exists keeps its labels,
+dependency references, state and the rest of its body, so an epic republished
+after its readiness changed still shows the text it was first published with,
+and a task the operator closed stays closed. Identity is the trimmed title, not
+a machine marker: renaming a published issue makes the next publish create a
+new one under the generated title.
 `TestPublishPreMigrationEpic_RepublishCreatesNothing` pins that a republish
 modifies nothing.
 

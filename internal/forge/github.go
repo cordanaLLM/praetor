@@ -747,6 +747,8 @@ type ghIssueRaw struct {
 	PullRequest *struct {
 		URL string `json:"url"`
 	} `json:"pull_request"`
+	// SubIssues is GitHub's sub-issue progress of the issue; nil when the forge sent none.
+	SubIssues *SubIssueSummary `json:"sub_issues_summary"`
 }
 
 // parseGitHubIssues decodes one page of the issues endpoint. It returns the converted
@@ -771,25 +773,59 @@ func parseGitHubIssues(body []byte) ([]IssueSpec, int, error) {
 		if r.PullRequest != nil {
 			continue
 		}
-		lbls := make([]string, 0, len(r.Labels))
-		for _, l := range r.Labels {
-			lbls = append(lbls, l.Name)
-		}
-		deps := ParseIssueDependencies(r.Body)
-		depStrs := make([]string, 0, len(deps))
-		for _, d := range deps {
-			depStrs = append(depStrs, d.Raw)
-		}
-		specs = append(specs, IssueSpec{
-			ID:        r.Number,
-			Title:     r.Title,
-			Body:      r.Body,
-			State:     r.State,
-			Labels:    lbls,
-			DependsOn: depStrs,
-		})
+		specs = append(specs, issueSpecFromRaw(r))
 	}
 	return specs, len(raw), nil
+}
+
+// issueSpecFromRaw converts one issue of the REST API into the spec every reader works
+// on: its labels by name, its Depends-On references and its sub-issue progress.
+func issueSpecFromRaw(r ghIssueRaw) IssueSpec {
+	lbls := make([]string, 0, len(r.Labels))
+	for _, l := range r.Labels {
+		lbls = append(lbls, l.Name)
+	}
+	deps := ParseIssueDependencies(r.Body)
+	depStrs := make([]string, 0, len(deps))
+	for _, d := range deps {
+		depStrs = append(depStrs, d.Raw)
+	}
+	return IssueSpec{
+		ID:        r.Number,
+		Title:     r.Title,
+		Body:      r.Body,
+		State:     r.State,
+		Labels:    lbls,
+		DependsOn: depStrs,
+		SubIssues: r.SubIssues,
+	}
+}
+
+// GetIssue reads one issue by number. A pull request number is refused: the issues
+// endpoint serves pull requests too, and no issue reader may mistake one for an issue.
+func (g *GitHubDriver) GetIssue(ctx context.Context, number int) (IssueSpec, error) {
+	if number <= 0 {
+		return IssueSpec{}, fmt.Errorf("get issue: issue number must be positive, got %d", number)
+	}
+	base, err := g.repoPath("issues")
+	if err != nil {
+		return IssueSpec{}, fmt.Errorf("get issue #%d: %w", number, err)
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodGet, fmt.Sprintf("%s/%d", base, number), nil)
+	if err != nil {
+		return IssueSpec{}, fmt.Errorf("failed reading issue #%d: %w", number, err)
+	}
+	if status != http.StatusOK {
+		return IssueSpec{}, fmt.Errorf("unexpected status %d reading issue #%d: %s", status, number, util.BodyPreview(body))
+	}
+	var raw ghIssueRaw
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return IssueSpec{}, fmt.Errorf("failed parsing issue #%d (raw: %q): %w", number, util.BodyPreview(body), err)
+	}
+	if raw.Number != number || raw.PullRequest != nil {
+		return IssueSpec{}, fmt.Errorf("issue #%d reads back as #%d (pull request: %t)", number, raw.Number, raw.PullRequest != nil)
+	}
+	return issueSpecFromRaw(raw), nil
 }
 
 // UpdateIssue modifies state and labels of an existing issue. The GitHub REST API replaces
@@ -812,6 +848,24 @@ func (g *GitHubDriver) UpdateIssue(ctx context.Context, number int, labels []str
 	if len(payload) == 0 {
 		return errors.New("update issue: nothing to update (no labels and no state)")
 	}
+	return g.patchIssue(ctx, number, payload)
+}
+
+// EditIssueBody replaces the body of an existing issue. Labels, state and every other
+// field stay as they are: the PATCH carries the body alone.
+func (g *GitHubDriver) EditIssueBody(ctx context.Context, number int, body string) error {
+	if err := g.Authenticate(ctx); err != nil {
+		return err
+	}
+	if number <= 0 {
+		return fmt.Errorf("edit issue body: issue number must be positive, got %d", number)
+	}
+	return g.patchIssue(ctx, number, map[string]any{"body": body})
+}
+
+// patchIssue sends one PATCH of an existing issue: the single write path UpdateIssue and
+// EditIssueBody share.
+func (g *GitHubDriver) patchIssue(ctx context.Context, number int, payload map[string]any) error {
 	base, err := g.repoPath("issues")
 	if err != nil {
 		return fmt.Errorf("update issue #%d: %w", number, err)

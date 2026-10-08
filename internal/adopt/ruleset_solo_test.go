@@ -14,7 +14,8 @@ import (
 
 // soloPathFilteredCI is the CI shape of a single-maintainer repository whose lanes are
 // path-filtered: a planner job computes which lanes a diff needs, each lane runs only when the
-// planner says so, and an aggregate merge gate that needs all of them runs on every run.
+// planner says so, and an aggregate merge gate that needs all of them runs on every run and fails
+// when any of them failed or was cancelled.
 const soloPathFilteredCI = `name: CI
 on:
   pull_request:
@@ -42,7 +43,8 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - run: test "${{ needs.go.result }}" != failure
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
 `
 
 // soloRuleset is the part of an adopted ruleset a single maintainer's merge depends on.
@@ -51,12 +53,21 @@ type soloRuleset struct {
 	codeOwner bool
 	contexts  []string
 	hasPRRule bool
+	bypass    []soloBypassActor
+}
+
+// soloBypassActor is one bypass_actors entry of an adopted ruleset.
+type soloBypassActor struct {
+	ActorID    int    `json:"actor_id"`
+	ActorType  string `json:"actor_type"`
+	BypassMode string `json:"bypass_mode"`
 }
 
 func parseSoloRuleset(t *testing.T, data string) soloRuleset {
 	t.Helper()
 	var doc struct {
-		Rules []struct {
+		BypassActors []soloBypassActor `json:"bypass_actors"`
+		Rules        []struct {
 			Type       string `json:"type"`
 			Parameters struct {
 				Approvals            int  `json:"required_approving_review_count"`
@@ -70,7 +81,7 @@ func parseSoloRuleset(t *testing.T, data string) soloRuleset {
 	if err := json.Unmarshal([]byte(data), &doc); err != nil {
 		t.Fatalf("parse the adopted ruleset: %v\n%s", err, data)
 	}
-	var got soloRuleset
+	got := soloRuleset{bypass: doc.BypassActors}
 	for _, rule := range doc.Rules {
 		switch rule.Type {
 		case "pull_request":
@@ -113,20 +124,21 @@ func adoptSoloRepository(t *testing.T, name, reviewMode string) (string, string)
 }
 
 // Positive: a single-maintainer repository with path-filtered CI adopts a ruleset its one
-// maintainer can merge under: no approval, no code-owner review, and the aggregate merge gate
-// required beside the unconditional planner. The lane the planner gates is not required, and the
-// audit accepts the file adoption wrote, because both render it the same way.
+// maintainer can merge under: no approval, no code-owner review, the repository admin role as a
+// pull-request bypass actor, and the aggregate merge gate as the only required check (#76). The
+// planner and the lane it gates are covered by the gate, which fails when either failed or was
+// cancelled. The audit accepts the file adoption wrote, because both render it the same way.
 func TestAdopt_Positive_SoloPathFilteredRulesetIsMergeable(t *testing.T) {
 	repo, written := adoptSoloRepository(t, "solo-path-filtered", "single_maintainer")
 	got := parseSoloRuleset(t, written)
 	if !got.hasPRRule || got.approvals != 0 || got.codeOwner {
 		t.Fatalf("single_maintainer must render 0 approvals without code-owner review, got %+v\n%s", got, written)
 	}
-	if !slices.Contains(got.contexts, "Merge gate") || !slices.Contains(got.contexts, "CI impact plan") {
-		t.Fatalf("the always() merge gate and the planner must be required, got %v", got.contexts)
+	if want := []string{"Merge gate"}; !slices.Equal(got.contexts, want) {
+		t.Fatalf("the proven merge gate must be the only required check, got %v, want %v", got.contexts, want)
 	}
-	if slices.Contains(got.contexts, "Go lane") {
-		t.Fatalf("a lane gated on the planner's output must not be required, got %v", got.contexts)
+	if want := []soloBypassActor{{ActorID: 5, ActorType: "RepositoryRole", BypassMode: "pull_request"}}; !slices.Equal(got.bypass, want) {
+		t.Fatalf("single_maintainer must let the admin role bypass on pull requests, got %+v, want %+v", got.bypass, want)
 	}
 	if summary, err := auditAdoptedRuleset(t, repo); err != nil || !strings.Contains(summary, "verified") {
 		t.Fatalf("the audit must compare and accept the ruleset adoption wrote: %q, %v", summary, err)
@@ -140,15 +152,19 @@ func TestAdopt_Positive_SoloPathFilteredRulesetIsMergeable(t *testing.T) {
 }
 
 // Negative: without the declared review mode the archetype's independent review stays, so the
-// repository does not silently lose its approval requirement; the merge gate is required alike.
+// repository does not silently lose its approval requirement, and no actor may bypass the rules;
+// the merge gate is required alike.
 func TestAdopt_Negative_IndependentReviewModeKeepsApprovals(t *testing.T) {
 	repo, written := adoptSoloRepository(t, "solo-independent", "")
 	got := parseSoloRuleset(t, written)
 	if got.approvals < 1 || !got.codeOwner {
 		t.Fatalf("independent review must keep approvals and code-owner review, got %+v", got)
 	}
-	if !slices.Contains(got.contexts, "Merge gate") {
-		t.Fatalf("the merge gate is required whatever the review mode, got %v", got.contexts)
+	if len(got.bypass) != 0 || strings.Contains(written, "bypass_actors") {
+		t.Fatalf("independent review must render no bypass actor, got %+v", got.bypass)
+	}
+	if want := []string{"Merge gate"}; !slices.Equal(got.contexts, want) {
+		t.Fatalf("the merge gate is required whatever the review mode, got %v, want %v", got.contexts, want)
 	}
 	if _, err := auditAdoptedRuleset(t, repo); err != nil {
 		t.Fatalf("the audit must accept the ruleset adoption wrote: %v", err)

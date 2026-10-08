@@ -268,7 +268,44 @@ func ValidateRepositoryRuleset(data []byte, branch string, policy config.BranchP
 	return nil
 }
 
+// protectionRuleset renders the praetor ruleset named name over refs under policy, requiring
+// contexts, with the bypass actors policy declares (rulesetBypassActors). The local file and a
+// ruleset sync --remote writes are both rendered here.
 func protectionRuleset(name string, refs []string, policy config.BranchProtectionPolicy, contexts []string, strict bool) (map[string]any, error) {
+	doc, err := protectionDocument(name, refs, policy, contexts, strict)
+	if err != nil {
+		return nil, err
+	}
+	if actors := rulesetBypassActors(policy); actors != nil {
+		doc["bypass_actors"] = actors
+	}
+	return doc, nil
+}
+
+// repositoryAdminRoleID is the actor_id of the repository admin role in a ruleset's
+// bypass_actors entry of actor_type RepositoryRole. The REST reference does not list the role ids;
+// 5 for admin is the value GitHub writes for that role, as github/rest-api-description#4406 and
+// #7111 record (read 2026-10-07).
+const repositoryAdminRoleID = 5
+
+// rulesetBypassActors returns the bypass_actors of a ruleset rendered under policy. Under review
+// mode single_maintainer it is the repository admin role in bypass mode pull_request, the
+// narrowest of the three modes the REST reference defines (always, pull_request: "an actor can
+// only bypass rules on pull requests", exempt: rules are not run and no audit entry is written;
+// read 2026-10-07): the one maintainer can merge a pull request whose rules cannot be met, such as
+// a required check no run reports, and still cannot push to the branch past them (#76). Every other mode renders none, so
+// every rule binds every actor. A live ruleset keeps its own bypass actors (mergeRuleset), so this
+// entry reaches GitHub only in a ruleset sync --remote creates.
+func rulesetBypassActors(policy config.BranchProtectionPolicy) []map[string]any {
+	if policy.ReviewMode != config.BranchReviewModeSingleMaintainer {
+		return nil
+	}
+	return []map[string]any{{"actor_id": repositoryAdminRoleID, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}}
+}
+
+// protectionDocument is protectionRuleset without its bypass actors: the name, target,
+// enforcement, refs and rules.
+func protectionDocument(name string, refs []string, policy config.BranchProtectionPolicy, contexts []string, strict bool) (map[string]any, error) {
 	reviewCount, requireCodeOwner, err := policy.EffectiveReviewRequirements()
 	if err != nil {
 		return nil, err

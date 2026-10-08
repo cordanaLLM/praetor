@@ -26,6 +26,16 @@ type IssueSpec struct {
 	Assignees []string `json:"assignees,omitempty" yaml:"assignees,omitempty"`
 	Milestone string   `json:"milestone,omitempty" yaml:"milestone,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty" yaml:"depends_on,omitempty"`
+	// SubIssues is the forge's sub-issue progress of a listed issue (GitHub's
+	// sub_issues_summary). It is read, never declared, so it has no YAML form.
+	SubIssues *SubIssueSummary `json:"sub_issues_summary,omitempty" yaml:"-"`
+}
+
+// SubIssueSummary counts the sub-issues GitHub attaches to an issue and how many of them
+// are closed. The planning sync reads it and never writes sub-issues.
+type SubIssueSummary struct {
+	Total     int `json:"total"`
+	Completed int `json:"completed"`
 }
 
 // IssueRef represents a parsed cross-repository or local issue reference.
@@ -220,7 +230,7 @@ func (b *IssueBatch) Ensure(ctx context.Context, spec IssueSpec) (*IssueUpsertRe
 	if created == nil {
 		return nil, fmt.Errorf("%s created issue %q but returned no issue", b.forge.Name(), spec.Title)
 	}
-	b.existing[strings.TrimSpace(spec.Title)] = IssueSpec{ID: created.Number, Title: spec.Title, State: created.State}
+	b.existing[strings.TrimSpace(spec.Title)] = IssueSpec{ID: created.Number, Title: spec.Title, Body: spec.Body, State: created.State}
 	return &IssueUpsertResult{IssueResponse: *created, Outcome: IssueCreated}, nil
 }
 
@@ -250,6 +260,14 @@ func (b *IssueBatch) lookup(spec IssueSpec) (IssueSpec, bool, error) {
 	}
 	current, found := b.existing[title]
 	return current, found, nil
+}
+
+// Existing returns the issue spec resolves to: the one the forge's inventory held under
+// its trimmed title when the batch was prepared, body included, or the one Ensure created
+// for it since, with the body it was created with. found is false for a title the batch
+// has not resolved, and an error refuses a spec outside the prepared batch.
+func (b *IssueBatch) Existing(spec IssueSpec) (current IssueSpec, found bool, err error) {
+	return b.lookup(spec)
 }
 
 // SyncIssues converges a declarative batch of issues onto the target forge. It is an

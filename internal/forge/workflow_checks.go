@@ -37,10 +37,12 @@ const (
 	workflowDiscoveryTimeout = 30 * time.Second
 )
 
-// RequiredStatusContexts selects the names of the jobs that report on every pull request
-// (reportsOnEveryPullRequest) from repository workflows with unfiltered pull_request triggers.
-// It never substitutes Praetor's own gates. Reads are bounded and reject symlink paths;
-// incomplete inventories fail.
+// RequiredStatusContexts selects the check contexts of the jobs that report on every pull
+// request (requiredJob, reportsOnEveryPullRequest) from repository workflows with unfiltered
+// pull_request triggers, less the jobs a proven aggregate of their workflow covers
+// (aggregateCoveredJobs): the aggregate is required in their place (workflowContextsIn). It never
+// substitutes Praetor's own gates. Reads are bounded and reject symlink paths; incomplete
+// inventories fail.
 func RequiredStatusContexts(ctx context.Context, repoPath string) ([]string, error) {
 	return RequiredStatusContextsPlanned(ctx, repoPath, nil)
 }
@@ -310,7 +312,7 @@ func workflowPullRequestContexts(data []byte) ([]string, error) {
 
 // workflowContextsIn is workflowPullRequestContexts inside the repository named identity
 // ("<owner>/<name>", or "" when unknown). Only a job that reports on every pull request there
-// (reportsOnEveryPullRequest) is a required check.
+// (requiredJob) and that no proven aggregate covers (aggregateCoveredJobs) is a required check.
 func workflowContextsIn(data []byte, identity string) ([]string, error) {
 	var spec workflowSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
@@ -323,17 +325,11 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 		return nil, fmt.Errorf("workflow exceeds %d jobs", maxJobsPerFile)
 	}
 	ids := sortedJobIDs(spec.Jobs)
+	covered := aggregateCoveredJobs(&spec, ids)
 	var contexts []string
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
-		if !reportsOnEveryPullRequest(job.If, identity) {
-			continue
-		}
-		// An advisory leg is reported to the forge as successful whether or not it passed,
-		// so requiring it would install a check that can never fail. That is the same
-		// unfalsifiable green this invariant exists to forbid, arrived at from the other
-		// side. Advisory legs stay advisory; they do not become required checks.
-		if advisoryJob(job.ContinueOnError) {
+		if covered[ids[i]] || !requiredJob(&job, identity) {
 			continue
 		}
 		names, err := jobCheckContexts(ids[i], job)
@@ -345,9 +341,22 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 	return contexts, nil
 }
 
+// requiredJob reports whether job's check is required on its own merits: it reports on every pull
+// request inside the repository named identity (reportsOnEveryPullRequest) and is not advisory.
+//
+// An advisory leg is reported to the forge as successful whether or not it passed, so requiring it
+// would install a check that can never fail. That is the same unfalsifiable green this invariant
+// exists to forbid, arrived at from the other side. Advisory legs stay advisory; they do not
+// become required checks.
+func requiredJob(job *workflowJob, identity string) bool {
+	return reportsOnEveryPullRequest(job.If, identity) && !advisoryJob(job.ContinueOnError)
+}
+
 // everyRunConditions are the job conditions, whitespace removed, that consist of status
 // functions alone and hold on every run that is not cancelled. `success() || failure()` and
-// `!cancelled()` are one condition spelled two ways; always() holds on a cancelled run too.
+// `!cancelled()` are one condition spelled two ways; always() holds on a cancelled run too. Each
+// makes its job a required check (reportsOnEveryPullRequest); only always() lets an aggregate
+// cover the jobs it needs (aggregateCondition).
 var everyRunConditions = []string{"always()", "!cancelled()", "success()||failure()", "failure()||success()"}
 
 // reportsOnEveryPullRequest reports whether a job carrying condition reports its check on every

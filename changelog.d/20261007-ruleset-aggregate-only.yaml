@@ -1,0 +1,4 @@
+type: fixed
+title: "A skipped path-filtered lane no longer makes the generated ruleset unsatisfiable: a proven always() merge gate is required in place of the jobs it covers, and a single_maintainer ruleset lets the admin role bypass it on pull requests"
+issue: "#76"
+breaking: true

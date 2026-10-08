@@ -59,7 +59,8 @@ type RunDefaults struct {
 //
 // RunsOn is a raw node because the key has three shapes: one label, a list of labels, and a
 // mapping of a runner group and its labels (RunnerLabels). Container is raw because it is an
-// image name or a mapping; only its presence changes the default shell (StepShell).
+// image name or a mapping; only its presence changes the default shell (StepShell). Needs is raw
+// because the key is one job id or a list of them (NeedIDs).
 //
 // Uses is the reusable workflow a job calls instead of running steps: a path under Dir of this
 // repository ("./.github/workflows/<file>") or "<owner>/<repo>/.github/workflows/<file>@<ref>".
@@ -67,6 +68,7 @@ type Job struct {
 	Name            string    `yaml:"name"`
 	Uses            string    `yaml:"uses"`
 	If              string    `yaml:"if"`
+	Needs           yaml.Node `yaml:"needs"`
 	ContinueOnError string    `yaml:"continue-on-error"`
 	Permissions     yaml.Node `yaml:"permissions"`
 	Strategy        Strategy  `yaml:"strategy"`
@@ -88,19 +90,19 @@ type Job struct {
 // no production check reads.
 //
 // Shell is the step's `shell:`; empty means the job's or the workflow's defaults.run.shell, or
-// else the runner's default (StepShell).
+// else the runner's default (StepShell). ContinueOnError is the step's `continue-on-error:` as
+// written, a literal or an expression, so an aggregate's failing step can be told from one whose
+// failure is forgiven (internal/forge/workflow_aggregate.go).
 type Step struct {
-	Name  string         `yaml:"name"`
-	ID    string         `yaml:"id"`
-	If    string         `yaml:"if"`
-	Uses  string         `yaml:"uses"`
-	Run   string         `yaml:"run"`
-	Shell string         `yaml:"shell"`
-	With  map[string]any `yaml:"with"`
-	Env   yaml.Node      `yaml:"env"`
-	// ContinueOnError is the step's continue-on-error: a step that sets it lets its job pass
-	// when it fails (HostedGateFault).
-	ContinueOnError string `yaml:"continue-on-error"`
+	Name            string         `yaml:"name"`
+	ID              string         `yaml:"id"`
+	If              string         `yaml:"if"`
+	Uses            string         `yaml:"uses"`
+	Run             string         `yaml:"run"`
+	Shell           string         `yaml:"shell"`
+	ContinueOnError string         `yaml:"continue-on-error"`
+	With            map[string]any `yaml:"with"`
+	Env             yaml.Node      `yaml:"env"`
 	// RunLine is the document line the run: value starts on, its | or > indicator for a block
 	// scalar, and 0 for a step without run:.
 	RunLine int `yaml:"-"`
@@ -120,6 +122,28 @@ func (s *Step) UnmarshalYAML(node *yaml.Node) error {
 	}
 	if run := util.YAMLMappingValue(node, "run"); run != nil {
 		s.RunLine, s.RunLiteral = run.Line, run.Kind == yaml.ScalarNode && run.Style&yaml.LiteralStyle != 0
+	}
+	return nil
+}
+
+// NeedIDs returns the ids of the jobs j needs, in document order: the id of a scalar needs:, or
+// each scalar entry of a list, at most MaxJobsPerFile of them (a document naming more jobs is
+// refused by Parse). Any other shape, and an absent key, needs no job.
+func (j *Job) NeedIDs() []string {
+	switch j.Needs.Kind {
+	case yaml.ScalarNode:
+		if id := strings.TrimSpace(j.Needs.Value); id != "" {
+			return []string{id}
+		}
+	case yaml.SequenceNode:
+		var ids []string
+		for i := 0; i < len(j.Needs.Content) && i < MaxJobsPerFile; i++ {
+			entry := j.Needs.Content[i]
+			if id := strings.TrimSpace(entry.Value); entry.Kind == yaml.ScalarNode && id != "" {
+				ids = append(ids, id)
+			}
+		}
+		return ids
 	}
 	return nil
 }

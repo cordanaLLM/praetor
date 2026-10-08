@@ -144,6 +144,7 @@ required when the job reports on every pull request:
   repository without such a takeover should not use it: a skipped job reports success, so
   nothing then verifies the Renovate pull request it merges.
 - The job is not advisory: `continue-on-error` is absent or `false`.
+- No proven aggregate job needs it directly (see the aggregate rule below).
 
 Any other condition makes the job optional, a status function joined with anything else
 (`always() && ...`) included. GitHub reports a job its condition skipped as successful, so a lane
@@ -171,15 +172,110 @@ an earlier sync added; remove that check from the live ruleset by hand
 The Platform Neutrality matrix is the case in point
 ([HISS-21](standards/hiss-21-platform-neutrality.md#outside-the-canonical-repository-the-matrix-is-opt-in-and-says-so)).
 
-Path-filtered CI therefore gets its protection from an aggregate job: it `needs` every lane, runs
-with `if: always()`, and fails when a job it needs failed or was cancelled. The ruleset requires
-that aggregate beside the unconditional planner, never the gated lanes
-(`internal/forge/workflow_aggregate_test.go`). The aggregate is only as strict as its own steps.
+Path-filtered CI therefore gets its protection from an aggregate job. GitHub skips every job
+whose `needs` include a skipped job, and a skipped matrix job reports none of its per-leg checks,
+so a lane the planner skips can leave a required leaf check unreported forever. The ruleset
+requires the aggregate, and a job the aggregate needs directly is not a required check of its
+own when the workflow file proves that the aggregate fails whenever that job failed or was
+cancelled (`internal/forge/workflow_aggregate.go`).
+
+The proof reads an allow-list of aggregate shapes and refuses every other one, so an aggregate it
+cannot read keeps the jobs it needs required beside it, as before. A proven aggregate:
+
+- `needs` at least one job;
+- runs under `if: always()` alone, bare or as one `${{ }}` expression. A gate with no condition,
+  with `success()` or with any other condition is skipped when a need failed, and a skipped gate
+  passes a required check. `!cancelled()` and `success() || failure()` make the gate required but
+  cover no job: on a cancelled run such a gate does not run, and whether GitHub then reports it
+  as skipped or cancelled is not verified;
+- may lead its condition with the Renovate skip above. That gate is skipped on a Renovate pull
+  request, so it covers only the jobs that carry the same skip; a job it needs without the skip
+  stays required;
+- is not advisory and passes when every job it needs succeeded;
+- has only steps of the two shapes below. Any other step, such as a checkout, is refused: a step
+  can change what a later one runs.
+
+The first shape is an exit step: a `run:` step with no `continue-on-error` and no `env:`, under the
+runner's default shell or `shell:` `bash`, `sh`, `pwsh`, `powershell` or `cmd` (a custom template
+such as `bash {0}` is refused, whether the step, the job's or the workflow's `defaults.run` names
+it). Its script is lines of `echo`, `printf`, `Write-Host` or `Write-Output`, then
+`exit <1..255>`, then only blank and comment lines. Every line holds only ASCII letters, digits,
+spaces and `.,:_'"=/+-#`, and closes each quote it opens, so no line continues onto the next,
+opens a here-document, expands a variable, sets a trap or joins a second command. Its `if:` is a
+disjunction, bare or as one `${{ }}` expression, of `contains(needs.*.result, '<result>')`,
+`needs.<id>.result == '<result>'` and `needs.<id>.result != '<result>'` terms. The aggregate
+covers each job whose failure, and whose cancellation, makes that condition hold.
+
+```yaml
+merge-gate:
+  name: Merge gate
+  needs: [impact-plan, go, test]
+  if: always()
+  runs-on: ubuntu-latest
+  steps:
+    - name: Fail when a needed job failed or was cancelled
+      if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      run: |
+        echo "::error::a needed job failed or was cancelled"
+        exit 1
+```
+
+The second shape is a [`re-actors/alls-green`](https://github.com/re-actors/alls-green) step
+pinned by the full commit SHA of a release whose decision code praetor has read: v1.1.0 to
+v1.3.0, listed in `allsGreenReleases` in `internal/forge/workflow_allsgreen.go`. A tag, a branch
+or any other commit is refused, v1.0.x included, which declares no `allowed-skips`. The step has
+`jobs: ${{ toJSON(needs) }}`, no `continue-on-error` and no input the action does not declare.
+It has no `if:`: a condition on another need could skip it on the very run where a covered need
+failed, so an alls-green step with any `if:` is refused and the leaves stay required. `allowed-failures` and `allowed-skips`
+must be absent or literal lists of job ids, comma-separated or JSON. The action rejects a failed
+or cancelled job unless `allowed-failures` names it, so the aggregate covers every job it needs
+except those. It also rejects a skipped job that `allowed-skips` does not name, so name the
+path-filtered lanes there:
+
+```yaml
+merge-gate:
+  name: Merge gate
+  needs: [impact-plan, go, test]
+  if: always()
+  runs-on: ubuntu-latest
+  steps:
+    - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+      with:
+        allowed-skips: go, test
+        jobs: ${{ toJSON(needs) }}
+```
+
+The proof assumes that a listed commit runs the code read at that release: a commit cannot
+change, so a moved tag does not affect it. A later release proves nothing until its decision code
+is read and its commit added to the list.
+
+A job the aggregate reaches only through another job stays required: when it fails, the job
+between is skipped, and a skipped need does not fail the aggregate. Put the planner in the
+aggregate's `needs` to cover it. Both examples above are tested as written
+(`TestRequiredStatusContexts_Positive_DocumentedAggregatesNarrowToTheGate`). The other tests are
+`TestRequiredStatusContexts_Positive_ProvenAggregateIsTheOnlyRequiredCheck`,
+`TestProvenAggregate_SkippedLaneMergesAndFailedLeafBlocks`,
+`TestRequiredStatusContexts_Negative_UnprovenAggregateKeepsTheLeaves`,
+`TestRequiredStatusContexts_Negative_GateConditionMustBeAlways`,
+`TestRequiredStatusContexts_RenovateSkippedGateCoversOnlySkippedNeeds`,
+`TestRequiredStatusContexts_Boundary_AggregateSpellings`,
+`TestRequiredStatusContexts_Boundary_AggregateReach` and `TestGateScript` in
+`internal/forge/workflow_aggregate_proof_test.go`, and the `TestAllsGreenAggregate_*` tests in
+`internal/forge/workflow_allsgreen_test.go`.
+
+A ruleset rendered before the aggregate was proven requires the leaf checks. The audit reports it
+as drift; delete `.github/rulesets/main.json` and run `praetorctl sync` to regenerate it.
+`sync --remote` then adds the aggregate to the live ruleset but never removes a check it already
+requires (`TestSync_Remote_KeepsLiveLeafChecksAndAddsTheAggregate` in
+`cmd/standardsctl/sync_remote_aggregate_test.go`). Remove the leaf checks from ruleset
+`praetor-main-protection` by hand in the repository's ruleset settings, then run
+`praetorctl plan --remote` to read the result back.
 
 A repository with one maintainer declares `review_mode: single_maintainer` under
 `overrides.branch_protection` ([review policy](guides/review-policy.md)). Adoption, `sync` and the audit
 render the ruleset from the same effective policy, so the file adoption writes, with zero
-approvals, no code-owner review and the aggregate required, is the one the audit accepts
+approvals, no code-owner review, the repository admin role as a pull-request bypass actor and the
+aggregate as the only required check, is the one the audit accepts
 (`TestAdopt_Positive_SoloPathFilteredRulesetIsMergeable` in `internal/adopt/ruleset_solo_test.go`).
 
 ### Refreshing a ruleset Praetor rendered earlier

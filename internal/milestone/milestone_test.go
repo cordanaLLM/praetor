@@ -86,7 +86,8 @@ func TestMilestone_Positive_Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CloseMilestone failed: %v", err)
 	}
-	if closed.State != StateClosed || closed.Progress != 100.0 {
+	// Progress comes from the issue counts (#837): a milestone holding no issue has none.
+	if closed.State != StateClosed || closed.Progress != 0 {
 		t.Errorf("expected closed milestone state, got %+v", closed)
 	}
 
