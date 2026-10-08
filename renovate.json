@@ -30,11 +30,20 @@
   "github-actions": {
     "managerFilePatterns": [
       "/^tools/markdownlint/assets\\.go$/",
-      "/^tools/apicompat/assets\\.go$/",
-      "/^internal/supplychain/reuse_lint\\.go$/"
+      "/^tools/apicompat/assets\\.go$/"
     ]
   },
   "customManagers": [
+    {
+      "customType": "regex",
+      "description": "REUSE gate action: ReuseActionVersion and ReuseActionCommit in internal/supplychain/reuse_lint.go. Renovate looks up fsfe/reuse-action tags, keeping the version and full commit SHA synchronized.",
+      "managerFilePatterns": ["/^internal/supplychain/reuse_lint\\.go$/"],
+      "matchStrings": [
+        "ReuseActionVersion = \"(?<currentValue>v[0-9]+)\"[\\s\\S]*?ReuseActionCommit = \"(?<currentDigest>[0-9a-f]{40})\""
+      ],
+      "depNameTemplate": "fsfe/reuse-action",
+      "datasourceTemplate": "github-tags"
+    },
     {
       "customType": "regex",
       "description": "The pinned Node release the gate runs the devcontainer CLI with. Renovate moves the version; the per-platform checksums beside it must then be refreshed from the release's SHASUMS256.txt (PRAETOR_UPDATE_NODE_PINS=1 go test ./internal/devcontainer -run TestPinnedNodeMatchesTheRelease), and that test fails the branch until they are.",
@@ -124,7 +133,7 @@
     },
     {
       "description": "REUSE gate actions: keep the hook job and workflow pin synchronized.",
-      "matchManagers": ["github-actions"],
+      "matchManagers": ["github-actions", "custom.regex"],
       "matchFileNames": [".github/workflows/compliance.yml", "internal/supplychain/reuse_lint.go"],
       "groupName": "REUSE gate actions"
     },

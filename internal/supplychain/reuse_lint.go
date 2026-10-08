@@ -26,7 +26,6 @@ const (
 	// ReuseActionVersion is the one tag every emitted or own workflow runs ReuseAction at.
 	ReuseActionVersion = "v6"
 	// ReuseActionCommit is the full commit SHA corresponding to ReuseActionVersion.
-	// uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5  # v6
 	ReuseActionCommit = "676e2d560c9a403aa252096d99fcab3e1132b0f5"
 	// LicensesDir holds the full text of every license REUSE names, one <id>.txt each.
 	LicensesDir = "LICENSES"

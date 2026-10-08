@@ -6,6 +6,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -47,22 +48,28 @@ var priorReuseWorkflowDigests = map[string]string{
 	"8d5902c19f49ab5a997e55d5862cb003507552450b5c012e67919559e927c5dc": "reuse-action v6 and checkout pinned by commit digest, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
 }
 
-// defaultCheckoutPinnedRef is the fallback actions/checkout reference when parsing markdownassets.Workflow fails.
-const defaultCheckoutPinnedRef = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1"
+// scanCheckoutPinnedRef extracts the pinned actions/checkout reference from workflow.
+func scanCheckoutPinnedRef(workflow string) (string, error) {
+	_, uses, err := util.ScanActionUses(workflow, managedasset.MaxWorkflowLines)
+	if err != nil {
+		return "", fmt.Errorf("scan workflow actions: %w", err)
+	}
+	for _, use := range uses {
+		if use.Pin.Action == "actions/checkout" && use.Pinned {
+			return use.Ref, nil
+		}
+	}
+	return "", errors.New("workflow carries no pinned actions/checkout")
+}
 
 // reuseCheckoutRef returns the actions/checkout reference pinned by digest with its version comment,
 // taking the SHA and version from markdownassets.Workflow, the same source praetor-docs.yml uses (HISS-19).
 func reuseCheckoutRef() string {
-	_, uses, err := util.ScanActionUses(markdownassets.Workflow, managedasset.MaxWorkflowLines)
+	ref, err := scanCheckoutPinnedRef(markdownassets.Workflow)
 	if err != nil {
-		return defaultCheckoutPinnedRef
+		return ""
 	}
-	for _, use := range uses {
-		if use.Pin.Action == "actions/checkout" && use.Pinned {
-			return use.Ref
-		}
-	}
-	return defaultCheckoutPinnedRef
+	return ref
 }
 
 // reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
