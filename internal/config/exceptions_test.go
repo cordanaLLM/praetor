@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -161,38 +162,76 @@ func TestValidateExceptionsBoundary(t *testing.T) {
 	}
 }
 
-// A HISS-11 entry names the release workflow the supply-chain gate measured (#330). Positive: a
-// .yml or .yaml file directly in .github/workflows is accepted and selected by its rule.
-// Negative: a glob, a file outside .github/workflows or below it, and a file that is no YAML
-// document are refused with the rule named. Boundary: the target check binds only HISS-11, so a
-// clang-tidy-coverage entry for a C file stays valid beside it.
-func TestValidateExceptionsSupplyChainTarget(t *testing.T) {
-	entry := func(target string) Exception {
-		return Exception{Rule: ExceptionRuleSupplyChain, Path: target, Reason: "release provenance below the declared level",
-			Expires: "2026-12-31"}
-	}
-	for _, target := range []string{".github/workflows/release.yml", ".github/workflows/release-binaries.yaml"} {
-		if err := ValidateExceptions([]Exception{validException(), entry(target)}, exceptionsToday); err != nil {
-			t.Fatalf("HISS-11 entry for %s refused: %v", target, err)
+// A HISS-11 entry names the release workflow the supply-chain gate measured (#330), and a HISS-18
+// entry the workflow the trigger check reported (#817). Positive: for either rule, a .yml or
+// .yaml file directly in .github/workflows is accepted and selected by its rule. Negative: a
+// glob, a file outside .github/workflows or below it, and a file that is no YAML document are
+// refused with the rule named. Boundary: the target check binds only those two rules, so a
+// clang-tidy-coverage entry for a C file stays valid beside them.
+func TestValidateExceptionsWorkflowTarget(t *testing.T) {
+	for _, rule := range []string{ExceptionRuleSupplyChain, ExceptionRuleWorkflowTriggers} {
+		entry := func(target string) Exception {
+			return Exception{Rule: rule, Path: target, Reason: "the workflow falls short of the rule", Expires: "2026-12-31"}
+		}
+		for _, target := range []string{".github/workflows/release.yml", ".github/workflows/release-binaries.yaml"} {
+			if err := ValidateExceptions([]Exception{validException(), entry(target)}, exceptionsToday); err != nil {
+				t.Fatalf("%s entry for %s refused: %v", rule, target, err)
+			}
+		}
+		if got := ExceptionsFor([]Exception{validException(), entry(".github/workflows/release.yml")}, rule); len(got) != 1 ||
+			got[0].Path != ".github/workflows/release.yml" {
+			t.Fatalf("ExceptionsFor(%s) = %+v", rule, got)
+		}
+		globbed := entry("")
+		globbed.Glob = ".github/workflows/*.yml"
+		for name, refused := range map[string]Exception{
+			"glob":                  globbed,
+			"outside the workflows": entry("release.yml"),
+			"below the workflows":   entry(".github/workflows/nested/release.yml"),
+			"not a YAML document":   entry(".github/workflows/release.sh"),
+			"another directory":     entry(".github/actions/release.yml"),
+		} {
+			err := ValidateExceptions([]Exception{refused}, exceptionsToday)
+			if err == nil || !strings.Contains(err.Error(), "rule "+rule+" must name one workflow file directly in .github/workflows") {
+				t.Errorf("%s %s: ValidateExceptions = %v; want the target refused", rule, name, err)
+			}
 		}
 	}
-	if got := ExceptionsFor([]Exception{validException(), entry(".github/workflows/release.yml")}, ExceptionRuleSupplyChain); len(got) != 1 ||
-		got[0].Path != ".github/workflows/release.yml" {
-		t.Fatalf("ExceptionsFor(HISS-11) = %+v", got)
+}
+
+// ExceptionFor. Positive: a live entry naming the path excuses it, the last of several live ones
+// winning, and marks every entry naming it, expired ones included. Negative: an expired entry
+// alone is returned as expired and excuses nothing; an entry naming another path is neither
+// returned nor marked. Boundary: an entry holds on its expires day and has expired the day after,
+// and a used slice shorter than the entries marks only what it holds.
+func TestExceptionFor(t *testing.T) {
+	const ci = ".github/workflows/ci.yml"
+	entry := func(path, expires string) Exception {
+		return Exception{Rule: ExceptionRuleWorkflowTriggers, Path: path, Reason: "runs everywhere", Expires: expires}
 	}
-	globbed := entry("")
-	globbed.Glob = ".github/workflows/*.yml"
-	for name, refused := range map[string]Exception{
-		"glob":                  globbed,
-		"outside the workflows": entry("release.yml"),
-		"below the workflows":   entry(".github/workflows/nested/release.yml"),
-		"not a YAML document":   entry(".github/workflows/release.sh"),
-		"another directory":     entry(".github/actions/release.yml"),
-	} {
-		err := ValidateExceptions([]Exception{refused}, exceptionsToday)
-		if err == nil || !strings.Contains(err.Error(), "rule HISS-11 must name one workflow file directly in .github/workflows") {
-			t.Errorf("%s: ValidateExceptions = %v; want the HISS-11 target refused", name, err)
-		}
+	entries := []Exception{
+		entry(ci, "2026-10-05"), entry(".github/workflows/other.yml", "2026-12-31"),
+		entry(ci, "2026-10-06"), entry(ci, "2026-12-31"),
+	}
+	used := make([]bool, len(entries))
+	live, expired := ExceptionFor(entries, ci, exceptionsToday, used)
+	if live != &entries[3] || expired != &entries[0] || !slices.Equal(used, []bool{true, false, true, true}) {
+		t.Fatalf("ExceptionFor(ci) = %+v, %+v, used %v", live, expired, used)
+	}
+	live, expired = ExceptionFor(entries[:1], ci, exceptionsToday, nil)
+	if live != nil || expired != &entries[0] {
+		t.Fatalf("an expired entry alone: live %+v, expired %+v", live, expired)
+	}
+	live, expired = ExceptionFor(entries[2:3], ci, exceptionsToday, nil)
+	if live != &entries[2] || expired != nil {
+		t.Fatalf("an entry on its expires day: live %+v, expired %+v", live, expired)
+	}
+	short := make([]bool, 1)
+	if live, _ := ExceptionFor(entries, ".github/workflows/absent.yml", exceptionsToday, short); live != nil || short[0] {
+		t.Fatalf("an unnamed path: live %+v, used %v", live, short)
+	}
+	if live, _ := ExceptionFor(entries, ci, exceptionsToday, short); live == nil || !short[0] {
+		t.Fatalf("a short used slice: live %+v, used %v", live, short)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"github.com/cordanaLLM/praetor/internal/runner"
@@ -184,6 +185,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error {
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
+		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
@@ -508,6 +510,20 @@ func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.M
 		return err
 	}
 	fmt.Println(supplyChain)
+	return nil
+}
+
+// auditWorkflowTriggers prints the HISS-18 workflow trigger check the MCP standards_audit runs
+// too (forge.AuditWorkflowTriggers, #817), with the manifest's HISS-18 exceptions. Its findings
+// are [WARN] lines; only a check that cannot run fails the audit.
+func auditWorkflowTriggers(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	triggers, err := forge.AuditWorkflowTriggers(ctx, forge.WorkflowTriggerOptions{
+		Root: rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(triggers)
 	return nil
 }
 

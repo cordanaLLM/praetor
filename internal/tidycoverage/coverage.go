@@ -171,26 +171,14 @@ func judge(report *Report, units []string, read map[string]bool, entries []confi
 
 // judgeUnit returns "" when a live entry excuses unit, and otherwise the finding that names
 // it. Every entry that matches unit is marked used, expired or not, so an expired entry is
-// reported once, through its unit, rather than also as stale.
+// reported once, through its unit, rather than also as stale (config.ExceptionFor).
 func judgeUnit(unit string, entries []config.Exception, used []bool, today time.Time) string {
-	expired := ""
-	live := false
-	for index := 0; index < len(entries); index++ {
-		if !entries[index].Matches(unit) {
-			continue
-		}
-		used[index] = true
-		if !entries[index].Expired(today) {
-			live = true
-		} else if expired == "" {
-			expired = entries[index].Expires
-		}
-	}
+	live, expired := config.ExceptionFor(entries, unit, today, used)
 	switch {
-	case live:
+	case live != nil:
 		return ""
-	case expired != "":
-		return fmt.Sprintf("%s: read by no clang-tidy lane; its exception expired on %s", unit, expired)
+	case expired != nil:
+		return fmt.Sprintf("%s: read by no clang-tidy lane; its exception expired on %s", unit, expired.Expires)
 	default:
 		return fmt.Sprintf("%s: read by no clang-tidy lane and named by no exceptions entry", unit)
 	}

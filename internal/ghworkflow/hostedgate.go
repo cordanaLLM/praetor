@@ -37,18 +37,25 @@ const (
 	// default branch, at the indentation of a key under 'on': push:. The branch is single-quoted,
 	// so a branch name YAML would read as a number or a boolean stays a string.
 	HostedGatePushBranchesPrefix = "\n    branches: ['"
+	// HostedGateReadyType is the pull_request activity type GitHub raises when a draft is marked
+	// ready for review: the run it starts replaces the draft step's failure, so a workflow whose
+	// jobs stop on a draft must run on it.
+	HostedGateReadyType = "ready_for_review"
 	// hostedGateTypes are the pull_request activity types a gate runs on, in their order.
-	hostedGateTypes = "opened, synchronize, reopened, ready_for_review"
+	hostedGateTypes = "opened, synchronize, reopened, " + HostedGateReadyType
 	// HostedGateOn is a gate's whole 'on' block, rendered for HostedGateDefaultBranch.
 	HostedGateOn = "'on':\n  pull_request:\n    types: [" + hostedGateTypes + "]\n  push:" +
 		HostedGatePushBranchesPrefix + HostedGateDefaultBranch + "']\n"
+	// PullRequestDraftField is the event payload field that is true on a draft pull request; a
+	// condition that reads it decides on drafts.
+	PullRequestDraftField = "github.event.pull_request.draft"
 	// HostedGateDraft is the condition of the draft step: it holds on a draft pull request only.
 	// On a push run github.event.pull_request is absent, which GitHub's loose comparison reads
 	// as 0, not true (1).
-	HostedGateDraft = "github.event.pull_request.draft == true"
+	HostedGateDraft = PullRequestDraftField + " == true"
 	// HostedGateNotDraft is the condition every gate step after the draft step carries: it holds
 	// on a push and on a pull request that is not a draft.
-	HostedGateNotDraft = "github.event.pull_request.draft != true"
+	HostedGateNotDraft = PullRequestDraftField + " != true"
 	// HostedGateStepIf is the HostedGateNotDraft line at a gate step's indentation, led by its
 	// line break: a gate text appends it to the step's name line, so every uses: line stays a
 	// line of its own in the Go source, where Renovate's line-based extractor finds it.
@@ -164,13 +171,24 @@ func sequenceValues(node *yaml.Node) []string {
 	return values
 }
 
+// StringList returns the values of a workflow key that takes one string or a list of them, such
+// as a job's needs or a trigger's types and branches filters: the scalar alone, or the scalar
+// entries of a sequence of at most MaxStepsPerJob entries. Any other node, a sequence holding a
+// non-scalar entry included, yields nil.
+func StringList(node *yaml.Node) []string {
+	if node != nil && node.Kind == yaml.ScalarNode && node.ShortTag() != "!!null" {
+		return []string{node.Value}
+	}
+	return sequenceValues(node)
+}
+
 // hostedGateStepsFault reports how a gate job's steps depart from the draft step followed by
 // gate steps that each carry HostedGateNotDraft.
 func hostedGateStepsFault(jobID string, steps []Step) error {
 	if len(steps) < 2 || len(steps) > MaxStepsPerJob {
 		return fmt.Errorf("job %s does not run the draft step and at least one gate step", jobID)
 	}
-	if err := hostedGateDraftStepFault(&steps[0]); err != nil {
+	if err := DraftStepFault(&steps[0]); err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
 	for i := 1; i < len(steps) && i < MaxStepsPerJob; i++ {
@@ -183,8 +201,14 @@ func hostedGateStepsFault(jobID string, steps []Step) error {
 	return nil
 }
 
-// hostedGateDraftStepFault reports how a step departs from HostedGateDraftStep.
-func hostedGateDraftStepFault(step *Step) error {
+// DraftStepFault reports how step departs from HostedGateDraftStep, or nil when it is that step:
+// it runs on a draft alone, runs exactly the draft step's script under the default shell without
+// continue-on-error, and carries the annotation's title and message. A job whose first step
+// passes stops on a draft pull request with a failed check. A nil step is no draft step.
+func DraftStepFault(step *Step) error {
+	if step == nil {
+		return errors.New("there is no first step")
+	}
 	if condition, closed := UnwrapExpression(step.If); !closed || condition != HostedGateDraft {
 		return fmt.Errorf("the first step does not run on a draft alone (%s)", HostedGateDraft)
 	}

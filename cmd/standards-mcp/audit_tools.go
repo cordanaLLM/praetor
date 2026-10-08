@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -50,7 +51,34 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		manifest.Repository.Owner, manifest.Repository.Name, manifest.Repository.Owner,
 		manifest.Repository.Name, manifest.Version, effective.Evidence())
 
-	gates := []auditGate{
+	gates := s.auditGates(p, effective)
+	passed := 0
+	for i := 0; i < len(gates) && i < maxAuditGates; i++ {
+		if err := ctx.Err(); err != nil {
+			report.Template("[FAIL] Audit cancelled: %v", err)
+			return mcpComposedErrorResult(report.Text())
+		}
+		line, err := gates[i](ctx)
+		if err != nil {
+			// A gate error carries its own [FAIL] verdict and quotes repository paths.
+			report.External(err.Error(), mcpTextUntrusted)
+			return mcpComposedErrorResult(report.Text())
+		}
+		report.External(line+"\n", mcpTextUntrusted)
+		passed++
+	}
+
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, workflow triggers, hooks. "+
+		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation, backlog caps.",
+		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
+	return mcpComposedTextResult(report.Text())
+}
+
+// auditGates lists the governance gates runAuditGates runs after the manifest and policy gate,
+// in order, over the resolved paths p and the effective policy.
+func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []auditGate {
+	manifest := effective.Manifest
+	return []auditGate{
 		func(ctx context.Context) (string, error) {
 			return auditLockfile(ctx, s.rootDir, p.policy.CatalogRoot, manifest)
 		},
@@ -69,29 +97,14 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 				Root: s.rootDir, Policy: &effective.Policy, Exceptions: manifest.Exceptions, Today: time.Now(),
 			})
 		},
+		// The CLI audit's HISS-18 workflow trigger check (#817): findings warn, the gate passes.
+		func(ctx context.Context) (string, error) {
+			return forge.AuditWorkflowTriggers(ctx, forge.WorkflowTriggerOptions{
+				Root: s.rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+			})
+		},
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },
 	}
-
-	passed := 0
-	for i := 0; i < len(gates) && i < maxAuditGates; i++ {
-		if err := ctx.Err(); err != nil {
-			report.Template("[FAIL] Audit cancelled: %v", err)
-			return mcpComposedErrorResult(report.Text())
-		}
-		line, err := gates[i](ctx)
-		if err != nil {
-			// A gate error carries its own [FAIL] verdict and quotes repository paths.
-			report.External(err.Error(), mcpTextUntrusted)
-			return mcpComposedErrorResult(report.Text())
-		}
-		report.External(line+"\n", mcpTextUntrusted)
-		passed++
-	}
-
-	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, agent source caveman lint, branch protection, labels, supply chain, hooks. "+
-		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation, backlog caps.",
-		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
-	return mcpComposedTextResult(report.Text())
 }
 
 // auditLockfile uses the same version, entry, source and aggregate checks as the CLI,

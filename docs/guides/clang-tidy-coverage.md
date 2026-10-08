@@ -108,7 +108,7 @@ credits gate of a Praetor checkout reads those whose `rule` is `credits`
 
 | Key | Rule |
 | :--- | :--- |
-| `rule` | A rule some gate reads from the list: `clang-tidy-coverage`, `credits` (`config.ExceptionRuleCredits`), or `HISS-11` for a supply-chain gap the release workflows have not closed yet ([Declaring a gap](releasing.md#declaring-a-gap)). |
+| `rule` | A rule some gate reads from the list: `clang-tidy-coverage`, `credits` (`config.ExceptionRuleCredits`), `HISS-11` for a supply-chain gap the release workflows have not closed yet ([Declaring a gap](releasing.md#declaring-a-gap)), or `HISS-18` for a workflow that must run on every branch push or on drafts ([Workflow trigger audit](workflow-triggers.md#declaring-a-workflow-that-must-run-everywhere)). A `HISS-11` or `HISS-18` entry names one workflow file by `path`. |
 | `path` or `glob` | Exactly one. `path` names one clean repository-relative file without glob characters. `glob` follows the `docs_surfaces` glob rules: `*` stays inside one segment and a `**` segment spans any number. |
 | `reason` | One line, at most 1024 bytes. |
 | `expires` | A `YYYY-MM-DD` date at most 90 days after today, the bound `scripts/npm_audit_gate.py` applies to its own list. The entry holds through that day. |

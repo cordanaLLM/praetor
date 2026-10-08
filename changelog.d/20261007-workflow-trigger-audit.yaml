@@ -1,0 +1,4 @@
+type: added
+title: "Audit warns about workflow triggers that start wasted runs: unfiltered pushes, draft runs and draft skips"
+issue: "#817"
+breaking: false

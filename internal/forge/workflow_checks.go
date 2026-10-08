@@ -432,10 +432,11 @@ func jobCheckContexts(id string, job workflowJob) ([]string, error) {
 
 // workflowTrigger is one event an "on" node names, with the event's own value node when the
 // declaration is a mapping entry; a trigger declared as a scalar or inside a sequence carries
-// none.
+// none. line is the document line the event's name stands on.
 type workflowTrigger struct {
 	name  string
 	value *yaml.Node
+	line  int
 }
 
 // workflowTriggers lists the events an "on" node names, in file order: the scalar, the sequence
@@ -447,15 +448,15 @@ func workflowTriggers(on *yaml.Node) []workflowTrigger {
 	switch on.Kind {
 	case yaml.ScalarNode:
 		if on.Value != "" {
-			triggers = append(triggers, workflowTrigger{name: on.Value})
+			triggers = append(triggers, workflowTrigger{name: on.Value, line: on.Line})
 		}
 	case yaml.SequenceNode:
 		for i := 0; i < len(on.Content) && i < maxJobsPerFile; i++ {
-			triggers = append(triggers, workflowTrigger{name: on.Content[i].Value})
+			triggers = append(triggers, workflowTrigger{name: on.Content[i].Value, line: on.Content[i].Line})
 		}
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(on.Content) && i < 2*maxJobsPerFile; i += 2 {
-			triggers = append(triggers, workflowTrigger{name: on.Content[i].Value, value: on.Content[i+1]})
+			triggers = append(triggers, workflowTrigger{name: on.Content[i].Value, value: on.Content[i+1], line: on.Content[i].Line})
 		}
 	}
 	return triggers
@@ -464,13 +465,20 @@ func workflowTriggers(on *yaml.Node) []workflowTrigger {
 // eventTrigger reports whether an "on" node declares the named trigger, and returns that
 // trigger's own value node when the declaration is a mapping entry that has one.
 func eventTrigger(on *yaml.Node, event string) (*yaml.Node, bool) {
+	trigger, declared := declaredTrigger(on, event)
+	return trigger.value, declared
+}
+
+// declaredTrigger returns the first trigger of an "on" node that names event, and whether there
+// is one.
+func declaredTrigger(on *yaml.Node, event string) (workflowTrigger, bool) {
 	triggers := workflowTriggers(on)
 	for i := 0; i < len(triggers) && i < maxJobsPerFile; i++ {
 		if triggers[i].name == event {
-			return triggers[i].value, true
+			return triggers[i], true
 		}
 	}
-	return nil, false
+	return workflowTrigger{}, false
 }
 
 // pullRequestTriggers lists the contributor-triggered pull request events this workflow
