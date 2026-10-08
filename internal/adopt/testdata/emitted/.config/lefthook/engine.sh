@@ -80,13 +80,20 @@ pin_fault() { #
   echo "it is neither a commit id of 7 to 40 hexadecimal digits nor a release tag such as v1.2.3" #
 } #
 #
-# declared_pins: one "file<TAB>value" line per PRAETOR_REF or praetor-adopt / reusable-workflow
-# uses declaration under .github/workflows.
+# declared_pins: one "file<TAB>value" line per PRAETOR_REF declaration under .github/workflows.
 declared_pins() { #
   for file in .github/workflows/*.yml .github/workflows/*.yaml; do #
     [ -e "$file" ] || continue #
     [ -r "$file" ] || refuse "workflow file $file is not readable" #
     tr -d '\r' <"$file" | sed -n 's/^[[:space:]]*PRAETOR_REF[[:space:]]*[:=][[:space:]]*//p' | sed -e 's/[[:space:]]*#.*$//' -e "s/^[\"']//" -e "s/[\"'][[:space:]]*\$//" -e 's/[[:space:]]*$//' | while read -r value; do printf '%s\t%s\n' "$file" "$value"; done #
+  done #
+} #
+#
+# uses_pins: one "file<TAB>value" line per praetor-adopt or reusable-workflow uses ref under .github/workflows.
+uses_pins() { #
+  for file in .github/workflows/*.yml .github/workflows/*.yaml; do #
+    [ -e "$file" ] || continue #
+    [ -r "$file" ] || refuse "workflow file $file is not readable" #
     tr -d '\r' <"$file" | sed -n -e 's/^[[:space:]]*-[[:space:]]*uses:[[:space:]]*//p' -e 's/^[[:space:]]*uses:[[:space:]]*//p' | sed -e 's/[[:space:]]*#.*$//' -e "s/^[\"']//" -e "s/[\"'][[:space:]]*\$//" -e 's/[[:space:]]*$//' | sed -n -e 's/^[Cc][Oo][Rr][Dd][Aa][Nn][Aa][Ll][Ll][Mm]\/[Pp][Rr][Aa][Ee][Tt][Oo][Rr]\/\.github\/actions\/praetor-adopt@\(..*\)$/\1/p' -e 's/^[Cc][Oo][Rr][Dd][Aa][Nn][Aa][Ll][Ll][Mm]\/[Pp][Rr][Aa][Ee][Tt][Oo][Rr]\/\.github\/workflows\/[^@[:space:]]*@\(..*\)$/\1/p' | while read -r value; do #
       if fault=$(pin_fault "$value"); then :; else printf '%s\t%s\n' "$file" "$value"; fi #
     done #
@@ -157,6 +164,7 @@ install_pinned() { #
 } #
 #
 pins=$(declared_pins) #
+[ -n "$pins" ] || pins=$(uses_pins) #
 if [ -n "$pins" ]; then #
   values=$(printf '%s\n' "$pins" | cut -f2 | sort -u) #
   [ "$(printf '%s\n' "$values" | wc -l)" -eq 1 ] || refuse "the repository declares several PRAETOR_REF values, so no engine is pinned: $(printf '%s\n' "$pins" | tr '\t\n' '= ')" #

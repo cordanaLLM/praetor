@@ -348,7 +348,7 @@ the repository declares, the one its hosted Standards job installs.
 are read past). A ref is a commit id of 7 to 40 hexadecimal digits or a full release tag such as
 `v1.2.3` (a tag without patch digits like `v1` or `v1.2` moves under `go install`, and a branch
 name moves, so they are no pin). A non-pin `uses:` ref such as `@main` is treated as unpinned (running
-the engine on `PATH`). Declaring two different pin values pins nothing.
+the engine on `PATH`). Declaring two different pin values fails closed with refusal.
 
 **The cache** is `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>`, one directory per pin.
 The first hook run with a pin that is not cached installs it:
@@ -378,21 +378,23 @@ praetor hooks: installing the engine pinned by PRAETOR_REF=492a00f930e1 (declare
 The launcher is a POSIX shell script that runs under Git Bash on Windows, and every line ends
 in a comment sign for the reason given for the [Python launcher](#the-launcher-adoption-writes).
 
-Generated `Makefile`s and adopted `Makefile`s whose appended verification block matches an allow-list
-of canonical current or prior renderings wire `PRAETORCTL ?= sh .config/lefthook/engine.sh` when the
-engine launcher is installed, so make targets and hooks resolve the exact same engine binary (#906, HISS-19).
-Where git-hooks is declined, or where an adopter maintains a custom `verify-all` or an edited verification
-block, `make` keeps its existing resolution (such as from `PATH`), and an edited verification block is
-preserved with a warning naming the line to change or insert.
+Generated `Makefile`s and adopted `Makefile`s include `.config/praetor/engine.mk`,
+a Praetor-managed file that sets `PRAETORCTL ?= $(shell sh .config/lefthook/engine.sh --print-path)`
+and provides the `praetor-engine-path` target, aligning Make targets and hooks with the repository's pinned
+engine (#906, HISS-19). For an adopter-owned `Makefile`, adoption inserts exactly one marked line,
+`-include .config/praetor/engine.mk`, near the top (after leading comments), and preserves the rest of the
+file untouched. Because the first `?=` assignment wins in Make, any later fallback assignment becomes a
+no-op without needing to recognize or edit existing verification blocks. An adopter's explicit assignment
+using `:=` or `=` is respected and reported as an informational override naming the line.
 
 **One pin reader.** `.config/lefthook/engine.sh` is also a standalone entry point: an adopter
 `Makefile` target or script runs `sh .config/lefthook/engine.sh <arguments>` from the repository
 root to get the same pin resolution, cache and refusals as the hooks, and needs no second reader
 of `PRAETOR_REF`. When a recipe or rule needs the binary path directly, `--print-path` prints
-only the path of the resolved binary:
+only the path of the resolved binary, which `.config/praetor/engine.mk` uses:
 
 ```makefile
-PRAETORCTL ?= $(shell sh .config/lefthook/engine.sh --print-path)
+-include .config/praetor/engine.mk
 ```
 
 Tests (`internal/adopt/engine_launcher_test.go`): `TestEngineLauncher_Positive_PinnedEngineWinsOverPath`

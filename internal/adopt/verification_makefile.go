@@ -74,6 +74,7 @@ func documentationMakefileBlockPrior(state documentationMarkerState) bool {
 // defined by outside, the rest of the Makefile: Make would then warn "overriding recipe" and run
 // only one of the two recipes.
 func documentationTargetCollision(outside, inside string, expand makefileExpander) error {
+	outside = withoutEngineMakefileInclude(outside)
 	outside, notes := expand(outside)
 	for _, target := range documentationMakefileTargets {
 		if !util.MakefileHasTarget(inside, target) && util.MakefileMayDefineTarget(outside, target) {
@@ -353,9 +354,9 @@ func isLegacyVerificationMakefile(data string) bool {
 // Where both renderings coincide -- a plan with no runnable commands -- the file is already current.
 func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
 	data = withoutDocumentationMakefileBlock(data)
-	priorWithLauncher := buildMakefileWithSourceGateAndLauncher(plan, priorVerificationRecipePrefix, true, true)
-	priorWithoutLauncher := buildMakefileWithSourceGateAndLauncher(plan, priorVerificationRecipePrefix, true, false)
-	return (data == priorWithLauncher || data == priorWithoutLauncher) && data != buildMakefile(plan)
+	priorWithInclude := buildMakefileWith(plan, priorVerificationRecipePrefix)
+	priorWithoutInclude := buildMakefileLegacy(plan, priorVerificationRecipePrefix, true)
+	return (data == priorWithInclude || data == priorWithoutInclude) && data != buildMakefile(plan)
 }
 
 // isPlaceholderVerificationMakefile reports whether data is exactly the placeholder Makefile
@@ -424,9 +425,6 @@ func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 		plan.unavailable("The Makefile still holds the failing placeholder recipe adoption writes; replace it with the project's build and test commands.")
 		return
 	}
-	if hasKnownAppendedVerificationBlock(text, plan) {
-		return
-	}
 	plan.Status = verificationPreserved
 	plan.Reasons = append(plan.Reasons, "Existing custom verify-all is preserved; execute and review it before claiming project verification.")
 	plan.Declared = append(append([][]string(nil), plan.Build...), plan.Test...)
@@ -443,131 +441,22 @@ func withoutDocumentationMakefileBlock(data string) string {
 }
 
 func appendVerificationTargets(existing string, plan *VerificationPlan) (string, error) {
-	return appendVerificationTargetsWithLauncher(existing, plan, true)
-}
-
-const verificationAppendedMarker = "# Praetor declared verification; existing project recipes remain unchanged."
-
-func renderAppendedBlock(before string, plan *VerificationPlan, varLine, cli string, caveman bool, prefix string) string {
-	var b strings.Builder
-	b.WriteString(verificationAppendedMarker + "\n")
-	if varLine != "" {
-		b.WriteString(varLine)
-	}
-	b.WriteString(".PHONY: verify-all\nverify-all:\n\t@" + cli + " compile-context --verify\n")
-	if caveman {
-		b.WriteString("\t@" + cli + " caveman check --configured-sources\n")
-	}
-	b.WriteString("\t@" + cli + " audit\n")
-	b.WriteString(verificationRecipeWith(plan, plan.commands(), prefix))
-	for _, target := range []string{"compile-context", "audit"} {
-		if !util.MakefileHasTarget(before, target) {
-			b.WriteString("\n" + target + ":\n\t@" + cli + " " + target + "\n")
-		}
-	}
-	return b.String()
-}
-
-func knownAppendedVerificationBlocks(before string, plan *VerificationPlan) map[string]string {
-	if plan == nil || plan.Status == verificationUnavailable {
-		return nil
-	}
-	blocks := make(map[string]string)
-	record := func(block, matchedVar string) {
-		if digest, _, err := util.CanonicalTextDigest([]byte(block)); err == nil {
-			blocks[digest] = matchedVar
-		}
-	}
-	record(renderAppendedBlock(before, plan, makefileCLIVariableLine(true), "$(PRAETORCTL)", true, verificationRecipePrefix), makefileCLIVariableLine(true))
-	for _, prefix := range []string{verificationRecipePrefix, priorVerificationRecipePrefix} {
-		record(renderAppendedBlock(before, plan, makefileCLIVariableLine(false), "$(PRAETORCTL)", true, prefix), makefileCLIVariableLine(false))
-		record(renderAppendedBlock(before, plan, makefileCLIVariableLine(false), "$(PRAETORCTL)", false, prefix), makefileCLIVariableLine(false))
-		record(renderAppendedBlock(before, plan, "", "standardsctl", false, prefix), "")
-	}
-	return blocks
-}
-
-type appendedBlockState struct {
-	hasMarker   bool
-	known       bool
-	matchedVar  string
-	lineNum     int
-	lineContent string
-	hasVar      bool
-}
-
-func inspectAppendedVerificationBlock(normalized string, plan *VerificationPlan) appendedBlockState {
-	if strings.Count(normalized, verificationAppendedMarker) != 1 {
-		return appendedBlockState{}
-	}
-	idx := strings.Index(normalized, verificationAppendedMarker)
-	before := normalized[:idx]
-	if before != "" && !strings.HasSuffix(before, "\n") {
-		return appendedBlockState{}
-	}
-	if mayDefineVerificationTarget(withoutDocumentationMakefileBlock(before)) {
-		return appendedBlockState{}
-	}
-	block := normalized[idx:]
-	if strings.Contains(block, unavailableVerificationRecipe) {
-		return appendedBlockState{hasMarker: true}
-	}
-	state := appendedBlockState{hasMarker: true}
-	if matchedVar, known, _ := util.LookupCanonicalText([]byte(block), knownAppendedVerificationBlocks(before, plan)); known {
-		state.known = true
-		state.matchedVar = matchedVar
-		return state
-	}
-	afterMarker := strings.TrimPrefix(block[len(verificationAppendedMarker):], "\n")
-	state.lineNum, state.lineContent, state.hasVar = findEditedCLIVariableLine(before, afterMarker)
-	return state
-}
-
-func findEditedCLIVariableLine(before, afterMarker string) (int, string, bool) {
-	markerLine := strings.Count(before, "\n") + 1
-	lines := strings.Split(afterMarker, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "PRAETORCTL") || strings.HasPrefix(trimmed, "PRAETOR_") {
-			return markerLine + 1 + i, line, true
-		}
-		if strings.HasPrefix(trimmed, "verify-all:") || strings.HasPrefix(trimmed, ".PHONY:") {
-			break
-		}
-	}
-	return markerLine, "", false
-}
-
-func hasKnownAppendedVerificationBlock(normalized string, plan *VerificationPlan) bool {
-	return inspectAppendedVerificationBlock(normalized, plan).known
-}
-
-func swapAppendedVerificationLauncher(normalized string, plan *VerificationPlan, launcher bool) (string, bool) {
-	state := inspectAppendedVerificationBlock(normalized, plan)
-	if !state.known {
-		return "", false
-	}
-	targetVar := makefileCLIVariableLine(launcher)
-	if state.matchedVar == targetVar {
-		return normalized, true
-	}
-	idx := strings.Index(normalized, verificationAppendedMarker)
-	before := normalized[:idx]
-	targetBlock := renderAppendedBlock(before, plan, targetVar, "$(PRAETORCTL)", true, verificationRecipePrefix)
-	return before + targetBlock, true
-}
-
-func appendVerificationTargetsWithLauncher(existing string, plan *VerificationPlan, launcher bool) (string, error) {
 	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
 	if err != nil {
 		return "", fmt.Errorf("makefile line endings are inconsistent: %w", err)
 	}
-	if swapped, ok := swapAppendedVerificationLauncher(normalized, plan, launcher); ok {
-		return util.RestoreLineEndings(swapped, crlf), nil
-	}
 	var result strings.Builder
 	result.WriteString(normalized)
-	result.WriteString("\n" + renderAppendedBlock(normalized, plan, makefileCLIVariableLine(launcher), "$(PRAETORCTL)", true, verificationRecipePrefix))
+	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
+		util.MakefileCLIVariable + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
+	// One recipe for the build and test commands together: rendered once for each, an
+	// unavailable plan wrote its failing pair twice (#594).
+	result.WriteString(verificationRecipe(plan, plan.commands()))
+	for _, target := range []string{"compile-context", "audit"} {
+		if !util.MakefileHasTarget(normalized, target) {
+			result.WriteString("\n" + target + ":\n\t@$(PRAETORCTL) " + target + "\n")
+		}
+	}
 	return util.RestoreLineEndings(result.String(), crlf), nil
 }
 
@@ -576,5 +465,5 @@ func appendVerificationTargetsWithLauncher(existing string, plan *VerificationPl
 // answer is the shared Makefile reader's (util.MakefileMayDefineTarget), the one editor
 // generation reads the same file with, so the two cannot disagree on what a line declares (#304).
 func mayDefineVerificationTarget(data string) bool {
-	return util.MakefileMayDefineTarget(data, verificationTarget)
+	return util.MakefileMayDefineTarget(withoutEngineMakefileInclude(data), verificationTarget)
 }

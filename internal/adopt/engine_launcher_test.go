@@ -302,6 +302,44 @@ func TestEngineLauncher_Positive_UsesRefPinsEngine(t *testing.T) {
 	}
 }
 
+// Positive: an explicit PRAETOR_REF wins over a uses: ref with another pin value (#906).
+func TestEngineLauncher_Positive_ExplicitPraetorRefWinsOverUsesRef(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.cached(enginePin)
+	const usesPin = "7828da5640001111222233334444555566667777"
+	f.cached(usesPin)
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\njobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@"+usesPin+"\n")
+	out, code := f.run()
+	if code != 0 || strings.TrimSpace(out) != "pinned-engine audit --offline" {
+		t.Fatalf("exit %d, output %q, want explicit PRAETOR_REF to win", code, out)
+	}
+}
+
+// Negative: conflicting uses: refs when no PRAETOR_REF is declared fail closed (#906).
+func TestEngineLauncher_Negative_ConflictingUsesRefsFailClosed(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.declare("a.yml", "jobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@"+enginePin+"\n")
+	f.declare("b.yml", "jobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@1111111aaaaaaa\n")
+	out, code := f.run()
+	if code != 1 || !strings.Contains(out, "several PRAETOR_REF values") || strings.Contains(out, "path-engine") {
+		t.Fatalf("exit %d, output %q, want conflicting uses refs to fail closed", code, out)
+	}
+}
+
+// Boundary: when an explicit PRAETOR_REF matches the uses: ref, it succeeds (#906).
+func TestEngineLauncher_Boundary_ExplicitPraetorRefSameAsUsesRef(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.cached(enginePin)
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\njobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@"+enginePin+"\n")
+	out, code := f.run()
+	if code != 0 || strings.TrimSpace(out) != "pinned-engine audit --offline" {
+		t.Fatalf("exit %d, output %q, want same pin to succeed", code, out)
+	}
+}
+
 // Boundary: a non-pin uses ref such as @main is treated as unpinned (falling back to PATH with notice).
 func TestEngineLauncher_Boundary_NonPinUsesRefRunsOnPath(t *testing.T) {
 	f := newEngineFixture(t)

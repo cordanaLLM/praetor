@@ -25,6 +25,7 @@ const engineLauncherFile = ".config/lefthook/engine.sh"
 var priorEngineLauncherDigests = map[string]string{
 	"3ba512b82b0f461443b3d268bb5dbd2df6e9f420840d83e1210078e8f94d28a8": "engine pinned by PRAETOR_REF (#906)",
 	"93387a66f5c910bd4df4dbe11bd016d489af208620f7c0deea69777cdad00387": "engine launcher with --print-path, uses-pin, full semver (#906)",
+	"888b3442bf8381166b8623c195c887260a68672ce5795bf327ae5ce8b77fcc7b": "engine launcher with explicit PRAETOR_REF priority (#906)",
 }
 
 // reconcileEngineLauncher scaffolds the launcher beside the lefthook.yml jobs that run it. An
