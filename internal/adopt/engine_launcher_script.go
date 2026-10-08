@@ -1,17 +1,29 @@
-#!/bin/sh
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package adopt
+
+// engineLauncherScript is the text of the engine launcher (engineLauncherFile). It is a POSIX shell
+// script because a hook must resolve its engine before any Praetor binary runs, and it runs under
+// Git Bash on Windows. It is a Go constant, not an embedded file: the DevContainer bootstrap
+// refuses a go:embed directive that is not a registered asset family. The emitted fixture under
+// testdata/emitted holds the same text, which scripts/test_emitted_hook_lint.py lints with
+// shellcheck, and engine_launcher_test.go runs it against stub binaries.
+const engineLauncherScript = `#!/bin/sh
 # The one place a Praetor Git hook chooses which engine judges the repository (#906).
 # Every governance job in lefthook.yml and the fallback pre-commit hook run
-# `sh .config/lefthook/engine.sh <praetorctl arguments>` from the repository root.
+# "sh .config/lefthook/engine.sh <praetorctl arguments>" from the repository root.
 #
 # The engine is the one the repository pins, not the newest binary on PATH. The pin is the
-# value of PRAETOR_REF declared in a workflow under .github/workflows (`PRAETOR_REF: <ref>` or
-# `PRAETOR_REF=<ref>`), the same declaration a hosted Standards job installs the engine from
-# with `go install <module>/cmd/standardsctl@${PRAETOR_REF}`. A pin is a commit id of 7 to 40
+# value of PRAETOR_REF declared in a workflow under .github/workflows ("PRAETOR_REF: <ref>" or
+# "PRAETOR_REF=<ref>"), the same declaration a hosted Standards job installs the engine from
+# with "go install <module>/cmd/standardsctl@${PRAETOR_REF}". A pin is a commit id of 7 to 40
 # hexadecimal digits or a release tag such as v1.2.3; a branch name moves, so it is no pin.
 #
 # With a pin, the engine is installed once per pin into
 #   ${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>
-# by `go install`, bounded by PRAETOR_ENGINE_INSTALL_TIMEOUT seconds (default 300), and run
+# by "go install", bounded by PRAETOR_ENGINE_INSTALL_TIMEOUT seconds (default 300), and run
 # from there. A pin that cannot be read, is declared twice with different values, or cannot be
 # installed fails the hook with a message naming the pin, the cache path and the command that
 # fixes it; the hook never falls back to the binary on PATH, which may be a different version.
@@ -121,3 +133,4 @@ if path=$(command -v praetorctl 2>/dev/null || command -v standardsctl 2>/dev/nu
   exec "$path" "$@" #
 fi #
 refuse "HISS governance hook cannot run because neither praetorctl nor standardsctl is installed" #
+`

@@ -6,7 +6,6 @@ package adopt
 
 import (
 	"context"
-	_ "embed" // engineLauncherScript is the launcher text written into adopted repositories.
 )
 
 // engineLauncherFile is the launcher every governance job of the generated lefthook.yml and the
@@ -17,13 +16,6 @@ import (
 // whatever newer binary came first on PATH.
 const engineLauncherFile = ".config/lefthook/engine.sh"
 
-// engineLauncherScript is the launcher text. It is a POSIX shell script because a hook must
-// resolve its engine before any Praetor binary runs, and it runs under Git Bash on Windows.
-// engine_launcher_test.go runs it against stub binaries.
-//
-//go:embed engine_launcher.sh
-var engineLauncherScript string
-
 // priorEngineLauncherDigests are the digests (priorRendering) of every text a Praetor release wrote
 // at engineLauncherFile, keyed to what produced it; the current text is one of them. Audit does not
 // read the launcher, so --force keeps an edited copy: these texts are what adoption refreshes to
@@ -31,7 +23,7 @@ var engineLauncherScript string
 // TestPriorEngineLauncherDigests_Boundary_CurrentTextRecorded fails until a changed launcher is
 // recorded here, so the next release still refreshes it.
 var priorEngineLauncherDigests = map[string]string{
-	"918eae4d632b02621b6727d942e1b90199987f19fb6d91aa47c4ed86d0fae44e": "engine pinned by PRAETOR_REF (#906)",
+	"bff2399a3d9b4a0af2539adda7dfb0f95de69ad1619a5ebb0be7432c1a8aff64": "engine pinned by PRAETOR_REF (#906)",
 }
 
 // reconcileEngineLauncher scaffolds the launcher beside the lefthook.yml jobs that run it. An

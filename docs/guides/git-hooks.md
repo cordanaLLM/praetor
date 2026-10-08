@@ -337,8 +337,8 @@ carries exactly the draft annotation as `draft_pending` rather than `failed`;
 Every governance job of the generated `lefthook.yml` and the fallback `pre-commit` hook run
 `sh .config/lefthook/engine.sh <arguments>` instead of a `praetorctl` found on `PATH`
 (`lefthookGovernedCommand` in `internal/adopt/hooks.go`; the script is
-`internal/adopt/engine_launcher.sh`, installed by `praetorctl adopt`). A newer binary on
-`PATH` therefore never judges a repository that pins an older engine: the hook runs the engine
+`engineLauncherScript` in `internal/adopt/engine_launcher_script.go`, installed by `praetorctl adopt`).
+A newer binary on `PATH` therefore never judges a repository that pins an older engine: the hook runs the engine
 the repository declares, the one its hosted Standards job installs.
 
 **The pin** is the value of `PRAETOR_REF` declared in any file under `.github/workflows`, as
@@ -374,6 +374,11 @@ The launcher is a POSIX shell script that runs under Git Bash on Windows, and ev
 in a comment sign for the reason given for the [Python launcher](#the-launcher-adoption-writes).
 The hosted job and the `Makefile` are not changed: the `Makefile` resolves `PRAETORCTL` from
 `PATH`, as it did.
+
+**One pin reader.** `.config/lefthook/engine.sh` is also a standalone entry point: an adopter
+`Makefile` target or script runs `sh .config/lefthook/engine.sh <arguments>` from the repository
+root to get the same pin resolution, cache and refusals as the hooks, and needs no second reader
+of `PRAETOR_REF`.
 
 Tests (`internal/adopt/engine_launcher_test.go`): `TestEngineLauncher_Positive_PinnedEngineWinsOverPath`
 runs stub binaries that print their identity with a different `praetorctl` first on `PATH`;

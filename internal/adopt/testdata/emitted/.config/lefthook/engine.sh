@@ -1,17 +1,17 @@
 #!/bin/sh
 # The one place a Praetor Git hook chooses which engine judges the repository (#906).
 # Every governance job in lefthook.yml and the fallback pre-commit hook run
-# `sh .config/lefthook/engine.sh <praetorctl arguments>` from the repository root.
+# "sh .config/lefthook/engine.sh <praetorctl arguments>" from the repository root.
 #
 # The engine is the one the repository pins, not the newest binary on PATH. The pin is the
-# value of PRAETOR_REF declared in a workflow under .github/workflows (`PRAETOR_REF: <ref>` or
-# `PRAETOR_REF=<ref>`), the same declaration a hosted Standards job installs the engine from
-# with `go install <module>/cmd/standardsctl@${PRAETOR_REF}`. A pin is a commit id of 7 to 40
+# value of PRAETOR_REF declared in a workflow under .github/workflows ("PRAETOR_REF: <ref>" or
+# "PRAETOR_REF=<ref>"), the same declaration a hosted Standards job installs the engine from
+# with "go install <module>/cmd/standardsctl@${PRAETOR_REF}". A pin is a commit id of 7 to 40
 # hexadecimal digits or a release tag such as v1.2.3; a branch name moves, so it is no pin.
 #
 # With a pin, the engine is installed once per pin into
 #   ${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>
-# by `go install`, bounded by PRAETOR_ENGINE_INSTALL_TIMEOUT seconds (default 300), and run
+# by "go install", bounded by PRAETOR_ENGINE_INSTALL_TIMEOUT seconds (default 300), and run
 # from there. A pin that cannot be read, is declared twice with different values, or cannot be
 # installed fails the hook with a message naming the pin, the cache path and the command that
 # fixes it; the hook never falls back to the binary on PATH, which may be a different version.
