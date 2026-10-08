@@ -383,6 +383,9 @@ func (f Family) plainWorkflow() string {
 	if f.plain != "" {
 		return f.plain
 	}
+	if f.draftSkip {
+		return f.shapeAlt
+	}
 	return f.Workflow
 }
 
@@ -578,6 +581,7 @@ func (f Family) priorVariantRendering(rel string, actual []byte) (known, crlf bo
 	}
 	base := f
 	base.Workflow, base.plain, base.Strip, base.Customize = f.plainWorkflow(), "", nil, nil
+	base.draftSkip, base.shapeAlt = false, ""
 	if plain == base.Workflow {
 		return true, crlf
 	}
@@ -594,6 +598,9 @@ func (f Family) strippedVariant(rel string, actual []byte) (plain string, crlf, 
 	text, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
 	if err != nil || text == f.Workflow {
 		return "", false, false
+	}
+	if restored, isSkip := ghworkflow.UnrenderDraftSkip(text); isSkip {
+		text = restored
 	}
 	plain, ok = f.Strip(text)
 	if !ok || (plain == text && f.plain == "") {

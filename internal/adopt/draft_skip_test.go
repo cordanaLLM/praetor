@@ -187,24 +187,24 @@ func TestAdoptRefusesAnInvalidDraftPolicy(t *testing.T) {
 }
 
 // Boundary (#857): the draft skip and the manifest settings of a family compose. With
-// hosted_gates.draft: skip and api.system_packages declared, the API gate's workflow is the skip
-// shape and carries the declared package; the Markdown gate, which takes no settings, is the skip
-// shape alone.
+// hosted_gates.draft: skip, an unedited copy refreshes without --force when api.system_packages
+// are declared, carrying the declared package in the skip shape.
 func TestDraftSkipComposesWithManifestSettings(t *testing.T) {
-	root := newTestRepo(t, "gates-draft-skip-settings")
-	mustWrite(t, filepath.Join(root, config.ManifestFileName),
-		"version: 1\nrepository:\n  owner: acme\n  name: gates\napi:\n  system_packages: [libfoo-dev]\nhosted_gates:\n  draft: skip\n")
-	for _, family := range managedasset.Families() {
-		if family.WorkflowFile == "" {
-			continue
-		}
-		rendered, err := FamilyForRepository(t.Context(), root, family)
-		if err != nil {
-			t.Fatalf("%s: %v", family.Name, err)
-		}
-		_, _, skipping := rendered.DraftSkipJobs()
-		if declared := strings.Contains(rendered.Workflow, "libfoo-dev"); !skipping || declared != (family.Customize != nil) {
-			t.Fatalf("%s: skip = %v, declared package = %v, want skip and the package only where the family takes settings", family.Name, skipping, declared)
-		}
+	root, opts := adoptHostedGates(t, "gates-draft-skip-settings", "")
+	declareDraftSkip(t, root, true)
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(root, config.ManifestFileName)
+	manifest := strings.TrimRight(mustRead(t, manifestPath), "\n") + "\napi:\n  system_packages: [libfoo-dev]\n"
+	mustWrite(t, manifestPath, manifest)
+	report, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRefreshed(t, report, map[string]string{APICompatibilityWorkflowFile: ""})
+	got := mustRead(t, filepath.Join(root, filepath.FromSlash(APICompatibilityWorkflowFile)))
+	if !strings.Contains(got, "libfoo-dev") || !strings.Contains(got, "github.event.pull_request.draft == false") {
+		t.Fatalf("workflow was not refreshed to skip shape with declared package:\n%s", got)
 	}
 }
