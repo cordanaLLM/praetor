@@ -452,17 +452,32 @@ func (f Family) PriorText(rel string, actual []byte) bool {
 // every other earlier-text set: an LF text and its CRLF checkout match, while an edit, mixed
 // line endings or a lone carriage return match nothing.
 func (f Family) PriorRendering(rel string, actual []byte) (known, crlf bool) {
-	owner, known, crlf := util.LookupCanonicalText(actual, f.Prior)
-	if known && owner == rel {
-		return true, crlf
+	known, crlf, direct := f.basePriorRendering(rel, actual)
+	if direct {
+		return known, crlf
 	}
-	if branch, renderedCRLF := f.otherBranchRendering(rel, actual); branch != "" {
-		return true, renderedCRLF
-	}
-	if known, variantCRLF := f.priorVariantRendering(rel, actual); known {
+	if variant, variantCRLF := f.priorVariantRendering(rel, actual); variant {
 		return true, variantCRLF
 	}
-	return f.priorOtherBranchRendering(rel, actual), crlf
+	return false, crlf
+}
+
+// basePriorRendering is PriorRendering without the manifest-settings variants: a Prior text, an
+// otherBranchRendering or a priorOtherBranchRendering. Both PriorRendering and
+// priorVariantRendering call it, so the call graph stays acyclic (HISS-01). direct reports a
+// match; without one, known is false and crlf is the line-ending style Prior lookup saw.
+func (f Family) basePriorRendering(rel string, actual []byte) (known, crlf, direct bool) {
+	owner, found, crlf := util.LookupCanonicalText(actual, f.Prior)
+	if found && owner == rel {
+		return true, crlf, true
+	}
+	if branch, renderedCRLF := f.otherBranchRendering(rel, actual); branch != "" {
+		return true, renderedCRLF, true
+	}
+	if f.priorOtherBranchRendering(rel, actual) {
+		return true, crlf, true
+	}
+	return false, crlf, false
 }
 
 // priorVariantRendering reports whether actual, the family's workflow file, is Praetor's own
@@ -473,15 +488,8 @@ func (f Family) PriorRendering(rel string, actual []byte) (known, crlf bool) {
 // workflow; an edited rendering matches nothing. The current text is never a prior rendering of
 // itself.
 func (f Family) priorVariantRendering(rel string, actual []byte) (known, crlf bool) {
-	if f.Strip == nil || f.WorkflowFile == "" || rel != f.WorkflowFile {
-		return false, false
-	}
-	text, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
-	if err != nil || text == f.Workflow {
-		return false, false
-	}
-	plain, ok := f.Strip(text)
-	if !ok || (plain == text && f.plain == "") {
+	plain, crlf, ok := f.strippedVariant(rel, actual)
+	if !ok {
 		return false, false
 	}
 	base := f
@@ -489,8 +497,25 @@ func (f Family) priorVariantRendering(rel string, actual []byte) (known, crlf bo
 	if plain == base.Workflow {
 		return true, crlf
 	}
-	known, plainCRLF := base.PriorRendering(rel, []byte(plain))
+	known, plainCRLF, _ := base.basePriorRendering(rel, []byte(plain))
 	return known, crlf || plainCRLF
+}
+
+// strippedVariant returns the plain text under actual, the family's workflow file, when Strip
+// recognises actual as Praetor's own manifest-settings rendering that is not the current text.
+func (f Family) strippedVariant(rel string, actual []byte) (plain string, crlf, ok bool) {
+	if f.Strip == nil || f.WorkflowFile == "" || rel != f.WorkflowFile {
+		return "", false, false
+	}
+	text, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
+	if err != nil || text == f.Workflow {
+		return "", false, false
+	}
+	plain, ok = f.Strip(text)
+	if !ok || (plain == text && f.plain == "") {
+		return "", false, false
+	}
+	return plain, crlf, true
 }
 
 // priorOtherBranchRendering reports whether actual, the family's workflow file, is a Prior text

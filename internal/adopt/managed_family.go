@@ -7,9 +7,7 @@ package adopt
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
-	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
@@ -77,7 +75,7 @@ func FamilyForRepository(ctx context.Context, repoPath string, family managedass
 	if !family.BranchDependent() && family.Customize == nil {
 		return family, nil
 	}
-	manifest, err := repositoryManifest(repoPath)
+	manifest, err := loadDeclaredManifest(ctx, repoPath)
 	if err != nil {
 		return managedasset.Family{}, fmt.Errorf("render the %s workflow %s: %w", family.Kind, family.WorkflowFile, err)
 	}
@@ -91,15 +89,6 @@ func FamilyForRepository(ctx context.Context, repoPath string, family managedass
 		}
 	}
 	return family.ForManifest(manifest)
-}
-
-// repositoryManifest loads the manifest of the repository at repoPath, nil when it has none.
-func repositoryManifest(repoPath string) (*config.Manifest, error) {
-	path := filepath.Join(repoPath, config.ManifestFileName)
-	if !util.FileExists(path) {
-		return nil, nil
-	}
-	return config.LoadManifest(path)
 }
 
 func reconcileManagedFamilyFile(ctx context.Context, s *adoptSession, family managedasset.Family, sc scaffold) (scaffoldState, error) {
