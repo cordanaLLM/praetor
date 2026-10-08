@@ -124,6 +124,7 @@ var operatorSpecs = map[string]settingSpec{
 	"forge.default_owner":                   {check: optional(githubOwner)},
 	"forge.reconcile_repos":                 {kind: kindList, maxItems: MaxReconcileRepos, check: repositoryList},
 	"forge.review_bot":                      {check: optional(reviewBot)},
+	"forge.claim_stale":                     {check: durationWithin(10*time.Minute, 720*time.Hour)},
 	"topology":                              {kind: kindMapping},
 	"topology.org_containers":               {kind: kindList, rule: ruleAppend, maxItems: MaxOrgContainers, check: orgContainerList},
 }
