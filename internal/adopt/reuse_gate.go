@@ -46,6 +46,8 @@ var priorReuseWorkflowDigests = map[string]string{
 	"c8b2b85f7d8f3be75dc21737409a7583e159adca329ba91c9578f180ccf17b25": "reuse-action v6, checkout v7, hosted gate shape, default branch main, 10-minute timeout",
 	"8edae714aaca03bb34c9069cf294950a566f65d92b5c076be3dee6c98537d210": "reuse-action v6, checkout v7, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
 	"c20f118f20de38aa547894de8b1ff070ea76619051f9cfabcb9a778905cb4840": "reuse-action v6, checkout v7, hosted gate shape with merge_group, default branch main, 10-minute timeout",
+	"b2af66a81dfc0edcab9f50f201b037b44307f8df15fefc838e69e002ad5a5a49": "reuse-action v6 and checkout pinned by Renovate from tag pins, hosted gate shape, default branch main, 10-minute timeout",
+	"b5460afc9787f9149405b991d77d11664518d38baae5657e4cdb3b643630285e": "reuse-action v6 and checkout pinned by Renovate from tag pins, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
 	"8d5902c19f49ab5a997e55d5862cb003507552450b5c012e67919559e927c5dc": "reuse-action v6 and checkout pinned by commit digest, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
 }
 
@@ -76,6 +78,11 @@ func renderReuseWorkflow(workflow, branch string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("render the hosted REUSE gate: %w", err)
 	}
+	return renderReuseWorkflowWithRef(ref, branch), nil
+}
+
+// renderReuseWorkflowWithRef renders the hosted REUSE gate using ref for actions/checkout.
+func renderReuseWorkflowWithRef(ref, branch string) string {
 	on := strings.Replace(ghworkflow.HostedGateOn,
 		ghworkflow.HostedGatePushBranchesPrefix+ghworkflow.HostedGateDefaultBranch+"']",
 		ghworkflow.HostedGatePushBranchesPrefix+branch+"']", 1)
@@ -104,7 +111,7 @@ func renderReuseWorkflow(workflow, branch string) (string, error) {
 		"          persist-credentials: false\n" +
 		"      - name: reuse lint" + ghworkflow.HostedGateStepIf + "\n" +
 		"        # yamllint disable-line rule:line-length\n" +
-		"        uses: " + supplychain.ReuseActionPinnedRef() + "\n", nil
+		"        uses: " + supplychain.ReuseActionPinnedRef() + "\n"
 }
 
 // reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
@@ -115,32 +122,42 @@ func renderReuseWorkflow(workflow, branch string) (string, error) {
 // commit out without keeping the token and runs supplychain.ReuseActionPinnedRef, both pinned by
 // full commit SHA with their version comment (HISS-11).
 func reuseWorkflow(branch string) (string, error) {
-	return renderReuseWorkflow(markdownassets.Workflow, branch)
+	ref, err := reuseCheckoutRef()
+	if err != nil {
+		return "", fmt.Errorf("render the hosted REUSE gate: %w", err)
+	}
+	return renderReuseWorkflowWithRef(ref, branch), nil
 }
 
 // reuseRenderingBranch returns the default branch data is the hosted REUSE gate rendered for
 // (reuseWorkflow), in one consistent line-ending style, and whether data is such a rendering:
 // Praetor's unedited output, for the current default branch or another one, such as before the
 // branch was renamed.
-func reuseRenderingBranch(data []byte) (string, bool) {
+func reuseRenderingBranch(data []byte) (string, bool, error) {
 	_, rest, found := strings.Cut(string(data), ghworkflow.HostedGatePushBranchesPrefix)
 	branch, _, closed := strings.Cut(rest, "']")
 	if !found || !closed || !config.ValidBranchName(branch) {
-		return "", false
+		return "", false, nil
 	}
 	expected, err := reuseWorkflow(branch)
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	equal, err := util.CanonicalTextEquivalent(data, []byte(expected))
-	return branch, err == nil && equal
+	if err != nil {
+		return "", false, fmt.Errorf("compare REUSE gate: %w", err)
+	}
+	return branch, equal, nil
 }
 
 // isReuseRendering reports whether data is a hosted REUSE gate adoption wrote and nobody edited:
 // an earlier rendering (priorReuseWorkflowDigests) or the current one for any default branch.
-func isReuseRendering(data []byte) bool {
-	_, current := reuseRenderingBranch(data)
-	return current || isPriorRendering(data, priorReuseWorkflowDigests)
+func isReuseRendering(data []byte) (bool, error) {
+	_, current, err := reuseRenderingBranch(data)
+	if err != nil {
+		return false, err
+	}
+	return current || isPriorRendering(data, priorReuseWorkflowDigests), nil
 }
 
 // reuseDefaultBranch is the default branch the hosted REUSE gate is rendered for: the one the
@@ -199,12 +216,18 @@ func (s *adoptSession) reusePriorDigests(ctx context.Context) (map[string]string
 		return nil, fmt.Errorf("inspect %s: %w", reuseWorkflowFile, err)
 	}
 	prior := maps.Clone(priorReuseWorkflowDigests)
-	if branch, rendered := reuseRenderingBranch(existing); exists && rendered {
-		digest, _, err := util.CanonicalTextDigest(existing)
+	if exists {
+		branch, rendered, err := reuseRenderingBranch(existing)
 		if err != nil {
-			return nil, fmt.Errorf("digest %s: %w", reuseWorkflowFile, err)
+			return nil, err
 		}
-		prior[digest] = "the current rendering for default branch " + branch
+		if rendered {
+			digest, _, err := util.CanonicalTextDigest(existing)
+			if err != nil {
+				return nil, fmt.Errorf("digest %s: %w", reuseWorkflowFile, err)
+			}
+			prior[digest] = "the current rendering for default branch " + branch
+		}
 	}
 	return prior, nil
 }
@@ -227,7 +250,11 @@ func (s *adoptSession) removeReuseGate(ctx context.Context) error {
 	if !exists {
 		return nil
 	}
-	if !isReuseRendering(actual) {
+	rendering, err := isReuseRendering(actual)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", reuseWorkflowFile, err)
+	}
+	if !rendering {
 		s.report.addWarning("%s kept: the root carries neither %s nor %s/, so its REUSE lint job fails every run and, while the "+
 			"branch ruleset requires it, every pull request; it is edited, so adoption does not remove it: remove it, or add %s or %s/ back",
 			reuseWorkflowFile, supplychain.ReuseFile, supplychain.LicensesDir, supplychain.ReuseFile, supplychain.LicensesDir)
@@ -242,6 +269,17 @@ func (s *adoptSession) removeReuseGate(ctx context.Context) error {
 	s.report.recordReconciledAs(reuseWorkflowFile, actionRemove, "Removed the hosted REUSE gate: the root carries neither "+
 		supplychain.ReuseFile+" nor "+supplychain.LicensesDir+"/, so reuse lint would fail every pull request")
 	return nil
+}
+
+func reuseRenderingAllowed(ctx context.Context, repoPath string) (bool, error) {
+	existing, exists, err := contextopt.ObserveSnapshotIn(ctx, repoPath, reuseWorkflowFile)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return true, nil
+	}
+	return isReuseRendering(existing)
 }
 
 // plannedReuseWorkflow lists the hosted REUSE gate when this run leaves it as adoption's
@@ -264,15 +302,32 @@ func (s *adoptSession) plannedReuseWorkflow(ctx context.Context) ([]flavor.Plann
 	if err != nil {
 		return nil, err
 	}
-	existing, exists, err := contextopt.ObserveSnapshotIn(ctx, s.repoPath, reuseWorkflowFile)
-	if err != nil || (exists && !isReuseRendering(existing)) {
-		return nil, ctx.Err()
+	allowed, err := reuseRenderingAllowed(ctx, s.repoPath)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, nil
 	}
 	workflow, err := reuseWorkflow(branch)
 	if err != nil {
 		return nil, err
 	}
 	return []flavor.PlannedTemplate{{Path: reuseWorkflowFile, Content: workflow}}, nil
+}
+
+// reuseManagedPaths returns the hosted REUSE gate path when the repository declares REUSE,
+// so adoption includes it in the Renovate packageRules entry that disables updates on
+// Praetor-managed files.
+func reuseManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
+	declared, err := supplychain.ReuseDeclared(ctx, s.repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("decide the hosted REUSE gate: %w", err)
+	}
+	if !declared {
+		return nil, nil
+	}
+	return []string{reuseWorkflowFile}, nil
 }
 
 // migrateReuseSwitch writes target's rendering over existing when existing is the current

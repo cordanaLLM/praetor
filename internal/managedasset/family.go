@@ -795,10 +795,6 @@ func UnpinnedActions(workflow string) ([]string, error) {
 	return unpinned, nil
 }
 
-func unpinnedActions(workflow string) ([]string, error) {
-	return UnpinnedActions(workflow)
-}
-
 // validatePrior requires every Prior key to be a lowercase hex SHA-256 naming one of the
 // family's managed paths, and none to be the digest of that path's current canonical text.
 func (f Family) validatePrior() error {

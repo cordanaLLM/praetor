@@ -18,13 +18,14 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
 // renovateManagedFixturePaths are the managed paths of the families the default facets
-// enable in a repository whose go.mod git tracks, the documentation families' and then the API
-// compatibility family's (apiCompatibilityFixturePaths), spelled out rather than read from the
-// code under test.
-var renovateManagedFixturePaths = append(slices.Clone(documentationFixturePaths), apiCompatibilityFixturePaths...)
+// enable in a repository whose go.mod git tracks, rendered from the managed-asset registry
+// (one source, HISS-19) instead of a hand-written list.
+var renovateManagedFixturePaths = managedPathsOf(managedasset.Families())
 
 // devContainerBundleFixturePaths are the generated DevContainer bundle files Renovate's
 // managers read, which the managed entry lists after the family paths when the bundle is
@@ -42,35 +43,7 @@ func withBundleFixturePaths(paths []string) []string {
 const ownDevContainer = "{\n  \"image\": \"ghcr.io/acme/dev:1\"\n}\n"
 
 // apiCompatibilityFixturePaths are the managed paths of the api:public-contract family.
-var apiCompatibilityFixturePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go", "tools/apicompat/gate/placeholder.go"}
-
-// documentationFixturePaths are the managed paths of the docs:seo-portal families.
-var documentationFixturePaths = []string{
-	".github/workflows/praetor-docs.yml",
-	"tools/markdownlint/package.json",
-	"tools/markdownlint/package-lock.json",
-	"tools/markdownlint/markdownlint-cli2.yaml",
-	"tools/markdownlint/verify.mjs",
-	"tools/markdownlint/no-private-scratch-links.mjs",
-	"tools/figures/core.mjs",
-	"tools/figures/checks.mjs",
-	"tools/figures/build.mjs",
-	"tools/figures/types.ts",
-	"tools/figures/third_party/interfig/vendor.json",
-	"tools/figures/third_party/interfig/VENDOR.md",
-	"tools/figures/third_party/interfig/upstream/LICENSE",
-	"tools/figures/third_party/interfig/upstream/src/svg.ts",
-	"tools/figures/third_party/interfig/upstream/src/geometry.ts",
-	"tools/figures/third_party/interfig/upstream/src/model.ts",
-	"tools/figures/dist/loader.js",
-	"tools/figures/dist/player.js",
-	"tools/figures/dist/THIRD-PARTY-LICENSES.txt",
-	"tools/figures/figures.css",
-	"tools/figures/mkdocs_hook.py",
-	"tools/figures/astro.mjs",
-	"tools/figures/serve.mjs",
-	"tools/figures/README.md",
-}
+var apiCompatibilityFixturePaths = managedasset.ForFacet(managedasset.APIContractFacet)[0].ManagedPaths()
 
 // adopterRenovateConfig is an adopter's own configuration: a preset, an ignorePaths list and
 // a rule of its own, in an order and with inline arrays a rewrite must keep in value.
@@ -547,5 +520,42 @@ func TestUncoveredRenovatePathsBoundary(t *testing.T) {
 		if got := uncoveredRenovatePaths(rules, all); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: uncovered %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// Positive: the rendered Renovate rule that disables updates on managed files lists every
+// file adoption scaffolds and refreshes: all families in the registry, the generated
+// DevContainer bundle, and reuse.yml when the repository declares REUSE (HISS-19).
+func TestRenovateManagedPaths_IncludesAllScaffoldedFilesAndReuseGate(t *testing.T) {
+	repo := newTestRepo(t, "renovate-all-managed")
+	trackGoModule(t, repo, "go.mod")
+	mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
+	mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
+
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+
+	data := mustRead(t, filepath.Join(repo, "renovate.json"))
+	_, managed, _ := renovateTestRules(t, data)
+	if len(managed) != 1 {
+		t.Fatalf("want 1 managed rule, got %d", len(managed))
+	}
+
+	rendered := managed[0].MatchFileNames
+
+	// Verify all files from the managed-asset registry are included.
+	for _, family := range managedasset.Families() {
+		for _, path := range family.ManagedPaths() {
+			if !slices.Contains(rendered, path) {
+				t.Errorf("rendered Renovate rule is missing managed registry file %s", path)
+			}
+		}
+	}
+
+	// Verify reuse.yml is included.
+	if !slices.Contains(rendered, reuseWorkflowFile) {
+		t.Errorf("rendered Renovate rule is missing %s", reuseWorkflowFile)
 	}
 }

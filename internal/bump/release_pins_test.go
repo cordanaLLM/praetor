@@ -187,6 +187,8 @@ func TestReuseActionPinnedRefPairsRegistryTagAndCommit(t *testing.T) {
 	assertMismatchedPinRefused(t, workflow)
 }
 
+const expectedReuseActionCommit = "676e2d560c9a403aa252096d99fcab3e1132b0f5"
+
 func assertPinnedRefStructure(t *testing.T) {
 	t.Helper()
 	pin, ok := util.ParseSHAPin(supplychain.ReuseActionPinnedRef())
@@ -196,8 +198,11 @@ func assertPinnedRefStructure(t *testing.T) {
 	if pin.Action != supplychain.ReuseAction {
 		t.Errorf("action = %s, want %s", pin.Action, supplychain.ReuseAction)
 	}
-	if pin.SHA != supplychain.ReuseActionCommit {
-		t.Errorf("SHA = %s, want %s", pin.SHA, supplychain.ReuseActionCommit)
+	if pin.SHA != expectedReuseActionCommit {
+		t.Errorf("SHA = %s, want %s", pin.SHA, expectedReuseActionCommit)
+	}
+	if supplychain.ReuseActionCommit != expectedReuseActionCommit {
+		t.Errorf("ReuseActionCommit = %s, want %s", supplychain.ReuseActionCommit, expectedReuseActionCommit)
 	}
 	if pin.Release != supplychain.ReuseActionVersion {
 		t.Errorf("release = %s, want %s", pin.Release, supplychain.ReuseActionVersion)
@@ -211,7 +216,7 @@ func assertMatchingPinVerifies(t *testing.T, workflow []ActionCandidate) {
 	t.Helper()
 	upstream := pinUpstream{
 		tags: map[string]string{
-			supplychain.ReuseAction + " " + supplychain.ReuseActionVersion: supplychain.ReuseActionCommit,
+			supplychain.ReuseAction + " " + supplychain.ReuseActionVersion: expectedReuseActionCommit,
 		},
 	}
 	lookup := &fakePinLookup{upstream: upstream}

@@ -1,0 +1,4 @@
+type: fixed
+title: "Renovate ignores all managed assets rendered during adoption (#1029)"
+issue: "#1029"
+breaking: false

@@ -356,16 +356,23 @@ func TestReuseWorkflow_RendersTheDefaultBranch(t *testing.T) {
 		if decoded.Jobs["reuse"].Timeout != 10 {
 			t.Errorf("%s: timeout-minutes %d, want 10", branch, decoded.Jobs["reuse"].Timeout)
 		}
-		if got, rendered := reuseRenderingBranch([]byte(rendering)); !rendered || got != branch {
+		got, rendered, err := reuseRenderingBranch([]byte(rendering))
+		if err != nil {
+			t.Fatalf("%s: reuseRenderingBranch err: %v", branch, err)
+		}
+		if !rendered || got != branch {
 			t.Errorf("%s: read back as %q, %v", branch, got, rendered)
 		}
 	}
 	edited := strings.Replace(mustReuseWorkflow(t, "master"), "timeout-minutes: 10", "timeout-minutes: 30", 1)
-	if _, rendered := reuseRenderingBranch([]byte(edited)); rendered || isReuseRendering([]byte(edited)) {
-		t.Error("an edited rendering reads as Praetor's")
+	if _, rendered, err := reuseRenderingBranch([]byte(edited)); err != nil || rendered {
+		t.Errorf("reuseRenderingBranch(edited): rendered=%v, err=%v", rendered, err)
 	}
-	if _, rendered := reuseRenderingBranch([]byte(mustReuseWorkflow(t, "a b"))); rendered {
-		t.Error("a rendering for a name that is no branch reads as Praetor's")
+	if rendered, err := isReuseRendering([]byte(edited)); err != nil || rendered {
+		t.Errorf("isReuseRendering(edited): rendered=%v, err=%v", rendered, err)
+	}
+	if _, rendered, err := reuseRenderingBranch([]byte(mustReuseWorkflow(t, "a b"))); err != nil || rendered {
+		t.Errorf("a rendering for a name that is no branch reads as Praetor's: rendered=%v, err=%v", rendered, err)
 	}
 }
 
@@ -616,5 +623,65 @@ func TestAdopt_RefreshesPriorTagPinnedReuseWorkflow(t *testing.T) {
 	}
 	if !strings.Contains(reuseGateDetails(rep), "Refreshed") {
 		t.Errorf("report details do not mention Refreshed: %s", reuseGateDetails(rep))
+	}
+}
+
+// applyRenovateRewrite derives the Renovate-pinned text from a tag-pinned REUSE gate
+// by applying the exact rewrite Renovate performed in #1029.
+func applyRenovateRewrite(text string) string {
+	text = strings.Replace(text, "uses: actions/checkout@v7", "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", 1)
+	text = strings.Replace(text, "uses: fsfe/reuse-action@v6", "uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6", 1)
+	return text
+}
+
+// Boundary: an adopter whose Renovate pinned the tag-pinned reuse.yml holds an exact rewrite
+// (#1029: uses: <action>@<full sha> # <tag>). Adoption refreshes such a copy to the current
+// digest-pinned rendering without --force.
+func TestAdopt_RefreshesRenovatePinnedReuseWorkflow(t *testing.T) {
+	for _, fixture := range []string{"reuse-action-v6.yml", "reuse-action-v6-draft-bash.yml"} {
+		t.Run(fixture, func(t *testing.T) {
+			repoPath := newTestRepo(t, "refresh-renovate-pinned")
+			mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+			priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", fixture))
+			renovatePinnedText := applyRenovateRewrite(priorText)
+			workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+			mustWrite(t, workflowPath, renovatePinnedText)
+
+			rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+			got := mustRead(t, workflowPath)
+			want := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+			if got != want {
+				t.Fatalf("refreshed gate differs from current rendering:\ngot:\n%s\nwant:\n%s", got, want)
+			}
+			if hasAction(rep, reuseWorkflowFile, actionReplace) {
+				t.Errorf("want a refresh without --force, got actionReplace: %+v", rep.ActionDetails)
+			}
+			if !strings.Contains(reuseGateDetails(rep), "Refreshed") {
+				t.Errorf("report details do not mention Refreshed: %s", reuseGateDetails(rep))
+			}
+		})
+	}
+}
+
+// Negative (Rule 13): a hand edit beyond the Renovate rewrite is kept and fails the refresh.
+func TestAdopt_KeepsHandEditedReuseWorkflow_Negative(t *testing.T) {
+	repoPath := newTestRepo(t, "keep-hand-edited-reuse-gate")
+	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", "reuse-action-v6-draft-bash.yml"))
+	handEdited := applyRenovateRewrite(priorText) + "\n        # custom adopter step or comment\n"
+	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPath, handEdited)
+
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	got := mustRead(t, workflowPath)
+	if got != handEdited {
+		t.Fatalf("hand-edited gate was modified: got:\n%s\nwant:\n%s", got, handEdited)
+	}
+	if strings.Contains(reuseGateDetails(rep), "Refreshed") {
+		t.Errorf("report details incorrectly mention Refreshed: %s", reuseGateDetails(rep))
+	}
+	want := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	if got == want {
+		t.Fatal("negative test: hand-edited gate unexpectedly matched current rendering")
 	}
 }

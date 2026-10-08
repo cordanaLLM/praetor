@@ -42,7 +42,8 @@
         "ReuseActionVersion = \"(?<currentValue>v[0-9]+)\"[\\s\\S]*?ReuseActionCommit = \"(?<currentDigest>[0-9a-f]{40})\""
       ],
       "depNameTemplate": "fsfe/reuse-action",
-      "datasourceTemplate": "github-tags"
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "regex:^v(?<major>\\d+)$"
     },
     {
       "customType": "regex",
@@ -135,6 +136,8 @@
       "description": "REUSE gate actions: keep the hook job and workflow pin synchronized.",
       "matchManagers": ["github-actions", "custom.regex"],
       "matchFileNames": [".github/workflows/compliance.yml", "internal/supplychain/reuse_lint.go"],
+      "matchPackageNames": ["fsfe/reuse-action"],
+      "allowedVersions": "/^v\\d+$/",
       "groupName": "REUSE gate actions"
     },
     {
