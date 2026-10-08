@@ -56,6 +56,10 @@ func independentMCPOutputCallsites(ctx context.Context, root string) (callsites 
 	parsedFiles := make([]outputOracleFile, 0, maxOutputOracleFiles)
 	count := 0
 	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() == "testdata" && entry.Type()&os.ModeSymlink == 0 {
+			// Go tooling ignores testdata; it holds goldens, never package sources.
+			continue
+		}
 		if entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
 			return nil, nil, fmt.Errorf("output census rejects non-regular entry %s", entry.Name())
 		}

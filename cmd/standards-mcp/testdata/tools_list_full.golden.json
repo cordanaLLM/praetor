@@ -37,7 +37,7 @@
           },
           "source_root": {
             "type": "string",
-            "description": "Praetor source bundle; required for missing lock and with force; purpose: real pinned lock; confinement: server root"
+            "description": "Praetor Git checkout or source bundle; go.mod source: Git checkout required (bootstrap inventory = git ls-files); req... Full text: standards_tool_describe."
           }
         },
         "additionalProperties": false
@@ -326,7 +326,7 @@
           },
           "source_root": {
             "type": "string",
-            "description": "Praetor source bundle for public cases; default server root"
+            "description": "Praetor Git checkout or source bundle for public cases; go.mod source: Git checkout required (bootstrap inventory = git ls-files); default server root"
           },
           "stage": {
             "type": "string",
