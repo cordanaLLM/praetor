@@ -14,8 +14,9 @@ import (
 const (
 	// MaxAPISystemPackages bounds the Debian packages the API compatibility workflow installs.
 	MaxAPISystemPackages = 64
-	// MaxAPISystemPackageBytes bounds one package name.
-	MaxAPISystemPackageBytes = 128
+	// MaxAPISystemPackageBytes bounds one package name, so that its line in the rendered workflow
+	// stays inside the 80 columns yamllint's default line-length rule allows.
+	MaxAPISystemPackageBytes = 64
 )
 
 // ExceptionRuleAPICompatibility is the rule of the Go API compatibility gate

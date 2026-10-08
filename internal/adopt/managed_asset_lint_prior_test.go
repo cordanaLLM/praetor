@@ -21,6 +21,7 @@ import (
 // (tools/apicompat/testdata/prior); the figure engine's has no directory of its own.
 var lintPriorFixtures = []struct{ family, rel, dir, fixture string }{
 	{"API compatibility", "tools/apicompat/gate/main.go", filepath.Join("..", "..", "tools", "apicompat", "testdata", "prior"), "api-gate-main.go.txt"},
+	{"API compatibility", "tools/apicompat/gate/main.go", filepath.Join("..", "..", "tools", "apicompat", "testdata", "prior"), "api-gate-main-before-system-packages.go.txt"},
 	{"Figure engine", "tools/figures/mkdocs_hook.py", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-mkdocs_hook.py.txt"},
 	{"Figure engine", "tools/figures/third_party/interfig/VENDOR.md", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-VENDOR.md.txt"},
 	{"Figure engine", "tools/figures/README.md", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-README.md.txt"},

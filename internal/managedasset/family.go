@@ -120,8 +120,18 @@ type Family struct {
 	// keeps the --force contract. The current workflow rendered for another default branch
 	// counts as such a text too (PriorRendering), so a renamed default branch refreshes it.
 	Prior map[string]string
+	// Customize, when set, returns the function that renders the family's plain workflow for the
+	// settings a repository's manifest declares, or nil when it declares none (ForManifest). The
+	// API compatibility family renders api.system_packages and its module exceptions this way.
+	Customize func(m *config.Manifest) (func(plain string) (string, error), error)
+	// Strip is Customize's inverse: the plain workflow behind a text that carries manifest
+	// settings, ok only for exactly Praetor's rendering of them. A file holding such a text for
+	// settings the manifest no longer declares is an unedited earlier rendering (PriorRendering).
+	Strip func(workflow string) (plain string, ok bool)
 	// branch is the default branch Workflow is rendered for; empty means WorkflowBranch.
 	branch string
+	// plain is Workflow before Customize rendered it; empty while it was not rendered.
+	plain string
 }
 
 // Families returns the registry in its fixed order: the order adoption emits and audit
@@ -156,7 +166,25 @@ func apiCompatibility() Family {
 		Workflow:      apiassets.Workflow,
 		RefuseForeign: true,
 		Prior:         apiassets.PriorDigests(),
+		Customize:     customizeAPIWorkflow,
+		Strip:         apiassets.StripSettings,
 	}
+}
+
+// customizeAPIWorkflow reads the API compatibility settings out of m: api.system_packages and the
+// live-or-expired entries of the api-compatibility exceptions, in declaration order. It returns
+// nil while m declares neither.
+func customizeAPIWorkflow(m *config.Manifest) (func(plain string) (string, error), error) {
+	settings := apiassets.Settings{SystemPackages: slices.Clone(m.API.Packages())}
+	for _, entry := range config.ExceptionsFor(m.Exceptions, config.ExceptionRuleAPICompatibility) {
+		settings.Exceptions = append(settings.Exceptions, apiassets.ModuleException{
+			Path: entry.Path, Reason: entry.Reason, Expires: entry.Expires,
+		})
+	}
+	if settings.Empty() {
+		return nil, nil
+	}
+	return func(plain string) (string, error) { return apiassets.RenderWorkflow(plain, settings) }, nil
 }
 
 func markdown() Family {
@@ -316,8 +344,39 @@ func (f Family) ForBranch(branch string) (Family, error) {
 		return Family{}, fmt.Errorf("managed asset family %q workflow cannot be rendered for default branch %q: not a branch name", f.Name, branch)
 	}
 	f.Workflow = strings.Replace(f.Workflow, pushBranchesLine(f.Branch()), pushBranchesLine(branch), 1)
+	f.plain = strings.Replace(f.plain, pushBranchesLine(f.Branch()), pushBranchesLine(branch), 1)
 	f.branch = branch
 	return f, nil
+}
+
+// ForManifest returns the family with its workflow rendered for the settings m declares
+// (Customize), on top of the rendering for its default branch (ForBranch). A family without
+// Customize, or whose settings m leaves undeclared, is returned unchanged, so a repository that
+// declares none keeps the canonical bytes. Adoption writes this rendering and audit locks a copy
+// to it (FamilyForRepository in internal/adopt).
+func (f Family) ForManifest(m *config.Manifest) (Family, error) {
+	if f.Customize == nil || m == nil {
+		return f, nil
+	}
+	render, err := f.Customize(m)
+	if err != nil || render == nil {
+		return f, err
+	}
+	plain := f.plainWorkflow()
+	rendered, err := render(plain)
+	if err != nil {
+		return Family{}, fmt.Errorf("managed asset family %q workflow cannot be rendered for the manifest: %w", f.Name, err)
+	}
+	f.plain, f.Workflow = plain, rendered
+	return f, nil
+}
+
+// plainWorkflow returns the workflow before any manifest settings were rendered into it.
+func (f Family) plainWorkflow() string {
+	if f.plain != "" {
+		return f.plain
+	}
+	return f.Workflow
 }
 
 // OtherBranch returns the default branch other than Branch that actual, the family's file at rel,
@@ -400,7 +459,38 @@ func (f Family) PriorRendering(rel string, actual []byte) (known, crlf bool) {
 	if branch, renderedCRLF := f.otherBranchRendering(rel, actual); branch != "" {
 		return true, renderedCRLF
 	}
+	if known, variantCRLF := f.priorVariantRendering(rel, actual); known {
+		return true, variantCRLF
+	}
 	return f.priorOtherBranchRendering(rel, actual), crlf
+}
+
+// priorVariantRendering reports whether actual, the family's workflow file, is Praetor's own
+// rendering (Strip) of manifest settings the manifest no longer declares, or declares
+// differently, over a text the family ships or shipped: its plain workflow for this or another
+// default branch, or a Prior text. Removing api.system_packages or changing the list therefore
+// refreshes the file without --force, and so does declaring settings over an unedited plain
+// workflow; an edited rendering matches nothing. The current text is never a prior rendering of
+// itself.
+func (f Family) priorVariantRendering(rel string, actual []byte) (known, crlf bool) {
+	if f.Strip == nil || f.WorkflowFile == "" || rel != f.WorkflowFile {
+		return false, false
+	}
+	text, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
+	if err != nil || text == f.Workflow {
+		return false, false
+	}
+	plain, ok := f.Strip(text)
+	if !ok || (plain == text && f.plain == "") {
+		return false, false
+	}
+	base := f
+	base.Workflow, base.plain, base.Strip, base.Customize = f.plainWorkflow(), "", nil, nil
+	if plain == base.Workflow {
+		return true, crlf
+	}
+	known, plainCRLF := base.PriorRendering(rel, []byte(plain))
+	return known, crlf || plainCRLF
 }
 
 // priorOtherBranchRendering reports whether actual, the family's workflow file, is a Prior text

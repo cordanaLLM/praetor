@@ -1,0 +1,4 @@
+type: added
+title: "The locked API compatibility workflow installs the Debian packages a manifest declares in api.system_packages before it builds the Go modules, and a module that still cannot be built takes an expiring exception (rule api-compatibility, path <module>/go.mod) that the gate reports as not compared; the workflow is rendered and audited per repository, no declaration keeps its bytes, and unedited earlier renderings refresh without --force. Migration: audit fails on the previous gate program copy until praetorctl adopt runs; plain adopt refreshes an unedited earlier copy, and only an edited one needs praetorctl adopt --force"
+issue: "#849"
+breaking: true

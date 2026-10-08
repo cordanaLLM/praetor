@@ -110,6 +110,71 @@ ruleset still requires the context, an unforced run stops and names the missing 
 Until that run, audit fails on the gate files or the required context left behind and names the
 adoption run that retires them.
 
+## Modules that need system libraries
+
+The job builds every module on a hosted Linux runner (`go list -export ./...`), so a package that
+needs a C library or header at build time, through cgo, fails there when the runner lacks it. The
+workflow is locked, so the repository declares the need in `.standards.yaml` and adoption renders
+the workflow from it.
+
+```yaml
+api:
+  system_packages:
+    - libudev-dev
+    - libopenal-dev
+```
+
+`api.system_packages` lists Debian package names, validated against the Debian package-name grammar
+(lower case letters, digits and `+ - .`, two to 64 characters, opening with a letter or digit),
+at most 64, without repeats; a list outside that fails manifest validation naming the key
+(`internal/config/api_policy.go`, `TestAPIPolicy_Negative_InvalidPackagesFail`). While the list is
+non-empty the rendered workflow gains one step, `Install system packages for the Go build`, directly
+before the step that runs the gate: it carries the draft condition of every gate step, a 15 minute
+timeout, and runs `sudo apt-get update` and then `sudo apt-get install -y --no-install-recommends`
+with exactly the declared names, one per line so that no line passes yamllint's 80 columns (`TestRenderWorkflow_Positive_InstallStepRunsBeforeTheChecker` in
+`tools/apicompat/render_test.go`). An absent or empty list renders the workflow byte-identical to
+the text before the key existed (`TestRenderWorkflow_Boundary_EmptySettingsKeepTheBytes`). Nothing
+sets `CGO_ENABLED`: a module is never compared with cgo silently switched off.
+
+The rendering is per repository, like the default-branch rendering above
+(`adopt.FamilyForRepository`): audit locks the copy to the rendering for this repository's
+manifest, so a hand-edited copy fails and so does a copy rendered for other packages
+(`TestAuditLocksTheAPIWorkflowToTheManifestRendering` in
+`cmd/standardsctl/audit_api_system_packages_test.go`). Plain `praetorctl adopt` refreshes an
+unedited earlier rendering, whether the manifest gained, changed or dropped packages, or the branch
+changed, without `--force`; an edited one still needs `--force`
+(`TestAdoptRefreshesUneditedRenderingsWhenTheManifestChanges` in
+`internal/adopt/api_system_packages_test.go`, `TestPriorRendering_RecognisesRenderingsOfOtherSettings`
+in `internal/managedasset/manifest_render_test.go`).
+
+### A module that cannot be built even so
+
+A module whose packages do not build on the runner even with the packages installed takes an
+expiring exception from the manifest's `exceptions` list, rule `api-compatibility`, naming the
+module's `go.mod`:
+
+```yaml
+exceptions:
+  - rule: api-compatibility
+    path: hw/vendor-sdk/go.mod
+    reason: Needs a vendor SDK that no Debian package provides.
+    expires: 2026-12-31
+```
+
+The entry follows the rules of the exceptions list (one line of reason, a date at most 90 days
+ahead, no repeats; `config.ValidateExceptions`) and takes a `path` to one `go.mod`, never a glob,
+and no `${{` in the reason, because the workflow carries the entries to the gate in the
+environment variable `APICOMPAT_EXCEPTIONS`; the gate reads no manifest. While the entry holds,
+through the end of its `expires` day in UTC, a build failure of that module is not a failure: the
+gate prints `not compared`, with the reason and the expiry, in its report and as a warning
+annotation, compares the other modules and exits as if the module were absent from the comparison.
+A module that builds is compared whatever the list says. Once the entry expired, or without one,
+the build failure fails the gate with status 2 as before, naming the expired entry
+(`TestGate_Positive_ExceptedModuleIsReportedNotCompared`,
+`TestGate_Negative_ExpiredOrMissingExceptionFails` in `tools/apicompat/gate_exceptions_test.go`).
+A damaged `APICOMPAT_EXCEPTIONS` fails the run instead of reading as no exceptions
+(`TestGate_Boundary_DamagedExceptionsFailTheRun`).
+
 ## Run it locally
 
 From a clean checkout, with `git` and `go` on `PATH`:
@@ -147,7 +212,9 @@ binary you built.
    checker reads every package of the earlier path as removed (`isNewMajor`;
    `TestGate_Positive_InPlaceMajorVersionIsANewModule`, `TestGate_Boundary_MajorVersionSuffixes`).
 4. **Comparison.** For each compared module the gate runs `go list -export ./...` at `HEAD`, so a
-   module whose packages do not build fails instead of reading as empty, and then
+   module whose packages do not build fails instead of reading as empty (unless a live
+   `api-compatibility` exception excuses it,
+   [Modules that need system libraries](#modules-that-need-system-libraries)), and then
    `go-apidiff <base> <HEAD> --repo-path=<root>` from that module's directory. go-apidiff loads
    `./...` from its working directory, which is what keeps a nested module from being skipped by
    a run at the root.

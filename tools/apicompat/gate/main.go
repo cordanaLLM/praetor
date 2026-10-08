@@ -112,7 +112,7 @@ const (
 	maxRevisionBytes = 4096
 
 	// exceptionsEnv carries the manifest's api-compatibility exceptions, as the workflow renders
-	// them (internal/apicompat render).
+	// them (tools/apicompat/render.go).
 	exceptionsEnv  = "APICOMPAT_EXCEPTIONS"
 	maxExceptions  = 1024
 	exceptionsDate = "2006-01-02"
