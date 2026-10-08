@@ -185,3 +185,26 @@ func TestAdoptRefusesAnInvalidDraftPolicy(t *testing.T) {
 		}
 	}
 }
+
+// Boundary (#857): the draft skip and the manifest settings of a family compose. With
+// hosted_gates.draft: skip and api.system_packages declared, the API gate's workflow is the skip
+// shape and carries the declared package; the Markdown gate, which takes no settings, is the skip
+// shape alone.
+func TestDraftSkipComposesWithManifestSettings(t *testing.T) {
+	root := newTestRepo(t, "gates-draft-skip-settings")
+	mustWrite(t, filepath.Join(root, config.ManifestFileName),
+		"version: 1\nrepository:\n  owner: acme\n  name: gates\napi:\n  system_packages: [libfoo-dev]\nhosted_gates:\n  draft: skip\n")
+	for _, family := range managedasset.Families() {
+		if family.WorkflowFile == "" {
+			continue
+		}
+		rendered, err := FamilyForRepository(t.Context(), root, family)
+		if err != nil {
+			t.Fatalf("%s: %v", family.Name, err)
+		}
+		_, _, skipping := rendered.DraftSkipJobs()
+		if declared := strings.Contains(rendered.Workflow, "libfoo-dev"); !skipping || declared != (family.Customize != nil) {
+			t.Fatalf("%s: skip = %v, declared package = %v, want skip and the package only where the family takes settings", family.Name, skipping, declared)
+		}
+	}
+}

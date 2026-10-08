@@ -25,6 +25,16 @@ func TestRenderDraftSkipPositive(t *testing.T) {
 			t.Fatalf("the skip shape still holds %q:\n%s", absent, rendered)
 		}
 	}
+	assertSkipJobs(t, rendered, gateID)
+	if again, _, err := RenderDraftSkip(hostedGateFixture); err != nil || again != rendered {
+		t.Fatalf("the rendering is not deterministic: %v", err)
+	}
+	assertSkipLineWidth(t, rendered)
+}
+
+// assertSkipJobs checks the parsed gate job and result job of a skip rendering.
+func assertSkipJobs(t *testing.T, rendered, gateID string) {
+	t.Helper()
 	spec, err := Parse([]byte(rendered))
 	if err != nil {
 		t.Fatalf("the skip shape does not parse: %v\n%s", err, rendered)
@@ -34,15 +44,24 @@ func TestRenderDraftSkipPositive(t *testing.T) {
 		len(got.Steps) != 1 || got.Steps[0].Name != "Run the gate" {
 		t.Fatalf("gate job = %+v, want the folded skip condition, the renamed job and the one gate step", got)
 	}
-	if got := spec.Jobs[result]; got.Name != "Gate" || got.If != "always()" || strings.Join(got.NeedIDs(), ",") != gateID ||
+	assertSkipResultJob(t, spec.Jobs[result], gateID)
+}
+
+// assertSkipResultJob checks the result job: the original context behind always(), needing the
+// gate job, with the draft step and the failure step.
+func assertSkipResultJob(t *testing.T, got Job, gateID string) {
+	t.Helper()
+	if got.Name != "Gate" || got.If != "always()" || strings.Join(got.NeedIDs(), ",") != gateID ||
 		len(got.Steps) != 2 || got.Steps[0].If != "needs.gate.result == 'skipped'" ||
 		got.Steps[1].If != "needs.gate.result != 'success'" {
 		t.Fatalf("result job = %+v, want the original context behind always() needing the gate job", got)
 	}
-	if again, _, err := RenderDraftSkip(hostedGateFixture); err != nil || again != rendered {
-		t.Fatalf("the rendering is not deterministic: %v", err)
-	}
-	// The annotation line is the one line allowed past 80 columns, between yamllint comments.
+}
+
+// assertSkipLineWidth checks that the annotation line is the one line allowed past 80 columns,
+// between yamllint comments.
+func assertSkipLineWidth(t *testing.T, rendered string) {
+	t.Helper()
 	exempt := "echo \"::error title="
 	for _, line := range strings.Split(rendered, "\n") {
 		if len(line) > 80 && !strings.Contains(line, exempt) {
