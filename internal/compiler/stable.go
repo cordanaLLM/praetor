@@ -15,10 +15,11 @@ import (
 
 // UnlayeredWarning is the line an AGENTS.md without band markers earns. The compiled files
 // keep the source order, so a client's prompt cache loses every byte after the first edit.
-// The warning lasts one release; the next makes the missing markers a failure.
+// The warning is a warning for now; a later release makes the missing markers a failure
+// (follow-up tracked in #853).
 const UnlayeredWarning = "[WARN] AGENTS.md carries no cache band markers; add " +
 	agentcontext.BandHeadMarker + ", " + agentcontext.BandConfigMarker + " and " +
-	agentcontext.BandTailMarker + " to keep a stable prompt prefix (the next release fails without them)"
+	agentcontext.BandTailMarker + " to keep a stable prompt prefix (a later release fails without them; see docs/guides/context-cache-bands.md)"
 
 // stableClocks and stableSeeds are the two environments the stability check renders under.
 // Both pairs differ, so a render that reads either one produces different bytes and fails.
@@ -42,19 +43,27 @@ func VerifyStableContext(ctx context.Context, w io.Writer, tr *Transpiler, sourc
 		return fmt.Errorf("stability check: %w", err)
 	}
 	content := string(data)
-	renderErr := verifyRenderTwice(selected, content, (*Transpiler).CompileContent)
-	head, layered := agentcontext.HeadBand(content)
-	if !layered {
+	res, renderErr := verifyRenderTwice(selected, content, (*Transpiler).CompileContent)
+	if res == nil {
+		return renderErr
+	}
+	if !res.Layered {
 		_, werr := fmt.Fprintln(w, UnlayeredWarning)
 		return errors.Join(renderErr, werr)
+	}
+	head, _, err := agentcontext.HeadBand(content)
+	if err != nil {
+		return errors.Join(renderErr, fmt.Errorf("stability check: %w", err))
 	}
 	return errors.Join(renderErr, headVolatileError(source, head))
 }
 
 // verifyRenderTwice compiles content under the two stability environments and names each
 // vendor file whose bytes differ. compile is the render under test: production passes
-// CompileContent, a test passes one that reads the env so the refusal is seen end to end.
-func verifyRenderTwice(tr *Transpiler, content string, compile func(*Transpiler, string) (*CompileResult, error)) error {
+// CompileContent, a test passes one that reads the env so the refusal is seen end to end. It
+// returns the first render, which says whether the source is layered, with a drift error, or
+// a nil result with the error of a render that failed.
+func verifyRenderTwice(tr *Transpiler, content string, compile func(*Transpiler, string) (*CompileResult, error)) (*CompileResult, error) {
 	var results [2]*CompileResult
 	for i := range results {
 		run := *tr
@@ -62,18 +71,18 @@ func verifyRenderTwice(tr *Transpiler, content string, compile func(*Transpiler,
 		run.Env = &agentcontext.RenderEnv{Now: func() time.Time { return clock }, Seed: stableSeeds[i]}
 		res, err := compile(&run, content)
 		if err != nil {
-			return fmt.Errorf("stability check: render %d: %w", i+1, err)
+			return nil, fmt.Errorf("stability check: render %d: %w", i+1, err)
 		}
 		results[i] = res
 	}
 	drift, err := driftedFiles(results[0], results[1])
 	if err != nil {
-		return err
+		return results[0], err
 	}
 	if len(drift) > 0 {
-		return fmt.Errorf("stability check: two renders under different clocks and visit orders differ in %s", strings.Join(drift, ", "))
+		return results[0], fmt.Errorf("stability check: two renders under different clocks and visit orders differ in %s", strings.Join(drift, ", "))
 	}
-	return nil
+	return results[0], nil
 }
 
 // driftedFiles names the vendor files whose bytes differ between two renders, and fails when

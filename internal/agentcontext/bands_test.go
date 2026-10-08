@@ -26,15 +26,21 @@ var bandFixture = strings.Join([]string{
 	"",
 }, "\n")
 
-func TestBandsEmitHeadConfigTailForEveryVendorFile(t *testing.T) {
-	result, err := NewTranspiler().CompileContent(bandFixture)
+// compileFixture compiles source and fails the test on an error.
+func compileFixture(t *testing.T, source string) *CompileResult {
+	t.Helper()
+	result, err := NewTranspiler().CompileContent(source)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !result.Layered {
 		t.Fatal("marked source reported unlayered")
 	}
-	for _, file := range result.Files {
+	return result
+}
+
+func TestBandsEmitHeadConfigTailInOrderForEveryVendorFile(t *testing.T) {
+	for _, file := range compileFixture(t, bandFixture).Files {
 		if !strings.HasPrefix(file.Content, testFrontmatterFor(file.RelativePath)+testHeader+"# Harness") {
 			t.Fatalf("%s: static header or title not first: %q", file.RelativePath, file.Content)
 		}
@@ -47,16 +53,54 @@ func TestBandsEmitHeadConfigTailForEveryVendorFile(t *testing.T) {
 		if strings.Contains(file.Content, "praetor:") {
 			t.Fatalf("%s: marker leaked into the compiled file", file.RelativePath)
 		}
-		if strings.Contains(file.Content, "Claude only.") != (file.RelativePath == "CLAUDE.md") {
-			t.Fatalf("%s: vendor section placement wrong", file.RelativePath)
-		}
-		if strings.Contains(file.Content, "\n\n\n") || !strings.HasSuffix(file.Content, "Tail text.") && !strings.HasSuffix(file.Content, "Tail text.\n") {
+	}
+}
+
+func TestBandsJoinWithOneBlankLineAndKeepTheFinalNewline(t *testing.T) {
+	for _, file := range compileFixture(t, bandFixture).Files {
+		if strings.Contains(file.Content, "\n\n\n") || !strings.HasSuffix(file.Content, "\n\nTail text.\n") {
 			t.Fatalf("%s: band joins left a gap or lost the tail: %q", file.RelativePath, file.Content)
 		}
 	}
-	claude := result.Files[0].Content
-	if strings.Index(claude, "Claude only.") < strings.Index(claude, "Config text.") || strings.Index(claude, "Claude only.") > strings.Index(claude, "Tail text.") {
-		t.Fatalf("vendor section is not in the config band: %q", claude)
+}
+
+func TestVendorSectionJoinsTheConfigBandOfItsOwnFileOnly(t *testing.T) {
+	for _, file := range compileFixture(t, bandFixture).Files {
+		isClaude := file.RelativePath == "CLAUDE.md"
+		if strings.Contains(file.Content, "Claude only.") != isClaude {
+			t.Fatalf("%s: vendor section placement wrong", file.RelativePath)
+		}
+		c := file.Content
+		if isClaude && !strings.Contains(c, "Config text.\n\n## Claude Code\nClaude only.\n\nTail text.") {
+			t.Fatalf("vendor section is not in the config band: %q", c)
+		}
+	}
+}
+
+// endingCases lists band combinations; each ends with a newline exactly when its source does.
+var endingCases = map[string]string{
+	"head only":              "# H\n\n" + BandHeadMarker + "\nHead.\n",
+	"head and config":        "# H\n\n" + BandHeadMarker + "\nHead.\n\n" + BandConfigMarker + "\nConfig.\n",
+	"head and tail":          "# H\n\n" + BandHeadMarker + "\nHead.\n\n" + BandTailMarker + "\nTail.\n",
+	"out of order":           "# H\n\n" + BandTailMarker + "\nTail.\n" + BandConfigMarker + "\nConfig.\n",
+	"tail then vendor":       "# H\n\n" + BandTailMarker + "\nTail.\n\n## Claude Code\nClaude only.\n",
+	"config then blank tail": "# H\n\n" + BandConfigMarker + "\nConfig.\n\n" + BandTailMarker + "\n\n",
+}
+
+func TestLayeredOutputEndsWithNewlineExactlyWhenTheSourceDoes(t *testing.T) {
+	for name, source := range endingCases {
+		for _, trimmed := range []bool{false, true} {
+			text := source
+			if trimmed {
+				text = strings.TrimRight(source, "\n")
+			}
+			for _, file := range compileFixture(t, text).Files {
+				body := strings.TrimPrefix(file.Content, testFrontmatterFor(file.RelativePath)+testHeader)
+				if strings.HasSuffix(body, "\n") != !trimmed || strings.HasSuffix(body, "\n\n") {
+					t.Fatalf("%s (trimmed=%v) %s: ending wrong: %q", name, trimmed, file.RelativePath, body)
+				}
+			}
+		}
 	}
 }
 
@@ -79,8 +123,8 @@ func TestUnmarkedSourceKeepsSourceOrder(t *testing.T) {
 	if got := result.Files[0].Content; got != testHeader+source {
 		t.Fatalf("unmarked source changed: %q", got)
 	}
-	if _, ok := HeadBand(source); ok {
-		t.Fatal("unmarked source has a head band")
+	if _, ok, err := HeadBand(source); ok || err != nil {
+		t.Fatalf("unmarked source has a head band: %v, %v", ok, err)
 	}
 }
 
@@ -180,33 +224,65 @@ func TestConfigEditLeavesHeadBytesAlone(t *testing.T) {
 }
 
 func TestHeadBandExcludesVendorSectionsAndOtherBands(t *testing.T) {
-	head, ok := HeadBand(bandFixture)
-	if !ok || head != "# Harness\n\nHead text." {
-		t.Fatalf("head = %q, %v", head, ok)
+	head, ok, err := HeadBand(bandFixture)
+	if err != nil || !ok || head != "# Harness\n\nHead text." {
+		t.Fatalf("head = %q, %v, %v", head, ok, err)
 	}
 }
 
-func TestScanVolatileFindsEachKindAndNothingInPlainText(t *testing.T) {
-	cases := map[string]string{
-		"timestamp":     "Built 2026-10-07T12:30:00Z by CI.",
-		"digest":        "pin sha256:0123456789abcdef0123",
-		"absolute path": "see /home/someone/work/file",
-		"run counter":   "run #42 of the suite",
-	}
-	for kind, line := range cases {
-		found := ScanVolatile("stable line\n" + line)
-		if len(found) != 1 || found[0].Kind != kind || found[0].Line != 2 {
-			t.Fatalf("%s: %+v", kind, found)
+var sha64 = strings.Repeat("0123456789abcdef", 4)
+
+// volatileShapes lists one planted positive per exact shape the scanner flags.
+var volatileShapes = []struct{ kind, line string }{
+	{"timestamp", "Built 2026-10-07T12:30:00Z by CI."},
+	{"timestamp", "Built 2026-10-07T12:30:00.123+02:00 by CI."},
+	{"digest", "pin sha256:" + sha64},
+	{"absolute path", "see /home/someone/work/file"},
+	{"absolute path", "dir `/Users/me/x`"},
+	{"absolute path", "config at /etc/ssl/certs/ca.pem"},
+	{"absolute path", "cache=/usr/local/share/app"},
+	{"absolute path", "mounted /private/var/folders/x"},
+	{"absolute path", "disk /Volumes/Data/work"},
+	{"absolute path", `path C:\Users\me\work`},
+	{"absolute path", "path D:/work/out"},
+	{"absolute path", `share \\server\share\dir`},
+	{"run counter", "run #42 of the suite"},
+	{"run counter", "run_id: 7f3a9"},
+	{"run counter", "run-id=1234"},
+	{"run counter", "build number 1234"},
+	{"run counter", "Build #88"},
+}
+
+// proseLines look like a volatile shape but are not: each must pass the scanner.
+var proseLines = []string{
+	"Rules apply since 2026-10-07.",
+	"Meeting at 2026-10-07 12:30.",
+	"Use `make verify-all`; evidence: <path> sha256:<12 hex> lines:<n>",
+	"A short digest sha256:0123456789ab is not a pin.",
+	"Pinned to 0123456789abcdef0123456789abcdef01234567 for good.",
+	"retry count: 3",
+	"Run: 2 passes",
+	"run `go test`, count the failures, path ./cmd/standardsctl",
+	"Scratch goes to /var/tmp in a sentence.",
+	"Keep /etc and /usr out of it.",
+	"Read src/etc/x/y and a/home/b/c, not https://example.com/home/x/y.",
+	"The build takes 3 targets; attempt 3 of 5.",
+	"",
+}
+
+func TestScanVolatileFlagsEachPlantedShape(t *testing.T) {
+	for _, c := range volatileShapes {
+		found := ScanVolatile("stable line\n" + c.line)
+		if len(found) != 1 || found[0].Kind != c.kind || found[0].Line != 2 {
+			t.Fatalf("%q: %+v", c.line, found)
 		}
 	}
-	for _, clean := range []string{
-		"Rules apply since 2026-10-07.",
-		"Use `make verify-all`; evidence: <path> sha256:<12 hex> lines:<n>",
-		"run `go test`, count the failures, path ./cmd/standardsctl",
-		"",
-	} {
-		if found := ScanVolatile(clean); len(found) != 0 {
-			t.Fatalf("%q flagged: %+v", clean, found)
+}
+
+func TestScanVolatilePassesOrdinaryProse(t *testing.T) {
+	for _, line := range proseLines {
+		if found := ScanVolatile(line); len(found) != 0 {
+			t.Fatalf("%q flagged: %+v", line, found)
 		}
 	}
 }
@@ -263,15 +339,47 @@ func TestVendorSectionsInHeadAndTailRelocateToConfigBand(t *testing.T) {
 	}
 }
 
-func TestHeadBandOmitsVendorSectionOpenedInHead(t *testing.T) {
-	head, ok := HeadBand(vendorBandFixture)
-	if !ok {
-		t.Fatal("marked source reported unmarked")
+func TestHeadBandOmitsVendorSectionsOpenedInHeadAndTail(t *testing.T) {
+	head, ok, err := HeadBand(vendorBandFixture)
+	if err != nil || !ok {
+		t.Fatalf("marked source: %v, %v", ok, err)
 	}
-	if head != "Head text." && !strings.Contains(head, "Head text.") {
-		t.Fatalf("head lost its own text: %q", head)
+	if head != "# Harness\n\nHead text." {
+		t.Fatalf("head = %q, want exactly the head text without vendor sections", head)
 	}
-	if strings.Contains(head, "Claude") {
-		t.Fatalf("vendor section leaked into the head band: %q", head)
+}
+
+// Negative: an over-budget source is an error, never an unmarked source.
+func TestHeadBandReportsAnOverBudgetSource(t *testing.T) {
+	big := BandHeadMarker + "\n" + strings.Repeat("x\n", maxCanonicalLines+1)
+	if head, ok, err := HeadBand(big); err == nil || ok || head != "" {
+		t.Fatalf("over-budget source: %q, %v, %v", head, ok, err)
+	}
+}
+
+func TestInsertIntoConfigBand(t *testing.T) {
+	section := "## Register\n\nBlock."
+	cases := map[string]struct{ in, want string }{
+		"after the config marker": {
+			"# H\n\n" + BandHeadMarker + "\nHead.\n\n" + BandConfigMarker + "\nConfig.\n\n" + BandTailMarker + "\nTail.\n",
+			"# H\n\n" + BandHeadMarker + "\nHead.\n\n" + BandConfigMarker + "\n\n" + section + "\n\nConfig.\n\n" + BandTailMarker + "\nTail.\n",
+		},
+		"new config marker before the tail": {
+			"# H\n\n" + BandHeadMarker + "\nHead.\n\n" + BandTailMarker + "\nTail.\n",
+			"# H\n\n" + BandHeadMarker + "\nHead.\n\n" + BandConfigMarker + "\n\n" + section + "\n\n" + BandTailMarker + "\nTail.\n",
+		},
+		"new config marker at the end": {
+			"# H\n\n" + BandHeadMarker + "\nHead.\n",
+			"# H\n\n" + BandHeadMarker + "\nHead.\n\n" + BandConfigMarker + "\n\n" + section + "\n",
+		},
+	}
+	for name, c := range cases {
+		got, layered := InsertIntoConfigBand(c.in, section)
+		if !layered || got != c.want {
+			t.Fatalf("%s: layered=%v got %q want %q", name, layered, got, c.want)
+		}
+	}
+	if got, layered := InsertIntoConfigBand("# H\nPlain.\n", section); layered || got != "# H\nPlain.\n" {
+		t.Fatalf("unmarked source changed: %q, %v", got, layered)
 	}
 }

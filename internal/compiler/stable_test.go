@@ -48,7 +48,7 @@ func TestVerifyStableContext_Negative_PlantedTimestampInHeadRefused(t *testing.T
 }
 
 func TestVerifyStableContext_Negative_PlantedDigestPathAndCounterRefused(t *testing.T) {
-	for _, text := range []string{"pin sha256:0123456789abcdef0123", "dir /home/someone/work", "run #7"} {
+	for _, text := range []string{"pin sha256:" + strings.Repeat("0123456789abcdef", 4), "dir /home/someone/work", "run #7"} {
 		planted := strings.Replace(layeredSource, "Static rule.", text, 1)
 		if _, err := runStable(t, planted); err == nil {
 			t.Fatalf("%q accepted in the head", text)
@@ -76,10 +76,11 @@ func TestVerifyStableContext_Negative_MissingSourceFails(t *testing.T) {
 }
 
 func TestVerifyRenderTwice_Positive_BothRendersMatch(t *testing.T) {
-	if err := verifyRenderTwice(NewTranspiler(), layeredSource, (*Transpiler).CompileContent); err != nil {
-		t.Fatal(err)
+	res, err := verifyRenderTwice(NewTranspiler(), layeredSource, (*Transpiler).CompileContent)
+	if err != nil || res == nil || !res.Layered {
+		t.Fatalf("layered render: %+v, %v", res, err)
 	}
-	if err := verifyRenderTwice(NewTranspiler(), "", (*Transpiler).CompileContent); err == nil {
+	if res, err := verifyRenderTwice(NewTranspiler(), "", (*Transpiler).CompileContent); err == nil || res != nil {
 		t.Fatal("empty source rendered")
 	}
 }
@@ -131,7 +132,7 @@ func clockReadingCompile(tr *Transpiler, content string) (*CompileResult, error)
 
 // Negative: a render that reads the injected clock is refused end to end, naming the file.
 func TestVerifyRenderTwice_Negative_ClockReadingRenderRefused(t *testing.T) {
-	err := verifyRenderTwice(NewTranspiler(), layeredSource, clockReadingCompile)
+	_, err := verifyRenderTwice(NewTranspiler(), layeredSource, clockReadingCompile)
 	if err == nil || !strings.Contains(err.Error(), "differ in") {
 		t.Fatalf("clock-reading render accepted: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestVerifyRenderTwice_Negative_ClockReadingRenderRefused(t *testing.T) {
 // Negative: a render that fails under one environment fails the check with the render named.
 func TestVerifyRenderTwice_Negative_RenderErrorPropagates(t *testing.T) {
 	failing := func(*Transpiler, string) (*CompileResult, error) { return nil, context.DeadlineExceeded }
-	if err := verifyRenderTwice(NewTranspiler(), layeredSource, failing); err == nil || !strings.Contains(err.Error(), "render 1") {
+	if _, err := verifyRenderTwice(NewTranspiler(), layeredSource, failing); err == nil || !strings.Contains(err.Error(), "render 1") {
 		t.Fatalf("render error lost: %v", err)
 	}
 }

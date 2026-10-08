@@ -95,12 +95,12 @@ func scanBands(lines []string) ([]band, bool) {
 	return bands, marked
 }
 
-// layoutBands emits the head, the config band and the tail in that order for one vendor
-// target, whatever order the source wrote them in. Lines of a vendor section are client
-// configuration and always join the config band. Blank lines at a band edge are trimmed and
-// the bands are joined by one blank line, so an edit inside a band moves no byte of an
-// earlier band.
-func layoutBands(lines, owners []string, bands []band, section string) string {
+// splitBands collects the lines of every band for one vendor target. Lines of that vendor's
+// section are client configuration and always join the config band; lines of any other
+// vendor's section, and marker lines, are left out. An empty section selects no vendor, so
+// the head it returns is the head every vendor file shares. This is the one place the band
+// membership of a line is decided (HISS-19): layoutBands and HeadBand both read it.
+func splitBands(lines, owners []string, bands []band, section string) [bandCount][]string {
 	var parts [bandCount][]string
 	for i, line := range lines {
 		b := bands[i]
@@ -112,13 +112,27 @@ func layoutBands(lines, owners []string, bands []band, section string) string {
 		}
 		parts[b] = append(parts[b], line)
 	}
+	return parts
+}
+
+// layoutBands emits the head, the config band and the tail in that order for one vendor
+// target, whatever order the source wrote them in. Blank lines at a band edge are trimmed and
+// the bands are joined by one blank line, so an edit inside a band moves no byte of an
+// earlier band. The output ends with a newline exactly when the source does, whichever bands
+// are present.
+func layoutBands(lines, owners []string, bands []band, section string) string {
+	parts := splitBands(lines, owners, bands, section)
 	out := make([]string, 0, bandCount)
-	for b := range parts {
-		if text := trimBlankEdges(parts[b], band(b) == bandTail); text != "" {
+	for _, part := range parts {
+		if text := trimBlankEdges(part); text != "" {
 			out = append(out, text)
 		}
 	}
-	return strings.Join(out, "\n\n")
+	text := strings.Join(out, "\n\n")
+	if text != "" && lines[len(lines)-1] == "" {
+		text += "\n"
+	}
+	return text
 }
 
 // blankAfterMarker reports whether line i is the blank line that follows a marker. The marker
@@ -127,45 +141,34 @@ func blankAfterMarker(lines []string, bands []band, i int) bool {
 	return i > 0 && bands[i-1] == bandMarker && strings.TrimSpace(lines[i]) == ""
 }
 
-// trimBlankEdges joins lines without blank lines at either edge. The tail keeps its trailing
-// newline, so a source that ends in one compiles to a file that ends in one.
-func trimBlankEdges(lines []string, keepFinalNewline bool) string {
+// trimBlankEdges joins lines without blank lines at either edge.
+func trimBlankEdges(lines []string) string {
 	start, end := 0, len(lines)
 	for start < end && strings.TrimSpace(lines[start]) == "" {
 		start++
 	}
-	trailing := end > start+1 && lines[end-1] == ""
 	for end > start && strings.TrimSpace(lines[end-1]) == "" {
 		end--
 	}
-	text := strings.Join(lines[start:end], "\n")
-	if keepFinalNewline && trailing && text != "" {
-		text += "\n"
-	}
-	return text
+	return strings.Join(lines[start:end], "\n")
 }
 
 // HeadBand returns the head band every vendor file shares (vendor sections never join it) and
-// whether content carries band markers. An unmarked source has no head.
-func HeadBand(content string) (string, bool) {
+// whether content carries band markers. An unmarked source has no head. An over-budget source
+// is an error, not an unmarked source.
+func HeadBand(content string) (string, bool, error) {
 	if lf, _, err := util.NormalizeLineEndingsStrict(content); err == nil {
 		content = lf
 	}
 	lines, owners, err := ownVendorLines(content)
 	if err != nil {
-		return "", false
+		return "", false, fmt.Errorf("head band: %w", err)
 	}
 	bands, marked := scanBands(lines)
 	if !marked {
-		return "", false
+		return "", false, nil
 	}
-	var head []string
-	for i, line := range lines {
-		if bands[i] == bandHead && owners[i] == "" {
-			head = append(head, line)
-		}
-	}
-	return trimBlankEdges(head, false), true
+	return trimBlankEdges(splitBands(lines, owners, bands, "")[bandHead]), true, nil
 }
 
 // VolatileToken is one piece of head text that changes between runs.
@@ -183,18 +186,36 @@ func (v VolatileToken) String() string {
 // maxVolatileFindings bounds the findings one scan lists (HISS-02).
 const maxVolatileFindings = 20
 
+// pathBoundary precedes a path so a relative path (src/etc/x) or a URL never matches.
+const pathBoundary = "(?:^|[\\s`(\"'=<])"
+
+// pathTail is one path character: anything but whitespace and a closing quote.
+const pathTail = "[^\\s`)\"'>]"
+
+// volatilePatterns match exact shapes only; prose that merely resembles one (a retry count, a
+// pass count, a directory named in a sentence, a static 40-hex pin) is not volatile.
+//   - timestamp: an RFC 3339 date-time with a zone.
+//   - digest: sha256: followed by the full 64 hex digits.
+//   - absolute path: a user or volume root with one component below it (/home/name,
+//     /Volumes/disk), a system root with two (/etc/ssl/certs; /var/tmp alone is prose), a
+//     drive path (C:\x, C:/x) or a UNC path (\\host\share).
+//   - run counter: run_id with a value, run #N, build number or build #N.
 var volatilePatterns = [...]struct {
 	kind string
 	re   *regexp.Regexp
 }{
-	{"timestamp", regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?`)},
-	{"digest", regexp.MustCompile(`(?i)sha256:[0-9a-f]{12,}|\b[0-9a-f]{40,64}\b`)},
-	{"absolute path", regexp.MustCompile("(?:^|[\\s`(\"'=])(?:/(?:home|Users|tmp|var|root|mnt|srv|opt)/[^\\s`)\"']+|[A-Za-z]:\\\\[^\\s`)\"']+)")},
-	{"run counter", regexp.MustCompile(`(?i)\brun[ _-]?(?:id|counter|count|number)?\s*[#:=]\s*\d+|\bcount[:=]\s*\d+`)},
+	{"timestamp", regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})`)},
+	{"digest", regexp.MustCompile(`(?i)\bsha256:[0-9a-f]{64}\b`)},
+	{"absolute path", regexp.MustCompile(pathBoundary + "(?:" +
+		"/(?:home|Users|Volumes)/" + pathTail + "+" +
+		"|/(?:root|tmp|var|mnt|srv|opt|etc|usr|private|workspace|nix)(?:/[^\\s/`)\"'>]+){2,}" +
+		"|[A-Za-z]:[\\\\/]" + pathTail + "+" +
+		"|\\\\\\\\[^\\s\\\\]+\\\\" + pathTail + "+)")},
+	{"run counter", regexp.MustCompile(`(?i)\brun[_-]?id\s*[:=]\s*\S*\d|\brun\s*#\s*\d+|\bbuild[ _-]?(?:number|no\.?)\s*[:=#]?\s*\d+|\bbuild\s*#\s*\d+`)},
 }
 
-// ScanVolatile returns the volatile tokens in a head band: ISO timestamps, sha256 digests,
-// absolute paths and run counters. The head is the prefix a client caches, so one such token
+// ScanVolatile returns the volatile tokens in a head band: RFC 3339 timestamps, sha256
+// digests, absolute paths and run counters (volatilePatterns lists the exact shapes). The head is the prefix a client caches, so one such token
 // breaks the cache at every run.
 func ScanVolatile(head string) []VolatileToken {
 	var found []VolatileToken
@@ -209,4 +230,58 @@ func ScanVolatile(head string) []VolatileToken {
 		}
 	}
 	return found
+}
+
+// InsertIntoConfigBand returns the LF text content with section placed in its config band, and
+// whether content carries band markers at all (an unmarked source is returned unchanged). The
+// section goes right after the config marker; a layered source with no config marker gets one,
+// before the tail marker when there is a tail and at the end otherwise, so the section never
+// lands in the head or the tail.
+func InsertIntoConfigBand(content, section string) (string, bool) {
+	lines := strings.Split(content, "\n")
+	bands, marked := scanBands(lines)
+	if !marked {
+		return content, false
+	}
+	insert := append([]string{""}, strings.Split(strings.TrimRight(section, "\n"), "\n")...)
+	insert = append(insert, "")
+	at := markerLine(lines, bands, BandConfigMarker)
+	var rest int
+	if at >= 0 {
+		at++
+		rest = at
+		for rest < len(lines) && strings.TrimSpace(lines[rest]) == "" {
+			rest++
+		}
+	} else {
+		insert = append([]string{BandConfigMarker}, insert...)
+		at = markerLine(lines, bands, BandTailMarker)
+		rest = at
+		if at < 0 {
+			// No tail: the section ends the file, after the last non-blank line.
+			at, rest = endOfText(lines), len(lines)
+			insert = append([]string{""}, insert...)
+		}
+	}
+	out := slices.Concat(lines[:at], insert, lines[rest:])
+	return strings.Join(out, "\n"), true
+}
+
+// markerLine returns the index of the first line that is the given marker, or -1.
+func markerLine(lines []string, bands []band, marker string) int {
+	for i, line := range lines {
+		if bands[i] == bandMarker && strings.TrimSpace(line) == marker {
+			return i
+		}
+	}
+	return -1
+}
+
+// endOfText returns the index just past the last non-blank line.
+func endOfText(lines []string) int {
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return end
 }

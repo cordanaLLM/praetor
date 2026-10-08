@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -346,5 +347,43 @@ func TestLoadRegisterBlockFollowsDispatchHook(t *testing.T) {
 	}
 	if block := render(preTool); strings.Contains(block, claim) {
 		t.Errorf("pre-tool row read as the dispatch hook:\n%s", block)
+	}
+}
+
+// A layered AGENTS.md with no register block receives the section in its config band, not at
+// the end of the file, which is the tail band (#853).
+func TestSpliceRegisterBlock_LayeredSourceGetsTheSectionInTheConfigBand(t *testing.T) {
+	block := config.RegisterBlockStart + "\nregister body\n" + config.RegisterBlockEnd
+	source := "# Policy\n\n" + agentcontext.BandHeadMarker + "\nRules.\n\n" + agentcontext.BandConfigMarker + "\nClient notes.\n\n" + agentcontext.BandTailMarker + "\nCommands.\n"
+	got, changed, err := SpliceRegisterBlock(source, block)
+	if err != nil || !changed {
+		t.Fatalf("splice: changed=%v err=%v", changed, err)
+	}
+	at := strings.Index(got, config.RegisterBlockStart)
+	cfg, tail := strings.Index(got, agentcontext.BandConfigMarker), strings.Index(got, agentcontext.BandTailMarker)
+	if at < cfg || at > tail || !strings.HasSuffix(got, "Commands.\n") {
+		t.Fatalf("register block not inside the config band: %q", got)
+	}
+	if again, changed, err := SpliceRegisterBlock(got, block); err != nil || changed || again != got {
+		t.Fatalf("second splice not idempotent: changed=%v err=%v", changed, err)
+	}
+	// Boundary: an unmarked source still receives the section at the end.
+	plain, _, err := SpliceRegisterBlock("# Policy\n\nRules.\n", block)
+	if err != nil || !strings.HasSuffix(plain, config.RegisterBlockEnd+"\n") {
+		t.Fatalf("unmarked splice: %q, %v", plain, err)
+	}
+}
+
+// Negative: a layered source without a config marker still never lands the section in the head.
+func TestSpliceRegisterBlock_LayeredSourceWithoutConfigMarkerGetsOneBeforeTheTail(t *testing.T) {
+	block := config.RegisterBlockStart + "\nregister body\n" + config.RegisterBlockEnd
+	source := "# Policy\n\n" + agentcontext.BandHeadMarker + "\nRules.\n\n" + agentcontext.BandTailMarker + "\nCommands.\n"
+	got, _, err := SpliceRegisterBlock(source, block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := strings.Index(got, agentcontext.BandConfigMarker)
+	if cfg < 0 || cfg > strings.Index(got, config.RegisterBlockStart) || strings.Index(got, config.RegisterBlockEnd) > strings.Index(got, agentcontext.BandTailMarker) {
+		t.Fatalf("section outside a new config band: %q", got)
 	}
 }

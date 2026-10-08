@@ -373,7 +373,7 @@ func TestHarnessCarriesTheCacheBandMarkers(t *testing.T) {
 	if title < 0 || title >= head || head >= cfg || cfg >= register || register >= tail || tail >= footer {
 		t.Fatalf("band order wrong: title=%d head=%d config=%d register=%d tail=%d footer=%d", title, head, cfg, register, tail, footer)
 	}
-	if _, layered := agentcontext.HeadBand(harness); !layered {
-		t.Fatal("harness is not layered")
+	if _, layered, err := agentcontext.HeadBand(harness); err != nil || !layered {
+		t.Fatalf("harness is not layered: %v", err)
 	}
 }
