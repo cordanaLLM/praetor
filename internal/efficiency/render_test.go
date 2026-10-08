@@ -1,0 +1,145 @@
+// SPDX-License-Identifier: EUPL-1.2
+// SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
+
+package efficiency
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
+
+func sampleReport() *Report {
+	now := time.Now().Truncate(time.Second).UTC()
+	spend1 := 0.15
+	touches1 := 2
+	tokens1 := int64(500)
+	cacheRate1 := 0.75
+	localRate1 := 0.25
+	itmSecs1 := int64(7200)
+
+	return &Report{
+		Units: []UnitReport{
+			{
+				PullRequestNumber:   101,
+				HeadBranch:          "feat/alpha",
+				Title:               "Alpha feature",
+				Milestone:           "1.0",
+				CreatedAt:           now.Add(-2 * time.Hour),
+				MergedAt:            now,
+				IssueToMerge:        "2h00m",
+				IssueToMergeSecs:    &itmSecs1,
+				FrontierTokens:      "500",
+				FrontierTokensNum:   &tokens1,
+				Spend:               "$0.15",
+				SpendAmount:         &spend1,
+				OperatorTouches:     "2",
+				OperatorTouchNum:    &touches1,
+				PromptCacheHitRate:  "75.0%",
+				CacheHitRatio:       &cacheRate1,
+				LocalFirstRatio:     "25.0%",
+				LocalRatio:          &localRate1,
+				FactHitRatio:        FollowUpRefs,
+				ChecksBeforeReviews: FollowUpRefs,
+			},
+		},
+		MilestoneSummary: MilestoneSummary{
+			Milestone:           "1.0",
+			UnitsCount:          1,
+			FrontierTokens:      "500",
+			FrontierTokensNum:   &tokens1,
+			AttributedSpend:     "$0.15",
+			AttributedSpendNum:  &spend1,
+			UnattributedSpend:   "$0.05",
+			TotalSpend:          "$0.20",
+			AvgIssueToMerge:     "2h00m",
+			AvgIssueToMergeSecs: &itmSecs1,
+			OperatorTouches:     "2",
+			OperatorTouchNum:    &touches1,
+			PromptCacheHitRate:  "75.0%",
+			CacheHitRatio:       &cacheRate1,
+			LocalFirstRatio:     "25.0%",
+			LocalRatio:          &localRate1,
+			FactHitRatio:        FollowUpRefs,
+			ChecksBeforeReviews: FollowUpRefs,
+		},
+		Sources: SourcesMeasured{
+			Forge:       true,
+			Transcripts: true,
+			SpendLog:    true,
+		},
+	}
+}
+
+func TestRenderJSON_Positive_Schema(t *testing.T) {
+	rep := sampleReport()
+	var buf bytes.Buffer
+	if err := RenderJSON(rep, &buf); err != nil {
+		t.Fatalf("unexpected error rendering JSON: %v", err)
+	}
+
+	jsonBytes := buf.Bytes()
+	if !json.Valid(jsonBytes) {
+		t.Fatal("output must be valid JSON")
+	}
+
+	var parsed Report
+	if err := json.Unmarshal(jsonBytes, &parsed); err != nil {
+		t.Fatalf("failed unmarshaling output JSON: %v", err)
+	}
+
+	if len(parsed.Units) != 1 || parsed.Units[0].PullRequestNumber != 101 {
+		t.Errorf("unexpected units in parsed JSON: %+v", parsed.Units)
+	}
+	if parsed.MilestoneSummary.Milestone != "1.0" {
+		t.Errorf("unexpected milestone in parsed JSON: %s", parsed.MilestoneSummary.Milestone)
+	}
+	if parsed.MilestoneSummary.FactHitRatio != FollowUpRefs {
+		t.Errorf("fact hit ratio must carry follow-up reference in JSON")
+	}
+}
+
+func TestRenderTable_Positive(t *testing.T) {
+	rep := sampleReport()
+	var buf bytes.Buffer
+	if err := RenderTable(rep, &buf); err != nil {
+		t.Fatalf("unexpected error rendering Table: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "ISSUE-TO-MERGE") || !strings.Contains(output, "FRONTIER TOKENS") {
+		t.Error("table header missing expected columns")
+	}
+	if !strings.Contains(output, "#101") || !strings.Contains(output, "feat/alpha") {
+		t.Error("table row missing unit data")
+	}
+	if !strings.Contains(output, "Milestone Summary: 1.0") {
+		t.Error("milestone summary section missing")
+	}
+	if !strings.Contains(output, FollowUpRefs) {
+		t.Error("milestone summary missing follow-up reference")
+	}
+}
+
+func TestRender_Negative_NilReport(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderJSON(nil, &buf); err == nil {
+		t.Error("expected error rendering nil report as JSON")
+	}
+	if err := RenderTable(nil, &buf); err == nil {
+		t.Error("expected error rendering nil report as Table")
+	}
+}
+
+func TestRender_Boundary_EmptyReport(t *testing.T) {
+	emptyReport := &Report{}
+	var buf bytes.Buffer
+	if err := RenderJSON(emptyReport, &buf); err != nil {
+		t.Fatalf("unexpected error rendering empty report as JSON: %v", err)
+	}
+	if err := RenderTable(emptyReport, &buf); err != nil {
+		t.Fatalf("unexpected error rendering empty report as Table: %v", err)
+	}
+}

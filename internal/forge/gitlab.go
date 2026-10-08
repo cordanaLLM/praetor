@@ -121,3 +121,10 @@ func (gl *GitLabDriver) WorkflowRunHistory(ctx context.Context, workflow, branch
 	}
 	return WorkflowRunHistory{}, gl.unsupported("WorkflowRunHistory")
 }
+
+func (gl *GitLabDriver) ListMergedPullRequests(ctx context.Context, limit int) ([]MergedPullRequest, error) {
+	if err := gl.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	return nil, gl.unsupported("ListMergedPullRequests")
+}

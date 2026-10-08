@@ -87,6 +87,10 @@ func (f *fakeForge) WorkflowRunHistory(context.Context, string, string) (forge.W
 	return forge.WorkflowRunHistory{}, forge.ErrNotImplemented
 }
 
+func (f *fakeForge) ListMergedPullRequests(context.Context, int) ([]forge.MergedPullRequest, error) {
+	return nil, forge.ErrNotImplemented
+}
+
 func (f *fakeForge) CreateIssue(_ context.Context, spec forge.IssueSpec) (*forge.IssueResponse, error) {
 	f.created = append(f.created, spec)
 	if f.failOn == len(f.created) {
