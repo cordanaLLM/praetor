@@ -867,7 +867,9 @@ ruleset protects, and audit locks that rendering; a push to another branch or
 of a tag starts no run. On a draft the job fails by design without checking
 anything, saying the gate runs when the pull request is marked ready, and the
 `ready_for_review` run then reports `Documentation Governance` on the same head
-commit. The rules are the API compatibility gate's
+commit. The draft step names `bash` as its shell, so it behaves the same on every
+runner, including Windows runners whose default shell is PowerShell. The rules
+are the API compatibility gate's
 ([When the workflow runs](api-compatibility.md#when-the-workflow-runs)).
 The main CI workflow also selects the gate on documentation-only changes while skipping the
 race and security suites; state-only changes under the ignored private ledgers
