@@ -27,9 +27,20 @@ func TestExportWritesEveryManagedAsset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed) != len(assets) || len(assets) == 0 {
-		t.Fatalf("listed %d paths for %d assets", len(listed), len(assets))
+	skips, err := managedasset.DraftSkipAssets()
+	if err != nil || len(skips) == 0 {
+		t.Fatalf("draft skip assets = %d, %v", len(skips), err)
 	}
+	assertSkipsExported(t, root, listed, skips)
+	if len(listed) != len(assets)+len(skips) || len(assets) == 0 {
+		t.Fatalf("listed %d paths for %d assets and %d draft skip renderings", len(listed), len(assets), len(skips))
+	}
+	assertAssetsExported(t, root, listed, assets)
+}
+
+// assertAssetsExported checks that each asset is written at its path byte for byte and listed.
+func assertAssetsExported(t *testing.T, root string, listed []string, assets []managedasset.Asset) {
+	t.Helper()
 	for _, asset := range assets {
 		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(asset.Path)))
 		if err != nil || !bytes.Equal(got, asset.Data) {
@@ -37,6 +48,19 @@ func TestExportWritesEveryManagedAsset(t *testing.T) {
 		}
 		if !slices.Contains(listed, asset.Path) {
 			t.Errorf("%s is not listed", asset.Path)
+		}
+	}
+}
+
+// assertSkipsExported checks that each draft skip rendering is written below draftSkipDir byte
+// for byte and listed.
+func assertSkipsExported(t *testing.T, root string, listed []string, skips []managedasset.Asset) {
+	t.Helper()
+	for _, skip := range skips {
+		rel := draftSkipDir + "/" + skip.Path
+		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil || !bytes.Equal(got, skip.Data) || !slices.Contains(listed, rel) {
+			t.Errorf("the draft skip rendering %s was not exported and listed: %v", rel, err)
 		}
 	}
 }

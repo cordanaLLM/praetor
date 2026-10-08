@@ -57,10 +57,12 @@ func auditExactManagedFile(ctx context.Context, rootDir string, family managedas
 // auditDraftSkipGuard refuses the opt-in draft skip (hosted_gates.draft: skip) of the family's
 // workflow at rel while its copy actual does not keep the required check failing on a draft
 // (forge.DraftSkipFault), naming the missing condition. Only the draft skip family workflow is
-// judged; the byte comparison that follows locks the accepted rendering.
+// judged, and only a copy that is not an earlier Praetor text: a stale fail-closed or earlier skip
+// copy reports the refresh adoption performs (PriorText), not a guard fault it never had to meet.
+// The byte comparison that follows locks the accepted rendering.
 func auditDraftSkipGuard(gate string, family managedasset.Family, rel string, actual []byte) error {
 	gateJob, _, skipping := family.DraftSkipJobs()
-	if !skipping || rel != family.WorkflowFile {
+	if !skipping || rel != family.WorkflowFile || family.PriorText(rel, actual) {
 		return nil
 	}
 	if err := forge.DraftSkipFault(actual, gateJob, family.StatusContext); err != nil {

@@ -39,7 +39,11 @@ func TestAuditLocksTheDraftSkipRendering(t *testing.T) {
 		failedOnly := "needs." + gate + ".result == 'failure' || needs." + gate + ".result == 'cancelled'"
 		withoutResult := skip.Workflow[:strings.Index(skip.Workflow, "  "+result+":")]
 		cases := map[string]struct{ text, want string }{
-			"the fail-closed text": {family.Workflow, "does not carry the draft skip condition"},
+			"the fail-closed text": {family.Workflow, "holds an earlier Praetor text; run 'praetorctl adopt'"},
+			"an edited fail-closed text": {
+				family.Workflow + "# edit\n",
+				"does not carry the draft skip condition",
+			},
 			"no aggregate": {
 				strings.Replace(withoutResult, "name: "+family.StatusContext+ghworkflow.HostedGateSkipGateSuffix, "name: "+family.StatusContext, 1),
 				"is the gate job " + gate + " itself, whose draft skip reports success",
@@ -69,6 +73,22 @@ func TestAuditLocksTheDraftSkipRendering(t *testing.T) {
 		if _, err := auditManagedFamily(t.Context(), undeclared, family); err == nil ||
 			!strings.Contains(err.Error(), "holds an earlier Praetor text; run 'praetorctl adopt'") {
 			t.Fatalf("%s: the skip rendering without the opt-in: %v", family.Name, err)
+		}
+	}
+}
+
+// Negative (#857): an invalid hosted_gates.draft fails the audit of every family with a hosted
+// workflow naming the key, instead of auditing the fail-closed default.
+func TestAuditRefusesAnInvalidDraftPolicy(t *testing.T) {
+	for _, family := range managedasset.Families() {
+		if family.WorkflowFile == "" {
+			continue
+		}
+		root := t.TempDir()
+		writeFixtureFile(t, root, ".standards.yaml", strings.Replace(draftSkipManifest, "draft: skip", "draft: sometimes", 1))
+		writeFamilyFixture(t, root, family, func(text string) string { return text })
+		if _, err := auditManagedFamily(t.Context(), root, family); err == nil || !strings.Contains(err.Error(), "hosted_gates.draft") {
+			t.Fatalf("%s: audit = %v, want the invalid hosted_gates.draft", family.Name, err)
 		}
 	}
 }

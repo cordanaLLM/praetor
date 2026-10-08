@@ -59,7 +59,10 @@ hosted gates yet, not that they passed. The opt-in draft skip (`hosted_gates.dra
 the same marker: its result job runs a first step, only when the gate job was skipped, that prints
 the same annotation and exits 1 (`ghworkflow.RenderDraftSkip`,
 `TestRenderDraftSkip_Boundary_CarriesTheDraftMarker`), so a draft reads as `draft_pending` in either
-shape.
+shape. The skip is a trade-off: a draft still starts the `<job id>-result` job (it runs under
+`always()`), the required check stays red on a draft, and only the gate job's own work is skipped.
+A repository whose contract allows no job on a draft must declare the result jobs in the list of
+jobs that may start there.
 
 The check observer uses `gh pr list --json statusCheckRollup`, verified against
 GitHub CLI 2.100.0. It rejects 100 or more contexts as incomplete because that

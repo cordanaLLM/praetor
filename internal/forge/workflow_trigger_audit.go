@@ -390,8 +390,9 @@ func ownDraftHandling(job *workflowJob, work draftHandling) draftHandling {
 // so (`!failure() && !cancelled()`, `always() && needs.plan.result == 'success'`), so the check
 // protects by default and reads none.
 //
-// TODO(#821): pass the proven always() aggregate job (internal/forge/workflow_aggregate.go) once
-// it is on main; until then such a workflow is declared in the exceptions list.
+// The one exception is the proven always() aggregate of the opt-in draft skip, which the caller
+// settles first (draftProvenSkip, docs/guides/workflow-triggers.md); any other such workflow is
+// declared in the exceptions list (Limits).
 func decideJob(job *workflowJob, work draftHandling, decided map[string]jobDecision) jobDecision {
 	if work == draftProvenSkip {
 		return jobDecision{handling: draftStops}

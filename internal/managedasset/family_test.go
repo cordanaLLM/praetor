@@ -615,3 +615,94 @@ func TestPriorRenderingReadsASkipCopyOfAnOutgoingText(t *testing.T) {
 		}
 	}
 }
+
+// Positive (#857): a skip rendering recorded in Prior is an earlier text of either family even
+// after the skip shape changed, when UnrenderDraftSkip can no longer read it back. It refreshes in
+// LF, CRLF and for another default branch, whichever shape the family selects. Negative: an edited
+// recorded skip text and an unrecorded one are no earlier text.
+func TestPriorRenderingAcceptsARecordedSkipPrior(t *testing.T) {
+	for _, family := range Families() {
+		if family.WorkflowFile == "" {
+			continue
+		}
+		skip, err := family.WithDraftShape(true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A skip text no current rendering reads back: the result job's old message.
+		outgoing := strings.Replace(skip.Workflow, "Fail unless the gate passed", "Fail unless the old gate passed", 1)
+		if _, ok := ghworkflow.UnrenderDraftSkip(outgoing); ok || outgoing == skip.Workflow {
+			t.Fatalf("%s: the fixture skip text must differ from the rendering and not unrender", family.Name)
+		}
+		recorded := family
+		recorded.Prior = maps.Clone(family.Prior)
+		recorded.Prior[sha256Hex(outgoing)] = family.WorkflowFile
+		for _, selected := range []bool{false, true} {
+			assertRecordedSkipPrior(t, recorded, selected, outgoing)
+		}
+		if known, _ := family.PriorRendering(family.WorkflowFile, []byte(outgoing)); known {
+			t.Errorf("%s: an unrecorded skip text was claimed", family.Name)
+		}
+	}
+}
+
+// assertRecordedSkipPrior checks that outgoing, a skip text recorded in family.Prior, is an
+// earlier text in LF, CRLF and master renderings under the shape selected, and an edit of it not.
+func assertRecordedSkipPrior(t *testing.T, family Family, selected bool, outgoing string) {
+	t.Helper()
+	shaped, err := family.WithDraftShape(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{
+		"LF":     outgoing,
+		"CRLF":   strings.ReplaceAll(outgoing, "\n", "\r\n"),
+		"master": strings.Replace(outgoing, pushBranchesLine(WorkflowBranch), pushBranchesLine("master"), 1),
+	} {
+		if known, _ := shaped.PriorRendering(family.WorkflowFile, []byte(text)); !known {
+			t.Errorf("%s (skip=%v, %s): a recorded skip prior is not an earlier text", family.Name, selected, name)
+		}
+	}
+	if known, _ := shaped.PriorRendering(family.WorkflowFile, []byte(outgoing+"# edit\n")); known {
+		t.Errorf("%s (skip=%v): an edited recorded skip text was claimed", family.Name, selected)
+	}
+}
+
+// Negative (#857): asking for the draft skip of a workflow that is not in the fail-closed shape is
+// an error naming the family, while the fail-closed default leaves the family unchanged. Boundary:
+// a family without a workflow is unchanged either way, and DraftSkipAssets lists a skip rendering
+// per workflow, distinct from the fail-closed text.
+func TestWithDraftShapeRefusesAWorkflowOutsideTheFailClosedShape(t *testing.T) {
+	for _, family := range Families() {
+		if family.WorkflowFile == "" {
+			unchanged, err := family.WithDraftShape(true)
+			if err != nil || unchanged.Workflow != "" {
+				t.Fatalf("%s: a family without a workflow = (%q, %v), want it unchanged", family.Name, unchanged.Workflow, err)
+			}
+			continue
+		}
+		foreign := family
+		foreign.Workflow = "name: Foreign\non: push\njobs: {}\n"
+		if _, err := foreign.WithDraftShape(true); err == nil || !strings.Contains(err.Error(), family.Name) {
+			t.Fatalf("%s: WithDraftShape(true) on a foreign workflow = %v, want an error naming the family", family.Name, err)
+		}
+		kept, err := foreign.WithDraftShape(false)
+		if err != nil || kept.Workflow != foreign.Workflow {
+			t.Fatalf("%s: WithDraftShape(false) on a foreign workflow = (%v), want it unchanged", family.Name, err)
+		}
+	}
+}
+
+// Boundary (#857): DraftSkipAssets lists one skip rendering per hosted workflow, each with its
+// result job and none equal to the fail-closed text.
+func TestDraftSkipAssetsListEachHostedWorkflow(t *testing.T) {
+	skips, err := DraftSkipAssets()
+	if err != nil || len(skips) == 0 {
+		t.Fatalf("DraftSkipAssets = %d, %v", len(skips), err)
+	}
+	for _, skip := range skips {
+		if !strings.Contains(string(skip.Data), ghworkflow.HostedGateSkipResultSuffix+":") {
+			t.Errorf("%s: the skip asset holds no result job", skip.Path)
+		}
+	}
+}

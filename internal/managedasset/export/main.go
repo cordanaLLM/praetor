@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 // Command export writes every managed asset (internal/managedasset.Assets) under a directory at
-// its repository-relative path and prints the paths, one per line. The lint harness
+// its repository-relative path, and the draft skip rendering of each hosted workflow
+// (managedasset.DraftSkipAssets) below draft-skip/, and prints the paths, one per line. The lint harness
 // scripts/test_emitted_hook_lint.py runs it to lint the files adoption writes, so the set it
 // lints is the registry and no list of it exists elsewhere (HISS-19).
 //
@@ -20,6 +21,11 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 )
+
+// draftSkipDir is the directory below the export root that holds the draft skip rendering of
+// each hosted workflow (managedasset.DraftSkipAssets), so it never collides with the
+// fail-closed rendering at the real path.
+const draftSkipDir = "draft-skip"
 
 // assetMode and dirMode are the permissions of an exported file and its directories.
 const (
@@ -65,6 +71,14 @@ func export(dir string) (paths []string, err error) {
 		return nil, fmt.Errorf("open %s: %w", dir, err)
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
+	skips, err := managedasset.DraftSkipAssets()
+	if err != nil {
+		return nil, err
+	}
+	for _, skip := range skips {
+		skip.Path = path.Join(draftSkipDir, skip.Path)
+		assets = append(assets, skip)
+	}
 	paths = make([]string, 0, len(assets))
 	for _, asset := range assets {
 		if err := writeAsset(root, asset); err != nil {

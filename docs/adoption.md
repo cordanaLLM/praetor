@@ -160,8 +160,8 @@ instead: on a draft the job reports a failed check by design, and the `ready_for
 reports the same check on the same head commit, which replaces the failure
 ([When the workflow runs](guides/api-compatibility.md#when-the-workflow-runs)).
 
-A repository that prefers a skipped draft to a red one can opt in with `hosted_gates.draft: skip`
-in `.standards.yaml` (`fail` is the default and the only other value;
+A repository that prefers the draft to skip the gate's work, not to run the gate job, can opt in with
+`hosted_gates.draft: skip` in `.standards.yaml` (`fail` is the default and the only other value;
 `internal/config/hosted_gates.go`). Adoption then renders `praetor-api.yml` and `praetor-docs.yml`
 from the same hosted gate definition with the draft step replaced by a job-level skip,
 `github.event_name != 'pull_request' || github.event.pull_request.draft == false`, on the gate
@@ -178,9 +178,19 @@ that passes on a skip, or one the proof cannot read (`forge.DraftSkipFault`,
 (`TestAuditLocksTheDraftSkipRendering`). The fail-closed text and the skip text refresh into one
 another with a plain `praetorctl adopt`, without `--force`, and an edited copy of either is kept
 (`TestAdoptRendersTheSelectedDraftShape`). The skip text of an earlier gate text refreshes too, once
-that text is in the family's `Prior` (`TestPriorRenderingReadsASkipCopyOfAnOutgoingText`). The skip shape is accepted by the HISS-18 workflow
-trigger audit only under the same guard
+that text is in the family's `Prior` (`TestPriorRenderingReadsASkipCopyOfAnOutgoingText`); a change
+to the skip text itself fails the shipped-text ledger of the family until the outgoing skip digest
+is recorded there as well (`TestShippedTextLedger`). The skip shape is accepted by the HISS-18
+workflow trigger audit only under the same guard
 ([Workflow triggers](guides/workflow-triggers.md#the-opt-in-draft-skip)).
+
+The opt-in is a trade-off, not a way to a green draft. A draft still starts the `<job id>-result`
+job, because it runs under `always()`, and that job fails, so the required check stays red on a
+draft exactly as it does with the fail-closed step; what the skip saves is the gate job's own
+work. A repository whose contract allows no job to start on a draft therefore has to declare the
+result jobs (`api-compatibility-result` in `praetor-api.yml`, `documentation-result` in `praetor-docs.yml`) in the list of
+jobs that may start there; without that declaration the skip shape breaks the contract it was
+chosen to keep.
 
 A repository guard is judged against the manifest identity. An operational fork resolves that
 identity to its `repository.source`, so the ruleset the fork commits equals the canonical one.

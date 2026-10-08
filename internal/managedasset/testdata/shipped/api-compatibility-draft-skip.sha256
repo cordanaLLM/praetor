@@ -1,0 +1,5 @@
+# Every draft skip rendering (hosted_gates.draft: skip) the api-compatibility family shipped, oldest first:
+# "<sha256>  <path>", the digest over the LF text. The last line is the current skip rendering;
+# every earlier line must be in the family's Prior, or a copy of it is orphaned when the skip
+# shape changes. TestShippedTextLedger enforces both; PRAETOR_UPDATE_SHIPPED_TEXTS=1 appends.
+2c9bafc92efe6d114d15881f3659020624a2e37920aab9628196a06d30b9816e  .github/workflows/praetor-api.yml

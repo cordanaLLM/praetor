@@ -114,17 +114,8 @@ func resultJob(gateID, context, runner string) string {
 // shapes. The result must render back to text byte for byte, so a text that is not exactly a
 // rendering returns false.
 func UnrenderDraftSkip(text string) (failClosed string, ok bool) {
-	head, jobs, found := strings.Cut(text, hostedGateJobsMarker)
-	gateID, afterID, named := strings.Cut(jobs, hostedGateNameMarker)
-	if !found || !named || gateID == "" || strings.ContainsAny(gateID, " \n") {
-		return "", false
-	}
-	nameLine, afterName, _ := strings.Cut(afterID, "\n")
-	context, suffixed := strings.CutSuffix(nameLine, HostedGateSkipGateSuffix)
-	body, hasIf := strings.CutPrefix(afterName, hostedGateSkipGateIf)
-	_, result := DraftSkipJobs(gateID)
-	body, _, hasResult := strings.Cut(body, "\n  "+result+":\n")
-	if !suffixed || !hasIf || !hasResult {
+	head, gateID, context, body, ok := cutSkipGate(text)
+	if !ok {
 		return "", false
 	}
 	steps, hasSteps := restoreGateSteps(body + "\n")
@@ -136,6 +127,26 @@ func UnrenderDraftSkip(text string) (failClosed string, ok bool) {
 		return "", false
 	}
 	return restored, true
+}
+
+// cutSkipGate cuts a skip rendering into the text before its jobs block, the id of the gate job,
+// the required context (the gate job's name without HostedGateSkipGateSuffix), and the gate job's
+// body after its condition up to the result job. It reports false when any of those is missing.
+func cutSkipGate(text string) (head, gateID, context, body string, ok bool) {
+	head, jobs, found := strings.Cut(text, hostedGateJobsMarker)
+	gateID, afterID, named := strings.Cut(jobs, hostedGateNameMarker)
+	if !found || !named || gateID == "" || strings.ContainsAny(gateID, " \n") {
+		return "", "", "", "", false
+	}
+	nameLine, afterName, _ := strings.Cut(afterID, "\n")
+	context, suffixed := strings.CutSuffix(nameLine, HostedGateSkipGateSuffix)
+	body, hasIf := strings.CutPrefix(afterName, hostedGateSkipGateIf)
+	_, result := DraftSkipJobs(gateID)
+	body, _, hasResult := strings.Cut(body, "\n  "+result+":\n")
+	if !suffixed || !hasIf || !hasResult {
+		return "", "", "", "", false
+	}
+	return head, gateID, context, body, true
 }
 
 // restoreGateSteps puts the draft step and the step conditions back into the body of a gate job
