@@ -59,6 +59,12 @@ func TestClaim_Positive_CreatesCommentLabelAndAssignee(t *testing.T) {
 	if res.Action != "created" || res.Claim.Stage != "claimed" || res.Claim.CommentID == 0 {
 		t.Fatalf("unexpected result: %+v", res)
 	}
+	requireClaimSideEffects(t, f)
+}
+
+// requireClaimSideEffects checks the label, the assignee and the marker a first claim leaves.
+func requireClaimSideEffects(t *testing.T, f *forgetest.ClaimFake) {
+	t.Helper()
 	if !f.OnIssue[forge.LabelInProgress] || !f.Labels[forge.LabelInProgress] {
 		t.Fatalf("in-progress label not created and added: repo=%v issue=%v", f.Labels, f.OnIssue)
 	}
@@ -103,24 +109,30 @@ func TestClaim_Boundary_StaleWindowEdge(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
-			oldID := f.Seed(claimAt("old", claimEpoch.Add(-tc.age)), "OWNER")
+			oldID := f.Seed(t, claimAt("old", claimEpoch.Add(-tc.age)), "OWNER")
 			res, err := newTestDesk(f, clock).Claim(context.Background(), testRef(), forge.ClaimRequest{Session: "new", Lane: "agy", Branch: "feat/new"})
 			if tc.stale {
-				if err != nil || res.Action != "took-over" || res.TookOver == nil || res.TookOver.Session != "old" {
-					t.Fatalf("stale claim must be taken over naming the old one: res=%+v err=%v", res, err)
-				}
-				if res.Claim.CommentID != oldID || countClaimComments(f) != 1 {
-					t.Fatalf("takeover must edit the one claim comment, got id %d and %d claim comments", res.Claim.CommentID, countClaimComments(f))
-				}
-				if !strings.Contains(f.Comments[0].Body, "replaces the stale claim of session old") {
-					t.Fatalf("comment must name the old claim:\n%s", f.Comments[0].Body)
-				}
+				requireTakeover(t, f, res, err, oldID)
 				return
 			}
 			if !errors.Is(err, forge.ErrClaimHeld) {
 				t.Fatalf("claim inside the window must be refused, got res=%+v err=%v", res, err)
 			}
 		})
+	}
+}
+
+// requireTakeover checks that a stale claim was taken over in place, naming the old claim.
+func requireTakeover(t *testing.T, f *forgetest.ClaimFake, res forge.ClaimResult, err error, oldID int64) {
+	t.Helper()
+	if err != nil || res.Action != "took-over" || res.TookOver == nil || res.TookOver.Session != "old" {
+		t.Fatalf("stale claim must be taken over naming the old one: res=%+v err=%v", res, err)
+	}
+	if res.Claim.CommentID != oldID || countClaimComments(f) != 1 {
+		t.Fatalf("takeover must edit the one claim comment, got id %d and %d claim comments", res.Claim.CommentID, countClaimComments(f))
+	}
+	if !strings.Contains(f.Comments[0].Body, "replaces the stale claim of session old") {
+		t.Fatalf("comment must name the old claim:\n%s", f.Comments[0].Body)
 	}
 }
 
@@ -232,7 +244,7 @@ func TestStatus_Positive_NoStageReadsWithoutWriting(t *testing.T) {
 
 func TestStatus_Positive_TakeoverNoteSurvivesEdits(t *testing.T) {
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
-	f.Seed(claimAt("old", claimEpoch.Add(-7*time.Hour)), "OWNER")
+	f.Seed(t, claimAt("old", claimEpoch.Add(-7*time.Hour)), "OWNER")
 	d := newTestDesk(f, clock)
 	mustClaim(t, d, "new")
 	if _, err := d.Status(context.Background(), testRef(), forge.StatusRequest{Session: "new", Stage: "review"}); err != nil {
@@ -376,7 +388,10 @@ func TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID(t *testing.T) {
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
 	f.BeforeList = func(f *forgetest.ClaimFake, call int) {
 		if call == 2 { // the read-back after our write: a rival's older comment appears
-			rival, _ := forge.RenderClaimMarker(claimAt("rival", claimEpoch))
+			rival, err := forge.RenderClaimMarker(claimAt("rival", claimEpoch))
+			if err != nil {
+				t.Errorf("render rival marker: %v", err)
+			}
 			f.Comments = append([]forge.IssueComment{{ID: 1, Association: "OWNER", Body: rival}}, f.Comments...)
 		}
 	}

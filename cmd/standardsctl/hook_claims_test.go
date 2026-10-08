@@ -30,7 +30,7 @@ func useFakeHookDesk(t *testing.T, fake *forgetest.ClaimFake, now time.Time) *in
 func TestHookIssueClaims_Positive_ReportsTheLiveClaimAndBuildsTheDeskOnce(t *testing.T) {
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	fake := forgetest.NewClaimFake()
-	fake.Seed(forge.Claim{Session: "other", Lane: "agy", Branch: "feat/o", Stage: "review", Started: now, Updated: now}, "OWNER")
+	fake.Seed(t, forge.Claim{Session: "other", Lane: "agy", Branch: "feat/o", Stage: "review", Started: now, Updated: now}, "OWNER")
 	built := useFakeHookDesk(t, fake, now.Add(time.Hour))
 	lookup := hookIssueClaims(config.ForgeSettings{})
 	for i := 0; i < 2; i++ {
@@ -47,7 +47,7 @@ func TestHookIssueClaims_Positive_ReportsTheLiveClaimAndBuildsTheDeskOnce(t *tes
 func TestHookIssueClaims_Boundary_StaleAndReleasedClaimsAreNoClaim(t *testing.T) {
 	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 	fake := forgetest.NewClaimFake()
-	fake.Seed(forge.Claim{Session: "old", Lane: "l", Branch: "b", Stage: "review", Started: now.Add(-8 * time.Hour), Updated: now.Add(-6*time.Hour - time.Second)}, "OWNER")
+	fake.Seed(t, forge.Claim{Session: "old", Lane: "l", Branch: "b", Stage: "review", Started: now.Add(-8 * time.Hour), Updated: now.Add(-6*time.Hour - time.Second)}, "OWNER")
 	useFakeHookDesk(t, fake, now)
 	if claim, err := hookIssueClaims(config.ForgeSettings{})(context.Background(), "acme/widgets#7"); err != nil || claim != nil {
 		t.Fatalf("a claim one second past the window holds nothing: %+v %v", claim, err)

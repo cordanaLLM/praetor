@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
@@ -153,10 +154,11 @@ func (f *ClaimFake) AddAssignees(_ context.Context, _ int, logins []string) erro
 
 // Seed adds a comment holding claim c, written by an author with the given association, and
 // returns its id.
-func (f *ClaimFake) Seed(c forge.Claim, association string) int64 {
+func (f *ClaimFake) Seed(tb testing.TB, c forge.Claim, association string) int64 {
+	tb.Helper()
 	marker, err := forge.RenderClaimMarker(c)
 	if err != nil {
-		panic(err)
+		tb.Fatalf("seed claim: %v", err)
 	}
 	f.NextID++
 	f.Comments = append(f.Comments, forge.IssueComment{ID: f.NextID, Author: "someone", Association: association, Body: marker + "\nhuman text\n"})

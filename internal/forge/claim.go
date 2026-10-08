@@ -476,6 +476,11 @@ func (d *ClaimDesk) Status(ctx context.Context, ref ClaimRef, req StatusRequest)
 	if req.Stage == "" {
 		return d.readStatus(ref, found), nil
 	}
+	return d.recordStage(ctx, f, ref, found, req, note)
+}
+
+// recordStage edits the session's claim comment to the requested stage and syncs the blocked label.
+func (d *ClaimDesk) recordStage(ctx context.Context, f ClaimForge, ref ClaimRef, found []claimComment, req StatusRequest, note string) (ClaimResult, error) {
 	own, err := d.ownClaim(ref, found, req.Session)
 	if err != nil {
 		return ClaimResult{}, err

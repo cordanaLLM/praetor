@@ -12,24 +12,34 @@ import (
 	"testing"
 )
 
-func TestGitHubClaim_Positive_CommentCalls(t *testing.T) {
-	gh, fake := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, _ int) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/user":
-			writeJSON(t, w, http.StatusOK, map[string]any{"login": "operator"})
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
-			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 5, "user": map[string]any{"login": "a"}, "author_association": "OWNER", "body": "hi"}})
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
-			writeJSON(t, w, http.StatusCreated, map[string]any{"id": 6, "user": map[string]any{"login": "operator"}, "author_association": "OWNER", "body": "x"})
-		case r.Method == http.MethodPatch && strings.HasSuffix(r.URL.Path, "/issues/comments/6"):
-			writeJSON(t, w, http.StatusOK, map[string]any{"id": 6})
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues/7/assignees"):
-			writeJSON(t, w, http.StatusCreated, map[string]any{})
-		default:
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-			writeJSON(t, w, http.StatusTeapot, nil)
+// claimRoutes answers the calls the claim code makes, one route per method and path suffix.
+func claimRoutes(t *testing.T) func(w http.ResponseWriter, r *http.Request, index int) {
+	t.Helper()
+	routes := []struct {
+		method, suffix string
+		status         int
+		body           any
+	}{
+		{http.MethodGet, "/user", http.StatusOK, map[string]any{"login": "operator"}},
+		{http.MethodGet, "/issues/7/comments", http.StatusOK, []map[string]any{{"id": 5, "user": map[string]any{"login": "a"}, "author_association": "OWNER", "body": "hi"}}},
+		{http.MethodPost, "/issues/7/comments", http.StatusCreated, map[string]any{"id": 6, "user": map[string]any{"login": "operator"}, "author_association": "OWNER", "body": "x"}},
+		{http.MethodPatch, "/issues/comments/6", http.StatusOK, map[string]any{"id": 6}},
+		{http.MethodPost, "/issues/7/assignees", http.StatusCreated, map[string]any{}},
+	}
+	return func(w http.ResponseWriter, r *http.Request, _ int) {
+		for _, route := range routes {
+			if r.Method == route.method && strings.HasSuffix(r.URL.Path, route.suffix) {
+				writeJSON(t, w, route.status, route.body)
+				return
+			}
 		}
-	})
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		writeJSON(t, w, http.StatusTeapot, nil)
+	}
+}
+
+func TestGitHubClaim_Positive_ViewerAndComments(t *testing.T) {
+	gh, _ := newFakeForge(t, claimRoutes(t))
 	ctx := context.Background()
 	if login, err := gh.Viewer(ctx); err != nil || login != "operator" {
 		t.Fatalf("viewer: %q %v", login, err)
@@ -45,49 +55,56 @@ func TestGitHubClaim_Positive_CommentCalls(t *testing.T) {
 	if err := gh.EditIssueComment(ctx, 6, "y"); err != nil {
 		t.Fatalf("edit: %v", err)
 	}
-	if err := gh.AddAssignees(ctx, 7, []string{"operator"}); err != nil {
+}
+
+func TestGitHubClaim_Positive_AssigneesPayload(t *testing.T) {
+	gh, fake := newFakeForge(t, claimRoutes(t))
+	if err := gh.AddAssignees(context.Background(), 7, []string{"operator"}); err != nil {
 		t.Fatalf("assign: %v", err)
 	}
 	last := fake.requests[len(fake.requests)-1]
-	if got, _ := last.Body["assignees"].([]any); len(got) != 1 {
+	if got, ok := last.Body["assignees"].([]any); !ok || len(got) != 1 {
 		t.Fatalf("assignees payload: %v", last.Body)
 	}
 }
 
-func TestGitHubClaim_Negative_StatusesAndBadInput(t *testing.T) {
+func TestGitHubClaim_Negative_ForbiddenStatusesFail(t *testing.T) {
 	gh, _ := newFakeForge(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
 		writeJSON(t, w, http.StatusForbidden, map[string]any{"message": "no"})
 	})
 	ctx := context.Background()
-	if _, err := gh.Viewer(ctx); err == nil {
-		t.Fatal("viewer must fail on 403")
+	calls := map[string]func() error{
+		"viewer":       func() error { _, err := gh.Viewer(ctx); return err },
+		"list":         func() error { _, err := gh.ListIssueComments(ctx, 7); return err },
+		"create":       func() error { _, err := gh.CreateIssueComment(ctx, 7, "x"); return err },
+		"edit":         func() error { return gh.EditIssueComment(ctx, 6, "x") },
+		"assign":       func() error { return gh.AddAssignees(ctx, 7, []string{"a"}) },
+		"ensure label": func() error { return gh.EnsureLabel(ctx, Label{Name: "x", Color: "ffffff"}) },
 	}
-	if _, err := gh.ListIssueComments(ctx, 7); err == nil {
-		t.Fatal("list must fail on 403")
+	for name, call := range calls {
+		if err := call(); err == nil {
+			t.Errorf("%s must fail on 403", name)
+		}
 	}
-	if _, err := gh.CreateIssueComment(ctx, 7, "x"); err == nil {
-		t.Fatal("create must fail on 403")
+}
+
+func TestGitHubClaim_Negative_BadInputIsRefusedBeforeTheWire(t *testing.T) {
+	gh, fake := newFakeForge(t, claimRoutes(t))
+	ctx := context.Background()
+	calls := map[string]func() error{
+		"list issue 0":    func() error { _, err := gh.ListIssueComments(ctx, 0); return err },
+		"create issue -1": func() error { _, err := gh.CreateIssueComment(ctx, -1, "x"); return err },
+		"edit comment 0":  func() error { return gh.EditIssueComment(ctx, 0, "x") },
+		"no logins":       func() error { return gh.AddAssignees(ctx, 7, nil) },
+		"unnamed label":   func() error { return gh.EnsureLabel(ctx, Label{}) },
 	}
-	if err := gh.EditIssueComment(ctx, 6, "x"); err == nil {
-		t.Fatal("edit must fail on 403")
+	for name, call := range calls {
+		if err := call(); err == nil {
+			t.Errorf("%s must be refused", name)
+		}
 	}
-	if err := gh.AddAssignees(ctx, 7, []string{"a"}); err == nil {
-		t.Fatal("assign must fail on 403")
-	}
-	if err := gh.EnsureLabel(ctx, Label{Name: "x", Color: "ffffff"}); err == nil {
-		t.Fatal("ensure label must fail on 403")
-	}
-	if _, err := gh.ListIssueComments(ctx, 0); err == nil {
-		t.Fatal("issue 0 must be refused")
-	}
-	if _, err := gh.CreateIssueComment(ctx, -1, "x"); err == nil {
-		t.Fatal("issue -1 must be refused")
-	}
-	if err := gh.EditIssueComment(ctx, 0, "x"); err == nil {
-		t.Fatal("comment 0 must be refused")
-	}
-	if err := gh.AddAssignees(ctx, 7, nil); err == nil {
-		t.Fatal("empty login set must be refused")
+	if len(fake.requests) != 0 {
+		t.Fatalf("refused input must not reach the forge: %d requests", len(fake.requests))
 	}
 }
 

@@ -60,53 +60,72 @@ func TestClaimRun_Negative_BadCommandAndReference(t *testing.T) {
 
 func TestClaimSummary_Positive_NamesTheTakenOverClaim(t *testing.T) {
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
-	f.Seed(claimAt("old", claimEpoch.Add(-7*time.Hour)), "OWNER")
+	f.Seed(t, claimAt("old", claimEpoch.Add(-7*time.Hour)), "OWNER")
 	res, err := newTestDesk(f, clock).Run(context.Background(), forge.ClaimCommand{Op: forge.ClaimOpClaim, Ref: "acme/widgets#7", Session: "new", Lane: "l", Branch: "b"})
 	if err != nil || !strings.Contains(res.Summary(), "replaced the stale claim: claimed by session old") {
 		t.Fatalf("summary = %q err %v", res.Summary(), err)
 	}
 }
 
+// claimHTTPServer is a stand-in GitHub API for one issue, other/lib#9, that keeps its comments
+// and records every request path.
+type claimHTTPServer struct {
+	t        *testing.T
+	mu       sync.Mutex
+	paths    []string
+	comments []map[string]any
+}
+
+func (s *claimHTTPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.paths = append(s.paths, r.Method+" "+r.URL.Path)
+	switch {
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
+		s.addComment(w, r)
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+		reply(s.t, w, http.StatusOK, s.comments)
+	case r.Method == http.MethodGet:
+		s.read(w, r)
+	default:
+		reply(s.t, w, http.StatusCreated, map[string]any{})
+	}
+}
+
+func (s *claimHTTPServer) read(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case r.URL.Path == "/repos/other/lib/issues/9":
+		reply(s.t, w, http.StatusOK, map[string]any{"number": 9, "state": "open"})
+	case r.URL.Path == "/user":
+		reply(s.t, w, http.StatusOK, map[string]any{"login": "op"})
+	default:
+		reply(s.t, w, http.StatusOK, map[string]any{})
+	}
+}
+
+func (s *claimHTTPServer) addComment(w http.ResponseWriter, r *http.Request) {
+	var in map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		s.t.Errorf("decode comment payload: %v", err)
+	}
+	comment := map[string]any{"id": 31, "user": map[string]any{"login": "op"}, "author_association": "OWNER", "body": in["body"]}
+	s.comments = append(s.comments, comment)
+	reply(s.t, w, http.StatusCreated, comment)
+}
+
 // TestNewClaimDesk_Positive_CrossRepositoryOverHTTP runs the real GitHub driver against a
 // stand-in server: the claim lands on the repository the reference names, not on a default.
 func TestNewClaimDesk_Positive_CrossRepositoryOverHTTP(t *testing.T) {
-	var mu sync.Mutex
-	var paths []string
-	comments := []map[string]any{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		paths = append(paths, r.Method+" "+r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/other/lib/issues/9":
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": 9, "state": "open"})
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
-			_ = json.NewEncoder(w).Encode(comments)
-		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
-			var in map[string]string
-			_ = json.NewDecoder(r.Body).Decode(&in)
-			comments = append(comments, map[string]any{"id": 31, "user": map[string]any{"login": "op"}, "author_association": "OWNER", "body": in["body"]})
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(comments[0])
-		case r.Method == http.MethodGet && r.URL.Path == "/user":
-			_ = json.NewEncoder(w).Encode(map[string]any{"login": "op"})
-		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/labels/"):
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("{}"))
-		default:
-			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte("{}"))
-		}
-	}))
+	fake := &claimHTTPServer{t: t, comments: []map[string]any{}}
+	srv := httptest.NewServer(fake)
 	defer srv.Close()
 	t.Setenv("GITHUB_REPOSITORY", "")
 	desk := forge.NewClaimDesk("tok", srv.URL, time.Hour)
 	res, err := desk.Run(context.Background(), forge.ClaimCommand{Op: forge.ClaimOpClaim, Ref: "other/lib#9", Session: "s1", Lane: "l", Branch: "b"})
 	if err != nil || res.Action != "created" {
-		t.Fatalf("claim over http: %+v %v (requests %v)", res, err, paths)
+		t.Fatalf("claim over http: %+v %v (requests %v)", res, err, fake.paths)
 	}
-	for _, p := range paths {
+	for _, p := range fake.paths {
 		if strings.Contains(p, "/repos/") && !strings.Contains(p, "/repos/other/lib/") {
 			t.Fatalf("request left the referenced repository: %s", p)
 		}
@@ -134,5 +153,15 @@ func TestNewClaimDesk_Negative_ServerErrorFailsClosed(t *testing.T) {
 		forge.ClaimCommand{Op: forge.ClaimOpClaim, Ref: "other/lib#9", Session: "s1", Lane: "l", Branch: "b"})
 	if !errors.Is(err, forge.ErrClaimUnverifiable) {
 		t.Fatalf("a cancelled context must be unverifiable, got %v", err)
+	}
+}
+
+// reply writes a JSON response and reports an encoding failure to the test.
+func reply(t *testing.T, w http.ResponseWriter, status int, payload any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(payload); err != nil {
+		t.Errorf("encode response: %v", err)
 	}
 }

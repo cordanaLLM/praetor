@@ -25,7 +25,7 @@ const (
 	maxOutputOracleFiles            = 128
 	maxOutputOracleFileBytes        = 1 << 20
 	maxOutputOracleTotalBytes       = 8 << 20
-	expectedMCPOutputCallsiteDigest = "sha256:5f831c50a78a03200e1ecf8bb0a9fcb903424561a0ccd0ac448c8ce883e393a6"
+	expectedMCPOutputCallsiteDigest = "sha256:d1f8fd721b32f289fc7b397ff2fb3b347da92d27bd50875155750903a53b25cb"
 )
 
 type outputCallsite struct{ identity, kind string }

@@ -38,40 +38,39 @@ func productionClaimDesk(ctx context.Context) (*forge.ClaimDesk, error) {
 	return forge.NewClaimDesk(token, "", policy.OperatorSettings().Forge.ClaimStaleWindow()), nil
 }
 
-var claimRefProperty = mcp.PropertySchema{Type: "string", Description: "Issue reference <owner>/<repo>#<number>; any repository the token can reach"}
-var claimSessionProperty = mcp.PropertySchema{Type: "string", Description: "Identifier of the agent session that holds the claim"}
-var claimNoteProperty = mcp.PropertySchema{Type: "string", Description: "Short note shown on the claim comment"}
-
 func (s *Server) createIssueClaimTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{Type: "object", Required: []string{"ref", "session", "lane", "branch"}, Properties: map[string]mcp.PropertySchema{
-		"ref": claimRefProperty, "session": claimSessionProperty,
-		"lane":   {Type: "string", Description: "Lane the session works in"},
-		"branch": {Type: "string", Description: "Branch that carries the work"},
+		"ref":     {Type: "string", Description: "Issue reference <owner>/<repo>#<number>, any repository token reaches"},
+		"session": {Type: "string", Description: "Identifier of agent session holding claim"},
+		"lane":    {Type: "string", Description: "Lane session works in"},
+		"branch":  {Type: "string", Description: "Branch carrying work"},
 	}}
 	return mcp.NewOpenWorldTool("standards_issue_claim",
-		"Claim a forge issue before working on it, as `praetorctl issue claim`: one claim comment with a machine-readable marker, the status:in-progress label and the account as assignee. Refused while another session holds a live claim; a claim without an update for the stale window is taken over. Writes to the forge.",
+		"Claim forge issue before work, as praetorctl issue claim. Posts one claim comment with machine-readable marker, adds status:in-progress label, assigns account. Refused while another session holds live claim; claim idle past stale window gets taken over. Writes to forge.",
 		schema, s.runIssueClaim(forge.ClaimOpClaim), false, true)
 }
 
 func (s *Server) createIssueStatusTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{Type: "object", Required: []string{"ref", "session"}, Properties: map[string]mcp.PropertySchema{
-		"ref": claimRefProperty, "session": claimSessionProperty,
-		"stage": {Type: "string", Description: "claimed, implementing, review, fix-round-N, blocked, queued or landing; omit to read the current claim"},
-		"note":  claimNoteProperty,
+		"ref":     {Type: "string", Description: "Issue reference <owner>/<repo>#<number>, any repository token reaches"},
+		"session": {Type: "string", Description: "Identifier of agent session holding claim"},
+		"stage":   {Type: "string", Description: "claimed, implementing, review, fix-round-N, blocked, queued, landing; omit to read claim"},
+		"note":    {Type: "string", Description: "Short note shown on claim comment"},
 	}}
 	return mcp.NewOpenWorldTool("standards_issue_status",
-		"Record a stage on the session's issue claim by editing its one claim comment, as `praetorctl issue status`; blocked adds status:blocked. Without a stage it only reads the claim. Writes to the forge.",
+		"Record stage on session issue claim by editing single claim comment, as praetorctl issue status. Stage blocked adds status:blocked label. Without stage, reads claim only. Writes to forge.",
 		schema, s.runIssueClaim(forge.ClaimOpStatus), false, true)
 }
 
 func (s *Server) createIssueReleaseTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{Type: "object", Required: []string{"ref", "session", "outcome"}, Properties: map[string]mcp.PropertySchema{
-		"ref": claimRefProperty, "session": claimSessionProperty,
+		"ref":     {Type: "string", Description: "Issue reference <owner>/<repo>#<number>, any repository token reaches"},
+		"session": {Type: "string", Description: "Identifier of agent session holding claim"},
 		"outcome": {Type: "string", Description: "landed, abandoned or handed-over"},
-		"note":    claimNoteProperty,
+		"note":    {Type: "string", Description: "Short note shown on claim comment"},
 	}}
 	return mcp.NewOpenWorldTool("standards_issue_release",
-		"Release the session's issue claim, as `praetorctl issue release`: finalise the claim comment with the outcome and remove the status labels; the pull request closes the issue. Writes to the forge.",
+		"Release session issue claim, as praetorctl issue release. Finalises claim comment with outcome, removes status labels; pull request closes issue. Writes to forge.",
 		schema, s.runIssueClaim(forge.ClaimOpRelease), false, true)
 }
 
@@ -79,23 +78,7 @@ func (s *Server) createIssueReleaseTool() (mcp.Tool, error) {
 // forge.ClaimCommand the CLI builds and runs it on the same desk.
 func (s *Server) runIssueClaim(op string) mcp.ToolHandler {
 	return func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
-		if err := requireStringArguments(args); err != nil {
-			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
-		}
-		cmd := forge.ClaimCommand{Op: op}
-		for key, target := range map[string]*string{"ref": &cmd.Ref, "session": &cmd.Session, "lane": &cmd.Lane,
-			"branch": &cmd.Branch, "stage": &cmd.Stage, "note": &cmd.Note, "outcome": &cmd.Outcome} {
-			value, err := argString(args, key)
-			if err != nil {
-				return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
-			}
-			*target = value
-		}
-		desk, err := newClaimDesk(ctx)
-		if err != nil {
-			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
-		}
-		result, err := desk.Run(ctx, cmd)
+		result, err := executeIssueClaim(ctx, op, args)
 		if err != nil {
 			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
@@ -105,4 +88,24 @@ func (s *Server) runIssueClaim(op string) mcp.ToolHandler {
 		}
 		return mcpTextResult(string(data), mcpTextStructuredJSON), nil
 	}
+}
+
+func executeIssueClaim(ctx context.Context, op string, args map[string]any) (forge.ClaimResult, error) {
+	if err := requireStringArguments(args); err != nil {
+		return forge.ClaimResult{}, err
+	}
+	cmd := forge.ClaimCommand{Op: op}
+	for key, target := range map[string]*string{"ref": &cmd.Ref, "session": &cmd.Session, "lane": &cmd.Lane,
+		"branch": &cmd.Branch, "stage": &cmd.Stage, "note": &cmd.Note, "outcome": &cmd.Outcome} {
+		value, err := argString(args, key)
+		if err != nil {
+			return forge.ClaimResult{}, err
+		}
+		*target = value
+	}
+	desk, err := newClaimDesk(ctx)
+	if err != nil {
+		return forge.ClaimResult{}, err
+	}
+	return desk.Run(ctx, cmd)
 }
