@@ -65,22 +65,17 @@ func scanCheckoutPinnedRef(workflow string) (string, error) {
 
 // reuseCheckoutRef returns the actions/checkout reference pinned by digest with its version comment,
 // taking the SHA and version from markdownassets.Workflow, the same source praetor-docs.yml uses (HISS-19).
-func reuseCheckoutRef() string {
-	ref, err := scanCheckoutPinnedRef(markdownassets.Workflow)
-	if err != nil {
-		return ""
-	}
-	return ref
+func reuseCheckoutRef() (string, error) {
+	return scanCheckoutPinnedRef(markdownassets.Workflow)
 }
 
-// reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
-// the ruleset requiring its job protects: one job, on the runner the flavor workflows use, with a
-// timeout, in the hosted gate shape every hosted gate shares (ghworkflow.HostedGateOn: pull
-// request activity and a push to the default branch only; ghworkflow.HostedGateDraftStep first,
-// so a draft run fails by design; ghworkflow.HostedGateStepIf on every later step). It checks the
-// commit out without keeping the token and runs supplychain.ReuseActionPinnedRef, both pinned by
-// full commit SHA with their version comment (HISS-11).
-func reuseWorkflow(branch string) string {
+// renderReuseWorkflow renders the hosted REUSE gate for the given default branch using
+// the actions/checkout pinned reference scanned from workflow.
+func renderReuseWorkflow(workflow, branch string) (string, error) {
+	ref, err := scanCheckoutPinnedRef(workflow)
+	if err != nil {
+		return "", fmt.Errorf("render the hosted REUSE gate: %w", err)
+	}
 	on := strings.Replace(ghworkflow.HostedGateOn,
 		ghworkflow.HostedGatePushBranchesPrefix+ghworkflow.HostedGateDefaultBranch+"']",
 		ghworkflow.HostedGatePushBranchesPrefix+branch+"']", 1)
@@ -104,12 +99,23 @@ func reuseWorkflow(branch string) string {
 		ghworkflow.HostedGateDraftStep +
 		"      - name: Check out the source" + ghworkflow.HostedGateStepIf + "\n" +
 		"        # yamllint disable-line rule:line-length\n" +
-		"        uses: " + reuseCheckoutRef() + "\n" +
+		"        uses: " + ref + "\n" +
 		"        with:\n" +
 		"          persist-credentials: false\n" +
 		"      - name: reuse lint" + ghworkflow.HostedGateStepIf + "\n" +
 		"        # yamllint disable-line rule:line-length\n" +
-		"        uses: " + supplychain.ReuseActionPinnedRef() + "\n"
+		"        uses: " + supplychain.ReuseActionPinnedRef() + "\n", nil
+}
+
+// reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
+// the ruleset requiring its job protects: one job, on the runner the flavor workflows use, with a
+// timeout, in the hosted gate shape every hosted gate shares (ghworkflow.HostedGateOn: pull
+// request activity and a push to the default branch only; ghworkflow.HostedGateDraftStep first,
+// so a draft run fails by design; ghworkflow.HostedGateStepIf on every later step). It checks the
+// commit out without keeping the token and runs supplychain.ReuseActionPinnedRef, both pinned by
+// full commit SHA with their version comment (HISS-11).
+func reuseWorkflow(branch string) (string, error) {
+	return renderReuseWorkflow(markdownassets.Workflow, branch)
 }
 
 // reuseRenderingBranch returns the default branch data is the hosted REUSE gate rendered for
@@ -122,7 +128,11 @@ func reuseRenderingBranch(data []byte) (string, bool) {
 	if !found || !closed || !config.ValidBranchName(branch) {
 		return "", false
 	}
-	equal, err := util.CanonicalTextEquivalent(data, []byte(reuseWorkflow(branch)))
+	expected, err := reuseWorkflow(branch)
+	if err != nil {
+		return "", false
+	}
+	equal, err := util.CanonicalTextEquivalent(data, []byte(expected))
 	return branch, err == nil && equal
 }
 
@@ -164,10 +174,14 @@ func reconcileReuseGate(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	workflow, err := reuseWorkflow(branch)
+	if err != nil {
+		return err
+	}
 	_, err = s.scaffoldFile(ctx, scaffold{
 		rel:       reuseWorkflowFile,
 		perm:      filePerm,
-		content:   []byte(reuseWorkflow(branch)),
+		content:   []byte(workflow),
 		created:   "Scaffolded the hosted REUSE gate: reuse lint at " + supplychain.ReuseActionRef() + " on " + branch,
 		verified:  "Existing hosted REUSE gate verified present",
 		prior:     prior,
@@ -254,7 +268,11 @@ func (s *adoptSession) plannedReuseWorkflow(ctx context.Context) ([]flavor.Plann
 	if err != nil || (exists && !isReuseRendering(existing)) {
 		return nil, ctx.Err()
 	}
-	return []flavor.PlannedTemplate{{Path: reuseWorkflowFile, Content: reuseWorkflow(branch)}}, nil
+	workflow, err := reuseWorkflow(branch)
+	if err != nil {
+		return nil, err
+	}
+	return []flavor.PlannedTemplate{{Path: reuseWorkflowFile, Content: workflow}}, nil
 }
 
 // migrateReuseSwitch writes target's rendering over existing when existing is the current
