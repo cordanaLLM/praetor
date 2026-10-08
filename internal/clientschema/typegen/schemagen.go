@@ -485,14 +485,14 @@ func quote(text string) string {
 }
 
 func comment(name string, node map[string]any) string {
-	if description := oneLine(stringMember(node, "description")); description != "" {
+	if description := describe(node); description != "" {
 		return "// " + name + " is generated from the vendored schema: " + description + "\n"
 	}
 	return "// " + name + " is generated from the vendored schema.\n"
 }
 
 func trail(prop map[string]any) string {
-	if description := stringMember(prop, "description"); description != "" {
+	if description := describe(prop); description != "" {
 		return " // " + oneLine(description)
 	}
 	if constant, ok := prop["const"].(string); ok {
@@ -501,13 +501,12 @@ func trail(prop map[string]any) string {
 	return ""
 }
 
-// stringMember returns the string member key of node, or "" when it is absent or not a string.
-func stringMember(node map[string]any, key string) string {
-	text, ok := node[key].(string)
-	if !ok {
-		return ""
+// describe returns the first sentence of the description member of node, or "" without one.
+func describe(node map[string]any) string {
+	if text, ok := node["description"].(string); ok {
+		return oneLine(text)
 	}
-	return text
+	return ""
 }
 
 // oneLine reduces a description to its first sentence on one line, bounded.
