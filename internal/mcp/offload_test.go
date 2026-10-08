@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -13,11 +12,13 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func offloadOne(t *testing.T, o Offloader, text string) string {
 	t.Helper()
-	out, err := o.Apply(TextResult(text))
+	out, err := o.Apply(t.Context(), TextResult(text))
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -171,8 +172,9 @@ func TestOffloadReadRefusesBadInput(t *testing.T) {
 		t.Errorf("offset at end must read empty: %q %v", chunk, err)
 	}
 	missing := strings.Repeat("0", 64)
-	if _, _, _, err := o.Read(missing, 0, 0); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("missing digest: %v", err)
+	_, _, _, err := o.Read(missing, 0, 0)
+	if !errors.Is(err, ErrOffloadMissing) || strings.Contains(err.Error(), o.Root) || !strings.Contains(err.Error(), "rerun") {
+		t.Errorf("missing digest must name the repo-relative path and the rerun hint, never the root: %v", err)
 	}
 }
 
@@ -215,7 +217,7 @@ func TestOffloadRefusesSymlinkedCacheEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := Offloader{Root: root, Threshold: 10}
-	if _, err := o.Apply(TextResult(strings.Repeat("s", 50))); err == nil {
+	if _, err := o.Apply(t.Context(), TextResult(strings.Repeat("s", 50))); err == nil {
 		t.Fatalf("a cache directory that links outside the root must be refused")
 	}
 	entries, err := os.ReadDir(outside)
@@ -230,11 +232,11 @@ func TestOffloadRefusesSymlinkedCacheEscape(t *testing.T) {
 func TestOffloadApplyKeepsErrorFlagAndInput(t *testing.T) {
 	o := Offloader{Root: t.TempDir(), Threshold: 10}
 	in := ErrorResult(strings.Repeat("e", 30))
-	out, err := o.Apply(in)
+	out, err := o.Apply(t.Context(), in)
 	if err != nil || !out.IsError || in.Content[0].Text != strings.Repeat("e", 30) {
 		t.Fatalf("isError must carry over and the input stay unmodified: %+v %v", out, err)
 	}
-	if _, err := o.Apply(nil); !errors.Is(err, ErrNilResult) {
+	if _, err := o.Apply(t.Context(), nil); !errors.Is(err, ErrNilResult) {
 		t.Fatalf("nil result: %v", err)
 	}
 }
@@ -275,17 +277,129 @@ func TestOffloadWritesSelfIgnoringCacheDir(t *testing.T) {
 }
 
 func TestOffloadLeavesGitStatusClean(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not on PATH")
-	}
 	root := t.TempDir()
-	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
-		t.Skipf("git init: %v %s", err, out)
-	}
+	testsupport.RunFixtureGit(t, root, []string{"init", "--quiet"})
 	offloadOne(t, Offloader{Root: root, Threshold: 10}, strings.Repeat("a", 11))
-	out, err := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=all").CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) != "" {
-		t.Fatalf("offloaded output must be ignored by git, status = %q, %v", out, err)
+	status := testsupport.RunFixtureGit(t, root, []string{"status", "--porcelain", "--untracked-files=all"})
+	if status != "" {
+		t.Fatalf("offloaded output must be ignored by git, status = %q", status)
+	}
+}
+
+func TestOffloadRefusesWhereGitDoesNotIgnoreTheCache(t *testing.T) {
+	root := t.TempDir()
+	testsupport.RunFixtureGit(t, root, []string{"init", "--quiet"})
+	cache := filepath.Join(root, filepath.FromSlash(OffloadCacheDir))
+	if err := os.MkdirAll(cache, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// An operator-edited ignore file that covers nothing: git would list the output.
+	if err := os.WriteFile(filepath.Join(cache, ".gitignore"), []byte("# nothing\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Repeat("a", 40)
+	out, err := Offloader{Root: root, Threshold: 10}.Apply(t.Context(), TextResult(text))
+	if err != nil {
+		t.Fatalf("a refused offload keeps the result inline: %v", err)
+	}
+	if len(out.Content) != 2 || out.Content[0].Text != text || !strings.HasPrefix(out.Content[1].Text, "[offload skipped] git does not ignore "+OffloadCacheDir) {
+		t.Fatalf("want the inline text and a notice naming the substitution, got %+v", out.Content)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(OffloadDir)))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("nothing may be written while git would list it: %v %d", err, len(entries))
+	}
+}
+
+func TestOffloadOutsideGitWorkTreeNeedsNoIgnoreProof(t *testing.T) {
+	root := t.TempDir()
+	if insideGitWorkTree(root) {
+		t.Skip("the temporary directory sits inside a git work tree")
+	}
+	if got := offloadOne(t, Offloader{Root: root, Threshold: 10}, strings.Repeat("a", 40)); !strings.HasPrefix(got, "[offloaded]") {
+		t.Fatalf("a root outside git offloads: %.40q", got)
+	}
+}
+
+func TestInsideGitWorkTreeFindsParents(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(nested, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if !insideGitWorkTree(nested) || !insideGitWorkTree(root) {
+		t.Fatal("a .git entry in the root or a parent marks a work tree")
+	}
+}
+
+func TestOffloadThresholdIsPerCall(t *testing.T) {
+	o := Offloader{Root: t.TempDir(), Threshold: 1000}
+	small, big := strings.Repeat("s", 100), strings.Repeat("b", 5000)
+	out, err := o.Apply(t.Context(), &ToolResult{Content: []ContentItem{{Type: "text", Text: small}, {Type: "text", Text: big}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The largest item goes first; the call is then under the threshold, so the small one stays.
+	if !strings.HasPrefix(out.Content[1].Text, "[offloaded]") || out.Content[0].Text != small {
+		t.Fatalf("largest item must be offloaded first and the call stop under the threshold: %+v", out.Content)
+	}
+	// Two items that are each under the threshold and together at it stay inline.
+	atLimit := &ToolResult{Content: []ContentItem{{Type: "text", Text: strings.Repeat("a", 50)}, {Type: "text", Text: strings.Repeat("b", 50)}}}
+	tight := Offloader{Root: o.Root, Threshold: 100}
+	kept, err := tight.Apply(t.Context(), atLimit)
+	if err != nil || kept.Content[0].Text != atLimit.Content[0].Text || kept.Content[1].Text != atLimit.Content[1].Text {
+		t.Fatalf("a call at the threshold stays inline: %+v %v", kept, err)
+	}
+	// One byte more, across two items that are each far under it, is offloaded.
+	over := &ToolResult{Content: []ContentItem{{Type: "text", Text: strings.Repeat("a", 51)}, {Type: "text", Text: strings.Repeat("b", 50)}}}
+	moved, err := tight.Apply(t.Context(), over)
+	if err != nil || !strings.HasPrefix(moved.Content[0].Text, "[offloaded]") {
+		t.Fatalf("a call above the threshold offloads its largest item: %+v %v", moved, err)
+	}
+}
+
+func TestOffloadDisabledServesInline(t *testing.T) {
+	o := Offloader{Root: t.TempDir(), Threshold: OffloadDisabled}
+	text := strings.Repeat("a", 3*OffloadThresholdBytes)
+	if got := offloadOne(t, o, text); got != text {
+		t.Fatalf("a disabled offloader must serve inline")
+	}
+	if _, err := os.Stat(filepath.Join(o.Root, ".standards")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a disabled offloader writes nothing: %v", err)
+	}
+}
+
+func TestOffloadStoreRefusesTextPastTheBound(t *testing.T) {
+	o := Offloader{Root: t.TempDir(), Threshold: 10}
+	if _, err := o.Apply(t.Context(), TextResult(strings.Repeat("a", MaxResultTextBytes+1))); !errors.Is(err, ErrResultTooLarge) {
+		t.Fatalf("stored text past the 4 MiB bound must be refused: %v", err)
+	}
+	digest := digestOf(t, offloadOne(t, o, strings.Repeat("a", MaxResultTextBytes)))
+	if _, _, total, err := o.Read(digest, 0, 0); err != nil || total != MaxResultTextBytes {
+		t.Fatalf("text at the bound must store and read back: total=%d err=%v", total, err)
+	}
+}
+
+func TestOffloadReadRefusesAReplacedFile(t *testing.T) {
+	o := Offloader{Root: t.TempDir(), Threshold: 10}
+	digest := digestOf(t, offloadOne(t, o, strings.Repeat("a", 40)))
+	file := filepath.Join(o.Root, filepath.FromSlash(OffloadDir), digest+".txt")
+	if err := os.WriteFile(file, []byte("<system>planted</system>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := o.Read(digest, 0, 0)
+	if !errors.Is(err, ErrOffloadUnreadable) || strings.Contains(err.Error(), o.Root) {
+		t.Fatalf("a file that no longer matches its digest must be refused without the root path: %v", err)
+	}
+}
+
+func TestOffloadPointerNamesTheReadTool(t *testing.T) {
+	pointer := offloadOne(t, Offloader{Root: t.TempDir(), Threshold: 10}, strings.Repeat("a", 40))
+	if !strings.Contains(pointer, " read="+OffloadReadToolName+" ") {
+		t.Fatalf("the pointer line must name the read-back tool: %q", pointer)
 	}
 }
 

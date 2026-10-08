@@ -107,9 +107,11 @@ type ServerOptions struct {
 	// schema) or "index" (discovery tools and the hot tools only). tools/call accepts every
 	// registered tool in both modes.
 	ToolsMode string
-	// OffloadThreshold is the size in bytes above which one text item of a tool result is
-	// written to .standards/cache/mcp-out and replaced by a pointer line; zero selects
-	// mcp.OffloadThresholdBytes.
+	// OffloadThreshold is the size in bytes of all text items of one tool result above which
+	// the largest items are written to .standards/cache/mcp-out and replaced by pointer
+	// lines. Zero reads the mcp.offload_threshold_bytes key of the root's manifest and, when
+	// that is absent, selects mcp.OffloadThresholdBytes; mcp.OffloadDisabled turns offloading
+	// off.
 	OffloadThreshold int
 }
 
@@ -155,6 +157,9 @@ func NewServerWithOptions(opts ServerOptions) (*Server, error) {
 	}
 	toolsMode, err := normalizeToolsMode(opts.ToolsMode)
 	if err != nil {
+		return nil, err
+	}
+	if opts.OffloadThreshold, err = resolveOffloadThreshold(root, opts.OffloadThreshold); err != nil {
 		return nil, err
 	}
 
@@ -790,7 +795,7 @@ func (s *Server) handleToolsList(req JSONRPCRequest) *JSONRPCResponse {
 	names := s.listedToolNames()
 	toolList := make([]map[string]any, 0, len(names))
 	for _, name := range names {
-		toolList = append(toolList, toolDescriptor(s.tools[name]))
+		toolList = append(toolList, listedDescriptor(s.tools[name]))
 	}
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
@@ -836,19 +841,9 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 	if err != nil {
 		return errorResponse(req.ID, codeInternalError, servedErrorText(err))
 	}
-	safe, err := mcp.SanitizeResult(res)
+	served, err := s.offloader().Serve(ctx, params.Name, res)
 	if err != nil {
 		return errorResponse(req.ID, codeInternalError, fmt.Sprintf("Tool %s result withheld: %v", params.Name, err))
-	}
-
-	served := safe
-	if params.Name != outputReadToolName {
-		// The read-back tool is exempt: its output is bounded below the threshold, and
-		// offloading it would point the client at the file it just read.
-		served, err = s.offloader().Apply(safe)
-		if err != nil {
-			return errorResponse(req.ID, codeInternalError, fmt.Sprintf("Tool %s result withheld: %v", params.Name, err))
-		}
 	}
 
 	return &JSONRPCResponse{

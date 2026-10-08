@@ -83,6 +83,37 @@
         "idempotentHint": true,
         "openWorldHint": false
       },
+      "description": "Read offloaded tool output by pointer-line sha256. Max 12 KiB per call; continue from next_offset.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum bytes to return (default and maximum 12288)"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Byte offset to start at (default 0)"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "64 lowercase hex digits from [offloaded] pointer line"
+          }
+        },
+        "required": [
+          "sha256"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_output_read"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
       "description": "Return full description, input schema of one standards tool.",
       "inputSchema": {
         "type": "object",

@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 )
 
@@ -21,10 +25,18 @@ const (
 )
 
 // outputReadToolName names the offload read-back tool, whose output is never offloaded.
-const outputReadToolName = "standards_output_read"
+const outputReadToolName = mcp.OffloadReadToolName
 
 // maxSummaryRunes bounds the one-line summary in the tool index.
 const maxSummaryRunes = 120
+
+// maxListedDescriptionBytes is the longest description (of a tool or of one property) that
+// tools/list serves whole. A longer one is cut to its summary there, and
+// standards_tool_describe returns it in full, so the listing stays small in both modes.
+const maxListedDescriptionBytes = 200
+
+// describeHint ends a description that tools/list cut short.
+const describeHint = " Full text: standards_tool_describe."
 
 // indexModeTools names the tools tools/list still carries in index mode. tools/call
 // accepts every registered tool in both modes.
@@ -33,6 +45,7 @@ var indexModeTools = map[string]bool{
 	"standards_compile_context": true,
 	"standards_tools_index":     true,
 	"standards_tool_describe":   true,
+	outputReadToolName:          true,
 }
 
 // ErrToolsMode reports a -tools value other than full or index.
@@ -151,7 +164,7 @@ func (s *Server) toolDescribe(_ context.Context, args map[string]any) (*mcp.Tool
 	return mcpTextResult(string(data), mcpTextStructuredJSON), nil
 }
 
-// toolDescriptor is the tools/list entry of one tool.
+// toolDescriptor is the full descriptor of one tool, as standards_tool_describe returns it.
 func toolDescriptor(tool mcp.Tool) map[string]any {
 	return map[string]any{
 		"name":        tool.Name,
@@ -161,17 +174,40 @@ func toolDescriptor(tool mcp.Tool) map[string]any {
 	}
 }
 
+// listedDescriptor is the tools/list entry of one tool: toolDescriptor with every description
+// above maxListedDescriptionBytes cut to its summary. The prose moves to the describe text.
+func listedDescriptor(tool mcp.Tool) map[string]any {
+	listed := tool
+	listed.Description = listedDescription(tool.Description)
+	properties := make(map[string]mcp.PropertySchema, len(tool.InputSchema.Properties))
+	for name, property := range tool.InputSchema.Properties {
+		property.Description = listedDescription(property.Description)
+		properties[name] = property
+	}
+	listed.InputSchema.Properties = properties
+	return toolDescriptor(listed)
+}
+
+// listedDescription returns description unchanged when it fits maxListedDescriptionBytes, else
+// its summary followed by describeHint.
+func listedDescription(description string) string {
+	if len(description) <= maxListedDescriptionBytes {
+		return description
+	}
+	return toolSummary(description) + describeHint
+}
+
 // outputRead serves standards_output_read.
 func (s *Server) outputRead(_ context.Context, args map[string]any) (*mcp.ToolResult, error) {
 	digest, err := argString(args, "sha256")
 	if err != nil {
 		return mcpErrorResult(err.Error(), mcpTextProtocol), nil
 	}
-	offset, err := argInt(args, "offset")
+	offset, err := boundedIntArg(args, "offset", 0, mcp.MaxResultTextBytes, 0)
 	if err != nil {
 		return mcpErrorResult(err.Error(), mcpTextProtocol), nil
 	}
-	limit, err := argInt(args, "limit")
+	limit, err := boundedIntArg(args, "limit", 0, mcp.MaxResultTextBytes, 0)
 	if err != nil {
 		return mcpErrorResult(err.Error(), mcpTextProtocol), nil
 	}
@@ -183,25 +219,63 @@ func (s *Server) outputRead(_ context.Context, args map[string]any) (*mcp.ToolRe
 	return mcpTextResult(header+chunk, mcpTextUntrusted), nil
 }
 
-// argInt reads an optional non-negative integer argument (0 when absent). JSON numbers
-// decode to float64; a fractional or negative value is refused.
-func argInt(args map[string]any, key string) (int, error) {
-	raw, ok := args[key]
-	if !ok || raw == nil {
+// intArg reads an optional JSON integer argument. present reports whether the key was
+// supplied at all; whole is false for a value that is not a whole number within the exact
+// integer range of a float64 (a string, null, a fraction, an infinity). JSON numbers decode
+// to float64; in-process callers pass int.
+func intArg(args map[string]any, key string) (value int, present, whole bool) {
+	raw, present := args[key]
+	if !present {
+		return 0, false, false
+	}
+	switch number := raw.(type) {
+	case int:
+		return number, true, true
+	case float64:
+		if number != math.Trunc(number) || math.Abs(number) > 1<<53 {
+			return 0, true, false
+		}
+		return int(number), true, true
+	}
+	return 0, true, false
+}
+
+// boundedIntArg reads an optional integer argument within [minimum, maximum], def when the key
+// is absent. It is the one bounded-integer reader of the tool handlers.
+func boundedIntArg(args map[string]any, key string, minimum, maximum, def int) (int, error) {
+	value, present, whole := intArg(args, key)
+	if !present {
+		return def, nil
+	}
+	if !whole || value < minimum || value > maximum {
+		return 0, fmt.Errorf("%w: %s must be an integer from %d to %d", ErrArgType, key, minimum, maximum)
+	}
+	return value, nil
+}
+
+// resolveOffloadThreshold returns the offload threshold of a server rooted at root: requested
+// when the caller set one, else the mcp.offload_threshold_bytes key of the manifest read through
+// the manifest loader (0 there opts out of offloading), else 0 for the default. A manifest the
+// loader refuses fails the server start instead of silently selecting the default.
+func resolveOffloadThreshold(root string, requested int) (int, error) {
+	if requested != 0 {
+		return requested, nil
+	}
+	manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
+	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
 	}
-	f, isNumber := raw.(float64)
-	if !isNumber {
-		i, isInt := raw.(int)
-		if !isInt {
-			return 0, fmt.Errorf("%w: %s must be an integer, got %T", ErrArgType, key, raw)
-		}
-		f = float64(i)
+	if err != nil {
+		return 0, fmt.Errorf("read the offload threshold: %w", err)
 	}
-	if f < 0 || f != float64(int64(f)) || f > float64(mcp.MaxResultTextBytes) {
-		return 0, fmt.Errorf("%w: %s must be an integer from 0 to %d", ErrArgType, key, mcp.MaxResultTextBytes)
+	policy := manifest.DeclaredMCP()
+	switch {
+	case policy == nil || policy.OffloadThresholdBytes == nil:
+		return 0, nil
+	case *policy.OffloadThresholdBytes == 0:
+		return mcp.OffloadDisabled, nil
 	}
-	return int(f), nil
+	return *policy.OffloadThresholdBytes, nil
 }
 
 // listedToolNames returns the tool names tools/list serves in the server's mode, sorted.

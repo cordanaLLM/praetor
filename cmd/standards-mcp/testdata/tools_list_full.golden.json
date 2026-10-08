@@ -21,7 +21,7 @@
           },
           "force": {
             "type": "boolean",
-            "description": "Refresh, not reset. Rebuild .standards.lock + pinned catalog from source_root (required, dry_run included); rewrite drifted files audit compares byte for byte (documentation gate, branch ruleset while policy requires one, DevContainer, edited Makefile or .gitattributes managed block); merge managed values into editor JSON; regenerate AGENTS.md harness, repository additions kept; reset Paperclip platform naming another repository to this repository. Replaced or merged file: line delta + backup under .workingdir/adopt-backups when git ignores backup path. Other files audit never verifies: kept; delete one, rerun adopt to regenerate (default: false)"
+            "description": "Refresh, not reset. Full text: standards_tool_describe."
           },
           "path": {
             "type": "string",
@@ -33,7 +33,7 @@
           },
           "record_baseline": {
             "type": "boolean",
-            "description": "Record existing infractions into .standards-baseline.json when absent. Existing baseline: kept, rescanned, ratchet verdict reported, never rewritten; re-record = CLI only (praetorctl adopt --rerecord-baseline or praetorctl baseline --record). false skips scan (default: true)"
+            "description": "Record existing infractions into .standards-baseline.json when absent. Full text: standards_tool_describe."
           },
           "source_root": {
             "type": "string",
@@ -142,7 +142,7 @@
         "idempotentHint": true,
         "openWorldHint": false
       },
-      "description": "Analyze exact duplicates and verified compiler projections in selected context files. Return hashes, aliases and byte counts only; no writes, activation, contents, token estimates or per-turn savings claims.",
+      "description": "Analyze exact duplicates and verified compiler projections in selected context files. Full text: standards_tool_describe.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -498,7 +498,7 @@
         "properties": {
           "framework": {
             "type": "string",
-            "description": "Go target framework local checkout path; default: $PRAETOR_FRAMEWORK_DIR, else framework.targets.go.checkout, else framework.targets.go.contract, else framework.targets.go.module; \"\" selects declaration"
+            "description": "Go target framework local checkout path; default: $PRAETOR_FRAMEWORK_DIR, else framework.targets.go.checkout, else fr... Full text: standards_tool_describe."
           },
           "path": {
             "type": "string",
@@ -778,7 +778,7 @@
         "idempotentHint": true,
         "openWorldHint": false
       },
-      "description": "Read explicitly selected private wish and poll ledger, revision and tallies. Output: private wish contents plus asserted local voter identities for current client; no initialization or platform contact.",
+      "description": "Read explicitly selected private wish and poll ledger, revision and tallies. Full text: standards_tool_describe.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -804,7 +804,7 @@
         "properties": {
           "request_json": {
             "type": "string",
-            "description": "Strict JSON request: action init, add-wish, set-status, open-poll, vote, withdraw or close-poll. expected_revision required except init. Local actors: trusted assertions; authenticated platform users: no. See wishes-and-polls guide."
+            "description": "Strict JSON request: action init, add-wish, set-status, open-poll, vote, withdraw or close-poll. Full text: standards_tool_describe."
           },
           "store": {
             "type": "string",

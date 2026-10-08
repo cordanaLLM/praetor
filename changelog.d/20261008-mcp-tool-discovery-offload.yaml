@@ -1,4 +1,4 @@
 type: changed
-title: Keep the standards-mcp tool list byte-stable, add an index mode with a describe tool, and offload tool output over 16 KiB to a pointer line with a bounded read-back tool
+title: Make the standards-mcp tool list small and stable, and offload large tool output
 issue: "#853"
 breaking: false

@@ -69,21 +69,14 @@ func (s *Server) parsePublicDogfood(args map[string]any) (dogfood.PublicLoopOpti
 }
 
 func publicAttemptArgument(args map[string]any) (int, error) {
-	value, ok := args["max_attempts"]
-	if !ok {
+	value, present, whole := intArg(args, "max_attempts")
+	if !present {
 		return 2, nil
 	}
-	switch number := value.(type) {
-	case float64:
-		if number == 2 || number == 3 {
-			return int(number), nil
-		}
-	case int:
-		if number == 2 || number == 3 {
-			return number, nil
-		}
+	if !whole || (value != 2 && value != 3) {
+		return 0, fmt.Errorf("max_attempts must be the integer 2 or 3")
 	}
-	return 0, fmt.Errorf("max_attempts must be the integer 2 or 3")
+	return value, nil
 }
 
 func rejectPublicOnlyArgs(args map[string]any) error {

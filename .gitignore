@@ -74,12 +74,10 @@ all_github_repos.json
 /deploy/arc/
 /deploy/k8s/
 
-# standards-mcp offloaded tool output (internal/mcp/offload.go)
-/.standards/cache/
-
 # BEGIN praetor private artifacts (praetorctl adopt)
 /.workingdir/
 /.workingdir2/
 /.standards/worktrees/
 /.agents/mcp_config.json
+/.standards/cache/
 # END praetor private artifacts

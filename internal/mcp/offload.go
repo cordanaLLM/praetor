@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,9 +21,12 @@ import (
 )
 
 const (
-	// OffloadThresholdBytes is the default size above which one text item is written to
-	// the offload directory and replaced by a pointer line.
+	// OffloadThresholdBytes is the default size of all text items of one result above which
+	// the largest items are written to the offload directory and replaced by pointer lines.
 	OffloadThresholdBytes = 16 << 10
+	// OffloadDisabled is the Threshold value that turns offloading off: every result is
+	// served inline, up to the sanitizer bound.
+	OffloadDisabled = -1
 	// OffloadMaxFiles bounds the offload directory (HISS-02); the oldest files go first.
 	OffloadMaxFiles = 256
 	// OffloadHeadBytes is how much of the text the pointer line carries inline.
@@ -35,6 +40,19 @@ const (
 	OffloadMaxReadBytes = 12 << 10
 
 	offloadExt = ".txt"
+
+	// OffloadReadToolName names the tool that reads offloaded output back; pointer lines name
+	// it, and its own output is never offloaded.
+	OffloadReadToolName = "standards_output_read"
+
+	// offloadGitTimeout bounds the one git query that proves the cache directory is ignored
+	// (HISS-02).
+	offloadGitTimeout = 10 * time.Second
+	// offloadProbeDigest names the path that query asks about; any digest-shaped name is
+	// ignored by the same rule.
+	offloadProbeDigest = "0000000000000000000000000000000000000000000000000000000000000000"
+	// maxGitAncestors bounds the walk up from the root that looks for a git work tree.
+	maxGitAncestors = 256
 )
 
 var (
@@ -42,6 +60,13 @@ var (
 	ErrOffloadDigest = errors.New("mcp: offload digest must be 64 lowercase hex digits")
 	// ErrOffloadRange reports a read-back offset or limit outside the stored text.
 	ErrOffloadRange = errors.New("mcp: offload read range is invalid")
+	// ErrOffloadMissing reports a digest with no stored file, such as output evicted by the
+	// file cap or never offloaded.
+	ErrOffloadMissing = errors.New("mcp: offloaded output is not stored (evicted or never offloaded); rerun the tool")
+	// ErrOffloadUnreadable reports a stored file that could not be read back. The cause is
+	// dropped on purpose: it carries an absolute path, and the model sees repository-relative
+	// paths only.
+	ErrOffloadUnreadable = errors.New("mcp: offloaded output could not be read")
 
 	offloadDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
@@ -51,15 +76,16 @@ var (
 type Offloader struct {
 	// Root is the repository root the offload directory sits in.
 	Root string
-	// Threshold is the size in bytes above which a text item is offloaded; zero selects
-	// OffloadThresholdBytes.
+	// Threshold is the size in bytes of all text items of one result above which items are
+	// offloaded, largest first; zero selects OffloadThresholdBytes and OffloadDisabled
+	// turns offloading off.
 	Threshold int
 	// MaxFiles bounds the stored files; zero selects OffloadMaxFiles.
 	MaxFiles int
 }
 
 func (o Offloader) threshold() int {
-	if o.Threshold > 0 {
+	if o.Threshold != 0 {
 		return o.Threshold
 	}
 	return OffloadThresholdBytes
@@ -72,39 +98,140 @@ func (o Offloader) maxFiles() int {
 	return OffloadMaxFiles
 }
 
-// Apply returns res with every text item above the threshold replaced by a pointer line.
-// Call it on the output of SanitizeResult: the stored bytes are the sanitized bytes. res
-// is never modified. A write failure is returned, never served inline (no silent fallback).
-func (o Offloader) Apply(res *ToolResult) (*ToolResult, error) {
+// Serve makes the result of the tool named tool safe to serve: sanitize first, then offload,
+// so the stored bytes are the sanitized bytes. A successful read-back (OffloadReadToolName) is
+// exempt from both. Its chunk is a slice of text that was sanitized once when it was stored;
+// sanitizing the slice again would find word boundaries the cut created, so the chunks would
+// no longer join to the stored bytes and their sha256, and offloading it would point the
+// client at the file it just read. Read refuses a file that does not match its digest, so a
+// file edited in place after it was stored is never served; the cache is repository-local
+// state under the operator's control, trusted like the repository itself.
+func (o Offloader) Serve(ctx context.Context, tool string, res *ToolResult) (*ToolResult, error) {
 	if res == nil {
 		return nil, ErrNilResult
 	}
-	out := &ToolResult{Content: make([]ContentItem, len(res.Content)), IsError: res.IsError}
-	for i := 0; i < len(res.Content); i++ {
-		item := res.Content[i]
-		if len(item.Text) > o.threshold() {
-			pointer, err := o.store(item.Text)
-			if err != nil {
-				return nil, err
-			}
-			item.Text = pointer
-		}
-		out.Content[i] = item
+	if tool == OffloadReadToolName && !res.IsError {
+		return res, nil
 	}
+	safe, err := SanitizeResult(res)
+	if err != nil {
+		return nil, err
+	}
+	return o.Apply(ctx, safe)
+}
+
+// Apply returns res with the largest text items replaced by pointer lines until the text
+// of the whole call is at most the threshold. Call it on the output of SanitizeResult: the
+// stored bytes are the sanitized bytes. res is never modified. A write failure is returned,
+// never served inline (no silent fallback). Where git does not ignore the cache directory,
+// nothing is written and res is served inline with a notice item that names the
+// substitution, so offloaded output can never turn up as untracked files.
+func (o Offloader) Apply(ctx context.Context, res *ToolResult) (*ToolResult, error) {
+	if res == nil {
+		return nil, ErrNilResult
+	}
+	out := &ToolResult{Content: slices.Clone(res.Content), IsError: res.IsError}
+	total := 0
+	for i := 0; i < len(out.Content); i++ {
+		total += len(out.Content[i].Text)
+	}
+	if o.threshold() < 0 || total <= o.threshold() {
+		return out, nil
+	}
+	skipped, err := o.prepare(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if skipped != "" {
+		return withOffloadNotice(out, skipped)
+	}
+	return out, o.offloadLargest(out, total)
+}
+
+// offloadLargest replaces text items of out, largest first, until total, the byte count of
+// all items, is at most the threshold. Equal sizes go in item order.
+func (o Offloader) offloadLargest(out *ToolResult, total int) error {
+	order := make([]int, len(out.Content))
+	for i := 0; i < len(order); i++ {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return len(out.Content[order[a]].Text) > len(out.Content[order[b]].Text)
+	})
+	for i := 0; i < len(order) && total > o.threshold(); i++ {
+		item := &out.Content[order[i]]
+		pointer, err := o.store(item.Text)
+		if err != nil {
+			return err
+		}
+		total += len(pointer) - len(item.Text)
+		item.Text = pointer
+	}
+	return nil
+}
+
+// withOffloadNotice appends the notice that offloading was skipped, as an item of its own so
+// a structured first item stays parseable.
+func withOffloadNotice(out *ToolResult, reason string) (*ToolResult, error) {
+	if len(out.Content) >= MaxResultContentItems {
+		return nil, fmt.Errorf("%w: no room for the offload notice (%s)", ErrResultTooLarge, reason)
+	}
+	out.Content = append(out.Content, ContentItem{Type: "text", Text: "[offload skipped] " + reason +
+		"; the output above is inline. Add /" + OffloadCacheDir + "/ to .gitignore (praetorctl adopt writes it), then retry."})
 	return out, nil
 }
 
-// store writes text content-addressed and returns its pointer line.
-func (o Offloader) store(text string) (string, error) {
-	sum := sha256.Sum256([]byte(text))
-	digest := hex.EncodeToString(sum[:])
-	rel := filepath.Join(filepath.FromSlash(OffloadDir), digest+offloadExt)
+// prepare creates the offload directory and its self-ignoring .gitignore, then proves git
+// ignores the cache path. A non-empty reason means offloading must not write; err is an I/O
+// failure. A root outside any git work tree has no status to pollute and passes.
+func (o Offloader) prepare(ctx context.Context) (reason string, err error) {
 	if err := util.MkdirConfined(o.Root, filepath.FromSlash(OffloadDir), util.SecureDirPerm); err != nil {
 		return "", fmt.Errorf("mcp: create offload directory: %w", err)
 	}
 	if err := o.ensureSelfIgnore(); err != nil {
 		return "", err
 	}
+	if !insideGitWorkTree(o.Root) {
+		return "", nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, offloadGitTimeout)
+	defer cancel()
+	probe := path.Join(OffloadDir, offloadProbeDigest+offloadExt)
+	ignored, err := util.GitIgnoredPaths(ctx, o.Root, []string{probe}, true)
+	switch {
+	case err != nil:
+		return "git could not be asked whether " + OffloadCacheDir + " is ignored", nil
+	case !slices.Contains(ignored, probe):
+		return "git does not ignore " + OffloadCacheDir, nil
+	}
+	return "", nil
+}
+
+// insideGitWorkTree reports whether root or one of its parents holds a .git entry.
+func insideGitWorkTree(root string) bool {
+	dir := filepath.Clean(root)
+	for i := 0; i < maxGitAncestors; i++ {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+	return false
+}
+
+// store writes text content-addressed and returns its pointer line. The directory and its
+// ignore file exist already (prepare).
+func (o Offloader) store(text string) (string, error) {
+	if err := checkTextBound(len(text)); err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(text))
+	digest := hex.EncodeToString(sum[:])
+	rel := filepath.Join(filepath.FromSlash(OffloadDir), digest+offloadExt)
 	err := util.WriteFileConfinedExclusive(o.Root, rel, []byte(text), util.SecureFilePerm)
 	switch {
 	case err == nil:
@@ -157,8 +284,8 @@ func pointerLine(digest, text string) string {
 			head = head[:len(head)-1]
 		}
 	}
-	return fmt.Sprintf("[offloaded] path=%s bytes=%d sha256=%s head=%s",
-		path.Join(OffloadDir, digest+offloadExt), len(text), digest, strconv.Quote(head))
+	return fmt.Sprintf("[offloaded] path=%s bytes=%d sha256=%s read=%s head=%s",
+		path.Join(OffloadDir, digest+offloadExt), len(text), digest, OffloadReadToolName, strconv.Quote(head))
 }
 
 type offloadEntry struct {
@@ -232,8 +359,16 @@ func (o Offloader) Read(digest string, offset, limit int) (chunk string, next, t
 	}
 	rel := filepath.Join(filepath.FromSlash(OffloadDir), digest+offloadExt)
 	data, err := util.ReadConfinedLimited(o.Root, rel, MaxResultTextBytes)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", 0, 0, fmt.Errorf("%w: %s", ErrOffloadMissing, path.Join(OffloadDir, digest+offloadExt))
+	}
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("mcp: read offloaded output %s: %w", digest, err)
+		return "", 0, 0, fmt.Errorf("%w: %s", ErrOffloadUnreadable, path.Join(OffloadDir, digest+offloadExt))
+	}
+	if sum := sha256.Sum256(data); hex.EncodeToString(sum[:]) != digest {
+		// The file name is the digest of its content. A file that no longer matches was
+		// replaced after it was stored, and it is served unsanitized, so it is refused.
+		return "", 0, 0, fmt.Errorf("%w: %s does not match its digest", ErrOffloadUnreadable, path.Join(OffloadDir, digest+offloadExt))
 	}
 	total = len(data)
 	if offset > total {
@@ -246,17 +381,29 @@ func (o Offloader) Read(digest string, offset, limit int) (chunk string, next, t
 // runeAligned returns text[start:end] with both ends moved inward to rune boundaries, and
 // the aligned end.
 func runeAligned(text string, start, end int) (string, int) {
-	for start < end && start < len(text) && !utf8.RuneStart(text[start]) {
-		start++
-	}
-	for end < len(text) && end > start && !utf8.RuneStart(text[end]) {
-		end--
-	}
+	start = runeStartFrom(text, start, end)
+	end = runeStartBefore(text, start, end)
 	if end == start && start < len(text) {
 		// A limit smaller than one rune still advances by that rune.
 		end = oneRuneEnd(text, start)
 	}
 	return text[start:end], end
+}
+
+// runeStartFrom moves start forward to the first rune boundary, never past end.
+func runeStartFrom(text string, start, end int) int {
+	for start < end && start < len(text) && !utf8.RuneStart(text[start]) {
+		start++
+	}
+	return start
+}
+
+// runeStartBefore moves end back to a rune boundary, never below start.
+func runeStartBefore(text string, start, end int) int {
+	for end < len(text) && end > start && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return end
 }
 
 // oneRuneEnd returns the end offset of the rune starting at start.

@@ -342,27 +342,47 @@ with the production extractor. The form rules are in the
 sorted, the server version stays out of it, and `initialize` declares
 `tools.listChanged: false`. `TestToolsListGoldenFullMode` and
 `TestToolsListGoldenIndexMode` pin the bytes against
-`internal/mcp/testdata/*.golden.json`; a tool or schema edit fails them until the
-reviewer accepts the new bytes with `PRAETOR_UPDATE_GOLDEN=1 go test ./cmd/standards-mcp`.
+`cmd/standards-mcp/testdata/*.golden.json` through `testsupport.AssertGolden`, which
+folds CRLF; `.gitattributes` also pins the files to LF. A tool or schema edit fails the
+tests until the reviewer accepts the new bytes with
+`PRAETOR_UPDATE_GOLDEN=1 go test ./cmd/standards-mcp`.
 
-`standards-mcp -tools=full` (default) lists every tool with its schema, about 20 KB.
+`standards-mcp -tools=full` (default) lists every tool with its schema, about 18.9 KB.
 `-tools=index` lists `standards_tools_index`, `standards_tool_describe`,
-`standards_audit` and `standards_compile_context`, about 2.5 KB. The index returns
-one `name | summary | annotations` line per tool; `standards_tool_describe {name}`
-returns the full descriptor. `tools/call` accepts every registered tool in both modes
-(`TestToolsListIndexModeShrinksAndCallStillWorks`).
+`standards_output_read`, `standards_audit` and `standards_compile_context`, about
+3.2 KB. A description above 200 bytes, of a tool or of one property, is cut to its
+summary in `tools/list` and ends with a pointer to `standards_tool_describe`, which
+returns the full descriptor (`TestListedDescriptionsMoveProseToDescribe`). The index
+returns one `name | summary | annotations` line per tool. `tools/call` accepts every
+registered tool in both modes (`TestToolsListIndexModeShrinksAndCallStillWorks`).
 
-Text above 16 KiB in one result item is written, after `SanitizeResult` ran, to
-`.standards/cache/mcp-out/<sha256>.txt` (private mode, at most 256 files, oldest
-removed first) and replaced by one line:
-`[offloaded] path=<repo-relative, forward slashes> bytes=<n> sha256=<hex> head=<first 400 bytes, quoted>`.
+When the text of one result exceeds 16 KiB in all, the largest items are written, after
+`SanitizeResult` ran, to `.standards/cache/mcp-out/<sha256>.txt` (private mode, at most
+256 files, oldest removed first) and replaced by one line:
+`[offloaded] path=<repo-relative, forward slashes> bytes=<n> sha256=<hex> read=standards_output_read head=<first 400 bytes, quoted>`.
 Equal bytes give the same file and the same line. `standards_output_read {sha256, offset, limit}`
 reads it back, 12 KiB per call, and answers `next_offset`; only a 64-digit lowercase hex
-digest names a file, so no path argument can leave the directory
-(`internal/mcp/offload_test.go`). The 4 MiB sanitizer cap is unchanged. The first offload
-writes `.standards/cache/.gitignore` containing `*`, so output never appears as untracked
-files in an adopter repository (`TestOffloadLeavesGitStatusClean`); an existing file there
-is kept as is.
+digest names a file, a file that no longer matches its digest is refused, and errors name
+repository-relative paths only (an evicted pointer says to rerun the tool). A chunk is a
+verbatim slice of the stored bytes: it is not sanitized a second time, because the stored
+text was sanitized once (`TestReadBackServesStoredBytesUnchanged`). The 4 MiB bound holds
+for the sanitized bytes too, since neutralizing lengthens text.
+
+The threshold is the `mcp.offload_threshold_bytes` key of `.standards.yaml`, read at server
+start through the manifest loader: absent keeps 16 KiB, `0` turns offloading off (every
+result is served inline up to 4 MiB), any other value lies in 1024..4194304. A manifest the
+loader refuses stops the server instead of selecting the default.
+
+Offloading never leaves files for git to list. The first offload writes
+`.standards/cache/.gitignore` containing `*`, and `praetorctl adopt` adds
+`/.standards/cache/` to the managed `.gitignore` block, so an existing block gains the rule on
+the next run. Before it writes, the server asks git whether the cache path is ignored; where
+it is not (an operator-edited ignore file, or no answer from git), nothing is written and the
+result is served inline with an `[offload skipped]` notice item
+(`TestOffloadRefusesWhereGitDoesNotIgnoreTheCache`). A root outside any git work tree needs no
+such proof. A write failure, such as a read-only root, still withholds the result with an
+error instead of serving it inline silently; set `mcp.offload_threshold_bytes: 0` for a
+checkout the server cannot write to.
 
 ### Shared audit authority and parity
 

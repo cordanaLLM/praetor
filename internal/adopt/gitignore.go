@@ -14,6 +14,10 @@ import (
 // tracked.
 const agyWorkspaceIgnore = "/.agents/mcp_config.json"
 
+// mcpOutputCacheIgnore is the cache directory standards-mcp offloads large tool output to
+// (internal/mcp.OffloadCacheDir). It is host-local output and is never tracked.
+const mcpOutputCacheIgnore = "/.standards/cache/"
+
 const (
 	gitIgnoreManagedBegin = "# BEGIN praetor private artifacts (praetorctl adopt)"
 	gitIgnoreManagedEnd   = "# END praetor private artifacts"
@@ -23,11 +27,12 @@ const (
 // managedIgnoreRules are the ignore rules of the managed block, in block order: the
 // private session ledger, the legacy scratch root, the container for the isolated gate
 // worktrees, whose leftovers would otherwise be scanned as repository content and would
-// keep the tree dirty for receipt minting, and the per-host AGY workspace configuration.
+// keep the tree dirty for receipt minting, the per-host AGY workspace configuration, and the
+// standards-mcp output cache.
 // Adoption guarantees each in every adopted repository, except that a repository may
 // retire legacyScratchIgnore (keepsLegacyScratch). The whole list is also the set of
 // unmarked lines Praetor's former format wrote.
-var managedIgnoreRules = []string{"/.workingdir/", legacyScratchIgnore, "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore}
+var managedIgnoreRules = []string{"/.workingdir/", legacyScratchIgnore, "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore, mcpOutputCacheIgnore}
 
 // gitIgnoreTailBlock is the private-artifact block adoption owns at the tail of .gitignore.
 // Exact unmarked rules Praetor's former format wrote are migrated into it.

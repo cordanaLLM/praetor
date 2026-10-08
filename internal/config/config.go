@@ -274,6 +274,10 @@ type Manifest struct {
 	// and build markers (VerificationPolicy), for every run that walks it: adoption, `praetorctl
 	// paperclip harness` and the audit's Paperclip gate. It is repository-only, like Documentation.
 	Verification *VerificationPolicy `yaml:"verification,omitempty"`
+	// MCP tunes the standards-mcp server for this repository: the size above which a tool
+	// result is offloaded to a pointer line, or 0 to serve every result inline (MCPPolicy). It
+	// is repository-only, like Verification.
+	MCP *MCPPolicy `yaml:"mcp,omitempty"`
 	// DocsSurfaces maps the repository's user-facing surfaces to the documentation that
 	// describes them; `praetorctl docs references --base=<rev>` fails a change that touches a
 	// surface without its documentation (#608). It is repository-only, like Register and HISS.
