@@ -70,31 +70,102 @@ type umbrellaUse struct {
 	refs map[string]map[string]struct{}
 }
 
-// inspectUmbrellaImports reports the imports of the selected go framework's umbrella packages
-// in every Go project of repo. A project whose scan failed (failed) is skipped: the report
-// already lists it. A framework that is not configured, or not a go framework, has none.
-func inspectUmbrellaImports(ctx context.Context, repo *fleetRepo, failed []SubprojectFailure, framework *FrameworkIndex) ([]UmbrellaFinding, error) {
-	if repo == nil || framework == nil || framework.Name == "" || !isGoEcosystem(framework.Ecosystem) {
-		return nil, nil
+func shouldInspectUmbrellas(repo *fleetRepo, framework *FrameworkIndex) bool {
+	return repo != nil && framework != nil && framework.Name != "" && isGoEcosystem(framework.Ecosystem)
+}
+
+func skippedSubprojects(report *RepoNeeds) map[string]bool {
+	if report == nil {
+		return nil
 	}
-	skipped := make(map[string]bool, len(failed))
-	for _, failure := range failed {
+	skipped := make(map[string]bool, len(report.FailedSubprojects))
+	for _, failure := range report.FailedSubprojects {
 		skipped[failure.Dir] = true
 	}
+	return skipped
+}
+
+// inspectUmbrellaImports reports the imports of the selected go framework's umbrella packages
+// in every Go project of repo. A project whose scan failed is skipped: the report already
+// lists it. A framework that is not configured, or not a go framework, has none.
+func inspectUmbrellaImports(ctx context.Context, repo *fleetRepo, report *RepoNeeds, framework *FrameworkIndex) ([]UmbrellaFinding, error) {
+	if !shouldInspectUmbrellas(repo, framework) {
+		return nil, nil
+	}
 	candidates := umbrellaCandidates(framework)
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	skipped := skippedSubprojects(report)
+	cache := newModuleGraphCache()
 	var findings []UmbrellaFinding
 	for _, dir := range repo.subprojects {
 		project := relativeTo(repo.root, []string{dir})[0]
-		if skipped[project] || !util.FileExists(filepath.Join(dir, "go.mod")) {
+		if skipped[project] || !util.FileExists(filepath.Join(dir, "go.mod")) || !projectImportsCandidate(report, project, candidates) {
 			continue
 		}
-		found, err := inspectProjectUmbrellas(ctx, dir, project, framework, candidates)
+		found, err := inspectProjectUmbrellas(ctx, dir, project, framework, candidates, cache)
 		if err != nil {
 			return nil, err
 		}
 		findings = append(findings, found...)
 	}
-	return findings, nil
+	return aggregateUnknownUmbrellas(findings), nil
+}
+
+func projectImportsCandidate(report *RepoNeeds, project string, candidates map[string]*FrameworkUmbrella) bool {
+	if report == nil {
+		return true
+	}
+	var imports []string
+	if report.ProjectImports != nil {
+		imports = report.ProjectImports[project]
+	}
+	if len(imports) == 0 && project == "." {
+		imports = report.Imports
+	}
+	if len(imports) == 0 && report.ProjectImports == nil && len(report.Imports) == 0 {
+		return true
+	}
+	for _, imp := range imports {
+		if _, ok := candidates[imp]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func aggregateUnknownUmbrellas(findings []UmbrellaFinding) []UmbrellaFinding {
+	unknown := make(map[string]*UmbrellaFinding)
+	var out []UmbrellaFinding
+	for _, f := range findings {
+		if f.Status != UmbrellaUnknown {
+			out = append(out, f)
+			continue
+		}
+		existing, ok := unknown[f.Umbrella]
+		if !ok {
+			clone := f
+			unknown[f.Umbrella] = &clone
+			out = append(out, clone)
+			continue
+		}
+		for _, file := range f.Files {
+			existing.Files = appendUniqueStr(existing.Files, file)
+		}
+		slices.Sort(existing.Files)
+		if existing.Project != f.Project {
+			existing.Project = "."
+		}
+	}
+	for i := range out {
+		if out[i].Status == UmbrellaUnknown {
+			if aggregated, ok := unknown[out[i].Umbrella]; ok {
+				out[i] = *aggregated
+			}
+		}
+	}
+	return out
 }
 
 func isGoEcosystem(ecosystem string) bool {
@@ -105,6 +176,9 @@ func isGoEcosystem(ecosystem string) bool {
 // description: each umbrella the contract describes, and the framework's root package,
 // undescribed (nil) unless the contract describes it or declares it an ordinary package.
 func umbrellaCandidates(framework *FrameworkIndex) map[string]*FrameworkUmbrella {
+	if framework == nil || framework.Contract == "" {
+		return nil
+	}
 	candidates := make(map[string]*FrameworkUmbrella, len(framework.Umbrellas)+1)
 	for importPath := range framework.Umbrellas {
 		described := framework.Umbrellas[importPath]
@@ -120,7 +194,7 @@ func umbrellaCandidates(framework *FrameworkIndex) map[string]*FrameworkUmbrella
 // inspectProjectUmbrellas judges every umbrella candidate the Go project at dir imports. The
 // framework's own modules import it natively and are never judged.
 func inspectProjectUmbrellas(ctx context.Context, dir, project string, framework *FrameworkIndex,
-	candidates map[string]*FrameworkUmbrella) ([]UmbrellaFinding, error) {
+	candidates map[string]*FrameworkUmbrella, cache *moduleGraphCache) ([]UmbrellaFinding, error) {
 	module, err := parseGoMod(filepath.Join(dir, "go.mod"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse go.mod of %s: %w", project, err)
@@ -141,7 +215,7 @@ func inspectProjectUmbrellas(ctx context.Context, dir, project string, framework
 			finding.Files = append(finding.Files, path.Join(project, file))
 		}
 		if finding.Status == UmbrellaRecommend {
-			measurement, err := measureUmbrellaSwitch(ctx, dir, umbrellaPath, finding.Unmapped, umbrellaReplacements(umbrella, use))
+			measurement, err := measureUmbrellaSwitch(ctx, dir, umbrellaPath, finding.Unmapped, umbrellaReplacements(umbrella, use), cache)
 			if err != nil {
 				return nil, err
 			}

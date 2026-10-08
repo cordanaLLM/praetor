@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -396,16 +397,29 @@ func mergeSubprojectScans(ctx context.Context, repo *fleetRepo, registry *Analyz
 		if dir != repo.root {
 			scan.nested = append(scan.nested, dir)
 		}
+		proj := relativeTo(repo.root, []string{dir})[0]
 		if scan.row == nil {
 			scan.row = sub
+			recordProjectImports(scan.row, proj, sub.Imports)
 			continue
 		}
+		recordProjectImports(scan.row, proj, sub.Imports)
 		mergeRepoNeeds(scan.row, sub)
 	}
 	if scan.row == nil {
 		return nil, noSubprojectScannedError(repo.root, scan.failed)
 	}
 	return scan, nil
+}
+
+func recordProjectImports(row *RepoNeeds, project string, imports []string) {
+	if row == nil || len(imports) == 0 {
+		return
+	}
+	if row.ProjectImports == nil {
+		row.ProjectImports = make(map[string][]string)
+	}
+	row.ProjectImports[project] = slices.Clone(imports)
 }
 
 // noSubprojectScannedError reports a repository in which every sub-project failed.

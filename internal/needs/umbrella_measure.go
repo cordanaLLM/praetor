@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -48,6 +49,32 @@ type UmbrellaMeasurement struct {
 	PackagesAfter  int    `json:"packages_after,omitempty"`
 }
 
+// moduleGraphCache caches the module graph listing per project directory within one report run.
+type moduleGraphCache struct {
+	listings map[string][]byte
+	errors   map[string]error
+}
+
+func newModuleGraphCache() *moduleGraphCache {
+	return &moduleGraphCache{
+		listings: make(map[string][]byte),
+		errors:   make(map[string]error),
+	}
+}
+
+func (c *moduleGraphCache) list(ctx context.Context, dir string) ([]byte, error) {
+	if c == nil {
+		return listModuleGraph(ctx, dir)
+	}
+	if listing, ok := c.listings[dir]; ok {
+		return listing, c.errors[dir]
+	}
+	listing, err := listModuleGraph(ctx, dir)
+	c.listings[dir] = listing
+	c.errors[dir] = err
+	return listing, err
+}
+
 func notMeasured(reason string) UmbrellaMeasurement {
 	return UmbrellaMeasurement{Reason: reason}
 }
@@ -56,22 +83,43 @@ func notMeasured(reason string) UmbrellaMeasurement {
 // reports it, against the same graph with every project package's umbrella import replaced
 // by its replacements. An identifier no grouping describes keeps the umbrella import, so the
 // switch is not measured. Only a cancelled caller context is an error.
-func measureUmbrellaSwitch(ctx context.Context, dir, umbrella string, unmapped []string, replacements map[string][]string) (UmbrellaMeasurement, error) {
+func measureUmbrellaSwitch(ctx context.Context, dir, umbrella string, unmapped []string, replacements map[string][]string, cache ...*moduleGraphCache) (UmbrellaMeasurement, error) {
 	if len(unmapped) > 0 {
 		return notMeasured(fmt.Sprintf("the umbrella import stays for %s, which no grouping describes", strings.Join(unmapped, ", "))), nil
 	}
-	listing, err := listModuleGraph(ctx, dir)
+	var c *moduleGraphCache
+	if len(cache) > 0 {
+		c = cache[0]
+	}
+	listing, err := c.list(ctx, dir)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return UmbrellaMeasurement{}, ctxErr
 		}
-		return notMeasured("module graph unavailable offline: " + measurementReason(err)), nil
+		return notMeasured(classifyModuleGraphError(err)), nil
 	}
 	graph, err := parseModuleGraph(listing, maxModuleGraphPackages)
 	if err != nil {
 		return notMeasured(err.Error()), nil
 	}
 	return graph.measureSwitch(umbrella, replacements), nil
+}
+
+// classifyModuleGraphError classifies a go list failure into its cause.
+func classifyModuleGraphError(err error) string {
+	reason := measurementReason(err)
+	lower := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, exec.ErrNotFound) || strings.Contains(lower, "executable file not found"):
+		return "go binary not found: " + reason
+	case strings.Contains(lower, "cannot run toolchain") || strings.Contains(lower, "toolchain refused") || strings.Contains(lower, "gotoolchain=local"):
+		return "toolchain refused by GOTOOLCHAIN=local: " + reason
+	case strings.Contains(lower, "goproxy=off") || strings.Contains(lower, "go.sum") ||
+		strings.Contains(lower, "module lookup disabled") || strings.Contains(lower, "updates to go.mod needed"):
+		return "module graph unavailable offline: " + reason
+	default:
+		return "go list failed: " + reason
+	}
 }
 
 // measurementReason renders a go list failure on one bounded line.

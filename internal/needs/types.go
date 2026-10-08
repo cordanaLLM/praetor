@@ -148,6 +148,10 @@ type RepoNeeds struct {
 	// (umbrella.go). They depend on the selected framework and are never written into a
 	// .needs.yaml manifest.
 	UmbrellaImports []UmbrellaFinding `json:"umbrella_imports,omitempty" yaml:"-"`
+	// Imports holds the raw Go import paths observed during AST analysis.
+	Imports []string `json:"imports,omitempty" yaml:"-"`
+	// ProjectImports maps each Go project directory (relative to repo root) to its observed imports.
+	ProjectImports map[string][]string `json:"project_imports,omitempty" yaml:"-"`
 }
 
 // SubprojectFailure names a nested sub-project whose scan failed, with the error.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -249,6 +250,17 @@ func mergeRepoNeeds(dst, src *RepoNeeds) {
 	dst.NonGoals = mergeNonGoals(dst.NonGoals, src.NonGoals)
 	for _, deprecation := range src.Deprecations {
 		dst.Deprecations = appendUniqueStr(dst.Deprecations, deprecation)
+	}
+	for _, imp := range src.Imports {
+		dst.Imports = appendUniqueStr(dst.Imports, imp)
+	}
+	if src.ProjectImports != nil {
+		if dst.ProjectImports == nil {
+			dst.ProjectImports = make(map[string][]string, len(src.ProjectImports))
+		}
+		for p, imps := range src.ProjectImports {
+			dst.ProjectImports[p] = slices.Clone(imps)
+		}
 	}
 	calculateReadiness(dst)
 }

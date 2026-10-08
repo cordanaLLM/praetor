@@ -82,7 +82,7 @@ func ReportRepoWithFramework(ctx context.Context, repoPath string, framework *Fr
 	if err != nil {
 		return nil, err
 	}
-	findings, err := inspectUmbrellaImports(ctx, repo, report.FailedSubprojects, framework)
+	findings, err := inspectUmbrellaImports(ctx, repo, report, framework)
 	if err != nil {
 		return nil, fmt.Errorf("inspect umbrella imports: %w", err)
 	}

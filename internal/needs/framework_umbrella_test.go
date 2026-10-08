@@ -16,12 +16,25 @@ func TestContractUmbrellaValidation_3D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid umbrella contract refused: %v", err)
 	}
-	umbrellas := indexUmbrellas(contract.Umbrellas)
-	if got := umbrellas["example.com/kit"]; len(got.Groupings) != 3 || got.Groupings[1].Name != "HTTP" ||
-		!slices.Equal(got.Groupings[1].Packages, []string{"example.com/kit/httpx"}) {
+	assertIndexedUmbrellaKit(t, indexUmbrellas(contract.Umbrellas))
+	assertMalformedContractUmbrellaCases(t)
+	assertDuplicateContractUmbrellaRefused(t)
+}
+
+func assertIndexedUmbrellaKit(t *testing.T, umbrellas map[string]FrameworkUmbrella) {
+	t.Helper()
+	got := umbrellas["example.com/kit"]
+	if len(got.Groupings) != 3 || got.Groupings[1].Name != "HTTP" {
 		t.Fatalf("indexed umbrella = %+v", got)
 	}
-	for name, tc := range map[string]struct{ old, new, want string }{
+	if !slices.Equal(got.Groupings[1].Packages, []string{"example.com/kit/httpx"}) {
+		t.Fatalf("indexed umbrella = %+v", got)
+	}
+}
+
+func assertMalformedContractUmbrellaCases(t *testing.T) {
+	t.Helper()
+	cases := map[string]struct{ old, new, want string }{
 		"outside":    {"  - import: example.com/kit\n    groupings:", "  - import: example.org/other\n    groupings:", "is outside"},
 		"undeclared": {"packages: [example.com/kit/config]", "packages: [example.com/kit/missing]", "no package the contract declares"},
 		"itself":     {"packages: [example.com/kit/config]", "packages: [example.com/kit]", "the umbrella itself"},
@@ -31,7 +44,8 @@ func TestContractUmbrellaValidation_3D(t *testing.T) {
 		"name":       {"    groupings:\n      - name: Core", "    name: kit-fx\n    groupings:\n      - name: Core", "not a Go package name"},
 		"blank name": {"    groupings:\n      - name: Core", "    name: _\n    groupings:\n      - name: Core", "not a Go package name"},
 		"ecosystem":  {"framework: example.com/kit\n", "framework: example.com/kit\necosystem: npm\n", "a npm contract cannot carry them"},
-	} {
+	}
+	for name, tc := range cases {
 		raw := strings.Replace(umbrellaContract, tc.old, tc.new, 1)
 		if raw == umbrellaContract {
 			t.Fatalf("%s: fixture replacement did not apply", name)
@@ -40,6 +54,10 @@ func TestContractUmbrellaValidation_3D(t *testing.T) {
 			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
 		}
 	}
+}
+
+func assertDuplicateContractUmbrellaRefused(t *testing.T) {
+	t.Helper()
 	duplicate := umbrellaContract + "  - import: example.com/kit\n    groupings:\n      - name: Core\n        packages: [example.com/kit/config]\n"
 	if _, err := parseFrameworkContract([]byte(duplicate), ""); err == nil || !strings.Contains(err.Error(), "described twice") {
 		t.Errorf("duplicate umbrella: err = %v", err)
@@ -87,6 +105,17 @@ func TestContractUmbrellaBounds_3D(t *testing.T) {
 // is listed as skipped, and a fork's rebased contract moves every umbrella path.
 func TestContractUmbrellaExportAndRebase_3D(t *testing.T) {
 	path := writeFixture(t, t.TempDir(), "kit.capabilities.yaml", umbrellaContract)
+	original, err := parseFrameworkContract([]byte(umbrellaContract), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertUmbrellaExportRoundtrip(t, path, original)
+	assertUmbrellaExportPartial(t, original)
+	assertUmbrellaRebase(t, original)
+}
+
+func assertUmbrellaExportRoundtrip(t *testing.T, path string, original *frameworkContract) {
+	t.Helper()
 	export, err := ExportFrameworkContract(t.Context(), "go", FrameworkSource{Contract: path}, Targets{})
 	if err != nil {
 		t.Fatal(err)
@@ -95,22 +124,26 @@ func TestContractUmbrellaExportAndRebase_3D(t *testing.T) {
 	if err := yaml.Unmarshal(export.Data, &exported); err != nil {
 		t.Fatal(err)
 	}
-	original, err := parseFrameworkContract([]byte(umbrellaContract), "")
-	if err != nil {
-		t.Fatal(err)
-	}
 	if !slices.EqualFunc(exported.Umbrellas, original.Umbrellas, umbrellaEqual) || len(export.Skipped) != 0 {
 		t.Fatalf("export lost umbrellas: %+v (skipped %v)", exported.Umbrellas, export.Skipped)
 	}
+}
+
+func assertUmbrellaExportPartial(t *testing.T, original *frameworkContract) {
+	t.Helper()
 	var skipped []string
 	partial := contractUmbrellas(indexUmbrellas(original.Umbrellas), original.Packages[:1], &skipped)
 	if len(partial) != 1 || len(partial[0].Groupings) != 1 || partial[0].Groupings[0].Name != "Core" || len(skipped) != 2 {
 		t.Fatalf("partial export = %+v, skipped %v", partial, skipped)
 	}
-	if none := contractUmbrellas(indexUmbrellas(original.Umbrellas), nil, &skipped); len(none) != 0 ||
-		!strings.Contains(skipped[len(skipped)-1], "no grouping lists an exported package") {
+	none := contractUmbrellas(indexUmbrellas(original.Umbrellas), nil, &skipped)
+	if len(none) != 0 || !strings.Contains(skipped[len(skipped)-1], "no grouping lists an exported package") {
 		t.Fatalf("an umbrella without exported packages was kept: %+v %v", none, skipped)
 	}
+}
+
+func assertUmbrellaRebase(t *testing.T, original *frameworkContract) {
+	t.Helper()
 	fork := original.rebase("example.org/fork")
 	if fork.Umbrellas[0].Import != "example.org/fork" || fork.Umbrellas[0].Groupings[2].Packages[0] != "example.org/fork/store" ||
 		original.Umbrellas[0].Import != "example.com/kit" {
@@ -130,6 +163,7 @@ func umbrellaEqual(a, b contractUmbrella) bool {
 // A checkout of a fork observed against the configured contract judges imports of its own
 // umbrella path.
 func TestContractUmbrellaObservedFork(t *testing.T) {
+	offlineGo(t)
 	path := writeFixture(t, t.TempDir(), "kit.capabilities.yaml", umbrellaContract)
 	fork := t.TempDir()
 	writeFixture(t, fork, "go.mod", "module example.org/fork\n\ngo 1.22\n")
