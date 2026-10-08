@@ -163,3 +163,63 @@ func TestMergeDocumentationMakefileRemadeIncludeRefuses(t *testing.T) {
 		t.Errorf("fragment with no source beside it refused: %v", err)
 	}
 }
+
+// TestMergeDocumentationMakefileRemadeIncludeSpellings covers the spellings Make treats alike
+// (GNU Make 4.4.1 strips a leading "./" from include operands and targets) and the suffix rules
+// that build an include from a neighbour of another suffix: each stays ambiguous and refuses.
+func TestMergeDocumentationMakefileRemadeIncludeSpellings(t *testing.T) {
+	cases := []struct {
+		name, makefile string
+		files          map[string]string
+	}{
+		{"dot operand, plain target", "include ./gen.mk\ngen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.mk": "help:\n"}},
+		{"plain operand, dot target", "include gen.mk\n./gen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.mk": "help:\n"}},
+		{"custom suffix rule", ".SUFFIXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.mk": "help:\n", "gen.in": "x\n"}},
+		{"built-in suffix rule", "include gen.s\n", map[string]string{"gen.s": "help:\n", "gen.S": "x\n"}},
+		{"built-in suffix without neighbour", "include gen.s\n", map[string]string{"gen.s": "help:\n"}},
+	}
+	for _, tc := range cases {
+		tracked := "gen.mk"
+		if _, ok := tc.files["gen.s"]; ok {
+			tracked = "gen.s"
+		}
+		s := includeRepo(t, tc.files, tracked)
+		if _, err := mergeWithIncludes(s, tc.makefile); err == nil {
+			t.Errorf("%s: include followed", tc.name)
+		}
+	}
+	s := includeRepo(t, map[string]string{"gen.mk": "help:\n"}, "gen.mk")
+	if _, err := mergeWithIncludes(s, "include ./gen.mk\n"); err != nil {
+		t.Errorf("dot-prefixed literal include with no rule refused: %v", err)
+	}
+}
+
+// TestReconcileMakefileFollowsTrackedIncludeThroughSession drives the production entry point
+// (reconcileMakefile, the adopt path) so a regression in the wiring of the expander is caught.
+func TestReconcileMakefileFollowsTrackedIncludeThroughSession(t *testing.T) {
+	makefile := "include shared.mk\n\n.PHONY: verify-all\nverify-all: lint\n"
+	s := includeDocsSession(t, map[string]string{makefileName: makefile, "shared.mk": "lint:\n\t@true\n"}, AdoptOptions{})
+	if err := reconcileMakefile(t.Context(), s); err != nil {
+		t.Fatalf("tracked include refused through the session: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(s.repoPath, makefileName)); !strings.Contains(got, DocumentationMakefileBlock()) || !strings.HasPrefix(got, makefile) {
+		t.Fatalf("block not attached:\n%s", got)
+	}
+	bad := includeDocsSession(t, map[string]string{makefileName: makefile, "shared.mk": "docs-lint:\n\t@true\n"}, AdoptOptions{})
+	if err := reconcileMakefile(t.Context(), bad); err == nil {
+		t.Fatal("fragment defining docs-lint accepted through the session")
+	}
+	untracked := includeDocsSession(t, map[string]string{makefileName: makefile}, AdoptOptions{})
+	mustWrite(t, filepath.Join(untracked.repoPath, "shared.mk"), "lint:\n")
+	if err := reconcileMakefile(t.Context(), untracked); err == nil {
+		t.Fatal("untracked include accepted through the session")
+	}
+}
+
+// includeDocsSession is docsSession with a declared verification plan, which reconcileMakefile reads.
+func includeDocsSession(t *testing.T, files map[string]string, opts AdoptOptions) *adoptSession {
+	t.Helper()
+	s := docsSession(t, files, opts)
+	s.verification = &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"go", "build", "./..."}}, Test: [][]string{{"go", "test", "./..."}}}
+	return s
+}

@@ -203,8 +203,10 @@ refuses: `-include`, `sinclude`, `load`, an operand with a variable, wildcard, f
 comment, a path outside the repository, a missing, untracked, generated or symlinked file, an
 include past the depth bound, a fragment that ends inside a continuation, define or
 conditional, and an include Make would remake before reading it: a rule in the Makefile or a
-fragment that may target the included file, or a neighbour a built-in rule builds it from
-(`name.sh`, `name.c`, any `name.*`, `name,v`, `s.name`, `RCS/`, `SCCS/`). Each fragment is spliced
+fragment that may target the included file (a leading `./` on either side is
+ignored, as Make does), a neighbour a built-in rule builds it from (`name.sh`, `name.c`, any
+`name.*`, `name,v`, `s.name`, `RCS/`, `SCCS/`), any mention of `.SUFFIXES`, or an include whose
+name ends in one of Make's default suffixes (`gen.s` is built from `gen.S`). Each fragment is spliced
 between lines that close the open recipe, as Make does at an include (issue #843).
 
 The answer holds for the invocation the gates run, `make verify-all` or `make docs-lint` with no

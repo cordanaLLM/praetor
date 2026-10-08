@@ -1,6 +1,9 @@
 package util
 
-import "strings"
+import (
+	"path"
+	"strings"
+)
 
 // MaxMakefileIncludeDepth bounds how many levels of nested literal includes MakefileExpandIncludes
 // follows (HISS-01, HISS-02): an include in the Makefile is level 1, an include inside that
@@ -39,12 +42,45 @@ func MakefileExpandIncludes(data string, read MakefileIncludeReader) string {
 		}
 		data = expanded
 	}
-	for _, operand := range followed {
-		if MakefileMayDefineTarget(data, operand) {
-			return original
-		}
+	if makefileMayRemakeIncluded(data, followed) {
+		return original
 	}
 	return data
+}
+
+// makefileDefaultSuffixes is GNU Make's default .SUFFIXES list. A file ending in one can be built
+// by a built-in suffix rule from a neighbour with another suffix (gen.s from gen.S through .S.s,
+// measured against GNU Make 4.4.1), which no name-prefix check on the neighbours sees.
+var makefileDefaultSuffixes = []string{
+	".out", ".a", ".ln", ".o", ".c", ".cc", ".C", ".cpp", ".p", ".f", ".F", ".m", ".r", ".y", ".l",
+	".ym", ".yl", ".s", ".S", ".mod", ".sym", ".def", ".h", ".info", ".dvi", ".tex", ".texinfo",
+	".texi", ".txinfo", ".w", ".ch", ".web", ".sh", ".elc", ".el",
+}
+
+// makefileMayRemakeIncluded reports whether Make may remake any followed include before reading it:
+// a rule that may target it under any spelling Make treats alike, a mention of .SUFFIXES (a suffix
+// rule can then build it from a neighbour of the same stem), or a name ending in a default suffix.
+func makefileMayRemakeIncluded(data string, followed []string) bool {
+	if len(followed) == 0 {
+		return false
+	}
+	if strings.Contains(data, ".SUFFIXES") {
+		return true
+	}
+	for _, operand := range followed {
+		clean := path.Clean(operand)
+		for _, spelling := range []string{operand, clean, "./" + clean} {
+			if MakefileMayDefineTarget(data, spelling) {
+				return true
+			}
+		}
+		for _, suffix := range makefileDefaultSuffixes {
+			if strings.HasSuffix(clean, suffix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // makefileIncludeBoundary is the line spliced before and after every fragment. A variable binding
