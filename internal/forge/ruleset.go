@@ -95,16 +95,9 @@ const rulesetEnforcementActive = "active"
 // release line .config/flavors.yaml tracks. The local file and a remote sync share it, so neither
 // narrows the other.
 //
-// A ruleset that carries a merge_queue rule (mergeQueue) targets the default branch alone: GitHub
-// documents that a merge queue cannot be enabled with branch protection rules that use wildcard
-// characters in the branch name pattern, and says nothing on rulesets, so a wildcard include is
-// unverified there and is not rendered next to the queue rule
-// (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue,
-// read 2026-10-08). The lts-* branches are then not covered by this ruleset.
-func RepositoryRulesetRefs(branch string, mergeQueue bool) []string {
-	if mergeQueue {
-		return []string{"refs/heads/" + branch}
-	}
+// The merge_queue rule is not part of this ruleset: it lives in its own ruleset on the default
+// branch alone (MergeQueueRulesetName), because this one holds the lts-* wildcard.
+func RepositoryRulesetRefs(branch string) []string {
 	return []string{"refs/heads/" + branch, "refs/heads/lts-*"}
 }
 
@@ -115,7 +108,7 @@ func RenderRepositoryRuleset(branch string, policy config.BranchProtectionPolicy
 	if !config.ValidBranchName(branch) {
 		return nil, fmt.Errorf("ruleset default branch %q is not a branch name", branch)
 	}
-	doc, err := protectionRuleset(RepositoryRulesetName, RepositoryRulesetRefs(branch, policy.MergeQueue), policy, contexts, true)
+	doc, err := protectionRuleset(RepositoryRulesetName, RepositoryRulesetRefs(branch), policy, contexts, true)
 	if err != nil {
 		return nil, err
 	}
@@ -419,11 +412,7 @@ func protectionRules(policy config.BranchProtectionPolicy, reviewCount int, requ
 		"require_last_push_approval":        false,
 		"required_review_thread_resolution": true,
 	}})
-	if !policy.MergeQueue {
-		return rules
-	}
-	rules = append(rules, mergeQueueRuleOf(policy.EnforceLinearHistory))
-	if policy.CodeQLDefaultSetup {
+	if policy.MergeQueue && policy.CodeQLDefaultSetup {
 		rules = append(rules, codeScanningRuleOf())
 	}
 	return rules

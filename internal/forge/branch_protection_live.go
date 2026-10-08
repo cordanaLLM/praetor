@@ -98,6 +98,9 @@ type LiveBranchProtection struct {
 	RulesetEnforcement map[int]string
 	// Legacy is the legacy protection object, or nil when GitHub reports the branch has none.
 	Legacy *LegacyBranchProtection
+	// QueueRuleset is the merge queue ruleset (MergeQueueRulesetName) when the repository has
+	// one, whether or not it applies to Branch.
+	QueueRuleset *LiveQueueRuleset
 	// Missing reports that the repository on GitHub has no such branch yet. Its rulesets are
 	// still read: GitHub lists the rules of every ruleset that targets the branch's name.
 	Missing bool
@@ -164,12 +167,16 @@ func (g *GitHubDriver) ReadBranchProtection(ctx context.Context, branch string) 
 	if err != nil {
 		return nil, fmt.Errorf("name the rulesets of %s: %w", branch, err)
 	}
+	queue, err := g.readQueueRuleset(ctx, names, enforcement)
+	if err != nil {
+		return nil, fmt.Errorf("read the merge queue ruleset for %s: %w", branch, err)
+	}
 	legacy, missing, err := g.legacyProtection(ctx, branch)
 	if err != nil {
 		return nil, fmt.Errorf("read the legacy branch protection of %s: %w", branch, err)
 	}
 	return &LiveBranchProtection{Branch: branch, Rules: rules, RulesetNames: names, RulesetEnforcement: enforcement,
-		Legacy: legacy, Missing: missing}, nil
+		Legacy: legacy, QueueRuleset: queue, Missing: missing}, nil
 }
 
 // branchRules lists every active rule GitHub enforces on branch, page by page.

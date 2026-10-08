@@ -46,7 +46,8 @@ func normalizeRuleset(doc map[string]any) (map[string]any, error) {
 // relaxation the policy declares included, and each rendered parameter whose live value was
 // stricter is returned as lowered (loweredParameters) for sync --remote to report. The live
 // ruleset keeps its bypass actors, other conditions, every ref it includes, every status check
-// context it requires, and every rule and rule parameter praetor does not render. Removing
+// context it requires (less the CodeQL default setup contexts a merge group never reports, when
+// desired carries a code_scanning rule), and every rule and rule parameter praetor does not render. Removing
 // any of those from a live ruleset is a deliberate manual change.
 func mergeRuleset(live, desired map[string]any) (map[string]any, []LoweredParameter, error) {
 	merged := map[string]any{"name": desired["name"], "target": desired["target"], "enforcement": desired["enforcement"]}

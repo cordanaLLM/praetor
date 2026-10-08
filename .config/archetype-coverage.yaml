@@ -302,6 +302,9 @@ fields:
       - func: internal/forge.protectionRules
         kind: acts
         effect: renders the required_linear_history rule into the ruleset
+      - func: internal/forge.RenderMergeQueueRuleset
+        kind: acts
+        effect: picks the squash merge method of the merge queue rule
       - func: internal/adopt.RulesetRequired
         kind: acts
         effect: >-
@@ -432,7 +435,7 @@ fields:
     consumers:
       - func: internal/forge.protectionRules
         kind: acts
-        effect: renders the merge_queue rule into the ruleset
+        effect: renders the code_scanning rule next to a declared queue
       - func: internal/forge.RenderRulesetForRepository
         kind: acts
         effect: >-
@@ -494,11 +497,21 @@ fields:
         kind: reports
         effect: >-
           names the workflows the declared queue leaves out of the ruleset
-      - func: internal/forge.RenderRepositoryRuleset
+      - func: cmd/standardsctl.reconcileRemoteMergeQueue
         kind: acts
         effect: >-
-          targets the ruleset that carries the merge_queue rule at the
-          default branch alone
+          writes the merge_queue rule into its own ruleset on the default
+          branch alone
+      - func: internal/forge.MergeQueueRulesetFindings
+        kind: reports
+        effect: >-
+          compares the live queue and its ruleset's refs with the declaration
+          (plan --remote, sync --remote readback, the audit)
+      - func: cmd/standardsctl.reportLiveProtection
+        kind: reports
+        effect: >-
+          names a queue ruleset still on GitHub when the policy declares no
+          queue
       - func: internal/forge.protectionDocument
         kind: acts
         effect: >-

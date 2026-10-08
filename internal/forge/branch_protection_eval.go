@@ -263,7 +263,7 @@ func EvaluateBranchProtection(policy config.BranchProtectionPolicy, contexts []s
 	if finding, compared := rulesetEnforcementFinding(live); compared {
 		findings = append(findings, finding)
 	}
-	return findings, nil
+	return append(findings, MergeQueueRulesetFindings(policy, live)...), nil
 }
 
 // rulesetEnforcementFinding compares the enforcement of the ruleset praetor writes

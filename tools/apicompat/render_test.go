@@ -65,8 +65,9 @@ func TestRenderWorkflow_Positive_InstallStepRunsBeforeTheChecker(t *testing.T) {
 	}
 }
 
-// Boundary: no packages and no exceptions render the locked bytes, which are the bytes before the
-// settings existed; a nil and an empty list are the same.
+// Boundary: no packages and no exceptions render the locked bytes, so the empty-settings rendering
+// equals the current base rendering; a nil and an empty list are the same. The previous base
+// rendering (digest e4306dbb, before the merge_group trigger) stays reachable as a prior.
 func TestRenderWorkflow_Boundary_EmptySettingsKeepTheBytes(t *testing.T) {
 	for _, settings := range []Settings{{}, {SystemPackages: []string{}}, {Exceptions: []ModuleException{}}} {
 		if got := mustRender(t, settings); got != Workflow {
@@ -74,7 +75,7 @@ func TestRenderWorkflow_Boundary_EmptySettingsKeepTheBytes(t *testing.T) {
 		}
 	}
 	digest, _, err := util.CanonicalTextDigest([]byte(Workflow))
-	if err != nil || digest != "d64b71821e056174c3127244483c916a3baa646b6f37f419eac44102c8c30dbd" {
+	if err != nil || digest != "8f82f6979372fd279692a655ea561c937d86603e7483c671018b9ddd7ac09bd6" {
 		t.Fatalf("Workflow digest = %s (%v): the default rendering is no longer byte-identical to the shipped text", digest, err)
 	}
 }

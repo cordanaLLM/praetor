@@ -45,7 +45,7 @@ func queuedRuleTypes(t *testing.T, data []byte) []string {
 	return types
 }
 
-// Positive: a queue-protected policy renders the merge_queue rule and requires only the contexts
+// Positive: a queue-protected policy keeps the merge_queue rule out of the main ruleset and requires only the contexts
 // of workflows that trigger on merge_group. Negative: the workflow without the trigger is
 // excluded from the required checks and reported with its path and contexts. Boundary: a
 // workflow that requires no pull request check is no finding.
@@ -59,12 +59,18 @@ func TestMergeQueueRendersOnlyMergeGroupContexts(t *testing.T) {
 	if !slices.Equal(contexts, []string{"Build"}) {
 		t.Fatalf("queue contexts = %v, want only Build", contexts)
 	}
-	if !slices.Contains(queuedRuleTypes(t, data), "merge_queue") {
-		t.Fatalf("no merge_queue rule in %s", data)
+	if slices.Contains(queuedRuleTypes(t, data), "merge_queue") {
+		t.Fatalf("the main ruleset carries the merge_queue rule, which lives in its own ruleset: %s", data)
 	}
-	if !strings.Contains(string(data), `"merge_method": "SQUASH"`) {
-		t.Fatalf("linear history must merge by squash: %s", data)
+	if !strings.Contains(string(data), `"refs/heads/lts-*"`) {
+		t.Fatalf("the main ruleset lost its lts-* include: %s", data)
 	}
+	requireDocsFinding(t, root)
+}
+
+// requireDocsFinding requires the findings of the queue fixture to be docs.yml alone.
+func requireDocsFinding(t *testing.T, root string) {
+	t.Helper()
 	findings, err := MergeQueueFindings(t.Context(), root, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +120,7 @@ func TestMergeQueueRendersCodeScanningForDefaultSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	types := queuedRuleTypes(t, data)
-	if !slices.Contains(types, "code_scanning") || !slices.Contains(types, "merge_queue") {
+	if !slices.Contains(types, "code_scanning") || slices.Contains(types, "merge_queue") {
 		t.Fatalf("rule types = %v", types)
 	}
 	for _, name := range []string{"CodeQL", "Analyze (go)"} {
@@ -161,6 +167,21 @@ func TestRequiredWithoutMergeGroup(t *testing.T) {
 	}
 }
 
+// The queue ruleset is the one that carries the merge_queue rule.
+func TestRulesetHasRuleReadsTheQueueRuleset(t *testing.T) {
+	queue, err := RenderMergeQueueRuleset(FallbackDefaultBranch, config.BranchProtectionPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queueJSON, err := json.Marshal(queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has, err := RulesetHasRule(queueJSON, "merge_queue"); err != nil || !has {
+		t.Fatalf("merge_queue rule of the queue ruleset = %v, %v", has, err)
+	}
+}
+
 // The ruleset readers the audit uses: a queue rule and the required contexts are read, anything
 // that is not one JSON document is refused.
 func TestRulesetReadersForTheQueueAudit(t *testing.T) {
@@ -168,9 +189,10 @@ func TestRulesetReadersForTheQueueAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if has, err := RulesetHasRule(data, "merge_queue"); err != nil || !has {
-		t.Fatalf("merge_queue rule = %v, %v", has, err)
+	if has, err := RulesetHasRule(data, "merge_queue"); err != nil || has {
+		t.Fatalf("the main ruleset carries a merge_queue rule = %v, %v", has, err)
 	}
+
 	if has, err := RulesetHasRule(data, "code_scanning"); err != nil || has {
 		t.Fatalf("code_scanning rule = %v, %v", has, err)
 	}

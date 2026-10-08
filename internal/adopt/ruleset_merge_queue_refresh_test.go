@@ -44,9 +44,6 @@ func TestAdopt_Positive_DeclaringAMergeQueueRefreshesTheUneditedRuleset(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if has, err := forge.RulesetHasRule(before, "merge_queue"); err != nil || has {
-		t.Fatalf("the first adoption must render no queue: %v %v", has, err)
-	}
 	declareMergeQueue(t, repo)
 
 	rep := adoptForRuleset(t, repo, false)
@@ -57,9 +54,7 @@ func TestAdopt_Positive_DeclaringAMergeQueueRefreshesTheUneditedRuleset(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if has, err := forge.RulesetHasRule(after, "merge_queue"); err != nil || !has {
-		t.Fatalf("the second adoption must render the merge_queue rule: %v %v\n%s", has, err, after)
-	}
+	requireQueueRefresh(t, before, after)
 	omitted := 0
 	for _, w := range rep.Warnings {
 		if strings.Contains(w, "not required by the merge queue ruleset") && strings.Contains(w, "merge_group:") {
@@ -68,6 +63,21 @@ func TestAdopt_Positive_DeclaringAMergeQueueRefreshesTheUneditedRuleset(t *testi
 	}
 	if omitted == 0 {
 		t.Fatalf("workflows without merge_group must be reported by the run: %v", rep.Warnings)
+	}
+}
+
+// requireQueueRefresh requires the refreshed main ruleset to carry no merge_queue rule (it lives in
+// its own ruleset) and to drop the check of a workflow without merge_group that it required before.
+func requireQueueRefresh(t *testing.T, before, after []byte) {
+	t.Helper()
+	if has, err := forge.RulesetHasRule(after, "merge_queue"); err != nil || has {
+		t.Fatalf("the committed main ruleset must carry no merge_queue rule: %v %v\n%s", has, err, after)
+	}
+	if was, err := forge.RulesetRequiresStatusContext(before, "Lint Check"); err != nil || !was {
+		t.Fatalf("the queue-less ruleset must require Lint Check: %v %v", was, err)
+	}
+	if required, err := forge.RulesetRequiresStatusContext(after, "Lint Check"); err != nil || required {
+		t.Fatalf("the refreshed ruleset must drop the check of a workflow without merge_group: %v %v\n%s", required, err, after)
 	}
 }
 

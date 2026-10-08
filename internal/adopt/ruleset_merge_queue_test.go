@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,17 +59,23 @@ func TestAuditBranchProtection_MergeQueue_Positive(t *testing.T) {
 func TestAuditBranchProtection_MergeQueue_Negative(t *testing.T) {
 	both := []string{"Unit Tests", "Documentation Governance"}
 	cases := map[string]struct {
-		policy  config.BranchProtectionPolicy
-		ruleset config.BranchProtectionPolicy
+		policy config.BranchProtectionPolicy
+		// handQueueRule adds a merge_queue rule to the file, as an operator would by hand: the
+		// rendered main ruleset carries none.
+		handQueueRule bool
 	}{
-		"declared queue":         {queuePolicy(), queuePolicy()},
-		"queue rule in the file": {signedPolicy(), queuePolicy()},
+		"declared queue":         {queuePolicy(), false},
+		"queue rule in the file": {signedPolicy(), true},
 	}
 	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeQueueWorkflows(t, root)
-			writeAuditRuleset(t, root, renderAuditRuleset(t, test.ruleset, both))
+			ruleset := renderAuditRuleset(t, test.policy, both)
+			if test.handQueueRule {
+				ruleset = withHandQueueRule(t, ruleset)
+			}
+			writeAuditRuleset(t, root, ruleset)
 			_, err := AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, &config.ResolvedPolicy{BranchProtection: test.policy})
 			if err == nil {
 				t.Fatal("a required context no merge group reports must fail the audit")
@@ -83,6 +90,25 @@ func TestAuditBranchProtection_MergeQueue_Negative(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withHandQueueRule returns the ruleset JSON with a merge_queue rule appended.
+func withHandQueueRule(t *testing.T, ruleset string) string {
+	t.Helper()
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(ruleset), &doc); err != nil {
+		t.Fatal(err)
+	}
+	rules, isList := doc["rules"].([]any)
+	if !isList {
+		t.Fatal("the ruleset has no rules list")
+	}
+	doc["rules"] = append(rules, map[string]any{"type": forge.MergeQueueRule})
+	data, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 // The renderer and the audit agree: the ruleset RenderRulesetForRepository writes for a queue
