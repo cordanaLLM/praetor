@@ -10,7 +10,7 @@
       "branch": "master",
       "pin": "ce64da2a95a2bd40740c2d608206f8a36024d30b",
       "version": "SchemaStore ce64da2",
-      "url_base": "https://raw.githubusercontent.com/SchemaStore/schemastore/ce64da2a95a2bd40740c2d608206f8a36024d30b/",
+      "url_base": "https://raw.githubusercontent.com/SchemaStore/schemastore/{pin}/",
       "license": "Apache-2.0",
       "copyright": "SchemaStore contributors",
       "files": [
@@ -29,7 +29,7 @@
       "pin_kind": "tag",
       "pin": "v0.63.0",
       "version": "v0.63.0",
-      "url_base": "https://raw.githubusercontent.com/google-gemini/gemini-cli/v0.63.0/",
+      "url_base": "https://raw.githubusercontent.com/google-gemini/gemini-cli/{pin}/",
       "license": "Apache-2.0",
       "copyright": "Google LLC",
       "files": [
@@ -48,7 +48,7 @@
       "pin_kind": "tag",
       "pin": "rust-v0.162.0",
       "version": "rust-v0.162.0",
-      "url_base": "https://raw.githubusercontent.com/openai/codex/rust-v0.162.0/",
+      "url_base": "https://raw.githubusercontent.com/openai/codex/{pin}/",
       "license": "Apache-2.0",
       "copyright": "OpenAI",
       "files": [
@@ -67,7 +67,7 @@
       "pin_kind": "tag",
       "pin": "rust-v0.162.0",
       "version": "rust-v0.162.0",
-      "url_base": "https://raw.githubusercontent.com/openai/codex/rust-v0.162.0/",
+      "url_base": "https://raw.githubusercontent.com/openai/codex/{pin}/",
       "license": "Apache-2.0",
       "copyright": "OpenAI",
       "files": [
@@ -196,13 +196,13 @@
       "pin_kind": "tag",
       "pin": "2025-11-25",
       "version": "2025-11-25",
-      "url_base": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/2025-11-25/",
+      "url_base": "https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/{pin}/",
       "license": "MIT",
       "copyright": "2024-2025 Anthropic, PBC and contributors",
       "files": [
         {
           "path": "mcp/schema.json",
-          "upstream": "schema/2025-11-25/schema.json",
+          "upstream": "schema/{pin}/schema.json",
           "sha256": "1ffe4c5577974012f5fa02af14ea88df4b7146679df1abaaad497c8d9230ca8a"
         }
       ]

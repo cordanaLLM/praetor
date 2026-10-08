@@ -84,6 +84,21 @@
       "depNameTemplate": "node",
       "datasourceTemplate": "node-version",
       "versioningTemplate": "node"
+    },
+    {
+      "customType": "regex",
+      "description": "Vendored upstream client schemas pinned at a release tag, and the hosted opencode copy whose pin names the release it was observed beside (internal/clientschema/vendor/manifest.json, #909). Renovate moves the pin; the takeover then runs the refresh in docs/guides/client-schemas.md, which fetches every file at the new pin and rewrites the sha256 values, and the pin test fails the branch until it has.",
+      "managerFilePatterns": ["/^internal/clientschema/vendor/manifest\\.json$/"],
+      "matchStrings": ["\"repo\": \"(?<depName>[A-Za-z0-9._/-]+)\",\\s*\"pin_kind\": \"(?:tag|hosted)\",\\s*\"pin\": \"(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "github-tags"
+    },
+    {
+      "customType": "regex",
+      "description": "Vendored upstream client schemas pinned at a commit of a branch, the Claude Code settings schema from SchemaStore (internal/clientschema/vendor/manifest.json, #909). The takeover refreshes the files and digests as for the tag pins.",
+      "managerFilePatterns": ["/^internal/clientschema/vendor/manifest\\.json$/"],
+      "matchStrings": ["\"repo\": \"(?<depName>[A-Za-z0-9._/-]+)\",\\s*\"pin_kind\": \"commit\",\\s*\"branch\": \"(?<currentValue>[^\"]+)\",\\s*\"pin\": \"(?<currentDigest>[0-9a-f]{40})\""],
+      "packageNameTemplate": "https://github.com/{{{depName}}}",
+      "datasourceTemplate": "git-refs"
     }
   ],
   "pip-compile": {
@@ -199,6 +214,23 @@
       "matchFileNames": ["internal/devcontainer/bootstrap.go", "docker/dev/Dockerfile"],
       "matchPackageNames": ["golang", "docker.io/library/golang", "mcr.microsoft.com/devcontainers/base"],
       "groupName": "reviewed devcontainer images"
+    },
+    {
+      "description": "Vendored client schemas move together in one branch, so a bump lands as one refresh whose failing test names the drifted field. Codex tags carry a rust- prefix and alpha builds, the MCP specification tags are revision dates with -RC candidates, and neither follows the versioning of the default datasource.",
+      "matchFileNames": ["internal/clientschema/vendor/manifest.json"],
+      "groupName": "vendored client schemas"
+    },
+    {
+      "matchFileNames": ["internal/clientschema/vendor/manifest.json"],
+      "matchDepNames": ["openai/codex"],
+      "extractVersion": "^rust-v(?<version>\\d+\\.\\d+\\.\\d+)$",
+      "versioning": "semver"
+    },
+    {
+      "matchFileNames": ["internal/clientschema/vendor/manifest.json"],
+      "matchDepNames": ["modelcontextprotocol/modelcontextprotocol"],
+      "allowedVersions": "/^\\d{4}-\\d{2}-\\d{2}$/",
+      "versioning": "loose"
     }
   ]
 }
