@@ -173,41 +173,46 @@ func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 		"p.mk": "%.mk: %.in\n\tcp $< $@\n",
 	})
 	for name, data := range map[string]string{
-		"rule in the Makefile":    "include gen.mk\ngen.mk: gen.mk.in\n\tcp $< $@\n",
-		"rule in a fragment":      "include gen.mk\ninclude b.mk\n",
-		"pattern rule":            "include gen.mk\n%.mk: %.mk.in\n\tcp $< $@\n",
-		"pattern rule in include": "include gen.mk\ninclude p.mk\n",
-		"rule before the line":    "gen.mk: gen.mk.in\n\tcp $< $@\ninclude gen.mk\n",
-		"dot-dot-slash target":    "include gen.mk\n././gen.mk: gen.in\n",
-		"dot-double-slash target": "include gen.mk\n.//gen.mk: gen.in\n",
-		"dot operand":             "include ././gen.mk\ngen.mk: gen.in\n",
-		"double-colon rule":       "include gen.mk\ngen.mk:: gen.in\n",
-		"double-colon other":      "include gen.mk\nother:: x\n",
-		"VPATH":                   "VPATH = src\ninclude gen.mk\n",
-		"vpath":                   "vpath %.sh src\ninclude gen.mk\n",
-		"VPATH in a fragment":     "include gen.mk\ninclude v.mk\n",
-		".SUFFIXES":               ".SUFFIXES:\ninclude gen.mk\n",
-		"default suffix":          "include gen.s\n",
-		"static pattern rule":     "include gen.mk\ngen.mk gen.o: %.mk: %.in\n",
-		"computed target":         "include gen.mk\nGEN := ././gen.mk\n$(GEN): gen.src\n",
-		"computed dot target":     "include gen.mk\nGEN := .//gen.mk\n$(GEN): gen.src\n",
-		"computed static pattern": "include gen.mk\nT := gen.mk\n$(T): %.mk: %.src\n",
-		"computed VPATH name":     "X := VP\n$(X)ATH := src\ninclude gen.mk\n",
-		"computed SUFFIXES name":  "S := .SUFF\n$(S)IXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n",
-		"grouped target":          "include gen.mk\ngen.mk&: gen.src\n\tcp $< $@\n",
-		"grouped target spaced":   "include gen.mk\ngen.mk &: gen.src\n\tcp $< $@\n",
-		"suffix rule":             ".in.mk:\n\tcp $< $@\ninclude gen.mk\n",
-		"default rule":            "include gen.mk\n.DEFAULT:\n\tcp gen.src $@\n",
-		"eval of a rule":          "include gen.mk\nX := $(eval gen.mk: gen.src)\n",
-		"command binding":         "include gen.mk\nX != echo gen.mk: gen.src\n",
-		"bare expansion":          "include gen.mk\n$(RULES)\n",
-		"define block":            "include gen.mk\ndefine R\ngen.mk: gen.src\nendef\n",
-		"bare export":             "include gen.mk\nexport X\n",
-		"load":                    "include gen.mk\nload x.so\n",
-		"computed in conditional": "include gen.mk\nifdef X\n$(G): s\nendif\n",
-		"changed PRAETORCTL line": strings.TrimSuffix(util.MakefileCLIVariable, "\n") + " extra\ninclude gen.mk\n",
-		"shell command":           "X := $(shell cp gen.src gen.mk)\ninclude gen.mk\n",
-		"makefile target rule":    "include gen.mk\nMakefile: stamp\n\t@touch Makefile\nstamp:\n\t@cp gen.src gen.mk\n",
+		"rule in the Makefile":           "include gen.mk\ngen.mk: gen.mk.in\n\tcp $< $@\n",
+		"rule in a fragment":             "include gen.mk\ninclude b.mk\n",
+		"pattern rule":                   "include gen.mk\n%.mk: %.mk.in\n\tcp $< $@\n",
+		"pattern rule in include":        "include gen.mk\ninclude p.mk\n",
+		"rule before the line":           "gen.mk: gen.mk.in\n\tcp $< $@\ninclude gen.mk\n",
+		"dot-dot-slash target":           "include gen.mk\n././gen.mk: gen.in\n",
+		"dot-double-slash target":        "include gen.mk\n.//gen.mk: gen.in\n",
+		"dot operand":                    "include ././gen.mk\ngen.mk: gen.in\n",
+		"double-colon rule":              "include gen.mk\ngen.mk:: gen.in\n",
+		"double-colon other":             "include gen.mk\nother:: x\n",
+		"VPATH":                          "VPATH = src\ninclude gen.mk\n",
+		"vpath":                          "vpath %.sh src\ninclude gen.mk\n",
+		"VPATH in a fragment":            "include gen.mk\ninclude v.mk\n",
+		".SUFFIXES":                      ".SUFFIXES:\ninclude gen.mk\n",
+		"default suffix":                 "include gen.s\n",
+		"static pattern rule":            "include gen.mk\ngen.mk gen.o: %.mk: %.in\n",
+		"computed target":                "include gen.mk\nGEN := ././gen.mk\n$(GEN): gen.src\n",
+		"computed dot target":            "include gen.mk\nGEN := .//gen.mk\n$(GEN): gen.src\n",
+		"computed static pattern":        "include gen.mk\nT := gen.mk\n$(T): %.mk: %.src\n",
+		"computed VPATH name":            "X := VP\n$(X)ATH := src\ninclude gen.mk\n",
+		"computed SUFFIXES name":         "S := .SUFF\n$(S)IXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n",
+		"grouped target":                 "include gen.mk\ngen.mk&: gen.src\n\tcp $< $@\n",
+		"grouped target spaced":          "include gen.mk\ngen.mk &: gen.src\n\tcp $< $@\n",
+		"suffix rule":                    ".in.mk:\n\tcp $< $@\ninclude gen.mk\n",
+		"default rule":                   "include gen.mk\n.DEFAULT:\n\tcp gen.src $@\n",
+		"eval of a rule":                 "include gen.mk\nX := $(eval gen.mk: gen.src)\n",
+		"command binding":                "include gen.mk\nX != echo gen.mk: gen.src\n",
+		"bare expansion":                 "include gen.mk\n$(RULES)\n",
+		"define block":                   "include gen.mk\ndefine R\ngen.mk: gen.src\nendef\n",
+		"bare export":                    "include gen.mk\nexport X\n",
+		"load":                           "include gen.mk\nload x.so\n",
+		"computed in conditional":        "include gen.mk\nifdef X\n$(G): s\nendif\n",
+		"changed PRAETORCTL line":        strings.TrimSuffix(util.MakefileCLIVariable, "\n") + " extra\ninclude gen.mk\n",
+		"shell command":                  "X := $(shell cp gen.src gen.mk)\ninclude gen.mk\n",
+		"makefile target rule":           "include gen.mk\nMakefile: stamp\n\t@touch Makefile\nstamp:\n\t@cp gen.src gen.mk; touch stamp\n",
+		"SHELL with PRAETORCTL":          "SHELL := ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		"override SHELL with PRAETORCTL": "override SHELL := ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		"export SHELL with PRAETORCTL":   "export SHELL = ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		".SHELLFLAGS with PRAETORCTL":    ".SHELLFLAGS := -x\n" + util.MakefileCLIVariable + "include gen.mk\n",
+		"MAKESHELL with PRAETORCTL":      "MAKESHELL := ./x.sh\n" + util.MakefileCLIVariable + "include gen.mk\n",
 	} {
 		got := util.MakefileExpandIncludes(data, read)
 		if strings.Contains(name, "default suffix") {
@@ -265,4 +270,13 @@ func TestMakefileExpandIncludesReportNamesRemadeIncludes(t *testing.T) {
 			t.Fatalf("followed include noted: %q", notes)
 		}
 	})
+}
+
+func TestMakefileExpandIncludesReport_ShellTurnsOffCLIVariableException(t *testing.T) {
+	read := fragmentReader(map[string]string{"gen.mk": "help:\n"})
+	data := "SHELL := ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n"
+	_, notes := util.MakefileExpandIncludesReport(data, read)
+	if len(notes) != 1 || !strings.Contains(notes[0], "call to $(shell)") {
+		t.Fatalf("expected call to $(shell) note, got: %q", notes)
+	}
 }

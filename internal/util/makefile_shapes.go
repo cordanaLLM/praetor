@@ -89,6 +89,7 @@ func makefileTrackedLiteralShapes(lines []makefileTrackedLine, followed []string
 	for _, operand := range followed {
 		operands[makefileNormalizeName(operand)] = struct{}{}
 	}
+	allowCLIVariable := !makefileAssignsShellCombined(lines)
 	var scanner makefileScanner
 	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
 		tl := lines[index]
@@ -97,12 +98,42 @@ func makefileTrackedLiteralShapes(lines []makefileTrackedLine, followed []string
 			shape := makefileRefusedShape(tl.text, kind, scanner.lost, operands)
 			return false, tl.file, tl.line, shape
 		}
-		if kind == makefileSyntaxLine && !makefileAllowedShape(strings.TrimSpace(tl.text), operands) {
+		if kind == makefileSyntaxLine && !makefileAllowedShape(strings.TrimSpace(tl.text), operands, allowCLIVariable) {
 			shape := makefileRefusedShape(strings.TrimSpace(tl.text), kind, false, operands)
 			return false, tl.file, tl.line, shape
 		}
 	}
 	return true, "", 0, ""
+}
+
+// makefileAssignsShell reports whether line assigns one of the shell variables Make runs $(shell)
+// through: SHELL, .SHELLFLAGS or MAKESHELL. Leading override, export, private and unexport
+// keywords are stripped before the comparison.
+func makefileAssignsShell(line string) bool {
+	assign, colon, _ := makefileSplit(line)
+	if assign < 0 || (colon >= 0 && colon < assign) {
+		return false
+	}
+	for _, word := range makefileNameWords(line[:assign]) {
+		switch word {
+		case "SHELL", ".SHELLFLAGS", "MAKESHELL":
+			return true
+		}
+	}
+	return false
+}
+
+// makefileAssignsShellCombined reports whether any syntax line of lines assigns SHELL, .SHELLFLAGS
+// or MAKESHELL.
+func makefileAssignsShellCombined(lines []makefileTrackedLine) bool {
+	var scanner makefileScanner
+	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
+		tl := lines[index]
+		if scanner.next(tl.text) == makefileSyntaxLine && makefileAssignsShell(strings.TrimSpace(tl.text)) {
+			return true
+		}
+	}
+	return false
 }
 
 // makefileParsesText reports whether line holds a call that parses text, runs a command or writes
@@ -118,12 +149,22 @@ func makefileParsesText(line string) bool {
 	})
 }
 
+// makefileBlankOrComment reports whether line is empty or starts with a comment character.
+func makefileBlankOrComment(line string) bool {
+	return line == "" || strings.HasPrefix(line, "#")
+}
+
+// makefileAllowedParsedText reports whether line is allowed despite holding text-parsing syntax.
+func makefileAllowedParsedText(line string, allowCLIVariable bool) bool {
+	return allowCLIVariable && makefileIsCLIVariableLine(line)
+}
+
 // makefileAllowedShape reports whether one trimmed syntax line is an allowed shape.
-func makefileAllowedShape(line string, operands map[string]struct{}) bool {
-	if line == "" || strings.HasPrefix(line, "#") {
+func makefileAllowedShape(line string, operands map[string]struct{}, allowCLIVariable bool) bool {
+	if makefileBlankOrComment(line) {
 		return true
 	}
-	if makefileParsesText(line) && !makefileIsCLIVariableLine(line) {
+	if makefileParsesText(line) && !makefileAllowedParsedText(line, allowCLIVariable) {
 		return false
 	}
 	if makefileAllowedDirective(line) {

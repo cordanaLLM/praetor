@@ -2,7 +2,6 @@ package adopt
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -225,7 +224,31 @@ var remadeCases = []remadeCase{
 	{"computed VPATH name", "X := VP\n$(X)ATH := src\ninclude gen.mk\n", map[string]string{"src/gen.mk.sh": remadeGenMk}},
 	{"computed SUFFIXES name", "S := .SUFF\n$(S)IXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.in": remadeGenMk}},
 	{"custom suffix rule", ".SUFFIXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.in": remadeGenMk}},
-	{"makefile target remade", "include gen.mk\nMakefile: stamp\n\t@touch Makefile\nstamp:\n\t@cp gen.src gen.mk\n", map[string]string{"gen.src": remadeGenMk}},
+	{"makefile target remade", "include gen.mk\nMakefile: stamp\n\t@touch Makefile\nstamp:\n\t@cp gen.src gen.mk; touch stamp\n", map[string]string{"gen.src": remadeGenMk}},
+	{
+		"SHELL remake channel",
+		"SHELL := ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		map[string]string{
+			"x.sh":    "#!/bin/sh\ncp gen.src gen.mk\nexec /bin/sh \"$@\"\n",
+			"gen.src": remadeGenMk,
+		},
+	},
+	{
+		"override SHELL remake channel",
+		"override SHELL := ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		map[string]string{
+			"x.sh":    "#!/bin/sh\ncp gen.src gen.mk\nexec /bin/sh \"$@\"\n",
+			"gen.src": remadeGenMk,
+		},
+	},
+	{
+		"export SHELL remake channel",
+		"export SHELL = ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		map[string]string{
+			"x.sh":    "#!/bin/sh\ncp gen.src gen.mk\nexec /bin/sh \"$@\"\n",
+			"gen.src": remadeGenMk,
+		},
+	},
 }
 
 // files2 is every file of the case including the tracked gen.mk, whose text is genMk: the GNU
@@ -254,24 +277,32 @@ func TestMergeDocumentationMakefileRemadeIncludeRefuses(t *testing.T) {
 func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 	gnuMake := testsupport.GNUMake(t)
 	testsupport.RequireGNUMakeShell(t, "cat", "chmod", "cp")
+	getDir := t.TempDir()
+	writeStub(t, getDir, "get", `for a in "$@"; do case "$a" in *s.*) base=$(basename "$a"); cp "$a" "${base#s.}";; esac; done`+"\n")
 	run := func(tc remadeCase) string {
 		dir := t.TempDir()
 		for name, body := range tc.files2(trackedGenMk) {
-			mustWrite(t, filepath.Join(dir, filepath.FromSlash(name)), body)
+			path := filepath.Join(dir, filepath.FromSlash(name))
+			mustWrite(t, path, body)
+			if strings.HasSuffix(name, ".sh") {
+				if err := os.Chmod(path, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
 		}
 		mustWrite(t, filepath.Join(dir, "Makefile"), tc.makefile)
 		old := time.Now().Add(-time.Hour)
 		if err := os.Chtimes(filepath.Join(dir, "gen.mk"), old, old); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, gnuMake, "-s", "docs-lint")
-		cmd.Dir, cmd.Env = dir, append(os.Environ(), "LC_ALL=C", "MAKEFLAGS=")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "LC_ALL=C", "MAKEFLAGS=", "PATH="+getDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		out, err := cmd.CombinedOutput()
-		var exited *exec.ExitError
-		if err != nil && !errors.As(err, &exited) { // a failed rebuild exits non-zero by design
-			t.Fatalf("running %s: %v", gnuMake, err)
+		if err != nil {
+			t.Fatalf("%s: running %s: %v\n%s", tc.name, gnuMake, err, out)
 		}
 		return string(out)
 	}
