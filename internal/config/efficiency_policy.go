@@ -22,9 +22,10 @@ type EfficiencyPolicy struct {
 
 // EfficiencySources defines the paths and settings for optional ledger sources.
 type EfficiencySources struct {
-	Forge       ForgeSource       `yaml:"forge,omitempty"`
-	Transcripts TranscriptsSource `yaml:"transcripts,omitempty"`
-	SpendLog    SpendLogSource    `yaml:"spend_log,omitempty"`
+	Forge                 ForgeSource       `yaml:"forge,omitempty"`
+	Transcripts           TranscriptsSource `yaml:"transcripts,omitempty"`
+	SpendLog              SpendLogSource    `yaml:"spend_log,omitempty"`
+	TranscriptsViaGateway bool              `yaml:"transcripts_via_gateway,omitempty"`
 }
 
 // ForgeSource configures the forge records source.

@@ -31,13 +31,13 @@ func RenderTable(report *Report, out io.Writer) error {
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	header := "PR\tBRANCH\tISSUE-TO-MERGE\tTOUCHES\tFRONTIER TOKENS\tSPEND\tCACHE HIT\tLOCAL-1ST\n"
+	header := "PR\tBRANCH\tISSUE-TO-MERGE\tTOUCHES\tFRONTIER TOKENS\tSPEND\tCACHE HIT\tLOCAL-1ST\tSOURCES\n"
 	if _, err := fmt.Fprint(w, header); err != nil {
 		return err
 	}
 
 	for _, u := range report.Units {
-		line := fmt.Sprintf("#%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		line := fmt.Sprintf("#%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			u.PullRequestNumber,
 			u.HeadBranch,
 			u.IssueToMerge,
@@ -46,6 +46,7 @@ func RenderTable(report *Report, out io.Writer) error {
 			u.Spend,
 			u.PromptCacheHitRate,
 			u.LocalFirstRatio,
+			u.Sources,
 		)
 		if _, err := fmt.Fprint(w, line); err != nil {
 			return err

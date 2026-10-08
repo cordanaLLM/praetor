@@ -25,6 +25,7 @@ efficiency:
       dir: ".workingdir/sessions"
     spend_log:
       path: ".workingdir/spend-export.jsonl"
+    transcripts_via_gateway: false
   frontier_models: ["claude-opus-", "claude-sonnet-"]
   frontier_classes: ["reasoning"]
   light_classes: ["light"]
@@ -33,6 +34,8 @@ efficiency:
 
 Every list is optional; an omitted list uses the default below. `transcripts` accepts `dir` or
 `path` (the same setting); setting both to different values is a manifest error.
+`transcripts_via_gateway` (bool, default `false`) controls request counting when both session
+transcripts and gateway spend logs join the same unit.
 
 ```bash
 praetorctl efficiency
@@ -122,11 +125,17 @@ For each landed pull request unit the ledger computes:
 - **Local-first ratio:** Local requests over all requests of the unit.
 - **Fact-hit ratio and checks-before-reviews:** `not measured (see #897)`.
 
-**Requests, local-first and frontier tokens come from one source per unit.** When the spend log
-has entries attributed to the unit, those decide (they include local models with zero spend and
-cover every request through the gateway); otherwise the joined transcripts decide. The two never
-add, because a gateway request made by an agent session appears in both. Touches and cache hit
-rate always come from transcripts.
+- **Sources:** Sources that counted for requests and tokens: `transcripts+gateway`, `gateway`, `transcripts`, or `not measured`.
+
+**Requests, local-first and frontier tokens join across configured sources.** By default
+(`sources.transcripts_via_gateway: false`), transcript requests and gateway entries both count in
+full (they represent distinct requests, for example when an agent calls its provider directly
+without routing through the gateway). When `sources.transcripts_via_gateway: true`, the gateway
+counts; transcript usage for joined units is not added (they represent the same requests).
+Transcript-only metrics (operator touches, prompt-cache hit rate when the gateway carries no cache
+fields) still come from transcripts. Every unit row and JSON output name the sources that counted;
+when `transcripts_via_gateway: true`, any unadded transcript requests are reported under Notes
+and in the JSON output.
 
 ### Model classes
 

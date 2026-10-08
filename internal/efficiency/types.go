@@ -28,27 +28,29 @@ const (
 
 // UnitReport represents efficiency metrics for one landed pull request.
 type UnitReport struct {
-	PullRequestNumber   int       `json:"pull_request_number"`
-	HeadBranch          string    `json:"head_branch"`
-	Title               string    `json:"title"`
-	Milestone           string    `json:"milestone,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
-	MergedAt            time.Time `json:"merged_at"`
-	ClosingIssues       []int     `json:"closing_issues,omitempty"`
-	IssueToMerge        string    `json:"issue_to_merge"`
-	IssueToMergeSecs    *int64    `json:"issue_to_merge_secs,omitempty"`
-	FrontierTokens      string    `json:"frontier_tokens"`
-	FrontierTokensNum   *int64    `json:"frontier_tokens_num,omitempty"`
-	Spend               string    `json:"spend"`
-	SpendAmount         *float64  `json:"spend_amount,omitempty"`
-	OperatorTouches     string    `json:"operator_touches"`
-	OperatorTouchNum    *int      `json:"operator_touches_num,omitempty"`
-	PromptCacheHitRate  string    `json:"prompt_cache_hit_rate"`
-	CacheHitRatio       *float64  `json:"cache_hit_ratio,omitempty"`
-	LocalFirstRatio     string    `json:"local_first_ratio"`
-	LocalRatio          *float64  `json:"local_ratio,omitempty"`
-	FactHitRatio        string    `json:"fact_hit_ratio"`
-	ChecksBeforeReviews string    `json:"checks_before_reviews"`
+	PullRequestNumber          int       `json:"pull_request_number"`
+	HeadBranch                 string    `json:"head_branch"`
+	Title                      string    `json:"title"`
+	Milestone                  string    `json:"milestone,omitempty"`
+	CreatedAt                  time.Time `json:"created_at"`
+	MergedAt                   time.Time `json:"merged_at"`
+	ClosingIssues              []int     `json:"closing_issues,omitempty"`
+	IssueToMerge               string    `json:"issue_to_merge"`
+	IssueToMergeSecs           *int64    `json:"issue_to_merge_secs,omitempty"`
+	FrontierTokens             string    `json:"frontier_tokens"`
+	FrontierTokensNum          *int64    `json:"frontier_tokens_num,omitempty"`
+	Spend                      string    `json:"spend"`
+	SpendAmount                *float64  `json:"spend_amount,omitempty"`
+	OperatorTouches            string    `json:"operator_touches"`
+	OperatorTouchNum           *int      `json:"operator_touches_num,omitempty"`
+	PromptCacheHitRate         string    `json:"prompt_cache_hit_rate"`
+	CacheHitRatio              *float64  `json:"cache_hit_ratio,omitempty"`
+	LocalFirstRatio            string    `json:"local_first_ratio"`
+	LocalRatio                 *float64  `json:"local_ratio,omitempty"`
+	FactHitRatio               string    `json:"fact_hit_ratio"`
+	ChecksBeforeReviews        string    `json:"checks_before_reviews"`
+	Sources                    string    `json:"sources"`
+	TranscriptRequestsNotAdded *int      `json:"transcript_requests_not_added,omitempty"`
 }
 
 // MilestoneSummary aggregates metrics across units in a milestone.

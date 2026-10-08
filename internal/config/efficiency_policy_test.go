@@ -272,3 +272,55 @@ func TestDefaultFrontierModels_Negative_NoCheapFamilyPrefixes(t *testing.T) {
 		}
 	}
 }
+
+func TestEfficiencyPolicy_Positive_TranscriptsViaGateway(t *testing.T) {
+	manifestYAML := `version: 1
+repository:
+  owner: "exampleOrg"
+  name: "example"
+efficiency:
+  sources:
+    transcripts_via_gateway: true
+`
+	m, err := LoadManifest(writeManifest(t, manifestYAML))
+	if err != nil {
+		t.Fatalf("unexpected error loading manifest: %v", err)
+	}
+	if m.Efficiency == nil || !m.Efficiency.Sources.TranscriptsViaGateway {
+		t.Errorf("expected TranscriptsViaGateway to be true, got %+v", m.Efficiency)
+	}
+}
+
+func TestEfficiencyPolicy_Boundary_TranscriptsViaGatewayDefault(t *testing.T) {
+	manifestYAML := `version: 1
+repository:
+  owner: "exampleOrg"
+  name: "example"
+efficiency:
+  sources:
+    forge:
+      path: "fixtures/prs.json"
+`
+	m, err := LoadManifest(writeManifest(t, manifestYAML))
+	if err != nil {
+		t.Fatalf("unexpected error loading manifest: %v", err)
+	}
+	if m.Efficiency == nil || m.Efficiency.Sources.TranscriptsViaGateway {
+		t.Errorf("expected default TranscriptsViaGateway to be false, got %+v", m.Efficiency)
+	}
+}
+
+func TestEfficiencyPolicy_Negative_TranscriptsViaGatewayInvalidType(t *testing.T) {
+	manifestYAML := `version: 1
+repository:
+  owner: "exampleOrg"
+  name: "example"
+efficiency:
+  sources:
+    transcripts_via_gateway: "not-a-bool"
+`
+	_, err := LoadManifest(writeManifest(t, manifestYAML))
+	if err == nil {
+		t.Fatal("expected error for non-boolean transcripts_via_gateway")
+	}
+}
