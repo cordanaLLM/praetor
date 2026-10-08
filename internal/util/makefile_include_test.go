@@ -189,6 +189,22 @@ func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 		".SUFFIXES":               ".SUFFIXES:\ninclude gen.mk\n",
 		"default suffix":          "include gen.s\n",
 		"static pattern rule":     "include gen.mk\ngen.mk gen.o: %.mk: %.in\n",
+		"computed target":         "include gen.mk\nGEN := ././gen.mk\n$(GEN): gen.src\n",
+		"computed dot target":     "include gen.mk\nGEN := .//gen.mk\n$(GEN): gen.src\n",
+		"computed static pattern": "include gen.mk\nT := gen.mk\n$(T): %.mk: %.src\n",
+		"computed VPATH name":     "X := VP\n$(X)ATH := src\ninclude gen.mk\n",
+		"computed SUFFIXES name":  "S := .SUFF\n$(S)IXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n",
+		"grouped target":          "include gen.mk\ngen.mk&: gen.src\n\tcp $< $@\n",
+		"grouped target spaced":   "include gen.mk\ngen.mk &: gen.src\n\tcp $< $@\n",
+		"suffix rule":             ".in.mk:\n\tcp $< $@\ninclude gen.mk\n",
+		"default rule":            "include gen.mk\n.DEFAULT:\n\tcp gen.src $@\n",
+		"eval of a rule":          "include gen.mk\nX := $(eval gen.mk: gen.src)\n",
+		"command binding":         "include gen.mk\nX != echo gen.mk: gen.src\n",
+		"bare expansion":          "include gen.mk\n$(RULES)\n",
+		"define block":            "include gen.mk\ndefine R\ngen.mk: gen.src\nendef\n",
+		"bare export":             "include gen.mk\nexport X\n",
+		"load":                    "include gen.mk\nload x.so\n",
+		"computed in conditional": "include gen.mk\nifdef X\n$(G): s\nendif\n",
 	} {
 		got := util.MakefileExpandIncludes(data, read)
 		if strings.Contains(name, "default suffix") {
@@ -205,6 +221,7 @@ func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 		"percent in a prereq":     "include gen.mk\nobjs := $(S:%.c=%.o)\nother: $(objs)\n",
 		"percent in a recipe":     "include gen.mk\nother:\n\t@printf '%s: x' y\n",
 		"percent after semicolon": "include gen.mk\nother: x ; @printf '%s: x' y\n",
+		"shared fragment shape":   "include gen.mk\nNAME := x\nexport V := 1\nifeq ($(NAME),x)\nT = y\nendif\n.PHONY: other\n.DEFAULT_GOAL := other\nother: gen.mk.txt\n\t@true\n",
 	} {
 		plain := util.MakefileExpandIncludes(data, read)
 		if strings.Contains(plain, "include") || util.MakefileMayDefineTarget(plain, "docs-lint") {

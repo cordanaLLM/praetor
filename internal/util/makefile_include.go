@@ -66,36 +66,21 @@ var makefileDefaultSuffixes = []string{
 }
 
 // makefileMayRemakeIncluded reports whether Make may remake any followed include before reading it.
-// It is an allow-list: an include is trusted only when nothing in the combined text can make Make
-// look for a source. The text must mention no VPATH, vpath or .SUFFIXES (they widen where and how
-// a source is found), hold no pattern rule or double-colon rule (either can build any file), and
-// no explicit rule whose target equals a followed operand after Make's normalisation
-// (makefileNormalizeName); no operand may end in one of Make's default suffixes.
+// It is an allow-list (makefileLiteralShapes): an include is trusted only when every line of the
+// combined text is a shape the reader fully understands, and no operand ends in one of Make's
+// default suffixes. Guessing at spellings of a remaking rule is not enough: a computed target, a
+// computed VPATH or .SUFFIXES name, a grouped or static-pattern rule each remade a followed
+// include in measured runs against GNU Make 4.4.1.
 func makefileMayRemakeIncluded(data string, followed []string) bool {
 	if len(followed) == 0 {
 		return false
 	}
-	for _, word := range []string{".SUFFIXES", "VPATH", "vpath"} {
-		if strings.Contains(data, word) {
-			return true
-		}
-	}
-	targets, unsafe := makefileRuleTargets(data)
-	if unsafe {
-		return true
-	}
 	for _, operand := range followed {
-		clean := path.Clean(operand)
-		if _, named := targets[makefileNormalizeName(operand)]; named || makefileHasDefaultSuffix(clean) {
+		if makefileHasDefaultSuffix(path.Clean(operand)) {
 			return true
 		}
-		for _, spelling := range []string{operand, clean, "./" + clean} {
-			if MakefileMayDefineTarget(data, spelling) {
-				return true
-			}
-		}
 	}
-	return false
+	return !makefileLiteralShapes(data, followed)
 }
 
 // makefileHasDefaultSuffix reports whether name ends in a suffix of Make's default .SUFFIXES list.
@@ -116,54 +101,6 @@ func makefileNormalizeName(name string) string {
 		name = strings.TrimLeft(name[2:], "/")
 	}
 	return path.Clean(name)
-}
-
-// makefileRuleTargets returns the normalised explicit rule targets of data's syntax lines, and
-// whether data holds a rule the set cannot describe: a pattern rule (a "%" in the target part) or
-// a double-colon rule. Recipe lines are skipped; a line that is not a rule contributes nothing.
-func makefileRuleTargets(data string) (map[string]struct{}, bool) {
-	lines, whole := makefileLogicalLines(data)
-	if !whole {
-		return nil, true
-	}
-	targets := make(map[string]struct{})
-	var scanner makefileScanner
-	for index := 0; index < len(lines) && index < MaxMakefileLines; index++ {
-		kind := scanner.next(lines[index])
-		if scanner.lost {
-			return nil, true
-		}
-		if kind != makefileSyntaxLine {
-			continue
-		}
-		head, double, isRule := makefileRuleHead(lines[index])
-		if isRule && (double || strings.Contains(head, "%")) {
-			return nil, true
-		}
-		for _, field := range strings.Fields(head) {
-			targets[makefileNormalizeName(field)] = struct{}{}
-		}
-	}
-	return targets, false
-}
-
-// makefileRuleHead splits a syntax line at its first colon: head is the target part, double says
-// the colon is followed by another that does not start an assignment, and isRule is false for a
-// line with no colon or an assignment (":=", "::=", ":::=").
-func makefileRuleHead(line string) (head string, double, isRule bool) {
-	trimmed := strings.TrimSpace(line)
-	colon := strings.IndexByte(trimmed, ':')
-	if colon < 0 || strings.HasPrefix(trimmed, "#") {
-		return "", false, false
-	}
-	if equals := strings.IndexByte(trimmed, '='); equals >= 0 && equals < colon {
-		return "", false, false
-	}
-	rest := trimmed[colon+1:]
-	if strings.HasPrefix(rest, "=") || strings.HasPrefix(rest, ":=") || strings.HasPrefix(rest, "::=") {
-		return "", false, false
-	}
-	return trimmed[:colon], strings.HasPrefix(rest, ":"), true
 }
 
 // makefileIncludeBoundary is the line spliced before and after every fragment. A variable binding

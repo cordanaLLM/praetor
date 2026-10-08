@@ -207,11 +207,26 @@ stays ambiguous and refuses, naming the include and the cause in the message:
 - The operand is a literal path to a regular file that Git tracks, inside the repository, with no
   variable, wildcard, function, comment or `..`; `-include`, `sinclude` and `load` are never
   followed.
-- The Makefile and every followed fragment together mention no `VPATH`, `vpath` or `.SUFFIXES`,
-  hold no pattern rule (a target containing `%`) and no double-colon rule, and have no rule target
-  equal to a followed operand. Both sides are normalised as Make does: every leading `./` and the
-  slashes after it are dropped, then the path is cleaned, so `include gen.mk` and a target
-  `././gen.mk` or `.//gen.mk` are the same file.
+- Every line of the Makefile and the followed fragments together is one of a small set of literal
+  shapes. Any other line makes the include ambiguous, whatever it spells:
+  - a comment, a blank line or a recipe line;
+  - an `include`, `-include` or `sinclude` line;
+  - a conditional (`ifeq`, `ifneq`, `ifdef`, `ifndef`, `else`, `endif`) whose branches hold only
+    allowed shapes;
+  - a variable assignment (`=`, `:=`, `::=`, `+=`, `?=`, with the `override`, `export` and
+    `private` modifiers) whose name holds no `$`, is not `VPATH` and does not start with a dot
+    (`.DEFAULT_GOAL` is the exception), and whose line calls none of `eval`, `guile`, `shell`,
+    `file` or `call`; a `!=` binding is not allowed;
+  - an explicit rule with literal targets: no `$`, `%`, `&` (grouped targets), wildcard or archive
+    member in a target, no double colon, no target that starts with a dot except `.PHONY`,
+    `.SILENT`, `.ONESHELL`, `.DELETE_ON_ERROR` and `.PRECIOUS`, and no target equal to a followed
+    operand. Targets and operands are normalised as Make does: every leading `./` and the slashes
+    after it are dropped, then the path is cleaned, so `include gen.mk` and a target `././gen.mk`
+    or `.//gen.mk` are the same file.
+
+  Not allowed, therefore: `define` blocks, `vpath` and `export NAME` lines, a bare expansion, `load`,
+  a computed target or variable name, a pattern, grouped, double-colon or suffix rule, and
+  `.SUFFIXES` or `.DEFAULT`. A shared fragment of literal targets and plain assignments passes.
 - The operand does not end in one of Make's default suffixes (`.s`, `.c`, `.sh` and the rest of the
   default `.SUFFIXES` list), which a built-in suffix rule can build from a neighbour.
 - No entry in the include's directory has a name that contains the include's base name other than

@@ -216,12 +216,21 @@ var remadeCases = []remadeCase{
 	{"dot operand", "include ././gen.mk\ngen.mk: gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
 	{"pattern rule", "include gen.mk\n%.mk: %.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
 	{"double-colon rule", "include gen.mk\ngen.mk:: gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"computed target", "GEN := ././gen.mk\ninclude gen.mk\n$(GEN): gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"computed dot-slash target", "GEN := .//gen.mk\ninclude gen.mk\n$(GEN): gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"computed static pattern", "T := gen.mk\ninclude gen.mk\n$(T): %.mk: %.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"static pattern literal", "include gen.mk\ngen.mk: %.mk: %.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"grouped target", "include gen.mk\ngen.mk&: gen.src\n\tcp $< $@\n", map[string]string{"gen.src": remadeGenMk}},
+	{"computed VPATH name", "X := VP\n$(X)ATH := src\ninclude gen.mk\n", map[string]string{"src/gen.mk.sh": remadeGenMk}},
+	{"computed SUFFIXES name", "S := .SUFF\n$(S)IXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.in": remadeGenMk}},
 	{"custom suffix rule", ".SUFFIXES: .in .mk\n.in.mk:\n\tcp $< $@\ninclude gen.mk\n", map[string]string{"gen.in": remadeGenMk}},
 }
 
-// files2 is every file of the case including the tracked gen.mk.
-func (tc remadeCase) files2() map[string]string {
-	files := map[string]string{"gen.mk": trackedGenMk}
+// files2 is every file of the case including the tracked gen.mk, whose text is genMk: the GNU
+// Make replay needs the docs-lint recipe to tell which text Make read, while the reader-side tests
+// use text that defines no gate target, so only the remake guard can make them refuse.
+func (tc remadeCase) files2(genMk string) map[string]string {
+	files := map[string]string{"gen.mk": genMk}
 	for name, body := range tc.files {
 		files[name] = body
 	}
@@ -230,10 +239,10 @@ func (tc remadeCase) files2() map[string]string {
 
 func TestMergeDocumentationMakefileRemadeIncludeRefuses(t *testing.T) {
 	for _, tc := range remadeCases {
-		s := includeRepo(t, tc.files2(), "gen.mk")
+		s := includeRepo(t, tc.files2("help:\n"), "gen.mk")
 		_, err := mergeWithIncludes(s, tc.makefile)
-		if err == nil {
-			t.Errorf("%s: remade include followed", tc.name)
+		if err == nil || !strings.Contains(err.Error(), "not followed") {
+			t.Errorf("%s: remade include not refused by the remake guard: %v", tc.name, err)
 		}
 	}
 }
@@ -245,7 +254,7 @@ func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 	testsupport.RequireGNUMakeShell(t, "cat", "chmod", "cp")
 	run := func(tc remadeCase) string {
 		dir := t.TempDir()
-		for name, body := range tc.files2() {
+		for name, body := range tc.files2(trackedGenMk) {
 			mustWrite(t, filepath.Join(dir, filepath.FromSlash(name)), body)
 		}
 		mustWrite(t, filepath.Join(dir, "Makefile"), tc.makefile)
