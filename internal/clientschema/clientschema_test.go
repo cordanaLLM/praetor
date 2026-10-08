@@ -98,7 +98,7 @@ func TestEverySourceNamesItsLicenceAndAPinKind(t *testing.T) {
 }
 
 func TestParseManifestRefusals(t *testing.T) {
-	good, err := os.ReadFile(filepath.Join("vendor", ManifestFile))
+	good, err := os.ReadFile(filepath.Join("upstream", ManifestFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,16 +153,92 @@ func TestLookups(t *testing.T) {
 	}
 }
 
-// renovateExpressions reads renovate.json with the duplicate-refusing reader and returns the
-// regular expressions of the custom managers that watch the client schema manifest.
-func renovateExpressions(t *testing.T) []*regexp.Regexp {
+// renovatePresetIgnoreGlobs are the default ignorePaths from config:recommended / :ignoreModulesAndTests.
+var renovatePresetIgnoreGlobs = []string{
+	"**/node_modules/**",
+	"**/bower_components/**",
+	"**/vendor/**",
+	"**/examples/**",
+	"**/__tests__/**",
+	"**/test/**",
+	"**/tests/**",
+	"**/__fixtures__/**",
+}
+
+func globToRegex(glob string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	i := 0
+	for i < len(glob) {
+		if strings.HasPrefix(glob[i:], "**/") {
+			b.WriteString("(?:.*/)?")
+			i += 3
+		} else if strings.HasPrefix(glob[i:], "/**") {
+			b.WriteString("(?:/.*)?")
+			i += 3
+		} else if glob[i] == '*' {
+			b.WriteString("[^/]*")
+			i++
+		} else if glob[i] == '?' {
+			b.WriteString("[^/]")
+			i++
+		} else if strings.ContainsRune(`.+()|[]{}^$\`, rune(glob[i])) {
+			b.WriteByte('\\')
+			b.WriteByte(glob[i])
+			i++
+		} else {
+			b.WriteByte(glob[i])
+			i++
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
+}
+
+func isRenovateIgnored(path string, globs []string) (bool, string) {
+	for _, glob := range globs {
+		re, err := globToRegex(glob)
+		if err != nil {
+			continue
+		}
+		if re.MatchString(path) {
+			return true, glob
+		}
+	}
+	return false, ""
+}
+
+func parseSlashRegex(p string) (*regexp.Regexp, error) {
+	trimmed := strings.TrimSpace(p)
+	if strings.HasPrefix(trimmed, "/") && strings.HasSuffix(trimmed, "/") && len(trimmed) >= 2 {
+		return regexp.Compile(trimmed[1 : len(trimmed)-1])
+	}
+	return regexp.Compile(trimmed)
+}
+
+func managerMatchesFile(patterns []string, path string) bool {
+	for _, p := range patterns {
+		re, err := parseSlashRegex(p)
+		if err == nil && re.MatchString(path) {
+			return true
+		}
+	}
+	return false
+}
+
+// renovateConfig reads renovate.json with the duplicate-refusing reader.
+func renovateConfig(t *testing.T) ([]string, []struct {
+	Patterns []string `json:"managerFilePatterns"`
+	Matches  []string `json:"matchStrings"`
+}) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var config struct {
-		Managers []struct {
+		IgnorePaths []string `json:"ignorePaths"`
+		Managers    []struct {
 			Patterns []string `json:"managerFilePatterns"`
 			Matches  []string `json:"matchStrings"`
 		} `json:"customManagers"`
@@ -174,26 +250,36 @@ func renovateExpressions(t *testing.T) []*regexp.Regexp {
 	if err := json.Unmarshal(raw, &config); err != nil {
 		t.Fatal(err)
 	}
-	var expressions []*regexp.Regexp
-	for _, manager := range config.Managers {
-		if !slices.ContainsFunc(manager.Patterns, func(p string) bool { return strings.Contains(p, "clientschema") }) {
-			continue
-		}
-		for _, match := range manager.Matches {
-			expressions = append(expressions, regexp.MustCompile(match))
-		}
-	}
-	return expressions
+	return config.IgnorePaths, config.Managers
 }
 
 // TestRenovateTracksEveryPin matches each source's pin lines with the regex custom managers of
 // renovate.json, so a pin Renovate cannot see fails.
 func TestRenovateTracksEveryPin(t *testing.T) {
-	expressions := renovateExpressions(t)
+	ignorePaths, managers := renovateConfig(t)
+	allIgnores := append(slices.Clone(renovatePresetIgnoreGlobs), ignorePaths...)
+	manifestRepoPath := filepath.ToSlash(filepath.Join(vendorRoot, ManifestFile))
+
+	if ignored, pattern := isRenovateIgnored(manifestRepoPath, allIgnores); ignored {
+		t.Fatalf("manifest path %s is ignored by Renovate (matched %q)", manifestRepoPath, pattern)
+	}
+
+	var expressions []*regexp.Regexp
+	for _, manager := range managers {
+		if !slices.ContainsFunc(manager.Patterns, func(p string) bool { return strings.Contains(p, "clientschema") }) {
+			continue
+		}
+		if !managerMatchesFile(manager.Patterns, manifestRepoPath) {
+			t.Fatalf("custom manager %v does not match manifest path %s", manager.Patterns, manifestRepoPath)
+		}
+		for _, match := range manager.Matches {
+			expressions = append(expressions, regexp.MustCompile(match))
+		}
+	}
 	if len(expressions) != 2 {
 		t.Fatalf("renovate.json has %d client schema expressions, want 2 (tag and commit)", len(expressions))
 	}
-	manifestText, err := os.ReadFile(filepath.Join("vendor", ManifestFile))
+	manifestText, err := os.ReadFile(filepath.Join("upstream", ManifestFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,12 +299,20 @@ func TestRenovateTracksEveryPin(t *testing.T) {
 	}
 }
 
+// TestRenovateTracksEveryPin_FailsWhenIgnored plants an ignore glob to prove Renovate filtering rejects it.
+func TestRenovateTracksEveryPin_FailsWhenIgnored(t *testing.T) {
+	fakeIgnores := []string{"**/custom-ignore/**"}
+	if ignored, _ := isRenovateIgnored("internal/clientschema/custom-ignore/manifest.json", fakeIgnores); !ignored {
+		t.Fatal("planted ignore was not recognized")
+	}
+}
+
 // A Renovate branch moves "pin" and nothing else. The manifest must then be refused offline,
 // naming the source, until the refresh has recorded the new pin with its digests; the stale
 // reader the refresh starts from still accepts it. Boundary: a digest pin that differs from a
 // commit pin in one hex digit is refused too, and a missing digest pin fails the structure check.
 func TestMovedPinIsRefusedUntilRefreshed(t *testing.T) {
-	good, err := os.ReadFile(filepath.Join("vendor", ManifestFile))
+	good, err := os.ReadFile(filepath.Join("upstream", ManifestFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +354,7 @@ func TestOnlyTheManifestIsEmbedded(t *testing.T) {
 	if !slices.Equal(directives, []string{EmbedDirective}) {
 		t.Fatalf("embed directives = %q, want only %q", directives, EmbedDirective)
 	}
-	if got := AssetPaths(); !slices.Equal(got, []string{"internal/clientschema/vendor/manifest.json"}) {
+	if got := AssetPaths(); !slices.Equal(got, []string{"internal/clientschema/upstream/manifest.json"}) {
 		t.Fatalf("AssetPaths = %v", got)
 	}
 	if len(manifestJSON) == 0 {
@@ -292,7 +386,7 @@ func renovateRules(t *testing.T) []renovateRule {
 	}
 	var rules []renovateRule
 	for _, rule := range config.Rules {
-		if slices.Contains(rule.Files, "internal/clientschema/vendor/manifest.json") && len(rule.DepNames) > 0 {
+		if slices.Contains(rule.Files, "internal/clientschema/upstream/manifest.json") && len(rule.DepNames) > 0 {
 			rules = append(rules, rule)
 		}
 	}

@@ -132,7 +132,7 @@ is made:
   writes: it records the replaced image in `internal/devcontainer/prior-images.json` and
   regenerates and verifies `.devcontainer/`
   ([moving a reviewed default image](devcontainer-bootstrap.md#moving-a-reviewed-default-image)).
-- The `vendored client schemas` group moves `pin` in `internal/clientschema/vendor/manifest.json`
+- The `vendored client schemas` group moves `pin` in `internal/clientschema/upstream/manifest.json`
   and nothing else, so every test that loads the manifest fails with `ErrPinMoved` until the
   takeover runs `PRAETOR_UPDATE_CLIENT_SCHEMAS=1 go test ./tools/schemacheck -run TestRefreshVendor`
   and `go generate ./internal/clientschema`, and commits what they write

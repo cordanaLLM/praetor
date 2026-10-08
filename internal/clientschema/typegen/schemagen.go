@@ -258,11 +258,7 @@ func enumDecl(name string, node map[string]any, values []string) string {
 	return b.String()
 }
 
-func (g *generator) structDecl(name string, node map[string]any) (string, error) {
-	properties, ok := node["properties"].(map[string]any)
-	if !ok || len(properties) > maxFields {
-		return "", fmt.Errorf("no properties object, or more than %d properties", maxFields)
-	}
+func requiredFields(node map[string]any) map[string]bool {
 	required := map[string]bool{}
 	if list, ok := node["required"].([]any); ok {
 		for _, item := range list {
@@ -271,11 +267,25 @@ func (g *generator) structDecl(name string, node map[string]any) (string, error)
 			}
 		}
 	}
+	return required
+}
+
+func sortedPropertyKeys(properties map[string]any) []string {
 	keys := make([]string, 0, len(properties))
 	for key := range properties {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	return keys
+}
+
+func (g *generator) structDecl(name string, node map[string]any) (string, error) {
+	properties, ok := node["properties"].(map[string]any)
+	if !ok || len(properties) > maxFields {
+		return "", fmt.Errorf("no properties object, or more than %d properties", maxFields)
+	}
+	required := requiredFields(node)
+	keys := sortedPropertyKeys(properties)
 	var b strings.Builder
 	b.WriteString(comment(name, node) + "type " + name + " struct {\n")
 	used := map[string]string{}
@@ -351,6 +361,22 @@ func pointerable(expression string) bool {
 	return expression != "json.RawMessage" && expression != "any"
 }
 
+// isObjectMap reports whether node represents a map with a schema-valued additionalProperties.
+func isObjectMap(node map[string]any) (map[string]any, bool) {
+	if hasMembers(node) {
+		return nil, false
+	}
+	kind := typeOf(node)
+	if kind != "" && kind != "object" {
+		return nil, false
+	}
+	extra, ok := node["additionalProperties"].(map[string]any)
+	if !ok || len(extra) == 0 {
+		return nil, false
+	}
+	return extra, true
+}
+
 // expr resolves a schema node to a Go type expression, queueing the named types it needs. The
 // second result reports a nullable member (type list with null, or anyOf with a null branch).
 func (g *generator) expr(node map[string]any, hint string) (string, bool, error) {
@@ -375,26 +401,49 @@ func (g *generator) expr(node map[string]any, hint string) (string, bool, error)
 			node = items
 			continue
 		}
+		if extra, ok := isObjectMap(node); ok {
+			prefix += "map[string]"
+			hint += "Value"
+			node = extra
+			continue
+		}
 		expression, err := g.leaf(node, hint)
 		return prefix + expression, nullable, err
 	}
-	return "", false, errors.New("array nesting too deep")
+	return "", false, errors.New("type nesting too deep")
+}
+
+func primitiveType(kind string) (string, bool) {
+	switch kind {
+	case "string":
+		return "string", true
+	case "integer":
+		return "int64", true
+	case "number":
+		return "float64", true
+	case "boolean":
+		return "bool", true
+	default:
+		return "", false
+	}
+}
+
+func isObjectNode(node map[string]any) bool {
+	if typeOf(node) == "object" {
+		return true
+	}
+	if _, ok := node["properties"].(map[string]any); ok {
+		return true
+	}
+	_, ok := node["additionalProperties"]
+	return ok
 }
 
 func (g *generator) leaf(node map[string]any, hint string) (string, error) {
-	switch typeOf(node) {
-	case "string":
-		return "string", nil
-	case "integer":
-		return "int64", nil
-	case "number":
-		return "float64", nil
-	case "boolean":
-		return "bool", nil
-	case "object":
-		return g.objectExpr(node, hint)
+	if prim, ok := primitiveType(typeOf(node)); ok {
+		return prim, nil
 	}
-	if _, ok := node["properties"].(map[string]any); ok {
+	if isObjectNode(node) {
 		return g.objectExpr(node, hint)
 	}
 	if _, ok := node["const"].(string); ok {
@@ -426,10 +475,6 @@ func (g *generator) objectExpr(node map[string]any, hint string) (string, error)
 	if hasMembers(node) {
 		g.enqueue(hint, node)
 		return hint, nil
-	}
-	if extra, ok := node["additionalProperties"].(map[string]any); ok && len(extra) > 0 {
-		value, _, err := g.expr(extra, hint+"Value")
-		return "map[string]" + value, err
 	}
 	return "map[string]any", nil
 }

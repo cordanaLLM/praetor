@@ -86,6 +86,7 @@ type rendering struct {
 	name   string
 	schema string
 	doc    []byte
+	format string
 }
 
 // renderings lists every client config praetor renders that an upstream schema covers. The
@@ -95,25 +96,39 @@ func renderings(t *testing.T) []rendering {
 	unrelated := []byte(`{"ui": {"theme": "dark"}, "mcpServers": {"existing": {"command": "/bin/true", "args": []}}}`)
 	geminiMerged := renderedMCP(t, clientsetup.Gemini, renderedHooks(t, "gemini", nil))
 	return []rendering{
-		{".claude/settings.json (adoption hooks)", "claude/claude-code-settings.json", renderedHooks(t, "claude", nil)},
-		{".codex/hooks.json (adoption hooks)", "codex/config.schema.json", renderedHooks(t, "codex", nil)},
-		{".gemini/settings.json (adoption hooks)", "gemini/settings.schema.json", renderedHooks(t, "gemini", nil)},
-		{".gemini/settings.json (MCP registry)", "gemini/settings.schema.json", renderedMCP(t, clientsetup.Gemini, nil)},
-		{".gemini/settings.json (MCP merged into hooks)", "gemini/settings.schema.json", geminiMerged},
-		{".gemini/settings.json (MCP merged into other settings)", "gemini/settings.schema.json", renderedMCP(t, clientsetup.Gemini, unrelated)},
-		{"opencode.json (MCP registry)", "opencode/config.json", renderedMCP(t, clientsetup.OpenCodeV1, nil)},
-		{"opencode.json (MCP merged)", "opencode/config.json", renderedMCP(t, clientsetup.OpenCodeV1, []byte(`{"logLevel": "INFO", "username": "praetor"}`))},
-		{"tracked .claude/settings.json", "claude/claude-code-settings.json", readRepoFile(t, ".claude/settings.json")},
-		{"tracked .codex/hooks.json", "codex/config.schema.json", readRepoFile(t, ".codex/hooks.json")},
-		{"tracked .gemini/settings.json", "gemini/settings.schema.json", readRepoFile(t, ".gemini/settings.json")},
+		{".claude/settings.json (adoption hooks)", "claude/claude-code-settings.json", renderedHooks(t, "claude", nil), ""},
+		{".codex/hooks.json (adoption hooks)", "codex/config.schema.json", renderedHooks(t, "codex", nil), ""},
+		{".gemini/settings.json (adoption hooks)", "gemini/settings.schema.json", renderedHooks(t, "gemini", nil), ""},
+		{".gemini/settings.json (MCP registry)", "gemini/settings.schema.json", renderedMCP(t, clientsetup.Gemini, nil), ""},
+		{".gemini/settings.json (MCP merged into hooks)", "gemini/settings.schema.json", geminiMerged, ""},
+		{".gemini/settings.json (MCP merged into other settings)", "gemini/settings.schema.json", renderedMCP(t, clientsetup.Gemini, unrelated), ""},
+		{"codex-mcp.toml (MCP registry)", "codex/config.schema.json", renderedMCP(t, clientsetup.Codex, nil), "toml"},
+		{"opencode.json (MCP registry)", "opencode/config.json", renderedMCP(t, clientsetup.OpenCodeV1, nil), ""},
+		{"opencode.json (MCP merged)", "opencode/config.json", renderedMCP(t, clientsetup.OpenCodeV1, []byte(`{"logLevel": "INFO", "username": "praetor"}`)), ""},
+		{"tracked .claude/settings.json", "claude/claude-code-settings.json", readRepoFile(t, ".claude/settings.json"), ""},
+		{"tracked .codex/config.toml", "codex/config.schema.json", readRepoFile(t, ".codex/config.toml"), "toml"},
+		{"tracked .codex/hooks.json", "codex/config.schema.json", readRepoFile(t, ".codex/hooks.json"), ""},
+		{"tracked .gemini/settings.json", "gemini/settings.schema.json", readRepoFile(t, ".gemini/settings.json"), ""},
 	}
 }
 
 func TestRenderedClientConfigsValidateAgainstThePinnedSchemas(t *testing.T) {
 	for _, r := range renderings(t) {
 		t.Run(r.name, func(t *testing.T) {
-			if err := compileVendored(t, r.schema).Validate(r.doc); err != nil {
-				t.Fatalf("%s violates %s:\n%v\n%s", r.name, r.schema, err, r.doc)
+			schema := compileVendored(t, r.schema)
+			switch r.format {
+			case "toml":
+				value, err := ReadTOML(r.doc)
+				if err != nil {
+					t.Fatalf("ReadTOML(%s): %v\n%s", r.name, err, r.doc)
+				}
+				if err := schema.ValidateValue(value); err != nil {
+					t.Fatalf("%s violates %s:\n%v\n%s", r.name, r.schema, err, r.doc)
+				}
+			default:
+				if err := schema.Validate(r.doc); err != nil {
+					t.Fatalf("%s violates %s:\n%v\n%s", r.name, r.schema, err, r.doc)
+				}
 			}
 		})
 	}
@@ -143,6 +158,26 @@ func TestEachSchemaRefusesAMutatedDocument(t *testing.T) {
 		var violations *Violations
 		if !errors.As(err, &violations) || !violations.Names(c.field) {
 			t.Errorf("%s accepted or misreported %s: %v (want a violation naming %s)", c.schema, c.doc, err, c.field)
+		}
+	}
+}
+
+func TestCodexConfigRefusesMutatedTOML(t *testing.T) {
+	cases := []struct{ doc, field string }{
+		{"[mcp_servers.x]\ncommand = 123\n", "/mcp_servers/x/command"},
+		{"[mcp_servers.x]\nargs = 'not-an-array'\n", "/mcp_servers/x/args"},
+		{"[mcp_servers.x]\nstartup_timeout_sec = 'not-a-number'\n", "/mcp_servers/x/startup_timeout_sec"},
+	}
+	schema := compileVendored(t, "codex/config.schema.json")
+	for _, c := range cases {
+		val, err := ReadTOML([]byte(c.doc))
+		if err != nil {
+			t.Fatalf("ReadTOML(%s): %v", c.doc, err)
+		}
+		err = schema.ValidateValue(val)
+		var violations *Violations
+		if !errors.As(err, &violations) || !violations.Names(c.field) {
+			t.Errorf("ValidateValue(%s) = %v, want violation naming %s", c.doc, err, c.field)
 		}
 	}
 }

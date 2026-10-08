@@ -10,6 +10,7 @@
 //   - Schema.Validate checks a JSON document, Schema.ValidateValue a decoded value, and both
 //     return a *Violations that names every field, sorted, bounded.
 //   - ReadYAML reads a YAML 1.2 document into a JSON-compatible value (yaml.go).
+//   - ReadTOML reads a TOML document into a JSON-compatible value (toml.go).
 //   - Fetch and SkipOffline serve the fetch-only path for schemas hosted in copyleft repositories
 //     and the online pin check; offline runs skip with a stated reason (fetch.go).
 //

@@ -165,9 +165,9 @@ entries:
     notice: "© SchemaStore contributors"
     use: >-
       Checks the Claude Code settings and hook files Praetor renders; vendored byte-identical under
-      `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files) (docs/guides/client-schemas.md)
+      `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files) (docs/guides/client-schemas.md)
     paths:
-      - "internal/clientschema/vendor/manifest.json"
+      - "internal/clientschema/upstream/manifest.json"
     match:
       - "SchemaStore/schemastore"
   - name: "Gemini CLI settings schema"
@@ -180,9 +180,9 @@ entries:
     notice: "© Google LLC"
     use: >-
       Checks the Gemini CLI settings and hook files Praetor renders; vendored byte-identical under
-      `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files)
+      `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files)
     paths:
-      - "internal/clientschema/vendor/manifest.json"
+      - "internal/clientschema/upstream/manifest.json"
     match:
       - "google-gemini/gemini-cli"
   - name: "Codex config and hook schemas"
@@ -195,9 +195,9 @@ entries:
     notice: "© OpenAI"
     use: >-
       Checks the Codex hook files and payload fixtures and generates the Codex hook event types
-      (`internal/codexhook`); vendored byte-identical under `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files)
+      (`internal/codexhook`); vendored byte-identical under `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files)
     paths:
-      - "internal/clientschema/vendor/manifest.json"
+      - "internal/clientschema/upstream/manifest.json"
     match:
       - "openai/codex"
   - name: "Model Context Protocol schema"
@@ -210,9 +210,9 @@ entries:
     notice: "© 2024–2025 Anthropic, PBC and contributors; the LICENSE file at tag 2025-11-25 states MIT"
     use: >-
       Checks the `standards-mcp` responses and generates the MCP message types (`internal/mcpwire`); vendored
-      byte-identical under `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files)
+      byte-identical under `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files)
     paths:
-      - "internal/clientschema/vendor/manifest.json"
+      - "internal/clientschema/upstream/manifest.json"
     match:
       - "modelcontextprotocol/modelcontextprotocol"
   - name: "opencode config schema"
@@ -225,9 +225,9 @@ entries:
     notice: "© 2025 opencode"
     use: >-
       Checks the `opencode.json` MCP projection Praetor renders; vendored byte-identical under
-      `internal/clientschema/vendor/` and used at build and test time only (the binaries carry the generated types, not the schema files)
+      `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files)
     paths:
-      - "internal/clientschema/vendor/manifest.json"
+      - "internal/clientschema/upstream/manifest.json"
     match:
       - "anomalyco/opencode"
   - name: "jsonschema"
@@ -244,6 +244,21 @@ entries:
       - "tools/schemacheck/go.mod"
     packages:
       - "go:github.com/santhosh-tekuri/jsonschema/v6"
+  - name: "go-toml v2"
+    url: "https://github.com/pelletier/go-toml"
+    detail: "(`v2.4.3`)"
+    section: "development"
+    kind: "dependency"
+    relation: "used by CI"
+    license: "MIT"
+    notice: "© 2021–2023 Thomas Pelletier"
+    use: >-
+      TOML reading for validating Codex configurations against JSON Schema in the test-only module
+      `tools/schemacheck`; the production module does not link it
+    paths:
+      - "tools/schemacheck/go.mod"
+    packages:
+      - "go:github.com/pelletier/go-toml/v2"
   - name: "markdownlint"
     url: "https://github.com/DavidAnson/markdownlint"
     detail: "0.41.1"

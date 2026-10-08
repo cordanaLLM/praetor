@@ -16,7 +16,7 @@ import (
 // Fetcher reads one URL; Fetch is the production one and tests pass a fake.
 type Fetcher func(ctx context.Context, url string) ([]byte, error)
 
-// Refresh brings the vendor directory at dir (internal/clientschema/vendor) to the pins its
+// Refresh brings the vendor directory at dir (internal/clientschema/upstream) to the pins its
 // manifest records: it fetches every file at its pinned URL, then rewrites the files and their
 // sha256 values. Nothing is written unless every fetch succeeded, so a failure half way leaves
 // the directory as it was. A refresh also records the pin the digests were taken at

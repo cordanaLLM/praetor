@@ -9,7 +9,8 @@ import (
 // A requirement the go.mod replaces with a directory is the checkout's own module, so the scan
 // does not count it as a third-party dependency; a requirement replaced by another module, or
 // not replaced, stays (nested test-only modules such as tools/schemacheck require this module).
-func TestParseGoMod_LocalReplaceIsNotAThirdPartyDependency(t *testing.T) {
+func setupLocalReplaceTestFiles(t *testing.T) string {
+	t.Helper()
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o750); err != nil {
 		t.Fatal(err)
@@ -32,6 +33,14 @@ func TestParseGoMod_LocalReplaceIsNotAThirdPartyDependency(t *testing.T) {
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return path
+}
+
+// A requirement the go.mod replaces with a directory is the checkout's own module, so the scan
+// does not count it as a third-party dependency; a requirement replaced by another module, or
+// not replaced, stays (nested test-only modules such as tools/schemacheck require this module).
+func TestParseGoMod_LocalReplaceIsNotAThirdPartyDependency(t *testing.T) {
+	path := setupLocalReplaceTestFiles(t)
 	parsed, err := parseGoMod(path)
 	if err != nil {
 		t.Fatal(err)

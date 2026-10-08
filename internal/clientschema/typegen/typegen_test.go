@@ -1,6 +1,7 @@
 package typegen
 
 import (
+	"encoding/json"
 	"errors"
 	"go/parser"
 	"go/token"
@@ -265,5 +266,31 @@ func TestGenerateKeepsOpenObjects(t *testing.T) {
 	clash := `{"type":"object","properties":{"extra":{"type":"string"}}}`
 	if _, err := Generate("p", "", []byte(clash), []Root{{Name: "X"}}); err == nil {
 		t.Error("a property named extra collided with the Extra member silently")
+	}
+}
+
+func TestGenerateDepthBound(t *testing.T) {
+	curr := map[string]any{"type": "string"}
+	for i := 0; i < 65; i++ {
+		curr = map[string]any{
+			"type":                 "object",
+			"additionalProperties": curr,
+		}
+	}
+	root := map[string]any{
+		"$defs": map[string]any{
+			"Deep": curr,
+		},
+	}
+	raw, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Generate("p", "", raw, []Root{{Def: "Deep", Name: "Deep"}})
+	if err == nil {
+		t.Fatal("expected depth bound error for 65 levels of nesting, got nil")
+	}
+	if !strings.Contains(err.Error(), "nesting too deep") {
+		t.Fatalf("expected nesting too deep error, got: %v", err)
 	}
 }

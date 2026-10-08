@@ -179,10 +179,10 @@ cmd/standards-mcp/testdata/*.golden.json text eol=lf
 #                                  the pin, and vendor.json records the SHA-256 of every file. It
 #                                  comes last and wins: with text unset, eol has no effect.
 
-# Vendored upstream schemas are pinned by sha256 (internal/clientschema/vendor/manifest.json), so
+# Vendored upstream schemas are pinned by sha256 (internal/clientschema/upstream/manifest.json), so
 # their bytes must reach every checkout exactly as upstream published them: no line-ending
 # conversion, and no whitespace check on an upstream file that ends in a blank line.
-internal/clientschema/vendor/** -text -whitespace
+internal/clientschema/upstream/** -text -whitespace
 
 # BEGIN praetor managed attributes (praetorctl adopt)
 # praetorctl audit hashes these files; keep their checkout bytes the same on every platform.

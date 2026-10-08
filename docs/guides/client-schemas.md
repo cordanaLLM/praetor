@@ -8,7 +8,7 @@ Renovate pin bump whose failing test names the field that drifted.
 
 ## Pinned schemas
 
-`internal/clientschema/vendor/manifest.json` is the one pin file. It records, per source,
+`internal/clientschema/upstream/manifest.json` is the one pin file. It records, per source,
 the repository, the pin, the pin the digests were taken at (`digest_pin`), the licence, the
 copyright holder and the sha256 of every file. `internal/clientschema` reads it; no other code
 lists a schema. Only the manifest is embedded in the binaries: the schema files are read from
@@ -66,7 +66,7 @@ make client-schemas-test
 | A pin that moved without a refresh of its digests is refused, naming the source; the refresh accepts that state and records the new pin | `TestMovedPinIsRefusedUntilRefreshed`, `tools/schemacheck` `TestRefreshAcceptsABumpedPinAndRecordsIt` |
 | Only the manifest is embedded | `TestOnlyTheManifestIsEmbedded` |
 | Generated MCP types lose no member in a decode and encode round trip | `tools/schemacheck` `TestGeneratedMCPTypesRoundTripWithoutLoss` |
-| Adoption hooks for Claude Code, Codex and Gemini CLI, the MCP registry for Gemini CLI and opencode, merges into existing settings, and this repository's tracked hook files validate | `tools/schemacheck` `TestRenderedClientConfigsValidateAgainstThePinnedSchemas` |
+| Adoption hooks for Claude Code, Codex and Gemini CLI, the MCP registry for Codex, Gemini CLI and opencode, merges into existing settings, and this repository's tracked config and hook files validate | `tools/schemacheck` `TestRenderedClientConfigsValidateAgainstThePinnedSchemas` |
 | A schema that renames a member Praetor renders fails and names it; the restored schema passes | `TestPlantedSchemaRenameFailsAndNamesTheField` |
 | Each schema family refuses a mutated document | `TestEachSchemaRefusesAMutatedDocument`, `TestMCPSchemaDefinitionsRefuseMutatedMessages` |
 | Codex hook payload fixtures validate against the published input schemas, and every registered Codex event has one | `TestCodexHookFixturesValidateAgainstThePublishedInputSchemas`, `TestEveryRegisteredCodexEventHasASchemaCheckedFixture` |
@@ -88,9 +88,6 @@ with that reason (`TestVendoredSchemasEqualTheirUpstreamPins`).
 - Gemini CLI's schema does not close the set of hook event names, so renaming an event there
   is not detected. Claude Code's and Codex's schemas are closed, and the planted-rename test
   covers them.
-- Codex configuration is TOML. `codex mcp add` owns that file, and Praetor's `codex-mcp.toml`
-  export is not validated, because the oracle reads JSON and YAML only. The Codex hooks file
-  (`.codex/hooks.json`) is validated against the `hooks` member of the config schema.
 - Codex hook outputs: Praetor's Codex dialect answers with an exit code and stderr, never a
   JSON document on stdout, so the output schemas are vendored and generated but no Praetor
   output is validated against them.
@@ -164,6 +161,7 @@ tests assert Praetor's own contract; none of them is checked against an upstream
 | Claude Code `.mcp.json` | `internal/clientsetup` | <https://code.claude.com/docs/en/mcp> |
 | Continue `.continue/mcpServers/praetor.yaml`, Cline and Kilo MCP exports | `internal/clientsetup` | <https://docs.continue.dev/customize/deep-dives/mcp>, <https://docs.cline.bot/mcp/mcp-overview>, <https://kilo.ai/docs/automate/mcp/using-in-kilo-code> |
 | Cursor, Windsurf and Codex rule files | `compile-context` | the vendors' rules documentation; the files are Markdown |
+| Codex CLI invocation (`codex mcp add`) | `internal/clientsetup` | <https://developers.openai.com/codex/mcp/> |
 | Claude Code, Gemini CLI and Antigravity hook payloads | `internal/agenthook` fixtures under `testdata/agent-text/claude`, `testdata/agent-text/gemini`, `testdata/agent-text/agy`, `testdata/agy/docs` and `testdata/pre-tool/cases.json` | <https://code.claude.com/docs/en/hooks>, the Gemini CLI source cited in `internal/agenthook/registrations.go`, <https://antigravity.google/docs/plugins> |
 | Agent Skills | `compile-context` | the agentskills.io specification, prose only |
 
@@ -179,6 +177,7 @@ fails when a new fixture family appears without a row here.
   `ValidateValue` return a `*Violations` that lists each failing field as a JSON pointer.
 - `ReadYAML` reads YAML 1.2, so the workflow key `on:` stays a string and not a boolean
   (`TestReadYAMLKeepsOnAString`).
+- `ReadTOML` reads a TOML document into a JSON-compatible value.
 - `Fetch` and `SkipOffline` are the fetch-only path for a schema hosted in a copyleft
   repository: validate from the fetched copy and never commit it. Permissive schemas are
   vendored instead.

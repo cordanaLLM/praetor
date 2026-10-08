@@ -88,7 +88,7 @@ func builtinArtefacts(manifest *config.Manifest) ([]builtin, error) {
 			Paths:   []string{"internal/codexhook/events_gen.go", "internal/mcpwire/messages_gen.go"},
 			Command: []string{"go", "test", "-count=1", "-run", "^TestGeneratedTypesAreFresh$", "./internal/clientschema/typegen"},
 			Env:     map[string]string{"PRAETOR_UPDATE_CLIENT_SCHEMA_TYPES": "1"},
-			Sources: []string{"internal/clientschema/vendor/**", "internal/clientschema/typegen/*.go"}}},
+			Sources: []string{"internal/clientschema/upstream/**", "internal/clientschema/typegen/*.go"}}},
 		{praetor: true, requires: ".devcontainer/Dockerfile.praetor", decl: config.GeneratedArtefact{Name: NameDevContainer,
 			Paths:   []string{".devcontainer/devcontainer.json", ".devcontainer/Dockerfile.praetor", ".devcontainer/praetor-source.*.b64"},
 			Command: []string{SelfCommand, "devcontainer", "generate", "--source-root=.", "--force"},

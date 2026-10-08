@@ -49,7 +49,7 @@ func TestVendoredSchemasEqualTheirUpstreamPins(t *testing.T) {
 // TestRefreshVendor rewrites the vendor directory from the pins when asked.
 func TestRefreshVendor(t *testing.T) {
 	if os.Getenv(refreshEnv) != "1" {
-		t.Skipf("set %s=1 to fetch the pinned schemas and rewrite internal/clientschema/vendor", refreshEnv)
+		t.Skipf("set %s=1 to fetch the pinned schemas and rewrite internal/clientschema/upstream", refreshEnv)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -197,6 +197,37 @@ func bumpPin(t *testing.T, dir string) {
 	}
 }
 
+func fakeFetcher(t *testing.T, bumped, vendored *clientschema.Manifest) Fetcher {
+	return func(_ context.Context, url string) ([]byte, error) {
+		for _, source := range bumped.Sources {
+			for _, file := range source.Files {
+				if source.URL(file) == url {
+					return clientschema.Read(vendorDir, vendoredFile(t, vendored, file.Path))
+				}
+			}
+		}
+		return nil, errors.New("unexpected URL " + url)
+	}
+}
+
+func assertBumpedPinRefused(t *testing.T, raw []byte) {
+	t.Helper()
+	if _, err := clientschema.ParseManifest(raw); !errors.Is(err, clientschema.ErrPinMoved) || !strings.Contains(err.Error(), "gemini-settings") {
+		t.Fatalf("ParseManifest(bumped pin) = %v, want ErrPinMoved naming gemini-settings", err)
+	}
+}
+
+func assertRefreshedPin(t *testing.T, raw []byte) {
+	t.Helper()
+	refreshed, err := clientschema.ParseManifest(raw)
+	if err != nil {
+		t.Fatalf("refreshed manifest is refused: %v", err)
+	}
+	if gemini, _ := refreshed.Source("gemini-settings"); gemini.Pin != "v0.64.0" || gemini.DigestPin != "v0.64.0" {
+		t.Fatalf("gemini pin %q, digest pin %q, want both v0.64.0", gemini.Pin, gemini.DigestPin)
+	}
+}
+
 // TestRefreshAcceptsABumpedPinAndRecordsIt is the Renovate flow end to end: a manifest whose pin
 // moved is refused by the offline check (clientschema.ErrPinMoved) but is the input of Refresh,
 // which fetches at the new pin and records it, after which the strict check accepts the manifest.
@@ -208,25 +239,13 @@ func TestRefreshAcceptsABumpedPinAndRecordsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := clientschema.ParseManifest(raw); !errors.Is(err, clientschema.ErrPinMoved) || !strings.Contains(err.Error(), "gemini-settings") {
-		t.Fatalf("ParseManifest(bumped pin) = %v, want ErrPinMoved naming gemini-settings", err)
-	}
+	assertBumpedPinRefused(t, raw)
 	bumped, err := clientschema.ParseStaleManifest(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
 	vendored := loadManifest(t)
-	// The fake upstream serves the vendored bytes of the file whose URL, at the bumped pin, is asked for.
-	fetch := func(_ context.Context, url string) ([]byte, error) {
-		for _, source := range bumped.Sources {
-			for _, file := range source.Files {
-				if source.URL(file) == url {
-					return clientschema.Read(vendorDir, vendoredFile(t, vendored, file.Path))
-				}
-			}
-		}
-		return nil, errors.New("unexpected URL " + url)
-	}
+	fetch := fakeFetcher(t, bumped, vendored)
 	if err := Refresh(context.Background(), dir, fetch); err != nil {
 		t.Fatal(err)
 	}
@@ -234,13 +253,7 @@ func TestRefreshAcceptsABumpedPinAndRecordsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refreshed, err := clientschema.ParseManifest(raw)
-	if err != nil {
-		t.Fatalf("refreshed manifest is refused: %v", err)
-	}
-	if gemini, _ := refreshed.Source("gemini-settings"); gemini.Pin != "v0.64.0" || gemini.DigestPin != "v0.64.0" {
-		t.Fatalf("gemini pin %q, digest pin %q, want both v0.64.0", gemini.Pin, gemini.DigestPin)
-	}
+	assertRefreshedPin(t, raw)
 }
 
 // vendoredFile returns the manifest entry of the vendored copy at path.

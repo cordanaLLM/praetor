@@ -33,11 +33,11 @@ import (
 // EmbedDirective.
 const (
 	SourceFile     = "internal/clientschema/clientschema.go"
-	EmbedDirective = "//go:embed vendor/manifest.json"
-	vendorRoot     = "internal/clientschema/vendor/"
+	EmbedDirective = "//go:embed upstream/manifest.json"
+	vendorRoot     = "internal/clientschema/upstream/"
 )
 
-//go:embed vendor/manifest.json
+//go:embed upstream/manifest.json
 var manifestJSON []byte
 
 // VendorDir is the vendor directory of the checkout at root.
