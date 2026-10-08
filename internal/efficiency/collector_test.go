@@ -249,6 +249,26 @@ func TestCollector_Positive_TranscriptsViaGatewayTrueGatewayCounts(t *testing.T)
 	assertUnaddedNote(t, report.Notes, "unit #1: 2 transcript requests not added (transcripts_via_gateway=true)")
 }
 
+// The milestone summary splits gateway spend into this milestone's units, other units and
+// unattributed entries, and the parts add up to the total; the split does not depend on
+// transcripts_via_gateway, which decides tokens only.
+func TestCollector_Positive_MilestoneSpendSplitAddsUp(t *testing.T) {
+	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	spend := filepath.Join(dir, "spend.jsonl")
+	writeFile(t, spend, []byte(`{"request_id":"a","model":"claude-opus-4-1","spend":1.5,"total_tokens":500,"request_tags":["branch:feat/x"]}
+{"request_id":"b","model":"ollama/q","model_group":"local","spend":0,"total_tokens":50,"request_tags":["branch:feat/x"]}
+{"request_id":"c","model":"claude-opus-4-1","spend":0.5,"total_tokens":5,"request_tags":["branch:feat/o"]}
+{"request_id":"d","model":"claude-opus-4-1","spend":0.25,"total_tokens":5}
+`))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, SpendLogPath: spend, Milestone: "M1"})
+	ms := report.MilestoneSummary
+	if ms.AttributedSpend != "$1.50" || ms.OtherUnitsSpend != "$0.50" || ms.UnattributedSpend != "$0.25" || ms.TotalSpend != "$2.25" {
+		t.Errorf("spend scopes must add up: %+v", ms)
+	}
+}
+
 func TestCollector_Boundary_NoGatewayEntries(t *testing.T) {
 	dir := t.TempDir()
 	prs := filepath.Join(dir, "prs.json")
