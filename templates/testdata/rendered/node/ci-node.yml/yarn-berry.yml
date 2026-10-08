@@ -2,17 +2,34 @@
 name: CI
 
 'on':
-  push:
-    branches: [main]
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: ['main']
 
 jobs:
   test:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        shell: bash
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Checkout source
+        if: github.event.pull_request.draft != true
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        if: github.event.pull_request.draft != true
+        uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
@@ -20,6 +37,7 @@ jobs:
       # hands over to the release a .yarnrc.yml yarnPath names; Node 25 and
       # later ship without Corepack.
       - name: Enable Yarn
+        if: github.event.pull_request.draft != true
         run: |
           npm install --global corepack@latest
           corepack enable yarn
@@ -27,7 +45,9 @@ jobs:
       # The locked install takes exactly what yarn.lock records and fails
       # when the two disagree.
       - name: Install dependencies
+        if: github.event.pull_request.draft != true
         run: yarn install --immutable
 
       - name: Test
+        if: github.event.pull_request.draft != true
         run: yarn run test

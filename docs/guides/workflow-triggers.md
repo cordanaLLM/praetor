@@ -37,9 +37,12 @@ The accepted shape is the one the hosted gates Praetor ships already use, define
 `internal/ghworkflow/hostedgate.go` ([When the workflow runs](api-compatibility.md#when-the-workflow-runs)):
 `push` filtered to the default branch, `pull_request` on `opened`, `synchronize`, `reopened` and
 `ready_for_review`, and a job whose first step, `Stop on a draft pull request`, fails a draft
-with an error annotation. The check reads that step through `ghworkflow.DraftStepFault`, the
+with an error annotation. The step names `shell: bash`, because a step without a shell runs
+under PowerShell on a Windows runner, or under a `defaults.run.shell`, which cannot read its
+script and so prints no annotation; a draft step without it is reported like a missing one.
+The check reads that step through `ghworkflow.DraftStepFault`, the
 function the hosted gate check uses, so the audit and the emitter cannot disagree
-(`TestAuditWorkflowTriggers_ShippedHostedGatesPass`, `TestDraftStepFault`).
+(`TestAuditWorkflowTriggers_EngineWorkflowsPass`, `TestDraftStepFault`).
 
 Each job that does work begins with the draft step itself rather than needing another job that
 does. A job also passes when:
@@ -63,6 +66,46 @@ decides each job once, after every job it needs, from the job itself and the dec
 needs. The names of the jobs therefore never change a verdict
 (`TestAuditWorkflowTriggers_VerdictIndependentOfJobNames` renames one workflow every way).
 
+## Workflows Praetor writes and runs
+
+Every workflow Praetor ships follows the shape, so a fresh adoption and Praetor's own audit report
+no finding:
+
+- **Flavor CI workflows.** The `ci.yml` that `praetorctl flavor apply` (and so `praetorctl adopt`)
+  scaffolds for the Go, Rust, Node, JVM and Flutter flavors renders the shape from the same
+  constants through the template functions `hostedGateOn`, `hostedGateDraftStep` and
+  `hostedGateStepIf` (`templates/hostedgate.go`): it runs on a push to `main` and on the four
+  pull request types, its first step is the draft step, and every later step carries
+  `github.event.pull_request.draft != true`. Each rendering passes `ghworkflow.HostedGateFault`
+  (`TestCIWorkflowTemplatesRenderTheHostedGateShape` in `templates/hostedgate_test.go`), and a
+  fresh adoption of each flavor audits clean
+  (`TestAdoptThenAuditReportsNoFlavorWorkflowTriggerFinding` in
+  `cmd/standardsctl/audit_workflow_triggers_test.go`).
+- **Updating an adopted copy.** Every text the CI templates rendered before is recorded
+  (`internal/flavor/ci_prior.go`, fixtures in `internal/flavor/testdata/ci-prior`), so a plain
+  `praetorctl adopt` or `praetorctl flavor apply` refreshes an unedited `ci.yml` without
+  `--force` and an edited one stays until `--force`
+  (`TestCIWorkflowApply_Positive_RefreshesAnEarlierText`,
+  `TestCIWorkflowApply_Negative_KeepsAnEditedCopy` in `internal/flavor/ci_prior_test.go`).
+- **Praetor's own workflows.** `ci.yml`, `compliance.yml`, `pages.yml`, `portability.yml` and
+  `security.yml` run on `ready_for_review` and begin every job a pull request starts with the
+  draft step; their schedule, dispatch and protected-branch push triggers stay. `ci.yml` also
+  keeps `edited`, because its governance step reads the pull request body, and its push on
+  `checkpoint/**`, the hosted run behind the lighter checkpoint pre-push policy
+  ([remote checkpoints](git-hooks.md#remote-checkpoints)). A push carries no pull request, so the
+  draft step never stops that run. Beside a checkpoint's draft pull request it reports the same
+  contexts as the draft run, and the checkpoint planner, which keeps the newest run of each job
+  (`_latest_runs` in `.config/lefthook/scripts/checkpoint.py`), reads the pair as draft pending
+  or as the push run's own result (`test_review_checkpoint_push_run_beside_draft_run` in
+  `.config/lefthook/scripts/test_checkpoint.py`). A matrix step that runs after a failure
+  (`!cancelled()`) carries the draft term too. Every context the committed ruleset requires keeps
+  its name and fails a draft in its draft step (`TestEngineRequiredContextsFailOnADraft` in
+  `internal/forge/workflow_draft_contexts_test.go`).
+
+On a draft, each required check therefore fails with the annotation the checkpoint planner reads
+as `draft_pending` ([checkpoint cadence](checkpoint-cadence.md)); marking the pull request ready
+starts the run that replaces the failure on the same head commit.
+
 ## Why findings warn
 
 HISS-18's failure action is a CI optimization gate (`internal/hisscatalog/catalog.go`), the one
@@ -70,9 +113,10 @@ HISS rule whose failure rejects nothing; the [HISS specification](../standards/h
 describes it as a filter that, when in doubt, runs more rather than blocks. A wasted run costs
 minutes, not correctness, so the check prints a `[WARN]` line per finding and the audit passes.
 
-Failing would also block every commit of a freshly adopted repository: adopting a Go service
-writes the go-service flavor's `ci.yml`, whose job runs on drafts, and the pre-commit hook runs
-`praetorctl audit --offline` (`TestAdoptThenAuditReportsTheFlavorWorkflowTriggers` in
+Failing would also block every commit of an adopted repository whose own workflows predate the
+shape, or whose `ci.yml` is an edited copy of an earlier flavor rendering that adoption does not
+refresh, because the pre-commit hook runs `praetorctl audit --offline`. Such a `ci.yml` is still
+reported (`TestAdoptThenAuditReportsNoFlavorWorkflowTriggerFinding` in
 `cmd/standardsctl/audit_workflow_triggers_test.go`).
 
 The check does fail when it cannot run: a workflow it cannot parse, more workflows than it reads
@@ -139,6 +183,7 @@ A finding is one line, and the last line counts them and names both ways out:
   the job calling the first one is reported. So is a job calling a reusable workflow of this
   repository whose jobs' needs form a cycle.
 - Steps after the draft step are not read: a later step whose condition calls `always()` still
-  runs on a draft.
+  runs on a draft. Praetor's own required checks are held to that by a test instead
+  (`TestEngineRequiredContextsFailOnADraft`).
 - The run budget part of #817 (runs and run-minutes per workflow from the forge) and the check
   for a workflow that re-runs on every base-branch push are not implemented.

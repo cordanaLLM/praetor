@@ -1,12 +1,15 @@
+<%- /*
+The trigger, the draft step and every later step's condition are the hosted gate shape
+(templates/hostedgate.go, defined in internal/ghworkflow/hostedgate.go): the job runs on a push to
+the default branch and on every pull request activity that can change what merges, and on a draft
+it fails in its first step, saying it runs when the pull request is marked ready (#817). Every
+rendering this body or an earlier one produced is recorded (internal/flavor/ci_prior.go), so an
+unedited copy is refreshed without --force.
+*/ -%>
 ---
 name: CI
 
-'on':
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+<% hostedGateOn %>
 jobs:
   test:
     runs-on: ubuntu-26.04
@@ -15,21 +18,23 @@ jobs:
     env:
       RUSTFLAGS: -D warnings
     steps:
-      - uses: actions/checkout@v4
+<% hostedGateDraftStep %>
+      - name: Checkout source<% hostedGateStepIf %>
+        uses: actions/checkout@v4
 
       # rustup ships on the hosted runner image, so the toolchain needs no
       # third-party action.
-      - name: Install the stable toolchain
+      - name: Install the stable toolchain<% hostedGateStepIf %>
         run: |
           rustup toolchain install stable --profile minimal \
             --component clippy,rustfmt
           rustup default stable
 
-      - name: Check formatting
+      - name: Check formatting<% hostedGateStepIf %>
         run: cargo fmt --all -- --check
 
-      - name: Lint
+      - name: Lint<% hostedGateStepIf %>
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Test
+      - name: Test<% hostedGateStepIf %>
         run: cargo test --all-features

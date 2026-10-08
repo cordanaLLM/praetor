@@ -63,7 +63,10 @@ merge on the skip before the new run reports
 ([using conditions to control job execution](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions)).
 On a draft the job's first step runs alone: it prints an error annotation titled
 `Gate not run on a draft` and a step summary line saying that the gate did not run because the
-pull request is a draft and runs when it is marked ready for review, then exits 1. Every other
+pull request is a draft and runs when it is marked ready for review, then exits 1. The step
+names `shell: bash`: without it a Windows runner would run the script under PowerShell, and a
+`defaults.run.shell` under that shell, and the step would fail without the annotation
+(`TestDraftStepFault` in `internal/ghworkflow/hostedgate_test.go`). Every other
 step carries `if: github.event.pull_request.draft != true`. A draft therefore shows a failed
 check by design. Marking it ready starts the `ready_for_review` run, which reports the same
 check on the same head commit and replaces the failure; until it reports, the failed check keeps
@@ -79,8 +82,9 @@ of a draft carrying exactly that annotation as `draft_pending`, not as a failed 
 ([Checkpoint cadence](checkpoint-cadence.md)).
 
 An earlier Praetor wrote a workflow that ran on every push to every branch and tag and on every
-draft (#815). Plain `praetorctl adopt` refreshes that text, and a rendering for a former default
-branch, without `--force`; a hand-edited copy still needs `--force`
+draft (#815), and then one whose draft step named no shell. Plain `praetorctl adopt` refreshes
+either text, and a rendering for a former default branch, without `--force`; a hand-edited copy
+still needs `--force`
 (`TestAdoptRefreshesPriorHostedGatesAndKeepsEditedOnes` in
 `internal/adopt/workflow_branch_test.go`). An earlier text rendered for a default branch other
 than `main` refreshes too: the prior lookup reads its one push branch line as `main` and matches

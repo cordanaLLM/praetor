@@ -1,18 +1,24 @@
+<%- /*
+The trigger, the draft step and every later step's condition are the hosted gate shape
+(templates/hostedgate.go, defined in internal/ghworkflow/hostedgate.go): the job runs on a push to
+the default branch and on every pull request activity that can change what merges, and on a draft
+it fails in its first step, saying it runs when the pull request is marked ready (#817). Every
+rendering this body or an earlier one produced is recorded (internal/flavor/ci_prior.go), so an
+unedited copy is refreshed without --force.
+*/ -%>
 ---
 name: CI
 
-'on':
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+<% hostedGateOn %>
 jobs:
   test:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+<% hostedGateDraftStep %>
+      - name: Checkout source<% hostedGateStepIf %>
+        uses: actions/checkout@v7
+      - name: Setup Go<% hostedGateStepIf %>
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
           # Left to the two steps below. setup-go's own cache covers the module
@@ -27,7 +33,7 @@ jobs:
       # the commit, and runs past 80 columns, so yamllint's line-length rule is
       # off for the two cache steps alone.
       # yamllint disable rule:line-length
-      - name: Restore Go module cache
+      - name: Restore Go module cache<% hostedGateStepIf %>
         uses: actions/cache@v6
         with:
           path: ~/go/pkg/mod
@@ -41,7 +47,7 @@ jobs:
       # it every run misses, restores the newest prefix match, and saves what it
       # actually built. `test` names this job's build cache; give every job in
       # the repository a different name here.
-      - name: Restore Go build cache
+      - name: Restore Go build cache<% hostedGateStepIf %>
         uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
@@ -54,8 +60,8 @@ jobs:
       # Only the Go toolchain runs here. Praetor's gates (compile-context,
       # audit, flavor audit) need praetorctl, which no step installs; the git
       # hooks adoption writes run them.
-      - name: Vet
+      - name: Vet<% hostedGateStepIf %>
         run: go vet ./...
 
-      - name: Test
+      - name: Test<% hostedGateStepIf %>
         run: go test -race ./...

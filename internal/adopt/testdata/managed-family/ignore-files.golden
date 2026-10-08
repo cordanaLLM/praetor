@@ -7,7 +7,7 @@ action create tools/markdownlint/verify.mjs :: Scaffolded locked Markdown govern
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action append .prettierignore :: Preserved existing rules and declared the praetor-managed artifacts
-file .github/workflows/praetor-docs.yml sha256:0a2adf287a81d548a8ee2f32e28f92ffeba997a4c5189085538d8fdd0bff3d7a
+file .github/workflows/praetor-docs.yml sha256:5a8932a0b5535c934f5eb00bf097e7f9cdcfe94053f82941aa2ff7a6bd4f7803
 file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
 file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -44,7 +44,7 @@ action reconcile .prettierignore :: No Prettier configuration found; managed art
 report-error tools/figures/dist/loader.js: ignored by .gitignore:1 (dist/); adoption writes it, but git will not commit it, so a clean checkout lacks it. Add !/tools/figures/dist/ after that rule, or stop ignoring the path
 report-error tools/figures/dist/player.js: ignored by .gitignore:1 (dist/); adoption writes it, but git will not commit it, so a clean checkout lacks it. Add !/tools/figures/dist/ after that rule, or stop ignoring the path
 report-error tools/figures/dist/THIRD-PARTY-LICENSES.txt: ignored by .gitignore:1 (dist/); adoption writes it, but git will not commit it, so a clean checkout lacks it. Add !/tools/figures/dist/ after that rule, or stop ignoring the path
-file .github/workflows/praetor-docs.yml sha256:0a2adf287a81d548a8ee2f32e28f92ffeba997a4c5189085538d8fdd0bff3d7a
+file .github/workflows/praetor-docs.yml sha256:5a8932a0b5535c934f5eb00bf097e7f9cdcfe94053f82941aa2ff7a6bd4f7803
 file tools/markdownlint/package.json sha256:1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b
 file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3

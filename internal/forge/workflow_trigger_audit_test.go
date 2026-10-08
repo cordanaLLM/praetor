@@ -7,6 +7,7 @@ package forge
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,12 @@ var triggersToday = time.Date(2026, time.October, 7, 15, 0, 0, 0, time.UTC)
 // hostedGateWorkflow is a one-job workflow in the hosted gate shape: it runs on the gate's
 // pull_request types and on a push to main, and its job stops on a draft in its first step.
 var hostedGateWorkflow = string(draftWorkflow("", ghworkflow.HostedGateDraftStep+gateRunStep))
+
+// lineAfter returns the 1-based line number of the first line written after text, so an expected
+// finding names a job's line wherever the draft step's length puts it.
+func lineAfter(text string) string {
+	return strconv.Itoa(strings.Count(text, "\n") + 1)
+}
 
 // triggerRepository writes files under .github/workflows of a fresh root and returns the root.
 func triggerRepository(t *testing.T, files map[string]string) string {
@@ -91,6 +98,8 @@ func TestAuditWorkflowTriggers_Positive_HostedGateShapePasses(t *testing.T) {
 func TestAuditWorkflowTriggers_Negative_ReportsEachWastedRun(t *testing.T) {
 	const prTypes = "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n"
 	job := "    runs-on: x\n    steps:\n      - run: make test\n"
+	plan := prTypes + "  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep
+	afterPlan := "x.yml:" + lineAfter(plan) + ": pull_request job "
 	cases := map[string]struct{ doc, want string }{
 		"scalar push":     {"on: push\njobs:\n  b:\n" + job, "x.yml:1: push runs on every branch and tag: it names no branches or tags filter."},
 		"sequence push":   {"on: [push]\njobs:\n  b:\n" + job, "x.yml:1: push runs on every branch and tag"},
@@ -112,16 +121,14 @@ func TestAuditWorkflowTriggers_Negative_ReportsEachWastedRun(t *testing.T) {
 			"x.yml:2: pull_request stops a draft in its jobs but does not run on ready_for_review"},
 		"remote callee": {prTypes + "  call:\n    uses: acme/ci/.github/workflows/gate.yml@v1\n",
 			"x.yml:5: pull_request job call runs on a draft pull request: it calls acme/ci/.github/workflows/gate.yml@v1"},
-		"runs after need": {prTypes + "  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep +
-			"  lane:\n    needs: [plan]\n    if: always()\n" + job, "x.yml:19: pull_request job lane may be skipped on a draft because it needs plan"},
-		"skipped by need": {prTypes + "  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep +
-			"  ci-ok:\n    needs: plan\n" + job, "x.yml:19: pull_request job ci-ok may be skipped on a draft because it needs plan, " +
+		"runs after need": {plan + "  lane:\n    needs: [plan]\n    if: always()\n" + job,
+			afterPlan + "lane may be skipped on a draft because it needs plan"},
+		"skipped by need": {plan + "  ci-ok:\n    needs: plan\n" + job, afterPlan + "ci-ok may be skipped on a draft because it needs plan, " +
 			"which is held back on one: unless the job's condition runs it after a failed need, which this check does not read, " +
 			"GitHub skips it and reports the skip as successful, which a required check accepts; drop the need and begin the job " +
 			`with the draft step "Stop on a draft pull request", or declare a workflow whose aggregate job needs the others in the exceptions list.`},
-		"own draft step skipped by need": {prTypes + "  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep +
-			"  ci-ok:\n    needs: plan\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep,
-			"x.yml:19: pull_request job ci-ok may be skipped on a draft because it needs plan"},
+		"own draft step skipped by need": {plan + "  ci-ok:\n    needs: plan\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep,
+			afterPlan + "ci-ok may be skipped on a draft because it needs plan"},
 	}
 	for name, tc := range cases {
 		out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": tc.doc}))
@@ -146,11 +153,12 @@ func TestAuditWorkflowTriggers_JobsSkippedThroughNeeds(t *testing.T) {
 	plan := "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\njobs:\n" +
 		"  plan:\n    runs-on: x\n    steps:\n" + ghworkflow.HostedGateDraftStep + "      - run: make plan\n"
 	run := "    runs-on: x\n    steps:\n      - run: make\n"
-	chain := plan + "  build:\n    needs: plan\n" + run + "  ci-ok:\n    needs: [build]\n" + run
+	build := plan + "  build:\n    needs: plan\n" + run
+	chain := build + "  ci-ok:\n    needs: [build]\n" + run
 	out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": chain}))
 	for _, want := range []string{
-		"[WARN] Workflow triggers (HISS-18): .github/workflows/x.yml:20: pull_request job build may be skipped on a draft because it needs plan,",
-		"[WARN] Workflow triggers (HISS-18): .github/workflows/x.yml:25: pull_request job ci-ok may be skipped on a draft because it needs build,",
+		"[WARN] Workflow triggers (HISS-18): .github/workflows/x.yml:" + lineAfter(plan) + ": pull_request job build may be skipped on a draft because it needs plan,",
+		"[WARN] Workflow triggers (HISS-18): .github/workflows/x.yml:" + lineAfter(build) + ": pull_request job ci-ok may be skipped on a draft because it needs build,",
 		"1 of 1 workflows start runs this check counts as wasted (findings: 2)",
 	} {
 		if !strings.Contains(out, want) {
@@ -186,16 +194,16 @@ func TestAuditWorkflowTriggers_NeedSkipWhateverTheCondition(t *testing.T) {
 		doc := plan + "  ci-ok:\n    needs: plan\n    if: " + condition + "\n    runs-on: x\n    steps:\n" +
 			ghworkflow.HostedGateDraftStep + "      - run: make\n"
 		out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": doc}))
-		want := "[WARN] Workflow triggers (HISS-18): .github/workflows/x.yml:19: pull_request job ci-ok may be skipped on a " +
+		want := "[WARN] Workflow triggers (HISS-18): .github/workflows/x.yml:" + lineAfter(plan) + ": pull_request job ci-ok may be skipped on a " +
 			"draft because it needs plan, which is held back on one"
 		if !strings.Contains(out, want) || !strings.Contains(out, "(findings: 1)") {
 			t.Errorf("condition %q: output lacks %q as its one finding:\n%s", condition, want, out)
 		}
 	}
-	unreached := plan + "  deploy:\n    if: github.event_name != 'pull_request'\n    runs-on: x\n    steps:\n      - run: make\n" +
-		"  publish:\n    needs: [deploy]\n    if: always()\n    runs-on: x\n    steps:\n      - run: make publish\n"
+	deploy := plan + "  deploy:\n    if: github.event_name != 'pull_request'\n    runs-on: x\n    steps:\n      - run: make\n"
+	unreached := deploy + "  publish:\n    needs: [deploy]\n    if: always()\n    runs-on: x\n    steps:\n      - run: make publish\n"
 	out := auditTriggers(t, triggerRepository(t, map[string]string{"x.yml": unreached}))
-	if want := ".github/workflows/x.yml:24: pull_request job publish runs on a draft pull request: its first step is not the draft step"; !strings.Contains(out, want) {
+	if want := ".github/workflows/x.yml:" + lineAfter(deploy) + ": pull_request job publish runs on a draft pull request: its first step is not the draft step"; !strings.Contains(out, want) {
 		t.Errorf("an always() job behind an unreached need: output lacks %q:\n%s", want, out)
 	}
 }
@@ -311,17 +319,19 @@ func TestAuditWorkflowTriggers_SkipsWithoutWorkflowsAndFailsUnread(t *testing.T)
 	}
 }
 
-// Positive: the hosted gates this repository ships, rendered into .github/workflows, carry no
-// finding: the check and the emitter read one shape (ghworkflow).
-func TestAuditWorkflowTriggers_ShippedHostedGatesPass(t *testing.T) {
+// Positive: no workflow of this repository carries a finding (#817): the hosted gates it ships,
+// rendered into .github/workflows, read one shape with the check (ghworkflow), and its own
+// workflows (ci.yml, compliance.yml, pages.yml, portability.yml, security.yml) follow it.
+func TestAuditWorkflowTriggers_EngineWorkflowsPass(t *testing.T) {
 	engine := filepath.Join("..", "..")
-	_, findings, err := workflowTriggerFindings(t.Context(), engine)
+	read, findings, err := workflowTriggerFindings(t.Context(), engine)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if read < 11 {
+		t.Fatalf("read %d workflows, want every engine workflow", read)
+	}
 	for _, finding := range findings {
-		if finding.Workflow == ".github/workflows/praetor-api.yml" || finding.Workflow == ".github/workflows/praetor-docs.yml" {
-			t.Errorf("a shipped hosted gate is reported: %s", finding)
-		}
+		t.Errorf("an engine workflow is reported: %s", finding)
 	}
 }

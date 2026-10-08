@@ -44,7 +44,7 @@ func TestNeutralText_Positive(t *testing.T) {
 	for _, want := range []string{
 		"Adoption adds no server-side `praetorctl` gate run. Scaffolded CI: ",
 		"`" + DocumentationWorkflowFile + "` runs step `" + ghworkflow.HostedGateDraftStepName + "`, `node tools/markdownlint/verify.mjs`",
-		"`.github/workflows/ci.yml` runs `go vet ./...`, `go test -race ./...`",
+		"`.github/workflows/ci.yml` runs step `" + ghworkflow.HostedGateDraftStepName + "`, `go vet ./...`, `go test -race ./...`",
 	} {
 		if !strings.Contains(harness, want) {
 			t.Errorf("rule 5 lacks %q:\n%s", want, harness)

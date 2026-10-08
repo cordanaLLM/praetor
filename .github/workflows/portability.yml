@@ -18,12 +18,16 @@ name: Platform Neutrality
 # advisory legs marked rather than hidden, and legs that cannot run their tests saying so
 # in the workflow instead of quietly omitting the step.
 
+# The hosted gate shape (internal/ghworkflow/hostedgate.go, docs/guides/workflow-triggers.md): a
+# pull request runs on every activity that can change what merges, and both jobs fail a draft in
+# their first step and run once the draft is marked ready (ready_for_review). The dispatch stays.
 on:
   push:
     branches:
       - main
       - 'lts-*'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
       - 'lts-*'
@@ -52,6 +56,21 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 2
     steps:
+      # The hosted gate's draft step, as ghworkflow.HostedGateDraftStep renders it: on a draft
+      # nothing runs and the job says so instead of stating a skip reason.
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        shell: bash
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       # The branch name and the author reach the script through the environment, never through
       # an expression inside it, so a crafted branch name cannot become shell text. The test
       # repeats the job condition's Renovate term, so the reason names the cause that skipped it.
@@ -104,6 +123,25 @@ jobs:
             name: Windows
 
     steps:
+      # The hosted gate's draft step, as ghworkflow.HostedGateDraftStep renders it: on a draft
+      # every leg fails here with the annotation the checkpoint planner reads as draft pending.
+      # The steps that run on after a failure (!cancelled() below) also carry the draft term
+      # (github.event.pull_request.draft != true), so a draft runs no step of the matrix. The
+      # step names bash (ghworkflow.HostedGateDraftShell): the Windows leg's default shell is
+      # pwsh, which refuses the script, so the leg would fail without the annotation.
+      - name: Stop on a draft pull request
+        if: github.event.pull_request.draft == true
+        shell: bash
+        env:
+          TITLE: Gate not run on a draft
+          MESSAGE: >-
+            The gate did not run because the pull request is a draft.
+            It runs when the pull request is marked ready for review.
+        run: |
+          echo "::error title=$TITLE::$MESSAGE"
+          echo "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Checkout Source Code
         uses: actions/checkout@v7
         with:
@@ -138,7 +176,7 @@ jobs:
       # reproduces exactly that. `!cancelled()` does not alter the job's conclusion: a failed
       # step still fails the leg. It only means one run reports every layer instead of one.
       - name: Vet Every Package
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         run: go vet ./...
 
       # Not -race here. The race detector needs a host C toolchain, and whether one exists
@@ -149,7 +187,7 @@ jobs:
       # alone took 557 s, most of it a nested go test over a repository copy, so the default
       # was one slow runner away from a panic that names no failing test.
       - name: Test Every Package
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         run: go test -timeout 30m ./...
 
       # The self-tests drive the real hooks, so they need the pinned hook runner and the
@@ -157,7 +195,7 @@ jobs:
       # a suite that silently degrades because a tool is missing is the failure mode this whole
       # job exists to make visible, and it would be absurd to introduce it here.
       - name: Install Pinned Git Hook Toolchain
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         run: go install github.com/evilmartians/lefthook/v2@v2.1.14
 
       # test_security_scope.py fails outright when gosec is absent rather than skipping, which
@@ -172,7 +210,7 @@ jobs:
       # TestPortabilityPassesNoDottedDashArgumentThroughPowerShell keeps such an argument out
       # of the default shell.
       - name: Install Security Scanner
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
 
@@ -194,7 +232,7 @@ jobs:
       # yamllint pin (HISS-19). The lock is universal for Python >= 3.10, and it also brings
       # black and flake8, which no hook runs.
       - name: Install YAML Linter
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: >-
           "$PYTHON" -m pip install --disable-pip-version-check --require-hashes
@@ -215,7 +253,7 @@ jobs:
       # reproducible gate (HISS-19, HISS-20). The install directory goes first on PATH so the
       # pin wins over the preinstalled copy.
       - name: Install Shell Linter
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         env:
           SHELLCHECK_VERSION: v0.11.0
@@ -257,7 +295,7 @@ jobs:
           fi
 
       - name: Build praetorctl
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl
 
@@ -266,7 +304,7 @@ jobs:
       # repository path: the three places a platform difference would make it wrong. The
       # binary built above runs it directly, not through its Makefile target.
       - name: Documentation References
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
 
@@ -284,7 +322,7 @@ jobs:
       # tool; one outside --require is reported as not asserted, never silently absent. The
       # table in docs/standards/hiss-21-platform-neutrality.md is rendered from REQUIRED.
       - name: Assert Hook Toolchain
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: '"$PYTHON" -B .config/lefthook/scripts/toolchain.py --require "$REQUIRED"'
         env:
@@ -300,7 +338,7 @@ jobs:
       # than by name: assuming a platform's binary naming is the exact defect this job exists
       # to catch. The hooks they drive resolve their own interpreter, as on any host.
       - name: Harness Self-Tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: '"$PYTHON" -B scripts/portability_selftest.py --min-executed "$MIN_EXECUTED"'
         env:
@@ -318,7 +356,7 @@ jobs:
       # start the npm batch shim without a shell and runs the npm-cli.js shipped beside node.exe
       # instead; this step is the leg that proves that path works on the platform it exists for.
       - name: Setup Node Toolchain
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         uses: actions/setup-node@v7
         with:
           node-version: '24'
@@ -328,7 +366,7 @@ jobs:
             tools/markdownlint/package-lock.json
 
       - name: Markdown Gate Self-Test
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         run: node tools/markdownlint/verify.mjs --self-test
 
       # `make docs-figures-check` and the managed `make docs-figures` are verify-all gates, so they
@@ -343,7 +381,7 @@ jobs:
       # at the end of .gitattributes). The Chromium smoke test needs a built site and runs in
       # pages.yml on Linux only.
       - name: Figure Build Check
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: |
           npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
@@ -358,7 +396,7 @@ jobs:
       # `-text` in .gitattributes so their hashes hold on a Windows checkout, and node expands the
       # quoted test glob itself (docs/standards/hiss-21-platform-neutrality.md).
       - name: Interfig Verify Gate
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: |
           "$PYTHON" -B scripts/test_sync_interfig.py

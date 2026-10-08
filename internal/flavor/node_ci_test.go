@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 	"github.com/cordanaLLM/praetor/templates"
 	"gopkg.in/yaml.v3"
@@ -80,17 +81,22 @@ type nodeJob struct {
 // unrunnableNodeSteps returns every step of a Node workflow that cannot pass on CI's checkout of
 // repo: an action whose inputs the checkout does not satisfy, a command naming a lockfile,
 // script or tool that is not there, and any action or command the check does not model, so a
-// later body cannot add one unchecked.
+// later body cannot add one unchecked. The hosted gate's draft step is not read (draftSteps): it
+// runs on a draft alone and fails it by design, so a ready pull request never runs it.
 func unrunnableNodeSteps(t *testing.T, body, repo string) []string {
 	t.Helper()
 	var workflow nodeWorkflow
 	if err := yaml.Unmarshal([]byte(body), &workflow); err != nil {
 		t.Fatalf("parse workflow: %v\n%s", err, body)
 	}
+	spec, err := ghworkflow.Parse([]byte(body))
+	if err != nil {
+		t.Fatalf("parse workflow: %v\n%s", err, body)
+	}
 	var problems []string
-	for _, steps := range workflow.Jobs {
+	for id, steps := range workflow.Jobs {
 		job := newNodeJob(t, repo)
-		for i := 0; i < len(steps.Steps) && i < maxWorkflowSteps; i++ {
+		for i := draftSteps(spec.Jobs[id].Steps); i < len(steps.Steps) && i < maxWorkflowSteps; i++ {
 			step := steps.Steps[i]
 			if step.Uses != "" {
 				problems = append(problems, job.action(step.Uses, step.With)...)
@@ -99,6 +105,15 @@ func unrunnableNodeSteps(t *testing.T, body, repo string) []string {
 		}
 	}
 	return problems
+}
+
+// draftSteps is how many leading steps of a job a ready pull request never runs: one when the
+// first is the hosted gate's draft step (ghworkflow.DraftStepFault), none otherwise.
+func draftSteps(steps []ghworkflow.Step) int {
+	if len(steps) > 0 && ghworkflow.DraftStepFault(&steps[0]) == nil {
+		return 1
+	}
+	return 0
 }
 
 func newNodeJob(t *testing.T, repo string) *nodeJob {

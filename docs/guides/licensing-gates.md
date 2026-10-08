@@ -23,8 +23,9 @@ Adoption writes two jobs, both at the one REUSE pin, `supplychain.ReuseActionVer
   `timeout-minutes: 10` and becomes a required status check of the branch ruleset adoption
   renders. It has the hosted gate shape every emitted gate shares
   (`internal/ghworkflow/hostedgate.go`): it runs on pull request activity and on a push to the
-  default branch that ruleset protects, its first step fails a draft run by design, and every
-  later step runs only when the pull request is not a draft. The branch is
+  default branch that ruleset protects, its first step fails a draft run by design (on `bash`,
+  so it behaves the same on every runner), and every later step runs only when the pull request
+  is not a draft. The branch is
   `repository.default_branch` of `.standards.yaml`, else the origin HEAD the checkout records,
   else `main` (`forge.RepositoryDefaultBranch`), written as `branches: ['master']`;
 - a `reuse-lint` pre-commit job in `lefthook.yml` that runs `reuse lint` where reuse 6.x is

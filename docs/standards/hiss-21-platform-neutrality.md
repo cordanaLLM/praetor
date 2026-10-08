@@ -63,6 +63,20 @@ reason and states where the coverage is recovered.
 `windows-2025` with `fail-fast: false`, compiling, vetting and testing every package and then
 running the harness self-tests through `scripts/portability_selftest.py`.
 
+On a draft pull request no leg runs: the workflow follows the hosted gate shape
+([workflows Praetor writes and runs](../guides/workflow-triggers.md#workflows-praetor-writes-and-runs)).
+Each leg, and the skip job below, begins with the draft step, which fails the draft with the
+annotation the checkpoint planner reads as draft pending, and marking the pull request ready
+(`ready_for_review`) starts the run that replaces the failure. The draft step names
+`shell: bash` (`ghworkflow.HostedGateDraftShell`): the Windows leg's default shell is PowerShell,
+which refuses the step's script, so that leg would fail without the annotation. The leg's other
+steps keep the shell they had. The steps that keep running after
+an earlier failure (`!cancelled()`) also carry `github.event.pull_request.draft != true`, so the
+draft runs none of them. That term reads the event every leg shares, never the leg, so such a
+step still counts as running on every leg (`runsOnEveryLeg` in
+`internal/forge/workflow_guard_test.go`), and `TestEngineRequiredContextsFailOnADraft` in
+`internal/forge/workflow_draft_contexts_test.go` fails when a step would run on a draft.
+
 Every label is an explicit image, never a `-latest` alias. An alias retargets the matrix the day
 GitHub promotes the next image, which changes what the platform-neutrality claim was measured
 against without changing a line of this repository — the same argument

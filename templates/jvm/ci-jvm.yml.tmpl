@@ -5,22 +5,27 @@ runs whichever build the repository carries and names what is missing instead of
 layout it did not model. A wrapper committed without its executable bit (Git records the mode, and
 Windows checkouts often drop it) still runs through sh. TestJVMBuildStepRunsTheRepositorysBuild
 (internal/flavor/jvm_ci_test.go) executes the step against each layout.
+
+The trigger, the draft step and every later step's condition are the hosted gate shape
+(templates/hostedgate.go, defined in internal/ghworkflow/hostedgate.go): the job runs on a push to
+the default branch and on every pull request activity that can change what merges, and on a draft
+it fails in its first step, saying it runs when the pull request is marked ready (#817). Every
+rendering this body or an earlier one produced is recorded (internal/flavor/ci_prior.go), so an
+unedited copy is refreshed without --force.
 */ -%>
 ---
 name: CI
 
-'on':
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
+<% hostedGateOn %>
 jobs:
   test:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+<% hostedGateDraftStep %>
+      - name: Checkout source<% hostedGateStepIf %>
+        uses: actions/checkout@v4
+      - name: Setup Java<% hostedGateStepIf %>
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '25'
@@ -28,7 +33,7 @@ jobs:
       # jvm-service matches Maven and Gradle builds alike, so the step runs
       # whichever the repository carries, preferring a checked-in wrapper over
       # the runner's own install.
-      - name: Build and verify
+      - name: Build and verify<% hostedGateStepIf %>
         run: |
           if [ -x ./mvnw ]; then
             ./mvnw -B verify

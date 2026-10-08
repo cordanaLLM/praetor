@@ -107,6 +107,9 @@ var priorDigests = map[string]string{
 	// The gate that ran on every push to every branch and tag and on every draft pull request
 	// (#815).
 	"05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84": WorkflowFile,
+	// The gate whose draft step ran under the runner's default shell, which is pwsh on a Windows
+	// runner and cannot read the step's script.
+	"0a2adf287a81d548a8ee2f32e28f92ffeba997a4c5189085538d8fdd0bff3d7a": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked

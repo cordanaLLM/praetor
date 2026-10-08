@@ -5,6 +5,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,24 +63,57 @@ func TestAuditWorkflowTriggers_CLI(t *testing.T) {
 	}
 }
 
-// End to end (#817): adopting a Go service (go.mod and cmd/) scaffolds the go-service flavor's
-// ci.yml, whose job runs on draft pull requests. The audit reports that workflow and still
-// passes, so the pre-commit audit --offline an adopted repository runs does not block its commits
-// on a HISS-18 finding in a workflow Praetor wrote.
-//
-// The warning is asserted on purpose and the test stays as it is for now: the flavor ci
-// templates move to the hosted gate shape in a later change of #817, as the operator decided on
-// 2026-10-07, and this test then turns into the check that they pass.
-func TestAdoptThenAuditReportsTheFlavorWorkflowTriggers(t *testing.T) {
-	root, _ := adoptedRepository(t, map[string]string{
-		"go.mod": "module example.com/widgets\n\ngo 1.24\n", "cmd/widgets/main.go": "package main\n\nfunc main() {}\n",
-	})
+// flavorFixtures are the smallest repositories adoption scaffolds each flavor's CI workflow in,
+// by the flavor it resolves.
+var flavorFixtures = map[string]map[string]string{
+	"go-service": {"go.mod": "module example.com/widgets\n\ngo 1.24\n", "cmd/widgets/main.go": "package main\n\nfunc main() {}\n"},
+	"rust-systems": {"Cargo.toml": "[package]\nname = \"widgets\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+		"src/main.rs": "fn main() {}\n"},
+	"typescript-node": {"package.json": "{\"name\": \"widgets\", \"scripts\": {\"test\": \"node --test\"}}\n",
+		"package-lock.json": "{\"name\": \"widgets\", \"lockfileVersion\": 3, \"requires\": true, \"packages\": {\"\": {\"name\": \"widgets\"}}}\n"},
+	"jvm-service":    {"pom.xml": "<project/>\n", "src/main/java/App.java": "class App {}\n"},
+	"mobile-flutter": {"pubspec.yaml": "name: widgets\nenvironment:\n  sdk: \">=3.0.0 <4.0.0\"\ndependencies:\n  flutter:\n    sdk: flutter\n", "lib/main.dart": "void main() {}\n"},
+}
+
+// End to end (#817): adopting each flavor scaffolds its CI workflow in the hosted gate shape
+// (templates/hostedgate.go), so the audit --offline an adopted repository's pre-commit hook runs
+// reports no HISS-18 finding on a fresh adoption: the CI workflow is written (Positive) and the
+// trigger check passes over every workflow adoption wrote. Negative: an earlier rendering of the
+// Go CI workflow, the one that ran on every draft, is still reported, so the pass is the shape's,
+// not a check that stopped reading ci.yml.
+func TestAdoptThenAuditReportsNoFlavorWorkflowTriggerFinding(t *testing.T) {
+	for flavorName, files := range flavorFixtures {
+		t.Run(flavorName, func(t *testing.T) {
+			root, _ := adoptedRepository(t, files)
+			if _, err := os.Stat(filepath.Join(root, ".github", "workflows", "ci.yml")); err != nil {
+				t.Fatalf("adoption wrote no CI workflow for %s: %v", flavorName, err)
+			}
+			out := auditOffline(t, root)
+			mustContain(t, out, "[PASS] Workflow triggers (HISS-18): workflows read: ")
+			if strings.Contains(out, "[WARN] Workflow triggers") {
+				t.Fatalf("a fresh %s adoption reports a HISS-18 finding:\n%s", flavorName, out)
+			}
+		})
+	}
+	root, _ := adoptedRepository(t, flavorFixtures["go-service"])
+	earlier, err := os.ReadFile(filepath.Join("..", "..", "internal", "flavor", "testdata", "ci-prior", "go", "520.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, root, ".github/workflows/ci.yml", string(earlier))
+	mustContain(t, auditOffline(t, root), "[WARN] Workflow triggers (HISS-18): .github/workflows/ci.yml:", "runs on a draft pull request",
+		"reported, not enforced")
+}
+
+// auditOffline runs audit --offline on the adopted repository at root and fails the test when the
+// audit fails.
+func auditOffline(t *testing.T, root string) string {
+	t.Helper()
 	out, err := captureStdout(t, func() error {
 		return dispatchCommand("audit", []string{"--config=" + filepath.Join(root, ".standards.yaml"), "--offline"})
 	})
 	if err != nil {
 		t.Fatalf("audit --offline of a fresh adoption failed: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[WARN] Workflow triggers (HISS-18): .github/workflows/ci.yml:", "runs on a draft pull request",
-		"reported, not enforced")
+	return out
 }
