@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -363,6 +364,14 @@ func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 		return string(out)
 	}
 	for _, tc := range remadeCases {
+		if runtime.GOOS == "windows" && tc.name == "makefile target remade" {
+			// HISS-21 stated skip: on the Windows runner GNU Make read the tracked text instead of
+			// restarting after it remade its own makefile (observed 2026-10-08). The reader refuses
+			// this shape on every platform (TestMergeDocumentationMakefileRemadeIncludeRefuses);
+			// only this replay of GNU Make's restart is skipped there.
+			t.Logf("%s: replay skipped on windows: GNU Make there does not restart after remaking its own makefile", tc.name)
+			continue
+		}
 		if out := run(tc); strings.Contains(out, "tracked") {
 			t.Errorf("%s: Make read the tracked text, so the case proves nothing: %q", tc.name, out)
 		}
