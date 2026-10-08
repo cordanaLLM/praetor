@@ -16,7 +16,7 @@ import (
 
 // registerRoutingRel is the routing configuration whose target_tasks are the task vocabulary a
 // manifest's register rows may name.
-const registerRoutingRel = ".config/models/routing.yaml"
+const registerRoutingRel = router.DefaultConfigPath
 
 // LoadCheckedRegisterAuthority resolves the text register policy of the repository at root and
 // checks the task rows the manifest wrote against the routing vocabulary. The manifest and the

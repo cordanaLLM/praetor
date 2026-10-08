@@ -239,6 +239,10 @@ func validateRepairPolicyFields(policy RepairPolicy) error {
 	if math.IsNaN(policy.MaxCost) || math.IsInf(policy.MaxCost, 0) || policy.MaxCost < 0 {
 		return errors.New("repair max_cost must be finite and nonnegative")
 	}
+	// The router accepts a tier-only route, but a repair ceiling is checked against an estimate.
+	if policy.InputTokens+policy.OutputTokens == 0 {
+		return errors.New("repair routing needs at least one positive token estimate to enforce max_cost")
+	}
 	if err := validateRepairRegisterPolicy(policy); err != nil {
 		return err
 	}

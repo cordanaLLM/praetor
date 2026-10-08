@@ -16,6 +16,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DefaultConfigPath is the repository-relative routing catalog every consumer reads.
+const DefaultConfigPath = ".config/models/routing.yaml"
+
 const (
 	// MaxRoutingTiers bounds task eligibility evaluation.
 	MaxRoutingTiers = 16
@@ -78,8 +81,8 @@ func decodeRoutingConfig(data []byte, path string) (*RoutingConfig, error) {
 	return &cfg, nil
 }
 
-// maxModelFieldNodes bounds one model mapping: eight known keys, a key and a value node each.
-const maxModelFieldNodes = 16
+// maxModelFieldNodes bounds one model mapping: sixteen known keys, a key and a value node each.
+const maxModelFieldNodes = 32
 
 // UnmarshalYAML records actual numeric price presence, including explicit zero.
 func (model *ModelDescriptor) UnmarshalYAML(node *yaml.Node) error {
@@ -90,7 +93,7 @@ func (model *ModelDescriptor) UnmarshalYAML(node *yaml.Node) error {
 	for i := 0; i+1 < len(node.Content) && i < maxModelFieldNodes; i += 2 {
 		key, value := node.Content[i].Value, node.Content[i+1]
 		switch key {
-		case "id", "family", "source", "rpm_limit", "tpm_limit", "capabilities":
+		case "id", "family", "source", "rpm_limit", "tpm_limit", "capabilities", "provider", "alias", "alias_status", "alias_reason", "preview", "as_of", "lane":
 		case "cost_per_m_in", "cost_per_m_out":
 			if value.Tag != "!!int" && value.Tag != "!!float" {
 				return fmt.Errorf("%w: %s must be explicitly numeric", ErrInvalidRoutingConfig, key)
@@ -128,11 +131,17 @@ func ValidateRoutingConfig(cfg *RoutingConfig) error {
 			return err
 		}
 	}
-	return nil
+	if err := validateGateway(cfg); err != nil {
+		return err
+	}
+	return validateLanes(cfg)
 }
 
 func validateRoutingGovernance(policy GovernancePolicy) error {
 	threshold := policy.ExhaustionThresholdPercent
+	if policy.CatalogMaxAgeDays < 0 || policy.CatalogMaxAgeDays > MaxCatalogMaxAgeDays {
+		return fmt.Errorf("%w: catalog_max_age_days must be between 0 and %d", ErrInvalidRoutingConfig, MaxCatalogMaxAgeDays)
+	}
 	if !finiteNonnegative(threshold) || threshold > 100 || policy.MaxConcurrentSameModel < 0 {
 		return fmt.Errorf("%w: invalid governance limits", ErrInvalidRoutingConfig)
 	}
@@ -172,6 +181,14 @@ func validateRoutingModel(model ModelDescriptor, seen map[string]bool) error {
 	}
 	if !knownModelSource(model.Source) {
 		return fmt.Errorf("%w: model %s has unknown source %q", ErrInvalidRoutingConfig, model.ID, model.Source)
+	}
+	return validateModelExtras(model)
+}
+
+// validateModelExtras checks the alias, probe, as_of and capability declarations of a model.
+func validateModelExtras(model ModelDescriptor) error {
+	if err := validateAliasEntry(model); err != nil {
+		return err
 	}
 	return validateRoutingTags(model.Capabilities)
 }

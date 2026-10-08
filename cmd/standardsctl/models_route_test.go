@@ -31,6 +31,101 @@ func writeRouteCLIInput(t *testing.T, body string) string {
 	return path
 }
 
+const cliLaneFixture = `version: 1
+gateway:
+  address: http://gateway.example.invalid/v1
+lanes:
+  gateway-coding:
+    harness: coding-harness
+    command: [coding-harness, run, --model, "{target}", --task, "{task}"]
+tiers:
+  work:
+    target_tasks: [implement, review]
+    lane: gateway-coding
+    models:
+      - {id: pinned-cheap, family: openai, cost_per_m_in: 0, cost_per_m_out: 0}
+      - {id: gw-light, family: openai, provider: gw, alias: light, alias_status: answers, cost_per_m_in: 1, cost_per_m_out: 1}
+`
+
+type cliRouteLane struct {
+	Lane struct {
+		Name    string   `json:"name"`
+		Harness string   `json:"harness"`
+		Target  string   `json:"target"`
+		Command []string `json:"command"`
+	} `json:"lane"`
+	Model   struct{ ID string } `json:"model"`
+	Skipped []struct {
+		Model, Reason string
+	} `json:"skipped"`
+}
+
+func TestModelsRouteCLITierOnlyReturnsExecutableLane(t *testing.T) {
+	path := writeRouteCLIInput(t, cliLaneFixture)
+	for _, label := range []string{"implement", "review"} {
+		out, err := captureStdout(t, func() error { return runModels([]string{"route", "--config=" + path, "--task=" + label}) })
+		if err != nil {
+			t.Fatalf("%s: tier-only route refused: %v", label, err)
+		}
+		var report cliRouteLane
+		if err := json.Unmarshal([]byte(out), &report); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"coding-harness", "run", "--model", "light", "--task", label}
+		if report.Model.ID != "gw-light" || report.Lane.Harness != "coding-harness" || report.Lane.Target != "light" || strings.Join(report.Lane.Command, " ") != strings.Join(want, " ") {
+			t.Fatalf("%s: lane wrong: %+v", label, report)
+		}
+		if len(report.Skipped) != 1 || report.Skipped[0].Model != "pinned-cheap" {
+			t.Fatalf("%s: the cheaper pinned model must be reported as skipped: %+v", label, report.Skipped)
+		}
+	}
+}
+
+func TestModelsRouteCLIUnansweredAliasIsSkippedWithItsReason(t *testing.T) {
+	body := strings.Replace(cliLaneFixture, "alias_status: answers", "alias_status: unanswered, alias_reason: 'HTTP 400: Invalid model name passed'", 1)
+	path := writeRouteCLIInput(t, body)
+	out, err := captureStdout(t, func() error { return runModels([]string{"route", "--config=" + path, "--task=implement"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report cliRouteLane
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Skipped) != 1 || report.Skipped[0].Model != "gw-light" || !strings.Contains(report.Skipped[0].Reason, "Invalid model name passed") {
+		t.Fatalf("the dead alias must be skipped with its reason: %+v", report.Skipped)
+	}
+	if report.Model.ID != "pinned-cheap" {
+		t.Fatalf("with no answering alias the declared pinned model remains the only candidate: %s", report.Model.ID)
+	}
+}
+
+func TestModelsOutcomeCLIRecordsAndReadsBack(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "routing", "outcomes.jsonl")
+	args := []string{"outcome", "--task=implement", "--lane=gateway-coding", "--target=light", "--result=ok", "--duration-ms=900", "--outcome-log=" + log}
+	if _, err := captureStdout(t, func() error { return runModels(args) }); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := router.ReadOutcomes(context.Background(), log)
+	if err != nil || len(recorded) != 1 || recorded[0].Task != "implement" || recorded[0].Result != router.OutcomeOK || recorded[0].DurationMS != 900 {
+		t.Fatalf("readback: %+v %v", recorded, err)
+	}
+	for name, bad := range map[string][]string{
+		"unknown result":     {"outcome", "--task=implement", "--target=light", "--result=great", "--outcome-log=" + log},
+		"missing task":       {"outcome", "--target=light", "--result=ok", "--outcome-log=" + log},
+		"route flag misuse":  {"route", "--task=implement", "--result=ok"},
+		"outcome token flag": {"outcome", "--task=implement", "--target=light", "--result=ok", "--input-tokens=5", "--outcome-log=" + log},
+		"sync flag misuse":   {"route", "--task=implement", "--probe-aliases=false"},
+	} {
+		if _, err := captureStdout(t, func() error { return runModels(bad) }); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if again, err := router.ReadOutcomes(context.Background(), log); err != nil || len(again) != 1 {
+		t.Fatalf("a refused record changed the log: %+v %v", again, err)
+	}
+}
+
 func TestModelsRouteCLIProjectedCapacityMatchesCore(t *testing.T) {
 	path := writeRouteCLIInput(t, cliRouteFixture)
 	usagePath := writeRouteCLIInput(t, `{"version":1,"captured_at":"2026-09-12T12:00:00Z","models":{"cheap":{"current_rpm":7,"current_tpm":700},"reserve":{"current_rpm":8,"current_tpm":0}}}`)
@@ -120,7 +215,7 @@ func TestModelsRouteCLIUsesSuppliedCapacityAndRejectsMissingObservations(t *test
 
 func TestModelsRouteCLIRejectsInvalidOrInertArguments(t *testing.T) {
 	path := writeRouteCLIInput(t, cliRouteFixture)
-	cases := [][]string{{"list", "--task=implement"}, {"route", "extra"}, {"route", "--discover-local=false"}, {"route", "--task=unknown", "--input-tokens=1"}, {"route", "--task=implement"}, {"route", "--task=implement", "--input-tokens=1000000001"}, {"route", "--task=implement", "--input-tokens=1", "--capabilities=tools,,json"}, {"list", "--prune"}, {"route", "--prune", "--task=implement", "--input-tokens=1"}}
+	cases := [][]string{{"list", "--task=implement"}, {"route", "extra"}, {"route", "--discover-local=false"}, {"route", "--task=unknown", "--input-tokens=1"}, {"route", "--task=implement", "--output-tokens=-1"}, {"route", "--task=implement", "--input-tokens=1000000001"}, {"route", "--task=implement", "--input-tokens=1", "--capabilities=tools,,json"}, {"list", "--prune"}, {"route", "--prune", "--task=implement", "--input-tokens=1"}}
 	for _, args := range cases {
 		args = append(args, "--config="+path)
 		if _, err := captureStdout(t, func() error { return runModels(args) }); err == nil {

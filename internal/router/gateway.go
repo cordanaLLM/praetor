@@ -1,0 +1,261 @@
+package router
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+	"unicode"
+)
+
+// AliasStatus is the result of the last probe of an alias entry.
+type AliasStatus string
+
+const (
+	// AliasAnswers means the gateway answered a probe call for the alias.
+	AliasAnswers AliasStatus = "answers"
+	// AliasUnanswered means the probe call failed; the entry records why.
+	AliasUnanswered AliasStatus = "unanswered"
+)
+
+const (
+	// aliasProbeTimeout bounds one probe call (HISS-02).
+	aliasProbeTimeout = 10 * time.Second
+	// maxProbeBodyBytes bounds the response body read from a probe.
+	maxProbeBodyBytes = 64 << 10
+	// maxProbeReasonBytes bounds a recorded unanswered reason.
+	maxProbeReasonBytes = 200
+	// maxEnvNameBytes bounds the name of the key variable.
+	maxEnvNameBytes = 128
+)
+
+// ErrProbeNotRun means a probe could not be attempted (for example the key variable is
+// unset). It is not evidence about the alias, so the recorded status stays as it was.
+var ErrProbeNotRun = errors.New("alias probe not run")
+
+// envNameShape is the shape of an environment variable name; its length is bounded apart.
+var envNameShape = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// GatewayConfig declares the gateway serving the router aliases; the adopter supplies it.
+type GatewayConfig struct {
+	Address string `yaml:"address" json:"address"`
+	KeyEnv  string `yaml:"key_env,omitempty" json:"key_env,omitempty"`
+}
+
+func validateGateway(cfg *RoutingConfig) error {
+	gw := cfg.Gateway
+	if gw == nil {
+		return requireNoAliases(cfg)
+	}
+	parsed, err := url.Parse(gw.Address)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || len(gw.Address) > maxRoutingNameBytes {
+		return fmt.Errorf("%w: gateway address must be an http(s) URL", ErrInvalidRoutingConfig)
+	}
+	if gw.KeyEnv != "" && (len(gw.KeyEnv) > maxEnvNameBytes || !envNameShape.MatchString(gw.KeyEnv)) {
+		return fmt.Errorf("%w: gateway key_env must be an environment variable name", ErrInvalidRoutingConfig)
+	}
+	return nil
+}
+
+// requireNoAliases refuses an alias entry in a catalog that declares no gateway: nothing could
+// probe it, and nothing says which service its alias names.
+func requireNoAliases(cfg *RoutingConfig) error {
+	for _, tier := range cfg.Tiers {
+		for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
+			if tier.Models[i].Alias != "" {
+				return fmt.Errorf("%w: model %s names an alias but the catalog declares no gateway", ErrInvalidRoutingConfig, tier.Models[i].ID)
+			}
+		}
+	}
+	return nil
+}
+
+// gatewayServesAliases reports whether any alias entry answered its probe.
+func gatewayServesAliases(cfg *RoutingConfig) bool {
+	for _, tier := range cfg.Tiers {
+		for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
+			if tier.Models[i].Alias != "" && tier.Models[i].AliasStatus == AliasAnswers {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// gatewayExclusion returns why the gateway rules exclude a candidate, or "" when it stays.
+// An alias entry stays only once its probe answered. When the gateway serves aliases, a
+// pinned model is excluded too, because the gateway refuses concrete IDs its key cannot use;
+// a model from a local runtime never passes through the gateway and stays.
+func gatewayExclusion(model ModelDescriptor, serves bool) string {
+	if model.Alias != "" {
+		switch model.AliasStatus {
+		case AliasAnswers:
+			return ""
+		case AliasUnanswered:
+			return "alias did not answer the gateway probe: " + model.AliasReason
+		default:
+			return "alias has not been probed; run models sync"
+		}
+	}
+	if serves && model.Source != SourceLocal {
+		return "pinned model; the gateway serves aliases"
+	}
+	return ""
+}
+
+// validateAliasEntry checks the alias, probe and as_of fields of one model.
+func validateAliasEntry(model ModelDescriptor) error {
+	if (model.Alias == "") != (model.Provider == "") {
+		return fmt.Errorf("%w: model %s needs provider and alias together", ErrInvalidRoutingConfig, model.ID)
+	}
+	if model.Alias != "" && (!routingName(model.Alias) || !routingName(model.Provider)) {
+		return fmt.Errorf("%w: model %s has an invalid provider or alias", ErrInvalidRoutingConfig, model.ID)
+	}
+	return validateProbeFields(model)
+}
+
+// validateProbeFields checks the recorded probe status and the as_of date of one model.
+func validateProbeFields(model ModelDescriptor) error {
+	switch model.AliasStatus {
+	case "", AliasAnswers, AliasUnanswered:
+	default:
+		return fmt.Errorf("%w: model %s has unknown alias_status %q", ErrInvalidRoutingConfig, model.ID, model.AliasStatus)
+	}
+	if model.Alias == "" && (model.AliasStatus != "" || model.AliasReason != "") {
+		return fmt.Errorf("%w: model %s records an alias probe without an alias", ErrInvalidRoutingConfig, model.ID)
+	}
+	if _, err := time.Parse(time.DateOnly, model.AsOf); model.AsOf != "" && err != nil {
+		return fmt.Errorf("%w: model %s as_of must be a YYYY-MM-DD date", ErrInvalidRoutingConfig, model.ID)
+	}
+	return nil
+}
+
+// AliasProber makes one bounded probe call for an alias.
+type AliasProber func(ctx context.Context, gw GatewayConfig, alias string) error
+
+// AliasProbe is the outcome of probing one alias entry.
+type AliasProbe struct {
+	Model  string      `json:"model"`
+	Alias  string      `json:"alias"`
+	Status AliasStatus `json:"status,omitempty"`
+	Reason string      `json:"reason,omitempty"`
+}
+
+// HTTPAliasProber returns the prober that sends one one-token chat completion to the gateway.
+func HTTPAliasProber(client *http.Client) AliasProber {
+	return func(ctx context.Context, gw GatewayConfig, alias string) error {
+		return probeAlias(ctx, client, gw, alias)
+	}
+}
+
+func probeAlias(ctx context.Context, client *http.Client, gw GatewayConfig, alias string) (resultErr error) {
+	key := ""
+	if gw.KeyEnv != "" {
+		if key = os.Getenv(gw.KeyEnv); key == "" {
+			return fmt.Errorf("%w: environment variable %s is empty", ErrProbeNotRun, gw.KeyEnv)
+		}
+	}
+	body, err := json.Marshal(map[string]any{"model": alias, "max_tokens": 1,
+		"messages": []map[string]string{{"role": "user", "content": "ping"}}})
+	if err != nil {
+		return fmt.Errorf("encode probe: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, aliasProbeTimeout)
+	defer cancel()
+	target := strings.TrimRight(gw.Address, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrProbeNotRun, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("gateway unreachable: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes))
+	if err != nil {
+		return fmt.Errorf("read probe response: %w", err)
+	}
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, gatewayMessage(data))
+	}
+	return nil
+}
+
+// gatewayMessage extracts the error message of an OpenAI-style error body, else the bare text.
+func gatewayMessage(data []byte) string {
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	text := string(data)
+	if json.Unmarshal(data, &payload) == nil && payload.Error.Message != "" {
+		text = payload.Error.Message
+	}
+	return boundedReason(text)
+}
+
+// boundedReason drops control characters and cuts the text to maxProbeReasonBytes.
+func boundedReason(text string) string {
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, strings.TrimSpace(text))
+	if len(text) > maxProbeReasonBytes {
+		text = strings.ToValidUTF8(text[:maxProbeReasonBytes], "")
+	}
+	return text
+}
+
+// ProbeAliases probes every alias entry once and records the outcome on the entry, with now as
+// its AsOf date when the gateway answered. A probe that could not run (ErrProbeNotRun) leaves
+// the entry unchanged and is reported without a status. Without a gateway it probes nothing.
+func ProbeAliases(ctx context.Context, cfg *RoutingConfig, prober AliasProber, now time.Time) []AliasProbe {
+	if cfg == nil || cfg.Gateway == nil || prober == nil {
+		return nil
+	}
+	var probes []AliasProbe
+	for name, tier := range cfg.Tiers {
+		for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
+			if tier.Models[i].Alias == "" {
+				continue
+			}
+			probes = append(probes, probeEntry(ctx, *cfg.Gateway, &tier.Models[i], prober, now))
+		}
+		cfg.Tiers[name] = tier
+	}
+	slices.SortFunc(probes, func(a, b AliasProbe) int { return strings.Compare(a.Model, b.Model) })
+	return probes
+}
+
+func probeEntry(ctx context.Context, gw GatewayConfig, model *ModelDescriptor, prober AliasProber, now time.Time) AliasProbe {
+	probe := AliasProbe{Model: model.ID, Alias: model.Alias}
+	err := prober(ctx, gw, model.Alias)
+	switch {
+	case err == nil:
+		model.AliasStatus, model.AliasReason, model.AsOf = AliasAnswers, "", now.UTC().Format(time.DateOnly)
+	case errors.Is(err, ErrProbeNotRun):
+		probe.Reason = boundedReason(err.Error())
+		return probe
+	default:
+		model.AliasStatus, model.AliasReason = AliasUnanswered, boundedReason(err.Error())
+	}
+	probe.Status, probe.Reason = model.AliasStatus, model.AliasReason
+	return probe
+}
