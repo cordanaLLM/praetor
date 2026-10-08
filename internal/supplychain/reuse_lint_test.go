@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -81,12 +82,21 @@ func TestReuseDeclared_3D(t *testing.T) {
 	}
 }
 
+type renovatePackageRule struct {
+	MatchManagers     []string `json:"matchManagers"`
+	MatchFileNames    []string `json:"matchFileNames"`
+	MatchPackageNames []string `json:"matchPackageNames"`
+	AllowedVersions   string   `json:"allowedVersions"`
+	GroupName         string   `json:"groupName"`
+}
+
 type renovateCustomManager struct {
 	CustomType          string   `json:"customType"`
 	ManagerFilePatterns []string `json:"managerFilePatterns"`
 	MatchStrings        []string `json:"matchStrings"`
 	DepNameTemplate     string   `json:"depNameTemplate"`
 	DatasourceTemplate  string   `json:"datasourceTemplate"`
+	VersioningTemplate  string   `json:"versioningTemplate"`
 }
 
 type renovateConfig struct {
@@ -94,6 +104,7 @@ type renovateConfig struct {
 		ManagerFilePatterns []string `json:"managerFilePatterns"`
 	} `json:"github-actions"`
 	CustomManagers []renovateCustomManager `json:"customManagers"`
+	PackageRules   []renovatePackageRule   `json:"packageRules"`
 }
 
 // Positive: renovate.json carries a regex custom manager for internal/supplychain/reuse_lint.go
@@ -124,6 +135,29 @@ func TestRenovateRegexMatchesReuseActionPin(t *testing.T) {
 	broken := strings.Replace(string(src), ReuseActionCommit, "", 1)
 	if re.MatchString(broken) {
 		t.Error("regex matched broken source missing commit SHA")
+	}
+}
+
+// Positive: the REUSE gate packageRule in renovate.json narrows matching to fsfe/reuse-action
+// and restricts allowedVersions to major-only tags (/^v\d+$/).
+func TestRenovatePackageRule_NarrowsToReuseAction(t *testing.T) {
+	config := readRenovateTestConfig(t)
+	var found *renovatePackageRule
+	for i := range config.PackageRules {
+		rule := &config.PackageRules[i]
+		if rule.GroupName == "REUSE gate actions" {
+			found = rule
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("packageRules missing 'REUSE gate actions' group")
+	}
+	if !slices.Equal(found.MatchPackageNames, []string{"fsfe/reuse-action"}) {
+		t.Errorf("matchPackageNames = %v, want [fsfe/reuse-action]", found.MatchPackageNames)
+	}
+	if found.AllowedVersions != "/^v\\d+$/" {
+		t.Errorf("allowedVersions = %q, want /^v\\d+$/", found.AllowedVersions)
 	}
 }
 
@@ -160,6 +194,9 @@ func assertReuseManagerConfig(t *testing.T, manager *renovateCustomManager) {
 	}
 	if manager.DatasourceTemplate != "github-tags" {
 		t.Errorf("datasourceTemplate = %q, want github-tags", manager.DatasourceTemplate)
+	}
+	if manager.VersioningTemplate != "regex:^v(?<major>\\d+)$" {
+		t.Errorf("versioningTemplate = %q, want regex:^v(?<major>\\d+)$", manager.VersioningTemplate)
 	}
 	if len(manager.MatchStrings) == 0 {
 		t.Fatal("custom manager has empty matchStrings")
