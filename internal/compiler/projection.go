@@ -243,6 +243,9 @@ type PendingSources struct {
 	// Skills maps the name of a skill Praetor ships (config.RegisterSkillBundle) to the bytes of
 	// the SKILL.md the caller writes under CanonicalSkillsRel.
 	Skills map[string][]byte
+	// Licenses maps the name of a skill Praetor ships to the bytes of the LICENSE the caller
+	// writes beside its SKILL.md.
+	Licenses map[string][]byte
 }
 
 // PlanAgentSurfacesOver is PlanAgentSurfaces for the tree a caller is about to leave: a pending
@@ -335,7 +338,7 @@ func planAgentSurfaces(ctx context.Context, targetDir string, vendor []projectio
 	if err != nil {
 		return plan, err
 	}
-	if plan.clientSkills, err = clientSkillProjections(ctx, targetDir, skillDirs, pending.Skills); err != nil {
+	if plan.clientSkills, err = clientSkillProjections(ctx, targetDir, skillDirs, pending); err != nil {
 		return plan, err
 	}
 	if plan.pluginSkills, err = pluginSkillProjections(ctx, targetDir); err != nil {

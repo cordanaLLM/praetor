@@ -610,7 +610,7 @@ Three rules hold on every run, `--force` or not:
 | | the `AGENTS.md` harness | kept; only its text register block is spliced from the manifest | regenerated, keeping the preamble, invariant rows under the repository's own IDs and the instructions below the harness; an edited generated line is a `replace` (`TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions`) |
 | | `.paperclip/harness.json` | a harness the repository edited is kept; a `platform` naming another repository is a warning | only that `platform` is reset to this repository's `<owner>/<name>`; `.paperclip/rules.md` stays as it is, a deleted one included (`TestAdoptForcePatchesOnlyHarnessPlatform`) |
 | | `.standards.yaml` | profiles, facets and every other declaration kept (`praetorctl profile set` changes them); `register.sources` added, or re-bound only to a harness the run writes | the same |
-| Generated, not audit-verified | the anti-evasion interceptor, the checkpoint scripts and policy, the personas `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, the register skills and NOTICE files under `.agents/skills/` (`.agents/skills/<name>/SKILL.md` and `NOTICE`), the label taxonomy, `CONTRIBUTING.md`, the pull request template, `SECURITY.md`, editor files that are not JSON | an edited file is kept with a warning that counts the lines regenerating it would change | the same; delete the file and re-run adopt to regenerate it (`TestAdopt_Negative_EditedEvasionHookKeptUnderForce`) |
+| Generated, not audit-verified | the anti-evasion interceptor, the checkpoint scripts and policy, the personas `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, the register skills and their upstream `LICENSE` files under `.agents/skills/` (`.agents/skills/<name>/SKILL.md` and `LICENSE`), the label taxonomy, `CONTRIBUTING.md`, the pull request template, `SECURITY.md`, editor files that are not JSON | an edited file is kept with a warning that counts the lines regenerating it would change | the same; delete the file and re-run adopt to regenerate it (`TestAdopt_Negative_EditedEvasionHookKeptUnderForce`) |
 | | `lefthook.yml` | a current or earlier Praetor rendering is written, migrated or verified; any other configuration is kept and not activated | the same, and a CRLF checkout of the current rendering is rewritten with LF bytes (`TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce`) |
 | | the `pre-commit` hook written when lefthook cannot install | a hook Praetor did not write is kept | the same (`TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce`) |
 | Written only when absent | flavor templates such as `rustfmt.toml`, developer-owned editor files such as `.nvim.lua`, the ADR directory | an existing file is kept | the same |
@@ -853,12 +853,14 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   tests in `internal/adopt/register_preflight_test.go`).
 - **Register skills.** With `--lock-source-root`, the agent-harness step installs the skills
   the text register block names, `social-text` and `caveman`, and `adhd-format`, which
-  `social-text` inherits from, along with their `NOTICE` files, into `.agents/skills/`. Shipped
-  skills carry inline credit and licence notices, and adoption refuses any skill referencing
-  unshipped repository paths (`compiler.CheckShippedSkillReferences`). A declined agent-harness step,
-  or a run without `--lock-source-root`, installs none, and neither the block nor the Paperclip
-  harness then names one. A declined agent-definitions step installs none either while `agent_clients`
-  selects Claude Code, since no step would write the `.claude/skills/` copies. A symlinked
+  `social-text` inherits from, into `.agents/skills/`, each with the upstream `LICENSE` its
+  declared origin requires (`.agents/skills/<name>/LICENSE`). Shipped skills carry an inline
+  credit and name no repository path an adopter lacks; adoption checks that on the source bundle
+  (`compiler.CheckShippedSkillReferences`) and never on the copy the repository already holds.
+  A declined agent-harness step, or a run without `--lock-source-root`, installs none, and
+  neither the block nor the Paperclip harness then names one. A declined agent-definitions
+  step installs none either while `agent_clients` selects Claude Code, since no step would
+  write the `.claude/skills/` copies. A symlinked
   `.claude/skills` fails adoption before its first write
   ([register skills](guides/text-register.md#register-skills),
   `internal/adopt/register_skills.go`).

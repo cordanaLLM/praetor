@@ -39,32 +39,33 @@ import (
 var priorSkillDigests = map[string]map[string]string{
 	compiler.CanonicalSkillRel("social-text"): {
 		"a128a86ad170bfaf89012567e1405693006627e260cd18c420f3abb500dd6d9e": "first shipped, REUSE header and upstream credit (#235)",
-		"4bbcf2b726218a7e876b13df50f1e1c2fe71ea4766615225d40955f3ed777c7f": "inline credit and upstream licence notice (#850)",
+		"66c09c5a6102bdd5b8bf81859fd4896f9627d29e3795b54b0623320dccd11a38": "inline credit, no repository path an adopter lacks (#850)",
 	},
 	compiler.CanonicalSkillRel("caveman"): {
 		"c0ab6d15d42d9dab2640eb53abf7865495ab99979931cd463540646974d59b49": "first shipped, REUSE header and upstream credit (#235)",
-		"54c31c7c5dfe320228c5db1535765dc2414dd2a5fa1b6a79d5c68fa4f71b9fa3": "inline credit and upstream licence notice (#850)",
+		"8709bb0106e84d6ce2ead7d708b23d0335fb6a072ddce893837faee8ebcbd7bd": "inline credit, no repository path an adopter lacks (#850)",
 	},
 	compiler.CanonicalSkillRel("adhd-format"): {
 		"1db3a6e0ec137143cb81002491bab5f5ae6a9331333126423de199a1c66edb44": "first shipped, REUSE header and upstream credit (#235)",
-		"1d5efc9bf3e177ddb016daf50663cd7554bac8495b408fa5e784ebfc6cfdd8ac": "inline credit and upstream licence notice (#850)",
+		"1d5efc9bf3e177ddb016daf50663cd7554bac8495b408fa5e784ebfc6cfdd8ac": "inline credit, no repository path an adopter lacks (#850)",
 	},
 }
 
-// priorSkillNoticeDigests are the digests of every notice text a Praetor release shipped at each
-// canonical skill notice path of the bundle.
-var priorSkillNoticeDigests = map[string]map[string]string{
-	compiler.CanonicalSkillNoticeRel("social-text"): {
-		"00ce9229ed278a6730e0d0d495b06d6555e802c4032e75763b90482b85d15549": "shipped with contributors in copyright line (#850)",
-		"8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c": "first shipped, upstream MIT notice (#850)",
+// priorSkillLicenseDigests are the digests of every LICENSE text a Praetor release shipped at each
+// canonical skill licence path of the bundle, the current texts among them: the upstream MIT text
+// of the skill's origin, byte for byte. testdata/skill-licenses reproduces each digest, and
+// TestPriorSkillLicenseDigests_Boundary_CurrentSourcesRecorded fails until a changed licence is
+// recorded here. An earlier text no release shipped is replaced here, never kept beside the new
+// one.
+var priorSkillLicenseDigests = map[string]map[string]string{
+	compiler.CanonicalSkillLicenseRel("social-text"): {
+		"8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c": "first shipped, upstream MIT text of i-have-adhd (#850)",
 	},
-	compiler.CanonicalSkillNoticeRel("caveman"): {
-		"6df7ffc52b0daea109eb96701daa0426cf41d0baf829ba8d3fbf664eaba5f410": "shipped with contributors in copyright line (#850)",
-		"5eb826cd03151bcc7cce3f80d40e87733237fedfc6c36d6908aca5fd650a0bdb": "first shipped, upstream MIT notice (#850)",
+	compiler.CanonicalSkillLicenseRel("caveman"): {
+		"94fe75d355887f84ee7eefca68e06d8d082a23dad47a8e1f58a94d98900edf5b": "first shipped, upstream MIT text of Caveman at 8dffbb260 (#850)",
 	},
-	compiler.CanonicalSkillNoticeRel("adhd-format"): {
-		"00ce9229ed278a6730e0d0d495b06d6555e802c4032e75763b90482b85d15549": "shipped with contributors in copyright line (#850)",
-		"8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c": "first shipped, upstream MIT notice (#850)",
+	compiler.CanonicalSkillLicenseRel("adhd-format"): {
+		"8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c": "first shipped, upstream MIT text of i-have-adhd (#850)",
 	},
 }
 
@@ -73,9 +74,9 @@ const maxRegisterSkills = 8
 
 // skillSource is one skill of the bundle as the verified source bundle holds it.
 type skillSource struct {
-	name   string
-	data   []byte
-	notice []byte
+	name    string
+	data    []byte
+	license []byte
 }
 
 // registerSkillPlan is what the agent-harness step installs, resolved once per run
@@ -176,13 +177,13 @@ func (s *adoptSession) installRegisterSkills(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		if len(sources[i].notice) > 0 {
-			noticeRel := compiler.CanonicalSkillNoticeRel(sources[i].name)
+		if len(sources[i].license) > 0 {
+			licenseRel := compiler.CanonicalSkillLicenseRel(sources[i].name)
 			if _, err := s.scaffoldFile(ctx, scaffold{
-				rel: noticeRel, perm: filePerm, content: sources[i].notice, confined: true, prior: priorSkillNoticeDigests[noticeRel],
-				created:   "Installed notice for the " + sources[i].name + " skill from the verified source bundle",
-				verified:  "Existing notice for " + sources[i].name + " skill verified identical to the verified source bundle",
-				refreshed: "Refreshed the unedited earlier Praetor notice for " + sources[i].name + " skill to the verified source bundle",
+				rel: licenseRel, perm: filePerm, content: sources[i].license, confined: true, prior: priorSkillLicenseDigests[licenseRel],
+				created:   "Installed the upstream licence of the " + sources[i].name + " skill from the verified source bundle",
+				verified:  "Existing upstream licence of the " + sources[i].name + " skill verified identical to the verified source bundle",
+				refreshed: "Refreshed the unedited earlier Praetor licence of the " + sources[i].name + " skill to the verified source bundle",
 			}); err != nil {
 				return err
 			}
@@ -210,20 +211,32 @@ func readRegisterSkillSources(ctx context.Context, root string) ([]skillSource, 
 		if err := compiler.CheckShippedSkillReferences(names[i], data); err != nil {
 			return nil, fmt.Errorf("the source bundle %s: %w", root, err)
 		}
-		noticeData, noticeExists, err := compiler.ReadCanonicalSkillNotice(ctx, root, names[i])
+		license, err := readSkillLicense(ctx, root, names[i], data)
 		if err != nil {
-			return nil, fmt.Errorf("the source bundle %s: %w", root, err)
+			return nil, err
 		}
-		if compiler.SkillRequiresNotice(data) && !noticeExists {
-			return nil, fmt.Errorf("the source bundle %s holds no %s for %s", root, compiler.CanonicalSkillNoticeRel(names[i]), names[i])
-		}
-		var notice []byte
-		if noticeExists {
-			notice = noticeData
-		}
-		sources = append(sources, skillSource{name: names[i], data: data, notice: notice})
+		sources = append(sources, skillSource{name: names[i], data: data, license: license})
 	}
 	return sources, nil
+}
+
+// readSkillLicense reads the LICENSE the source bundle holds beside skill name, whose SKILL.md is
+// data. A skill whose declared upstream licence requires its text to travel with copies
+// (compiler.SkillRequiresLicense) must have one; any other skill installs the file only when the
+// source holds it.
+func readSkillLicense(ctx context.Context, root, name string, data []byte) ([]byte, error) {
+	required, err := compiler.SkillRequiresLicense(data)
+	if err != nil {
+		return nil, fmt.Errorf("the source bundle %s: skill %s: %w", root, name, err)
+	}
+	license, exists, err := compiler.ReadCanonicalSkillLicense(ctx, root, name)
+	if err != nil {
+		return nil, fmt.Errorf("the source bundle %s: %w", root, err)
+	}
+	if required && !exists {
+		return nil, fmt.Errorf("the source bundle %s holds no %s for %s", root, compiler.CanonicalSkillLicenseRel(name), name)
+	}
+	return license, nil
 }
 
 // warnAbsentRegisterSkills warns, when the run installs no skill for reason, about every register
@@ -250,13 +263,24 @@ func (s *adoptSession) warnAbsentRegisterSkills(ctx context.Context, reason stri
 // the client copies; a real run gets none and reads the disk. A kept edited skill is not among
 // them: its copies follow the text on disk.
 func (s *adoptSession) pendingSkills() map[string][]byte {
+	return s.pendingBundleFiles(compiler.CanonicalSkillRel)
+}
+
+// pendingLicenses is pendingSkills for the LICENSE beside each skill.
+func (s *adoptSession) pendingLicenses() map[string][]byte {
+	return s.pendingBundleFiles(compiler.CanonicalSkillLicenseRel)
+}
+
+// pendingBundleFiles returns, in a dry run, the file relOf names for each skill of the bundle that
+// the run planned to write (planDryRunWrite), keyed by skill name; a real run gets none.
+func (s *adoptSession) pendingBundleFiles(relOf func(name string) string) map[string][]byte {
 	if !s.opts.DryRun {
 		return nil
 	}
 	pending := make(map[string][]byte)
 	names := config.RegisterSkillBundle()
 	for i := 0; i < len(names) && i < maxRegisterSkills; i++ {
-		if content := s.dryRunWrites[compiler.CanonicalSkillRel(names[i])]; content != nil {
+		if content := s.dryRunWrites[relOf(names[i])]; content != nil {
 			pending[names[i]] = content
 		}
 	}

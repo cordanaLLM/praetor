@@ -64,10 +64,10 @@ entries:
     relation: "adapted"
     license: "MIT"
     notice: >-
-      © 2026 Julius Brussee and [contributors](https://github.com/JuliusBrussee/caveman/graphs/contributors): the
-      terms of the upstream skill when this skill was adapted from it (2026-09-18). Upstream commit 921eab8a8
-      relicensed the repository to Apache-2.0 on 2026-09-24, released as Caveman 3.0.0 on 2026-09-30; releases before
-      3.0.0 keep the terms they shipped with
+      © 2026 Julius Brussee: the MIT terms of the upstream skill when this skill was adapted from it (2026-09-18),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 8dffbb260, the last licence text before
+      the relicensing. Upstream commit 921eab8a8 relicensed the repository to Apache-2.0 on 2026-09-24, released as
+      Caveman 3.0.0 on 2026-09-30; releases before 3.0.0 keep the terms they shipped with
     artifact: "`caveman` skill, `.agents/skills/caveman/SKILL.md`"
     use: >-
       The name and the rules (drop articles, filler and hedges; write fragments; keep code and error text verbatim;
@@ -83,7 +83,7 @@ entries:
     kind: "adapted code"
     relation: "adapted"
     license: "MIT"
-    notice: "© 2026 Julius Brussee and contributors, as above"
+    notice: "© 2026 Julius Brussee, as above"
     artifact: "prose linter, `internal/caveman` (`praetorctl caveman check`)"
     use: >-
       The same rules checked mechanically: article density, filler and hedge words, sentence length, and the brief and
@@ -96,7 +96,9 @@ entries:
     kind: "adapted code"
     relation: "adapted"
     license: "MIT"
-    notice: "© 2026 Ayoub Ghriss and [contributors](https://github.com/ayghri/i-have-adhd/graphs/contributors)"
+    notice: >-
+      © 2026 Ayoub Ghriss: the MIT text shipped byte for byte as `LICENSE` beside each skill, from upstream commit
+      d1671755d, the last commit to change the licence text
     artifact: >-
       `adhd-format` skill, `.agents/skills/adhd-format/SKILL.md`; `social-text` skill,
       `.agents/skills/social-text/SKILL.md`, which inherits from it

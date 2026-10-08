@@ -247,17 +247,25 @@ splice the block before their first compile for the same reason.
 
 Adoption ships the skills the block names. With `--lock-source-root`, the agent-harness step
 installs `social-text`, `caveman` and `adhd-format`, which `social-text` inherits from, into
-`.agents/skills/` from that checkout (`config.RegisterSkillBundle`). Each carries its REUSE
-header, its `metadata.derived_from` credit, an inline credit line naming the upstream author,
-repository and licence terms, and an accompanying MIT `NOTICE` file
-(`.agents/skills/<name>/NOTICE`). Adoption and compiler/audit validate that shipped skills do not
-reference repository-relative paths that an adopter does not receive
-(`compiler.CheckShippedSkillReferences` in `internal/compiler/skill_projection.go`). The
-bundle is one unit: a source that lacks one skill or notice installs none. An edited skill or
-notice is kept and reported, `--force` included; unedited earlier Praetor texts are refreshed
-(`priorSkillDigests` and `priorSkillNoticeDigests` in `internal/adopt/register_skills.go`,
-`TestAdopt_Positive_PriorSkillRefreshedOnPlainRun`,
-`TestAdopt_Positive_PriorNoticeRefreshedOnPlainRun`).
+`.agents/skills/` from that checkout (`config.RegisterSkillBundle`). Each `SKILL.md` carries its
+REUSE header, its `metadata.derived_from` credit and an inline credit line naming the upstream
+author, repository and licence terms; the credit points at no file of this repository. Beside it
+sits a `LICENSE` file with the upstream MIT text, byte for byte, as the upstream stated it when
+the skill was adapted (the commits are in [credits](../credits.md)). A skill needs that file when
+its declared `derived_from` licence is one that travels with copies (`compiler.SkillRequiresLicense`).
+compile-context copies the `LICENSE` beside every `SKILL.md` it projects: into the plugin and into
+`.claude/skills/<name>/`.
+
+The source bundle is checked where the defect starts. Adoption reads the bundle through
+`compiler.CheckShippedSkillReferences`, and Praetor's own tests read its tree through it: every
+path-shaped token of a skill, in a code span or in plain text, must be an absolute URL or a file
+adoption writes for the shipped skills, and a text past the token bound fails closed. The check is
+no gate of compile-context, `--verify` or audit, so a copy an adopter already holds, edited or
+not, is never refused by it. The bundle is one unit: a source that lacks one skill or one
+required `LICENSE` installs none. An edited skill or licence is kept and reported, `--force`
+included; an unedited earlier Praetor text is refreshed (`priorSkillDigests` and
+`priorSkillLicenseDigests` in `internal/adopt/register_skills.go`,
+`TestAdopt_Negative_EditedSkillIsKeptAndReported`).
 
 Codex, Gemini CLI, Cursor, Copilot and Windsurf read `.agents/skills/`; Claude Code reads
 `.claude/skills/` only (`agentcontext.SkillDirs`). When `agent_clients` selects Claude Code,

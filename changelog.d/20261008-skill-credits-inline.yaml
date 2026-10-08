@@ -1,4 +1,4 @@
 type: fixed
-title: "Shipped register skills carry their upstream credit inline and install their licence notice next to the skill instead of pointing at Praetor-only docs/credits.md; adoption refuses shipped skills referencing repository-relative paths adopters lack."
+title: Ship the upstream MIT licence beside each derived register skill, in the checkout, the plugin and the client copies, and keep Praetor-only paths out of the skill credits; the path check runs on the source bundle only, never on a copy an adopter holds
 issue: "#850"
 breaking: false
