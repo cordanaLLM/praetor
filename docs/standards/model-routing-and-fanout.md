@@ -175,7 +175,7 @@ Ollama and vLLM endpoints, so a model you pull or serve becomes routable.
 ```bash
 praetorctl models sync                         # seed list plus this machine's local models
 praetorctl models sync --discover-local=false  # seed list only; no daemon needed
-praetorctl models sync --prune                 # rebuild from the seed list and this run's discovery
+praetorctl models sync --prune                 # remove flagged retired seed entries
 ```
 
 Discovery queries every endpoint in `--local-endpoints` (default
@@ -184,8 +184,8 @@ asked for Ollama's `/api/tags` first and, when that path answers 404, for the
 OpenAI-compatible `/v1/models` that vLLM serves (`internal/router/discovery.go`). An
 endpoint that does not answer is listed as `Endpoint skipped` and the sync goes on
 with the others, keeping that endpoint's catalogued entries. A `--prune` run refuses
-instead, since it would remove them. `TestDiscoverLocalModelsIsolatesFailingEndpoints`
-and `TestSyncCatalogIsolatesFailedDiscovery` pin this.
+instead, because it refuses to prune from a partial local inventory (`internal/router/sync.go:386`).
+`TestDiscoverLocalModelsIsolatesFailingEndpoints` and `TestSyncCatalogIsolatesFailedDiscovery` pin this.
 
 A new entry's tier comes from the parameter-count tag in its ID (`7b`, `1.5b`, `235b`,
 `8x7b`): below 5 billion is `nano`, below 20 `lightweight`, up to 35 `midweight`, and
@@ -201,7 +201,7 @@ Each model entry records who owns it in `source`:
 
 | `source` | Written by | What a sync does with it |
 | :--- | :--- | :--- |
-| `seed` | the seed list in `internal/router/sync.go` | rewrites it in place from the seed list |
+| `seed` | the seed list in `internal/router/sync.go` | rewrites it in place from the seed list; retired seed entries leave with `--prune` |
 | `local` | discovery against a local Ollama or vLLM endpoint | keeps it; a rediscovered ID is never added twice |
 | absent | an operator editing the file | keeps it |
 
@@ -212,10 +212,9 @@ seed entry instead of appearing twice. If a sync would still lose an entry, whic
 happens when the seed list drops a model the catalog marks `source: seed`, it writes
 nothing and exits with an error that lists the IDs and names `--prune`.
 
-`--prune` is the explicit rebuild. The result holds the seed list plus what this run
-discovered, and the command prints each removed ID. Run it with discovery on, on the
-machine whose models the catalog should list; otherwise it removes every `local`
-entry.
+`--prune` removes only flagged seed entries (`source: seed`) that are retired;
+hand-declared entries, alias entries and local models are preserved as operator data,
+and the command prints each removed ID.
 
 A catalog that does not load, for example with a duplicate ID or an unknown `source`
 value, is refused rather than overwritten; repair or delete it first. The write is
@@ -228,9 +227,10 @@ entries, with or without `--prune`: each `governance` key and each default tier'
 `description`, `target_tasks`, `fallback_tier` and `lane` that the file declares is kept, an
 explicit `false`, zero or empty list included, and only an undeclared key takes the
 built-in default (`internal/router/sync_settings.go`). To return a setting to its
-default, delete the key and sync. A `--prune` run keeps a declared `fallback_tier`
-even when it names a tier the rebuild drops, and then refuses with the unknown tier
-named. The behavior is pinned by `internal/router/sync_test.go` and
+default, delete the key and sync. `internal/router/sync.go:458` preserves unowned tiers
+and `internal/router/sync.go:465` preserves hand-declared models across prune, so a declared
+fallback to an operator tier is no longer dropped or left dangling by prune (`internal/router/sync_test.go:289`).
+The behavior is pinned by `internal/router/sync_test.go` and
 `cmd/standardsctl/models_sync_test.go`.
 
 ### Nightly catalog check
@@ -351,7 +351,7 @@ is configured, never deleted), `praetorctl models sync --prune` removes only ent
 removes hand-declared or alias entries, and never touches the gateway or lanes sections. A
 plain `models sync` refuses to remove flagged seed entries without `--prune`. The audit
 remedy names each flagged hand or alias entry for the operator to refresh (`as_of`) or remove
-by hand. The seed list no longer carries the three
+by hand; retired seed entries leave with `models sync --prune --discover-local=false` or by hand. The seed list no longer carries the three
 preview models it once did. Tests: `TestAuditModelCatalogFailsStaleAndPreviewEntries`,
 `TestAuditModelCatalogWindowBoundary`, `TestSyncProbesAliasesAndReportsStalePreviewEntries`,
 `TestSyncPruneRemovesOnlyFlaggedSeedEntries`.
@@ -361,7 +361,7 @@ preview models it once did. Tests: `TestAuditModelCatalogFailsStaleAndPreviewEnt
 Configuration and snapshot files must be regular files no larger than 1 MiB.
 Routing accepts version 1, up to 16 tiers, 64 models per tier, 64 task/capability
 labels per list, 256 bytes per name and 1,024 snapshot model entries. Model IDs are
-globually unique. Each token estimate is bounded at 1,000,000,000; that is an input
+globally unique. Each token estimate is bounded at 1,000,000,000; that is an input
 safety bound, not an asserted model context-window limit. Overflowing cost
 calculations fail. Reads and task selection accept caller cancellation.
 
@@ -374,15 +374,16 @@ shared validation prevents listing one ambiguous file as free while routing trea
 it differently. Programmatically constructed task-routing descriptors must set
 `CostRatesDeclared` when both configured rates are intentional.
 
-Migration: gateway `key_env` must begin with the `PRAETOR_GATEWAY_` prefix followed
-by at least one character of `[A-Z0-9_]`. Alias exclusion is scoped per tier rather
-than catalog-wide, so tiers without alias entries retain their pinned models while
-tiers holding aliases fail closed if none answer. The `provider` field on alias entries
-is optional metadata, and `alias` is sent verbatim as the model target. `models sync --prune`
-removes only flagged seed entries (`source: seed`); hand-declared entries, alias entries,
-local models, and gateway/lanes configurations are preserved as operator data. Flagged
-hand or alias entries must be refreshed (`as_of`) or removed by hand as reported by
-`praetorctl audit`.
+Migration: `praetorctl audit` now fails on preview or stale catalog entries (`auditModelCatalog`).
+Retired seed previews must be removed by hand or with `praetorctl models sync --prune --discover-local=false`.
+A non-loopback HTTP gateway address is refused; use HTTPS for external gateways. Gateway alias probing
+is opt-in via `--probe-aliases`. Gateway `key_env` must begin with the `PRAETOR_GATEWAY_` prefix followed
+by at least one character of `[A-Z0-9_]`. Alias exclusion is scoped per tier rather than catalog-wide, so
+tiers holding alias entries exclude pinned non-local models and fail closed if none answer, while tiers
+without alias entries retain pinned models. `models sync --prune` removes only flagged seed entries
+(`source: seed`) that are retired; hand-declared entries, alias entries, local models, and gateway/lanes
+configurations are preserved as operator data. Flagged hand or alias entries must be refreshed (`as_of`)
+or removed by hand as reported by `praetorctl audit`.
 
 Migration: model entries accept an optional `source` field whose only values are
 `seed` and `local`; any other value is rejected. `models sync` now merges instead of

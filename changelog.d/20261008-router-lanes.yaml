@@ -1,4 +1,4 @@
 type: added
-title: "Breaking change: route models by gateway alias and lane with per-tier fail-closed, PRAETOR_GATEWAY_ key_env prefix allow-list, and seed-only prune scope"
+title: "Breaking change: route models by gateway alias and lane, gate catalog freshness in praetorctl audit, enforce key env prefix, and restrict prune to seeds"
 issue: "#852"
 breaking: true
