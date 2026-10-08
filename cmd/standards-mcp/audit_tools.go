@@ -185,8 +185,13 @@ func auditContextSync(ctx context.Context, manifest *config.Manifest, agentsPath
 	if _, err := compiler.SyncRegisterBlock(ctx, root, agentsPath, false); err != nil {
 		return "", fmt.Errorf("[FAIL] Agent context text register: %w", harness.Narrow(err))
 	}
-	if err := compiler.NewTranspiler().VerifyContext(ctx, agentsPath, root); err != nil {
+	tr := compiler.NewTranspiler()
+	if err := tr.VerifyContext(ctx, agentsPath, root); err != nil {
 		return "", fmt.Errorf("[FAIL] Agent context targets out of sync: %w", harness.Narrow(err))
+	}
+	var warn strings.Builder
+	if err := compiler.VerifyStableContext(ctx, &warn, tr, agentsPath); err != nil {
+		return "", fmt.Errorf("[FAIL] Agent context cache stability: %w", harness.Narrow(err))
 	}
 	lint, err := compiler.LintContext(ctx, agentsPath)
 	if err != nil {
@@ -197,11 +202,20 @@ func auditContextSync(ctx context.Context, manifest *config.Manifest, agentsPath
 	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(agentsPath)); err != nil {
 		return "", fmt.Errorf("[FAIL] Agent context evidence directory: %w", err)
 	}
-	line := "[PASS] Cross-agent context targets verified in sync.\n[PASS] Agent context " + lint.Summary() + "."
-	if harness.Declined {
-		line += "\n" + harness.Line("Agent harness")
+	lines := []string{
+		"[PASS] Cross-agent context targets verified in sync.",
+		"[PASS] Agent context " + lint.Summary() + ".",
 	}
-	return line, nil
+	for _, l := range strings.Split(warn.String(), "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "[WARN]") {
+			lines = append(lines, l)
+		}
+	}
+	if harness.Declined {
+		lines = append(lines, harness.Line("Agent harness"))
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 // auditBranchProtection delegates branch protection ruleset audit to the shared authority

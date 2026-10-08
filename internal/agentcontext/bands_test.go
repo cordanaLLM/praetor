@@ -236,13 +236,18 @@ var sha64 = strings.Repeat("0123456789abcdef", 4)
 var volatileShapes = []struct{ kind, line string }{
 	{"timestamp", "Built 2026-10-07T12:30:00Z by CI."},
 	{"timestamp", "Built 2026-10-07T12:30:00.123+02:00 by CI."},
+	{"timestamp", "Built 2026-10-07T12:30:00."},
+	{"timestamp", "2026-10-07 12:30:00Z"},
 	{"digest", "pin sha256:" + sha64},
+	{"digest", "sha256:abcdef012345"},
 	{"absolute path", "see /home/someone/work/file"},
 	{"absolute path", "dir `/Users/me/x`"},
 	{"absolute path", "config at /etc/ssl/certs/ca.pem"},
 	{"absolute path", "cache=/usr/local/share/app"},
 	{"absolute path", "mounted /private/var/folders/x"},
 	{"absolute path", "disk /Volumes/Data/work"},
+	{"absolute path", "temp /tmp/tmp.Xa3bQ9"},
+	{"absolute path", "cache /root/.cache/pkg"},
 	{"absolute path", `path C:\Users\me\work`},
 	{"absolute path", "path D:/work/out"},
 	{"absolute path", `share \\server\share\dir`},
@@ -258,7 +263,6 @@ var proseLines = []string{
 	"Rules apply since 2026-10-07.",
 	"Meeting at 2026-10-07 12:30.",
 	"Use `make verify-all`; evidence: <path> sha256:<12 hex> lines:<n>",
-	"A short digest sha256:0123456789ab is not a pin.",
 	"Pinned to 0123456789abcdef0123456789abcdef01234567 for good.",
 	"retry count: 3",
 	"Run: 2 passes",
@@ -291,6 +295,74 @@ func TestScanVolatileBoundsFindings(t *testing.T) {
 	head := strings.Repeat("at 2026-10-07T12:30:00Z\n", maxVolatileFindings*3)
 	if got := len(ScanVolatile(head)); got != maxVolatileFindings {
 		t.Fatalf("findings = %d, want %d", got, maxVolatileFindings)
+	}
+}
+
+// Negative (Finding 3): scanner catches mktemp paths, no-zone timestamps, space-separator
+// timestamps and short digests.
+func TestScanVolatile_Negative_MissedTokens(t *testing.T) {
+	cases := []struct {
+		token string
+		kind  string
+		want  string
+	}{
+		{"/tmp/tmp.Xa3bQ9", "absolute path", "/tmp/tmp.Xa3bQ9"},
+		{"Built 2026-10-07T12:30:00.", "timestamp", "2026-10-07T12:30:00"},
+		{"2026-10-07 12:30:00Z", "timestamp", "2026-10-07 12:30:00Z"},
+		{"sha256:abcdef012345", "digest", "sha256:abcdef012345"},
+	}
+	for _, c := range cases {
+		found := ScanVolatile(c.token)
+		if len(found) != 1 {
+			t.Fatalf("%q: expected 1 token, got %d: %+v", c.token, len(found), found)
+		}
+		if found[0].Kind != c.kind {
+			t.Errorf("%q: kind = %q, want %q", c.token, found[0].Kind, c.kind)
+		}
+		if found[0].Match != c.want {
+			t.Errorf("%q: match = %q, want %q", c.token, found[0].Match, c.want)
+		}
+	}
+}
+
+// Boundary (Finding 3 nit): leading boundary characters like '=' and '(' are trimmed from Match.
+func TestScanVolatile_BoundaryTrim(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{
+		{"=/home/kilian", "/home/kilian"},
+		{"(/home/u/x)", "/home/u/x"},
+		{"`/Users/me/x`", "/Users/me/x"},
+	} {
+		found := ScanVolatile(tc.input)
+		if len(found) != 1 || found[0].Match != tc.want {
+			t.Fatalf("%q: got %+v, want match %q", tc.input, found, tc.want)
+		}
+	}
+}
+
+// Finding 4: a vendor section opened in the head with no blank line before the next marker
+// relocates to the config band and is joined with a blank line instead of glued to config text.
+func TestLayoutBands_RelocatedVendorSectionWithoutTrailingBlankLine(t *testing.T) {
+	source := "# Harness\n\n<!-- praetor:head -->\nHead.\n## Claude Code\nClaude only.\n<!-- praetor:config -->\nConfig.\n"
+	result, err := NewTranspiler().CompileContent(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claude string
+	for _, file := range result.Files {
+		if file.RelativePath == "CLAUDE.md" {
+			claude = file.Content
+			break
+		}
+	}
+	if claude == "" {
+		t.Fatal("CLAUDE.md missing from compilation result")
+	}
+	want := "Head.\n\n## Claude Code\nClaude only.\n\nConfig.\n"
+	if !strings.HasSuffix(claude, want) {
+		t.Fatalf("CLAUDE.md vendor section glued: got %q, want suffix %q", claude, want)
 	}
 }
 

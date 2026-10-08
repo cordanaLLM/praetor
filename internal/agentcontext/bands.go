@@ -95,6 +95,15 @@ func scanBands(lines []string) ([]band, bool) {
 	return bands, marked
 }
 
+func appendConfigLine(parts []string, origin, prevOrigin band, line string) ([]string, band) {
+	if prevOrigin != bandMarker && prevOrigin != origin {
+		if len(parts) > 0 && parts[len(parts)-1] != "" {
+			parts = append(parts, "")
+		}
+	}
+	return append(parts, line), origin
+}
+
 // splitBands collects the lines of every band for one vendor target. Lines of that vendor's
 // section are client configuration and always join the config band; lines of any other
 // vendor's section, and marker lines, are left out. An empty section selects no vendor, so
@@ -102,6 +111,7 @@ func scanBands(lines []string) ([]band, bool) {
 // membership of a line is decided (HISS-19): layoutBands and HeadBand both read it.
 func splitBands(lines, owners []string, bands []band, section string) [bandCount][]string {
 	var parts [bandCount][]string
+	prevConfigOrigin := bandMarker
 	for i, line := range lines {
 		b := bands[i]
 		if b == bandMarker || (owners[i] != "" && owners[i] != section) || blankAfterMarker(lines, bands, i) {
@@ -109,6 +119,10 @@ func splitBands(lines, owners []string, bands []band, section string) [bandCount
 		}
 		if owners[i] != "" {
 			b = bandConfig
+		}
+		if b == bandConfig {
+			parts[bandConfig], prevConfigOrigin = appendConfigLine(parts[bandConfig], bands[i], prevConfigOrigin, line)
+			continue
 		}
 		parts[b] = append(parts[b], line)
 	}
@@ -192,37 +206,41 @@ const pathBoundary = "(?:^|[\\s`(\"'=<])"
 // pathTail is one path character: anything but whitespace and a closing quote.
 const pathTail = "[^\\s`)\"'>]"
 
+func trimVolatileMatch(m string) string {
+	return strings.TrimLeft(strings.TrimSpace(m), "`(\"'=<")
+}
+
 // volatilePatterns match exact shapes only; prose that merely resembles one (a retry count, a
 // pass count, a directory named in a sentence, a static 40-hex pin) is not volatile.
-//   - timestamp: an RFC 3339 date-time with a zone.
-//   - digest: sha256: followed by the full 64 hex digits.
-//   - absolute path: a user or volume root with one component below it (/home/name,
-//     /Volumes/disk), a system root with two (/etc/ssl/certs; /var/tmp alone is prose), a
-//     drive path (C:\x, C:/x) or a UNC path (\\host\share).
+//   - timestamp: a date-time with seconds (optional zone, 'T' or space separator).
+//   - digest: sha256: followed by 12 or more hex digits (abbreviated or full digest).
+//   - absolute path: a depth-1 root (/home/name, /Users/name, /Volumes/disk, /root/file,
+//     /tmp/file), a system root with two components (/etc/ssl/certs; /var/tmp alone is prose),
+//     a drive path (C:\x, C:/x) or a UNC path (\\host\share).
 //   - run counter: run_id with a value, run #N, build number or build #N.
 var volatilePatterns = [...]struct {
 	kind string
 	re   *regexp.Regexp
 }{
-	{"timestamp", regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})`)},
-	{"digest", regexp.MustCompile(`(?i)\bsha256:[0-9a-f]{64}\b`)},
+	{"timestamp", regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)?\b`)},
+	{"digest", regexp.MustCompile(`(?i)\bsha256:[0-9a-f]{12,64}\b`)},
 	{"absolute path", regexp.MustCompile(pathBoundary + "(?:" +
-		"/(?:home|Users|Volumes)/" + pathTail + "+" +
-		"|/(?:root|tmp|var|mnt|srv|opt|etc|usr|private|workspace|nix)(?:/[^\\s/`)\"'>]+){2,}" +
+		"/(?:home|Users|Volumes|root|tmp)/" + pathTail + "+" +
+		"|/(?:var|mnt|srv|opt|etc|usr|private|workspace|nix)(?:/[^\\s/`)\"'>]+){2,}" +
 		"|[A-Za-z]:[\\\\/]" + pathTail + "+" +
 		"|\\\\\\\\[^\\s\\\\]+\\\\" + pathTail + "+)")},
 	{"run counter", regexp.MustCompile(`(?i)\brun[_-]?id\s*[:=]\s*\S*\d|\brun\s*#\s*\d+|\bbuild[ _-]?(?:number|no\.?)\s*[:=#]?\s*\d+|\bbuild\s*#\s*\d+`)},
 }
 
-// ScanVolatile returns the volatile tokens in a head band: RFC 3339 timestamps, sha256
-// digests, absolute paths and run counters (volatilePatterns lists the exact shapes). The head is the prefix a client caches, so one such token
+// ScanVolatile returns the volatile tokens in a head band: timestamps, sha256 digests,
+// absolute paths and run counters (volatilePatterns lists the exact shapes). The head is the prefix a client caches, so one such token
 // breaks the cache at every run.
 func ScanVolatile(head string) []VolatileToken {
 	var found []VolatileToken
 	for n, line := range strings.Split(head, "\n") {
 		for _, p := range volatilePatterns {
 			if m := p.re.FindString(line); m != "" {
-				found = append(found, VolatileToken{Line: n + 1, Kind: p.kind, Match: strings.TrimSpace(m)})
+				found = append(found, VolatileToken{Line: n + 1, Kind: p.kind, Match: trimVolatileMatch(m)})
 			}
 		}
 		if len(found) >= maxVolatileFindings {

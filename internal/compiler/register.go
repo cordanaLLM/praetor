@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/agenthook"
@@ -171,8 +170,8 @@ func spliceRegister(content, block string) (out string, changed, missing bool, e
 		// document receives it in its config band, not at the end, which is the tail band.
 		block = config.RegisterSectionPrefix + block
 		if banded, layered := agentcontext.InsertIntoConfigBand(lf, block); layered {
-			if count := strings.Count(strings.TrimRight(banded, "\n"), "\n") + 1; count > MaxLineBudget {
-				return "", false, false, fmt.Errorf("%w: %d lines, budget %d", util.ErrMarkedBlockBudget, count, MaxLineBudget)
+			if err := util.CheckLineBudget(banded, MaxLineBudget); err != nil {
+				return "", false, false, err
 			}
 			return util.RestoreLineEndings(banded, crlf), true, true, nil
 		}

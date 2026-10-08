@@ -15,11 +15,9 @@ import (
 
 // UnlayeredWarning is the line an AGENTS.md without band markers earns. The compiled files
 // keep the source order, so a client's prompt cache loses every byte after the first edit.
-// The warning is a warning for now; a later release makes the missing markers a failure
-// (follow-up tracked in #853).
 const UnlayeredWarning = "[WARN] AGENTS.md carries no cache band markers; add " +
 	agentcontext.BandHeadMarker + ", " + agentcontext.BandConfigMarker + " and " +
-	agentcontext.BandTailMarker + " to keep a stable prompt prefix (a later release fails without them; see docs/guides/context-cache-bands.md)"
+	agentcontext.BandTailMarker + " to keep a stable prompt prefix (see docs/guides/context-cache-bands.md)"
 
 // stableClocks and stableSeeds are the two environments the stability check renders under.
 // Both pairs differ, so a render that reads either one produces different bytes and fails.

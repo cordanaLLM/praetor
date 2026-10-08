@@ -284,3 +284,25 @@ func TestMarkdownHeadingTextBoundary(t *testing.T) {
 		}
 	}
 }
+
+// Positive: within budget returns nil.
+func TestCheckLineBudget_Positive(t *testing.T) {
+	if err := CheckLineBudget("one\ntwo\n", 5); err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+}
+
+// Negative: over budget returns ErrMarkedBlockBudget.
+func TestCheckLineBudget_Negative(t *testing.T) {
+	err := CheckLineBudget("one\ntwo\nthree\n", 2)
+	if !errors.Is(err, ErrMarkedBlockBudget) {
+		t.Fatalf("expected ErrMarkedBlockBudget, got %v", err)
+	}
+}
+
+// Boundary: exactly at budget returns nil.
+func TestCheckLineBudget_Boundary(t *testing.T) {
+	if err := CheckLineBudget("one\ntwo\n", 2); err != nil {
+		t.Fatalf("expected nil error at exact budget, got %v", err)
+	}
+}
