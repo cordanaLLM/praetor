@@ -88,6 +88,16 @@ third-party-notices:
 credits-check:
 	go test -count=1 ./internal/supplychain
 
+# The JSON Schema oracle is a test-only module (tools/schemacheck), so `go test ./...` of this
+# module never reaches it. It validates every client config Praetor renders, the Codex hook
+# fixtures and the standards-mcp responses against the vendored upstream schemas
+# (docs/guides/client-schemas.md). Online pin checks and refreshes are opt-in there.
+.PHONY: client-schemas-test
+verify-all: client-schemas-test
+client-schemas-test:
+	go -C tools/schemacheck vet ./...
+	go -C tools/schemacheck test -race -count=1 ./...
+
 # Nothing regenerates .needs.yaml on its own; this fails when the committed manifest is not
 # what `needs scan --write` would write now. It gates this repository only: adopter audits
 # do not run it, so an adopter's older manifest is not failed by a newer Praetor. The scan

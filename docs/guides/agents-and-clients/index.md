@@ -15,6 +15,9 @@ repository policy from the client-specific adapters the other pages configure.
   and the native hook coverage of each client.
 - [Shared client configuration](../client-bootstrap.md): `praetorctl clients` projects the
   MCP server registry into client settings.
+- [Client schemas](../client-schemas.md): the pinned upstream schemas every rendered client
+  config and hook fixture is checked against, the types generated from them and the formats
+  that have none.
 - [Configurable backend connections](../client-connections.md): `praetorctl clients connect`
   applies one private deployment profile to that registry.
 - [Repository-aware editor generation](../editor-capabilities.md): `praetorctl editors

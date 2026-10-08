@@ -155,6 +155,96 @@ entries:
       - "go.mod"
     packages:
       - "go:gopkg.in/yaml.v3"
+  - name: "SchemaStore Claude Code settings schema"
+    url: "https://github.com/SchemaStore/schemastore"
+    detail: "(`claude-code-settings.json` at commit `ce64da2`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "Apache-2.0"
+    notice: "© SchemaStore contributors"
+    use: >-
+      Checks the Claude Code settings and hook files Praetor renders; vendored byte-identical under
+      `internal/clientschema/vendor/` and embedded in the binaries (docs/guides/client-schemas.md)
+    paths:
+      - "internal/clientschema/vendor/manifest.json"
+    match:
+      - "SchemaStore/schemastore"
+  - name: "Gemini CLI settings schema"
+    url: "https://github.com/google-gemini/gemini-cli"
+    detail: "(`schemas/settings.schema.json` at `v0.63.0`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "Apache-2.0"
+    notice: "© Google LLC"
+    use: >-
+      Checks the Gemini CLI settings and hook files Praetor renders; vendored byte-identical under
+      `internal/clientschema/vendor/` and embedded in the binaries
+    paths:
+      - "internal/clientschema/vendor/manifest.json"
+    match:
+      - "google-gemini/gemini-cli"
+  - name: "Codex config and hook schemas"
+    url: "https://github.com/openai/codex"
+    detail: "(`codex-rs/core/config.schema.json` and `codex-rs/hooks/schema/generated/` at `rust-v0.162.0`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "Apache-2.0"
+    notice: "© OpenAI"
+    use: >-
+      Checks the Codex hook files and payload fixtures and generates the Codex hook event types
+      (`internal/codexhook`); vendored byte-identical under `internal/clientschema/vendor/` and embedded in the
+      binaries
+    paths:
+      - "internal/clientschema/vendor/manifest.json"
+    match:
+      - "openai/codex"
+  - name: "Model Context Protocol schema"
+    url: "https://github.com/modelcontextprotocol/modelcontextprotocol"
+    detail: "(`schema/2025-11-25/schema.json`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "MIT"
+    notice: "© 2024–2025 Anthropic, PBC and contributors; the LICENSE file at tag 2025-11-25 states MIT"
+    use: >-
+      Checks the `standards-mcp` responses and generates the MCP message types (`internal/mcpwire`); vendored
+      byte-identical under `internal/clientschema/vendor/` and embedded in the binaries
+    paths:
+      - "internal/clientschema/vendor/manifest.json"
+    match:
+      - "modelcontextprotocol/modelcontextprotocol"
+  - name: "opencode config schema"
+    url: "https://github.com/anomalyco/opencode"
+    detail: "(hosted `https://opencode.ai/config.json`, observed beside release `v1.18.35`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "MIT"
+    notice: "© 2025 opencode"
+    use: >-
+      Checks the `opencode.json` MCP projection Praetor renders; vendored byte-identical under
+      `internal/clientschema/vendor/` and embedded in the binaries
+    paths:
+      - "internal/clientschema/vendor/manifest.json"
+    match:
+      - "anomalyco/opencode"
+  - name: "jsonschema"
+    url: "https://github.com/santhosh-tekuri/jsonschema"
+    detail: "(`v6.0.3`)"
+    section: "development"
+    kind: "dependency"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: >-
+      The JSON Schema oracle of the test-only module `tools/schemacheck`; the production module does not
+      link it
+    paths:
+      - "tools/schemacheck/go.mod"
+    packages:
+      - "go:github.com/santhosh-tekuri/jsonschema/v6"
   - name: "markdownlint"
     url: "https://github.com/DavidAnson/markdownlint"
     detail: "0.41.1"

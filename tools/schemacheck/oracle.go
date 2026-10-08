@@ -26,8 +26,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/clientschema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
-	"golang.org/x/text/language"
-	"golang.org/x/text/message"
 )
 
 // Bounds (HISS-02).
@@ -38,8 +36,6 @@ const (
 	maxOutputNodes = 100000
 	resourcePrefix = "https://schemas.praetor.invalid/"
 )
-
-var printer = message.NewPrinter(language.English)
 
 // Schema is one compiled schema.
 type Schema struct {
@@ -206,15 +202,19 @@ func (s *Schema) ValidateValue(value any) error {
 func collect(name string, root *jsonschema.ValidationError) *Violations {
 	report := &Violations{Schema: name}
 	seen := map[string]bool{}
-	stack := []*jsonschema.ValidationError{root}
+	detailed := root.DetailedOutput()
+	stack := []jsonschema.OutputUnit{*detailed}
 	for visited := 0; len(stack) > 0 && visited < maxOutputNodes; visited++ {
 		node := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if len(node.Causes) > 0 {
-			stack = append(stack, node.Causes...)
+		if len(node.Errors) > 0 {
+			stack = append(stack, node.Errors...)
 			continue
 		}
-		item := Violation{Field: "/" + strings.Join(node.InstanceLocation, "/"), Message: node.ErrorKind.LocalizedString(printer)}
+		if node.Error == nil {
+			continue
+		}
+		item := Violation{Field: "/" + strings.TrimPrefix(node.InstanceLocation, "/"), Message: node.Error.String()}
 		key := item.Field + "\x00" + item.Message
 		if seen[key] {
 			continue
