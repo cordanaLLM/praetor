@@ -109,9 +109,10 @@ caveman-sources:
 fmt-check:
 	$(HOOK_RUNNER) fmt-check
 
-# The API compatibility gate (tools/apicompat/gate) builds only under its own tag, which keeps it
-# out of an adopting module's ./...; vet it with that tag here, and .golangci.yml sets the same
-# tag for the linters.
+# The API compatibility gate program (tools/apicompat/gate/main.go) builds only under its own tag,
+# which keeps it out of ./...; without the tag the directory holds placeholder.go, a buildable
+# stand-in that ./... does reach (#842). Vet the program with the tag here, and .golangci.yml sets
+# the same tag for the linters.
 lint: fmt-check
 	go vet ./...
 	go vet -tags=apicompatgate ./tools/apicompat/gate/
@@ -374,10 +375,12 @@ hooks-test:
 # The canonical hook sources (checkpoint.py and common.py, which adoption copies, and the
 # vendorable praetor.yml) must pass black, flake8 and yamllint as an adopter's hooks run
 # them, and so must the renderings of the hook templates adoption writes (lefthook.yml,
-# block_evasion.py, committed under internal/adopt/testdata/emitted) and the documentation
-# gate's locked YAML (praetor-docs.yml, markdownlint-cli2.yaml). The tools come from the
-# hash-locked .config/hook-lint/requirements.txt. A missing or mismatched tool is a skip with its reason
-# locally, and a failure where PRAETOR_HOOK_LINT_BIN names the pinned toolchain (CI).
+# block_evasion.py, committed under internal/adopt/testdata/emitted). Every managed asset
+# adoption writes is linted too (Python, YAML, Go, shell), enumerated from the registry by
+# internal/managedasset/export. The tools come from the hash-locked
+# .config/hook-lint/requirements.txt (black, flake8, yamllint, ruff) and tools/go/go.mod
+# (gofumpt). A missing or mismatched tool is a skip with its reason locally, and a failure where
+# PRAETOR_HOOK_LINT_BIN names the pinned toolchain (CI).
 # scripts/test_emitted_yaml_lint.py applies the same yamllint run to the other YAML Praetor
 # emits into an adopted repository, reusing that gate's tool resolution.
 .PHONY: hooks-lint

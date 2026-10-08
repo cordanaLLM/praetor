@@ -7,14 +7,15 @@
 // compatibility family; adoption, audit and the devcontainer bootstrap read it through it.
 //
 // The gate is one Go program, gate/main.go. Its build constraint (BuildTag) keeps it out of
-// every ./... pattern, so an adopting module neither builds, tests, lints nor publishes it as
-// API, while "go run tools/apicompat/gate/main.go", which names the file, still builds it.
-// A second file, gate/placeholder.go, holds the opposite constraint and a main that says how to
-// run the gate, so the directory is a buildable package without the tag: a hook that vets or
-// lints it by directory finds Go files instead of failing on a package whose files the
-// constraint excludes (#842). Praetor lints and vets the program with the tag (Makefile lint,
+// every ./... pattern, so an adopting module neither builds, tests, lints nor publishes the
+// program as API, while "go run tools/apicompat/gate/main.go", which names the file, still
+// builds it. A second file, gate/placeholder.go, holds the opposite constraint and a main that
+// says how to run the gate, so the directory is a buildable package without the tag: a hook that
+// vets or lints it by directory finds Go files instead of failing on a package whose files the
+// constraint excludes (#842). The cost is that a ./... pattern now reaches the placeholder
+// (a package main with no tests and no exported API), where it used to reach nothing there. Praetor lints and vets the program with the tag (Makefile lint,
 // .golangci.yml) and tests it by building the embedded bytes (gate_test.go). Both files are
-// kept clean under gofmt, gofumpt and go vet (internal/managedasset/lint_clean_test.go).
+// kept clean under gofmt, gofumpt and go vet (scripts/test_emitted_hook_lint.py).
 package apicompat
 
 import (
@@ -121,7 +122,8 @@ jobs:
 // priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the family's
 // managed paths, taken with LF line endings, to that path: the family's Prior
 // (internal/managedasset). Adoption refreshes a file holding exactly one of these texts without
-// --force. testdata/prior holds each text, and TestPriorDigests recomputes every digest from it.
+// --force. testdata/prior holds each text (the gate program's is api-gate-main.go.txt), and
+// TestPriorDigests recomputes every digest from it.
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{

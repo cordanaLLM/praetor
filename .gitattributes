@@ -119,11 +119,13 @@ internal/astmerge/testdata/*.txt text eol=lf
 # comparison on that leg only (HISS-21).
 internal/paperclip/testdata/** text eol=lf
 
-# internal/managedasset/testdata/prior holds the earlier texts of locked assets that adoption
-# refreshes (TestLintCleanAssetPriors). The tests write these bytes into a repository as they are
-# and derive a CRLF checkout themselves, so a CRLF checkout of the fixtures would double the
-# carriage returns and fail them on the Windows leg only (HISS-21).
+# internal/managedasset/testdata/prior and tools/apicompat/testdata/prior hold the earlier texts of
+# locked assets that adoption refreshes (TestLintCleanAssetPriorsRefreshWithoutForce and the
+# prior-digest tests). The tests write these bytes into a repository as they are and derive a CRLF
+# checkout themselves, so a CRLF checkout of the fixtures would double the carriage returns and
+# fail them on the Windows leg only (HISS-21).
 internal/managedasset/testdata/prior/** text eol=lf
+tools/apicompat/testdata/prior/** text eol=lf
 
 # The editors/ reference integrations are generator output: `praetorctl editors reference
 # --verify` (make verify-all) and internal/editor's TestReferenceSetMatchesTrackedTree compare

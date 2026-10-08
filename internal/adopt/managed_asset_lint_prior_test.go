@@ -15,14 +15,15 @@ import (
 )
 
 // lintPriorFixtures are the managed assets rewritten to pass the linters adopters run over
-// every tracked file (internal/managedasset/lint_clean_test.go, #842, #845, #578). Each fixture
-// is the text Praetor shipped before, so an adopter's unedited copy must refresh without
-// --force.
-var lintPriorFixtures = []struct{ family, rel, fixture string }{
-	{"API compatibility", "tools/apicompat/gate/main.go", "api-gate-main.go.txt"},
-	{"Figure engine", "tools/figures/mkdocs_hook.py", "figures-mkdocs_hook.py.txt"},
-	{"Figure engine", "tools/figures/third_party/interfig/VENDOR.md", "figures-VENDOR.md.txt"},
-	{"Figure engine", "tools/figures/README.md", "figures-README.md.txt"},
+// every tracked file (scripts/test_emitted_hook_lint.py, #842, #845, #578). Each fixture is the
+// text Praetor shipped before, so an adopter's unedited copy must refresh without --force. The
+// gate program's lives with the API compatibility family's other earlier texts
+// (tools/apicompat/testdata/prior); the figure engine's has no directory of its own.
+var lintPriorFixtures = []struct{ family, rel, dir, fixture string }{
+	{"API compatibility", "tools/apicompat/gate/main.go", filepath.Join("..", "..", "tools", "apicompat", "testdata", "prior"), "api-gate-main.go.txt"},
+	{"Figure engine", "tools/figures/mkdocs_hook.py", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-mkdocs_hook.py.txt"},
+	{"Figure engine", "tools/figures/third_party/interfig/VENDOR.md", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-VENDOR.md.txt"},
+	{"Figure engine", "tools/figures/README.md", filepath.Join("..", "managedasset", "testdata", "prior"), "figures-README.md.txt"},
 }
 
 func lintPriorFamily(t *testing.T, name string) managedasset.Family {
@@ -35,9 +36,9 @@ func lintPriorFamily(t *testing.T, name string) managedasset.Family {
 	return families[index]
 }
 
-func lintPriorText(t *testing.T, fixture string) string {
+func lintPriorText(t *testing.T, dir, fixture string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "managedasset", "testdata", "prior", fixture))
+	data, err := os.ReadFile(filepath.Join(dir, fixture))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func TestLintCleanAssetPriorsRefreshWithoutForce(t *testing.T) {
 		if err != nil || !owned {
 			t.Fatalf("%s: canonical text: owned=%v err=%v", tc.rel, owned, err)
 		}
-		old := lintPriorText(t, tc.fixture)
+		old := lintPriorText(t, tc.dir, tc.fixture)
 		if old == string(current) {
 			t.Fatalf("%s: the fixture is the current text, so no refresh is exercised", tc.rel)
 		}
@@ -80,7 +81,7 @@ func TestLintCleanAssetPriorsRefreshWithoutForce(t *testing.T) {
 func TestLintCleanAssetPriorsKeepEditedCopies(t *testing.T) {
 	for _, tc := range lintPriorFixtures {
 		family := lintPriorFamily(t, tc.family)
-		edited := lintPriorText(t, tc.fixture) + "\nan operator edit\n"
+		edited := lintPriorText(t, tc.dir, tc.fixture) + "\nan operator edit\n"
 		s := familySession(t, false)
 		mustWrite(t, filepath.Join(s.repoPath, filepath.FromSlash(tc.rel)), edited)
 		if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
@@ -97,7 +98,7 @@ func TestLintCleanAssetPriorsKeepEditedCopies(t *testing.T) {
 func TestLintCleanAssetPriorFixturesAreRecorded(t *testing.T) {
 	for _, tc := range lintPriorFixtures {
 		family := lintPriorFamily(t, tc.family)
-		if !family.PriorText(tc.rel, []byte(lintPriorText(t, tc.fixture))) {
+		if !family.PriorText(tc.rel, []byte(lintPriorText(t, tc.dir, tc.fixture))) {
 			t.Errorf("%s: the fixture %s is not a recorded prior text of %s", tc.rel, tc.fixture, tc.family)
 		}
 	}

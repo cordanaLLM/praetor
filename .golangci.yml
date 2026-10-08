@@ -10,8 +10,9 @@ version: "2"
 run:
   timeout: 10m
   tests: true
-  # tools/apicompat/gate/main.go builds only under this tag, which keeps the gate out of an
-  # adopting module's ./... patterns; the tag selects that one file and nothing else here.
+  # tools/apicompat/gate/main.go builds only under this tag, which keeps the gate program out of
+  # ./... patterns; with the tag on, main.go is built and its placeholder.go (the opposite
+  # constraint, which ./... reaches without the tag) is not, so no file is linted twice.
   build-tags:
     - apicompatgate
 

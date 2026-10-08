@@ -214,7 +214,7 @@ def published_files() -> list[tuple[str, Path]]:
         where = DIST_DIR.as_posix()
         raise CheckError(f"{where} holds more than {MAX_DIST_FILES} files")
     served = [(f"{DIST_URI}/{name}", DIST_DIR / name) for name in names]
-    return [(CSS_URI, CSS_FILE)] + served
+    return [(CSS_URI, CSS_FILE), *served]
 
 
 def on_files(files, config):

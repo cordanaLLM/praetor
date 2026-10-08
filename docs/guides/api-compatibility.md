@@ -16,8 +16,8 @@ and `praetorctl audit` compares them byte for byte, one consistent line-ending s
 
 | File | Purpose |
 | :--- | :--- |
-| `tools/apicompat/gate/main.go` | The gate program. Its `//go:build apicompatgate` constraint keeps it out of every `./...` pattern, so the repository's own build, tests, linters and API never include it; `go run` builds it because the command names the file. |
-| `tools/apicompat/gate/placeholder.go` | A stand-in for the gate in a build without the tag: a `main` that exits 1 and names the command that runs the gate. It gives the directory one buildable package, so `go vet ./tools/apicompat/gate` and `golangci-lint run ./tools/apicompat/gate`, which a pre-commit hook may run on the directory of a staged file, find a Go file instead of failing on a package whose files the tag excludes. |
+| `tools/apicompat/gate/main.go` | The gate program. Its `//go:build apicompatgate` constraint keeps the gate itself out of every `./...` pattern, so the repository's own build, tests, linters and API never include it; `go run` builds it because the command names the file. |
+| `tools/apicompat/gate/placeholder.go` | A stand-in for the gate in a build without the tag: a `main` that exits 1 and names the command that runs the gate. It gives the directory one buildable package, which a `./...` pattern of the repository now builds, vets and lints (a `main` that prints one line and exits 1, with no exported API), and so `go vet ./tools/apicompat/gate` and `golangci-lint run ./tools/apicompat/gate`, which a pre-commit hook may run on the directory of a staged file, find a Go file instead of failing on a package whose files the tag excludes. |
 | `.github/workflows/praetor-api.yml` | One job, `Go API Compatibility`, on pushes to the repository's default branch and on every pull request; on a draft it fails by design until the draft is marked ready ([When the workflow runs](#when-the-workflow-runs)). The branch ruleset adoption renders requires it. |
 
 Adoption refuses, even with `--force`, to overwrite a file the repository already had at either

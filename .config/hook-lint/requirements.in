@@ -1,4 +1,4 @@
-# Lint toolchain for the canonical hook sources (scripts/test_emitted_hook_lint.py) and the
+# Lint toolchain for the hook sources and managed assets (scripts/test_emitted_hook_lint.py) and the
 # portability job's yamllint, one exact pin each. requirements.txt is the lock
 # compiled from this file: every package the gate installs, pinned with hashes. Change a
 # pin here, then regenerate the lock from this directory with the command recorded in the
@@ -7,3 +7,4 @@
 black==26.10.0
 flake8==7.4.1
 yamllint==1.38.0
+ruff==0.16.8

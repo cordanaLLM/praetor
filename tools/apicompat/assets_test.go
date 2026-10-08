@@ -149,8 +149,9 @@ func TestWorkflowIsARequiredCheck(t *testing.T) {
 	}
 }
 
-// PriorDigests. Positive: every file under testdata/prior reproduces one digest, mapped to the
-// workflow, and every digest is reproduced. Negative: the current text is no Prior text, and the
+// PriorDigests. Positive: every file under testdata/prior reproduces one digest, each digest is
+// reproduced by one file, and the file maps to the path it was shipped at: the workflow, or the
+// gate program (api-gate-main.go.txt). Negative: the current texts are no Prior text, and the
 // returned map is a private copy, so a caller cannot add a digest the family then accepts.
 // Boundary: a CRLF checkout of a prior text reproduces the same digest.
 func TestPriorDigests(t *testing.T) {
@@ -159,29 +160,30 @@ func TestPriorDigests(t *testing.T) {
 		t.Fatal(err)
 	}
 	digests := PriorDigests()
-	workflowTexts := 0
-	for _, rel := range digests {
-		if rel == WorkflowFile {
-			workflowTexts++
-		}
-	}
-	// The gate program's earlier texts are kept beside the registry's other lint-clean priors
-	// (internal/managedasset/testdata/prior), which internal/adopt replays.
-	if len(entries) != workflowTexts {
-		t.Fatalf("testdata/prior holds %d texts for %d workflow digests", len(entries), workflowTexts)
+	if len(entries) != len(digests) {
+		t.Fatalf("testdata/prior holds %d texts for %d digests", len(entries), len(digests))
 	}
 	total := len(digests)
+	reproduced := map[string]bool{}
 	for _, entry := range entries {
 		data, err := os.ReadFile(filepath.Join("testdata", "prior", entry.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
+		want := WorkflowFile
+		if entry.Name() == "api-gate-main.go.txt" {
+			want = Directory + "/" + GateFile
+		}
 		for _, text := range [][]byte{data, bytes.ReplaceAll(data, []byte("\n"), []byte("\r\n"))} {
 			digest, _, err := util.CanonicalTextDigest(text)
-			if err != nil || digests[digest] != WorkflowFile {
-				t.Fatalf("%s: digest %s maps to %q (%v), want %s", entry.Name(), digest, digests[digest], err, WorkflowFile)
+			if err != nil || digests[digest] != want {
+				t.Fatalf("%s: digest %s maps to %q (%v), want %s", entry.Name(), digest, digests[digest], err, want)
 			}
+			reproduced[digest] = true
 		}
+	}
+	if len(reproduced) != total {
+		t.Fatalf("testdata/prior reproduces %d of %d digests", len(reproduced), total)
 	}
 	current, _, err := util.CanonicalTextDigest([]byte(Workflow))
 	if err != nil || digests[current] != "" {
