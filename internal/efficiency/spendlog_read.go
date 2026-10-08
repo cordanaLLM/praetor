@@ -147,7 +147,7 @@ func (s *spendReader) csvRows(ctx context.Context, in io.Reader) error {
 	if err != nil {
 		return err
 	}
-	for row := 1; ; row++ {
+	for row := 1; row <= s.limits.Lines+1; row++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -167,6 +167,7 @@ func (s *spendReader) csvRows(ctx context.Context, in io.Reader) error {
 		entry := csvEntry(record, indices)
 		s.report.process(&entry, s.classifier, s.attr)
 	}
+	return fmt.Errorf("exceeds %d rows limit", s.limits.Lines)
 }
 
 // sniffFormat picks the reader from the extension, else from the first byte.

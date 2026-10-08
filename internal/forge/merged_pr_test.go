@@ -70,8 +70,11 @@ func TestReadAndParseMergedPullRequests_Positive(t *testing.T) {
 	if len(prs[0].ClosingIssues) != 1 || prs[0].ClosingIssues[0].Number != 12 {
 		t.Errorf("unexpected closing issues: %+v", prs[0].ClosingIssues)
 	}
+	assertReadMergedPullRequests(t, jsonContent)
+}
 
-	// ReadMergedPullRequests stream test
+func assertReadMergedPullRequests(t *testing.T, jsonContent string) {
+	t.Helper()
 	prsFromReader, err := ReadMergedPullRequests(strings.NewReader(jsonContent))
 	if err != nil {
 		t.Fatalf("unexpected error reading from reader: %v", err)
