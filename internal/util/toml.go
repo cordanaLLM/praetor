@@ -43,8 +43,8 @@ func TOMLKeyValue(line string) (key, value string, ok bool) {
 }
 
 // TOMLKeyPath tokenizes the TOML 1.0 key that opens text (the key ABNF of toml.io/en/v1.0.0): one
-// or more segments joined by dots, each a bare key ([A-Za-z0-9_-]+), a basic string without any
-// backslash or a literal string. Spaces and tabs are allowed only between tokens, never inside a
+// or more segments joined by dots, each a bare key ([A-Za-z0-9_-]+) or a basic or literal string
+// holding no backslash. Spaces and tabs are allowed only between tokens, never inside a
 // bare key or a quoted one. It returns the decoded segments, so "annotations" and annotations
 // are the same segment, and the text after the key with its leading spaces and tabs dropped. A
 // text that does not open with such a key is an error, never a guess: a segment it cannot

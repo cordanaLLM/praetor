@@ -16,8 +16,8 @@ import (
 // The REUSE.toml reads: praetorctl audit's licensing gates and vendored license warning
 // (cmd/standardsctl, audit_reuse.go) and the label a copied upstream file must carry
 // (CheckUpstreamCredits). They read the file's shape, not TOML: the module carries no TOML
-// library; keys and table headers are tokenized exactly by util.TOMLKeyPath. REUSE 3.3 allows other keys and tables to convey additional
-// information. The read mirrors what the reuse tool parses (reuse/global_licensing.py,
+// library; keys and table headers are tokenized exactly by util.TOMLKeyPath. REUSE 3.3 allows
+// other keys and tables to convey additional information. The read mirrors what the reuse tool parses (reuse/global_licensing.py,
 // ReuseTOML.from_dict and AnnotationsItem.from_dict), so it follows an allow-list and refuses
 // shapes that can define annotations this read never sees, naming the line.
 // A header or key line that util.TOMLKeyPath cannot tokenize (a bare key outside A-Za-z0-9_-,
@@ -210,7 +210,8 @@ func (s *reuseScan) assignTableKey(segments []string, value string) error {
 	}
 }
 
-// isAnnotationSegment reports whether segment is one of the four keys an [[annotations]] table reads.
+// isAnnotationSegment reports whether segment is one of the four keys an [[annotations]] table
+// reads.
 func isAnnotationSegment(segment string) bool {
 	return segment == reusePathKey || segment == reuseLicenseKey || slices.Contains(reuseSteppedKeys, segment)
 }
