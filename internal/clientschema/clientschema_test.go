@@ -227,21 +227,20 @@ func managerMatchesFile(patterns []string, path string) bool {
 }
 
 // renovateConfig reads renovate.json with the duplicate-refusing reader.
-func renovateConfig(t *testing.T) ([]string, []struct {
+type customManager struct {
 	Patterns []string `json:"managerFilePatterns"`
 	Matches  []string `json:"matchStrings"`
-}) {
+}
+
+func renovateConfig(t *testing.T) ([]string, []customManager) {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var config struct {
-		IgnorePaths []string `json:"ignorePaths"`
-		Managers    []struct {
-			Patterns []string `json:"managerFilePatterns"`
-			Matches  []string `json:"matchStrings"`
-		} `json:"customManagers"`
+		IgnorePaths []string        `json:"ignorePaths"`
+		Managers    []customManager `json:"customManagers"`
 	}
 	opts := strictjson.Options{MaxBytes: 1 << 20, MaxDepth: 64, Names: strictjson.ExactNames}
 	if err := strictjson.Validate(raw, opts); err != nil {
@@ -251,6 +250,33 @@ func renovateConfig(t *testing.T) ([]string, []struct {
 		t.Fatal(err)
 	}
 	return config.IgnorePaths, config.Managers
+}
+
+func clientSchemaExpressions(t *testing.T, managers []customManager, manifestRepoPath string) []*regexp.Regexp {
+	t.Helper()
+	var expressions []*regexp.Regexp
+	for _, manager := range managers {
+		if !slices.ContainsFunc(manager.Patterns, func(p string) bool { return strings.Contains(p, "clientschema") }) {
+			continue
+		}
+		if !managerMatchesFile(manager.Patterns, manifestRepoPath) {
+			t.Fatalf("custom manager %v does not match manifest path %s", manager.Patterns, manifestRepoPath)
+		}
+		for _, match := range manager.Matches {
+			expressions = append(expressions, regexp.MustCompile(match))
+		}
+	}
+	return expressions
+}
+
+func collectTrackedDeps(expressions []*regexp.Regexp, manifestText string) map[string]bool {
+	tracked := map[string]bool{}
+	for _, expression := range expressions {
+		for _, match := range expression.FindAllStringSubmatch(manifestText, -1) {
+			tracked[match[expression.SubexpIndex("depName")]] = true
+		}
+	}
+	return tracked
 }
 
 // TestRenovateTracksEveryPin matches each source's pin lines with the regex custom managers of
@@ -264,18 +290,7 @@ func TestRenovateTracksEveryPin(t *testing.T) {
 		t.Fatalf("manifest path %s is ignored by Renovate (matched %q)", manifestRepoPath, pattern)
 	}
 
-	var expressions []*regexp.Regexp
-	for _, manager := range managers {
-		if !slices.ContainsFunc(manager.Patterns, func(p string) bool { return strings.Contains(p, "clientschema") }) {
-			continue
-		}
-		if !managerMatchesFile(manager.Patterns, manifestRepoPath) {
-			t.Fatalf("custom manager %v does not match manifest path %s", manager.Patterns, manifestRepoPath)
-		}
-		for _, match := range manager.Matches {
-			expressions = append(expressions, regexp.MustCompile(match))
-		}
-	}
+	expressions := clientSchemaExpressions(t, managers, manifestRepoPath)
 	if len(expressions) != 2 {
 		t.Fatalf("renovate.json has %d client schema expressions, want 2 (tag and commit)", len(expressions))
 	}
@@ -283,12 +298,7 @@ func TestRenovateTracksEveryPin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tracked := map[string]bool{}
-	for _, expression := range expressions {
-		for _, match := range expression.FindAllStringSubmatch(string(manifestText), -1) {
-			tracked[match[expression.SubexpIndex("depName")]] = true
-		}
-	}
+	tracked := collectTrackedDeps(expressions, string(manifestText))
 	for _, source := range loadManifest(t).Sources {
 		if !tracked[source.Repo] {
 			t.Errorf("source %s (%s) matches no Renovate custom manager", source.ID, source.Repo)

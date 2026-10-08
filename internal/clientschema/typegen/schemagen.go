@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Bounds (HISS-02).
@@ -270,22 +272,13 @@ func requiredFields(node map[string]any) map[string]bool {
 	return required
 }
 
-func sortedPropertyKeys(properties map[string]any) []string {
-	keys := make([]string, 0, len(properties))
-	for key := range properties {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func (g *generator) structDecl(name string, node map[string]any) (string, error) {
 	properties, ok := node["properties"].(map[string]any)
 	if !ok || len(properties) > maxFields {
 		return "", fmt.Errorf("no properties object, or more than %d properties", maxFields)
 	}
 	required := requiredFields(node)
-	keys := sortedPropertyKeys(properties)
+	keys := util.SortedKeys(properties)
 	var b strings.Builder
 	b.WriteString(comment(name, node) + "type " + name + " struct {\n")
 	used := map[string]string{}
