@@ -124,7 +124,7 @@ func makefileNormalizeName(name string) string {
 // including file with none open. Without it a recipe, or a recipe state a conditional left unsure,
 // would carry across the splice and a tab-prefixed line would read as a recipe line where Make
 // parses it as makefile syntax (measured against GNU Make 4.4.1).
-const makefileIncludeBoundary = ".PRAETOR_INCLUDE_BOUNDARY := 1"
+const makefileIncludeBoundary = "PRAETOR_INCLUDE_BOUNDARY := 1"
 
 // makefileExpandLevel replaces the literal include lines of lines once. Nested includes the
 // fragments bring are left for the next level. When the scanner loses its place anywhere in lines

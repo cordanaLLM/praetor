@@ -203,8 +203,8 @@ const (
 )
 
 // remadeCases are measured against GNU Make 4.4.1 (TestRemadeIncludeCasesMatchGNUMake replays them
-// when GNU Make is installed): each rebuilds gen.mk, so Make runs "remade" (or fails running the
-// missing SCCS tool "get") instead of the tracked recipe. An allow-list reader follows none.
+// when GNU Make is installed): each rebuilds gen.mk, so Make runs "remade" instead of the
+// tracked recipe. An allow-list reader follows none.
 var remadeCases = []remadeCase{
 	{"sibling gen.mk.sh", "include gen.mk\n", map[string]string{"gen.mk.sh": remadeGenMk}},
 	{"vpath directive", "vpath %.sh src\ninclude gen.mk\n", map[string]string{"src/gen.mk.sh": remadeGenMk}},
@@ -249,6 +249,35 @@ var remadeCases = []remadeCase{
 			"gen.src": remadeGenMk,
 		},
 	},
+	{
+		"MAKEFLAGS VPATH remake channel",
+		"MAKEFLAGS += VPATH=src\ninclude gen.mk\n",
+		map[string]string{
+			"src/gen.mk.sh": remadeGenMk,
+		},
+	},
+	{
+		"MAKEFLAGS SHELL remake channel",
+		"MAKEFLAGS += SHELL=./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		map[string]string{
+			"x.sh":    "#!/bin/sh\ncp gen.src gen.mk\nexec /bin/sh \"$@\"\n",
+			"gen.src": remadeGenMk,
+		},
+	},
+	{
+		"export PS4 remake channel",
+		"export SHELLOPTS := xtrace\nexport PS4 = $$(cp gen.src gen.mk)\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		map[string]string{
+			"gen.src": remadeGenMk,
+		},
+	},
+	{
+		"export BASH_FUNC remake channel",
+		"export BASH_FUNC_command%% = () { cp gen.src gen.mk; }\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
+		map[string]string{
+			"gen.src": remadeGenMk,
+		},
+	},
 }
 
 // files2 is every file of the case including the tracked gen.mk, whose text is genMk: the GNU
@@ -272,6 +301,19 @@ func TestMergeDocumentationMakefileRemadeIncludeRefuses(t *testing.T) {
 	}
 }
 
+func writeRemadeFixtureFiles(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, body := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		mustWrite(t, path, body)
+		if strings.HasSuffix(name, ".sh") {
+			if err := os.Chmod(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
 // TestRemadeIncludeCasesMatchGNUMake replays remadeCases (and the safe controls) against GNU Make:
 // a refused case must not run the tracked recipe, an allowed one must.
 func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
@@ -281,15 +323,7 @@ func TestRemadeIncludeCasesMatchGNUMake(t *testing.T) {
 	writeStub(t, getDir, "get", `for a in "$@"; do case "$a" in *s.*) base=$(basename "$a"); cp "$a" "${base#s.}";; esac; done`+"\n")
 	run := func(tc remadeCase) string {
 		dir := t.TempDir()
-		for name, body := range tc.files2(trackedGenMk) {
-			path := filepath.Join(dir, filepath.FromSlash(name))
-			mustWrite(t, path, body)
-			if strings.HasSuffix(name, ".sh") {
-				if err := os.Chmod(path, 0o755); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
+		writeRemadeFixtureFiles(t, dir, tc.files2(trackedGenMk))
 		mustWrite(t, filepath.Join(dir, "Makefile"), tc.makefile)
 		old := time.Now().Add(-time.Hour)
 		if err := os.Chtimes(filepath.Join(dir, "gen.mk"), old, old); err != nil {
@@ -326,13 +360,20 @@ func TestMergeDocumentationMakefileAllowListFollowsSafeIncludes(t *testing.T) {
 		"dot operand":           "include ./gen.mk\n",
 		"rule for another file": "include gen.mk\nother: x\n\t@true\n",
 		"percent in recipe":     "include gen.mk\nother:\n\t@printf '%s: x\\n' y\n",
-		"percent in prereq":     "include gen.mk\nobjs := $(SRC:%.c=%.o)\nother: $(objs)\n",
 		"assignment with colon": "include gen.mk\nT := a::b\n",
 	} {
 		s := includeRepo(t, map[string]string{"gen.mk": "help:\n", "other.txt": "x\n"}, "gen.mk")
 		if _, err := mergeWithIncludes(s, makefile); err != nil {
 			t.Errorf("%s: safe include refused: %v", name, err)
 		}
+	}
+}
+
+func TestMergeDocumentationMakefileFragmentPrerequisiteReferenceRefuses(t *testing.T) {
+	s := includeRepo(t, map[string]string{"gen.mk": "VAR := dep\nother: $(VAR)\n\t@true\n"}, "gen.mk")
+	_, err := mergeWithIncludes(s, "include gen.mk\n")
+	if err == nil || !strings.Contains(err.Error(), "not followed") {
+		t.Fatalf("fragment with $(VAR) in prerequisite accepted: %v", err)
 	}
 }
 

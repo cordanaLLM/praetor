@@ -1,4 +1,4 @@
 type: fixed
-title: Adoption follows tracked Makefile includes that Make cannot remake; the PRAETORCTL exception holds only with the default shell
+title: Adoption follows tracked Makefile includes where Make evaluates nothing while reading makefiles
 issue: "#843"
 breaking: false

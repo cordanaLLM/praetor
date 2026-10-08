@@ -207,12 +207,25 @@ func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 		"computed in conditional":        "include gen.mk\nifdef X\n$(G): s\nendif\n",
 		"changed PRAETORCTL line":        strings.TrimSuffix(util.MakefileCLIVariable, "\n") + " extra\ninclude gen.mk\n",
 		"shell command":                  "X := $(shell cp gen.src gen.mk)\ninclude gen.mk\n",
+		"file function":                  "include gen.mk\nX := $(file <gen.src)\n",
+		"call function":                  "include gen.mk\nX := $(call myfunc,arg)\n",
+		"guile function":                 "include gen.mk\nX := $(guile (display 1))\n",
+		"$G target":                      "include gen.mk\n$G: gen.src\n",
+		"dot-name variable":              "include gen.mk\n.FOO := bar\n",
 		"makefile target rule":           "include gen.mk\nMakefile: stamp\n\t@touch Makefile\nstamp:\n\t@cp gen.src gen.mk; touch stamp\n",
 		"SHELL with PRAETORCTL":          "SHELL := ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
 		"override SHELL with PRAETORCTL": "override SHELL := ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
 		"export SHELL with PRAETORCTL":   "export SHELL = ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n",
-		".SHELLFLAGS with PRAETORCTL":    ".SHELLFLAGS := -x\n" + util.MakefileCLIVariable + "include gen.mk\n",
 		"MAKESHELL with PRAETORCTL":      "MAKESHELL := ./x.sh\n" + util.MakefileCLIVariable + "include gen.mk\n",
+		"MAKEFLAGS VPATH":                "MAKEFLAGS += VPATH=src\ninclude gen.mk\n",
+		"MAKEFLAGS SHELL":                "MAKEFLAGS += SHELL=./x.sh\ninclude gen.mk\n",
+		"export SHELLOPTS":               "export SHELLOPTS := xtrace\nexport PS4 = $$(cp gen.src gen.mk)\ninclude gen.mk\n",
+		"export BASH_FUNC":               "export BASH_FUNC_command%% = () { cp gen.src gen.mk; }\ninclude gen.mk\n",
+		"percent in a prereq":            "include gen.mk\nobjs := $(S:%.c=%.o)\nother: $(objs)\n",
+		"prerequisite reference":         "include gen.mk\nother: $(VAR)\n",
+		"shared fragment with export":    "include gen.mk\nexport V := 1\n",
+		"shared fragment conditional $":  "include gen.mk\nifeq ($(NAME),x)\nT = y\nendif\n",
+		"shared fragment dot variable":   "include gen.mk\n.DEFAULT_GOAL := other\n",
 	} {
 		got := util.MakefileExpandIncludes(data, read)
 		if strings.Contains(name, "default suffix") {
@@ -226,10 +239,9 @@ func TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous(t *testing.T) {
 		"rule for another target": "include gen.mk\nother: x\n\t@true\n",
 		"dot operand":             "include ./gen.mk\n",
 		"assignment":              "include gen.mk\nT := a::b\nU = c:d\n",
-		"percent in a prereq":     "include gen.mk\nobjs := $(S:%.c=%.o)\nother: $(objs)\n",
 		"percent in a recipe":     "include gen.mk\nother:\n\t@printf '%s: x' y\n",
 		"percent after semicolon": "include gen.mk\nother: x ; @printf '%s: x' y\n",
-		"shared fragment shape":   "include gen.mk\nNAME := x\nexport V := 1\nifeq ($(NAME),x)\nT = y\nendif\n.PHONY: other\n.DEFAULT_GOAL := other\nother: gen.mk.txt\n\t@true\n",
+		"shared fragment shape":   "include gen.mk\nNAME := x\nT = y\n.PHONY: other\nother: gen.mk.txt\n\t@true\n",
 		"MakefileCLIVariable":     util.MakefileCLIVariable + "include gen.mk\n",
 	} {
 		plain := util.MakefileExpandIncludes(data, read)
@@ -272,11 +284,11 @@ func TestMakefileExpandIncludesReportNamesRemadeIncludes(t *testing.T) {
 	})
 }
 
-func TestMakefileExpandIncludesReport_ShellTurnsOffCLIVariableException(t *testing.T) {
+func TestMakefileExpandIncludesReport_SpecialVariableRefused(t *testing.T) {
 	read := fragmentReader(map[string]string{"gen.mk": "help:\n"})
 	data := "SHELL := ./x.sh\n" + util.MakefileCLIVariable + "all: $(PRAETORCTL)\ninclude gen.mk\n"
 	_, notes := util.MakefileExpandIncludesReport(data, read)
-	if len(notes) != 1 || !strings.Contains(notes[0], "call to $(shell)") {
-		t.Fatalf("expected call to $(shell) note, got: %q", notes)
+	if len(notes) != 1 || !strings.Contains(notes[0], "special variable assignment") {
+		t.Fatalf("expected special variable assignment note, got: %q", notes)
 	}
 }

@@ -350,6 +350,34 @@ func makefileRule(line string) ([]string, string) {
 	return strings.Fields(line[:colon]), prerequisites
 }
 
+// makefileTrackedLine records one logical line together with the file and 1-indexed line number
+// where it appeared, so a refusal note can name the exact location that caused it.
+type makefileTrackedLine struct {
+	text string
+	file string
+	line int
+}
+
+// makefileTrackedLogicalLines returns the logical lines of data with each line's file and 1-based
+// start line recorded, and false when the file exceeds the line bound.
+func makefileTrackedLogicalLines(data, file string) ([]makefileTrackedLine, bool) {
+	physical := strings.Split(data, "\n")
+	lines := make([]makefileTrackedLine, 0, min(len(physical), MaxMakefileLines))
+	for start := 0; start < len(physical) && start < MaxMakefileLines; {
+		line, next, whole := makefileJoin(physical, start)
+		if !whole {
+			return lines, false
+		}
+		lines = append(lines, makefileTrackedLine{
+			text: strings.TrimSuffix(line, "\r"),
+			file: file,
+			line: start + 1,
+		})
+		start = next
+	}
+	return lines, len(physical) <= MaxMakefileLines
+}
+
 // makefileLogicalLines returns the logical lines of data up to the first point the reader cannot
 // resolve, and whether it read the whole file. Measured against GNU Make 4.4.1, a continuation
 // joins every kind of line: an assignment ("HELP = usage \" then "  verify-all: x" binds HELP), a
@@ -357,17 +385,12 @@ func makefileRule(line string) ([]string, string) {
 // (a continued line swallows the "endef" after it) and a rule line ("verify-all \" then
 // "  other: dep" declares both targets).
 func makefileLogicalLines(data string) ([]string, bool) {
-	physical := strings.Split(data, "\n")
-	lines := make([]string, 0, min(len(physical), MaxMakefileLines))
-	for start := 0; start < len(physical) && start < MaxMakefileLines; {
-		line, next, whole := makefileJoin(physical, start)
-		if !whole {
-			return lines, false
-		}
-		lines = append(lines, line)
-		start = next
+	tracked, whole := makefileTrackedLogicalLines(data, "")
+	lines := make([]string, len(tracked))
+	for i, tl := range tracked {
+		lines[i] = tl.text
 	}
-	return lines, len(physical) <= MaxMakefileLines
+	return lines, whole
 }
 
 // makefileJoin returns the logical line that starts at physical[start], the index of the physical
