@@ -142,11 +142,10 @@ func reuseRenderingBranch(data []byte) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	equal, err := util.CanonicalTextEquivalent(data, []byte(expected))
-	if err != nil {
-		return "", false, fmt.Errorf("compare REUSE gate: %w", err)
+	if equal, err := util.CanonicalTextEquivalent(data, []byte(expected)); err == nil && equal {
+		return branch, true, nil
 	}
-	return branch, equal, nil
+	return "", false, nil
 }
 
 // isReuseRendering reports whether data is a hosted REUSE gate adoption wrote and nobody edited:
@@ -316,15 +315,37 @@ func (s *adoptSession) plannedReuseWorkflow(ctx context.Context) ([]flavor.Plann
 }
 
 // reuseManagedPaths returns the hosted REUSE gate path when the repository declares REUSE,
-// so adoption includes it in the Renovate packageRules entry that disables updates on
-// Praetor-managed files.
+// the reuse-gate step is not declined, and the file is absent, a Praetor rendering, or
+// written with --force (following generatedDevContainerPaths), so adoption includes it in
+// the Renovate packageRules entry that disables updates on Praetor-managed files.
 func reuseManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
+	declined, err := ArtifactDeclined(s.declined, reuseGateStep)
+	if err != nil {
+		return nil, fmt.Errorf("resolve adoption.decline for the hosted REUSE gate: %w", err)
+	}
+	if declined {
+		return nil, nil
+	}
 	declared, err := supplychain.ReuseDeclared(ctx, s.repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("decide the hosted REUSE gate: %w", err)
 	}
 	if !declared {
 		return nil, nil
+	}
+	data, exists, err := observeAdoptionInput(ctx, s, reuseWorkflowFile)
+	if err != nil {
+		_, err = uninspectableReason(ctx, err)
+		return nil, err
+	}
+	if exists && !s.opts.Force {
+		rendering, err := isReuseRendering(data)
+		if err != nil {
+			return nil, err
+		}
+		if !rendering {
+			return nil, nil
+		}
 	}
 	return []string{reuseWorkflowFile}, nil
 }
