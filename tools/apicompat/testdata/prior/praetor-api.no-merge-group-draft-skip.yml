@@ -1,0 +1,72 @@
+---
+name: Praetor API Compatibility
+
+'on':
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: ['main']
+
+permissions:
+  contents: read
+
+jobs:
+  api-compatibility:
+    name: Go API Compatibility gate
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.draft == false
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      # yamllint disable rule:line-length
+      - name: Restore Go module cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            gomod-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore Go build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-${{ hashFiles('**/go.sum') }}-
+            gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-
+      # yamllint enable rule:line-length
+      - name: Compare the API of every Go module
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: go run tools/apicompat/gate/main.go -base="$BASE"
+  api-compatibility-result:
+    name: Go API Compatibility
+    needs: [api-compatibility]
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      # yamllint disable rule:line-length
+      - name: Report the draft
+        if: needs.api-compatibility.result == 'skipped'
+        run: |
+          echo "::error title=Gate not run on a draft::The gate did not run because the pull request is a draft. It runs when the pull request is marked ready for review."
+          exit 1
+      # yamllint enable rule:line-length
+      - name: Fail unless the gate passed
+        if: needs.api-compatibility.result != 'success'
+        run: |
+          echo "The gate did not pass or was skipped on a draft."
+          exit 1
