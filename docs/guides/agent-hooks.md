@@ -1010,7 +1010,9 @@ prose-question deny below into a stated skip. `stop` runs every check on each pa
 prose question, the ledger verify, the checkpoint): on the first pass one deny lists each
 failing check, so the single continuation is not spent on the question alone; on the
 repeated pass the question is skipped and what still fails halts the session
-(`TestRunStopQuestionAndDueCheckpointPerClient`).
+(`TestRunStopQuestionAndDueCheckpointPerClient`). A failing ledger verify does not
+hide the checkpoint: both reasons show on the first pass
+(`TestRunStopStaleLedgerAndDueCheckpointShareOneDeny`).
 
 ### Prose-question check
 
@@ -1041,8 +1043,8 @@ message to judge.
 | `gemini` | `AfterAgent` | `prompt_response` (`packages/core/src/hooks/types.ts`, v0.61.0) | `ask_user` |
 | `agy` | `Stop` | none: the payload holds `executionNum`, `terminationReason` and `fullyIdle` | none: a stated skip (`agy stop payload carries no final message, prose questions not judged`) |
 
-Fenced code (a fence closes only on the same character and at least the opener's length),
-4-space or tab indented code, inline code, blockquotes, table rows with or without leading
+Fenced code (read by `util.MarkdownFence`, the one fence tracker; a fence closes only on the same character and at least the opener's length, and ```` ```make``` passes ```` is an inline span), inline code (`util.MarkdownCodeSpans`),
+4-space or tab indented code, blockquotes, table rows with or without leading
 pipes and URLs are removed first (a URL's trailing punctuation stays, so `merge <url>?` is still a
 question). Only the last two paragraphs are judged. The stop is denied once when any
 sentence of the closing prose paragraph ends in `?` or the full-width `？` (a trailing
