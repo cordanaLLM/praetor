@@ -1,0 +1,4 @@
+type: fixed
+title: Build the API compatibility checker from a pinned build module that requires golang.org/x/tools v0.51.0, so the gate's canary passes under Go 1.27.2 and the required Go API Compatibility check goes green again; adopted repositories get it with a plain adopt
+issue: "#1049"
+breaking: false

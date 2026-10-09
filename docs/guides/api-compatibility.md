@@ -203,15 +203,16 @@ go run tools/apicompat/gate/main.go -base=origin/main
 ```
 
 The checker checks each revision out in the working tree and restores `HEAD` afterwards, and it
-refuses a dirty tree, so commit or stash first. Without `-checker`, the gate installs the pinned
-checker into a temporary directory from the Go module proxy; pass `-checker=<path>` to use a
+refuses a dirty tree, so commit or stash first. Without `-checker`, the gate builds the pinned
+checker from its build module into a temporary directory, downloading the modules from the Go
+module proxy; pass `-checker=<path>` to use a
 binary you built.
 
 | Flag | Default | Meaning |
 | :--- | :--- | :--- |
 | `-base` | empty | Base revision. Empty selects the newest root release tag merged into `HEAD`. |
 | `-policy` | `auto` | `auto` warns before v1 and rejects from v1; `warn` and `reject` fix the policy. |
-| `-checker` | empty | A go-apidiff binary; empty installs the pinned one. |
+| `-checker` | empty | A go-apidiff binary; empty builds the pinned one. |
 | `-repo` | `.` | Any directory inside the repository. |
 
 ## What it compares
@@ -258,7 +259,7 @@ there is no published API, and the gate passes saying so; a push builds on that.
 | :--- | :--- |
 | `0` | Every compared module is compatible, nothing was there to compare, or incompatible changes were reported under the warn policy. |
 | `1` | Incompatible changes under the reject policy. |
-| `2` | The comparison did not run: a git or discovery error, a malformed `go.mod`, a module that does not build at `HEAD`, a checker that cannot be installed, misses the canary, exits with a status other than 0 or 1, or prints an error. |
+| `2` | The comparison did not run: a git or discovery error, a malformed `go.mod`, a module that does not build at `HEAD`, a checker that cannot be built, misses the canary, exits with a status other than 0 or 1, or prints an error. |
 
 Compatibility policy never relaxes execution policy: status 2 holds under `-policy=warn` too.
 `go run` itself exits 1 for any nonzero status of the program, so a workflow log shows the
@@ -267,12 +268,32 @@ program's status in the `exit status N` line. On GitHub Actions the verdict is p
 
 ## The pinned checker
 
-`checkerModule` in `tools/apicompat/gate/main.go` pins
-`github.com/joelanford/go-apidiff@v0.8.4-0.20260910211158-c3e0953fa2fd`, commit `c3e0953fa2fd` of
-its main branch. The newest release, v0.8.3, builds against `golang.org/x/tools` v0.33.0, which
-cannot decode the export data Go 1.27 writes; go-apidiff ignores the resulting package errors and
-reports every module as compatible. The pinned commit changes only dependencies, and its CLI and
-exit statuses (0 compatible, 1 incompatible, 2 failed) match the release.
+The gate builds `github.com/joelanford/go-apidiff` from a pinned build module instead of running
+`go install module@version`. The module is the text of three files, `checkerGoMod`,
+`checkerGoSum` and `checkerTools` in `tools/apicompat/gate/main.go`; the gate writes them to a
+temporary directory and runs `go build -mod=readonly` there (`buildChecker`). The text lives in the
+gate because the gate ships as embedded bytes and `go:embed` cannot embed the files of a nested
+module.
+
+- go-apidiff is at commit `c3e0953fa2fd` of its main branch
+  (`v0.8.4-0.20260910211158-c3e0953fa2fd`). The newest release, v0.8.3, builds against
+  `golang.org/x/tools` v0.33.0, which cannot decode the export data Go 1.27 writes; go-apidiff
+  ignores the resulting package errors and reports every module as compatible. The pinned commit
+  changes only dependencies, and its CLI and exit statuses (0 compatible, 1 incompatible, 2
+  failed) match the release.
+- `golang.org/x/tools` is required at v0.51.0 exactly. The commit's own `go.mod` asks for v0.49.0,
+  which reads export data up to version 4, while Go 1.27.2 writes version 5; built against it the
+  checker exits 0 without comparing anything and the canary fails every run (#1049). The build
+  module raises the floor without a change upstream.
+- `go.sum` pins the whole closure, and `-mod=readonly` refuses a build that would change it.
+
+To refresh the module, change the two requirements in `checkerGoMod`, run `go mod tidy` in a
+scratch directory holding the three texts, and copy the results back. `TestGatePinsItsChecker`
+(`tools/apicompat/checker_pin_test.go`) refuses an x/tools below v0.51.0, a requirement that is
+not exact, a `go.sum` without both modules' hashes and a `tools.go` without both imports.
+Renovate moves the two requirements through the regex manager in `renovate.json`; the branch then
+needs the `go.sum` refresh and the outgoing gate text recorded in `priorDigests` and
+`internal/managedasset/testdata/shipped`.
 
 Before comparing anything, the gate runs the checker on a canary repository whose second commit
 removes an exported function. A checker that does not report that removal fails the gate with

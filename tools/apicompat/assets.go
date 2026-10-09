@@ -139,6 +139,9 @@ var priorDigests = map[string]string{
 	// The gate whose draft step ran under the runner's default shell, which is pwsh on a Windows
 	// runner and cannot read the step's script.
 	"e4306dbb7b164e9ca3040668b4a2b63b9092b8f35645b348252fb6d55f062f29": WorkflowFile,
+	// The gate that installed the checker as module@version, whose x/tools cannot read Go 1.27.2
+	// export data (#1049).
+	"10c868a450275a43abc625176bd27cdf5e148f509f8704019940ca01076ee5f8": Directory + "/" + GateFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}
