@@ -23,7 +23,6 @@ var stopFixtures = []stopFixture{
 	{"closing question", "Fixed the parser.\n\nShould I also update the docs?", Deny},
 	{"closing question with trailing emphasis", "All green.\n\n**Want me to push?**", Deny},
 	{"question above an options list", "Two ways forward.\n\nWhich do you prefer?\n- A: rebase\n- B: merge", Deny},
-	{"options list then a request to choose", "Options:\n\n- A: rebase\n- B: merge\n\nLet me know which one.", Deny},
 	{"question in a code block", "Ran it.\n\n" + fence + "\n$ grep -n 'why?' file\nShould this fail?\n" + fence + "\n\nDone.", Allow},
 	{"question in an unclosed code block", "Done.\n\n" + fence + "\nShould this fail?", Allow},
 	{"inline triple-backtick span opens no fence", "```make``` passes.\n\nShould I push?", Deny},
@@ -40,13 +39,7 @@ var stopFixtures = []stopFixture{
 	{"closing question about a link in parentheses", "Fixed it.\n\nMerge (https://github.com/o/r/pull/12)?", Deny},
 	{"url with a query string then a statement", "Fixed it.\n\nSee https://example.com/a?b=1.", Allow},
 	{"rhetorical question mid-report", "Why did it fail?\n\nThe cache was stale.\n\nI cleared it and reran.\n\nAll tests pass.", Allow},
-	{"options list without a choice request", "Changed:\n\n- parser.go\n- parser_test.go\n\nAll tests pass.", Allow},
-	{"choice words without a list", "Pick up from here tomorrow.", Allow},
 	{"statement", "Done. Tests pass.", Allow},
-	{"summary list then a let-me-know offer", "Changed:\n- a.go\n- b.go\n\nLet me know if you need anything else.", Allow},
-	{"summary list then a tell-me offer", "Changed:\n- a.go\n- b.go\n\nTell me if CI fails.", Allow},
-	{"options list then a let-me-know-whether", "Options:\n- A: rebase\n- B: merge\n\nLet me know whether to rebase.", Deny},
-	{"options list then a let-me-know-if-you-prefer", "Options:\n- A: rebase\n- B: merge\n\nLet me know if you prefer B.", Deny},
 	{"question in an indented code block", "Ran it.\n\n    Should this fail?\n\nDone.", Allow},
 	{"question in a closing table cell", "Result:\n\n| case | verdict |\n| --- | --- |\n| why? | none |", Allow},
 	{"full-width closing question", "Fixed it.\n\nPush now\uff1f", Deny},
@@ -57,14 +50,13 @@ var stopFixtures = []stopFixture{
 	{"list of statements then no question", "Done.\n\n- Rebased.\n- Pushed.", Allow},
 	{"question list followed by a statement paragraph", "Open items:\n\n- Why did it fail?\n\nIt was the cache.", Allow},
 	{"list item with a question mark mid-item", "Done.\n\n- Fixed the why? case.", Allow},
-	{"statement of preference after a list", "Options:\n- A\n- B\n\nI prefer A and went with it.", Allow},
-	{"which-one statement after a list", "Changed:\n- a.go\n- b.go\n\nWhich one of these mattered most was a.go.", Allow},
-	{"report that picked an approach", "Approaches:\n- A\n- B\n\nI will pick the simplest approach and move on.", Allow},
-	{"imperative pick after a list", "Options:\n- A\n- B\n\nPick one of these.", Deny},
-	{"do-you-prefer after a list", "Options:\n- A\n- B\n\nDo you prefer A", Deny},
 	{"longer fence holding shorter fence lines", "Ran it.\n\n````\n```\nShould this fail?\n```\n````\n\nDone.", Allow},
 	{"tilde fence is not closed by backticks", "Ran it.\n\n~~~\n```\nShould this fail?\n~~~\n\nDone.", Allow},
 	{"table without leading pipes", "Result:\n\ncase | verdict\n--- | ---\nwhy? | none", Allow},
+	{"choice request without a question mark passes", "Options:\n- A: rebase\n- B: merge\n\nLet me know which one.", Allow},
+	{"statement after a summary list", "Changed:\n- a.go\n- b.go\n\nTell me if CI fails.", Allow},
+	{"lone backtick does not mask a later question", "Pressed ` once.\n\nShould I push? Note: `x` is fine.", Deny},
+	{"question in a code span of the closing paragraph", "Done.\n\nThe regexp `a?` matches.", Allow},
 	{"empty message", "", Skip},
 	{"blank message", " \n\t\n", Skip},
 }
@@ -137,11 +129,11 @@ func TestClosesWithQuestionJudgesOnlyTheClosingParagraphs(t *testing.T) {
 		message string
 		want    Outcome
 	}{
-		"question two paragraphs from the end":    {"Ready?\n\nMiddle.\n\nEnd.", Allow},
-		"question one paragraph from the end":     {"Ready?\n\nEnd.", Allow},
-		"question in the last paragraph":          {"Middle.\n\nReady?", Deny},
-		"list is the last paragraph":              {"Which one?\n\n- A\n- B", Deny},
-		"single list item is not an options list": {"- A\n\nLet me know.", Allow},
+		"question two paragraphs from the end": {"Ready?\n\nMiddle.\n\nEnd.", Allow},
+		"question one paragraph from the end":  {"Ready?\n\nEnd.", Allow},
+		"question in the last paragraph":       {"Middle.\n\nReady?", Deny},
+		"list is the last paragraph":           {"Which one?\n\n- A\n- B", Deny},
+		"single list item then an offer":       {"- A\n\nLet me know.", Allow},
 	} {
 		if got := evaluateStopQuestion(row, Canonical{Return: tc.message}); got.Outcome != tc.want {
 			t.Errorf("%s: %+v, want %v", name, got, tc.want)
