@@ -223,20 +223,36 @@ func evaluatePostTool(ctx context.Context, root string, in Invocation) Verdict {
 // The question's stated skip survives an otherwise clean stop.
 func evaluateStop(ctx context.Context, row Registration, root string, canonical Canonical, in Invocation) Verdict {
 	question := evaluateStopQuestion(row, canonical)
-	ledger := evaluateStopLedger(ctx, root, canonical, in)
-	switch {
-	case question.Outcome == Deny && ledger.Outcome == Deny:
-		return Verdict{Outcome: Deny, Reason: question.Reason + " Also failing: " +
-			strings.TrimPrefix(ledger.Reason, "[BLOCKED BY HISS] ")}
-	case question.Outcome == Deny:
-		return question
-	case ledger.Outcome != Allow:
-		return ledger
+	ledger := evaluateStopLedger(ctx, root, canonical)
+	checkpoint := evaluateStopCheckpoint(ctx, root, canonical, in)
+	var denies []Verdict
+	for _, v := range []Verdict{question, ledger, checkpoint} {
+		if v.Outcome == Deny {
+			denies = append(denies, v)
+		}
+	}
+	if len(denies) > 0 {
+		return joinStopDenies(denies)
+	}
+	for _, v := range []Verdict{ledger, checkpoint} {
+		if v.Outcome != Allow {
+			return v
+		}
 	}
 	return question
 }
 
-func evaluateStopLedger(ctx context.Context, root string, canonical Canonical, in Invocation) Verdict {
+// joinStopDenies merges every failing stop check into one deny: the first reason leads and
+// each further one follows "Also failing:", so no check hides behind another.
+func joinStopDenies(denies []Verdict) Verdict {
+	reason := denies[0].Reason
+	for _, v := range denies[1:] {
+		reason += " Also failing: " + strings.TrimPrefix(v.Reason, "[BLOCKED BY HISS] ")
+	}
+	return Verdict{Outcome: Deny, Reason: reason}
+}
+
+func evaluateStopLedger(ctx context.Context, root string, canonical Canonical) Verdict {
 	verifyCtx, cancel := context.WithTimeout(ctx, stateVerifyBudget)
 	defer cancel()
 	if err := state.VerifyStateSync(verifyCtx, root); err != nil {
@@ -245,7 +261,7 @@ func evaluateStopLedger(ctx context.Context, root string, canonical Canonical, i
 			"do not report completion while state is unverified."
 		return Verdict{Outcome: Deny, Reason: stopReason(reason, canonical.StopActive)}
 	}
-	return evaluateStopCheckpoint(ctx, root, canonical, in)
+	return Verdict{Outcome: Allow}
 }
 
 func evaluateStopCheckpoint(ctx context.Context, root string, canonical Canonical, in Invocation) Verdict {

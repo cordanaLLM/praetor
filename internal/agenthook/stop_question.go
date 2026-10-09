@@ -3,6 +3,8 @@ package agenthook
 import (
 	"regexp"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Rule 4 of the agent harness (ask in a popup, never in prose) enforced at the stop event.
@@ -40,9 +42,7 @@ var questionTools = map[string]string{
 }
 
 var (
-	fencedBlockLine = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})(.*)$")
 	tableSepLine    = regexp.MustCompile(`^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$`)
-	inlineCodeSpan  = regexp.MustCompile("`+[^`]*`+")
 	urlSpan         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S*[^\s.,;:!?)\]'"*_>]`)
 	itemQuestionEnd = regexp.MustCompile(`[?？]["')\]}*_>]*$`)
 	questionEnd     = regexp.MustCompile(`[?？]["')\]}*_>]*(\s|$)`)
@@ -104,24 +104,20 @@ func closesWithQuestion(text string) bool {
 	return choiceRequest.MatchString(prose) && countListItems(paragraphs) >= 2
 }
 
-// stripQuoted drops fenced code blocks (an unclosed fence runs to the end; a fence closes
-// only on the same character, at least as long as the opener), blockquote lines, 4-space or
-// tab indented code (an indented list item stays), table rows (with or without a leading
-// pipe), inline code spans and URLs.
+// stripQuoted drops fenced code blocks (util.MarkdownFence, the repository's one fence
+// tracker: an unclosed fence runs to the end, "```make``` passes" is an inline span and opens
+// nothing), blockquote lines, 4-space or tab indented code (an indented list item stays),
+// table rows (with or without a leading pipe), inline code spans (util.MarkdownCodeSpans)
+// and URLs.
 func stripQuoted(text string) string {
 	kept := make([]string, 0, strings.Count(text, "\n")+1)
-	var fence string
+	var fence util.MarkdownFence
 	inTable := false
 	for _, line := range strings.Split(text, "\n") {
-		if fence != "" {
-			if closesFence(line, fence) {
-				fence = ""
+		if fence.Open() || !indentedLine.MatchString(line) {
+			if fence.Inside(strings.TrimSpace(line)) {
+				continue
 			}
-			continue
-		}
-		if opener := fencedBlockLine.FindStringSubmatch(line); opener != nil {
-			fence = opener[1]
-			continue
 		}
 		inTable, kept = tableLine(line, inTable, kept)
 		if inTable || skippedLine(line) {
@@ -129,15 +125,23 @@ func stripQuoted(text string) string {
 		}
 		kept = append(kept, line)
 	}
-	joined := strings.Join(kept, "\n")
-	return urlSpan.ReplaceAllString(inlineCodeSpan.ReplaceAllString(joined, ""), "link")
+	joined := maskCodeSpans(strings.Join(kept, "\n"))
+	return urlSpan.ReplaceAllString(joined, "link")
 }
 
-// closesFence reports whether line closes a fence opened with opener: the same character,
-// at least as many of them, nothing else on the line.
-func closesFence(line, opener string) bool {
-	trimmed := strings.TrimSpace(line)
-	return len(trimmed) >= len(opener) && strings.Trim(trimmed, opener[:1]) == "" && !strings.HasPrefix(line, "    ")
+// maxCodeSpans bounds the inline code spans read from one message (HISS-02).
+const maxCodeSpans = 1 << 12
+
+// maskCodeSpans removes the inline code spans of text.
+func maskCodeSpans(text string) string {
+	var out strings.Builder
+	last := 0
+	for _, span := range util.MarkdownCodeSpans(text, maxCodeSpans) {
+		out.WriteString(text[last:span.Start])
+		last = span.End
+	}
+	out.WriteString(text[last:])
+	return out.String()
 }
 
 func skippedLine(line string) bool {

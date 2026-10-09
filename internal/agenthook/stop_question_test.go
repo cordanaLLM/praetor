@@ -26,6 +26,9 @@ var stopFixtures = []stopFixture{
 	{"options list then a request to choose", "Options:\n\n- A: rebase\n- B: merge\n\nLet me know which one.", Deny},
 	{"question in a code block", "Ran it.\n\n" + fence + "\n$ grep -n 'why?' file\nShould this fail?\n" + fence + "\n\nDone.", Allow},
 	{"question in an unclosed code block", "Done.\n\n" + fence + "\nShould this fail?", Allow},
+	{"inline triple-backtick span opens no fence", "```make``` passes.\n\nShould I push?", Deny},
+	{"double-backtick span holds a question", "The pattern is ``a`b?`` and it matches.", Allow},
+	{"single backtick run does not pair with a longer run", "Use `a?`` here. Should I push?", Deny},
 	{"question in inline code", "The regexp is `a?` and it matches.", Allow},
 	{"question in a blockquote", "The reviewer wrote:\n\n> Should we merge this?\n\nI merged it.", Allow},
 	{"question mark in a url", "See https://example.com/search?q=1 for the report.", Allow},
@@ -206,6 +209,35 @@ func TestRunStopQuestionAndLedgerShareOneDeny(t *testing.T) {
 	stderr := string(response.Stderr)
 	if response.ExitCode != 2 || !strings.Contains(stderr, "AskUserQuestion") || !strings.Contains(stderr, "Praetor state could not be verified") {
 		t.Errorf("question and ledger must both be listed: %+v", response)
+	}
+}
+
+// A stale ledger and a due checkpoint both follow from uncommitted edits: pass 1 lists both
+// (positive), pass 2 halts naming both still failing (boundary), a clean checkpoint leaves
+// the ledger reason alone (negative).
+func TestRunStopStaleLedgerAndDueCheckpointShareOneDeny(t *testing.T) {
+	root := repository(t, true) // never synced
+	_, getenv := buildStub(t, "python3")
+	stubStdout(t, dueReport("commit"))
+	run := func(active bool) Response {
+		in := stopInvocation("claude", root, getenv, finalMessagePayload(t, "claude", "Done.", active))
+		in.Policy = policy(t)
+		return Run(context.Background(), in)
+	}
+	first := run(false)
+	stderr := string(first.Stderr)
+	if first.ExitCode != 2 || !strings.Contains(stderr, "Praetor state could not be verified") ||
+		!strings.Contains(stderr, "Also failing: Praetor checkpoint due") {
+		t.Errorf("pass 1 must list ledger and checkpoint: %+v", first)
+	}
+	again := run(true)
+	if again.ExitCode != 0 || !strings.Contains(string(again.Stdout), "Praetor state could not be verified") ||
+		!strings.Contains(string(again.Stdout), "Praetor checkpoint due") {
+		t.Errorf("pass 2 must halt naming both: %+v", again)
+	}
+	stubStdout(t, cleanReport)
+	if only := run(false); strings.Contains(string(only.Stderr), "Also failing") {
+		t.Errorf("clean checkpoint must not be listed: %+v", only)
 	}
 }
 
