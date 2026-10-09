@@ -172,25 +172,48 @@ func decodeFragment(raw []byte) (Fragment, error) {
 	if _, ok := sectionTitles[fragment.Type]; !ok || strings.TrimSpace(fragment.Title) == "" {
 		return Fragment{}, errors.New("fragment requires a known type and nonempty title")
 	}
-	var rawMap map[string]any
-	if err := yaml.Unmarshal(raw, &rawMap); err != nil {
+	issue, present, err := fragmentIssueScalar(raw)
+	if err != nil {
 		return Fragment{}, err
 	}
-	if val, ok := rawMap["issue"]; ok {
-		if val == nil {
-			return Fragment{}, errors.New("issue cannot be empty")
-		}
-		strVal, isStr := val.(string)
-		if !isStr {
-			return Fragment{}, fmt.Errorf("invalid issue %v: must be string", val)
-		}
-		normIssue, err := normaliseIssue(strVal)
+	if present {
+		normIssue, err := normalizeIssue(issue)
 		if err != nil {
 			return Fragment{}, err
 		}
 		fragment.Issue = normIssue
 	}
 	return fragment, nil
+}
+
+// fragmentIssueScalar returns the issue value as written and whether the key is present.
+// A quoted string and an unquoted integer both count, so issue: 502 decodes as it did
+// before; an empty value is refused with a hint, because an unquoted #502 is a YAML
+// comment and reaches the decoder as an empty key.
+func fragmentIssueScalar(raw []byte) (string, bool, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		return "", false, err
+	}
+	if len(document.Content) == 0 || document.Content[0].Kind != yaml.MappingNode {
+		return "", false, nil
+	}
+	fields := document.Content[0].Content
+	for index := 0; index+1 < len(fields); index += 2 {
+		if fields[index].Value != "issue" {
+			continue
+		}
+		value := fields[index+1]
+		switch {
+		case value.Kind == yaml.ScalarNode && (value.Tag == "!!str" || value.Tag == "!!int"):
+			return value.Value, true, nil
+		case value.Kind == yaml.ScalarNode && value.Tag == "!!null":
+			return "", false, errors.New(`issue cannot be empty; quote it, for example issue: "#502" (an unquoted #502 is a YAML comment)`)
+		default:
+			return "", false, fmt.Errorf("invalid issue %q: write digits, optionally prefixed by one #, or a comma-separated list of them", value.Value)
+		}
+	}
+	return "", false, nil
 }
 
 func fragmentFilename(name string) bool {

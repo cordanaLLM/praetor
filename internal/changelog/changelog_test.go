@@ -219,7 +219,7 @@ func TestLoadFragments_Negative_InvalidIssue(t *testing.T) {
 	}
 }
 
-func TestNormaliseIssue_Positive(t *testing.T) {
+func TestNormalizeIssue_Positive(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -238,18 +238,18 @@ func TestNormaliseIssue_Positive(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := normaliseIssue(tc.input)
+			got, err := normalizeIssue(tc.input)
 			if err != nil {
 				t.Fatalf("unexpected error for %q: %v", tc.input, err)
 			}
 			if got != tc.want {
-				t.Errorf("normaliseIssue(%q) = %q; want %q", tc.input, got, tc.want)
+				t.Errorf("normalizeIssue(%q) = %q; want %q", tc.input, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestNormaliseIssue_Negative(t *testing.T) {
+func TestNormalizeIssue_Negative(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -274,7 +274,7 @@ func TestNormaliseIssue_Negative(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := normaliseIssue(tc.input)
+			_, err := normalizeIssue(tc.input)
 			if err == nil {
 				t.Fatalf("expected error for %q, got nil", tc.input)
 			}
@@ -282,7 +282,7 @@ func TestNormaliseIssue_Negative(t *testing.T) {
 	}
 }
 
-func TestNormaliseIssue_Boundary(t *testing.T) {
+func TestNormalizeIssue_Boundary(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -296,13 +296,52 @@ func TestNormaliseIssue_Boundary(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := normaliseIssue(tc.input)
+			got, err := normalizeIssue(tc.input)
 			if err != nil {
 				t.Fatalf("unexpected error for %q: %v", tc.input, err)
 			}
 			if got != tc.want {
-				t.Errorf("normaliseIssue(%q) = %q; want %q", tc.input, got, tc.want)
+				t.Errorf("normalizeIssue(%q) = %q; want %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+// The issue key accepts a quoted string and an unquoted integer alike, as decoding into the
+// string field did before; an empty value, an unquoted #N (a YAML comment, so empty), a
+// structured value and a leading-zero integer are refused, and an absent key stays absent.
+func TestDecodeFragment_IssueScalarForms(t *testing.T) {
+	const head = "type: added\ntitle: x\n"
+	accepted := map[string]string{
+		"issue: 502\n":           "#502",
+		"issue: \"#502\"\n":      "#502",
+		"issue: \"565, #604\"\n": "#565, #604",
+		"":                       "",
+	}
+	for body, want := range accepted {
+		fragment, err := decodeFragment([]byte(head + body))
+		if err != nil {
+			t.Fatalf("decode %q: %v", body, err)
+		}
+		if fragment.Issue != want {
+			t.Errorf("decode %q: issue = %q, want %q", body, fragment.Issue, want)
+		}
+	}
+	refused := map[string]string{
+		"issue:\n":      "quote it",
+		"issue: #502\n": "quote it",
+		"issue: [1]\n":  "",
+		"issue: 0502\n": "",
+		"issue: 5e2\n":  "invalid issue",
+	}
+	for body, hint := range refused {
+		_, err := decodeFragment([]byte(head + body))
+		if err == nil {
+			t.Errorf("decode %q: accepted, want a refusal", body)
+			continue
+		}
+		if hint != "" && !strings.Contains(err.Error(), hint) {
+			t.Errorf("decode %q: error %q does not contain %q", body, err, hint)
+		}
 	}
 }
