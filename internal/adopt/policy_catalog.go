@@ -159,18 +159,6 @@ func adoptionScanLimit(s *adoptSession) int {
 	return hiss.DefaultMaxFuncLOC
 }
 
-// MaterializePinnedCatalog writes the pinned catalog the lock of the repository at root resolves
-// from the source bundle lockSource into root/.config/archetypes, the files the adoption
-// policy-catalog step writes, so audit and devcontainer generate read the pins without the
-// bundle. A file that already holds the pinned bytes is kept; one that differs fails, as
-// adoption without --force does. It runs the adoption step itself (reconcilePolicyCatalog: prospective
-// projection validation, publish, readback). praetorctl init calls it after it pins the lock.
-func MaterializePinnedCatalog(ctx context.Context, root, lockSource string) error {
-	s := newProfileSetSession(root, ProfileSetOptions{LockSourceRoot: lockSource})
-	s.opts.Force = false
-	return reconcilePolicyCatalog(ctx, s)
-}
-
 // Inspect every destination before publishing any catalog entry. Force permits
 // explicit replacement, and an unmodified earlier Praetor text is replaced without it by a
 // text holding exactly its values (isLayoutOnlySuccessor); otherwise differing user files are

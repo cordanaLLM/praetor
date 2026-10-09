@@ -52,37 +52,38 @@ it compiles the agent files from it and writes none without it. It is not a step
 `cmd/standardsctl/init.go`), so do not run it after adoption.
 
 ```bash
-# 1. Initialize configuration; pin the lock and write the catalog from the Praetor checkout
-praetorctl init --lock-source-root=/path/to/praetor --profile framework --facets security:high,api:public-contract
+# 1. Initialize configuration: writes .standards.yaml, baseline, and placeholder lockfile
+praetorctl init --profile framework --facets security:high,api:public-contract
 
-# 2. Recompile the agent files and persona copies (rerun after every AGENTS.md edit)
+# 2. Pin the lockfile and write the policy catalog from the Praetor checkout
+praetorctl profile set --lock-source-root=/path/to/praetor
+
+# 3. Recompile the agent files and persona copies (rerun after every AGENTS.md edit)
 praetorctl compile-context
 
-# 3. Snapshot legacy technical debt infractions to prevent CI failure
+# 4. Snapshot legacy technical debt infractions to prevent CI failure
 praetorctl baseline --record --allow-increase --reason "<why>"
 
-# 4. Prepare a portable devcontainer from reviewed Praetor sources
+# 5. Prepare a portable devcontainer from reviewed Praetor sources
 praetorctl devcontainer generate --source-root /path/to/praetor
 
-# 5. Verify the configured governance contract
+# 6. Verify the configured governance contract
 praetorctl audit --offline
 ```
 
-Without `--lock-source-root`, init writes a placeholder lock with no content digests and prints a
-warning saying so. `devcontainer generate` and `audit` then fail on the missing digest; pin the
-lock afterwards with `praetorctl profile set --lock-source-root=/path/to/praetor`. With the
-flag, init writes the lock adoption writes (`config.BuildLockfile`) and the pinned catalog under
-`.config/archetypes/` (`adopt.MaterializePinnedCatalog`), and a fresh repository passes
-`devcontainer generate` and the manifest, lock, digest, DevContainer, cross-agent context and
-caveman register gates of the audit
-(`TestInitLock_Positive_PinnedLockPassesGenerateAndAudit` in `cmd/standardsctl/init_lock_test.go`).
-Init does not make the whole audit pass. The audit stops at its first failing gate, so an
+`praetorctl init` writes `.standards.yaml`, a zero-debt `.standards-baseline.json` and an
+unpinned `.standards.lock` placeholder with no content digests, and prints a warning saying so.
+`devcontainer generate` and `audit` then fail on the missing digest; pin the lock afterwards with
+`praetorctl profile set --lock-source-root=/path/to/praetor` (which also materializes the policy
+catalog under `.config/archetypes/`).
+
+Init does not make the audit pass on its own. The audit stops at its first failing gate, so an
 init-only repository meets the gaps one at a time: no branch ruleset (`praetorctl sync` writes
 it), with `docs:seo-portal` no documentation gate (missing `tools/markdownlint`), with
 `api:public-contract` in a Go module no API compatibility gate (missing `tools/apicompat/gate`),
 no HISS-11 supply-chain exception, no `.paperclip/harness.json`, no agent definitions and no
-git hooks. Adoption writes all of them, which is why the quickstart uses it; `init` is for a
-repository that fills those in by other means.
+git hooks. Adoption writes all of them, which is why the quickstart uses it; `init` is a staged
+alternative that does not pass the audit on its own.
 
 Step 1 writes your repository's identity into `.standards.yaml`. `repository.owner` and
 `repository.name` come from the origin remote. Without a remote the owner is
@@ -122,7 +123,7 @@ activation. Those stages need their own selected checks and execution evidence.
 
 | Step | Action | Command | Expected Output |
 | :--- | :--- | :--- | :--- |
-| **1. Scaffolding** | Create declarative configuration and compile agent files | `praetorctl init --lock-source-root=/path/to/praetor` | `.standards.yaml`, a digest-pinned `.standards.lock`, `.config/archetypes/` and a zero-debt `.standards-baseline.json` created. The agent files are then written the way step 2 writes them (`initAgentContext` in `cmd/standardsctl/init.go`, `adopt.CompileAgentContext`): in a Git work tree the Praetor private-artifact block is merged into `.gitignore` unless Git already ignores `.workingdir/evidence/`; the text register is spliced into `AGENTS.md`; the six vendor files `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md` and the persona copies are compiled. An `AGENTS.md` the caveman lint rejects fails init after the files are written; fix it and run step 2 (`cmd/standardsctl/init_evidence_test.go`). |
+| **1. Scaffolding** | Create declarative configuration and compile agent files | `praetorctl init` | `.standards.yaml`, an unpinned `.standards.lock` placeholder and a zero-debt `.standards-baseline.json` created. The agent files are then written the way step 2 writes them (`initAgentContext` in `cmd/standardsctl/init.go`, `adopt.CompileAgentContext`): in a Git work tree the Praetor private-artifact block is merged into `.gitignore` unless Git already ignores `.workingdir/evidence/`; the text register is spliced into `AGENTS.md`; the six vendor files `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md` and the persona copies are compiled. An `AGENTS.md` the caveman lint rejects fails init after the files are written; fix it and run step 2 (`cmd/standardsctl/init_evidence_test.go`). |
 | **2. Context Recompilation** | Recompile vendor files and persona copies | `praetorctl compile-context` | The vendor files rewritten from `AGENTS.md` (all six unless `agent_clients` in `.standards.yaml` selects fewer); each persona in `.agents/agents` copied to `.claude/agents`, `.github/agents`, `.gemini/agents` and `.codex/agents`. `praetorctl compile-context --verify` checks the same files and writes nothing. |
 | **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record --allow-increase --reason "<why>"` | `.standards-baseline.json` populated with existing debt. |
 | **4. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |

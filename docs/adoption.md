@@ -69,16 +69,16 @@ Run `praetorctl audit --offline` afterwards. See
 
 ### `praetorctl init` instead of adoption
 
-`praetorctl init` writes only the manifest, lock, baseline and agent files, and needs
-`AGENTS.md` first ([onboarding guide](guides/onboarding.md)). Give it the same
-`--lock-source-root=/path/to/praetor` so its lock carries digests; without the flag the lock is
-an unpinned placeholder that `audit` and `devcontainer generate` refuse, and init says so
-(`cmd/standardsctl/init_lock_test.go`). Even pinned, an init-only repository does not pass
-`audit --offline`: init writes no branch ruleset, no documentation gate tooling
-(`tools/markdownlint` under `docs:seo-portal`), no API compatibility gate
-(`tools/apicompat/gate` under `api:public-contract`), no HISS-11 supply-chain exception, no
-Paperclip harness, agent definitions or git hooks, so use adoption for a repository that must
-audit clean.
+`praetorctl init` writes `.standards.yaml`, a zero-debt `.standards-baseline.json` and an
+unpinned `.standards.lock` placeholder with no content digests, and compiles agent files from
+`AGENTS.md` only when that file already exists ([onboarding guide](guides/onboarding.md)). It
+takes no `--lock-source-root` flag; `audit` and `devcontainer generate` refuse the placeholder
+lock until you pin it with `praetorctl profile set --lock-source-root=/path/to/praetor`. Even
+pinned, an init-only repository does not pass `audit --offline`: init writes no branch ruleset,
+no documentation gate tooling (`tools/markdownlint` under `docs:seo-portal`), no API
+compatibility gate (`tools/apicompat/gate` under `api:public-contract`), no HISS-11 supply-chain
+exception, no Paperclip harness, agent definitions or git hooks, so use adoption for a repository
+that must audit clean.
 
 `--facets` names the facets adoption writes when it creates `.standards.yaml`. Omitted, adoption
 writes `security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`
@@ -723,7 +723,7 @@ short of ready is ([adoption verification](guides/adoption-verification.md)): an
 without the success line and names the verdict and what resolves it.
 
 ```text
-Repository adopted into cordanaLLM/praetor governance; not ready yet: Debt Baseline. See the warnings above.
+Repository onboarded: <owner>/<name>; not ready yet: Debt Baseline. See the warnings above.
   Debt Baseline: Baseline kept, not re-recorded; HISS-13 ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline
   Resolve: fix the findings, or accept them deliberately with 'praetorctl adopt --rerecord-baseline --allow-increase --reason=<why>' or 'praetorctl baseline --record --allow-increase --reason=<why>'; until then praetorctl audit rejects the repository
 ```

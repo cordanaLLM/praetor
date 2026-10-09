@@ -179,7 +179,7 @@ func TestPrintAdoptReportQualifiesSuccessWithPendingPillars(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustContain(t, out, "⚠ Verification Gate", "[warned: 1 warning(s)]", "not ready yet: Verification Gate. See the warnings above.")
-	if strings.Contains(out, "successfully adopted") || strings.Contains(out, "✓ Verification Gate") {
+	if strings.Contains(out, "successfully onboarded") || strings.Contains(out, "✓ Verification Gate") {
 		t.Fatalf("unavailable verification reported as a clean adoption:\n%s", out)
 	}
 	preserved := allSteps("")

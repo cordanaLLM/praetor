@@ -75,38 +75,6 @@ func TestCatalogPreflightPreservesConflictsAndAllowsExplicitForce(t *testing.T) 
 	}
 }
 
-// Positive, negative and boundary (#955): MaterializePinnedCatalog writes the pinned files once,
-// keeps a repeat call byte for byte, refuses a conflicting file without writing the others, and
-// refuses a bundle that does not hold the pinned catalog.
-func TestMaterializePinnedCatalog_3D(t *testing.T) {
-	s, policy := catalogSession(t)
-	if err := MaterializePinnedCatalog(t.Context(), s.repoPath, s.opts.LockSourceRoot); err != nil {
-		t.Fatal(err)
-	}
-	for _, artifact := range policy.CatalogArtifacts {
-		if got := mustRead(t, filepath.Join(s.repoPath, artifact.RelativePath)); got != string(artifact.Content) {
-			t.Fatalf("%s differs from the pinned bytes", artifact.RelativePath)
-		}
-	}
-	before := snapshotTree(t, s.repoPath)
-	if err := MaterializePinnedCatalog(t.Context(), s.repoPath, s.opts.LockSourceRoot); err != nil {
-		t.Fatalf("a repeat call must keep the pinned files: %v", err)
-	}
-	assertTreeUnchanged(t, before, snapshotTree(t, s.repoPath))
-
-	conflict := filepath.Join(s.repoPath, policy.CatalogArtifacts[1].RelativePath)
-	mustWrite(t, conflict, "# operator edit\n")
-	if err := MaterializePinnedCatalog(t.Context(), s.repoPath, s.opts.LockSourceRoot); err == nil {
-		t.Fatal("a conflicting catalog file was overwritten")
-	}
-	if got := mustRead(t, conflict); got != "# operator edit\n" {
-		t.Fatal("the conflicting file changed")
-	}
-	if err := MaterializePinnedCatalog(t.Context(), s.repoPath, filepath.Join(s.repoPath, "missing")); err == nil {
-		t.Fatal("a source without the pinned catalog was accepted")
-	}
-}
-
 func TestCatalogRejectsChangedPinnedSourceBeforeMaterialization(t *testing.T) {
 	s, policy := catalogSession(t)
 	path := filepath.Join(s.opts.LockSourceRoot, policy.CatalogArtifacts[0].RelativePath)

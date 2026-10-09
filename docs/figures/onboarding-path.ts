@@ -17,8 +17,7 @@ export default {
   evidence: [
     'cmd/standardsctl/init.go:runInit',
     'cmd/standardsctl/init.go:ensureManifestAbsent',
-    'cmd/standardsctl/init.go:initialManifest',
-    'cmd/standardsctl/init.go:writeInitialManifest',
+    'cmd/standardsctl/init.go:createInitialManifest',
     'cmd/standardsctl/init.go:initBaselineAndLockfile',
     'cmd/standardsctl/init.go:initAgentContext',
     'internal/adopt/context_write.go:CompileAgentContext',
@@ -58,7 +57,7 @@ export default {
           gap: 24,
           children: [
             { id: 'repo', label: 'Target repository', sub: 'already carries AGENTS.md', shape: 'store', width: 300 },
-            { id: 'adopt', label: 'Alternate entry', sub: 'praetorctl adopt', width: 300 },
+            { id: 'adopt', label: 'Quickstart', sub: 'praetorctl adopt', width: 300 },
           ],
         },
         {
@@ -74,7 +73,7 @@ export default {
             { id: 'audit', label: '5. Audit Verification', sub: 'praetorctl audit', width: 330 },
           ],
         },
-        { id: 'governed', label: 'Governed repository', sub: 'praetorctl audit pass', shape: 'store', width: 220 },
+        { id: 'governed', label: 'Staged alternative', sub: 'does not pass audit on its own', shape: 'store', width: 240 },
       ],
     },
     edges: [
@@ -84,7 +83,7 @@ export default {
       { from: 'baseline', to: 'devcontainer' },
       { from: 'devcontainer', to: 'audit' },
       { from: 'adopt', to: 'audit', label: 'skips 1-4' },
-      { from: 'audit', to: 'governed', label: 'verified' },
+      { from: 'audit', to: 'governed', label: 'remaining gaps' },
     ],
     steps: [
       {
@@ -93,7 +92,7 @@ export default {
         flow: [
           { edges: 'repo->init', say: 'init reads AGENTS.md beside the manifest; without it, init writes no agent files.' },
           {
-            say: 'writeInitialManifest and initBaselineAndLockfile write the manifest, the lockfile and a zero-debt baseline.',
+            say: 'createInitialManifest and initBaselineAndLockfile write the manifest, the lockfile and a zero-debt baseline.',
             show: {
               init: [
                 { tag: 'created', tone: 'green', text: '.standards.yaml', mono: true },
@@ -178,19 +177,19 @@ export default {
           { edges: 'devcontainer->audit', say: 'Audit checks manifest, lockfile, agent context, debt baseline, and DevContainer.' },
           {
             edges: 'audit->governed',
-            say: 'Every executed gate passes with zero files modified; repository is verified and governed.',
+            say: 'The staged alternative does not pass the audit on its own: ruleset, gate tooling and hooks remain missing.',
             show: {
               audit: [
-                { tag: 'verified', tone: 'green', text: '0 files modified', meta: 'read-only' },
-                { tag: 'pass', tone: 'green', text: 'governance contract verified' },
+                { tag: 'fails', tone: 'orange', text: 'audit fails on gaps', meta: 'ruleset, tooling, hooks missing' },
+                { tag: 'staged', tone: 'orange', text: 'does not pass audit alone' },
               ],
             },
           },
         ],
       },
       {
-        label: 'adopt instead',
-        caption: 'An alternate entry that replaces steps 1 to 4, not a step before init.',
+        label: 'adopt quickstart',
+        caption: 'The quickstart that replaces steps 1 to 4, not a step before init.',
         flow: [
           {
             say: 'One adopt run writes what steps 1 to 4 write, and synthesizes AGENTS.md when it is missing.',

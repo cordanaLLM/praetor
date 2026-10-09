@@ -1,4 +1,4 @@
 type: changed
-title: Let praetorctl init pin its lock with --lock-source-root and write the validated pinned catalog, stop it printing a fixed upstream repository name, fail a pin before init writes any file, and rewrite the onboarding and adoption quickstart with prerequisites, the full scaffold table, a flavor table and the gaps init leaves in the audit
+title: Stop praetorctl adopt and init printing a fixed upstream repository name, report the configured repository name in their closing output, and rewrite the onboarding and adoption quickstart with prerequisites, the full scaffold table, a flavor table and the gaps init leaves in the audit
 issue: "#955"
 breaking: false

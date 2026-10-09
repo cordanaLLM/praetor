@@ -14,7 +14,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
-	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -22,8 +21,8 @@ import (
 // initFilePerm is the mode of the scaffolded, tracked configuration files.
 const initFilePerm os.FileMode = 0o644
 
-// initIdentityTimeout bounds the settings read, origin-remote lookup, lockfile generation
-// (BuildLockfile) and catalog materialization (MaterializePinnedCatalog) that init executes (HISS-02).
+// initIdentityTimeout bounds the settings read and the origin-remote lookup that resolve the
+// identity init writes (HISS-02).
 const initIdentityTimeout = 30 * time.Second
 
 func runInit(args []string) error {
@@ -31,8 +30,6 @@ func runInit(args []string) error {
 	profile := fs.String("profile", "framework", "Primary repository profile")
 	facets := fs.String("facets", strings.Join(config.DefaultFacets(), ","), "Comma-separated list of facets")
 	outputPath := fs.String("output", ".standards.yaml", "Path to write .standards.yaml; its directory receives the companion files")
-	lockSource := fs.String("lock-source-root", "", devcontainer.SourceRootForms+" the profile and facet pins in .standards.lock come from; "+
-		"without it init writes an unpinned placeholder lock that audit and devcontainer generate refuse"+devcontainer.SourceRootGitNote)
 	settings := registerOperatorSettingsFlags(fs)
 
 	if _, err := parseInterspersed(fs, args); err != nil {
@@ -57,15 +54,10 @@ func runInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	manifest := initialManifest(*profile, util.SplitCSV(*facets), identity)
-	resolvedLockSource, lockContent, err := prepareInitLock(ctx, *lockSource, *outputPath, rootDir, &manifest)
-	if err != nil {
+	if err := createInitialManifest(*outputPath, *profile, util.SplitCSV(*facets), identity); err != nil {
 		return err
 	}
-	if err := writeInitialManifest(*outputPath, &manifest); err != nil {
-		return err
-	}
-	if err := initBaselineAndLockfile(ctx, rootDir, resolvedLockSource, lockContent); err != nil {
+	if err := initBaselineAndLockfile(rootDir); err != nil {
 		return err
 	}
 	if err := initAgentContext(rootDir); err != nil {
@@ -153,48 +145,15 @@ func onboardedMessage(identity config.RepositoryMetadata, pending ...string) str
 	return fmt.Sprintf("%s; not ready yet: %s. See the warnings above.", prefix, strings.Join(pending, ", "))
 }
 
-func initialManifest(profile string, facets []string, identity config.RepositoryMetadata) config.Manifest {
-	return config.Manifest{
+func createInitialManifest(outputPath, profile string, facets []string, identity config.RepositoryMetadata) error {
+	manifest := config.Manifest{
 		Version:    1,
 		Repository: identity,
 		Profiles:   []string{profile},
 		Facets:     facets,
 	}
-}
 
-// prepareInitLock resolves the lock source, builds the lock content and, when a lock source was
-// given, validates the catalog projection before init writes any file to disk, so a pin or
-// catalog error leaves no partial configuration behind.
-func prepareInitLock(ctx context.Context, lockSourceFlag, outputPath, rootDir string, manifest *config.Manifest) (string, []byte, error) {
-	resolvedLockSource, err := resolveLockSourceRoot(lockSourceFlag, "--lock-source-root")
-	if err != nil {
-		return "", nil, err
-	}
-	lockContent, err := initLockContent(ctx, outputPath, resolvedLockSource, manifest)
-	if err != nil {
-		return "", nil, err
-	}
-	if resolvedLockSource != "" {
-		manifestBytes, err := config.RenderManifest(manifest)
-		if err != nil {
-			return "", nil, fmt.Errorf("failed to render manifest: %w", err)
-		}
-		policy, err := config.LoadEffectivePolicyInputsContext(ctx, config.EffectiveOptions{
-			Root: rootDir, CatalogRoot: resolvedLockSource,
-		}, manifestBytes, lockContent)
-		if err != nil {
-			return "", nil, fmt.Errorf("resolve init catalog: %w", err)
-		}
-		if err := config.ValidateCatalogProjectionContext(ctx, rootDir, policy.CatalogArtifacts); err != nil {
-			return "", nil, fmt.Errorf("validate prospective catalog: %w", err)
-		}
-	}
-	return resolvedLockSource, lockContent, nil
-}
-
-func writeInitialManifest(outputPath string, manifest *config.Manifest) error {
-	profile, facets, identity := manifest.Profiles[0], manifest.Facets, manifest.Repository
-	data, err := config.RenderManifest(manifest)
+	data, err := config.RenderManifest(&manifest)
 	if err != nil {
 		return fmt.Errorf("failed to render manifest: %w", err)
 	}
@@ -211,7 +170,7 @@ func writeInitialManifest(outputPath string, manifest *config.Manifest) error {
 	return nil
 }
 
-func initBaselineAndLockfile(ctx context.Context, rootDir, lockSource string, lockContent []byte) error {
+func initBaselineAndLockfile(rootDir string) error {
 	baselinePath := filepath.Join(rootDir, ".standards-baseline.json")
 	missing, err := fileMissing(baselinePath)
 	if err != nil {
@@ -229,68 +188,27 @@ func initBaselineAndLockfile(ctx context.Context, rootDir, lockSource string, lo
 		fmt.Printf("[CREATED] %s (0 legacy infractions)\n", baselinePath)
 	}
 
-	return initLockfile(ctx, rootDir, lockSource, lockContent)
-}
-
-// initLockContent builds the lock init writes: with a lock source the lock adoption writes
-// (config.BuildLockfile: every selected profile and facet pinned to its verified content digest),
-// so devcontainer generate and audit accept a fresh repository; without one the unpinned
-// placeholder, because no digest can be computed without a source. It writes nothing.
-func initLockContent(ctx context.Context, manifestPath, lockSource string, manifest *config.Manifest) ([]byte, error) {
-	if lockSource == "" {
-		return placeholderLock(filepath.Join(filepath.Dir(manifestPath), config.LockFileName)), nil
-	}
-	content, err := config.BuildLockfile(ctx, lockSource, manifest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to pin %s to %s: %w", config.LockFileName, lockSource, err)
-	}
-	return content, nil
-}
-
-// initLockfile writes content as .standards.lock unless one exists. With a lock source it then
-// materializes the pinned catalog next to it, because audit and devcontainer generate read that
-// catalog from the repository exactly as adoption leaves it.
-func initLockfile(ctx context.Context, rootDir, lockSource string, content []byte) error {
 	lockPath := filepath.Join(rootDir, config.LockFileName)
-	missing, err := fileMissing(lockPath)
+	missing, err = fileMissing(lockPath)
 	if err != nil {
 		return err
 	}
-	if !missing {
-		if lockSource != "" {
-			fmt.Printf("[WARN] %s already exists; keeping existing lock and skipping pins from %s\n", lockPath, lockSource)
+	if missing {
+		pinned, identified := lockVersion()
+		if !identified {
+			fmt.Printf("[WARN] %s records pinned_version %q: this build carries no release "+
+				"version, no VCS stamp and no module version, so the lock cannot say which "+
+				"praetor governed this repository. Re-run init from a released binary, a "+
+				"VCS-stamped build or a go install module@version build.\n",
+				lockPath, pinned)
 		}
-		return nil
+		content := fmt.Appendf(nil, "# SemVer lockfile\nversion: 1\npinned_version: %q\n", pinned)
+		if err := util.WriteFileConfined(rootDir, config.LockFileName, content, initFilePerm); err != nil {
+			return fmt.Errorf("failed to create lockfile: %w", err)
+		}
+		fmt.Printf("[CREATED] %s\n", lockPath)
 	}
-	if err := util.WriteFileConfined(rootDir, config.LockFileName, content, initFilePerm); err != nil {
-		return fmt.Errorf("failed to create lockfile: %w", err)
-	}
-	fmt.Printf("[CREATED] %s\n", lockPath)
-	if lockSource == "" {
-		return nil
-	}
-	if err := adopt.MaterializePinnedCatalog(ctx, rootDir, lockSource); err != nil {
-		return fmt.Errorf("failed to materialize the pinned catalog: %w", err)
-	}
-	fmt.Printf("[CREATED] %s (pinned catalog)\n", filepath.Join(rootDir, ".config", "archetypes"))
 	return nil
-}
-
-// placeholderLock is the lock init writes without a lock source: the running build's version and
-// no digests. It prints what that costs and the command that pins it.
-func placeholderLock(lockPath string) []byte {
-	pinned, identified := lockVersion()
-	if !identified {
-		fmt.Printf("[WARN] %s records pinned_version %q: this build carries no release "+
-			"version, no VCS stamp and no module version, so the lock cannot say which "+
-			"praetor governed this repository. Re-run init from a released binary, a "+
-			"VCS-stamped build or a go install module@version build.\n",
-			lockPath, pinned)
-	}
-	fmt.Printf("[WARN] %s carries no content digests: audit and devcontainer generate refuse it. "+
-		"Pin it with 'praetorctl profile set --lock-source-root=%s' or re-run init with --lock-source-root.\n",
-		lockPath, adopt.LockSourcePlaceholder)
-	return fmt.Appendf(nil, "# SemVer lockfile\nversion: 1\npinned_version: %q\n", pinned)
 }
 
 func initAgentContext(rootDir string) error {
