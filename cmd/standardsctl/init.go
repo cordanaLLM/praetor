@@ -218,6 +218,15 @@ func initLockfile(ctx context.Context, rootDir, lockSource string, manifest *con
 		return fmt.Errorf("failed to create lockfile: %w", err)
 	}
 	fmt.Printf("[CREATED] %s\n", lockPath)
+	if lockSource == "" {
+		return nil
+	}
+	// The lock pins digests of the catalog; audit and devcontainer generate read that catalog
+	// from the repository, so it is materialized next to the lock exactly as adoption does.
+	if err := adopt.MaterializePinnedCatalog(ctx, rootDir, lockSource); err != nil {
+		return fmt.Errorf("failed to materialize the pinned catalog: %w", err)
+	}
+	fmt.Printf("[CREATED] %s (pinned catalog)\n", filepath.Join(rootDir, ".config", "archetypes"))
 	return nil
 }
 
