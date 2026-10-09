@@ -128,7 +128,7 @@ func TestLoadFragments_Boundary_EmptyOrMissingDir(t *testing.T) {
 	}
 }
 
-func TestRenderRelease_IssueHashNormalisation(t *testing.T) {
+func TestRenderRelease_Positive_IssueHashNormalisation(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	_, err := CreateFragment(tmpDir, Fragment{
@@ -144,6 +144,15 @@ func TestRenderRelease_IssueHashNormalisation(t *testing.T) {
 		Type:  TypeFixed,
 		Title: "Fix without hash prefix",
 		Issue: "502",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = CreateFragment(tmpDir, Fragment{
+		Type:  TypeFixed,
+		Title: "Mixed list fix",
+		Issue: "5, owner/repo#6",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +175,9 @@ func TestRenderRelease_IssueHashNormalisation(t *testing.T) {
 	if !strings.Contains(content, "- Fix without hash prefix (#502)") {
 		t.Errorf("expected '- Fix without hash prefix (#502)', got:\n%s", content)
 	}
+	if !strings.Contains(content, "- Mixed list fix (#5, owner/repo#6)") {
+		t.Errorf("expected '- Mixed list fix (#5, owner/repo#6)', got:\n%s", content)
+	}
 }
 
 func TestLoadFragments_Negative_InvalidIssue(t *testing.T) {
@@ -174,8 +186,13 @@ func TestLoadFragments_Negative_InvalidIssue(t *testing.T) {
 		issue string
 	}{
 		{name: "double-hash", issue: "##502"},
+		{name: "space-after-hash", issue: "# 502"},
+		{name: "leading-zero", issue: "007"},
+		{name: "zero", issue: "0"},
 		{name: "alpha", issue: "abc"},
-		{name: "empty-after-strip", issue: "#"},
+		{name: "empty", issue: ""},
+		{name: "whitespace-only", issue: "   "},
+		{name: "trailing-comma", issue: "502,"},
 	}
 
 	for _, tc := range tests {
@@ -195,8 +212,96 @@ func TestLoadFragments_Negative_InvalidIssue(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected validation error for issue %q, got nil", tc.issue)
 			}
-			if !strings.Contains(err.Error(), fragFile) && !strings.Contains(err.Error(), "20261009-invalid.yaml") {
-				t.Errorf("error %q should name the fragment path", err.Error())
+			if !strings.Contains(err.Error(), fragFile) {
+				t.Errorf("error %q should name the fragment path %s", err.Error(), fragFile)
+			}
+		})
+	}
+}
+
+func TestNormaliseIssue_Positive(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "single-value-bare", input: "502", want: "#502"},
+		{name: "single-value-hash", input: "#502", want: "#502"},
+		{name: "comma-list-hashes", input: "#348, #349", want: "#348, #349"},
+		{name: "comma-list-bare", input: "565, 604", want: "#565, #604"},
+		{name: "comma-list-mixed-hashes", input: "565, #604", want: "#565, #604"},
+		{name: "comma-list-spaces", input: "332,   #334, #351", want: "#332, #334, #351"},
+		{name: "owner-repo", input: "owner/repo#5", want: "owner/repo#5"},
+		{name: "mixed-list", input: "5, owner/repo#6", want: "#5, owner/repo#6"},
+		{name: "mixed-list-hashes", input: "#5, owner/repo#6", want: "#5, owner/repo#6"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normaliseIssue(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Errorf("normaliseIssue(%q) = %q; want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNormaliseIssue_Negative(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "double-hash", input: "##502"},
+		{name: "space-after-hash", input: "# 502"},
+		{name: "leading-zero", input: "007"},
+		{name: "zero", input: "0"},
+		{name: "alpha", input: "abc"},
+		{name: "empty", input: ""},
+		{name: "whitespace-only", input: "   "},
+		{name: "trailing-comma", input: "502,"},
+		{name: "leading-comma", input: ",502"},
+		{name: "empty-component", input: "502,,503"},
+		{name: "hash-before-owner-repo", input: "#owner/repo#5"},
+		{name: "owner-repo-no-num", input: "owner/repo#"},
+		{name: "owner-repo-zero", input: "owner/repo#0"},
+		{name: "owner-repo-leading-zero", input: "owner/repo#007"},
+		{name: "owner-repo-alpha", input: "owner/repo#abc"},
+		{name: "owner-repo-invalid", input: "owner/repo/sub#5"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := normaliseIssue(tc.input)
+			if err == nil {
+				t.Fatalf("expected error for %q, got nil", tc.input)
+			}
+		})
+	}
+}
+
+func TestNormaliseIssue_Boundary(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "min-int-bare", input: "1", want: "#1"},
+		{name: "min-int-hash", input: "#1", want: "#1"},
+		{name: "single-char-owner-repo", input: "a/b#1", want: "a/b#1"},
+		{name: "large-issue-number", input: "999999999", want: "#999999999"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := normaliseIssue(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Errorf("normaliseIssue(%q) = %q; want %q", tc.input, got, tc.want)
 			}
 		})
 	}

@@ -35,5 +35,5 @@ in `fragments.go`. Each fragment specifies:
 
 - `type`: one of `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`.
 - `title`: one-sentence imperative description of the change.
-- `issue`: optional issue reference (digits or `#<digits>`, e.g. `502` or `#502`, or an `owner/repo#n` cross reference). Leading `#` characters are normalised by `NormaliseIssue` in `changelog.go` to prevent duplicate hash prefixes during release rendering.
+- `issue`: optional issue reference or comma-separated list of issue references (with optional spaces after commas). Each item takes digits with no leading zero and one optional leading `#` (e.g. `502` or `#502`), or an `owner/repo#n` cross reference. A single leading `#` is normalised on decode by `normaliseIssue` in `changelog.go` to prevent duplicate hash prefixes during release rendering.
 - `breaking`: optional boolean indicating whether the change introduces breaking changes.

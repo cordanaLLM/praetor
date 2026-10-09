@@ -530,7 +530,7 @@ Each YAML fragment in `changelog.d/` ([`internal/changelog/fragments.go`](https:
 | :--- | :--- | :--- |
 | `type` | string | Mandatory category: `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`. |
 | `title` | string | Mandatory one-sentence summary of the change. |
-| `issue` | string | Optional issue identifier (`502` or `#502`, or cross-repository reference `owner/repo#n`). Leading `#` prefixes are normalised on decode ([`internal/changelog/changelog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/changelog/changelog.go)). |
+| `issue` | string | Optional issue identifier or comma-separated list of issue identifiers (with optional spaces after commas). Each item takes digits with no leading zero and one optional leading `#` (e.g. `502` or `#502`), or a cross-repository reference (`owner/repo#n`). A single leading `#` is normalised on decode ([`internal/changelog/changelog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/changelog/changelog.go)). |
 | `breaking` | boolean | Optional flag (`true` indicates a breaking change). |
 
 ## Release flavors

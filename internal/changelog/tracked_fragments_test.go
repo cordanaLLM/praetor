@@ -83,7 +83,7 @@ func TestTrackedFragments_Boundary_OptionalKeysOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a fragment using every known key must load: %v", err)
 	}
-	if len(frags) != 1 || frags[0].Issue != "194" || !frags[0].Breaking {
+	if len(frags) != 1 || frags[0].Issue != "#194" || !frags[0].Breaking {
 		t.Errorf("unexpected decode: %+v", frags)
 	}
 }

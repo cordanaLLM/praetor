@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
 )
@@ -59,26 +60,35 @@ var sectionTitles = map[FragmentType]string{
 	TypeSecurity:   "Security",
 }
 
-// CreateFragment writes a new YAML fragment file into changelog.d/.
-func CreateFragment(repoPath string, f Fragment) (string, error) {
+func validateFragment(f *Fragment) error {
 	if strings.TrimSpace(f.Title) == "" {
-		return "", fmt.Errorf("changelog: title cannot be empty")
+		return fmt.Errorf("changelog: title cannot be empty")
 	}
-	normIssue, err := NormaliseIssue(f.Issue)
-	if err != nil {
-		return "", fmt.Errorf("changelog: %w", err)
+	if f.Issue != "" {
+		normIssue, err := normaliseIssue(f.Issue)
+		if err != nil {
+			return fmt.Errorf("changelog: %w", err)
+		}
+		f.Issue = normIssue
 	}
-	f.Issue = normIssue
 	// A title that cannot be represented is refused at creation rather than at release.
 	// Accepting it writes a fragment that renders into the journaled section and fails the
 	// release for whoever runs it next, with an error pointing at a JSON offset rather than
 	// at the fragment that caused it.
 	if !RenderTextRepresentable(f.Title) || !RenderTextRepresentable(f.Issue) {
-		return "", fmt.Errorf("%w: fragment title and issue", ErrRenderTextUnrepresentable)
+		return fmt.Errorf("%w: fragment title and issue", ErrRenderTextUnrepresentable)
 	}
 	f.Type = FragmentType(strings.ToLower(string(f.Type)))
 	if _, ok := sectionTitles[f.Type]; !ok {
-		return "", fmt.Errorf("changelog: invalid fragment type %q", f.Type)
+		return fmt.Errorf("changelog: invalid fragment type %q", f.Type)
+	}
+	return nil
+}
+
+// CreateFragment writes a new YAML fragment file into changelog.d/.
+func CreateFragment(repoPath string, f Fragment) (string, error) {
+	if err := validateFragment(&f); err != nil {
+		return "", err
 	}
 
 	dir := filepath.Join(repoPath, FragmentDir)
@@ -160,14 +170,7 @@ func renderFragmentLine(it Fragment) string {
 	if it.Issue == "" {
 		return line
 	}
-	issue, err := NormaliseIssue(it.Issue)
-	if err == nil {
-		it.Issue = issue
-	}
-	if strings.Contains(it.Issue, "/") {
-		return fmt.Sprintf("%s (%s)", line, it.Issue)
-	}
-	return fmt.Sprintf("%s (#%s)", line, it.Issue)
+	return fmt.Sprintf("%s (%s)", line, it.Issue)
 }
 
 func spliceChangelog(data []byte, exists bool, releaseSection string) []byte {
@@ -233,26 +236,36 @@ func slugify(s string) string {
 	return res
 }
 
-// NormaliseIssue normalises an issue reference: strips one leading '#',
-// validates digits only, an owner/repo#n cross reference, or a comma-separated list
-// of issue references. An empty-after-strip value or invalid format returns an error.
-func NormaliseIssue(issue string) (string, error) {
+// maxIssueComponents bounds the number of issue references in a comma-separated list (HISS-02).
+const maxIssueComponents = 64
+
+// normaliseIssue normalises an issue reference: strips one optional leading '#',
+// validates digits with no leading zero, an owner/repo#n cross reference, or a
+// comma-separated list of issue references. Each item is returned in its final form
+// ("#<n>" or "<owner>/<repo>#<n>").
+func normaliseIssue(issue string) (string, error) {
 	if issue == "" {
-		return "", nil
+		return "", errors.New("issue cannot be empty")
 	}
-	raw := strings.TrimSpace(issue)
-	if raw == "" {
+	trimmed := strings.TrimSpace(issue)
+	if trimmed == "" {
 		return "", errors.New("issue cannot be whitespace only")
 	}
-	stripped := strings.TrimPrefix(raw, "#")
-	if strings.TrimSpace(stripped) == "" {
-		return "", fmt.Errorf("issue %q is empty after stripping leading #", issue)
+	if strings.HasPrefix(trimmed, ",") || strings.HasSuffix(trimmed, ",") {
+		return "", fmt.Errorf("invalid issue %q: leading or trailing comma", issue)
 	}
 
-	items := strings.Split(stripped, ",")
-	parts := make([]string, len(items))
-	for i, item := range items {
-		norm, err := validateIssueComponent(i, item, issue)
+	rawItems := strings.Split(trimmed, ",")
+	if len(rawItems) > maxIssueComponents {
+		return "", fmt.Errorf("invalid issue %q: exceeds maximum of %d components", issue, maxIssueComponents)
+	}
+	parts := make([]string, len(rawItems))
+	for i, raw := range rawItems {
+		item := strings.TrimSpace(raw)
+		if item == "" {
+			return "", fmt.Errorf("invalid issue %q: empty component", issue)
+		}
+		norm, err := normaliseIssueComponent(item, issue)
 		if err != nil {
 			return "", err
 		}
@@ -261,39 +274,37 @@ func NormaliseIssue(issue string) (string, error) {
 	return strings.Join(parts, ", "), nil
 }
 
-func validateIssueComponent(index int, item, original string) (string, error) {
-	trimmed := strings.TrimSpace(item)
-	if trimmed == "" {
-		return "", fmt.Errorf("invalid issue %q: empty component", original)
+func normaliseIssueComponent(item, original string) (string, error) {
+	if strings.Contains(item, "/") {
+		return normaliseCrossRepoIssue(item, original)
 	}
-	if index == 0 {
-		if strings.HasPrefix(trimmed, "#") {
-			return "", fmt.Errorf("invalid issue %q: multiple leading # symbols", original)
-		}
-		if !isValidIssueRef(trimmed) {
-			return "", fmt.Errorf("invalid issue %q: must be digits or owner/repo#n", original)
-		}
-		return trimmed, nil
-	}
-	if strings.HasPrefix(trimmed, "##") {
-		return "", fmt.Errorf("invalid issue %q: multiple leading # symbols", original)
-	}
-	ref := strings.TrimPrefix(trimmed, "#")
-	if !isValidIssueRef(ref) {
-		return "", fmt.Errorf("invalid issue %q: must be digits or owner/repo#n", original)
-	}
-	if !strings.Contains(ref, "/") {
-		return "#" + ref, nil
-	}
-	return ref, nil
+	return normaliseLocalIssue(item, original)
 }
 
-func isValidIssueRef(s string) bool {
-	return isDigitsOnly(s) || isOwnerRepoIssue(s)
+func normaliseCrossRepoIssue(item, original string) (string, error) {
+	if strings.HasPrefix(item, "#") {
+		return "", fmt.Errorf("invalid issue %q: cross-repository reference cannot start with #: %s", item, original)
+	}
+	repo, num, ok := strings.Cut(item, "#")
+	if !ok || !config.ValidRepositoryIdentity(repo) || !isValidIssueNumber(num) {
+		return "", fmt.Errorf("invalid issue %q: must be digits or owner/repo#n: %s", item, original)
+	}
+	return item, nil
 }
 
-func isDigitsOnly(s string) bool {
-	if s == "" {
+func normaliseLocalIssue(item, original string) (string, error) {
+	if strings.HasPrefix(item, "##") {
+		return "", fmt.Errorf("invalid issue %q: multiple leading # symbols: %s", item, original)
+	}
+	num := strings.TrimPrefix(item, "#")
+	if !isValidIssueNumber(num) {
+		return "", fmt.Errorf("invalid issue %q: must be digits with no leading zero: %s", item, original)
+	}
+	return "#" + num, nil
+}
+
+func isValidIssueNumber(s string) bool {
+	if s == "" || s[0] == '0' || len(s) > 32 {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
@@ -302,42 +313,4 @@ func isDigitsOnly(s string) bool {
 		}
 	}
 	return true
-}
-
-func isOwnerRepoIssue(s string) bool {
-	slash := strings.IndexByte(s, '/')
-	if slash <= 0 || slash == len(s)-1 {
-		return false
-	}
-	owner := s[:slash]
-	rest := s[slash+1:]
-	hash := strings.IndexByte(rest, '#')
-	if hash <= 0 || hash == len(rest)-1 {
-		return false
-	}
-	repo := rest[:hash]
-	num := rest[hash+1:]
-	return isIssueIdentifier(owner) && isIssueIdentifier(repo) && isDigitsOnly(num)
-}
-
-func isIssueIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if !validIssueByte(s[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func validIssueByte(c byte) bool {
-	if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-		return true
-	}
-	if c >= '0' && c <= '9' {
-		return true
-	}
-	return c == '_' || c == '-' || c == '.'
 }
