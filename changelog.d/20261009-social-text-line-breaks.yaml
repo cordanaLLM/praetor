@@ -1,4 +1,4 @@
 type: changed
-title: Break walls of text in forge-facing social register outputs with short paragraphs, list formatting, explicit blank lines, and two-dimension tables
+title: Require short paragraphs, lists for parallel items, blank lines around blocks and two-dimension tables in social-register forge text
 issue: "#1099"
 breaking: false

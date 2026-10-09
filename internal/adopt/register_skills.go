@@ -40,7 +40,7 @@ var priorSkillDigests = map[string]map[string]string{
 	compiler.CanonicalSkillRel("social-text"): {
 		"a128a86ad170bfaf89012567e1405693006627e260cd18c420f3abb500dd6d9e": "first shipped, REUSE header and upstream credit (#235)",
 		"5f142b7db4b084bd6168bcad862e7860688b4b8e43f3ed997dd5ed0cc77b05f2": "inline credit, no repository path an adopter lacks (#850)",
-		"fbc0061472fe7e91194342c593abb9f1a3fc6b15346960802430e7598c94494c": "line breaks and lists in forge text (#1099)",
+		"fe90eab731a01498ea5e18e8af0af6c935e780bd11567c2a54d3db96b72d954b": "line breaks and lists in forge text (#1099)",
 	},
 	compiler.CanonicalSkillRel("caveman"): {
 		"c0ab6d15d42d9dab2640eb53abf7865495ab99979931cd463540646974d59b49": "first shipped, REUSE header and upstream credit (#235)",
