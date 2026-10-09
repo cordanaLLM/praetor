@@ -51,9 +51,20 @@ func runFlavorList() error {
 	flavors := flavor.List()
 	fmt.Println("=== Praetor Engineering Flavors ===")
 	for _, f := range flavors {
-		fmt.Printf("  %-22s : %-45s [HISS: %s]\n", f.Name(), f.Description(), f.HISSProfile())
+		fmt.Printf("  %-22s : %-45s [HISS: %s]\n", f.Name(), f.Description(), flavorProfiles(f))
 	}
 	return nil
+}
+
+// flavorProfiles names the profile a flavor is built for and, after a comma, every further
+// profile it implements (flavor.MultiProfile), so list and inspect show that go-service
+// resolves under app-service as well as framework.
+func flavorProfiles(f flavor.Flavor) string {
+	profiles := []string{f.HISSProfile()}
+	if multi, ok := f.(flavor.MultiProfile); ok {
+		profiles = append(profiles, multi.AlsoImplements()...)
+	}
+	return strings.Join(profiles, ", ")
 }
 
 func runFlavorInspect(args []string) error {
@@ -67,7 +78,7 @@ func runFlavorInspect(args []string) error {
 
 	fmt.Printf("=== Flavor: %s ===\n", flv.Name())
 	fmt.Printf("Description:  %s\n", flv.Description())
-	fmt.Printf("HISS Profile: %s\n\n", flv.HISSProfile())
+	fmt.Printf("HISS Profile: %s\n\n", flavorProfiles(flv))
 
 	fmt.Println("Required Templates:")
 	for _, t := range flv.RequiredTemplates() {
@@ -146,7 +157,7 @@ func runFlavorAudit(args []string) error {
 			failed = append(failed, fmt.Sprintf("%s at %s (score: %.1f%%)", report.Flavor, report.Path, report.Score))
 		}
 	}
-	if len(reports) == 1 && len(failed) == 1 {
+	if len(reports) == 1 && len(failed) == 1 && (reports[0].Path == "" || reports[0].Path == ".") {
 		return fmt.Errorf("flavor audit failed (score: %.1f%%)", reports[0].Score)
 	}
 	if len(failed) > 0 {

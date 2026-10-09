@@ -160,3 +160,50 @@ func TestAdopt_Boundary_NoFlavorMatchScaffoldsNothing(t *testing.T) {
 		}
 	}
 }
+
+// pinnedManifest declares framework and the given flavors pins.
+func pinnedManifest(pins string) string {
+	return "version: 1\nrepository:\n  owner: acme\n  name: svc\nprofiles:\n  - framework\n" + pins
+}
+
+// adoptGoModule adopts a Go module with a cmd/ entry point under manifest and returns the report.
+func adoptGoModule(t *testing.T, name, manifest string) (*AdoptReport, string) {
+	t.Helper()
+	repoPath := newTestRepo(t, name)
+	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/svc\n")
+	mustWrite(t, filepath.Join(repoPath, "cmd", "svc", "main.go"), "package main\n\nfunc main() {}\n")
+	mustWrite(t, filepath.Join(repoPath, ".standards.yaml"), manifest)
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+	return rep, repoPath
+}
+
+// TestAdopt_Positive_FollowsTheFlavorPin: a root pin of go-library wins over detection, which
+// would scaffold go-service and its Dockerfile; the audit then measures what adoption wrote.
+func TestAdopt_Positive_FollowsTheFlavorPin(t *testing.T) {
+	_, repoPath := adoptGoModule(t, "pin-root", pinnedManifest("flavors:\n  - name: go-library\n"))
+	if _, err := os.Stat(filepath.Join(repoPath, "Dockerfile")); err == nil {
+		t.Fatal("adoption scaffolded go-service's Dockerfile although go-library is pinned")
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, ".github", "workflows", "ci.yml")); err != nil {
+		t.Fatalf("adoption must scaffold the pinned go-library workflow: %v", err)
+	}
+}
+
+// TestAdopt_Negative_SkipsAFlavorItCannotScaffoldAtTheRoot: a directory-scoped pin names no root
+// flavor, so adoption scaffolds no flavor template and says why.
+func TestAdopt_Negative_SkipsAFlavorItCannotScaffoldAtTheRoot(t *testing.T) {
+	rep, repoPath := adoptGoModule(t, "pin-scoped", pinnedManifest("flavors:\n  - name: go-service\n    path: cmd\n"))
+	if _, err := os.Stat(filepath.Join(repoPath, "Dockerfile")); err == nil {
+		t.Fatal("adoption scaffolded a flavor at the root for a directory-scoped pin")
+	}
+	var warned bool
+	for _, d := range rep.ActionDetails {
+		warned = warned || strings.Contains(d.Details, "flavors pins in .standards.yaml are scoped")
+	}
+	if !warned {
+		t.Errorf("the skip must name the pins, got %+v", rep.ActionDetails)
+	}
+}

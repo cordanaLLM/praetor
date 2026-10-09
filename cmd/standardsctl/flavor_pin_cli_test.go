@@ -44,3 +44,25 @@ func TestFlavorAudit_Negative_UnknownPinRefused(t *testing.T) {
 	t.Logf("audit result: %v", auditErr)
 	mustContain(t, out, "(Flavor: go-library)")
 }
+
+// Boundary: a failing single scoped report names the pin path, and list and inspect show that
+// go-service also implements app-service.
+func TestFlavorAudit_Boundary_ScopedFailureNamesThePath(t *testing.T) {
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, ".standards.yaml", pinFixtureManifest+"flavors:\n  - name: go-service\n    path: api\n")
+	writeFixtureFile(t, dir, "api/go.mod", "module example.com/api\n")
+	_, err := captureStdout(t, func() error { return dispatchCommand("flavor", []string{"audit", dir}) })
+	if err == nil || !strings.Contains(err.Error(), "go-service at api") {
+		t.Fatalf("err = %v; want the failing pin path named", err)
+	}
+}
+
+func TestFlavorListAndInspect_Positive_ShowSecondaryProfile(t *testing.T) {
+	for _, args := range [][]string{{"list"}, {"inspect", "go-service"}} {
+		out, err := captureStdout(t, func() error { return dispatchCommand("flavor", args) })
+		if err != nil {
+			t.Fatalf("flavor %v: %v", args, err)
+		}
+		mustContain(t, out, "framework, app-service")
+	}
+}

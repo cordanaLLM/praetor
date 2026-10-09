@@ -54,3 +54,17 @@ func TestRunFlavorStage_Boundary_ScopedPinNamesTheFailingComponent(t *testing.T)
 		t.Fatalf("err = %v; want the failing component named", err)
 	}
 }
+
+// TestRunFlavorStage_Positive_ConformingScopedPinPasses: a conforming repository with the pin
+// scoped to svc/ passes the stage. The repository-level files (workflow, lock, ruleset, hooks)
+// are read at the root and only the stack template below svc/ (#1103).
+func TestRunFlavorStage_Positive_ConformingScopedPinPasses(t *testing.T) {
+	repo := goLibraryRepo(t, map[string]string{
+		".standards.yaml":   appServiceWithPin("flavors:\n  - name: go-library\n    path: svc\n"),
+		"svc/go.mod":        "module example.com/svc\n",
+		"svc/.golangci.yml": "version: \"2\"\n",
+	})
+	if msg, err := runFlavorStage(context.Background(), &stageConfig{repoDir: repo}); err != nil || msg != "" {
+		t.Fatalf("a conforming scoped pin must pass the stage, got %q, %v", msg, err)
+	}
+}

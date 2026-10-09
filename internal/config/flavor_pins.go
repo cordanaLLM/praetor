@@ -39,13 +39,19 @@ func ValidateFlavorPins(pins []FlavorPin) error {
 		if err := pins[i].validate(i); err != nil {
 			return err
 		}
-		key := FlavorPin{Name: strings.TrimSpace(pins[i].Name), Path: pins[i].CleanPath()}
+		key := FlavorPin{Name: pins[i].FlavorName(), Path: pins[i].CleanPath()}
 		if first, repeated := seen[key]; repeated {
 			return fmt.Errorf("flavors[%d] repeats flavors[%d] (%s at %q)", i, first, key.Name, key.Path)
 		}
 		seen[key] = i
 	}
 	return nil
+}
+
+// FlavorName returns the pin's flavor name, trimmed. It is the one place a name is trimmed:
+// validation and the resolver both read it, so a name that validates is the name looked up.
+func (p FlavorPin) FlavorName() string {
+	return strings.TrimSpace(p.Name)
 }
 
 // CleanPath returns the pin's repository-relative path as written, trimmed; empty and "." both
@@ -61,7 +67,7 @@ func (p FlavorPin) CleanPath() string {
 
 func (p FlavorPin) validate(index int) error {
 	prefix := fmt.Sprintf("flavors[%d]", index)
-	if strings.TrimSpace(p.Name) == "" {
+	if p.FlavorName() == "" {
 		return fmt.Errorf("%s.name must name a flavor (praetorctl flavor list names each)", prefix)
 	}
 	clean := p.CleanPath()

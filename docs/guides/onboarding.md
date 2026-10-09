@@ -121,16 +121,23 @@ a Go library.
   names the flavors of the profile it tried; it takes no `--flavor`, so there the remedy is the
   `flavors` pin below, a marker a flavor detects or a declared profile that fits
   (`internal/gating/flavor_stage_test.go`).
+  `praetorctl adopt` scaffolds no flavor templates there and prints a "Not applicable" warning
+  naming `praetorctl flavor apply --flavor=<name>` instead (`internal/adopt/flavor_report_test.go`);
+  a flat Go module with only root `.go` files is one such repository.
 - `go-service` also implements `app-service` (`flavor.MultiProfile`), tried after the flavors built
   for that profile, so a Go service declaring `app-service` resolves without a flag
   (`internal/flavor/pins_test.go`).
 - The `flavors` list in `.standards.yaml` pins the flavor and replaces detection for `flavor audit`,
   `gate run` and the generated pre-push hook, which runs the audit. Each entry names a flavor
   (`praetorctl flavor list`) and optionally a repository-relative `path`; a repository with several
-  components lists one entry per path and each is audited against its own directory only. An unknown
-  flavor, a missing directory or a path outside the repository is refused, never skipped. An
-  explicit `--flavor` still wins on the command line
-  (`flavor.ResolveTargets`, `internal/config/flavor_pins.go`, `cmd/standardsctl/flavor_pin_cli_test.go`).
+  components lists one entry per path. A path-scoped entry audits the flavor's stack templates and
+  toolchains in that directory and the repository-level files (`.github/` workflows and rulesets,
+  `.vscode/`, `lefthook.yml`, `.standards.yaml`, `.standards.lock`, `AGENTS.md`, `CLAUDE.md`) at the
+  repository root, where they live whichever directory holds the stack
+  (`internal/flavor/pins_test.go`). An unknown flavor, a missing directory or a path outside the
+  repository, symlinks included, is refused, never skipped. An explicit `--flavor` still wins on
+  the command line (`flavor.ResolveTargets`, `internal/config/flavor_pins.go`,
+  `cmd/standardsctl/flavor_pin_cli_test.go`).
 
   ```yaml
   flavors:
@@ -140,10 +147,12 @@ a Go library.
       path: web
   ```
 
-  `praetorctl adopt` scaffolds no flavor templates there and
-  prints a "Not applicable" warning naming `praetorctl flavor apply --flavor=<name>` instead
-  (`internal/adopt/flavor_report_test.go`); a flat Go module with only root `.go` files is one such
-  repository.
+  `flavor apply`, `adopt` and the Hindsight distiller read the same pin through the same resolver,
+  so they act on the flavor the audit measures. A scaffold writes one flavor at the repository
+  root: with a root pin it scaffolds that flavor, and with a directory-scoped or a second pin
+  `flavor apply` refuses (`flavor.ErrPinNotScaffoldable`) and `adopt` skips the flavor step with
+  that reason; pass `--flavor=<name>` to scaffold one deliberately
+  (`internal/flavor/pins_apply_test.go`).
 - `flavor apply` also renders the branch ruleset (`.github/rulesets/main.json`) and lists every
   other required setting with the command that writes it
   ([flavor settings](archetype-authoring.md#flavor-settings-the-ruleset-is-rendered-the-rest-are-deferred)).
