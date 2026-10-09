@@ -9,7 +9,8 @@ onboarding-path
 ## 1. Quickstart
 
 Prerequisites: `praetorctl` installed ([workstation install](workstation-update.md)); a Praetor
-checkout or source bundle, written `/path/to/praetor` below, which `--lock-source-root` names so
+Git checkout (adopt refuses a `git archive` export, see [source roots](../adoption.md)), written
+`/path/to/praetor` below, which `--lock-source-root` names so
 the lock can pin your profile and facets to content digests; a Git repository with your
 files committed; a known hosting forge, meaning an `origin` remote on `github.com` or
 `repository.forge` declared in `.standards.yaml` (any other host gets no Paperclip harness and the

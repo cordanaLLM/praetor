@@ -9,7 +9,8 @@ Apply Praetor governance scaffolding to a legacy or greenfield repository and re
 - **`praetorctl`**, installed with the workstation command
   ([workstation install](guides/workstation-update.md)). `standardsctl` is the older name of the
   same binary.
-- **A Praetor checkout** (a Git clone or a source bundle of the engine), here written
+- **A Praetor checkout** (a Git clone of the engine; adopt refuses a `git archive` export, see
+  the source-root rules below), here written
   `/path/to/praetor`. `--lock-source-root` names it: the first adoption pins your profile and
   facets to the content digests of its catalog, and copies the pinned catalog into your
   repository. Without it a first adoption stops with `new lock pins require an explicit verified
