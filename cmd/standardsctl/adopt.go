@@ -274,6 +274,13 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 	}
 }
 
+func adoptReportIdentity(rep *adopt.AdoptReport) config.RepositoryMetadata {
+	if rep != nil && rep.EffectivePolicy != nil && rep.EffectivePolicy.Manifest != nil {
+		return rep.EffectivePolicy.Manifest.Repository
+	}
+	return config.RepositoryMetadata{}
+}
+
 // printAppliedOutcome closes an applied run. A Verification Gate left short of ready, such as one
 // whose verify-all can only exit 1, qualifies the line, so the run never ends with an unqualified
 // success its verify-all contradicts (#594). A kept baseline the rescan rejects qualifies it the
@@ -282,13 +289,13 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 // not an error of the run. An informational warning on another pillar, such as a preserved
 // DevContainer, stays on that pillar's line and leaves the success line as it is (PendingPillars).
 func printAppliedOutcome(rep *adopt.AdoptReport) {
+	identity := adoptReportIdentity(rep)
 	pending := rep.PendingPillars()
 	if len(pending) == 0 {
-		fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
+		fmt.Println("\n" + onboardedMessage(identity))
 		return
 	}
-	fmt.Printf("\nRepository adopted into cordanaLLM/praetor governance; not ready yet: %s. See the warnings above.\n",
-		strings.Join(pending, ", "))
+	fmt.Println("\n" + onboardedMessage(identity, pending...))
 	for _, line := range rep.PendingBaseline() {
 		fmt.Println("  " + line)
 	}

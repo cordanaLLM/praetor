@@ -73,14 +73,16 @@ warning saying so. `devcontainer generate` and `audit` then fail on the missing 
 lock afterwards with `praetorctl profile set --lock-source-root=/path/to/praetor`. With the
 flag, init writes the lock adoption writes (`config.BuildLockfile`) and the pinned catalog under
 `.config/archetypes/` (`adopt.MaterializePinnedCatalog`), and a fresh repository passes
-`devcontainer generate` and the lock, digest and DevContainer gates of the audit
+`devcontainer generate` and the manifest, lock, digest, DevContainer, cross-agent context and
+caveman register gates of the audit
 (`TestInitLock_Positive_PinnedLockPassesGenerateAndAudit` in `cmd/standardsctl/init_lock_test.go`).
 Init does not make the whole audit pass. The audit stops at its first failing gate, so an
 init-only repository meets the gaps one at a time: no branch ruleset (`praetorctl sync` writes
-it), no HISS-11 supply-chain exception, no `.paperclip/harness.json`, no agent definitions and no
-git hooks, and with `api:public-contract` in a Go module no API compatibility gate. Adoption
-writes all of them, which is why the quickstart uses it; `init` is for a repository that fills
-those in by other means.
+it), with `docs:seo-portal` no documentation gate (missing `tools/markdownlint`), with
+`api:public-contract` in a Go module no API compatibility gate (missing `tools/apicompat/gate`),
+no HISS-11 supply-chain exception, no `.paperclip/harness.json`, no agent definitions and no
+git hooks. Adoption writes all of them, which is why the quickstart uses it; `init` is for a
+repository that fills those in by other means.
 
 Step 1 writes your repository's identity into `.standards.yaml`. `repository.owner` and
 `repository.name` come from the origin remote. Without a remote the owner is

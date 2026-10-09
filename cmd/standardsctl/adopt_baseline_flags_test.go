@@ -84,7 +84,7 @@ func TestAdoptBaselineFlags_3D(t *testing.T) {
 }
 
 // pendingBaselineLine is how an applied run closes when only the kept baseline holds it back.
-const pendingBaselineLine = "Repository adopted into cordanaLLM/praetor governance; not ready yet: Debt Baseline. See the warnings above."
+const pendingBaselineLine = "Repository onboarded: example/adopted; not ready yet: Debt Baseline. See the warnings above."
 
 // TestAdoptRejectedKeptBaseline_3D pins the shape #358 was reported in through the command: a
 // repository adopted without debt holds a baseline with zero entries and then gains one finding.

@@ -17,7 +17,8 @@ export default {
   evidence: [
     'cmd/standardsctl/init.go:runInit',
     'cmd/standardsctl/init.go:ensureManifestAbsent',
-    'cmd/standardsctl/init.go:createInitialManifest',
+    'cmd/standardsctl/init.go:initialManifest',
+    'cmd/standardsctl/init.go:writeInitialManifest',
     'cmd/standardsctl/init.go:initBaselineAndLockfile',
     'cmd/standardsctl/init.go:initAgentContext',
     'internal/adopt/context_write.go:CompileAgentContext',
@@ -43,8 +44,8 @@ export default {
     'internal/adopt/harness.go:resolveAgentsContent',
   ],
   describe: [
-    'A repository that already carries AGENTS.md runs five commands in order. init writes the manifest, lockfile and a zero-debt baseline, then runs the compile-context write: Git ignores the evidence directory, and the six vendor files and persona copies are compiled from AGENTS.md. compile-context repeats that write after every AGENTS.md edit. baseline records existing debt, devcontainer generate prepares the container bundle, and audit verifies the result.',
-    'praetorctl adopt is an alternate entry, not a step before init: one run writes what steps 1 to 4 write, AGENTS.md included when it is missing, and the path continues at step 5. init refuses to run afterwards because .standards.yaml already exists.',
+    'In the onboarding guide, praetorctl adopt is the primary quickstart: one run adopts an existing repository into full governance, synthesizing AGENTS.md when missing and configuring the manifest, pinned lock, catalog, baseline, agent files, DevContainer, hooks and CI workflows.',
+    'praetorctl init is the staged alternative for repositories that already carry canonical AGENTS.md instructions. Five commands run in order: init writes the manifest, lockfile and baseline, compile-context projects vendor files, baseline records debt, devcontainer generate prepares the container bundle, and audit verifies governance. init refuses to run after adoption because .standards.yaml already exists.',
   ],
   props: {
     speed: 1100,
@@ -92,7 +93,7 @@ export default {
         flow: [
           { edges: 'repo->init', say: 'init reads AGENTS.md beside the manifest; without it, init writes no agent files.' },
           {
-            say: 'createInitialManifest and initBaselineAndLockfile write the manifest, the lockfile and a zero-debt baseline.',
+            say: 'writeInitialManifest and initBaselineAndLockfile write the manifest, the lockfile and a zero-debt baseline.',
             show: {
               init: [
                 { tag: 'created', tone: 'green', text: '.standards.yaml', mono: true },

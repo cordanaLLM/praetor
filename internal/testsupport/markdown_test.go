@@ -102,3 +102,25 @@ func TestMarkdownFindingsNestedFences(t *testing.T) {
 		t.Errorf("a tilde run closed or broke a backtick fence: %v", findings)
 	}
 }
+
+// Positive, Negative, Boundary (HISS-15, HISS-21): MarkdownTableRowsUnderHeading parses
+// backtick-started rows under a heading, ignores other lines and sections, handles CRLF,
+// and returns nil when the heading is missing.
+func TestMarkdownTableRowsUnderHeading_3D(t *testing.T) {
+	md := "## Target\n\n| Col 1 | Col 2 |\n| :--- | :--- |\n| `step1` | desc 1 |\n| plain | ignored |\n| `step2` | desc 2 |\n\n## Next\n| `step3` | after |\n"
+	got := MarkdownTableRowsUnderHeading(md, "## Target")
+	if len(got) != 2 || got[0][0] != "`step1`" || got[0][1] != "desc 1" || got[1][0] != "`step2`" || got[1][1] != "desc 2" {
+		t.Fatalf("positive parse unexpected rows: %+v", got)
+	}
+
+	// Negative: missing heading returns nil.
+	if got := MarkdownTableRowsUnderHeading(md, "## Missing"); got != nil {
+		t.Fatalf("missing heading returned %v, want nil", got)
+	}
+
+	// Boundary: CRLF behaves identically to LF.
+	crlf := strings.ReplaceAll(md, "\n", "\r\n")
+	if crlfGot := MarkdownTableRowsUnderHeading(crlf, "## Target"); len(crlfGot) != len(got) {
+		t.Fatalf("CRLF rows length %d differs from LF length %d", len(crlfGot), len(got))
+	}
+}

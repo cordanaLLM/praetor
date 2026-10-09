@@ -74,8 +74,11 @@ Run `praetorctl audit --offline` afterwards. See
 `--lock-source-root=/path/to/praetor` so its lock carries digests; without the flag the lock is
 an unpinned placeholder that `audit` and `devcontainer generate` refuse, and init says so
 (`cmd/standardsctl/init_lock_test.go`). Even pinned, an init-only repository does not pass
-`audit --offline`: init writes no branch ruleset, no HISS-11 supply-chain exception, no Paperclip
-harness, agent definitions or git hooks, so use adoption for a repository that must audit clean.
+`audit --offline`: init writes no branch ruleset, no documentation gate tooling
+(`tools/markdownlint` under `docs:seo-portal`), no API compatibility gate
+(`tools/apicompat/gate` under `api:public-contract`), no HISS-11 supply-chain exception, no
+Paperclip harness, agent definitions or git hooks, so use adoption for a repository that must
+audit clean.
 
 `--facets` names the facets adoption writes when it creates `.standards.yaml`. Omitted, adoption
 writes `security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`

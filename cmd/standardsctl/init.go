@@ -22,8 +22,8 @@ import (
 // initFilePerm is the mode of the scaffolded, tracked configuration files.
 const initFilePerm os.FileMode = 0o644
 
-// initIdentityTimeout bounds the settings read and the origin-remote lookup that resolve the
-// identity init writes (HISS-02).
+// initIdentityTimeout bounds the settings read, origin-remote lookup, lockfile generation
+// (BuildLockfile) and catalog materialization (MaterializePinnedCatalog) that init executes (HISS-02).
 const initIdentityTimeout = 30 * time.Second
 
 func runInit(args []string) error {
@@ -45,10 +45,6 @@ func runInit(args []string) error {
 	if err := ensureManifestAbsent(*outputPath); err != nil {
 		return err
 	}
-	resolvedLockSource, err := resolveLockSourceRoot(*lockSource, "--lock-source-root")
-	if err != nil {
-		return err
-	}
 
 	// Every companion file lives next to the manifest, never in the process cwd.
 	rootDir := filepath.Dir(*outputPath)
@@ -62,9 +58,7 @@ func runInit(args []string) error {
 		return err
 	}
 	manifest := initialManifest(*profile, util.SplitCSV(*facets), identity)
-	// The pinned lock depends only on the in-memory manifest, so a source or profile that cannot
-	// be pinned fails here, before init writes any file and leaves a manifest behind.
-	lockContent, err := initLockContent(ctx, *outputPath, resolvedLockSource, &manifest)
+	resolvedLockSource, lockContent, err := prepareInitLock(ctx, *lockSource, *outputPath, rootDir, &manifest)
 	if err != nil {
 		return err
 	}
@@ -143,13 +137,20 @@ func initRepositoryIdentity(ctx context.Context, rootDir string, settings *opera
 	return config.RepositoryMetadata{Owner: owner, Name: name, Visibility: "public", DefaultBranch: branch}, nil
 }
 
-// onboardedMessage is the closing line of init. It names the repository the manifest records
+// onboardedMessage is the closing line of init and adopt. It names the repository the manifest records
 // (owner/name) and nothing else: Praetor ships no repository name of its own to print.
-func onboardedMessage(identity config.RepositoryMetadata) string {
-	if identity.Owner != "" && identity.Name != "" {
-		return fmt.Sprintf("Repository successfully onboarded: %s/%s", identity.Owner, identity.Name)
+func onboardedMessage(identity config.RepositoryMetadata, pending ...string) string {
+	if len(pending) == 0 {
+		if identity.Owner != "" && identity.Name != "" {
+			return fmt.Sprintf("Repository successfully onboarded: %s/%s", identity.Owner, identity.Name)
+		}
+		return "Repository successfully onboarded."
 	}
-	return "Repository successfully onboarded."
+	prefix := "Repository onboarded"
+	if identity.Owner != "" && identity.Name != "" {
+		prefix = fmt.Sprintf("Repository onboarded: %s/%s", identity.Owner, identity.Name)
+	}
+	return fmt.Sprintf("%s; not ready yet: %s. See the warnings above.", prefix, strings.Join(pending, ", "))
 }
 
 func initialManifest(profile string, facets []string, identity config.RepositoryMetadata) config.Manifest {
@@ -159,6 +160,36 @@ func initialManifest(profile string, facets []string, identity config.Repository
 		Profiles:   []string{profile},
 		Facets:     facets,
 	}
+}
+
+// prepareInitLock resolves the lock source, builds the lock content and, when a lock source was
+// given, validates the catalog projection before init writes any file to disk, so a pin or
+// catalog error leaves no partial configuration behind.
+func prepareInitLock(ctx context.Context, lockSourceFlag, outputPath, rootDir string, manifest *config.Manifest) (string, []byte, error) {
+	resolvedLockSource, err := resolveLockSourceRoot(lockSourceFlag, "--lock-source-root")
+	if err != nil {
+		return "", nil, err
+	}
+	lockContent, err := initLockContent(ctx, outputPath, resolvedLockSource, manifest)
+	if err != nil {
+		return "", nil, err
+	}
+	if resolvedLockSource != "" {
+		manifestBytes, err := config.RenderManifest(manifest)
+		if err != nil {
+			return "", nil, fmt.Errorf("failed to render manifest: %w", err)
+		}
+		policy, err := config.LoadEffectivePolicyInputsContext(ctx, config.EffectiveOptions{
+			Root: rootDir, CatalogRoot: resolvedLockSource,
+		}, manifestBytes, lockContent)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolve init catalog: %w", err)
+		}
+		if err := config.ValidateCatalogProjectionContext(ctx, rootDir, policy.CatalogArtifacts); err != nil {
+			return "", nil, fmt.Errorf("validate prospective catalog: %w", err)
+		}
+	}
+	return resolvedLockSource, lockContent, nil
 }
 
 func writeInitialManifest(outputPath string, manifest *config.Manifest) error {
@@ -222,8 +253,14 @@ func initLockContent(ctx context.Context, manifestPath, lockSource string, manif
 func initLockfile(ctx context.Context, rootDir, lockSource string, content []byte) error {
 	lockPath := filepath.Join(rootDir, config.LockFileName)
 	missing, err := fileMissing(lockPath)
-	if err != nil || !missing {
+	if err != nil {
 		return err
+	}
+	if !missing {
+		if lockSource != "" {
+			fmt.Printf("[WARN] %s already exists; keeping existing lock and skipping pins from %s\n", lockPath, lockSource)
+		}
+		return nil
 	}
 	if err := util.WriteFileConfined(rootDir, config.LockFileName, content, initFilePerm); err != nil {
 		return fmt.Errorf("failed to create lockfile: %w", err)

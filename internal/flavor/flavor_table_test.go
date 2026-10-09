@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // flavorGuide is the onboarding guide whose flavor table lists the built-in flavors (#955).
@@ -14,32 +16,17 @@ var flavorGuide = filepath.Join("..", "..", "docs", "guides", "onboarding.md")
 const (
 	flavorHeading = "## Flavors"
 	flavorRowOpen = "| `"
-	maxGuideLines = 20000
 )
 
 // flavorTableRows returns, in order, "name profile" for each row of the flavor table: the rows
-// between flavorHeading and the next heading.
+// between flavorHeading and the next heading, using testsupport.MarkdownTableRowsUnderHeading.
 func flavorTableRows(text string) []string {
-	// The guide is checked out with CRLF line endings on Windows (`* text=auto`).
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	_, section, found := strings.Cut(text, flavorHeading+"\n")
-	if !found {
-		return nil
-	}
+	tableRows := testsupport.MarkdownTableRowsUnderHeading(text, flavorHeading)
 	var rows []string
-	lines := strings.Split(section, "\n")
-	for i := 0; i < len(lines) && i < maxGuideLines; i++ {
-		if strings.HasPrefix(lines[i], "#") {
-			break
+	for _, cells := range tableRows {
+		if len(cells) >= 2 {
+			rows = append(rows, strings.Trim(cells[0], "`")+" "+strings.Trim(cells[1], "`"))
 		}
-		if !strings.HasPrefix(lines[i], flavorRowOpen) {
-			continue
-		}
-		cells := strings.Split(lines[i], "|")
-		if len(cells) < 4 {
-			continue
-		}
-		rows = append(rows, strings.Trim(strings.TrimSpace(cells[1]), "`")+" "+strings.Trim(strings.TrimSpace(cells[2]), "`"))
 	}
 	return rows
 }

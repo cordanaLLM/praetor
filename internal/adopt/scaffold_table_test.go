@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // scaffoldGuide is the adoption guide whose scaffold table lists the adoption steps (#955).
@@ -14,41 +16,40 @@ var scaffoldGuide = filepath.Join("..", "..", "docs", "adoption.md")
 const (
 	scaffoldHeading = "### What Adoption Scaffolds Automatically"
 	scaffoldRowOpen = "| `"
-	maxGuideLines   = 20000
 )
 
 // scaffoldTableSteps returns, in order, the step names the first cell of each row of the
-// scaffold table holds. The table is the rows between scaffoldHeading and the next heading.
+// scaffold table holds, using testsupport.MarkdownTableRowsUnderHeading.
 func scaffoldTableSteps(text string) []string {
-	_, section, found := strings.Cut(text, scaffoldHeading)
-	if !found {
-		return nil
-	}
-	var steps []string
-	lines := strings.Split(section, "\n")
-	for i := 0; i < len(lines) && i < maxGuideLines; i++ {
-		if strings.HasPrefix(lines[i], "#") {
-			break
+	rows := testsupport.MarkdownTableRowsUnderHeading(text, scaffoldHeading)
+	steps := make([]string, 0, len(rows))
+	for _, cells := range rows {
+		if len(cells) > 0 {
+			steps = append(steps, strings.Trim(cells[0], "`"))
 		}
-		if !strings.HasPrefix(lines[i], scaffoldRowOpen) {
-			continue
-		}
-		name, _, _ := strings.Cut(strings.TrimPrefix(lines[i], scaffoldRowOpen), "`")
-		steps = append(steps, name)
 	}
 	return steps
 }
 
 // Positive: the scaffold table lists exactly the steps of the adoption chain, in order, so a
-// step added to adoptSteps without a row, or a row for a removed step, fails here.
+// step added to adoptSteps without a row, or a row for a removed step, fails here. It also
+// verifies that the "What it writes" column is non-empty for every step in the chain.
 func TestAdoptionScaffoldTable_MatchesTheStepChain(t *testing.T) {
 	data, err := os.ReadFile(scaffoldGuide)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, want := scaffoldTableSteps(string(data)), adoptStepNames()
-	if !slices.Equal(got, want) {
-		t.Fatalf("docs/adoption.md scaffold table lists %v; adoptSteps runs %v", got, want)
+	rows := testsupport.MarkdownTableRowsUnderHeading(string(data), scaffoldHeading)
+	steps := make([]string, 0, len(rows))
+	for _, cells := range rows {
+		if len(cells) < 2 || strings.TrimSpace(cells[1]) == "" {
+			t.Errorf("step %s has empty 'What it writes' column in scaffold table", cells[0])
+		}
+		steps = append(steps, strings.Trim(cells[0], "`"))
+	}
+	want := adoptStepNames()
+	if !slices.Equal(steps, want) {
+		t.Fatalf("docs/adoption.md scaffold table lists %v; adoptSteps runs %v", steps, want)
 	}
 }
 

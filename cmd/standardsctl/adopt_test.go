@@ -193,7 +193,7 @@ func TestPrintAdoptReportQualifiesSuccessWithPendingPillars(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(out, "Repository successfully adopted") || strings.Contains(out, "not ready yet") {
+		if !strings.Contains(out, "Repository successfully onboarded") || strings.Contains(out, "not ready yet") {
 			t.Fatalf("clean adoption qualified:\n%s", out)
 		}
 	}
