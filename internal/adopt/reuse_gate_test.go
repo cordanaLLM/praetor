@@ -685,3 +685,44 @@ func TestAdopt_KeepsHandEditedReuseWorkflow_Negative(t *testing.T) {
 		t.Fatal("negative test: hand-edited gate unexpectedly matched current rendering")
 	}
 }
+
+// Boundary (HISS-15): an existing reuse.yml with mixed line endings is preserved unverified
+// by both adopt and dry-run without aborting the adoption.
+func TestAdopt_MixedLineEndingsReuseWorkflow_PreservedUnverified(t *testing.T) {
+	currentText := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	mixedText := strings.Replace(currentText, "\n", "\r\n", 1)
+
+	// Test dry-run preserves the file and reports preserved unverified
+	dryRepo := newTestRepo(t, "mixed-endings-reuse-dry")
+	mustWrite(t, filepath.Join(dryRepo, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	workflowPathDry := filepath.Join(dryRepo, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPathDry, mixedText)
+
+	dryRep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: dryRepo, DryRun: true})
+	if err != nil {
+		t.Fatalf("DryRun with mixed-endings reuse.yml failed: %v", err)
+	}
+	if got := mustRead(t, workflowPathDry); got != mixedText {
+		t.Fatalf("DryRun modified mixed-endings reuse.yml: got:\n%s\nwant:\n%s", got, mixedText)
+	}
+	if !strings.Contains(reuseGateDetails(dryRep), "Existing file preserved unverified") {
+		t.Errorf("DryRun report details do not mention 'Existing file preserved unverified': %s", reuseGateDetails(dryRep))
+	}
+
+	// Test adopt preserves the file and reports preserved unverified
+	adoptRepo := newTestRepo(t, "mixed-endings-reuse-adopt")
+	mustWrite(t, filepath.Join(adoptRepo, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	workflowPathAdopt := filepath.Join(adoptRepo, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPathAdopt, mixedText)
+
+	adoptRep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: adoptRepo})
+	if err != nil {
+		t.Fatalf("Adopt with mixed-endings reuse.yml failed: %v", err)
+	}
+	if got := mustRead(t, workflowPathAdopt); got != mixedText {
+		t.Fatalf("Adopt modified mixed-endings reuse.yml: got:\n%s\nwant:\n%s", got, mixedText)
+	}
+	if !strings.Contains(reuseGateDetails(adoptRep), "Existing file preserved unverified") {
+		t.Errorf("Adopt report details do not mention 'Existing file preserved unverified': %s", reuseGateDetails(adoptRep))
+	}
+}

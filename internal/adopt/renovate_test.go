@@ -18,14 +18,47 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
+// apiCompatibilityFixturePaths are the managed paths of the api:public-contract family.
+var apiCompatibilityFixturePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go", "tools/apicompat/gate/placeholder.go"}
+
+// documentationFixturePaths are the managed paths of the docs:seo-portal families.
+var documentationFixturePaths = []string{
+	".github/workflows/praetor-docs.yml",
+	"tools/markdownlint/package.json",
+	"tools/markdownlint/package-lock.json",
+	"tools/markdownlint/markdownlint-cli2.yaml",
+	"tools/markdownlint/verify.mjs",
+	"tools/markdownlint/no-private-scratch-links.mjs",
+	"tools/figures/core.mjs",
+	"tools/figures/checks.mjs",
+	"tools/figures/build.mjs",
+	"tools/figures/types.ts",
+	"tools/figures/third_party/interfig/vendor.json",
+	"tools/figures/third_party/interfig/VENDOR.md",
+	"tools/figures/third_party/interfig/upstream/LICENSE",
+	"tools/figures/third_party/interfig/upstream/src/svg.ts",
+	"tools/figures/third_party/interfig/upstream/src/geometry.ts",
+	"tools/figures/third_party/interfig/upstream/src/model.ts",
+	"tools/figures/dist/loader.js",
+	"tools/figures/dist/player.js",
+	"tools/figures/dist/THIRD-PARTY-LICENSES.txt",
+	"tools/figures/figures.css",
+	"tools/figures/mkdocs_hook.py",
+	"tools/figures/astro.mjs",
+	"tools/figures/serve.mjs",
+	"tools/figures/README.md",
+}
+
 // renovateManagedFixturePaths are the managed paths of the families the default facets
-// enable in a repository whose go.mod git tracks, rendered from the managed-asset registry
-// (one source, HISS-19) instead of a hand-written list.
-var renovateManagedFixturePaths = managedPathsOf(managedasset.Families())
+// enable in a repository whose go.mod git tracks, the documentation families' and then the API
+// compatibility family's (apiCompatibilityFixturePaths), spelled out rather than read from the
+// code under test.
+var renovateManagedFixturePaths = append(slices.Clone(documentationFixturePaths), apiCompatibilityFixturePaths...)
 
 // devContainerBundleFixturePaths are the generated DevContainer bundle files Renovate's
 // managers read, which the managed entry lists after the family paths when the bundle is
@@ -41,9 +74,6 @@ func withBundleFixturePaths(paths []string) []string {
 // ownDevContainer is an operator's own DevContainer, which adoption preserves and whose
 // updates stay with the operator's Renovate.
 const ownDevContainer = "{\n  \"image\": \"ghcr.io/acme/dev:1\"\n}\n"
-
-// apiCompatibilityFixturePaths are the managed paths of the api:public-contract family.
-var apiCompatibilityFixturePaths = managedasset.ForFacet(managedasset.APIContractFacet)[0].ManagedPaths()
 
 // adopterRenovateConfig is an adopter's own configuration: a preset, an ignorePaths list and
 // a rule of its own, in an order and with inline arrays a rewrite must keep in value.
@@ -544,18 +574,142 @@ func TestRenovateManagedPaths_IncludesAllScaffoldedFilesAndReuseGate(t *testing.
 	}
 
 	rendered := managed[0].MatchFileNames
+	want := append(withBundleFixturePaths(renovateManagedFixturePaths), reuseWorkflowFile)
+	if !slices.Equal(rendered, want) {
+		t.Fatalf("rendered Renovate rule mismatch:\ngot:  %v\nwant: %v", rendered, want)
+	}
+}
 
-	// Verify all files from the managed-asset registry are included.
-	for _, family := range managedasset.Families() {
-		for _, path := range family.ManagedPaths() {
-			if !slices.Contains(rendered, path) {
-				t.Errorf("rendered Renovate rule is missing managed registry file %s", path)
-			}
+// Positive (HISS-20): the managed-asset registry's rendered path list matches the spelled-out
+// fixture list in renovateManagedFixturePaths exactly in content and order.
+func TestManagedAssetRegistry_MatchesSpelledOutRenovateFixturePaths(t *testing.T) {
+	registryPaths := managedPathsOf(managedasset.Families())
+	if !slices.Equal(registryPaths, renovateManagedFixturePaths) {
+		t.Fatalf("managed-asset registry paths do not match spelled-out fixture paths:\ngot:  %v\nwant: %v", registryPaths, renovateManagedFixturePaths)
+	}
+}
+
+// Negative (HISS-15): reuse.yml is omitted from the Renovate managed rule when:
+// (a) the reuse-gate step is declined;
+// (b) REUSE is not declared;
+// (c) the file is an adopter-owned copy;
+// (d) the file is an edited Praetor copy kept with a warning.
+func TestRenovateManagedPaths_ReuseGateNegativeCases(t *testing.T) {
+	t.Run("declined step", func(t *testing.T) {
+		repo := newTestRepo(t, "renovate-reuse-declined")
+		trackGoModule(t, repo, "go.mod")
+		mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nadoption:\n  decline: ["+reuseGateStep+"]\n")
+		mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
+		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
+
+		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
+		if _, err := Adopt(t.Context(), opts); err != nil {
+			t.Fatalf("adopt: %v", err)
 		}
-	}
+		data := mustRead(t, filepath.Join(repo, "renovate.json"))
+		_, managed, _ := renovateTestRules(t, data)
+		if len(managed) != 1 {
+			t.Fatalf("want 1 managed rule, got %d", len(managed))
+		}
+		if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
+			t.Errorf("declined reuse-gate step: %s must not be listed in Renovate rule", reuseWorkflowFile)
+		}
+	})
 
-	// Verify reuse.yml is included.
-	if !slices.Contains(rendered, reuseWorkflowFile) {
-		t.Errorf("rendered Renovate rule is missing %s", reuseWorkflowFile)
-	}
+	t.Run("reuse not declared", func(t *testing.T) {
+		repo := newTestRepo(t, "renovate-reuse-not-declared")
+		trackGoModule(t, repo, "go.mod")
+		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
+
+		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
+		if _, err := Adopt(t.Context(), opts); err != nil {
+			t.Fatalf("adopt: %v", err)
+		}
+		data := mustRead(t, filepath.Join(repo, "renovate.json"))
+		_, managed, _ := renovateTestRules(t, data)
+		if len(managed) != 1 {
+			t.Fatalf("want 1 managed rule, got %d", len(managed))
+		}
+		if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
+			t.Errorf("reuse not declared: %s must not be listed in Renovate rule", reuseWorkflowFile)
+		}
+	})
+
+	t.Run("adopter owned copy", func(t *testing.T) {
+		repo := newTestRepo(t, "renovate-reuse-adopter-owned")
+		trackGoModule(t, repo, "go.mod")
+		mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
+		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
+		adopterWorkflow := "name: Custom REUSE Gate\non: [push]\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
+		mustWrite(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile)), adopterWorkflow)
+
+		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
+		if _, err := Adopt(t.Context(), opts); err != nil {
+			t.Fatalf("adopt: %v", err)
+		}
+		data := mustRead(t, filepath.Join(repo, "renovate.json"))
+		_, managed, _ := renovateTestRules(t, data)
+		if len(managed) != 1 {
+			t.Fatalf("want 1 managed rule, got %d", len(managed))
+		}
+		if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
+			t.Errorf("adopter-owned copy: %s must not be listed in Renovate rule", reuseWorkflowFile)
+		}
+		if got := mustRead(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile))); got != adopterWorkflow {
+			t.Fatalf("adopter workflow was modified: got %s, want %s", got, adopterWorkflow)
+		}
+	})
+
+	t.Run("edited praetor copy kept with warning", func(t *testing.T) {
+		repo := newTestRepo(t, "renovate-reuse-edited-praetor")
+		trackGoModule(t, repo, "go.mod")
+		mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
+		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
+		currentWorkflow := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+		editedWorkflow := currentWorkflow + "\n# custom adopter addition\n"
+		mustWrite(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile)), editedWorkflow)
+
+		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
+		rep, err := Adopt(t.Context(), opts)
+		if err != nil {
+			t.Fatalf("adopt: %v", err)
+		}
+		data := mustRead(t, filepath.Join(repo, "renovate.json"))
+		_, managed, _ := renovateTestRules(t, data)
+		if len(managed) != 1 {
+			t.Fatalf("want 1 managed rule, got %d", len(managed))
+		}
+		if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
+			t.Errorf("edited Praetor copy: %s must not be listed in Renovate rule", reuseWorkflowFile)
+		}
+		if got := mustRead(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile))); got != editedWorkflow {
+			t.Fatalf("edited workflow was modified: got %s, want %s", got, editedWorkflow)
+		}
+		if len(rep.Warnings) == 0 {
+			t.Error("expected warning for edited Praetor copy kept, got none")
+		}
+	})
+
+	t.Run("force overwrites edited copy and lists it", func(t *testing.T) {
+		repo := newTestRepo(t, "renovate-reuse-forced")
+		trackGoModule(t, repo, "go.mod")
+		mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
+		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
+		currentWorkflow := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+		editedWorkflow := currentWorkflow + "\n# custom adopter addition\n"
+		mustWrite(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile)), editedWorkflow)
+
+		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Force: true}
+		if _, err := Adopt(t.Context(), opts); err != nil {
+			t.Fatalf("adopt: %v", err)
+		}
+		data := mustRead(t, filepath.Join(repo, "renovate.json"))
+		_, managed, _ := renovateTestRules(t, data)
+		if len(managed) != 1 {
+			t.Fatalf("want 1 managed rule, got %d", len(managed))
+		}
+		if !slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
+			t.Errorf("forced adoption: %s must be listed in Renovate rule", reuseWorkflowFile)
+		}
+	})
 }
