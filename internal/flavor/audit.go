@@ -128,14 +128,11 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 		return nil, fmt.Errorf("audit flavor cancelled: %w", err)
 	}
 	if targetFlavor == "" || targetFlavor == "auto" {
-		targets, err := ResolveTargets(repoPath)
+		resolved, err := resolveAutoTarget(repoPath)
 		if err != nil {
 			return nil, err
 		}
-		if len(targets) != 1 || targets[0].Path != "." {
-			return nil, fmt.Errorf("audit flavor: %s pins %d flavor targets; audit them with AuditTargetsContext", repoPath, len(targets))
-		}
-		targetFlavor = targets[0].Flavor
+		targetFlavor = resolved
 	}
 
 	flv, err := Get(targetFlavor)
@@ -154,6 +151,19 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 	report.Score = conformanceScore(report)
 	report.Passed = report.Score >= passingScore && len(report.MissingTemplates) == 0
 	return report, nil
+}
+
+// resolveAutoTarget names the one flavor a repository without an explicit target audits
+// against; a repository with several pin targets is refused, since one report cannot cover them.
+func resolveAutoTarget(repoPath string) (string, error) {
+	targets, err := ResolveTargets(repoPath)
+	if err != nil {
+		return "", err
+	}
+	if len(targets) != 1 || targets[0].Path != "." {
+		return "", fmt.Errorf("audit flavor: %s pins %d flavor targets; audit them with AuditTargetsContext", repoPath, len(targets))
+	}
+	return targets[0].Flavor, nil
 }
 
 // auditRequiredItems records flv's required templates, settings and toolchains in report,

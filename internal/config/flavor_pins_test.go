@@ -6,11 +6,11 @@ import (
 )
 
 func TestValidateFlavorPins_Positive(t *testing.T) {
-	pins := []FlavorPin{{Name: "go-service", Path: "api"}, {Name: "frontend-svelte", Path: "web/"}, {Name: "go-library"}}
+	pins := []FlavorPin{{Name: "go-service", Path: "api"}, {Name: "frontend-svelte", Path: "web"}, {Name: "go-library"}}
 	if err := ValidateFlavorPins(pins); err != nil {
 		t.Fatalf("valid pins refused: %v", err)
 	}
-	if got := (FlavorPin{Name: "x", Path: "web/"}).CleanPath(); got != "web" {
+	if got := (FlavorPin{Name: "x", Path: " web "}).CleanPath(); got != "web" {
 		t.Errorf("CleanPath = %q; want web", got)
 	}
 	if got := (FlavorPin{Name: "x"}).CleanPath(); got != "." {
@@ -23,8 +23,11 @@ func TestValidateFlavorPins_Negative(t *testing.T) {
 		"missing name":      {{Path: "api"}},
 		"escaping path":     {{Name: "go-service", Path: "../outside"}},
 		"absolute path":     {{Name: "go-service", Path: "/etc"}},
+		"trailing slash":    {{Name: "go-service", Path: "api/"}},
+		"backslash":         {{Name: "go-service", Path: "a\\b"}},
+		"newline":           {{Name: "go-service", Path: "a\nb"}},
 		"drive path":        {{Name: "go-service", Path: "C:/x"}},
-		"duplicate":         {{Name: "go-service", Path: "api"}, {Name: "go-service", Path: "api/"}},
+		"duplicate":         {{Name: "go-service", Path: "api"}, {Name: "go-service", Path: " api"}},
 		"duplicate at root": {{Name: "go-service"}, {Name: "go-service", Path: "."}},
 	}
 	for name, pins := range cases {
@@ -46,7 +49,7 @@ func TestValidateFlavorPins_Boundary(t *testing.T) {
 	if err := ValidateFlavorPins(pins); err == nil {
 		t.Fatalf("%d pins accepted", len(pins))
 	}
-	long := FlavorPin{Name: "go-service", Path: strings.Repeat("a", MaxFlavorPinPathBytes+1)}
+	long := FlavorPin{Name: "go-service", Path: strings.Repeat("a", 257)}
 	if err := ValidateFlavorPins([]FlavorPin{long}); err == nil {
 		t.Fatal("an over-long path was accepted")
 	}

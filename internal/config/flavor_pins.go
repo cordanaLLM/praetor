@@ -6,7 +6,6 @@ package config
 
 import (
 	"fmt"
-	"path"
 	"strings"
 )
 
@@ -14,8 +13,6 @@ import (
 const (
 	// MaxFlavorPins bounds the pins one manifest declares.
 	MaxFlavorPins = 32
-	// MaxFlavorPinPathBytes bounds a pin's path.
-	MaxFlavorPinPathBytes = 256
 )
 
 // FlavorPin pins one flavor to the repository, or to one directory of it (#1103).
@@ -51,14 +48,15 @@ func ValidateFlavorPins(pins []FlavorPin) error {
 	return nil
 }
 
-// CleanPath returns the pin's repository-relative path with "/" separators; empty and "." both
-// mean the repository root and come back as ".".
+// CleanPath returns the pin's repository-relative path as written, trimmed; empty and "." both
+// mean the repository root and come back as ".". Any other spelling must already be a clean
+// path, which validate checks with ValidRepositoryPath.
 func (p FlavorPin) CleanPath() string {
 	trimmed := strings.TrimSpace(p.Path)
 	if trimmed == "" {
 		return "."
 	}
-	return path.Clean(strings.ReplaceAll(trimmed, "\\", "/"))
+	return trimmed
 }
 
 func (p FlavorPin) validate(index int) error {
@@ -66,12 +64,9 @@ func (p FlavorPin) validate(index int) error {
 	if strings.TrimSpace(p.Name) == "" {
 		return fmt.Errorf("%s.name must name a flavor (praetorctl flavor list names each)", prefix)
 	}
-	if len(p.Path) > MaxFlavorPinPathBytes {
-		return fmt.Errorf("%s.path is %d bytes; maximum is %d", prefix, len(p.Path), MaxFlavorPinPathBytes)
-	}
 	clean := p.CleanPath()
-	if path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") || strings.ContainsRune(clean, ':') {
-		return fmt.Errorf("%s.path %q must be a directory inside the repository", prefix, p.Path)
+	if clean != "." && (!ValidRepositoryPath(clean) || strings.ContainsRune(clean, ':')) {
+		return fmt.Errorf("%s.path %q must be a clean forward-slash directory inside the repository", prefix, p.Path)
 	}
 	return nil
 }
