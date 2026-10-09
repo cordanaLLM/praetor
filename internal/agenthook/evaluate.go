@@ -261,6 +261,18 @@ func evaluateStopLedger(ctx context.Context, root string, canonical Canonical) V
 			"do not report completion while state is unverified."
 		return Verdict{Outcome: Deny, Reason: stopReason(reason, canonical.StopActive)}
 	}
+	report, err := state.AuditWorkingDirContext(verifyCtx, root)
+	if err != nil || !report.Valid {
+		detail := "ledger audit failed"
+		if err != nil {
+			detail = err.Error()
+		} else if len(report.Violations) > 0 {
+			detail = strings.Join(report.Violations, "; ")
+		}
+		reason := "Praetor state audit failed: " + detail +
+			". Resolve the listed ledger rows, run praetorctl state audit ., then retry."
+		return Verdict{Outcome: Deny, Reason: stopReason(reason, canonical.StopActive)}
+	}
 	return Verdict{Outcome: Allow}
 }
 
