@@ -1,0 +1,3 @@
+type: changed
+title: "Dependencies: update mcr.microsoft.com/devcontainers/base:ubuntu26.04 docker digest to 91eff04"
+breaking: false
