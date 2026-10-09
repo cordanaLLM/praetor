@@ -172,11 +172,24 @@ func decodeFragment(raw []byte) (Fragment, error) {
 	if _, ok := sectionTitles[fragment.Type]; !ok || strings.TrimSpace(fragment.Title) == "" {
 		return Fragment{}, errors.New("fragment requires a known type and nonempty title")
 	}
-	normIssue, err := NormaliseIssue(fragment.Issue)
-	if err != nil {
+	var rawMap map[string]any
+	if err := yaml.Unmarshal(raw, &rawMap); err != nil {
 		return Fragment{}, err
 	}
-	fragment.Issue = normIssue
+	if val, ok := rawMap["issue"]; ok {
+		if val == nil {
+			return Fragment{}, errors.New("issue cannot be empty")
+		}
+		strVal, isStr := val.(string)
+		if !isStr {
+			return Fragment{}, fmt.Errorf("invalid issue %v: must be string", val)
+		}
+		normIssue, err := normaliseIssue(strVal)
+		if err != nil {
+			return Fragment{}, err
+		}
+		fragment.Issue = normIssue
+	}
 	return fragment, nil
 }
 
