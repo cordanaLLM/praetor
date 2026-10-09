@@ -1,17 +1,17 @@
 {
   "slug": "onboarding-path",
   "title": "Repository onboarding path",
-  "alt": "Five onboarding commands scaffold configuration and agent files, record debt, prepare a devcontainer, and verify governance.",
+  "alt": "Six commands scaffold config, pin the lock, compile context, record debt, prepare a devcontainer, and verify governance.",
   "text": [
-    "Onboarding commands, in order: 1. Scaffolding (praetorctl init), 2. Context Recompilation (praetorctl compile-context), 3. Brownfield Baselining (praetorctl baseline --record --allow-increase), 4. Devcontainer Setup (praetorctl devcontainer generate), 5. Audit Verification (praetorctl audit).",
-    "Boxes: Target repository (already carries AGENTS.md), Quickstart (praetorctl adopt), Staged alternative (does not pass audit on its own).",
-    "Target repository → 1. Scaffolding (start) → 2. Context Recompilation → 3. Brownfield Baselining → 4. Devcontainer Setup → 5. Audit Verification.",
-    "Quickstart → 5. Audit Verification (skips 1-4) → Staged alternative (remaining gaps).",
-    "Scenario 1, init: Write the configuration, then compile the vendor files from AGENTS.md. init reads AGENTS.md beside the manifest; without it, init writes no agent files. createInitialManifest and initBaselineAndLockfile write the manifest, the lockfile and a zero-debt baseline. initAgentContext runs the compile-context write: Git ignores .workingdir/evidence/, the text register is spliced into AGENTS.md, and the six vendor files and persona copies are compiled and linted.",
-    "Scenario 2, compile-context: Recompile the vendor files and persona copies; rerun after every AGENTS.md edit. compile-context runs the same write that init ran. writeAgentSurfaces copies every .agents/agents persona into each client persona directory, then the caveman lint runs.",
-    "Scenario 3, baseline: Snapshot legacy technical debt into baseline file. HISS scanner sweeps the codebase for existing infractions. Initial legacy debt is recorded with --allow-increase and --reason=\"<why>\" to permit non-zero count.",
-    "Scenario 4, devcontainer: Prepare a portable devcontainer from reviewed Praetor sources. DevContainer configuration and reviewed source bundle companions are generated. The configuration, Dockerfile.praetor and up to eight source parts are written to .devcontainer/.",
-    "Scenario 5, audit: Verify configured governance contracts and debt ratchet. Audit checks manifest, lockfile, agent context, debt baseline, and DevContainer. The staged alternative does not pass the audit on its own: ruleset, gate tooling and hooks remain missing.",
+    "Onboarding commands, in order: 1. Scaffolding (praetorctl init), 2. Lockfile Pinning (praetorctl profile set --lock-source-root), 3. Context Recompilation (praetorctl compile-context), 4. Brownfield Baselining (praetorctl baseline --record --allow-increase), 5. Devcontainer Setup (praetorctl devcontainer generate --source-root), 6. Audit Verification (praetorctl audit --offline).",
+    "Boxes: Target repository (already carries AGENTS.md), Quickstart (praetorctl adopt), Audit passes (the quickstart), Remaining gaps (does not pass audit on its own).",
+    "Target repository → 1. Scaffolding (start) → 2. Lockfile Pinning → 3. Context Recompilation → 4. Brownfield Baselining → 5. Devcontainer Setup → 6. Audit Verification.",
+    "Quickstart → 6. Audit Verification (skips 1-5) → Audit passes (audit passes).",
+    "6. Audit Verification → Remaining gaps (remaining gaps).",
+    "Scenario 1, init: Write the configuration, then compile the vendor files from AGENTS.md. init reads AGENTS.md beside the manifest; without it, init writes no agent files. createInitialManifest and initBaselineAndLockfile write the manifest, an unpinned placeholder lockfile and a zero-debt baseline. initAgentContext runs the compile-context write: Git ignores .workingdir/evidence/, the text register is spliced into AGENTS.md, and the six vendor files and persona copies are compiled and linted.",
+    "Scenario 2, profile set: Pin the lockfile and write the policy catalog from the Praetor checkout. profile set pins placeholder lockfile digests from the reviewed Praetor source root. devcontainer generate and audit require sha256 digests; pinning also materializes the catalog under .config/archetypes/.",
+    "Scenario 3, compile-context: Recompile the vendor files and persona copies; rerun after every AGENTS.md edit. compile-context runs the same write that init ran. writeAgentSurfaces copies every .agents/agents persona into each client persona directory, then the caveman lint runs.",
+    "Scenario 4, baseline: Snapshot legacy technical debt into baseline file. HISS scanner sweeps the codebase for existing infractions. Initial legacy debt is recorded with --allow-increase and --reason=\"<why>\" to permit non-zero count.",
     "(Shortened to 2500 characters; docs/figures/onboarding-path.ts holds the full content.)"
   ],
   "evidence": [
@@ -24,6 +24,8 @@
     "internal/adopt/private_ignore.go:EnsureEvidenceIgnore",
     "internal/compiler/projection.go:CompileVendorTargets",
     "internal/agentcontext/render.go:vendorTargets",
+    "cmd/standardsctl/profile.go:runProfileSet",
+    "internal/adopt/profile_set.go:SetProfile",
     "cmd/standardsctl/compile_context.go:runCompileContext",
     "internal/compiler/projection.go:CompileContextProjections",
     "internal/compiler/projection.go:writeAgentSurfaces",
@@ -42,17 +44,17 @@
     "internal/adopt/adopt.go:manifestFile",
     "internal/adopt/harness.go:resolveAgentsContent"
   ],
-  "spec_sha256": "86a20a22c4275ea6910e6206e7ddb088d357720f83a5160ee4d096893f624d22",
+  "spec_sha256": "fee0c67d47d07f96b04440c8a9ea2631b39833f848e12d4196ae7ad7f1d6ac03",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "6a70b89b2d53c73fa79cb881a89e709622b2cfd2e8568b8e9797a328993dd0fc"
   },
-  "svg_sha256": "5deff15254f4d45302b02241287dacf10c69c4c67ae30bc14b1f2e11ef47c6f3",
-  "static_sha256": "a1fe7426e56635ad9fb298af412a63a7679079a95a6c9690fc5da9aee14f1a84",
+  "svg_sha256": "c7df550106e385b1e897d8022bc61046b310343c1d0715d32d8e4ca2d4c0f583",
+  "static_sha256": "f22d76f0d89952a43e019374ba19ed477c7ec2a34c65d4a8cebeeba5c930bde2",
   "width": 1214,
-  "height": 1463,
+  "height": 1620,
   "static_width": 1214,
-  "static_height": 448,
+  "static_height": 521,
   "edges": [
     {
       "from": "Target repository",
@@ -61,30 +63,39 @@
     },
     {
       "from": "1. Scaffolding",
-      "to": "2. Context Recompilation"
+      "to": "2. Lockfile Pinning"
     },
     {
-      "from": "2. Context Recompilation",
-      "to": "3. Brownfield Baselining"
+      "from": "2. Lockfile Pinning",
+      "to": "3. Context Recompilation"
     },
     {
-      "from": "3. Brownfield Baselining",
-      "to": "4. Devcontainer Setup"
+      "from": "3. Context Recompilation",
+      "to": "4. Brownfield Baselining"
     },
     {
-      "from": "4. Devcontainer Setup",
-      "to": "5. Audit Verification"
+      "from": "4. Brownfield Baselining",
+      "to": "5. Devcontainer Setup"
+    },
+    {
+      "from": "5. Devcontainer Setup",
+      "to": "6. Audit Verification"
     },
     {
       "from": "Quickstart",
-      "to": "5. Audit Verification",
-      "label": "skips 1-4"
+      "to": "6. Audit Verification",
+      "label": "skips 1-5"
     },
     {
-      "from": "5. Audit Verification",
-      "to": "Staged alternative",
+      "from": "6. Audit Verification",
+      "to": "Audit passes",
+      "label": "audit passes"
+    },
+    {
+      "from": "6. Audit Verification",
+      "to": "Remaining gaps",
       "label": "remaining gaps"
     }
   ],
-  "html": "<figure class=\"praetor-figure\" id=\"fig-onboarding-path\" data-figure=\"onboarding-path\" aria-describedby=\"fig-onboarding-path-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"{{base}}/onboarding-path.static.svg\" width=\"1214\" height=\"448\">\n<img src=\"{{base}}/onboarding-path.svg\" alt=\"Five onboarding commands scaffold configuration and agent files, record debt, prepare a devcontainer, and verify governance.\" width=\"1214\" height=\"1463\" loading=\"lazy\">\n</picture>\n<figcaption>Repository onboarding path</figcaption>\n</figure>\n<p><a href=\"{{link}}\">Open the interactive figure</a></p>\n<details class=\"praetor-figure__text\" id=\"fig-onboarding-path-text\"><summary>Text description</summary>\n<ul>\n<li>Onboarding commands, in order: 1. Scaffolding (praetorctl init), 2. Context Recompilation (praetorctl compile-context), 3. Brownfield Baselining (praetorctl baseline --record --allow-increase), 4. Devcontainer Setup (praetorctl devcontainer generate), 5. Audit Verification (praetorctl audit).</li>\n<li>Boxes: Target repository (already carries AGENTS.md), Quickstart (praetorctl adopt), Staged alternative (does not pass audit on its own).</li>\n<li>Target repository → 1. Scaffolding (start) → 2. Context Recompilation → 3. Brownfield Baselining → 4. Devcontainer Setup → 5. Audit Verification.</li>\n<li>Quickstart → 5. Audit Verification (skips 1-4) → Staged alternative (remaining gaps).</li>\n<li>Scenario 1, init: Write the configuration, then compile the vendor files from AGENTS.md. init reads AGENTS.md beside the manifest; without it, init writes no agent files. createInitialManifest and initBaselineAndLockfile write the manifest, the lockfile and a zero-debt baseline. initAgentContext runs the compile-context write: Git ignores .workingdir/evidence/, the text register is spliced into AGENTS.md, and the six vendor files and persona copies are compiled and linted.</li>\n<li>Scenario 2, compile-context: Recompile the vendor files and persona copies; rerun after every AGENTS.md edit. compile-context runs the same write that init ran. writeAgentSurfaces copies every .agents/agents persona into each client persona directory, then the caveman lint runs.</li>\n<li>Scenario 3, baseline: Snapshot legacy technical debt into baseline file. HISS scanner sweeps the codebase for existing infractions. Initial legacy debt is recorded with --allow-increase and --reason=&quot;&lt;why&gt;&quot; to permit non-zero count.</li>\n<li>Scenario 4, devcontainer: Prepare a portable devcontainer from reviewed Praetor sources. DevContainer configuration and reviewed source bundle companions are generated. The configuration, Dockerfile.praetor and up to eight source parts are written to .devcontainer/.</li>\n<li>Scenario 5, audit: Verify configured governance contracts and debt ratchet. Audit checks manifest, lockfile, agent context, debt baseline, and DevContainer. The staged alternative does not pass the audit on its own: ruleset, gate tooling and hooks remain missing.</li>\n<li>(Shortened to 2500 characters; docs/figures/onboarding-path.ts holds the full content.)</li>\n</ul>\n</details>"
+  "html": "<figure class=\"praetor-figure\" id=\"fig-onboarding-path\" data-figure=\"onboarding-path\" aria-describedby=\"fig-onboarding-path-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"{{base}}/onboarding-path.static.svg\" width=\"1214\" height=\"521\">\n<img src=\"{{base}}/onboarding-path.svg\" alt=\"Six commands scaffold config, pin the lock, compile context, record debt, prepare a devcontainer, and verify governance.\" width=\"1214\" height=\"1620\" loading=\"lazy\">\n</picture>\n<figcaption>Repository onboarding path</figcaption>\n</figure>\n<p><a href=\"{{link}}\">Open the interactive figure</a></p>\n<details class=\"praetor-figure__text\" id=\"fig-onboarding-path-text\"><summary>Text description</summary>\n<ul>\n<li>Onboarding commands, in order: 1. Scaffolding (praetorctl init), 2. Lockfile Pinning (praetorctl profile set --lock-source-root), 3. Context Recompilation (praetorctl compile-context), 4. Brownfield Baselining (praetorctl baseline --record --allow-increase), 5. Devcontainer Setup (praetorctl devcontainer generate --source-root), 6. Audit Verification (praetorctl audit --offline).</li>\n<li>Boxes: Target repository (already carries AGENTS.md), Quickstart (praetorctl adopt), Audit passes (the quickstart), Remaining gaps (does not pass audit on its own).</li>\n<li>Target repository → 1. Scaffolding (start) → 2. Lockfile Pinning → 3. Context Recompilation → 4. Brownfield Baselining → 5. Devcontainer Setup → 6. Audit Verification.</li>\n<li>Quickstart → 6. Audit Verification (skips 1-5) → Audit passes (audit passes).</li>\n<li>6. Audit Verification → Remaining gaps (remaining gaps).</li>\n<li>Scenario 1, init: Write the configuration, then compile the vendor files from AGENTS.md. init reads AGENTS.md beside the manifest; without it, init writes no agent files. createInitialManifest and initBaselineAndLockfile write the manifest, an unpinned placeholder lockfile and a zero-debt baseline. initAgentContext runs the compile-context write: Git ignores .workingdir/evidence/, the text register is spliced into AGENTS.md, and the six vendor files and persona copies are compiled and linted.</li>\n<li>Scenario 2, profile set: Pin the lockfile and write the policy catalog from the Praetor checkout. profile set pins placeholder lockfile digests from the reviewed Praetor source root. devcontainer generate and audit require sha256 digests; pinning also materializes the catalog under .config/archetypes/.</li>\n<li>Scenario 3, compile-context: Recompile the vendor files and persona copies; rerun after every AGENTS.md edit. compile-context runs the same write that init ran. writeAgentSurfaces copies every .agents/agents persona into each client persona directory, then the caveman lint runs.</li>\n<li>Scenario 4, baseline: Snapshot legacy technical debt into baseline file. HISS scanner sweeps the codebase for existing infractions. Initial legacy debt is recorded with --allow-increase and --reason=&quot;&lt;why&gt;&quot; to permit non-zero count.</li>\n<li>(Shortened to 2500 characters; docs/figures/onboarding-path.ts holds the full content.)</li>\n</ul>\n</details>"
 }

@@ -13,7 +13,7 @@ const vendorFiles = [
 
 export default {
   title: 'Repository onboarding path',
-  alt: 'Five onboarding commands scaffold configuration and agent files, record debt, prepare a devcontainer, and verify governance.',
+  alt: 'Six commands scaffold config, pin the lock, compile context, record debt, prepare a devcontainer, and verify governance.',
   evidence: [
     'cmd/standardsctl/init.go:runInit',
     'cmd/standardsctl/init.go:ensureManifestAbsent',
@@ -24,6 +24,8 @@ export default {
     'internal/adopt/private_ignore.go:EnsureEvidenceIgnore',
     'internal/compiler/projection.go:CompileVendorTargets',
     'internal/agentcontext/render.go:vendorTargets',
+    'cmd/standardsctl/profile.go:runProfileSet',
+    'internal/adopt/profile_set.go:SetProfile',
     'cmd/standardsctl/compile_context.go:runCompileContext',
     'internal/compiler/projection.go:CompileContextProjections',
     'internal/compiler/projection.go:writeAgentSurfaces',
@@ -44,7 +46,8 @@ export default {
   ],
   describe: [
     'In the onboarding guide, praetorctl adopt is the primary quickstart: one run adopts an existing repository into full governance, synthesizing AGENTS.md when missing and configuring the manifest, pinned lock, catalog, baseline, agent files, DevContainer, hooks and CI workflows.',
-    'praetorctl init is the staged alternative for repositories that already carry canonical AGENTS.md instructions. Five commands run in order: init writes the manifest, lockfile and baseline, compile-context projects vendor files, baseline records debt, devcontainer generate prepares the container bundle, and audit verifies governance. init refuses to run after adoption because .standards.yaml already exists.',
+    'praetorctl init is the staged alternative for repositories that already carry canonical AGENTS.md instructions. Six commands run in order: init writes the manifest, lockfile placeholder and baseline, profile set pins the lockfile and catalog, compile-context projects vendor files, baseline records debt, devcontainer generate prepares the container bundle, and audit verifies governance. init refuses to run after adoption because .standards.yaml already exists.',
+    'The adopt quickstart passes audit on its own once committed; the staged init path leaves remaining gaps (ruleset, CI workflows, and hooks) that do not pass audit alone.',
   ],
   props: {
     speed: 1100,
@@ -67,23 +70,33 @@ export default {
           gap: 20,
           children: [
             { id: 'init', label: '1. Scaffolding', sub: 'praetorctl init', width: 330 },
-            { id: 'compile', label: '2. Context Recompilation', sub: 'praetorctl compile-context', width: 330 },
-            { id: 'baseline', label: '3. Brownfield Baselining', sub: 'praetorctl baseline --record --allow-increase', width: 330 },
-            { id: 'devcontainer', label: '4. Devcontainer Setup', sub: 'praetorctl devcontainer generate', width: 330 },
-            { id: 'audit', label: '5. Audit Verification', sub: 'praetorctl audit', width: 330 },
+            { id: 'pin', label: '2. Lockfile Pinning', sub: 'praetorctl profile set --lock-source-root', width: 330 },
+            { id: 'compile', label: '3. Context Recompilation', sub: 'praetorctl compile-context', width: 330 },
+            { id: 'baseline', label: '4. Brownfield Baselining', sub: 'praetorctl baseline --record --allow-increase', width: 330 },
+            { id: 'devcontainer', label: '5. Devcontainer Setup', sub: 'praetorctl devcontainer generate --source-root', width: 330 },
+            { id: 'audit', label: '6. Audit Verification', sub: 'praetorctl audit --offline', width: 330 },
           ],
         },
-        { id: 'governed', label: 'Staged alternative', sub: 'does not pass audit on its own', shape: 'store', width: 240 },
+        {
+          direction: 'column',
+          gap: 24,
+          children: [
+            { id: 'governed', label: 'Audit passes', sub: 'the quickstart', shape: 'store', width: 240 },
+            { id: 'gaps', label: 'Remaining gaps', sub: 'does not pass audit on its own', shape: 'store', width: 240 },
+          ],
+        },
       ],
     },
     edges: [
       { from: 'repo', to: 'init', label: 'start' },
-      { from: 'init', to: 'compile' },
+      { from: 'init', to: 'pin' },
+      { from: 'pin', to: 'compile' },
       { from: 'compile', to: 'baseline' },
       { from: 'baseline', to: 'devcontainer' },
       { from: 'devcontainer', to: 'audit' },
-      { from: 'adopt', to: 'audit', label: 'skips 1-4' },
-      { from: 'audit', to: 'governed', label: 'remaining gaps' },
+      { from: 'adopt', to: 'audit', label: 'skips 1-5' },
+      { from: 'audit', to: 'governed', label: 'audit passes' },
+      { from: 'audit', to: 'gaps', label: 'remaining gaps' },
     ],
     steps: [
       {
@@ -92,11 +105,11 @@ export default {
         flow: [
           { edges: 'repo->init', say: 'init reads AGENTS.md beside the manifest; without it, init writes no agent files.' },
           {
-            say: 'createInitialManifest and initBaselineAndLockfile write the manifest, the lockfile and a zero-debt baseline.',
+            say: 'createInitialManifest and initBaselineAndLockfile write the manifest, an unpinned placeholder lockfile and a zero-debt baseline.',
             show: {
               init: [
                 { tag: 'created', tone: 'green', text: '.standards.yaml', mono: true },
-                { tag: 'created', tone: 'green', text: '.standards.lock', mono: true },
+                { tag: 'created', tone: 'green', text: '.standards.lock', meta: 'unpinned placeholder', mono: true },
                 { tag: 'created', tone: 'green', text: '.standards-baseline.json', meta: '0 infractions', mono: true },
               ],
             },
@@ -106,7 +119,7 @@ export default {
             show: {
               init: [
                 { tag: 'created', tone: 'green', text: '.standards.yaml', mono: true },
-                { tag: 'created', tone: 'green', text: '.standards.lock', mono: true },
+                { tag: 'created', tone: 'green', text: '.standards.lock', meta: 'unpinned placeholder', mono: true },
                 { tag: 'created', tone: 'green', text: '.standards-baseline.json', meta: '0 infractions', mono: true },
                 { tag: 'updated', tone: 'blue', text: '.gitignore', meta: 'evidence ignored', mono: true },
                 { tag: 'updated', tone: 'blue', text: 'AGENTS.md', meta: 'register block', mono: true },
@@ -118,10 +131,26 @@ export default {
         ],
       },
       {
+        label: 'profile set',
+        caption: 'Pin the lockfile and write the policy catalog from the Praetor checkout.',
+        flow: [
+          { edges: 'init->pin', say: 'profile set pins placeholder lockfile digests from the reviewed Praetor source root.' },
+          {
+            say: 'devcontainer generate and audit require sha256 digests; pinning also materializes the catalog under .config/archetypes/.',
+            show: {
+              pin: [
+                { tag: 'updated', tone: 'blue', text: '.standards.lock', meta: 'sha256 digests', mono: true },
+                { tag: 'created', tone: 'green', text: '.config/archetypes/', meta: 'policy catalog', mono: true },
+              ],
+            },
+          },
+        ],
+      },
+      {
         label: 'compile-context',
         caption: 'Recompile the vendor files and persona copies; rerun after every AGENTS.md edit.',
         flow: [
-          { edges: 'init->compile', say: 'compile-context runs the same write that init ran.' },
+          { edges: 'pin->compile', say: 'compile-context runs the same write that init ran.' },
           {
             say: 'writeAgentSurfaces copies every .agents/agents persona into each client persona directory, then the caveman lint runs.',
             show: {
@@ -159,12 +188,12 @@ export default {
         flow: [
           { edges: 'baseline->devcontainer', say: 'DevContainer configuration and reviewed source bundle companions are generated.' },
           {
-            say: 'The configuration, Dockerfile.praetor and up to eight source parts are written to .devcontainer/.',
+            say: 'JSON configuration and exact source companions are prepared; build and startup remain separate checks.',
             show: {
               devcontainer: [
-                { tag: 'created', tone: 'green', text: '.devcontainer/devcontainer.json', mono: true },
-                { tag: 'created', tone: 'green', text: '.devcontainer/Dockerfile.praetor', mono: true },
-                { tag: 'created', tone: 'green', text: '.devcontainer/praetor-source.NNN.b64', mono: true },
+                { tag: 'prepared', tone: 'green', text: 'devcontainer.json', mono: true },
+                { tag: 'prepared', tone: 'green', text: 'Dockerfile.praetor', mono: true },
+                { tag: 'prepared', tone: 'green', text: 'praetor-source.NNN.b64', mono: true },
               ],
             },
           },
@@ -176,11 +205,15 @@ export default {
         flow: [
           { edges: 'devcontainer->audit', say: 'Audit checks manifest, lockfile, agent context, debt baseline, and DevContainer.' },
           {
-            edges: 'audit->governed',
+            edges: 'audit->gaps',
             say: 'The staged alternative does not pass the audit on its own: ruleset, gate tooling and hooks remain missing.',
             show: {
               audit: [
                 { tag: 'fails', tone: 'orange', text: 'audit fails on gaps', meta: 'ruleset, tooling, hooks missing' },
+                { tag: 'staged', tone: 'orange', text: 'does not pass audit alone' },
+              ],
+              gaps: [
+                { tag: 'gaps', tone: 'orange', text: 'ruleset and CI missing' },
                 { tag: 'staged', tone: 'orange', text: 'does not pass audit alone' },
               ],
             },
@@ -189,10 +222,10 @@ export default {
       },
       {
         label: 'adopt quickstart',
-        caption: 'The quickstart that replaces steps 1 to 4, not a step before init.',
+        caption: 'The quickstart that replaces steps 1 to 5, not a step before init.',
         flow: [
           {
-            say: 'One adopt run writes what steps 1 to 4 write, and synthesizes AGENTS.md when it is missing.',
+            say: 'One adopt run writes what steps 1 to 5 write, and synthesizes AGENTS.md when it is missing.',
             show: {
               adopt: [
                 { tag: 'created', tone: 'green', text: '.standards.yaml', mono: true },
@@ -206,9 +239,23 @@ export default {
           },
           {
             edges: 'adopt->audit',
-            say: 'The path continues at step 5. init would now refuse: .standards.yaml already exists.',
+            say: 'The path continues at step 6. init would now refuse: .standards.yaml already exists.',
             show: {
               init: [{ tag: 'refused', tone: 'orange', text: '.standards.yaml already exists', meta: 'ensureManifestAbsent' }],
+            },
+          },
+          {
+            edges: 'audit->governed',
+            say: 'With git add -A, praetorctl audit --offline exits 0: the quickstart passes audit on its own.',
+            show: {
+              audit: [
+                { tag: 'pass', tone: 'green', text: 'audit --offline exits 0' },
+                { tag: 'verified', tone: 'green', text: 'all gates pass' },
+              ],
+              governed: [
+                { tag: 'pass', tone: 'green', text: 'governance contract verified' },
+                { tag: 'verified', tone: 'green', text: '0 files modified', meta: 'read-only' },
+              ],
             },
           },
         ],
