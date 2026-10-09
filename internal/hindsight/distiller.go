@@ -103,12 +103,14 @@ func distillSources(ctx context.Context, repoPath string, sources []distillSourc
 // matches, or whose profile has no flavor, yields no fact rather than a guess.
 func distillFlavorFacts(_ context.Context, repoPath string) ([]MemoryFact, error) {
 	targets, err := flavor.ResolveTargets(repoPath)
-	if flavor.IsNotApplicable(err) {
+	if flavor.IsNotApplicable(err) || errors.Is(err, flavor.ErrNoProfile) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve repository flavor: %w", err)
 	}
+	// The profile the resolution used; a pinned repository declaring none falls back to the
+	// flavor's own, so the fact never reads "under profile .".
 	profile := flavor.ResolutionProfile(repoPath)
 	facts := make([]MemoryFact, 0, len(targets))
 	for i := 0; i < len(targets) && i < config.MaxFlavorPins; i++ {
@@ -116,11 +118,15 @@ func distillFlavorFacts(_ context.Context, repoPath string) ([]MemoryFact, error
 		if err != nil {
 			return nil, fmt.Errorf("resolve flavor %q: %w", targets[i].Flavor, err)
 		}
+		used := profile
+		if used == "" {
+			used = flv.HISSProfile()
+		}
 		stmt := fmt.Sprintf("Repository uses flavor %s under profile %s. Description: %s.",
-			flv.Name(), profile, flv.Description())
+			flv.Name(), used, flv.Description())
 		if targets[i].Path != "." {
 			stmt = fmt.Sprintf("Directory %s uses flavor %s under profile %s. Description: %s.",
-				targets[i].Path, flv.Name(), profile, flv.Description())
+				targets[i].Path, flv.Name(), used, flv.Description())
 		}
 		facts = append(facts, createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()}))
 	}

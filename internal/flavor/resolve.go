@@ -44,12 +44,12 @@ func ResolutionProfile(repoPath string) string {
 
 // ResolveForProfile names the flavor implementing profile that matches the repository, for a
 // caller that has already decided the profile, such as adoption, which records it in the
-// manifest it writes. An empty profile is ErrNoFlavorMatched, a profile no flavor implements is
+// manifest it writes. An empty profile is ErrNoProfile (which also wraps ErrNoFlavorMatched), a profile no flavor implements is
 // ErrFlavorNotApplicable, and a profile whose flavors all fail to match is ErrNoFlavorMatched.
 func ResolveForProfile(repoPath, profile string) (string, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
-		return "", fmt.Errorf("%w: no profile classifies %s", ErrNoFlavorMatched, repoPath)
+		return "", fmt.Errorf("%w: %w: %s", ErrNoProfile, ErrNoFlavorMatched, repoPath)
 	}
 	candidates := flavorsForProfile(profile)
 	if len(candidates) == 0 {

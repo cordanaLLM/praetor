@@ -22,6 +22,7 @@ func TestIsNotApplicable(t *testing.T) {
 		{"nil", nil, false},
 		{"unrelated", errors.New("read failed"), false},
 		{"pin not scaffoldable", flavor.ErrPinNotScaffoldable, false},
+		{"no profile classifies", fmt.Errorf("w: %w: %w", flavor.ErrNoProfile, flavor.ErrNoFlavorMatched), false},
 	}
 	for _, c := range cases {
 		if got := flavor.IsNotApplicable(c.err); got != c.want {
@@ -88,5 +89,40 @@ func TestAuditTargets_Boundary_ScopedPinReadsGitleaksAtTheRoot(t *testing.T) {
 	}
 	if !hasGitleaksMissing(map[string]string{".standards.yaml": pins, "src/main.c": "int main(){}\n", "src/.gitleaks.toml": gitleaks}) {
 		t.Error("a .gitleaks.toml below the pin path satisfied the root requirement")
+	}
+}
+
+// TestResolveTargets_Negative_NoProfileIsNotASkip: a missing directory and an empty one have no
+// profile, so the audit keeps refusing them (fail closed); only a classified profile with no
+// matching flavor is the skip.
+func TestResolveTargets_Negative_NoProfileIsNotASkip(t *testing.T) {
+	for name, dir := range map[string]string{"missing": "/nonexistent/path", "empty": t.TempDir()} {
+		_, err := flavor.ResolveTargets(dir)
+		if err == nil || flavor.IsNotApplicable(err) || !errors.Is(err, flavor.ErrNoProfile) {
+			t.Errorf("%s: err = %v; want a refusal wrapping ErrNoProfile, not the skip", name, err)
+		}
+		if !errors.Is(err, flavor.ErrNoFlavorMatched) {
+			t.Errorf("%s: err = %v; must still wrap ErrNoFlavorMatched for nothing-matched callers", name, err)
+		}
+	}
+}
+
+// TestIsScaffoldSkip: skips are the audit's decision, no profile and an unscaffoldable pin; a
+// bad pin and nil are not.
+func TestIsScaffoldSkip(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want bool
+	}{
+		"not applicable": {flavor.ErrFlavorNotApplicable, true},
+		"no profile":     {flavor.ErrNoProfile, true},
+		"scoped pin":     {flavor.ErrPinNotScaffoldable, true},
+		"bad pin":        {errors.New("flavors[0] in .standards.yaml: unknown flavor"), false},
+		"nil":            {nil, false},
+	}
+	for name, c := range cases {
+		if got := flavor.IsScaffoldSkip(c.err); got != c.want {
+			t.Errorf("%s: IsScaffoldSkip = %v; want %v", name, got, c.want)
+		}
 	}
 }

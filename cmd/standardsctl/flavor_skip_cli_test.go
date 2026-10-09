@@ -45,3 +45,14 @@ func TestFlavorAudit_Boundary_PinWinsOverSkip(t *testing.T) {
 	}
 	mustContain(t, out, "(Flavor: native-gpu-systems)")
 }
+
+// Negative (#1111 review): a mistyped path and an empty directory have no profile, so the audit
+// keeps failing instead of skipping.
+func TestFlavorAudit_Negative_NoProfileStillFails(t *testing.T) {
+	for name, dir := range map[string]string{"missing": "/nonexistent/path", "empty": t.TempDir()} {
+		out, err := captureStdout(t, func() error { return dispatchCommand("flavor", []string{"audit", dir}) })
+		if err == nil || strings.Contains(out, "Skipped") {
+			t.Errorf("%s: a repository no profile classifies must fail, got err=%v\n%s", name, err, out)
+		}
+	}
+}

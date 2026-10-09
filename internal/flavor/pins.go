@@ -94,6 +94,15 @@ func SingleRootFlavor(targets []Target) (string, error) {
 	return targets[0].Flavor, nil
 }
 
+// IsScaffoldSkip reports whether err means a scaffold has no flavor to write and says so, rather
+// than failing: the audit's own not-applicable decision (IsNotApplicable), a repository no profile
+// classifies (ErrNoProfile: nothing to scaffold, though the audit still refuses it) or a pin the
+// root scaffold cannot express (ErrPinNotScaffoldable). Every other resolution error, such as a
+// bad pin, is a failure for the caller to report.
+func IsScaffoldSkip(err error) bool {
+	return IsNotApplicable(err) || errors.Is(err, ErrNoProfile) || errors.Is(err, ErrPinNotScaffoldable)
+}
+
 // pinnedTargets validates each pin against the registry and the working tree.
 func pinnedTargets(repoPath string, pins []config.FlavorPin) ([]Target, error) {
 	targets := make([]Target, 0, len(pins))

@@ -207,3 +207,31 @@ func TestAdopt_Negative_SkipsAFlavorItCannotScaffoldAtTheRoot(t *testing.T) {
 		t.Errorf("the skip must name the pins, got %+v", rep.ActionDetails)
 	}
 }
+
+// TestApplyDetectedFlavor_Negative_BadFlavorPinIsAnAdoptError: an unknown flavor name or a
+// missing pin directory is the failure the pre-push audit reports, so the flavor step records it
+// as an error and never as "Not applicable ... audit skips with the same reason" (#1111 review).
+func TestApplyDetectedFlavor_Negative_BadFlavorPinIsAnAdoptError(t *testing.T) {
+	cases := map[string]string{
+		"unknown-name": "flavors:\n  - name: native-gpu-systm\n",
+		"missing-path": "flavors:\n  - name: go-service\n    path: missing\n",
+	}
+	for name, pins := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := t.TempDir()
+			mustWrite(t, filepath.Join(repo, ".standards.yaml"), pinnedManifest(pins))
+			s := &adoptSession{repoPath: repo, arch: "framework", opts: AdoptOptions{DryRun: true}, report: &AdoptReport{}}
+			s.applyDetectedFlavor(context.Background())
+			found := false
+			for _, e := range s.report.Errors {
+				found = found || strings.Contains(e, "resolve flavor")
+			}
+			if !found {
+				t.Fatalf("a bad pin must be an adopt error, got errors %v", s.report.Errors)
+			}
+			if hasAction(s.report, flavorReportPath, actionSkip) {
+				t.Errorf("a bad pin must not be recorded as a skipped flavor: %+v", s.report.ActionDetails)
+			}
+		})
+	}
+}

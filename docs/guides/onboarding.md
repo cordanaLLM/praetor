@@ -117,13 +117,16 @@ a Go library.
   the governance tool rather than the repository.
 - Where nothing matches and no flavor is pinned, one decision (`flavor.IsNotApplicable`) governs
   every caller, so adoption and the audit reach the same verdict: `praetorctl adopt` scaffolds no
-  flavor templates and warns "Not applicable" (`internal/adopt/flavor_report_test.go`), and
+  flavor templates and warns "Not applicable" (`internal/adopt/flavor_report_test.go`), a bad
+  `flavors` pin is an adoption error, never that warning
+  (`internal/adopt/flavor_report_test.go`), and
   `flavor audit` prints "Skipped, not applicable" with the same reason and exits 0
   (`cmd/standardsctl/flavor_skip_cli_test.go`). `gate run` records its Flavor Conformance stage as
-  not applicable and names the flavors of the profile it tried, so the generated pre-push
-  `flavor-audit` job passes on the skip (`internal/gating/flavor_stage_test.go`). A repository whose
-  markers match a flavor but does not conform still fails, and a `flavors` pin below wins over the
-  skip. `flavor apply` still refuses with `ErrNoFlavorMatched` instead of scaffolding a flavor that
+  not applicable and names the flavors of the profile it tried (`internal/gating/flavor_stage_test.go`).
+  The generated pre-push `flavor-audit` job runs `flavor audit .`, so it passes on the same skip. A repository whose
+  markers match a flavor but does not conform still fails, a repository no profile classifies (a
+  mistyped or empty directory, `flavor.ErrNoProfile`) still fails
+  (`cmd/standardsctl/flavor_skip_cli_test.go`), and a `flavors` pin below wins over the skip. `flavor apply` still refuses with `ErrNoFlavorMatched` instead of scaffolding a flavor that
   describes nothing about the repository; pass `--flavor=<name>` to scaffold or audit against one
   deliberately. A flat Go module with only root `.go` files is one such repository.
 - `go-service` also implements `app-service` (`flavor.MultiProfile`), tried after the flavors built
@@ -133,9 +136,8 @@ a Go library.
   `gate run` and the generated pre-push hook, which runs the audit. Each entry names a flavor
   (`praetorctl flavor list`) and optionally a repository-relative `path`; a repository with several
   components lists one entry per path. A path-scoped entry audits the flavor's stack templates and
-  toolchains in that directory and the repository-level files (`.github/`, `.vscode/`, `.paperclip/`,
-  `lefthook.yml`, `.gitleaks.toml`, `.standards.yaml`, `.standards.lock`, `AGENTS.md`, `CLAUDE.md`) at the repository root, where they live whichever directory holds the stack
-  (`internal/flavor/pins_test.go`). An unknown flavor, a missing directory or a path outside the
+  toolchains in that directory and the repository-level files at the repository root, where they
+  live whichever directory holds the stack; the list is the one below (`internal/flavor/pins_test.go`). An unknown flavor, a missing directory or a path outside the
   repository, symlinks included, is refused, never skipped. An explicit `--flavor` still wins on
   the command line (`flavor.ResolveTargets`, `internal/config/flavor_pins.go`,
   `cmd/standardsctl/flavor_pin_cli_test.go`).
@@ -152,7 +154,7 @@ a Go library.
   so they act on the flavor the audit measures. A scaffold writes one flavor at the repository
   root: with a root pin it scaffolds that flavor. A directory-scoped or a second pin gets no
   scaffold: `flavor apply` refuses (`flavor.ErrPinNotScaffoldable`) and `adopt` skips the flavor
-  step with that reason. For such pins, keep the repository-level files (`.github/`, `.vscode/`, `.paperclip/`,
+  step with that reason and no `--flavor` suggestion. For such pins, keep the repository-level files (`.github/`, `.vscode/`, `.paperclip/`,
   `lefthook.yml`, `.gitleaks.toml`, `.standards.yaml`, `.standards.lock`, `AGENTS.md`, `CLAUDE.md`)
   at the repository root and the stack files (for a Go service `go.mod`, `.golangci.yml`,
   `.gosec.json`, `Dockerfile`) under each pinned path; the list is built from the audit's own
