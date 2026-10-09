@@ -2,6 +2,7 @@ package agenthook
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -131,4 +132,39 @@ func stopLauncherProblems(run, probe, timeout time.Duration) []string {
 		problems = append(problems, "probes plus run take up to "+worst.String()+", past the client timeout "+timeout.String())
 	}
 	return problems
+}
+
+// TestRegisteredStopCommandHaltsARepeatedDeny: a stop that is still denied after one
+// continuation ends the session with continue:false and exit 0 instead of exit 2 again, for
+// every client (positive); the first pass still exits 2 (negative); a clean repeated stop
+// stays silent (boundary).
+func TestRegisteredStopCommandHaltsARepeatedDeny(t *testing.T) {
+	root := syncedRepository(t)
+	_, getenv := buildStub(t, "python3")
+	for client := range trackedStopFiles {
+		stubStdout(t, dueReport("commit"))
+		run := func(active bool) Response {
+			in := stopInvocation(client, root, getenv, finalMessagePayload(t, client, "Done.", active))
+			in.Event = string(EventStop)
+			in.Policy = policy(t)
+			return Run(context.Background(), in)
+		}
+		first := run(false)
+		if first.ExitCode != 2 || len(first.Stdout) != 0 {
+			t.Errorf("%s first pass: %+v, want exit 2 and no stdout", client, first)
+		}
+		second := run(true)
+		var body struct {
+			Continue *bool  `json:"continue"`
+			Reason   string `json:"stopReason"`
+		}
+		if err := json.Unmarshal(second.Stdout, &body); err != nil || second.ExitCode != 0 ||
+			body.Continue == nil || *body.Continue || !strings.Contains(body.Reason, "Checkpoint remains incomplete") {
+			t.Errorf("%s repeated pass: %+v (%v), want exit 0 and continue:false", client, second, err)
+		}
+		stubStdout(t, cleanReport)
+		if clean := run(true); clean.ExitCode != 0 || len(clean.Stdout) != 0 {
+			t.Errorf("%s clean repeated pass: %+v, want silent allow", client, clean)
+		}
+	}
 }

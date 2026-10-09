@@ -1037,7 +1037,10 @@ which`, `let me know whether`, `tell me which`, `pick one`, `which one`, `prefer
 call`, …) and the closing paragraphs hold an options list of two or more items. A bare
 `Let me know if you need anything else.` or `Tell me if CI fails.` after a summary list
 points at no choice and passes. A question in an earlier paragraph, followed by more
-report, passes as rhetorical.
+report, passes as rhetorical. A list in the last paragraph counts as a question when one
+of its items itself ends in `?` or `？` (`Two decisions needed:` then `1. Rebase or
+merge?`), because a list of questions is the usual way to ask in prose; a list in the
+earlier paragraph, followed by more report, is not judged.
 
 Trade-off: the check cannot tell a rhetorical question from a real one inside a single
 paragraph, so a one-paragraph report that asks and answers ("Why did it fail? The cache was
@@ -1049,7 +1052,13 @@ choices through it, then end the turn, and adds that a client without a structur
 tool in its current mode (Codex outside the modes that offer `request_user_input`) should
 restate the choice as a decision or a statement without a question.
 
-The deny is block-once: with `stop_hook_active` set (agy: `executionNum` above 1) the check
+A stop that is still denied on the repeated pass (`stop_hook_active` set, for a ledger or
+checkpoint the agent cannot clear) is answered with `{"continue": false, "stopReason": ...,
+"systemMessage": ...}` and exit 0 for `claude`, `codex` and `gemini`, the shape the retired
+`checkpoint.py` used, so the session ends with the reason stated instead of looping. The
+test is `TestRegisteredStopCommandHaltsARepeatedDeny`.
+
+The prose-question deny is block-once: with `stop_hook_active` set (agy: `executionNum` above 1) the check
 is a stated skip, so a false positive costs one extra turn and cannot loop. An empty or
 absent message is a stated skip as well. The check follows the existing `hooks.scope`
 setting: an ungoverned workspace is skipped under the default `governed` scope before any
@@ -1105,8 +1114,8 @@ registrations match the shell tool only, and the `lefthook` dialect keeps its be
 - Codex return register enforcement: `SubagentStop` exposes the returned text, but the
   spawn receipt exposes no documented dispatch-to-agent correlation key. Capability
   reporting keeps enforcement `unenforceable` instead of guessing ownership.
-- The per-dialect encoding that comes with the `agy` dialect:
-  `post-tool`'s due-checkpoint note and `stop`'s block/continue decision still reach the
+- The per-dialect encoding that comes with the `agy` dialect, except the repeated stop
+  (`continue: false`, above): `post-tool`'s due-checkpoint note and the first `stop` block still reach the
   client through the same generic `Deny`/`Skip` encoding `pre-tool` uses (stderr text and
   an exit code), not the native JSON shape (`hookSpecificOutput.additionalContext`,
   `decision: block` vs `continue: false`) those two events are specified to use; that

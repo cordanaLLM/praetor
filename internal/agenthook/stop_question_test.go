@@ -48,6 +48,12 @@ var stopFixtures = []stopFixture{
 	{"question in a closing table cell", "Result:\n\n| case | verdict |\n| --- | --- |\n| why? | none |", Allow},
 	{"full-width closing question", "Fixed it.\n\nPush now\uff1f", Deny},
 	{"single paragraph that asks and answers", "Why did it fail? The cache was stale.", Deny},
+	{"intro then numbered questions", "Two decisions needed:\n\n1. Rebase or merge?\n2. Push now?", Deny},
+	{"numbered questions only", "1. Rebase or merge?\n2. Push now?", Deny},
+	{"statement then bulleted questions", "Done.\n\n- Should I rebase?\n- Should I push?", Deny},
+	{"list of statements then no question", "Done.\n\n- Rebased.\n- Pushed.", Allow},
+	{"question list followed by a statement paragraph", "Open items:\n\n- Why did it fail?\n\nIt was the cache.", Allow},
+	{"list item with a question mark mid-item", "Done.\n\n- Fixed the why? case.", Allow},
 	{"empty message", "", Skip},
 	{"blank message", " \n\t\n", Skip},
 }
