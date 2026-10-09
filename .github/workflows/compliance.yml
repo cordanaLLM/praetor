@@ -58,16 +58,17 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go Toolchain
+        id: setup-go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
 
       - name: Restore Go Module And Build Caches
         uses: ./.github/actions/go-cache
         with:
           job: compliance
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       # The workflow runs on push to main and lts-* as well as on pull requests, so the step
       # carries no event condition: a commit that reaches a protected branch directly is

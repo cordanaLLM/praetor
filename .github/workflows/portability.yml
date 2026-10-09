@@ -148,16 +148,17 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Go Toolchain
+        id: setup-go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
 
       - name: Restore Go Module And Build Caches
         uses: ./.github/actions/go-cache
         with:
           job: portability
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       - name: Setup Python Toolchain
         id: python

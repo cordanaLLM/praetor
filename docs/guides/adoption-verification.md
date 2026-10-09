@@ -954,11 +954,11 @@ fails this way until the toolchain that scans is upgraded:
 - Upgrade Go to the patch release that fixes the advisory and re-run the gate; nothing else is
   needed. `go version` names the toolchain, and the advisory (for the one above,
   <https://pkg.go.dev/vuln/GO-2026-5037>) names the fixed release. This repository's CI sets
-  `check-latest: true` on the `actions/setup-go` step of each job that runs the gate
+  `go-version-file: go.mod` on the `actions/setup-go` step of each job that runs the gate
   ([`.github/workflows/ci.yml`](https://github.com/cordanaLLM/praetor/blob/main/.github/workflows/ci.yml),
   [`.github/workflows/security.yml`](https://github.com/cordanaLLM/praetor/blob/main/.github/workflows/security.yml)),
-  so it takes a patch release as soon as the runner can download it, not when the runner image
-  next updates.
+  so it takes the patch release named by the `toolchain` directive, which Renovate keeps current,
+  not the newest one the `actions/go-versions` manifest lists (the manifest lags a release).
 - Until you can upgrade, a `not_affected` statement for the advisory is the stopgap:
   `vulnerable_code_not_present`, with an impact statement naming the affected packages the build
   does not import. After the upgrade the gate prints the statement as unused; remove it then.
@@ -1000,9 +1000,10 @@ dependency is updated past the fix. Run `praetorctl security govuln` to list the
 `praetorctl adopt` to move an unedited `lefthook.yml` to the new job. The standard library counts
 too: after a Go security release the gate fails on every run until the Go toolchain that scans is
 upgraded to the fixed patch release, with a `not_affected` statement as the stopgap
-([Standard-library advisories](#go-vulnerabilities-and-the-openvex-document) above). In CI, let
-`actions/setup-go` resolve the newest patch release (`check-latest: true`) on the jobs that run the
-gate.
+([Standard-library advisories](#go-vulnerabilities-and-the-openvex-document) above). In CI, pin the
+fixed release in the `toolchain` directive of `go.mod` and set `actions/setup-go` up with
+`go-version-file: go.mod` on the jobs that run the gate; `check-latest: true` resolves through the
+`actions/go-versions` manifest, which can lag a release.
 
 ### No receipt when no toolchain stage ran
 

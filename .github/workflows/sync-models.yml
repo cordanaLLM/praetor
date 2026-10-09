@@ -34,16 +34,17 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Go Toolchain
+        id: setup-go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
 
       - name: Restore Go Module And Build Caches
         uses: ./.github/actions/go-cache
         with:
           job: sync-models
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       # The runner has no Ollama or vLLM daemon, so discovery is off. The sync merges
       # and exits non-zero, writing nothing, if any existing entry would be removed.

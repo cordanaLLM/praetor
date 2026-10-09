@@ -171,10 +171,19 @@ func runsGovulnGateStep(step ghworkflow.Step) bool {
 	return slices.ContainsFunc(gateCommands, func(command string) bool { return strings.Contains(step.Run, command) })
 }
 
+// setsGoUpFromGoMod reports whether a setup-go step takes its version from go.mod alone.
+// setup-go reads go-version first when both inputs are set, so a step that also sets
+// go-version resolves that range through the manifest again.
+func setsGoUpFromGoMod(step ghworkflow.Step) bool {
+	_, ranged := step.With["go-version"]
+	return step.With["go-version-file"] == "go.mod" && !ranged
+}
+
 // cachedGoGateJobs parses one workflow and returns how many of its jobs run the gate and which of
-// those set Go up without check-latest: true. Such a job scans with the Go patch release the
-// runner image has cached, so after a Go security release its standard-library advisories fail
-// the gate until the image moves.
+// those set Go up without go-version-file: go.mod. Such a job scans with a Go patch release
+// resolved from a range, and the actions/go-versions manifest behind that range lags a release
+// (or stops updating), so its standard-library advisories fail the gate although a fixed Go
+// release exists. go.mod's toolchain directive is the one source of the scanning version.
 func cachedGoGateJobs(t *testing.T, data []byte) (int, []string) {
 	t.Helper()
 	spec, err := ghworkflow.Parse(data)
@@ -189,7 +198,7 @@ func cachedGoGateJobs(t *testing.T, data []byte) (int, []string) {
 		}
 		gateJobs++
 		if slices.ContainsFunc(steps, func(step ghworkflow.Step) bool {
-			return strings.HasPrefix(step.Uses, "actions/setup-go@") && step.With["check-latest"] != true
+			return strings.HasPrefix(step.Uses, "actions/setup-go@") && !setsGoUpFromGoMod(step)
 		}) {
 			cached = append(cached, id)
 		}
@@ -198,15 +207,16 @@ func cachedGoGateJobs(t *testing.T, data []byte) (int, []string) {
 }
 
 // Negative: every job of the CI and security workflows that runs the gate resolves the newest Go
-// patch release (setup-go check-latest: true). A job that sets Go up without it is reported.
-func TestSecurityGovuln_Negative_GateJobsResolveTheLatestGoPatch(t *testing.T) {
+// patch release from go.mod's toolchain directive (setup-go go-version-file: go.mod). A job that
+// sets Go up from a version range, with or without check-latest, is reported.
+func TestSecurityGovuln_Negative_GateJobsResolveGoFromGoMod(t *testing.T) {
 	for _, name := range []string{"ci.yml", "security.yml"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if gateJobs, cached := cachedGoGateJobs(t, data); gateJobs == 0 || len(cached) != 0 {
-			t.Errorf("%s: %d jobs run the gate; these set Go up without check-latest: %q", name, gateJobs, cached)
+			t.Errorf("%s: %d jobs run the gate; these set Go up without go-version-file: go.mod: %q", name, gateJobs, cached)
 		}
 	}
 	planted := "jobs:\n  scan:\n    runs-on: ubuntu-26.04\n    steps:\n" +
@@ -214,5 +224,101 @@ func TestSecurityGovuln_Negative_GateJobsResolveTheLatestGoPatch(t *testing.T) {
 		"      - run: go run ./cmd/standardsctl security govuln\n"
 	if gateJobs, cached := cachedGoGateJobs(t, []byte(planted)); gateJobs != 1 || !slices.Equal(cached, []string{"scan"}) {
 		t.Fatalf("planted job: %d gate jobs, cached %q; want the scan job reported", gateJobs, cached)
+	}
+	plantedLatest := strings.Replace(planted, "cache: false\n", "cache: false\n          check-latest: true\n", 1)
+	if _, cached := cachedGoGateJobs(t, []byte(plantedLatest)); !slices.Equal(cached, []string{"scan"}) {
+		t.Fatalf("check-latest job: cached %q; a version range with check-latest still resolves through the manifest", cached)
+	}
+	fixed := strings.Replace(planted, "go-version: '1.27'", "go-version-file: go.mod", 1)
+	if _, cached := cachedGoGateJobs(t, []byte(fixed)); len(cached) != 0 {
+		t.Fatalf("go-version-file job reported: %q", cached)
+	}
+	// boundary: both inputs set; setup-go uses go-version, so the range comes back
+	both := strings.Replace(planted, "go-version: '1.27'", "go-version: '1.27'\n          go-version-file: go.mod", 1)
+	if _, cached := cachedGoGateJobs(t, []byte(both)); !slices.Equal(cached, []string{"scan"}) {
+		t.Fatalf("job with go-version and go-version-file: cached %q; setup-go reads go-version first", cached)
+	}
+}
+
+// goReleaseSteps returns the ids of a job's steps that resolve the Go release from go.mod: a
+// setup-go step reading go-version-file: go.mod alone, or a run step reading go.mod's
+// toolchain directive (a job that keeps no Go cache runs no setup-go step of its own).
+func goReleaseSteps(steps []ghworkflow.Step) map[string]bool {
+	ids := map[string]bool{}
+	for _, step := range steps {
+		fromSetup := strings.HasPrefix(step.Uses, "actions/setup-go@") && setsGoUpFromGoMod(step)
+		fromRun := strings.Contains(step.Run, "go.mod") && strings.Contains(step.Run, "toolchain go")
+		if step.ID != "" && (fromSetup || fromRun) {
+			ids[step.ID] = true
+		}
+	}
+	return ids
+}
+
+// passesResolvedGo reports whether a praetor-adopt call's go-version input is the go-version
+// output of one of the job's go.mod-resolving steps.
+func passesResolvedGo(step ghworkflow.Step, resolved map[string]bool) bool {
+	input, ok := step.With["go-version"].(string)
+	if !ok {
+		return false
+	}
+	id, ok := strings.CutPrefix(input, "${{ steps.")
+	if !ok {
+		return false
+	}
+	id, ok = strings.CutSuffix(id, ".outputs.go-version }}")
+	return ok && resolved[id]
+}
+
+// adoptCallsWithoutResolvedGo parses one workflow and returns how many steps call the
+// praetor-adopt action and which of them ("job/step name") do not pass a go.mod-resolved Go
+// release. The action runs its own setup-go with check-latest; without the exact release it
+// resolves the default range through the lagging manifest and overrides the job's toolchain.
+func adoptCallsWithoutResolvedGo(t *testing.T, data []byte) (int, []string) {
+	t.Helper()
+	spec, err := ghworkflow.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, missing := 0, []string{}
+	for _, id := range ghworkflow.SortedJobIDs(spec.Jobs) {
+		steps := spec.Jobs[id].Steps
+		resolved := goReleaseSteps(steps)
+		for _, step := range steps {
+			if step.Uses != "./.github/actions/praetor-adopt" {
+				continue
+			}
+			calls++
+			if !passesResolvedGo(step, resolved) {
+				missing = append(missing, id+"/"+step.Name)
+			}
+		}
+	}
+	return calls, missing
+}
+
+// Negative: every praetor-adopt call in adopt.yml passes a go.mod-resolved Go release. A copy
+// of adopt.yml with the input dropped from its last call reports exactly that call.
+func TestAdoptWorkflow_Negative_PassesResolvedGoVersionToAction(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "adopt.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	calls, missing := adoptCallsWithoutResolvedGo(t, []byte(text))
+	if calls < 3 || len(missing) != 0 {
+		t.Fatalf("adopt.yml: %d praetor-adopt calls, want at least 3; missing a go.mod-resolved Go release: %q", calls, missing)
+	}
+	last := strings.LastIndex(text, "\n          go-version: ${{ steps.")
+	if last < 0 {
+		t.Fatal("adopt.yml carries no resolved Go version input")
+	}
+	end := strings.IndexByte(text[last+1:], '\n')
+	if end < 0 {
+		t.Fatal("adopt.yml ends inside the resolved Go version input")
+	}
+	mutant := text[:last] + text[last+1+end:]
+	if _, missing := adoptCallsWithoutResolvedGo(t, []byte(mutant)); len(missing) != 1 {
+		t.Fatalf("mutant with one input dropped: missing %q; want exactly one call reported", missing)
 	}
 }

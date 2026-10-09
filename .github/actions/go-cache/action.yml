@@ -12,7 +12,9 @@ inputs:
       discriminator share one build cache, which is the defect this action exists to prevent.
     required: true
   go-version:
-    description: Go toolchain version, included in both keys so a toolchain bump cannot reuse objects.
+    description: >
+      Resolved Go toolchain version (the go-version output of the setup-go step, not its input
+      spec), included in both keys so a toolchain bump cannot reuse objects.
     required: true
 
 outputs:

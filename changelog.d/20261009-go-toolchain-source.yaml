@@ -1,0 +1,3 @@
+type: fixed
+title: Take the Go toolchain for CI from go.mod (toolchain directive and setup-go go-version-file), so the Go Vulnerability & AST Security Scan runs on Go 1.27.2 and stops failing on the standard-library advisories that release fixes while the actions/go-versions manifest still resolves 1.27.1
+breaking: false

@@ -53,17 +53,17 @@ jobs:
       # which reads the setup-go steps of workflow jobs and not those inside an action. The
       # action's own setup-go cache is off for the same reason.
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
-          check-latest: true
 
       - name: Restore Go Module And Build Caches
         uses: ./.github/actions/go-cache
         with:
           job: adopt
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       # target_path reaches standardsctl through the action's path input, which the action
       # passes through env as one argument (.github/actions/praetor-adopt/action.yml).
@@ -73,6 +73,9 @@ jobs:
         with:
           path: ${{ inputs.target_path }}
           mode: adopt
+          # The action runs its own setup-go with check-latest; pass the exact version resolved
+          # above so it finds that toolchain in the tool cache instead of the lagging manifest.
+          go-version: ${{ steps.setup-go.outputs.go-version }}
           dry-run: ${{ inputs.dry_run }}
           force: "true"
           record-baseline: "true"
@@ -206,6 +209,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The head's go.mod toolchain directive names the Go release, as in the adopt job above.
+      # The action runs its own setup-go with check-latest, which resolves a range through the
+      # lagging setup-go manifest; an exact release missing there is downloaded from go.dev.
+      # This job keeps no Go cache, so it reads the release from go.mod instead of running a
+      # setup-go step of its own (AuditGoBuildCaches would ask that step for a cache).
+      - name: Resolve Go Release
+        id: go-release
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$(sed -n 's/^toolchain go\([0-9][0-9a-z.]*\)$/\1/p' go.mod)"
+          if [ -z "$release" ]; then
+            echo "adopt: go.mod at the pull request head names no toolchain directive" >&2
+            exit 1
+          fi
+          echo "go-version=$release" >> "$GITHUB_OUTPUT"
+
       # cache: "false" keeps setup-go from saving what this job built into the default
       # branch's cache scope; the job restores no cache either.
       - name: Execute Dogfood Benchmark
@@ -214,6 +235,7 @@ jobs:
         with:
           mode: dogfood
           cache: "false"
+          go-version: ${{ steps.go-release.outputs.go-version }}
 
       - name: Execute Fast Adoption
         id: praetor
@@ -224,6 +246,7 @@ jobs:
           force: "true"
           record-baseline: "true"
           cache: "false"
+          go-version: ${{ steps.go-release.outputs.go-version }}
 
       - name: Enforce Monotonic Debt Ratchet
         if: "!contains(github.event.comment.body, '/dogfood')"

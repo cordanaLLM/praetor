@@ -2,6 +2,8 @@ module github.com/cordanaLLM/praetor/tools/go
 
 go 1.27
 
+toolchain go1.27.2
+
 tool (
 	github.com/securego/gosec/v2/cmd/gosec
 	github.com/zricethezav/gitleaks/v8
