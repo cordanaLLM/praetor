@@ -316,9 +316,11 @@ func (s *adoptSession) plannedReuseWorkflow(ctx context.Context) ([]flavor.Plann
 }
 
 // reuseManagedPaths returns the hosted REUSE gate path when the repository declares REUSE,
-// the reuse-gate step is not declined, and the file is absent, a Praetor rendering, or
-// written with --force (following generatedDevContainerPaths), so adoption includes it in
-// the Renovate packageRules entry that disables updates on Praetor-managed files.
+// the reuse-gate step is not declined, and the file is absent or a Praetor rendering, so
+// adoption includes it in the Renovate packageRules entry that disables updates on
+// Praetor-managed files. --force does not count: it regenerates only audit-locked scaffolds,
+// and the REUSE gate is not one, so an edited or adopter-owned copy is kept and stays
+// under the adopter's Renovate.
 func reuseManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
 	declined, err := ArtifactDeclined(s.declined, reuseGateStep)
 	if err != nil {
@@ -339,7 +341,7 @@ func reuseManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
 		_, err = uninspectableReason(ctx, err)
 		return nil, err
 	}
-	if exists && !s.opts.Force {
+	if exists {
 		rendering, err := isReuseRendering(data)
 		if err != nil {
 			return nil, err
