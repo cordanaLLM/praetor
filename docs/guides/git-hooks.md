@@ -921,8 +921,10 @@ The gate's untracked Exit-0 receipt `.standards-receipt.json` at the root is out
 the binding too, so a `praetorctl gate run` after the sync leaves the ledger current
 (#136); the [state ledger integrity guide](state-ledger-integrity.md) states why.
 
-This repository's native Stop/AfterAgent bridge calls the shared `agent-state-stop`
-job and requires its unique success marker. Missing, stale or invalid state blocks
+This repository's native Stop/AfterAgent registration reaches the engine, which runs
+`state sync --verify` and `state audit` itself; with no engine the launcher falls back
+to the bridge that calls the shared `agent-state-stop` job and requires its unique
+success marker. Missing, stale or invalid state blocks
 completion. The Git hooks rebuild the checkout CLI before ledger checks to avoid
 accepting an older installed binary. Generated adoption bundles require their own
 compatible CLI and hook integration; this repository's activation is not evidence
