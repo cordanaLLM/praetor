@@ -95,6 +95,12 @@ malformed row, duplicate or noncanonical ID, invalid severity/status, unreadable
 file, symlink, or exceeded size limit returns an error. Audit, state sync and
 Hindsight ingestion propagate that error instead of reporting an empty ledger.
 
+The agent stop engine runs the same audit through `state.AuditWorkingDirContext`
+(`internal/state/audit.go`), the context-taking form that `AuditWorkingDir` wraps, so
+an unresolved P0 row blocks a stop exactly as `praetorctl state audit .` reports it
+([`internal/state/audit_context_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/audit_context_test.go),
+`TestRunStopBlocksOnAnUnresolvedP0Row` in `internal/agenthook`).
+
 Use `praetorctl state bug add`, `list` and `resolve`. Mutations preserve unrelated
 rows and surrounding Markdown byte for byte. IDs increase from the greatest
 existing numeric ID; gaps are not reused. Recovery must retain source finding IDs
