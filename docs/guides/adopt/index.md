@@ -4,12 +4,12 @@ These guides cover bringing an existing or new repository under Praetor governan
 scaffolding the manifest and agent harness, choosing archetypes and facets, and checking
 what adoption declared.
 
-Read [Fast adoption](../../adoption.md) first for the one-step path, then
+Read [Fast adoption](../../adoption.md) first: its prerequisites, the one-step path and the table of what adoption writes. Then
 [Repository onboarding](../onboarding.md) for the staged workflow behind it.
 
-- [Fast adoption](../../adoption.md): one-step adoption through `praetorctl adopt`, the
+- [Fast adoption](../../adoption.md): prerequisites, one-step adoption through `praetorctl adopt`, the
   `standards_adopt` MCP tool or the GitHub Action, and what each scaffolds.
-- [Repository onboarding](../onboarding.md): flavor detection, the manifest, the agent
+- [Repository onboarding](../onboarding.md): the quickstart, staged onboarding with `init`, the flavor table, flavor detection, the manifest, the agent
   harness, the technical-debt baseline and verification, step by step.
 - [Adoption verification commands](../adoption-verification.md): what the adoption report's
   `verification` object declares, and why adoption never runs a project's own scripts.

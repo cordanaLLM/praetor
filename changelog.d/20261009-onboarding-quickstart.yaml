@@ -1,0 +1,4 @@
+type: fixed
+title: Make praetorctl init pin its lock with --lock-source-root and write the pinned catalog, stop it printing a fixed upstream repository name, and rewrite the onboarding and adoption quickstart with prerequisites, the full scaffold table and a flavor table
+issue: "#955"
+breaking: false
