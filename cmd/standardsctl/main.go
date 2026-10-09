@@ -100,6 +100,7 @@ func printCoreCommands() {
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
+	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
 	fmt.Println("  hiss               Inspect and verify declared HISS enforcement evidence")
 	fmt.Println("  hook               Serve one agent-hook event: praetorctl hook <client> <event>")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
@@ -254,6 +255,8 @@ func coreCommandTable() map[string]commandFunc {
 		"security":                 runSecurity,
 		"seo":                      runSEO,
 		"sentinel":                 runSentinel,
+		"efficiency":               runEfficiency,
+		"efficiency-ledger":        runEfficiency,
 		"worktree":                 runWorktree,
 	}
 }

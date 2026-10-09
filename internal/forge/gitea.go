@@ -123,3 +123,10 @@ func (gt *GiteaDriver) WorkflowRunHistory(ctx context.Context, workflow, branch 
 	}
 	return WorkflowRunHistory{}, gt.unsupported("WorkflowRunHistory")
 }
+
+func (gt *GiteaDriver) ListMergedPullRequests(ctx context.Context, _ MergedPullRequestQuery) (MergedPullRequestList, error) {
+	if err := gt.Authenticate(ctx); err != nil {
+		return MergedPullRequestList{}, err
+	}
+	return MergedPullRequestList{}, gt.unsupported("ListMergedPullRequests")
+}

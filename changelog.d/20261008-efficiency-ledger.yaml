@@ -1,0 +1,4 @@
+type: added
+title: "praetorctl efficiency (alias: efficiency-ledger) measures and reports efficiency ledger across landed pull requests and milestone summaries as table and JSON"
+issue: "#870"
+breaking: false

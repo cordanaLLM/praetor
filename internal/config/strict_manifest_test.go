@@ -56,6 +56,10 @@ register:
         surface: hooks
         kind: message
         format: python
+efficiency:
+  sources:
+    transcripts:
+      dir: ".claude/transcripts"
 `)
 
 	m, err := LoadManifest(path)
@@ -79,6 +83,9 @@ register:
 	}
 	if len(m.Needs) == 0 {
 		t.Error("needs declaration was dropped")
+	}
+	if m.Efficiency == nil || m.Efficiency.Sources.Transcripts.Directory() != ".claude/transcripts" {
+		t.Errorf("efficiency section was dropped: %+v", m.Efficiency)
 	}
 }
 

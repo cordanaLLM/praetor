@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -154,6 +155,17 @@ func (g *GitHubDriver) Authenticate(ctx context.Context) error {
 	return nil
 }
 
+func marshalPayload(payload any) (io.Reader, error) {
+	if payload == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed encoding request payload: %w", err)
+	}
+	return bytes.NewReader(data), nil
+}
+
 // sendRequest handles authenticated HTTP communication with GitHub REST API.
 func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, payload any) (respBody []byte, statusCode int, err error) {
 	if err := g.Authenticate(ctx); err != nil {
@@ -161,13 +173,9 @@ func (g *GitHubDriver) sendRequest(ctx context.Context, method, path string, pay
 	}
 
 	target := g.Endpoint + path
-	var bodyReader io.Reader
-	if payload != nil {
-		data, err := json.Marshal(payload)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed encoding request payload: %w", err)
-		}
-		bodyReader = bytes.NewReader(data)
+	bodyReader, err := marshalPayload(payload)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
@@ -932,4 +940,241 @@ func (g *GitHubDriver) RemoveLabel(ctx context.Context, number int, label string
 			status, label, number, util.BodyPreview(body))
 	}
 	return nil
+}
+
+type ghPullRaw struct {
+	Number    int     `json:"number"`
+	Title     string  `json:"title"`
+	Body      string  `json:"body"`
+	CreatedAt string  `json:"created_at"`
+	MergedAt  *string `json:"merged_at"`
+	Head      struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Milestone *struct {
+		Title string `json:"title"`
+	} `json:"milestone"`
+}
+
+func ghPullToMerged(r ghPullRaw) (MergedPullRequest, error) {
+	mergedAt, err := time.Parse(time.RFC3339, *r.MergedAt)
+	if err != nil {
+		return MergedPullRequest{}, fmt.Errorf("parse merged_at: %w", err)
+	}
+	createdAt, err := time.Parse(time.RFC3339, r.CreatedAt)
+	if err != nil {
+		return MergedPullRequest{}, fmt.Errorf("parse created_at: %w", err)
+	}
+	milestone := ""
+	if r.Milestone != nil {
+		milestone = r.Milestone.Title
+	}
+	closingNums := ParseClosingIssueNumbers(r.Body)
+	closingIssues := make([]ClosingIssue, 0, len(closingNums))
+	for _, n := range closingNums {
+		closingIssues = append(closingIssues, ClosingIssue{Number: n})
+	}
+	return MergedPullRequest{
+		Number:        r.Number,
+		HeadBranch:    r.Head.Ref,
+		Title:         r.Title,
+		Milestone:     milestone,
+		CreatedAt:     createdAt,
+		MergedAt:      mergedAt,
+		ClosingIssues: closingIssues,
+	}, nil
+}
+
+// parseGitHubMergedPulls keeps the merged pull requests of one listing page. A merged pull
+// request with unparseable timestamps is reported as a warning, not dropped silently.
+func parseGitHubMergedPulls(body []byte) ([]MergedPullRequest, int, []string, error) {
+	var raw []ghPullRaw
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, 0, nil, fmt.Errorf("failed parsing pull requests list: %w", err)
+	}
+	if raw == nil {
+		return nil, 0, nil, errors.New("GitHub pull request listing must be an array, not null")
+	}
+	prs := make([]MergedPullRequest, 0, len(raw))
+	var warnings []string
+	for _, r := range raw {
+		if r.MergedAt == nil || *r.MergedAt == "" {
+			continue
+		}
+		pr, err := ghPullToMerged(r)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("pull request #%d skipped: %v", r.Number, err))
+			continue
+		}
+		prs = append(prs, pr)
+	}
+	return prs, len(raw), warnings, nil
+}
+
+// scanClosedPulls walks the closed pull request listing up to the page ceiling and keeps
+// the merged pull requests of the milestone. truncated names a hit page ceiling.
+func (g *GitHubDriver) scanClosedPulls(ctx context.Context, milestone string, list *MergedPullRequestList) ([]MergedPullRequest, error) {
+	base, err := g.repoPath("pulls")
+	if err != nil {
+		return nil, fmt.Errorf("list merged pull requests: %w", err)
+	}
+	var matched []MergedPullRequest
+	err = g.walkPages(ctx, base, "state=closed&sort=updated&direction=desc&", "pulls", maxIssuePages, func(body []byte) (int, bool, error) {
+		prs, rawCount, warnings, parseErr := parseGitHubMergedPulls(body)
+		if parseErr != nil {
+			return 0, false, parseErr
+		}
+		list.Warnings = append(list.Warnings, warnings...)
+		for _, pr := range prs {
+			if milestone == "" || pr.Milestone == milestone {
+				matched = append(matched, pr)
+			}
+		}
+		return rawCount, false, nil
+	})
+	if errors.Is(err, errPageCeiling) {
+		list.Truncated = fmt.Sprintf("scanned only the %d most recently updated closed pull requests; older merged pull requests were not examined", maxIssuePages*issuesPerPage)
+		return matched, nil
+	}
+	return matched, err
+}
+
+// newestMerged sorts by merge time, newest first, and keeps limit; the cut is stated.
+func newestMerged(matched []MergedPullRequest, limit int, list *MergedPullRequestList) []MergedPullRequest {
+	sort.SliceStable(matched, func(i, j int) bool { return matched[i].MergedAt.After(matched[j].MergedAt) })
+	if len(matched) <= limit {
+		return matched
+	}
+	extra := fmt.Sprintf("%d matching merged pull requests beyond the limit of %d were left out", len(matched)-limit, limit)
+	if list.Truncated != "" {
+		extra = list.Truncated + "; " + extra
+	}
+	list.Truncated = extra
+	return matched[:limit]
+}
+
+// ListMergedPullRequests fetches landed pull requests. The listing is sorted by update time,
+// so it scans closed pull requests up to the page ceiling, filters by milestone before the
+// limit, sorts by merge time and keeps the newest Limit. Truncation and per-issue fetch
+// failures are reported in the result, never dropped.
+func (g *GitHubDriver) ListMergedPullRequests(ctx context.Context, query MergedPullRequestQuery) (MergedPullRequestList, error) {
+	var list MergedPullRequestList
+	if err := g.Authenticate(ctx); err != nil {
+		return list, err
+	}
+	limit := query.Limit
+	if limit <= 0 || limit > MaxMergedPRsLimit {
+		limit = MaxMergedPRsLimit
+	}
+	matched, err := g.scanClosedPulls(ctx, query.Milestone, &list)
+	if err != nil {
+		return list, err
+	}
+	list.PullRequests = newestMerged(matched, limit, &list)
+	list.Warnings = append(list.Warnings, g.populateClosingIssues(ctx, list.PullRequests)...)
+	return list, nil
+}
+
+type ghIssueDetailRaw struct {
+	Number      int     `json:"number"`
+	CreatedAt   string  `json:"created_at"`
+	ClosedAt    *string `json:"closed_at"`
+	PullRequest *struct {
+		URL string `json:"url"`
+	} `json:"pull_request"`
+}
+
+func parseIssueTimes(raw *ghIssueDetailRaw, number int) (time.Time, *time.Time, error) {
+	if raw.PullRequest != nil {
+		return time.Time{}, nil, fmt.Errorf("item #%d is a pull request", number)
+	}
+	created, err := time.Parse(time.RFC3339, raw.CreatedAt)
+	if err != nil {
+		return time.Time{}, nil, fmt.Errorf("parse issue #%d created_at: %w", number, err)
+	}
+	var closed *time.Time
+	if raw.ClosedAt != nil && *raw.ClosedAt != "" {
+		if t, err := time.Parse(time.RFC3339, *raw.ClosedAt); err == nil {
+			closed = &t
+		}
+	}
+	return created, closed, nil
+}
+
+func (g *GitHubDriver) fetchIssueTimes(ctx context.Context, number int) (time.Time, *time.Time, error) {
+	if number <= 0 {
+		return time.Time{}, nil, fmt.Errorf("invalid issue number %d", number)
+	}
+	base, err := g.repoPath("issues")
+	if err != nil {
+		return time.Time{}, nil, err
+	}
+	body, status, err := g.sendRequest(ctx, http.MethodGet, fmt.Sprintf("%s/%d", base, number), nil)
+	if err != nil {
+		return time.Time{}, nil, err
+	}
+	if status != http.StatusOK {
+		return time.Time{}, nil, fmt.Errorf("unexpected status %d fetching issue #%d", status, number)
+	}
+	var raw ghIssueDetailRaw
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return time.Time{}, nil, err
+	}
+	return parseIssueTimes(&raw, number)
+}
+
+// maxClosingIssueFetches bounds the issue lookups of one listing (HISS-02).
+const maxClosingIssueFetches = 200
+
+type issueTimes struct {
+	created time.Time
+	closed  *time.Time
+}
+
+// issueResolver fetches each closing issue once and remembers failures.
+type issueResolver struct {
+	driver  *GitHubDriver
+	cache   map[int]issueTimes
+	failed  map[int]bool
+	fetches int
+}
+
+// resolve returns the times of issue num, or a warning when they cannot be had.
+func (r *issueResolver) resolve(ctx context.Context, num, prNum int) (issueTimes, string) {
+	if cached, ok := r.cache[num]; ok {
+		return cached, ""
+	}
+	if r.failed[num] {
+		return issueTimes{}, ""
+	}
+	r.failed[num] = true
+	if r.fetches >= maxClosingIssueFetches {
+		return issueTimes{}, fmt.Sprintf("closing issue #%d not fetched: more than %d lookups needed", num, maxClosingIssueFetches)
+	}
+	r.fetches++
+	created, closed, err := r.driver.fetchIssueTimes(ctx, num)
+	if err != nil {
+		return issueTimes{}, fmt.Sprintf("closing issue #%d of pull request #%d not fetched: %v", num, prNum, err)
+	}
+	delete(r.failed, num)
+	r.cache[num] = issueTimes{created: created, closed: closed}
+	return r.cache[num], ""
+}
+
+// populateClosingIssues fetches created_at (and closed_at) of every closing issue once. A
+// failed or skipped lookup leaves CreatedAt zero and is returned as a warning.
+func (g *GitHubDriver) populateClosingIssues(ctx context.Context, prs []MergedPullRequest) []string {
+	resolver := &issueResolver{driver: g, cache: make(map[int]issueTimes), failed: make(map[int]bool)}
+	var warnings []string
+	for i := range prs {
+		for j := range prs[i].ClosingIssues {
+			times, warning := resolver.resolve(ctx, prs[i].ClosingIssues[j].Number, prs[i].Number)
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+			prs[i].ClosingIssues[j].CreatedAt = times.created
+			prs[i].ClosingIssues[j].ClosedAt = times.closed
+		}
+	}
+	return warnings
 }

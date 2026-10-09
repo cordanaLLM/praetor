@@ -342,6 +342,15 @@ docs_surfaces:
       - "internal/radar/*_test.go"
     docs:
       - "docs/guides/radar.md"
+  - name: "efficiency ledger"
+    paths:
+      - "internal/efficiency/*.go"
+      - "internal/config/efficiency_policy.go"
+      - "cmd/standardsctl/efficiency.go"
+    exclude:
+      - "internal/efficiency/*_test.go"
+    docs:
+      - "docs/guides/efficiency-ledger.md"
 
 # Framework capability demand declarations
 needs:

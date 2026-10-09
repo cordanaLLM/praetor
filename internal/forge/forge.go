@@ -74,6 +74,9 @@ type Forge interface {
 	// EditIssueBody replaces the body of an existing issue and changes nothing else. The
 	// pre-migration epic writes its child task-list lines through it (#837).
 	EditIssueBody(ctx context.Context, number int, body string) error
+	// ListMergedPullRequests fetches landed pull requests, newest merge first, filtered by
+	// milestone before the limit, along with the creation time of their closing issues.
+	ListMergedPullRequests(ctx context.Context, query MergedPullRequestQuery) (MergedPullRequestList, error)
 }
 
 // NewForge returns the appropriate forge implementation based on provider identifier.
