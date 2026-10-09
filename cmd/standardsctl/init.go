@@ -62,10 +62,16 @@ func runInit(args []string) error {
 		return err
 	}
 	manifest := initialManifest(*profile, util.SplitCSV(*facets), identity)
+	// The pinned lock depends only on the in-memory manifest, so a source or profile that cannot
+	// be pinned fails here, before init writes any file and leaves a manifest behind.
+	lockContent, err := initLockContent(ctx, *outputPath, resolvedLockSource, &manifest)
+	if err != nil {
+		return err
+	}
 	if err := writeInitialManifest(*outputPath, &manifest); err != nil {
 		return err
 	}
-	if err := initBaselineAndLockfile(ctx, rootDir, resolvedLockSource, &manifest); err != nil {
+	if err := initBaselineAndLockfile(ctx, rootDir, resolvedLockSource, lockContent); err != nil {
 		return err
 	}
 	if err := initAgentContext(rootDir); err != nil {
@@ -174,7 +180,7 @@ func writeInitialManifest(outputPath string, manifest *config.Manifest) error {
 	return nil
 }
 
-func initBaselineAndLockfile(ctx context.Context, rootDir, lockSource string, manifest *config.Manifest) error {
+func initBaselineAndLockfile(ctx context.Context, rootDir, lockSource string, lockContent []byte) error {
 	baselinePath := filepath.Join(rootDir, ".standards-baseline.json")
 	missing, err := fileMissing(baselinePath)
 	if err != nil {
@@ -192,27 +198,32 @@ func initBaselineAndLockfile(ctx context.Context, rootDir, lockSource string, ma
 		fmt.Printf("[CREATED] %s (0 legacy infractions)\n", baselinePath)
 	}
 
-	return initLockfile(ctx, rootDir, lockSource, manifest)
+	return initLockfile(ctx, rootDir, lockSource, lockContent)
 }
 
-// initLockfile writes .standards.lock unless one exists. With a lock source it writes the lock
-// adoption writes (config.BuildLockfile: every selected profile and facet pinned to its verified
-// content digest), so devcontainer generate and audit accept a fresh repository. Without one it
-// writes the unpinned placeholder and says so, because no digest can be computed without a source.
-func initLockfile(ctx context.Context, rootDir, lockSource string, manifest *config.Manifest) error {
+// initLockContent builds the lock init writes: with a lock source the lock adoption writes
+// (config.BuildLockfile: every selected profile and facet pinned to its verified content digest),
+// so devcontainer generate and audit accept a fresh repository; without one the unpinned
+// placeholder, because no digest can be computed without a source. It writes nothing.
+func initLockContent(ctx context.Context, manifestPath, lockSource string, manifest *config.Manifest) ([]byte, error) {
+	if lockSource == "" {
+		return placeholderLock(filepath.Join(filepath.Dir(manifestPath), config.LockFileName)), nil
+	}
+	content, err := config.BuildLockfile(ctx, lockSource, manifest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to pin %s to %s: %w", config.LockFileName, lockSource, err)
+	}
+	return content, nil
+}
+
+// initLockfile writes content as .standards.lock unless one exists. With a lock source it then
+// materializes the pinned catalog next to it, because audit and devcontainer generate read that
+// catalog from the repository exactly as adoption leaves it.
+func initLockfile(ctx context.Context, rootDir, lockSource string, content []byte) error {
 	lockPath := filepath.Join(rootDir, config.LockFileName)
 	missing, err := fileMissing(lockPath)
 	if err != nil || !missing {
 		return err
-	}
-	var content []byte
-	if lockSource != "" {
-		content, err = config.BuildLockfile(ctx, lockSource, manifest)
-		if err != nil {
-			return fmt.Errorf("failed to pin %s to %s: %w", config.LockFileName, lockSource, err)
-		}
-	} else {
-		content = placeholderLock(lockPath)
 	}
 	if err := util.WriteFileConfined(rootDir, config.LockFileName, content, initFilePerm); err != nil {
 		return fmt.Errorf("failed to create lockfile: %w", err)
@@ -221,8 +232,6 @@ func initLockfile(ctx context.Context, rootDir, lockSource string, manifest *con
 	if lockSource == "" {
 		return nil
 	}
-	// The lock pins digests of the catalog; audit and devcontainer generate read that catalog
-	// from the repository, so it is materialized next to the lock exactly as adoption does.
 	if err := adopt.MaterializePinnedCatalog(ctx, rootDir, lockSource); err != nil {
 		return fmt.Errorf("failed to materialize the pinned catalog: %w", err)
 	}

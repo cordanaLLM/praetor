@@ -10,9 +10,12 @@ onboarding-path
 
 Prerequisites: `praetorctl` installed ([workstation install](workstation-update.md)); a Praetor
 checkout or source bundle, written `/path/to/praetor` below, which `--lock-source-root` names so
-the lock can pin your profile and facets to content digests; and a Git repository with your
-files committed. Run these in the repository root. Each command exits 0 in a new Go module
-(a `go.mod` and one source file, an `origin` remote, committed):
+the lock can pin your profile and facets to content digests; a Git repository with your
+files committed; a known hosting forge, meaning an `origin` remote on `github.com` or
+`repository.forge` declared in `.standards.yaml` (any other host gets no Paperclip harness and the
+audit fails on its absence; [Hosting forge](../adoption.md#what-adoption-reads-before-it-writes)). Run these in the
+repository root. Each command exits 0 in a new Go module (a `go.mod` and one source file, a
+`github.com` `origin` remote, committed):
 
 ```bash
 # 1. Preview what adoption would write; the plan needs the lock source, as the real run does
@@ -30,8 +33,9 @@ praetorctl audit --offline
 
 One adopt run is the whole onboarding. It detects the profile (the report's `Archetype:` line);
 when that is not the profile you want, pass `--profile` on the first run, or move an adopted
-repository with `praetorctl profile set <profile> --lock-source-root=/path/to/praetor` and refresh
-the files it lists with `praetorctl adopt --force --lock-source-root=/path/to/praetor`
+repository with `praetorctl profile set <profile> --lock-source-root=/path/to/praetor`, then refresh
+with `praetorctl adopt --lock-source-root=/path/to/praetor` (add `--force` for the files `profile
+set` lists; the plain run also refreshes the Paperclip harness, which `profile set` does not check)
 ([Changing the profile, facets or catalog](../adoption.md#changing-the-profile-facets-or-catalog)).
 `--dry-run` needs `--lock-source-root` on a first adoption because the plan resolves the policy the
 lock would pin; without it the dry run exits 1 with `new lock pins require an explicit verified
@@ -71,10 +75,12 @@ flag, init writes the lock adoption writes (`config.BuildLockfile`) and the pinn
 `.config/archetypes/` (`adopt.MaterializePinnedCatalog`), and a fresh repository passes
 `devcontainer generate` and the lock, digest and DevContainer gates of the audit
 (`TestInitLock_Positive_PinnedLockPassesGenerateAndAudit` in `cmd/standardsctl/init_lock_test.go`).
-Init writes no branch ruleset and records no HISS-11 supply-chain exception, so the audit of an
-init-only repository reports the missing ruleset until `praetorctl sync` writes it, and reports
-the supply-chain gap until the release workflows reach the declared level or the exception is
-declared. Adoption does both, which is why the quickstart uses it.
+Init does not make the whole audit pass. The audit stops at its first failing gate, so an
+init-only repository meets the gaps one at a time: no branch ruleset (`praetorctl sync` writes
+it), no HISS-11 supply-chain exception, no `.paperclip/harness.json`, no agent definitions and no
+git hooks, and with `api:public-contract` in a Go module no API compatibility gate. Adoption
+writes all of them, which is why the quickstart uses it; `init` is for a repository that fills
+those in by other means.
 
 Step 1 writes your repository's identity into `.standards.yaml`. `repository.owner` and
 `repository.name` come from the origin remote. Without a remote the owner is
@@ -118,7 +124,7 @@ activation. Those stages need their own selected checks and execution evidence.
 | **2. Context Recompilation** | Recompile vendor files and persona copies | `praetorctl compile-context` | The vendor files rewritten from `AGENTS.md` (all six unless `agent_clients` in `.standards.yaml` selects fewer); each persona in `.agents/agents` copied to `.claude/agents`, `.github/agents`, `.gemini/agents` and `.codex/agents`. `praetorctl compile-context --verify` checks the same files and writes nothing. |
 | **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record --allow-increase --reason "<why>"` | `.standards-baseline.json` populated with existing debt. |
 | **4. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
-| **5. Audit Verification** | Verify configured governance and debt-ratchet gates | `praetorctl audit` | Every executed gate reports pass; skipped or unsupported coverage remains explicit. |
+| **5. Audit Verification** | Verify configured governance and debt-ratchet gates | `praetorctl audit` | After `init` alone the audit fails at the first gate init leaves open (see the gaps above); once those are filled every executed gate reports pass, and skipped or unsupported coverage remains explicit. |
 
 ---
 

@@ -20,6 +20,10 @@ Apply Praetor governance scaffolding to a legacy or greenfield repository and re
   writes the Go API compatibility gate only where Git tracks a `go.mod`
   ([Go API compatibility gate](guides/api-compatibility.md)), so adopt after the first commit and
   stage what adoption writes before you audit.
+- **A known hosting forge.** An `origin` remote on `github.com`, or `repository.forge` declared in
+  `.standards.yaml` (`github`, `forgejo` or `gitlab`). Any other host with no declaration gets no
+  Paperclip harness, and `praetorctl audit` then fails on the missing
+  `.paperclip/harness.json` ([Hosting forge](#what-adoption-reads-before-it-writes)).
 
 ## Adopt a repository
 
@@ -69,7 +73,9 @@ Run `praetorctl audit --offline` afterwards. See
 `AGENTS.md` first ([onboarding guide](guides/onboarding.md)). Give it the same
 `--lock-source-root=/path/to/praetor` so its lock carries digests; without the flag the lock is
 an unpinned placeholder that `audit` and `devcontainer generate` refuse, and init says so
-(`cmd/standardsctl/init_lock_test.go`).
+(`cmd/standardsctl/init_lock_test.go`). Even pinned, an init-only repository does not pass
+`audit --offline`: init writes no branch ruleset, no HISS-11 supply-chain exception, no Paperclip
+harness, agent definitions or git hooks, so use adoption for a repository that must audit clean.
 
 `--facets` names the facets adoption writes when it creates `.standards.yaml`. Omitted, adoption
 writes `security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`
@@ -1230,8 +1236,12 @@ the refresh and a re-run that passes every gate.
 
 The other audit gates do not run. The invariant scan reads its limits from the effective policy
 (`EffectivePolicy.HISSScanOptions` in `internal/config/hiss_exceptions.go`), so a profile with a
-lower `max_func_loc` can report debt the baseline does not hold. Run `praetorctl audit` for the
-full verdict.
+lower `max_func_loc` can report debt the baseline does not hold. The Paperclip harness states the
+profile's HISS-04 limits and is not among the five gates either, so a profile change that moves
+those limits leaves `praetorctl audit` failing with `Paperclip harness out of date` while
+`profile set` names nothing to refresh. Run a plain `praetorctl adopt --lock-source-root=...`
+afterwards: it refreshes an unmodified earlier harness without `--force`. Run `praetorctl audit`
+for the full verdict.
 
 `--lock-source-root` is required. A profile or facet the source bundle does not define fails
 before anything is written. The error names the bundle and its catalog version, such as

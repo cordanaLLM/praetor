@@ -20,6 +20,8 @@ const (
 // flavorTableRows returns, in order, "name profile" for each row of the flavor table: the rows
 // between flavorHeading and the next heading.
 func flavorTableRows(text string) []string {
+	// The guide is checked out with CRLF line endings on Windows (`* text=auto`).
+	text = strings.ReplaceAll(text, "\r\n", "\n")
 	_, section, found := strings.Cut(text, flavorHeading+"\n")
 	if !found {
 		return nil
@@ -91,5 +93,14 @@ func TestFlavorTable_RefusesDriftedTables(t *testing.T) {
 	}
 	if got := flavorTableRows(render(nil)); len(got) != 0 {
 		t.Fatalf("an empty table read as %v", got)
+	}
+}
+
+// Boundary (HISS-21): a CRLF checkout of the guide yields the same rows as an LF one.
+func TestFlavorTableRows_Boundary_CRLFCheckout(t *testing.T) {
+	lf := flavorHeading + "\n\n| `a` | `p` | x |\n| `b` | `q` | y |\n\n## Next\n"
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+	if got, want := flavorTableRows(crlf), flavorTableRows(lf); !slices.Equal(got, want) || len(got) != 2 {
+		t.Fatalf("CRLF rows %v differ from LF rows %v", got, want)
 	}
 }
