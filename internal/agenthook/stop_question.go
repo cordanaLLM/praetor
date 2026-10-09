@@ -48,14 +48,8 @@ var (
 	questionEnd     = regexp.MustCompile(`[?？]["')\]}*_>]*(\s|$)`)
 	indentedLine    = regexp.MustCompile(`^( {4}|\t)`)
 	listItemLine    = regexp.MustCompile(`^\s*([-*+]|\d{1,3}[.)]|[A-Za-z][.)]|\(?[A-Za-z0-9]\))\s+\S`)
-	// choiceRequest points at a choice addressed to the reader: a bare "let me know" or "tell
-	// me" closes a summary as often as it closes an options list, so the request must name
-	// which, whether or a pick, and "prefer" counts only as a question or a request ("do you
-	// prefer", "let me know if you prefer"), never as the author's own statement ("I prefer
-	// A"). An imperative "pick/choose" must open its sentence, so a report that says it picked
-	// an approach does not match.
-	choiceRequest = regexp.MustCompile(`(?i)(\b(let me know|tell me|reply with|say)\s+(which|whether|what you prefer|if you prefer)\b|(^|[.!?:]\s+)(please\s+|just\s+)?(pick|choose)\s+(one|a|an|the|between|from)\b|\b(do|would) you prefer\b|\bwhich (one|option) (do you|would you|should (i|we))\b|\b(your call|you decide|up to you)\b)`)
-	tableRowLine  = regexp.MustCompile(`^\s*\|`)
+	blankLine       = regexp.MustCompile(`\n[ \t\r]*\n`)
+	tableRowLine    = regexp.MustCompile(`^\s*\|`)
 )
 
 // evaluateStopQuestion judges the final message of a stop. Deny only for a closing prose
@@ -81,8 +75,9 @@ func evaluateStopQuestion(row Registration, canonical Canonical) Verdict {
 		"decision or a statement without a question."}
 }
 
-// closesWithQuestion reports whether the closing paragraph of text ends in a question, or
-// closes an options list with a request to choose. Fenced, indented and inline code,
+// closesWithQuestion reports whether the closing paragraph of text contains a sentence that
+// ends in "?" or the full-width "？". A choice phrased without a question mark passes: the
+// miss costs less than a phrase heuristic that keeps growing false positives. Fenced, indented and inline code,
 // blockquotes, table rows and URLs are removed first; only the last two paragraphs are
 // judged, so a question answered further down a report passes. Known trade-offs: a report that
 // is one paragraph and asks and answers in it ("Why did it fail? The cache was stale.") is
@@ -98,10 +93,7 @@ func closesWithQuestion(text string) bool {
 	if !found {
 		return false
 	}
-	if questionEnd.MatchString(prose) {
-		return true
-	}
-	return choiceRequest.MatchString(prose) && countListItems(paragraphs) >= 2
+	return questionEnd.MatchString(prose)
 }
 
 // stripQuoted drops fenced code blocks (util.MarkdownFence, the repository's one fence
@@ -132,8 +124,23 @@ func stripQuoted(text string) string {
 // maxCodeSpans bounds the inline code spans read from one message (HISS-02).
 const maxCodeSpans = 1 << 12
 
-// maskCodeSpans removes the inline code spans of text.
+// maskCodeSpans removes the inline code spans of text, one paragraph at a time: a code span
+// never crosses a blank line, so a lone backtick must not pair with one in a later paragraph
+// and mask the closing question between them.
 func maskCodeSpans(text string) string {
+	var out strings.Builder
+	last := 0
+	for _, gap := range blankLine.FindAllStringIndex(text, maxCodeSpans) {
+		out.WriteString(maskParagraphSpans(text[last:gap[0]]))
+		out.WriteString(text[gap[0]:gap[1]])
+		last = gap[1]
+	}
+	out.WriteString(maskParagraphSpans(text[last:]))
+	return out.String()
+}
+
+// maskParagraphSpans removes the inline code spans of one paragraph.
+func maskParagraphSpans(text string) string {
 	var out strings.Builder
 	last := 0
 	for _, span := range util.MarkdownCodeSpans(text, maxCodeSpans) {
@@ -206,18 +213,6 @@ func closingProse(paragraphs [][]string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func countListItems(paragraphs [][]string) int {
-	count := 0
-	for _, paragraph := range paragraphs {
-		for _, line := range paragraph {
-			if listItemLine.MatchString(line) {
-				count++
-			}
-		}
-	}
-	return count
 }
 
 // listAsksQuestion reports whether the last paragraph is a list with an item that ends in a
