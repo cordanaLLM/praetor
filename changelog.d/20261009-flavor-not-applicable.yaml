@@ -1,0 +1,4 @@
+type: fixed
+title: Make flavor audit, the gate's Flavor Conformance stage and the pre-push hook skip with a stated reason, as adoption does, when no flavor of the profile matches and none is pinned, so an adopter repository without flavor markers can push; a matching non-conforming repository still fails and a pin wins over the skip
+issue: "#1111"
+breaking: false

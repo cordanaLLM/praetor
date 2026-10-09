@@ -18,8 +18,9 @@ const (
 // FlavorPin pins one flavor to the repository, or to one directory of it (#1103).
 //
 // Without pins the flavor is detected from the declared profile and the repository's markers.
-// A pin replaces detection for every command that resolves a flavor: `flavor audit`, `gate run`
-// and the generated pre-push hook, which runs the audit. Path scopes the pin to a repository
+// A pin replaces detection for every command that resolves a flavor (`flavor audit`, `flavor apply`,
+// `gate run`, adoption, the Hindsight distiller and the generated pre-push hook, which runs the
+// audit) and wins over the not-applicable skip, so a pinned repository is always audited. Path scopes the pin to a repository
 // relative directory, so a repository with several components audits each against its own
 // flavor; an empty Path is the repository root. The flavor name is checked against the registry
 // by internal/flavor, which owns it.

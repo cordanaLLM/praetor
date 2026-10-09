@@ -122,3 +122,19 @@ func TestDistillFlavorFacts_Pins(t *testing.T) {
 		t.Error("an unknown pinned flavor must be an error, not a silent fall back to detection")
 	}
 }
+
+// TestDistillFlavorFacts_RecordsTheResolutionProfile: the fact names the profile the resolution
+// used (the declared one), not the flavor's own, which differs for a pinned flavor of another
+// profile (#1103 review).
+func TestDistillFlavorFacts_RecordsTheResolutionProfile(t *testing.T) {
+	root := t.TempDir()
+	writeDistillerFile(t, root, ".standards.yaml",
+		"version: 1\nprofiles:\n  - app-service\nflavors:\n  - name: go-library\n")
+	facts, err := distillFlavorFacts(context.Background(), root)
+	if err != nil || len(facts) != 1 {
+		t.Fatalf("facts = %+v, %v", facts, err)
+	}
+	if !strings.Contains(facts[0].Statement, "under profile app-service") {
+		t.Errorf("statement = %q; want the declared profile app-service", facts[0].Statement)
+	}
+}

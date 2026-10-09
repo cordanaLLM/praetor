@@ -140,10 +140,10 @@ func runFlavorAudit(args []string) error {
 	dir := positionalAt(positional, 0, ".")
 
 	reports, err := auditFlavorReports(dir, *targetFlv)
-	if errors.Is(err, flavor.ErrFlavorNotApplicable) {
-		fmt.Printf("=== Flavor Audit: %s ===\n  Not applicable: %v\n", dir, err)
-		fmt.Println("  The declared profile governs this repository; no flavor describes its stack.")
-		fmt.Println("  Pass --flavor=<name> to audit against one anyway.")
+	if flavor.IsNotApplicable(err) {
+		fmt.Printf("=== Flavor Audit: %s ===\n  Skipped, not applicable: %v\n", dir, err)
+		fmt.Println("  The profile governs this repository; no flavor of it describes its stack, and none is pinned.")
+		fmt.Println("  Pin one with a flavors entry in .standards.yaml, or pass --flavor=<name> to audit against one anyway.")
 		return nil
 	}
 	if err != nil {

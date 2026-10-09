@@ -17,6 +17,14 @@ import (
 // name, because gate run and the generated pre-push hook take none.
 const pinRemedy = "; pin the flavor with a flavors entry in .standards.yaml"
 
+// ScopedPinRemedy is the remedy for a scoped or multiple pin: such pins get no scaffold, and the
+// files that belong at the repository root differ from those that belong under the pin path.
+const ScopedPinRemedy = "pins scoped to a directory or several pins get no scaffold; " +
+	"keep the repository-level files (.github/ workflows and rulesets, .vscode/, lefthook.yml, " +
+	".gitleaks.toml, .standards.yaml, .standards.lock, AGENTS.md, CLAUDE.md) at the repository root " +
+	"and the stack files (templates and toolchain configuration) under each pinned path; " +
+	"pass --flavor=<name> only to scaffold one flavor at the root deliberately"
+
 // ErrPinNotScaffoldable refuses a scaffold that the manifest's flavors pins cannot describe as
 // one flavor at the repository root: a pin scoped to a directory, or several pins. The audit
 // measures every pin; a scaffold writes one flavor at the root, so it takes the choice from the
@@ -76,7 +84,7 @@ func resolveTargetsWith(repoPath string, detect func(string) (string, error)) ([
 // ErrPinNotScaffoldable when they are several or scoped to a directory.
 func SingleRootFlavor(targets []Target) (string, error) {
 	if len(targets) != 1 || targets[0].Path != "." {
-		return "", fmt.Errorf("%w: %d target(s); pass --flavor=<name> to scaffold one", ErrPinNotScaffoldable, len(targets))
+		return "", fmt.Errorf("%w: %d target(s); %s", ErrPinNotScaffoldable, len(targets), ScopedPinRemedy)
 	}
 	return targets[0].Flavor, nil
 }
@@ -118,7 +126,10 @@ func pinDirectory(repoPath, rel string) error {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	inside, err := filepath.Rel(root, real)
-	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+	if err != nil {
+		return fmt.Errorf("relate %s to repository %s: %w", real, root, err)
+	}
+	if inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("resolves outside the repository %s", repoPath)
 	}
 	return nil

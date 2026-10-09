@@ -28,11 +28,18 @@ import (
 // ErrNoFlavorMatched when nothing classifies the repository or none of the profile's flavors
 // matches it. It never substitutes a flavor.
 func Resolve(repoPath string) (string, error) {
-	decision := classify.Resolve(
+	return ResolveForProfile(repoPath, ResolutionProfile(repoPath))
+}
+
+// ResolutionProfile is the profile Resolve picks flavors under: the repository's declared
+// profile, else the one its markers classify, empty when neither names one. A caller that
+// describes a resolved flavor reports this profile, not the flavor's own HISSProfile, which
+// differs for a flavor that also implements the profile (MultiProfile) or is pinned.
+func ResolutionProfile(repoPath string) string {
+	return classify.Resolve(
 		classify.FromDeclaration(declaredProfiles(repoPath)),
 		classify.ByMarkers(repoPath),
-	)
-	return ResolveForProfile(repoPath, decision.Archetype)
+	).Archetype
 }
 
 // ResolveForProfile names the flavor implementing profile that matches the repository, for a

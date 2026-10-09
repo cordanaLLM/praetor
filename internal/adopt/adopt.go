@@ -1210,17 +1210,19 @@ func resolveAdoptionFlavor(repoPath, profile string) (string, error) {
 // flavorSkipDetail says why adoption scaffolded no flavor for profile: the profile has no flavor
 // at all, or none of its flavors matches the repository. Neither is replaced by a guess.
 func flavorSkipDetail(profile string, err error) string {
+	if errors.Is(err, flavor.ErrPinNotScaffoldable) {
+		return "Not applicable: the flavors pins in .standards.yaml are scoped to a directory or several, " +
+			"so no flavor templates were scaffolded; " + flavor.ScopedPinRemedy
+	}
 	reason := "no registered flavor matches this repository"
 	switch {
 	case errors.Is(err, flavor.ErrFlavorNotApplicable):
 		reason = fmt.Sprintf("profile %s has no flavor", profile)
-	case errors.Is(err, flavor.ErrPinNotScaffoldable):
-		reason = "the flavors pins in .standards.yaml are scoped to a directory or several"
 	case profile != "":
 		reason = fmt.Sprintf("no registered flavor of profile %s matches this repository", profile)
 	}
-	return "Not applicable: " + reason + ", so no flavor templates were scaffolded; " +
-		"run `praetorctl flavor apply --flavor=<name>` to choose one"
+	return "Not applicable: " + reason + ", so no flavor templates were scaffolded and `praetorctl flavor audit` " +
+		"skips with the same reason; run `praetorctl flavor apply --flavor=<name>` to choose one"
 }
 
 // recordFlavorReport lists the templates a flavor apply created and the existing files it left
