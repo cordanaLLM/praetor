@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/semver"
 )
 
@@ -25,7 +26,22 @@ const (
 	xtoolsModuleName  = "golang.org/x/tools"
 )
 
-var checkerRequirePattern = `(?m)^\t%s (v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$`
+// directRequirements maps each module go.mod requires directly (no indirect marker) to its
+// version, read through internal/gomanifest the way the go command reads the file (HISS-19).
+func directRequirements(goMod string) map[string]string {
+	direct := map[string]string{}
+	inBlock := false
+	for _, raw := range strings.Split(goMod, "\n") {
+		line, ok := gomanifest.RequirementLine(raw, &inBlock)
+		if !ok || gomanifest.IsIndirect(line) {
+			continue
+		}
+		if requirement, parsed := gomanifest.ParseRequirement(line); parsed {
+			direct[requirement.Path] = requirement.Version
+		}
+	}
+	return direct
+}
 
 // buildModuleConst returns the text of one raw-string constant of the gate source.
 func buildModuleConst(source []byte, name string) (string, error) {
@@ -40,14 +56,13 @@ func buildModuleConst(source []byte, name string) (string, error) {
 // require go-apidiff and golang.org/x/tools directly at exact versions, x/tools at minXTools or
 // newer, go.sum must hold both modules' hashes, and tools.go must import both.
 func checkBuildModule(goMod, goSum, tools string) error {
-	versions := map[string]string{}
+	versions := directRequirements(goMod)
 	for _, module := range []string{checkerModuleName, xtoolsModuleName} {
-		match := regexp.MustCompile(fmt.Sprintf(checkerRequirePattern, regexp.QuoteMeta(module))).FindStringSubmatch(goMod)
-		if match == nil {
+		version, found := versions[module]
+		if _, precision, parsed := semver.ParseTag(version); !found || !parsed || precision != 3 {
 			return fmt.Errorf("go.mod does not require %s directly at an exact version", module)
 		}
-		versions[module] = match[1]
-		for _, sum := range []string{module + " " + match[1] + " h1:", module + " " + match[1] + "/go.mod h1:"} {
+		for _, sum := range []string{module + " " + version + " h1:", module + " " + version + "/go.mod h1:"} {
 			if !strings.Contains(goSum, sum) {
 				return fmt.Errorf("go.sum lacks a %q line", sum)
 			}
@@ -63,7 +78,7 @@ func checkBuildModule(goMod, goSum, tools string) error {
 			return fmt.Errorf("tools.go does not import %s", imported)
 		}
 	}
-	if strings.Contains(goMod, "=>") {
+	if len(gomanifest.ParseManifest([]byte(goMod)).Replaces) > 0 {
 		return errors.New("go.mod holds a replace directive")
 	}
 	return nil
@@ -91,7 +106,7 @@ func TestGatePinsItsChecker(t *testing.T) {
 	if bytes.Contains(source, []byte(`"install"`)) || bytes.Contains(source, []byte("checkerModule")) {
 		t.Fatal("the gate still installs the checker as module@version instead of building the pinned build module")
 	}
-	xtools := regexp.MustCompile(`\tgolang\.org/x/tools (v\S+)\n`).FindStringSubmatch(goMod)[1]
+	xtools := directRequirements(goMod)[xtoolsModuleName]
 	withXTools := func(version string) (string, string) {
 		return strings.Replace(goMod, xtoolsModuleName+" "+xtools, xtoolsModuleName+" "+version, 1),
 			strings.ReplaceAll(goSum, xtoolsModuleName+" "+xtools, xtoolsModuleName+" "+version)
