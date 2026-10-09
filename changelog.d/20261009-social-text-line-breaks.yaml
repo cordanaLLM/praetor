@@ -1,0 +1,4 @@
+type: changed
+title: Break walls of text in forge-facing social register outputs with short paragraphs, list formatting, explicit blank lines, and two-dimension tables
+issue: "#1099"
+breaking: false
