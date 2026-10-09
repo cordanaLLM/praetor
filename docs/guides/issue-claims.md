@@ -1,7 +1,7 @@
 # Issue claims
 
 An issue claim tells everyone reading the forge that one agent session works on an issue, on
-which branch, and at which stage. It keeps two sessions from picking up the same issue and
+which branch, and at which stage. It provides advisory coordination between sessions and
 gives the issue a status before any pull request exists.
 
 Claims are a Praetor capability, not a pipeline script: the same code serves the CLI, the MCP
@@ -83,8 +83,8 @@ its session, lane, branch, stage and last update (`forge.ClaimHeldError`).
 
 A claim is stale once its last update is older than the window. A claim whose last update is
 exactly one window old is still live; one second more makes it stale. Future clock skew is capped
-at the stale window: a claim update timestamp further in the future than the window is malformed
-and ignored. A session that finds only a stale claim takes it over: a new claim comment is
+at the stale window: a claim update timestamp further in the future than the window is treated
+as stale. A session that finds only a stale claim takes it over: a new claim comment is
 written with a `Takeover` line naming the claim it replaced, and the old stale comment is
 finalised as `abandoned`. Tests: `TestClaim_Boundary_StaleWindowEdge`.
 
@@ -96,15 +96,25 @@ file.
 A status update from a session that does not hold the claim is refused, so a session whose
 claim was taken over learns that at its next update.
 
-Every new claim (first claim, reuse after release, stale takeover) writes a new claim comment.
-Stages of an ongoing claim edit the session's own comment in place. When two sessions claim
-at the same moment, both write a comment; each reads the comments back after writing, and the
-claim with the lower comment identifier holds. Any loser finalises its own comment as `abandoned`
-and is refused naming the winner (`TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID`,
+Issue claims are advisory: they converge through comment timestamps and IDs rather than hard
+distributed locking. Every new claim (first claim, reuse after release, stale takeover) writes
+a new claim comment. Stages of an ongoing claim edit the session's own comment in place. When
+two sessions claim or update at the same moment, both may write; there is a residual race
+window where two sessions can each act once before their next read. On the next forge read,
+the reconcile step computes the holder as the oldest live claim by comment identifier; any
+session owning a live comment that is not the holder finalises its comment as `abandoned` and
+is refused with `forge.ClaimHeldError` naming the winner.
+
+Because claims are advisory, worktree ownership and the landing queue serve as the real
+exclusion guard that prevents concurrent work from landing. Hard mutual exclusion through a
+git-ref lease is tracked in [#1033](https://github.com/cordanaLLM/praetor/issues/1033). Tests:
+`TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID`,
 `TestClaim_Negative_InterleavedClaimersOnReleasedCommentExactlyOneHolds`,
 `TestClaim_Negative_InterleavedClaimersOnStaleCommentExactlyOneHolds`,
 `TestClaim_Negative_StaleHolderEditRacingTakeover_TakeoverWins`,
-`TestClaim_Negative_StaleHolderEditRacingTakeover_ResumeWins`).
+`TestClaim_Negative_StaleHolderEditRacingTakeover_ResumeWins`,
+`TestClaim_Negative_NonHolderStatusAndReleaseFinalisesComment`,
+`TestClaim_ZombieScenario_ResumeRacingTakeover`.
 
 ## Release
 

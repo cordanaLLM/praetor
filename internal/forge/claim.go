@@ -225,28 +225,78 @@ func readClaims(ctx context.Context, f ClaimForge, number int) ([]claimComment, 
 	return found, nil
 }
 
-// fresh reports whether a live claim is still inside the stale window: a claim is stale
+// isFresh reports whether a live claim is still inside the stale window: a claim is stale
 // once its last update is older than the window. Future clock skew is capped at the stale
-// window: an update timestamp further in the future than the window is malformed and ignored.
-func (d *ClaimDesk) fresh(c Claim) bool {
+// window: an update timestamp further in the future than the window is treated as stale.
+func isFresh(c Claim, now time.Time, stale time.Duration) bool {
 	if c.Released() {
 		return false
 	}
-	now := d.Now()
-	if c.Updated.After(now.Add(d.Stale)) || c.Updated.Before(now.Add(-d.Stale)) {
+	if c.Updated.After(now.Add(stale)) || c.Updated.Before(now.Add(-stale)) {
 		return false
 	}
 	return true
 }
 
-// holder returns the first fresh live claim: the lowest comment id wins when a race left two.
-func (d *ClaimDesk) holder(found []claimComment) (Claim, bool) {
+// holder computes the active claim holder from the comment list: the oldest live claim
+// by comment id, after finalised and stale claims are discarded.
+func holder(found []claimComment, now time.Time, stale time.Duration) (claimComment, bool) {
+	var (
+		best claimComment
+		have bool
+	)
 	for _, entry := range found {
-		if d.fresh(entry.claim) {
-			return entry.claim, true
+		if !isFresh(entry.claim, now, stale) {
+			continue
+		}
+		if !have || entry.claim.CommentID < best.claim.CommentID {
+			best = entry
+			have = true
 		}
 	}
-	return Claim{}, false
+	return best, have
+}
+
+// holder returns the first fresh live claim: the lowest comment id wins when a race left two.
+func (d *ClaimDesk) holder(found []claimComment) (Claim, bool) {
+	entry, ok := holder(found, d.Now(), d.Stale)
+	return entry.claim, ok
+}
+
+// reconcile reconciles the comment thread against the active claim holder: any live comment
+// owned by the session that is not the holder is finalised as abandoned (the loser rule).
+// It returns the holder comment (if any), whether a holder exists, and any refusal or failure.
+func (d *ClaimDesk) reconcile(ctx context.Context, f ClaimForge, ref ClaimRef, session string, found []claimComment) (claimComment, bool, error) {
+	now, stale := d.Now(), d.Stale
+	heldComment, held := holder(found, now, stale)
+	finaliseErrs := d.abandonOwnNonHolderLive(ctx, f, session, held, heldComment.claim.CommentID, found, now, stale)
+	if held && heldComment.claim.Session != session {
+		refusal := &ClaimHeldError{Ref: ref, Holder: heldComment.claim}
+		return heldComment, true, errors.Join(append([]error{refusal}, finaliseErrs...)...)
+	}
+	if len(finaliseErrs) > 0 {
+		return heldComment, held, errors.Join(finaliseErrs...)
+	}
+	return heldComment, held, nil
+}
+
+func (d *ClaimDesk) abandonOwnNonHolderLive(ctx context.Context, f ClaimForge, session string, held bool, holderID int64, found []claimComment, now time.Time, stale time.Duration) []error {
+	var errs []error
+	for i := range found {
+		c := found[i].claim
+		if c.Session != session || !isFresh(c, now, stale) {
+			continue
+		}
+		if held && c.CommentID == holderID {
+			continue
+		}
+		if err := d.finalise(ctx, f, c, "abandoned"); err != nil {
+			errs = append(errs, err)
+		}
+		found[i].claim.Stage = ClaimStageReleased
+		found[i].claim.Outcome = "abandoned"
+	}
+	return errs
 }
 
 func sanitizeNote(note string) (string, error) {
@@ -309,25 +359,28 @@ func (d *ClaimDesk) Claim(ctx context.Context, ref ClaimRef, req ClaimRequest) (
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	if other, held := d.holder(found); held && other.Session != req.Session {
-		return ClaimResult{}, &ClaimHeldError{Ref: ref, Holder: other}
+	heldComment, held, err := d.reconcile(ctx, f, ref, req.Session, found)
+	if err != nil {
+		return ClaimResult{}, err
 	}
-	return d.writeClaim(ctx, f, ref, req, found)
+	return d.writeClaim(ctx, f, ref, req, found, heldComment, held)
 }
 
 // writeClaim writes the claim comment and the labels once no other session holds the issue.
-func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, req ClaimRequest, found []claimComment) (ClaimResult, error) {
+func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, req ClaimRequest, found []claimComment, heldComment claimComment, held bool) (ClaimResult, error) {
 	now := d.Now().UTC().Truncate(time.Second)
 	claim := Claim{Session: req.Session, Lane: req.Lane, Branch: req.Branch, Stage: "claimed", Started: now, Updated: now}
-	target, hasTarget := d.pickClaimTarget(found, req.Session)
+	var target claimComment
+	var hasTarget bool
+	if held {
+		target, hasTarget = heldComment, true
+	} else {
+		target, hasTarget = d.pickClaimTarget(found, req.Session)
+	}
 	action, tookOver, takeover := resolveClaimAction(target, hasTarget, req.Session)
 	if action == "resumed" {
-		current, err := d.resumeTarget(ctx, f, ref, req.Session, target)
-		if err != nil {
-			return ClaimResult{}, err
-		}
-		target = current
 		claim.Started, claim.Stage = target.claim.Started, target.claim.Stage
+		takeover = takeoverNote(target.body)
 	}
 	body, err := renderClaimBody(claim, takeover)
 	if err != nil {
@@ -355,24 +408,6 @@ func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, 
 		return ClaimResult{}, errors.Join(d.abandon(ctx, f, claim, err), d.clearLabels(ctx, f, ref.Number))
 	}
 	return ClaimResult{Ref: ref.String(), Action: action, Claim: claim, TookOver: tookOver}, nil
-}
-
-func (d *ClaimDesk) resumeTarget(ctx context.Context, f ClaimForge, ref ClaimRef, session string, target claimComment) (claimComment, error) {
-	current, err := readClaims(ctx, f, ref.Number)
-	if err != nil {
-		return claimComment{}, err
-	}
-	if other, held := d.holder(current); held && other.Session != session {
-		return claimComment{}, &ClaimHeldError{Ref: ref, Holder: other}
-	}
-	cur, ok := findClaimComment(current, target.claim.CommentID)
-	if !ok || cur.claim.Released() || cur.claim.Session != session {
-		if other, held := d.holder(current); held {
-			return claimComment{}, &ClaimHeldError{Ref: ref, Holder: other}
-		}
-		return claimComment{}, fmt.Errorf("%w: %s (claim it first)", ErrNoClaim, ref)
-	}
-	return cur, nil
 }
 
 func (d *ClaimDesk) finaliseStaleTarget(ctx context.Context, f ClaimForge, ref ClaimRef, session string, target claimComment) error {
@@ -446,9 +481,6 @@ func resolveClaimAction(target claimComment, hasTarget bool, session string) (st
 // take over (a stale live claim). Released claims are never reused; every new claim writes
 // a new comment.
 func (d *ClaimDesk) pickClaimTarget(found []claimComment, session string) (claimComment, bool) {
-	if other, held := d.holder(found); held && other.Session != session {
-		return claimComment{}, false
-	}
 	var stale *claimComment
 	for i := range found {
 		switch {
@@ -563,26 +595,6 @@ func (d *ClaimDesk) applyClaimLabels(ctx context.Context, f ClaimForge, number i
 	return nil
 }
 
-// ownClaim returns the session's live claim, or the error that says why there is none.
-func (d *ClaimDesk) ownClaim(ref ClaimRef, found []claimComment, session string) (claimComment, error) {
-	if other, held := d.holder(found); held {
-		if other.Session != session {
-			return claimComment{}, &ClaimHeldError{Ref: ref, Holder: other}
-		}
-		for _, entry := range found {
-			if entry.claim.CommentID == other.CommentID {
-				return entry, nil
-			}
-		}
-	}
-	for _, entry := range found {
-		if entry.claim.Session == session && !entry.claim.Released() {
-			return entry, nil
-		}
-	}
-	return claimComment{}, fmt.Errorf("%w: %s (claim it first)", ErrNoClaim, ref)
-}
-
 // Status records a stage on the session's claim by editing its comment. Without a stage it
 // reads the current holder and changes nothing.
 func (d *ClaimDesk) Status(ctx context.Context, ref ClaimRef, req StatusRequest) (ClaimResult, error) {
@@ -605,15 +617,18 @@ func (d *ClaimDesk) Status(ctx context.Context, ref ClaimRef, req StatusRequest)
 	if req.Stage == "" {
 		return d.readStatus(ref, found), nil
 	}
-	return d.recordStage(ctx, f, ref, found, req, note)
-}
-
-// recordStage edits the session's claim comment to the requested stage and syncs the blocked label.
-func (d *ClaimDesk) recordStage(ctx context.Context, f ClaimForge, ref ClaimRef, found []claimComment, req StatusRequest, note string) (ClaimResult, error) {
-	own, err := d.ownClaim(ref, found, req.Session)
+	heldComment, held, err := d.reconcile(ctx, f, ref, req.Session, found)
 	if err != nil {
 		return ClaimResult{}, err
 	}
+	if !held {
+		return ClaimResult{}, fmt.Errorf("%w: %s (claim it first)", ErrNoClaim, ref)
+	}
+	return d.recordStage(ctx, f, ref, heldComment, req, note)
+}
+
+// recordStage edits the session's claim comment to the requested stage and syncs the blocked label.
+func (d *ClaimDesk) recordStage(ctx context.Context, f ClaimForge, ref ClaimRef, own claimComment, req StatusRequest, note string) (ClaimResult, error) {
 	claim := own.claim
 	claim.Stage, claim.Note, claim.Updated = req.Stage, note, d.Now().UTC().Truncate(time.Second)
 	body, err := renderClaimBody(claim, takeoverNote(own.body))
@@ -622,9 +637,6 @@ func (d *ClaimDesk) recordStage(ctx context.Context, f ClaimForge, ref ClaimRef,
 	}
 	if err := f.EditIssueComment(ctx, claim.CommentID, body); err != nil {
 		return ClaimResult{}, unverifiable("edit claim comment", err)
-	}
-	if err := d.confirmHold(ctx, f, ref, claim, true, false); err != nil {
-		return ClaimResult{}, err
 	}
 	if err := d.syncBlocked(ctx, f, ref.Number, req.Stage == claimBlockedStage); err != nil {
 		return ClaimResult{}, err
@@ -677,10 +689,24 @@ func (d *ClaimDesk) Release(ctx context.Context, ref ClaimRef, req ReleaseReques
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	own, err := d.ownClaim(ref, found, req.Session)
+	heldComment, held, err := d.reconcile(ctx, f, ref, req.Session, found)
 	if err != nil {
 		return ClaimResult{}, err
 	}
+	var own claimComment
+	if held {
+		own = heldComment
+	} else {
+		target, ok := findOwnUnreleased(found, req.Session)
+		if !ok {
+			return ClaimResult{}, fmt.Errorf("%w: %s (claim it first)", ErrNoClaim, ref)
+		}
+		own = target
+	}
+	return d.finaliseRelease(ctx, f, ref, own, req, note)
+}
+
+func (d *ClaimDesk) finaliseRelease(ctx context.Context, f ClaimForge, ref ClaimRef, own claimComment, req ReleaseRequest, note string) (ClaimResult, error) {
 	claim := own.claim
 	claim.Stage, claim.Outcome, claim.Note = ClaimStageReleased, req.Outcome, note
 	claim.Updated = d.Now().UTC().Truncate(time.Second)
@@ -697,6 +723,15 @@ func (d *ClaimDesk) Release(ctx context.Context, ref ClaimRef, req ReleaseReques
 		return ClaimResult{}, unverifiable("finalise claim comment", err)
 	}
 	return ClaimResult{Ref: ref.String(), Claim: claim, Action: "released"}, nil
+}
+
+func findOwnUnreleased(found []claimComment, session string) (claimComment, bool) {
+	for _, entry := range found {
+		if entry.claim.Session == session && !entry.claim.Released() {
+			return entry, true
+		}
+	}
+	return claimComment{}, false
 }
 
 // LiveClaim returns the fresh live claim on the issue, or nil when none holds it. A forge

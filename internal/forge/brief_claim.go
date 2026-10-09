@@ -36,7 +36,7 @@ func ParseBriefClaim(text string) (BriefClaim, error) {
 	for _, token := range raw.Issues {
 		ref, err := ParseClaimRef(token)
 		if err != nil {
-			return BriefClaim{}, fmt.Errorf("brief issue %s is not <owner>/<repo>#<number>", token)
+			return BriefClaim{}, fmt.Errorf("brief issue %s is not <owner>/<repo>#<number>: %w", token, err)
 		}
 		refs = append(refs, ref.String())
 	}

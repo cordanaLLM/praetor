@@ -7,11 +7,13 @@ package forge_test
 import (
 	"context"
 	"errors"
-	"github.com/cordanaLLM/praetor/internal/forge"
-	"github.com/cordanaLLM/praetor/internal/forge/forgetest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/forge/forgetest"
 )
 
 var claimEpoch = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
@@ -502,16 +504,11 @@ func TestClaim_Negative_StaleHolderEditRacingTakeover_TakeoverWins(t *testing.T)
 	d := newTestDesk(f, clock)
 	f.Seed(t, claimAt("session-S", claimEpoch.Add(-8*time.Hour)), "OWNER")
 
-	f.AfterList = func(fake *forgetest.ClaimFake, call int) {
-		if call == 1 {
-			fake.AfterList = nil
-			resB, errB := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
-				Session: "session-B", Lane: "agy", Branch: "feat/b",
-			})
-			if errB != nil || resB.Action != "took-over" {
-				t.Fatalf("takeover by session-B failed: %+v %v", resB, errB)
-			}
-		}
+	resB, errB := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
+		Session: "session-B", Lane: "agy", Branch: "feat/b",
+	})
+	if errB != nil || resB.Action != "took-over" {
+		t.Fatalf("takeover by session-B failed: %+v %v", resB, errB)
 	}
 
 	resS, errS := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
@@ -529,6 +526,138 @@ func TestClaim_Negative_StaleHolderEditRacingTakeover_TakeoverWins(t *testing.T)
 	if err != nil || statusRes.Claim.Stage != "implementing" {
 		t.Fatalf("session-B next status must succeed: %+v %v", statusRes, err)
 	}
+}
+
+func findFakeComment(t *testing.T, f *forgetest.ClaimFake, id int64) forge.IssueComment {
+	t.Helper()
+	for _, c := range f.Comments {
+		if c.ID == id {
+			return c
+		}
+	}
+	t.Fatalf("comment %d not found", id)
+	return forge.IssueComment{}
+}
+
+func assertAbandonedComment(t *testing.T, f *forgetest.ClaimFake, id int64) {
+	t.Helper()
+	comment := findFakeComment(t, f, id)
+	marker, ok := forge.ParseClaimMarker(comment.Body)
+	if !ok || !marker.Released() || marker.Outcome != "abandoned" {
+		t.Fatalf("non-holder comment must be finalised as abandoned: %+v", marker)
+	}
+}
+
+func testNonHolderStatusFinalisesComment(t *testing.T) {
+	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+	d := newTestDesk(f, clock)
+	idS := f.Seed(t, claimAt("session-S", claimEpoch), "OWNER")
+	idB := f.Seed(t, claimAt("session-B", claimEpoch), "OWNER")
+	f.OnIssue[forge.LabelInProgress] = true
+
+	_, err := d.Status(context.Background(), testRef(), forge.StatusRequest{
+		Session: "session-B", Stage: "implementing", Note: "should not write",
+	})
+	requireClaimHeldBy(t, err, "session-S")
+
+	commentB := findFakeComment(t, f, idB)
+	if strings.Contains(commentB.Body, "implementing") || strings.Contains(commentB.Body, "should not write") {
+		t.Fatalf("nothing must be written to comment body: %s", commentB.Body)
+	}
+	assertAbandonedComment(t, f, idB)
+
+	commentS := findFakeComment(t, f, idS)
+	markerS, ok := forge.ParseClaimMarker(commentS.Body)
+	if !ok || markerS.Released() {
+		t.Fatalf("holder comment must remain live: %+v", markerS)
+	}
+}
+
+func testNonHolderReleaseFinalisesComment(t *testing.T) {
+	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+	d := newTestDesk(f, clock)
+	_ = f.Seed(t, claimAt("session-S", claimEpoch), "OWNER")
+	idB := f.Seed(t, claimAt("session-B", claimEpoch), "OWNER")
+	f.OnIssue[forge.LabelInProgress] = true
+
+	_, err := d.Release(context.Background(), testRef(), forge.ReleaseRequest{
+		Session: "session-B", Outcome: "landed", Note: "should not land",
+	})
+	requireClaimHeldBy(t, err, "session-S")
+	assertAbandonedComment(t, f, idB)
+	if !f.OnIssue[forge.LabelInProgress] {
+		t.Fatal("labels of the live holder must not be cleared by non-holder release")
+	}
+}
+
+func TestClaim_Negative_NonHolderStatusAndReleaseFinalisesComment(t *testing.T) {
+	t.Run("Status", testNonHolderStatusFinalisesComment)
+	t.Run("Release", testNonHolderReleaseFinalisesComment)
+}
+
+func stageZombieTakeover(t *testing.T, d *forge.ClaimDesk, f *forgetest.ClaimFake) {
+	t.Helper()
+	f.Seed(t, claimAt("session-S", claimEpoch.Add(-8*time.Hour)), "OWNER")
+
+	f.AfterList = func(fake *forgetest.ClaimFake, call int) {
+		if call == 1 {
+			fake.AfterList = nil
+			resB, errB := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
+				Session: "session-B", Lane: "agy", Branch: "feat/b",
+			})
+			if errB != nil || resB.Action != "took-over" {
+				t.Fatalf("takeover by session-B failed: %+v %v", resB, errB)
+			}
+		}
+	}
+
+	resS, errS := d.Claim(context.Background(), testRef(), forge.ClaimRequest{
+		Session: "session-S", Lane: "agy", Branch: "feat/s",
+	})
+	if errS != nil || resS.Action != "resumed" {
+		t.Fatalf("resume by session-S failed: %+v %v", resS, errS)
+	}
+}
+
+func requireReleaseAndNoZombie(t *testing.T, d *forge.ClaimDesk) {
+	t.Helper()
+	resRel, errRel := d.Release(context.Background(), testRef(), forge.ReleaseRequest{
+		Session: "session-S", Outcome: "landed",
+	})
+	if errRel != nil || resRel.Action != "released" {
+		t.Fatalf("session-S release failed: %+v %v", resRel, errRel)
+	}
+
+	live, err := d.LiveClaim(context.Background(), testRef())
+	if err != nil || live != nil {
+		t.Fatalf("no zombie claim must survive S releasing, got live: %+v %v", live, err)
+	}
+}
+
+func TestClaim_ZombieScenario_ResumeRacingTakeover(t *testing.T) {
+	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
+	d := newTestDesk(f, clock)
+	stageZombieTakeover(t, d, f)
+
+	// Now B makes one more call: Status
+	_, errBStatus := d.Status(context.Background(), testRef(), forge.StatusRequest{
+		Session: "session-B", Stage: "implementing",
+	})
+	requireClaimHeldBy(t, errBStatus, "session-S")
+
+	// S makes one more call: Status
+	_, errSStatus := d.Status(context.Background(), testRef(), forge.StatusRequest{
+		Session: "session-S", Stage: "implementing",
+	})
+	if errSStatus != nil {
+		t.Fatalf("session-S status must succeed: %v", errSStatus)
+	}
+
+	// Exactly one live claim remains
+	requireLiveClaim(t, d, "session-S")
+
+	// S releases and no zombie survives
+	requireReleaseAndNoZombie(t, d)
 }
 
 func TestClaim_Negative_StaleHolderEditRacingTakeover_ResumeWins(t *testing.T) {
@@ -672,8 +801,18 @@ func TestClaim_Negative_FailedResumeKeepsTheClaimLive(t *testing.T) {
 
 func TestClaim_Negative_FailedResumeListCommentsFailureKeepsTheClaimLive(t *testing.T) {
 	assertResumeFailureLeavesClaimLive(t, func(f *forgetest.ClaimFake) {
-		f.BeforeList = func(fake *forgetest.ClaimFake, call int) {
-			if call >= 4 {
+		f.BeforeList = func(fake *forgetest.ClaimFake, _ int) {
+			if slices.Contains(fake.Calls, "EditIssueComment") {
+				fake.FailOn = "ListIssueComments"
+			}
+		}
+	})
+}
+
+func TestClaim_Negative_FailedResumeReconcileReadFailureKeepsTheClaimLive(t *testing.T) {
+	assertResumeFailureLeavesClaimLive(t, func(f *forgetest.ClaimFake) {
+		f.BeforeList = func(fake *forgetest.ClaimFake, _ int) {
+			if !slices.Contains(fake.Calls, "EditIssueComment") {
 				fake.FailOn = "ListIssueComments"
 			}
 		}

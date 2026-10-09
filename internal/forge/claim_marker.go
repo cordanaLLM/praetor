@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// Issue claims (#937). One comment per issue carries the claim. Its first line is a machine
+// Issue claims (#937). Each claim writes a comment whose first line is a machine
 // readable marker, an HTML comment GitHub does not render; the rest is human text that every
 // stage update rewrites.
 //
