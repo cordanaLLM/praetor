@@ -36,24 +36,30 @@ const (
 // unmarked lines Praetor's former format wrote.
 var managedIgnoreRules = []string{"/.workingdir/", legacyScratchIgnore, "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore, mcpOutputCacheIgnore}
 
-// GitIgnoreBlockVersion identifies an accepted version of the managed .gitignore block.
-type GitIgnoreBlockVersion struct {
+// gitIgnoreBlockVersion identifies an accepted version of the managed .gitignore block.
+type gitIgnoreBlockVersion struct {
 	Version string
 	Rules   []string
 }
 
-// CanonicalGitIgnoreBlockVersion is the current canonical version of the managed .gitignore block.
-var CanonicalGitIgnoreBlockVersion = GitIgnoreBlockVersion{
+// canonicalGitIgnoreBlockVersion is the current canonical version of the managed .gitignore block.
+var canonicalGitIgnoreBlockVersion = gitIgnoreBlockVersion{
 	Version: "v2",
 	Rules:   managedIgnoreRules,
 }
 
-// GitIgnoreBlockHistory lists earlier accepted versions of the managed .gitignore block,
-// in chronological order (oldest first). Each entry reuses the existing rule slice (HISS-19).
-var GitIgnoreBlockHistory = []GitIgnoreBlockVersion{
+// gitIgnoreBlockHistory lists earlier accepted versions of the managed .gitignore block,
+// in chronological order (oldest first). Each entry is stored as a literal rule list
+// to prevent aliasing with live canonical rules.
+var gitIgnoreBlockHistory = []gitIgnoreBlockVersion{
 	{
 		Version: "v1",
-		Rules:   managedIgnoreRules[:4],
+		Rules: []string{
+			"/.workingdir/",
+			legacyScratchIgnore,
+			"/" + worktree.WorktreeSubdir + "/",
+			agyWorkspaceIgnore,
+		},
 	},
 }
 
@@ -65,21 +71,17 @@ type GitIgnoreTailMatch struct {
 }
 
 // RulesFor returns the version's rules adjusted for keepLegacy and negateConfig.
-func (v GitIgnoreBlockVersion) RulesFor(keepLegacy, negateConfig bool) []string {
-	rules := v.Rules
-	if !keepLegacy {
-		rules = slices.DeleteFunc(slices.Clone(rules), func(rule string) bool {
-			return rule == legacyScratchIgnore
-		})
-	}
+// It returns a cloned slice to ensure the version's underlying rules cannot be mutated.
+func (v gitIgnoreBlockVersion) RulesFor(keepLegacy, negateConfig bool) []string {
+	rules := privateIgnoreRules(v.Rules, keepLegacy)
 	if negateConfig {
-		return append(slices.Clone(rules), configDirNegation)
+		return append(rules, configDirNegation)
 	}
 	return rules
 }
 
 // Render returns the version's managed tail block for the given configuration.
-func (v GitIgnoreBlockVersion) Render(keepLegacy, negateConfig bool) string {
+func (v gitIgnoreBlockVersion) Render(keepLegacy, negateConfig bool) string {
 	return gitIgnoreTailBlock().render(v.RulesFor(keepLegacy, negateConfig))
 }
 
@@ -88,21 +90,21 @@ const maxHistoryVersions = 64
 
 // LookupManagedGitIgnoreTail inspects text (the .gitignore content of the repository at repoPath)
 // and reports whether it ends with an accepted managed private-artifact block: the current
-// canonical block or a known historical version in GitIgnoreBlockHistory.
+// canonical block or a known historical version in gitIgnoreBlockHistory.
 func LookupManagedGitIgnoreTail(repoPath, text string) (GitIgnoreTailMatch, bool) {
 	normalized, _ := util.NormalizeLineEndings(text)
 	keep := keepsLegacyScratch(normalized, legacyScratchPresent(repoPath), false)
 
-	if versionMatchesTail(normalized, CanonicalGitIgnoreBlockVersion, keep) {
+	if versionMatchesTail(normalized, canonicalGitIgnoreBlockVersion, keep) {
 		return GitIgnoreTailMatch{
 			Matched: true,
 			Current: true,
-			Version: CanonicalGitIgnoreBlockVersion.Version,
+			Version: canonicalGitIgnoreBlockVersion.Version,
 		}, true
 	}
 
-	for i := len(GitIgnoreBlockHistory) - 1; i >= 0 && i < maxHistoryVersions; i-- {
-		v := GitIgnoreBlockHistory[i]
+	for i := len(gitIgnoreBlockHistory) - 1; i >= 0 && i < maxHistoryVersions; i-- {
+		v := gitIgnoreBlockHistory[i]
 		if versionMatchesTail(normalized, v, keep) {
 			return GitIgnoreTailMatch{
 				Matched: true,
@@ -116,14 +118,14 @@ func LookupManagedGitIgnoreTail(repoPath, text string) (GitIgnoreTailMatch, bool
 }
 
 // versionMatchesTail reports whether normalized text ends with version's block (with or without configDirNegation).
-func versionMatchesTail(normalized string, v GitIgnoreBlockVersion, keepLegacy bool) bool {
+func versionMatchesTail(normalized string, v gitIgnoreBlockVersion, keepLegacy bool) bool {
 	return strings.HasSuffix(normalized, v.Render(keepLegacy, false)) ||
 		strings.HasSuffix(normalized, v.Render(keepLegacy, true))
 }
 
-// CheckBlockHistoryTransition validates that whenever the canonical block changes from
+// checkBlockHistoryTransition validates that whenever the canonical block changes from
 // previous to current, previous is present in history.
-func CheckBlockHistoryTransition(previous, current GitIgnoreBlockVersion, history []GitIgnoreBlockVersion) error {
+func checkBlockHistoryTransition(previous, current gitIgnoreBlockVersion, history []gitIgnoreBlockVersion) error {
 	if slices.Equal(previous.Rules, current.Rules) {
 		return nil
 	}
@@ -155,10 +157,10 @@ func gitIgnoreTailBlock() managedTailBlock {
 // with it and named (reportReincludedConfigFiles).
 const configDirNegation = "!/" + configDir + "/"
 
-// managedGitIgnoreRules returns the managed block's rules: CanonicalGitIgnoreBlockVersion.Rules,
+// managedGitIgnoreRules returns the managed block's rules: canonicalGitIgnoreBlockVersion.Rules,
 // without legacyScratchIgnore unless keepLegacy is set, then configDirNegation when negateConfig is set.
 func managedGitIgnoreRules(keepLegacy, negateConfig bool) []string {
-	return CanonicalGitIgnoreBlockVersion.RulesFor(keepLegacy, negateConfig)
+	return canonicalGitIgnoreBlockVersion.RulesFor(keepLegacy, negateConfig)
 }
 
 // renderManagedGitIgnore renders the managed block from managedGitIgnoreRules.
@@ -180,7 +182,7 @@ func RetiredLegacyScratchBlock() string {
 
 // HasManagedGitIgnoreTail reports whether text, the LF-normalized .gitignore of the repository
 // at repoPath, ends with the canonical managed block adoption writes there: the current canonical
-// block or an earlier accepted version in GitIgnoreBlockHistory. Audit and verify paths route
+// block or an earlier accepted version in gitIgnoreBlockHistory. Audit and verify paths route
 // through LookupManagedGitIgnoreTail.
 func HasManagedGitIgnoreTail(repoPath, text string) bool {
 	_, ok := LookupManagedGitIgnoreTail(repoPath, text)
