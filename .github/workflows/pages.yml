@@ -130,16 +130,17 @@ jobs:
           npm --prefix tools/figures run smoke -- --site site --require-browser
 
       - name: Setup Go
+        id: setup-go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
 
       - name: Restore Go Module And Build Caches
         uses: ./.github/actions/go-cache
         with:
           job: pages-build
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       - name: SEO Integrity Audit
         run: go run ./cmd/standardsctl seo audit site

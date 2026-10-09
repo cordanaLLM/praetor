@@ -172,9 +172,10 @@ func runsGovulnGateStep(step ghworkflow.Step) bool {
 }
 
 // cachedGoGateJobs parses one workflow and returns how many of its jobs run the gate and which of
-// those set Go up without check-latest: true. Such a job scans with the Go patch release the
-// runner image has cached, so after a Go security release its standard-library advisories fail
-// the gate until the image moves.
+// those set Go up without go-version-file: go.mod. Such a job scans with a Go patch release
+// resolved from a range, and the actions/go-versions manifest behind that range lags a release
+// (or stops updating), so its standard-library advisories fail the gate although a fixed Go
+// release exists. go.mod's toolchain directive is the one source of the scanning version.
 func cachedGoGateJobs(t *testing.T, data []byte) (int, []string) {
 	t.Helper()
 	spec, err := ghworkflow.Parse(data)
@@ -189,7 +190,7 @@ func cachedGoGateJobs(t *testing.T, data []byte) (int, []string) {
 		}
 		gateJobs++
 		if slices.ContainsFunc(steps, func(step ghworkflow.Step) bool {
-			return strings.HasPrefix(step.Uses, "actions/setup-go@") && step.With["check-latest"] != true
+			return strings.HasPrefix(step.Uses, "actions/setup-go@") && step.With["go-version-file"] != "go.mod"
 		}) {
 			cached = append(cached, id)
 		}
@@ -198,15 +199,16 @@ func cachedGoGateJobs(t *testing.T, data []byte) (int, []string) {
 }
 
 // Negative: every job of the CI and security workflows that runs the gate resolves the newest Go
-// patch release (setup-go check-latest: true). A job that sets Go up without it is reported.
-func TestSecurityGovuln_Negative_GateJobsResolveTheLatestGoPatch(t *testing.T) {
+// patch release from go.mod's toolchain directive (setup-go go-version-file: go.mod). A job that
+// sets Go up from a version range, with or without check-latest, is reported.
+func TestSecurityGovuln_Negative_GateJobsResolveGoFromGoMod(t *testing.T) {
 	for _, name := range []string{"ci.yml", "security.yml"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if gateJobs, cached := cachedGoGateJobs(t, data); gateJobs == 0 || len(cached) != 0 {
-			t.Errorf("%s: %d jobs run the gate; these set Go up without check-latest: %q", name, gateJobs, cached)
+			t.Errorf("%s: %d jobs run the gate; these set Go up without go-version-file: go.mod: %q", name, gateJobs, cached)
 		}
 	}
 	planted := "jobs:\n  scan:\n    runs-on: ubuntu-26.04\n    steps:\n" +
@@ -214,5 +216,13 @@ func TestSecurityGovuln_Negative_GateJobsResolveTheLatestGoPatch(t *testing.T) {
 		"      - run: go run ./cmd/standardsctl security govuln\n"
 	if gateJobs, cached := cachedGoGateJobs(t, []byte(planted)); gateJobs != 1 || !slices.Equal(cached, []string{"scan"}) {
 		t.Fatalf("planted job: %d gate jobs, cached %q; want the scan job reported", gateJobs, cached)
+	}
+	plantedLatest := strings.Replace(planted, "cache: false\n", "cache: false\n          check-latest: true\n", 1)
+	if _, cached := cachedGoGateJobs(t, []byte(plantedLatest)); !slices.Equal(cached, []string{"scan"}) {
+		t.Fatalf("check-latest job: cached %q; a version range with check-latest still resolves through the manifest", cached)
+	}
+	fixed := strings.Replace(planted, "go-version: '1.27'", "go-version-file: go.mod", 1)
+	if _, cached := cachedGoGateJobs(t, []byte(fixed)); len(cached) != 0 {
+		t.Fatalf("go-version-file job reported: %q", cached)
 	}
 }

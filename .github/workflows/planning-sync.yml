@@ -45,17 +45,18 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go Toolchain
+        id: setup-go
         # yamllint disable-line rule:line-length
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
 
       - name: Restore Go Module And Build Caches
         uses: ./.github/actions/go-cache
         with:
           job: planning-sync
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       - name: Reconcile Planning State
         shell: bash

@@ -58,16 +58,17 @@ jobs:
           persist-credentials: false
 
       - name: Setup Go Toolchain
+        id: setup-go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
 
       - name: Restore Go Module And Build Caches
         uses: ./.github/actions/go-cache
         with:
           job: devcontainer-refresh
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       # Past the bound the check exits non-zero, which is when the refresh matters most, so its
       # report is kept for the pull request body and its exit status does not stop the job.

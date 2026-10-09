@@ -75,22 +75,24 @@ jobs:
           fetch-depth: 0
 
       # make verify-all runs the Go vulnerability gate (make vuln), which reports every standard
-      # library advisory against the toolchain that scans. check-latest takes the newest 1.27
-      # patch release instead of the one the runner image has cached, so a Go security release
-      # stops failing the gate as soon as the runner can download it.
+      # library advisory against the toolchain that scans. go.mod's toolchain directive is the one
+      # source of that version: go-version-file reads it, and an exact version missing from the
+      # actions/go-versions manifest (which lags a release) is downloaded from go.dev instead.
+      # A range plus check-latest resolves through the manifest and stayed on a vulnerable patch
+      # release while the manifest job was failing. Renovate keeps the directive current.
       - name: Setup Go Toolchain
+        id: setup-go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
-          check-latest: true
 
       - name: Restore Go Module And Build Caches
         id: gocache
         uses: ./.github/actions/go-cache
         with:
           job: ci-verify
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       - name: Detect Changed Paths & Evaluate CI Filter
         id: base
@@ -528,10 +530,11 @@ jobs:
             tools/figures/package-lock.json
 
       - name: Setup Go Toolchain
+        id: setup-go
         if: steps.changed.outputs.run == 'true'
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27'
+          go-version-file: go.mod
           cache: false
 
       - name: Restore Go Module And Build Caches
@@ -539,7 +542,7 @@ jobs:
         uses: ./.github/actions/go-cache
         with:
           job: docs-presets
-          go-version: '1.27'
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       # Both fixture builds below run praetorctl adopt, and their smoke tests drive Chromium through
       # the playwright pin in tools/figures/package-lock.json, so both are set up once here; the SEO

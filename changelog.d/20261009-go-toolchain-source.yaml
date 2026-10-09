@@ -1,0 +1,3 @@
+type: fixed
+title: Take the Go toolchain for CI from go.mod (toolchain go1.27.2 and setup-go go-version-file) so the Go Vulnerability & AST Security Scan stops reporting GO-2026-6599 to GO-2026-6613 against stdlib 1.27.1 while the actions/go-versions manifest lags
+breaking: false
