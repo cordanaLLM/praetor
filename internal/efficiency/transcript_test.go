@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -149,6 +150,13 @@ func TestReadTranscriptsDir_Negative_EmptyMissingAndCancelled(t *testing.T) {
 	cancel()
 	if _, _, err := ReadTranscriptsDir(ctx, t.TempDir(), NewClassifier(nil)); err == nil {
 		t.Error("cancelled context must fail")
+	}
+	// Permission bits make a file unreadable only on Unix: on Windows chmod 0 just sets the
+	// read-only attribute, so the unreadable case runs where the bits are enforced (HISS-21:
+	// a skipped leg states its reason). Root reads through the bits, so it is skipped too.
+	if runtime.GOOS == "windows" {
+		t.Log("unreadable-file case skipped: Windows does not enforce permission bits on reads")
+		return
 	}
 	unreadable := t.TempDir()
 	writeFile(t, filepath.Join(unreadable, "a.jsonl"), []byte("{}\n"))
