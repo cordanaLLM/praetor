@@ -1,0 +1,3 @@
+type: changed
+title: "Dependencies: update dependency ruff to v0.17.0"
+breaking: false
