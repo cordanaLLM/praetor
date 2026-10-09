@@ -1,0 +1,4 @@
+type: fixed
+issue: "#1090"
+title: "Accept historical managed .gitignore blocks in audit with a warning, resolving audit failures for adopters upgraded after #1063"
+breaking: false

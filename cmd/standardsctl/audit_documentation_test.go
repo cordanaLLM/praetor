@@ -672,3 +672,57 @@ func TestAuditDocumentationGate_Boundary_RulesetCarriesPerLegMatrixContexts(t *t
 		t.Fatalf("ruleset requiring the per-leg contexts failed: %v", err)
 	}
 }
+
+// Positive: the documentation gate accepts both the current managed .gitignore block
+// and known earlier versions (emitting a [WARN] line for earlier versions). Hand-edited
+// or unknown blocks fail.
+func TestAuditDocumentationGateManagedGitIgnoreBlockHistory(t *testing.T) {
+	manifest := &config.Manifest{Facets: []string{"docs:seo-portal"}}
+
+	t.Run("current block passes without warning", func(t *testing.T) {
+		root := documentationAuditFixture(t)
+		writeFixtureFile(t, root, ".gitignore", adopt.ManagedGitIgnoreBlock())
+		out, err := captureStdout(t, func() error {
+			return docGate(t.Context(), manifest, root)
+		})
+		if err != nil {
+			t.Fatalf("current block failed audit: %v", err)
+		}
+		if strings.Contains(out, "[WARN]") {
+			t.Fatalf("current block emitted warning:\n%s", out)
+		}
+	})
+
+	t.Run("previous four-rule block passes with warning", func(t *testing.T) {
+		root := documentationAuditFixture(t)
+		fourRuleBlock := "# BEGIN praetor private artifacts (praetorctl adopt)\n" +
+			"/.workingdir/\n" +
+			"/.workingdir2/\n" +
+			"/.standards/worktrees/\n" +
+			"/.agents/mcp_config.json\n" +
+			"# END praetor private artifacts\n"
+		writeFixtureFile(t, root, ".gitignore", fourRuleBlock)
+		out, err := captureStdout(t, func() error {
+			return docGate(t.Context(), manifest, root)
+		})
+		if err != nil {
+			t.Fatalf("previous four-rule block failed audit: %v", err)
+		}
+		if !strings.Contains(out, "[WARN]") || !strings.Contains(out, "re-adopt to refresh") {
+			t.Fatalf("previous four-rule block want warning containing [WARN] and 're-adopt to refresh', got:\n%s", out)
+		}
+	})
+
+	t.Run("hand-edited block fails", func(t *testing.T) {
+		root := documentationAuditFixture(t)
+		handEditedBlock := "# BEGIN praetor private artifacts (praetorctl adopt)\n" +
+			"/.workingdir/\n" +
+			"/hand-edited/\n" +
+			"# END praetor private artifacts\n"
+		writeFixtureFile(t, root, ".gitignore", handEditedBlock)
+		err := docGate(t.Context(), manifest, root)
+		if err == nil || !strings.Contains(err.Error(), "canonical Praetor private-artifact block") {
+			t.Fatalf("hand-edited block passed or had wrong error: %v", err)
+		}
+	})
+}
