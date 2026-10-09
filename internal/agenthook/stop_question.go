@@ -43,6 +43,7 @@ var (
 	fencedBlockLine = regexp.MustCompile("^ {0,3}(```|~~~)")
 	inlineCodeSpan  = regexp.MustCompile("`+[^`]*`+")
 	urlSpan         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S*[^\s.,;:!?)\]'"*_>]`)
+	itemQuestionEnd = regexp.MustCompile(`[?？]["')\]}*_>]*$`)
 	questionEnd     = regexp.MustCompile(`[?？]["')\]}*_>]*(\s|$)`)
 	indentedLine    = regexp.MustCompile(`^( {4}|\t)`)
 	listItemLine    = regexp.MustCompile(`^\s*([-*+]|\d{1,3}[.)]|[A-Za-z][.)]|\(?[A-Za-z0-9]\))\s+\S`)
@@ -85,6 +86,9 @@ func evaluateStopQuestion(row Registration, canonical Canonical) Verdict {
 // same way. The block-once skip (stop_hook_active) bounds either false positive to one turn.
 func closesWithQuestion(text string) bool {
 	paragraphs := closingParagraphs(stripQuoted(text))
+	if listAsksQuestion(paragraphs) {
+		return true
+	}
 	prose, found := closingProse(paragraphs)
 	if !found {
 		return false
@@ -168,4 +172,19 @@ func countListItems(paragraphs [][]string) int {
 		}
 	}
 	return count
+}
+
+// listAsksQuestion reports whether the last paragraph is a list with an item that ends in a
+// question (the item itself ends in one): a numbered or bulleted list of questions is the usual way to ask in prose. A list
+// in the earlier paragraph is not judged, because a later paragraph follows it.
+func listAsksQuestion(paragraphs [][]string) bool {
+	if len(paragraphs) == 0 {
+		return false
+	}
+	for _, line := range paragraphs[len(paragraphs)-1] {
+		if listItemLine.MatchString(line) && itemQuestionEnd.MatchString(strings.TrimSpace(line)) {
+			return true
+		}
+	}
+	return false
 }

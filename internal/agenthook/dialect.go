@@ -139,6 +139,9 @@ func (d Dialect) Encode(canonical Canonical, verdict Verdict) Response {
 	case Skip:
 		return Response{Stderr: []byte("praetor hook: " + boundReason(verdict.Reason) + ", skipped\n")}
 	default:
+		if canonical.Event == EventStop && canonical.StopActive {
+			return haltStop(verdict.Reason)
+		}
 		return Response{Stderr: []byte(boundReason(verdict.Reason) + "\n"), ExitCode: d.denyExit}
 	}
 }
@@ -191,6 +194,18 @@ func nativeEventName(client string, event Event) string {
 		}
 	}
 	return ""
+}
+
+// haltStop ends the session on a repeated stop that is still denied: the client's universal
+// continue:false output (claude, codex and gemini all read it) with exit 0, so a blocker the
+// agent cannot clear states its reason once instead of sending the agent back on every stop.
+func haltStop(reason string) Response {
+	bounded := boundReason(reason)
+	encoded, err := json.Marshal(map[string]any{"continue": false, "stopReason": bounded, "systemMessage": bounded})
+	if err != nil {
+		return Response{Stderr: []byte("praetor hook: encode stop halt: " + err.Error() + "\n"), ExitCode: usageExit}
+	}
+	return Response{Stdout: append(encoded, '\n')}
 }
 
 func (d Dialect) isCommandTool(tool string) bool {
