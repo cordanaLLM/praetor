@@ -1,4 +1,4 @@
 type: added
-title: Register the stop engine call in this repository's Claude Code, Codex and Gemini CLI configs and refuse a stop whose final message asks the operator in prose, naming the client's structured question tool in the deny; list a due checkpoint or stale ledger in the same deny as the question on the first pass; a stop still denied on the repeated pass now ends the session with continue:false and exit 0 instead of exit 2 again; Antigravity states a skip because its stop payload has no message, and adoption does not render the stop rows yet
+title: Refuse a stop whose closing paragraph holds a sentence ending in a question mark (a choice written without one now passes), naming the client's structured question tool in the deny; every stop check (question, ledger with audit, checkpoint) runs on each pass and the first deny lists all failures; a stop still denied on the repeated pass now ends the session with continue:false and exit 0 instead of exit 2 again; with no engine the stop launcher falls back to the checkpoint adapter and says so on stderr
 issue: "#1095"
 breaking: false

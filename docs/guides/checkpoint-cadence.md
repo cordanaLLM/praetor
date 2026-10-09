@@ -115,11 +115,12 @@ publication policy. Go forge PR requests now separately support the draft flag.
 ## Agent activation and failure handling
 
 Codex and Claude use PostToolUse and Stop; Gemini uses AfterTool and AfterAgent.
-The post-tool rows of Codex, Claude and Gemini invoke `.config/agent/hooks/checkpoint.py`,
+The post-tool rows of Codex, Claude and Gemini invoke the adapter `.config/agent/hooks/checkpoint.py`
+(the engine's own evaluator is the separate `.config/lefthook/scripts/checkpoint.py`),
 which requires the actual Lefthook job's structured result; in this repository the Stop and
 AfterAgent rows call `praetorctl hook <client> stop` through the launcher
 `.config/agent/hooks/praetor_hook.py`, and the engine's stop path runs the ledger verify
-and `checkpoint.py --event stop` itself, together with the prose-question check
+and `.config/lefthook/scripts/checkpoint.py --event stop` itself, together with the prose-question check
 ([agent hooks](agent-hooks.md#prose-question-check)). PostToolUse/AfterTool adds guidance without
 replacing the completed tool's output. Stop/AfterAgent requests one continuation
 for due or unverifiable work. If
@@ -142,10 +143,10 @@ registrations of this repository call this path; the post-tool and pre-edit regi
 do not yet, so it exists alongside `.config/agent/hooks/checkpoint.py` and the
 Lefthook jobs below until a later change re-points them and removes the Python adapters.
 
-Stop/AfterAgent first runs the separate `agent-state-stop` Lefthook job, even
-when cadence is disabled. Its unique execution marker must confirm a valid,
-fresh existing ledger through `state sync --verify`; the bridge does not silently
-write a replacement snapshot. After changing the ledger or staging public work,
+Stop/AfterAgent first checks the ledger, even when cadence is disabled: the engine
+runs `state sync --verify` and `state audit` in Go (`evaluateStopLedger`), and the
+no-engine fallback adapter runs the `agent-state-stop` Lefthook job. Both confirm a
+valid, fresh existing ledger; neither silently writes a replacement snapshot. After changing the ledger or staging public work,
 run `praetorctl state sync .` explicitly. Generated adoptee bundles still need
 their own compatible CLI/state-job bootstrap; this repository's wiring does not
 prove native activation or freshness enforcement for every adopter.

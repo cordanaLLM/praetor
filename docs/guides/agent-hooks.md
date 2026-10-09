@@ -474,11 +474,24 @@ exits 0 with the reason on stderr:
 praetor hook: no engine serves claude pre-dispatch (checked /home/example/.local/bin/praetorctl); gate unenforced until bin/praetorctl rebuilt (make hook-cli) or engine reinstalled (make dev-install), skipped
 ```
 
-Failing open is deliberate for the stop row too: a stop gate that blocked whenever no
-engine is built would end every session on a host that never ran `make hook-cli`, and the
-skip is stated on stderr, not silent. The engine's own stop path still fails closed (no
-Python interpreter, an unverifiable ledger or checkpoint all deny).
-The test `test_missing_engine_is_a_stated_skip` in `scripts/test_praetor_hook.py` pins it.
+The stop row does not fail open. When no engine serves `claude`, `codex` or `gemini` `stop`,
+the launcher runs the checkpoint adapter `.config/agent/hooks/checkpoint.py` (the call the
+stop registration made before the engine row) on the same stdin, and prints one stderr line
+naming the fallback:
+
+```text
+praetor hook: no engine serves claude stop; falling back to checkpoint.py (checkpoint and ledger only, prose questions not judged)
+```
+
+The stop gate is then as strict as before the engine row, minus the prose-question check,
+which only the engine has; the stderr line says so. It also covers an older engine that
+lists no stop row, so that engine never answers `stop` with its usage and exit 2 on every
+pass. agy has no adapter, and a checkout without the adapter file has nothing to fall back
+to; both stay a stated skip. `test_stop_without_an_engine_falls_back_to_the_checkpoint_adapter`,
+`test_stop_fallback_is_not_taken_when_an_engine_serves_or_the_pair_is_not_stop` and
+`test_stop_without_engine_or_adapter_and_agy_stop_stay_stated_skips` in
+`scripts/test_praetor_hook.py` pin it; `test_missing_engine_is_a_stated_skip` pins the skip
+for the other pairs.
 
 For AGY, the same skip also prints the answer the engine's agy encoder gives a skip:
 `{"decision":"allow"}` for `pre-tool` and `pre-dispatch`, `{}` for `stop` (`PROCEED` in the
@@ -992,9 +1005,12 @@ checkpoint due: …`; both are `[BLOCKED BY HISS]` on `claude`/`codex`/`gemini`.
 
 **`stop` state verification.** Before the checkpoint itself, `stop` calls the Go state-sync
 verifier (`internal/state.VerifyStateSync`, the function behind `praetorctl state sync
---verify .`) against the governed root. A missing, stale or unverifiable `.workingdir` ledger
-blocks on its own, independent of whether a checkpoint is due; the reason names the repair
-(`praetorctl state sync .`).
+--verify .`) and the state audit (`internal/state.AuditWorkingDir`, the function behind
+`praetorctl state audit .`) against the governed root, the two steps the former
+`agent-state-stop` job ran. A missing, stale or unverifiable `.workingdir` ledger, or an
+audit violation such as an unresolved P0 row, blocks on its own, independent of whether a
+checkpoint is due; the reason names the repair (`praetorctl state sync .`,
+`TestRunStopBlocksOnAnUnresolvedP0Row`).
 
 **`stop_hook_active`.** The `claude`, `codex` and `gemini` stop decoders read the client's
 `stop_hook_active` flag into `Canonical.StopActive` (`fillMainStop` in
@@ -1021,8 +1037,12 @@ repository's `.claude/settings.json` (`Stop`), `.codex/hooks.json` (`Stop`) and
 `.gemini/settings.json` (`AfterAgent`) register it through the launcher
 `.config/agent/hooks/praetor_hook.py`; the engine's stop path runs the ledger verify and
 `checkpoint.py --event stop` itself, so the registration replaced the direct
-`checkpoint.py` stop call instead of adding a second one (`checkpoint.py` itself stays: the
-claude and gemini post-tool rows and the engine's stop path run it)
+`checkpoint.py` stop call instead of adding a second one (two different files
+share the name `checkpoint.py`: the engine runs `.config/lefthook/scripts/checkpoint.py`
+(`checkpointScriptDir` in `internal/agenthook/python.go`), the claude and gemini post-tool
+rows and the launcher's no-engine stop fallback run the adapter
+`.config/agent/hooks/checkpoint.py`, and the codex post-tool row runs its own adapter
+wrapper)
 (`TestTrackedStopRegistrationReachesTheEngine`, `TestRegisteredStopCommandDeniesAClosingQuestion`).
 A repository that adopted Praetor does not get the stop rows yet: adoption registers
 pre-tool rows only (`internal/adopt/agent_hooks.go`, `NativeHooks(..., EventPreTool)`), so
@@ -1040,18 +1060,18 @@ message to judge.
 Fenced code (read by `util.MarkdownFence`, the one fence tracker; a fence closes only on the same character and at least the opener's length, and ```` ```make``` passes ```` is an inline span), inline code (`util.MarkdownCodeSpans`),
 4-space or tab indented code, blockquotes, table rows with or without leading
 pipes and URLs are removed first (a URL's trailing punctuation stays, so `merge <url>?` is still a
-question). Only the last two paragraphs are judged. The stop is denied once when any
-sentence of the closing prose paragraph ends in `?` or the full-width `？` (a trailing
-`Happy to.` does not hide it), or when that paragraph asks the reader to choose (`let me know
-which`, `let me know if you prefer`, `do you prefer`, a sentence opening with `pick one` or
-`choose between`, `which one should I`, `your call`, …; a statement such as `I prefer A`
-or `I will pick the simplest approach` does not count) and the closing paragraphs hold an options list of two or more items. A bare
-`Let me know if you need anything else.` or `Tell me if CI fails.` after a summary list
-points at no choice and passes. A question in an earlier paragraph, followed by more
-report, passes as rhetorical. A list in the last paragraph counts as a question when one
-of its items itself ends in `?` or `？` (`Two decisions needed:` then `1. Rebase or
-merge?`), because a list of questions is the usual way to ask in prose; a list in the
-earlier paragraph, followed by more report, is not judged.
+question). Code spans are masked one paragraph at a time, so a lone backtick cannot pair with
+one in a later paragraph and hide the closing question. Only the last two paragraphs are
+judged. The stop is denied once when any sentence of the closing prose paragraph ends in `?`
+or the full-width `？` (a trailing `Happy to.` does not hide it). Nothing else is a question:
+a choice written without a question mark (`Let me know which one.`) passes, because every
+phrase heuristic tried for it added false positives. A question in an earlier paragraph,
+followed by more report, passes as rhetorical. A list in the last paragraph counts as a
+question when one of its items itself ends in `?` or `？` (`Two decisions needed:` then `1.
+Rebase or merge?`), because a list of questions is the usual way to ask in prose; a list in
+the earlier paragraph, followed by more report, is not judged. A `?` inside a quoted word
+mid-sentence (`the 'why?' case`) still counts. The fixtures are `stopFixtures` in
+`internal/agenthook/stop_question_test.go`, replayed for every client.
 
 Trade-off: the check cannot tell a rhetorical question from a real one inside a single
 paragraph, so a one-paragraph report that asks and answers ("Why did it fail? The cache was
