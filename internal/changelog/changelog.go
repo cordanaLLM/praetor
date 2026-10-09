@@ -3,6 +3,7 @@ package changelog
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,11 @@ func CreateFragment(repoPath string, f Fragment) (string, error) {
 	if strings.TrimSpace(f.Title) == "" {
 		return "", fmt.Errorf("changelog: title cannot be empty")
 	}
+	normIssue, err := NormaliseIssue(f.Issue)
+	if err != nil {
+		return "", fmt.Errorf("changelog: %w", err)
+	}
+	f.Issue = normIssue
 	// A title that cannot be represented is refused at creation rather than at release.
 	// Accepting it writes a fragment that renders into the journaled section and fails the
 	// release for whoever runs it next, with an error pointing at a JSON offset rather than
@@ -138,19 +144,30 @@ func buildReleaseSection(fragments []Fragment, version, date string) string {
 		}
 		fmt.Fprintf(&sb, "### %s\n\n", sectionTitles[sec])
 		for _, it := range items {
-			line := fmt.Sprintf("- %s", it.Title)
-			if it.Breaking {
-				line = fmt.Sprintf("- **BREAKING**: %s", it.Title)
-			}
-			if it.Issue != "" {
-				line = fmt.Sprintf("%s (#%s)", line, it.Issue)
-			}
-			sb.WriteString(line + "\n")
+			sb.WriteString(renderFragmentLine(it) + "\n")
 		}
 		sb.WriteString("\n")
 	}
 
 	return strings.TrimRight(sb.String(), "\n") + "\n\n"
+}
+
+func renderFragmentLine(it Fragment) string {
+	line := fmt.Sprintf("- %s", it.Title)
+	if it.Breaking {
+		line = fmt.Sprintf("- **BREAKING**: %s", it.Title)
+	}
+	if it.Issue == "" {
+		return line
+	}
+	issue, err := NormaliseIssue(it.Issue)
+	if err == nil {
+		it.Issue = issue
+	}
+	if strings.Contains(it.Issue, "/") {
+		return fmt.Sprintf("%s (%s)", line, it.Issue)
+	}
+	return fmt.Sprintf("%s (#%s)", line, it.Issue)
 }
 
 func spliceChangelog(data []byte, exists bool, releaseSection string) []byte {
@@ -214,4 +231,113 @@ func slugify(s string) string {
 		res = "change"
 	}
 	return res
+}
+
+// NormaliseIssue normalises an issue reference: strips one leading '#',
+// validates digits only, an owner/repo#n cross reference, or a comma-separated list
+// of issue references. An empty-after-strip value or invalid format returns an error.
+func NormaliseIssue(issue string) (string, error) {
+	if issue == "" {
+		return "", nil
+	}
+	raw := strings.TrimSpace(issue)
+	if raw == "" {
+		return "", errors.New("issue cannot be whitespace only")
+	}
+	stripped := strings.TrimPrefix(raw, "#")
+	if strings.TrimSpace(stripped) == "" {
+		return "", fmt.Errorf("issue %q is empty after stripping leading #", issue)
+	}
+
+	items := strings.Split(stripped, ",")
+	parts := make([]string, len(items))
+	for i, item := range items {
+		norm, err := validateIssueComponent(i, item, issue)
+		if err != nil {
+			return "", err
+		}
+		parts[i] = norm
+	}
+	return strings.Join(parts, ", "), nil
+}
+
+func validateIssueComponent(index int, item, original string) (string, error) {
+	trimmed := strings.TrimSpace(item)
+	if trimmed == "" {
+		return "", fmt.Errorf("invalid issue %q: empty component", original)
+	}
+	if index == 0 {
+		if strings.HasPrefix(trimmed, "#") {
+			return "", fmt.Errorf("invalid issue %q: multiple leading # symbols", original)
+		}
+		if !isValidIssueRef(trimmed) {
+			return "", fmt.Errorf("invalid issue %q: must be digits or owner/repo#n", original)
+		}
+		return trimmed, nil
+	}
+	if strings.HasPrefix(trimmed, "##") {
+		return "", fmt.Errorf("invalid issue %q: multiple leading # symbols", original)
+	}
+	ref := strings.TrimPrefix(trimmed, "#")
+	if !isValidIssueRef(ref) {
+		return "", fmt.Errorf("invalid issue %q: must be digits or owner/repo#n", original)
+	}
+	if !strings.Contains(ref, "/") {
+		return "#" + ref, nil
+	}
+	return ref, nil
+}
+
+func isValidIssueRef(s string) bool {
+	return isDigitsOnly(s) || isOwnerRepoIssue(s)
+}
+
+func isDigitsOnly(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isOwnerRepoIssue(s string) bool {
+	slash := strings.IndexByte(s, '/')
+	if slash <= 0 || slash == len(s)-1 {
+		return false
+	}
+	owner := s[:slash]
+	rest := s[slash+1:]
+	hash := strings.IndexByte(rest, '#')
+	if hash <= 0 || hash == len(rest)-1 {
+		return false
+	}
+	repo := rest[:hash]
+	num := rest[hash+1:]
+	return isIssueIdentifier(owner) && isIssueIdentifier(repo) && isDigitsOnly(num)
+}
+
+func isIssueIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !validIssueByte(s[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func validIssueByte(c byte) bool {
+	if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+		return true
+	}
+	if c >= '0' && c <= '9' {
+		return true
+	}
+	return c == '_' || c == '-' || c == '.'
 }
