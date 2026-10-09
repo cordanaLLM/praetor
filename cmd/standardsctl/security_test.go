@@ -226,3 +226,31 @@ func TestSecurityGovuln_Negative_GateJobsResolveGoFromGoMod(t *testing.T) {
 		t.Fatalf("go-version-file job reported: %q", cached)
 	}
 }
+
+// adopt.yml sets Go up from go.mod, then calls the praetor-adopt action, which runs its own
+// setup-go with check-latest. Without the resolved version passed down, that inner step
+// resolves the default range through the lagging manifest and overrides the outer toolchain.
+func TestAdoptWorkflow_Negative_PassesResolvedGoVersionToAction(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "adopt.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "go-version: ${{ steps.setup-go.outputs.go-version }}"
+	text := string(data)
+	idx := strings.Index(text, "uses: ./.github/actions/praetor-adopt")
+	if idx < 0 {
+		t.Fatal("adopt.yml no longer calls the praetor-adopt action")
+	}
+	end := strings.Index(text[idx:], "\n      - name:")
+	if end < 0 {
+		end = len(text) - idx
+	}
+	if !strings.Contains(text[idx:idx+end], want) {
+		t.Errorf("adopt.yml: the praetor-adopt call lacks %q", want)
+	}
+	// negative: the same call with the input removed must be refused by the check above
+	call := strings.Replace(text[idx:idx+end], want, "", 1)
+	if strings.Contains(call, want) {
+		t.Fatal("stripped call still contains the input")
+	}
+}

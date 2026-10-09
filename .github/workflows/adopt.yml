@@ -73,6 +73,9 @@ jobs:
         with:
           path: ${{ inputs.target_path }}
           mode: adopt
+          # The action runs its own setup-go with check-latest; pass the exact version resolved
+          # above so it finds that toolchain in the tool cache instead of the lagging manifest.
+          go-version: ${{ steps.setup-go.outputs.go-version }}
           dry-run: ${{ inputs.dry_run }}
           force: "true"
           record-baseline: "true"
