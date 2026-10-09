@@ -1212,7 +1212,7 @@ func resolveAdoptionFlavor(repoPath, profile string) (string, error) {
 func flavorSkipDetail(profile string, err error) string {
 	if errors.Is(err, flavor.ErrPinNotScaffoldable) {
 		return "Not applicable: the flavors pins in .standards.yaml are scoped to a directory or several, " +
-			"so no flavor templates were scaffolded; " + flavor.ScopedPinRemedy
+			"so no flavor templates were scaffolded; " + flavor.ScopedPinRemedy()
 	}
 	reason := "no registered flavor matches this repository"
 	switch {

@@ -133,9 +133,8 @@ a Go library.
   `gate run` and the generated pre-push hook, which runs the audit. Each entry names a flavor
   (`praetorctl flavor list`) and optionally a repository-relative `path`; a repository with several
   components lists one entry per path. A path-scoped entry audits the flavor's stack templates and
-  toolchains in that directory and the repository-level files (`.github/` workflows and rulesets,
-  `.vscode/`, `lefthook.yml`, `.gitleaks.toml`, `.standards.yaml`, `.standards.lock`, `AGENTS.md`,
-  `CLAUDE.md`) at the repository root, where they live whichever directory holds the stack
+  toolchains in that directory and the repository-level files (`.github/`, `.vscode/`, `.paperclip/`,
+  `lefthook.yml`, `.gitleaks.toml`, `.standards.yaml`, `.standards.lock`, `AGENTS.md`, `CLAUDE.md`) at the repository root, where they live whichever directory holds the stack
   (`internal/flavor/pins_test.go`). An unknown flavor, a missing directory or a path outside the
   repository, symlinks included, is refused, never skipped. An explicit `--flavor` still wins on
   the command line (`flavor.ResolveTargets`, `internal/config/flavor_pins.go`,
@@ -153,11 +152,12 @@ a Go library.
   so they act on the flavor the audit measures. A scaffold writes one flavor at the repository
   root: with a root pin it scaffolds that flavor. A directory-scoped or a second pin gets no
   scaffold: `flavor apply` refuses (`flavor.ErrPinNotScaffoldable`) and `adopt` skips the flavor
-  step with that reason. For such pins, keep the repository-level files (`.github/` workflows and
-  rulesets, `.vscode/`, `lefthook.yml`, `.gitleaks.toml`, `.standards.yaml`, `.standards.lock`,
-  `AGENTS.md`, `CLAUDE.md`) at the repository root and the stack files under each pinned path
-  (`flavor.ScopedPinRemedy`, `internal/flavor/not_applicable_test.go`); pass `--flavor=<name>` only
-  to scaffold one flavor at the root deliberately (`internal/flavor/pins_apply_test.go`).
+  step with that reason. For such pins, keep the repository-level files (`.github/`, `.vscode/`, `.paperclip/`,
+  `lefthook.yml`, `.gitleaks.toml`, `.standards.yaml`, `.standards.lock`, `AGENTS.md`, `CLAUDE.md`)
+  at the repository root and the stack files (for a Go service `go.mod`, `.golangci.yml`,
+  `.gosec.json`, `Dockerfile`) under each pinned path; the list is built from the audit's own
+  repository-level lists (`flavor.ScopedPinRemedy`, `internal/flavor/not_applicable_test.go`). To
+  scaffold one flavor, pin it once without a path (`internal/flavor/pins_apply_test.go`).
 - `flavor apply` also renders the branch ruleset (`.github/rulesets/main.json`) and lists every
   other required setting with the command that writes it
   ([flavor settings](archetype-authoring.md#flavor-settings-the-ruleset-is-rendered-the-rest-are-deferred)).

@@ -53,10 +53,13 @@ func TestSingleRootFlavor_Negative_ScopedPinRemedyListsRootAndPathFiles(t *testi
 	if !errors.Is(err, flavor.ErrPinNotScaffoldable) {
 		t.Fatalf("err = %v; want ErrPinNotScaffoldable", err)
 	}
-	for _, want := range []string{"get no scaffold", ".gitleaks.toml", "repository root", "each pinned path"} {
+	for _, want := range []string{"get no scaffold", ".gitleaks.toml", ".paperclip/", ".github/", "repository root", "each pinned path", "go.mod"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the remedy lacks %q: %v", want, err)
 		}
+	}
+	if strings.Contains(err.Error(), "--flavor") {
+		t.Errorf("the remedy must not suggest --flavor: %v", err)
 	}
 	if _, err := flavor.SingleRootFlavor([]flavor.Target{{Flavor: "go-service", Path: "."}}); err != nil {
 		t.Errorf("a root pin must scaffold: %v", err)

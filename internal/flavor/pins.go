@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -18,12 +19,16 @@ import (
 const pinRemedy = "; pin the flavor with a flavors entry in .standards.yaml"
 
 // ScopedPinRemedy is the remedy for a scoped or multiple pin: such pins get no scaffold, and the
-// files that belong at the repository root differ from those that belong under the pin path.
-const ScopedPinRemedy = "pins scoped to a directory or several pins get no scaffold; " +
-	"keep the repository-level files (.github/ workflows and rulesets, .vscode/, lefthook.yml, " +
-	".gitleaks.toml, .standards.yaml, .standards.lock, AGENTS.md, CLAUDE.md) at the repository root " +
-	"and the stack files (templates and toolchain configuration) under each pinned path; " +
-	"pass --flavor=<name> only to scaffold one flavor at the root deliberately"
+// files that belong at the repository root differ from those that belong under the pin path. The
+// root list is built from repositoryLevelPrefixes and repositoryLevelFiles, the lists the audit
+// reads, so the text cannot drift from what the audit does.
+func ScopedPinRemedy() string {
+	root := append(slices.Clone(repositoryLevelPrefixes), repositoryLevelFiles...)
+	return "pins scoped to a directory or several pins get no scaffold; keep the repository-level files (" +
+		strings.Join(root, ", ") + ") at the repository root and the stack files " +
+		"(for a Go service: go.mod, .golangci.yml, .gosec.json, Dockerfile) under each pinned path; " +
+		"to scaffold one flavor, pin it once without a path (the repository root)"
+}
 
 // ErrPinNotScaffoldable refuses a scaffold that the manifest's flavors pins cannot describe as
 // one flavor at the repository root: a pin scoped to a directory, or several pins. The audit
@@ -84,7 +89,7 @@ func resolveTargetsWith(repoPath string, detect func(string) (string, error)) ([
 // ErrPinNotScaffoldable when they are several or scoped to a directory.
 func SingleRootFlavor(targets []Target) (string, error) {
 	if len(targets) != 1 || targets[0].Path != "." {
-		return "", fmt.Errorf("%w: %d target(s); %s", ErrPinNotScaffoldable, len(targets), ScopedPinRemedy)
+		return "", fmt.Errorf("%w: %d target(s); %s", ErrPinNotScaffoldable, len(targets), ScopedPinRemedy())
 	}
 	return targets[0].Flavor, nil
 }
