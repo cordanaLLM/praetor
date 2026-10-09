@@ -1,4 +1,4 @@
 type: fixed
-title: "Git hooks and generated and adopted Makefiles run the engine the repository pins with PRAETOR_REF, routing $(PRAETORCTL) through .config/praetor/engine.mk and the hook launcher"
+title: "Git hooks and generated and adopted Makefiles run the engine the repository pins with PRAETOR_REF, routing $(PRAETORCTL) through .config/praetor/engine.mk with a default-goal guard and the hook launcher"
 issue: "#906"
 breaking: true

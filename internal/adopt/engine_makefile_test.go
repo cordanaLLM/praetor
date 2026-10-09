@@ -486,3 +486,79 @@ func TestEngineMakefile_Boundary_LauncherRemovedFallsBackToPath(t *testing.T) {
 		t.Fatalf("praetor-engine-path = %q, want %q", strings.TrimSpace(out), filepath.Join(stubDir, "praetorctl"))
 	}
 }
+
+// Positive: a generated Makefile runs its first real target when make runs with no goal (#906).
+func TestEngineMakefile_Positive_GeneratedMakefileRunsFirstTargetWithoutGoal(t *testing.T) {
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is absent; skipping make execution (HISS-21)")
+	}
+	root, _ := setupPinnedEngineRepo(t, "default-goal-generated")
+	stubs := t.TempDir()
+	writeStub(t, stubs, "cargo", "echo GENERATED-CARGO-BUILD-RAN\n")
+	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory")
+	if err != nil {
+		t.Fatalf("plain make failed: %v, output: %q", err, out)
+	}
+	if !strings.Contains(out, "GENERATED-CARGO-BUILD-RAN") {
+		t.Fatalf("plain make did not run first real target; got output: %q", out)
+	}
+}
+
+// Positive: an adopter Makefile with all: build runs the build when make runs with no goal (#906).
+func TestEngineMakefile_Positive_AdopterMakefileRunsBuildWithoutGoal(t *testing.T) {
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is absent; skipping make execution (HISS-21)")
+	}
+	root, _ := setupPinnedEngineRepo(t, "default-goal-adopter")
+	ownMakefile := "# Project\nall: build\nbuild:\n\t@echo OWN-BUILD-RAN\n"
+	mustWrite(t, filepath.Join(root, "Makefile"), ownMakefile)
+
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory")
+	if err != nil {
+		t.Fatalf("plain make failed: %v, output: %q", err, out)
+	}
+	if !strings.Contains(out, "OWN-BUILD-RAN") {
+		t.Fatalf("plain make did not run build target; got output: %q", out)
+	}
+}
+
+// Positive: make praetor-engine-path prints the launcher path (#906).
+func TestEngineMakefile_Positive_ExplicitPraetorEnginePathPrintsLauncherPath(t *testing.T) {
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is absent; skipping make execution (HISS-21)")
+	}
+	root, wantPath := setupPinnedEngineRepo(t, "default-goal-explicit")
+	ownMakefile := "# Project\nall: build\nbuild:\n\t@echo OWN-BUILD-RAN\n"
+	mustWrite(t, filepath.Join(root, "Makefile"), ownMakefile)
+
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "praetor-engine-path")
+	if err != nil {
+		t.Fatalf("make praetor-engine-path failed: %v, output: %q", err, out)
+	}
+	if strings.TrimSpace(out) != wantPath {
+		t.Fatalf("praetor-engine-path = %q, want %q", strings.TrimSpace(out), wantPath)
+	}
+}

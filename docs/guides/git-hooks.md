@@ -381,9 +381,11 @@ in a comment sign for the reason given for the [Python launcher](#the-launcher-a
 Generated `Makefile`s and adopted `Makefile`s include `.config/praetor/engine.mk` when the hook launcher is installed or planned,
 a Praetor-managed file that resolves `$(PRAETORCTL)` through `.config/lefthook/engine.sh`
 and provides the `praetor-engine-path` target, aligning Make targets and hooks with the repository's pinned
-engine (#906, HISS-19). For an adopter-owned `Makefile`, adoption inserts
-`-include .config/praetor/engine.mk` near the top (after leading comments), and preserves the rest of the
-file untouched. Because the first `?=` assignment wins in Make, any later fallback assignment becomes a
+engine (#906, HISS-19). To avoid becoming Make's default goal when included before the first target,
+`engine.mk` guards `praetor-engine-path` by saving `$(.DEFAULT_GOAL)` before the rule and restoring it afterward.
+For an adopter-owned `Makefile`, adoption inserts
+`-include .config/praetor/engine.mk` near the top (after leading comments), leaving existing rules in place.
+Because the first `?=` assignment wins in Make, any later fallback assignment becomes a
 no-op without needing to recognize or edit existing verification blocks. An adopter's assignment
 using `:=`, `::=`, `=`, `!=`, `+=`, or `define` is respected and reported as a warning naming the line. An assignment using `?=` is shadowed by `.config/praetor/engine.mk` and is reported as a warning advising `:=` or `=` to override.
 

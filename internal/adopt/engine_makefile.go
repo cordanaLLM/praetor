@@ -23,15 +23,18 @@ const (
 		"PRAETOR_ENGINE = $(eval PRAETOR_ENGINE := $(or $(shell sh " + engineLauncherFile + " --print-path),$(error praetor hooks: engine launcher failed to resolve praetorctl)))$(PRAETOR_ENGINE)\n" +
 		"PRAETORCTL ?= $(PRAETOR_ENGINE)\n" +
 		"endif\n\n" +
+		"praetor_engine_goal := $(.DEFAULT_GOAL)\n" +
 		".PHONY: praetor-engine-path\n" +
 		"praetor-engine-path:\n" +
-		"\t@echo $(PRAETORCTL)\n"
+		"\t@echo $(PRAETORCTL)\n" +
+		".DEFAULT_GOAL := $(praetor_engine_goal)\n"
 )
 
 // priorEngineMakefileDigests records the digests of every Praetor text at engineMakefile.
 var priorEngineMakefileDigests = map[string]string{
 	"2665828e723edbad12d9195f1997e9b99bbd7754990bbf259d7f0b09503d24f6": "engine resolution and praetor-engine-path target (#906)",
 	"f8274873d3db269e3308ce3425cc049f08f9dfee5d91f29adf42e6e194b8b1d1": "fail-closed engine resolution guarding on launcher existence (#906)",
+	"0599c6a779e0f605cc29e5f331511f87262db68b0177c55db7898937d5b5be94": "default-goal preservation around praetor-engine-path target (#906)",
 }
 
 // reconcileEngineMakefile scaffolds the managed engine.mk file.
