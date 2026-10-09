@@ -165,6 +165,12 @@ func TestLegacyScratch_Boundary_RetiredBlockKeepsConfigNegation(t *testing.T) {
 // and so does one that cannot be inspected; a longer name does not. Dropping the rule never
 // changes the shared rule list.
 func TestLegacyScratch_Boundary_EntryNameAndRuleList(t *testing.T) {
+	assertLegacyScratchPresentBoundary(t)
+	assertPrivateIgnoreRulesBoundary(t)
+}
+
+func assertLegacyScratchPresentBoundary(t *testing.T) {
+	t.Helper()
 	for name, want := range map[string]bool{"file": true, "dir": true, "longer": false, "absent": false} {
 		root := t.TempDir()
 		switch name {
@@ -182,11 +188,15 @@ func TestLegacyScratch_Boundary_EntryNameAndRuleList(t *testing.T) {
 	if !legacyScratchPresent("uninspectable\x00root") {
 		t.Error("an entry that cannot be inspected counted as absent")
 	}
+}
+
+func assertPrivateIgnoreRulesBoundary(t *testing.T) {
+	t.Helper()
 	before := slices.Clone(managedIgnoreRules)
-	if rules := privateIgnoreRules(false); slices.Contains(rules, legacyScratchIgnore) || len(rules) != len(before)-1 {
+	if rules := privateIgnoreRules(managedIgnoreRules, false); slices.Contains(rules, legacyScratchIgnore) || len(rules) != len(before)-1 {
 		t.Fatalf("privateIgnoreRules(false) = %v", rules)
 	}
-	if !slices.Equal(managedIgnoreRules, before) || !slices.Equal(privateIgnoreRules(true), before) {
+	if !slices.Equal(managedIgnoreRules, before) || !slices.Equal(privateIgnoreRules(managedIgnoreRules, true), before) {
 		t.Fatalf("privateIgnoreRules changed the shared rule list: %v", managedIgnoreRules)
 	}
 }

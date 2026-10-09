@@ -53,13 +53,14 @@ func legacyScratchPresent(repoPath string) bool {
 	return !errors.Is(err, fs.ErrNotExist)
 }
 
-// privateIgnoreRules returns managedIgnoreRules, in block order, without legacyScratchIgnore
-// unless keepLegacy is set.
-func privateIgnoreRules(keepLegacy bool) []string {
+// privateIgnoreRules returns rules, in block order, without legacyScratchIgnore
+// unless keepLegacy is set. It always returns a new slice to prevent callers from
+// mutating the underlying rules.
+func privateIgnoreRules(rules []string, keepLegacy bool) []string {
 	if keepLegacy {
-		return managedIgnoreRules
+		return slices.Clone(rules)
 	}
-	return slices.DeleteFunc(slices.Clone(managedIgnoreRules), func(rule string) bool {
+	return slices.DeleteFunc(slices.Clone(rules), func(rule string) bool {
 		return rule == legacyScratchIgnore
 	})
 }

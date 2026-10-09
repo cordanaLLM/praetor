@@ -529,7 +529,7 @@ func scratchIgnoreProbes(roots []string) []string {
 }
 
 // auditManagedGitIgnoreBlock checks that .gitignore ends with the managed block adoption writes
-// for the repository (adopt.HasManagedGitIgnoreTail) and returns its LF-normalized text.
+// for the repository (adopt.LookupManagedGitIgnoreTail) and returns its LF-normalized text.
 func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) (string, error) {
 	ignore, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootDir, ".gitignore"))
 	if err != nil {
@@ -539,8 +539,12 @@ func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) (string, er
 	if ignoreLineErr != nil {
 		return "", fmt.Errorf("[FAIL] .gitignore documentation privacy rules have invalid line endings: %w", ignoreLineErr)
 	}
-	if !adopt.HasManagedGitIgnoreTail(rootDir, normalized) {
+	match, ok := adopt.LookupManagedGitIgnoreTail(rootDir, normalized)
+	if !ok {
 		return "", fmt.Errorf("[FAIL] .gitignore must end with the canonical Praetor private-artifact block")
+	}
+	if !match.Current {
+		fmt.Printf("[WARN] .gitignore private-artifact block matches %s; re-adopt to refresh\n", match.Version)
 	}
 	return normalized, nil
 }
