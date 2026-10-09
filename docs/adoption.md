@@ -4,16 +4,39 @@ Apply Praetor governance scaffolding to a legacy or greenfield repository and re
 
 ---
 
-## 🚀 1-Step CLI Adoption
+## Prerequisites
 
-Run `standardsctl adopt` (or `praetorctl adopt`):
+- **`praetorctl`**, installed with the workstation command
+  ([workstation install](guides/workstation-update.md)). `standardsctl` is the older name of the
+  same binary.
+- **A Praetor checkout** (a Git clone or a source bundle of the engine), here written
+  `/path/to/praetor`. `--lock-source-root` names it: the first adoption pins your profile and
+  facets to the content digests of its catalog, and copies the pinned catalog into your
+  repository. Without it a first adoption stops with `new lock pins require an explicit verified
+  lock source root` (`ErrLockSourceRequired` in `internal/adopt/lock.go`). A repository that
+  already holds a valid lock and its `.config/archetypes` catalog needs no source for a later
+  run.
+- **A Git repository with your files committed**, run from its root or with `--path`. Adoption
+  writes the Go API compatibility gate only where Git tracks a `go.mod`
+  ([Go API compatibility gate](guides/api-compatibility.md)), so adopt after the first commit and
+  stage what adoption writes before you audit.
+
+## Adopt a repository
+
+Run `praetorctl adopt` (the older name `standardsctl adopt` is the same command):
 
 ```bash
 # Adopt current repository (auto-detects language and frameworks)
 praetorctl adopt --lock-source-root=/path/to/praetor
 
-# Dry-run simulation: inspect proposed changes without writing files
-standardsctl adopt --dry-run
+# Stage what adoption wrote, then verify the result
+git add -A
+praetorctl audit --offline
+
+# Dry-run simulation: inspect proposed changes without writing files.
+# --lock-source-root is required here too on a first adoption, because the plan resolves the
+# policy the lock would pin.
+praetorctl adopt --dry-run --lock-source-root=/path/to/praetor
 
 # Regenerate drifted audit-locked files; an existing debt baseline is kept, not re-recorded
 praetorctl adopt --force --lock-source-root=/path/to/praetor
@@ -27,6 +50,26 @@ praetorctl profile set os-image --lock-source-root=/path/to/praetor --dry-run
 
 `--force` refreshes rather than resets: what it rewrites, merges and keeps is in
 [What a forced re-adoption changes](#what-a-forced-re-adoption-changes).
+
+### Choose the profile
+
+Adoption detects the profile from the files it finds (the report's `Archetype:` line) and a dry
+run shows it before anything is written. When the detected profile is not the one you want, pass
+`--profile` on the first adoption, or move an adopted repository with
+`praetorctl profile set <profile> --lock-source-root=/path/to/praetor`. `profile set` rewrites
+the declaration, the lock and the catalog, then lists any audit-locked file that no longer
+matches the new declaration (such as the DevContainer) and the
+`praetorctl adopt --force --lock-source-root=... --dry-run` command that previews their refresh.
+Run `praetorctl audit --offline` afterwards. See
+[Changing the profile, facets or catalog](#changing-the-profile-facets-or-catalog).
+
+### `praetorctl init` instead of adoption
+
+`praetorctl init` writes only the manifest, lock, baseline and agent files, and needs
+`AGENTS.md` first ([onboarding guide](guides/onboarding.md)). Give it the same
+`--lock-source-root=/path/to/praetor` so its lock carries digests; without the flag the lock is
+an unpinned placeholder that `audit` and `devcontainer generate` refuse, and init says so
+(`cmd/standardsctl/init_lock_test.go`).
 
 `--facets` names the facets adoption writes when it creates `.standards.yaml`. Omitted, adoption
 writes `security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`
@@ -548,6 +591,49 @@ Tests: `internal/adopt/large_repo_bounds_test.go`,
 `cmd/standardsctl/audit_paperclip_test.go`.
 
 ### What Adoption Scaffolds Automatically
+
+Adoption is a chain of steps, run in this order (`adoptSteps` in `internal/adopt/adopt.go`).
+Each row is one step, named as `adoption.decline` and the adoption report name it, with the
+files it writes in a repository that declares the default facets. Which of them are mandatory
+and which a repository may decline is in
+[adoption verification](guides/adoption-verification.md). A step writes only what its inputs call
+for: the API gate needs a tracked `go.mod`, the REUSE gate a `REUSE.toml` or `LICENSES/`, and a
+flavor only where one matches. `praetorctl adopt --dry-run --lock-source-root=/path/to/praetor`
+prints the exact list for your repository, about a hundred files for a Go module, before it
+writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
+`internal/adopt/scaffold_table_test.go` keeps this table equal to the chain).
+
+| Step | What it writes |
+| :-- | :-- |
+| `manifest` | `.standards.yaml`: profile, facets, repository identity, register sources |
+| `git-ignore` | `.gitignore`: the managed block for private working directories and gate worktrees |
+| `lockfile` | `.standards.lock`: profiles and facets pinned to content digests of the source bundle |
+| `policy-catalog` | `.config/archetypes/`: the pinned profile and facet texts audit reads |
+| `baseline` | `.standards-baseline.json`: the recorded legacy debt |
+| `agent-harness` | `AGENTS.md`; `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md`, `.codex/rules.md`; the register skills in `.agents/skills/` and their `.claude/skills/` copies |
+| `dev-container` | `.devcontainer/` bundle (`devcontainer.json`, `Dockerfile.praetor`, source companions); the `.gitattributes` managed block |
+| `documentation-gate` | `tools/markdownlint/`, `tools/figures/`, `.github/workflows/praetor-docs.yml` (facet `docs:seo-portal`) |
+| `api-compatibility-gate` | `tools/apicompat/gate/`, `.github/workflows/praetor-api.yml` (facet `api:public-contract`, tracked `go.mod`) |
+| `makefile` | `Makefile` with the `verify-all` target |
+| `editors` | `.editorconfig`, `.vscode/`, `.idea/`, `.zed/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project`, `.clang-tidy` where the profile calls for it |
+| `formatter-ignore` | `.prettierignore` entries for managed artifacts, where a formatter is configured |
+| `renovate-ignore` | the managed-file ignore rule in an existing Renovate configuration; none is created |
+| `actionlint-labels` | `.github/actionlint.yaml` runner labels |
+| `contributing` | `CONTRIBUTING.md` |
+| `pull-request-template` | `.github/pull_request_template.md` |
+| `security-policy` | `SECURITY.md` |
+| `adr` | `docs/adr/README.md` and `docs/adr/0000-template.md` |
+| `readme` | the governance block in an existing `README.md` |
+| `reuse-gate` | `.github/workflows/reuse.yml`, where the root carries `REUSE.toml` or `LICENSES/` |
+| `working-dir-and-flavor` | the private `.workingdir/` ledger and the detected flavor's templates ([flavors](guides/onboarding.md#flavors)) |
+| `branch-ruleset` | `.github/rulesets/main.json`, the branch ruleset with the required status checks |
+| `labels` | `.config/labels.yaml`, the label taxonomy |
+| `paperclip` | `.paperclip/harness.json` and `.paperclip/rules.md` |
+| `agent-definitions` | `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, projected to `.claude/agents/`, `.github/agents/`, `.gemini/agents/` and `.codex/agents/` |
+| `git-hooks` | `lefthook.yml`, `.config/lefthook/`, `.config/agent/checkpoint.json`, `.config/agent/hooks/block_evasion.py`, the installed `.git/hooks/pre-commit` |
+| `agent-hooks` | the hook settings of `.claude/settings.json`, `.gemini/settings.json` and `.codex/hooks.json` for the clients `agent_clients` selects |
+
+The groups with behavior of their own:
 
 1. **`.standards.yaml`**: Declarative repository manifest containing profile, facets, tool versions, and policy locks.
 2. **`.standards.lock`**: Cryptographic SemVer lockfile binding your repo to exact governance standard releases.
