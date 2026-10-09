@@ -240,15 +240,40 @@ func TestSecurityGovuln_Negative_GateJobsResolveGoFromGoMod(t *testing.T) {
 	}
 }
 
-// resolvedGoInput is the praetor-adopt input that hands the job's go.mod-resolved Go release to
-// the action's own setup-go step.
-const resolvedGoInput = "${{ steps.setup-go.outputs.go-version }}"
+// goReleaseSteps returns the ids of a job's steps that resolve the Go release from go.mod: a
+// setup-go step reading go-version-file: go.mod alone, or a run step reading go.mod's
+// toolchain directive (a job that keeps no Go cache runs no setup-go step of its own).
+func goReleaseSteps(steps []ghworkflow.Step) map[string]bool {
+	ids := map[string]bool{}
+	for _, step := range steps {
+		fromSetup := strings.HasPrefix(step.Uses, "actions/setup-go@") && setsGoUpFromGoMod(step)
+		fromRun := strings.Contains(step.Run, "go.mod") && strings.Contains(step.Run, "toolchain go")
+		if step.ID != "" && (fromSetup || fromRun) {
+			ids[step.ID] = true
+		}
+	}
+	return ids
+}
+
+// passesResolvedGo reports whether a praetor-adopt call's go-version input is the go-version
+// output of one of the job's go.mod-resolving steps.
+func passesResolvedGo(step ghworkflow.Step, resolved map[string]bool) bool {
+	input, ok := step.With["go-version"].(string)
+	if !ok {
+		return false
+	}
+	id, ok := strings.CutPrefix(input, "${{ steps.")
+	if !ok {
+		return false
+	}
+	id, ok = strings.CutSuffix(id, ".outputs.go-version }}")
+	return ok && resolved[id]
+}
 
 // adoptCallsWithoutResolvedGo parses one workflow and returns how many steps call the
-// praetor-adopt action and which of them ("job/step name") miss the resolved Go version, or sit
-// in a job whose setup-go step is not id setup-go reading go.mod. The action runs its own
-// setup-go with check-latest; without the exact version it resolves the default range through
-// the lagging manifest and overrides the job's toolchain.
+// praetor-adopt action and which of them ("job/step name") do not pass a go.mod-resolved Go
+// release. The action runs its own setup-go with check-latest; without the exact release it
+// resolves the default range through the lagging manifest and overrides the job's toolchain.
 func adoptCallsWithoutResolvedGo(t *testing.T, data []byte) (int, []string) {
 	t.Helper()
 	spec, err := ghworkflow.Parse(data)
@@ -258,15 +283,13 @@ func adoptCallsWithoutResolvedGo(t *testing.T, data []byte) (int, []string) {
 	calls, missing := 0, []string{}
 	for _, id := range ghworkflow.SortedJobIDs(spec.Jobs) {
 		steps := spec.Jobs[id].Steps
-		resolved := slices.ContainsFunc(steps, func(step ghworkflow.Step) bool {
-			return step.ID == "setup-go" && strings.HasPrefix(step.Uses, "actions/setup-go@") && setsGoUpFromGoMod(step)
-		})
+		resolved := goReleaseSteps(steps)
 		for _, step := range steps {
 			if step.Uses != "./.github/actions/praetor-adopt" {
 				continue
 			}
 			calls++
-			if !resolved || step.With["go-version"] != resolvedGoInput {
+			if !passesResolvedGo(step, resolved) {
 				missing = append(missing, id+"/"+step.Name)
 			}
 		}
@@ -274,8 +297,8 @@ func adoptCallsWithoutResolvedGo(t *testing.T, data []byte) (int, []string) {
 	return calls, missing
 }
 
-// Negative: every praetor-adopt call in adopt.yml passes the job's go.mod-resolved Go release.
-// A copy of adopt.yml with the input dropped from one call reports exactly that call.
+// Negative: every praetor-adopt call in adopt.yml passes a go.mod-resolved Go release. A copy
+// of adopt.yml with the input dropped from its last call reports exactly that call.
 func TestAdoptWorkflow_Negative_PassesResolvedGoVersionToAction(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "adopt.yml"))
 	if err != nil {
@@ -284,14 +307,17 @@ func TestAdoptWorkflow_Negative_PassesResolvedGoVersionToAction(t *testing.T) {
 	text := strings.ReplaceAll(string(data), "\r\n", "\n")
 	calls, missing := adoptCallsWithoutResolvedGo(t, []byte(text))
 	if calls < 3 || len(missing) != 0 {
-		t.Fatalf("adopt.yml: %d praetor-adopt calls, want at least 3; missing the resolved Go version: %q", calls, missing)
+		t.Fatalf("adopt.yml: %d praetor-adopt calls, want at least 3; missing a go.mod-resolved Go release: %q", calls, missing)
 	}
-	line := "\n          go-version: " + resolvedGoInput
-	last := strings.LastIndex(text, line)
+	last := strings.LastIndex(text, "\n          go-version: ${{ steps.")
 	if last < 0 {
 		t.Fatal("adopt.yml carries no resolved Go version input")
 	}
-	mutant := text[:last] + text[last+len(line):]
+	end := strings.IndexByte(text[last+1:], '\n')
+	if end < 0 {
+		t.Fatal("adopt.yml ends inside the resolved Go version input")
+	}
+	mutant := text[:last] + text[last+1+end:]
 	if _, missing := adoptCallsWithoutResolvedGo(t, []byte(mutant)); len(missing) != 1 {
 		t.Fatalf("mutant with one input dropped: missing %q; want exactly one call reported", missing)
 	}
