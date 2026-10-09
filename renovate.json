@@ -63,6 +63,13 @@
     },
     {
       "customType": "regex",
+      "description": "API compatibility checker: the two direct requirements of the checker's build module, the go.mod text in tools/apicompat/gate/main.go (checkerGoMod). Renovate moves the versions; go.sum beside them (checkerGoSum) must then be refreshed with go mod tidy, and the outgoing gate text recorded in priorDigests and internal/managedasset/testdata/shipped. TestGatePinsItsChecker fails the branch until go.sum covers the new versions (docs/guides/api-compatibility.md, The pinned checker).",
+      "managerFilePatterns": ["/^tools/apicompat/gate/main\\.go$/"],
+      "matchStrings": ["\\t(?<depName>github\\.com/joelanford/go-apidiff|golang\\.org/x/tools) (?<currentValue>v[0-9][0-9A-Za-z.+-]*)\\n"],
+      "datasourceTemplate": "go"
+    },
+    {
+      "customType": "regex",
       "description": "DevContainer features: the archetype and facet catalog selects them and devcontainer.json is generated from it, so feature updates move the catalog. Every file naming one feature changes in one branch, as ResolveDevContainerFeatures requires one reference per feature; the takeover re-pins .standards.lock and regenerates the bundle when a file this repository's own manifest declares moved, as #705 did (docs/guides/archetype-authoring.md).",
       "managerFilePatterns": ["/^\\.config/archetypes/.+\\.yaml$/"],
       "matchStrings": ["\"(?<depName>ghcr\\.io/devcontainers/features/[a-z0-9-]+):(?<currentValue>[0-9]+)\""],
@@ -107,6 +114,12 @@
       "matchManagers": ["github-actions"],
       "matchFileNames": [".github/workflows/praetor-api.yml", "tools/apicompat/assets.go"],
       "groupName": "API compatibility gate actions"
+    },
+    {
+      "description": "API compatibility checker: go-apidiff and golang.org/x/tools move in one branch, because the build module's go.mod and go.sum are one text (docs/guides/api-compatibility.md, The pinned checker). golang.org/x/tools stays at v0.51.0 or newer, the first release measured to read Go 1.27.2 export data.",
+      "matchFileNames": ["tools/apicompat/gate/main.go"],
+      "matchPackageNames": ["github.com/joelanford/go-apidiff", "golang.org/x/tools"],
+      "groupName": "API compatibility checker"
     },
     {
       "description": "Starlight preset: package.json stays on exact versions, package-lock.json moves with them, and CI builds the preset from the lock with npm ci.",

@@ -10,7 +10,6 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -63,25 +62,6 @@ func TestGateSourceStaysOutOfPackagePatterns(t *testing.T) {
 	formatted, err := format.Source(source)
 	if err != nil || !bytes.Equal(formatted, source) || bytes.Contains(source, []byte("\r")) {
 		t.Fatalf("the gate is not gofmt-formatted LF text (format error %v)", err)
-	}
-}
-
-// Positive: the checker is pinned to one exact module version. Negative: no moving query
-// (latest, a branch) and no unpinned install appear. Boundary: the pin is one well-formed
-// module@version token.
-func TestGatePinsItsChecker(t *testing.T) {
-	source, err := Read(GateFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pin := regexp.MustCompile(`(?m)^\s*checkerModule = "(github\.com/joelanford/go-apidiff@v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?)"$`)
-	if !pin.Match(source) {
-		t.Fatal("checkerModule is not github.com/joelanford/go-apidiff at an exact version")
-	}
-	for _, moving := range []string{"@latest", "@main", "@master", "go-apidiff@v0\""} {
-		if bytes.Contains(source, []byte(moving)) {
-			t.Fatalf("the gate names a moving checker version %q", moving)
-		}
 	}
 }
 
