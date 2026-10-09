@@ -65,7 +65,7 @@ func validateFragment(f *Fragment) error {
 		return fmt.Errorf("changelog: title cannot be empty")
 	}
 	if f.Issue != "" {
-		normIssue, err := normaliseIssue(f.Issue)
+		normIssue, err := normalizeIssue(f.Issue)
 		if err != nil {
 			return fmt.Errorf("changelog: %w", err)
 		}
@@ -239,11 +239,11 @@ func slugify(s string) string {
 // maxIssueComponents bounds the number of issue references in a comma-separated list (HISS-02).
 const maxIssueComponents = 64
 
-// normaliseIssue normalises an issue reference: strips one optional leading '#',
+// normalizeIssue normalizes an issue reference: strips one optional leading '#',
 // validates digits with no leading zero, an owner/repo#n cross reference, or a
 // comma-separated list of issue references. Each item is returned in its final form
 // ("#<n>" or "<owner>/<repo>#<n>").
-func normaliseIssue(issue string) (string, error) {
+func normalizeIssue(issue string) (string, error) {
 	if issue == "" {
 		return "", errors.New("issue cannot be empty")
 	}
@@ -265,7 +265,7 @@ func normaliseIssue(issue string) (string, error) {
 		if item == "" {
 			return "", fmt.Errorf("invalid issue %q: empty component", issue)
 		}
-		norm, err := normaliseIssueComponent(item, issue)
+		norm, err := normalizeIssueComponent(item, issue)
 		if err != nil {
 			return "", err
 		}
@@ -274,7 +274,7 @@ func normaliseIssue(issue string) (string, error) {
 	return strings.Join(parts, ", "), nil
 }
 
-func normaliseIssueComponent(item, original string) (string, error) {
+func normalizeIssueComponent(item, original string) (string, error) {
 	if strings.Contains(item, "/") {
 		return normaliseCrossRepoIssue(item, original)
 	}
