@@ -115,12 +115,16 @@ publication policy. Go forge PR requests now separately support the draft flag.
 ## Agent activation and failure handling
 
 Codex and Claude use PostToolUse and Stop; Gemini uses AfterTool and AfterAgent.
-All three invoke `.config/agent/hooks/checkpoint.py`, which requires the actual
-Lefthook job's structured result. PostToolUse/AfterTool adds guidance without
+The post-tool rows of Codex, Claude and Gemini invoke `.config/agent/hooks/checkpoint.py`,
+which requires the actual Lefthook job's structured result; in this repository the Stop and
+AfterAgent rows call `praetorctl hook <client> stop` through the launcher
+`.config/agent/hooks/praetor_hook.py`, and the engine's stop path runs the ledger verify
+and `checkpoint.py --event stop` itself, together with the prose-question check
+([agent hooks](agent-hooks.md#prose-question-check)). PostToolUse/AfterTool adds guidance without
 replacing the completed tool's output. Stop/AfterAgent requests one continuation
 for due or unverifiable work. If
 the continued turn still cannot qualify, it ends with an explicit blocked reason
-instead of looping or claiming completion. Repair the reported cause and resume.
+(`continue: false`, exit 0) instead of looping or claiming completion. Repair the reported cause and resume.
 Repeated periodic reminders can occur until the checkpoint is reconciled.
 
 `praetorctl hook <client> post-tool|stop|pre-edit` runs the same two evaluator
@@ -133,10 +137,10 @@ and a fail-closed block on stop rather than a silent `[WinError 2]`. The Lefthoo
 jobs try the default of that setting, the same three candidates, and prove one
 before they run it
 ([the interpreter the hooks run](git-hooks.md#the-interpreter-the-hooks-run)).
-No client registration calls
-this path yet; it exists alongside `.config/agent/hooks/checkpoint.py` and the
-Lefthook jobs below until a later change re-points the tracked registrations at
-it and removes the Python adapters.
+The tracked Stop and AfterAgent
+registrations of this repository call this path; the post-tool and pre-edit registrations
+do not yet, so it exists alongside `.config/agent/hooks/checkpoint.py` and the
+Lefthook jobs below until a later change re-points them and removes the Python adapters.
 
 Stop/AfterAgent first runs the separate `agent-state-stop` Lefthook job, even
 when cadence is disabled. Its unique execution marker must confirm a valid,

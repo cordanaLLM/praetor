@@ -198,6 +198,20 @@ class Launcher(unittest.TestCase):
                 self.assertIn("praetor hook: " + self.installed, stderr)
                 self.assertEqual(self.stdout, "")
 
+    def test_stop_pair_waits_the_stop_timeout_and_every_other_pair_the_run_timeout(self):
+        seen = []
+
+        def run(argv, **kwargs):
+            seen.append(kwargs["timeout"])
+            return subprocess.CompletedProcess(argv, 0)
+
+        for pair, want in ((["claude", "stop"], LAUNCHER.STOP_RUN_TIMEOUT),
+                           (["codex", "stop"], LAUNCHER.STOP_RUN_TIMEOUT),
+                           (["claude", "pre-dispatch"], LAUNCHER.RUN_TIMEOUT)):
+            LAUNCHER.serve("praetorctl", pair, run)
+            self.assertEqual(seen.pop(), want, pair)
+        self.assertNotEqual(LAUNCHER.STOP_RUN_TIMEOUT, LAUNCHER.RUN_TIMEOUT)
+
     def test_agy_engine_that_hangs_or_vanishes_is_an_allow_not_a_block(self):
         for error in (subprocess.TimeoutExpired("praetorctl", LAUNCHER.RUN_TIMEOUT), FileNotFoundError("gone")):
             with self.subTest(error=type(error).__name__):

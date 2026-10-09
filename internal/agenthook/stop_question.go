@@ -40,16 +40,21 @@ var questionTools = map[string]string{
 }
 
 var (
-	fencedBlockLine = regexp.MustCompile("^ {0,3}(```|~~~)")
+	fencedBlockLine = regexp.MustCompile("^ {0,3}(`{3,}|~{3,})(.*)$")
+	tableSepLine    = regexp.MustCompile(`^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$`)
 	inlineCodeSpan  = regexp.MustCompile("`+[^`]*`+")
 	urlSpan         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S*[^\s.,;:!?)\]'"*_>]`)
 	itemQuestionEnd = regexp.MustCompile(`[?？]["')\]}*_>]*$`)
 	questionEnd     = regexp.MustCompile(`[?？]["')\]}*_>]*(\s|$)`)
 	indentedLine    = regexp.MustCompile(`^( {4}|\t)`)
 	listItemLine    = regexp.MustCompile(`^\s*([-*+]|\d{1,3}[.)]|[A-Za-z][.)]|\(?[A-Za-z0-9]\))\s+\S`)
-	// choiceRequest points at a choice: a bare "let me know" or "tell me" closes a summary as
-	// often as it closes an options list, so the request must name which, whether or a pick.
-	choiceRequest = regexp.MustCompile(`(?i)\b((let me know|tell me|reply with|say)\s+(which|whether|what you prefer)|(pick|choose)\s+(one|a|an|the|between|from)|prefer|which (one|option|of|do you)|your call|you decide|up to you)\b`)
+	// choiceRequest points at a choice addressed to the reader: a bare "let me know" or "tell
+	// me" closes a summary as often as it closes an options list, so the request must name
+	// which, whether or a pick, and "prefer" counts only as a question or a request ("do you
+	// prefer", "let me know if you prefer"), never as the author's own statement ("I prefer
+	// A"). An imperative "pick/choose" must open its sentence, so a report that says it picked
+	// an approach does not match.
+	choiceRequest = regexp.MustCompile(`(?i)(\b(let me know|tell me|reply with|say)\s+(which|whether|what you prefer|if you prefer)\b|(^|[.!?:]\s+)(please\s+|just\s+)?(pick|choose)\s+(one|a|an|the|between|from)\b|\b(do|would) you prefer\b|\bwhich (one|option) (do you|would you|should (i|we))\b|\b(your call|you decide|up to you)\b)`)
 	tableRowLine  = regexp.MustCompile(`^\s*\|`)
 )
 
@@ -99,24 +104,61 @@ func closesWithQuestion(text string) bool {
 	return choiceRequest.MatchString(prose) && countListItems(paragraphs) >= 2
 }
 
-// stripQuoted drops fenced code blocks (an unclosed fence runs to the end), blockquote
-// lines, 4-space or tab indented code (an indented list item stays), table rows, inline code
-// spans and URLs.
+// stripQuoted drops fenced code blocks (an unclosed fence runs to the end; a fence closes
+// only on the same character, at least as long as the opener), blockquote lines, 4-space or
+// tab indented code (an indented list item stays), table rows (with or without a leading
+// pipe), inline code spans and URLs.
 func stripQuoted(text string) string {
 	kept := make([]string, 0, strings.Count(text, "\n")+1)
-	fenced := false
+	var fence string
+	inTable := false
 	for _, line := range strings.Split(text, "\n") {
-		switch {
-		case fencedBlockLine.MatchString(line):
-			fenced = !fenced
-		case fenced, strings.HasPrefix(strings.TrimLeft(line, " \t"), ">"), tableRowLine.MatchString(line),
-			indentedLine.MatchString(line) && !listItemLine.MatchString(line):
-		default:
-			kept = append(kept, line)
+		if fence != "" {
+			if closesFence(line, fence) {
+				fence = ""
+			}
+			continue
 		}
+		if opener := fencedBlockLine.FindStringSubmatch(line); opener != nil {
+			fence = opener[1]
+			continue
+		}
+		inTable, kept = tableLine(line, inTable, kept)
+		if inTable || skippedLine(line) {
+			continue
+		}
+		kept = append(kept, line)
 	}
 	joined := strings.Join(kept, "\n")
 	return urlSpan.ReplaceAllString(inlineCodeSpan.ReplaceAllString(joined, ""), "link")
+}
+
+// closesFence reports whether line closes a fence opened with opener: the same character,
+// at least as many of them, nothing else on the line.
+func closesFence(line, opener string) bool {
+	trimmed := strings.TrimSpace(line)
+	return len(trimmed) >= len(opener) && strings.Trim(trimmed, opener[:1]) == "" && !strings.HasPrefix(line, "    ")
+}
+
+func skippedLine(line string) bool {
+	return strings.HasPrefix(strings.TrimLeft(line, " \t"), ">") || tableRowLine.MatchString(line) ||
+		indentedLine.MatchString(line) && !listItemLine.MatchString(line)
+}
+
+// tableLine tracks a GFM table without leading pipes: its delimiter row starts the table,
+// the header row above it (already kept) is dropped, and every following line holding a pipe
+// belongs to it. It returns the new table state and the possibly trimmed kept lines.
+func tableLine(line string, inTable bool, kept []string) (bool, []string) {
+	switch {
+	case strings.Contains(line, "-") && strings.Contains(line, "|") && tableSepLine.MatchString(line):
+		if n := len(kept); n > 0 && strings.Contains(kept[n-1], "|") {
+			kept = kept[:n-1]
+		}
+		return true, kept
+	case inTable && strings.Contains(line, "|"):
+		return true, kept
+	}
+	return false, kept
 }
 
 // closingParagraphs returns the last two nonempty paragraphs, each as its trimmed lines.

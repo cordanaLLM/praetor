@@ -54,6 +54,14 @@ var stopFixtures = []stopFixture{
 	{"list of statements then no question", "Done.\n\n- Rebased.\n- Pushed.", Allow},
 	{"question list followed by a statement paragraph", "Open items:\n\n- Why did it fail?\n\nIt was the cache.", Allow},
 	{"list item with a question mark mid-item", "Done.\n\n- Fixed the why? case.", Allow},
+	{"statement of preference after a list", "Options:\n- A\n- B\n\nI prefer A and went with it.", Allow},
+	{"which-one statement after a list", "Changed:\n- a.go\n- b.go\n\nWhich one of these mattered most was a.go.", Allow},
+	{"report that picked an approach", "Approaches:\n- A\n- B\n\nI will pick the simplest approach and move on.", Allow},
+	{"imperative pick after a list", "Options:\n- A\n- B\n\nPick one of these.", Deny},
+	{"do-you-prefer after a list", "Options:\n- A\n- B\n\nDo you prefer A", Deny},
+	{"longer fence holding shorter fence lines", "Ran it.\n\n````\n```\nShould this fail?\n```\n````\n\nDone.", Allow},
+	{"tilde fence is not closed by backticks", "Ran it.\n\n~~~\n```\nShould this fail?\n~~~\n\nDone.", Allow},
+	{"table without leading pipes", "Result:\n\ncase | verdict\n--- | ---\nwhy? | none", Allow},
 	{"empty message", "", Skip},
 	{"blank message", " \n\t\n", Skip},
 }
@@ -188,15 +196,51 @@ func TestRunStopRepeatedStopIsSkippedPerClient(t *testing.T) {
 	}
 }
 
-// The question check runs before the ledger: an unsynced ledger still denies a stop with no
-// question, and a question denies first without reading the ledger.
-func TestRunStopQuestionDeniesBeforeTheLedgerIsRead(t *testing.T) {
-	root := repository(t, true) // never synced: the ledger check alone would deny too
+// Every stop check runs on the first pass: an unsynced ledger and a closing question both
+// show in the one deny, so the single continuation fixes both.
+func TestRunStopQuestionAndLedgerShareOneDeny(t *testing.T) {
+	root := repository(t, true) // never synced: the ledger check denies too
 	in := stopInvocation("claude", root, noEnvironment, finalMessagePayload(t, "claude", "Should I proceed?", false))
 	in.Policy = policy(t)
 	response := Run(context.Background(), in)
-	if response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "AskUserQuestion") {
-		t.Errorf("question must deny first: %+v", response)
+	stderr := string(response.Stderr)
+	if response.ExitCode != 2 || !strings.Contains(stderr, "AskUserQuestion") || !strings.Contains(stderr, "Praetor state could not be verified") {
+		t.Errorf("question and ledger must both be listed: %+v", response)
+	}
+}
+
+// Question plus a due checkpoint: pass 1 lists both reasons (positive); pass 2 halts with the
+// remaining checkpoint only (boundary); each alone keeps its own behaviour (negative).
+func TestRunStopQuestionAndDueCheckpointPerClient(t *testing.T) {
+	root := syncedRepository(t)
+	_, getenv := buildStub(t, "python3")
+	for _, client := range []string{"claude", "codex", "gemini"} {
+		stubStdout(t, dueReport("commit"))
+		run := func(message string, active bool) Response {
+			in := stopInvocation(client, root, getenv, finalMessagePayload(t, client, message, active))
+			in.Policy = policy(t)
+			return Run(context.Background(), in)
+		}
+		both := run("Done.\n\nShould I push?", false)
+		stderr := string(both.Stderr)
+		if both.ExitCode != 2 || !strings.Contains(stderr, "asks the operator in prose") || !strings.Contains(stderr, "Praetor checkpoint due") {
+			t.Errorf("%s pass 1 must list both: %+v", client, both)
+		}
+		again := run("Done.\n\nShould I push?", true)
+		if again.ExitCode != 0 || !strings.Contains(string(again.Stdout), "Checkpoint remains incomplete") ||
+			strings.Contains(string(again.Stdout), "asks the operator in prose") {
+			t.Errorf("%s pass 2 must halt on the checkpoint only: %+v", client, again)
+		}
+		checkpointOnly := run("Done.", false)
+		if checkpointOnly.ExitCode != 2 || strings.Contains(string(checkpointOnly.Stderr), "asks the operator in prose") ||
+			!strings.Contains(string(checkpointOnly.Stderr), "Praetor checkpoint due") {
+			t.Errorf("%s checkpoint alone: %+v", client, checkpointOnly)
+		}
+		stubStdout(t, cleanReport)
+		questionOnly := run("Done.\n\nShould I push?", false)
+		if questionOnly.ExitCode != 2 || strings.Contains(string(questionOnly.Stderr), "Also failing") {
+			t.Errorf("%s question alone: %+v", client, questionOnly)
+		}
 	}
 }
 

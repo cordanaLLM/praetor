@@ -59,6 +59,9 @@ BUDGETS = {
 TIMEOUT_UNITS = {".claude/settings.json": 1, ".codex/hooks.json": 1, ".gemini/settings.json": 1000}
 CODEX_WINDOWS_GAP = ("Codex runs hooks through cmd.exe on Windows, which has no $( ) for the "
                      "registration's Git-root lookup; see docs/guides/agent-hooks.md")
+CLAUDE_WINDOWS_GAP = ("the Claude launcher registrations are shell command lines with "
+                      "${CLAUDE_PROJECT_DIR}; this harness runs them through /bin/sh, which a Windows "
+                      "runner does not provide; see docs/guides/agent-hooks.md")
 
 
 def gemini_argv(command):
@@ -317,7 +320,7 @@ class NativeLefthook(unittest.TestCase):
             # A launcher registration is one shell command line; Claude Code expands
             # ${CLAUDE_PROJECT_DIR} in it, and so does the shell here.
             if os.name == "nt":
-                self.skipTest(CODEX_WINDOWS_GAP)
+                self.skipTest(CLAUDE_WINDOWS_GAP)
             return ["/bin/sh", "-c", action["command"]], cwd, {"CLAUDE_PROJECT_DIR": root}
         if settings == ".claude/settings.json":
             program = shutil.which(action["command"])
@@ -469,6 +472,32 @@ class NativeLefthook(unittest.TestCase):
                 result = self.run_registered(settings, key, {"hook_event_name": event})
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, "")
+
+    def test_registered_stop_commands_deny_a_closing_question_end_to_end(self):
+        """The registered command line, as a subprocess, with a closing-question payload."""
+        (self.root / ".workingdir").mkdir(exist_ok=True)
+        self.state("sync")
+        rows = ((".claude/settings.json", "Stop", "last_assistant_message"),
+                (".gemini/settings.json", "AfterAgent", "prompt_response"),
+                (".codex/hooks.json", "Stop", "last_assistant_message"))
+        for settings, key, field in rows:
+            with self.subTest(settings=settings, state="clean"):
+                payload = {"hook_event_name": key, field: "Fixed it.\n\nShould I push?"}
+                asked = self.run_registered(settings, key, payload)
+                self.assertEqual(asked.returncode, 2, asked.stdout + asked.stderr)
+                self.assertIn("asks the operator in prose", asked.stderr)
+                self.assertNotIn("Also failing", asked.stderr)
+                statement = self.run_registered(settings, key, {**payload, field: "Fixed it. Tests pass."})
+                self.assertEqual((statement.returncode, statement.stdout), (0, ""), statement.stderr)
+        (self.root / "README.md").write_text("dirty\n")
+        self.state("sync")
+        for settings, key, field in rows:
+            with self.subTest(settings=settings, state="due"):
+                payload = {"hook_event_name": key, field: "Fixed it.\n\nShould I push?"}
+                both = self.run_registered(settings, key, payload)
+                self.assertEqual(both.returncode, 2, both.stdout + both.stderr)
+                self.assertIn("asks the operator in prose", both.stderr)
+                self.assertIn("Praetor checkpoint due:", both.stderr)
 
     def test_native_adapter_rejects_malformed_event_names_without_typeerror(self):
         for payload in ({"hook_event_name": None}, {"hook_event_name": 7},
@@ -684,10 +713,13 @@ class NativeLefthook(unittest.TestCase):
         edit["tool_input"]["file_path"] = str(worktree / "README.md")
         dirty = self.run_registered(".claude/settings.json", "PreToolUse", edit, entry=1,
                                     cwd=cwd, project=project)
+        self.assertEqual(dirty.returncode, 0, dirty.stdout + dirty.stderr)
+        if os.name == "nt":
+            # The pre-edit rows above ran; only the shell-line Stop launcher cannot start here.
+            return new, None
         stop = self.run_registered(".claude/settings.json", "Stop",
                                    {"hook_event_name": "Stop", "cwd": str(cwd)},
                                    cwd=cwd, project=project)
-        self.assertEqual(dirty.returncode, 0, dirty.stdout + dirty.stderr)
         return new, stop
 
     def test_claude_hooks_judge_a_linked_worktree_session_by_that_worktree(self):
@@ -709,14 +741,16 @@ class NativeLefthook(unittest.TestCase):
                 nested.mkdir()
                 new, stop = self.claude_worktree_calls(worktree, nested)
                 self.assertEqual(new.returncode, 0, new.stdout + new.stderr)
-                self.assertEqual((stop.returncode, stop.stdout), (0, ""), stop.stderr)
+                if stop is not None:
+                    self.assertEqual((stop.returncode, stop.stdout), (0, ""), stop.stderr)
                 (worktree / "README.md").write_text("worktree is due\n")
                 self.state("sync", worktree)
                 new, stop = self.claude_worktree_calls(worktree, nested)
                 self.assertEqual(new.returncode, 2, new.stdout + new.stderr)
                 self.assertIn("rejects new public file path", new.stderr)
-                self.assertEqual(stop.returncode, 2, stop.stdout + stop.stderr)
-                self.assertIn("Praetor checkpoint due:", stop.stderr)
+                if stop is not None:
+                    self.assertEqual(stop.returncode, 2, stop.stdout + stop.stderr)
+                    self.assertIn("Praetor checkpoint due:", stop.stderr)
 
     def test_claude_hooks_started_in_a_worktree_judge_the_checkout_the_session_moved_to(self):
         worktree = self.linked_worktree(self.root / ".claude/worktrees/agent/tree")
@@ -724,8 +758,9 @@ class NativeLefthook(unittest.TestCase):
         self.state("sync")
         new, stop = self.claude_worktree_calls(self.root, self.root, project=worktree)
         self.assertEqual(new.returncode, 2, new.stdout + new.stderr)
-        self.assertEqual(stop.returncode, 2, stop.stdout + stop.stderr)
-        self.assertIn("Praetor checkpoint due:", stop.stderr)
+        if stop is not None:
+            self.assertEqual(stop.returncode, 2, stop.stdout + stop.stderr)
+            self.assertIn("Praetor checkpoint due:", stop.stderr)
 
     def submodule(self, name):
         """A registered submodule: a .git file pointing into the fixture's .git/modules."""

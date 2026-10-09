@@ -480,6 +480,12 @@ exits 0 with the reason on stderr:
 praetor hook: no engine serves claude pre-dispatch (checked /home/example/.local/bin/praetorctl); gate unenforced until bin/praetorctl rebuilt (make hook-cli) or engine reinstalled (make dev-install), skipped
 ```
 
+Failing open is deliberate for the stop row too: a stop gate that blocked whenever no
+engine is built would end every session on a host that never ran `make hook-cli`, and the
+skip is stated on stderr, not silent. The engine's own stop path still fails closed (no
+Python interpreter, an unverifiable ledger or checkpoint all deny).
+The test `test_missing_engine_is_a_stated_skip` in `scripts/test_praetor_hook.py` pins it.
+
 For AGY, the same skip also prints the answer the engine's agy encoder gives a skip:
 `{"decision":"allow"}` for `pre-tool` and `pre-dispatch`, `{}` for `stop` (`PROCEED` in the
 guard; `agyEncodePreTool` and `agyEncodeStop` in `internal/agenthook/dialect_agy.go`). An agy
@@ -1000,20 +1006,27 @@ blocks on its own, independent of whether a checkpoint is due; the reason names 
 `stop_hook_active` flag into `Canonical.StopActive` (`fillMainStop` in
 `internal/agenthook/dialect_agent.go`); a malformed flag reads as false. A repeated pass
 changes the wording of a checkpoint block (`Checkpoint remains incomplete: …`) and turns the
-prose-question deny below into a stated skip.
+prose-question deny below into a stated skip. `stop` runs every check on each pass (the
+prose question, the ledger verify, the checkpoint): on the first pass one deny lists each
+failing check, so the single continuation is not spent on the question alone; on the
+repeated pass the question is skipped and what still fails halts the session
+(`TestRunStopQuestionAndDueCheckpointPerClient`).
 
 ### Prose-question check
 
-Rule 4 of the agent harness (ask in a popup, never in prose) is checked by the stop engine,
-before the ledger and the checkpoint, in `internal/agenthook/stop_question.go`. It needs no
-I/O. It judges the final assistant message of the turn.
+Rule 4 of the agent harness (ask in a popup, never in prose) is checked by the stop engine
+in `internal/agenthook/stop_question.go`, alongside the ledger and the checkpoint. The check
+itself needs no I/O. It judges the final assistant message of the turn. When the question
+and another stop check fail on the first pass, the deny carries both reasons, the second
+after `Also failing:`.
 
 Limit: the check runs only where `praetorctl hook <client> stop` is registered. This
 repository's `.claude/settings.json` (`Stop`), `.codex/hooks.json` (`Stop`) and
 `.gemini/settings.json` (`AfterAgent`) register it through the launcher
 `.config/agent/hooks/praetor_hook.py`; the engine's stop path runs the ledger verify and
 `checkpoint.py --event stop` itself, so the registration replaced the direct
-`checkpoint.py` call instead of adding a second one
+`checkpoint.py` stop call instead of adding a second one (`checkpoint.py` itself stays: the
+claude and gemini post-tool rows and the engine's stop path run it)
 (`TestTrackedStopRegistrationReachesTheEngine`, `TestRegisteredStopCommandDeniesAClosingQuestion`).
 A repository that adopted Praetor does not get the stop rows yet: adoption registers
 pre-tool rows only (`internal/adopt/agent_hooks.go`, `NativeHooks(..., EventPreTool)`), so
@@ -1028,13 +1041,15 @@ message to judge.
 | `gemini` | `AfterAgent` | `prompt_response` (`packages/core/src/hooks/types.ts`, v0.61.0) | `ask_user` |
 | `agy` | `Stop` | none: the payload holds `executionNum`, `terminationReason` and `fullyIdle` | none: a stated skip (`agy stop payload carries no final message, prose questions not judged`) |
 
-Fenced code, 4-space or tab indented code, inline code, blockquotes, table rows and URLs
-are removed first (a URL's trailing punctuation stays, so `merge <url>?` is still a
+Fenced code (a fence closes only on the same character and at least the opener's length),
+4-space or tab indented code, inline code, blockquotes, table rows with or without leading
+pipes and URLs are removed first (a URL's trailing punctuation stays, so `merge <url>?` is still a
 question). Only the last two paragraphs are judged. The stop is denied once when any
 sentence of the closing prose paragraph ends in `?` or the full-width `？` (a trailing
-`Happy to.` does not hide it), or when that paragraph points at a choice (`let me know
-which`, `let me know whether`, `tell me which`, `pick one`, `which one`, `prefer`, `your
-call`, …) and the closing paragraphs hold an options list of two or more items. A bare
+`Happy to.` does not hide it), or when that paragraph asks the reader to choose (`let me know
+which`, `let me know if you prefer`, `do you prefer`, a sentence opening with `pick one` or
+`choose between`, `which one should I`, `your call`, …; a statement such as `I prefer A`
+or `I will pick the simplest approach` does not count) and the closing paragraphs hold an options list of two or more items. A bare
 `Let me know if you need anything else.` or `Tell me if CI fails.` after a summary list
 points at no choice and passes. A question in an earlier paragraph, followed by more
 report, passes as rhetorical. A list in the last paragraph counts as a question when one
@@ -1054,9 +1069,10 @@ restate the choice as a decision or a statement without a question.
 
 A stop that is still denied on the repeated pass (`stop_hook_active` set, for a ledger or
 checkpoint the agent cannot clear) is answered with `{"continue": false, "stopReason": ...,
-"systemMessage": ...}` and exit 0 for `claude`, `codex` and `gemini`, the shape the retired
-`checkpoint.py` used, so the session ends with the reason stated instead of looping. The
-test is `TestRegisteredStopCommandHaltsARepeatedDeny`.
+"systemMessage": ...}` and exit 0 for `claude`, `codex` and `gemini` instead of exit 2 again,
+the shape `checkpoint.py`'s direct stop registration used, so the session ends with the reason stated instead of looping. The
+test is `TestRegisteredStopCommandHaltsARepeatedDeny`. Codex and Gemini CLI honouring
+`continue: false` on stop is unverified beyond that precedent.
 
 The prose-question deny is block-once: with `stop_hook_active` set (agy: `executionNum` above 1) the check
 is a stated skip, so a false positive costs one extra turn and cannot loop. An empty or
@@ -1128,7 +1144,8 @@ registrations match the shell tool only, and the `lefthook` dialect keeps its be
 - The session receipt log.
 - Adoption rendering the `stop` rows (`NativeHooks` for `EventStop` beside `EventPreTool`)
   for adopting repositories, migrating an existing `checkpoint.py` stop registration
-  without `--force` and keeping every other handler. Tracked: the follow-up to #1095.
+  without `--force` and keeping every other handler. Tracked: cordanaLLM/praetor#1118
+(follow-up to #1095).
 - Moving the `post-tool` and `pre-edit` client registrations and the Lefthook jobs to this
   entrypoint, and deleting the Python adapters (`.config/agent/hooks/checkpoint.py` and
   `checkpoint_scope.py` keep running there today; `praetorctl hook <client> post-tool|pre-edit`

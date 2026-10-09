@@ -214,17 +214,24 @@ func evaluatePostTool(ctx context.Context, root string, in Invocation) Verdict {
 	return Verdict{Outcome: Skip, Reason: "Praetor checkpoint due: " + strings.Join(report.Actions, "; ")}
 }
 
-// evaluateStop verifies the state ledger before the checkpoint itself (3.3): a stale or
-// unverifiable ledger blocks on its own, independent of whether a checkpoint is due. The
-// prose-question check (stop_question.go) runs first: it needs no I/O, and its deny is the
-// block-once of rule 4. Its stated skip survives an otherwise clean stop.
+// evaluateStop runs every stop check on each pass: the prose-question check
+// (stop_question.go, no I/O), the state ledger verify and the checkpoint (3.3: a stale or
+// unverifiable ledger blocks on its own, independent of whether a checkpoint is due). On the
+// first pass one deny lists each failing check, so the single continuation a block-once stop
+// grants is not spent on the question alone. On the repeated pass (StopActive) the question
+// is a stated skip and a still-failing ledger or checkpoint halts, naming what remains.
+// The question's stated skip survives an otherwise clean stop.
 func evaluateStop(ctx context.Context, row Registration, root string, canonical Canonical, in Invocation) Verdict {
 	question := evaluateStopQuestion(row, canonical)
-	if question.Outcome == Deny {
+	ledger := evaluateStopLedger(ctx, root, canonical, in)
+	switch {
+	case question.Outcome == Deny && ledger.Outcome == Deny:
+		return Verdict{Outcome: Deny, Reason: question.Reason + " Also failing: " +
+			strings.TrimPrefix(ledger.Reason, "[BLOCKED BY HISS] ")}
+	case question.Outcome == Deny:
 		return question
-	}
-	if verdict := evaluateStopLedger(ctx, root, canonical, in); verdict.Outcome != Allow {
-		return verdict
+	case ledger.Outcome != Allow:
+		return ledger
 	}
 	return question
 }
