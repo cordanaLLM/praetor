@@ -593,123 +593,74 @@ func TestManagedAssetRegistry_MatchesSpelledOutRenovateFixturePaths(t *testing.T
 // (a) the reuse-gate step is declined;
 // (b) REUSE is not declared;
 // (c) the file is an adopter-owned copy;
-// (d) the file is an edited Praetor copy kept with a warning.
+// (d) the file is an edited Praetor copy kept with a warning;
+// (e) the same edited copy meets --force, which regenerates only audit-locked scaffolds,
+// and the REUSE gate is not one, so the copy is kept and stays unlisted.
 func TestRenovateManagedPaths_ReuseGateNegativeCases(t *testing.T) {
-	t.Run("declined step", func(t *testing.T) {
-		repo := newTestRepo(t, "renovate-reuse-declined")
-		trackGoModule(t, repo, "go.mod")
+	edited := mustReuseWorkflow(t, forge.FallbackDefaultBranch) + "\n# custom adopter addition\n"
+	adopterWorkflow := "name: Custom REUSE Gate\non: [push]\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
+	for _, tc := range []reuseUnlistedCase{
+		{name: "declined step", dir: "renovate-reuse-declined", declined: true, reuse: true},
+		{name: "reuse not declared", dir: "renovate-reuse-not-declared"},
+		{name: "adopter owned copy", dir: "renovate-reuse-adopter-owned", reuse: true, workflow: adopterWorkflow},
+		{name: "edited praetor copy kept with warning", dir: "renovate-reuse-edited-praetor", reuse: true, workflow: edited, warn: true},
+		{name: "force keeps edited copy and does not list it", dir: "renovate-reuse-forced", reuse: true, workflow: edited, force: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assertReuseUnlisted(t, tc) })
+	}
+}
+
+// reuseUnlistedCase is one adoption that must keep reuse.yml out of the managed rule.
+type reuseUnlistedCase struct {
+	name, dir string
+	declined  bool   // adoption.decline lists the reuse-gate step
+	reuse     bool   // REUSE.toml declares REUSE
+	workflow  string // existing reuse.yml text; empty means none
+	force     bool
+	warn      bool // adoption must warn that it kept the file
+}
+
+// seedReuseUnlisted builds the repository for tc and returns its path and the reuse.yml path.
+func seedReuseUnlisted(t *testing.T, tc reuseUnlistedCase) (string, string) {
+	t.Helper()
+	repo := newTestRepo(t, tc.dir)
+	trackGoModule(t, repo, "go.mod")
+	if tc.declined {
 		mustWrite(t, filepath.Join(repo, manifestFile), "version: 1\nadoption:\n  decline: ["+reuseGateStep+"]\n")
+	}
+	if tc.reuse {
 		mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
-		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
+	}
+	mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
+	workflowPath := filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile))
+	if tc.workflow != "" {
+		mustWrite(t, workflowPath, tc.workflow)
+	}
+	return repo, workflowPath
+}
 
-		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
-		if _, err := Adopt(t.Context(), opts); err != nil {
-			t.Fatalf("adopt: %v", err)
+// assertReuseUnlisted adopts tc's repository and checks that reuse.yml is unlisted, that an
+// existing copy is byte-identical afterwards, and that a kept edited copy warns.
+func assertReuseUnlisted(t *testing.T, tc reuseUnlistedCase) {
+	t.Helper()
+	repo, workflowPath := seedReuseUnlisted(t, tc)
+	rep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Force: tc.force})
+	if err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	_, managed, _ := renovateTestRules(t, mustRead(t, filepath.Join(repo, "renovate.json")))
+	if len(managed) != 1 {
+		t.Fatalf("want 1 managed rule, got %d", len(managed))
+	}
+	if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
+		t.Errorf("%s: %s must not be listed in the Renovate managed rule", tc.name, reuseWorkflowFile)
+	}
+	if tc.workflow != "" {
+		if got := mustRead(t, workflowPath); got != tc.workflow {
+			t.Fatalf("%s: existing workflow was modified: got %s, want %s", tc.name, got, tc.workflow)
 		}
-		data := mustRead(t, filepath.Join(repo, "renovate.json"))
-		_, managed, _ := renovateTestRules(t, data)
-		if len(managed) != 1 {
-			t.Fatalf("want 1 managed rule, got %d", len(managed))
-		}
-		if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
-			t.Errorf("declined reuse-gate step: %s must not be listed in Renovate rule", reuseWorkflowFile)
-		}
-	})
-
-	t.Run("reuse not declared", func(t *testing.T) {
-		repo := newTestRepo(t, "renovate-reuse-not-declared")
-		trackGoModule(t, repo, "go.mod")
-		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
-
-		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
-		if _, err := Adopt(t.Context(), opts); err != nil {
-			t.Fatalf("adopt: %v", err)
-		}
-		data := mustRead(t, filepath.Join(repo, "renovate.json"))
-		_, managed, _ := renovateTestRules(t, data)
-		if len(managed) != 1 {
-			t.Fatalf("want 1 managed rule, got %d", len(managed))
-		}
-		if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
-			t.Errorf("reuse not declared: %s must not be listed in Renovate rule", reuseWorkflowFile)
-		}
-	})
-
-	t.Run("adopter owned copy", func(t *testing.T) {
-		repo := newTestRepo(t, "renovate-reuse-adopter-owned")
-		trackGoModule(t, repo, "go.mod")
-		mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
-		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
-		adopterWorkflow := "name: Custom REUSE Gate\non: [push]\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
-		mustWrite(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile)), adopterWorkflow)
-
-		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
-		if _, err := Adopt(t.Context(), opts); err != nil {
-			t.Fatalf("adopt: %v", err)
-		}
-		data := mustRead(t, filepath.Join(repo, "renovate.json"))
-		_, managed, _ := renovateTestRules(t, data)
-		if len(managed) != 1 {
-			t.Fatalf("want 1 managed rule, got %d", len(managed))
-		}
-		if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
-			t.Errorf("adopter-owned copy: %s must not be listed in Renovate rule", reuseWorkflowFile)
-		}
-		if got := mustRead(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile))); got != adopterWorkflow {
-			t.Fatalf("adopter workflow was modified: got %s, want %s", got, adopterWorkflow)
-		}
-	})
-
-	t.Run("edited praetor copy kept with warning", func(t *testing.T) {
-		repo := newTestRepo(t, "renovate-reuse-edited-praetor")
-		trackGoModule(t, repo, "go.mod")
-		mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
-		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
-		currentWorkflow := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
-		editedWorkflow := currentWorkflow + "\n# custom adopter addition\n"
-		mustWrite(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile)), editedWorkflow)
-
-		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
-		rep, err := Adopt(t.Context(), opts)
-		if err != nil {
-			t.Fatalf("adopt: %v", err)
-		}
-		data := mustRead(t, filepath.Join(repo, "renovate.json"))
-		_, managed, _ := renovateTestRules(t, data)
-		if len(managed) != 1 {
-			t.Fatalf("want 1 managed rule, got %d", len(managed))
-		}
-		if slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
-			t.Errorf("edited Praetor copy: %s must not be listed in Renovate rule", reuseWorkflowFile)
-		}
-		if got := mustRead(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile))); got != editedWorkflow {
-			t.Fatalf("edited workflow was modified: got %s, want %s", got, editedWorkflow)
-		}
-		if len(rep.Warnings) == 0 {
-			t.Error("expected warning for edited Praetor copy kept, got none")
-		}
-	})
-
-	t.Run("force overwrites edited copy and lists it", func(t *testing.T) {
-		repo := newTestRepo(t, "renovate-reuse-forced")
-		trackGoModule(t, repo, "go.mod")
-		mustWrite(t, filepath.Join(repo, supplychain.ReuseFile), "version = 1\n")
-		mustWrite(t, filepath.Join(repo, "renovate.json"), adopterRenovateConfig)
-		currentWorkflow := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
-		editedWorkflow := currentWorkflow + "\n# custom adopter addition\n"
-		mustWrite(t, filepath.Join(repo, filepath.FromSlash(reuseWorkflowFile)), editedWorkflow)
-
-		opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Force: true}
-		if _, err := Adopt(t.Context(), opts); err != nil {
-			t.Fatalf("adopt: %v", err)
-		}
-		data := mustRead(t, filepath.Join(repo, "renovate.json"))
-		_, managed, _ := renovateTestRules(t, data)
-		if len(managed) != 1 {
-			t.Fatalf("want 1 managed rule, got %d", len(managed))
-		}
-		if !slices.Contains(managed[0].MatchFileNames, reuseWorkflowFile) {
-			t.Errorf("forced adoption: %s must be listed in Renovate rule", reuseWorkflowFile)
-		}
-	})
+	}
+	if tc.warn && len(rep.Warnings) == 0 {
+		t.Errorf("%s: expected a warning for the kept copy, got none", tc.name)
+	}
 }
