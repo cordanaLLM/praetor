@@ -47,7 +47,7 @@ jobs:
           go-version: ${{ steps.setup-go.outputs.go-version }}
 
       # The runner has no Ollama or vLLM daemon, so discovery is off. The sync merges
-      # and exits non-zero, writing nothing, if any existing entry would be removed.
+      # and exits non-zero, writing nothing, if any retired seed entry would be removed without --prune.
       - name: Sync AI Model Catalog
         run: go run ./cmd/standardsctl models sync --discover-local=false
 

@@ -29,20 +29,6 @@ tiers:
               tpm_limit: 40000
               cost_per_m_in: 15
               cost_per_m_out: 75
-            - id: gemini-2.5-pro-preview-03-25
-              family: google
-              source: seed
-              rpm_limit: 300
-              tpm_limit: 2000000
-              cost_per_m_in: 1.25
-              cost_per_m_out: 5
-            - id: gemini-2.5-flash-preview-03-25
-              family: google
-              source: seed
-              rpm_limit: 2000
-              tpm_limit: 4000000
-              cost_per_m_in: 0.075
-              cost_per_m_out: 0.3
             - id: gemini-2.0-flash
               family: google
               source: seed
@@ -50,13 +36,6 @@ tiers:
               tpm_limit: 4000000
               cost_per_m_in: 0.1
               cost_per_m_out: 0.4
-            - id: gpt-4.5-preview-2025-02-27
-              family: openai
-              source: seed
-              rpm_limit: 200
-              tpm_limit: 100000
-              cost_per_m_in: 75
-              cost_per_m_out: 150
             - id: o3-mini
               family: openai
               source: seed

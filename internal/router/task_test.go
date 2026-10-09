@@ -139,7 +139,7 @@ func TestTaskRoutingInputBounds(t *testing.T) {
 	if got := routeTask(t, arbiter, TaskRequest{Task: "implement", InputTokens: MaxTaskTokens}); got.EstimatedCost != 1000 {
 		t.Fatal("exact token bound rejected")
 	}
-	for _, request := range []TaskRequest{{Task: "implement"}, {Task: "", InputTokens: 1}, {Task: "implement", InputTokens: -1}, {Task: "implement", OutputTokens: MaxTaskTokens + 1}, {Task: "implement", InputTokens: 1, Capabilities: make([]string, MaxRoutingTags+1)}} {
+	for _, request := range []TaskRequest{{Task: "", InputTokens: 1}, {Task: "implement", InputTokens: -1}, {Task: "implement", OutputTokens: MaxTaskTokens + 1}, {Task: "implement", InputTokens: 1, Capabilities: make([]string, MaxRoutingTags+1)}} {
 		if _, err := arbiter.SelectForTask(context.Background(), request); err == nil {
 			t.Fatalf("invalid request accepted: %+v", request)
 		}

@@ -64,6 +64,9 @@ func keepDeclaredSettings(cfg, existing *RoutingConfig, declared settingsPresenc
 		if keys["fallback_tier"] {
 			tier.FallbackTier = previous.FallbackTier
 		}
+		if keys["lane"] {
+			tier.Lane = previous.Lane
+		}
 		cfg.Tiers[name] = tier
 	}
 }
@@ -77,5 +80,8 @@ func keepGovernance(policy *GovernancePolicy, existing GovernancePolicy, keys ma
 	}
 	if keys["orthogonal_audit_required"] {
 		policy.OrthogonalAuditRequired = existing.OrthogonalAuditRequired
+	}
+	if keys["catalog_max_age_days"] {
+		policy.CatalogMaxAgeDays = existing.CatalogMaxAgeDays
 	}
 }

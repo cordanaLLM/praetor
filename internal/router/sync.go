@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
@@ -30,10 +32,17 @@ type SyncOptions struct {
 	DiscoverLocal      bool
 	LocalEndpoints     []string
 	MinContextWindow   int
-	// Prune rebuilds the catalog from the seed list and this run's local discovery,
-	// removing every other entry. Without it a sync never removes an entry and
+	// Prune removes only flagged seed entries that are retired; hand-declared,
+	// alias and local entries are kept. Without it a sync never removes an entry and
 	// refuses to write when one would be lost.
 	Prune bool
+	// ProbeAliases makes one bounded probe call per alias entry of the catalog's gateway and
+	// records whether it answered. Without a gateway section it probes nothing.
+	ProbeAliases bool
+	// Prober makes the probe call; nil takes the network prober.
+	Prober AliasProber
+	// Now dates the entries a sync writes or confirms; zero takes the clock.
+	Now time.Time
 }
 
 // SyncResult details the catalog a synchronization wrote.
@@ -52,6 +61,11 @@ type SyncResult struct {
 	// DiscoveryFailures lists, one per endpoint, the local endpoints that did not answer
 	// a non-pruning sync; the sync kept their catalogued entries.
 	DiscoveryFailures []string
+	// Findings lists the written entries that are marked preview or older than the
+	// catalog's freshness window.
+	Findings []CatalogFinding
+	// AliasProbes lists the outcome of each alias probe the sync made or could not make.
+	AliasProbes []AliasProbe
 }
 
 // ErrSyncWouldRemove means a sync without Prune would drop catalog entries.
@@ -217,10 +231,7 @@ var legacySeedCatalog = []catalogEntry{
 	{"claude-3-7-sonnet-20250219", 1000, 80000, 3.0, 15.0},
 	{"claude-3-5-sonnet-20241022", 1000, 80000, 3.0, 15.0},
 	{"claude-3-opus-20240229", 50, 40000, 15.0, 75.0},
-	{"gemini-2.5-pro-preview-03-25", 300, 2000000, 1.25, 5.0},
-	{"gemini-2.5-flash-preview-03-25", 2000, 4000000, 0.075, 0.30},
 	{"gemini-2.0-flash", 2000, 4000000, 0.10, 0.40},
-	{"gpt-4.5-preview-2025-02-27", 200, 100000, 75.0, 150.0},
 	{"o3-mini", 500, 1000000, 1.10, 4.40},
 	{"o1", 500, 100000, 15.0, 60.0},
 	{"gpt-4o-2024-11-20", 2000, 450000, 2.50, 10.0},
@@ -272,18 +283,22 @@ func recordTierCount(result *SyncResult, tierName string) {
 }
 
 // SyncCatalog merges legacy seed metadata and optional local model inventory into
-// the catalog at targetPath. Seed-owned entries are rewritten in place; every other
-// existing entry is kept unless opts.Prune is set, and a sync that would lose an
-// entry without it writes nothing and returns ErrSyncWouldRemove. Governance keys and
-// default-tier descriptions, task labels and fallbacks the catalog declares are kept;
-// only undeclared ones take the built-in defaults. A local endpoint that does not answer
-// is listed in SyncResult.DiscoveryFailures, and refuses a pruning sync.
+// the catalog at targetPath. Seed-owned entries are rewritten in place; hand-declared,
+// alias and local entries are kept, and opts.Prune removes only flagged seed entries that
+// are retired. A sync that would lose an entry without opts.Prune writes nothing and
+// returns ErrSyncWouldRemove. Governance keys and default-tier descriptions, task labels
+// and fallbacks the catalog declares are kept; only undeclared ones take the built-in
+// defaults. A local endpoint that does not answer is listed in SyncResult.DiscoveryFailures,
+// and refuses a pruning sync.
 // Seed prices, quota values and naming heuristics are not live provider observations.
 func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*SyncResult, error) {
 	return syncCatalog(ctx, targetPath, opts, DiscoverLocalModels)
 }
 
 func syncCatalog(ctx context.Context, targetPath string, opts SyncOptions, discover localDiscovery) (*SyncResult, error) {
+	if opts.Now.IsZero() {
+		opts.Now = time.Now()
+	}
 	before, exists, err := contextopt.ObserveSnapshot(ctx, targetPath)
 	if err != nil {
 		return nil, err
@@ -300,11 +315,14 @@ func syncCatalog(ctx context.Context, targetPath string, opts SyncOptions, disco
 	if err != nil {
 		return nil, err
 	}
-	cfg, result, err := planCatalog(existing, declared, discovered, opts.Prune)
+	cfg, result, err := planCatalog(existing, declared, discovered, opts.Prune, opts.Now)
 	if err != nil {
 		return nil, err
 	}
 	result.DiscoveryFailures = failures
+	if err := probeForSync(ctx, cfg, result, opts); err != nil {
+		return nil, err
+	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal updated routing config: %w", err)
@@ -315,6 +333,26 @@ func syncCatalog(ctx context.Context, targetPath string, opts SyncOptions, disco
 		return nil, fmt.Errorf("failed to write routing config to %s: %w", targetPath, err)
 	}
 	return result, nil
+}
+
+// probeForSync probes the alias entries when asked, then flags stale and preview entries of
+// the catalog about to be written. The probe changes entries before they are validated again.
+func probeForSync(ctx context.Context, cfg *RoutingConfig, result *SyncResult, opts SyncOptions) error {
+	if opts.ProbeAliases {
+		prober := opts.Prober
+		if prober == nil {
+			prober = HTTPAliasProber(&http.Client{Timeout: aliasProbeTimeout})
+		}
+		result.AliasProbes = ProbeAliases(ctx, cfg, prober, opts.Now)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if err := ValidateRoutingConfig(cfg); err != nil {
+		return fmt.Errorf("probed catalog: %w", err)
+	}
+	result.Findings = CatalogFindings(cfg, opts.Now)
+	return nil
 }
 
 // existingCatalog decodes the catalog observed before the sync. An absent file is
@@ -366,13 +404,12 @@ func discoveryFailures(err error) []string {
 
 // planCatalog merges the seed list, the existing catalog and discovered local
 // models, then refuses any removal the caller did not ask to prune.
-func planCatalog(existing *RoutingConfig, declared settingsPresence, discovered []ModelDescriptor, prune bool) (*RoutingConfig, *SyncResult, error) {
+func planCatalog(existing *RoutingConfig, declared settingsPresence, discovered []ModelDescriptor, prune bool, now time.Time) (*RoutingConfig, *SyncResult, error) {
 	cfg := seedCatalog()
 	keepDeclaredSettings(cfg, existing, declared)
-	if !prune {
-		preserveUnowned(cfg, existing, modelIDs(cfg))
-	}
-	addDiscovered(cfg, discovered)
+	cfg.Gateway, cfg.Lanes = existing.Gateway, existing.Lanes
+	preserveUnowned(cfg, existing, modelIDs(cfg))
+	addDiscovered(cfg, discovered, now)
 	removed := missingIDs(existing, cfg)
 	if len(removed) > 0 && !prune {
 		return nil, nil, fmt.Errorf("%w: %s", ErrSyncWouldRemove, strings.Join(removed, ", "))
@@ -383,6 +420,16 @@ func planCatalog(existing *RoutingConfig, declared settingsPresence, discovered 
 	result := summarizeCatalog(cfg, existing)
 	result.Removed = removed
 	return cfg, result, nil
+}
+
+// isSeedModel reports whether an ID is declared by the built-in seed catalog.
+func isSeedModel(id string) bool {
+	for _, m := range legacySeedCatalog {
+		if m.id == id {
+			return true
+		}
+	}
+	return false
 }
 
 // seedCatalog builds the default tiers holding only the seed-owned entries.
@@ -411,34 +458,56 @@ func seedCatalog() *RoutingConfig {
 }
 
 // preserveUnowned keeps every existing entry the seed list does not own, in its
-// tier and order, and keeps tiers the defaults do not define. An entry marked as
-// seed that the seed list no longer carries is retired, not kept, so the removal
-// check reports it and only a pruning sync drops it.
+// tier and order, and keeps tiers the defaults do not define. Hand-declared,
+// alias and local entries are operator data and are never removed. A retired seed entry
+// missing from the seed list is left unpreserved so that prune drops it and plain sync
+// refuses to remove it.
 func preserveUnowned(cfg, existing *RoutingConfig, owned map[string]bool) {
 	for name, tier := range existing.Tiers {
 		if _, ok := cfg.Tiers[name]; !ok {
-			cfg.Tiers[name] = Tier{Description: tier.Description, TargetTasks: tier.TargetTasks, FallbackTier: tier.FallbackTier}
+			cfg.Tiers[name] = Tier{Description: tier.Description, TargetTasks: tier.TargetTasks, FallbackTier: tier.FallbackTier, Lane: tier.Lane}
 		}
 		for _, model := range tier.Models {
-			if !owned[model.ID] && model.Source != SourceSeed {
+			if owned[model.ID] {
+				continue
+			}
+			if model.Source != SourceSeed {
 				appendModel(cfg.Tiers, name, model)
 			}
 		}
 	}
 }
 
-// addDiscovered appends discovered local models the catalog does not already carry.
+// addDiscovered appends discovered local models the catalog does not already carry,
+// and refreshes the as_of date for rediscovered source: local models.
 // An ID the seed list or an existing entry declares keeps that entry.
-func addDiscovered(cfg *RoutingConfig, discovered []ModelDescriptor) {
+func addDiscovered(cfg *RoutingConfig, discovered []ModelDescriptor, now time.Time) {
 	present := modelIDs(cfg)
+	asOf := now.UTC().Format(time.DateOnly)
 	for _, model := range discovered {
 		if present[model.ID] {
+			refreshDiscoveredLocal(cfg, model.ID, asOf)
 			continue
 		}
 		present[model.ID] = true
 		model.Source = SourceLocal
+		model.AsOf = asOf
 		model.CostRatesDeclared = true
 		appendModel(cfg.Tiers, ClassifyTier(model.ID), model)
+	}
+}
+
+func refreshDiscoveredLocal(cfg *RoutingConfig, id, asOf string) {
+	for name, tier := range cfg.Tiers {
+		for i := range tier.Models {
+			if tier.Models[i].ID == id {
+				if tier.Models[i].Source == SourceLocal {
+					tier.Models[i].AsOf = asOf
+					cfg.Tiers[name] = tier
+				}
+				return
+			}
+		}
 	}
 }
 

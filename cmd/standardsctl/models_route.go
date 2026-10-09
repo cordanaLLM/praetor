@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,28 +40,28 @@ func addModelRouteFlags(fs *flag.FlagSet) modelRouteFlags {
 	return modelRouteFlags{
 		task:         fs.String("task", "", "Declared target_tasks label for models route"),
 		capabilities: fs.String("capabilities", "", "Comma-separated required declared model capabilities for route"),
-		input:        fs.Int64("input-tokens", 0, "Estimated input tokens for cost and projected quota checks"),
-		output:       fs.Int64("output-tokens", 0, "Estimated output tokens for cost and projected quota checks"),
+		input:        fs.Int64("input-tokens", 0, "Optional estimated input tokens for cost and projected quota checks; with neither estimate the route ranks by configured rates"),
+		output:       fs.Int64("output-tokens", 0, "Optional estimated output tokens for cost and projected quota checks"),
 		usage:        fs.String("usage", "", "Optional bounded JSON capacity snapshot; requires an observation and positive RPM/TPM limits for the selected model"),
 	}
+}
+
+// modelFlagActions names the models actions each action-specific flag applies to.
+var modelFlagActions = map[string][]string{
+	"task": {"route", "outcome"}, "capabilities": {"route"}, "input-tokens": {"route"}, "output-tokens": {"route"},
+	"usage": {"route"}, "lane": {"outcome"}, "target": {"outcome"}, "result": {"outcome"}, "note": {"outcome"},
+	"outcome-log": {"outcome"}, "duration-ms": {"outcome"}, "probe-aliases": {"sync"}, "prune": {"sync"},
 }
 
 func validateModelRouteFlags(fs *flag.FlagSet, action string) error {
 	var err error
 	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "task", "capabilities", "input-tokens", "output-tokens", "usage":
-			if action != "route" {
-				err = fmt.Errorf("--%s requires models route", f.Name)
-			}
-		case "discover-local", "local-endpoints":
-			if action == "route" {
-				err = fmt.Errorf("--%s does not apply to offline routing", f.Name)
-			}
-		case "prune":
-			if action != "sync" {
-				err = fmt.Errorf("--prune requires models sync")
-			}
+		if actions, ok := modelFlagActions[f.Name]; ok && !slices.Contains(actions, action) {
+			err = fmt.Errorf("--%s requires models %s", f.Name, strings.Join(actions, " or models "))
+			return
+		}
+		if (f.Name == "discover-local" || f.Name == "local-endpoints") && (action == "route" || action == "outcome") {
+			err = fmt.Errorf("--%s does not apply to models %s", f.Name, action)
 		}
 	})
 	return err

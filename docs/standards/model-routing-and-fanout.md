@@ -55,9 +55,12 @@ cost_per_m_in * input_tokens / 1,000,000
 
 Both prices must be explicit finite nonnegative numbers. Explicit zero is allowed;
 missing or null rates cannot win as free models. Rates must use a common currency
-or unit; no currency conversion is implemented. At least one token estimate must
-be positive. Equal estimates resolve by lexicographic model ID, then tier name,
-independently of map or list iteration order.
+or unit; no currency conversion is implemented. Token estimates are optional. With
+neither given, the route is tier-only: `estimated_cost` is 0 and candidates rank by
+the sum of their two per-million rates (`basis` says so), pinned by
+`TestTierOnlyRouteRanksByRatesWithoutEstimates`. Each given estimate still drives
+cost and the quota checks. Equal ranks resolve by lexicographic model ID, then tier
+name, independently of map or list iteration order.
 
 The JSON result includes the exact loaded configuration SHA256, selected model,
 task/capabilities, token estimates, configured cost and capacity observation status.
@@ -172,7 +175,7 @@ Ollama and vLLM endpoints, so a model you pull or serve becomes routable.
 ```bash
 praetorctl models sync                         # seed list plus this machine's local models
 praetorctl models sync --discover-local=false  # seed list only; no daemon needed
-praetorctl models sync --prune                 # rebuild from the seed list and this run's discovery
+praetorctl models sync --prune                 # remove flagged retired seed entries
 ```
 
 Discovery queries every endpoint in `--local-endpoints` (default
@@ -181,8 +184,8 @@ asked for Ollama's `/api/tags` first and, when that path answers 404, for the
 OpenAI-compatible `/v1/models` that vLLM serves (`internal/router/discovery.go`). An
 endpoint that does not answer is listed as `Endpoint skipped` and the sync goes on
 with the others, keeping that endpoint's catalogued entries. A `--prune` run refuses
-instead, since it would remove them. `TestDiscoverLocalModelsIsolatesFailingEndpoints`
-and `TestSyncCatalogIsolatesFailedDiscovery` pin this.
+instead, because it refuses to prune from a partial local inventory (`internal/router/sync.go:386`).
+`TestDiscoverLocalModelsIsolatesFailingEndpoints` and `TestSyncCatalogIsolatesFailedDiscovery` pin this.
 
 A new entry's tier comes from the parameter-count tag in its ID (`7b`, `1.5b`, `235b`,
 `8x7b`): below 5 billion is `nano`, below 20 `lightweight`, up to 35 `midweight`, and
@@ -198,7 +201,7 @@ Each model entry records who owns it in `source`:
 
 | `source` | Written by | What a sync does with it |
 | :--- | :--- | :--- |
-| `seed` | the seed list in `internal/router/sync.go` | rewrites it in place from the seed list |
+| `seed` | the seed list in `internal/router/sync.go` | rewrites it in place from the seed list; retired seed entries leave with `--prune` |
 | `local` | discovery against a local Ollama or vLLM endpoint | keeps it; a rediscovered ID is never added twice |
 | absent | an operator editing the file | keeps it |
 
@@ -209,10 +212,9 @@ seed entry instead of appearing twice. If a sync would still lose an entry, whic
 happens when the seed list drops a model the catalog marks `source: seed`, it writes
 nothing and exits with an error that lists the IDs and names `--prune`.
 
-`--prune` is the explicit rebuild. The result holds the seed list plus what this run
-discovered, and the command prints each removed ID. Run it with discovery on, on the
-machine whose models the catalog should list; otherwise it removes every `local`
-entry.
+`--prune` removes only flagged seed entries (`source: seed`) that are retired;
+hand-declared entries, alias entries and local models are preserved as operator data,
+and the command prints each removed ID.
 
 A catalog that does not load, for example with a duplicate ID or an unknown `source`
 value, is refused rather than overwritten; repair or delete it first. The write is
@@ -222,12 +224,13 @@ being lost, apart from a writer that races that final check.
 
 Governance and the default tiers' metadata follow the same ownership rule as model
 entries, with or without `--prune`: each `governance` key and each default tier's
-`description`, `target_tasks` and `fallback_tier` that the file declares is kept, an
+`description`, `target_tasks`, `fallback_tier` and `lane` that the file declares is kept, an
 explicit `false`, zero or empty list included, and only an undeclared key takes the
 built-in default (`internal/router/sync_settings.go`). To return a setting to its
-default, delete the key and sync. A `--prune` run keeps a declared `fallback_tier`
-even when it names a tier the rebuild drops, and then refuses with the unknown tier
-named. The behavior is pinned by `internal/router/sync_test.go` and
+default, delete the key and sync. `internal/router/sync.go:458` preserves unowned tiers
+and `internal/router/sync.go:465` preserves hand-declared models across prune, so a declared
+fallback to an operator tier is no longer dropped or left dangling by prune (`internal/router/sync_test.go:289`).
+The behavior is pinned by `internal/router/sync_test.go` and
 `cmd/standardsctl/models_sync_test.go`.
 
 ### Nightly catalog check
@@ -239,6 +242,119 @@ never commits. `main` requires a pull request, signed commits and passing checks
 no bypass actor, so a bot push cannot land there, and this repository does not let
 `GITHUB_TOKEN` open pull requests. To clear the failure, run `praetorctl models sync`
 and land the result in a pull request.
+
+## Gateway aliases
+
+An OpenAI-compatible gateway can serve router aliases (classes such as light, coding,
+reasoning or auto) and refuse the concrete model IDs its key cannot use, so a pinned ID
+the catalog lists may fail there. A catalog entry can therefore name an alias instead:
+
+```yaml
+gateway:
+  address: https://gateway.example.com/v1   # yours; the repository ships none
+  key_env: PRAETOR_GATEWAY_API_KEY          # variable holding the bearer key; never stored
+tiers:
+  lightweight:
+    models:
+      - {id: gateway-light, family: openai, provider: gateway, alias: light,
+         cost_per_m_in: 0, cost_per_m_out: 0}
+```
+
+An alias entry needs a `gateway` section, and `id` stays the unique catalog key
+(`internal/router/gateway.go`). The `provider` field is optional metadata; the router
+sends the alias verbatim as the model name in gateway chat completions and expands
+`{target}` to the bare alias in lane commands. A model declaring `provider` without an
+alias is refused at config load.
+
+The `key_env` setting must name an environment variable starting with `PRAETOR_GATEWAY_`
+followed by at least one character of `[A-Z0-9_]`. A single constant validated at config load
+enforces this allow-list and the refusal names the rule (e.g. `GITHUB_TOKEN` is refused).
+Nothing in code, defaults or docs names a gateway: the adopter configures its address and aliases.
+
+`models sync` makes one bounded call per alias entry (a one-token chat completion, 10
+second deadline) and records `alias_status: answers` or `unanswered` with the gateway's
+refusal in `alias_reason`. It does not trust the gateway's model listing, which can list
+more than the key may use. A probe that cannot run, such as an unset `key_env` variable,
+changes nothing and is reported as `Alias not probed`, as is a transport failure or an HTTP
+408, 429 or 5xx answer, which say nothing about the alias; any other refusal is recorded
+as `unanswered`. The probe is opt-in (`--probe-aliases`) because it sends the value of
+`key_env` as a bearer token to the declared address: the address must be `https` unless
+it is a loopback host, and a change to the `gateway` section in a pull request needs the
+same review as a change to a CI secret binding. The route then applies three rules:
+
+- An alias entry is a candidate only while its status is `answers`. An `unanswered` or
+  never probed alias is skipped and listed in the result's `skipped` array with the
+  reason (`alias has not been probed; run models sync --probe-aliases`).
+- Alias exclusion is per tier. A tier holding at least one alias entry excludes its pinned
+  non-local models, however cheap and whatever the probes said, because the gateway refuses
+  concrete IDs; only models from a local runtime (`source: local`) stay, since they never
+  pass through the gateway. A tier with no alias entry keeps its pinned models. When none
+  of the aliases in an alias-holding tier answers, that tier fails closed with the skipped reasons.
+- The harness is told the alias, never a model ID behind it.
+
+`TestRouteNeverFallsBackToPinnedModelWhenGatewayServesAliases`,
+`TestRouteExcludesPinnedModelsWhenNoAliasAnswers` and
+`TestProbeAliasesRecordsAnswerAndReason` pin these.
+
+## Lanes and outcomes
+
+A lane says how a pick is executed. One `lanes` table in `routing.yaml`, read by the
+same loader as the rest, maps a lane name to its harness and headless command, and a
+tier or model names its lane (`lane:`; a model's own lane wins):
+
+```yaml
+lanes:
+  gateway-coding:
+    harness: coding-harness
+    command: [coding-harness, run, --model, "{target}", --task, "{task}"]
+tiers:
+  lightweight:
+    lane: gateway-coding
+```
+
+The command is an argument vector, never a shell line. `{target}` expands to the
+alias of an alias entry or the model ID, `{task}` to the label; each stays one
+argument whatever it contains, and any other `{name}` is refused at load. The
+harness may be a local or gateway model through a headless coding harness, a
+free-tier CLI or the frontier agent; Praetor ships no lane, because the command lines
+are the adopter's.
+
+`models route --task <label>` returns `lane` with `name`, `harness`, `target` and the
+exact `command`. A pick with no lane declared returns `lane_note` instead of a guess.
+`TestEveryDeclaredLabelRoutesToAnExecutableLane` routes every declared label.
+
+`praetorctl models outcome --task <label> --target <t> --result ok|fail|timeout
+[--lane <name>] [--duration-ms n] [--note text]` appends one record to
+`.workingdir/routing/outcomes.jsonl` (`--outcome-log` changes it), a private JSON Lines
+log that is never rewritten. It is the measured routing data the efficiency ledger reads
+through `router.ReadOutcomes`, which fails on a record it cannot decode instead of
+averaging over the rest. The router does not dispatch: the caller that runs the command
+records how it ended.
+
+## Catalog freshness
+
+Every entry may carry `preview: true` and an `as_of` date (YYYY-MM-DD) for when its data
+was written or confirmed; a model ID containing `preview` counts as preview. `models
+sync` lists each preview entry and each entry whose `as_of` is older than
+`governance.catalog_max_age_days` (default 180) as `Catalog stale`. An answering alias
+probe sets `as_of` to the sync date and a discovered local model gets the sync date. An
+entry without `as_of`, and an entry owned by the seed list (`source: seed`), is not
+judged on age: the seed list ships inside the binary, so a fixed date would turn the
+audit red on that date with no change in the repository. The preview check applies to
+every entry, seed included, so the seed prices are only as current as the binary.
+
+`praetorctl audit` runs the same check over `.config/models/routing.yaml`
+(`auditModelCatalog`) and fails on any finding; a repository without that file skips it,
+saying so, and a file that does not load fails. Under the operator-data rule (operator data
+is configured, never deleted), `praetorctl models sync --prune` removes only entries with
+`source: seed` that the freshness check flags (for example retired preview models); it never
+removes hand-declared or alias entries, and never touches the gateway or lanes sections. A
+plain `models sync` refuses to remove flagged seed entries without `--prune`. The audit
+remedy names each flagged hand or alias entry for the operator to refresh (`as_of`) or remove
+by hand; retired seed entries leave with `models sync --prune --discover-local=false` or by hand. The seed list no longer carries the three
+preview models it once did. Tests: `TestAuditModelCatalogFailsStaleAndPreviewEntries`,
+`TestAuditModelCatalogWindowBoundary`, `TestSyncProbesAliasesAndReportsStalePreviewEntries`,
+`TestSyncPruneRemovesOnlyFlaggedSeedEntries`.
 
 ## Bounds and configuration migration
 
@@ -257,6 +373,17 @@ shipped routing data and `models sync` output already include both prices. This
 shared validation prevents listing one ambiguous file as free while routing treats
 it differently. Programmatically constructed task-routing descriptors must set
 `CostRatesDeclared` when both configured rates are intentional.
+
+Migration: `praetorctl audit` now fails on preview or stale catalog entries (`auditModelCatalog`).
+Retired seed previews must be removed by hand or with `praetorctl models sync --prune --discover-local=false`.
+A non-loopback HTTP gateway address is refused; use HTTPS for external gateways. Gateway alias probing
+is opt-in via `--probe-aliases`. Gateway `key_env` must begin with the `PRAETOR_GATEWAY_` prefix followed
+by at least one character of `[A-Z0-9_]`. Alias exclusion is scoped per tier rather than catalog-wide, so
+tiers holding alias entries exclude pinned non-local models and fail closed if none answer, while tiers
+without alias entries retain pinned models. `models sync --prune` removes only flagged seed entries
+(`source: seed`) that are retired; hand-declared entries, alias entries, local models, and gateway/lanes
+configurations are preserved as operator data. Flagged hand or alias entries must be refreshed (`as_of`)
+or removed by hand as reported by `praetorctl audit`.
 
 Migration: model entries accept an optional `source` field whose only values are
 `seed` and `local`; any other value is rejected. `models sync` now merges instead of
@@ -277,8 +404,8 @@ enforce concurrency.
 
 ## Remaining dispatch and feedback work
 
-Automatic agent dispatch, shared fleet reservations, observed latency/success
-feedback, quality calibration, retry/escalation policy and
+Automatic agent dispatch, shared fleet reservations, feeding the
+[outcome log](#lanes-and-outcomes) back into selection, quality calibration, retry/escalation policy and
 cross-model review orchestration remain unimplemented integrations. The declared
 `orthogonal_audit_required` setting does not establish scheduler enforcement.
 The concurrency setting is enforced only by callers using the shared tracker

@@ -11,13 +11,13 @@ import (
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
-// cliSyncFixture carries one local entry and one seed entry the seed list no longer owns.
+// cliSyncFixture carries one local entry and one seed preview entry the freshness check flags.
 const cliSyncFixture = `version: 1
 tiers:
   nano:
     models:
       - {id: qwen2.5:0.5b, family: open-weights, source: local, rpm_limit: 1, tpm_limit: 1, cost_per_m_in: 0, cost_per_m_out: 0}
-      - {id: retired-seed-model, family: open-weights, source: seed, rpm_limit: 1, tpm_limit: 1, cost_per_m_in: 0, cost_per_m_out: 0}
+      - {id: retired-seed-preview, family: open-weights, source: seed, rpm_limit: 1, tpm_limit: 1, cost_per_m_in: 0, cost_per_m_out: 0}
 governance:
   exhaustion_threshold_percent: 80
 `
@@ -36,7 +36,7 @@ func TestModelsSyncCLIRefusesRemovalUntilPruned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Pruned:              qwen2.5:0.5b", "Pruned:              retired-seed-model", "Kept, not seed-owned: 0 models"} {
+	for _, want := range []string{"Pruned:              retired-seed-preview", "Kept, not seed-owned: 1 models"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
 		}
@@ -44,7 +44,7 @@ func TestModelsSyncCLIRefusesRemovalUntilPruned(t *testing.T) {
 }
 
 func TestModelsSyncCLIKeepsLocalEntriesWithoutDiscovery(t *testing.T) {
-	path := writeRouteCLIInput(t, strings.Replace(cliSyncFixture, "id: retired-seed-model, family: open-weights, source: seed,", "id: hand-added, family: open-weights,", 1))
+	path := writeRouteCLIInput(t, strings.Replace(cliSyncFixture, "id: retired-seed-preview, family: open-weights, source: seed,", "id: hand-added, family: open-weights,", 1))
 	out, err := captureStdout(t, func() error { return runModels([]string{"sync", "--discover-local=false", "--config=" + path}) })
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestModelsSyncCLIReportsSkippedEndpoint(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(down.Close)
-	path := writeRouteCLIInput(t, strings.Replace(cliSyncFixture, "id: retired-seed-model, family: open-weights, source: seed,", "id: hand-added, family: open-weights,", 1))
+	path := writeRouteCLIInput(t, strings.Replace(cliSyncFixture, "id: retired-seed-preview, family: open-weights, source: seed,", "id: hand-added, family: open-weights,", 1))
 	out, err := captureStdout(t, func() error {
 		return runModels([]string{"sync", "--config=" + path, "--local-endpoints=" + down.URL})
 	})

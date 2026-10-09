@@ -1,0 +1,80 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/router"
+)
+
+// auditModelCatalog fails a repository whose model routing catalog is stale: an entry marked
+// preview, or one whose as_of date is older than the catalog's freshness window
+// (docs/standards/model-routing-and-fanout.md). A repository without a catalog skips the check,
+// saying so; a catalog that does not load fails it, since a check that did not run is no pass.
+func auditModelCatalog(ctx context.Context, rootDir string, now time.Time) error {
+	path := filepath.Join(rootDir, filepath.FromSlash(router.DefaultConfigPath))
+	cfg, err := router.LoadRoutingConfigContext(ctx, path)
+	if errors.Is(err, fs.ErrNotExist) {
+		fmt.Printf("[SKIP] model catalog freshness not checked: the repository has no %s.\n", router.DefaultConfigPath)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("[FAIL] model catalog not checked: %w", err)
+	}
+	findings := router.CatalogFindings(cfg, now)
+	if len(findings) == 0 {
+		fmt.Printf("[PASS] model catalog %s has no preview entry and none older than %d days.\n",
+			router.DefaultConfigPath, int(router.CatalogMaxAge(cfg)/(24*time.Hour)))
+		return nil
+	}
+	for _, finding := range findings {
+		fmt.Printf("  - %s\n", finding)
+	}
+	remedy := auditRemedy(cfg, findings)
+	return fmt.Errorf("[FAIL] model catalog %s is stale: %d finding(s); %s",
+		router.DefaultConfigPath, len(findings), remedy)
+}
+
+func auditRemedy(cfg *router.RoutingConfig, findings []router.CatalogFinding) string {
+	var handOrAlias []string
+	var hasSeed bool
+	for _, finding := range findings {
+		model, ok := findCatalogModel(cfg, finding.Model)
+		if ok && model.Source == router.SourceSeed {
+			hasSeed = true
+		} else {
+			if !slices.Contains(handOrAlias, finding.Model) {
+				handOrAlias = append(handOrAlias, finding.Model)
+			}
+		}
+	}
+	slices.Sort(handOrAlias)
+	var parts []string
+	if len(handOrAlias) > 0 {
+		parts = append(parts, "refresh (as_of) or remove by hand: "+strings.Join(handOrAlias, ", "))
+	}
+	if hasSeed {
+		parts = append(parts, "retired seed entries leave with praetorctl models sync --prune --discover-local=false, or by hand")
+	}
+	if len(parts) == 0 {
+		return "delete or replace the entries it reports"
+	}
+	return strings.Join(parts, "; ")
+}
+
+func findCatalogModel(cfg *router.RoutingConfig, id string) (router.ModelDescriptor, bool) {
+	for _, tier := range cfg.Tiers {
+		for _, m := range tier.Models {
+			if m.ID == id {
+				return m, true
+			}
+		}
+	}
+	return router.ModelDescriptor{}, false
+}
