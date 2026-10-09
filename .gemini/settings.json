@@ -49,8 +49,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B .config/agent/hooks/checkpoint.py",
-            "timeout": 60000
+            "command": "python3 -B .config/agent/hooks/praetor_hook.py gemini stop",
+            "timeout": 90000
           }
         ]
       }

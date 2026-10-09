@@ -237,8 +237,8 @@ func TestEvaluateStopHonoursStopActiveOnASecondPass(t *testing.T) {
 	_, getenv := buildStub(t, "python3")
 	stubStdout(t, dueReport("commit"))
 	in := Invocation{Getenv: getenv, Settings: config.HookSettings{Python: [][]string{{"python3"}}}}
-	first := evaluateStop(context.Background(), root, Canonical{StopActive: false}, in)
-	second := evaluateStop(context.Background(), root, Canonical{StopActive: true}, in)
+	first := evaluateStop(context.Background(), Registration{Client: "claude", Event: EventStop}, root, Canonical{StopActive: false}, in)
+	second := evaluateStop(context.Background(), Registration{Client: "claude", Event: EventStop}, root, Canonical{StopActive: true}, in)
 	if first.Outcome != Deny || second.Outcome != Deny {
 		t.Fatalf("both passes must block: first=%+v second=%+v", first, second)
 	}
