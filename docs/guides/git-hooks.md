@@ -378,14 +378,14 @@ praetor hooks: installing the engine pinned by PRAETOR_REF=492a00f930e1 (declare
 The launcher is a POSIX shell script that runs under Git Bash on Windows, and every line ends
 in a comment sign for the reason given for the [Python launcher](#the-launcher-adoption-writes).
 
-Generated `Makefile`s and adopted `Makefile`s include `.config/praetor/engine.mk`,
-a Praetor-managed file that sets `PRAETORCTL ?= $(shell sh .config/lefthook/engine.sh --print-path)`
+Generated `Makefile`s and adopted `Makefile`s include `.config/praetor/engine.mk` when the hook launcher is installed or planned,
+a Praetor-managed file that resolves `$(PRAETORCTL)` through `.config/lefthook/engine.sh`
 and provides the `praetor-engine-path` target, aligning Make targets and hooks with the repository's pinned
-engine (#906, HISS-19). For an adopter-owned `Makefile`, adoption inserts exactly one marked line,
-`-include .config/praetor/engine.mk`, near the top (after leading comments), and preserves the rest of the
+engine (#906, HISS-19). For an adopter-owned `Makefile`, adoption inserts
+`-include .config/praetor/engine.mk` near the top (after leading comments), and preserves the rest of the
 file untouched. Because the first `?=` assignment wins in Make, any later fallback assignment becomes a
-no-op without needing to recognize or edit existing verification blocks. An adopter's explicit assignment
-using `:=` or `=` is respected and reported as an informational override naming the line.
+no-op without needing to recognize or edit existing verification blocks. An adopter's assignment
+using `:=`, `::=`, `=`, `!=`, `+=`, or `define` is respected and reported as a warning naming the line. An assignment using `?=` is shadowed by `.config/praetor/engine.mk` and is reported as a warning advising `:=` or `=` to override.
 
 **One pin reader.** `.config/lefthook/engine.sh` is also a standalone entry point: an adopter
 `Makefile` target or script runs `sh .config/lefthook/engine.sh <arguments>` from the repository

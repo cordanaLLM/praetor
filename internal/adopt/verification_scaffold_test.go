@@ -1,7 +1,9 @@
 package adopt
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -183,7 +185,10 @@ func TestVerificationPriorPathResolvedMakefileIsRegenerated(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := mustRead(t, filepath.Join(root, "Makefile"))
-		withInclude, _ := ensureEngineMakefileInclude(existing)
+		withInclude, _, err := ensureEngineMakefileInclude(existing)
+		if err != nil {
+			t.Fatal(err)
+		}
 		want, mergeErr := mergeDocumentationMakefile(withInclude, false)
 		if mergeErr != nil {
 			t.Fatal(mergeErr)
@@ -210,18 +215,72 @@ func preparePriorPathResolvedRepo(t *testing.T) (string, *VerificationPlan, stri
 }
 
 // Boundary: when git-hooks is declined in the manifest, the generated Makefile keeps
-// the existing contract and resolves PRAETORCTL from PATH (util.MakefileCLIVariable).
+// the existing contract and resolves PRAETORCTL from PATH (util.MakefileCLIVariable),
+// and make executes the binary on PATH rather than failing on a missing launcher.
 func TestVerificationDeclinedGitHooksResolvesFromPath(t *testing.T) {
 	root := newTestRepo(t, "declined-hooks-makefile")
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
 	mustWrite(t, filepath.Join(root, ".standards.yaml"), "version: 1\nadoption:\n  decline:\n    - git-hooks\n")
+
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, "praetorctl", "echo \"path-praetorctl $*\"\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertNoIssues(t, report)
+
 	got := mustRead(t, filepath.Join(root, "Makefile"))
-	if !strings.Contains(got, util.MakefileCLIVariable) || strings.Contains(got, engineLauncherFile) {
+	if !strings.Contains(got, util.MakefileCLIVariable) || strings.Contains(got, engineLauncherFile) || strings.Contains(got, engineMakefileIncludeLine) {
 		t.Fatalf("declined git-hooks did not resolve from PATH:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(".config/praetor/engine.mk"))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("engine.mk was installed when git-hooks was declined: %v", err)
+	}
+
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is absent; skipping make execution (HISS-21)")
+	}
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "compile-context")
+	if err != nil {
+		t.Fatalf("make compile-context failed: %v, output: %q", err, out)
+	}
+	if !strings.Contains(out, "path-praetorctl compile-context") {
+		t.Fatalf("expected PATH stub execution, got: %q", out)
+	}
+}
+
+// Positive: a Makefile generated before PRAETORCTL resolved through the engine launcher,
+// with the documentation gate block attached, is regenerated to resolve through the engine
+// launcher across repeated runs, keeping status declared and matching current rendering (MAJOR 2).
+func TestVerificationPriorPathResolvedMakefileWithDocsBlockIsRegenerated(t *testing.T) {
+	root, plan, existing := preparePriorPathResolvedRepo(t)
+	withDocs, err := mergeDocumentationMakefile(existing, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(root, "Makefile"), withDocs)
+
+	opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
+	want, err := mergeDocumentationMakefile(buildMakefile(plan), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for run := 1; run <= 3; run++ {
+		report, err := Adopt(t.Context(), opts)
+		if err != nil {
+			t.Fatalf("run %d failed: %v", run, err)
+		}
+		if report.Verification.Status != verificationDeclared {
+			t.Fatalf("run %d status = %v, want %v", run, report.Verification.Status, verificationDeclared)
+		}
+		got := mustRead(t, filepath.Join(root, "Makefile"))
+		if got != want {
+			t.Fatalf("run %d Makefile != want:\n%s\nwant:\n%s", run, got, want)
+		}
 	}
 }

@@ -5,6 +5,7 @@
 package adopt
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -275,4 +276,213 @@ func findLastAction(details []ActionDetail, path string) *ActionDetail {
 		}
 	}
 	return found
+}
+
+// Negative: when git-hooks is declined, engine.mk is neither created nor included,
+// and make compile-context runs the PATH stub without failing (MAJOR 1).
+func TestEngineMakefile_Negative_DeclinedGitHooksRunsStubFromPath(t *testing.T) {
+	root := newTestRepo(t, "declined-hooks-stub")
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+	mustWrite(t, filepath.Join(root, ".standards.yaml"), "version: 1\nadoption:\n  decline:\n    - git-hooks\n")
+
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, "praetorctl", "echo \"path-praetorctl $*\"\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(engineMakefile))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("engine.mk was installed when git-hooks was declined: %v", err)
+	}
+	makefile := mustRead(t, filepath.Join(root, "Makefile"))
+	if strings.Contains(makefile, engineMakefileIncludeLine) {
+		t.Fatalf("Makefile included engine.mk when git-hooks was declined:\n%s", makefile)
+	}
+
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is absent; skipping make execution (HISS-21)")
+	}
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "compile-context")
+	if err != nil {
+		t.Fatalf("make compile-context failed: %v, output: %q", err, out)
+	}
+	if !strings.Contains(out, "path-praetorctl compile-context") {
+		t.Fatalf("expected PATH stub output, got: %q", out)
+	}
+}
+
+// Negative: when a custom lefthook.yml is kept, engine.mk is neither created nor included,
+// and make compile-context runs the PATH stub without failing (MAJOR 1).
+func TestEngineMakefile_Negative_KeptCustomLefthookRunsStubFromPath(t *testing.T) {
+	root := newTestRepo(t, "kept-custom-lefthook-stub")
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+	mustWrite(t, filepath.Join(root, "lefthook.yml"), "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n")
+
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, "praetorctl", "echo \"path-praetorctl $*\"\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(report.Warnings, func(w string) bool {
+		return strings.Contains(w, "existing lefthook.yml differs")
+	}) {
+		t.Fatalf("expected warning that custom lefthook.yml is kept, got: %v", report.Warnings)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(engineMakefile))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("engine.mk was installed when custom lefthook was kept: %v", err)
+	}
+	makefile := mustRead(t, filepath.Join(root, "Makefile"))
+	if strings.Contains(makefile, engineMakefileIncludeLine) {
+		t.Fatalf("Makefile included engine.mk when custom lefthook was kept:\n%s", makefile)
+	}
+
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is absent; skipping make execution (HISS-21)")
+	}
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "compile-context")
+	if err != nil {
+		t.Fatalf("make compile-context failed: %v, output: %q", err, out)
+	}
+	if !strings.Contains(out, "path-praetorctl compile-context") {
+		t.Fatalf("expected PATH stub output, got: %q", out)
+	}
+}
+
+// Negative: a Makefile with inconsistent line endings is refused rather than silently rewritten (MINOR 3).
+func TestEngineMakefile_Negative_InconsistentLineEndingsRefused(t *testing.T) {
+	root := newTestRepo(t, "inconsistent-endings")
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+	mixedMakefile := "# head\r\nall: build\nbuild:\n\t@cargo build\r\n"
+	mustWrite(t, filepath.Join(root, "Makefile"), mixedMakefile)
+
+	_, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err == nil || !strings.Contains(err.Error(), "makefile line endings are inconsistent") {
+		t.Fatalf("expected inconsistent line endings error, got: %v", err)
+	}
+}
+
+// Positive: assignment shapes ?=, !=, +=, and define PRAETORCTL are detected and reported (MINOR 4).
+func TestEngineMakefile_Positive_AllAssignmentOverrideShapesDetectedAndReported(t *testing.T) {
+	tests := []struct {
+		name       string
+		line       string
+		wantSubstr string
+	}{
+		{
+			name:       "conditional",
+			line:       "PRAETORCTL ?= /opt/team/praetorctl",
+			wantSubstr: "defines PRAETORCTL with ?=; shadowed by .config/praetor/engine.mk",
+		},
+		{
+			name:       "shell assignment",
+			line:       "PRAETORCTL != which praetorctl",
+			wantSubstr: "overrides PRAETORCTL; adopter override is respected",
+		},
+		{
+			name:       "append",
+			line:       "PRAETORCTL += --flag",
+			wantSubstr: "overrides PRAETORCTL; adopter override is respected",
+		},
+		{
+			name:       "define block",
+			line:       "define PRAETORCTL",
+			wantSubstr: "overrides PRAETORCTL; adopter override is respected",
+		},
+		{
+			name:       "override prefix",
+			line:       "override PRAETORCTL := /opt/team/praetorctl",
+			wantSubstr: "overrides PRAETORCTL; adopter override is respected",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newTestRepo(t, "override-"+tc.name)
+			mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+			mustWrite(t, filepath.Join(root, ".standards.yaml"), "version: 1\nfacets: []\n")
+			content := "# Project Makefile\n" + tc.line + "\nall: build\nbuild:\n\t@cargo build\ntest:\n\t@cargo test\n"
+			if tc.name == "define block" {
+				content = "# Project Makefile\ndefine PRAETORCTL\n/opt/team/praetorctl\nendef\nall: build\nbuild:\n\t@cargo build\ntest:\n\t@cargo test\n"
+			}
+			mustWrite(t, filepath.Join(root, "Makefile"), content)
+
+			report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.ContainsFunc(report.Warnings, func(w string) bool {
+				return strings.Contains(w, tc.wantSubstr)
+			}) {
+				t.Fatalf("expected warning containing %q, got: %v", tc.wantSubstr, report.Warnings)
+			}
+		})
+	}
+}
+
+// Negative: a non-pin PRAETOR_REF fails closed with exit code 2 and refuses (MINOR 5).
+func TestEngineMakefile_Negative_NonPinRefFailsClosed(t *testing.T) {
+	root := newTestRepo(t, "non-pin-ref-fails")
+	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
+	mustWrite(t, filepath.Join(root, ".github", "workflows", "gate.yml"), "env:\n  PRAETOR_REF: main\n")
+
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is absent; skipping make execution (HISS-21)")
+	}
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "praetor-engine-path")
+	if err == nil {
+		t.Fatalf("make praetor-engine-path succeeded unexpectedly: output: %q", out)
+	}
+	if !strings.Contains(err.Error(), "exit status 2") {
+		t.Fatalf("expected exit status 2, got: %v", err)
+	}
+}
+
+// Boundary: if .config/lefthook/engine.sh is later removed, make falls back to PATH (MAJOR 1).
+func TestEngineMakefile_Boundary_LauncherRemovedFallsBackToPath(t *testing.T) {
+	root, wantPath := setupPinnedEngineRepo(t, "launcher-removed")
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+
+	verifyMakePraetorEnginePath(t, root, wantPath)
+
+	// Remove launcher script
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(engineLauncherFile))); err != nil {
+		t.Fatal(err)
+	}
+
+	stubDir := t.TempDir()
+	writeStub(t, stubDir, "praetorctl", "echo \"path-praetorctl $*\"\n")
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	makePath, err := exec.LookPath("make")
+	if err != nil {
+		t.Skip("make is absent; skipping make execution (HISS-21)")
+	}
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "praetor-engine-path")
+	if err != nil {
+		t.Fatalf("make praetor-engine-path failed after launcher removal: %v, output: %q", err, out)
+	}
+	if strings.TrimSpace(out) != filepath.Join(stubDir, "praetorctl") {
+		t.Fatalf("praetor-engine-path = %q, want %q", strings.TrimSpace(out), filepath.Join(stubDir, "praetorctl"))
+	}
 }

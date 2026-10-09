@@ -78,8 +78,14 @@ func buildMakefileFormat(plan *VerificationPlan, prefix string, sourceGate, with
 }
 
 func reconcileMakefile(ctx context.Context, s *adoptSession) error {
-	if err := reconcileEngineMakefile(ctx, s); err != nil {
+	withLauncher, err := launcherInstalledOrPlanned(ctx, s)
+	if err != nil {
 		return err
+	}
+	if withLauncher {
+		if err := reconcileEngineMakefile(ctx, s); err != nil {
+			return err
+		}
 	}
 	documentationEnabled, err := documentationEnabledForSession(s)
 	if err != nil {
@@ -99,17 +105,17 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 	}
 	generated := isReplaceableVerificationMakefile(string(data), s.verification)
 	noteExistingTestTarget(s, string(data), exists, generated)
-	return applyMakefileReplacement(ctx, s, full, data, exists, generated, documentationEnabled)
+	return applyMakefileReplacement(ctx, s, full, data, exists, generated, documentationEnabled, withLauncher)
 }
 
 func applyMakefileReplacement(
-	ctx context.Context, s *adoptSession, full string, data []byte, exists, generated, documentationEnabled bool,
+	ctx context.Context, s *adoptSession, full string, data []byte, exists, generated, documentationEnabled, withLauncher bool,
 ) error {
-	handled, err := reconcileExistingVerificationMakefile(ctx, s, full, data, exists, generated, documentationEnabled)
+	handled, err := reconcileExistingVerificationMakefile(ctx, s, full, data, exists, generated, documentationEnabled, withLauncher)
 	if err != nil || handled {
 		return err
 	}
-	replacement, err := verificationMakefileReplacement(ctx, s, string(data), exists, generated, documentationEnabled)
+	replacement, err := verificationMakefileReplacement(ctx, s, string(data), exists, generated, documentationEnabled, withLauncher)
 	if err != nil {
 		return err
 	}
@@ -201,9 +207,9 @@ func publishVerificationMakefile(
 }
 
 func verificationMakefileReplacement(
-	ctx context.Context, s *adoptSession, data string, exists, generated, documentationEnabled bool,
+	ctx context.Context, s *adoptSession, data string, exists, generated, documentationEnabled, withLauncher bool,
 ) (string, error) {
-	replacement := buildMakefile(s.verification)
+	replacement := buildMakefileFormat(s.verification, verificationRecipePrefix, true, withLauncher)
 	switch {
 	case exists && generated:
 		// Earlier output in a CRLF checkout keeps its line-ending style (isReplaceableVerificationMakefile).
@@ -212,8 +218,14 @@ func verificationMakefileReplacement(
 	case exists:
 		var err error
 		checkMakefileCLIVariableOverride(s, data)
-		withInclude, _ := ensureEngineMakefileInclude(data)
-		replacement, err = appendVerificationTargets(withInclude, s.verification)
+		withIncludeData := data
+		if withLauncher {
+			withIncludeData, _, err = ensureEngineMakefileInclude(data)
+			if err != nil {
+				return "", err
+			}
+		}
+		replacement, err = appendVerificationTargets(withIncludeData, s.verification)
 		if err != nil {
 			return "", err
 		}
@@ -233,7 +245,7 @@ func (s *adoptSession) recordPreservedVerificationMakefile(ctx context.Context, 
 }
 
 func reconcileExistingVerificationMakefile(
-	ctx context.Context, s *adoptSession, full string, data []byte, exists, generated, documentationEnabled bool,
+	ctx context.Context, s *adoptSession, full string, data []byte, exists, generated, documentationEnabled, withLauncher bool,
 ) (bool, error) {
 	if !exists || !mayDefineVerificationTarget(string(data)) || generated {
 		return false, nil
@@ -247,7 +259,15 @@ func reconcileExistingVerificationMakefile(
 		return true, nil
 	}
 	checkMakefileCLIVariableOverride(s, content)
-	updated, inserted := ensureEngineMakefileInclude(content)
+	updated := content
+	var inserted bool
+	if withLauncher {
+		var err error
+		updated, inserted, err = ensureEngineMakefileInclude(content)
+		if err != nil {
+			return true, err
+		}
+	}
 	return updatePreservedVerificationMakefile(ctx, s, full, data, content, updated, inserted, documentationEnabled)
 }
 

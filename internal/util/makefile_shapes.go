@@ -72,9 +72,9 @@ var makefileCLIVariableLines = func() []string {
 	return lines
 }()
 
-// makefileIsCLIVariableLine reports whether line matches one of the lines of MakefileCLIVariable
+// MakefileIsCLIVariableLine reports whether line matches one of the lines of MakefileCLIVariable
 // by exact comparison after line-ending normalisation and trailing-space trim.
-func makefileIsCLIVariableLine(line string) bool {
+func MakefileIsCLIVariableLine(line string) bool {
 	norm := strings.TrimRight(strings.ReplaceAll(line, "\r", ""), " \t")
 	for _, expected := range makefileCLIVariableLines {
 		if norm == expected {
@@ -82,6 +82,10 @@ func makefileIsCLIVariableLine(line string) bool {
 		}
 	}
 	return false
+}
+
+func makefileIsCLIVariableLine(line string) bool {
+	return MakefileIsCLIVariableLine(line)
 }
 
 // makefileIsMakefileName reports whether name is one of the names Make treats as its makefile.

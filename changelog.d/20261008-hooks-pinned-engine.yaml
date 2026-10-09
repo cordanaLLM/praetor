@@ -1,4 +1,4 @@
 type: fixed
-title: "Git hooks and generated and adopted Makefiles run the engine the repository pins with PRAETOR_REF, running every $(PRAETORCTL) through the launcher, installed once per pin with go install, and fail closed when the pin cannot be resolved or installed; the adopted Makefile gets the engine.mk include; `make verify-all` needs Go and network on the first pinned run; a non-pin ref blocks make; an unpinned run prints the notice once per recipe line; in CI and devcontainers, persist or pre-seed the engine cache (${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine) or ensure Go toolchain and network access; pin a commit or tag, install Go or pre-seed the cache, tune PRAETOR_ENGINE_INSTALL_TIMEOUT"
+title: "Git hooks and generated and adopted Makefiles run the engine the repository pins with PRAETOR_REF, routing $(PRAETORCTL) through .config/praetor/engine.mk and the hook launcher"
 issue: "#906"
 breaking: true

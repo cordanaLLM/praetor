@@ -387,11 +387,12 @@ func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool
 	if err != nil {
 		return false
 	}
-	return isLegacyVerificationMakefile(normalized) ||
-		isPriorGeneratedMakefile(normalized, plan) ||
-		normalized == priorSourceGateMakefile(plan) ||
-		normalized == priorPathResolvedMakefile(plan) ||
-		isPlaceholderVerificationMakefile(normalized, plan)
+	stripped := withoutDocumentationMakefileBlock(normalized)
+	return isLegacyVerificationMakefile(stripped) ||
+		isPriorGeneratedMakefile(stripped, plan) ||
+		stripped == priorSourceGateMakefile(plan) ||
+		stripped == priorPathResolvedMakefile(plan) ||
+		isPlaceholderVerificationMakefile(stripped, plan)
 }
 
 const legacyVerificationStub = "\n.PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n"
