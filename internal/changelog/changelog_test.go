@@ -1,6 +1,7 @@
 package changelog
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,5 +125,79 @@ func TestLoadFragments_Boundary_EmptyOrMissingDir(t *testing.T) {
 	}
 	if len(frags) != 0 || len(files) != 0 {
 		t.Errorf("expected 0 fragments, got %d", len(frags))
+	}
+}
+
+func TestRenderRelease_IssueHashNormalisation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	_, err := CreateFragment(tmpDir, Fragment{
+		Type:  TypeFixed,
+		Title: "Fix with hash prefix",
+		Issue: "#502",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = CreateFragment(tmpDir, Fragment{
+		Type:  TypeFixed,
+		Title: "Fix without hash prefix",
+		Issue: "502",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RenderRelease(tmpDir, "1.2.0", "2026-10-09"); err != nil {
+		t.Fatalf("RenderRelease failed: %v", err)
+	}
+
+	changelogFile := filepath.Join(tmpDir, "CHANGELOG.md")
+	data, err := os.ReadFile(changelogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+
+	if !strings.Contains(content, "- Fix with hash prefix (#502)") {
+		t.Errorf("expected '- Fix with hash prefix (#502)', got:\n%s", content)
+	}
+	if !strings.Contains(content, "- Fix without hash prefix (#502)") {
+		t.Errorf("expected '- Fix without hash prefix (#502)', got:\n%s", content)
+	}
+}
+
+func TestLoadFragments_Negative_InvalidIssue(t *testing.T) {
+	tests := []struct {
+		name  string
+		issue string
+	}{
+		{name: "double-hash", issue: "##502"},
+		{name: "alpha", issue: "abc"},
+		{name: "empty-after-strip", issue: "#"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			dir := filepath.Join(tmpDir, FragmentDir)
+			if err := os.MkdirAll(dir, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			fragFile := filepath.Join(dir, "20261009-invalid.yaml")
+			content := fmt.Sprintf("type: fixed\ntitle: Invalid issue test\nissue: %q\n", tc.issue)
+			if err := os.WriteFile(fragFile, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			_, _, err := LoadFragments(tmpDir)
+			if err == nil {
+				t.Fatalf("expected validation error for issue %q, got nil", tc.issue)
+			}
+			if !strings.Contains(err.Error(), fragFile) && !strings.Contains(err.Error(), "20261009-invalid.yaml") {
+				t.Errorf("error %q should name the fragment path", err.Error())
+			}
+		})
 	}
 }

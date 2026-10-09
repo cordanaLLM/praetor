@@ -27,3 +27,13 @@ Inputs, output and the journal use the shared 1 MiB snapshot limit. The operatio
 has a ten-second deadline. Cooperating renderers serialize; external writers can
 still race the final content check and filesystem operation. Inspect the journal
 and current files before reconciling edits or recovering a failed filesystem sync.
+
+## Fragment schema
+
+Changelog fragments stored in `changelog.d/` are decoded and validated by `decodeFragment`
+in `fragments.go`. Each fragment specifies:
+
+- `type`: one of `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`.
+- `title`: one-sentence imperative description of the change.
+- `issue`: optional issue reference (digits or `#<digits>`, e.g. `502` or `#502`, or an `owner/repo#n` cross reference). Leading `#` characters are normalised by `NormaliseIssue` in `changelog.go` to prevent duplicate hash prefixes during release rendering.
+- `breaking`: optional boolean indicating whether the change introduces breaking changes.

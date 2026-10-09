@@ -1,0 +1,4 @@
+type: fixed
+title: Normalise changelog fragment issue references to prevent duplicate hashes during release rendering
+issue: "1048"
+breaking: true

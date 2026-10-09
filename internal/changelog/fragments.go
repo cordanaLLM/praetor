@@ -28,7 +28,7 @@ func loadFragmentsContext(ctx context.Context, repoPath string) (fragments []Fra
 		return nil, nil, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	fragments, snapshots, err := loadFragmentSnapshots(ctx, root)
+	fragments, snapshots, err := loadFragmentSnapshots(ctx, repoPath, root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -108,7 +108,7 @@ func fragmentEntries(root *os.Root) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
-func loadFragmentSnapshots(ctx context.Context, root *os.Root) ([]Fragment, []fragmentSnapshot, error) {
+func loadFragmentSnapshots(ctx context.Context, repoPath string, root *os.Root) ([]Fragment, []fragmentSnapshot, error) {
 	entries, err := fragmentEntries(root)
 	if err != nil {
 		return nil, nil, err
@@ -130,7 +130,8 @@ func loadFragmentSnapshots(ctx context.Context, root *os.Root) ([]Fragment, []fr
 		}
 		fragment, err := decodeFragment(raw)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parse changelog fragment %s: %w", entry.Name(), err)
+			fragPath := filepath.Join(repoPath, FragmentDir, entry.Name())
+			return nil, nil, fmt.Errorf("parse changelog fragment %s: %w", fragPath, err)
 		}
 		fragments = append(fragments, fragment)
 		snapshots = append(snapshots, fragmentSnapshot{Name: entry.Name(), SHA256: contentHash(raw)})
@@ -171,6 +172,11 @@ func decodeFragment(raw []byte) (Fragment, error) {
 	if _, ok := sectionTitles[fragment.Type]; !ok || strings.TrimSpace(fragment.Title) == "" {
 		return Fragment{}, errors.New("fragment requires a known type and nonempty title")
 	}
+	normIssue, err := NormaliseIssue(fragment.Issue)
+	if err != nil {
+		return Fragment{}, err
+	}
+	fragment.Issue = normIssue
 	return fragment, nil
 }
 
