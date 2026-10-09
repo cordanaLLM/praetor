@@ -1,0 +1,4 @@
+type: changed
+title: Make the standards-mcp tool list small and stable, and offload large tool output
+issue: "#853"
+breaking: false

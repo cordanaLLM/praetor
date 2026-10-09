@@ -1,0 +1,822 @@
+{
+  "tools": [
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Adopt any codebase into Praetor governance in 1 step",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "description": "Simulate adoption without writing files (default: false)"
+          },
+          "facets": {
+            "type": "string",
+            "description": "Comma-separated facets, as in CLI --facets; omitted or empty uses shared defaults (at most 64 entries)"
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Refresh, not reset. Full text: standards_tool_describe."
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to repository to adopt (default: server root; other repositories require -allow-outside-root)"
+          },
+          "profile": {
+            "type": "string",
+            "description": "Primary repository profile, such as planning-artifacts; omitted or empty uses shared auto-detection"
+          },
+          "record_baseline": {
+            "type": "boolean",
+            "description": "Record existing infractions into .standards-baseline.json when absent. Full text: standards_tool_describe."
+          },
+          "source_root": {
+            "type": "string",
+            "description": "Praetor Git checkout or source bundle; go.mod source: Git checkout required (bootstrap inventory = git ls-files); req... Full text: standards_tool_describe."
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_adopt"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Audit repository against declared HISS standards",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agents_path": {
+            "type": "string",
+            "description": "Path to canonical AGENTS.md (default: AGENTS.md)"
+          },
+          "baseline_path": {
+            "type": "string",
+            "description": "Path to .standards-baseline.json debt file (default: .standards-baseline.json)"
+          },
+          "catalog_root": {
+            "type": "string",
+            "description": "Root containing pinned .config/archetypes (default: server root)"
+          },
+          "config_path": {
+            "type": "string",
+            "description": "Path to .standards.yaml manifest (default: .standards.yaml)"
+          },
+          "deployment_config_path": {
+            "type": "string",
+            "description": "Explicit deployment complexity policy file for this audit"
+          },
+          "fleet_config_path": {
+            "type": "string",
+            "description": "Explicit fleet complexity policy file for this audit"
+          },
+          "organization_config_path": {
+            "type": "string",
+            "description": "Explicit organization complexity policy file for this audit"
+          },
+          "workstation_config_path": {
+            "type": "string",
+            "description": "Explicit workstation complexity policy file for this audit"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_audit"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "List versioned client configuration, lifecycle, brief-capture, return-capture, and register-enforcement capabilities. Definitions remain separate from native activation evidence.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "name": "standards_client_capabilities"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Compile or verify cross-agent instructions from AGENTS.md",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Path to canonical AGENTS.md (default: AGENTS.md)"
+          },
+          "target_dir": {
+            "type": "string",
+            "description": "Root directory to write target files (default: server root)"
+          },
+          "verify_only": {
+            "type": "boolean",
+            "description": "If true, verify synchronization without writing files"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_compile_context"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Analyze exact duplicates and verified compiler projections in selected context files. Full text: standards_tool_describe.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "root": {
+            "type": "string",
+            "description": "Selected source root, confined to server root by default"
+          },
+          "sources": {
+            "type": "array",
+            "description": "1..64 explicit, unique relative UTF-8 text file paths; no symlinks; 1 MiB/file, 8 MiB total"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_context_analyze"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "description": "Execute self-governance verification and retained public adoption loops",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "artifact_dir": {
+            "type": "string",
+            "description": "Required retained evidence directory for public_loop, confined to server root"
+          },
+          "benchmark_popular": {
+            "type": "boolean",
+            "description": "Benchmark curated popular public OSS repositories; clones required; server flag: -allow-remote-benchmarks"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "description": "Public loop plans only by default; false applies inside fresh disposable clones"
+          },
+          "host_path": {
+            "type": "string",
+            "description": "Path to host repository (default: server root)"
+          },
+          "max_attempts": {
+            "type": "integer",
+            "description": "Public loop apply/recheck bound: 2 or 3 (default: 2)"
+          },
+          "public_loop": {
+            "type": "boolean",
+            "description": "Run retained public clone plan/apply/recheck loop (requires server remote opt-in)"
+          },
+          "public_repos": {
+            "type": "string",
+            "description": "Comma-separated curated HTTPS URLs, optionally #\u003ccommit SHA\u003e"
+          },
+          "source_root": {
+            "type": "string",
+            "description": "Praetor bundle with validated lock and local archetypes (default: host_path)"
+          },
+          "targets_dir": {
+            "type": "string",
+            "description": "Optional local target-repository directory; confinement: server root unless -allow-outside-root"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_dogfood"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "description": "Observe selected Praetor capability gaps in local or pinned public source; retain deduplicated review candidates without upstream execution or automatic repairs",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "artifact_dir": {
+            "type": "string",
+            "description": "Private evidence directory creation path under existing parent"
+          },
+          "config_path": {
+            "type": "string",
+            "description": "Pinned public cohort; exclusive with path"
+          },
+          "path": {
+            "type": "string",
+            "description": "Explicit local source tree; exclusive with config_path"
+          },
+          "policy_path": {
+            "type": "string",
+            "description": "Reviewed capability detection rules, never loaded from observed repositories"
+          },
+          "stage": {
+            "type": "string",
+            "description": "plan (default) or observe; public observation needs server remote opt-in"
+          }
+        },
+        "required": [
+          "artifact_dir",
+          "policy_path"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_dogfood_discover"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Inspect bounded local dogfood repair admission and retained outcomes without running repairs, reading credentials, creating files or dispatching providers",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "config_path": {
+            "type": "string",
+            "description": "Private repair execution configuration, confined with every embedded input to this server root"
+          },
+          "report_path": {
+            "type": "string",
+            "description": "Retained completed dogfood suite report inside this server root"
+          }
+        },
+        "required": [
+          "config_path",
+          "report_path"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_dogfood_repair_status"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Inspect local dogfood schedule admission and retained attempt state without running suites, creating files or dispatching agents",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "config_path": {
+            "type": "string",
+            "description": "Private version-1 schedule JSON; every embedded read path obeys server confinement"
+          }
+        },
+        "required": [
+          "config_path"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_dogfood_schedule_status"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "description": "Run configured pinned public adoption and private transcript replay cases; retain explicit completion/failure metadata without executing transcript content or upstream code",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "artifact_dir": {
+            "type": "string",
+            "description": "Private evidence directory creation path under existing parent"
+          },
+          "config_path": {
+            "type": "string",
+            "description": "Version-1 JSON suite file; embedded transcript paths also obey server confinement"
+          },
+          "source_root": {
+            "type": "string",
+            "description": "Praetor Git checkout or source bundle for public cases; go.mod source: Git checkout required (bootstrap inventory = git ls-files); default server root"
+          },
+          "stage": {
+            "type": "string",
+            "description": "plan (declarations only, default) or verify (bounded execution and replay); public verify requires server remote opt-in"
+          }
+        },
+        "required": [
+          "artifact_dir",
+          "config_path"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_dogfood_suite"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Explain specific HISS invariant rule plus formal verification mechanism",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "description": "input: HISS rule identifier. allowed: schema enum.",
+            "enum": [
+              "HISS-01",
+              "HISS-02",
+              "HISS-03",
+              "HISS-04",
+              "HISS-05",
+              "HISS-06",
+              "HISS-07",
+              "HISS-08",
+              "HISS-09",
+              "HISS-10",
+              "HISS-11",
+              "HISS-12",
+              "HISS-13",
+              "HISS-14",
+              "HISS-15",
+              "HISS-16",
+              "HISS-17",
+              "HISS-18",
+              "HISS-19",
+              "HISS-20",
+              "HISS-21"
+            ]
+          }
+        },
+        "required": [
+          "rule_id"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_explain_rule"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "description": "Audit workstation repositories and fleet adoption state",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dev_dir": {
+            "type": "string",
+            "description": "Developer repositories root path; default: ~/dev; -allow-outside-root required outside server root"
+          },
+          "json": {
+            "type": "boolean",
+            "description": "Return private workstation repository observations as JSON (default false)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_harvest_workstation"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Harvest and distill verified repository facts into local memory cache; name every failed fact source",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Repository root path (default: server root)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_hindsight_optimize"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Inspect Go AST symbols and analyze HISS-04 complexity bounds (LOC, statements, cyclomatic, cognitive)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Go AST symbol inspection path; file or directory; server-root relative"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_inspect_symbols"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Rapid zero-token recall of verified repository facts, canonical utilities, and library rules from local memory cache",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Optional category filter ('governance', 'architecture', 'canonical_utility', 'bug_ruling', 'dependency_doc', 'flavor')"
+          },
+          "path": {
+            "type": "string",
+            "description": "Repository root path (default: server root)"
+          },
+          "query": {
+            "type": "string",
+            "description": "Keyword or topic query (e.g. 'yaml', 'ast dedupe', 'governance', 'flavor')"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_memory_recall"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Evaluate repository needs and target framework migration compatibility",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "framework": {
+            "type": "string",
+            "description": "Go target framework local checkout path; default: $PRAETOR_FRAMEWORK_DIR, else framework.targets.go.checkout, else fr... Full text: standards_tool_describe."
+          },
+          "path": {
+            "type": "string",
+            "description": "Path to repository to scan (default: server root)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_needs_report"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Validate bounded NotebookLM snapshot; output: planning preparation metadata; no source text, network, generation or writes",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "bundle_path": {
+            "type": "string",
+            "description": "Explicit local NotebookLM source snapshot inside this server root"
+          }
+        },
+        "required": [
+          "bundle_path"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_notebook_prepare"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Read offloaded tool output by pointer-line sha256. Max 12 KiB per call; continue from next_offset.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum bytes to return (default and maximum 12288)"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Byte offset to start at (default 0)"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "64 lowercase hex digits from [offloaded] pointer line"
+          }
+        },
+        "required": [
+          "sha256"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_output_read"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Retrieve token-compressed documentation sheet for declared project package or action; quoted lines = package's own upstream documentation, not verified instructions",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "package": {
+            "type": "string",
+            "description": "Exact package or action name (e.g. gopkg.in/yaml.v3 or actions/checkout)"
+          },
+          "path": {
+            "type": "string",
+            "description": "Repository root path (default: server root)"
+          }
+        },
+        "required": [
+          "package"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_package_docs"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Plan standards enforcement and policy reconciliation",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "catalog_root": {
+            "type": "string",
+            "description": "Root containing pinned .config/archetypes (default: server root)"
+          },
+          "config_path": {
+            "type": "string",
+            "description": "Path to .standards.yaml manifest (default: .standards.yaml)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_plan"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "description": "Compile structural planning proposal into new private .workingdir artifact directory; no existing state, source verification, execution or publication",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "input_path": {
+            "type": "string",
+            "description": "Strict planning draft JSON inside this server root"
+          },
+          "output_dir": {
+            "type": "string",
+            "description": "Private artifact directory creation path below server-root .workingdir"
+          }
+        },
+        "required": [
+          "input_path",
+          "output_dir"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_planning_prepare"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Validate bounded planning draft structure; output: metadata; source assertions remain unverified; no artifact or project-state writes",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "input_path": {
+            "type": "string",
+            "description": "Strict planning draft JSON inside this server root"
+          }
+        },
+        "required": [
+          "input_path"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_planning_validate"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Return full description, input schema of one standards tool.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tool name as listed by standards_tools_index"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_tool_describe"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "List every standards tool: one-line summary, annotations. Static, sorted by name.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "name": "standards_tools_index"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "action: ingest bounded transcript page into private local storage. return: metadata + continuation. never upload or execute content.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "cache_dir": {
+            "type": "string",
+            "description": "cache_dir: explicit private local event destination."
+          },
+          "cursor": {
+            "type": "string",
+            "description": "cursor: opaque resume value from prior page."
+          },
+          "expected_sha256": {
+            "type": "string",
+            "description": "expected_sha256: optional required SHA256 for selected full source."
+          },
+          "format": {
+            "type": "string",
+            "description": "format: antigravity-jsonl-v1 (default) | claude-code-jsonl-v1."
+          },
+          "max_records": {
+            "type": "integer",
+            "description": "max_records: page record limit 1..10000 (default 1000)."
+          },
+          "source_path": {
+            "type": "string",
+            "description": "source_path: explicit local JSONL. prefer: Antigravity full counterpart."
+          }
+        },
+        "required": [
+          "cache_dir",
+          "source_path"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_transcript_ingest"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "description": "Audit all declared dependencies and workflow actions against upstream releases and runner deprecations",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Repository root path (default: server root)"
+          },
+          "prerelease": {
+            "type": "boolean",
+            "description": "Include prerelease upgrade targets (default: false)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_version_audit"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Read explicitly selected private wish and poll ledger, revision and tallies. Full text: standards_tool_describe.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "store": {
+            "type": "string",
+            "description": "Local ledger path; defaults to .workingdir/wishes.json, confined to server root"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_wishes_status"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      },
+      "description": "Apply one revision-checked private wish or single-choice poll operation; output: ledger. Explicit init only; local ballots never approve wishes. No GitHub, Discord, network calls or publication.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_json": {
+            "type": "string",
+            "description": "Strict JSON request: action init, add-wish, set-status, open-poll, vote, withdraw or close-poll. Full text: standards_tool_describe."
+          },
+          "store": {
+            "type": "string",
+            "description": "Local ledger path; defaults to .workingdir/wishes.json, confined to server root"
+          }
+        },
+        "required": [
+          "request_json"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_wishes_update"
+    }
+  ]
+}

@@ -103,6 +103,16 @@ type ServerOptions struct {
 	AllowedOrigins []string
 	// ToolTimeout bounds one tools/call; zero selects defaultToolTimeout.
 	ToolTimeout time.Duration
+	// ToolsMode selects what tools/list serves: "full" (default, every tool with its
+	// schema) or "index" (discovery tools and the hot tools only). tools/call accepts every
+	// registered tool in both modes.
+	ToolsMode string
+	// OffloadThreshold is the size in bytes of all text items of one tool result above which
+	// the largest items are written to .standards/cache/mcp-out and replaced by pointer
+	// lines. Zero reads the mcp.offload_threshold_bytes key of the root's manifest and, when
+	// that is absent, selects mcp.OffloadThresholdBytes; mcp.OffloadDisabled turns offloading
+	// off.
+	OffloadThreshold int
 }
 
 // Server implements the MCP server instance.
@@ -111,7 +121,10 @@ type Server struct {
 	version string
 	opts    ServerOptions
 	tools   map[string]mcp.Tool
-	order   []string
+	// order lists the tool names sorted ascending, so tools/list bytes do not depend on
+	// the order the constructors run in.
+	order     []string
+	toolsMode string
 
 	sessions *sseRegistry
 
@@ -142,14 +155,27 @@ func NewServerWithOptions(opts ServerOptions) (*Server, error) {
 	if opts.ToolTimeout <= 0 {
 		opts.ToolTimeout = defaultToolTimeout
 	}
+	toolsMode, err := normalizeToolsMode(opts.ToolsMode)
+	if err != nil {
+		return nil, err
+	}
+	var notice string
+	if opts.OffloadThreshold, notice, err = resolveOffloadThreshold(root, opts.OffloadThreshold); err != nil {
+		return nil, err
+	}
+	if notice != "" {
+		fmt.Fprintln(os.Stderr, notice)
+	}
 
 	s := &Server{
 		rootDir:  root,
 		version:  opts.Version,
 		opts:     opts,
 		tools:    make(map[string]mcp.Tool),
-		order:    make([]string, 0, 13),
+		order:    make([]string, 0, 32),
 		sessions: newSSERegistry(),
+
+		toolsMode: toolsMode,
 	}
 
 	if err := s.registerStandardTools(); err != nil {
@@ -187,6 +213,9 @@ func (s *Server) registerStandardTools() error {
 		s.createWishesStatusTool,
 		s.createWishesUpdateTool,
 		s.createClientCapabilitiesTool,
+		s.createToolsIndexTool,
+		s.createToolDescribeTool,
+		s.createOutputReadTool,
 	}
 
 	limit := len(tools)
@@ -198,6 +227,7 @@ func (s *Server) registerStandardTools() error {
 		s.tools[t.Name] = t
 		s.order = append(s.order, t.Name)
 	}
+	sort.Strings(s.order)
 	return nil
 }
 
@@ -752,7 +782,7 @@ func (s *Server) handleInitialize(req JSONRPCRequest) *JSONRPCResponse {
 		Result: map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities": map[string]any{
-				"tools": map[string]any{},
+				"tools": map[string]any{"listChanged": false},
 			},
 			"serverInfo": map[string]string{
 				"name":    "standards-mcp",
@@ -762,17 +792,14 @@ func (s *Server) handleInitialize(req JSONRPCRequest) *JSONRPCResponse {
 	}
 }
 
-// handleToolsList enumerates all registered tools with their schemas.
+// handleToolsList enumerates the tools of the server's mode, sorted by name, with their
+// schemas. The result carries no version or other per-build text, so its bytes are stable
+// across builds that register the same tools.
 func (s *Server) handleToolsList(req JSONRPCRequest) *JSONRPCResponse {
-	toolList := make([]map[string]any, 0, len(s.order))
-	for _, name := range s.order {
-		tool := s.tools[name]
-		toolList = append(toolList, map[string]any{
-			"name":        tool.Name,
-			"description": tool.Description,
-			"inputSchema": tool.InputSchema,
-			"annotations": tool.Annotations,
-		})
+	names := s.listedToolNames()
+	toolList := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		toolList = append(toolList, listedDescriptor(s.tools[name]))
 	}
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
@@ -818,7 +845,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 	if err != nil {
 		return errorResponse(req.ID, codeInternalError, servedErrorText(err))
 	}
-	safe, err := mcp.SanitizeResult(res)
+	served, err := s.offloader().Serve(ctx, params.Name, res)
 	if err != nil {
 		return errorResponse(req.ID, codeInternalError, fmt.Sprintf("Tool %s result withheld: %v", params.Name, err))
 	}
@@ -826,8 +853,13 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result:  safe,
+		Result:  served,
 	}
+}
+
+// offloader returns the output offloader bound to the server root.
+func (s *Server) offloader() mcp.Offloader {
+	return mcp.Offloader{Root: s.rootDir, Threshold: s.opts.OffloadThreshold}
 }
 
 // runTool runs one tool under the per-call deadline (HISS-02). One strict check sits in

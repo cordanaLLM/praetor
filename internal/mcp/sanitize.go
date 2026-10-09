@@ -67,10 +67,17 @@ func SanitizeResult(res *ToolResult) (*ToolResult, error) {
 		return nil, err
 	}
 	out := &ToolResult{Content: make([]ContentItem, count), IsError: res.IsError}
+	sanitized := 0
 	for i := 0; i < count; i++ {
 		item := res.Content[i]
 		item.Text = lockdown.SanitizePrompt(item.Text)
+		sanitized += len(item.Text)
 		out.Content[i] = item
+	}
+	// Neutralizing can lengthen text (<system> becomes [neutralized:system]), so the bound
+	// holds for the served bytes too, not only for the input.
+	if err := checkTextBound(sanitized); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -81,7 +88,11 @@ func SanitizeText(text string) (string, error) {
 	if err := checkTextBound(len(text)); err != nil {
 		return "", err
 	}
-	return lockdown.SanitizePrompt(text), nil
+	safe := lockdown.SanitizePrompt(text)
+	if err := checkTextBound(len(safe)); err != nil {
+		return "", err
+	}
+	return safe, nil
 }
 
 // checkTextBound fails closed when n bytes exceed MaxResultTextBytes.

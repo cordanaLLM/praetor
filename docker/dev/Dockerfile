@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # cordanaLLM/praetor Go development container base
-FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
+FROM golang:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
 
 LABEL org.opencontainers.image.title="cordanaLLM/praetor dev container" \
       org.opencontainers.image.description="Go development environment for cordanaLLM/praetor" \

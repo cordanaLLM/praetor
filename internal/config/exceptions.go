@@ -5,7 +5,11 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -57,11 +61,17 @@ const ExceptionRuleRootLicenseNotice = "root-license-notice"
 // full makes the entry stale.
 const ExceptionRuleReuseAnnotationOrder = "reuse-annotation-order"
 
+// ExceptionRuleDedupe is the rule of the HISS-19 deduplication gate (internal/dedupe): an entry
+// excuses one Go file whose duplicate function blocks sit only in excepted files, such as a code
+// generator's repeated output.
+const ExceptionRuleDedupe = "HISS-19"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
 var exceptionRules = []string{
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
 	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
+	ExceptionRuleDedupe,
 }
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -143,6 +153,25 @@ func ExceptionDay(t time.Time) time.Time {
 	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }
 
+// LoadExceptionsFor loads the repository manifest at root/.standards.yaml and returns the
+// entries declaring rule. When root has no manifest, LoadExceptionsFor returns nil, nil.
+func LoadExceptionsFor(ctx context.Context, root, rule string) ([]Exception, error) {
+	if ctx == nil {
+		return nil, errors.New("load exceptions requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	manifest, err := LoadManifest(filepath.Join(root, ManifestFileName))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return ExceptionsFor(manifest.Exceptions, rule), nil
+}
+
 // ExceptionsFor returns the entries of entries that name rule, in declaration order: what the
 // gate owning rule reads from the manifest's exceptions list.
 func ExceptionsFor(entries []Exception, rule string) []Exception {
@@ -221,6 +250,9 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.apiModuleTargetProblem(); problem != "" {
 		return problem
 	}
+	if problem := e.dedupeTargetProblem(); problem != "" {
+		return problem
+	}
 	if problem := exceptionReasonProblem(e.Reason); problem != "" {
 		return "reason " + problem
 	}
@@ -250,6 +282,14 @@ func (e Exception) rootLicenseTargetProblem() string {
 	if (e.Rule == ExceptionRuleRootLicenseNotice || e.Rule == ExceptionRuleReuseAnnotationOrder) &&
 		(e.Glob != "" || strings.Contains(e.Path, "/")) {
 		return "rule " + e.Rule + " must name one file at the repository root by path, one entry per file"
+	}
+	return ""
+}
+
+// dedupeTargetProblem requires a HISS-19 entry to name one repository file by path, one entry per file.
+func (e Exception) dedupeTargetProblem() string {
+	if e.Rule == ExceptionRuleDedupe && e.Glob != "" {
+		return "rule " + e.Rule + " must name one repository file by path, one entry per file"
 	}
 	return ""
 }

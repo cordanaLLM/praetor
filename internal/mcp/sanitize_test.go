@@ -214,3 +214,22 @@ func TestSanitizeText_3D(t *testing.T) {
 		t.Errorf("oversized text must fail closed: len=%d err=%v", len(got), err)
 	}
 }
+
+// TestSanitizeBoundHoldsAfterNeutralizing: the neutralizer lengthens text (8 bytes of
+// <system> become 20), so a result that fits the 4 MiB bound as input but not as served bytes
+// is refused, by SanitizeResult and SanitizeText alike, and one that fits both passes.
+func TestSanitizeBoundHoldsAfterNeutralizing(t *testing.T) {
+	expanding := strings.Repeat("<system>", MaxResultTextBytes/8)
+	if len(expanding) > MaxResultTextBytes {
+		t.Fatalf("setup: input must fit the bound, got %d", len(expanding))
+	}
+	if _, err := SanitizeResult(TextResult(expanding)); !errors.Is(err, ErrResultTooLarge) {
+		t.Fatalf("SanitizeResult must refuse text that outgrows the bound: %v", err)
+	}
+	if _, err := SanitizeText(expanding); !errors.Is(err, ErrResultTooLarge) {
+		t.Fatalf("SanitizeText must refuse text that outgrows the bound: %v", err)
+	}
+	if _, err := SanitizeResult(TextResult(strings.Repeat("x", MaxResultTextBytes))); err != nil {
+		t.Fatalf("text at the bound that does not grow passes: %v", err)
+	}
+}

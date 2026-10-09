@@ -8,7 +8,7 @@ file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448c
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:8e14d51b230823345ff9b480e762219197819c6ad373ffa6782d4cdabb493e26
 file tools/markdownlint/no-private-scratch-links.mjs sha256:3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0
-file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 file .prettierignore absent
 == disable over mixed asset
 action reconcile .gitignore :: Private artifact ignore tail block already effective
@@ -20,5 +20,5 @@ file tools/markdownlint/package-lock.json sha256:a2bcd70b321d7a680d7ad7ba4c1448c
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:8e14d51b230823345ff9b480e762219197819c6ad373ffa6782d4cdabb493e26
 file tools/markdownlint/no-private-scratch-links.mjs sha256:3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0
-file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 file .prettierignore absent

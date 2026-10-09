@@ -1,29 +1,29 @@
 == empty
-gitignore ok "# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+gitignore ok "# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true ok 1384 bytes sha256:98fbc92998ea09cb13fde2efb4e74e42c8b1a1b3f5390166b2a77ea7932fb2d6
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 520 bytes sha256:a26dcbb803369c2d84c97528773d4e84dc94d6f6126cd6817ec6a0042953ed53
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == operator text
-gitignore ok "dist/\ncoverage/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+gitignore ok "dist/\ncoverage/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true ok 1401 bytes sha256:a8ee50169adb7a0f9ea942d49ee06fc38691fbc298463483bb0ad86857b058a2
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 537 bytes sha256:198f4514890f891a9acb14155e06ddbc2186fc470edf700e2a3b998d372dc67a
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == operator text without final newline
-gitignore ok "dist/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+gitignore ok "dist/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true ok 1391 bytes sha256:5bab0cd00b445979a3d0cfbc3d541c8ab22330f8c3475adbf456466a98bafde4
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 527 bytes sha256:fbcd8ca02371d1bdcd9e7bffb1bb05c6f5d3cf4224186b002a55e84cbb7826ef
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == blank lines only
-gitignore ok "# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+gitignore ok "# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true ok 1384 bytes sha256:98fbc92998ea09cb13fde2efb4e74e42c8b1a1b3f5390166b2a77ea7932fb2d6
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 520 bytes sha256:a26dcbb803369c2d84c97528773d4e84dc94d6f6126cd6817ec6a0042953ed53
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == CRLF
-gitignore ok "dist/\r\ncoverage/\r\n\r\n# BEGIN praetor private artifacts (praetorctl adopt)\r\n/.workingdir/\r\n/.workingdir2/\r\n/.standards/worktrees/\r\n/.agents/mcp_config.json\r\n# END praetor private artifacts\r\n"
+gitignore ok "dist/\r\ncoverage/\r\n\r\n# BEGIN praetor private artifacts (praetorctl adopt)\r\n/.workingdir/\r\n/.workingdir2/\r\n/.standards/worktrees/\r\n/.agents/mcp_config.json\r\n/.standards/cache/\r\n# END praetor private artifacts\r\n"
 formatter documentation=true ok 1444 bytes sha256:e6a2a82143f13fef28f561668f258941d35c0c89f6419346e9a4da4700f7d083
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 556 bytes sha256:92b7c3eb18aa9225ad72d67e14921c504fba74d92717841ff6707dab35b8df26
@@ -35,61 +35,61 @@ verify formatter documentation=true error .prettierignore line endings are incon
 formatter documentation=false error .prettierignore line endings are inconsistent: text contains mixed LF and CRLF line endings
 verify formatter documentation=false error .prettierignore line endings are inconsistent: text contains mixed LF and CRLF line endings
 == legacy unmarked rule
-gitignore ok "node_modules/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+gitignore ok "node_modules/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true ok 1428 bytes sha256:03b39a56460556c6ea854180a4b835bf555e5bb3610bc50dcfc90cb449ea4047
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 564 bytes sha256:496e95dfec1d52d01b23bc353c3db267a590a86db7ae7bd28a7ab3de0c08c676
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == git block alone
-gitignore ok "# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
-formatter documentation=true ok 1547 bytes sha256:e9825440f118ba752e99f106622bfab8022d0c77a467e2b64fffbc7efd9a6bd5
+gitignore ok "# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
+formatter documentation=true ok 1566 bytes sha256:d5c3f1e6c1a5ce190beb099bcb6a1f51b2a27a489adb4188e397a7527436af4f
 verify formatter documentation=true error .prettierignore managed artifact block is stale
-formatter documentation=false ok 683 bytes sha256:00f808f58d38f362d1a6aab96e8d07a1f541c86b3dcc09d69e44b28a253e464a
+formatter documentation=false ok 702 bytes sha256:953d2d3c2393ce9144fb68bb5aef9e80292afae78bcd9dd0d2df4fbc22577784
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == formatter block alone
-gitignore ok 1547 bytes sha256:cce657a1b5cd79761f9b409d383fd4b4aa004079d8ad06f89c579b4383e54d3d
+gitignore ok 1566 bytes sha256:18170401b1960356e42d738e09ff652b42c85185921980c07091bd0018dc0a2c
 formatter documentation=true ok 1384 bytes sha256:98fbc92998ea09cb13fde2efb4e74e42c8b1a1b3f5390166b2a77ea7932fb2d6
 verify formatter documentation=true ok ""
 formatter documentation=false ok 520 bytes sha256:a26dcbb803369c2d84c97528773d4e84dc94d6f6126cd6817ec6a0042953ed53
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == operator text above formatter block
-gitignore ok 1554 bytes sha256:564c34c12f15ca60baf2138dcf3bdb1cf027cea055cafb9966aba5580ff32c97
+gitignore ok 1573 bytes sha256:1ca3221b96640b227085f6f1179f717eb34a9a3cced270573e687b13860ab2b3
 formatter documentation=true ok 1391 bytes sha256:5bab0cd00b445979a3d0cfbc3d541c8ab22330f8c3475adbf456466a98bafde4
 verify formatter documentation=true ok ""
 formatter documentation=false ok 527 bytes sha256:fbcd8ca02371d1bdcd9e7bffb1bb05c6f5d3cf4224186b002a55e84cbb7826ef
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == git block mid file
-gitignore ok "a/\nb/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
-formatter documentation=true ok 1553 bytes sha256:3d064d34b0e6bb590322022a59d4fd27cd8676c556bba441593f72e2564ef8fd
+gitignore ok "a/\nb/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
+formatter documentation=true ok 1572 bytes sha256:f588a963f7ac484f9c1ea438bd3b3a4f3522c60fb45f3b50838a2b7b20c5baf7
 verify formatter documentation=true error .prettierignore managed artifact block is stale
-formatter documentation=false ok 689 bytes sha256:c133ecc736ab60bb5662d5254ea008c2f4ea497159538c5d1bb8b7c7d0f523bb
+formatter documentation=false ok 708 bytes sha256:2822a4558da84ba073b73f0b6e8b16e97992e89df7d88ec4cef821afe8b754ef
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == formatter block mid file
-gitignore ok 1553 bytes sha256:92b7ad0f5c9a201a0502e75fb75cefb8e44b05c4c004f8474b70975b759fae5b
+gitignore ok 1572 bytes sha256:5cb296632289977d2197e9aae18d77288565a3924f151214a2c3c806c0bd8f70
 formatter documentation=true ok 1391 bytes sha256:a6e29adedeba3fc8368ad5c03caee60714fdb23e94c53609449f85a241265bf9
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 527 bytes sha256:5cc600473cff653f61cef17d2ba2668b7ba8e2e56b3c0ea5fe529fcb3adf974c
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == git block twice
 gitignore error .gitignore contains duplicate managed markers
-formatter documentation=true ok 1709 bytes sha256:67561f44ce3a0de623fa05da49f6399c090a3e5db5bec992bd37dfb96f6c3dc9
+formatter documentation=true ok 1747 bytes sha256:4a3cf02417c26373cb57c39de59821c02e07ebf9fbab07c18a8180237b5d21ba
 verify formatter documentation=true error .prettierignore managed artifact block is stale
-formatter documentation=false ok 845 bytes sha256:42a2e9c64b28e58baef3d3955ec7125f26621dda5b55d08b623681af9a0dee67
+formatter documentation=false ok 883 bytes sha256:08d7e86d99c496c163c5981eb0091f0a0762b6472d0d3f8493e74787897cddec
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == formatter block twice
-gitignore ok 2931 bytes sha256:82898c971321a9f6b8eada1df9f206dbd7cafd2a612e724a3813c374040bef09
+gitignore ok 2950 bytes sha256:9b501f8cde9f653d4b19717bc647a5e05d17e33edf94f8e37118a0bdc602abea
 formatter documentation=true error .prettierignore contains duplicate or nested managed blocks
 verify formatter documentation=true error .prettierignore contains duplicate or nested managed blocks
 formatter documentation=false error .prettierignore contains duplicate or nested managed blocks
 verify formatter documentation=false error .prettierignore contains duplicate or nested managed blocks
 == git begin nested
 gitignore error .gitignore contains duplicate managed markers
-formatter documentation=true ok 1600 bytes sha256:2947469d4f4a0e836d702c8c912690c512c3edb18ee9f3e55568abf0063e1dc9
+formatter documentation=true ok 1619 bytes sha256:2ea9fe50e5731703f851c4e060d846a6e66939966bea17c9ea32115dc0b0467c
 verify formatter documentation=true error .prettierignore managed artifact block is stale
-formatter documentation=false ok 736 bytes sha256:d85ec854cca01dfe785d1e1f605febb8534f8881d0feaa2852fcb083e28d7e49
+formatter documentation=false ok 755 bytes sha256:520c750e37bbf21233dcdf248bc76d1118557d04bbfe301f57c4a3107f02c2f7
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == formatter begin nested
-gitignore ok 1600 bytes sha256:ce3638e31c96c8626103533c83b7889462b9f8521337c99a9bf3ab72ac1c8f98
+gitignore ok 1619 bytes sha256:5c543fda8467e2cc3e0f260422165119274cd42a2aa2a0e0b4f8487cae3fe26f
 formatter documentation=true error .prettierignore contains duplicate or nested managed blocks
 verify formatter documentation=true error .prettierignore contains duplicate or nested managed blocks
 formatter documentation=false error .prettierignore contains duplicate or nested managed blocks
@@ -101,7 +101,7 @@ verify formatter documentation=true error .prettierignore managed artifact block
 formatter documentation=false ok 580 bytes sha256:b9d5fc66714b932c0337f286739ffca6fd6ff6fdad249844563d59255902f3f3
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == formatter unterminated
-gitignore ok "a/\n# BEGIN praetor-managed artifacts (praetorctl adopt)\nb/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+gitignore ok "a/\n# BEGIN praetor-managed artifacts (praetorctl adopt)\nb/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true error .prettierignore contains an unterminated managed block
 verify formatter documentation=true error .prettierignore contains an unterminated managed block
 formatter documentation=false error .prettierignore contains an unterminated managed block
@@ -113,7 +113,7 @@ verify formatter documentation=true error .prettierignore managed artifact block
 formatter documentation=false ok 556 bytes sha256:3c57025a2b5332100feafc3e57b00cb15916ce0b3a620f50559b97a2d4c86027
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == formatter unmatched end
-gitignore ok "a/\n# END praetor-managed artifacts\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+gitignore ok "a/\n# END praetor-managed artifacts\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true error .prettierignore contains an unmatched managed end marker
 verify formatter documentation=true error .prettierignore contains an unmatched managed end marker
 formatter documentation=false error .prettierignore contains an unmatched managed end marker
@@ -125,13 +125,13 @@ verify formatter documentation=true error .prettierignore managed artifact block
 formatter documentation=false ok 579 bytes sha256:f7f7d98a65112069708d64a7ce02d6f3ab38d246cf417ba9d253f5c179fcd6f9
 verify formatter documentation=false error .prettierignore managed artifact block is stale
 == formatter indented marker
-gitignore ok "a/\n# END praetor-managed artifacts \n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+gitignore ok "a/\n# END praetor-managed artifacts \n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true error .prettierignore contains a non-canonical managed marker at line 2
 verify formatter documentation=true error .prettierignore contains a non-canonical managed marker at line 2
 formatter documentation=false error .prettierignore contains a non-canonical managed marker at line 2
 verify formatter documentation=false error .prettierignore contains a non-canonical managed marker at line 2
 == at line bound
-gitignore ok 8353 bytes sha256:b38ae348d01e715999384f951376a28ae6facb5f71928346e3890e199a2324f7
+gitignore ok 8372 bytes sha256:913d8ae5d07a2d8c51c014f206de6a499a64a8d4e8904516ab2de538c6cebd6d
 formatter documentation=true ok 9575 bytes sha256:f85eb5fec06e5c5cad8390b4a1118cb15b0578757315aca3e2f313a287ec31b7
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 8711 bytes sha256:f9037ed3c7cfa880c4c2d2bb653a10cc87e6884e75b4e472c656bc30841e6479

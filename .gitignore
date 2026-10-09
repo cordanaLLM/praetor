@@ -79,4 +79,5 @@ all_github_repos.json
 /.workingdir2/
 /.standards/worktrees/
 /.agents/mcp_config.json
+/.standards/cache/
 # END praetor private artifacts

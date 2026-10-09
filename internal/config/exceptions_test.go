@@ -5,7 +5,11 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -356,5 +360,86 @@ func TestValidateExceptionsRootLicenseNotice(t *testing.T) {
 	other.Rule = ExceptionRuleClangTidyCoverage
 	if err := ValidateExceptions([]Exception{notice, other}, exceptionsToday); err != nil {
 		t.Fatalf("one file under two rules refused: %v", err)
+	}
+}
+
+// A HISS-19 entry names one repository file by path (dedupe clone exceptions, #891).
+// Positive: a regular repository file path validates, round-trips through LoadManifest,
+// and is selected by ExceptionsFor. Negative: a glob target is refused.
+func TestValidateExceptionsDedupeTarget(t *testing.T) {
+	entry := Exception{
+		Rule:    ExceptionRuleDedupe,
+		Path:    "api/v1/zz_generated.deepcopy.go",
+		Reason:  "controller-gen repeated DeepCopyInto",
+		Expires: "2026-12-31",
+	}
+	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
+		t.Fatalf("a valid HISS-19 entry was refused: %v", err)
+	}
+	if got := ExceptionsFor([]Exception{validException(), entry}, ExceptionRuleDedupe); len(got) != 1 || got[0].Path != entry.Path {
+		t.Fatalf("ExceptionsFor(HISS-19) = %+v", got)
+	}
+
+	globbed := entry
+	globbed.Path, globbed.Glob = "", "api/**/*.go"
+	if err := ValidateExceptions([]Exception{globbed}, exceptionsToday); err == nil ||
+		!strings.Contains(err.Error(), "rule HISS-19 must name one repository file by path") {
+		t.Errorf("glob target accepted for HISS-19: %v", err)
+	}
+
+	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
+	manifest := fmt.Sprintf("version: 1\nexceptions:\n  - rule: %q\n    path: %q\n    reason: %q\n    expires: %q\n",
+		ExceptionRuleDedupe, "pkg/deepcopy.go", "generated clones", expires)
+	m, err := LoadManifest(writeManifest(t, manifest))
+	if err != nil || len(ExceptionsFor(m.Exceptions, ExceptionRuleDedupe)) != 1 {
+		t.Fatalf("LoadManifest: %v, %+v", err, m)
+	}
+}
+
+func TestLoadExceptionsFor_Positive(t *testing.T) {
+	root := t.TempDir()
+	expires := ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(ExceptionDateLayout)
+	content := fmt.Sprintf("version: 1\nexceptions:\n  - rule: %q\n    path: %q\n    reason: %q\n    expires: %q\n",
+		ExceptionRuleDedupe, "pkg/deepcopy.go", "generated clones", expires)
+	if err := os.WriteFile(filepath.Join(root, ManifestFileName), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := LoadExceptionsFor(t.Context(), root, ExceptionRuleDedupe)
+	if err != nil {
+		t.Fatalf("LoadExceptionsFor failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Path != "pkg/deepcopy.go" {
+		t.Fatalf("unexpected entries: %+v", entries)
+	}
+}
+
+func TestLoadExceptionsFor_Boundary_MissingManifestReturnsNil(t *testing.T) {
+	root := t.TempDir()
+	entries, err := LoadExceptionsFor(t.Context(), root, ExceptionRuleDedupe)
+	if err != nil {
+		t.Fatalf("LoadExceptionsFor missing manifest: %v", err)
+	}
+	if entries != nil {
+		t.Fatalf("expected nil entries, got %+v", entries)
+	}
+}
+
+func TestLoadExceptionsFor_Negative_MalformedManifestFails(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ManifestFileName), []byte("version: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadExceptionsFor(t.Context(), root, ExceptionRuleDedupe)
+	if err == nil {
+		t.Fatal("expected error on malformed manifest")
+	}
+}
+
+func TestLoadExceptionsFor_Negative_CanceledContextFails(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err := LoadExceptionsFor(ctx, ".", ExceptionRuleDedupe)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("LoadExceptionsFor with canceled context: %v, want context.Canceled", err)
 	}
 }

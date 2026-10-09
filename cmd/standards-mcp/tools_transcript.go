@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/mcp"
@@ -78,16 +77,12 @@ func (s *Server) transcriptArguments(args map[string]any) (harvester.TranscriptI
 }
 
 func transcriptBatchArgument(args map[string]any) (int, error) {
-	value, ok := args["max_records"]
-	if !ok {
+	value, present, whole := intArg(args, "max_records")
+	if !present {
 		return 1000, nil
 	}
-	number, ok := value.(float64)
-	if integer, isInt := value.(int); isInt {
-		number, ok = float64(integer), true
-	}
-	if !ok || number < 1 || number > harvester.MaxTranscriptBatchRecords || number != math.Trunc(number) {
+	if !whole || value < 1 || value > harvester.MaxTranscriptBatchRecords {
 		return 0, fmt.Errorf("max_records must be an integer between 1 and %d", harvester.MaxTranscriptBatchRecords)
 	}
-	return int(number), nil
+	return value, nil
 }

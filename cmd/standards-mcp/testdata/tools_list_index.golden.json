@@ -1,0 +1,149 @@
+{
+  "tools": [
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Audit repository against declared HISS standards",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "agents_path": {
+            "type": "string",
+            "description": "Path to canonical AGENTS.md (default: AGENTS.md)"
+          },
+          "baseline_path": {
+            "type": "string",
+            "description": "Path to .standards-baseline.json debt file (default: .standards-baseline.json)"
+          },
+          "catalog_root": {
+            "type": "string",
+            "description": "Root containing pinned .config/archetypes (default: server root)"
+          },
+          "config_path": {
+            "type": "string",
+            "description": "Path to .standards.yaml manifest (default: .standards.yaml)"
+          },
+          "deployment_config_path": {
+            "type": "string",
+            "description": "Explicit deployment complexity policy file for this audit"
+          },
+          "fleet_config_path": {
+            "type": "string",
+            "description": "Explicit fleet complexity policy file for this audit"
+          },
+          "organization_config_path": {
+            "type": "string",
+            "description": "Explicit organization complexity policy file for this audit"
+          },
+          "workstation_config_path": {
+            "type": "string",
+            "description": "Explicit workstation complexity policy file for this audit"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_audit"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Compile or verify cross-agent instructions from AGENTS.md",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "Path to canonical AGENTS.md (default: AGENTS.md)"
+          },
+          "target_dir": {
+            "type": "string",
+            "description": "Root directory to write target files (default: server root)"
+          },
+          "verify_only": {
+            "type": "boolean",
+            "description": "If true, verify synchronization without writing files"
+          }
+        },
+        "additionalProperties": false
+      },
+      "name": "standards_compile_context"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Read offloaded tool output by pointer-line sha256. Max 12 KiB per call; continue from next_offset.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum bytes to return (default and maximum 12288)"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Byte offset to start at (default 0)"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "64 lowercase hex digits from [offloaded] pointer line"
+          }
+        },
+        "required": [
+          "sha256"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_output_read"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "Return full description, input schema of one standards tool.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tool name as listed by standards_tools_index"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_tool_describe"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "description": "List every standards tool: one-line summary, annotations. Static, sorted by name.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "name": "standards_tools_index"
+    }
+  ]
+}

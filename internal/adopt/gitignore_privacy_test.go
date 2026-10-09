@@ -15,6 +15,9 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 		"missing": "", "custom": "# retain exactly\nuser-output/",
 		"old-opt-in":   ".workingdir/*\n!.workingdir/STATE.md\n",
 		"pre-agy-rule": "bin/\n/.workingdir/\n",
+		// The block as it rendered before the standards-mcp output cache joined it: the merge
+		// replaces it, so an already adopted repository gains the rule on the next run.
+		"pre-cache-block": "bin/\n\n" + gitIgnoreManagedBegin + "\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n" + gitIgnoreManagedEnd + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := newTestRepo(t, name)
@@ -57,6 +60,12 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 			}
 			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".agents/mcp_config.json"); err != nil {
 				t.Fatalf("per-host client configuration remains publishable: %v", err)
+			}
+			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".standards/cache/mcp-out/"+strings.Repeat("a", 64)+".txt"); err != nil {
+				t.Fatalf("standards-mcp output cache remains publishable: %v", err)
+			}
+			if strings.Count(got, gitIgnoreManagedBegin) != 1 {
+				t.Fatalf("the managed block must appear once: %q", got)
 			}
 			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".agents/plugins/praetor/plugin.json"); err == nil {
 				t.Fatal("tracked plugin projection became ignored")

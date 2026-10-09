@@ -150,6 +150,12 @@ editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 docs/presets/mkdocs/docs/figures/*.ts text eol=lf
 docs/presets/mkdocs/docs/assets/figures/* text eol=lf
 
+# cmd/standards-mcp/testdata holds the golden tools/list and tool descriptor bytes that the
+# cmd/standards-mcp tests compare against the server's LF output; the golden helper folds CRLF,
+# and the pin keeps a checkout from rewriting them at all, so the files stay one byte
+# sequence on every platform (HISS-21).
+cmd/standards-mcp/testdata/*.golden.json text eol=lf
+
 # The managed attribute block at the end of this file is what `praetorctl adopt` writes in
 # every adopting repository (internal/adopt/gitattributes.go): the DevContainer rule unless
 # adoption.decline lists dev-container (rule from Attributes in internal/devcontainer/checkout.go),

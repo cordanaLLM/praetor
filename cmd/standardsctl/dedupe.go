@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dedupe"
 )
 
@@ -104,6 +105,10 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		fmt.Println("  Not applicable: no Go sources found; this detector reads Go only.")
 		printUnscannedLanguages(report)
 		fmt.Println("  Clone detection for other languages is not implemented.")
+		if len(report.StaleExceptions) > 0 {
+			printStaleExceptions(report.StaleExceptions)
+			return dedupeVerdict(report)
+		}
 		return nil
 	}
 	fmt.Printf("  Files Scanned:     %d\n", report.TotalFilesScanned)
@@ -118,23 +123,56 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		fmt.Printf("  Passed:            %v\n", report.Passed)
 	}
 
-	if len(report.Duplicates) > 0 {
-		fmt.Printf("\nDuplicate Function Blocks (%d):\n", len(report.Duplicates))
-		for i, d := range report.Duplicates {
-			fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
-			for _, loc := range d.Locations {
+	printDuplicateBlocks(report.Duplicates)
+	printExceptedBlocks(report.Excepted)
+	printSprawlInfractions(report.SprawlItems)
+	printStaleExceptions(report.StaleExceptions)
+	return dedupeVerdict(report)
+}
+
+func printDuplicateBlocks(duplicates []dedupe.DuplicateGroup) {
+	if len(duplicates) == 0 {
+		return
+	}
+	fmt.Printf("\nDuplicate Function Blocks (%d):\n", len(duplicates))
+	for i, d := range duplicates {
+		fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
+		for _, loc := range d.Locations {
+			if loc.Expired != "" {
+				fmt.Printf("      - %s:%d in %s() (its %s exception expired on %s)\n",
+					loc.Path, loc.Line, loc.FuncName, config.ExceptionRuleDedupe, loc.Expired)
+			} else {
 				fmt.Printf("      - %s:%d in %s()\n", loc.Path, loc.Line, loc.FuncName)
 			}
 		}
 	}
+}
 
-	if len(report.SprawlItems) > 0 {
-		fmt.Printf("\nUtility Sprawl Infractions (%d):\n", len(report.SprawlItems))
-		for _, sp := range report.SprawlItems {
-			fmt.Printf("  - %s:%d: uses %s (should use %s)\n", sp.File, sp.Line, sp.Pattern, sp.Replacement)
+func printExceptedBlocks(excepted []dedupe.DuplicateGroup) {
+	if len(excepted) == 0 {
+		return
+	}
+	fmt.Printf("\nExcepted Duplicate Function Blocks (%d):\n", len(excepted))
+	for i, d := range excepted {
+		fmt.Printf("  [%d] %d lines (hash: %s):\n", i+1, d.LOC, d.Hash)
+		for _, loc := range d.Locations {
+			fmt.Printf("      - %s:%d in %s()\n", loc.Path, loc.Line, loc.FuncName)
+		}
+		for _, exc := range d.Exceptions {
+			fmt.Printf("      excepted until %s by the exceptions entry (rule %s, %s): %s\n",
+				exc.Expires, config.ExceptionRuleDedupe, exc.Path, exc.Reason)
 		}
 	}
-	return dedupeVerdict(report)
+}
+
+func printSprawlInfractions(sprawl []dedupe.SprawlItem) {
+	if len(sprawl) == 0 {
+		return
+	}
+	fmt.Printf("\nUtility Sprawl Infractions (%d):\n", len(sprawl))
+	for _, sp := range sprawl {
+		fmt.Printf("  - %s:%d: uses %s (should use %s)\n", sp.File, sp.Line, sp.Pattern, sp.Replacement)
+	}
 }
 
 // printUnscannedLanguages names the source languages the scan found but cannot read, with
@@ -148,17 +186,28 @@ func printUnscannedLanguages(report *dedupe.DedupeReport) {
 	fmt.Println("  HISS-19 is not measured for these languages; this detector reads Go only.")
 }
 
+func printStaleExceptions(stale []string) {
+	if len(stale) == 0 {
+		return
+	}
+	fmt.Printf("\nStale Exceptions (%d):\n", len(stale))
+	for _, s := range stale {
+		fmt.Printf("  - %s\n", s)
+	}
+}
+
 // dedupeVerdict turns a report into the command's exit: nil when the scan passed or did not
 // apply, an error naming the finding counts otherwise.
 func dedupeVerdict(report *dedupe.DedupeReport) error {
-	if report.Applicable && !report.Passed {
-		// The score is not the verdict: any finding fails the scan, so a single sprawl item
-		// used to be reported as "failed with score 95.0%", which reads like a threshold the
-		// repository missed rather than the one call site it has to fix.
-		return fmt.Errorf("dedupe audit failed: %d duplicate function group(s), %d utility sprawl finding(s); cleanliness %.1f%%",
-			len(report.Duplicates), len(report.SprawlItems), report.CleanlinessScore)
+	if report.Passed || (!report.Applicable && len(report.StaleExceptions) == 0) {
+		return nil
 	}
-	return nil
+	if len(report.StaleExceptions) > 0 {
+		return fmt.Errorf("dedupe audit failed: %d duplicate function group(s), %d utility sprawl finding(s), %d stale exception(s); cleanliness %.1f%%",
+			len(report.Duplicates), len(report.SprawlItems), len(report.StaleExceptions), report.CleanlinessScore)
+	}
+	return fmt.Errorf("dedupe audit failed: %d duplicate function group(s), %d utility sprawl finding(s); cleanliness %.1f%%",
+		len(report.Duplicates), len(report.SprawlItems), report.CleanlinessScore)
 }
 
 func runDedupeCadence(args []string) error {
