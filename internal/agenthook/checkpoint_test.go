@@ -173,6 +173,37 @@ func TestRunStopOnAStaleOrMissingLedgerBlocks(t *testing.T) {
 	}
 }
 
+// A verified-fresh ledger with an unresolved P0 row still blocks stop, as the lefthook
+// state-audit step did before the engine row (positive); resolving the row clears it
+// (negative); a clean ledger allows (boundary, TestRunStopCleanAllows).
+func TestRunStopBlocksOnAnUnresolvedP0Row(t *testing.T) {
+	root := syncedRepository(t)
+	_, getenv := buildStub(t, "python3")
+	stubStdout(t, cleanReport)
+	bug, err := state.AddBug(root, state.BugEntry{Title: "stop audit fixture", Severity: "p0"})
+	if err != nil {
+		t.Fatalf("add bug: %v", err)
+	}
+	if _, err := state.SyncState(context.Background(), root, "p0 fixture"); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	run := func() Response {
+		return Run(context.Background(), checkpointInvocation(t, "stop", root, getenv, []byte(`{}`)))
+	}
+	if response := run(); response.ExitCode != 2 || !strings.Contains(string(response.Stderr), "state audit failed") {
+		t.Errorf("unresolved P0 must block stop: %+v", response)
+	}
+	if err := state.ResolveBug(root, bug.ID, "fixed"); err != nil {
+		t.Fatalf("resolve bug: %v", err)
+	}
+	if _, err := state.SyncState(context.Background(), root, "p0 resolved"); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if response := run(); response.ExitCode != 0 {
+		t.Errorf("resolved P0 must allow stop: %+v", response)
+	}
+}
+
 func TestRunStopCleanAllows(t *testing.T) {
 	root := syncedRepository(t)
 	_, getenv := buildStub(t, "python3")

@@ -1,10 +1,12 @@
 package state
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -22,6 +24,13 @@ type StateAuditReport struct {
 
 // AuditWorkingDir validates .workingdir completeness, bug ledger health, and question hygiene.
 func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return AuditWorkingDirContext(ctx, rootPath)
+}
+
+// AuditWorkingDirContext is AuditWorkingDir under the caller's cancellation.
+func AuditWorkingDirContext(ctx context.Context, rootPath string) (*StateAuditReport, error) {
 	wDir := filepath.Join(rootPath, WorkingDirName)
 	rep := &StateAuditReport{
 		Valid:            true,
@@ -50,7 +59,7 @@ func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
 		}
 	}
 
-	allBugs, err := ListBugs(rootPath, "all")
+	allBugs, err := ListBugsContext(ctx, rootPath, "all")
 	if err != nil {
 		rep.Valid = false
 		return rep, fmt.Errorf("audit list bugs: %w", err)
@@ -58,7 +67,7 @@ func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
 	rep.TotalBugs = len(allBugs)
 	countOpenAuditBugs(rep, allBugs)
 
-	allQs, err := ListQuestions(rootPath, "pending")
+	allQs, err := ListQuestionsContext(ctx, rootPath, "pending")
 	if err != nil {
 		rep.Valid = false
 		return rep, fmt.Errorf("audit list questions: %w", err)
