@@ -1,0 +1,4 @@
+type: fixed
+title: "The managed praetor-api.yml workflow sets GOTOOLCHAIN: auto in its compare step with go-version: stable in setup-go, so Go toolchain downloads succeed when a module requires a newer directive than the runner's manifest. Migration: audit fails on the earlier copy until praetorctl adopt runs; a plain adopt refreshes an unedited earlier copy, and a hand-edited copy is kept and reported."
+issue: "#1037"
+breaking: true

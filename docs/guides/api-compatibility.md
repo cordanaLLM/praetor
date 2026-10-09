@@ -74,6 +74,9 @@ check by design. Marking it ready starts the `ready_for_review` run, which repor
 check on the same head commit and replaces the failure; until it reports, the failed check keeps
 the pull request from merging.
 
+The compare step sets `GOTOOLCHAIN: auto`: the gate downloads the toolchain a module's `go` or
+`toolchain` directive names.
+
 `hosted_gates.draft: skip` in `.standards.yaml` opts in to a job-level draft skip instead, which
 the audit accepts only behind a result job that reports `Go API Compatibility`, needs the gate
 job and fails when it is skipped. A draft then skips the gate job and fails the required check
@@ -357,3 +360,6 @@ an adopting repository, so the forbidigo rule and the utility-sprawl check of
   without touching the tree. Run it in a clone, as the hosted job does.
 - The hosted job runs on Linux. The gate itself runs on Linux, macOS and Windows, and its tests run
   on all three.
+- A nested module whose `go` language version is newer than the toolchain the checker was built
+  with is type-checked by the checker's `go/types` and may not be reported; go-apidiff ignores
+  package errors.
