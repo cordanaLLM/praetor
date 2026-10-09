@@ -159,12 +159,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3",
-            "args": [
-              "-B",
-              "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/checkpoint.py"
-            ],
-            "timeout": 60
+            "command": "python3 -B \"${CLAUDE_PROJECT_DIR}/.config/agent/hooks/praetor_hook.py\" claude stop",
+            "timeout": 90
           }
         ]
       }

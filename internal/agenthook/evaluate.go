@@ -133,6 +133,9 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 		return evaluateAgentTraffic(ctx, row, canonical, root, in)
 	}
 	if !checkpointWired(row.Client) {
+		if row.Event == EventStop {
+			return evaluateStopQuestion(row, canonical)
+		}
 		return evaluateCommand(canonical, in)
 	}
 	switch row.Event {
@@ -141,7 +144,7 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	case EventPostTool:
 		return evaluatePostTool(ctx, root, in)
 	case EventStop:
-		return evaluateStop(ctx, root, canonical, in)
+		return evaluateStop(ctx, row, root, canonical, in)
 	default:
 		return evaluateCommand(canonical, in)
 	}
@@ -212,8 +215,21 @@ func evaluatePostTool(ctx context.Context, root string, in Invocation) Verdict {
 }
 
 // evaluateStop verifies the state ledger before the checkpoint itself (3.3): a stale or
-// unverifiable ledger blocks on its own, independent of whether a checkpoint is due.
-func evaluateStop(ctx context.Context, root string, canonical Canonical, in Invocation) Verdict {
+// unverifiable ledger blocks on its own, independent of whether a checkpoint is due. The
+// prose-question check (stop_question.go) runs first: it needs no I/O, and its deny is the
+// block-once of rule 4. Its stated skip survives an otherwise clean stop.
+func evaluateStop(ctx context.Context, row Registration, root string, canonical Canonical, in Invocation) Verdict {
+	question := evaluateStopQuestion(row, canonical)
+	if question.Outcome == Deny {
+		return question
+	}
+	if verdict := evaluateStopLedger(ctx, root, canonical, in); verdict.Outcome != Allow {
+		return verdict
+	}
+	return question
+}
+
+func evaluateStopLedger(ctx context.Context, root string, canonical Canonical, in Invocation) Verdict {
 	verifyCtx, cancel := context.WithTimeout(ctx, stateVerifyBudget)
 	defer cancel()
 	if err := state.VerifyStateSync(verifyCtx, root); err != nil {

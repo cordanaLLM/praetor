@@ -200,13 +200,33 @@ func decodeNativeReturn(client string, canonical Canonical, object map[string]js
 	if canonical.AgentID, err = requiredString(object, "agent_id"); err != nil {
 		return Canonical{}, err
 	}
-	if canonical.Return, err = optionalString(object, "last_assistant_message"); err != nil {
+	if canonical.Return, err = optionalString(object, finalMessageKey(client)); err != nil {
 		return Canonical{}, err
 	}
 	if canonical.StopActive, _, err = optionalBool(object, "stop_hook_active"); err != nil {
 		return Canonical{}, err
 	}
 	return canonical, nil
+}
+
+// finalMessageKey is the payload member that carries a client's final assistant text on a
+// stop event: last_assistant_message on Claude and Codex (Stop and SubagentStop), and
+// prompt_response on Gemini's AfterAgent (verified sources: stop_question.go).
+func finalMessageKey(client string) string {
+	if client == "gemini" {
+		return "prompt_response"
+	}
+	return "last_assistant_message"
+}
+
+// fillMainStop reads the final message and stop_hook_active of a main-agent stop. Both are
+// optional and read leniently: a member of the wrong type is an absent one, because a decode
+// failure would deny the stop on a payload this check only reads for a prose question.
+func fillMainStop(client string, canonical *Canonical, object map[string]json.RawMessage) {
+	if message, err := optionalString(object, finalMessageKey(client)); err == nil {
+		canonical.Return = message
+	}
+	canonical.StopActive = continuedStop(EventStop, object)
 }
 
 func agentToolInput(client string, object map[string]json.RawMessage) (string, map[string]json.RawMessage, error) {

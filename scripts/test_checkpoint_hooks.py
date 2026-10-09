@@ -260,6 +260,8 @@ class NativeLefthook(unittest.TestCase):
         for path in (".config/lefthook", ".config/agent/hooks"):
             shutil.copytree(ROOT / path, self.root / path)
         shutil.copy(ROOT / "lefthook.yml", self.root / "lefthook.yml")
+        # The engine's stop row skips a workspace without the standards manifest (Governed).
+        shutil.copy(ROOT / ".standards.yaml", self.root / ".standards.yaml")
         policy = json.loads((ROOT / ".config/agent/checkpoint.json").read_text())
         policy["publish"] = False
         policy["require_checks"] = False
@@ -311,6 +313,12 @@ class NativeLefthook(unittest.TestCase):
     def registered_process(self, settings, action, cwd, project=None):
         """The argv, cwd and environment the client owning `settings` runs `action` with."""
         root = str(self.root if project is None else project)
+        if settings == ".claude/settings.json" and "args" not in action:
+            # A launcher registration is one shell command line; Claude Code expands
+            # ${CLAUDE_PROJECT_DIR} in it, and so does the shell here.
+            if os.name == "nt":
+                self.skipTest(CODEX_WINDOWS_GAP)
+            return ["/bin/sh", "-c", action["command"]], cwd, {"CLAUDE_PROJECT_DIR": root}
         if settings == ".claude/settings.json":
             program = shutil.which(action["command"])
             self.assertIsNotNone(program, f"{action['command']} is not on PATH")
@@ -345,15 +353,21 @@ class NativeLefthook(unittest.TestCase):
         gemini = json.loads((ROOT / ".gemini/settings.json").read_text())["hooks"]
         self.assertEqual(claude["PreToolUse"][0]["hooks"][0]["timeout"], 15)
         self.assertEqual(claude["PostToolUse"][0]["hooks"][0]["timeout"], 60)
-        self.assertEqual(claude["Stop"][0]["hooks"][0]["timeout"], 60)
+        self.assertEqual(claude["Stop"][0]["hooks"][0]["timeout"], 90)
         self.assertEqual(gemini["BeforeTool"][0]["hooks"][0]["timeout"], 15000)
         self.assertEqual(gemini["AfterTool"][0]["hooks"][0]["timeout"], 60000)
-        self.assertEqual(gemini["AfterAgent"][0]["hooks"][0]["timeout"], 60000)
+        self.assertEqual(gemini["AfterAgent"][0]["hooks"][0]["timeout"], 90000)
         codex = json.loads((ROOT / ".codex/hooks.json").read_text())["hooks"]
         self.assertEqual(codex["PreToolUse"][0]["hooks"][0]["timeout"], 15)
         self.assertIn("codex_pre_tool.py", codex["PreToolUse"][0]["hooks"][0]["command"])
-        self.assertTrue(claude["Stop"][0]["hooks"][0]["args"][-1].endswith("/checkpoint.py"))
-        self.assertIn("checkpoint.py", gemini["AfterAgent"][0]["hooks"][0]["command"])
+        # Stop reaches the engine (prose-question check, ledger, checkpoint) through the launcher.
+        self.assertEqual(codex["Stop"][0]["hooks"][0]["timeout"], 90)
+        for hook, pair in ((claude["Stop"][0]["hooks"][0], "claude stop"),
+                           (gemini["AfterAgent"][0]["hooks"][0], "gemini stop"),
+                           (codex["Stop"][0]["hooks"][0], "codex stop")):
+            self.assertIn("praetor_hook.py", hook["command"])
+            self.assertTrue(hook["command"].endswith(" " + pair), hook["command"])
+            self.assertNotIn("checkpoint.py", hook["command"])
 
     def test_every_adapter_answers_before_its_client_gives_up(self):
         """A client lets a call through once its hook outlives the registered timeout.
@@ -380,8 +394,9 @@ class NativeLefthook(unittest.TestCase):
         gemini = json.loads((ROOT / ".gemini/settings.json").read_text())["hooks"]
         claude_actions = adapter_actions(claude)
         gemini_actions = adapter_actions(gemini)
-        self.assertEqual(len(claude_actions), 4)
-        self.assertEqual(len(gemini_actions), 4)
+        # Stop is an engine row now (praetor_hook.py ... stop), no longer a Python adapter.
+        self.assertEqual(len(claude_actions), 3)
+        self.assertEqual(len(gemini_actions), 3)
         for action in claude_actions:
             self.assertEqual(action["command"], "python3")
             self.assertEqual(action["args"][0], "-B")
@@ -414,7 +429,7 @@ class NativeLefthook(unittest.TestCase):
                 self.assertIn("shared hook policy rejected", result.stderr)
                 stop = self.run_registered(".claude/settings.json", "Stop", {"hook_event_name": "Stop"}, cwd=cwd)
                 self.assertEqual(stop.returncode, 0, stop.stderr)
-                self.assertEqual(json.loads(stop.stdout), {})
+                self.assertEqual(stop.stdout, "")
 
     def test_registered_guards_and_checkpoint_lifecycle(self):
         for settings, key, tool in ((".claude/settings.json", "PreToolUse", "Bash"),
@@ -441,8 +456,8 @@ class NativeLefthook(unittest.TestCase):
                               (".codex/hooks.json", "Stop")):
             with self.subTest(settings=settings, key=key):
                 stop = self.run_registered(settings, key, {"hook_event_name": key})
-                self.assertEqual(stop.returncode, 0, stop.stderr)
-                self.assertEqual(json.loads(stop.stdout)["decision"], "block")
+                self.assertEqual(stop.returncode, 2, stop.stderr)
+                self.assertIn("Praetor checkpoint due:", stop.stderr)
         (self.root / "README.md").write_text("fixture\n")
         (self.root / ".workingdir").mkdir(exist_ok=True)
         (self.root / ".workingdir/private.txt").write_text("private\n")
@@ -453,7 +468,7 @@ class NativeLefthook(unittest.TestCase):
             with self.subTest(settings=settings, key=key):
                 result = self.run_registered(settings, key, {"hook_event_name": event})
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(json.loads(result.stdout), {})
+                self.assertEqual(result.stdout, "")
 
     def test_native_adapter_rejects_malformed_event_names_without_typeerror(self):
         for payload in ({"hook_event_name": None}, {"hook_event_name": 7},
@@ -673,8 +688,7 @@ class NativeLefthook(unittest.TestCase):
                                    {"hook_event_name": "Stop", "cwd": str(cwd)},
                                    cwd=cwd, project=project)
         self.assertEqual(dirty.returncode, 0, dirty.stdout + dirty.stderr)
-        self.assertEqual(stop.returncode, 0, stop.stderr)
-        return new, json.loads(stop.stdout)
+        return new, stop
 
     def test_claude_hooks_judge_a_linked_worktree_session_by_that_worktree(self):
         """Claude keeps ${CLAUDE_PROJECT_DIR} on the start checkout after entering a worktree.
@@ -695,13 +709,14 @@ class NativeLefthook(unittest.TestCase):
                 nested.mkdir()
                 new, stop = self.claude_worktree_calls(worktree, nested)
                 self.assertEqual(new.returncode, 0, new.stdout + new.stderr)
-                self.assertEqual(stop, {})
+                self.assertEqual((stop.returncode, stop.stdout), (0, ""), stop.stderr)
                 (worktree / "README.md").write_text("worktree is due\n")
                 self.state("sync", worktree)
                 new, stop = self.claude_worktree_calls(worktree, nested)
                 self.assertEqual(new.returncode, 2, new.stdout + new.stderr)
                 self.assertIn("rejects new public file path", new.stderr)
-                self.assertIn("Praetor checkpoint due:", stop["reason"])
+                self.assertEqual(stop.returncode, 2, stop.stdout + stop.stderr)
+                self.assertIn("Praetor checkpoint due:", stop.stderr)
 
     def test_claude_hooks_started_in_a_worktree_judge_the_checkout_the_session_moved_to(self):
         worktree = self.linked_worktree(self.root / ".claude/worktrees/agent/tree")
@@ -709,7 +724,8 @@ class NativeLefthook(unittest.TestCase):
         self.state("sync")
         new, stop = self.claude_worktree_calls(self.root, self.root, project=worktree)
         self.assertEqual(new.returncode, 2, new.stdout + new.stderr)
-        self.assertIn("Praetor checkpoint due:", stop["reason"])
+        self.assertEqual(stop.returncode, 2, stop.stdout + stop.stderr)
+        self.assertIn("Praetor checkpoint due:", stop.stderr)
 
     def submodule(self, name):
         """A registered submodule: a .git file pointing into the fixture's .git/modules."""
@@ -779,8 +795,10 @@ class NativeLefthook(unittest.TestCase):
                                              cwd=nested, env=path)
                 self.assertLess(time.monotonic() - started, 15 - STARTUP_MARGIN)
                 if key == "Stop":
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn("timed out", json.loads(result.stdout)["reason"])
+                    # The engine fails closed (exit 2, stderr is the block reason) when it
+                    # cannot resolve the workspace root.
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("resolve workspace root", result.stderr)
                 else:
                     self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                     self.assertIn("policy unavailable", result.stderr)

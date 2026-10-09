@@ -89,13 +89,18 @@ func (d Dialect) decodeNative(event Event, object map[string]json.RawMessage) (C
 	if agentTrafficEvent(event) {
 		return decodeNativeAgentTraffic(d.Client, event, object)
 	}
-	return d.decodeNativeTool(event, object)
+	canonical, err := d.decodeNativeTool(event, object)
+	if err == nil && event == EventStop {
+		fillMainStop(d.payloadClient, &canonical, object)
+	}
+	return canonical, err
 }
 
-// continuedStop reports whether a post-return payload says a stop hook already continued
-// the subagent. Only a JSON true counts; an absent or malformed flag is false.
+// continuedStop reports whether a stop or post-return payload says a stop hook already
+// continued the turn or subagent. Only a JSON true counts; an absent or malformed flag is
+// false.
 func continuedStop(event Event, object map[string]json.RawMessage) bool {
-	if event != EventPostReturn {
+	if event != EventPostReturn && event != EventStop {
 		return false
 	}
 	active, _, err := optionalBool(object, "stop_hook_active")

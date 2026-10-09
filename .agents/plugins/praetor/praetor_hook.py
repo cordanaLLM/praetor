@@ -51,6 +51,10 @@ PROBE_LIMIT = 64 * 1024
 # this wait end before the longest launcher row (60 s) gives up; a shorter row's client timeout
 # ends that row first. TestLauncherTimeoutsOutwaitEngineBudgets pins both bounds.
 RUN_TIMEOUT = 45
+# The stop row outlasts the others: the engine verifies the state ledger (20 s) and then asks
+# the checkpoint evaluator (30 s) before it answers. The stop client timeout is 90 s, so both
+# probes plus this wait still end before the client gives up. TestStopLauncherTimeouts pins both.
+STOP_RUN_TIMEOUT = 55
 # The engine reads at most 1 MiB + 1 byte of payload (agenthook.MaxInputBytes).
 DRAIN_LIMIT = 1024 * 1024 + 1
 DRAIN_CHUNK = 64 * 1024
@@ -101,10 +105,11 @@ def serves(engine, pair, run=subprocess.run):
 
 def serve(engine, pair, run=subprocess.run):
     """Run the engine on the inherited streams and return its exit code unchanged."""
+    limit = STOP_RUN_TIMEOUT if pair[-1] == "stop" else RUN_TIMEOUT
     try:
-        return run([engine, "hook", *pair], timeout=RUN_TIMEOUT, check=False).returncode
+        return run([engine, "hook", *pair], timeout=limit, check=False).returncode
     except subprocess.TimeoutExpired:
-        reason = f"{engine} did not answer within {RUN_TIMEOUT} s"
+        reason = f"{engine} did not answer within {limit} s"
     except OSError as error:
         reason = f"{engine} could not start: {error}"
     sys.stderr.write("praetor hook: " + reason[:1000] + "\n")

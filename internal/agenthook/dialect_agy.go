@@ -287,6 +287,9 @@ func agyEncodePreTool(verdict Verdict) Response {
 // ungoverned workspace) is not blocking per 3.4's own table and always lets the agent
 // stop.
 func agyEncodeStop(canonical Canonical, verdict Verdict) Response {
+	if verdict.Outcome == Skip {
+		return agyRespond(map[string]any{}, []byte("praetor hook: "+boundReason(verdict.Reason)+", skipped\n"))
+	}
 	if verdict.Outcome != Deny || canonical.StopActive {
 		return agyRespond(map[string]any{}, nil)
 	}
