@@ -18,8 +18,11 @@ import (
 // nothing else. Toolchain counts are advisory: they describe the machine running the audit,
 // so folding them into the score made the same commit pass on one host and fail on another.
 type FlavorAuditReport struct {
-	Flavor           string         `json:"flavor"`
-	RepoPath         string         `json:"repo_path"`
+	Flavor   string `json:"flavor"`
+	RepoPath string `json:"repo_path"`
+	// Path is the repository-relative directory a pinned flavor was audited against, "." for
+	// the root; it is set by AuditTargetsContext.
+	Path             string         `json:"path,omitempty"`
 	Score            float64        `json:"score"`
 	Passed           bool           `json:"passed"`
 	TemplatesTotal   int            `json:"templates_total"`
@@ -125,11 +128,14 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 		return nil, fmt.Errorf("audit flavor cancelled: %w", err)
 	}
 	if targetFlavor == "" || targetFlavor == "auto" {
-		resolved, err := Resolve(repoPath)
+		targets, err := ResolveTargets(repoPath)
 		if err != nil {
 			return nil, err
 		}
-		targetFlavor = resolved
+		if len(targets) != 1 || targets[0].Path != "." {
+			return nil, fmt.Errorf("audit flavor: %s pins %d flavor targets; audit them with AuditTargetsContext", repoPath, len(targets))
+		}
+		targetFlavor = targets[0].Flavor
 	}
 
 	flv, err := Get(targetFlavor)

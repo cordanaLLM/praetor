@@ -1,0 +1,4 @@
+type: fixed
+title: "A Go service declaring app-service now resolves to the go-service flavor (flavors can name a secondary profile through flavor.MultiProfile, tried after the flavors built for it), and a flavors list in .standards.yaml pins one or more flavors, each optionally scoped to a repository-relative path, for flavor audit, gate run and the pre-push hook through one resolver (flavor.ResolveTargets); an unknown pinned flavor or a missing directory is refused, and a repository matching no flavor still fails and names the pin setting"
+issue: "#1103"
+breaking: false

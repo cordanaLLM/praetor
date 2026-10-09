@@ -222,6 +222,13 @@ type Flavor interface {
 	HISSProfile() string
 }
 
+// MultiProfile is the optional interface of a flavor that serves profiles beyond its primary
+// HISSProfile. Profile resolution tries the flavors whose primary profile it is first, then
+// these, so a secondary claim never outranks a flavor built for the profile (#1103).
+type MultiProfile interface {
+	AlsoImplements() []string
+}
+
 var (
 	registryMu sync.RWMutex
 	registry   = builtinFlavors()

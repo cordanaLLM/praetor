@@ -119,7 +119,27 @@ a Go library.
   of scoring the repository against a flavor that describes nothing about it. Pass `--flavor=<name>`
   to audit against one deliberately. `gate run` fails its Flavor Conformance stage the same way and
   names the flavors of the profile it tried; it takes no `--flavor`, so there the remedy is the
-  marker a flavor detects or a declared profile that fits (`internal/gating/flavor_stage_test.go`).
+  `flavors` pin below, a marker a flavor detects or a declared profile that fits
+  (`internal/gating/flavor_stage_test.go`).
+- `go-service` also implements `app-service` (`flavor.MultiProfile`), tried after the flavors built
+  for that profile, so a Go service declaring `app-service` resolves without a flag
+  (`internal/flavor/pins_test.go`).
+- The `flavors` list in `.standards.yaml` pins the flavor and replaces detection for `flavor audit`,
+  `gate run` and the generated pre-push hook, which runs the audit. Each entry names a flavor
+  (`praetorctl flavor list`) and optionally a repository-relative `path`; a repository with several
+  components lists one entry per path and each is audited against its own directory only. An unknown
+  flavor, a missing directory or a path outside the repository is refused, never skipped. An
+  explicit `--flavor` still wins on the command line
+  (`flavor.ResolveTargets`, `internal/config/flavor_pins.go`, `cmd/standardsctl/flavor_pin_cli_test.go`).
+
+  ```yaml
+  flavors:
+    - name: go-service
+      path: api
+    - name: frontend-svelte
+      path: web
+  ```
+
   `praetorctl adopt` scaffolds no flavor templates there and
   prints a "Not applicable" warning naming `praetorctl flavor apply --flavor=<name>` instead
   (`internal/adopt/flavor_report_test.go`); a flat Go module with only root `.go` files is one such

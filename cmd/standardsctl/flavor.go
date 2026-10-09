@@ -121,14 +121,14 @@ func printInspectTemplate(t flavor.TemplateItem) {
 
 func runFlavorAudit(args []string) error {
 	fs := flag.NewFlagSet("flavor audit", flag.ContinueOnError)
-	targetFlv := fs.String("flavor", "auto", "Target flavor (default: auto-detect)")
+	targetFlv := fs.String("flavor", "auto", "Target flavor (default: the .standards.yaml flavors pin, else auto-detect)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	dir := positionalAt(positional, 0, ".")
 
-	report, err := flavor.AuditFlavor(dir, *targetFlv)
+	reports, err := auditFlavorReports(dir, *targetFlv)
 	if errors.Is(err, flavor.ErrFlavorNotApplicable) {
 		fmt.Printf("=== Flavor Audit: %s ===\n  Not applicable: %v\n", dir, err)
 		fmt.Println("  The declared profile governs this repository; no flavor describes its stack.")
@@ -139,18 +139,51 @@ func runFlavorAudit(args []string) error {
 		return fmt.Errorf("flavor audit failed: %w%s", err, explicitFlavorHint(err))
 	}
 
-	fmt.Printf("=== Flavor Audit: %s (Flavor: %s) ===\n", dir, report.Flavor)
+	var failed []string
+	for _, report := range reports {
+		printFlavorAuditReport(dir, report)
+		if !report.Passed {
+			failed = append(failed, fmt.Sprintf("%s at %s (score: %.1f%%)", report.Flavor, report.Path, report.Score))
+		}
+	}
+	if len(reports) == 1 && len(failed) == 1 {
+		return fmt.Errorf("flavor audit failed (score: %.1f%%)", reports[0].Score)
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("flavor audit failed: %s", strings.Join(failed, ", "))
+	}
+	return nil
+}
+
+// auditFlavorReports audits dir against the explicit flavor, or, for "" and "auto", against
+// every flavor ResolveTargets names: the manifest's flavors pins, else the detected one.
+func auditFlavorReports(dir, targetFlv string) ([]*flavor.FlavorAuditReport, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), flavor.DefaultAuditTimeout)
+	defer cancel()
+	if targetFlv != "" && targetFlv != "auto" {
+		report, err := flavor.AuditFlavorContext(ctx, dir, targetFlv)
+		if err != nil {
+			return nil, err
+		}
+		return []*flavor.FlavorAuditReport{report}, nil
+	}
+	return flavor.AuditTargetsContext(ctx, dir)
+}
+
+// printFlavorAuditReport prints one report; a pinned flavor also names the directory it was
+// audited against.
+func printFlavorAuditReport(dir string, report *flavor.FlavorAuditReport) {
+	scope := ""
+	if report.Path != "" && report.Path != "." {
+		scope = ", Path: " + report.Path
+	}
+	fmt.Printf("=== Flavor Audit: %s (Flavor: %s%s) ===\n", dir, report.Flavor, scope)
 	fmt.Printf("  Score:       %.1f%%\n", report.Score)
 	fmt.Printf("  Passed:      %v\n", report.Passed)
 	fmt.Printf("  Templates:   %d/%d present\n", report.TemplatesPresent, report.TemplatesTotal)
 	fmt.Printf("  Settings:    %d/%d valid\n", report.SettingsValid, report.SettingsTotal)
 	fmt.Printf("  Toolchains:  %d/%d available (advisory, not scored)\n", report.ToolchainsAvailable, report.ToolchainsTotal)
 	printFlavorAuditFindings(report)
-
-	if !report.Passed {
-		return fmt.Errorf("flavor audit failed (score: %.1f%%)", report.Score)
-	}
-	return nil
 }
 
 // printFlavorAuditFindings prints each missing template, missing or invalid setting, missing

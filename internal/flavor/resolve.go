@@ -3,6 +3,7 @@ package flavor
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/classify"
@@ -87,5 +88,19 @@ func flavorsForProfile(profile string) []Flavor {
 			matched = append(matched, all[i])
 		}
 	}
+	for i := 0; i < len(all) && i < maxDetectionCandidates; i++ {
+		if all[i].HISSProfile() != profile && alsoImplements(all[i], profile) {
+			matched = append(matched, all[i])
+		}
+	}
 	return matched
+}
+
+// alsoImplements reports whether f declares profile as a secondary profile (MultiProfile).
+func alsoImplements(f Flavor, profile string) bool {
+	multi, ok := f.(MultiProfile)
+	if !ok {
+		return false
+	}
+	return slices.Contains(multi.AlsoImplements(), profile)
 }
