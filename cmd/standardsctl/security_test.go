@@ -171,6 +171,14 @@ func runsGovulnGateStep(step ghworkflow.Step) bool {
 	return slices.ContainsFunc(gateCommands, func(command string) bool { return strings.Contains(step.Run, command) })
 }
 
+// setsGoUpFromGoMod reports whether a setup-go step takes its version from go.mod alone.
+// setup-go reads go-version first when both inputs are set, so a step that also sets
+// go-version resolves that range through the manifest again.
+func setsGoUpFromGoMod(step ghworkflow.Step) bool {
+	_, ranged := step.With["go-version"]
+	return step.With["go-version-file"] == "go.mod" && !ranged
+}
+
 // cachedGoGateJobs parses one workflow and returns how many of its jobs run the gate and which of
 // those set Go up without go-version-file: go.mod. Such a job scans with a Go patch release
 // resolved from a range, and the actions/go-versions manifest behind that range lags a release
@@ -190,7 +198,7 @@ func cachedGoGateJobs(t *testing.T, data []byte) (int, []string) {
 		}
 		gateJobs++
 		if slices.ContainsFunc(steps, func(step ghworkflow.Step) bool {
-			return strings.HasPrefix(step.Uses, "actions/setup-go@") && step.With["go-version-file"] != "go.mod"
+			return strings.HasPrefix(step.Uses, "actions/setup-go@") && !setsGoUpFromGoMod(step)
 		}) {
 			cached = append(cached, id)
 		}
@@ -225,32 +233,66 @@ func TestSecurityGovuln_Negative_GateJobsResolveGoFromGoMod(t *testing.T) {
 	if _, cached := cachedGoGateJobs(t, []byte(fixed)); len(cached) != 0 {
 		t.Fatalf("go-version-file job reported: %q", cached)
 	}
+	// boundary: both inputs set; setup-go uses go-version, so the range comes back
+	both := strings.Replace(planted, "go-version: '1.27'", "go-version: '1.27'\n          go-version-file: go.mod", 1)
+	if _, cached := cachedGoGateJobs(t, []byte(both)); !slices.Equal(cached, []string{"scan"}) {
+		t.Fatalf("job with go-version and go-version-file: cached %q; setup-go reads go-version first", cached)
+	}
 }
 
-// adopt.yml sets Go up from go.mod, then calls the praetor-adopt action, which runs its own
-// setup-go with check-latest. Without the resolved version passed down, that inner step
-// resolves the default range through the lagging manifest and overrides the outer toolchain.
+// resolvedGoInput is the praetor-adopt input that hands the job's go.mod-resolved Go release to
+// the action's own setup-go step.
+const resolvedGoInput = "${{ steps.setup-go.outputs.go-version }}"
+
+// adoptCallsWithoutResolvedGo parses one workflow and returns how many steps call the
+// praetor-adopt action and which of them ("job/step name") miss the resolved Go version, or sit
+// in a job whose setup-go step is not id setup-go reading go.mod. The action runs its own
+// setup-go with check-latest; without the exact version it resolves the default range through
+// the lagging manifest and overrides the job's toolchain.
+func adoptCallsWithoutResolvedGo(t *testing.T, data []byte) (int, []string) {
+	t.Helper()
+	spec, err := ghworkflow.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls, missing := 0, []string{}
+	for _, id := range ghworkflow.SortedJobIDs(spec.Jobs) {
+		steps := spec.Jobs[id].Steps
+		resolved := slices.ContainsFunc(steps, func(step ghworkflow.Step) bool {
+			return step.ID == "setup-go" && strings.HasPrefix(step.Uses, "actions/setup-go@") && setsGoUpFromGoMod(step)
+		})
+		for _, step := range steps {
+			if step.Uses != "./.github/actions/praetor-adopt" {
+				continue
+			}
+			calls++
+			if !resolved || step.With["go-version"] != resolvedGoInput {
+				missing = append(missing, id+"/"+step.Name)
+			}
+		}
+	}
+	return calls, missing
+}
+
+// Negative: every praetor-adopt call in adopt.yml passes the job's go.mod-resolved Go release.
+// A copy of adopt.yml with the input dropped from one call reports exactly that call.
 func TestAdoptWorkflow_Negative_PassesResolvedGoVersionToAction(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "adopt.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "go-version: ${{ steps.setup-go.outputs.go-version }}"
-	text := string(data)
-	idx := strings.Index(text, "uses: ./.github/actions/praetor-adopt")
-	if idx < 0 {
-		t.Fatal("adopt.yml no longer calls the praetor-adopt action")
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	calls, missing := adoptCallsWithoutResolvedGo(t, []byte(text))
+	if calls < 3 || len(missing) != 0 {
+		t.Fatalf("adopt.yml: %d praetor-adopt calls, want at least 3; missing the resolved Go version: %q", calls, missing)
 	}
-	end := strings.Index(text[idx:], "\n      - name:")
-	if end < 0 {
-		end = len(text) - idx
+	line := "\n          go-version: " + resolvedGoInput
+	last := strings.LastIndex(text, line)
+	if last < 0 {
+		t.Fatal("adopt.yml carries no resolved Go version input")
 	}
-	if !strings.Contains(text[idx:idx+end], want) {
-		t.Errorf("adopt.yml: the praetor-adopt call lacks %q", want)
-	}
-	// negative: the same call with the input removed must be refused by the check above
-	call := strings.Replace(text[idx:idx+end], want, "", 1)
-	if strings.Contains(call, want) {
-		t.Fatal("stripped call still contains the input")
+	mutant := text[:last] + text[last+len(line):]
+	if _, missing := adoptCallsWithoutResolvedGo(t, []byte(mutant)); len(missing) != 1 {
+		t.Fatalf("mutant with one input dropped: missing %q; want exactly one call reported", missing)
 	}
 }

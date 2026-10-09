@@ -61,7 +61,10 @@ reason and states where the coverage is recovered.
 
 `.github/workflows/portability.yml` runs the matrix on `ubuntu-26.04`, `macos-26` and
 `windows-2025` with `fail-fast: false`, compiling, vetting and testing every package and then
-running the harness self-tests through `scripts/portability_selftest.py`.
+running the harness self-tests through `scripts/portability_selftest.py`. Every leg sets Go up
+from the `go.mod` toolchain directive (setup-go `go-version-file`), so the three platforms build
+with the same Go release as the other workflows
+([Go toolchain](../guides/contributing.md#go-toolchain)).
 
 On a draft pull request no leg runs: the workflow follows the hosted gate shape
 ([workflows Praetor writes and runs](../guides/workflow-triggers.md#workflows-praetor-writes-and-runs)).

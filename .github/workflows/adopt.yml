@@ -209,6 +209,17 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The head's go.mod toolchain directive names the Go release, as in the adopt job above.
+      # The action runs its own setup-go with check-latest, which resolves a range through the
+      # lagging setup-go manifest; given the exact version installed here it finds nothing
+      # newer there and takes this one from the tool cache.
+      - name: Setup Go
+        id: setup-go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
       # cache: "false" keeps setup-go from saving what this job built into the default
       # branch's cache scope; the job restores no cache either.
       - name: Execute Dogfood Benchmark
@@ -217,6 +228,7 @@ jobs:
         with:
           mode: dogfood
           cache: "false"
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       - name: Execute Fast Adoption
         id: praetor
@@ -227,6 +239,7 @@ jobs:
           force: "true"
           record-baseline: "true"
           cache: "false"
+          go-version: ${{ steps.setup-go.outputs.go-version }}
 
       - name: Enforce Monotonic Debt Ratchet
         if: "!contains(github.event.comment.body, '/dogfood')"

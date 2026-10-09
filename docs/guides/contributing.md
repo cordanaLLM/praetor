@@ -36,18 +36,22 @@ make verify-all
 
 ### Go toolchain
 
-`go.mod` carries the toolchain directive (`toolchain go1.27.2`), and `tools/go/go.mod` carries the
-same one. It is the single source of the Go release that builds and scans this repository:
+The `toolchain` directive in `go.mod`, repeated in `tools/go/go.mod`, names the Go release that
+builds and scans this repository on the host and in CI:
 
 - Local builds follow it through `GOTOOLCHAIN=auto` (the Go default): a `go` older than the
   directive downloads the named release and runs it. `GOTOOLCHAIN=local` opts out and uses the
   installed release, so a `govulncheck` run with it can report standard-library advisories that
   the directive's release has fixed.
-- CI jobs set Go up with `go-version-file: go.mod`. A version range with `check-latest` resolves
-  through the `actions/go-versions` manifest, which lags a release (its update job has been cancelled on every run since
-  at least 2026-10-05); an exact version missing from it is downloaded from go.dev instead.
+- CI jobs set Go up with `go-version-file: go.mod`. A version range, with or without
+  `check-latest`, resolves through the `actions/go-versions` manifest, which can lag a Go
+  release by days; an exact version missing from it is downloaded from go.dev instead.
   `TestSecurityGovuln_Negative_GateJobsResolveGoFromGoMod` fails a gate job that sets Go up
-  any other way.
+  any other way, and `TestAdoptWorkflow_Negative_PassesResolvedGoVersionToAction` fails a
+  `praetor-adopt` call that does not pass the resolved release on.
+- The DevContainer is the exception: it builds with the Go release of its digest-pinned builder
+  image under `GOTOOLCHAIN=local` (`internal/devcontainer/bootstrap.go`), and Renovate moves
+  that image in its own pull request.
 - Renovate's `gomod` manager proposes updates to the directive by default, so a Go security
   release arrives as a dependency pull request, not as a CI change.
 
