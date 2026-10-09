@@ -23,8 +23,9 @@ token` or `--token`.
 The CLI subcommands and the MCP tools build the same `forge.ClaimCommand` and run it on the
 same `forge.ClaimDesk`, so they cannot drift
 (`TestIssueClaimMCP_Positive_MirrorsTheCLIDesk`). A session identifier is 1 to 128 characters
-of letters, digits and `. _ / : + @ -`; lane and branch follow the same rule. A branch name
-outside it, such as one with a space, is refused.
+of letters, digits and `. _ / : + @ -`, and the first character must be a letter or digit; lane
+and branch follow the same rule. A branch name outside it, such as one with a space, is
+refused.
 
 ## What a claim writes
 
@@ -74,7 +75,8 @@ issue by posting a marker. Tests: `TestClaim_Negative_MalformedAndForeignMarkers
 | `landing` | `status` | |
 | `released` | `release` | Final. Carries the outcome. |
 
-A note is one line of at most 280 characters; a longer note is refused, not cut.
+Newlines and runs of whitespace in a note are folded into single spaces before the
+280-character limit applies; a longer note is refused, not cut.
 
 ## Refusal, takeover and the stale window
 
@@ -100,14 +102,17 @@ Issue claims are advisory: they converge through comment timestamps and IDs rath
 distributed locking. Every new claim (first claim, reuse after release, stale takeover) writes
 a new claim comment. Stages of an ongoing claim edit the session's own comment in place. When
 two sessions claim or update at the same moment, both may write; there is a residual race
-window where two sessions can each act once before their next read. On the next forge read,
-the reconcile step computes the holder as the oldest live claim by comment identifier; any
-session owning a live comment that is not the holder finalises its comment as `abandoned` and
-is refused with `forge.ClaimHeldError` naming the winner.
+window where two sessions can each act once before their next read. On the next claim, status
+update or release, the reconcile step computes the holder as the oldest live claim by comment
+id; a session owning a live comment that is not the holder finalises it as `abandoned`, and when
+another session holds the issue that session is refused with `forge.ClaimHeldError` naming the
+winner. Read-only operations (status without a stage, `LiveClaim` for the dispatch gate) report
+the holder and change nothing.
 
-Because claims are advisory, worktree ownership and the landing queue serve as the real
-exclusion guard that prevents concurrent work from landing. Hard mutual exclusion through a
-git-ref lease is tracked in [#1033](https://github.com/cordanaLLM/praetor/issues/1033). Tests:
+Claims are advisory and do not exclude conflicting work on their own; until
+[#1033](https://github.com/cordanaLLM/praetor/issues/1033) (hard mutual exclusion through a
+git-ref lease) lands, exclusion against conflicting work has to come from the repository's
+own pipeline, for example one worktree per branch and serialized merges. Tests:
 `TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID`,
 `TestClaim_Negative_InterleavedClaimersOnReleasedCommentExactlyOneHolds`,
 `TestClaim_Negative_InterleavedClaimersOnStaleCommentExactlyOneHolds`,
@@ -132,8 +137,8 @@ unreadable comment thread or a thread longer than 1,000 comments, returns an err
 `forge.ErrClaimUnverifiable`. A claim that could not be verified is never reported as held,
 and a hold that could not be checked is never reported as absent. When the comment was written
 but the labels or the read-back failed, the claim is finalised as `abandoned` so a half-made
-claim does not hold the issue and its status labels are removed again; on a takeover, status
-labels are cleared as well (`TestClaim_Negative_ForgeErrorsFailClosed`,
+claim does not hold the issue and any status labels it applied are removed again; on a
+takeover, status labels are cleared as well (`TestClaim_Negative_ForgeErrorsFailClosed`,
 `TestClaim_Negative_LabelFailureAbandonsTheComment`,
 `TestClaim_Negative_AbandonedClaimLeavesNoStatusLabel`,
 `TestClaim_Negative_TakeoverConfirmHoldFailureClearsLabels`). A session that re-runs `claim` on its
@@ -162,9 +167,10 @@ error, not skipped. The gate then decides per issue:
 | The brief names an issue but no `session:` | Deny. |
 | The claim cannot be read, or no lookup is wired | Deny. |
 
-A brief that names no issue is not touched and needs no token or network. A field is a line that starts at column 0 with the lowercase word `issue:` or `session:`; bulleted, indented or capitalised lines are prose and never match. A `session:` line is validated only when the brief also names an issue. Test: `TestExtractBriefClaimPositive`. The brief is also
-judged by the text register gate, so a session identifier must pass it: tokens such as `a` or
-`mine` inside the identifier are rejected as grammar words. Tests:
+A brief that names no issue is not touched and needs no token or network. A field is a line
+that starts at column 0 with the lowercase word `issue:` or `session:`; bulleted, indented or
+capitalised lines are prose and never match. A `session:` line is validated only when the brief
+also names an issue. Tests: `TestExtractBriefClaimPositive`,
 `TestBriefClaims_Negative_ForeignLiveClaimRefusesDispatchNamingIt`,
 `TestBriefClaims_Negative_UnclaimedUnverifiableAndMalformedRefuse` and
 `TestHookIssueClaims_Negative_FailsClosed`.
