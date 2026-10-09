@@ -145,3 +145,153 @@ func TestClientSkillProjections_Boundary(t *testing.T) {
 		t.Fatalf("planning and checking wrote .claude (stat err=%v)", err)
 	}
 }
+
+// licenseFixture is the LICENSE the licence projection tests write beside each skill.
+const licenseFixture = "MIT License\n\nCopyright (c) 2026 Fixture Holder\n"
+
+// Positive: a bundle skill's LICENSE travels with its SKILL.md into the client skill directory and
+// into the plugin, byte for byte, and --verify accepts both. Without it the licence stayed in
+// the checkout while the copies an agent client or the plugin installs outside it went without.
+func TestSkillLicenseProjection_Positive_TravelsWithTheSkill(t *testing.T) {
+	root := writeClientSkillFixture(t, "")
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	for _, name := range config.RegisterSkillBundle() {
+		writeRegisterFixture(t, root, CanonicalSkillLicenseRel(name), licenseFixture)
+	}
+	files, err := CompileAgentSurfaces(t.Context(), io.Discard, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := relPaths(files)
+	for _, name := range config.RegisterSkillBundle() {
+		for _, dir := range []string{".claude/skills", PluginSkillsRel} {
+			rel := SkillLicenseRel(dir, name)
+			if !slices.Contains(got, rel) {
+				t.Errorf("%s not projected: %v", rel, got)
+			} else if text := readRegisterFixture(t, filepath.Join(root, filepath.FromSlash(rel))); text != licenseFixture {
+				t.Errorf("%s = %q, want the canonical licence", rel, text)
+			}
+		}
+	}
+	if skillOwn := SkillLicenseRel(".claude/skills", ownSkill); slices.Contains(got, skillOwn) {
+		t.Errorf("the repository's own skill got a licence copy: %s", skillOwn)
+	}
+	if _, err := VerifyClientSkills(t.Context(), root); err != nil {
+		t.Fatalf("VerifyClientSkills: %v", err)
+	}
+	if _, err := VerifyPluginSkills(t.Context(), root); err != nil {
+		t.Fatalf("VerifyPluginSkills: %v", err)
+	}
+}
+
+// compiledLicenseFixture compiles a repository whose caveman skill carries a LICENSE and ships
+// the plugin, and returns its root.
+func compiledLicenseFixture(t *testing.T) string {
+	t.Helper()
+	root := writeClientSkillFixture(t, "")
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	writeRegisterFixture(t, root, CanonicalSkillLicenseRel("caveman"), licenseFixture)
+	if _, err := VerifyClientSkills(t.Context(), root); err == nil {
+		t.Fatal("a repository whose copies were never compiled verified")
+	}
+	if _, err := CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// Negative: an edited licence copy fails verification as projection drift, in the client directory
+// and in the plugin alike.
+func TestSkillLicenseProjection_Negative_EditedCopy(t *testing.T) {
+	root := compiledLicenseFixture(t)
+	for _, dir := range []string{".claude/skills", PluginSkillsRel} {
+		writeRegisterFixture(t, root, SkillLicenseRel(dir, "caveman"), licenseFixture+"edited\n")
+	}
+	if _, err := VerifyClientSkills(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || !strings.Contains(err.Error(), ".claude/skills/caveman/LICENSE") {
+		t.Fatalf("an edited client licence: err = %v", err)
+	}
+	if _, err := VerifyPluginSkills(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || !strings.Contains(err.Error(), PluginSkillsRel+"/caveman/LICENSE") {
+		t.Fatalf("an edited plugin licence: err = %v", err)
+	}
+}
+
+// Negative: a missing licence copy fails verification, in the client directory and in the plugin
+// alike.
+func TestSkillLicenseProjection_Negative_MissingCopy(t *testing.T) {
+	root := compiledLicenseFixture(t)
+	for _, dir := range []string{".claude/skills", PluginSkillsRel} {
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(SkillLicenseRel(dir, "caveman")))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := VerifyClientSkills(t.Context(), root); err == nil || !strings.Contains(err.Error(), ".claude/skills/caveman/LICENSE") {
+		t.Fatalf("a missing client licence: err = %v", err)
+	}
+	if _, err := VerifyPluginSkills(t.Context(), root); err == nil || !strings.Contains(err.Error(), PluginSkillsRel+"/caveman/LICENSE") {
+		t.Fatalf("a missing plugin licence: err = %v", err)
+	}
+}
+
+// Negative: a stale licence copy fails verification when the canonical skill has no LICENSE,
+// and CompileAgentSurfaces removes it.
+func TestSkillLicenseProjection_Negative_StaleCopy(t *testing.T) {
+	root := writeClientSkillFixture(t, "")
+	writeRegisterFixture(t, root, PluginManifestRel, `{"name":"praetor"}`)
+	if _, err := CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
+		t.Fatal(err)
+	}
+	assertLicensesVerified(t, root)
+
+	writeRegisterFixture(t, root, SkillLicenseRel(".claude/skills", "caveman"), licenseFixture)
+	writeRegisterFixture(t, root, SkillLicenseRel(PluginSkillsRel, "caveman"), licenseFixture)
+
+	if _, err := VerifyClientSkills(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || !strings.Contains(err.Error(), ".claude/skills/caveman/LICENSE") {
+		t.Fatalf("stale client licence: err = %v", err)
+	}
+	if _, err := VerifyPluginSkills(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || !strings.Contains(err.Error(), PluginSkillsRel+"/caveman/LICENSE") {
+		t.Fatalf("stale plugin licence: err = %v", err)
+	}
+
+	if _, err := CompileAgentSurfaces(t.Context(), io.Discard, root); err != nil {
+		t.Fatalf("CompileAgentSurfaces failed to clean stale licences: %v", err)
+	}
+	assertLicensesVerified(t, root)
+}
+
+func assertLicensesVerified(t *testing.T, root string) {
+	t.Helper()
+	if _, err := VerifyClientSkills(t.Context(), root); err != nil {
+		t.Fatalf("VerifyClientSkills failed: %v", err)
+	}
+	if _, err := VerifyPluginSkills(t.Context(), root); err != nil {
+		t.Fatalf("VerifyPluginSkills failed: %v", err)
+	}
+}
+
+// Boundary: a pending licence is planned before it exists, a pending licence for a skill Praetor
+// does not ship is refused, and CheckSkillTargets covers the licence targets.
+func TestSkillLicenseProjection_Boundary_PendingAndTargets(t *testing.T) {
+	empty := t.TempDir()
+	planned, err := PlanAgentSurfacesOver(t.Context(), empty, PendingSources{
+		Skills:   map[string][]byte{"caveman": []byte("# pending\n")},
+		Licenses: map[string][]byte{"caveman": []byte(licenseFixture)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := relPaths(planned); !slices.Equal(got, []string{".claude/skills/caveman/SKILL.md", ".claude/skills/caveman/LICENSE"}) {
+		t.Fatalf("pending caveman planned %v", got)
+	}
+	if _, err := PlanAgentSurfacesOver(t.Context(), empty, PendingSources{Licenses: map[string][]byte{ownSkill: []byte("x")}}); err == nil {
+		t.Fatal("a pending licence for a skill Praetor does not ship was planned")
+	}
+	linked := t.TempDir()
+	writeRegisterSkill(t, linked, "caveman")
+	writeRegisterFixture(t, linked, ".claude/skills/caveman/SKILL.md", "x")
+	if err := os.Symlink(filepath.Join(linked, "elsewhere"), filepath.Join(linked, ".claude", "skills", "caveman", "LICENSE")); err != nil {
+		t.Skipf("symlinks unavailable on this platform: %v", err)
+	}
+	if err := CheckSkillTargets(t.Context(), linked, []string{"caveman"}); err == nil || !strings.Contains(err.Error(), "LICENSE") {
+		t.Fatalf("CheckSkillTargets accepted a symlinked licence target: %v", err)
+	}
+}

@@ -46,7 +46,7 @@ func agentSurfaceKindOf(rel string) agentSurfaceKind {
 		return agentSurfaceKind{source: compiler.CanonicalSkillsRel,
 			projected:    "Projected canonical skill to the plugin copy",
 			synchronized: "Synchronized plugin copy of the canonical skill"}
-	case path.Base(rel) == compiler.SkillEntryName:
+	case path.Base(rel) == compiler.SkillEntryName || path.Base(rel) == compiler.SkillLicenseName:
 		return agentSurfaceKind{source: compiler.CanonicalSkillsRel,
 			projected:    "Projected canonical skill to the skill directory its agent client reads",
 			synchronized: "Synchronized client copy of the canonical skill"}
@@ -101,6 +101,9 @@ func priorAgentSurfaces(ctx context.Context, repoPath string) (priorVendorProjec
 func agentSurfaceDigests(files []compiler.TargetFile) priorVendorProjections {
 	prior := make(priorVendorProjections, len(files))
 	for i := 0; i < len(files) && i < maxProjectionTargets; i++ {
+		if files[i].Remove {
+			continue
+		}
 		prior.record(files[i].RelativePath, files[i].Content, agentSurfaceKindOf(files[i].RelativePath).source)
 	}
 	return prior
@@ -113,7 +116,7 @@ func agentSurfaceDigests(files []compiler.TargetFile) priorVendorProjections {
 // pendingSkills), so the preview names every copy the run projects and every hand edit it
 // replaces (#366).
 func projectAgentSurfaces(ctx context.Context, s *adoptSession, prior priorVendorProjections) error {
-	pending := compiler.PendingSources{Personas: s.pendingPersonas(), Skills: s.pendingSkills()}
+	pending := compiler.PendingSources{Personas: s.pendingPersonas(), Skills: s.pendingSkills(), Licenses: s.pendingLicenses()}
 	files, err := plannedAgentSurfaces(ctx, s.repoPath, pending)
 	if err != nil {
 		return err

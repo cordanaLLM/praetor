@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 )
 
 // syncWriter prints progress lines and keeps the first write error, so a caller checks once.
@@ -243,6 +244,9 @@ type PendingSources struct {
 	// Skills maps the name of a skill Praetor ships (config.RegisterSkillBundle) to the bytes of
 	// the SKILL.md the caller writes under CanonicalSkillsRel.
 	Skills map[string][]byte
+	// Licenses maps the name of a skill Praetor ships to the bytes of the LICENSE the caller
+	// writes beside its SKILL.md.
+	Licenses map[string][]byte
 }
 
 // PlanAgentSurfacesOver is PlanAgentSurfaces for the tree a caller is about to leave: a pending
@@ -302,6 +306,9 @@ func checkedAgentSurfaces(ctx context.Context, targetDir string, pending Pending
 // ships.
 type agentSurfacePlan struct {
 	personas, clientSkills, pluginPersonas, pluginSkills []projectionFile
+	// staleLicenses are the LICENSE copies the write removes (staleClientLicenses,
+	// stalePluginLicenses), planned and checked with the copies it writes.
+	staleLicenses []string
 }
 
 // sets lists the copies of the plan by kind, in write order.
@@ -311,11 +318,14 @@ func (p agentSurfacePlan) sets() [][]projectionFile {
 
 // targetFiles lists every copy of the plan in write order, as the compiled files a report reads.
 func (p agentSurfacePlan) targetFiles() []TargetFile {
-	files := make([]TargetFile, 0, len(p.personas)+len(p.clientSkills)+len(p.pluginPersonas)+len(p.pluginSkills))
+	files := make([]TargetFile, 0, len(p.personas)+len(p.clientSkills)+len(p.pluginPersonas)+len(p.pluginSkills)+len(p.staleLicenses))
 	for _, set := range p.sets() {
 		for _, file := range set {
 			files = append(files, TargetFile{RelativePath: file.rel, Content: string(file.data)})
 		}
+	}
+	for _, rel := range p.staleLicenses {
+		files = append(files, TargetFile{RelativePath: rel, Remove: true})
 	}
 	return files
 }
@@ -335,7 +345,7 @@ func planAgentSurfaces(ctx context.Context, targetDir string, vendor []projectio
 	if err != nil {
 		return plan, err
 	}
-	if plan.clientSkills, err = clientSkillProjections(ctx, targetDir, skillDirs, pending.Skills); err != nil {
+	if plan.clientSkills, err = clientSkillProjections(ctx, targetDir, skillDirs, pending); err != nil {
 		return plan, err
 	}
 	if plan.pluginSkills, err = pluginSkillProjections(ctx, targetDir); err != nil {
@@ -346,7 +356,34 @@ func planAgentSurfaces(ctx context.Context, targetDir string, vendor []projectio
 			return plan, err
 		}
 	}
-	return plan, nil
+	if plan.staleLicenses, err = plannedStaleLicenses(ctx, targetDir, skillDirs, pending); err != nil {
+		return plan, err
+	}
+	return plan, checkProjectionFiles(ctx, targetDir, removalFiles(plan.staleLicenses))
+}
+
+// plannedStaleLicenses returns the stale LICENSE copies one write removes: the plugin's and the
+// selected client directories' (stalePluginLicenses, staleClientLicenses).
+func plannedStaleLicenses(ctx context.Context, targetDir string, skillDirs []string, pending PendingSources) ([]string, error) {
+	plugin, err := stalePluginLicenses(ctx, targetDir)
+	if err != nil {
+		return nil, err
+	}
+	client, err := staleClientLicenses(ctx, targetDir, skillDirs, pending)
+	if err != nil {
+		return nil, err
+	}
+	return append(plugin, client...), nil
+}
+
+// removalFiles lists rels as projection files without content, so the writer's refusals run over
+// the files a write removes.
+func removalFiles(rels []string) []projectionFile {
+	files := make([]projectionFile, len(rels))
+	for i := range rels {
+		files[i] = projectionFile{rel: rels[i]}
+	}
+	return files
 }
 
 // planPersonaCopies returns a plan holding the persona copies agent_clients selects and the
@@ -366,6 +403,19 @@ func planPersonaCopies(ctx context.Context, targetDir string, pending map[string
 
 // writeAgentSurfaces writes a checked plan and reports each surface it wrote.
 func writeAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string, plan agentSurfacePlan) error {
+	if err := removeStaleSkillLicenses(ctx, targetDir, plan.staleLicenses); err != nil {
+		return fmt.Errorf("stale skill licence removal failed: %w", err)
+	}
+	if n := len(plan.staleLicenses); n > 0 {
+		sw.printf("  [COMPILED] removed %d stale skill licence copies (%s).\n", n, strings.Join(plan.staleLicenses, ", "))
+	}
+	if err := writePersonaSurfaces(ctx, sw, targetDir, plan); err != nil {
+		return err
+	}
+	return writeSkillSurfaces(ctx, sw, targetDir, plan)
+}
+
+func writePersonaSurfaces(ctx context.Context, sw *syncWriter, targetDir string, plan agentSurfacePlan) error {
 	if err := writeProjectionFiles(ctx, targetDir, plan.personas); err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
@@ -375,17 +425,21 @@ func writeAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string, p
 	if err := printNotApplicablePersonaDirs(ctx, sw.w, targetDir); err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
-	if err := writeProjectionFiles(ctx, targetDir, plan.clientSkills); err != nil {
-		return fmt.Errorf("client skill projection failed: %w", err)
-	}
-	if n := len(plan.clientSkills); n > 0 {
-		sw.printf("  [COMPILED] %d client skill projections of %s.\n", n, CanonicalSkillsRel)
-	}
 	if err := writeProjectionFiles(ctx, targetDir, plan.pluginPersonas); err != nil {
 		return fmt.Errorf("plugin agent projection failed: %w", err)
 	}
 	if n := len(plan.pluginPersonas); n > 0 {
 		sw.printf("  [COMPILED] %d plugin agent projections (%s).\n", n, PluginAgentsRel)
+	}
+	return nil
+}
+
+func writeSkillSurfaces(ctx context.Context, sw *syncWriter, targetDir string, plan agentSurfacePlan) error {
+	if err := writeProjectionFiles(ctx, targetDir, plan.clientSkills); err != nil {
+		return fmt.Errorf("client skill projection failed: %w", err)
+	}
+	if n := len(plan.clientSkills); n > 0 {
+		sw.printf("  [COMPILED] %d client skill projections of %s.\n", n, CanonicalSkillsRel)
 	}
 	if err := writeProjectionFiles(ctx, targetDir, plan.pluginSkills); err != nil {
 		return fmt.Errorf("plugin skill projection failed: %w", err)

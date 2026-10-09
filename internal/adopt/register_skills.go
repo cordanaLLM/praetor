@@ -39,12 +39,33 @@ import (
 var priorSkillDigests = map[string]map[string]string{
 	compiler.CanonicalSkillRel("social-text"): {
 		"a128a86ad170bfaf89012567e1405693006627e260cd18c420f3abb500dd6d9e": "first shipped, REUSE header and upstream credit (#235)",
+		"5f142b7db4b084bd6168bcad862e7860688b4b8e43f3ed997dd5ed0cc77b05f2": "inline credit, no repository path an adopter lacks (#850)",
 	},
 	compiler.CanonicalSkillRel("caveman"): {
 		"c0ab6d15d42d9dab2640eb53abf7865495ab99979931cd463540646974d59b49": "first shipped, REUSE header and upstream credit (#235)",
+		"7f76820594f9792d620eb1aa9fbe5f5b9e67c7fe0dbd256d46dd329078862cef": "inline credit, no repository path an adopter lacks (#850)",
 	},
 	compiler.CanonicalSkillRel("adhd-format"): {
 		"1db3a6e0ec137143cb81002491bab5f5ae6a9331333126423de199a1c66edb44": "first shipped, REUSE header and upstream credit (#235)",
+		"1d5efc9bf3e177ddb016daf50663cd7554bac8495b408fa5e784ebfc6cfdd8ac": "inline credit, no repository path an adopter lacks (#850)",
+	},
+}
+
+// priorSkillLicenseDigests are the digests of every LICENSE text a Praetor release shipped at each
+// canonical skill licence path of the bundle, the current texts among them: the upstream MIT text
+// of the skill's origin, byte for byte. testdata/skill-licenses reproduces each digest, and
+// TestPriorSkillLicenseDigests_Boundary_CurrentSourcesRecorded fails until a changed licence is
+// recorded here. An earlier text no release shipped is replaced here, never kept beside the new
+// one.
+var priorSkillLicenseDigests = map[string]map[string]string{
+	compiler.CanonicalSkillLicenseRel("social-text"): {
+		"8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c": "first shipped, upstream MIT text of i-have-adhd (#850)",
+	},
+	compiler.CanonicalSkillLicenseRel("caveman"): {
+		"94fe75d355887f84ee7eefca68e06d8d082a23dad47a8e1f58a94d98900edf5b": "first shipped, upstream MIT text of Caveman at 8dffbb260 (#850)",
+	},
+	compiler.CanonicalSkillLicenseRel("adhd-format"): {
+		"8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c": "first shipped, upstream MIT text of i-have-adhd (#850)",
 	},
 }
 
@@ -53,8 +74,9 @@ const maxRegisterSkills = 8
 
 // skillSource is one skill of the bundle as the verified source bundle holds it.
 type skillSource struct {
-	name string
-	data []byte
+	name    string
+	data    []byte
+	license []byte
 }
 
 // registerSkillPlan is what the agent-harness step installs, resolved once per run
@@ -155,6 +177,17 @@ func (s *adoptSession) installRegisterSkills(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
+		if len(sources[i].license) > 0 {
+			licenseRel := compiler.CanonicalSkillLicenseRel(sources[i].name)
+			if _, err := s.scaffoldFile(ctx, scaffold{
+				rel: licenseRel, perm: filePerm, content: sources[i].license, confined: true, prior: priorSkillLicenseDigests[licenseRel],
+				created:   "Installed the upstream licence of the " + sources[i].name + " skill from the verified source bundle",
+				verified:  "Existing upstream licence of the " + sources[i].name + " skill verified identical to the verified source bundle",
+				refreshed: "Refreshed the unedited earlier Praetor licence of the " + sources[i].name + " skill to the verified source bundle",
+			}); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -175,9 +208,35 @@ func readRegisterSkillSources(ctx context.Context, root string) ([]skillSource, 
 		if !exists {
 			return nil, fmt.Errorf("the source bundle %s holds no %s", root, compiler.CanonicalSkillRel(names[i]))
 		}
-		sources = append(sources, skillSource{name: names[i], data: data})
+		if err := compiler.CheckShippedSkillReferences(names[i], data); err != nil {
+			return nil, fmt.Errorf("the source bundle %s: %w", root, err)
+		}
+		license, err := readSkillLicense(ctx, root, names[i], data)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, skillSource{name: names[i], data: data, license: license})
 	}
 	return sources, nil
+}
+
+// readSkillLicense reads the LICENSE the source bundle holds beside skill name, whose SKILL.md is
+// data. A skill whose declared upstream licence requires its text to travel with copies
+// (compiler.SkillRequiresLicense) must have one; any other skill installs the file only when the
+// source holds it.
+func readSkillLicense(ctx context.Context, root, name string, data []byte) ([]byte, error) {
+	required, err := compiler.SkillRequiresLicense(data)
+	if err != nil {
+		return nil, fmt.Errorf("the source bundle %s: skill %s: %w", root, name, err)
+	}
+	license, exists, err := compiler.ReadCanonicalSkillLicense(ctx, root, name)
+	if err != nil {
+		return nil, fmt.Errorf("the source bundle %s: %w", root, err)
+	}
+	if required && !exists {
+		return nil, fmt.Errorf("the source bundle %s holds no %s for %s", root, compiler.CanonicalSkillLicenseRel(name), name)
+	}
+	return license, nil
 }
 
 // warnAbsentRegisterSkills warns, when the run installs no skill for reason, about every register
@@ -204,13 +263,24 @@ func (s *adoptSession) warnAbsentRegisterSkills(ctx context.Context, reason stri
 // the client copies; a real run gets none and reads the disk. A kept edited skill is not among
 // them: its copies follow the text on disk.
 func (s *adoptSession) pendingSkills() map[string][]byte {
+	return s.pendingBundleFiles(compiler.CanonicalSkillRel)
+}
+
+// pendingLicenses is pendingSkills for the LICENSE beside each skill.
+func (s *adoptSession) pendingLicenses() map[string][]byte {
+	return s.pendingBundleFiles(compiler.CanonicalSkillLicenseRel)
+}
+
+// pendingBundleFiles returns, in a dry run, the file relOf names for each skill of the bundle that
+// the run planned to write (planDryRunWrite), keyed by skill name; a real run gets none.
+func (s *adoptSession) pendingBundleFiles(relOf func(name string) string) map[string][]byte {
 	if !s.opts.DryRun {
 		return nil
 	}
 	pending := make(map[string][]byte)
 	names := config.RegisterSkillBundle()
 	for i := 0; i < len(names) && i < maxRegisterSkills; i++ {
-		if content := s.dryRunWrites[compiler.CanonicalSkillRel(names[i])]; content != nil {
+		if content := s.dryRunWrites[relOf(names[i])]; content != nil {
 			pending[names[i]] = content
 		}
 	}
