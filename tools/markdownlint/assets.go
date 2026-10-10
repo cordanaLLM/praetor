@@ -180,6 +180,9 @@ var priorDigests = map[string]string{
 	"5d769f012c60688714ef40fe3498174559d5e9eec7c527e5b6605a75b2571d24": Directory + "/package.json",
 	"d94aec74aec5ae8fedb118122b74aaa3ba347ec7cf413cc3cee975f1e2eacd2a": Directory + "/package-lock.json",
 	"b5da2d1072959fe473d2866919ae756f2ab81484175f583475118d490a81ef13": Directory + "/verify.mjs",
+	// verify.mjs before it left the read-only context projection, AGENTS.readonly.md, out of the
+	// style rules like the other compiled context files (#1135).
+	"8e14d51b230823345ff9b480e762219197819c6ad373ffa6782d4cdabb493e26": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{
