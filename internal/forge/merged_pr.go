@@ -4,6 +4,7 @@
 package forge
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -152,33 +154,48 @@ func ReadMergedPullRequests(r io.Reader) ([]MergedPullRequest, error) {
 	return ParseMergedPullRequests(data)
 }
 
-// ParseMergedPullRequests parses JSON bytes into a slice of MergedPullRequest records.
+// mergedPRJSON is the strict reader of a records file: unknown or repeated member names, a
+// second document and nesting beyond the record shape are refused.
+var mergedPRJSON = strictjson.Options{MaxBytes: MaxMergedPRBytes, MaxDepth: 8}
+
+// ParseMergedPullRequests parses a records file: a JSON array of records, or an object whose
+// only member is "units" holding that array.
 func ParseMergedPullRequests(data []byte) ([]MergedPullRequest, error) {
-	trimmed := strings.TrimSpace(string(data))
+	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
 		return nil, errors.New("merged pull requests data is empty")
 	}
-	var prs []MergedPullRequest
-	if strings.HasPrefix(trimmed, "{") {
-		var wrapper struct {
-			Units []MergedPullRequest `json:"units"`
-		}
-		if err := json.Unmarshal(data, &wrapper); err != nil {
-			return nil, fmt.Errorf("parse merged pull requests wrapper: %w", err)
-		}
-		prs = wrapper.Units
-		if prs == nil {
-			prs = []MergedPullRequest{}
-		}
-	} else {
-		if err := json.Unmarshal(data, &prs); err != nil {
-			return nil, fmt.Errorf("parse merged pull requests: %w", err)
-		}
+	prs, err := decodeMergedPullRequests(trimmed)
+	if err != nil {
+		return nil, err
 	}
 	if len(prs) > MaxMergedPRsLimit {
 		return nil, fmt.Errorf("merged pull requests count %d exceeds limit %d", len(prs), MaxMergedPRsLimit)
 	}
 	normalizePRNumbers(prs)
+	return prs, nil
+}
+
+func decodeMergedPullRequests(data []byte) ([]MergedPullRequest, error) {
+	if data[0] == '{' {
+		var wrapper struct {
+			Units []MergedPullRequest `json:"units"`
+		}
+		if err := strictjson.Decode(data, &wrapper, mergedPRJSON); err != nil {
+			return nil, fmt.Errorf("parse merged pull requests wrapper: %w", err)
+		}
+		if wrapper.Units == nil {
+			return nil, errors.New(`parse merged pull requests wrapper: the object carries no "units" array`)
+		}
+		return wrapper.Units, nil
+	}
+	var prs []MergedPullRequest
+	if err := strictjson.Decode(data, &prs, mergedPRJSON); err != nil {
+		return nil, fmt.Errorf("parse merged pull requests: %w", err)
+	}
+	if prs == nil {
+		return nil, errors.New(`parse merged pull requests: want a JSON array or {"units": [...]}, got null`)
+	}
 	return prs, nil
 }
 

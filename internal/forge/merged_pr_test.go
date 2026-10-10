@@ -344,3 +344,26 @@ func TestVectorFieldRaw_Boundary_RawObject(t *testing.T) {
 		t.Fatalf("expected empty provenance for raw object fallback, got: %+v", pr3.TokensByProvider)
 	}
 }
+
+func TestParseMergedPullRequests_Negative_StrictShapes(t *testing.T) {
+	for name, input := range map[string]string{
+		"unknown wrapper key":     `{"pull_requests":[{"number":1}]}`,
+		"wrapper beside units":    `{"units":[],"extra":1}`,
+		"missing units":           `{}`,
+		"null units":              `{"units":null}`,
+		"top-level null":          `null`,
+		"misspelled record key":   `[{"number":1,"dispositon":"rejected"}]`,
+		"misspelled key in units": `{"units":[{"number":1,"metric_epoc":"2026-10-10"}]}`,
+		"repeated record key":     `[{"number":1,"number":2}]`,
+		"second document":         `[] []`,
+	} {
+		prs, err := ParseMergedPullRequests([]byte(input))
+		if err == nil {
+			t.Errorf("%s: %s must be refused, got %d records", name, input, len(prs))
+		}
+	}
+	_, err := ParseMergedPullRequests([]byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), `no "units" array`) {
+		t.Errorf("a wrapper without units must say so: %v", err)
+	}
+}
