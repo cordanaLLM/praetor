@@ -26,7 +26,7 @@ const (
 // budgetFor is the outer context deadline Run applies before evaluate reads anything.
 func budgetFor(event Event) time.Duration {
 	switch event {
-	case EventPreDispatch, EventDispatchReceipt, EventDispatchAbort, EventPreHandback:
+	case EventPreDispatch, EventDispatchReceipt, EventDispatchAbort, EventPreHandback, EventSubagentStart:
 		return dispatchBudget
 	case EventPostReturn:
 		return returnBudget

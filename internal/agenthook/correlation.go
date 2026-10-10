@@ -53,10 +53,13 @@ const (
 var errNoCorrelation = errors.New("agent correlation missing")
 
 type correlationEntry struct {
-	Resolution        config.Resolution `json:"resolution"`
-	CreatedAt         int64             `json:"created_at"`
-	HandbackDigest    string            `json:"handback_digest,omitempty"`
-	HandbackDelivered bool              `json:"-"`
+	Resolution     config.Resolution `json:"resolution"`
+	CreatedAt      int64             `json:"created_at"`
+	HandbackDigest string            `json:"handback_digest,omitempty"`
+	// LaunchDigest is the SHA-256 of the prompt a read-only dispatch was rewritten to; the
+	// dispatch receipt compares the prompt the agent launched with against it.
+	LaunchDigest      string `json:"launch_digest,omitempty"`
+	HandbackDelivered bool   `json:"-"`
 }
 
 type correlationStore struct {
@@ -91,7 +94,7 @@ func newCorrelationStore(ctx context.Context, root, override string) (correlatio
 // the oldest rows instead of refusing: a leaked binding (an agent killed before SubagentStop)
 // must not shut off every later launch until its TTL runs out. An evicted agent's text is
 // then unowned, a stated skip, never a hold.
-func (s correlationStore) reserve(ctx context.Context, client, session, toolID string, resolution config.Resolution) error {
+func (s correlationStore) reserve(ctx context.Context, client, session, toolID string, resolution config.Resolution, launchDigest string) error {
 	name, err := correlationName("pending", client, session, toolID)
 	if err != nil {
 		return err
@@ -107,24 +110,27 @@ func (s correlationStore) reserve(ctx context.Context, client, session, toolID s
 		if evictErr := s.evictOldest(live); evictErr != nil {
 			return evictErr
 		}
-		return s.write(name, correlationEntry{Resolution: resolution, CreatedAt: time.Now().UTC().Unix()})
+		return s.write(name, correlationEntry{Resolution: resolution, CreatedAt: time.Now().UTC().Unix(), LaunchDigest: launchDigest})
 	})
 }
 
-func (s correlationStore) promote(ctx context.Context, client, session, toolID, agentID string) error {
+// promote binds the pending row of a dispatch to the agent it launched and returns that row.
+func (s correlationStore) promote(ctx context.Context, client, session, toolID, agentID string) (correlationEntry, error) {
 	pending, err := correlationName("pending", client, session, toolID)
 	if err != nil {
-		return err
+		return correlationEntry{}, err
 	}
 	active, err := correlationName("active", client, session, agentID)
 	if err != nil {
-		return err
+		return correlationEntry{}, err
 	}
-	return s.withLock(ctx, func() error {
+	var entry correlationEntry
+	err = s.withLock(ctx, func() error {
 		if _, cleanupErr := s.cleanup(); cleanupErr != nil {
 			return cleanupErr
 		}
-		if _, readErr := s.read(pending); readErr != nil {
+		var readErr error
+		if entry, readErr = s.read(pending); readErr != nil {
 			return fmt.Errorf("dispatch correlation missing: %w", readErr)
 		}
 		if absentErr := s.requireAbsent(active, "agent correlation already exists"); absentErr != nil {
@@ -132,6 +138,7 @@ func (s correlationStore) promote(ctx context.Context, client, session, toolID, 
 		}
 		return s.rename(pending, active, "bind dispatch correlation")
 	})
+	return entry, err
 }
 
 func (s correlationStore) cancelPending(ctx context.Context, client, session, toolID string) error {
@@ -563,7 +570,8 @@ func (s correlationStore) read(name string) (correlationEntry, error) {
 		return correlationEntry{}, err
 	}
 	var entry correlationEntry
-	if err := json.Unmarshal(data, &entry); err != nil || entry.CreatedAt <= 0 || !validCorrelationDigest(entry.HandbackDigest) {
+	if err := json.Unmarshal(data, &entry); err != nil || entry.CreatedAt <= 0 || !validCorrelationDigest(entry.HandbackDigest) ||
+		!validCorrelationDigest(entry.LaunchDigest) {
 		return correlationEntry{}, errors.New("invalid correlation record")
 	}
 	return entry, nil
@@ -571,6 +579,15 @@ func (s correlationStore) read(name string) (correlationEntry, error) {
 
 func correlationHandbackDigest(toolID, text string) string {
 	digest := sha256.Sum256([]byte(toolID + "\x00" + text))
+	return hex.EncodeToString(digest[:])
+}
+
+// correlationLaunchDigest is the LaunchDigest of a rewritten prompt; empty for none.
+func correlationLaunchDigest(prompt string) string {
+	if prompt == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(prompt))
 	return hex.EncodeToString(digest[:])
 }
 

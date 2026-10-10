@@ -170,10 +170,10 @@ func TestClaudeDispatchSurvivesAFullStoreOfLeakedBindings(t *testing.T) {
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
 	for index := 0; index < MaxCorrelationEntries; index++ {
 		tool, agent := fmt.Sprintf("leak-tool-%03d", index), fmt.Sprintf("leak-agent-%03d", index)
-		if err := store.reserve(t.Context(), "claude", "session-leak", tool, resolution); err != nil {
+		if err := store.reserve(t.Context(), "claude", "session-leak", tool, resolution, ""); err != nil {
 			t.Fatalf("reserve %d: %v", index, err)
 		}
-		if err := store.promote(t.Context(), "claude", "session-leak", tool, agent); err != nil {
+		if _, err := store.promote(t.Context(), "claude", "session-leak", tool, agent); err != nil {
 			t.Fatalf("promote %d: %v", index, err)
 		}
 	}

@@ -150,6 +150,10 @@ var registrationTable = []Registration{
 	// matcher selects a nonempty agent_type, so those human-facing answers never reach the
 	// gate; an internal agent under a named session agent is uncorrelated and skipped.
 	{Client: "claude", Event: EventPostReturn, NativeEvent: "SubagentStop", Matcher: "^.+$", Timeout: 60 * time.Second},
+	// SubagentStart carries agent_id and agent_type only, no prompt: the row adds the read-only
+	// projection for a read-only agent type (code.claude.com/docs/en/hooks, SubagentStart).
+	// The matcher selects a nonempty agent_type, as the SubagentStop row does.
+	{Client: "claude", Event: EventSubagentStart, NativeEvent: "SubagentStart", Matcher: "^.+$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},

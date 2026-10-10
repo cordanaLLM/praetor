@@ -8,6 +8,7 @@
 package agenthook
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -40,6 +41,9 @@ const (
 	EventHandbackAbort Event = "handback-abort"
 	// EventPostReturn validates a subagent return before the parent receives it.
 	EventPostReturn Event = "post-return"
+	// EventSubagentStart adds the read-only context to a subagent of a read-only role as it
+	// starts. It cannot block the start.
+	EventSubagentStart Event = "subagent-start"
 )
 
 // Input and output bounds (HISS-02). MaxInputBytes is the bound of the Python adapters.
@@ -104,8 +108,14 @@ type Canonical struct {
 	ToolUseID string
 	// AgentID identifies the launched subagent across a dispatch receipt and its return.
 	AgentID string
-	// Role identifies the dispatched subagent persona or role.
-	Role string
+	// Roles holds, per brief, the agent type names its native dispatch carries: Claude's
+	// tool_input.subagent_type, agy's Subagents[].TypeName and Subagents[].Role.
+	Roles [][]string
+	// DispatchInput is the native dispatch input the briefs were read from (Claude's
+	// tool_input, agy's toolCall.args), which a read-only rewrite returns changed.
+	DispatchInput json.RawMessage
+	// AgentType is the agent type a SubagentStart payload names.
+	AgentType string
 }
 
 // Outcome is the decision class of a verdict.
@@ -118,11 +128,17 @@ const (
 	Skip
 )
 
-// Verdict is one decision with the reason a dialect reports for Deny and Skip.
+// Verdict is one decision with the reason a dialect reports for Deny and Skip. An Allow can
+// carry the read-only context of a dispatch: UpdatedInput is the rewritten dispatch input (the
+// whole Claude tool_input, agy's overwrite object), AddedContext the text a subagent receives
+// at its start, and Notice the line that names the rewrite or the substitution on the hook's
+// own output.
 type Verdict struct {
 	Outcome      Outcome
 	Reason       string
+	UpdatedInput json.RawMessage
 	AddedContext string
+	Notice       string
 }
 
 // Response is what the process writes and the code it exits with.

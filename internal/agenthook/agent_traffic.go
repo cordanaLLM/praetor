@@ -4,14 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 
-	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
@@ -31,6 +28,8 @@ func evaluateAgentTraffic(ctx context.Context, row Registration, canonical Canon
 		return evaluateHandbackAbort(ctx, row, canonical, root, in)
 	case EventPostReturn:
 		return evaluateAgentReturn(ctx, row, canonical, root, in)
+	case EventSubagentStart:
+		return evaluateSubagentStart(ctx, canonical, root)
 	default:
 		return trafficDenied(errors.New("unsupported agent traffic event"))
 	}
@@ -115,7 +114,9 @@ func validateAllBriefs(authority briefAuthority, briefs []string) (config.Resolu
 	return resolution, nil
 }
 
-func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocation, root string, res config.Resolution) error {
+// reserveClaudeDispatch stores the pending row of a validated Claude dispatch: the register
+// contract of its return and, for a read-only one, the digest of the prompt it was rewritten to.
+func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocation, root string, res config.Resolution, prompt string) error {
 	if len(canonical.Briefs) != 1 {
 		return errors.New("client dispatch must carry exactly one brief")
 	}
@@ -123,7 +124,7 @@ func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocati
 	if err != nil {
 		return fmt.Errorf("reserve dispatch: %w", err)
 	}
-	if err := store.reserve(ctx, "claude", canonical.ConversationID, canonical.ToolUseID, res); err != nil {
+	if err := store.reserve(ctx, "claude", canonical.ConversationID, canonical.ToolUseID, res, correlationLaunchDigest(prompt)); err != nil {
 		return fmt.Errorf("reserve dispatch: %w", err)
 	}
 	return nil
@@ -141,63 +142,30 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 	if err != nil {
 		return trafficDenied(err)
 	}
-	addedContext := resolveDispatchContext(ctx, root, canonical)
+	verdict, prompt, err := readOnlyDelivery(ctx, row.Client, root, canonical)
+	if err != nil {
+		return trafficDenied(err)
+	}
 	if row.Client == "claude" {
-		if err := reserveClaudeDispatch(ctx, canonical, in, root, resolution); err != nil {
+		if err := reserveClaudeDispatch(ctx, canonical, in, root, resolution, prompt); err != nil {
 			return trafficDenied(err)
 		}
 	}
-	return Verdict{Outcome: Allow, AddedContext: addedContext}
+	return verdict
 }
 
-func isDispatchReadOnly(canonical Canonical) bool {
-	for _, brief := range canonical.Briefs {
-		if caveman.IsBriefReadOnly(brief) {
-			return true
-		}
-	}
-	return canonical.Role != "" && agentcontext.IsReadOnlyRole(canonical.Role)
-}
-
-func readOnlyContextFor(ctx context.Context, root string, canonical Canonical) string {
-	roPath := filepath.Join(root, agentcontext.CanonicalReadOnlyFile)
-	if data, err := contextopt.ReadSnapshot(ctx, roPath); err == nil {
-		return string(data)
-	}
-	agentsPath := filepath.Join(root, "AGENTS.md")
-	data, err := contextopt.ReadSnapshot(ctx, agentsPath)
-	if err != nil {
-		return ""
-	}
-	if len(canonical.Briefs) > 0 {
-		if proj, err := agentcontext.ContextForBrief(string(data), canonical.Briefs[0]); err == nil {
-			return proj
-		}
-	}
-	if canonical.Role != "" {
-		if proj, err := agentcontext.ContextForRole(string(data), canonical.Role); err == nil {
-			return proj
-		}
-	}
-	return ""
-}
-
-func resolveDispatchContext(ctx context.Context, root string, canonical Canonical) string {
-	if !isDispatchReadOnly(canonical) {
-		return ""
-	}
-	return readOnlyContextFor(ctx, root, canonical)
-}
-
+// evaluateDispatchReceipt binds a launched agent to its dispatch, then checks a read-only
+// dispatch launched with the rewritten prompt (launchVerdict).
 func evaluateDispatchReceipt(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
+	var pending correlationEntry
 	if err == nil {
-		err = store.promote(ctx, row.Client, canonical.ConversationID, canonical.ToolUseID, canonical.AgentID)
+		pending, err = store.promote(ctx, row.Client, canonical.ConversationID, canonical.ToolUseID, canonical.AgentID)
 	}
 	if err != nil {
 		return trafficDenied(fmt.Errorf("bind dispatch: %w", err))
 	}
-	return Verdict{Outcome: Allow}
+	return launchVerdict(pending, canonical)
 }
 
 // evaluateAgentReturn judges a subagent's final text at SubagentStop. A deny there does not
