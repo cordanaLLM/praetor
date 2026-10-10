@@ -61,22 +61,23 @@ func TestReadOnlyProjection_Positive(t *testing.T) {
 		}
 	}
 
-	// Verify HISS-17 row is replaced while retaining praetor gate enforcement
-	if !strings.Contains(got, "read-only: no ledger mutation") {
-		t.Errorf("read-only projection missing HISS-17 read-only replacement")
-	}
-	if !strings.Contains(got, "| pre-commit / CI | gate |") {
-		t.Errorf("read-only projection missing praetor HISS-17 gate enforcement")
+	// The HISS-17 row keeps its read-only clause and its own enforcement columns; the task and
+	// turn-end clauses are dropped.
+	if !strings.Contains(got, "never whole `.workingdir/STATE.md` | pre-commit / CI | gate |") {
+		t.Errorf("read-only projection lost the HISS-17 read clause or its enforcement")
 	}
 
-	// Verify Rule 2 runs inside verification gate
+	// Rule 2 describes the gate by name, without its command.
 	if !strings.Contains(got, "runs inside verification gate") {
 		t.Errorf("read-only projection missing Rule 2 gate replacement")
 	}
 
-	// Verify Primary Verification Commands does not contain bare verification gate line
+	// Primary Verification Commands loses the gate line with its comment, nothing more.
 	if strings.Contains(got, "\nverification gate\n") || strings.Contains(got, "# all format, lint, security gates") {
 		t.Errorf("Primary Verification Commands contains bare verification gate or dangling comment")
+	}
+	if !strings.Contains(got, "go run ./cmd/standardsctl topology audit \"${PRAETOR_DEV_ROOT:-$HOME/dev}\"\n```") {
+		t.Errorf("Primary Verification Commands fence lost its last kept command or closing line")
 	}
 }
 
@@ -121,7 +122,7 @@ func TestReadOnlyProjection_AdopterHarness(t *testing.T) {
 	}
 }
 
-func TestAssertNoMutatingCommands_GitGuards(t *testing.T) {
+func TestAssertReadOnly_GitGuards(t *testing.T) {
 	for _, cmd := range []string{
 		"git commit -s",
 		"git commit",
@@ -129,9 +130,27 @@ func TestAssertNoMutatingCommands_GitGuards(t *testing.T) {
 		"git push origin main",
 		"git add .",
 		"git add -A",
+		"praetorctl state sync .",
+		"praetorctl state task add x",
+		"lefthook run agent-checkpoint-stop",
+		"make verify-all",
 	} {
-		if err := assertNoMutatingCommands("some text with " + cmd + " included"); err == nil {
-			t.Errorf("assertNoMutatingCommands(%q) expected error, got nil", cmd)
+		if err := assertReadOnly("some text with " + cmd + " included"); err == nil {
+			t.Errorf("assertReadOnly(%q) expected error, got nil", cmd)
+		}
+		if err := assertReadOnly("```bash\n" + cmd + "\n```\n"); err == nil {
+			t.Errorf("assertReadOnly(fenced %q) expected error, got nil", cmd)
+		}
+		if err := assertReadOnly("| a | run " + cmd + " | never " + cmd + " |\n"); err == nil {
+			t.Errorf("assertReadOnly(table %q) expected error, got nil", cmd)
+		}
+		if err := assertReadOnly("Never run " + cmd + " here.\n"); err != nil {
+			t.Errorf("assertReadOnly(prohibition %q) = %v, want nil", cmd, err)
+		}
+	}
+	for _, readOnly := range []string{"praetorctl state task list", "state synchronization", "praetorctl state status"} {
+		if err := assertReadOnly("run " + readOnly + "\n"); err != nil {
+			t.Errorf("assertReadOnly(%q) = %v, want nil", readOnly, err)
 		}
 	}
 }

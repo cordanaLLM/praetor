@@ -1,6 +1,8 @@
 package compiler
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,88 +75,65 @@ func TestVerifyReadOnlyContext_Negative(t *testing.T) {
 	}
 }
 
-func TestContextForBrief_3D(t *testing.T) {
-	agentsMdPath := filepath.Join("..", "..", "AGENTS.md")
-	contentBytes, err := os.ReadFile(agentsMdPath)
-	if err != nil {
-		t.Fatalf("failed to read AGENTS.md: %v", err)
+// TestCompileContextProjections_Negative_MissingSourceWritesNothing: blocker 2. A source that
+// cannot be read fails with the "compilation failed" contract the CLI reports, and nothing is
+// written: no vendor file, no read-only projection.
+func TestCompileContextProjections_Negative_MissingSourceWritesNothing(t *testing.T) {
+	root := t.TempDir()
+	err := CompileContextProjections(t.Context(), io.Discard, NewTranspiler(), filepath.Join(root, "missing.md"), root)
+	if err == nil || !strings.Contains(err.Error(), "compilation failed") {
+		t.Fatalf("missing source: %v", err)
 	}
-	fullContent := string(contentBytes)
-
-	// Positive: brief marked readonly: true gets read-only projection
-	briefReadOnly := "goal: research architecture\ninputs: internal/\nreturn: report\nevidence: none\ntask: research\nreadonly: true\n"
-	got, err := ContextForBrief(fullContent, briefReadOnly)
-	if err != nil {
-		t.Fatalf("ContextForBrief failed: %v", err)
-	}
-	if !strings.Contains(got, agentcontext.ReadOnlyBanner) {
-		t.Errorf("read-only banner missing from ContextForBrief result")
-	}
-	if strings.Contains(got, "make verify-all") {
-		t.Errorf("mutating command make verify-all present in read-only brief context")
-	}
-
-	// Positive: brief with readonly: false gets full projection unchanged
-	briefReadWrite := "goal: fix bug\ninputs: internal/\nreturn: diff\nevidence: none\ntask: bug_fix\nreadonly: false\n"
-	got, err = ContextForBrief(fullContent, briefReadWrite)
-	if err != nil {
-		t.Fatalf("ContextForBrief failed: %v", err)
-	}
-	if got != fullContent {
-		t.Errorf("brief with readonly: false must get full content unchanged")
-	}
-
-	// Boundary: brief without readonly field gets full projection unchanged
-	briefDefault := "goal: fix bug\ninputs: internal/\nreturn: diff\nevidence: none\ntask: bug_fix\n"
-	got, err = ContextForBrief(fullContent, briefDefault)
-	if err != nil {
-		t.Fatalf("ContextForBrief failed: %v", err)
-	}
-	if got != fullContent {
-		t.Errorf("brief without readonly field must get full content unchanged")
-	}
-
-	// Negative: invalid readonly value returns error
-	briefInvalid := "goal: fix bug\ninputs: internal/\nreturn: diff\nevidence: none\ntask: bug_fix\nreadonly: maybe\n"
-	if _, err := ContextForBrief(fullContent, briefInvalid); err == nil {
-		t.Fatalf("expected error on invalid brief readonly value")
+	for _, rel := range []string{"CLAUDE.md", ReadOnlyFile} {
+		if _, statErr := os.Stat(filepath.Join(root, rel)); !errors.Is(statErr, os.ErrNotExist) {
+			t.Errorf("%s written for a missing source: %v", rel, statErr)
+		}
 	}
 }
 
-func TestContextForRole_3D(t *testing.T) {
-	content := "# Harness\n\nBefore concluding any turn:\n```bash\nmake verify-all\n```\n\n## Rules\n\nRule 1.\n"
-
-	// Positive: read-only role gets read-only projection
-	for _, role := range []string{"research", "praetor-auditor", "code-reviewer"} {
-		got, err := ContextForRole(content, role)
-		if err != nil {
-			t.Fatalf("ContextForRole(%q) failed: %v", role, err)
-		}
-		if !strings.Contains(got, agentcontext.ReadOnlyBanner) {
-			t.Errorf("ContextForRole(%q) missing read-only banner", role)
-		}
-		if strings.Contains(got, "make verify-all") {
-			t.Errorf("ContextForRole(%q) still contains make verify-all", role)
-		}
+// TestCompileContextProjections_Positive_ProjectionOfTheSplicedSnapshot: the read-only
+// projection is compiled from the same snapshot as the vendor files, after the text register
+// splice, so it matches the spliced source on disk and verify accepts it.
+func TestCompileContextProjections_Positive_ProjectionOfTheSplicedSnapshot(t *testing.T) {
+	root := skillFixture(t)
+	source := filepath.Join(root, "AGENTS.md")
+	writeCanonicalFixture(t, source, "# Policy\n\nBefore concluding any turn:\n```bash\nmake verify-all\n```\n")
+	if err := compileFixture(t, root); err != nil {
+		t.Fatalf("compile: %v", err)
 	}
-
-	// Negative: non-read-only role gets full projection
-	for _, role := range []string{"gatekeeper", "praetor-fuzzer", "packager"} {
-		got, err := ContextForRole(content, role)
-		if err != nil {
-			t.Fatalf("ContextForRole(%q) failed: %v", role, err)
-		}
-		if got != content {
-			t.Errorf("ContextForRole(%q) must return full content unchanged", role)
-		}
+	spliced := readFixtureText(t, source)
+	if !strings.Contains(spliced, "praetor:register:start") {
+		t.Fatal("the write did not splice the register block, so the snapshot check proves nothing")
 	}
-
-	// Boundary: empty role gets full content
-	got, err := ContextForRole(content, "")
+	want, err := agentcontext.ReadOnlyProjection(spliced)
 	if err != nil {
-		t.Fatalf("ContextForRole(\"\") failed: %v", err)
+		t.Fatal(err)
 	}
-	if got != content {
-		t.Errorf("ContextForRole(\"\") must return full content unchanged")
+	if got := readFixtureText(t, filepath.Join(root, ReadOnlyFile)); got != want {
+		t.Fatalf("projection differs from the spliced source's:\n%s", got)
+	}
+	if err := VerifyReadOnlyContext(t.Context(), source, root); err != nil {
+		t.Fatalf("verify rejects the written projection: %v", err)
+	}
+}
+
+// TestCompileContextProjections_Boundary_RefusedProjectionTargetWritesNothing: a read-only
+// projection target the writer refuses (a directory) leaves the source unspliced and writes no
+// vendor file.
+func TestCompileContextProjections_Boundary_RefusedProjectionTargetWritesNothing(t *testing.T) {
+	root := skillFixture(t)
+	source := filepath.Join(root, "AGENTS.md")
+	writeCanonicalFixture(t, source, fixtureSource)
+	if err := os.Mkdir(filepath.Join(root, ReadOnlyFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := compileFixture(t, root); err == nil {
+		t.Fatal("a directory at the projection target was written over")
+	}
+	if got := readFixtureText(t, source); got != fixtureSource {
+		t.Fatalf("source spliced before a refused write:\n%s", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "CLAUDE.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("vendor file written before a refused write: %v", err)
 	}
 }

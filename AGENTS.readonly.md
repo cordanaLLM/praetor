@@ -1,6 +1,6 @@
 # cordanaLLM/praetor Agent Operating Harness
 
-Run read-only: file edits, state mutations, commits prohibited. Mutating turn-end steps dropped.
+Run read-only: file edits, state mutations, commits prohibited. Mutating steps dropped; prohibitions kept.
 
 <!-- praetor:head -->
 
@@ -22,7 +22,7 @@ Session start: `python3 scripts/dev_mcp.py probe`; verify source identity.
 | **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | sweep | exit code 1 |
 | **HISS-15** 3D testing | positive + negative + boundary tests mandatory, every public interface | CI coverage gate | blocker |
 | **HISS-16** context integrity | single canonical `AGENTS.md`; vendor files compiled via `standardsctl compile-context`; `AGENTS.md` passes caveman lint | pre-commit | blocker |
-| **HISS-17** state ledger | turn start: `praetorctl state status` + `.workingdir/OPEN.md`, never whole `.workingdir/STATE.md`; read-only: no ledger mutation | pre-commit / CI | gate |
+| **HISS-17** state ledger | turn start: `praetorctl state status` + `.workingdir/OPEN.md`, never whole `.workingdir/STATE.md` | pre-commit / CI | gate |
 | **HISS-18** CI efficiency | diff-aware gating; docs/state-only change skips heavy race + security gates via `standardsctl ci filter` | CI | optimization gate |
 | **HISS-19** reuse before writing | one behavior = one implementation; extend or call existing, config formats included | `dedupe scan` in verify-all | gate fail |
 | **HISS-20** replayable evidence | every rule has fixtures replayed both directions; coverage claim reproducible, never asserted | `hiss coverage --verify` in verify-all | gate fail |
@@ -60,9 +60,9 @@ Session start: `python3 scripts/dev_mcp.py probe`; verify source identity.
 
 9. **Anti-loop interception.** Same AST diff + error category repeats $\ge 3$ times -> halt immediately. Re-evaluate design; no micro-textual retries.
 
-10. **State ledger discipline (HISS-17).** Read-only session maintains no state ledger mutations. Whole dir private + Git-ignored (cluster connection guides, backend settings, memory, scratch). Never stage its contents, force included. Publish reviewed, sanitized docs under `docs/` instead.
+10. **State ledger discipline (HISS-17).** Agents MUST maintain local `.workingdir` ledger every turn. Whole dir private + Git-ignored (cluster connection guides, backend settings, memory, scratch). Never stage its contents, force included. Publish reviewed, sanitized docs under `docs/` instead.
+    - Read-only run: mutating steps dropped here; rule duties bind write runs only.
     - Turn start: `praetorctl state status` (9 lines) + open tasks in `.workingdir/OPEN.md`. Never read whole `.workingdir/STATE.md` at turn start (~45k tokens); look up one entry only when decision needs it.
-    - Read-only execution: no task additions, ledger mutations, checkpoint hooks, commits.
 
 11. **Diff-aware CI efficiency (HISS-18).** CI pipelines MUST evaluate git diffs via `standardsctl ci filter`, run targeted gates. Pure docs or session-state changes MUST skip heavy race detectors + security suites; invariant integrity kept.
 

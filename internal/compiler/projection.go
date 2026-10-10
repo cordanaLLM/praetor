@@ -147,29 +147,101 @@ func prefixError(prefix string, err error) error {
 }
 
 // CompileVendorTargets splices the text register block into the canonical source, then
-// compiles and writes the six vendor files. The splice comes first so that every target
-// receives the block through the unchanged renderer. The manifest that governs the block is
-// the one beside the source, wherever the targets are written.
-func CompileVendorTargets(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
+// compiles and writes the six vendor files and the read-only projection (ReadOnlyFile). It
+// reads source once and computes everything it writes from that snapshot before the first
+// write (compileSource), so a failure leaves source and every output unchanged. The splice
+// comes first so that every target receives the block through the unchanged renderer. The
+// manifest that governs the block is the one beside the source, wherever the targets are
+// written. It returns the files it wrote.
+func CompileVendorTargets(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) (*CompileResult, error) {
+	compiled, err := compileSource(ctx, tr, source)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeCompiledSource(ctx, w, tr, source, targetDir, compiled); err != nil {
+		return nil, err
+	}
+	return compiled.result, nil
+}
+
+// compiledSource is what CompileVendorTargets writes, computed from one read of the source:
+// the source after the text register splice, whether the splice changed it, and the vendor
+// files followed by the read-only projection.
+type compiledSource struct {
+	spliced string
+	changed bool
+	result  *CompileResult
+}
+
+// compileSource reads source once and computes the splice, the vendor files and the read-only
+// projection from that one snapshot, writing nothing. Every failure reads "compilation failed".
+func compileSource(ctx context.Context, tr *Transpiler, source string) (compiledSource, error) {
+	root := filepath.Dir(source)
+	data, err := contextopt.ReadSnapshot(ctx, source)
+	if err != nil {
+		return compiledSource{}, fmt.Errorf("compilation failed: failed to read source %s: %w", source, err)
+	}
+	_, block, err := loadRegister(ctx, root, nil)
+	if err != nil {
+		return compiledSource{}, fmt.Errorf("compilation failed: text register: %w", err)
+	}
+	spliced, changed, _, err := spliceRegister(string(data), block)
+	if err != nil {
+		return compiledSource{}, fmt.Errorf("compilation failed: text register: %s: %w", source, err)
+	}
+	selected, err := tr.forRepository(ctx, root)
+	if err != nil {
+		return compiledSource{}, fmt.Errorf("compilation failed: %w", err)
+	}
+	res, err := selected.CompileContent(spliced)
+	if err != nil {
+		return compiledSource{}, fmt.Errorf("compilation failed: %w", err)
+	}
+	readOnly, err := agentcontext.ReadOnlyTarget(spliced)
+	if err != nil {
+		return compiledSource{}, fmt.Errorf("compilation failed: read-only projection: %w", err)
+	}
+	res.SourcePath = source
+	res.Files = append(res.Files, readOnly)
+	return compiledSource{spliced: spliced, changed: changed, result: res}, nil
+}
+
+// lintReadOnlyTarget runs the caveman gate VerifyReadOnlyContext applies over the read-only
+// projection among the written files, so compile-context fails on a projection verify rejects.
+func lintReadOnlyTarget(written *CompileResult) error {
+	for _, f := range written.Files {
+		if f.RelativePath == ReadOnlyFile {
+			_, err := LintContextText(ReadOnlyFile, f.Content)
+			return err
+		}
+	}
+	return nil
+}
+
+// writeCompiledSource checks every output before it writes the splice into source, then writes
+// the outputs and reports each.
+func writeCompiledSource(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string, compiled compiledSource) error {
 	sw := &syncWriter{w: w}
-	spliced, err := SyncRegisterBlock(ctx, filepath.Dir(source), source, true)
-	if err != nil {
-		return fmt.Errorf("compilation failed: text register: %w", err)
+	files := make([]projectionFile, 0, len(compiled.result.Files))
+	for _, f := range compiled.result.Files {
+		files = append(files, projectionFile{rel: f.RelativePath, data: []byte(f.Content)})
 	}
-	if spliced {
-		sw.printf("  [SPLICED] %s text register\n", source)
-	}
-	res, err := tr.CompileContext(ctx, source)
-	if err != nil {
-		return fmt.Errorf("compilation failed: %w", err)
-	}
-	if err := tr.WriteOutputsContext(ctx, res, targetDir); err != nil {
+	if err := checkProjectionFiles(ctx, targetDir, files); err != nil {
 		return fmt.Errorf("failed to write compiled files: %w", err)
 	}
-	for _, f := range res.Files {
+	if compiled.changed {
+		if err := contextopt.WriteSnapshot(ctx, source, []byte(compiled.spliced), 0o644); err != nil {
+			return fmt.Errorf("compilation failed: text register: failed to write %s: %w", source, err)
+		}
+		sw.printf("  [SPLICED] %s text register\n", source)
+	}
+	if err := tr.WriteOutputsContext(ctx, compiled.result, targetDir); err != nil {
+		return fmt.Errorf("failed to write compiled files: %w", err)
+	}
+	for _, f := range compiled.result.Files {
 		sw.printf("  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, MaxLineBudget)
 	}
-	if err := printNotApplicableTargets(w, res); err != nil {
+	if err := printNotApplicableTargets(w, compiled.result); err != nil {
 		return fmt.Errorf("failed to write not applicable targets: %w", err)
 	}
 	return sw.err
@@ -200,14 +272,16 @@ func printNotApplicable(w io.Writer, rels []string) error {
 	return nil
 }
 
-// CompileContextProjections writes the vendor context files, every persona projection and the
-// plugin persona and skill copies; any projection failure is an error, never a silently skipped
-// success line. Every canonical persona and skill is read, and every target is checked
+// CompileContextProjections writes the vendor context files, the read-only projection, every
+// persona projection and the plugin persona and skill copies; any projection failure is an
+// error, never a silently skipped success line. Every canonical persona and skill is read, the
+// source is read once and compiled (compileSource), and every target is checked
 // (checkProjectionFiles), before the text register splice into source and before the first file
 // is written, so a refused target leaves source and every output unchanged. Once everything is
 // written, the caveman gate compile-context --verify applies runs over AGENTS.md, every tracked
-// nested AGENTS.md and every canonical persona and skill (lintAgentText): a failure is returned, so the run never reports
-// success on text the next verify rejects. The CLI's compile-context and the MCP
+// nested AGENTS.md, every canonical persona and skill (lintAgentText) and the read-only
+// projection (lintReadOnlyTarget): a failure is returned, so the run never reports success on
+// text the next verify rejects. The CLI's compile-context and the MCP
 // standards_compile_context write call both run it.
 func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
 	sw := &syncWriter{w: w}
@@ -216,34 +290,19 @@ func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler,
 	if err != nil {
 		return fmt.Errorf("compilation failed: %w", err)
 	}
-	contentBytes, err := contextopt.ReadSnapshot(ctx, source)
-	if err != nil {
-		return fmt.Errorf("read source %s: %w", source, err)
-	}
-	if _, err := agentcontext.ReadOnlyProjection(string(contentBytes)); err != nil {
-		return fmt.Errorf("compile read-only projection: %w", err)
-	}
-	roFile := projectionFile{rel: ReadOnlyFile}
-	reservedTargets := append([]projectionFile(nil), vendor...)
-	reservedTargets = append(reservedTargets, roFile)
-	plan, err := planAgentSurfaces(ctx, targetDir, reservedTargets, PendingSources{})
+	plan, err := planAgentSurfaces(ctx, targetDir, append(vendor, projectionFile{rel: ReadOnlyFile}), PendingSources{})
 	if err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
-	if err := checkProjectionFiles(ctx, targetDir, []projectionFile{roFile}); err != nil {
+	written, err := CompileVendorTargets(ctx, w, tr, source, targetDir)
+	if err != nil {
 		return err
 	}
-	if err := CompileVendorTargets(ctx, w, tr, source, targetDir); err != nil {
-		return err
-	}
-	if err := CompileReadOnlyContext(ctx, source, targetDir); err != nil {
-		return fmt.Errorf("failed to write read-only context: %w", err)
-	}
-	sw.printf("  [COMPILED] %-35s (read-only projection)\n", ReadOnlyFile)
 	if err := writeAgentSurfaces(ctx, sw, targetDir, plan); err != nil {
 		return err
 	}
-	if err := errors.Join(lintAgentText(ctx, sw, source, targetDir)...); err != nil {
+	lintErrs := append(lintAgentText(ctx, sw, source, targetDir), lintReadOnlyTarget(written))
+	if err := errors.Join(lintErrs...); err != nil {
 		return fmt.Errorf("context written, but compile-context --verify will fail: %w", err)
 	}
 	sw.println("Cross-agent context transpilation completed successfully.")
