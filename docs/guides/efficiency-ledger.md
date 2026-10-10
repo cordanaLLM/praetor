@@ -83,11 +83,13 @@ and the bound named; nothing is cut off silently.
    array. It is read strictly (`forge.ParseMergedPullRequests`): an unknown or repeated key, a
    second document, `null`, or an object without `units` fails the run. Each row carries:
 
-   - `number` (or its alias `pull_request_number`), `head_branch`, `title` and `milestone`.
+   - `number` (or its alias `pull_request_number`), `head_branch`, `title` and `milestone`. A
+     row without a number, or whose two number fields name different pull requests, fails the
+     run.
    - `created_at` and `merged_at` as RFC 3339 timestamps, and `closing_issues` with their
      `number` and `created_at`.
-   - `disposition`: `qualified`, `offered`, `rejected`, `abandoned`, `reverted` or `timed_out`.
-     Defaults to `qualified`.
+   - `disposition`: exactly one of `qualified`, `offered`, `rejected`, `abandoned`, `reverted`
+     or `timed_out`. A row without one, or with any other spelling, fails the run.
    - `lane`: a lane identifier such as `claude-code` or `agy:flash`, counted per lane.
    - `metric_epoch`: the schema epoch tag, currently `2026-10-10`. A row without it, or a ledger
      that mixes epochs, fails the run.
@@ -107,8 +109,13 @@ and the bound named; nothing is cut off silently.
      "escaped_defects": null}]}
    ```
 
-   **Revert rule:** when a merged pull request's title is `Revert "<title>"`, the pull request
-   titled `<title>` is marked `reverted`; the revert itself stays `qualified`.
+   **Revert rule:** a `qualified` row titled `Revert "<title>"` (the git and GitHub form) or
+   `revert: <title>` (the conventional-commit form) marks the latest `qualified` unit titled
+   `<title>` that merged before it as `reverted`; the revert itself stays `qualified`. A revert
+   that is not `qualified` reverted nothing, a target with another disposition keeps it, a later
+   re-land under the same title stays `qualified`, and any other title such as `Revert <title>`
+   names no target. Reverts are read from every loaded record, so `--milestone` and `--limit`
+   do not hide them (`applyRevertDispositions` in `internal/efficiency/collector_unit.go`).
 
    **Live listing:** the GitHub listing scans closed pull requests and keeps the merged ones, so a
    live run sees only merged units; `rejected`, `abandoned` and `timed_out` units need a records
@@ -119,7 +126,8 @@ and the bound named; nothing is cut off silently.
    - `metric_epoch` is the current epoch, because the collector builds the row under the current
      schema.
    - `disposition` is `qualified`, or `reverted` under the revert rule. Check and review results
-     are not read.
+     are not read, and the revert rule sees only the listed pull requests, so a revert outside
+     `--limit` or `--milestone` is missed.
    - `wall_seconds` is `measured`: the pull request's creation to its merge.
    - `tokens_by_provider`, `review_rounds`, `retries`, `operator_minutes` and `escaped_defects`
      are not measured, because the listing carries no such data. Pass a records file to report
@@ -235,9 +243,9 @@ field; the forge package hands the field over as raw JSON.
 ### Summary rules
 
 The denominator is the **qualified** unit: a landed unit whose gates and review passed. Offered,
-rejected, abandoned, reverted and timed-out units stay visible in the lane counts
-(`2 qualified, 1 reverted, 3 offered`). Each summary figure follows one of three rules, and its
-label and text name the rule:
+rejected, abandoned, reverted and timed-out units stay visible in the lane counts, one count per
+disposition plus the total over every unit (`2 qualified, 1 reverted, 1 offered, 4 total`). Each
+summary figure follows one of three rules, and its label and text name the rule:
 
 | Rule | Figures | Computation |
 | :--- | :--- | :--- |
@@ -259,8 +267,11 @@ out of three pays for all three. The figure reads, for example,
   output sets `lower_bound`.
 - **No qualified unit:** every per-qualified-unit figure prints `undefined`, never `0`; an empty
   ledger prints `undefined` for every rate.
-- **Zero-failure claims:** escaped defects totalling zero over fully measured units print n and
-  the rule-of-three bound, `0 (n=2, rule-of-three bound <= 1.50)`.
+- **Zero-failure claims:** escaped defects that every unit measured (provenance `measured`) and
+  that total zero print the rule-of-three bound per qualified unit and its basis,
+  `0 (rule-of-three bound <= 1.50 per qualified unit; n=2 qualified units, 3 units observed)`.
+  With no failure in the observed units the expected count is at most 3 (95 %), so at most 3/n
+  per qualified unit. A modeled, cited or interval zero prints as an ordinary rate.
 
 ## Milestone summary
 
