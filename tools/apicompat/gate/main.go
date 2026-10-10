@@ -141,7 +141,7 @@ go 1.26.0
 
 require (
 	github.com/joelanford/go-apidiff v0.8.4-0.20260910211158-c3e0953fa2fd
-	golang.org/x/tools v0.51.0
+	golang.org/x/tools v0.52.0
 )
 
 require (
