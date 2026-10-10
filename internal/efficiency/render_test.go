@@ -11,62 +11,40 @@ import (
 	"time"
 )
 
-func sampleReport(t *testing.T) *Report {
-	t.Helper()
+// sampleUnit is one qualified unit joined by every source.
+func sampleUnit() UnitReport {
 	now := time.Now().Truncate(time.Second).UTC()
-	spend1 := 0.15
-	touches1 := 2
-	tokens1 := int64(500)
-	cacheRate1 := 0.75
-	localRate1 := 0.25
-	itmSecs1 := int64(7200)
+	spend, touches, tokens := 0.15, 2, int64(500)
+	cacheRate, localRate, itmSecs := 0.75, 0.25, int64(7200)
 	requests, local := 4, 1
 	cacheRead, cacheInput := int64(300), int64(400)
+	return UnitReport{
+		PullRequestNumber: 101, HeadBranch: "feat/alpha", Title: "Alpha feature", Milestone: "1.0",
+		CreatedAt: now.Add(-2 * time.Hour), MergedAt: now,
+		IssueToMerge: "2h00m", IssueToMergeSecs: &itmSecs,
+		FrontierTokens: "500", FrontierTokensNum: &tokens,
+		Spend: "$0.15", SpendAmount: &spend,
+		OperatorTouches: "2", OperatorTouchNum: &touches,
+		PromptCacheHitRate: "75.0%", CacheHitRatio: &cacheRate, CacheReadTokensNum: &cacheRead, PromptInputTokensNum: &cacheInput,
+		LocalFirstRatio: "25.0%", LocalRatio: &localRate, RequestsNum: &requests, LocalRequestsNum: &local,
+		FactHitRatio: FollowUpRefs, ChecksBeforeReviews: FollowUpRefs,
+		Sources: "transcripts+gateway", Disposition: DispositionQualified, MetricEpoch: CurrentMetricEpoch,
+		TokensByProvider: &VectorField[map[string]int64]{Value: map[string]int64{"anthropic": 500}, Provenance: ProvenanceMeasured},
+		WallSeconds:      &VectorField[int64]{Value: 7200, Provenance: ProvenanceMeasured},
+		ReviewRounds:     &VectorField[int]{Value: 1, Provenance: ProvenanceMeasured},
+		Retries:          &VectorField[int]{Value: 0, Provenance: ProvenanceMeasured},
+		OperatorMinutes:  &VectorField[float64]{Value: 15.0, Provenance: ProvenanceMeasured},
+		EscapedDefects:   &VectorField[int]{Value: 0, Provenance: ProvenanceMeasured},
+	}
+}
 
+// sampleReport builds its summary through buildMilestoneSummary, never by hand.
+func sampleReport(t *testing.T) *Report {
+	t.Helper()
 	report := &Report{
-		Units: []UnitReport{
-			{
-				PullRequestNumber:    101,
-				HeadBranch:           "feat/alpha",
-				Title:                "Alpha feature",
-				Milestone:            "1.0",
-				CreatedAt:            now.Add(-2 * time.Hour),
-				MergedAt:             now,
-				IssueToMerge:         "2h00m",
-				IssueToMergeSecs:     &itmSecs1,
-				FrontierTokens:       "500",
-				FrontierTokensNum:    &tokens1,
-				Spend:                "$0.15",
-				SpendAmount:          &spend1,
-				OperatorTouches:      "2",
-				OperatorTouchNum:     &touches1,
-				PromptCacheHitRate:   "75.0%",
-				CacheHitRatio:        &cacheRate1,
-				CacheReadTokensNum:   &cacheRead,
-				PromptInputTokensNum: &cacheInput,
-				LocalFirstRatio:      "25.0%",
-				LocalRatio:           &localRate1,
-				RequestsNum:          &requests,
-				LocalRequestsNum:     &local,
-				FactHitRatio:         FollowUpRefs,
-				ChecksBeforeReviews:  FollowUpRefs,
-				Sources:              "transcripts+gateway",
-				Disposition:          DispositionQualified,
-				MetricEpoch:          CurrentMetricEpoch,
-				TokensByProvider:     &VectorField[map[string]int64]{Value: map[string]int64{"anthropic": 500}, Provenance: ProvenanceMeasured},
-				WallSeconds:          &VectorField[int64]{Value: 7200, Provenance: ProvenanceMeasured},
-				ReviewRounds:         &VectorField[int]{Value: 1, Provenance: ProvenanceMeasured},
-				Retries:              &VectorField[int]{Value: 0, Provenance: ProvenanceMeasured},
-				OperatorMinutes:      &VectorField[float64]{Value: 15.0, Provenance: ProvenanceMeasured},
-				EscapedDefects:       &VectorField[int]{Value: 0, Provenance: ProvenanceMeasured},
-			},
-		},
+		Units:            []UnitReport{sampleUnit()},
 		MilestoneSummary: MilestoneSummary{Milestone: "1.0"},
-		Sources: SourcesMeasured{
-			Forge:       true,
-			Transcripts: true,
-			SpendLog:    true,
-		},
+		Sources:          SourcesMeasured{Forge: true, Transcripts: true, SpendLog: true},
 	}
 	spend := &SpendReport{SpendByPRNumber: map[int]float64{101: 0.15}, Unattributed: 0.05, TotalSpend: 0.20}
 	if err := (&Collector{}).buildMilestoneSummary(report, spend); err != nil {
@@ -178,6 +156,12 @@ func TestRender_Boundary_EmptyLedgerPrintsUndefinedRates(t *testing.T) {
 	if err := (&Collector{}).buildMilestoneSummary(rep, nil); err != nil {
 		t.Fatal(err)
 	}
+	assertEmptyLedgerTable(t, rep)
+	assertEmptyLedgerJSON(t, rep)
+}
+
+func assertEmptyLedgerTable(t *testing.T, rep *Report) {
+	t.Helper()
 	var tableBuf bytes.Buffer
 	if err := RenderTable(rep, &tableBuf); err != nil {
 		t.Fatalf("unexpected error rendering table: %v", err)
@@ -197,7 +181,10 @@ func TestRender_Boundary_EmptyLedgerPrintsUndefinedRates(t *testing.T) {
 	if want := summaryLine("Lane Counts", "0 qualified, 0 offered"); !strings.Contains(tableOut, want) {
 		t.Errorf("empty ledger lane counts missing %q:\n%s", want, tableOut)
 	}
+}
 
+func assertEmptyLedgerJSON(t *testing.T, rep *Report) {
+	t.Helper()
 	var jsonBuf bytes.Buffer
 	if err := RenderJSON(rep, &jsonBuf); err != nil {
 		t.Fatalf("unexpected error rendering json: %v", err)
@@ -218,7 +205,10 @@ func TestRender_Boundary_EmptyLedgerPrintsUndefinedRates(t *testing.T) {
 			t.Errorf("empty ledger JSON %s = %q, want %q", name, got, UndefinedRate)
 		}
 	}
-	if len(ms.WallSeconds.Components) != 0 || ms.FrontierTokensNum != nil {
-		t.Errorf("an empty ledger carries no numbers that read as zero: %+v", ms)
+	if len(ms.WallSeconds.Components) != 0 {
+		t.Errorf("an empty ledger carries no vector total that reads as zero: %+v", ms.WallSeconds)
+	}
+	if ms.FrontierTokensNum != nil {
+		t.Errorf("an empty ledger carries no token total that reads as zero: %v", *ms.FrontierTokensNum)
 	}
 }

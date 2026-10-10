@@ -6,18 +6,27 @@ package efficiency
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 func TestParseVectorField_Positive_ObjectAndInterval(t *testing.T) {
 	f, err := parseVectorField[int64](json.RawMessage(`{"value": 42, "provenance": "measured"}`))
-	if err != nil || f == nil || f.Value != 42 || f.Provenance != ProvenanceMeasured || f.Low != nil || f.High != nil {
-		t.Fatalf("object: %+v %v", f, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (VectorField[int64]{Value: 42, Provenance: ProvenanceMeasured}); *f != want {
+		t.Errorf("object: %+v, want %+v", *f, want)
 	}
 	m, err := parseVectorField[map[string]int64](json.RawMessage(`{"value": {"a": 5}, "provenance": "interval", "low": {"a": 4}, "high": {"a": 9}}`))
-	if err != nil || m.Low == nil || m.High == nil || (*m.Low)["a"] != 4 || (*m.High)["a"] != 9 {
-		t.Fatalf("interval: %+v %v", m, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := VectorField[map[string]int64]{Value: map[string]int64{"a": 5}, Provenance: ProvenanceInterval,
+		Low: &map[string]int64{"a": 4}, High: &map[string]int64{"a": 9}}
+	if !reflect.DeepEqual(*m, want) {
+		t.Errorf("interval: %+v, want %+v", *m, want)
 	}
 }
 

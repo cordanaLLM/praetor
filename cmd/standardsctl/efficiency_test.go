@@ -119,6 +119,13 @@ func TestRunEfficiencyTo_Positive_OutputCarriesUnitsAndNotMeasured(t *testing.T)
 	if !strings.Contains(table.String(), "#1") || !strings.Contains(table.String(), "not measured") || strings.Contains(table.String(), "(PR)") {
 		t.Errorf("table: %s", table.String())
 	}
+	assertEfficiencyJSON(t, prsPath)
+}
+
+// assertEfficiencyJSON checks that the unit's epoch and provenance and the summary's rule text
+// reach the JSON output.
+func assertEfficiencyJSON(t *testing.T, prsPath string) {
+	t.Helper()
 	var js bytes.Buffer
 	if err := runEfficiencyTo([]string{"--forge-records=" + prsPath, "--json"}, &js); err != nil {
 		t.Fatal(err)

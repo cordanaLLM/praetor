@@ -152,15 +152,16 @@ func TestCollector_Positive_LiveDriverQueryAndNotes(t *testing.T) {
 // forge timestamps, every other vector field not measured.
 func assertLiveStamped(t *testing.T, u UnitReport, wallSeconds int64) {
 	t.Helper()
-	if u.MetricEpoch != CurrentMetricEpoch || u.Disposition != DispositionQualified {
-		t.Errorf("live row epoch %q disposition %q", u.MetricEpoch, u.Disposition)
-	}
-	if u.WallSeconds == nil || u.WallSeconds.Value != wallSeconds || u.WallSeconds.Provenance != ProvenanceMeasured {
-		t.Errorf("wall_seconds must be measured from creation to merge (%d s): %+v", wallSeconds, u.WallSeconds)
-	}
-	if u.TokensByProvider != nil || u.ReviewRounds != nil || u.Retries != nil || u.OperatorMinutes != nil || u.EscapedDefects != nil {
-		t.Errorf("fields without a live source must be not measured (nil), never zero: %+v", u)
-	}
+	expectAll(t, []expectation{
+		{"current metric epoch", u.MetricEpoch == CurrentMetricEpoch, u.MetricEpoch},
+		{"merged means qualified", u.Disposition == DispositionQualified, u.Disposition},
+		{"wall_seconds measured from creation to merge", is(u.WallSeconds, VectorField[int64]{Value: wallSeconds, Provenance: ProvenanceMeasured}), u.WallSeconds},
+		{"tokens_by_provider not measured", u.TokensByProvider == nil, u.TokensByProvider},
+		{"review_rounds not measured", u.ReviewRounds == nil, u.ReviewRounds},
+		{"retries not measured", u.Retries == nil, u.Retries},
+		{"operator_minutes not measured", u.OperatorMinutes == nil, u.OperatorMinutes},
+		{"escaped_defects not measured", u.EscapedDefects == nil, u.EscapedDefects},
+	})
 }
 
 func TestCollector_Negative_SourceErrorsFailTheRun(t *testing.T) {
@@ -420,9 +421,9 @@ func TestRenderTable_Positive_PrintsNotes(t *testing.T) {
 	}
 }
 
-func TestCollector_Positive_QualifiedDenominatorAndLaneCounts(t *testing.T) {
-	// Acceptance: A fixture with two qualified units and one reverted unit reports the revert in the lane counts and divides by 2.
-	fixture := `[
+// twoQualifiedOneRevertedRecords is the acceptance fixture of #1132: two qualified units and
+// one reverted unit.
+const twoQualifiedOneRevertedRecords = `[
   {
     "number": 1,
     "head_branch": "feat/first",
@@ -463,8 +464,11 @@ func TestCollector_Positive_QualifiedDenominatorAndLaneCounts(t *testing.T) {
     "escaped_defects": {"value": 1, "provenance": "measured"}
   }
 ]`
+
+func TestCollector_Positive_QualifiedDenominatorAndLaneCounts(t *testing.T) {
+	// Acceptance: A fixture with two qualified units and one reverted unit reports the revert in the lane counts and divides by 2.
 	prsPath := filepath.Join(t.TempDir(), "prs.json")
-	writeFile(t, prsPath, []byte(fixture))
+	writeFile(t, prsPath, []byte(twoQualifiedOneRevertedRecords))
 	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
 
 	if len(report.Units) != 3 {
@@ -914,9 +918,8 @@ func TestCollector_Negative_RevertRuleNonMatchingTitle(t *testing.T) {
 	}
 }
 
-func TestCollector_Positive_PerLaneAggregation(t *testing.T) {
-	// Major 4: Per-lane aggregation and table rendering
-	fixture := `[
+// perLaneRecords spreads three units over two lanes.
+const perLaneRecords = `[
   {
     "number": 1,
     "head_branch": "feat/l1",
@@ -960,8 +963,11 @@ func TestCollector_Positive_PerLaneAggregation(t *testing.T) {
     "escaped_defects": {"value": 0, "provenance": "measured"}
   }
 ]`
+
+func TestCollector_Positive_PerLaneAggregation(t *testing.T) {
+	// Major 4: Per-lane aggregation and table rendering
 	prsPath := filepath.Join(t.TempDir(), "prs.json")
-	writeFile(t, prsPath, []byte(fixture))
+	writeFile(t, prsPath, []byte(perLaneRecords))
 	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
 
 	ms := report.MilestoneSummary

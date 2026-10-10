@@ -38,6 +38,27 @@ func collectRows(t *testing.T, transcripts bool, rows ...string) MilestoneSummar
 	return collect(t, opts).MilestoneSummary
 }
 
+// is reports a set pointer holding want.
+func is[T comparable](p *T, want T) bool {
+	return p != nil && *p == want
+}
+
+// expectation is one named check of a test table: ok must hold, got is printed when it does not.
+type expectation struct {
+	name string
+	ok   bool
+	got  any
+}
+
+func expectAll(t *testing.T, checks []expectation) {
+	t.Helper()
+	for _, c := range checks {
+		if !c.ok {
+			t.Errorf("%s: got %+v", c.name, c.got)
+		}
+	}
+}
+
 // The resource rule keeps a failed unit's consumption in the numerator and divides by the
 // qualified units; the ratio rule pools every unit's usage. The reverted unit is the only one
 // with sessions (feat/x), so a qualified-only filter in either rule changes every figure here.
@@ -45,30 +66,24 @@ func TestSummary_Positive_FailedUnitsStayInResourceNumeratorsAndRatios(t *testin
 	ms := collectRows(t, true,
 		recordRow("1", "feat/x", "reverted", labelled("100", "measured")),
 		recordRow("2", "feat/y", "qualified", labelled("100", "measured")))
-	if ms.QualifiedUnits != 1 || ms.UnitsCount != 2 {
-		t.Fatalf("units %d qualified %d", ms.UnitsCount, ms.QualifiedUnits)
-	}
-	if ms.OperatorTouchNum == nil || *ms.OperatorTouchNum != 2 || ms.OperatorTouchesPerQualified == nil || *ms.OperatorTouchesPerQualified != 2 {
-		t.Errorf("operator touches: total %v per qualified %v", ms.OperatorTouchNum, ms.OperatorTouchesPerQualified)
-	}
-	if want := ">= 2.00 per qualified unit (lower bound: total 2 over 1 of 2 units measured / 1 qualified)"; ms.OperatorTouches != want {
-		t.Errorf("operator touches = %q, want %q", ms.OperatorTouches, want)
-	}
-	if ms.FrontierTokensNum == nil || *ms.FrontierTokensNum != 1150 || ms.FrontierTokensPerQualifiedUnit == nil || *ms.FrontierTokensPerQualifiedUnit != 1150 {
-		t.Errorf("frontier tokens: total %v per qualified %v", ms.FrontierTokensNum, ms.FrontierTokensPerQualifiedUnit)
-	}
-	if ms.LocalRatio == nil || *ms.LocalRatio != 0 || !strings.Contains(ms.LocalFirstRatio, "pooled over the usage of 1 of 2 units") {
-		t.Errorf("local-first ratio over all usage: %v %q", ms.LocalRatio, ms.LocalFirstRatio)
-	}
-	if ms.CacheHitRatio == nil || !strings.Contains(ms.PromptCacheHitRate, "pooled over the usage of 1 of 2 units") {
-		t.Errorf("prompt-cache hit rate over all usage: %v %q", ms.CacheHitRatio, ms.PromptCacheHitRate)
-	}
-	if got := perQualified(t, "review rounds", ms.ReviewRounds, ""); got != 4 {
-		t.Errorf("review rounds per qualified unit = %v, want 4 (2+2 over 1)", got)
-	}
-	if ms.IssueToMergeUnits != 1 || !strings.HasPrefix(ms.AvgIssueToMerge, "3h00m (mean over 1 of 1 qualified units measured)") {
-		t.Errorf("issue-to-merge stays a mean over qualified units: %d %q", ms.IssueToMergeUnits, ms.AvgIssueToMerge)
-	}
+	touches := ">= 2.00 per qualified unit (lower bound: total 2 over 1 of 2 units measured / 1 qualified)"
+	pooled := "pooled over the usage of 1 of 2 units"
+	expectAll(t, []expectation{
+		{"units and qualified units", ms.UnitsCount == 2, ms.UnitsCount},
+		{"one qualified unit", ms.QualifiedUnits == 1, ms.QualifiedUnits},
+		{"operator touches total keeps the reverted unit", is(ms.OperatorTouchNum, 2), ms.OperatorTouchNum},
+		{"operator touches per qualified unit", is(ms.OperatorTouchesPerQualified, 2.0), ms.OperatorTouchesPerQualified},
+		{"operator touches text", ms.OperatorTouches == touches, ms.OperatorTouches},
+		{"frontier tokens total keeps the reverted unit", is(ms.FrontierTokensNum, int64(1150)), ms.FrontierTokensNum},
+		{"frontier tokens per qualified unit", is(ms.FrontierTokensPerQualifiedUnit, 1150.0), ms.FrontierTokensPerQualifiedUnit},
+		{"local-first ratio over all usage", is(ms.LocalRatio, 0.0), ms.LocalRatio},
+		{"local-first text names the pool", strings.Contains(ms.LocalFirstRatio, pooled), ms.LocalFirstRatio},
+		{"prompt-cache hit rate over all usage", ms.CacheHitRatio != nil, ms.CacheHitRatio},
+		{"prompt-cache text names the pool", strings.Contains(ms.PromptCacheHitRate, pooled), ms.PromptCacheHitRate},
+		{"review rounds per qualified unit (2+2 over 1)", perQualified(t, "review rounds", ms.ReviewRounds, "") == 4, ms.ReviewRounds},
+		{"issue-to-merge counts qualified units only", ms.IssueToMergeUnits == 1, ms.IssueToMergeUnits},
+		{"issue-to-merge is a qualified mean", strings.HasPrefix(ms.AvgIssueToMerge, "3h00m (mean over 1 of 1 qualified units measured)"), ms.AvgIssueToMerge},
+	})
 }
 
 // The ratio rule pools counts; a mean of per-unit ratios would weigh a one-request unit like a
@@ -101,22 +116,18 @@ func TestSummary_Positive_ProvenanceMixAndIntervalBounds(t *testing.T) {
 		recordRow("2", "feat/b", "qualified", `{"value":200,"provenance":"interval","low":150,"high":300}`),
 		recordRow("3", "feat/c", "rejected", labelled("60", "modeled")))
 	w := ms.WallSeconds
-	if w.Provenance != (ProvenanceMix{Measured: 1, Modeled: 1, Interval: 1}) {
-		t.Errorf("mix: %+v", w.Provenance)
-	}
 	c := w.Components[0]
-	if c.Total != 360 || c.TotalBounds == nil || *c.TotalBounds != (Interval{Low: 310, High: 460}) {
-		t.Errorf("total bounds: %+v", c)
-	}
-	if c.PerQualifiedUnit == nil || *c.PerQualifiedUnit != 180 || c.PerQualifiedUnitBounds == nil || *c.PerQualifiedUnitBounds != (Interval{Low: 155, High: 230}) {
-		t.Errorf("per-qualified bounds: %+v", c)
-	}
-	if want := "3m00s [2m35s, 3m50s] per qualified unit (total 6m00s [5m10s, 7m40s] over 3 units / 2 qualified) [measured 1, modeled 1, interval 1]"; w.Display != want {
-		t.Errorf("display = %q, want %q", w.Display, want)
-	}
-	if ms.ReviewRounds.Components[0].TotalBounds != nil || !strings.HasSuffix(ms.ReviewRounds.Display, "[measured 3]") {
-		t.Errorf("a field without intervals carries no bounds: %+v", ms.ReviewRounds)
-	}
+	display := "3m00s [2m35s, 3m50s] per qualified unit (total 6m00s [5m10s, 7m40s] over 3 units / 2 qualified) [measured 1, modeled 1, interval 1]"
+	expectAll(t, []expectation{
+		{"provenance mix", w.Provenance == ProvenanceMix{Measured: 1, Modeled: 1, Interval: 1}, w.Provenance},
+		{"total over every unit", c.Total == 360, c},
+		{"total bounds", is(c.TotalBounds, Interval{Low: 310, High: 460}), c.TotalBounds},
+		{"per qualified unit", is(c.PerQualifiedUnit, 180.0), c.PerQualifiedUnit},
+		{"per-qualified bounds", is(c.PerQualifiedUnitBounds, Interval{Low: 155, High: 230}), c.PerQualifiedUnitBounds},
+		{"display", w.Display == display, w.Display},
+		{"no bounds without an interval", ms.ReviewRounds.Components[0].TotalBounds == nil, ms.ReviewRounds},
+		{"mix of a single label", strings.HasSuffix(ms.ReviewRounds.Display, "[measured 3]"), ms.ReviewRounds.Display},
+	})
 }
 
 // A field some units do not measure only bounds the cost from below, and says so.
