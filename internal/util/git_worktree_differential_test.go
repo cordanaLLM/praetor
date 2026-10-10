@@ -2,6 +2,7 @@ package util
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -127,7 +128,9 @@ func differentialFixtures() []gitFixture {
 
 // gitStopsWalk runs real git rev-parse --show-toplevel at dir with its ancestor search
 // ceiled at root's parent. git stops at the entry when it finds a repository (exit 0) or
-// dies for a reason other than "not a git repository", the only message for a skipped entry.
+// dies for a reason other than a discovery failure. Only the discovery-failure text means
+// git skipped the entry: git up to 2.55 also prints "not a git repository: <path>" for a
+// well-formed gitlink whose target is missing, and that is a stop.
 func gitStopsWalk(t *testing.T, root, dir string) bool {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
@@ -139,7 +142,25 @@ func gitStopsWalk(t *testing.T, root, dir string) bool {
 	if err == nil {
 		return true
 	}
-	return !strings.Contains(string(out), "not a git repository")
+	text := string(out)
+	return !strings.Contains(text, "(or any of the parent directories)") &&
+		!strings.Contains(text, "(or any parent up to mount point")
+}
+
+// gitVersionAtLeast reports whether the installed git is at least major.minor.
+func gitVersionAtLeast(t *testing.T, major, minor int) bool {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "--version").Output()
+	if err != nil {
+		t.Fatalf("git --version: %v", err)
+	}
+	var gotMajor, gotMinor int
+	if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "git version %d.%d", &gotMajor, &gotMinor); err != nil {
+		t.Fatalf("parse git version %q: %v", out, err)
+	}
+	return gotMajor > major || (gotMajor == major && gotMinor >= minor)
 }
 
 // Differential: GitWorktreePresent must agree with real git on every fixture entry. The
@@ -162,8 +183,19 @@ func TestGitWorktreePresent_Differential_AgreesWithGitRevParse(t *testing.T) {
 			want := gitStopsWalk(t, root, dir)
 			got, err := GitWorktreePresent(t.Context(), dir)
 			if err != nil || got != want {
-				t.Fatalf("GitWorktreePresent = %v (err %v), git stops the walk = %v", got, err, want)
+				t.Fatalf("GitWorktreePresent = %v (err %v), git stops the walk = %v (git %s)", got, err, want, gitVersionText(t))
 			}
 		})
 	}
+}
+
+func gitVersionText(t *testing.T) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "--version").Output()
+	if err != nil {
+		return "unknown: " + err.Error()
+	}
+	return strings.TrimSpace(string(out))
 }
