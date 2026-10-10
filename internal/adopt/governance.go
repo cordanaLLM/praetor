@@ -217,9 +217,9 @@ func verificationMakefileReplacement(
 		replacement = util.RestoreLineEndings(replacement, crlf)
 	case exists:
 		var err error
-		checkMakefileCLIVariableOverride(s, data)
 		withIncludeData := data
 		if withLauncher {
+			checkMakefileCLIVariableOverride(s, data)
 			withIncludeData, _, err = ensureEngineMakefileInclude(data)
 			if err != nil {
 				return "", err
@@ -258,10 +258,10 @@ func reconcileExistingVerificationMakefile(
 		s.report.recordReconciled(makefileName, "Existing verify-all preserved; execution has not been verified by adoption")
 		return true, nil
 	}
-	checkMakefileCLIVariableOverride(s, content)
-	updated := content
 	var inserted bool
+	updated := content
 	if withLauncher {
+		checkMakefileCLIVariableOverride(s, content)
 		var err error
 		updated, inserted, err = ensureEngineMakefileInclude(content)
 		if err != nil {

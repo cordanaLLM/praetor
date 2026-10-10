@@ -7,8 +7,6 @@ package adopt
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -51,32 +49,14 @@ func reconcileEngineMakefile(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
-func launcherInstalledOrPlanned(ctx context.Context, s *adoptSession) (bool, error) {
+// launcherInstalledOrPlanned reports whether the engine launcher is planned or installed.
+// When git-hooks is declined, the launcher is neither installed nor planned (#1172).
+func launcherInstalledOrPlanned(_ context.Context, s *adoptSession) (bool, error) {
 	declined, err := ArtifactDeclined(s.declined, "git-hooks")
 	if err != nil {
 		return false, err
 	}
-	if declined {
-		return false, nil
-	}
-	if _, err := os.Stat(filepath.Join(s.repoPath, filepath.FromSlash(engineLauncherFile))); err == nil {
-		return true, nil
-	}
-	existing, exists, err := s.readExistingLefthook()
-	if err != nil {
-		return false, err
-	}
-	if exists {
-		shape, err := s.lefthookShape(ctx)
-		if err != nil {
-			return false, err
-		}
-		identity := classifyLefthookConfig(existing, shape)
-		if identity.reason != "" {
-			return false, nil
-		}
-	}
-	return true, nil
+	return !declined, nil
 }
 
 func hasEngineMakefileInclude(normalized string) bool {

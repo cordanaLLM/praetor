@@ -553,7 +553,8 @@ func buildFallbackPreCommitScript() string {
 // (classifyLefthookConfig). A configuration that is neither a current nor an earlier Praetor
 // rendering is kept, --force included, and not activated (keepLefthookConfig). Otherwise the
 // checkpoint bundle is installed, lefthook.yml is written, migrated or verified, and local git
-// hooks are activated for the rendering praetor wrote.
+// hooks are activated for the rendering praetor wrote. The engine launcher is reconciled
+// independently of whether lefthook.yml is written (#1172).
 func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	existing, exists, err := s.readExistingLefthook()
 	if err != nil {
@@ -563,18 +564,18 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	if err := reconcilePlannedEngineLauncher(ctx, s); err != nil {
+		return err
+	}
 	var identity lefthookIdentity
 	if exists {
 		identity = classifyLefthookConfig(existing, shape)
 	}
 	if identity.reason != "" {
-		return keepLefthookConfig(ctx, s, identity)
+		return keepLefthookConfig(ctx, s, identity, existing)
 	}
 	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s, false)
 	if err != nil {
-		return err
-	}
-	if err := reconcileEngineLauncher(ctx, s); err != nil {
 		return err
 	}
 	lefthookWritten, err := s.renderLefthook(ctx, lefthookTarget{shape: shape, checkpoint: checkpointReady}, existing, identity.prior)
@@ -589,6 +590,19 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
+}
+
+// reconcilePlannedEngineLauncher reconciles the hook engine launcher when it is planned or
+// installed (#1172).
+func reconcilePlannedEngineLauncher(ctx context.Context, s *adoptSession) error {
+	withLauncher, err := launcherInstalledOrPlanned(ctx, s)
+	if err != nil {
+		return err
+	}
+	if !withLauncher {
+		return nil
+	}
+	return reconcileEngineLauncher(ctx, s)
 }
 
 // renderLefthook writes lefthook.yml for target and reports whether it did: the configuration an
@@ -606,13 +620,21 @@ func (s *adoptSession) renderLefthook(ctx context.Context, target lefthookTarget
 // is absent: the checkpoint files, each on its own, never refreshing one that exists, since the
 // kept configuration may run its own copies; and the interceptor, refreshed from an unedited
 // earlier rendering only when the configuration does not extend the canonical policy, whose
-// vendored bundle owns it (BUG-858).
-func keepLefthookConfig(ctx context.Context, s *adoptSession, identity lefthookIdentity) error {
+// vendored bundle owns it (BUG-858). When the kept configuration does not call the launcher yet,
+// adoption reports the prefix to use (#1172).
+func keepLefthookConfig(ctx context.Context, s *adoptSession, identity lefthookIdentity, existing []byte) error {
 	if _, err := reconcileCheckpointLifecycle(ctx, s, true); err != nil {
 		return err
 	}
 	s.report.recordSkipped(lefthookFile, identity.reason)
+	warnKeptLefthookLauncher(s, existing)
 	return reconcileEvasionHook(ctx, s, identity.canonical)
+}
+
+func warnKeptLefthookLauncher(s *adoptSession, existing []byte) {
+	if !bytes.Contains(existing, []byte(engineLauncherFile)) {
+		s.report.addWarning("existing lefthook.yml does not call the engine launcher yet; run hooks through sh %s <args>", engineLauncherFile)
+	}
 }
 
 // lefthookTarget is the rendering this run writes: the jobs of shape, and the checkpoint
