@@ -9,14 +9,40 @@ import (
 	"time"
 )
 
+func sampleIdentity() RunIdentity {
+	return RunIdentity{
+		PhysicalModel:  "claude-3-5-sonnet",
+		Harness:        "praetor-agent",
+		HarnessVersion: "1.0.0",
+		PromptDigest:   "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		ContextDigest:  "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		ContextBytes:   1024,
+		ToolSet:        []string{"read", "write"},
+		PriorRounds:    1,
+		Retries:        0,
+		CostEstimate:   0.05,
+	}
+}
+
 func sampleOutcome(task, result string) Outcome {
-	return Outcome{Time: time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC), Task: task, Lane: "gateway-coding", Target: "light", Result: result, DurationMS: 1200}
+	return Outcome{
+		Time:          time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC),
+		Task:          task,
+		Lane:          "gateway-coding",
+		Target:        "light",
+		ResolvedModel: "claude-3-5-sonnet",
+		Result:        result,
+		DurationMS:    1200,
+		Identity:      sampleIdentity(),
+		ActualCost:    0.048,
+	}
 }
 
 func TestOutcomeLogAppendsAndReadsBackInOrder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "outcomes.jsonl")
 	ctx := context.Background()
-	for _, o := range []Outcome{sampleOutcome("stubs", OutcomeOK), sampleOutcome("synthesis", OutcomeFail), sampleOutcome("stubs", OutcomeTimeout)} {
+	samples := []Outcome{sampleOutcome("stubs", OutcomeOK), sampleOutcome("synthesis", OutcomeFail), sampleOutcome("stubs", OutcomeTimeout)}
+	for _, o := range samples {
 		if err := AppendOutcome(ctx, path, o); err != nil {
 			t.Fatal(err)
 		}
@@ -25,8 +51,33 @@ func TestOutcomeLogAppendsAndReadsBackInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 || got[0].Result != OutcomeOK || got[1].Task != "synthesis" || got[2].Result != OutcomeTimeout || got[0].DurationMS != 1200 {
-		t.Fatalf("readback wrong: %+v", got)
+	assertOutcomeResults(t, got)
+	assertOutcomeIdentity(t, got[0])
+}
+
+func assertOutcomeResults(t *testing.T, got []Outcome) {
+	t.Helper()
+	if len(got) != 3 {
+		t.Fatalf("expected 3 outcomes, got: %d", len(got))
+	}
+	if got[0].Result != OutcomeOK || got[1].Task != "synthesis" {
+		t.Fatalf("results mismatch: %+v", got)
+	}
+	if got[2].Result != OutcomeTimeout || got[0].DurationMS != 1200 {
+		t.Fatalf("duration or result mismatch: %+v", got)
+	}
+}
+
+func assertOutcomeIdentity(t *testing.T, o Outcome) {
+	t.Helper()
+	if o.ResolvedModel != "claude-3-5-sonnet" {
+		t.Errorf("wrong resolved model: %s", o.ResolvedModel)
+	}
+	if o.Identity.Harness != "praetor-agent" {
+		t.Errorf("wrong harness: %s", o.Identity.Harness)
+	}
+	if o.IdentityKey == "" || o.EstimateError == nil {
+		t.Errorf("missing key or estimate error: %+v", o)
 	}
 }
 
@@ -48,11 +99,8 @@ func TestOutcomeLogMissingIsEmptyHistory(t *testing.T) {
 	}
 }
 
-func TestOutcomeRefusals(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "outcomes.jsonl")
-	ctx := context.Background()
-	bad := map[string]func(*Outcome){
+func outcomeRefusalMutators() map[string]func(*Outcome) {
+	return map[string]func(*Outcome){
 		"no task":         func(o *Outcome) { o.Task = "" },
 		"padded task":     func(o *Outcome) { o.Task = " stubs" },
 		"no target":       func(o *Outcome) { o.Target = "" },
@@ -62,8 +110,15 @@ func TestOutcomeRefusals(t *testing.T) {
 		"oversized note":  func(o *Outcome) { o.Note = strings.Repeat("n", maxOutcomeNoteBytes+1) },
 		"invalid lane":    func(o *Outcome) { o.Lane = "a\nb" },
 		"empty lane name": func(o *Outcome) { o.Lane = " " },
+		"negative actual": func(o *Outcome) { o.ActualCost = -0.5 },
 	}
-	for name, mutate := range bad {
+}
+
+func TestOutcomeRefusals(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "outcomes.jsonl")
+	ctx := context.Background()
+	for name, mutate := range outcomeRefusalMutators() {
 		o := sampleOutcome("stubs", OutcomeOK)
 		mutate(&o)
 		if err := AppendOutcome(ctx, path, o); err == nil {
@@ -85,6 +140,141 @@ func TestOutcomeRefusals(t *testing.T) {
 	cancel()
 	if err := AppendOutcome(cancelled, path, atBound); err == nil {
 		t.Fatal("canceled context ignored")
+	}
+}
+
+func identityRefusalMutators() map[string]func(*Outcome) {
+	return map[string]func(*Outcome){
+		"no identity":       func(o *Outcome) { o.Identity = RunIdentity{} },
+		"no phys model":     func(o *Outcome) { o.Identity.PhysicalModel = "" },
+		"invalid phys":      func(o *Outcome) { o.Identity.PhysicalModel = "bad model!" },
+		"no harness":        func(o *Outcome) { o.Identity.Harness = "" },
+		"no harness ver":    func(o *Outcome) { o.Identity.HarnessVersion = "" },
+		"no prompt digest":  func(o *Outcome) { o.Identity.PromptDigest = "" },
+		"no context digest": func(o *Outcome) { o.Identity.ContextDigest = "" },
+		"negative bytes":    func(o *Outcome) { o.Identity.ContextBytes = -1 },
+		"negative rounds":   func(o *Outcome) { o.Identity.PriorRounds = -1 },
+		"negative retries":  func(o *Outcome) { o.Identity.Retries = -1 },
+		"negative estimate": func(o *Outcome) { o.Identity.CostEstimate = -0.1 },
+		"invalid tool":      func(o *Outcome) { o.Identity.ToolSet = []string{"bad tool"} },
+		"mismatch model":    func(o *Outcome) { o.ResolvedModel = "other-model" },
+		"corrupt key":       func(o *Outcome) { o.IdentityKey = "sha256:corrupt" },
+	}
+}
+
+func TestOutcomeIdentityRefusals(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
+	ctx := context.Background()
+	for name, mutate := range identityRefusalMutators() {
+		o := sampleOutcome("stubs", OutcomeOK)
+		mutate(&o)
+		if err := AppendOutcome(ctx, path, o); err == nil {
+			t.Errorf("refusal expected for %s, but accepted", name)
+		}
+	}
+}
+
+func TestOutcomeIdentityKeyDiffersOnPromptTemplate(t *testing.T) {
+	run1 := sampleOutcome("stubs", OutcomeOK)
+	run1.Identity.PromptDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	run2 := sampleOutcome("stubs", OutcomeOK)
+	run2.Identity.PromptDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	run3 := sampleOutcome("stubs", OutcomeOK)
+	run3.Identity.PromptDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	key1 := run1.Key()
+	key2 := run2.Key()
+	key3 := run3.Key()
+
+	if key1 == key2 {
+		t.Fatalf("expected different identity keys for differing prompt digests, got identical: %s", key1)
+	}
+	if key1 != key3 {
+		t.Fatalf("expected identical keys for identical prompt digests, got: %s vs %s", key1, key3)
+	}
+}
+
+func TestOutcomeWrittenThroughAliasNamesResolvedModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
+	ctx := context.Background()
+
+	o := sampleOutcome("stubs", OutcomeOK)
+	o.Target = "gateway-coding"
+	o.ResolvedModel = "claude-3-7-sonnet-20250219"
+	o.Identity.PhysicalModel = "claude-3-7-sonnet-20250219"
+
+	if err := AppendOutcome(ctx, path, o); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	read, err := ReadOutcomes(ctx, path)
+	if err != nil || len(read) != 1 {
+		t.Fatalf("failed reading recorded outcome: %v", err)
+	}
+	if read[0].Target != "gateway-coding" {
+		t.Errorf("expected target gateway-coding, got: %s", read[0].Target)
+	}
+	if read[0].ResolvedModel != "claude-3-7-sonnet-20250219" {
+		t.Errorf("expected resolved_model to name physical model, got: %s", read[0].ResolvedModel)
+	}
+}
+
+func TestEstimateErrorMetricPerLane(t *testing.T) {
+	outcomes := []Outcome{
+		{
+			Task:          "stubs",
+			Lane:          "gateway-coding",
+			Target:        "light",
+			ResolvedModel: "claude-3-5-sonnet",
+			Result:        OutcomeOK,
+			Identity:      sampleIdentity(),
+			ActualCost:    0.06,
+		},
+		{
+			Task:          "implement",
+			Lane:          "gateway-coding",
+			Target:        "light",
+			ResolvedModel: "claude-3-5-sonnet",
+			Result:        OutcomeOK,
+			Identity:      sampleIdentity(),
+			ActualCost:    0.04,
+		},
+		{
+			Task:          "synthesis",
+			Lane:          "frontier-agent",
+			Target:        "heavy",
+			ResolvedModel: "claude-3-opus",
+			Result:        OutcomeOK,
+			Identity: RunIdentity{
+				PhysicalModel:  "claude-3-opus",
+				Harness:        "praetor-agent",
+				HarnessVersion: "1.0.0",
+				PromptDigest:   "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+				ContextDigest:  "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+				CostEstimate:   0.20,
+			},
+			ActualCost: 0.25,
+		},
+	}
+
+	recs := ReconcileLanes(outcomes)
+	if len(recs) != 2 {
+		t.Fatalf("expected 2 lanes, got: %d", len(recs))
+	}
+
+	coding := recs[1]
+	if coding.Lane != "gateway-coding" || coding.Runs != 2 {
+		t.Errorf("unexpected coding lane: %+v", coding)
+	}
+	if coding.EstimatedCost != 0.10 || coding.ActualCost != 0.10 || coding.EstimateError != 0 {
+		t.Errorf("unexpected cost reconciliation: %+v", coding)
+	}
+
+	rendered := RenderLaneReconciliation(recs)
+	if !strings.Contains(rendered, "lane gateway-coding:") || !strings.Contains(rendered, "lane frontier-agent:") {
+		t.Errorf("rendered reconciliation missing lanes: %s", rendered)
 	}
 }
 

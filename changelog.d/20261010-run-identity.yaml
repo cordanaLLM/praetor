@@ -1,0 +1,4 @@
+type: added
+title: "Breaking change: record run identity on every router outcome and efficiency ledger row, refuse outcomes without identity, and reconcile estimates per lane"
+issue: "#1133"
+breaking: true

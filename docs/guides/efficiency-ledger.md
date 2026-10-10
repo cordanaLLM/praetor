@@ -179,7 +179,12 @@ For each landed pull request unit the ledger computes:
 - **Prompt-cache hit rate:** `cache_read / (input + cache_creation + cache_read)` from transcripts.
 - **Local-first ratio:** Local requests over all requests of the unit.
 - **Fact-hit ratio and checks-before-reviews:** `not measured (see #897)`.
-
+- **Run identity and estimate error:** Unit rows report the resolved physical model
+  (`resolved_model`), full run identity (`identity`: physical model, harness, version,
+  prompt digest, context digest, context bytes, tool set, prior rounds, retries, cost
+  estimate), deterministic run key (`identity_key`), and reconciled estimate error
+  (`estimate_error` / `estimate_error_amount`). When unmeasured, `estimate_error` reports
+  `not measured`.
 - **Sources:** Sources that counted for requests and tokens: `transcripts+gateway`, `gateway`, `transcripts`, or `not measured`.
 
 **Requests, local-first and frontier tokens join across configured sources.** By default

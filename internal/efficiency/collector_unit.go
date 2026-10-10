@@ -189,6 +189,7 @@ func newUnit(pr forge.MergedPullRequest, live bool) (UnitReport, error) {
 		FactHitRatio:        FollowUpRefs,
 		ChecksBeforeReviews: FollowUpRefs,
 		Sources:             NotMeasured,
+		EstimateError:       NotMeasured,
 	}
 	if live {
 		stampLiveUnit(pr, &unit)

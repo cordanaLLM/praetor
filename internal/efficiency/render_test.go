@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/router"
 )
 
 // sampleUnit is one qualified unit joined by every source.
@@ -224,5 +226,60 @@ func TestRenderTable_Boundary_DispositionPrintedAsIs(t *testing.T) {
 	rows := strings.Split(out.String(), "\n")
 	if strings.Contains(rows[1], DispositionQualified) || !strings.Contains(rows[2], DispositionTimedOut) {
 		t.Errorf("rows must carry their own disposition:\n%s", out.String())
+	}
+}
+func TestRenderJSON_Positive_IdentityAndEstimateError(t *testing.T) {
+	rep := sampleReport(t)
+	errAmt := 0.005
+	id := &router.RunIdentity{
+		PhysicalModel:  "claude-3-7-sonnet-20250219",
+		Harness:        "claude-code",
+		HarnessVersion: "1.0.0",
+		PromptDigest:   "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ContextDigest:  "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+		ContextBytes:   4096,
+		ToolSet:        []string{"bash", "view"},
+		PriorRounds:    2,
+		Retries:        1,
+		CostEstimate:   0.015,
+	}
+	rep.Units[0].ResolvedModel = id.PhysicalModel
+	rep.Units[0].Identity = id
+	rep.Units[0].IdentityKey = id.Key()
+	rep.Units[0].EstimateError = "$+0.0050"
+	rep.Units[0].EstimateErrorAmount = &errAmt
+	rep.MilestoneSummary.EstimateError = "$+0.0050"
+	rep.MilestoneSummary.EstimateErrorAmount = &errAmt
+
+	var buf bytes.Buffer
+	if err := RenderJSON(rep, &buf); err != nil {
+		t.Fatalf("RenderJSON failed: %v", err)
+	}
+
+	var parsed Report
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+	if parsed.Units[0].Identity == nil || parsed.Units[0].Identity.PhysicalModel != id.PhysicalModel {
+		t.Fatalf("expected physical model %s, got %+v", id.PhysicalModel, parsed.Units[0].Identity)
+	}
+	if parsed.Units[0].IdentityKey != id.Key() {
+		t.Errorf("expected identity key %s, got %s", id.Key(), parsed.Units[0].IdentityKey)
+	}
+	if parsed.Units[0].EstimateError != "$+0.0050" {
+		t.Errorf("expected estimate error $+0.0050, got %s", parsed.Units[0].EstimateError)
+	}
+}
+
+func TestRenderTable_Positive_EstimateError(t *testing.T) {
+	rep := sampleReport(t)
+	rep.MilestoneSummary.EstimateError = "$+0.0050 (underestimated)"
+	var buf bytes.Buffer
+	if err := RenderTable(rep, &buf); err != nil {
+		t.Fatalf("RenderTable failed: %v", err)
+	}
+	want := summaryLine("Estimate Error", "$+0.0050 (underestimated)")
+	if !strings.Contains(buf.String(), want) {
+		t.Errorf("expected output to contain Estimate Error, got:\n%s", buf.String())
 	}
 }

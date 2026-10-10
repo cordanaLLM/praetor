@@ -324,12 +324,34 @@ exact `command`. A pick with no lane declared returns `lane_note` instead of a g
 `TestEveryDeclaredLabelRoutesToAnExecutableLane` routes every declared label.
 
 `praetorctl models outcome --task <label> --target <t> --result ok|fail|timeout
-[--lane <name>] [--duration-ms n] [--note text]` appends one record to
-`.workingdir/routing/outcomes.jsonl` (`--outcome-log` changes it), a private JSON Lines
-log that is never rewritten. It is the measured routing data the efficiency ledger reads
-through `router.ReadOutcomes`, which fails on a record it cannot decode instead of
-averaging over the rest. The router does not dispatch: the caller that runs the command
-records how it ended.
+[--lane <name>] [--duration-ms n] [--note text] [identity flags]` appends one
+record to `.workingdir/routing/outcomes.jsonl` (`--outcome-log` changes it), a
+private JSON Lines log that is never rewritten. It is the measured routing data
+the efficiency ledger reads through `router.ReadOutcomes`, which fails on a record
+it cannot decode instead of averaging over the rest. The router does not dispatch:
+the caller that runs the command records how it ended.
+
+Every outcome record requires a verified run identity:
+
+- `--physical-model <id>`: resolved physical model behind an alias (for example
+  `claude-3-7-sonnet-20250219`). When an alias is passed as target, the router
+  resolves it through `routing.yaml` or requires an explicit `--physical-model`;
+  naming the alias itself as the physical model is refused.
+- `--harness <name>` and `--harness-version <version>`: harness that ran the task.
+- `--prompt-digest <sha256:...>`: SHA-256 digest of prompt template or brief.
+- `--context-digest <sha256:...>`: SHA-256 digest of compiled context.
+- `--context-bytes <n>`: byte size of compiled context.
+- `--tools <list>`: comma-separated list of tool names available during the run.
+- `--rounds <n>` and `--retries <n>`: interaction rounds and prior retries.
+- `--cost-estimate <dollars>` and `--actual-cost <dollars>`: pre-dispatch cost
+  estimate and post-run measured cost.
+
+An outcome record without mandatory identity fields is refused by `ValidateOutcome`.
+Two runs differing only in prompt template produce distinct identity keys (`Key()`).
+After recording an outcome, the command computes the estimate-error metric
+(`actual_cost - cost_estimate`) and prints it per lane (`estimate-error [<lane>]: ...`).
+Passing `--reconcile` prints an aggregated reconciliation table per lane across all
+recorded outcomes in the log.
 
 ## Catalog freshness
 

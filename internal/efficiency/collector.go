@@ -104,6 +104,7 @@ func newReport(milestone string) *Report {
 			Retries:               undefinedVector,
 			OperatorMinutes:       undefinedVector,
 			EscapedDefects:        undefinedVector,
+			EstimateError:         NotMeasured,
 		},
 	}
 }
