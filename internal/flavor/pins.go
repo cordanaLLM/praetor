@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -16,6 +17,18 @@ import (
 // --flavor flag: the manifest setting that replaces detection (#1103). It carries no flag
 // name, because gate run and the generated pre-push hook take none.
 const pinRemedy = "; pin the flavor with a flavors entry in .standards.yaml"
+
+// ScopedPinRemedy is the remedy for a scoped or multiple pin: such pins get no scaffold, and the
+// files that belong at the repository root differ from those that belong under the pin path. The
+// root list is built from repositoryLevelPrefixes and repositoryLevelFiles, the lists the audit
+// reads, so the text cannot drift from what the audit does.
+func ScopedPinRemedy() string {
+	root := append(slices.Clone(repositoryLevelPrefixes), repositoryLevelFiles...)
+	return "pins scoped to a directory or several pins get no scaffold; keep the repository-level files (" +
+		strings.Join(root, ", ") + ") at the repository root and the stack files " +
+		"(for a Go service: go.mod, .golangci.yml, .gosec.json, Dockerfile) under each pinned path; " +
+		"to scaffold one flavor, pin it once without a path (the repository root)"
+}
 
 // ErrPinNotScaffoldable refuses a scaffold that the manifest's flavors pins cannot describe as
 // one flavor at the repository root: a pin scoped to a directory, or several pins. The audit
@@ -76,9 +89,18 @@ func resolveTargetsWith(repoPath string, detect func(string) (string, error)) ([
 // ErrPinNotScaffoldable when they are several or scoped to a directory.
 func SingleRootFlavor(targets []Target) (string, error) {
 	if len(targets) != 1 || targets[0].Path != "." {
-		return "", fmt.Errorf("%w: %d target(s); pass --flavor=<name> to scaffold one", ErrPinNotScaffoldable, len(targets))
+		return "", fmt.Errorf("%w: %d target(s); %s", ErrPinNotScaffoldable, len(targets), ScopedPinRemedy())
 	}
 	return targets[0].Flavor, nil
+}
+
+// IsScaffoldSkip reports whether err means a scaffold has no flavor to write and says so, rather
+// than failing: the audit's own not-applicable decision (IsNotApplicable), a repository no profile
+// classifies (ErrNoProfile: nothing to scaffold, though the audit still refuses it) or a pin the
+// root scaffold cannot express (ErrPinNotScaffoldable). Every other resolution error, such as a
+// bad pin, is a failure for the caller to report.
+func IsScaffoldSkip(err error) bool {
+	return IsNotApplicable(err) || errors.Is(err, ErrNoProfile) || errors.Is(err, ErrPinNotScaffoldable)
 }
 
 // pinnedTargets validates each pin against the registry and the working tree.
@@ -118,7 +140,10 @@ func pinDirectory(repoPath, rel string) error {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	inside, err := filepath.Rel(root, real)
-	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+	if err != nil {
+		return fmt.Errorf("relate %s to repository %s: %w", real, root, err)
+	}
+	if inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("resolves outside the repository %s", repoPath)
 	}
 	return nil

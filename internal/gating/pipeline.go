@@ -567,8 +567,9 @@ func runFlavorStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	fCtx, cancel := context.WithTimeout(ctx, flavor.DefaultAuditTimeout)
 	defer cancel()
 	reports, err := flavor.AuditTargetsContext(fCtx, cfg.repoDir)
-	if errors.Is(err, flavor.ErrFlavorNotApplicable) {
-		// Not a pass and not a failure: this repository's declared profile has no flavor, so
+	if flavor.IsNotApplicable(err) {
+		// Not a pass and not a failure: no flavor of this repository's profile applies and none
+		// is pinned (the same decision as `flavor audit` and the pre-push hook, #1111), so
 		// there is nothing for this stage to check. Reporting it is the point -- a skipped
 		// stage that reads as a pass is how a gate comes to certify what it never examined.
 		return "", notApplicable(err.Error())

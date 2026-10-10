@@ -3,10 +3,10 @@ package gating
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/cordanaLLM/praetor/internal/flavor"
 )
 
 // appServiceWithPin declares app-service, which go-library does not implement, so only a pin
@@ -16,12 +16,25 @@ func appServiceWithPin(pin string) string {
 }
 
 // TestRunFlavorStage_Positive_PinnedFlavorReachesTheGate: gate run has no --flavor, so the
-// manifest pin is the only way to name the flavor. Without it the stage fails nothing-matched.
+// manifest pin is the only way to name the flavor. Without it the stage is a stated skip naming
+// the pin setting (#1111); with it the pin wins over the skip and the repository is audited.
 func TestRunFlavorStage_Positive_PinnedFlavorReachesTheGate(t *testing.T) {
 	unpinned := goLibraryRepo(t, map[string]string{".standards.yaml": appServiceWithPin("")})
 	_, err := runFlavorStage(context.Background(), &stageConfig{repoDir: unpinned})
-	if !errors.Is(err, flavor.ErrNoFlavorMatched) || !strings.Contains(err.Error(), "flavors entry in .standards.yaml") {
-		t.Fatalf("unpinned err = %v; want nothing-matched naming the pin setting", err)
+	if reason := wantSkip(t, err, StageNotApplicable); !strings.Contains(reason, "flavors entry in .standards.yaml") {
+		t.Fatalf("unpinned skip reason = %q; want it to name the pin setting", reason)
+	}
+	// Boundary: the pin wins over the skip, so a pinned repository missing the flavor's files fails.
+	broken := goLibraryRepo(t, map[string]string{".standards.yaml": appServiceWithPin("flavors:\n  - name: go-library\n")})
+	if err := os.Remove(filepath.Join(broken, ".golangci.yml")); err != nil {
+		t.Fatalf("remove template: %v", err)
+	}
+	_, err = runFlavorStage(context.Background(), &stageConfig{repoDir: broken})
+	if err == nil {
+		t.Fatal("a pinned non-conforming repository passed")
+	}
+	if skip, ok := errors.AsType[*stageSkip](err); ok {
+		t.Fatalf("a pin must win over the skip, got %s: %s", skip.status, skip.reason)
 	}
 	pinned := goLibraryRepo(t, map[string]string{".standards.yaml": appServiceWithPin("flavors:\n  - name: go-library\n")})
 	if msg, err := runFlavorStage(context.Background(), &stageConfig{repoDir: pinned}); err != nil || msg != "" {

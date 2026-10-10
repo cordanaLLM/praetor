@@ -1184,8 +1184,14 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 // used to skip the flavor entirely, and a reviewer never saw the templates the real run created.
 func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 	name, err := resolveAdoptionFlavor(s.repoPath, s.arch)
-	if err != nil {
+	if flavor.IsScaffoldSkip(err) {
 		s.report.recordSkipped(flavorReportPath, flavorSkipDetail(s.arch, err))
+		return
+	}
+	if err != nil {
+		// A bad pin or an unreadable manifest is not "not applicable": the pre-push audit
+		// refuses it, so adoption reports it instead of promising a skip.
+		s.report.addError("resolve flavor: %v", err)
 		return
 	}
 	// Templates only: the branch-ruleset step renders the ruleset once every workflow of the
@@ -1210,17 +1216,24 @@ func resolveAdoptionFlavor(repoPath, profile string) (string, error) {
 // flavorSkipDetail says why adoption scaffolded no flavor for profile: the profile has no flavor
 // at all, or none of its flavors matches the repository. Neither is replaced by a guess.
 func flavorSkipDetail(profile string, err error) string {
+	if errors.Is(err, flavor.ErrPinNotScaffoldable) {
+		return "Not applicable: the flavors pins in .standards.yaml are scoped to a directory or several; " +
+			flavor.ScopedPinRemedy()
+	}
+	if errors.Is(err, flavor.ErrNoProfile) {
+		return "Not applicable: no profile classifies this repository, so no flavor templates were scaffolded; " +
+			"`praetorctl flavor audit` still refuses it until a profile is declared"
+	}
 	reason := "no registered flavor matches this repository"
 	switch {
 	case errors.Is(err, flavor.ErrFlavorNotApplicable):
 		reason = fmt.Sprintf("profile %s has no flavor", profile)
-	case errors.Is(err, flavor.ErrPinNotScaffoldable):
-		reason = "the flavors pins in .standards.yaml are scoped to a directory or several"
 	case profile != "":
 		reason = fmt.Sprintf("no registered flavor of profile %s matches this repository", profile)
 	}
-	return "Not applicable: " + reason + ", so no flavor templates were scaffolded; " +
-		"run `praetorctl flavor apply --flavor=<name>` to choose one"
+	return "Not applicable: " + reason + ", so no flavor templates were scaffolded and `praetorctl flavor audit` " +
+		"skips with the same reason; to audit a flavor anyway, pin it with a flavors entry in .standards.yaml, " +
+		"then run `praetorctl flavor apply` to scaffold it"
 }
 
 // recordFlavorReport lists the templates a flavor apply created and the existing files it left

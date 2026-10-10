@@ -106,12 +106,35 @@ var ErrNoFlavorMatched = errors.New("flavor: no registered flavor matches this r
 // the flavor's markers match is ErrNoFlavorMatched, not this.
 var ErrFlavorNotApplicable = errors.New("flavor: the declared profile has no flavor to audit or scaffold against")
 
+// ErrNoProfile reports that no profile classifies the repository: nothing declared one and no
+// marker implies one. It also wraps ErrNoFlavorMatched, so callers that refuse on a
+// nothing-matched error keep refusing, but IsNotApplicable excludes it: a missing or empty
+// directory, or a mistyped path, has no profile to govern it, and skipping its audit would pass a
+// repository nothing was checked against (fail closed).
+var ErrNoProfile = errors.New("flavor: no profile classifies this repository")
+
+// IsNotApplicable reports whether err means no flavor applies to the repository: its profile has
+// none (ErrFlavorNotApplicable) or none of the profile's flavors matches it (ErrNoFlavorMatched).
+// A repository no profile classifies (ErrNoProfile) is not skipped.
+// It is the one decision every caller that audits without a named flavor makes -- `flavor audit`,
+// the gate's Flavor Conformance stage, the generated pre-push hook that runs the audit, adoption
+// and the Hindsight distiller -- so they reach the same verdict on one checkout (#1111). A
+// repository whose markers match a flavor is never skipped, and a pin (ResolveTargets) is read
+// before detection, so it never reaches this decision.
+func IsNotApplicable(err error) bool {
+	if errors.Is(err, ErrNoProfile) {
+		return false
+	}
+	return errors.Is(err, ErrFlavorNotApplicable) || errors.Is(err, ErrNoFlavorMatched)
+}
+
 // DefaultAuditTimeout bounds AuditFlavor, whose callers bring no deadline of their own
 // (HISS-02). An audit reads a few dozen small files and resolves a handful of binaries.
 const DefaultAuditTimeout = 60 * time.Second
 
-// AuditFlavor audits a repository against a target flavor (for "" and "auto", the one Resolve
-// names), bounded by DefaultAuditTimeout. Callers that carry a context use AuditFlavorContext.
+// AuditFlavor audits a repository against a target flavor (for "" and "auto", the one root flavor
+// ResolveTargets names: a pin, else the detected flavor; several or scoped pins are refused),
+// bounded by DefaultAuditTimeout. Callers that carry a context use AuditFlavorContext.
 func AuditFlavor(repoPath string, targetFlavor string) (*FlavorAuditReport, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultAuditTimeout)
 	defer cancel()
@@ -220,7 +243,7 @@ func auditRequiredItems(ctx context.Context, rootDir, stackDir string, flv Flavo
 // the agent context files.
 var (
 	repositoryLevelPrefixes = []string{".github/", ".vscode/", ".paperclip/"}
-	repositoryLevelFiles    = []string{"lefthook.yml", ".standards.yaml", ".standards.lock", "AGENTS.md", "CLAUDE.md"}
+	repositoryLevelFiles    = []string{"lefthook.yml", ".gitleaks.toml", ".standards.yaml", ".standards.lock", "AGENTS.md", "CLAUDE.md"}
 )
 
 // repositoryLevel reports whether a template or setting path is read at the repository root

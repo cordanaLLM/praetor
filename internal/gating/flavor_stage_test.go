@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/cordanaLLM/praetor/internal/flavor"
 )
 
 // osImageManifest declares the os-image profile, which the os-image flavor implements.
@@ -44,29 +42,41 @@ func TestRunFlavorStage_Positive_KernelForgePasses(t *testing.T) {
 	}
 }
 
-// TestRunFlavorStage_Negative_UnmarkedOSImageStillFails keeps the stage fail-closed: a
-// repository declaring os-image with no forge marker at all is not waved through as a pass or
-// as not applicable. The reason names the flavor tried and no --flavor, which gate run lacks.
-func TestRunFlavorStage_Negative_UnmarkedOSImageStillFails(t *testing.T) {
+// TestRunFlavorStage_Positive_UnmarkedOSImageIsNotApplicable is #1111's acceptance for the gate:
+// a repository declaring os-image with no forge marker at all gets a stated not-applicable skip
+// naming the flavors tried, where it used to fail a stage the generated pre-push hook shares
+// with `flavor audit`. The reason names no --flavor, which gate run lacks.
+func TestRunFlavorStage_Positive_UnmarkedOSImageIsNotApplicable(t *testing.T) {
 	_, err := runFlavorStage(context.Background(), &stageConfig{repoDir: kernelForgeRepo(t, nil)})
-	if skip, skipped := errors.AsType[*stageSkip](err); skipped {
-		t.Fatalf("an unmarked os-image repository was skipped as %s: %s", skip.status, skip.reason)
-	}
-	if !errors.Is(err, flavor.ErrNoFlavorMatched) {
-		t.Fatalf("an unmarked os-image repository must fail with ErrNoFlavorMatched, got %v", err)
-	}
-	if reason := err.Error(); strings.Contains(reason, "--flavor") || !strings.Contains(reason, `profile "os-image" has flavors (os-image)`) {
+	reason := wantSkip(t, err, StageNotApplicable)
+	if strings.Contains(reason, "--flavor") || !strings.Contains(reason, `profile "os-image" has flavors (os-image)`) {
 		t.Errorf("the reason must name the flavor tried and no flag gate run lacks, got %q", reason)
 	}
 }
 
+// TestRunFlavorStage_Negative_MarkedNonConformingForgeStillFails: a forge whose Kconfig
+// fragments match the os-image flavor is not waved through when it lacks the flavor's files.
+func TestRunFlavorStage_Negative_MarkedNonConformingForgeStillFails(t *testing.T) {
+	repo := kernelForgeRepo(t, map[string]string{"kconfig/base.config": "CONFIG_MODULES=y\n"})
+	if err := os.Remove(filepath.Join(repo, ".yamllint.yml")); err != nil {
+		t.Fatalf("remove yamllint policy: %v", err)
+	}
+	_, err := runFlavorStage(context.Background(), &stageConfig{repoDir: repo})
+	if err == nil {
+		t.Fatal("a matching but non-conforming forge passed the stage")
+	}
+	if skip, skipped := errors.AsType[*stageSkip](err); skipped {
+		t.Fatalf("a matching forge was skipped as %s: %s", skip.status, skip.reason)
+	}
+}
+
 // TestRunFlavorStage_Boundary_KconfigOutputIsNoForge: the .config file Kconfig writes, at the
-// root or under kconfig/, is not a fragment, so it still fails the stage like no marker at all.
+// root or under kconfig/, is not a fragment, so it is no marker, like no marker at all: the
+// stage reports not applicable.
 func TestRunFlavorStage_Boundary_KconfigOutputIsNoForge(t *testing.T) {
 	repo := kernelForgeRepo(t, map[string]string{".config": "CONFIG_X=y\n", "kconfig/.config": "CONFIG_X=y\n"})
-	if _, err := runFlavorStage(context.Background(), &stageConfig{repoDir: repo}); !errors.Is(err, flavor.ErrNoFlavorMatched) {
-		t.Fatalf("Kconfig output alone must not make a forge, got %v", err)
-	}
+	_, err := runFlavorStage(context.Background(), &stageConfig{repoDir: repo})
+	wantSkip(t, err, StageNotApplicable)
 }
 
 // goLibraryRepo builds a repository the flavor catalog detects as go-library: a go.mod and

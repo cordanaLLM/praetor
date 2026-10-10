@@ -74,7 +74,7 @@ func plannedWorkflowBodies(ctx context.Context, repoPath string, items []Templat
 
 // plannedFlavorName resolves the flavor of profile ApplyFlavor scaffolds for repoPath, as
 // adoption's flavor step does (ResolveTargetsForProfile: the manifest's pin, else the profile's
-// flavor). A profile with no flavor, none that matches, or a pin the root scaffold cannot
+// flavor). A profile with no flavor, none that matches (IsScaffoldSkip), or a pin the root scaffold cannot
 // express (ErrPinNotScaffoldable) yields an empty name and no error, like the skipped flavor
 // step in adoption; any other failure is returned.
 func plannedFlavorName(repoPath, profile string) (string, error) {
@@ -85,12 +85,10 @@ func plannedFlavorName(repoPath, profile string) (string, error) {
 			return name, nil
 		}
 	}
-	switch {
-	case errors.Is(err, ErrNoFlavorMatched), errors.Is(err, ErrFlavorNotApplicable), errors.Is(err, ErrPinNotScaffoldable):
+	if IsScaffoldSkip(err) {
 		return "", nil
-	default:
-		return "", fmt.Errorf("planned workflows: %w", err)
 	}
+	return "", fmt.Errorf("planned workflows: %w", err)
 }
 
 // plannedBody renders one template and reports whether an apply without --force leaves that

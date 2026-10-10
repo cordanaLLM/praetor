@@ -140,10 +140,10 @@ func runFlavorAudit(args []string) error {
 	dir := positionalAt(positional, 0, ".")
 
 	reports, err := auditFlavorReports(dir, *targetFlv)
-	if errors.Is(err, flavor.ErrFlavorNotApplicable) {
-		fmt.Printf("=== Flavor Audit: %s ===\n  Not applicable: %v\n", dir, err)
-		fmt.Println("  The declared profile governs this repository; no flavor describes its stack.")
-		fmt.Println("  Pass --flavor=<name> to audit against one anyway.")
+	if flavor.IsNotApplicable(err) {
+		fmt.Printf("=== Flavor Audit: %s ===\n  Skipped, not applicable: %v\n", dir, err)
+		fmt.Println("  The profile governs this repository; no flavor of it describes its stack, and none is pinned.")
+		fmt.Println("  Pin one with a flavors entry in .standards.yaml, or pass --flavor=<name> to audit against one anyway.")
 		return nil
 	}
 	if err != nil {
@@ -248,8 +248,9 @@ func runFlavorApply(args []string) error {
 	return withLedgerIgnore(ctx, dir, func() error { return applyFlavor(ctx, dir, *targetFlv, *force) })
 }
 
-// explicitFlavorHint is the remedy flavor audit and flavor apply add to a nothing-matched
-// refusal. They take --flavor; gate run, which surfaces the same flavor.ErrNoFlavorMatched, does
+// explicitFlavorHint is the remedy flavor apply adds to a nothing-matched refusal, and flavor
+// audit to a refusal of a repository no profile classifies (flavor.ErrNoProfile): a nothing-matched
+// audit is a skip (flavor.IsNotApplicable) and never reaches it. They take --flavor; gate run does
 // not, so the hint is added here rather than carried by the sentinel (#615).
 func explicitFlavorHint(err error) string {
 	if errors.Is(err, flavor.ErrNoFlavorMatched) {

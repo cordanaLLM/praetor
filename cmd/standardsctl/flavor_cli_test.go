@@ -130,16 +130,15 @@ func TestFlavorAudit_Positive_KernelForgeResolvesWithoutAFlag(t *testing.T) {
 	mustContain(t, out, "(Flavor: os-image)", "Passed:      true")
 }
 
-// Negative: where nothing matches, the flavor commands, which take --flavor, name it as the
-// remedy; the sentinel does not, since gate run surfaces it too and has no such flag.
-func TestFlavorAudit_Negative_NothingMatchedNamesTheFlag(t *testing.T) {
+// Negative: where nothing matches, flavor apply, which takes --flavor, refuses and names it as
+// the remedy; flavor audit skips with the stated reason instead (#1111, flavor_skip_cli_test.go).
+// The sentinel names no flag, since gate run surfaces it too and has no such flag.
+func TestFlavorApply_Negative_NothingMatchedNamesTheFlag(t *testing.T) {
 	dir := t.TempDir()
 	writeFixtureFile(t, dir, "versions.json", "{}\n")
-	for _, sub := range []string{"audit", "apply"} {
-		_, err := captureStdout(t, func() error { return dispatchCommand("flavor", []string{sub, dir}) })
-		if !errors.Is(err, flavor.ErrNoFlavorMatched) || !strings.Contains(err.Error(), "pass an explicit --flavor=<name>") {
-			t.Errorf("flavor %s: want a nothing-matched refusal naming --flavor, got %v", sub, err)
-		}
+	_, err := captureStdout(t, func() error { return dispatchCommand("flavor", []string{"apply", dir}) })
+	if !errors.Is(err, flavor.ErrNoFlavorMatched) || !strings.Contains(err.Error(), "pass an explicit --flavor=<name>") {
+		t.Errorf("flavor apply: want a nothing-matched refusal naming --flavor, got %v", err)
 	}
 	if strings.Contains(flavor.ErrNoFlavorMatched.Error(), "--flavor") {
 		t.Error("the sentinel names a flag gate run does not have")

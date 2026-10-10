@@ -80,7 +80,9 @@ exits on its default `moby: true` and releases from 4.1.1 install Moby.
 settings and toolchains a repository of that kind requires. Five profiles currently have any flavor
 implementing them — `app-service`, `framework`, `native-gpu-systems`, `container-image` and
 `os-image`. For the other nine, `flavor audit`, `flavor apply` and adoption report **not applicable**
-rather than measuring or scaffolding the repository against an inferred language flavor. A flavor
+(`flavor audit` skips with exit 0) rather than measuring or scaffolding the repository against an
+inferred language flavor. The same holds where the profile has flavors, none matches and none is
+pinned (`flavor.IsNotApplicable`). A flavor
 is only ever chosen among the flavors of the repository's profile (`internal/flavor/resolve.go`).
 
 ### Flavor templates: one embedded body, checked content

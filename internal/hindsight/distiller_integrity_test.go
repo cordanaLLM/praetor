@@ -122,3 +122,42 @@ func TestDistillFlavorFacts_Pins(t *testing.T) {
 		t.Error("an unknown pinned flavor must be an error, not a silent fall back to detection")
 	}
 }
+
+// TestDistillFlavorFacts_RecordsTheResolutionProfile: the fact names the profile the resolution
+// used (the declared one), not the flavor's own, which differs for a pinned flavor of another
+// profile (#1103 review).
+func TestDistillFlavorFacts_RecordsTheResolutionProfile(t *testing.T) {
+	root := t.TempDir()
+	writeDistillerFile(t, root, ".standards.yaml",
+		"version: 1\nprofiles:\n  - app-service\nflavors:\n  - name: go-library\n")
+	facts, err := distillFlavorFacts(context.Background(), root)
+	if err != nil || len(facts) != 1 {
+		t.Fatalf("facts = %+v, %v", facts, err)
+	}
+	if !strings.Contains(facts[0].Statement, "under profile app-service") {
+		t.Errorf("statement = %q; want the declared profile app-service", facts[0].Statement)
+	}
+}
+
+// TestDistillFlavorFacts_Boundary_PinnedWithoutProfileUsesTheFlavorProfile: a pinned repository
+// declaring no profile and carrying no markers still names a profile, never "under profile .".
+func TestDistillFlavorFacts_Boundary_PinnedWithoutProfileUsesTheFlavorProfile(t *testing.T) {
+	root := t.TempDir()
+	writeDistillerFile(t, root, ".standards.yaml", "version: 1\nflavors:\n  - name: go-library\n")
+	facts, err := distillFlavorFacts(context.Background(), root)
+	if err != nil || len(facts) != 1 {
+		t.Fatalf("facts = %+v, %v", facts, err)
+	}
+	if strings.Contains(facts[0].Statement, "under profile .") || strings.Contains(facts[0].Statement, "under profile  ") {
+		t.Errorf("statement = %q; want the flavor's own profile", facts[0].Statement)
+	}
+}
+
+// TestDistillFlavorFacts_Negative_NoProfileYieldsNoFact: nothing classifies the directory, so
+// there is no fact and no error.
+func TestDistillFlavorFacts_Negative_NoProfileYieldsNoFact(t *testing.T) {
+	facts, err := distillFlavorFacts(context.Background(), t.TempDir())
+	if err != nil || len(facts) != 0 {
+		t.Fatalf("facts = %+v, %v; want none", facts, err)
+	}
+}

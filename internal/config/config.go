@@ -245,7 +245,9 @@ type Manifest struct {
 	Profiles   []string           `yaml:"profiles"`
 	Facets     []string           `yaml:"facets"`
 	// Flavors pins the flavor each component is audited against, replacing detection for
-	// `flavor audit`, `gate run` and the pre-push hook alike (FlavorPin, #1103).
+	// every command that resolves a flavor (`flavor audit`, `flavor apply`, `gate run`, adoption,
+	// the Hindsight distiller and the pre-push hook) and winning over the not-applicable skip
+	// (FlavorPin, #1103, #1111).
 	Flavors   []FlavorPin `yaml:"flavors,omitempty"`
 	Overrides Overrides   `yaml:"overrides,omitempty"`
 	// Receipt and Needs are consumed by internal/lockdown and internal/needs through their

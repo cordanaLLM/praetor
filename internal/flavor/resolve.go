@@ -28,21 +28,28 @@ import (
 // ErrNoFlavorMatched when nothing classifies the repository or none of the profile's flavors
 // matches it. It never substitutes a flavor.
 func Resolve(repoPath string) (string, error) {
-	decision := classify.Resolve(
+	return ResolveForProfile(repoPath, ResolutionProfile(repoPath))
+}
+
+// ResolutionProfile is the profile Resolve picks flavors under: the repository's declared
+// profile, else the one its markers classify, empty when neither names one. A caller that
+// describes a resolved flavor reports this profile, not the flavor's own HISSProfile, which
+// differs for a flavor that also implements the profile (MultiProfile) or is pinned.
+func ResolutionProfile(repoPath string) string {
+	return classify.Resolve(
 		classify.FromDeclaration(declaredProfiles(repoPath)),
 		classify.ByMarkers(repoPath),
-	)
-	return ResolveForProfile(repoPath, decision.Archetype)
+	).Archetype
 }
 
 // ResolveForProfile names the flavor implementing profile that matches the repository, for a
 // caller that has already decided the profile, such as adoption, which records it in the
-// manifest it writes. An empty profile is ErrNoFlavorMatched, a profile no flavor implements is
+// manifest it writes. An empty profile is ErrNoProfile (which also wraps ErrNoFlavorMatched), a profile no flavor implements is
 // ErrFlavorNotApplicable, and a profile whose flavors all fail to match is ErrNoFlavorMatched.
 func ResolveForProfile(repoPath, profile string) (string, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
-		return "", fmt.Errorf("%w: no profile classifies %s", ErrNoFlavorMatched, repoPath)
+		return "", fmt.Errorf("%w: %w: %s", ErrNoProfile, ErrNoFlavorMatched, repoPath)
 	}
 	candidates := flavorsForProfile(profile)
 	if len(candidates) == 0 {
