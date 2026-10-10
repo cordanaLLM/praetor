@@ -355,7 +355,8 @@ label the routing vocabulary does not declare. The hook resolves the register fr
 label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)).
 A brief may additionally specify `readonly: true` (or `read-only: true`) to request the
 canonical read-only context projection (`AGENTS.readonly.md`), which strips mutating
-turn-end instructions and ledger mutating commands.
+turn-end instructions and ledger mutating commands. How each client delivers it, and that
+Codex and Gemini cannot: [read-only dispatch](agent-hooks.md#read-only-dispatch).
 
 The rendered block states the brief shape on its task-row line (`subagentBriefRule` in
 `internal/config/register_render.go`) and adds "registered dispatch hook denies brief

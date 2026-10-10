@@ -125,6 +125,7 @@ described under [Rollout](#rollout-engine-skew-never-blocks-a-client).
 | `claude` | `handback-abort` | `PostToolUseFailure` | `^SubagentHandback$` | 15 s | `praetorctl hook claude handback-abort` |
 | `claude` | `handback-abort` | `PermissionDenied` | `^SubagentHandback$` | 15 s | `praetorctl hook claude handback-abort` |
 | `claude` | `post-return` | `SubagentStop` | `^.+$` | 60 s | `praetorctl hook claude post-return` |
+| `claude` | `subagent-start` | `SubagentStart` | `^.+$` | 15 s | `praetorctl hook claude subagent-start` |
 | `codex` | `pre-tool` | `PreToolUse` | `^Bash$` | 15 s | `praetorctl hook codex pre-tool` |
 | `codex` | `post-tool` | `PostToolUse` | none | 60 s | `praetorctl hook codex post-tool` |
 | `codex` | `stop` | `Stop` | none | 60 s | `praetorctl hook codex stop` |
@@ -219,10 +220,8 @@ dialect encoder as command hooks. `pre-dispatch` extracts the brief's `task:` fi
 the Caveman scanner, verifies that routing declares the label, resolves
 `register.tasks.<label>`, and calls the shared runtime validator with kind `brief`. An
 internal result must pass Caveman; docs and social results remain full prose by policy.
-When a brief sets `readonly: true` or `read-only: true`, or dispatches to a read-only role,
-`pre-dispatch` injects the compiled read-only context projection (`AGENTS.readonly.md`) via
-the dialect's additional context field (`hookSpecificOutput.additionalContext` for Claude
-Code; `additionalContext` for Antigravity).
+A brief that sets `readonly: true` or `read-only: true`, or names a read-only agent type,
+receives the read-only context projection; see [Read-only dispatch](#read-only-dispatch).
 The label and the manifest resolve through `config.LoadRegisterTaskAuthority`, the same
 digest-bound `config.RegisterAuthority` snapshot that `compile-context` renders, so every
 resolution names the manifest SHA-256 that `config.ValidateEmission` requires
@@ -347,6 +346,66 @@ never that proof. `return_capture` proves that the body can be decoded, not that
 register can be recovered; the separate `register_enforcement` state carries that claim.
 Main-agent `Stop` and Gemini `AfterAgent` keep their checkpoint purpose: no Caveman hook is
 registered on a human-operator reply surface.
+
+### Read-only dispatch
+
+A dispatch is read-only when its brief sets `readonly: true` or `read-only: true`
+(`caveman.ExtractBriefReadOnly`; any other value denies the brief), or when it names a
+read-only agent type (`agentcontext.IsReadOnlyRole`): Claude's `tool_input.subagent_type`,
+AGY's `Subagents[].TypeName` or `Subagents[].Role`. Its agent should receive the compiled
+read-only projection, `AGENTS.readonly.md`, which `compile-context` writes beside the vendor
+files and `compile-context --verify` checks. Only a channel that reaches the subagent itself
+counts. Each client offers a different one, or none:
+
+| Client | Channel | What the hook returns |
+| :-- | :-- | :-- |
+| `claude` | `PreToolUse` `updatedInput` on the `Agent` tool | `permissionDecision: "allow"`, a `permissionDecisionReason` naming the rewrite, and the whole `tool_input` with `prompt` replaced by the banner, the projection inside `<read-only-context>` and the original brief. Every other field comes back unchanged. |
+| `claude` | `SubagentStart` `additionalContext` | The projection, for a read-only agent type only. The event carries `agent_id` and `agent_type`, no prompt, so a brief marker cannot reach it. |
+| `agy` | `PreToolUse` `overwrite` on `invoke_subagent` | `decision: "allow"`, a `reason` naming the rewrite, and `overwrite: {"Subagents": [...]}`: the whole array, each read-only entry's `Prompt` rewritten as for Claude, every other key and entry unchanged. |
+| `codex`, `gemini` | none | The allow, with `read-only projection not delivered: <client> has no channel that reaches the subagent` on stderr. The subagent loads the full context; the brief's `readonly` field is its only read-only signal. |
+
+Why these channels:
+
+- `PreToolUse` `additionalContext` reaches the context of the agent that called the tool,
+  the parent, never the subagent. `updatedInput` replaces the whole input object, so the
+  hook returns every field ([hooks reference](https://code.claude.com/docs/en/hooks),
+  "PreToolUse decision control"). Deny and ask rules still apply to the `allow`.
+- `SubagentStart` cannot block. Its `additionalContext` lands in the subagent's context
+  before its first prompt, but Claude Code caps it at 10,000 characters and moves a longer
+  value to a file it does not ask the agent to read (hooks reference, "JSON output"). A
+  projection over the cap is therefore replaced by the banner and the path of
+  `AGENTS.readonly.md` to read. This repository's projection is over the cap.
+- AGY's `PreToolUse` output has `decision`, `reason`, `permissionOverrides` and
+  `overwrite`, and no `additionalContext`. `overwrite` is a shallow, top-level merge into the
+  tool call's arguments, so a nested array is replaced whole, and the agent is told which
+  keys a hook rewrote. This is the contract embedded in the installed AGY 1.3.3 binary,
+  re-read on 2026-10-10.
+- Codex and Gemini document no hook output that changes a dispatch or adds context to the
+  launched agent, so the hook names the substitution instead of claiming a delivery.
+
+Failures are never silent:
+
+- **No projection.** A read-only dispatch without a readable `AGENTS.readonly.md` holding
+  the read-only banner is denied for `claude` and `agy`, with `run praetorctl
+  compile-context` in the reason. The full context is never sent in its place. At
+  `SubagentStart`, which cannot block, the agent receives the banner and the reason.
+- **Refused rewrite.** A session can refuse input changes from a hook. The pending dispatch
+  row stores the SHA-256 of the rewritten prompt, and the `dispatch-receipt` row compares
+  the `tool_input.prompt` the agent launched with. On a mismatch it exits 2, which hands the
+  parent `read-only projection not delivered: agent <id> launched without the rewritten
+  prompt`. The binding is kept, so the return is still judged.
+
+Unverified: whether `PostToolUse.tool_input` carries the rewritten input. If a client
+reports the original input there, every read-only Claude dispatch reports non-delivery: a
+loud false alarm, never a silent pass. A redacted native recording would settle it.
+
+`internal/agenthook/readonly_dispatch_test.go` covers each client, both failures and the
+context cap. `internal/agentcontext/readonly_test.go` and `readonly_probe_test.go` cover
+the projection: every gate-list command (`make verify-all`, `state sync`, `state task`
+except `list`, `make state-audit`, the checkpoint hooks, `commit with sign-off`,
+`git commit|push|add`) leaves fenced blocks, table cells, list items and rule sentences,
+wherever the rule sits, while a clause that forbids one, such as "Never `git push --force`",
+stays.
 
 ## Verdicts
 
@@ -853,8 +912,10 @@ edit tool call is simply allowed today, same as any other unclassified tool. Res
 {"decision": "deny", "reason": "..."}
 ```
 
-The full contract also has `"ask"` and `"force_ask"` decisions and an `overwrite` key;
-nothing here produces them, since the command policy only ever allows or denies.
+The full contract also has `"ask"` and `"force_ask"` decisions, which nothing here
+produces, a `permissionOverrides` list, and an `overwrite` object merged into the tool call's
+arguments. The `pre-dispatch` row answers a read-only dispatch with `overwrite`
+([Read-only dispatch](#read-only-dispatch)); the contract has no `additionalContext` key.
 
 **`Stop`** — let the agent stop, or force it to keep going:
 
