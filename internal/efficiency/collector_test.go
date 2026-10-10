@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,7 +16,12 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/router"
 )
+
+func ptrFloat64(f float64) *float64 {
+	return &f
+}
 
 type stubForge struct {
 	forge.Forge
@@ -1062,5 +1068,105 @@ func TestLaneCounts_PositiveAndBoundary(t *testing.T) {
 	var empty LaneCounts
 	if got := empty.String(); got != "0 qualified, 0 total" {
 		t.Errorf("empty lane counts: %q", got)
+	}
+}
+
+func TestCollector_Positive_OutcomesPopulateUnitAndSummary(t *testing.T) {
+	dir := t.TempDir()
+	prs := filepath.Join(dir, "prs.json")
+	writeFile(t, prs, []byte(forgeRecords))
+	outcomesPath := filepath.Join(dir, "outcomes.jsonl")
+
+	o1 := router.Outcome{
+		Time:       time.Now().UTC(),
+		Task:       "coding",
+		Target:     "claude-3-7-sonnet",
+		Branch:     "feat/x",
+		Result:     router.OutcomeOK,
+		DurationMS: 5000,
+		ActualCost: ptrFloat64(0.015),
+		Identity: router.RunIdentity{
+			PhysicalModel:  "claude-3-7-sonnet-20250219",
+			Harness:        "claude-code",
+			HarnessVersion: "1.0.0",
+			PromptDigest:   "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			ContextDigest:  "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+			ContextBytes:   4096,
+			ToolSet:        []string{"bash", "view"},
+			CostEstimate:   0.010,
+		},
+	}
+	o2 := router.Outcome{
+		Time:       time.Now().UTC(),
+		Task:       "fast",
+		Target:     "claude-3-5-haiku",
+		Branch:     "feat/z",
+		Result:     router.OutcomeOK,
+		DurationMS: 2000,
+		Identity: router.RunIdentity{
+			PhysicalModel:  "claude-3-5-haiku-20241022",
+			Harness:        "claude-code",
+			HarnessVersion: "1.0.0",
+			PromptDigest:   "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+			ContextDigest:  "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+			ContextBytes:   1024,
+			ToolSet:        []string{"view"},
+			CostEstimate:   0.005,
+		},
+	}
+	if err := router.AppendOutcome(context.Background(), outcomesPath, o1); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.AppendOutcome(context.Background(), outcomesPath, o2); err != nil {
+		t.Fatal(err)
+	}
+
+	report := collect(t, CollectorOptions{ForgeJSONPath: prs, OutcomeLogPath: outcomesPath, Milestone: "M1"})
+
+	// PR #1 has measured actual cost
+	u1 := unitByNumber(t, report, 1)
+	if u1.ResolvedModel != "claude-3-7-sonnet-20250219" {
+		t.Errorf("u1.ResolvedModel = %q, want claude-3-7-sonnet-20250219", u1.ResolvedModel)
+	}
+	if u1.Identity == nil || u1.Identity.PhysicalModel != "claude-3-7-sonnet-20250219" {
+		t.Fatalf("u1.Identity = %+v, want non-nil with PhysicalModel", u1.Identity)
+	}
+	if u1.IdentityKey == "" {
+		t.Errorf("u1.IdentityKey is empty")
+	}
+	if u1.EstimateError != "$+0.0050" {
+		t.Errorf("u1.EstimateError = %q, want $+0.0050", u1.EstimateError)
+	}
+	if u1.EstimateErrorAmount == nil || math.Abs(*u1.EstimateErrorAmount-0.005) > 1e-6 {
+		t.Errorf("u1.EstimateErrorAmount = %v, want 0.005", u1.EstimateErrorAmount)
+	}
+
+	// PR #2 has no outcome
+	u2 := unitByNumber(t, report, 2)
+	if u2.ResolvedModel != "" || u2.Identity != nil || u2.IdentityKey != "" {
+		t.Errorf("u2 should have empty identity fields: %+v", u2)
+	}
+	if u2.EstimateError != NotMeasured || u2.EstimateErrorAmount != nil {
+		t.Errorf("u2.EstimateError = %q, want NotMeasured", u2.EstimateError)
+	}
+
+	// PR #3 has outcome but unmeasured actual cost
+	u3 := unitByNumber(t, report, 3)
+	if u3.ResolvedModel != "claude-3-5-haiku-20241022" {
+		t.Errorf("u3.ResolvedModel = %q, want claude-3-5-haiku-20241022", u3.ResolvedModel)
+	}
+	if u3.Identity == nil {
+		t.Errorf("u3.Identity should be populated")
+	}
+	if u3.EstimateError != NotMeasured || u3.EstimateErrorAmount != nil {
+		t.Errorf("u3.EstimateError = %q, want NotMeasured", u3.EstimateError)
+	}
+
+	// MilestoneSummary aggregates measured units
+	if report.MilestoneSummary.EstimateError != "$+0.0050" {
+		t.Errorf("summary.EstimateError = %q, want $+0.0050", report.MilestoneSummary.EstimateError)
+	}
+	if report.MilestoneSummary.EstimateErrorAmount == nil || math.Abs(*report.MilestoneSummary.EstimateErrorAmount-0.005) > 1e-6 {
+		t.Errorf("summary.EstimateErrorAmount = %v, want 0.005", report.MilestoneSummary.EstimateErrorAmount)
 	}
 }

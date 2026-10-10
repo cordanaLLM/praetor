@@ -55,6 +55,7 @@ var modelFlagActions = map[string][]string{
 	"prompt-digest": {"outcome"}, "context-digest": {"outcome"}, "context-bytes": {"outcome"},
 	"tools": {"outcome"}, "rounds": {"outcome"}, "retries": {"outcome"},
 	"cost-estimate": {"outcome"}, "actual-cost": {"outcome"}, "reconcile": {"outcome"},
+	"branch": {"outcome"},
 }
 
 func validateModelRouteFlags(fs *flag.FlagSet, action string) error {

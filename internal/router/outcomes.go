@@ -46,11 +46,13 @@ type RunIdentity struct {
 
 // Key computes a deterministic cryptographic hash identifying this exact run configuration.
 // Two runs differing only in their prompt template (or brief) digest yield distinct keys.
+// Per-attempt values (retries, prior rounds, cost estimate, context bytes) are excluded.
 func (id RunIdentity) Key() string {
 	h := sha256.New()
 	tools := make([]string, len(id.ToolSet))
 	copy(tools, id.ToolSet)
 	sort.Strings(tools)
+	h.Write([]byte("v1\x00"))
 	h.Write([]byte(id.PhysicalModel))
 	h.Write([]byte{0})
 	h.Write([]byte(id.Harness))
@@ -61,13 +63,7 @@ func (id RunIdentity) Key() string {
 	h.Write([]byte{0})
 	h.Write([]byte(id.ContextDigest))
 	h.Write([]byte{0})
-	fmt.Fprintf(h, "%d\x00%s\x00%d\x00%d\x00%.6f",
-		id.ContextBytes,
-		strings.Join(tools, ","),
-		id.PriorRounds,
-		id.Retries,
-		id.CostEstimate,
-	)
+	h.Write([]byte(strings.Join(tools, ",")))
 	return fmt.Sprintf("sha256:%x", h.Sum(nil))
 }
 
@@ -96,11 +92,19 @@ func validateIdentityNames(id RunIdentity) error {
 }
 
 func validateIdentityTools(tools []string) error {
-	for i := 0; i < len(tools) && i < MaxRoutingTags; i++ {
+	if len(tools) > MaxRoutingTags {
+		return fmt.Errorf("identity tool set holds %d tools, exceeding bound of %d", len(tools), MaxRoutingTags)
+	}
+	seen := make(map[string]bool, len(tools))
+	for i := 0; i < len(tools); i++ {
 		tool := tools[i]
 		if tool == "" || len(tool) > maxRoutingNameBytes || strings.IndexFunc(tool, unicode.IsSpace) >= 0 || strings.IndexFunc(tool, unicode.IsControl) >= 0 {
 			return errors.New("identity tool set must contain valid tool names")
 		}
+		if seen[tool] {
+			return fmt.Errorf("identity tool set contains duplicate tool %q", tool)
+		}
+		seen[tool] = true
 	}
 	return nil
 }
@@ -144,8 +148,9 @@ type Outcome struct {
 	Note          string      `json:"note,omitempty"`
 	Identity      RunIdentity `json:"identity"`
 	IdentityKey   string      `json:"identity_key,omitempty"`
-	ActualCost    float64     `json:"actual_cost,omitempty"`
+	ActualCost    *float64    `json:"actual_cost,omitempty"`
 	EstimateError *float64    `json:"estimate_error,omitempty"`
+	Branch        string      `json:"branch,omitempty"`
 }
 
 // Key returns the cryptographic key for the outcome's identity fields.
@@ -171,18 +176,29 @@ func validateOutcomeBasics(o Outcome) error {
 	if o.Lane != "" && !routingName(o.Lane) {
 		return errors.New("outcome lane is not a valid name")
 	}
-	switch o.Result {
-	case OutcomeOK, OutcomeFail, OutcomeTimeout:
-	default:
-		return fmt.Errorf("outcome result %q must be ok, fail or timeout", o.Result)
+	if err := validateOutcomeResult(o.Result); err != nil {
+		return err
 	}
+	return validateOutcomeDimensions(o)
+}
+
+func validateOutcomeDimensions(o Outcome) error {
 	if o.Time.IsZero() || o.DurationMS < 0 || len(o.Note) > maxOutcomeNoteBytes {
 		return errors.New("outcome needs a time, a nonnegative duration and a note of at most 256 bytes")
 	}
-	if o.ActualCost < 0 {
+	if o.ActualCost != nil && *o.ActualCost < 0 {
 		return errors.New("outcome actual cost must be nonnegative")
 	}
 	return nil
+}
+
+func validateOutcomeResult(result string) error {
+	switch result {
+	case OutcomeOK, OutcomeFail, OutcomeTimeout:
+		return nil
+	default:
+		return fmt.Errorf("outcome result %q must be ok, fail or timeout", result)
+	}
 }
 
 func validateOutcomeIdentity(o Outcome) error {
@@ -211,7 +227,7 @@ func AppendOutcome(ctx context.Context, path string, o Outcome) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	prepareOutcome(&o)
+	PrepareOutcome(&o)
 	if err := ValidateOutcome(o); err != nil {
 		return err
 	}
@@ -225,15 +241,17 @@ func AppendOutcome(ctx context.Context, path string, o Outcome) error {
 	return writeOutcomeRecord(path, line)
 }
 
-func prepareOutcome(o *Outcome) {
+// PrepareOutcome initializes computed fields (resolved model, identity key, and estimate error)
+// on an outcome record if they are not already set.
+func PrepareOutcome(o *Outcome) {
 	if o.ResolvedModel == "" && o.Identity.PhysicalModel != "" {
 		o.ResolvedModel = o.Identity.PhysicalModel
 	}
 	if o.IdentityKey == "" && o.Identity.PhysicalModel != "" {
 		o.IdentityKey = o.Identity.Key()
 	}
-	if o.EstimateError == nil && (o.ActualCost > 0 || o.Identity.CostEstimate > 0) {
-		diff := o.ActualCost - o.Identity.CostEstimate
+	if o.EstimateError == nil && o.ActualCost != nil {
+		diff := EstimateError(o.Identity.CostEstimate, *o.ActualCost)
 		o.EstimateError = &diff
 	}
 }
@@ -306,8 +324,13 @@ func scanOutcomeRecords(ctx context.Context, file *os.File) ([]Outcome, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &o); err != nil {
 			return nil, fmt.Errorf("outcome log line %d: %w", len(outcomes)+1, err)
 		}
-		if err := ValidateOutcome(o); err != nil {
+		if err := validateOutcomeBasics(o); err != nil {
 			return nil, fmt.Errorf("outcome log line %d: %w", len(outcomes)+1, err)
+		}
+		if o.Identity.PhysicalModel != "" {
+			if err := validateOutcomeIdentity(o); err != nil {
+				return nil, fmt.Errorf("outcome log line %d: %w", len(outcomes)+1, err)
+			}
 		}
 		outcomes = append(outcomes, o)
 	}
@@ -324,7 +347,7 @@ func EstimateError(estimated, actual float64) float64 {
 
 // FormatEstimateError renders the estimate error as signed currency and optional percentage.
 func FormatEstimateError(estimated, actual float64) string {
-	diff := actual - estimated
+	diff := EstimateError(estimated, actual)
 	if estimated > 0 {
 		return fmt.Sprintf("%+.4f (%+.1f%%)", diff, (diff/estimated)*100)
 	}
@@ -335,6 +358,7 @@ func FormatEstimateError(estimated, actual float64) string {
 type LaneReconciliation struct {
 	Lane          string   `json:"lane"`
 	Runs          int      `json:"runs"`
+	MeasuredRuns  int      `json:"measured_runs"`
 	EstimatedCost float64  `json:"estimated_cost"`
 	ActualCost    float64  `json:"actual_cost"`
 	EstimateError float64  `json:"estimate_error"`
@@ -359,8 +383,11 @@ func ReconcileLanes(outcomes []Outcome) []LaneReconciliation {
 			groups[lane] = entry
 		}
 		entry.Runs++
-		entry.EstimatedCost += o.Identity.CostEstimate
-		entry.ActualCost += o.ActualCost
+		if o.ActualCost != nil && o.Identity.PhysicalModel != "" {
+			entry.MeasuredRuns++
+			entry.EstimatedCost += o.Identity.CostEstimate
+			entry.ActualCost += *o.ActualCost
+		}
 	}
 	return finalizeLaneReconciliations(groups)
 }
@@ -374,10 +401,13 @@ func finalizeLaneReconciliations(groups map[string]*LaneReconciliation) []LaneRe
 	result := make([]LaneReconciliation, 0, len(names))
 	for i := 0; i < len(names); i++ {
 		entry := groups[names[i]]
-		entry.EstimateError = entry.ActualCost - entry.EstimatedCost
-		if entry.EstimatedCost > 0 {
-			ratio := (entry.ActualCost - entry.EstimatedCost) / entry.EstimatedCost
-			entry.ErrorRatio = &ratio
+		if entry.MeasuredRuns > 0 {
+			diff := EstimateError(entry.EstimatedCost, entry.ActualCost)
+			entry.EstimateError = diff
+			if entry.EstimatedCost > 0 {
+				ratio := diff / entry.EstimatedCost
+				entry.ErrorRatio = &ratio
+			}
 		}
 		result = append(result, *entry)
 	}
@@ -392,6 +422,10 @@ func RenderLaneReconciliation(reconciliations []LaneReconciliation) string {
 	var sb strings.Builder
 	for i := 0; i < len(reconciliations); i++ {
 		r := reconciliations[i]
+		if r.MeasuredRuns == 0 {
+			fmt.Fprintf(&sb, "lane %s: estimate-error not measured (runs: %d)\n", r.Lane, r.Runs)
+			continue
+		}
 		fmt.Fprintf(&sb, "lane %s: estimate-error %s (estimated: $%.4f, actual: $%.4f, runs: %d)\n",
 			r.Lane, FormatEstimateError(r.EstimatedCost, r.ActualCost), r.EstimatedCost, r.ActualCost, r.Runs)
 	}

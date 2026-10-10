@@ -349,7 +349,7 @@ Every outcome record requires a verified run identity:
 An outcome record without mandatory identity fields is refused by `ValidateOutcome`.
 Two runs differing only in prompt template produce distinct identity keys (`Key()`).
 After recording an outcome, the command computes the estimate-error metric
-(`actual_cost - cost_estimate`) and prints it per lane (`estimate-error [<lane>]: ...`).
+(`actual_cost - cost_estimate`) and prints it to stderr per lane (`estimate-error [<lane>]: ...`).
 Passing `--reconcile` prints an aggregated reconciliation table per lane across all
 recorded outcomes in the log.
 
@@ -423,6 +423,15 @@ fields; existing `recorded_headroom` remains the pre-request counter diagnostic.
 Dispatch consumers must opt into the reservation API, configure positive concurrency,
 and finish every successful handle; calling advisory selection alone does not
 enforce concurrency.
+
+Migration: outcome records now require mandatory run-identity fields (physical
+model, harness, version, prompt digest, context digest) when recorded. A target
+that is an alias requires an explicit `--physical-model` flag recording the actual
+model executed by the gateway. Pre-existing `outcomes.jsonl` logs written before
+identity fields remain readable: `ReadOutcomes` tolerates records lacking identity,
+reports them as unidentified, and excludes them from identity-keyed lane
+reconciliation. When actual cost is unmeasured, `--actual-cost` is omitted and
+estimate-error reports as not measured rather than zero.
 
 ## Remaining dispatch and feedback work
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/router"
 )
 
 func earliestClosingIssueCreatedAt(issues []forge.ClosingIssue) time.Time {
@@ -290,6 +291,7 @@ type unitSources struct {
 	owners     map[string]int
 	transcript map[string]*BranchTranscriptStats
 	spend      *SpendReport
+	outcomes   map[string][]router.Outcome
 	measured   SourcesMeasured
 	live       bool
 }
@@ -331,5 +333,44 @@ func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, src unitSources,
 	if usage.omittedTranscriptRequests > 0 && report != nil {
 		report.Notes = append(report.Notes, fmt.Sprintf("unit #%d: %d transcript requests not added (transcripts_via_gateway=true)", pr.Number, usage.omittedTranscriptRequests))
 	}
+	applyOutcomesToUnit(&unit, src.outcomes[pr.HeadBranch])
 	return unit, nil
+}
+
+func applyOutcomesToUnit(unit *UnitReport, outcomes []router.Outcome) {
+	if len(outcomes) == 0 {
+		return
+	}
+	latest := outcomes[len(outcomes)-1]
+	unit.ResolvedModel = latest.ResolvedModel
+	if unit.ResolvedModel == "" {
+		unit.ResolvedModel = latest.Identity.PhysicalModel
+	}
+	if latest.Identity.PhysicalModel != "" {
+		idCopy := latest.Identity
+		unit.Identity = &idCopy
+	}
+	unit.IdentityKey = latest.IdentityKey
+	if unit.IdentityKey == "" && unit.Identity != nil {
+		unit.IdentityKey = unit.Identity.Key()
+	}
+
+	var totalEstimated, totalActual float64
+	measured := 0
+	for _, o := range outcomes {
+		if o.ActualCost != nil {
+			totalEstimated += o.Identity.CostEstimate
+			totalActual += *o.ActualCost
+			measured++
+		}
+	}
+	if measured > 0 {
+		diff := router.EstimateError(totalEstimated, totalActual)
+		unit.EstimateErrorAmount = &diff
+		unit.EstimateError = formatEstimateErrorSpend(diff)
+	}
+}
+
+func formatEstimateErrorSpend(diff float64) string {
+	return fmt.Sprintf("$%+.4f", diff)
 }

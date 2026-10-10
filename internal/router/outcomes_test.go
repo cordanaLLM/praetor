@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,8 @@ func sampleIdentity() RunIdentity {
 	}
 }
 
+func ptrFloat64(v float64) *float64 { return &v }
+
 func sampleOutcome(task, result string) Outcome {
 	return Outcome{
 		Time:          time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC),
@@ -34,7 +37,7 @@ func sampleOutcome(task, result string) Outcome {
 		Result:        result,
 		DurationMS:    1200,
 		Identity:      sampleIdentity(),
-		ActualCost:    0.048,
+		ActualCost:    ptrFloat64(0.048),
 	}
 }
 
@@ -110,7 +113,7 @@ func outcomeRefusalMutators() map[string]func(*Outcome) {
 		"oversized note":  func(o *Outcome) { o.Note = strings.Repeat("n", maxOutcomeNoteBytes+1) },
 		"invalid lane":    func(o *Outcome) { o.Lane = "a\nb" },
 		"empty lane name": func(o *Outcome) { o.Lane = " " },
-		"negative actual": func(o *Outcome) { o.ActualCost = -0.5 },
+		"negative actual": func(o *Outcome) { o.ActualCost = ptrFloat64(-0.5) },
 	}
 }
 
@@ -230,7 +233,7 @@ func TestEstimateErrorMetricPerLane(t *testing.T) {
 			ResolvedModel: "claude-3-5-sonnet",
 			Result:        OutcomeOK,
 			Identity:      sampleIdentity(),
-			ActualCost:    0.06,
+			ActualCost:    ptrFloat64(0.06),
 		},
 		{
 			Task:          "implement",
@@ -239,7 +242,7 @@ func TestEstimateErrorMetricPerLane(t *testing.T) {
 			ResolvedModel: "claude-3-5-sonnet",
 			Result:        OutcomeOK,
 			Identity:      sampleIdentity(),
-			ActualCost:    0.04,
+			ActualCost:    ptrFloat64(0.04),
 		},
 		{
 			Task:          "synthesis",
@@ -255,7 +258,7 @@ func TestEstimateErrorMetricPerLane(t *testing.T) {
 				ContextDigest:  "sha256:4444444444444444444444444444444444444444444444444444444444444444",
 				CostEstimate:   0.20,
 			},
-			ActualCost: 0.25,
+			ActualCost: ptrFloat64(0.25),
 		},
 	}
 
@@ -295,5 +298,102 @@ func TestOutcomeLogCorruptLineIsAnError(t *testing.T) {
 	}
 	if _, err := ReadOutcomes(context.Background(), path); err == nil || !strings.Contains(err.Error(), "line 2") {
 		t.Fatalf("corrupt record must fail the read, naming its line: %v", err)
+	}
+}
+
+func TestOutcomeIdentityKeyStableAcrossRetries(t *testing.T) {
+	id1 := sampleIdentity()
+	id1.Retries = 0
+	id1.PriorRounds = 1
+	id1.CostEstimate = 0.05
+	id1.ContextBytes = 1000
+
+	id2 := sampleIdentity()
+	id2.Retries = 2
+	id2.PriorRounds = 3
+	id2.CostEstimate = 0.10
+	id2.ContextBytes = 2000
+
+	if id1.Key() != id2.Key() {
+		t.Fatalf("expected identical keys across retries, got: %s vs %s", id1.Key(), id2.Key())
+	}
+}
+
+func TestValidateRunIdentity_ToolsBoundary(t *testing.T) {
+	id := sampleIdentity()
+	tools64 := make([]string, MaxRoutingTags)
+	for i := 0; i < MaxRoutingTags; i++ {
+		tools64[i] = fmt.Sprintf("tool-%d", i)
+	}
+	id.ToolSet = tools64
+	if err := ValidateRunIdentity(id); err != nil {
+		t.Fatalf("expected 64 tools to be accepted, got error: %v", err)
+	}
+
+	idOver := sampleIdentity()
+	tools65 := make([]string, MaxRoutingTags+1)
+	for i := 0; i < MaxRoutingTags+1; i++ {
+		tools65[i] = fmt.Sprintf("tool-%d", i)
+	}
+	idOver.ToolSet = tools65
+	if err := ValidateRunIdentity(idOver); err == nil {
+		t.Fatal("expected 65 tools to be refused, but was accepted")
+	}
+
+	idDup := sampleIdentity()
+	idDup.ToolSet = []string{"tool-a", "tool-b", "tool-a"}
+	if err := ValidateRunIdentity(idDup); err == nil {
+		t.Fatal("expected duplicate tools to be refused, but was accepted")
+	}
+}
+
+func TestOutcomeLegacyRecordReadable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "outcomes.jsonl")
+	legacy := `{"time":"2026-10-08T09:00:00Z","task":"stubs","target":"light","result":"ok","duration_ms":100}` + "\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadOutcomes(context.Background(), path)
+	if err != nil {
+		t.Fatalf("legacy record must be readable: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 outcome, got %d", len(got))
+	}
+	if got[0].Identity.PhysicalModel != "" {
+		t.Errorf("legacy record should be unidentified, got: %+v", got[0].Identity)
+	}
+}
+
+func TestOutcomeEstimateWithoutActualCost(t *testing.T) {
+	o := sampleOutcome("stubs", OutcomeOK)
+	o.Identity.CostEstimate = 0.50
+	o.ActualCost = nil
+	o.EstimateError = nil
+	PrepareOutcome(&o)
+	if o.EstimateError != nil {
+		t.Fatalf("expected EstimateError to be nil when ActualCost is nil, got: %v", *o.EstimateError)
+	}
+}
+
+func TestOutcomeZeroCostAndContextBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "outcomes.jsonl")
+	o := sampleOutcome("stubs", OutcomeOK)
+	o.Identity.ContextBytes = 0
+	o.Identity.CostEstimate = 0
+	o.ActualCost = ptrFloat64(0)
+	if err := AppendOutcome(context.Background(), path, o); err != nil {
+		t.Fatalf("zero cost and context bytes refused: %v", err)
+	}
+	got, err := ReadOutcomes(context.Background(), path)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("readback failed: %v", err)
+	}
+	if got[0].Identity.ContextBytes != 0 || got[0].Identity.CostEstimate != 0 {
+		t.Errorf("zero values corrupted: %+v", got[0].Identity)
+	}
+	if got[0].ActualCost == nil || *got[0].ActualCost != 0 || got[0].EstimateError == nil || *got[0].EstimateError != 0 {
+		t.Errorf("zero actual cost and error corrupted: %+v", got[0])
 	}
 }

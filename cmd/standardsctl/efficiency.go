@@ -32,6 +32,7 @@ type efficiencyFlags struct {
 	forgeFile      string
 	transcriptsDir string
 	spendLogFile   string
+	outcomesFile   string
 }
 
 func parseEfficiencyFlags(args []string) (*efficiencyFlags, error) {
@@ -45,6 +46,7 @@ func parseEfficiencyFlags(args []string) (*efficiencyFlags, error) {
 	forgeFile := fs.String("forge-records", "", "Path to merged pull requests JSON fixture")
 	transcriptsDir := fs.String("transcripts-dir", "", "Path to agent session transcripts directory")
 	spendLogFile := fs.String("spend-log", "", "Path to gateway spend-log export file")
+	outcomesFile := fs.String("outcomes", "", "Path to router outcomes JSON lines file")
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -76,6 +78,7 @@ func parseEfficiencyFlags(args []string) (*efficiencyFlags, error) {
 		forgeFile:      *forgeFile,
 		transcriptsDir: *transcriptsDir,
 		spendLogFile:   *spendLogFile,
+		outcomesFile:   *outcomesFile,
 	}, nil
 }
 
@@ -160,6 +163,7 @@ func runEfficiencyTo(args []string, out io.Writer) error {
 		ForgeJSONPath:  fl.forgeFile,
 		TranscriptsDir: fl.transcriptsDir,
 		SpendLogPath:   fl.spendLogFile,
+		OutcomeLogPath: fl.outcomesFile,
 		Notes:          notes,
 	})
 
