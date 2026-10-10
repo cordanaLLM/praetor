@@ -22,7 +22,7 @@ GO_EXTENSIONS = {".go", ".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", 
 # vendorTargets) and the vendor persona directories (compiler.CompileAgentSurfaces).
 # test_context_changed_covers_every_compile_context_path runs the real compile-context and
 # fails if it writes a path these do not match.
-CONTEXT = {"AGENTS.md", "CLAUDE.md", ".windsurfrules",
+CONTEXT = {"AGENTS.md", "AGENTS.readonly.md", "CLAUDE.md", ".windsurfrules",
            ".github/copilot-instructions.md", ".gemini/GEMINI.md", ".codex/rules.md"}
 # .claude/skills/ is the client skill directory compile-context copies register skills to
 # (vendorTargets skillDir, compiler.VerifyClientSkills).

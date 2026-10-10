@@ -71,6 +71,9 @@ func (prior priorVendorProjections) add(source []byte, clients []string) {
 	for i := 0; i < len(res.Files) && i < maxTranspileTargets; i++ {
 		prior.record(res.Files[i].RelativePath, res.Files[i].Content, agentsFile)
 	}
+	if roContent, err := agentcontext.ReadOnlyProjection(string(source)); err == nil {
+		prior.record(compiler.ReadOnlyFile, roContent, agentsFile)
+	}
 }
 
 // record adds the digest of content, an earlier projection at rel compiled from source, to the

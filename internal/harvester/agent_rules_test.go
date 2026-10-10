@@ -61,8 +61,8 @@ func TestScanListsEveryRuleFileInRegistryOrder(t *testing.T) {
 	for _, target := range agentcontext.AllVendorTargets() {
 		vendor = append(vendor, target.Path)
 	}
-	if len(files) == 0 || files[0] != "AGENTS.md" || !slices.Equal(files[1:], vendor) {
-		t.Fatalf("ContextFiles = %v, want AGENTS.md then %v", files, vendor)
+	if len(files) == 0 || files[0] != "AGENTS.md" || files[1] != "AGENTS.readonly.md" || !slices.Equal(files[2:], vendor) {
+		t.Fatalf("ContextFiles = %v, want AGENTS.md, AGENTS.readonly.md then %v", files, vendor)
 	}
 	rep := scanOneRepo(t, files...)
 	want := make([]string, 0, len(files))

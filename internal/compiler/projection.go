@@ -63,13 +63,14 @@ func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, sou
 	sw := &syncWriter{w: w}
 	sw.printf("Verifying agent context synchronization against %s...\n", source)
 	vendorErr := verifyVendorContext(ctx, sw, tr, source, targetDir)
+	readOnlyErr := prefixError("context verification failed", VerifyReadOnlyContext(ctx, source, targetDir))
 	lintErrs := lintAgentText(ctx, sw, source, targetDir)
 	for i := range lintErrs {
 		lintErrs[i] = prefixError("context verification failed", lintErrs[i])
 	}
 	verified, surfaceErr := verifyAgentSurfaces(ctx, sw, targetDir)
 	stableErr := prefixError("context verification failed", VerifyStableContext(ctx, sw.w, tr, source))
-	if err := errors.Join(vendorErr, errors.Join(lintErrs...), surfaceErr, stableErr); err != nil {
+	if err := errors.Join(vendorErr, readOnlyErr, errors.Join(lintErrs...), surfaceErr, stableErr); err != nil {
 		return err
 	}
 	sw.printf("All agent context targets are 100%% in sync with canonical AGENTS.md (%d persona projections verified).\n", verified)
@@ -212,13 +213,19 @@ func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler,
 	if err != nil {
 		return fmt.Errorf("compilation failed: %w", err)
 	}
-	plan, err := planAgentSurfaces(ctx, targetDir, vendor, PendingSources{})
+	reservedTargets := append([]projectionFile(nil), vendor...)
+	reservedTargets = append(reservedTargets, projectionFile{rel: ReadOnlyFile})
+	plan, err := planAgentSurfaces(ctx, targetDir, reservedTargets, PendingSources{})
 	if err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
 	if err := CompileVendorTargets(ctx, w, tr, source, targetDir); err != nil {
 		return err
 	}
+	if err := CompileReadOnlyContext(ctx, source, targetDir); err != nil {
+		return fmt.Errorf("failed to write read-only context: %w", err)
+	}
+	sw.printf("  [COMPILED] %-35s (read-only projection)\n", ReadOnlyFile)
 	if err := writeAgentSurfaces(ctx, sw, targetDir, plan); err != nil {
 		return err
 	}

@@ -799,6 +799,15 @@ func projectVendorContext(ctx context.Context, s *adoptSession, agentsContent st
 	for i := 0; i < len(res.NotApplicable) && i < maxTranspileTargets; i++ {
 		s.report.recordNotApplicable(res.NotApplicable[i], "Not selected by agent_clients in "+manifestFile)
 	}
+	roContent, err := agentcontext.ReadOnlyProjection(agentsContent)
+	if err != nil {
+		return fmt.Errorf("read-only context projection: %w", err)
+	}
+	res.Files = append(res.Files, compiler.TargetFile{
+		RelativePath: compiler.ReadOnlyFile,
+		Content:      roContent,
+		LineCount:    strings.Count(roContent, "\n") + 1,
+	})
 	targets, err := observeVendorTargets(ctx, s.repoPath, res.Files)
 	if err != nil {
 		return err
