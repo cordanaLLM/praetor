@@ -41,60 +41,94 @@ func calculateIssueToMerge(pr forge.MergedPullRequest) (string, *int64) {
 	return formatDuration(dur), &secs
 }
 
-func unmarshalVectorValue[T any](raw *forge.VectorFieldRaw, target *VectorField[T]) {
+func unmarshalVectorValue[T any](fieldName string, raw *forge.VectorFieldRaw, target *VectorField[T]) error {
 	if raw == nil {
-		return
+		return nil
 	}
 	var val T
 	if len(raw.Value) > 0 {
-		if err := json.Unmarshal(raw.Value, &val); err == nil {
-			target.Value = val
+		if err := json.Unmarshal(raw.Value, &val); err != nil {
+			return fmt.Errorf("field %q: unmarshal value: %w", fieldName, err)
 		}
+		target.Value = val
 	}
 	target.Provenance = Provenance(raw.Provenance)
+	return nil
 }
 
-func initUnitVectorFields(pr forge.MergedPullRequest, itmSecs *int64, unit *UnitReport) {
-	unit.TokensByProvider = VectorField[map[string]int64]{Value: make(map[string]int64), Provenance: ProvenanceMeasured}
-	unit.WallSeconds = VectorField[int64]{Provenance: ProvenanceMeasured}
-	if itmSecs != nil {
-		unit.WallSeconds.Value = *itmSecs
+func initUnitVectorFields(pr forge.MergedPullRequest, unit *UnitReport) error {
+	if err := unmarshalVectorValue("tokens_by_provider", pr.TokensByProvider, &unit.TokensByProvider); err != nil {
+		return err
 	}
-	unit.ReviewRounds = VectorField[int]{Value: 1, Provenance: ProvenanceMeasured}
-	unit.Retries = VectorField[int]{Provenance: ProvenanceMeasured}
-	unit.OperatorMinutes = VectorField[float64]{Provenance: ProvenanceMeasured}
-	unit.EscapedDefects = VectorField[int]{Provenance: ProvenanceMeasured}
-
-	unmarshalVectorValue(pr.TokensByProvider, &unit.TokensByProvider)
-	unmarshalVectorValue(pr.WallSeconds, &unit.WallSeconds)
-	unmarshalVectorValue(pr.ReviewRounds, &unit.ReviewRounds)
-	unmarshalVectorValue(pr.Retries, &unit.Retries)
-	unmarshalVectorValue(pr.OperatorMinutes, &unit.OperatorMinutes)
-	unmarshalVectorValue(pr.EscapedDefects, &unit.EscapedDefects)
+	if err := unmarshalVectorValue("wall_seconds", pr.WallSeconds, &unit.WallSeconds); err != nil {
+		return err
+	}
+	if err := unmarshalVectorValue("review_rounds", pr.ReviewRounds, &unit.ReviewRounds); err != nil {
+		return err
+	}
+	if err := unmarshalVectorValue("retries", pr.Retries, &unit.Retries); err != nil {
+		return err
+	}
+	if err := unmarshalVectorValue("operator_minutes", pr.OperatorMinutes, &unit.OperatorMinutes); err != nil {
+		return err
+	}
+	if err := unmarshalVectorValue("escaped_defects", pr.EscapedDefects, &unit.EscapedDefects); err != nil {
+		return err
+	}
+	return nil
 }
 
 func resolveUnitDisposition(pr forge.MergedPullRequest) string {
 	if pr.Disposition != "" {
 		return normalizeDisposition(pr.Disposition)
 	}
-	lowerTitle := strings.ToLower(pr.Title)
-	if strings.HasPrefix(lowerTitle, "revert ") || strings.HasPrefix(lowerTitle, "revert:") {
-		return DispositionReverted
-	}
 	return DispositionQualified
 }
 
-func newUnit(pr forge.MergedPullRequest) UnitReport {
+func targetRevertedTitle(title string) string {
+	t := strings.TrimSpace(title)
+	lower := strings.ToLower(t)
+	if strings.HasPrefix(lower, "revert \"") {
+		rest := t[8:]
+		if idx := strings.LastIndex(rest, "\""); idx != -1 {
+			return strings.TrimSpace(rest[:idx])
+		}
+		return strings.TrimSpace(rest)
+	}
+	if strings.HasPrefix(lower, "revert: ") {
+		return strings.TrimSpace(t[8:])
+	}
+	if strings.HasPrefix(lower, "revert ") {
+		return strings.TrimSpace(t[7:])
+	}
+	return ""
+}
+
+func applyRevertDispositions(units []UnitReport) {
+	for i := range units {
+		revertTitle := targetRevertedTitle(units[i].Title)
+		if revertTitle == "" {
+			continue
+		}
+		for j := range units {
+			if i == j {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSpace(units[j].Title), revertTitle) {
+				units[j].Disposition = DispositionReverted
+				break
+			}
+		}
+	}
+}
+
+func newUnit(pr forge.MergedPullRequest) (UnitReport, error) {
 	closing := make([]int, 0, len(pr.ClosingIssues))
 	for _, ci := range pr.ClosingIssues {
 		closing = append(closing, ci.Number)
 	}
 	itm, secs := calculateIssueToMerge(pr)
 	disp := resolveUnitDisposition(pr)
-	epoch := pr.MetricEpoch
-	if epoch == "" {
-		epoch = CurrentMetricEpoch
-	}
 
 	unit := UnitReport{
 		PullRequestNumber:   pr.EffectiveNumber(),
@@ -108,7 +142,7 @@ func newUnit(pr forge.MergedPullRequest) UnitReport {
 		IssueToMergeSecs:    secs,
 		Disposition:         disp,
 		Lane:                pr.Lane,
-		MetricEpoch:         epoch,
+		MetricEpoch:         pr.MetricEpoch,
 		FrontierTokens:      NotMeasured,
 		Spend:               NotMeasured,
 		OperatorTouches:     NotMeasured,
@@ -118,8 +152,10 @@ func newUnit(pr forge.MergedPullRequest) UnitReport {
 		ChecksBeforeReviews: FollowUpRefs,
 		Sources:             NotMeasured,
 	}
-	initUnitVectorFields(pr, secs, &unit)
-	return unit
+	if err := initUnitVectorFields(pr, &unit); err != nil {
+		return unit, fmt.Errorf("unit #%d: %w", pr.EffectiveNumber(), err)
+	}
+	return unit, nil
 }
 
 // unitUsage is the request and frontier-token count of one unit and where it came from.
@@ -204,8 +240,11 @@ func (u unitUsage) apply(unit *UnitReport) {
 	unit.LocalRatio = &ratio
 }
 
-func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, owners map[string]int, transStats map[string]*BranchTranscriptStats, spend *SpendReport, sources SourcesMeasured, report *Report) UnitReport {
-	unit := newUnit(pr)
+func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, owners map[string]int, transStats map[string]*BranchTranscriptStats, spend *SpendReport, sources SourcesMeasured, report *Report) (UnitReport, error) {
+	unit, err := newUnit(pr)
+	if err != nil {
+		return unit, err
+	}
 	var stats *BranchTranscriptStats
 	// A reused branch name belongs to the pull request merged last; the others get no transcript join.
 	if sources.Transcripts && owners[pr.HeadBranch] == pr.Number {
@@ -230,5 +269,5 @@ func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, owners map[strin
 	if usage.omittedTranscriptRequests > 0 && report != nil {
 		report.Notes = append(report.Notes, fmt.Sprintf("unit #%d: %d transcript requests not added (transcripts_via_gateway=true)", pr.Number, usage.omittedTranscriptRequests))
 	}
-	return unit
+	return unit, nil
 }

@@ -5,6 +5,7 @@ package forge
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -252,5 +253,94 @@ func TestReadAndParseMergedPullRequests_Boundary_Limits(t *testing.T) {
 	jsonList := "[" + strings.Join(items, ",") + "]"
 	if _, err := ParseMergedPullRequests([]byte(jsonList)); err == nil {
 		t.Error("expected error when count limit exceeds MaxMergedPRsLimit")
+	}
+}
+
+func TestParseMergedPullRequests_UnitsWrapper_PositiveNegativeBoundary(t *testing.T) {
+	// Positive: units wrapper with PR records
+	pos := `{"units": [{"number": 1, "head_branch": "feat/wrapper", "title": "Wrapper PR"}]}`
+	prs, err := ParseMergedPullRequests([]byte(pos))
+	if err != nil {
+		t.Fatalf("unexpected error parsing units wrapper: %v", err)
+	}
+	if len(prs) != 1 || prs[0].Number != 1 {
+		t.Fatalf("expected 1 PR with number 1, got %+v", prs)
+	}
+
+	// Negative: malformed units field reports real wrapper error
+	neg := `{"units": "not-an-array"}`
+	_, err = ParseMergedPullRequests([]byte(neg))
+	if err == nil {
+		t.Fatal("expected error parsing malformed units wrapper")
+	}
+	if !strings.Contains(err.Error(), "parse merged pull requests wrapper") {
+		t.Errorf("expected wrapper error message, got: %v", err)
+	}
+
+	// Boundary: empty units array yields empty ledger without error
+	bound := `{"units": []}`
+	prs, err = ParseMergedPullRequests([]byte(bound))
+	if err != nil {
+		t.Fatalf("unexpected error on empty units wrapper: %v", err)
+	}
+	if prs == nil || len(prs) != 0 {
+		t.Fatalf("expected empty non-nil slice, got: %+v", prs)
+	}
+}
+
+func TestMergedPullRequest_EffectiveNumberAndAlias_PositiveBoundary(t *testing.T) {
+	// Positive: pull_request_number alias normalized and read by EffectiveNumber
+	aliasJSON := `[{"pull_request_number": 88, "head_branch": "feat/alias", "title": "Alias PR"}]`
+	prs, err := ParseMergedPullRequests([]byte(aliasJSON))
+	if err != nil {
+		t.Fatalf("unexpected error parsing pull_request_number alias: %v", err)
+	}
+	if len(prs) != 1 || prs[0].Number != 88 || prs[0].EffectiveNumber() != 88 {
+		t.Fatalf("expected number 88, got Number=%d, Effective=%d", prs[0].Number, prs[0].EffectiveNumber())
+	}
+
+	// Boundary: explicit number takes precedence over pull_request_number
+	both := MergedPullRequest{Number: 42, PRNumber: 99}
+	if got := both.EffectiveNumber(); got != 42 {
+		t.Errorf("expected number 42 to take precedence over PRNumber 99, got %d", got)
+	}
+
+	// Boundary: neither set yields 0
+	neither := MergedPullRequest{}
+	if got := neither.EffectiveNumber(); got != 0 {
+		t.Errorf("expected 0 for unset numbers, got %d", got)
+	}
+}
+
+func TestVectorFieldRaw_Positive_StructuredObject(t *testing.T) {
+	structuredJSON := `{"tokens_by_provider": {"value": {"anthropic": 100}, "provenance": "measured"}}`
+	var pr1 MergedPullRequest
+	if err := json.Unmarshal([]byte(structuredJSON), &pr1); err != nil {
+		t.Fatalf("unexpected error unmarshaling structured vector field: %v", err)
+	}
+	if pr1.TokensByProvider == nil || pr1.TokensByProvider.Provenance != "measured" {
+		t.Fatalf("expected provenance measured, got: %+v", pr1.TokensByProvider)
+	}
+}
+
+func TestVectorFieldRaw_Boundary_RawScalar(t *testing.T) {
+	rawScalar := `{"wall_seconds": 120}`
+	var pr2 MergedPullRequest
+	if err := json.Unmarshal([]byte(rawScalar), &pr2); err != nil {
+		t.Fatalf("unexpected error on raw scalar fallback: %v", err)
+	}
+	if pr2.WallSeconds == nil || pr2.WallSeconds.Provenance != "" || string(pr2.WallSeconds.Value) != "120" {
+		t.Fatalf("expected raw value 120 with empty provenance, got: %+v", pr2.WallSeconds)
+	}
+}
+
+func TestVectorFieldRaw_Boundary_RawObject(t *testing.T) {
+	rawObj := `{"tokens_by_provider": {"anthropic": 500}}`
+	var pr3 MergedPullRequest
+	if err := json.Unmarshal([]byte(rawObj), &pr3); err != nil {
+		t.Fatalf("unexpected error on raw object fallback: %v", err)
+	}
+	if pr3.TokensByProvider == nil || pr3.TokensByProvider.Provenance != "" {
+		t.Fatalf("expected empty provenance for raw object fallback, got: %+v", pr3.TokensByProvider)
 	}
 }

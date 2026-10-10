@@ -138,8 +138,13 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 	}
 	owners := branchOwners(prs.all)
 	for _, pr := range prs.units {
-		report.Units = append(report.Units, c.buildUnitReport(pr, owners, transStats, spend, report.Sources, report))
+		unit, err := c.buildUnitReport(pr, owners, transStats, spend, report.Sources, report)
+		if err != nil {
+			return nil, err
+		}
+		report.Units = append(report.Units, unit)
 	}
+	applyRevertDispositions(report.Units)
 	if err := ValidateRows(report.Units); err != nil {
 		return nil, fmt.Errorf("validate efficiency units: %w", err)
 	}
@@ -231,6 +236,7 @@ func (c *Collector) loadForgePRs(ctx context.Context, report *Report) (loaded, e
 	if c.opts.ForgeDriver == nil {
 		return loaded{}, nil
 	}
+	report.Notes = append(report.Notes, "live forge queries merged pull requests only; unmerged rejected/abandoned units require forge records input")
 	list, err := c.opts.ForgeDriver.ListMergedPullRequests(ctx, forge.MergedPullRequestQuery{Limit: c.opts.Limit, Milestone: c.opts.Milestone})
 	if err != nil {
 		return loaded{}, fmt.Errorf("list merged pull requests: %w", err)

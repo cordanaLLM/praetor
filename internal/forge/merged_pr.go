@@ -163,11 +163,14 @@ func ParseMergedPullRequests(data []byte) ([]MergedPullRequest, error) {
 		var wrapper struct {
 			Units []MergedPullRequest `json:"units"`
 		}
-		if err := json.Unmarshal(data, &wrapper); err == nil && len(wrapper.Units) > 0 {
-			prs = wrapper.Units
+		if err := json.Unmarshal(data, &wrapper); err != nil {
+			return nil, fmt.Errorf("parse merged pull requests wrapper: %w", err)
 		}
-	}
-	if prs == nil {
+		prs = wrapper.Units
+		if prs == nil {
+			prs = []MergedPullRequest{}
+		}
+	} else {
 		if err := json.Unmarshal(data, &prs); err != nil {
 			return nil, fmt.Errorf("parse merged pull requests: %w", err)
 		}

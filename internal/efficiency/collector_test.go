@@ -29,12 +29,40 @@ func (s *stubForge) ListMergedPullRequests(_ context.Context, q forge.MergedPull
 }
 
 const forgeRecords = `[
- {"number":1,"head_branch":"feat/x","title":"One","milestone":"M1","created_at":"2026-10-01T10:00:00Z","merged_at":"2026-10-04T10:00:00Z",
-  "closing_issues":[{"number":10,"created_at":"2026-10-01T00:00:00Z"}]},
- {"number":2,"head_branch":"feat/y","title":"Two","milestone":"M1","created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-03T10:00:00Z",
-  "closing_issues":[{"number":11}]},
- {"number":3,"head_branch":"feat/z","title":"Three","milestone":"M1","created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-02T10:00:00Z"},
- {"number":4,"head_branch":"feat/o","title":"Other","milestone":"M2","created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-09T10:00:00Z"}
+ {"number":1,"head_branch":"feat/x","title":"One","milestone":"M1","disposition":"qualified","metric_epoch":"2026-10-10",
+  "created_at":"2026-10-01T10:00:00Z","merged_at":"2026-10-04T10:00:00Z",
+  "closing_issues":[{"number":10,"created_at":"2026-10-01T00:00:00Z"}],
+  "tokens_by_provider":{"value":{},"provenance":"measured"},
+  "wall_seconds":{"value":100,"provenance":"measured"},
+  "review_rounds":{"value":1,"provenance":"measured"},
+  "retries":{"value":0,"provenance":"measured"},
+  "operator_minutes":{"value":1.0,"provenance":"measured"},
+  "escaped_defects":{"value":0,"provenance":"measured"}},
+ {"number":2,"head_branch":"feat/y","title":"Two","milestone":"M1","disposition":"qualified","metric_epoch":"2026-10-10",
+  "created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-03T10:00:00Z",
+  "closing_issues":[{"number":11}],
+  "tokens_by_provider":{"value":{},"provenance":"measured"},
+  "wall_seconds":{"value":100,"provenance":"measured"},
+  "review_rounds":{"value":1,"provenance":"measured"},
+  "retries":{"value":0,"provenance":"measured"},
+  "operator_minutes":{"value":1.0,"provenance":"measured"},
+  "escaped_defects":{"value":0,"provenance":"measured"}},
+ {"number":3,"head_branch":"feat/z","title":"Three","milestone":"M1","disposition":"qualified","metric_epoch":"2026-10-10",
+  "created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-02T10:00:00Z",
+  "tokens_by_provider":{"value":{},"provenance":"measured"},
+  "wall_seconds":{"value":100,"provenance":"measured"},
+  "review_rounds":{"value":1,"provenance":"measured"},
+  "retries":{"value":0,"provenance":"measured"},
+  "operator_minutes":{"value":1.0,"provenance":"measured"},
+  "escaped_defects":{"value":0,"provenance":"measured"}},
+ {"number":4,"head_branch":"feat/o","title":"Other","milestone":"M2","disposition":"qualified","metric_epoch":"2026-10-10",
+  "created_at":"2026-10-02T10:00:00Z","merged_at":"2026-10-09T10:00:00Z",
+  "tokens_by_provider":{"value":{},"provenance":"measured"},
+  "wall_seconds":{"value":100,"provenance":"measured"},
+  "review_rounds":{"value":1,"provenance":"measured"},
+  "retries":{"value":0,"provenance":"measured"},
+  "operator_minutes":{"value":1.0,"provenance":"measured"},
+  "escaped_defects":{"value":0,"provenance":"measured"}}
 ]`
 
 func collect(t *testing.T, opts CollectorOptions) *Report {
@@ -92,16 +120,28 @@ func TestCollector_Positive_MilestoneFiltersBeforeLimitAndStatesTruncation(t *te
 
 func TestCollector_Positive_LiveDriverQueryAndNotes(t *testing.T) {
 	stub := &stubForge{list: forge.MergedPullRequestList{
-		PullRequests: []forge.MergedPullRequest{{Number: 7, HeadBranch: "b"}},
-		Truncated:    "scanned only 2000",
-		Warnings:     []string{"closing issue #9 not fetched"},
+		PullRequests: []forge.MergedPullRequest{{
+			Number:           7,
+			HeadBranch:       "b",
+			Title:            "Stub PR",
+			Disposition:      "qualified",
+			MetricEpoch:      CurrentMetricEpoch,
+			TokensByProvider: &forge.VectorFieldRaw{Value: []byte("{}"), Provenance: "measured"},
+			WallSeconds:      &forge.VectorFieldRaw{Value: []byte("100"), Provenance: "measured"},
+			ReviewRounds:     &forge.VectorFieldRaw{Value: []byte("1"), Provenance: "measured"},
+			Retries:          &forge.VectorFieldRaw{Value: []byte("0"), Provenance: "measured"},
+			OperatorMinutes:  &forge.VectorFieldRaw{Value: []byte("1.0"), Provenance: "measured"},
+			EscapedDefects:   &forge.VectorFieldRaw{Value: []byte("0"), Provenance: "measured"},
+		}},
+		Truncated: "scanned only 2000",
+		Warnings:  []string{"closing issue #9 not fetched"},
 	}}
 	report := collect(t, CollectorOptions{ForgeDriver: stub, Milestone: "M1", Limit: 5, Notes: []string{"caller note"}})
 	if stub.query.Limit != 5 || stub.query.Milestone != "M1" {
 		t.Errorf("milestone and limit go to the forge together: %+v", stub.query)
 	}
 	joined := strings.Join(report.Notes, "\n")
-	for _, want := range []string{"caller note", "forge listing incomplete: scanned only 2000", "forge: closing issue #9 not fetched"} {
+	for _, want := range []string{"caller note", "live forge queries merged pull requests only", "forge listing incomplete: scanned only 2000", "forge: closing issue #9 not fetched"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("note %q missing in %q", want, joined)
 		}
@@ -325,8 +365,23 @@ func TestCollector_Boundary_ReusedBranchJoinsOnlyTheLatestMergedPR(t *testing.T)
 	dir := t.TempDir()
 	prs := filepath.Join(dir, "prs.json")
 	writeFile(t, prs, []byte(`[
- {"number":1,"head_branch":"feat/x","created_at":"2026-10-01T10:00:00Z","merged_at":"2026-10-02T10:00:00Z"},
- {"number":2,"head_branch":"feat/x","created_at":"2026-10-03T10:00:00Z","merged_at":"2026-10-04T10:00:00Z"}]`))
+ {"number":1,"head_branch":"feat/x","title":"PR 1","disposition":"qualified","metric_epoch":"2026-10-10",
+  "created_at":"2026-10-01T10:00:00Z","merged_at":"2026-10-02T10:00:00Z",
+  "tokens_by_provider":{"value":{},"provenance":"measured"},
+  "wall_seconds":{"value":100,"provenance":"measured"},
+  "review_rounds":{"value":1,"provenance":"measured"},
+  "retries":{"value":0,"provenance":"measured"},
+  "operator_minutes":{"value":1.0,"provenance":"measured"},
+  "escaped_defects":{"value":0,"provenance":"measured"}},
+ {"number":2,"head_branch":"feat/x","title":"PR 2","disposition":"qualified","metric_epoch":"2026-10-10",
+  "created_at":"2026-10-03T10:00:00Z","merged_at":"2026-10-04T10:00:00Z",
+  "tokens_by_provider":{"value":{},"provenance":"measured"},
+  "wall_seconds":{"value":100,"provenance":"measured"},
+  "review_rounds":{"value":1,"provenance":"measured"},
+  "retries":{"value":0,"provenance":"measured"},
+  "operator_minutes":{"value":1.0,"provenance":"measured"},
+  "escaped_defects":{"value":0,"provenance":"measured"}}
+]`))
 	tr := filepath.Join(dir, "tr")
 	writeFile(t, filepath.Join(tr, "s.jsonl"), readFixture(t))
 	report := collect(t, CollectorOptions{ForgeJSONPath: prs, TranscriptsDir: tr})
@@ -404,53 +459,62 @@ func TestCollector_Positive_QualifiedDenominatorAndLaneCounts(t *testing.T) {
 		t.Fatalf("expected 3 units, got %d", len(report.Units))
 	}
 	ms := report.MilestoneSummary
-	if ms.QualifiedUnits != 2 {
-		t.Errorf("expected 2 qualified units, got %d", ms.QualifiedUnits)
-	}
-	if ms.LaneCounts.Qualified != 2 || ms.LaneCounts.Reverted != 1 || ms.LaneCounts.Offered != 3 {
-		t.Errorf("unexpected lane counts: %+v", ms.LaneCounts)
-	}
-	laneStr := ms.LaneCounts.String()
-	if !strings.Contains(laneStr, "1 reverted") || !strings.Contains(laneStr, "2 qualified") {
-		t.Errorf("lane counts string must report revert: %q", laneStr)
-	}
 
-	// Verify denominator is 2 (divides by 2):
-	// Wall seconds: (100 + 200 + 60) / 2 = 180s = 3m
+	t.Run("LaneCounts", func(t *testing.T) {
+		if ms.QualifiedUnits != 2 {
+			t.Errorf("expected 2 qualified units, got %d", ms.QualifiedUnits)
+		}
+		if ms.LaneCounts.Qualified != 2 || ms.LaneCounts.Reverted != 1 || ms.LaneCounts.Offered != 3 {
+			t.Errorf("unexpected lane counts: %+v", ms.LaneCounts)
+		}
+		laneStr := ms.LaneCounts.String()
+		if !strings.Contains(laneStr, "1 reverted") || !strings.Contains(laneStr, "2 qualified") {
+			t.Errorf("lane counts string must report revert: %q", laneStr)
+		}
+	})
+
+	t.Run("AveragedRates", func(t *testing.T) {
+		assertNumericAverages(t, ms)
+		assertDefectsAndTokens(t, ms)
+	})
+
+	t.Run("RenderTable", func(t *testing.T) {
+		var tableBuf bytes.Buffer
+		if err := RenderTable(report, &tableBuf); err != nil {
+			t.Fatalf("render table: %v", err)
+		}
+		if !strings.Contains(tableBuf.String(), "1 reverted") {
+			t.Errorf("table output must report revert in lane counts:\n%s", tableBuf.String())
+		}
+	})
+}
+
+func assertNumericAverages(t *testing.T, ms MilestoneSummary) {
+	t.Helper()
 	if ms.AvgWallSecondsNum == nil || *ms.AvgWallSecondsNum != 180.0 {
 		t.Errorf("expected avg wall seconds 180 (360/2), got %v", ms.AvgWallSecondsNum)
 	}
-	// Review rounds: (1 + 3 + 2) / 2 = 3.00
 	if ms.AvgReviewRoundsNum == nil || *ms.AvgReviewRoundsNum != 3.0 {
 		t.Errorf("expected avg review rounds 3.0 (6/2), got %v", ms.AvgReviewRoundsNum)
 	}
-	// Retries: (0 + 2 + 0) / 2 = 1.00
 	if ms.AvgRetriesNum == nil || *ms.AvgRetriesNum != 1.0 {
 		t.Errorf("expected avg retries 1.0 (2/2), got %v", ms.AvgRetriesNum)
 	}
-	// Operator minutes: (5.0 + 15.0 + 4.0) / 2 = 12.0m
 	if ms.AvgOperatorMinutesNum == nil || *ms.AvgOperatorMinutesNum != 12.0 {
 		t.Errorf("expected avg operator minutes 12.0 (24/2), got %v", ms.AvgOperatorMinutesNum)
 	}
-	// Tokens by provider: anthropic (1000 + 2000 + 400) / 2 = 1700.0/unit
+}
+
+func assertDefectsAndTokens(t *testing.T, ms MilestoneSummary) {
+	t.Helper()
 	if ms.TokensByProvider["anthropic"] != 1700.0 {
 		t.Errorf("expected anthropic token rate 1700.0 (3400/2), got %f", ms.TokensByProvider["anthropic"])
 	}
-	// Escaped defects: 1 defect across 2 qualified units = 0.50 per qualified unit
 	if ms.EscapedDefectsNum == nil || *ms.EscapedDefectsNum != 1 {
 		t.Errorf("expected 1 defect, got %v", ms.EscapedDefectsNum)
 	}
 	if !strings.Contains(ms.EscapedDefects, "0.50 per qualified unit") {
 		t.Errorf("expected defect rate divided by 2, got %q", ms.EscapedDefects)
-	}
-
-	var tableBuf bytes.Buffer
-	if err := RenderTable(report, &tableBuf); err != nil {
-		t.Fatalf("render table: %v", err)
-	}
-	tableOut := tableBuf.String()
-	if !strings.Contains(tableOut, "1 reverted") {
-		t.Errorf("table output must report revert in lane counts:\n%s", tableOut)
 	}
 }
 
@@ -625,8 +689,292 @@ func TestCollector_Negative_MixedMetricEpochsRefused(t *testing.T) {
 	row2.PullRequestNumber = 2
 	row2.MetricEpoch = "2025-01-01"
 
-	if err := ValidateRows([]UnitReport{row1, row2}); err == nil {
+	err := ValidateRows([]UnitReport{row1, row2})
+	if err == nil {
 		t.Fatal("expected ValidateRows to refuse mixed metric epochs")
+	}
+	if !strings.Contains(err.Error(), "mixed metric epochs in ledger") {
+		t.Errorf("expected mixed epochs error, got: %v", err)
+	}
+}
+
+func TestCollector_Negative_RowCarryingOnlyNumberBranchTitleRefused(t *testing.T) {
+	// Blocker 1: A row with no provenance labels must be refused through the collector path.
+	fixture := `[{"number": 1, "head_branch": "feat/bare", "title": "Bare PR"}]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	_, err := NewCollector(CollectorOptions{ForgeJSONPath: prsPath}).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected Collect to refuse row carrying only number, branch, and title")
+	}
+}
+
+func TestCollector_Negative_MissingMetricEpochRefusedCollectorPath(t *testing.T) {
+	// Major 2: Missing metric_epoch refused through collector path
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/no-epoch",
+    "title": "No Epoch PR",
+    "disposition": "qualified",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	_, err := NewCollector(CollectorOptions{ForgeJSONPath: prsPath}).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected Collect to refuse row missing metric_epoch through collector path")
+	}
+	if !strings.Contains(err.Error(), "missing metric_epoch tag") {
+		t.Errorf("expected error to name missing metric_epoch tag, got: %v", err)
+	}
+}
+
+func TestCollector_Positive_ProbeQualifiedAndRevertedUnitRates(t *testing.T) {
+	// Major 3 probe: 1 qualified + 1 reverted must print '1 of 1 units measured' not '2 of 2'.
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/qual",
+    "title": "Qualified PR",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "created_at": "2026-10-01T10:00:00Z",
+    "merged_at": "2026-10-01T12:00:00Z",
+    "closing_issues": [{"number": 10, "created_at": "2026-10-01T08:00:00Z"}],
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  },
+  {
+    "number": 2,
+    "head_branch": "feat/rev",
+    "title": "Reverted PR",
+    "disposition": "reverted",
+    "metric_epoch": "2026-10-10",
+    "created_at": "2026-10-02T10:00:00Z",
+    "merged_at": "2026-10-02T12:00:00Z",
+    "closing_issues": [{"number": 11, "created_at": "2026-10-02T08:00:00Z"}],
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
+
+	ms := report.MilestoneSummary
+	if ms.QualifiedUnits != 1 {
+		t.Fatalf("expected 1 qualified unit, got %d", ms.QualifiedUnits)
+	}
+	if !strings.Contains(ms.AvgIssueToMerge, "1 of 1 units measured") {
+		t.Errorf("probe failure: expected '1 of 1 units measured', got %q", ms.AvgIssueToMerge)
+	}
+	if strings.Contains(ms.AvgIssueToMerge, "2 of 2") {
+		t.Errorf("probe failure: reverted unit must not be in rate denominator: %q", ms.AvgIssueToMerge)
+	}
+}
+
+func TestCollector_Positive_RevertRuleMarksOriginalReverted(t *testing.T) {
+	// Major 5 positive: Revert PR marks the original PR as reverted
+	fixture := `[
+  {
+    "number": 10,
+    "head_branch": "feat/orig",
+    "title": "Add super feature",
+    "metric_epoch": "2026-10-10",
+    "created_at": "2026-10-01T10:00:00Z",
+    "merged_at": "2026-10-01T12:00:00Z",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  },
+  {
+    "number": 11,
+    "head_branch": "revert-10",
+    "title": "Revert \"Add super feature\"",
+    "metric_epoch": "2026-10-10",
+    "created_at": "2026-10-02T10:00:00Z",
+    "merged_at": "2026-10-02T12:00:00Z",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 50, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
+
+	orig := unitByNumber(t, report, 10)
+	rev := unitByNumber(t, report, 11)
+	if orig.Disposition != DispositionReverted {
+		t.Errorf("original PR #10 must be marked reverted, got %q", orig.Disposition)
+	}
+	if rev.Disposition != DispositionQualified {
+		t.Errorf("revert PR #11 itself must be qualified, got %q", rev.Disposition)
+	}
+}
+
+func TestCollector_Negative_RevertRuleNonMatchingTitle(t *testing.T) {
+	// Major 5 negative: non-revert titles do not change disposition
+	fixture := `[
+  {
+    "number": 20,
+    "head_branch": "feat/first",
+    "title": "Add widget A",
+    "metric_epoch": "2026-10-10",
+    "created_at": "2026-10-01T10:00:00Z",
+    "merged_at": "2026-10-01T12:00:00Z",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  },
+  {
+    "number": 21,
+    "head_branch": "feat/second",
+    "title": "Add widget B",
+    "metric_epoch": "2026-10-10",
+    "created_at": "2026-10-02T10:00:00Z",
+    "merged_at": "2026-10-02T12:00:00Z",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
+
+	u1 := unitByNumber(t, report, 20)
+	u2 := unitByNumber(t, report, 21)
+	if u1.Disposition != DispositionQualified || u2.Disposition != DispositionQualified {
+		t.Errorf("neither PR is a revert; both must be qualified: u1=%q, u2=%q", u1.Disposition, u2.Disposition)
+	}
+}
+
+func TestCollector_Positive_PerLaneAggregation(t *testing.T) {
+	// Major 4: Per-lane aggregation and table rendering
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/l1",
+    "title": "Unit 1",
+    "lane": "fast-lane",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  },
+  {
+    "number": 2,
+    "head_branch": "feat/l2",
+    "title": "Unit 2",
+    "lane": "fast-lane",
+    "disposition": "reverted",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  },
+  {
+    "number": 3,
+    "head_branch": "feat/l3",
+    "title": "Unit 3",
+    "lane": "batch-lane",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
+
+	ms := report.MilestoneSummary
+	if len(ms.PerLane) != 2 {
+		t.Fatalf("expected 2 lanes, got %d", len(ms.PerLane))
+	}
+	fast := ms.PerLane["fast-lane"]
+	if fast.Qualified != 1 || fast.Reverted != 1 || fast.Offered != 2 {
+		t.Errorf("unexpected fast-lane counts: %+v", fast)
+	}
+	batch := ms.PerLane["batch-lane"]
+	if batch.Qualified != 1 || batch.Offered != 1 {
+		t.Errorf("unexpected batch-lane counts: %+v", batch)
+	}
+
+	var buf bytes.Buffer
+	if err := RenderTable(report, &buf); err != nil {
+		t.Fatalf("render table: %v", err)
+	}
+	tableOut := buf.String()
+	if !strings.Contains(tableOut, "Lane Counts (batch-lane):") || !strings.Contains(tableOut, "Lane Counts (fast-lane):") {
+		t.Errorf("table output must render per-lane counts:\n%s", tableOut)
+	}
+}
+
+func TestCollector_Negative_UnmarshalVectorTypeError(t *testing.T) {
+	// Major 6: Vector unmarshal error reporting with context
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/bad-type",
+    "title": "Bad Type PR",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "wall_seconds": {"value": "not-an-int", "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"},
+    "tokens_by_provider": {"value": {}, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	_, err := NewCollector(CollectorOptions{ForgeJSONPath: prsPath}).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected Collect to fail on vector field unmarshal type error")
+	}
+	if !strings.Contains(err.Error(), `field "wall_seconds": unmarshal value`) {
+		t.Errorf("expected error to wrap field name with context, got: %v", err)
 	}
 }
 

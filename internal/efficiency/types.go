@@ -132,17 +132,19 @@ func (vf *VectorField[T]) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("cannot parse vector field from %s", string(data))
 }
 
-// LaneCounts tracks unit outcomes in a lane/milestone.
+// LaneCounts tracks unit outcomes in a lane or milestone.
+// Offered is the total count of all units offered/attempted across all outcomes
+// (qualified + reverted + rejected + abandoned + timed-out + offered).
 type LaneCounts struct {
 	Qualified int `json:"qualified"`
-	Offered   int `json:"offered"`
+	Offered   int `json:"offered"` // Total units offered across all dispositions
 	Rejected  int `json:"rejected"`
 	Abandoned int `json:"abandoned"`
 	Reverted  int `json:"reverted"`
 	TimedOut  int `json:"timed_out"`
 }
 
-// Add counts one unit disposition.
+// Add counts one unit disposition. Offered is incremented for every unit as the total offered.
 func (lc *LaneCounts) Add(disp string) {
 	norm := normalizeDisposition(disp)
 	lc.Offered++
@@ -157,6 +159,8 @@ func (lc *LaneCounts) Add(disp string) {
 		lc.Abandoned++
 	case DispositionTimedOut:
 		lc.TimedOut++
+	case DispositionOffered:
+		// Counted in Offered total
 	}
 }
 
@@ -219,45 +223,46 @@ type UnitReport struct {
 
 // MilestoneSummary aggregates metrics across units in a milestone.
 type MilestoneSummary struct {
-	Milestone               string             `json:"milestone,omitempty"`
-	UnitsCount              int                `json:"units_count"`
-	QualifiedUnits          int                `json:"qualified_units"`
-	LaneCounts              LaneCounts         `json:"lane_counts"`
-	MetricEpoch             string             `json:"metric_epoch"`
-	FrontierTokens          string             `json:"frontier_tokens"`
-	FrontierTokensNum       *int64             `json:"frontier_tokens_num,omitempty"`
-	AttributedSpend         string             `json:"attributed_spend"`
-	AttributedSpendNum      *float64           `json:"attributed_spend_num,omitempty"`
-	UnattributedSpend       string             `json:"unattributed_spend"`
-	UnattributedSpendNum    *float64           `json:"unattributed_spend_num,omitempty"`
-	TotalSpend              string             `json:"total_spend"`
-	TotalSpendNum           *float64           `json:"total_spend_num,omitempty"`
-	OtherUnitsSpend         string             `json:"other_units_spend"`
-	OtherUnitsSpendNum      *float64           `json:"other_units_spend_num,omitempty"`
-	IssueToMergeUnits       int                `json:"issue_to_merge_units"`
-	AvgIssueToMerge         string             `json:"avg_issue_to_merge"`
-	AvgIssueToMergeSecs     *int64             `json:"avg_issue_to_merge_secs,omitempty"`
-	OperatorTouches         string             `json:"operator_touches"`
-	OperatorTouchNum        *int               `json:"operator_touches_num,omitempty"`
-	PromptCacheHitRate      string             `json:"prompt_cache_hit_rate"`
-	CacheHitRatio           *float64           `json:"cache_hit_ratio,omitempty"`
-	LocalFirstRatio         string             `json:"local_first_ratio"`
-	LocalRatio              *float64           `json:"local_ratio,omitempty"`
-	FactHitRatio            string             `json:"fact_hit_ratio"`
-	ChecksBeforeReviews     string             `json:"checks_before_reviews"`
-	TokensByProvider        map[string]float64 `json:"tokens_by_provider,omitempty"`
-	TokensByProviderDisplay string             `json:"tokens_by_provider_display,omitempty"`
-	AvgWallSeconds          string             `json:"avg_wall_seconds"`
-	AvgWallSecondsNum       *float64           `json:"avg_wall_seconds_num,omitempty"`
-	AvgReviewRounds         string             `json:"avg_review_rounds"`
-	AvgReviewRoundsNum      *float64           `json:"avg_review_rounds_num,omitempty"`
-	AvgRetries              string             `json:"avg_retries"`
-	AvgRetriesNum           *float64           `json:"avg_retries_num,omitempty"`
-	AvgOperatorMinutes      string             `json:"avg_operator_minutes"`
-	AvgOperatorMinutesNum   *float64           `json:"avg_operator_minutes_num,omitempty"`
-	EscapedDefects          string             `json:"escaped_defects"`
-	EscapedDefectsNum       *int               `json:"escaped_defects_num,omitempty"`
-	EscapedDefectsRate      string             `json:"escaped_defects_rate"`
+	Milestone               string                `json:"milestone,omitempty"`
+	UnitsCount              int                   `json:"units_count"`
+	QualifiedUnits          int                   `json:"qualified_units"`
+	LaneCounts              LaneCounts            `json:"lane_counts"`
+	PerLane                 map[string]LaneCounts `json:"per_lane,omitempty"`
+	MetricEpoch             string                `json:"metric_epoch"`
+	FrontierTokens          string                `json:"frontier_tokens"`
+	FrontierTokensNum       *int64                `json:"frontier_tokens_num,omitempty"`
+	AttributedSpend         string                `json:"attributed_spend"`
+	AttributedSpendNum      *float64              `json:"attributed_spend_num,omitempty"`
+	UnattributedSpend       string                `json:"unattributed_spend"`
+	UnattributedSpendNum    *float64              `json:"unattributed_spend_num,omitempty"`
+	TotalSpend              string                `json:"total_spend"`
+	TotalSpendNum           *float64              `json:"total_spend_num,omitempty"`
+	OtherUnitsSpend         string                `json:"other_units_spend"`
+	OtherUnitsSpendNum      *float64              `json:"other_units_spend_num,omitempty"`
+	IssueToMergeUnits       int                   `json:"issue_to_merge_units"`
+	AvgIssueToMerge         string                `json:"avg_issue_to_merge"`
+	AvgIssueToMergeSecs     *int64                `json:"avg_issue_to_merge_secs,omitempty"`
+	OperatorTouches         string                `json:"operator_touches"`
+	OperatorTouchNum        *int                  `json:"operator_touches_num,omitempty"`
+	PromptCacheHitRate      string                `json:"prompt_cache_hit_rate"`
+	CacheHitRatio           *float64              `json:"cache_hit_ratio,omitempty"`
+	LocalFirstRatio         string                `json:"local_first_ratio"`
+	LocalRatio              *float64              `json:"local_ratio,omitempty"`
+	FactHitRatio            string                `json:"fact_hit_ratio"`
+	ChecksBeforeReviews     string                `json:"checks_before_reviews"`
+	TokensByProvider        map[string]float64    `json:"tokens_by_provider,omitempty"`
+	TokensByProviderDisplay string                `json:"tokens_by_provider_display,omitempty"`
+	AvgWallSeconds          string                `json:"avg_wall_seconds"`
+	AvgWallSecondsNum       *float64              `json:"avg_wall_seconds_num,omitempty"`
+	AvgReviewRounds         string                `json:"avg_review_rounds"`
+	AvgReviewRoundsNum      *float64              `json:"avg_review_rounds_num,omitempty"`
+	AvgRetries              string                `json:"avg_retries"`
+	AvgRetriesNum           *float64              `json:"avg_retries_num,omitempty"`
+	AvgOperatorMinutes      string                `json:"avg_operator_minutes"`
+	AvgOperatorMinutesNum   *float64              `json:"avg_operator_minutes_num,omitempty"`
+	EscapedDefects          string                `json:"escaped_defects"`
+	EscapedDefectsNum       *int                  `json:"escaped_defects_num,omitempty"`
+	EscapedDefectsRate      string                `json:"escaped_defects_rate"`
 }
 
 // SourcesMeasured records which of the optional sources were present and read.
@@ -319,13 +324,15 @@ func ValidateRow(u UnitReport) error {
 func ValidateRows(units []UnitReport) error {
 	var firstEpoch string
 	for i, u := range units {
-		if err := ValidateRow(u); err != nil {
-			return err
-		}
 		if i == 0 {
 			firstEpoch = u.MetricEpoch
 		} else if u.MetricEpoch != firstEpoch {
 			return fmt.Errorf("mixed metric epochs in ledger: found %q and %q (schema change must not silently mix old and new rows)", firstEpoch, u.MetricEpoch)
+		}
+	}
+	for _, u := range units {
+		if err := ValidateRow(u); err != nil {
+			return err
 		}
 	}
 	return nil

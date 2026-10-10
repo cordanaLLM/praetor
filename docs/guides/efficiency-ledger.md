@@ -75,10 +75,31 @@ and the bound named; nothing is cut off silently.
 | Forge listing | closed pull requests scanned | 2000 (a hit is printed under Notes) |
 | Forge listing | closing-issue lookups | 200 (a hit is printed under Notes) |
 
-1. **Forge records:** Pull request number, head branch, creation and merge timestamps, milestone and
-   closing issues with their creation times. Loaded from a local JSON file (`sources.forge.path` or
+1. **Forge records:** Pull request records loaded from a local JSON file (`sources.forge.path` or
    `--forge-records`) or queried live through the manifest's forge kind and the shared token
-   resolver. The live listing scans closed pull requests, filters by milestone first, sorts by merge
+   resolver. A records file accepts either a top-level JSON array of unit objects or a wrapper object
+   `{"units": [...]}`. Each unit object accepts:
+   - `number` (or `pull_request_number` alias): integer pull request number.
+   - `head_branch`: branch name joining transcripts and spend logs.
+   - `title`: pull request title.
+   - `created_at` and `merged_at`: RFC3339 timestamps.
+   - `closing_issues`: array of closing issues with their `created_at` timestamps.
+   - `disposition`: qualification status (`qualified`, `offered`, `rejected`, `abandoned`,
+     `reverted`, `timed_out`). Defaults to `qualified`.
+   - `lane`: lane identifier string (e.g. `claude-code`, `agy:flash`), aggregated into per-lane counts.
+   - `metric_epoch`: schema epoch tag (current: `2026-10-10`). Ledgers mixing epochs or omitting
+     the epoch are refused.
+   - Vector fields: `tokens_by_provider`, `wall_seconds`, `review_rounds`, `retries`,
+     `operator_minutes`, `escaped_defects`. Each vector field has shape `{"value": <v>, "provenance": "<p>"}`
+     with provenance in `measured`, `modeled`, `cited`, or `interval`.
+   - **Revert rule:** When a merged pull request title matches `Revert "<title>"`, the earlier pull request
+     with title `<title>` has its disposition marked `reverted`; the revert pull request itself remains
+     `qualified`.
+   - **Live query bounds:** Live GitHub queries (`parseGitHubMergedPulls`) scan closed pull requests and
+     skip unmerged pull requests. Therefore, live queries observe only merged units (`qualified` or
+     `reverted`); non-merged dispositions (`rejected`, `abandoned`, `timed_out`) require offline
+     `--forge-records` input.
+   The live listing scans closed pull requests, filters by milestone first, sorts by merge
    time and keeps the newest `--limit`. Closing issues come from `Closes`/`Fixes`/`Resolves #N`
    in the pull request body (references qualified with a repository are ignored); the issue's
    `created_at` is fetched with a bounded read. Without a token the forge is `not measured` and the
@@ -162,7 +183,8 @@ Default cheap markers: `mini`, `nano`, `flash`, `lite`, `haiku`
 ### Missing sources rule
 
 When a source is omitted, a metric that needs it prints `not measured`, **never zero**; the same
-holds for any ratio with a zero denominator and for a unit that no session or spend entry joins.
+holds for a unit that no session or spend entry joins. Any ratio with a zero denominator prints
+`undefined`, **never zero**.
 
 ### Vector fields and provenance
 
@@ -183,14 +205,14 @@ the epoch tag are refused to prevent silent schema drift.
 
 ### Qualified-unit denominator and honest edge cases
 
-- **Qualified denominator:** Rates in milestone and cohort summaries divide strictly by the number of
+- **Qualified denominator:** Rates in milestone summaries divide strictly by the number of
   landed units that passed reviews and gates (`qualified` disposition). Units with dispositions
   `offered`, `rejected`, `abandoned`, `reverted`, or `timed_out` stay visible in summary lane counts
   (`X qualified, Y reverted, ...`) and their failures remain in the numerator base.
 - **Undefined rates:** When qualified units equal zero (including empty ledgers), rates print
   `undefined`, never `0`.
 - **Zero-failure claims:** For non-negative failure counters like escaped defects where zero failures
-  are observed in $n$ qualified units, the claim prints with sample size $n$ and the rule-of-three upper
+  are observed in n qualified units, the claim prints with sample size n and the rule-of-three upper
   confidence bound: `0 (n=X, rule-of-three bound <= 3/X)`.
 
 ## Milestone summary

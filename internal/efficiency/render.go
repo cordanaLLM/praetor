@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"text/tabwriter"
 )
@@ -79,6 +80,23 @@ func renderSummary(report *Report, out io.Writer) error {
 		fmt.Sprintf("Units:                   %d", ms.UnitsCount),
 		fmt.Sprintf("Qualified Units:         %d", ms.QualifiedUnits),
 		fmt.Sprintf("Lane Counts:             %s", ms.LaneCounts.String()),
+	}
+	if len(ms.PerLane) > 0 {
+		laneKeys := make([]string, 0, len(ms.PerLane))
+		for k := range ms.PerLane {
+			laneKeys = append(laneKeys, k)
+		}
+		sort.Strings(laneKeys)
+		for _, k := range laneKeys {
+			label := fmt.Sprintf("Lane Counts (%s):", k)
+			pad := 25 - len(label)
+			if pad < 1 {
+				pad = 1
+			}
+			lines = append(lines, fmt.Sprintf("%s%s%s", label, strings.Repeat(" ", pad), ms.PerLane[k].String()))
+		}
+	}
+	lines = append(lines,
 		fmt.Sprintf("Avg Issue-to-Merge:      %s", ms.AvgIssueToMerge),
 		fmt.Sprintf("Avg Wall Seconds:        %s", ms.AvgWallSeconds),
 		fmt.Sprintf("Avg Review Rounds:       %s", ms.AvgReviewRounds),
@@ -95,7 +113,7 @@ func renderSummary(report *Report, out io.Writer) error {
 		fmt.Sprintf("Local-First Ratio:       %s", ms.LocalFirstRatio),
 		fmt.Sprintf("Fact-Hit Ratio:          %s", ms.FactHitRatio),
 		fmt.Sprintf("Checks-Before-Reviews:   %s", ms.ChecksBeforeReviews),
-	}
+	)
 	if ms.TokensByProviderDisplay != "" && ms.TokensByProviderDisplay != UndefinedRate {
 		lines = append(lines, fmt.Sprintf("Tokens by Provider:      %s", ms.TokensByProviderDisplay))
 	}

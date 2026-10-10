@@ -17,8 +17,15 @@ func (c *Collector) buildMilestoneSummary(report *Report, spend *SpendReport) {
 	summary.UnitsCount = len(report.Units)
 	summary.MetricEpoch = CurrentMetricEpoch
 
+	summary.LaneCounts = LaneCounts{}
+	summary.PerLane = make(map[string]LaneCounts)
 	for _, u := range report.Units {
 		summary.LaneCounts.Add(u.Disposition)
+		if u.Lane != "" {
+			lc := summary.PerLane[u.Lane]
+			lc.Add(u.Disposition)
+			summary.PerLane[u.Lane] = lc
+		}
 	}
 	summary.QualifiedUnits = summary.LaneCounts.Qualified
 
@@ -148,6 +155,9 @@ func summarizeIssueToMerge(units []UnitReport, summary *MilestoneSummary) {
 	var total int64
 	measured := 0
 	for _, u := range units {
+		if u.Disposition != DispositionQualified {
+			continue
+		}
 		if u.IssueToMergeSecs != nil {
 			total += *u.IssueToMergeSecs
 			measured++
@@ -160,19 +170,22 @@ func summarizeIssueToMerge(units []UnitReport, summary *MilestoneSummary) {
 	}
 	avg := total / int64(measured)
 	summary.AvgIssueToMergeSecs = &avg
-	summary.AvgIssueToMerge = fmt.Sprintf("%s (%d of %d units measured)", formatDuration(time.Duration(avg)*time.Second), measured, len(units))
+	summary.AvgIssueToMerge = fmt.Sprintf("%s (%d of %d units measured)", formatDuration(time.Duration(avg)*time.Second), measured, summary.QualifiedUnits)
 }
 
 func summarizeTranscriptMetrics(units []UnitReport, summary *MilestoneSummary) {
 	touches, measured := 0, 0
 	for _, u := range units {
+		if u.Disposition != DispositionQualified {
+			continue
+		}
 		if u.OperatorTouchNum != nil {
 			touches += *u.OperatorTouchNum
 			measured++
 		}
 	}
 	if measured > 0 {
-		summary.OperatorTouches = fmt.Sprintf("%d (%d of %d units measured)", touches, measured, len(units))
+		summary.OperatorTouches = fmt.Sprintf("%d (%d of %d units measured)", touches, measured, summary.QualifiedUnits)
 		summary.OperatorTouchNum = &touches
 	} else {
 		summary.OperatorTouches = NotMeasured
@@ -186,6 +199,9 @@ func summarizeGatewayAndTranscriptUsage(units []UnitReport, summary *MilestoneSu
 	var tokenUnits int
 	var localSum, ratioUnits float64
 	for _, u := range units {
+		if u.Disposition != DispositionQualified {
+			continue
+		}
 		if u.FrontierTokensNum != nil {
 			frontier += *u.FrontierTokensNum
 			tokenUnits++
@@ -196,21 +212,29 @@ func summarizeGatewayAndTranscriptUsage(units []UnitReport, summary *MilestoneSu
 		}
 	}
 	if tokenUnits > 0 {
-		summary.FrontierTokens = fmt.Sprintf("%d (%d of %d units measured)", frontier, tokenUnits, len(units))
+		summary.FrontierTokens = fmt.Sprintf("%d (%d of %d units measured)", frontier, tokenUnits, summary.QualifiedUnits)
 		summary.FrontierTokensNum = &frontier
 	} else {
 		summary.FrontierTokens = NotMeasured
 	}
 	if ratioUnits > 0 {
 		mean := localSum / ratioUnits
-		summary.LocalFirstRatio = fmt.Sprintf("%s (mean of %d of %d units)", formatPercent(mean), int(ratioUnits), len(units))
+		summary.LocalFirstRatio = fmt.Sprintf("%s (mean of %d of %d units)", formatPercent(mean), int(ratioUnits), summary.QualifiedUnits)
 		summary.LocalRatio = &mean
 	} else {
 		summary.LocalFirstRatio = NotMeasured
 	}
+	summarizeCacheHitRate(units, summary)
+}
+
+// summarizeCacheHitRate computes average prompt-cache hit rate over qualified units.
+func summarizeCacheHitRate(units []UnitReport, summary *MilestoneSummary) {
 	var cacheSum float64
 	cacheUnits := 0
 	for _, u := range units {
+		if u.Disposition != DispositionQualified {
+			continue
+		}
 		if u.CacheHitRatio != nil {
 			cacheSum += *u.CacheHitRatio
 			cacheUnits++
@@ -218,7 +242,7 @@ func summarizeGatewayAndTranscriptUsage(units []UnitReport, summary *MilestoneSu
 	}
 	if cacheUnits > 0 {
 		mean := cacheSum / float64(cacheUnits)
-		summary.PromptCacheHitRate = fmt.Sprintf("%s (mean of %d of %d units)", formatPercent(mean), cacheUnits, len(units))
+		summary.PromptCacheHitRate = fmt.Sprintf("%s (mean of %d of %d units)", formatPercent(mean), cacheUnits, summary.QualifiedUnits)
 		summary.CacheHitRatio = &mean
 	} else {
 		summary.PromptCacheHitRate = NotMeasured

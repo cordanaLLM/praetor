@@ -1,4 +1,4 @@
 type: added
-title: "efficiency ledger qualifies unit denominators, tracks lane dispositions, enforces vector provenance and metric epoch, and bounds zero-failure claims"
+title: "efficiency ledger qualifies unit denominators, tracks lane dispositions, enforces vector provenance and metric epoch, and bounds zero-failure claims. Migration: efficiency ledger input rows without metric_epoch, disposition, or provenance labels on vector fields are refused; update forge records to include metric_epoch '2026-10-10' and provenance objects on vector fields"
 issue: "#1132"
-breaking: false
+breaking: true
