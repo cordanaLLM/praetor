@@ -200,7 +200,7 @@ entries:
       - "npm:smol-toml"
   - name: "js-yaml"
     url: "https://github.com/nodeca/js-yaml"
-    detail: "5.4.2"
+    detail: "5.4.3"
     section: "shipped"
     kind: "dependency"
     relation: "integrated"

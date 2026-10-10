@@ -76,7 +76,7 @@ jobs:
           fetch-depth: 0
       - name: Setup Node.js` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: "24"
           cache: npm
@@ -115,6 +115,10 @@ var priorDigests = map[string]string{
 	"5a8932a0b5535c934f5eb00bf097e7f9cdcfe94053f82941aa2ff7a6bd4f7803": WorkflowFile,
 	// The gate in the draft skip shape before it ran on merge_group (#893).
 	"51b53cde08a626fc77eae5c4f1134cff81fc7038baeb7b4e673129d6629da0fe": WorkflowFile,
+	// The hosted documentation gate on actions/setup-node v7.0.0 before the v7.1.0 update.
+	"9b91f7cbcd861ea9844ad498ad727c2fcdce091f74d5a7f2a156ce0b7bbe6332": WorkflowFile,
+	// The draft skip rendering of the gate on actions/setup-node v7.0.0 before the v7.1.0 update.
+	"3ac7dc11439891197d4d6b1ce608328ef4d756fa909a2c83e767ecdd64cb7db9": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked
@@ -183,6 +187,9 @@ var priorDigests = map[string]string{
 	// verify.mjs before it left the read-only context projection, AGENTS.readonly.md, out of the
 	// style rules like the other compiled context files (#1135).
 	"8e14d51b230823345ff9b480e762219197819c6ad373ffa6782d4cdabb493e26": Directory + "/verify.mjs",
+	// package.json and package-lock.json on js-yaml 5.4.2 before the 5.4.3 update (#801).
+	"1b8a7623acd0fe28e5a07c7f65c3a224a2157875d35bf8f6473735307dc64e1b": Directory + "/package.json",
+	"a2bcd70b321d7a680d7ad7ba4c1448cd916e3bf5816ac06793f88c4598823e1f": Directory + "/package-lock.json",
 }
 
 var assetNames = [...]string{

@@ -652,7 +652,8 @@ The hosted workflow (this repository's own `.github/workflows/praetor-docs.yml`)
 and the template `adopt.DocumentationWorkflow()` emits to adopters
 (`markdownlint.Workflow`, `tools/markdownlint/assets.go`) both pin
 `runs-on: ubuntu-26.04` and every action by full commit SHA, with the release as
-a trailing comment (`actions/checkout@<sha>  # v7.0.1`). A repository whose
+a trailing comment (`actions/checkout@<sha>  # v7.0.1`,
+`actions/setup-node@<sha>  # v7.1.0`). A repository whose
 organization requires SHA pinning can run the gate, and it cannot pin the
 actions itself because audit locks the file.
 `managedasset.Family.Validate` refuses a hosted workflow with a tag-, branch- or
