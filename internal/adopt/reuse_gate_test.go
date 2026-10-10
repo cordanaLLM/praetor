@@ -21,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,6 +36,15 @@ var reuseGoldenNames = map[hisscatalog.Language]string{
 	hisscatalog.LanguageGo:   "go.lefthook.yml",
 	hisscatalog.LanguageRust: "rust.lefthook.yml",
 	lefthookJobLanguages:     "go-rust.lefthook.yml",
+}
+
+func mustReuseWorkflow(t *testing.T, branch string) string {
+	t.Helper()
+	text, err := reuseWorkflow(branch)
+	if err != nil {
+		t.Fatalf("reuseWorkflow(%q): %v", branch, err)
+	}
+	return text
 }
 
 // Positive: a REUSE repository's rendering, for every language set, carries the reuse-lint
@@ -180,7 +190,7 @@ func TestAdopt_ReuseGateFollowsTheRoot(t *testing.T) {
 	reuseRepo := newTestRepo(t, "reuse-gate")
 	mustWrite(t, filepath.Join(reuseRepo, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
 	rep := adoptWithSource(t, reuseRepo, newAdoptLockSource(t), false)
-	if got := mustRead(t, filepath.Join(reuseRepo, filepath.FromSlash(reuseWorkflowFile))); got != reuseWorkflow(forge.FallbackDefaultBranch) {
+	if got := mustRead(t, filepath.Join(reuseRepo, filepath.FromSlash(reuseWorkflowFile))); got != mustReuseWorkflow(t, forge.FallbackDefaultBranch) {
 		t.Fatalf("the hosted REUSE gate is not the rendering:\n%s", got)
 	}
 	if !hasAction(rep, reuseWorkflowFile, actionCreate) {
@@ -259,7 +269,7 @@ func TestAdopt_Boundary_LefthookFollowsTheReuseSwitch(t *testing.T) {
 func TestAdopt_Boundary_EditedReuseGateIsKept(t *testing.T) {
 	repoPath := newTestRepo(t, "edited-reuse-gate")
 	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
-	edited := strings.Replace(reuseWorkflow(forge.FallbackDefaultBranch), "name: REUSE\n", "name: Licensing\n", 1)
+	edited := strings.Replace(mustReuseWorkflow(t, forge.FallbackDefaultBranch), "name: REUSE\n", "name: Licensing\n", 1)
 	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile)), edited)
 	adoptWithSource(t, repoPath, newAdoptLockSource(t), true)
 	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))); got != edited {
@@ -274,7 +284,7 @@ func TestAdopt_Boundary_EditedReuseGateIsKept(t *testing.T) {
 // the release that changes it still refreshes this one without --force, and every recorded digest
 // is reproduced by a text under testdata/reuse-workflow.
 func TestPriorReuseWorkflowDigests_Boundary_CurrentRenderingRecorded(t *testing.T) {
-	digest, _, err := util.CanonicalTextDigest([]byte(reuseWorkflow(forge.FallbackDefaultBranch)))
+	digest, _, err := util.CanonicalTextDigest([]byte(mustReuseWorkflow(t, forge.FallbackDefaultBranch)))
 	if err != nil {
 		t.Fatalf("digest the rendering: %v", err)
 	}
@@ -333,7 +343,7 @@ func TestReuseWorkflow_RendersTheDefaultBranch(t *testing.T) {
 		} `yaml:"jobs"`
 	}
 	for _, branch := range []string{"master", "1.0", "true"} {
-		rendering := reuseWorkflow(branch)
+		rendering := mustReuseWorkflow(t, branch)
 		if err := yaml.Unmarshal([]byte(rendering), &decoded); err != nil {
 			t.Fatalf("%s: decode: %v", branch, err)
 		}
@@ -346,16 +356,23 @@ func TestReuseWorkflow_RendersTheDefaultBranch(t *testing.T) {
 		if decoded.Jobs["reuse"].Timeout != 10 {
 			t.Errorf("%s: timeout-minutes %d, want 10", branch, decoded.Jobs["reuse"].Timeout)
 		}
-		if got, rendered := reuseRenderingBranch([]byte(rendering)); !rendered || got != branch {
+		got, rendered, err := reuseRenderingBranch([]byte(rendering))
+		if err != nil {
+			t.Fatalf("%s: reuseRenderingBranch err: %v", branch, err)
+		}
+		if !rendered || got != branch {
 			t.Errorf("%s: read back as %q, %v", branch, got, rendered)
 		}
 	}
-	edited := strings.Replace(reuseWorkflow("master"), "timeout-minutes: 10", "timeout-minutes: 30", 1)
-	if _, rendered := reuseRenderingBranch([]byte(edited)); rendered || isReuseRendering([]byte(edited)) {
-		t.Error("an edited rendering reads as Praetor's")
+	edited := strings.Replace(mustReuseWorkflow(t, "master"), "timeout-minutes: 10", "timeout-minutes: 30", 1)
+	if _, rendered, err := reuseRenderingBranch([]byte(edited)); err != nil || rendered {
+		t.Errorf("reuseRenderingBranch(edited): rendered=%v, err=%v", rendered, err)
 	}
-	if _, rendered := reuseRenderingBranch([]byte(reuseWorkflow("a b"))); rendered {
-		t.Error("a rendering for a name that is no branch reads as Praetor's")
+	if rendered, err := isReuseRendering([]byte(edited)); err != nil || rendered {
+		t.Errorf("isReuseRendering(edited): rendered=%v, err=%v", rendered, err)
+	}
+	if _, rendered, err := reuseRenderingBranch([]byte(mustReuseWorkflow(t, "a b"))); err != nil || rendered {
+		t.Errorf("a rendering for a name that is no branch reads as Praetor's: rendered=%v, err=%v", rendered, err)
 	}
 }
 
@@ -365,7 +382,7 @@ func TestReuseWorkflow_RendersTheDefaultBranch(t *testing.T) {
 // not-draft condition.
 func TestReuseWorkflow_HasTheHostedGateShape(t *testing.T) {
 	for _, branch := range []string{forge.FallbackDefaultBranch, "master"} {
-		spec, err := ghworkflow.Parse([]byte(reuseWorkflow(branch)))
+		spec, err := ghworkflow.Parse([]byte(mustReuseWorkflow(t, branch)))
 		if err != nil {
 			t.Fatalf("%s: parse: %v", branch, err)
 		}
@@ -376,7 +393,7 @@ func TestReuseWorkflow_HasTheHostedGateShape(t *testing.T) {
 			t.Errorf("%s: the shape check accepts another default branch", branch)
 		}
 	}
-	rendering := reuseWorkflow(forge.FallbackDefaultBranch)
+	rendering := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
 	mutants := map[string]string{
 		"no draft step":       strings.Replace(rendering, ghworkflow.HostedGateDraftStep, "", 1),
 		"unguarded lint":      strings.Replace(rendering, "reuse lint"+ghworkflow.HostedGateStepIf, "reuse lint", 1),
@@ -398,7 +415,7 @@ func TestReuseWorkflow_HasTheHostedGateShape(t *testing.T) {
 // declaring master gets the master rendering. Boundary: the unedited rendering for main, written
 // before the repository declared master, is refreshed to master without --force.
 func TestAdopt_ReuseGateFollowsTheDefaultBranch(t *testing.T) {
-	for name, existing := range map[string]string{"absent": "", "main rendering": reuseWorkflow(forge.FallbackDefaultBranch)} {
+	for name, existing := range map[string]string{"absent": "", "main rendering": mustReuseWorkflow(t, forge.FallbackDefaultBranch)} {
 		repoPath := newTestRepo(t, "reuse-gate-master-"+strings.ReplaceAll(name, " ", "-"))
 		mustWrite(t, filepath.Join(repoPath, manifestFile), "version: 1\nrepository:\n  owner: acme\n  name: x\n  default_branch: master\n")
 		mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
@@ -406,7 +423,7 @@ func TestAdopt_ReuseGateFollowsTheDefaultBranch(t *testing.T) {
 			mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile)), existing)
 		}
 		rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
-		if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))); got != reuseWorkflow("master") {
+		if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))); got != mustReuseWorkflow(t, "master") {
 			t.Fatalf("%s: the gate is not the master rendering:\n%s", name, got)
 		}
 		if existing != "" && (hasAction(rep, reuseWorkflowFile, actionReplace) || !strings.Contains(reuseGateDetails(rep), "Refreshed")) {
@@ -434,7 +451,7 @@ func reuseGateDetails(rep *AdoptReport) string {
 func TestAdopt_ReuseGateRemovedWithTheMarkers(t *testing.T) {
 	for _, branch := range []string{forge.FallbackDefaultBranch, "trunk"} {
 		repoPath := newTestRepo(t, "reuse-gate-gone-"+branch)
-		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile)), reuseWorkflow(branch))
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile)), mustReuseWorkflow(t, branch))
 		rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
 		if fileExists(filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))) || !hasAction(rep, reuseWorkflowFile, actionRemove) {
 			t.Fatalf("%s: the unedited gate was not removed: %+v", branch, rep.ActionDetails)
@@ -445,7 +462,7 @@ func TestAdopt_ReuseGateRemovedWithTheMarkers(t *testing.T) {
 	}
 
 	edited := newTestRepo(t, "reuse-gate-gone-edited")
-	text := strings.Replace(reuseWorkflow(forge.FallbackDefaultBranch), "name: REUSE\n", "name: Licensing\n", 1)
+	text := strings.Replace(mustReuseWorkflow(t, forge.FallbackDefaultBranch), "name: REUSE\n", "name: Licensing\n", 1)
 	mustWrite(t, filepath.Join(edited, filepath.FromSlash(reuseWorkflowFile)), text)
 	rep := adoptWithSource(t, edited, newAdoptLockSource(t), true)
 	if got := mustRead(t, filepath.Join(edited, filepath.FromSlash(reuseWorkflowFile))); got != text {
@@ -458,7 +475,7 @@ func TestAdopt_ReuseGateRemovedWithTheMarkers(t *testing.T) {
 	}
 
 	dry := newTestRepo(t, "reuse-gate-gone-dry")
-	mustWrite(t, filepath.Join(dry, filepath.FromSlash(reuseWorkflowFile)), reuseWorkflow(forge.FallbackDefaultBranch))
+	mustWrite(t, filepath.Join(dry, filepath.FromSlash(reuseWorkflowFile)), mustReuseWorkflow(t, forge.FallbackDefaultBranch))
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: dry, DryRun: true})
 	if err != nil {
 		t.Fatalf("Adopt: %v", err)
@@ -485,5 +502,227 @@ func TestWorkflowActions_3D(t *testing.T) {
 	}
 	if actions, err := workflowActions("jobs:\n  a:\n    steps:\n      - run: make\n"); err != nil || len(actions) != 0 {
 		t.Fatalf("a workflow using nothing: %q, %v", actions, err)
+	}
+}
+
+// Positive: the hosted REUSE gate pins every action by full 40-hex commit SHA with its release
+// version as a trailing comment, and the audit SHA-pin check (managedasset.UnpinnedActions)
+// reports zero unpinned actions on the rendering and on the committed emitted fixture.
+// Negative (Rule 13): the earlier tag-pinned rendering fails the check, returning the unpinned
+// actions. Boundary: each uses: line carries a 40-hex SHA, a version comment, and a yamllint
+// line-length exemption.
+func TestReuseWorkflow_PinsActionsByDigest_3D(t *testing.T) {
+	rendering := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	assertUnpinnedActions(t, rendering, "rendering", nil)
+
+	emittedPath := filepath.Join(emittedFixtureRoot, filepath.FromSlash(reuseWorkflowFile))
+	assertUnpinnedActions(t, mustRead(t, emittedPath), emittedPath, nil)
+
+	oldPath := filepath.Join("testdata", "reuse-workflow", "reuse-action-v6.yml")
+	wantOldUnpinned := []string{"uses: actions/checkout@v7", "uses: fsfe/reuse-action@v6"}
+	assertUnpinnedActions(t, mustRead(t, oldPath), oldPath, wantOldUnpinned)
+
+	assertUsesPins(t, rendering)
+}
+
+func assertUnpinnedActions(t *testing.T, workflow, name string, want []string) {
+	t.Helper()
+	unpinned, err := managedasset.UnpinnedActions(workflow)
+	if err != nil {
+		t.Fatalf("UnpinnedActions(%s): %v", name, err)
+	}
+	if (len(unpinned) == 0 && len(want) != 0) || (len(unpinned) != 0 && !slices.Equal(unpinned, want)) {
+		t.Errorf("%s unpinned actions = %q, want %q", name, unpinned, want)
+	}
+}
+
+func assertValidActionUse(t *testing.T, use util.ActionUse) {
+	t.Helper()
+	if !use.Pinned || !use.SHAPinned || len(use.Pin.SHA) != 40 || use.Pin.Release == "" {
+		t.Errorf("action %q not fully SHA-pinned with release comment: %+v", use.Ref, use)
+	}
+}
+
+func assertUsesPins(t *testing.T, rendering string) {
+	t.Helper()
+	_, uses, err := util.ScanActionUses(rendering, managedasset.MaxWorkflowLines)
+	if err != nil {
+		t.Fatalf("ScanActionUses(rendering): %v", err)
+	}
+	if len(uses) != 2 {
+		t.Fatalf("rendering has %d action uses, want 2", len(uses))
+	}
+	for _, use := range uses {
+		assertValidActionUse(t, use)
+	}
+	wantCheckout, err := scanCheckoutPinnedRef(markdownassets.Workflow)
+	if err != nil {
+		t.Fatalf("scan markdownassets.Workflow: %v", err)
+	}
+	if uses[0].Pin.Action != "actions/checkout" || uses[0].Ref != wantCheckout {
+		t.Errorf("checkout action = %q, want %q", uses[0].Ref, wantCheckout)
+	}
+	if uses[1].Pin.Action != supplychain.ReuseAction || uses[1].Ref != supplychain.ReuseActionPinnedRef() {
+		t.Errorf("reuse action = %q, want %q", uses[1].Ref, supplychain.ReuseActionPinnedRef())
+	}
+}
+
+// Positive: markdownassets.Workflow carries a pinned actions/checkout step, which reuseCheckoutRef
+// extracts without duplicating the pin literal (HISS-19).
+func TestMarkdownAssetsWorkflowCarriesPinnedCheckout(t *testing.T) {
+	ref, err := reuseCheckoutRef()
+	if err != nil {
+		t.Fatalf("reuseCheckoutRef: %v", err)
+	}
+	if !strings.HasPrefix(ref, "actions/checkout@") {
+		t.Errorf("scanned checkout ref = %q, want actions/checkout@<sha> # <version>", ref)
+	}
+}
+
+// Negative: a workflow without a pinned checkout reports an error, never falling back to a hardcoded pin.
+func TestScanCheckoutPinnedRef_Negative(t *testing.T) {
+	_, err := scanCheckoutPinnedRef("name: Empty\njobs:\n  test:\n    steps:\n      - run: true\n")
+	if err == nil {
+		t.Fatal("scanCheckoutPinnedRef on workflow without checkout: want error, got nil")
+	}
+}
+
+// Negative (HISS-15): a workflow lacking a pinned checkout fails REUSE workflow rendering with an error.
+func TestRenderReuseWorkflow_LacksPinnedCheckout_Negative(t *testing.T) {
+	cases := map[string]string{
+		"no checkout":       "name: Empty\njobs:\n  test:\n    steps:\n      - run: true\n",
+		"unpinned checkout": "name: Unpinned\njobs:\n  test:\n    steps:\n      - uses: actions/checkout@v7\n",
+	}
+	for name, workflow := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := renderReuseWorkflow(workflow, forge.FallbackDefaultBranch)
+			if err == nil {
+				t.Fatalf("%s: renderReuseWorkflow want error, got nil", name)
+			}
+		})
+	}
+}
+
+// Boundary: an unedited earlier tag-pinned hosted REUSE gate (reuse-action-v6.yml) is refreshed
+// to the current digest-pinned rendering on adoption without --force.
+func TestAdopt_RefreshesPriorTagPinnedReuseWorkflow(t *testing.T) {
+	repoPath := newTestRepo(t, "refresh-prior-reuse-gate")
+	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", "reuse-action-v6.yml"))
+	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPath, priorText)
+
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	got := mustRead(t, workflowPath)
+	want := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	if got != want {
+		t.Fatalf("refreshed gate differs from current rendering:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+	if hasAction(rep, reuseWorkflowFile, actionReplace) {
+		t.Errorf("want a refresh without --force, got actionReplace: %+v", rep.ActionDetails)
+	}
+	if !strings.Contains(reuseGateDetails(rep), "Refreshed") {
+		t.Errorf("report details do not mention Refreshed: %s", reuseGateDetails(rep))
+	}
+}
+
+// applyRenovateRewrite derives the Renovate-pinned text from a tag-pinned REUSE gate
+// by applying the exact rewrite Renovate performed in #1029.
+func applyRenovateRewrite(text string) string {
+	text = strings.Replace(text, "uses: actions/checkout@v7", "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", 1)
+	text = strings.Replace(text, "uses: fsfe/reuse-action@v6", "uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6", 1)
+	return text
+}
+
+// Boundary: an adopter whose Renovate pinned the tag-pinned reuse.yml holds an exact rewrite
+// (#1029: uses: <action>@<full sha> # <tag>). Adoption refreshes such a copy to the current
+// digest-pinned rendering without --force.
+func TestAdopt_RefreshesRenovatePinnedReuseWorkflow(t *testing.T) {
+	for _, fixture := range []string{"reuse-action-v6.yml", "reuse-action-v6-draft-bash.yml"} {
+		t.Run(fixture, func(t *testing.T) {
+			repoPath := newTestRepo(t, "refresh-renovate-pinned")
+			mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+			priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", fixture))
+			renovatePinnedText := applyRenovateRewrite(priorText)
+			workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+			mustWrite(t, workflowPath, renovatePinnedText)
+
+			rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+			got := mustRead(t, workflowPath)
+			want := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+			if got != want {
+				t.Fatalf("refreshed gate differs from current rendering:\ngot:\n%s\nwant:\n%s", got, want)
+			}
+			if hasAction(rep, reuseWorkflowFile, actionReplace) {
+				t.Errorf("want a refresh without --force, got actionReplace: %+v", rep.ActionDetails)
+			}
+			if !strings.Contains(reuseGateDetails(rep), "Refreshed") {
+				t.Errorf("report details do not mention Refreshed: %s", reuseGateDetails(rep))
+			}
+		})
+	}
+}
+
+// Negative (Rule 13): a hand edit beyond the Renovate rewrite is kept and fails the refresh.
+func TestAdopt_KeepsHandEditedReuseWorkflow_Negative(t *testing.T) {
+	repoPath := newTestRepo(t, "keep-hand-edited-reuse-gate")
+	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", "reuse-action-v6-draft-bash.yml"))
+	handEdited := applyRenovateRewrite(priorText) + "\n        # custom adopter step or comment\n"
+	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPath, handEdited)
+
+	rep := adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	got := mustRead(t, workflowPath)
+	if got != handEdited {
+		t.Fatalf("hand-edited gate was modified: got:\n%s\nwant:\n%s", got, handEdited)
+	}
+	if strings.Contains(reuseGateDetails(rep), "Refreshed") {
+		t.Errorf("report details incorrectly mention Refreshed: %s", reuseGateDetails(rep))
+	}
+	want := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	if got == want {
+		t.Fatal("negative test: hand-edited gate unexpectedly matched current rendering")
+	}
+}
+
+// Boundary (HISS-15): an existing reuse.yml with mixed line endings is preserved unverified
+// by both adopt and dry-run without aborting the adoption.
+func TestAdopt_MixedLineEndingsReuseWorkflow_PreservedUnverified(t *testing.T) {
+	currentText := mustReuseWorkflow(t, forge.FallbackDefaultBranch)
+	mixedText := strings.Replace(currentText, "\n", "\r\n", 1)
+
+	// Test dry-run preserves the file and reports preserved unverified
+	dryRepo := newTestRepo(t, "mixed-endings-reuse-dry")
+	mustWrite(t, filepath.Join(dryRepo, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	workflowPathDry := filepath.Join(dryRepo, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPathDry, mixedText)
+
+	dryRep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: dryRepo, DryRun: true})
+	if err != nil {
+		t.Fatalf("DryRun with mixed-endings reuse.yml failed: %v", err)
+	}
+	if got := mustRead(t, workflowPathDry); got != mixedText {
+		t.Fatalf("DryRun modified mixed-endings reuse.yml: got:\n%s\nwant:\n%s", got, mixedText)
+	}
+	if !strings.Contains(reuseGateDetails(dryRep), "Existing file preserved unverified") {
+		t.Errorf("DryRun report details do not mention 'Existing file preserved unverified': %s", reuseGateDetails(dryRep))
+	}
+
+	// Test adopt preserves the file and reports preserved unverified
+	adoptRepo := newTestRepo(t, "mixed-endings-reuse-adopt")
+	mustWrite(t, filepath.Join(adoptRepo, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	workflowPathAdopt := filepath.Join(adoptRepo, filepath.FromSlash(reuseWorkflowFile))
+	mustWrite(t, workflowPathAdopt, mixedText)
+
+	adoptRep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: adoptRepo})
+	if err != nil {
+		t.Fatalf("Adopt with mixed-endings reuse.yml failed: %v", err)
+	}
+	if got := mustRead(t, workflowPathAdopt); got != mixedText {
+		t.Fatalf("Adopt modified mixed-endings reuse.yml: got:\n%s\nwant:\n%s", got, mixedText)
+	}
+	if !strings.Contains(reuseGateDetails(adoptRep), "Existing file preserved unverified") {
+		t.Errorf("Adopt report details do not mention 'Existing file preserved unverified': %s", reuseGateDetails(adoptRep))
 	}
 }

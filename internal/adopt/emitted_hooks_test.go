@@ -38,9 +38,13 @@ const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 // is the one adoption creates with the default facets.
 func emittedHookRenderings(t *testing.T) map[string]string {
 	t.Helper()
+	reuseWorkflowContent, err := reuseWorkflow(forge.FallbackDefaultBranch)
+	if err != nil {
+		t.Fatalf("render reuseWorkflow: %v", err)
+	}
 	return map[string]string{
 		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true}, true),
-		reuseWorkflowFile:    reuseWorkflow(forge.FallbackDefaultBranch),
+		reuseWorkflowFile:    reuseWorkflowContent,
 		evasionHookFile:      buildBlockEvasionPY(),
 		engineLauncherFile:   engineLauncherScript,
 		manifestFile:         renderedPriorManifest(t),

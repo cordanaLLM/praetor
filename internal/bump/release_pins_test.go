@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/supplychain"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // releasePipelineActions are the signing, SBOM, image and chart actions the engine's
@@ -143,6 +144,18 @@ func TestReuseActionPinMatchesRegistryAndEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan engine workflows: %v", err)
 	}
+	assertEngineRunsReusePin(t, actions)
+	fixture, _, err := ScanWorkflowActions(t.Context(), writeReleaseWorkflow(t, []string{supplychain.ReuseAction + "@v5", supplychain.ReuseActionRef()}))
+	if err != nil || len(fixture) != 2 {
+		t.Fatalf("scan fixture: %v (%d actions)", err, len(fixture))
+	}
+	if fixture[0].CurrentVersion == fixture[0].LatestVersion || fixture[1].CurrentVersion != fixture[1].LatestVersion {
+		t.Errorf("want drift for v5 only: %+v", fixture)
+	}
+}
+
+func assertEngineRunsReusePin(t *testing.T, actions []ActionCandidate) {
+	t.Helper()
 	engine := 0
 	for _, a := range actions {
 		if a.Action == supplychain.ReuseAction {
@@ -155,11 +168,89 @@ func TestReuseActionPinMatchesRegistryAndEngine(t *testing.T) {
 	if engine == 0 {
 		t.Error("no engine workflow runs the REUSE action; praetor's own CI must run reuse lint")
 	}
-	fixture, _, err := ScanWorkflowActions(t.Context(), writeReleaseWorkflow(t, []string{supplychain.ReuseAction + "@v5", supplychain.ReuseActionRef()}))
-	if err != nil || len(fixture) != 2 {
-		t.Fatalf("scan fixture: %v (%d actions)", err, len(fixture))
+}
+
+// Positive: ReuseActionPinnedRef combines the registry tag with ReuseActionCommit, and
+// VerifyActionPins confirms PinVerified when the upstream tag resolves to that commit.
+// Negative: when ReuseActionVersion and ReuseActionCommit disagree with the registry tag,
+// VerifyActionPins refuses the pin as a release mismatch and clears UpToDate.
+func TestReuseActionPinnedRefPairsRegistryTagAndCommit(t *testing.T) {
+	assertPinnedRefStructure(t)
+	workflow, _, err := ScanWorkflowActions(t.Context(), writeReleaseWorkflow(t, []string{supplychain.ReuseActionPinnedRef()}))
+	if err != nil {
+		t.Fatalf("scan pinned workflow: %v", err)
 	}
-	if fixture[0].CurrentVersion == fixture[0].LatestVersion || fixture[1].CurrentVersion != fixture[1].LatestVersion {
-		t.Errorf("want drift for v5 only: %+v", fixture)
+	if len(workflow) != 1 {
+		t.Fatalf("scanned %d actions, want 1", len(workflow))
+	}
+	assertMatchingPinVerifies(t, workflow)
+	assertMismatchedPinRefused(t, workflow)
+}
+
+const expectedReuseActionCommit = "676e2d560c9a403aa252096d99fcab3e1132b0f5"
+
+func assertPinnedRefStructure(t *testing.T) {
+	t.Helper()
+	pin, ok := util.ParseSHAPin(supplychain.ReuseActionPinnedRef())
+	if !ok {
+		t.Fatalf("ReuseActionPinnedRef %q is not a valid SHA-pinned action", supplychain.ReuseActionPinnedRef())
+	}
+	if pin.Action != supplychain.ReuseAction {
+		t.Errorf("action = %s, want %s", pin.Action, supplychain.ReuseAction)
+	}
+	if pin.SHA != expectedReuseActionCommit {
+		t.Errorf("SHA = %s, want %s", pin.SHA, expectedReuseActionCommit)
+	}
+	if supplychain.ReuseActionCommit != expectedReuseActionCommit {
+		t.Errorf("ReuseActionCommit = %s, want %s", supplychain.ReuseActionCommit, expectedReuseActionCommit)
+	}
+	if pin.Release != supplychain.ReuseActionVersion {
+		t.Errorf("release = %s, want %s", pin.Release, supplychain.ReuseActionVersion)
+	}
+	if pin.Release != knownActionLatest[supplychain.ReuseAction] {
+		t.Fatalf("pinned release %s disagrees with registry %s", pin.Release, knownActionLatest[supplychain.ReuseAction])
+	}
+}
+
+func assertMatchingPinVerifies(t *testing.T, workflow []ActionCandidate) {
+	t.Helper()
+	upstream := pinUpstream{
+		tags: map[string]string{
+			supplychain.ReuseAction + " " + supplychain.ReuseActionVersion: expectedReuseActionCommit,
+		},
+	}
+	lookup := &fakePinLookup{upstream: upstream}
+	verified, findings := VerifyActionPins(t.Context(), workflow, lookup)
+	if len(findings) != 0 {
+		t.Errorf("unexpected findings: %+v", findings)
+	}
+	if verified[0].Pin != PinVerified {
+		t.Errorf("Pin = %v, want PinVerified", verified[0].Pin)
+	}
+	if !verified[0].UpToDate {
+		t.Error("want UpToDate true")
+	}
+}
+
+func assertMismatchedPinRefused(t *testing.T, workflow []ActionCandidate) {
+	t.Helper()
+	staleUpstream := pinUpstream{
+		tags: map[string]string{
+			supplychain.ReuseAction + " " + supplychain.ReuseActionVersion: "1111111111111111111111111111111111111111",
+		},
+		extra: map[string]bool{
+			supplychain.ReuseAction + " " + supplychain.ReuseActionCommit: true,
+		},
+	}
+	staleLookup := &fakePinLookup{upstream: staleUpstream}
+	mismatched, mismatchFindings := VerifyActionPins(t.Context(), workflow, staleLookup)
+	if len(mismatchFindings) == 0 {
+		t.Error("want mismatch findings, got none")
+	}
+	if mismatched[0].Pin != PinReleaseMismatch {
+		t.Errorf("Pin = %v, want PinReleaseMismatch", mismatched[0].Pin)
+	}
+	if mismatched[0].UpToDate {
+		t.Error("want UpToDate false for mismatched pin")
 	}
 }

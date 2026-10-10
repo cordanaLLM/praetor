@@ -25,13 +25,21 @@ const (
 	ReuseAction = "fsfe/reuse-action"
 	// ReuseActionVersion is the one tag every emitted or own workflow runs ReuseAction at.
 	ReuseActionVersion = "v6"
+	// ReuseActionCommit is the full commit SHA corresponding to ReuseActionVersion.
+	ReuseActionCommit = "676e2d560c9a403aa252096d99fcab3e1132b0f5"
 	// LicensesDir holds the full text of every license REUSE names, one <id>.txt each.
 	LicensesDir = "LICENSES"
 )
 
-// ReuseActionRef is ReuseAction pinned at ReuseActionVersion, the form a workflow step uses.
+// ReuseActionRef is ReuseAction pinned at ReuseActionVersion, the form the hook job output uses.
 func ReuseActionRef() string {
 	return ReuseAction + "@" + ReuseActionVersion
+}
+
+// ReuseActionPinnedRef is ReuseAction pinned by full commit SHA with its release tag as a
+// trailing comment, the digest-pinned form a workflow step uses (HISS-11).
+func ReuseActionPinnedRef() string {
+	return ReuseAction + "@" + ReuseActionCommit + "  # " + ReuseActionVersion
 }
 
 // ReuseMajor is the reuse release major ReuseActionVersion runs: its tag without the "v".

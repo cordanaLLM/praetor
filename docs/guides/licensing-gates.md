@@ -21,9 +21,12 @@ The `reuse.yml` workflow also triggers on `merge_group`, so its check reports fo
 Adoption writes two jobs, both at the one REUSE pin, `supplychain.ReuseActionVersion` in
 [`internal/supplychain/reuse_lint.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse_lint.go):
 
-- `.github/workflows/reuse.yml`, whose **REUSE lint** job runs `fsfe/reuse-action@v6` within
+- `.github/workflows/reuse.yml`, whose **REUSE lint** job runs `fsfe/reuse-action` within
   `timeout-minutes: 10` and becomes a required status check of the branch ruleset adoption
-  renders. It has the hosted gate shape every emitted gate shares
+  renders. Both `actions/checkout` and `fsfe/reuse-action` are pinned by full commit SHA with a
+  version comment (`supplychain.ReuseActionPinnedRef` and the checkout pin from
+  `tools/markdownlint/assets.go`, HISS-11), satisfying strict SHA-pinning organization policies.
+  It has the hosted gate shape every emitted gate shares
   (`internal/ghworkflow/hostedgate.go`): it runs on pull request activity and on a push to the
   default branch that ruleset protects, its first step fails a draft run by design (on `bash`,
   so it behaves the same on every runner), and every later step runs only when the pull request
