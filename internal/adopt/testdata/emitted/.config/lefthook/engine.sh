@@ -147,10 +147,15 @@ install_pinned() { #
     refuse "installing the engine pinned by $2 failed (exit $status, timeout $timeout seconds); run: $3" #
   fi #
   rm -f "$log" #
-  # Jobs that run in parallel, and worktrees that share the cache, each install on a cold cache.
-  # The target directory is never removed or replaced as a whole: each built file is renamed over
-  # the target one, which is atomic and swaps in an identical file when another job was first. A
-  # rename that fails because the engine is running (Windows) leaves that engine in place.
+  place_pinned "$1" "$2" "$3" #
+} #
+#
+# place_pinned DIRECTORY WHERE FIX: move what install_pinned built into $scratch into DIRECTORY.
+# Jobs that run in parallel, and worktrees that share the cache, each install on a cold cache.
+# The target directory is never removed or replaced as a whole: each built file is renamed over
+# the target one, which is atomic and swaps in an identical file when another job was first. A
+# rename that fails because the engine is running (Windows) leaves that engine in place.
+place_pinned() { #
   mkdir -p "$1" || refuse "cannot create $1 for the engine pinned by $2; run: $3" #
   for built in "$scratch"/*; do #
     if ! mv -f "$built" "$1/" 2>/dev/null && [ ! -e "$1/${built##*/}" ]; then #

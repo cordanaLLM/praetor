@@ -21,6 +21,11 @@ func pythonFunction(lines int) string {
 	return "def count():\n    value = 0\n" + strings.Repeat("    value += 1\n", lines-3) + "    return value\n"
 }
 
+// shellFunction returns a script holding one function of exactly lines lines, header to brace.
+func shellFunction(lines int) string {
+	return "#!/bin/sh\nset -eu\ncount() {\n" + strings.Repeat("  : step\n", lines-2) + "}\ncount\n"
+}
+
 // scanStrict scans files, written at their relative paths under a fresh root, with the
 // strict adopter limit and returns every violation it reports.
 func scanStrict(t *testing.T, files map[string]string) []hiss.InvariantViolation {
@@ -39,14 +44,15 @@ func scanStrict(t *testing.T, files map[string]string) []hiss.InvariantViolation
 	return report.Violations
 }
 
-// TestVendoredCheckpointSourcesFitStrictAdopterLOC keeps the Python adoption writes clean
+// TestVendoredCheckpointSourcesFitStrictAdopterLOC keeps the scripts adoption writes clean
 // under the strictest limit the public dogfood suite adopts with: the checkpoint scripts it
-// vendors and the evasion interceptor it renders. Black formatting once stretched six of the
-// checkpoint functions past it, and every public adoption under that policy failed on files
-// Praetor itself had written.
+// vendors, the evasion interceptor and the engine launcher it renders. Black formatting once
+// stretched six of the checkpoint functions past it, and every public adoption under that
+// policy failed on files Praetor itself had written; the launcher's install_pinned later did
+// the same at 37 lines.
 func TestVendoredCheckpointSourcesFitStrictAdopterLOC(t *testing.T) {
 	engineRoot := filepath.Join("..", "..")
-	files := map[string]string{evasionHookFile: buildBlockEvasionPY()}
+	files := map[string]string{evasionHookFile: buildBlockEvasionPY(), engineLauncherFile: engineLauncherScript}
 	for _, name := range []string{checkpointScript, checkpointCommon} {
 		body, err := os.ReadFile(filepath.Join(engineRoot, filepath.FromSlash(name)))
 		if err != nil {
@@ -59,18 +65,20 @@ func TestVendoredCheckpointSourcesFitStrictAdopterLOC(t *testing.T) {
 	}
 }
 
-// TestStrictAdopterLOCGuardBoundary proves the guard above can fail, at both paths it
+// TestStrictAdopterLOCGuardBoundary proves the guard above can fail, at each kind of path it
 // scans: a function one line over the limit is reported, and one exactly at it is not.
 func TestStrictAdopterLOCGuardBoundary(t *testing.T) {
 	for _, test := range []struct {
 		path        string
 		lines, want int
+		render      func(int) string
 	}{
-		{checkpointScript, strictAdopterFuncLOC + 1, 1}, {checkpointScript, strictAdopterFuncLOC, 0},
-		{evasionHookFile, strictAdopterFuncLOC + 1, 1}, {evasionHookFile, strictAdopterFuncLOC, 0},
+		{checkpointScript, strictAdopterFuncLOC + 1, 1, pythonFunction}, {checkpointScript, strictAdopterFuncLOC, 0, pythonFunction},
+		{evasionHookFile, strictAdopterFuncLOC + 1, 1, pythonFunction}, {evasionHookFile, strictAdopterFuncLOC, 0, pythonFunction},
+		{engineLauncherFile, strictAdopterFuncLOC + 1, 1, shellFunction}, {engineLauncherFile, strictAdopterFuncLOC, 0, shellFunction},
 	} {
 		t.Run(fmt.Sprintf("%s-%d-lines", filepath.Base(test.path), test.lines), func(t *testing.T) {
-			got := scanStrict(t, map[string]string{test.path: pythonFunction(test.lines)})
+			got := scanStrict(t, map[string]string{test.path: test.render(test.lines)})
 			if len(got) != test.want {
 				t.Fatalf("%d-line function: got %d violations, want %d: %+v", test.lines, len(got), test.want, got)
 			}
