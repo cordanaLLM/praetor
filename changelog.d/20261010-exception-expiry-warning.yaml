@@ -1,0 +1,4 @@
+type: added
+title: praetorctl exceptions list prints declared exceptions with their remaining days and filters by --expiring-within, and the audit warns 14 days before an entry expires
+issue: "#798"
+breaking: false

@@ -120,6 +120,29 @@ a valid declaration: the gate treats it as missing and fails on its files. An en
 excuses no unit every lane leaves unread, because a lane now reads the file or the file is gone,
 is stale and fails until it is removed (`TestCheck_Negative_ExpiredAndStaleExceptions`).
 
+Inspect declared exceptions and their remaining validity with `praetorctl exceptions list`
+(`cmd/standardsctl/exceptions.go`, `TestExceptionsList_Positive_ListsEntries`):
+
+```bash
+praetorctl exceptions list
+```
+
+Filter entries due to expire soon by passing `--expiring-within=<days>`
+(`TestExceptionsList_Positive_FiltersByExpiringWithin`, `TestExceptionsList_Boundary_ExactDaysAndZero`):
+
+```bash
+praetorctl exceptions list --expiring-within=14
+```
+
+The governance audit (`praetorctl audit`) warns 14 days before an exception expires
+(`config.ExceptionExpiryWarningDays`, `cmd/standardsctl/audit_exceptions.go`,
+`TestAuditExceptionsExpiry_3D`, `TestAudit_ExceptionsExpiryWarning_Integration`), prompting
+maintainers to address or renew the debt before the owning gate fails upon expiry:
+
+```text
+[WARN] Exceptions: the exceptions entry (rule HISS-11, .github/workflows/rel.yml) expires on 2026-10-24 (14 days left): Level 2 builder
+```
+
 ## Reading the output
 
 A pass names what each lane read:
@@ -146,3 +169,5 @@ Two older exception mechanisms keep their own formats: the npm audit gate reads
 `.config/security/npm-audit-exceptions.json` (`scripts/npm_audit_gate.py`), and the HISS-01
 cleanup-`goto` exception is declared under `hiss.exceptions` with its own document. Both could
 move onto the top-level `exceptions` list as further rules; neither is migrated yet.
+Like `.standards.yaml` exceptions, `scripts/npm_audit_gate.py` warns 14 days before an
+active npm audit exception expires (`EXCEPTION_EXPIRY_WARNING_DAYS`).
