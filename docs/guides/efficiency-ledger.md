@@ -57,7 +57,7 @@ praetorctl efficiency --transcripts-dir="$HOME/.claude/projects/<project>" --spe
 | `--limit=<N>` | Upper bound on pull requests reported (default 20); a cut is printed under Notes | |
 | `--path=<dir>` | Repository root where `.standards.yaml` lives (default `.`) | |
 | `--manifest=<file>` | Manifest to read instead of `<path>/.standards.yaml` | file unreadable or invalid |
-| `--forge-records=<file>` | Overrides forge records source with a specific JSON file | file unreadable or invalid JSON |
+| `--forge-records=<file>` | Overrides forge records source with a specific JSON file | file unreadable, invalid JSON, unknown or repeated key, row without its epoch or a labelled vector field |
 | `--transcripts-dir=<dir>` | Overrides agent session transcripts directory | directory unreadable, limit overflow |
 | `--spend-log=<file>` | Overrides gateway spend-log export file | file unreadable, invalid row, limit overflow |
 
@@ -75,14 +75,69 @@ and the bound named; nothing is cut off silently.
 | Forge listing | closed pull requests scanned | 2000 (a hit is printed under Notes) |
 | Forge listing | closing-issue lookups | 200 (a hit is printed under Notes) |
 
-1. **Forge records:** Pull request number, head branch, creation and merge timestamps, milestone and
-   closing issues with their creation times. Loaded from a local JSON file (`sources.forge.path` or
+1. **Forge records:** Pull request records loaded from a local JSON file (`sources.forge.path` or
    `--forge-records`) or queried live through the manifest's forge kind and the shared token
-   resolver. The live listing scans closed pull requests, filters by milestone first, sorts by merge
-   time and keeps the newest `--limit`. Closing issues come from `Closes`/`Fixes`/`Resolves #N`
-   in the pull request body (references qualified with a repository are ignored); the issue's
-   `created_at` is fetched with a bounded read. Without a token the forge is `not measured` and the
-   reason is printed under Notes.
+   resolver.
+
+   A records file is a JSON array of rows, or an object whose only member is `units` holding that
+   array. It is read strictly (`forge.ParseMergedPullRequests`): an unknown or repeated key, a
+   second document, `null`, or an object without `units` fails the run. Each row carries:
+
+   - `number` (or its alias `pull_request_number`), `head_branch`, `title` and `milestone`. A
+     row without a number, or whose two number fields name different pull requests, fails the
+     run.
+   - `created_at` and `merged_at` as RFC 3339 timestamps, and `closing_issues` with their
+     `number` and `created_at`.
+   - `disposition`: exactly one of `qualified`, `offered`, `rejected`, `abandoned`, `reverted`
+     or `timed_out`. A row without one, or with any other spelling, fails the run.
+   - `lane`: a lane identifier such as `claude-code` or `agy:flash`, counted per lane.
+   - `metric_epoch`: the schema epoch tag, currently `2026-10-10`. A row without it, or a ledger
+     that mixes epochs, fails the run.
+   - All six [vector fields](#vector-fields-and-provenance), each as
+     `{"value": <v>, "provenance": "<label>"}`, or `null` when the field was not measured. A row
+     that omits a vector field fails the run and names the field.
+
+   ```json
+   {"units": [{"number": 12, "head_branch": "feat/x", "title": "Add x",
+     "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T12:00:00Z",
+     "disposition": "qualified", "lane": "claude-code", "metric_epoch": "2026-10-10",
+     "tokens_by_provider": {"value": {"anthropic": 1200}, "provenance": "measured"},
+     "wall_seconds": {"value": 7200, "provenance": "measured"},
+     "review_rounds": {"value": 1, "provenance": "measured"},
+     "retries": {"value": 2, "provenance": "interval", "low": 1, "high": 3},
+     "operator_minutes": {"value": 5, "provenance": "modeled"},
+     "escaped_defects": null}]}
+   ```
+
+   **Revert rule:** a `qualified` row titled `Revert "<title>"` (the git and GitHub form) or
+   `revert: <title>` (the conventional-commit form) marks the latest `qualified` unit titled
+   `<title>` that merged before it as `reverted`; the revert itself stays `qualified`. A revert
+   that is not `qualified` reverted nothing, a target with another disposition keeps it, a later
+   re-land under the same title stays `qualified`, and any other title such as `Revert <title>`
+   names no target. Reverts are read from every loaded record, so `--milestone` and `--limit`
+   do not hide them (`applyRevertDispositions` in `internal/efficiency/collector_unit.go`).
+
+   **Live listing:** the GitHub listing scans closed pull requests and keeps the merged ones, so a
+   live run sees only merged units; `rejected`, `abandoned` and `timed_out` units need a records
+   file. A live row carries no ledger fields of its own, so the collector stamps them
+   (`stampLiveUnit` in `internal/efficiency/collector_unit.go`) and states each choice under
+   Notes:
+
+   - `metric_epoch` is the current epoch, because the collector builds the row under the current
+     schema.
+   - `disposition` is `qualified`, or `reverted` under the revert rule. Check and review results
+     are not read, and the revert rule sees only the listed pull requests, so a revert outside
+     `--limit` or `--milestone` is missed.
+   - `wall_seconds` is `measured`: the pull request's creation to its merge.
+   - `tokens_by_provider`, `review_rounds`, `retries`, `operator_minutes` and `escaped_defects`
+     are not measured, because the listing carries no such data. Pass a records file to report
+     them.
+
+   The live listing filters by milestone first, sorts by merge time and keeps the newest
+   `--limit`. Closing issues come from `Closes`/`Fixes`/`Resolves #N` in the pull request body
+   (references qualified with a repository are ignored); the issue's `created_at` is fetched
+   with a bounded read. Without a token the forge is `not measured` and the reason is printed
+   under Notes.
 2. **Agent session transcripts:** A directory of agent session JSONL files, read through the
    harvester's line reader and record decoder (8 MiB lines, UTF-8, surrogate and duplicate-key
    checks). Subagent sessions below the directory are read; hidden directories are skipped. Lines
@@ -162,13 +217,75 @@ Default cheap markers: `mini`, `nano`, `flash`, `lite`, `haiku`
 ### Missing sources rule
 
 When a source is omitted, a metric that needs it prints `not measured`, **never zero**; the same
-holds for any ratio with a zero denominator and for a unit that no session or spend entry joins.
+holds for a unit that no session or spend entry joins, and for a vector field that is `null` or
+has no live source. Any rate with a zero denominator prints `undefined`, **never zero**.
+
+### Vector fields and provenance
+
+Cost is a vector of six fields, never one composite score:
+
+| Field | Meaning |
+| :--- | :--- |
+| `tokens_by_provider` | tokens spent, keyed by provider |
+| `wall_seconds` | wall-clock seconds to landing; a live row measures pull request creation to merge |
+| `review_rounds` | review cycles before landing |
+| `retries` | retry attempts and test re-runs |
+| `operator_minutes` | human operator time in minutes |
+| `escaped_defects` | defects found after landing, in later gates or production |
+
+Every measured field carries one provenance label: `measured`, `modeled`, `cited` or `interval`.
+An `interval` field also carries `low` and `high` with `low <= value <= high`, over the same
+providers as its value; no other label carries bounds. A field without a label, with an unknown
+label, with a negative value or with broken bounds fails the run (`ValidateRow` in
+`internal/efficiency/vector.go`). `internal/efficiency/vector.go` is the one reader of a vector
+field; the forge package hands the field over as raw JSON.
+
+### Summary rules
+
+The denominator is the **qualified** unit: a landed unit whose gates and review passed. Offered,
+rejected, abandoned, reverted and timed-out units stay visible in the lane counts, one count per
+disposition plus the total over every unit (`2 qualified, 1 reverted, 1 offered, 4 total`). Each
+summary figure follows one of three rules, and its label and text name the rule:
+
+| Rule | Figures | Computation |
+| :--- | :--- | :--- |
+| Resource per qualified unit | the six vector fields, operator touches, frontier tokens, attributed spend | total over **every** unit, failures included, divided by the qualified-unit count |
+| Latency, qualified mean | issue-to-merge | mean over the qualified units that measured it |
+| Ratio, all usage | prompt-cache hit rate, local-first ratio | numerator and denominator summed over the usage of every unit, then divided |
+
+The resource rule keeps the cost of failed units in the numerator, so a lane that lands one unit
+out of three pays for all three. The figure reads, for example,
+`1.50 per qualified unit (total 3 over 3 units / 2 qualified) [measured 2, modeled 1]`:
+
+- **Provenance mix:** the bracket counts the units behind the figure per label, so a total that
+  adds measured and modeled values says so.
+- **Intervals:** when an `interval` field contributed, the rate and the total print their bounds,
+  `3m00s [2m35s, 3m50s]`, and the JSON output carries `total_bounds` and
+  `per_qualified_unit_bounds`.
+- **Partial coverage:** when only some units measured a figure, the total bounds the cost from
+  below and prints as `>= ... (lower bound: total ... over k of n units measured ...)`; the JSON
+  output sets `lower_bound`.
+- **No qualified unit:** every per-qualified-unit figure prints `undefined`, never `0`; an empty
+  ledger prints `undefined` for every rate.
+- **Zero-failure claims:** escaped defects that every unit measured (provenance `measured`) and
+  that total zero print the rule-of-three bound per qualified unit and its basis,
+  `0 (rule-of-three bound <= 1.50 per qualified unit; n=2 qualified units, 3 units observed)`.
+  With no failure in the observed units the expected count is at most 3 (95 %), so at most 3/n
+  per qualified unit. A modeled, cited or interval zero prints as an ordinary rate.
 
 ## Milestone summary
 
-The summary aggregates over the selected units and states how many units each figure covers:
-average issue-to-merge, operator touches, frontier tokens, the mean prompt-cache hit rate and
-local-first ratio, and the spend split:
+The summary prints the units, the qualified units, the lane counts in total and per lane, and
+then:
+
+| Label | Rule |
+| :--- | :--- |
+| Issue-to-Merge (Qualified Mean) | latency |
+| Wall Seconds, Review Rounds, Retries, Operator Minutes, Escaped Defects, Tokens by Provider per Qualified Unit | resource |
+| Operator Touches, Frontier Tokens, Spend per Qualified Unit | resource |
+| Prompt-Cache Hit Rate (All Usage), Local-First Ratio (All Usage) | ratio |
+
+followed by the spend split:
 
 - **Attributed:** spend of the listed units.
 - **Other units:** spend attributed to pull requests that were loaded but are not listed.

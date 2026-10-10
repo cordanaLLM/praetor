@@ -16,10 +16,21 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
+// efficiencyRecords is one records row in the current schema: metric epoch, disposition and
+// every vector field with a provenance label.
+const efficiencyRecords = `[{"number": 1, "head_branch": "feat/main", "title": "Main", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z",
+  "disposition": "qualified", "metric_epoch": "2026-10-10",
+  "tokens_by_provider": {"value": {"anthropic": 10}, "provenance": "measured"},
+  "wall_seconds": {"value": 3600, "provenance": "measured"},
+  "review_rounds": {"value": 1, "provenance": "measured"},
+  "retries": {"value": 0, "provenance": "modeled"},
+  "operator_minutes": {"value": 2.5, "provenance": "cited"},
+  "escaped_defects": {"value": 0, "provenance": "measured"}}]`
+
 func TestRunEfficiency_Positive(t *testing.T) {
 	dir := t.TempDir()
 	prsPath := filepath.Join(dir, "prs.json")
-	if err := os.WriteFile(prsPath, []byte(`[{"number": 1, "head_branch": "feat/main", "title": "Main", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z"}]`), 0o600); err != nil {
+	if err := os.WriteFile(prsPath, []byte(efficiencyRecords), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,8 +109,7 @@ func TestPrintUsageCarriesEfficiency(t *testing.T) {
 func TestRunEfficiencyTo_Positive_OutputCarriesUnitsAndNotMeasured(t *testing.T) {
 	dir := t.TempDir()
 	prsPath := filepath.Join(dir, "prs.json")
-	records := `[{"number": 1, "head_branch": "feat/main", "title": "Main", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z"}]`
-	if err := os.WriteFile(prsPath, []byte(records), 0o600); err != nil {
+	if err := os.WriteFile(prsPath, []byte(efficiencyRecords), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var table bytes.Buffer
@@ -109,6 +119,13 @@ func TestRunEfficiencyTo_Positive_OutputCarriesUnitsAndNotMeasured(t *testing.T)
 	if !strings.Contains(table.String(), "#1") || !strings.Contains(table.String(), "not measured") || strings.Contains(table.String(), "(PR)") {
 		t.Errorf("table: %s", table.String())
 	}
+	assertEfficiencyJSON(t, prsPath)
+}
+
+// assertEfficiencyJSON checks that the unit's epoch and provenance and the summary's rule text
+// reach the JSON output.
+func assertEfficiencyJSON(t *testing.T, prsPath string) {
+	t.Helper()
 	var js bytes.Buffer
 	if err := runEfficiencyTo([]string{"--forge-records=" + prsPath, "--json"}, &js); err != nil {
 		t.Fatal(err)
@@ -116,10 +133,46 @@ func TestRunEfficiencyTo_Positive_OutputCarriesUnitsAndNotMeasured(t *testing.T)
 	var decoded struct {
 		Units []struct {
 			IssueToMerge string `json:"issue_to_merge"`
+			MetricEpoch  string `json:"metric_epoch"`
+			Retries      struct {
+				Provenance string `json:"provenance"`
+			} `json:"retries"`
 		} `json:"units"`
+		Summary struct {
+			Retries struct {
+				Display string `json:"display"`
+			} `json:"retries"`
+		} `json:"milestone_summary"`
 	}
 	if err := json.Unmarshal(js.Bytes(), &decoded); err != nil || len(decoded.Units) != 1 || decoded.Units[0].IssueToMerge != "not measured" {
-		t.Errorf("json: %v %s", err, js.String())
+		t.Fatalf("json: %v %s", err, js.String())
+	}
+	if u := decoded.Units[0]; u.MetricEpoch != "2026-10-10" || u.Retries.Provenance != "modeled" {
+		t.Errorf("unit epoch and provenance must reach the JSON output: %+v", u)
+	}
+	if got := decoded.Summary.Retries.Display; got != "0.00 per qualified unit (total 0 over 1 units / 1 qualified) [modeled 1]" {
+		t.Errorf("summary retries = %q", got)
+	}
+}
+
+func TestRunEfficiencyTo_Negative_RecordsWithoutLedgerFieldsRefused(t *testing.T) {
+	dir := t.TempDir()
+	for name, records := range map[string]string{
+		"no metric epoch":       strings.Replace(efficiencyRecords, `"metric_epoch": "2026-10-10",`, "", 1),
+		"no provenance label":   strings.Replace(efficiencyRecords, `"retries": {"value": 0, "provenance": "modeled"}`, `"retries": {"value": 0}`, 1),
+		"vector field omitted":  strings.Replace(efficiencyRecords, `"retries": {"value": 0, "provenance": "modeled"},`, "", 1),
+		"misspelled record key": strings.Replace(efficiencyRecords, `"disposition"`, `"dispositon"`, 1),
+	} {
+		if records == efficiencyRecords {
+			t.Fatalf("%s: the fixture edit did not apply", name)
+		}
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
+		if err := os.WriteFile(path, []byte(records), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := runEfficiencyTo([]string{"--forge-records=" + path}, &bytes.Buffer{}); err == nil {
+			t.Errorf("%s must be refused", name)
+		}
 	}
 }
 

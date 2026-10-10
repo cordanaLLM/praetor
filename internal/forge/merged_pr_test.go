@@ -5,6 +5,7 @@ package forge
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -252,5 +253,114 @@ func TestReadAndParseMergedPullRequests_Boundary_Limits(t *testing.T) {
 	jsonList := "[" + strings.Join(items, ",") + "]"
 	if _, err := ParseMergedPullRequests([]byte(jsonList)); err == nil {
 		t.Error("expected error when count limit exceeds MaxMergedPRsLimit")
+	}
+}
+
+func TestParseMergedPullRequests_UnitsWrapper_PositiveNegativeBoundary(t *testing.T) {
+	// Positive: units wrapper with PR records
+	pos := `{"units": [{"number": 1, "head_branch": "feat/wrapper", "title": "Wrapper PR"}]}`
+	prs, err := ParseMergedPullRequests([]byte(pos))
+	if err != nil {
+		t.Fatalf("unexpected error parsing units wrapper: %v", err)
+	}
+	if len(prs) != 1 || prs[0].Number != 1 {
+		t.Fatalf("expected 1 PR with number 1, got %+v", prs)
+	}
+
+	// Negative: malformed units field reports real wrapper error
+	neg := `{"units": "not-an-array"}`
+	_, err = ParseMergedPullRequests([]byte(neg))
+	if err == nil {
+		t.Fatal("expected error parsing malformed units wrapper")
+	}
+	if !strings.Contains(err.Error(), "parse merged pull requests wrapper") {
+		t.Errorf("expected wrapper error message, got: %v", err)
+	}
+
+	// Boundary: empty units array yields empty ledger without error
+	bound := `{"units": []}`
+	prs, err = ParseMergedPullRequests([]byte(bound))
+	if err != nil {
+		t.Fatalf("unexpected error on empty units wrapper: %v", err)
+	}
+	if prs == nil || len(prs) != 0 {
+		t.Fatalf("expected empty non-nil slice, got: %+v", prs)
+	}
+}
+
+func TestMergedPullRequest_EffectiveNumberAndAlias_PositiveBoundary(t *testing.T) {
+	// Positive: pull_request_number alias normalized and read by EffectiveNumber
+	aliasJSON := `[{"pull_request_number": 88, "head_branch": "feat/alias", "title": "Alias PR"}]`
+	prs, err := ParseMergedPullRequests([]byte(aliasJSON))
+	if err != nil {
+		t.Fatalf("unexpected error parsing pull_request_number alias: %v", err)
+	}
+	if len(prs) != 1 || prs[0].Number != 88 || prs[0].EffectiveNumber() != 88 {
+		t.Fatalf("expected number 88, got Number=%d, Effective=%d", prs[0].Number, prs[0].EffectiveNumber())
+	}
+
+	// Boundary: explicit number takes precedence over pull_request_number
+	both := MergedPullRequest{Number: 42, PRNumber: 99}
+	if got := both.EffectiveNumber(); got != 42 {
+		t.Errorf("expected number 42 to take precedence over PRNumber 99, got %d", got)
+	}
+
+	// Boundary: neither set yields 0
+	neither := MergedPullRequest{}
+	if got := neither.EffectiveNumber(); got != 0 {
+		t.Errorf("expected 0 for unset numbers, got %d", got)
+	}
+}
+
+func TestParseMergedPullRequests_Negative_StrictShapes(t *testing.T) {
+	for name, input := range map[string]string{
+		"unknown wrapper key":     `{"pull_requests":[{"number":1}]}`,
+		"wrapper beside units":    `{"units":[],"extra":1}`,
+		"missing units":           `{}`,
+		"null units":              `{"units":null}`,
+		"top-level null":          `null`,
+		"misspelled record key":   `[{"number":1,"dispositon":"rejected"}]`,
+		"misspelled key in units": `{"units":[{"number":1,"metric_epoc":"2026-10-10"}]}`,
+		"repeated record key":     `[{"number":1,"number":2}]`,
+		"second document":         `[] []`,
+		"number conflict":         `[{"number":1,"pull_request_number":2}]`,
+		"no number":               `[{"head_branch":"b"}]`,
+	} {
+		prs, err := ParseMergedPullRequests([]byte(input))
+		if err == nil {
+			t.Errorf("%s: %s must be refused, got %d records", name, input, len(prs))
+		}
+	}
+	_, err := ParseMergedPullRequests([]byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), `no "units" array`) {
+		t.Errorf("a wrapper without units must say so: %v", err)
+	}
+}
+
+func TestParseMergedPullRequests_Positive_VectorFieldsStayRaw(t *testing.T) {
+	prs, err := ParseMergedPullRequests([]byte(`[{"number":1,"wall_seconds":{"value":120,"provenance":"measured"},"retries":null}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(prs[0].WallSeconds); got != `{"value":120,"provenance":"measured"}` {
+		t.Errorf("wall_seconds raw = %q", got)
+	}
+	if got := string(prs[0].Retries); got != "null" {
+		t.Errorf("an explicit null stays distinguishable from an absent field: %q", got)
+	}
+	if prs[0].ReviewRounds != nil {
+		t.Errorf("an absent field stays nil: %q", prs[0].ReviewRounds)
+	}
+}
+
+func TestMergedPullRequest_Boundary_DecodedVectorBytesDoNotAliasInput(t *testing.T) {
+	buf := []byte(`{"wall_seconds": 120}`)
+	var pr MergedPullRequest
+	if err := json.Unmarshal(buf, &pr); err != nil {
+		t.Fatal(err)
+	}
+	copy(buf[len(`{"wall_seconds": `):], "999")
+	if got := string(pr.WallSeconds); got != "120" {
+		t.Errorf("decoded vector bytes alias the caller's buffer: %q", got)
 	}
 }

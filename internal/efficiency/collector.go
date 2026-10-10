@@ -80,21 +80,30 @@ func formatTokens(tokens int64) string {
 }
 
 func newReport(milestone string) *Report {
+	undefinedVector := VectorSummary{Display: UndefinedRate}
 	return &Report{
 		Units: make([]UnitReport, 0),
 		MilestoneSummary: MilestoneSummary{
-			Milestone:           milestone,
-			FrontierTokens:      NotMeasured,
-			AttributedSpend:     NotMeasured,
-			UnattributedSpend:   NotMeasured,
-			OtherUnitsSpend:     NotMeasured,
-			TotalSpend:          NotMeasured,
-			AvgIssueToMerge:     NotMeasured,
-			OperatorTouches:     NotMeasured,
-			PromptCacheHitRate:  NotMeasured,
-			LocalFirstRatio:     NotMeasured,
-			FactHitRatio:        FollowUpRefs,
-			ChecksBeforeReviews: FollowUpRefs,
+			Milestone:             milestone,
+			MetricEpoch:           CurrentMetricEpoch,
+			FrontierTokens:        UndefinedRate,
+			AttributedSpend:       NotMeasured,
+			SpendPerQualifiedUnit: UndefinedRate,
+			UnattributedSpend:     NotMeasured,
+			OtherUnitsSpend:       NotMeasured,
+			TotalSpend:            NotMeasured,
+			AvgIssueToMerge:       UndefinedRate,
+			OperatorTouches:       UndefinedRate,
+			PromptCacheHitRate:    UndefinedRate,
+			LocalFirstRatio:       UndefinedRate,
+			FactHitRatio:          UndefinedRate,
+			ChecksBeforeReviews:   UndefinedRate,
+			TokensByProvider:      undefinedVector,
+			WallSeconds:           undefinedVector,
+			ReviewRounds:          undefinedVector,
+			Retries:               undefinedVector,
+			OperatorMinutes:       undefinedVector,
+			EscapedDefects:        undefinedVector,
 		},
 	}
 }
@@ -105,6 +114,7 @@ type loaded struct {
 	all      []forge.MergedPullRequest
 	units    []forge.MergedPullRequest
 	measured bool
+	live     bool // rows come from a live listing and carry no ledger fields of their own
 }
 
 // Collect executes the data collection and builds the final Report. A source that is
@@ -129,11 +139,21 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	owners := branchOwners(prs.all)
+	src := unitSources{owners: branchOwners(prs.all), transcript: transStats, spend: spend, measured: report.Sources, live: prs.live}
 	for _, pr := range prs.units {
-		report.Units = append(report.Units, c.buildUnitReport(pr, owners, transStats, spend, report.Sources, report))
+		unit, err := c.buildUnitReport(pr, src, report)
+		if err != nil {
+			return nil, err
+		}
+		report.Units = append(report.Units, unit)
 	}
-	c.buildMilestoneSummary(report, spend)
+	applyRevertDispositions(report.Units, revertsOf(prs.all, prs.live))
+	if err := ValidateRows(report.Units); err != nil {
+		return nil, fmt.Errorf("validate efficiency units: %w", err)
+	}
+	if err := c.buildMilestoneSummary(report, spend); err != nil {
+		return nil, fmt.Errorf("summarize efficiency units: %w", err)
+	}
 	return report, nil
 }
 
@@ -221,6 +241,7 @@ func (c *Collector) loadForgePRs(ctx context.Context, report *Report) (loaded, e
 	if c.opts.ForgeDriver == nil {
 		return loaded{}, nil
 	}
+	report.Notes = append(report.Notes, "live forge queries merged pull requests only; unmerged rejected/abandoned units require forge records input", LiveDispositionNote, LiveUnmeasuredFields)
 	list, err := c.opts.ForgeDriver.ListMergedPullRequests(ctx, forge.MergedPullRequestQuery{Limit: c.opts.Limit, Milestone: c.opts.Milestone})
 	if err != nil {
 		return loaded{}, fmt.Errorf("list merged pull requests: %w", err)
@@ -231,7 +252,7 @@ func (c *Collector) loadForgePRs(ctx context.Context, report *Report) (loaded, e
 	for _, warning := range list.Warnings {
 		report.Notes = append(report.Notes, "forge: "+warning)
 	}
-	return loaded{all: list.PullRequests, units: list.PullRequests, measured: true}, nil
+	return loaded{all: list.PullRequests, units: list.PullRequests, measured: true, live: true}, nil
 }
 
 // selectUnits filters by milestone first, sorts by merge time (newest first) and applies the
