@@ -15,8 +15,7 @@ import (
 func TestRunEfficiencyTo_Outcomes_JoinsRunIdentityOrFails(t *testing.T) {
 	dir := t.TempDir()
 	prsPath := filepath.Join(dir, "prs.json")
-	records := `[{"number": 1, "head_branch": "feat/main", "title": "Main", "created_at": "2026-10-01T10:00:00Z", "merged_at": "2026-10-01T11:00:00Z"}]`
-	if err := os.WriteFile(prsPath, []byte(records), 0o600); err != nil {
+	if err := os.WriteFile(prsPath, []byte(efficiencyRecords), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	log := filepath.Join(dir, "outcomes.jsonl")
