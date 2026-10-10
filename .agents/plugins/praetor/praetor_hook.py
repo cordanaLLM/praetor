@@ -58,6 +58,12 @@ RUN_TIMEOUT = 45
 # the checkpoint evaluator (30 s) before it answers. The stop client timeout is 90 s, so both
 # probes plus this wait still end before the client gives up. TestStopLauncherTimeouts pins both.
 STOP_RUN_TIMEOUT = 55
+# The no-engine stop fallback runs checkpoint.py, whose own backstop answers a hang with a
+# block after HOOK_LIMIT (55 s) plus its stop allowance HOOK_STOP (12 s), counted from the
+# adapter's start. This wait must outlast that, or the launcher kills the adapter first and
+# the client sees exit 1, a non-blocking fault, instead of the block. Both probes plus this
+# wait still end before the 90 s client timeout. TestStopLauncherTimeouts pins both bounds.
+STOP_FALLBACK_TIMEOUT = 70
 # The engine reads at most 1 MiB + 1 byte of payload (agenthook.MaxInputBytes).
 DRAIN_LIMIT = 1024 * 1024 + 1
 DRAIN_CHUNK = 64 * 1024
@@ -110,6 +116,8 @@ def serve(engine, pair, run=subprocess.run, argv=None):
     """Run the engine (or, for the stop fallback, argv) on the inherited streams and return
     its exit code unchanged."""
     limit = STOP_RUN_TIMEOUT if pair[-1] == "stop" else RUN_TIMEOUT
+    if argv:
+        limit = STOP_FALLBACK_TIMEOUT
     try:
         return run(argv or [engine, "hook", *pair], timeout=limit, check=False).returncode
     except subprocess.TimeoutExpired:

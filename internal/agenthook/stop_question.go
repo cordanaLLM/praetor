@@ -42,14 +42,13 @@ var questionTools = map[string]string{
 }
 
 var (
-	tableSepLine    = regexp.MustCompile(`^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$`)
-	urlSpan         = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S*[^\s.,;:!?)\]'"*_>]`)
-	itemQuestionEnd = regexp.MustCompile(`[?？]["')\]}*_>]*$`)
-	questionEnd     = regexp.MustCompile(`[?？]["')\]}*_>]*(\s|$)`)
-	indentedLine    = regexp.MustCompile(`^( {4}|\t)`)
-	listItemLine    = regexp.MustCompile(`^\s*([-*+]|\d{1,3}[.)]|[A-Za-z][.)]|\(?[A-Za-z0-9]\))\s+\S`)
-	blankLine       = regexp.MustCompile(`\n[ \t\r]*\n`)
-	tableRowLine    = regexp.MustCompile(`^\s*\|`)
+	tableSepLine = regexp.MustCompile(`^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$`)
+	urlSpan      = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S*[^\s.,;:!?)\]'"*_>]`)
+	questionEnd  = regexp.MustCompile(`[?？]["')\]}*_>]*(\s|$)`)
+	indentedLine = regexp.MustCompile(`^( {4}|\t)`)
+	listItemLine = regexp.MustCompile(`^\s*([-*+]|\d{1,3}[.)]|[A-Za-z][.)]|\(?[A-Za-z0-9]\))\s+\S`)
+	blankLine    = regexp.MustCompile(`\n[ \t\r]*\n`)
+	tableRowLine = regexp.MustCompile(`^\s*\|`)
 )
 
 // evaluateStopQuestion judges the final message of a stop. Deny only for a closing prose
@@ -216,14 +215,17 @@ func closingProse(paragraphs [][]string) (string, bool) {
 }
 
 // listAsksQuestion reports whether the last paragraph is a list with an item that ends in a
-// question (the item itself ends in one): a numbered or bulleted list of questions is the usual way to ask in prose. A list
-// in the earlier paragraph is not judged, because a later paragraph follows it.
+// question: a numbered or bulleted list of questions is the usual way to ask in prose. An item
+// follows the same rule as prose (questionEnd): any question mark followed by whitespace or the
+// end of the item counts, mid-sentence included, so "- Fixed the why? case." is denied like
+// "Fixed the why? case.". A list in the earlier paragraph is not judged, because a later
+// paragraph follows it.
 func listAsksQuestion(paragraphs [][]string) bool {
 	if len(paragraphs) == 0 {
 		return false
 	}
 	for _, line := range paragraphs[len(paragraphs)-1] {
-		if listItemLine.MatchString(line) && itemQuestionEnd.MatchString(strings.TrimSpace(line)) {
+		if listItemLine.MatchString(line) && questionEnd.MatchString(strings.TrimSpace(line)) {
 			return true
 		}
 	}
