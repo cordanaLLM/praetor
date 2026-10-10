@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXCEPTIONS = ROOT / ".config" / "security" / "npm-audit-exceptions.json"
 GATED_SEVERITIES = frozenset({"high", "critical"})
 MAX_EXCEPTION_DAYS = 90
+EXCEPTION_EXPIRY_WARNING_DAYS = 14
 AUDIT_TIMEOUT_SECONDS = 300
 # Bounds for the loops over untrusted report and file contents (HISS-02).
 MAX_PACKAGES = 20000
@@ -138,9 +139,9 @@ def covering(finding: tuple[str, str, str], exceptions: list[dict]) -> dict | No
     return None
 
 
-def judge(findings: set[tuple[str, str, str]], exceptions: list[dict], today: datetime.date) -> tuple[list[str], list[str]]:
-    """Return (failures, notes): uncovered or expired findings, and exceptions that matched nothing."""
-    failures, used = [], set()
+def judge(findings: set[tuple[str, str, str]], exceptions: list[dict], today: datetime.date) -> tuple[list[str], list[str], list[str]]:
+    """Return (failures, notes, warnings): uncovered or expired findings, unneeded exceptions, and expiring exceptions."""
+    failures, warnings, used = [], [], set()
     for finding in sorted(findings):
         exception = covering(finding, exceptions)
         advisory, package, lock = finding
@@ -150,9 +151,15 @@ def judge(findings: set[tuple[str, str, str]], exceptions: list[dict], today: da
         used.add(id(exception))
         if exception["expires"] < today:
             failures.append(f"{lock}: {package} {advisory} exception expired on {exception['expires']}; review it again")
+        elif (exception["expires"] - today).days <= EXCEPTION_EXPIRY_WARNING_DAYS:
+            days_left = (exception["expires"] - today).days
+            unit = "day" if days_left == 1 else "days"
+            warn_msg = f"{lock}: {package} {advisory} exception expires on {exception['expires']} ({days_left} {unit} left); review it before expiry"
+            if warn_msg not in warnings:
+                warnings.append(warn_msg)
     notes = [f"exception for {e['package']} {e['advisory']} matched no finding; remove it once the fix is locked"
              for e in exceptions if id(e) not in used]
-    return failures, notes
+    return failures, notes, warnings
 
 
 def gate(locks: list[str], exceptions_path: Path, today: datetime.date, root: Path = ROOT,
@@ -165,8 +172,8 @@ def gate(locks: list[str], exceptions_path: Path, today: datetime.date, root: Pa
             findings |= audit_lock(lock, root, runner)
     except GateError as exc:
         return 2, [f"npm audit gate: {exc}"]
-    failures, notes = judge(findings, exceptions, today)
-    lines = [f"note: {note}" for note in notes] + [f"FAIL {failure}" for failure in failures]
+    failures, notes, warnings = judge(findings, exceptions, today)
+    lines = [f"note: {note}" for note in notes] + [f"warn: {warn}" for warn in warnings] + [f"FAIL {failure}" for failure in failures]
     covered = len(findings) - len(failures)
     lines.append(f"npm audit gate: {len(locks)} locks, {len(findings)} high or critical findings, "
                  f"{covered} covered by a reviewed exception, {len(failures)} not")

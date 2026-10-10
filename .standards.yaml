@@ -291,6 +291,8 @@ docs_surfaces:
       - "internal/config/exceptions.go"
       - "internal/config/clang_tidy.go"
       - "cmd/standardsctl/tidy_coverage.go"
+      - "cmd/standardsctl/exceptions.go"
+      - "cmd/standardsctl/audit_exceptions.go"
     exclude:
       - "internal/tidycoverage/*_test.go"
     docs:
