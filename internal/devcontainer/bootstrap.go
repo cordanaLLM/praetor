@@ -48,8 +48,8 @@ const (
 	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried: that repository
 	// publishes "ubuntu26.04", and "ubuntu-26.04" is not a tag on it.
 	//
-	// Reviewed at mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:0b997af705ff88f10e3293326dce61b4a9676b9f98de6aad67f1973691737dd8
-	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base@sha256:0b997af705ff88f10e3293326dce61b4a9676b9f98de6aad67f1973691737dd8"
+	// Reviewed at mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:91eff046d5c12318fc98e59258982b87ba896c467427ed8b5dab5a02107a5db7
+	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base@sha256:91eff046d5c12318fc98e59258982b87ba896c467427ed8b5dab5a02107a5db7"
 )
 
 // BootstrapOptions selects a local Praetor source snapshot and immutable images.
