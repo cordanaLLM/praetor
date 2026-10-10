@@ -150,8 +150,8 @@ func TestAgyEncodePreTool(t *testing.T) {
 		want    string
 	}{
 		{"allow", Verdict{Outcome: Allow}, `{"decision":"allow"}`},
-		{"deny", Verdict{Deny, "no"}, `{"decision":"deny","reason":"no"}`},
-		{"skip answers allow", Verdict{Skip, "workspace not governed"}, `{"decision":"allow"}`},
+		{"deny", Verdict{Outcome: Deny, Reason: "no"}, `{"decision":"deny","reason":"no"}`},
+		{"skip answers allow", Verdict{Outcome: Skip, Reason: "workspace not governed"}, `{"decision":"allow"}`},
 		{"unknown outcome fails closed", Verdict{Outcome: Outcome(9), Reason: "?"}, `{"decision":"deny","reason":"?"}`},
 	} {
 		got := agy.Encode(Canonical{Event: EventPreTool}, tc.verdict)
@@ -159,7 +159,7 @@ func TestAgyEncodePreTool(t *testing.T) {
 			t.Errorf("%s: %+v", tc.name, got)
 		}
 	}
-	skip := agy.Encode(Canonical{Event: EventPreTool}, Verdict{Skip, "workspace not governed"})
+	skip := agy.Encode(Canonical{Event: EventPreTool}, Verdict{Outcome: Skip, Reason: "workspace not governed"})
 	if string(skip.Stderr) != "praetor hook: workspace not governed, skipped\n" {
 		t.Errorf("skip stderr: %q", skip.Stderr)
 	}
@@ -167,11 +167,11 @@ func TestAgyEncodePreTool(t *testing.T) {
 
 func TestAgyEncodeStopBlocksOnceThenLetsGo(t *testing.T) {
 	agy, _ := DialectFor("agy")
-	first := agy.Encode(Canonical{Event: EventStop, StopActive: false}, Verdict{Deny, "invalid hook input"})
+	first := agy.Encode(Canonical{Event: EventStop, StopActive: false}, Verdict{Outcome: Deny, Reason: "invalid hook input"})
 	if strings.TrimSpace(string(first.Stdout)) != `{"decision":"continue","reason":"invalid hook input"}` {
 		t.Errorf("first bad stop: %+v", first)
 	}
-	second := agy.Encode(Canonical{Event: EventStop, StopActive: true}, Verdict{Deny, "invalid hook input"})
+	second := agy.Encode(Canonical{Event: EventStop, StopActive: true}, Verdict{Outcome: Deny, Reason: "invalid hook input"})
 	if strings.TrimSpace(string(second.Stdout)) != `{}` {
 		t.Errorf("second bad stop still blocked: %+v", second)
 	}
@@ -179,7 +179,7 @@ func TestAgyEncodeStopBlocksOnceThenLetsGo(t *testing.T) {
 	if strings.TrimSpace(string(allowed.Stdout)) != `{}` {
 		t.Errorf("allowed stop: %+v", allowed)
 	}
-	skipped := agy.Encode(Canonical{Event: EventStop}, Verdict{Skip, "workspace not governed"})
+	skipped := agy.Encode(Canonical{Event: EventStop}, Verdict{Outcome: Skip, Reason: "workspace not governed"})
 	if strings.TrimSpace(string(skipped.Stdout)) != `{}` {
 		t.Errorf("skipped stop is neutral, not blocked: %+v", skipped)
 	}

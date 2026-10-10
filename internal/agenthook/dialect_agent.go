@@ -10,7 +10,7 @@ import (
 func agentTrafficEvent(event Event) bool {
 	return event == EventPreDispatch || event == EventDispatchReceipt || event == EventDispatchAbort ||
 		event == EventPreHandback || event == EventHandbackReceipt || event == EventHandbackAbort ||
-		event == EventPostReturn
+		event == EventPostReturn || event == EventSubagentStart
 }
 
 func decodeNativeAgentTraffic(client string, event Event, object map[string]json.RawMessage) (Canonical, error) {
@@ -31,6 +31,8 @@ func decodeNativeAgentTraffic(client string, event Event, object map[string]json
 		return decodeClaudeHandback(client, canonical, object)
 	case EventPostReturn:
 		return decodeNativeReturn(client, canonical, object)
+	case EventSubagentStart:
+		return decodeSubagentStart(client, canonical, object)
 	default:
 		return Canonical{}, fmt.Errorf("%w: %s has no agent text shape for %s", ErrUnsupported, client, event)
 	}
@@ -103,14 +105,10 @@ func decodeNativeBrief(client string, canonical Canonical, object map[string]jso
 	if err != nil {
 		return Canonical{}, fmt.Errorf("tool_input.%w", err)
 	}
-	canonical.Briefs = []string{brief}
+	canonical.Briefs, canonical.DispatchInput = []string{brief}, object["tool_input"]
 	if client == "claude" {
-		background, present, boolErr := optionalBool(input, "run_in_background")
-		if boolErr != nil {
-			return Canonical{}, fmt.Errorf("tool_input.%w", boolErr)
-		}
-		if present && !background {
-			return Canonical{}, errors.New("tool_input.run_in_background must not be false: foreground return precedes correlation")
+		if err := checkClaudeBriefInput(input, &canonical); err != nil {
+			return Canonical{}, err
 		}
 	}
 	if client != "gemini" {
@@ -119,16 +117,37 @@ func decodeNativeBrief(client string, canonical Canonical, object map[string]jso
 	return canonical, err
 }
 
+// checkClaudeBriefInput reads the agent type a Claude dispatch names and refuses a foreground
+// launch, whose return precedes the receipt that binds it.
+func checkClaudeBriefInput(input map[string]json.RawMessage, canonical *Canonical) error {
+	subagentType, err := optionalString(input, "subagent_type")
+	if err != nil {
+		return fmt.Errorf("tool_input.%w", err)
+	}
+	canonical.Roles = [][]string{{subagentType}}
+	background, present, err := optionalBool(input, "run_in_background")
+	if err != nil {
+		return fmt.Errorf("tool_input.%w", err)
+	}
+	if present && !background {
+		return errors.New("tool_input.run_in_background must not be false: foreground return precedes correlation")
+	}
+	return nil
+}
+
 func decodeNativeReceipt(client string, canonical Canonical, object map[string]json.RawMessage) (Canonical, error) {
 	if client != "claude" {
 		return Canonical{}, fmt.Errorf("%w: %s has no correlatable dispatch receipt", ErrUnsupported, client)
 	}
-	tool, _, err := agentToolInput(client, object)
+	tool, input, err := agentToolInput(client, object)
 	if err != nil {
 		return Canonical{}, err
 	}
 	canonical.Tool, canonical.ToolUseID = tool, ""
 	if canonical.ToolUseID, err = requiredString(object, "tool_use_id"); err != nil {
+		return Canonical{}, err
+	}
+	if canonical.Briefs, err = launchedPrompt(input); err != nil {
 		return Canonical{}, err
 	}
 	response, err := requiredObject(object, "tool_response")
@@ -140,6 +159,33 @@ func decodeNativeReceipt(client string, canonical Canonical, object map[string]j
 		return Canonical{}, errors.New("tool_response.status must be async_launched")
 	}
 	canonical.AgentID, err = requiredString(response, "agentId")
+	return canonical, err
+}
+
+// launchedPrompt reads the prompt a Claude dispatch receipt's tool_input reports the agent
+// launched with, as the one brief; absent, it reports none.
+func launchedPrompt(input map[string]json.RawMessage) ([]string, error) {
+	prompt, err := optionalString(input, "prompt")
+	if err != nil {
+		return nil, fmt.Errorf("tool_input.%w", err)
+	}
+	if prompt == "" {
+		return nil, nil
+	}
+	return []string{prompt}, nil
+}
+
+// decodeSubagentStart reads a Claude SubagentStart payload: the agent identifier and the agent
+// type its matcher filters on. The payload carries no prompt.
+func decodeSubagentStart(client string, canonical Canonical, object map[string]json.RawMessage) (Canonical, error) {
+	if client != "claude" {
+		return Canonical{}, fmt.Errorf("%w: %s has no subagent start payload", ErrUnsupported, client)
+	}
+	var err error
+	if canonical.AgentID, err = requiredString(object, "agent_id"); err != nil {
+		return Canonical{}, err
+	}
+	canonical.AgentType, err = optionalString(object, "agent_type")
 	return canonical, err
 }
 

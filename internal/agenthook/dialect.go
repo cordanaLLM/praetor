@@ -130,15 +130,62 @@ func (d Dialect) Encode(canonical Canonical, verdict Verdict) Response {
 	}
 	switch verdict.Outcome {
 	case Allow:
-		if d.allowMarker != "" && canonical.Event == EventPreTool {
-			return Response{Stdout: []byte(d.allowMarker + "\n")}
-		}
-		return Response{}
+		return d.encodeAllow(canonical, verdict)
 	case Skip:
 		return Response{Stderr: []byte("praetor hook: " + boundReason(verdict.Reason) + ", skipped\n")}
 	default:
 		return Response{Stderr: []byte(boundReason(verdict.Reason) + "\n"), ExitCode: d.denyExit}
 	}
+}
+
+// encodeAllow renders an allow: a read-only context delivery as Claude Code's
+// hookSpecificOutput (encodeDelivery), else the allow marker of a pre-tool row, with the
+// verdict's notice, when it has one, on stderr.
+func (d Dialect) encodeAllow(canonical Canonical, verdict Verdict) Response {
+	if verdict.UpdatedInput != nil || verdict.AddedContext != "" {
+		return d.encodeDelivery(canonical, verdict)
+	}
+	var stderr []byte
+	if verdict.Notice != "" {
+		stderr = []byte("praetor hook: " + boundReason(verdict.Notice) + "\n")
+	}
+	if d.allowMarker != "" && canonical.Event == EventPreTool {
+		return Response{Stdout: []byte(d.allowMarker + "\n"), Stderr: stderr}
+	}
+	return Response{Stderr: stderr}
+}
+
+// encodeDelivery renders a read-only context delivery in Claude Code's hookSpecificOutput
+// (code.claude.com/docs/en/hooks): at PreToolUse an allow decision with updatedInput, the whole
+// tool input, and the notice as its reason; at SubagentStart additionalContext, which lands in
+// the subagent's context before its first prompt. Any other client fails closed.
+func (d Dialect) encodeDelivery(canonical Canonical, verdict Verdict) Response {
+	if d.Client != "claude" {
+		return Response{Stderr: []byte("praetor hook: " + d.Client + " has no context delivery shape\n"), ExitCode: d.denyExit}
+	}
+	specific := map[string]any{"hookEventName": nativeEventName(d.Client, canonical.Event)}
+	if verdict.UpdatedInput != nil {
+		specific["permissionDecision"] = "allow"
+		specific["permissionDecisionReason"] = boundReason(verdict.Notice)
+		specific["updatedInput"] = verdict.UpdatedInput
+	} else {
+		specific["additionalContext"] = verdict.AddedContext
+	}
+	data, err := json.Marshal(map[string]any{"hookSpecificOutput": specific})
+	if err != nil {
+		return Response{Stderr: []byte("praetor hook: encode response: " + err.Error() + "\n"), ExitCode: d.denyExit}
+	}
+	return Response{Stdout: append(data, '\n')}
+}
+
+// nativeEventName returns the native event of client's first registration row for event.
+func nativeEventName(client string, event Event) string {
+	for _, row := range Registrations(client) {
+		if row.Event == event {
+			return row.NativeEvent
+		}
+	}
+	return ""
 }
 
 func (d Dialect) isCommandTool(tool string) bool {

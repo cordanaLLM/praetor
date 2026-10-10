@@ -42,7 +42,7 @@ type RuleCoverage struct {
 
 var (
 	schemaFieldRe  = regexp.MustCompile(`(?i)(?:^|[[:space:]])(goal|inputs|return|evidence|task|verdict|changed|ran|open):`)
-	fieldAtStartRe = regexp.MustCompile(`(?i)^(?:[-*+]\s+)?(goal|inputs|return|evidence|task|verdict|changed|ran|open):`)
+	fieldAtStartRe = regexp.MustCompile(`(?i)^(?:[-*+]\s+)?(goal|inputs|return|evidence|task|verdict|changed|ran|open|readonly|read-only):`)
 	asIsRe         = regexp.MustCompile(`(?i)\bas\s+is\b`)
 	literalFlagRe  = regexp.MustCompile(`^--?[A-Za-z0-9][A-Za-z0-9_.-]*(?:=[^\s=]+)?$`)
 	msvcDefineRe   = regexp.MustCompile(`^/D[A-Za-z_][A-Za-z0-9_]*(?:=[^\s=]+)?$`)
@@ -620,7 +620,10 @@ func shapeContent(ln line) bool {
 
 func schemaFields(text string) []string {
 	matches := schemaFieldRe.FindAllStringSubmatch(text, -1)
-	fields := make([]string, 0, len(matches))
+	fields := make([]string, 0, len(matches)+1)
+	if schemaFieldAtStart(text) == "readonly" {
+		fields = append(fields, "readonly")
+	}
 	for _, match := range matches {
 		fields = append(fields, strings.ToLower(match[1]))
 	}
@@ -632,7 +635,11 @@ func schemaFieldAtStart(text string) string {
 	if len(match) < 2 {
 		return ""
 	}
-	return strings.ToLower(match[1])
+	f := strings.ToLower(match[1])
+	if f == "read-only" {
+		f = "readonly"
+	}
+	return f
 }
 
 func checkFirstField(found *findings, line int, got, want string) {

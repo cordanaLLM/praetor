@@ -202,13 +202,14 @@ func VendorTargetPaths() []string {
 	return targetPaths(vendorTargets[:])
 }
 
-// ContextFiles returns the canonical context file followed by every vendor file compile-context
-// can write, in compile order, whatever a repository's agent_clients selects. It is the one
-// list of agent instruction files: workstation discovery (harvester) and the kind inference of
-// `caveman check` both read it (HISS-19; the hand-kept list it replaced missed files, BUG-840).
+// ContextFiles returns the canonical context file, the canonical read-only context file,
+// followed by every vendor file compile-context can write, in compile order, whatever a
+// repository's agent_clients selects. It is the one list of agent instruction files:
+// workstation discovery (harvester) and the kind inference of `caveman check` both read
+// it (HISS-19; the hand-kept list it replaced missed files, BUG-840).
 func ContextFiles() []string {
-	paths := make([]string, 0, len(vendorTargets)+1)
-	paths = append(paths, CanonicalFile)
+	paths := make([]string, 0, len(vendorTargets)+2)
+	paths = append(paths, CanonicalFile, CanonicalReadOnlyFile)
 	paths = append(paths, VendorTargetPaths()...)
 	return paths
 }

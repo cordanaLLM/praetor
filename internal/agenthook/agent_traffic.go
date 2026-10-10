@@ -28,6 +28,8 @@ func evaluateAgentTraffic(ctx context.Context, row Registration, canonical Canon
 		return evaluateHandbackAbort(ctx, row, canonical, root, in)
 	case EventPostReturn:
 		return evaluateAgentReturn(ctx, row, canonical, root, in)
+	case EventSubagentStart:
+		return evaluateSubagentStart(ctx, canonical, root)
 	default:
 		return trafficDenied(errors.New("unsupported agent traffic event"))
 	}
@@ -100,6 +102,34 @@ func evaluateHandbackAbort(ctx context.Context, row Registration, canonical Cano
 	return Verdict{Outcome: Allow}
 }
 
+func validateAllBriefs(authority briefAuthority, briefs []string) (config.Resolution, error) {
+	var resolution config.Resolution
+	for index := 0; index < len(briefs) && index < MaxDispatchBriefs; index++ {
+		resolved, err := validateAgentBrief(authority, briefs[index])
+		if err != nil {
+			return config.Resolution{}, fmt.Errorf("brief %d: %w", index, err)
+		}
+		resolution = resolved
+	}
+	return resolution, nil
+}
+
+// reserveClaudeDispatch stores the pending row of a validated Claude dispatch: the register
+// contract of its return and, for a read-only one, the digest of the prompt it was rewritten to.
+func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocation, root string, res config.Resolution, prompt string) error {
+	if len(canonical.Briefs) != 1 {
+		return errors.New("client dispatch must carry exactly one brief")
+	}
+	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
+	if err != nil {
+		return fmt.Errorf("reserve dispatch: %w", err)
+	}
+	if err := store.reserve(ctx, "claude", canonical.ConversationID, canonical.ToolUseID, res, correlationLaunchDigest(prompt)); err != nil {
+		return fmt.Errorf("reserve dispatch: %w", err)
+	}
+	return nil
+}
+
 func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if len(canonical.Briefs) == 0 || len(canonical.Briefs) > MaxDispatchBriefs {
 		return trafficDenied(fmt.Errorf("dispatch must carry 1..%d briefs", MaxDispatchBriefs))
@@ -108,39 +138,34 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 	if err != nil {
 		return trafficDenied(err)
 	}
-	var resolution config.Resolution
-	for index := 0; index < len(canonical.Briefs) && index < MaxDispatchBriefs; index++ {
-		resolved, err := validateAgentBrief(authority, canonical.Briefs[index])
-		if err != nil {
-			return trafficDenied(fmt.Errorf("brief %d: %w", index, err))
-		}
-		resolution = resolved
-	}
-	if row.Client != "claude" {
-		return Verdict{Outcome: Allow}
-	}
-	if len(canonical.Briefs) != 1 {
-		return trafficDenied(errors.New("client dispatch must carry exactly one brief"))
-	}
-	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
-	if err == nil {
-		err = store.reserve(ctx, row.Client, canonical.ConversationID, canonical.ToolUseID, resolution)
-	}
+	resolution, err := validateAllBriefs(authority, canonical.Briefs)
 	if err != nil {
-		return trafficDenied(fmt.Errorf("reserve dispatch: %w", err))
+		return trafficDenied(err)
 	}
-	return Verdict{Outcome: Allow}
+	verdict, prompt, err := readOnlyDelivery(ctx, row.Client, root, canonical)
+	if err != nil {
+		return trafficDenied(err)
+	}
+	if row.Client == "claude" {
+		if err := reserveClaudeDispatch(ctx, canonical, in, root, resolution, prompt); err != nil {
+			return trafficDenied(err)
+		}
+	}
+	return verdict
 }
 
+// evaluateDispatchReceipt binds a launched agent to its dispatch, then checks a read-only
+// dispatch launched with the rewritten prompt (launchVerdict).
 func evaluateDispatchReceipt(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
+	var pending correlationEntry
 	if err == nil {
-		err = store.promote(ctx, row.Client, canonical.ConversationID, canonical.ToolUseID, canonical.AgentID)
+		pending, err = store.promote(ctx, row.Client, canonical.ConversationID, canonical.ToolUseID, canonical.AgentID)
 	}
 	if err != nil {
 		return trafficDenied(fmt.Errorf("bind dispatch: %w", err))
 	}
-	return Verdict{Outcome: Allow}
+	return launchVerdict(pending, canonical)
 }
 
 // evaluateAgentReturn judges a subagent's final text at SubagentStop. A deny there does not
@@ -223,6 +248,9 @@ func loadBriefAuthority(ctx context.Context, root string) (briefAuthority, error
 // stored return contract require. The label must be declared by the routing vocabulary
 // that governs root; compile-context validates manifest task rows against the same set.
 func validateAgentBrief(authority briefAuthority, text string) (config.Resolution, error) {
+	if _, err := caveman.ExtractBriefReadOnly(text); err != nil {
+		return config.Resolution{}, err
+	}
 	task, err := caveman.ExtractBriefTask(text)
 	if err != nil {
 		return config.Resolution{}, err

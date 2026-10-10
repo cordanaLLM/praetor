@@ -107,7 +107,6 @@ const TOOL_FILES = [
 const STYLE_EXCLUDED_FILES = new Set([
   ".github/copilot-instructions.md",
   "AGENTS.md",
-  "AGENTS.readonly.md",
   "CHANGELOG.md",
   "CLAUDE.md",
 ]);

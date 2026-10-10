@@ -102,7 +102,7 @@ func projectionPaths(clients []string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", NameProjections, err)
 	}
-	paths := append([]string(nil), targets...)
+	paths := append([]string{compiler.ReadOnlyFile}, targets...)
 	for index := 0; index < len(personas); index++ {
 		paths = append(paths, personas[index]+"/*.md")
 	}

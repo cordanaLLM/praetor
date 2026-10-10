@@ -353,6 +353,10 @@ A subagent launch brief has no fallback. Text without a task label resolves to
 `invoke_agent` or AGY `invoke_subagent` brief without a `task:` field is denied, and so is a
 label the routing vocabulary does not declare. The hook resolves the register from that
 label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)).
+A brief may additionally specify `readonly: true` (or `read-only: true`) to request the
+canonical read-only context projection (`AGENTS.readonly.md`), which strips mutating
+turn-end instructions and ledger mutating commands. How each client delivers it, and that
+Codex and Gemini cannot: [read-only dispatch](agent-hooks.md#read-only-dispatch).
 
 The rendered block states the brief shape on its task-row line (`subagentBriefRule` in
 `internal/config/register_render.go`) and adds "registered dispatch hook denies brief
@@ -773,7 +777,7 @@ comment names for exactly this case.
 | `C7 word-ceiling` | `Options.MaxProseWords` is set (opt-in, 0 means no ceiling) and `Report.ProseWords` exceeds it |
 | `C8 token-ceiling` | `Options.MaxTokens` is set (opt-in, 0 means no ceiling) and `Report.EstimatedTokens` (the whole input, not prose alone) exceeds it |
 | `C9 grammar` | `message`, `brief` or `return` text contains a listed article, personal pronoun, copula, auxiliary, modal or politeness token, including straight/curly contractions; `as is` stays permitted by the clarity floor |
-| `C10 message-shape` | a brief lacks `goal`/`inputs`/`return`/`evidence`/`task`, a return lacks `verdict`/`changed`/`ran`/`evidence`/`open`, the answer field is not first, or known fields share a line |
+| `C10 message-shape` | a brief lacks `goal`/`inputs`/`return`/`evidence`/`task` (optional `readonly`/`read-only`), a return lacks `verdict`/`changed`/`ran`/`evidence`/`open`, the answer field is not first, or known fields share a line |
 | `C11 runtime-source-escape` | `CheckRuntime` only (`internal/caveman/runtime.go`): a line carries a source-only construct that could hide prose, such as an off region, a fence line, a setext underline, structured text, an HTML entity or tag, or a Markdown link |
 | `C12 runtime-evidence-pointer` | `CheckRuntime` only: an `evidence:` field carries pointer markers (`sha256`, `lines:`) but is not the complete canonical `evidence: <path> sha256:<12 hex> lines:<n>` form (`evidenceRe`, `internal/caveman/scan.go`) |
 | `C13 unclosed-fence` | a fenced code block is still open when the text ends; everything after its opening fence would otherwise count as code and escape every other rule. Only a bare delimiter at least as long as the opener closes it, so a template holding inner fences needs a longer outer fence. A backtick line whose info string holds a backtick (`` ```foo``` flag ``) is an inline code span under CommonMark and opens no fence; a tilde fence's info string may hold backticks |

@@ -21,10 +21,10 @@ func TestCorrelationStorePositive(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := config.Resolution{Register: config.TextRegisterInternal, MaxTokens: 512, Source: "tasks.ci_debugging"}
-	if err := store.reserve(t.Context(), "claude", "session", "tool", want); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "tool", want, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.promote(t.Context(), "claude", "session", "tool", "agent"); err != nil {
+	if _, err := store.promote(t.Context(), "claude", "session", "tool", "agent"); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := store.active(t.Context(), "claude", "session", "agent"); err != nil || got.Resolution != want {
@@ -71,11 +71,14 @@ func TestCorrelationStoreNegative(t *testing.T) {
 	}
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
 	for name, call := range map[string]func() error{
-		"empty id": func() error { return store.reserve(t.Context(), "claude", "", "tool", resolution) },
+		"empty id": func() error { return store.reserve(t.Context(), "claude", "", "tool", resolution, "") },
 		"long id": func() error {
-			return store.reserve(t.Context(), "claude", "session", string(make([]byte, MaxCorrelationIDBytes+1)), resolution)
+			return store.reserve(t.Context(), "claude", "session", string(make([]byte, MaxCorrelationIDBytes+1)), resolution, "")
 		},
-		"missing bind": func() error { return store.promote(t.Context(), "claude", "session", "missing", "agent") },
+		"missing bind": func() error {
+			_, err := store.promote(t.Context(), "claude", "session", "missing", "agent")
+			return err
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := call(); err == nil {
@@ -96,7 +99,7 @@ func TestCorrelationStoreEvictsOldestAtCapacity(t *testing.T) {
 	}
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
 	for index := 0; index < MaxCorrelationEntries; index++ {
-		if err := store.reserve(t.Context(), "claude", "session", fmt.Sprintf("tool-%03d", index), resolution); err != nil {
+		if err := store.reserve(t.Context(), "claude", "session", fmt.Sprintf("tool-%03d", index), resolution, ""); err != nil {
 			t.Fatalf("reserve %d: %v", index, err)
 		}
 	}
@@ -106,13 +109,13 @@ func TestCorrelationStoreEvictsOldestAtCapacity(t *testing.T) {
 	if err := os.Chtimes(oldest, older, older); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.reserve(t.Context(), "claude", "session", "tool-010", resolution); err == nil {
+	if err := store.reserve(t.Context(), "claude", "session", "tool-010", resolution, ""); err == nil {
 		t.Fatal("conflicting reservation accepted")
 	}
 	if _, err := os.Lstat(oldest); err != nil {
 		t.Fatalf("a refused reservation evicted a row: %v", err)
 	}
-	if err := store.reserve(t.Context(), "claude", "session", "overflow", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "overflow", resolution, ""); err != nil {
 		t.Fatalf("reservation at capacity refused: %v", err)
 	}
 	requireStoreRows(t, dir, MaxCorrelationEntries)
@@ -134,7 +137,7 @@ func TestCorrelationStoreReclaimsExpiredRowsBeforeEvicting(t *testing.T) {
 	}
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
 	for index := 0; index < MaxCorrelationEntries; index++ {
-		if err := store.reserve(t.Context(), "claude", "session", fmt.Sprintf("tool-%03d", index), resolution); err != nil {
+		if err := store.reserve(t.Context(), "claude", "session", fmt.Sprintf("tool-%03d", index), resolution, ""); err != nil {
 			t.Fatalf("reserve %d: %v", index, err)
 		}
 	}
@@ -143,7 +146,7 @@ func TestCorrelationStoreReclaimsExpiredRowsBeforeEvicting(t *testing.T) {
 	if err := os.Chtimes(stale, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.reserve(t.Context(), "claude", "session", "replacement", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "replacement", resolution, ""); err != nil {
 		t.Fatalf("stale slot was not reclaimed: %v", err)
 	}
 	requireStoreRows(t, dir, MaxCorrelationEntries)
@@ -179,7 +182,7 @@ func TestCorrelationStoreSweepsAbandonedTempFiles(t *testing.T) {
 		}
 	}
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
-	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(abandoned); !errors.Is(err, os.ErrNotExist) {
@@ -208,7 +211,7 @@ func TestCorrelationStoreReclaimsShortPendingLeaseButKeepsActiveAgent(t *testing
 		t.Fatal(err)
 	}
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
-	if err := store.reserve(t.Context(), "claude", "session", "stale-tool", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "stale-tool", resolution, ""); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := correlationName("pending", "claude", "session", "stale-tool")
@@ -219,10 +222,10 @@ func TestCorrelationStoreReclaimsShortPendingLeaseButKeepsActiveAgent(t *testing
 	if err := os.Chtimes(filepath.Join(dir, pending), oldPending, oldPending); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.reserve(t.Context(), "claude", "session", "stale-tool", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "stale-tool", resolution, ""); err != nil {
 		t.Fatalf("five-minute pending lease was not reclaimed: %v", err)
 	}
-	if err := store.promote(t.Context(), "claude", "session", "stale-tool", "active-agent"); err != nil {
+	if _, err := store.promote(t.Context(), "claude", "session", "stale-tool", "active-agent"); err != nil {
 		t.Fatal(err)
 	}
 	active, err := correlationName("active", "claude", "session", "active-agent")
@@ -250,7 +253,7 @@ func TestCorrelationStoreConcurrentReservations(t *testing.T) {
 		group.Add(1)
 		go func(worker int) {
 			defer group.Done()
-			errorsSeen <- store.reserve(context.Background(), "claude", "session", fmt.Sprintf("tool-%d", worker), resolution)
+			errorsSeen <- store.reserve(context.Background(), "claude", "session", fmt.Sprintf("tool-%d", worker), resolution, "")
 		}(index)
 	}
 	group.Wait()
@@ -293,7 +296,7 @@ func TestCorrelationStoreWaitsForASlowHolder(t *testing.T) {
 	released := holdCorrelationLock(t, dir, hold)
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
 	began := time.Now()
-	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution, ""); err != nil {
 		t.Fatalf("reserve behind a %s holder: %v", hold, err)
 	}
 	if took := time.Since(began); took < hold {
@@ -329,7 +332,7 @@ func TestCorrelationStoreLockWaitEndsAtItsBound(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), tc.deadline)
 			defer cancel()
 			// The holder releases at 600 ms, so an error proves the wait ended at its bound.
-			if err := store.reserve(ctx, "claude", "session", "tool", resolution); !tc.want(err) {
+			if err := store.reserve(ctx, "claude", "session", "tool", resolution, ""); !tc.want(err) {
 				t.Fatalf("reserve against a held lock: %v", err)
 			}
 			if err := <-released; err != nil {
@@ -344,13 +347,13 @@ func TestCorrelationStoreLockWaitEndsAtItsBound(t *testing.T) {
 func TestCorrelationStoreLockWaitBelowOneDelayTriesOnce(t *testing.T) {
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
 	free := correlationStore{dir: t.TempDir(), lockWait: time.Nanosecond}
-	if err := free.reserve(t.Context(), "claude", "session", "tool", resolution); err != nil {
+	if err := free.reserve(t.Context(), "claude", "session", "tool", resolution, ""); err != nil {
 		t.Fatalf("a free lock was not taken: %v", err)
 	}
 	dir := t.TempDir()
 	released := holdCorrelationLock(t, dir, 300*time.Millisecond)
 	held := correlationStore{dir: dir, lockWait: time.Nanosecond}
-	err := held.reserve(t.Context(), "claude", "session", "tool", resolution)
+	err := held.reserve(t.Context(), "claude", "session", "tool", resolution, "")
 	if err == nil || !strings.Contains(err.Error(), "remained locked") {
 		t.Fatalf("a held lock was not reported: %v", err)
 	}
@@ -377,7 +380,7 @@ func TestCorrelationStoreReclaimsStaleLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
-	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution, ""); err != nil {
 		t.Fatalf("stale lock was not reclaimed: %v", err)
 	}
 }
@@ -408,7 +411,7 @@ func TestCorrelationStoreScanBoundIsNotTheRowCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution, ""); err != nil {
 		t.Fatalf("%d entries with the lock were refused: %v", correlationScanLimit, err)
 	}
 	pastBound := t.TempDir()
@@ -416,7 +419,7 @@ func TestCorrelationStoreScanBoundIsNotTheRowCap(t *testing.T) {
 	if store, err = newCorrelationStore(t.Context(), "", pastBound); err != nil {
 		t.Fatal(err)
 	}
-	err = store.reserve(t.Context(), "claude", "session", "tool", resolution)
+	err = store.reserve(t.Context(), "claude", "session", "tool", resolution, "")
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("more than %d entries", correlationScanLimit)) {
 		t.Fatalf("%d entries with the lock: %v", correlationScanLimit+1, err)
 	}
@@ -434,13 +437,13 @@ func TestCorrelationStoreFullOfRowsSurvivesDebris(t *testing.T) {
 	}
 	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
 	for index := 0; index < MaxCorrelationEntries; index++ {
-		if err := store.reserve(t.Context(), "claude", "session", fmt.Sprintf("tool-%03d", index), resolution); err != nil {
+		if err := store.reserve(t.Context(), "claude", "session", fmt.Sprintf("tool-%03d", index), resolution, ""); err != nil {
 			t.Fatalf("reserve %d: %v", index, err)
 		}
 	}
 	fillCorrelationDir(t, dir, util.AtomicTempPrefix+"pending-abandoned.json", 16, correlationLockTTL+time.Minute)
 	fillCorrelationDir(t, dir, "foreign", 2*MaxCorrelationEntries, correlationActiveTTL+time.Hour)
-	if err := store.reserve(t.Context(), "claude", "session", "launch", resolution); err != nil {
+	if err := store.reserve(t.Context(), "claude", "session", "launch", resolution, ""); err != nil {
 		t.Fatalf("launch refused by debris: %v", err)
 	}
 	requireStoreRows(t, dir, MaxCorrelationEntries)

@@ -552,7 +552,8 @@ intended.
 `compiler.CompileContextProjections` for a write (`internal/compiler/projection.go`).
 A tool call and the CLI therefore check and write the same things:
 
-- A write compiles the vendor files, then copies every persona under
+- A write compiles the vendor files and the canonical read-only context
+  projection (`AGENTS.readonly.md`), then copies every persona under
   `.agents/agents` into each selected client's persona directory and, when
   `.agents/plugins/praetor/plugin.json` exists, into the plugin's `agents/` and
   `skills/` copies.
@@ -569,10 +570,10 @@ A tool call and the CLI therefore check and write the same things:
   `adopt.CompileAgentContext`, the write the CLI's `compile-context` and `init` run.
 - More than 50 files in `.agents/agents` fail both modes instead of being
   truncated.
-- Every file the call writes below `target_dir` (the vendor files, the
-  persona copies such as `.claude/agents/*.md`, and the plugin persona and
-  skill copies), and every persona and skill it reads from `.agents`, is
-  reached without following a symlink. A symlinked file, or a symlinked
+- Every file the call writes below `target_dir` (the vendor files,
+  `AGENTS.readonly.md`, the persona copies such as `.claude/agents/*.md`, and the
+  plugin persona and skill copies), and every persona and skill it reads from
+  `.agents`, is reached without following a symlink. A symlinked file, or a symlinked
   directory anywhere between `target_dir` and the file (`.claude`, `.agents`,
   `.agents/plugins/praetor`), is refused on write and on verify for the same
   reason, with or without `-allow-outside-root`. That flag still admits a

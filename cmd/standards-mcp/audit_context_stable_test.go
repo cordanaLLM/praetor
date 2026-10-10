@@ -26,6 +26,9 @@ func compiledFixtureServer(t *testing.T, source string) (*Server, string) {
 	if err := tr.WriteOutputs(res, root); err != nil {
 		t.Fatalf("write fixture vendor targets: %v", err)
 	}
+	if err := compiler.CompileReadOnlyContext(t.Context(), filepath.Join(root, "AGENTS.md"), root); err != nil {
+		t.Fatalf("compile fixture AGENTS.readonly.md: %v", err)
+	}
 	return srv, root
 }
 

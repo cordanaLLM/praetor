@@ -45,7 +45,7 @@ files exist, so a repository without a needs manifest has no "needs manifest" ar
 
 | Name | Paths | Render command | Applies when |
 | --- | --- | --- | --- |
-| compiled context projections | the vendor files and persona copies `agent_clients` selects, and the plugin copies | `praetorctl compile-context` | `AGENTS.md` exists and a projection does |
+| compiled context projections | the vendor files, `AGENTS.readonly.md`, persona copies `agent_clients` selects, and the plugin copies | `praetorctl compile-context` | `AGENTS.md` exists and a projection does |
 | agent register block | the register block of `AGENTS.md` | `praetorctl compile-context` | `AGENTS.md` carries the block |
 | debt baseline | `.standards-baseline.json` | `praetorctl baseline --record` | the baseline exists |
 | README governance block | the governance block of `README.md` | `praetorctl docs readme` | `README.md` carries the block |

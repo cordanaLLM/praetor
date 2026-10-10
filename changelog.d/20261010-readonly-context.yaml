@@ -1,0 +1,4 @@
+type: added
+title: Read-only projection of the compiled context (AGENTS.readonly.md), delivered to read-only subagents through the Claude Code prompt rewrite and SubagentStart context and the AGY overwrite, with the substitution named for Codex and Gemini, which offer no channel
+issue: "#1135"
+breaking: false

@@ -18,7 +18,11 @@ import (
 //   - the common fields on every payload: conversationId, workspacePaths, stepIdx
 //     (PreToolUse) / executionNum (Stop);
 //   - PreToolUse's toolCall.name and toolCall.args.CommandLine for the run_command tool;
-//   - PreToolUse's stdout: {"decision":"allow"|"deny","reason":...};
+//   - PreToolUse's stdout: {"decision":"allow"|"deny","reason":...}, and on an allow the
+//     optional "overwrite" object, a shallow top-level merge into the tool call's arguments
+//     whose rewrite the agent is told about (re-read from the installed 1.3.3 binary
+//     2026-10-10: the output fields are decision, reason, permissionOverrides, overwrite; there
+//     is no additionalContext);
 //   - Stop's stdin terminationReason/fullyIdle and its stdout {"decision":"continue",...}
 //     versus any other value, which lets the agent stop.
 //
@@ -54,8 +58,14 @@ type agyPreToolPayload struct {
 	StepIdx  *int         `json:"stepIdx"`
 }
 
+// agySubagent is one Subagents[] entry of an invoke_subagent call. TypeName and Role are the
+// agent type names the installed AGY 1.3.3 binary's own instructions pass
+// (`invoke_subagent` with **`TypeName`**, **`Role`**, **`Workspace`**), read here only to tell a
+// read-only agent type apart.
 type agySubagent struct {
-	Prompt string `json:"Prompt"`
+	Prompt   string `json:"Prompt"`
+	TypeName string `json:"TypeName"`
+	Role     string `json:"Role"`
 }
 
 type agyDispatchArgs struct {
@@ -94,33 +104,36 @@ func agyDecodePreDispatch(payload []byte) (Canonical, error) {
 	if doc.ToolCall == nil || doc.ToolCall.Name != "invoke_subagent" {
 		return Canonical{}, errors.New("toolCall.name must be invoke_subagent")
 	}
-	briefs, err := agyDispatchBriefs(doc.ToolCall.Args)
+	briefs, roles, err := agyDispatchBriefs(doc.ToolCall.Args)
 	if err != nil {
 		return Canonical{}, err
 	}
-	canonical.Tool, canonical.Briefs = doc.ToolCall.Name, briefs
+	canonical.Tool, canonical.Briefs, canonical.Roles = doc.ToolCall.Name, briefs, roles
+	canonical.DispatchInput = doc.ToolCall.Args
 	return canonical, nil
 }
 
 // agyDispatchBriefs reads the documented 1..MaxDispatchBriefs Subagents[].Prompt values of
-// an invoke_subagent call; each must be nonempty text.
-func agyDispatchBriefs(raw json.RawMessage) ([]string, error) {
+// an invoke_subagent call, each nonempty text, and the agent type names of each subagent.
+func agyDispatchBriefs(raw json.RawMessage) ([]string, [][]string, error) {
 	var args agyDispatchArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
-		return nil, errors.New("toolCall.args.Subagents must be an array")
+		return nil, nil, errors.New("toolCall.args.Subagents must be an array")
 	}
 	if len(args.Subagents) == 0 || len(args.Subagents) > MaxDispatchBriefs {
-		return nil, fmt.Errorf("toolCall.args.Subagents must contain 1..%d entries", MaxDispatchBriefs)
+		return nil, nil, fmt.Errorf("toolCall.args.Subagents must contain 1..%d entries", MaxDispatchBriefs)
 	}
 	briefs := make([]string, 0, len(args.Subagents))
+	roles := make([][]string, 0, len(args.Subagents))
 	for index := 0; index < len(args.Subagents) && index < MaxDispatchBriefs; index++ {
-		prompt := args.Subagents[index].Prompt
-		if strings.TrimFunc(prompt, isPythonSpace) == "" {
-			return nil, fmt.Errorf("toolCall.args.Subagents[%d].Prompt must be nonempty text", index)
+		subagent := args.Subagents[index]
+		if strings.TrimFunc(subagent.Prompt, isPythonSpace) == "" {
+			return nil, nil, fmt.Errorf("toolCall.args.Subagents[%d].Prompt must be nonempty text", index)
 		}
-		briefs = append(briefs, prompt)
+		briefs = append(briefs, subagent.Prompt)
+		roles = append(roles, []string{subagent.TypeName, subagent.Role})
 	}
-	return briefs, nil
+	return briefs, roles, nil
 }
 
 // agyDecodeToolPayload is the prologue agy's PreToolUse-shaped events share: one JSON
@@ -250,6 +263,14 @@ func agyEncodePreTool(verdict Verdict) Response {
 	var stderr []byte
 	switch verdict.Outcome {
 	case Allow:
+		// The contract's PreToolUse output has decision, reason, permissionOverrides and
+		// overwrite only: the read-only rewrite travels as overwrite, named in reason.
+		if verdict.UpdatedInput != nil {
+			body["overwrite"] = verdict.UpdatedInput
+		}
+		if verdict.Notice != "" {
+			body["reason"] = boundReason(verdict.Notice)
+		}
 	case Skip:
 		stderr = []byte("praetor hook: " + boundReason(verdict.Reason) + ", skipped\n")
 	default: // Deny and any outcome this dialect does not recognise fail closed.
