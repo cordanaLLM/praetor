@@ -53,6 +53,32 @@ func praetorTree() memoryTree {
 		".devcontainer/Dockerfile.praetor": "FROM scratch\n",
 		".devcontainer/devcontainer.json":  "{}\n",
 		"internal/managedasset/testdata/shipped/markdown.sha256": "abc  x\n",
+		"internal/codexhook/events_gen.go":                       "package codexhook\n",
+	}
+}
+
+func assertArtefactsActive(t *testing.T, artefacts []Artefact) []string {
+	t.Helper()
+	var names []string
+	for _, artefact := range artefacts {
+		names = append(names, artefact.Name)
+		if !artefact.Active || artefact.Origin != OriginBuiltin {
+			t.Errorf("%s: active=%v origin=%s reason=%q", artefact.Name, artefact.Active, artefact.Origin, artefact.Reason)
+		}
+	}
+	return names
+}
+
+func assertSetJSON(t *testing.T, set *Set) {
+	t.Helper()
+	data, err := json.Marshal(set)
+	if err != nil {
+		t.Fatalf("json = %v", err)
+	}
+	s := string(data)
+	if !strings.Contains(s, `"regeneration":{"branch_prefix":"regen/","title_type":"chore(generated)"}`) ||
+		!strings.Contains(s, `"command":["praetorctl","baseline","--record"]`) {
+		t.Fatalf("json = %s", s)
 	}
 }
 
@@ -63,14 +89,8 @@ func TestResolve_Positive_BuiltinsApplyInAPraetorCheckout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{NameProjections, NameRegisterBlock, NameBaseline, NameReadmeBlock, NameNeeds, NameFigures, NameShippedTexts, NameDevContainer}
-	var names []string
-	for _, artefact := range set.Artefacts {
-		names = append(names, artefact.Name)
-		if !artefact.Active || artefact.Origin != OriginBuiltin {
-			t.Errorf("%s: active=%v origin=%s reason=%q", artefact.Name, artefact.Active, artefact.Origin, artefact.Reason)
-		}
-	}
+	want := []string{NameProjections, NameRegisterBlock, NameBaseline, NameReadmeBlock, NameNeeds, NameFigures, NameShippedTexts, NameClientTypes, NameDevContainer}
+	names := assertArtefactsActive(t, set.Artefacts)
 	if strings.Join(names, ";") != strings.Join(want, ";") {
 		t.Fatalf("render order = %q, want %q", names, want)
 	}
@@ -80,11 +100,7 @@ func TestResolve_Positive_BuiltinsApplyInAPraetorCheckout(t *testing.T) {
 	if set.Marker.BranchPrefix != config.DefaultRegenerationBranchPrefix || set.Marker.TitleType != config.DefaultRegenerationTitleType {
 		t.Fatalf("marker = %+v", set.Marker)
 	}
-	data, err := json.Marshal(set)
-	if err != nil || !strings.Contains(string(data), `"regeneration":{"branch_prefix":"regen/","title_type":"chore(generated)"}`) ||
-		!strings.Contains(string(data), `"command":["praetorctl","baseline","--record"]`) {
-		t.Fatalf("json = %s, %v", data, err)
-	}
+	assertSetJSON(t, set)
 }
 
 // Positive (#696): the built-in declarations satisfy the schema an adopter's own entries must
@@ -113,6 +129,32 @@ func TestBuiltinArtefacts_Positive_SatisfyTheSchemaAndFollowClients(t *testing.T
 	}
 }
 
+func assertInactiveReasons(t *testing.T, set *Set, wantReasons map[string]string) {
+	t.Helper()
+	reasons := map[string]string{}
+	for _, artefact := range set.Artefacts {
+		if !artefact.Active {
+			reasons[artefact.Name] = artefact.Reason
+		}
+	}
+	for name, want := range wantReasons {
+		if !strings.Contains(reasons[name], want) {
+			t.Errorf("%s: reason %q, want %q", name, reasons[name], want)
+		}
+	}
+	if len(reasons) != len(wantReasons) {
+		t.Errorf("inactive = %q", reasons)
+	}
+}
+
+func assertResolveRefused(t *testing.T, manifest *config.Manifest, tree Tree, wantErr string) {
+	t.Helper()
+	_, err := Resolve(context.Background(), manifest, tree)
+	if err == nil || !strings.Contains(err.Error(), wantErr) {
+		t.Fatalf("Resolve with error %q: got %v", wantErr, err)
+	}
+}
+
 // Negative (#696): outside a Praetor checkout the Praetor-only artefacts do not apply, and an
 // artefact without its required file, its selected files or its block markers does not apply,
 // each with its reason. A declined name that is no built-in artefact, and a declared artefact
@@ -126,36 +168,44 @@ func TestResolve_Negative_ReasonsAndRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reasons := map[string]string{}
-	for _, artefact := range set.Artefacts {
-		if !artefact.Active {
-			reasons[artefact.Name] = artefact.Reason
-		}
-	}
 	wantReasons := map[string]string{
 		NameShippedTexts: "not a Praetor source checkout", NameDevContainer: "not a Praetor source checkout",
-		NameNeeds: ".needs.yaml is absent", NameReadmeBlock: "no file carries its block markers",
+		NameClientTypes: "not a Praetor source checkout",
+		NameNeeds:       ".needs.yaml is absent", NameReadmeBlock: "no file carries its block markers",
 	}
-	for name, want := range wantReasons {
-		if !strings.Contains(reasons[name], want) {
-			t.Errorf("%s: reason %q, want %q", name, reasons[name], want)
-		}
-	}
-	if len(reasons) != len(wantReasons) {
-		t.Errorf("inactive = %q", reasons)
-	}
+	assertInactiveReasons(t, set, wantReasons)
 	declined := &config.Manifest{Generated: &config.GeneratedPolicy{Decline: []string{"debt baselin"}}}
-	if _, err := Resolve(context.Background(), declined, tree); err == nil || !strings.Contains(err.Error(), `"debt baselin" names no built-in artefact`) {
-		t.Fatalf("a misspelled decline must be refused: %v", err)
-	}
+	assertResolveRefused(t, declined, tree, `"debt baselin" names no built-in artefact`)
 	clash := &config.Manifest{Generated: &config.GeneratedPolicy{Artefacts: []config.GeneratedArtefact{
 		{Name: NameBaseline, Paths: []string{"x"}, Command: []string{"m"}, Sources: []string{"s"}}}}}
-	if _, err := Resolve(context.Background(), clash, tree); err == nil || !strings.Contains(err.Error(), "takes the name of the built-in artefact") {
-		t.Fatalf("a declared artefact must not take a built-in name: %v", err)
-	}
+	assertResolveRefused(t, clash, tree, "takes the name of the built-in artefact")
 	broken := memoryTree{"README.md": readmegovernance.Start + "\n"}
-	if _, err := Resolve(context.Background(), nil, broken); err == nil || !strings.Contains(err.Error(), "README.md") {
-		t.Fatalf("an unbalanced block marker must be an error: %v", err)
+	assertResolveRefused(t, nil, broken, "README.md")
+}
+
+func assertGlobSelectionBounds(t *testing.T) {
+	t.Helper()
+	files := make([]string, 0, MaxArtefactFiles+1)
+	for index := 0; index < MaxArtefactFiles; index++ {
+		files = append(files, fmt.Sprintf("out/%05d.txt", index))
+	}
+	globs := newGlobSet([]string{"out/*.txt"})
+	if selected, err := globs.selectFrom(files, "out"); err != nil || len(selected) != MaxArtefactFiles {
+		t.Fatalf("exactly %d files: %d, %v", MaxArtefactFiles, len(selected), err)
+	}
+	if _, err := globs.selectFrom(append(files, "out/overflow.txt"), "out"); err == nil || !strings.Contains(err.Error(), "more than 4096 files") {
+		t.Fatalf("one file over the bound: %v", err)
+	}
+}
+
+func assertGlobPathDepthBounds(t *testing.T) {
+	t.Helper()
+	deep := strings.Repeat("d/", maxPathSegments) + "x.txt"
+	if newGlobSet([]string{"**/*.txt"}).match(deep) {
+		t.Fatal("a path deeper than the segment bound must match no glob")
+	}
+	if !newGlobSet([]string{"**/*.txt"}).match(strings.Repeat("d/", maxPathSegments-1) + "x.txt") {
+		t.Fatal("a path at the segment bound must still match")
 	}
 }
 
@@ -168,25 +218,9 @@ func TestResolve_Boundary_DeclineAndGlobBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(set.Declined, ",") != NameDevContainer || len(set.Artefacts) != 7 {
+	if strings.Join(set.Declined, ",") != NameDevContainer || len(set.Artefacts) != 8 {
 		t.Fatalf("declined = %q, artefacts = %d", set.Declined, len(set.Artefacts))
 	}
-	files := make([]string, 0, MaxArtefactFiles+1)
-	for index := 0; index < MaxArtefactFiles; index++ {
-		files = append(files, fmt.Sprintf("out/%05d.txt", index))
-	}
-	globs := newGlobSet([]string{"out/*.txt"})
-	if selected, err := globs.selectFrom(files, "out"); err != nil || len(selected) != MaxArtefactFiles {
-		t.Fatalf("exactly %d files: %d, %v", MaxArtefactFiles, len(selected), err)
-	}
-	if _, err := globs.selectFrom(append(files, "out/overflow.txt"), "out"); err == nil || !strings.Contains(err.Error(), "more than 4096 files") {
-		t.Fatalf("one file over the bound: %v", err)
-	}
-	deep := strings.Repeat("d/", maxPathSegments) + "x.txt"
-	if newGlobSet([]string{"**/*.txt"}).match(deep) {
-		t.Fatal("a path deeper than the segment bound must match no glob")
-	}
-	if !newGlobSet([]string{"**/*.txt"}).match(strings.Repeat("d/", maxPathSegments-1) + "x.txt") {
-		t.Fatal("a path at the segment bound must still match")
-	}
+	assertGlobSelectionBounds(t)
+	assertGlobPathDepthBounds(t)
 }

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -75,7 +76,7 @@ func inventoryFile(rel string, listed map[string]bool) bool {
 		hidden := strings.HasPrefix(dir, ".") && !slices.Contains(inventoryDotDirectories, dir)
 		return hidden || slices.Contains(inventorySkippedDirectories, dir)
 	})
-	return !skipped && len(inventoryReaders(rel, listed)) > 0
+	return !skipped && len(inventoryReaders("", rel, listed)) > 0
 }
 
 // pipRequirementsFile reports whether rel is a pip requirements file the inventory reads: a
@@ -96,11 +97,13 @@ type inventoryReader func(rel, text string) ([]InventoryItem, error)
 
 // inventoryReaders returns the readers that take the file at rel, by its name and place among
 // the files listed.
-func inventoryReaders(rel string, listed map[string]bool) []inventoryReader {
+func inventoryReaders(root, rel string, listed map[string]bool) []inventoryReader {
 	var readers []inventoryReader
 	switch base := path.Base(rel); {
 	case base == "go.mod":
-		readers = append(readers, goModInventory)
+		readers = append(readers, func(rel, text string) ([]InventoryItem, error) {
+			return goModInventory(root, rel, text)
+		})
 	case base == "package.json":
 		readers = append(readers, npmInventory)
 	case pipRequirementsFile(rel, listed):
@@ -120,18 +123,21 @@ func inventoryReaders(rel string, listed map[string]bool) []inventoryReader {
 	return readers
 }
 
-// goModInventory lists every direct requirement and every tool directive of a go.mod.
-func goModInventory(rel, text string) ([]InventoryItem, error) {
+// goModInventory lists every direct requirement and every tool directive of a go.mod, except a
+// requirement the same file replaces with a directory of the checkout at root whose go.mod
+// declares that module (gomanifest.LocalReplaces). rel is the go.mod's path below root.
+func goModInventory(root, rel, text string) ([]InventoryItem, error) {
 	lines, err := splitNoticeLines(text)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", rel, err)
 	}
+	local := gomanifest.LocalReplaces([]byte(text), filepath.Join(root, filepath.Dir(filepath.FromSlash(rel))), root)
 	var items []InventoryItem
 	inRequire, inTool := false, false
 	for _, line := range lines {
 		if requirement, required := gomanifest.RequirementLine(line, &inRequire); required {
 			parsed, ok := gomanifest.ParseRequirement(requirement)
-			if ok && !gomanifest.IsIndirect(requirement) {
+			if ok && !gomanifest.IsIndirect(requirement) && !local[parsed.Path] {
 				items = append(items, InventoryItem{Kind: inventoryGoModule, ID: parsed.Path, Path: rel})
 			}
 			continue

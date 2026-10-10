@@ -926,7 +926,7 @@ func rpc(t *testing.T, srv *Server, req JSONRPCRequest) *JSONRPCResponse {
 // wantRPCError asserts a JSON-RPC error response with code and id.
 func wantRPCError(t *testing.T, label string, resp *JSONRPCResponse, code int, id any) {
 	t.Helper()
-	if resp == nil || resp.Error == nil || resp.Error.Code != code || resp.ID != id {
+	if resp == nil || resp.Error == nil || resp.Error.Code != int64(code) || resp.ID != id {
 		t.Errorf("%s: got %+v, want error %d with id %v", label, resp, code, id)
 	}
 }

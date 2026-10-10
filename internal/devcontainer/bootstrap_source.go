@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/clientschema"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -406,7 +407,7 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 		return nil, err
 	}
 	managed := managedasset.Families()
-	families := make([]bootstrapAssetFamily, 0, len(managed)+2)
+	families := make([]bootstrapAssetFamily, 0, len(managed)+4)
 	for index := 0; index < len(managed) && index < managedasset.MaxFamilies; index++ {
 		family := managed[index]
 		families = append(families, bootstrapAssetFamily{
@@ -416,6 +417,8 @@ func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 	return append(families, bootstrapAssetFamily{
 		name: "template", source: templates.SourceFile, directive: "//go:embed " + templates.Pattern, assets: templateAssets,
 	}, cliBootstrapFamily(), bootstrapAssetFamily{
+		name: "client schemas", source: clientschema.SourceFile, directive: clientschema.EmbedDirective, assets: clientschema.AssetPaths(),
+	}, bootstrapAssetFamily{
 		name: "reviewed images", source: reviewedImagesSource, directive: priorImagesDirective, assets: []string{PriorImagesFile},
 	}), nil
 }

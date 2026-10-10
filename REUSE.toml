@@ -62,3 +62,56 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Ayoub Ghriss"
 SPDX-License-Identifier = "MIT"
+
+# The vendored upstream client schemas keep their upstream terms (internal/clientschema/upstream/manifest.json
+# names the source, pin and licence of each). Like the tables above, each must stay after the "**"
+# table. manifest.json sits beside them and stays EUPL-1.2.
+[[annotations]]
+path = ["internal/clientschema/upstream/claude/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "SchemaStore contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["internal/clientschema/upstream/gemini/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "Google LLC"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["internal/clientschema/upstream/codex/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "OpenAI"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["internal/clientschema/upstream/mcp/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2024-2025 Anthropic, PBC and contributors"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = ["internal/clientschema/upstream/opencode/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2025 opencode"
+SPDX-License-Identifier = "MIT"
+
+# The generated client schema types combine Praetor's generator code and type declarations (EUPL-1.2)
+# with comments copied verbatim from the upstream schemas (MCP MIT, Codex Apache-2.0).
+[[annotations]]
+path = ["internal/mcpwire/messages_gen.go"]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2026 Lusoris <lusoris@proton.me>",
+  "2024-2025 Anthropic, PBC and contributors",
+]
+SPDX-License-Identifier = "EUPL-1.2 AND MIT"
+
+[[annotations]]
+path = ["internal/codexhook/events_gen.go"]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2026 Lusoris <lusoris@proton.me>",
+  "OpenAI",
+]
+SPDX-License-Identifier = "EUPL-1.2 AND Apache-2.0"

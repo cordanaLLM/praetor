@@ -125,14 +125,14 @@ func TestCIGenerated_Positive_ListCheckAndRender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v\n%s", err, out)
 	}
-	mustContain(t, out, "=== Generated Artefacts: 9 declared ===", "branch regen/<name> and a title chore(generated): <summary>",
+	mustContain(t, out, "=== Generated Artefacts: 10 declared ===", "branch regen/<name> and a title chore(generated): <summary>",
 		"[active] upper copy (manifest)", "paths:   out/a.txt", "files:   1", "[inactive] debt baseline (builtin): .standards-baseline.json is absent")
 	out, err = f.run(t, "list", "--json")
 	if err != nil {
 		t.Fatalf("list --json: %v", err)
 	}
 	var set generated.Set
-	if err := json.Unmarshal([]byte(out), &set); err != nil || set.Marker.BranchPrefix != "regen/" || len(set.Artefacts) != 9 {
+	if err := json.Unmarshal([]byte(out), &set); err != nil || set.Marker.BranchPrefix != "regen/" || len(set.Artefacts) != 10 {
 		t.Fatalf("list --json = %+v, %v\n%s", set, err, out)
 	}
 	if out, err = f.run(t, "render", "--check"); err != nil {
