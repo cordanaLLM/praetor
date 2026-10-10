@@ -6,12 +6,14 @@ package efficiency
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/router"
 )
 
 // DefaultLimit is the number of landed pull requests reported when no limit is given.
@@ -29,6 +31,7 @@ type CollectorOptions struct {
 	ForgeJSONPath  string
 	TranscriptsDir string
 	SpendLogPath   string
+	OutcomeLogPath string
 	// Notes are caller-side findings, for example why no forge driver exists, printed with the report.
 	Notes []string
 }
@@ -104,6 +107,7 @@ func newReport(milestone string) *Report {
 			Retries:               undefinedVector,
 			OperatorMinutes:       undefinedVector,
 			EscapedDefects:        undefinedVector,
+			EstimateError:         NotMeasured,
 		},
 	}
 }
@@ -139,7 +143,11 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	src := unitSources{owners: branchOwners(prs.all), transcript: transStats, spend: spend, measured: report.Sources, live: prs.live}
+	outcomes, err := c.loadOutcomes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	src := unitSources{owners: branchOwners(prs.all), transcript: transStats, spend: spend, outcomes: outcomes, measured: report.Sources, live: prs.live}
 	for _, pr := range prs.units {
 		unit, err := c.buildUnitReport(pr, src, report)
 		if err != nil {
@@ -155,6 +163,29 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 		return nil, fmt.Errorf("summarize efficiency units: %w", err)
 	}
 	return report, nil
+}
+
+// loadOutcomes reads the router outcome log and groups its records by branch. An explicit
+// --outcomes path must exist; the default log may be absent (an empty history), but any other
+// error reading either fails the report instead of dropping the outcomes.
+func (c *Collector) loadOutcomes(ctx context.Context) (map[string][]router.Outcome, error) {
+	path := c.opts.OutcomeLogPath
+	if path == "" {
+		path = filepath.Join(c.opts.Root, router.DefaultOutcomeLogPath)
+	} else if _, err := os.Lstat(path); err != nil {
+		return nil, fmt.Errorf("read outcomes from %s: %w", path, err)
+	}
+	outcomes, err := router.ReadOutcomes(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("read outcomes from %s: %w", path, err)
+	}
+	byBranch := make(map[string][]router.Outcome)
+	for _, o := range outcomes {
+		if o.Branch != "" {
+			byBranch[o.Branch] = append(byBranch[o.Branch], o)
+		}
+	}
+	return byBranch, nil
 }
 
 func (c *Collector) loadTranscripts(ctx context.Context, report *Report) (map[string]*BranchTranscriptStats, error) {

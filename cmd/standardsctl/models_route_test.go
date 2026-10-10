@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,37 +98,185 @@ func TestModelsRouteCLIUnansweredAliasFailsClosedWithItsReason(t *testing.T) {
 	}
 }
 
+func validOutcomeCLIArgs(log string) []string {
+	return []string{
+		"outcome",
+		"--task=implement",
+		"--lane=gateway-coding",
+		"--target=light",
+		"--physical-model=claude-3-5-sonnet",
+		"--harness=praetor-agent",
+		"--harness-version=1.0.0",
+		"--prompt-digest=sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		"--context-digest=sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		"--context-bytes=1024",
+		"--tools=read,write",
+		"--rounds=1",
+		"--retries=0",
+		"--cost-estimate=0.05",
+		"--actual-cost=0.06",
+		"--result=ok",
+		"--duration-ms=900",
+		"--outcome-log=" + log,
+	}
+}
+
 func TestModelsOutcomeCLIRecordsAndReadsBack(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "routing", "outcomes.jsonl")
-	args := []string{"outcome", "--task=implement", "--lane=gateway-coding", "--target=light", "--result=ok", "--duration-ms=900", "--outcome-log=" + log}
-	if _, err := captureStdout(t, func() error { return runModels(args) }); err != nil {
+	args := validOutcomeCLIArgs(log)
+	stdout, err := captureStdout(t, func() error { return runModels(args) })
+	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(stdout, "estimate-error") {
+		t.Errorf("stdout must be pure JSON and not contain human estimate-error text: %s", stdout)
+	}
+	var echoed router.Outcome
+	if err := json.Unmarshal([]byte(stdout), &echoed); err != nil {
+		t.Fatalf("stdout must be valid JSON: %v, got %q", err, stdout)
+	}
 	recorded, err := router.ReadOutcomes(context.Background(), log)
-	if err != nil || len(recorded) != 1 || recorded[0].Task != "implement" || recorded[0].Result != router.OutcomeOK || recorded[0].DurationMS != 900 {
-		t.Fatalf("readback: %+v %v", recorded, err)
+	if err != nil || len(recorded) != 1 {
+		t.Fatalf("readback failed: %+v %v", recorded, err)
+	}
+	assertRecordedOutcomeFields(t, recorded[0])
+	if echoed.IdentityKey == "" || echoed.IdentityKey != recorded[0].IdentityKey {
+		t.Errorf("echoed identity_key %q must match recorded %q", echoed.IdentityKey, recorded[0].IdentityKey)
+	}
+	if echoed.ResolvedModel != recorded[0].ResolvedModel {
+		t.Errorf("echoed resolved_model %q must match recorded %q", echoed.ResolvedModel, recorded[0].ResolvedModel)
+	}
+}
+
+func assertRecordedOutcomeFields(t *testing.T, rec router.Outcome) {
+	t.Helper()
+	if rec.Task != "implement" || rec.Result != router.OutcomeOK || rec.DurationMS != 900 {
+		t.Errorf("unexpected record basics: %+v", rec)
+	}
+	if rec.ResolvedModel != "claude-3-5-sonnet" || rec.Identity.Harness != "praetor-agent" {
+		t.Errorf("unexpected record identity: %+v", rec.Identity)
+	}
+	if rec.IdentityKey == "" || rec.EstimateError == nil {
+		t.Errorf("expected identity key and estimate error: %+v", rec)
 	}
 }
 
 func TestModelsOutcomeCLIRejectsInvalidArguments(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "routing", "outcomes.jsonl")
-	args := []string{"outcome", "--task=implement", "--lane=gateway-coding", "--target=light", "--result=ok", "--duration-ms=900", "--outcome-log=" + log}
+	args := validOutcomeCLIArgs(log)
 	if _, err := captureStdout(t, func() error { return runModels(args) }); err != nil {
 		t.Fatal(err)
 	}
-	for name, bad := range map[string][]string{
-		"unknown result":     {"outcome", "--task=implement", "--target=light", "--result=great", "--outcome-log=" + log},
-		"missing task":       {"outcome", "--target=light", "--result=ok", "--outcome-log=" + log},
-		"route flag misuse":  {"route", "--task=implement", "--result=ok"},
-		"outcome token flag": {"outcome", "--task=implement", "--target=light", "--result=ok", "--input-tokens=5", "--outcome-log=" + log},
-		"sync flag misuse":   {"route", "--task=implement", "--probe-aliases=false"},
-	} {
+	for name, bad := range outcomeCLIBadArgs(log) {
 		if _, err := captureStdout(t, func() error { return runModels(bad) }); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
 	if again, err := router.ReadOutcomes(context.Background(), log); err != nil || len(again) != 1 {
 		t.Fatalf("a refused record changed the log: %+v %v", again, err)
+	}
+}
+
+func outcomeCLIBadArgs(log string) map[string][]string {
+	tooManyTools := make([]string, router.MaxIdentityTools+1)
+	for i := range tooManyTools {
+		tooManyTools[i] = fmt.Sprintf("tool%d", i)
+	}
+	validBase := validOutcomeCLIArgs(log)
+	withoutTools := make([]string, 0, len(validBase))
+	for _, a := range validBase {
+		if !strings.HasPrefix(a, "--tools=") {
+			withoutTools = append(withoutTools, a)
+		}
+	}
+
+	return map[string][]string{
+		"missing identity":      {"outcome", "--task=implement", "--target=light", "--result=ok", "--outcome-log=" + log},
+		"missing harness":       {"outcome", "--task=implement", "--target=light", "--result=ok", "--prompt-digest=sha256:abc", "--context-digest=sha256:def", "--outcome-log=" + log},
+		"unknown result":        {"outcome", "--task=implement", "--target=light", "--result=great", "--outcome-log=" + log},
+		"missing task":          {"outcome", "--target=light", "--result=ok", "--outcome-log=" + log},
+		"route flag misuse":     {"route", "--task=implement", "--result=ok"},
+		"outcome token flag":    {"outcome", "--task=implement", "--target=light", "--result=ok", "--input-tokens=5", "--outcome-log=" + log},
+		"sync flag misuse":      {"route", "--task=implement", "--probe-aliases=false"},
+		"reconcile with record": append(slices.Clone(validBase), "--reconcile"),
+		"tools over cap":        append(slices.Clone(withoutTools), "--tools="+strings.Join(tooManyTools, ",")),
+		"duplicate tools":       append(slices.Clone(withoutTools), "--tools=read,write,read"),
+	}
+}
+
+func TestModelsOutcomeCLIAliasResolveAndRefuse(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := writeRouteCLIInput(t, cliLaneFixture)
+	log := filepath.Join(dir, "outcomes.jsonl")
+
+	baseArgs := []string{
+		"outcome",
+		"--config=" + cfgPath,
+		"--lane=gateway-coding",
+		"--target=light",
+		"--task=implement",
+		"--harness=praetor-agent",
+		"--harness-version=1.0.0",
+		"--prompt-digest=sha256:1111111111111111111111111111111111111111111111111111111111111111",
+		"--context-digest=sha256:2222222222222222222222222222222222222222222222222222222222222222",
+		"--context-bytes=1024",
+		"--tools=read,write",
+		"--result=ok",
+		"--duration-ms=900",
+		"--outcome-log=" + log,
+	}
+
+	// Refuse alias target without explicit --physical-model
+	if _, err := captureStdout(t, func() error { return runModels(baseArgs) }); err == nil {
+		t.Fatalf("expected error for alias target without --physical-model")
+	}
+
+	// Refuse alias target when --physical-model matches alias name
+	aliasAsPhys := append(slices.Clone(baseArgs), "--physical-model=light")
+	if _, err := captureStdout(t, func() error { return runModels(aliasAsPhys) }); err == nil {
+		t.Fatalf("expected error when --physical-model equals alias")
+	}
+
+	// Refuse alias target when --physical-model matches catalog id
+	catalogAsPhys := append(slices.Clone(baseArgs), "--physical-model=gw-light")
+	if _, err := captureStdout(t, func() error { return runModels(catalogAsPhys) }); err == nil {
+		t.Fatalf("expected error when --physical-model equals catalog id")
+	}
+
+	// Refuse when --config points to nonexistent file
+	badCfgArgs := append(slices.Clone(baseArgs), "--config=does-not-exist.yaml", "--physical-model=claude-3-5-sonnet")
+	if _, err := captureStdout(t, func() error { return runModels(badCfgArgs) }); err == nil {
+		t.Fatalf("expected error when --config does not exist")
+	}
+
+	// Success when explicit --physical-model is provided for alias
+	goodArgs := append(slices.Clone(baseArgs), "--physical-model=claude-3-5-sonnet")
+	stdout, err := captureStdout(t, func() error { return runModels(goodArgs) })
+	if err != nil {
+		t.Fatalf("unexpected error with explicit physical-model: %v", err)
+	}
+	var recorded router.Outcome
+	if err := json.Unmarshal([]byte(stdout), &recorded); err != nil {
+		t.Fatalf("failed to parse echoed JSON: %v", err)
+	}
+	if recorded.ResolvedModel != "claude-3-5-sonnet" || recorded.Identity.PhysicalModel != "claude-3-5-sonnet" {
+		t.Errorf("expected physical model claude-3-5-sonnet, got resolved=%s, physical=%s", recorded.ResolvedModel, recorded.Identity.PhysicalModel)
+	}
+}
+
+func TestModelsOutcomeCLIReconcileFlag(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "routing", "outcomes.jsonl")
+	args := validOutcomeCLIArgs(log)
+	if _, err := captureStdout(t, func() error { return runModels(args) }); err != nil {
+		t.Fatal(err)
+	}
+	recArgs := []string{"outcome", "--reconcile", "--outcome-log=" + log}
+	stdout, err := captureStdout(t, func() error { return runModels(recArgs) })
+	if err != nil {
+		t.Fatalf("reconcile failed: %v", err)
+	}
+	if !strings.Contains(stdout, "lane gateway-coding:") || !strings.Contains(stdout, "estimate-error") {
+		t.Errorf("unexpected reconcile output: %s", stdout)
 	}
 }
 

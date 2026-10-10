@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/router"
 )
 
 const (
@@ -172,6 +174,11 @@ type UnitReport struct {
 	Retries                    *VectorField[int]              `json:"retries"`
 	OperatorMinutes            *VectorField[float64]          `json:"operator_minutes"`
 	EscapedDefects             *VectorField[int]              `json:"escaped_defects"`
+	ResolvedModel              string                         `json:"resolved_model,omitempty"`
+	Identity                   *router.RunIdentity            `json:"identity,omitempty"`
+	IdentityKey                string                         `json:"identity_key,omitempty"`
+	EstimateError              string                         `json:"estimate_error,omitempty"`
+	EstimateErrorAmount        *float64                       `json:"estimate_error_amount,omitempty"`
 }
 
 // ProvenanceMix counts the units behind one summary figure per provenance label, so a figure
@@ -284,6 +291,8 @@ type MilestoneSummary struct {
 	Retries                        VectorSummary         `json:"retries"`
 	OperatorMinutes                VectorSummary         `json:"operator_minutes"`
 	EscapedDefects                 VectorSummary         `json:"escaped_defects"`
+	EstimateError                  string                `json:"estimate_error,omitempty"`
+	EstimateErrorAmount            *float64              `json:"estimate_error_amount,omitempty"`
 }
 
 // SourcesMeasured records which of the optional sources were present and read.

@@ -324,12 +324,46 @@ exact `command`. A pick with no lane declared returns `lane_note` instead of a g
 `TestEveryDeclaredLabelRoutesToAnExecutableLane` routes every declared label.
 
 `praetorctl models outcome --task <label> --target <t> --result ok|fail|timeout
-[--lane <name>] [--duration-ms n] [--note text]` appends one record to
-`.workingdir/routing/outcomes.jsonl` (`--outcome-log` changes it), a private JSON Lines
-log that is never rewritten. It is the measured routing data the efficiency ledger reads
-through `router.ReadOutcomes`, which fails on a record it cannot decode instead of
-averaging over the rest. The router does not dispatch: the caller that runs the command
-records how it ended.
+[--lane <name>] [--duration-ms n] [--note text] [identity flags]` appends one
+record to `.workingdir/routing/outcomes.jsonl` (`--outcome-log` changes it), a
+private JSON Lines log that is never rewritten. It is the measured routing data
+the efficiency ledger reads through `router.ReadOutcomes`, which fails on a record
+it cannot decode instead of averaging over the rest. The router does not dispatch:
+the caller that runs the command records how it ended.
+
+Every outcome record requires a verified run identity:
+
+- `--physical-model <id>` (always required): the model that ran, for example
+  `claude-3-7-sonnet-20250219`. The target is never copied into it, because a
+  gateway alias such as `cordana-coding` need not be declared in the catalog. When
+  the routing catalog (`--config`, default `.config/models/routing.yaml`) loads, a
+  value naming any of its aliases, or the catalog ID of any alias entry, is refused.
+  When no catalog is found the command says on stderr that the value was not
+  checked. For a pinned target, pass the target or the model the provider resolved
+  it to.
+- `--harness <name>` and `--harness-version <version>`: harness that ran the task.
+- `--prompt-digest <sha256:...>`: SHA-256 digest of prompt template or brief.
+- `--context-digest <sha256:...>`: SHA-256 digest of compiled context.
+- `--context-bytes <n>`: byte size of compiled context.
+- `--tools <list>`: comma-separated tool names available during the run, at most
+  `router.MaxIdentityTools` (4096). The record keeps `tool_set_digest` (SHA-256 over
+  the sorted names, one per line, so listing order does not matter) and `tool_count`.
+  `--record-tool-list` keeps the full list as well; a record that then exceeds the
+  4096-byte line bound is refused with that reason.
+- `--rounds <n>` and `--retries <n>`: interaction rounds and prior retries.
+- `--cost-estimate <dollars>` and `--actual-cost <dollars>`: pre-dispatch cost
+  estimate and post-run measured cost. An omitted flag leaves the field absent;
+  `--cost-estimate=0` records a measured zero.
+
+An outcome record without mandatory identity fields is refused by `ValidateOutcome`.
+Two runs differing only in prompt template produce distinct identity keys (`Key()`).
+`estimate_error` (`actual_cost - cost_estimate`) is set only when both costs are
+present. After recording, the command prints it to stderr per lane
+(`estimate-error [<lane>]: ...`), or `not measured` when either cost is missing.
+`--reconcile` prints one line per lane across the log. Its sums cover measured runs
+only, that is, runs with a run identity, an estimate and an actual cost
+(`Outcome.MeasuredCosts`, `router.CostTally`); the efficiency ledger sums units by
+the same rule.
 
 ## Catalog freshness
 
@@ -401,6 +435,15 @@ fields; existing `recorded_headroom` remains the pre-request counter diagnostic.
 Dispatch consumers must opt into the reservation API, configure positive concurrency,
 and finish every successful handle; calling advisory selection alone does not
 enforce concurrency.
+
+Migration: outcome records now require mandatory run-identity fields (physical
+model, harness, version, prompt digest, context digest), and every `models outcome`
+call needs `--physical-model`, whatever the target. Pre-existing `outcomes.jsonl`
+logs written before run identity stay readable: `ReadOutcomes` skips the identity
+checks only for a record that carries none of the run-identity fields
+(`identity`, `identity_key`, `resolved_model`, `actual_cost`, `estimate_error`,
+`branch`). Such a record counts as a run in lane reconciliation but never as a
+measured cost. Any record with one of those fields is validated in full.
 
 ## Remaining dispatch and feedback work
 

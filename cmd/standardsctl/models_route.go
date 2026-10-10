@@ -51,6 +51,11 @@ var modelFlagActions = map[string][]string{
 	"task": {"route", "outcome"}, "capabilities": {"route"}, "input-tokens": {"route"}, "output-tokens": {"route"},
 	"usage": {"route"}, "lane": {"outcome"}, "target": {"outcome"}, "result": {"outcome"}, "note": {"outcome"},
 	"outcome-log": {"outcome"}, "duration-ms": {"outcome"}, "probe-aliases": {"sync"}, "prune": {"sync"},
+	"physical-model": {"outcome"}, "harness": {"outcome"}, "harness-version": {"outcome"},
+	"prompt-digest": {"outcome"}, "context-digest": {"outcome"}, "context-bytes": {"outcome"},
+	"tools": {"outcome"}, "rounds": {"outcome"}, "retries": {"outcome"},
+	"cost-estimate": {"outcome"}, "actual-cost": {"outcome"}, "reconcile": {"outcome"},
+	"branch": {"outcome"}, "record-tool-list": {"outcome"},
 }
 
 func validateModelRouteFlags(fs *flag.FlagSet, action string) error {
