@@ -4,7 +4,6 @@
 package efficiency
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -97,39 +96,14 @@ func ValidDisposition(disp string) bool {
 	}
 }
 
-// VectorField represents a metric value paired with its required provenance label.
+// VectorField is one measured vector value with its required provenance label. An interval
+// field also carries Low and High, the bounds around Value; no other label carries bounds. A
+// field that no source measured is a nil *VectorField, printed as null.
 type VectorField[T any] struct {
 	Value      T          `json:"value"`
 	Provenance Provenance `json:"provenance"`
-}
-
-// UnmarshalJSON unmarshals either an object with value and provenance or raw value bytes.
-func (vf *VectorField[T]) UnmarshalJSON(data []byte) error {
-	var obj struct {
-		Value      T          `json:"value"`
-		Provenance Provenance `json:"provenance"`
-	}
-	if err := json.Unmarshal(data, &obj); err == nil && obj.Provenance != "" {
-		vf.Value = obj.Value
-		vf.Provenance = obj.Provenance
-		return nil
-	}
-	var raw struct {
-		Value      T          `json:"value"`
-		Provenance Provenance `json:"provenance"`
-	}
-	if err := json.Unmarshal(data, &raw); err == nil {
-		vf.Value = raw.Value
-		vf.Provenance = raw.Provenance
-		return nil
-	}
-	var val T
-	if err := json.Unmarshal(data, &val); err == nil {
-		vf.Value = val
-		vf.Provenance = ""
-		return nil
-	}
-	return fmt.Errorf("cannot parse vector field from %s", string(data))
+	Low        *T         `json:"low,omitempty"`
+	High       *T         `json:"high,omitempty"`
 }
 
 // LaneCounts tracks unit outcomes in a lane or milestone.
@@ -185,84 +159,158 @@ func (lc LaneCounts) String() string {
 	return strings.Join(parts, ", ")
 }
 
-// UnitReport represents efficiency metrics for one landed or attempted unit.
+// UnitReport represents efficiency metrics for one landed or attempted unit. The *Num usage
+// counts are the parts of the unit's local-first and prompt-cache ratios, so the summary can
+// pool them over all usage.
 type UnitReport struct {
-	PullRequestNumber          int                           `json:"pull_request_number"`
-	HeadBranch                 string                        `json:"head_branch"`
-	Title                      string                        `json:"title"`
-	Milestone                  string                        `json:"milestone,omitempty"`
-	CreatedAt                  time.Time                     `json:"created_at"`
-	MergedAt                   time.Time                     `json:"merged_at"`
-	ClosingIssues              []int                         `json:"closing_issues,omitempty"`
-	IssueToMerge               string                        `json:"issue_to_merge"`
-	IssueToMergeSecs           *int64                        `json:"issue_to_merge_secs,omitempty"`
-	FrontierTokens             string                        `json:"frontier_tokens"`
-	FrontierTokensNum          *int64                        `json:"frontier_tokens_num,omitempty"`
-	Spend                      string                        `json:"spend"`
-	SpendAmount                *float64                      `json:"spend_amount,omitempty"`
-	OperatorTouches            string                        `json:"operator_touches"`
-	OperatorTouchNum           *int                          `json:"operator_touches_num,omitempty"`
-	PromptCacheHitRate         string                        `json:"prompt_cache_hit_rate"`
-	CacheHitRatio              *float64                      `json:"cache_hit_ratio,omitempty"`
-	LocalFirstRatio            string                        `json:"local_first_ratio"`
-	LocalRatio                 *float64                      `json:"local_ratio,omitempty"`
-	FactHitRatio               string                        `json:"fact_hit_ratio"`
-	ChecksBeforeReviews        string                        `json:"checks_before_reviews"`
-	Sources                    string                        `json:"sources"`
-	TranscriptRequestsNotAdded *int                          `json:"transcript_requests_not_added,omitempty"`
-	Disposition                string                        `json:"disposition"`
-	Lane                       string                        `json:"lane,omitempty"`
-	MetricEpoch                string                        `json:"metric_epoch"`
-	TokensByProvider           VectorField[map[string]int64] `json:"tokens_by_provider"`
-	WallSeconds                VectorField[int64]            `json:"wall_seconds"`
-	ReviewRounds               VectorField[int]              `json:"review_rounds"`
-	Retries                    VectorField[int]              `json:"retries"`
-	OperatorMinutes            VectorField[float64]          `json:"operator_minutes"`
-	EscapedDefects             VectorField[int]              `json:"escaped_defects"`
+	PullRequestNumber          int                            `json:"pull_request_number"`
+	HeadBranch                 string                         `json:"head_branch"`
+	Title                      string                         `json:"title"`
+	Milestone                  string                         `json:"milestone,omitempty"`
+	CreatedAt                  time.Time                      `json:"created_at"`
+	MergedAt                   time.Time                      `json:"merged_at"`
+	ClosingIssues              []int                          `json:"closing_issues,omitempty"`
+	IssueToMerge               string                         `json:"issue_to_merge"`
+	IssueToMergeSecs           *int64                         `json:"issue_to_merge_secs,omitempty"`
+	FrontierTokens             string                         `json:"frontier_tokens"`
+	FrontierTokensNum          *int64                         `json:"frontier_tokens_num,omitempty"`
+	Spend                      string                         `json:"spend"`
+	SpendAmount                *float64                       `json:"spend_amount,omitempty"`
+	OperatorTouches            string                         `json:"operator_touches"`
+	OperatorTouchNum           *int                           `json:"operator_touches_num,omitempty"`
+	PromptCacheHitRate         string                         `json:"prompt_cache_hit_rate"`
+	CacheHitRatio              *float64                       `json:"cache_hit_ratio,omitempty"`
+	CacheReadTokensNum         *int64                         `json:"cache_read_tokens_num,omitempty"`
+	PromptInputTokensNum       *int64                         `json:"prompt_input_tokens_num,omitempty"`
+	LocalFirstRatio            string                         `json:"local_first_ratio"`
+	LocalRatio                 *float64                       `json:"local_ratio,omitempty"`
+	RequestsNum                *int                           `json:"requests_num,omitempty"`
+	LocalRequestsNum           *int                           `json:"local_requests_num,omitempty"`
+	FactHitRatio               string                         `json:"fact_hit_ratio"`
+	ChecksBeforeReviews        string                         `json:"checks_before_reviews"`
+	Sources                    string                         `json:"sources"`
+	TranscriptRequestsNotAdded *int                           `json:"transcript_requests_not_added,omitempty"`
+	Disposition                string                         `json:"disposition"`
+	Lane                       string                         `json:"lane,omitempty"`
+	MetricEpoch                string                         `json:"metric_epoch"`
+	TokensByProvider           *VectorField[map[string]int64] `json:"tokens_by_provider"`
+	WallSeconds                *VectorField[int64]            `json:"wall_seconds"`
+	ReviewRounds               *VectorField[int]              `json:"review_rounds"`
+	Retries                    *VectorField[int]              `json:"retries"`
+	OperatorMinutes            *VectorField[float64]          `json:"operator_minutes"`
+	EscapedDefects             *VectorField[int]              `json:"escaped_defects"`
 }
 
-// MilestoneSummary aggregates metrics across units in a milestone.
+// ProvenanceMix counts the units behind one summary figure per provenance label, so a figure
+// that adds measured and modeled values says so.
+type ProvenanceMix struct {
+	Measured int `json:"measured"`
+	Modeled  int `json:"modeled"`
+	Cited    int `json:"cited"`
+	Interval int `json:"interval"`
+}
+
+func (m *ProvenanceMix) add(p Provenance) {
+	switch p {
+	case ProvenanceMeasured:
+		m.Measured++
+	case ProvenanceModeled:
+		m.Modeled++
+	case ProvenanceCited:
+		m.Cited++
+	case ProvenanceInterval:
+		m.Interval++
+	}
+}
+
+// String lists the labels that occur, for example "measured 2, modeled 1".
+func (m ProvenanceMix) String() string {
+	parts := make([]string, 0, 4)
+	for _, c := range []struct {
+		label Provenance
+		n     int
+	}{{ProvenanceMeasured, m.Measured}, {ProvenanceModeled, m.Modeled}, {ProvenanceCited, m.Cited}, {ProvenanceInterval, m.Interval}} {
+		if c.n > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d", c.label, c.n))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// Interval is a closed range of a summary figure.
+type Interval struct {
+	Low  float64 `json:"low"`
+	High float64 `json:"high"`
+}
+
+// VectorComponent is one number of a vector summary: the field itself for a scalar, one
+// provider for tokens_by_provider. Total runs over every unit that carries the field, failed
+// dispositions included; PerQualifiedUnit is Total over the qualified-unit count and is nil
+// when no unit qualified. The bounds are set when an interval field contributed.
+type VectorComponent struct {
+	Key                    string    `json:"key,omitempty"`
+	Total                  float64   `json:"total"`
+	TotalBounds            *Interval `json:"total_bounds,omitempty"`
+	PerQualifiedUnit       *float64  `json:"per_qualified_unit,omitempty"`
+	PerQualifiedUnitBounds *Interval `json:"per_qualified_unit_bounds,omitempty"`
+}
+
+// VectorSummary is one vector field over the selected units: cost per qualified unit, the
+// provenance mix of the units behind it, and LowerBound when some units did not measure the
+// field, so the total only bounds the cost from below.
+type VectorSummary struct {
+	Display       string            `json:"display"`
+	UnitsMeasured int               `json:"units_measured"`
+	LowerBound    bool              `json:"lower_bound,omitempty"`
+	Provenance    ProvenanceMix     `json:"provenance"`
+	Components    []VectorComponent `json:"components,omitempty"`
+}
+
+// MilestoneSummary aggregates metrics across units in a milestone under three rules, named in
+// every display string:
+//   - resource consumption (frontier tokens, operator touches, attributed spend and the vector
+//     fields) is the total over every unit, failed dispositions included, divided by the
+//     qualified-unit count;
+//   - latency (issue-to-merge) is the mean over qualified units;
+//   - ratios (prompt-cache hit rate, local-first ratio) are pooled over the usage of every unit.
 type MilestoneSummary struct {
-	Milestone               string                `json:"milestone,omitempty"`
-	UnitsCount              int                   `json:"units_count"`
-	QualifiedUnits          int                   `json:"qualified_units"`
-	LaneCounts              LaneCounts            `json:"lane_counts"`
-	PerLane                 map[string]LaneCounts `json:"per_lane,omitempty"`
-	MetricEpoch             string                `json:"metric_epoch"`
-	FrontierTokens          string                `json:"frontier_tokens"`
-	FrontierTokensNum       *int64                `json:"frontier_tokens_num,omitempty"`
-	AttributedSpend         string                `json:"attributed_spend"`
-	AttributedSpendNum      *float64              `json:"attributed_spend_num,omitempty"`
-	UnattributedSpend       string                `json:"unattributed_spend"`
-	UnattributedSpendNum    *float64              `json:"unattributed_spend_num,omitempty"`
-	TotalSpend              string                `json:"total_spend"`
-	TotalSpendNum           *float64              `json:"total_spend_num,omitempty"`
-	OtherUnitsSpend         string                `json:"other_units_spend"`
-	OtherUnitsSpendNum      *float64              `json:"other_units_spend_num,omitempty"`
-	IssueToMergeUnits       int                   `json:"issue_to_merge_units"`
-	AvgIssueToMerge         string                `json:"avg_issue_to_merge"`
-	AvgIssueToMergeSecs     *int64                `json:"avg_issue_to_merge_secs,omitempty"`
-	OperatorTouches         string                `json:"operator_touches"`
-	OperatorTouchNum        *int                  `json:"operator_touches_num,omitempty"`
-	PromptCacheHitRate      string                `json:"prompt_cache_hit_rate"`
-	CacheHitRatio           *float64              `json:"cache_hit_ratio,omitempty"`
-	LocalFirstRatio         string                `json:"local_first_ratio"`
-	LocalRatio              *float64              `json:"local_ratio,omitempty"`
-	FactHitRatio            string                `json:"fact_hit_ratio"`
-	ChecksBeforeReviews     string                `json:"checks_before_reviews"`
-	TokensByProvider        map[string]float64    `json:"tokens_by_provider,omitempty"`
-	TokensByProviderDisplay string                `json:"tokens_by_provider_display,omitempty"`
-	AvgWallSeconds          string                `json:"avg_wall_seconds"`
-	AvgWallSecondsNum       *float64              `json:"avg_wall_seconds_num,omitempty"`
-	AvgReviewRounds         string                `json:"avg_review_rounds"`
-	AvgReviewRoundsNum      *float64              `json:"avg_review_rounds_num,omitempty"`
-	AvgRetries              string                `json:"avg_retries"`
-	AvgRetriesNum           *float64              `json:"avg_retries_num,omitempty"`
-	AvgOperatorMinutes      string                `json:"avg_operator_minutes"`
-	AvgOperatorMinutesNum   *float64              `json:"avg_operator_minutes_num,omitempty"`
-	EscapedDefects          string                `json:"escaped_defects"`
-	EscapedDefectsNum       *int                  `json:"escaped_defects_num,omitempty"`
-	EscapedDefectsRate      string                `json:"escaped_defects_rate"`
+	Milestone                      string                `json:"milestone,omitempty"`
+	UnitsCount                     int                   `json:"units_count"`
+	QualifiedUnits                 int                   `json:"qualified_units"`
+	LaneCounts                     LaneCounts            `json:"lane_counts"`
+	PerLane                        map[string]LaneCounts `json:"per_lane,omitempty"`
+	MetricEpoch                    string                `json:"metric_epoch"`
+	FrontierTokens                 string                `json:"frontier_tokens"`
+	FrontierTokensNum              *int64                `json:"frontier_tokens_num,omitempty"`
+	FrontierTokensPerQualifiedUnit *float64              `json:"frontier_tokens_per_qualified_unit,omitempty"`
+	AttributedSpend                string                `json:"attributed_spend"`
+	AttributedSpendNum             *float64              `json:"attributed_spend_num,omitempty"`
+	SpendPerQualifiedUnit          string                `json:"spend_per_qualified_unit"`
+	SpendPerQualifiedUnitNum       *float64              `json:"spend_per_qualified_unit_num,omitempty"`
+	UnattributedSpend              string                `json:"unattributed_spend"`
+	UnattributedSpendNum           *float64              `json:"unattributed_spend_num,omitempty"`
+	TotalSpend                     string                `json:"total_spend"`
+	TotalSpendNum                  *float64              `json:"total_spend_num,omitempty"`
+	OtherUnitsSpend                string                `json:"other_units_spend"`
+	OtherUnitsSpendNum             *float64              `json:"other_units_spend_num,omitempty"`
+	IssueToMergeUnits              int                   `json:"issue_to_merge_units"`
+	AvgIssueToMerge                string                `json:"avg_issue_to_merge"`
+	AvgIssueToMergeSecs            *int64                `json:"avg_issue_to_merge_secs,omitempty"`
+	OperatorTouches                string                `json:"operator_touches"`
+	OperatorTouchNum               *int                  `json:"operator_touches_num,omitempty"`
+	OperatorTouchesPerQualified    *float64              `json:"operator_touches_per_qualified_unit,omitempty"`
+	PromptCacheHitRate             string                `json:"prompt_cache_hit_rate"`
+	CacheHitRatio                  *float64              `json:"cache_hit_ratio,omitempty"`
+	LocalFirstRatio                string                `json:"local_first_ratio"`
+	LocalRatio                     *float64              `json:"local_ratio,omitempty"`
+	FactHitRatio                   string                `json:"fact_hit_ratio"`
+	ChecksBeforeReviews            string                `json:"checks_before_reviews"`
+	TokensByProvider               VectorSummary         `json:"tokens_by_provider"`
+	WallSeconds                    VectorSummary         `json:"wall_seconds"`
+	ReviewRounds                   VectorSummary         `json:"review_rounds"`
+	Retries                        VectorSummary         `json:"retries"`
+	OperatorMinutes                VectorSummary         `json:"operator_minutes"`
+	EscapedDefects                 VectorSummary         `json:"escaped_defects"`
 }
 
 // SourcesMeasured records which of the optional sources were present and read.
@@ -278,64 +326,6 @@ type Report struct {
 	MilestoneSummary MilestoneSummary `json:"milestone_summary"`
 	Sources          SourcesMeasured  `json:"sources_measured"`
 	Notes            []string         `json:"notes,omitempty"`
-}
-
-func validateVectorField(prNum int, name string, p Provenance) error {
-	if !ValidProvenance(p) {
-		return fmt.Errorf("unit #%d: field %q missing or invalid provenance label %q (must be measured, modeled, cited, or interval)", prNum, name, p)
-	}
-	return nil
-}
-
-// ValidateRow checks that a unit row has a valid metric epoch, disposition, and
-// required provenance labels on every vector field. A row missing provenance is refused.
-func ValidateRow(u UnitReport) error {
-	if u.MetricEpoch == "" {
-		return fmt.Errorf("unit #%d: missing metric_epoch tag", u.PullRequestNumber)
-	}
-	if u.MetricEpoch != CurrentMetricEpoch {
-		return fmt.Errorf("unit #%d: incompatible metric epoch %q (expected %q)", u.PullRequestNumber, u.MetricEpoch, CurrentMetricEpoch)
-	}
-	if !ValidDisposition(u.Disposition) {
-		return fmt.Errorf("unit #%d: invalid disposition %q", u.PullRequestNumber, u.Disposition)
-	}
-	if err := validateVectorField(u.PullRequestNumber, "tokens_by_provider", u.TokensByProvider.Provenance); err != nil {
-		return err
-	}
-	if err := validateVectorField(u.PullRequestNumber, "wall_seconds", u.WallSeconds.Provenance); err != nil {
-		return err
-	}
-	if err := validateVectorField(u.PullRequestNumber, "review_rounds", u.ReviewRounds.Provenance); err != nil {
-		return err
-	}
-	if err := validateVectorField(u.PullRequestNumber, "retries", u.Retries.Provenance); err != nil {
-		return err
-	}
-	if err := validateVectorField(u.PullRequestNumber, "operator_minutes", u.OperatorMinutes.Provenance); err != nil {
-		return err
-	}
-	if err := validateVectorField(u.PullRequestNumber, "escaped_defects", u.EscapedDefects.Provenance); err != nil {
-		return err
-	}
-	return nil
-}
-
-// ValidateRows validates every row and ensures metric epochs are not mixed.
-func ValidateRows(units []UnitReport) error {
-	var firstEpoch string
-	for i, u := range units {
-		if i == 0 {
-			firstEpoch = u.MetricEpoch
-		} else if u.MetricEpoch != firstEpoch {
-			return fmt.Errorf("mixed metric epochs in ledger: found %q and %q (schema change must not silently mix old and new rows)", firstEpoch, u.MetricEpoch)
-		}
-	}
-	for _, u := range units {
-		if err := ValidateRow(u); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // FormatZeroFailureClaim prints n and the rule-of-three 95% upper bound.

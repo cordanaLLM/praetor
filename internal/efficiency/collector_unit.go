@@ -4,7 +4,6 @@
 package efficiency
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -41,41 +40,40 @@ func calculateIssueToMerge(pr forge.MergedPullRequest) (string, *int64) {
 	return formatDuration(dur), &secs
 }
 
-func unmarshalVectorValue[T any](fieldName string, raw *forge.VectorFieldRaw, target *VectorField[T]) error {
-	if raw == nil {
-		return nil
-	}
-	var val T
-	if len(raw.Value) > 0 {
-		if err := json.Unmarshal(raw.Value, &val); err != nil {
-			return fmt.Errorf("field %q: unmarshal value: %w", fieldName, err)
+// recordVectorFields reads the six vector fields of a records row through parseVectorField.
+func recordVectorFields(pr forge.MergedPullRequest, unit *UnitReport) error {
+	var errs [len(vectorFieldNames)]error
+	unit.TokensByProvider, errs[0] = parseVectorField[map[string]int64](pr.TokensByProvider)
+	unit.WallSeconds, errs[1] = parseVectorField[int64](pr.WallSeconds)
+	unit.ReviewRounds, errs[2] = parseVectorField[int](pr.ReviewRounds)
+	unit.Retries, errs[3] = parseVectorField[int](pr.Retries)
+	unit.OperatorMinutes, errs[4] = parseVectorField[float64](pr.OperatorMinutes)
+	unit.EscapedDefects, errs[5] = parseVectorField[int](pr.EscapedDefects)
+	for i, err := range errs {
+		if err != nil {
+			return fmt.Errorf("field %q: %w", vectorFieldNames[i], err)
 		}
-		target.Value = val
 	}
-	target.Provenance = Provenance(raw.Provenance)
 	return nil
 }
 
-func initUnitVectorFields(pr forge.MergedPullRequest, unit *UnitReport) error {
-	if err := unmarshalVectorValue("tokens_by_provider", pr.TokensByProvider, &unit.TokensByProvider); err != nil {
-		return err
+// LiveUnmeasuredFields names the vector fields a live forge listing has no source for, with
+// the reason printed under Notes.
+const LiveUnmeasuredFields = "live forge: tokens_by_provider, review_rounds, retries, operator_minutes and escaped_defects are not measured (the merged pull request listing carries no per-provider token, review round, retry, operator time or escaped defect data; pass --forge-records with labelled values to report them)"
+
+// LiveDispositionNote states how a live listing row gets its disposition.
+const LiveDispositionNote = "live forge: a merged pull request counts as qualified unless a later merged revert names its title; check and review results are not read"
+
+// stampLiveUnit fills the ledger fields of a live listing row, which carries none: the current
+// metric epoch, since the collector builds the row under the current schema, and wall_seconds
+// measured from the forge's creation and merge timestamps. Every other vector field stays nil
+// (not measured); LiveUnmeasuredFields says why.
+func stampLiveUnit(pr forge.MergedPullRequest, unit *UnitReport) {
+	unit.MetricEpoch = CurrentMetricEpoch
+	if pr.CreatedAt.IsZero() || pr.MergedAt.IsZero() || pr.MergedAt.Before(pr.CreatedAt) {
+		return
 	}
-	if err := unmarshalVectorValue("wall_seconds", pr.WallSeconds, &unit.WallSeconds); err != nil {
-		return err
-	}
-	if err := unmarshalVectorValue("review_rounds", pr.ReviewRounds, &unit.ReviewRounds); err != nil {
-		return err
-	}
-	if err := unmarshalVectorValue("retries", pr.Retries, &unit.Retries); err != nil {
-		return err
-	}
-	if err := unmarshalVectorValue("operator_minutes", pr.OperatorMinutes, &unit.OperatorMinutes); err != nil {
-		return err
-	}
-	if err := unmarshalVectorValue("escaped_defects", pr.EscapedDefects, &unit.EscapedDefects); err != nil {
-		return err
-	}
-	return nil
+	unit.WallSeconds = &VectorField[int64]{Value: int64(pr.MergedAt.Sub(pr.CreatedAt).Seconds()), Provenance: ProvenanceMeasured}
 }
 
 func resolveUnitDisposition(pr forge.MergedPullRequest) string {
@@ -122,7 +120,9 @@ func applyRevertDispositions(units []UnitReport) {
 	}
 }
 
-func newUnit(pr forge.MergedPullRequest) (UnitReport, error) {
+// newUnit builds the row of one pull request. A records row must carry its own epoch and every
+// vector field; a live listing row is stamped by stampLiveUnit.
+func newUnit(pr forge.MergedPullRequest, live bool) (UnitReport, error) {
 	closing := make([]int, 0, len(pr.ClosingIssues))
 	for _, ci := range pr.ClosingIssues {
 		closing = append(closing, ci.Number)
@@ -152,7 +152,11 @@ func newUnit(pr forge.MergedPullRequest) (UnitReport, error) {
 		ChecksBeforeReviews: FollowUpRefs,
 		Sources:             NotMeasured,
 	}
-	if err := initUnitVectorFields(pr, &unit); err != nil {
+	if live {
+		stampLiveUnit(pr, &unit)
+		return unit, nil
+	}
+	if err := recordVectorFields(pr, &unit); err != nil {
 		return unit, fmt.Errorf("unit #%d: %w", pr.EffectiveNumber(), err)
 	}
 	return unit, nil
@@ -235,30 +239,49 @@ func (u unitUsage) apply(unit *UnitReport) {
 	unit.FrontierTokens = formatTokens(u.frontierTokens)
 	tokens := u.frontierTokens
 	unit.FrontierTokensNum = &tokens
+	requests, local := u.requests, u.localRequests
+	unit.RequestsNum, unit.LocalRequestsNum = &requests, &local
 	ratio := float64(u.localRequests) / float64(u.requests)
 	unit.LocalFirstRatio = formatPercent(ratio)
 	unit.LocalRatio = &ratio
 }
 
-func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, owners map[string]int, transStats map[string]*BranchTranscriptStats, spend *SpendReport, sources SourcesMeasured, report *Report) (UnitReport, error) {
-	unit, err := newUnit(pr)
+// unitSources is what every unit of one run joins against.
+type unitSources struct {
+	owners     map[string]int
+	transcript map[string]*BranchTranscriptStats
+	spend      *SpendReport
+	measured   SourcesMeasured
+	live       bool
+}
+
+func applyTranscriptStats(stats *BranchTranscriptStats, unit *UnitReport) {
+	touches := stats.OperatorTouches
+	unit.OperatorTouches = fmt.Sprintf("%d", touches)
+	unit.OperatorTouchNum = &touches
+	if rate, ok := stats.PromptCacheHitRate(); ok {
+		unit.PromptCacheHitRate = formatPercent(rate)
+		unit.CacheHitRatio = &rate
+		read := stats.CacheReadTokens
+		input := stats.InputTokens + stats.CacheCreationTokens + stats.CacheReadTokens
+		unit.CacheReadTokensNum, unit.PromptInputTokensNum = &read, &input
+	}
+}
+
+func (c *Collector) buildUnitReport(pr forge.MergedPullRequest, src unitSources, report *Report) (UnitReport, error) {
+	unit, err := newUnit(pr, src.live)
 	if err != nil {
 		return unit, err
 	}
 	var stats *BranchTranscriptStats
 	// A reused branch name belongs to the pull request merged last; the others get no transcript join.
-	if sources.Transcripts && owners[pr.HeadBranch] == pr.Number {
-		stats = transStats[pr.HeadBranch]
+	if src.measured.Transcripts && src.owners[pr.HeadBranch] == pr.Number {
+		stats = src.transcript[pr.HeadBranch]
 	}
 	if stats != nil {
-		touches := stats.OperatorTouches
-		unit.OperatorTouches = fmt.Sprintf("%d", touches)
-		unit.OperatorTouchNum = &touches
-		if rate, ok := stats.PromptCacheHitRate(); ok {
-			unit.PromptCacheHitRate = formatPercent(rate)
-			unit.CacheHitRatio = &rate
-		}
+		applyTranscriptStats(stats, &unit)
 	}
+	spend := src.spend
 	if spend != nil && spend.RequestsByPRNumber[pr.Number] > 0 {
 		amount := spend.SpendByPRNumber[pr.Number]
 		unit.Spend = formatSpend(amount)

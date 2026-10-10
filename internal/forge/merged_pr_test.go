@@ -312,39 +312,6 @@ func TestMergedPullRequest_EffectiveNumberAndAlias_PositiveBoundary(t *testing.T
 	}
 }
 
-func TestVectorFieldRaw_Positive_StructuredObject(t *testing.T) {
-	structuredJSON := `{"tokens_by_provider": {"value": {"anthropic": 100}, "provenance": "measured"}}`
-	var pr1 MergedPullRequest
-	if err := json.Unmarshal([]byte(structuredJSON), &pr1); err != nil {
-		t.Fatalf("unexpected error unmarshaling structured vector field: %v", err)
-	}
-	if pr1.TokensByProvider == nil || pr1.TokensByProvider.Provenance != "measured" {
-		t.Fatalf("expected provenance measured, got: %+v", pr1.TokensByProvider)
-	}
-}
-
-func TestVectorFieldRaw_Boundary_RawScalar(t *testing.T) {
-	rawScalar := `{"wall_seconds": 120}`
-	var pr2 MergedPullRequest
-	if err := json.Unmarshal([]byte(rawScalar), &pr2); err != nil {
-		t.Fatalf("unexpected error on raw scalar fallback: %v", err)
-	}
-	if pr2.WallSeconds == nil || pr2.WallSeconds.Provenance != "" || string(pr2.WallSeconds.Value) != "120" {
-		t.Fatalf("expected raw value 120 with empty provenance, got: %+v", pr2.WallSeconds)
-	}
-}
-
-func TestVectorFieldRaw_Boundary_RawObject(t *testing.T) {
-	rawObj := `{"tokens_by_provider": {"anthropic": 500}}`
-	var pr3 MergedPullRequest
-	if err := json.Unmarshal([]byte(rawObj), &pr3); err != nil {
-		t.Fatalf("unexpected error on raw object fallback: %v", err)
-	}
-	if pr3.TokensByProvider == nil || pr3.TokensByProvider.Provenance != "" {
-		t.Fatalf("expected empty provenance for raw object fallback, got: %+v", pr3.TokensByProvider)
-	}
-}
-
 func TestParseMergedPullRequests_Negative_StrictShapes(t *testing.T) {
 	for name, input := range map[string]string{
 		"unknown wrapper key":     `{"pull_requests":[{"number":1}]}`,
@@ -365,5 +332,33 @@ func TestParseMergedPullRequests_Negative_StrictShapes(t *testing.T) {
 	_, err := ParseMergedPullRequests([]byte(`{}`))
 	if err == nil || !strings.Contains(err.Error(), `no "units" array`) {
 		t.Errorf("a wrapper without units must say so: %v", err)
+	}
+}
+
+func TestParseMergedPullRequests_Positive_VectorFieldsStayRaw(t *testing.T) {
+	prs, err := ParseMergedPullRequests([]byte(`[{"number":1,"wall_seconds":{"value":120,"provenance":"measured"},"retries":null}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(prs[0].WallSeconds); got != `{"value":120,"provenance":"measured"}` {
+		t.Errorf("wall_seconds raw = %q", got)
+	}
+	if got := string(prs[0].Retries); got != "null" {
+		t.Errorf("an explicit null stays distinguishable from an absent field: %q", got)
+	}
+	if prs[0].ReviewRounds != nil {
+		t.Errorf("an absent field stays nil: %q", prs[0].ReviewRounds)
+	}
+}
+
+func TestMergedPullRequest_Boundary_DecodedVectorBytesDoNotAliasInput(t *testing.T) {
+	buf := []byte(`{"wall_seconds": 120}`)
+	var pr MergedPullRequest
+	if err := json.Unmarshal(buf, &pr); err != nil {
+		t.Fatal(err)
+	}
+	copy(buf[len(`{"wall_seconds": `):], "999")
+	if got := string(pr.WallSeconds); got != "120" {
+		t.Errorf("decoded vector bytes alias the caller's buffer: %q", got)
 	}
 }

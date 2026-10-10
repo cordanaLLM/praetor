@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -101,7 +102,7 @@ func TestCollector_Positive_IssueToMergeNeverFallsBackToPRAge(t *testing.T) {
 			t.Errorf("#%d without a closing issue time must print %q, got %q", n, NotMeasured, got)
 		}
 	}
-	if !strings.Contains(report.MilestoneSummary.AvgIssueToMerge, "3d10h (1 of 3 units measured)") {
+	if !strings.Contains(report.MilestoneSummary.AvgIssueToMerge, "3d10h (mean over 1 of 3 qualified units measured)") {
 		t.Errorf("average must exclude unmeasured units and say so: %q", report.MilestoneSummary.AvgIssueToMerge)
 	}
 }
@@ -120,18 +121,13 @@ func TestCollector_Positive_MilestoneFiltersBeforeLimitAndStatesTruncation(t *te
 
 func TestCollector_Positive_LiveDriverQueryAndNotes(t *testing.T) {
 	stub := &stubForge{list: forge.MergedPullRequestList{
+		// The shape ghPullToMerged returns: no epoch, disposition or vector field.
 		PullRequests: []forge.MergedPullRequest{{
-			Number:           7,
-			HeadBranch:       "b",
-			Title:            "Stub PR",
-			Disposition:      "qualified",
-			MetricEpoch:      CurrentMetricEpoch,
-			TokensByProvider: &forge.VectorFieldRaw{Value: []byte("{}"), Provenance: "measured"},
-			WallSeconds:      &forge.VectorFieldRaw{Value: []byte("100"), Provenance: "measured"},
-			ReviewRounds:     &forge.VectorFieldRaw{Value: []byte("1"), Provenance: "measured"},
-			Retries:          &forge.VectorFieldRaw{Value: []byte("0"), Provenance: "measured"},
-			OperatorMinutes:  &forge.VectorFieldRaw{Value: []byte("1.0"), Provenance: "measured"},
-			EscapedDefects:   &forge.VectorFieldRaw{Value: []byte("0"), Provenance: "measured"},
+			Number:     7,
+			HeadBranch: "b",
+			Title:      "Stub PR",
+			CreatedAt:  time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC),
+			MergedAt:   time.Date(2026, 10, 1, 10, 30, 0, 0, time.UTC),
 		}},
 		Truncated: "scanned only 2000",
 		Warnings:  []string{"closing issue #9 not fetched"},
@@ -141,13 +137,29 @@ func TestCollector_Positive_LiveDriverQueryAndNotes(t *testing.T) {
 		t.Errorf("milestone and limit go to the forge together: %+v", stub.query)
 	}
 	joined := strings.Join(report.Notes, "\n")
-	for _, want := range []string{"caller note", "live forge queries merged pull requests only", "forge listing incomplete: scanned only 2000", "forge: closing issue #9 not fetched"} {
+	for _, want := range []string{"caller note", "live forge queries merged pull requests only", "forge listing incomplete: scanned only 2000", "forge: closing issue #9 not fetched", LiveDispositionNote, LiveUnmeasuredFields} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("note %q missing in %q", want, joined)
 		}
 	}
 	if !report.Sources.Forge || len(report.Units) != 1 {
-		t.Errorf("%+v", report)
+		t.Fatalf("%+v", report)
+	}
+	assertLiveStamped(t, report.Units[0], 1800)
+}
+
+// assertLiveStamped checks a live row: current epoch, qualified, wall_seconds measured from the
+// forge timestamps, every other vector field not measured.
+func assertLiveStamped(t *testing.T, u UnitReport, wallSeconds int64) {
+	t.Helper()
+	if u.MetricEpoch != CurrentMetricEpoch || u.Disposition != DispositionQualified {
+		t.Errorf("live row epoch %q disposition %q", u.MetricEpoch, u.Disposition)
+	}
+	if u.WallSeconds == nil || u.WallSeconds.Value != wallSeconds || u.WallSeconds.Provenance != ProvenanceMeasured {
+		t.Errorf("wall_seconds must be measured from creation to merge (%d s): %+v", wallSeconds, u.WallSeconds)
+	}
+	if u.TokensByProvider != nil || u.ReviewRounds != nil || u.Retries != nil || u.OperatorMinutes != nil || u.EscapedDefects != nil {
+		t.Errorf("fields without a live source must be not measured (nil), never zero: %+v", u)
 	}
 }
 
@@ -356,7 +368,7 @@ func TestCollector_Positive_TranscriptsFeedUnitsWithoutGateway(t *testing.T) {
 	if u.FrontierTokens != "1150" || u.LocalFirstRatio != "0.0%" || u.OperatorTouches != "2" {
 		t.Errorf("%+v", u)
 	}
-	if !strings.Contains(report.MilestoneSummary.OperatorTouches, "2 (1 of 3 units measured)") {
+	if want := ">= 0.67 per qualified unit (lower bound: total 2 over 1 of 3 units measured / 3 qualified)"; report.MilestoneSummary.OperatorTouches != want {
 		t.Errorf("summary: %q", report.MilestoneSummary.OperatorTouches)
 	}
 }
@@ -489,32 +501,46 @@ func TestCollector_Positive_QualifiedDenominatorAndLaneCounts(t *testing.T) {
 	})
 }
 
+// perQualified returns the per-qualified-unit rate of one vector component.
+func perQualified(t *testing.T, name string, v VectorSummary, key string) float64 {
+	t.Helper()
+	for _, c := range v.Components {
+		if c.Key == key && c.PerQualifiedUnit != nil {
+			return *c.PerQualifiedUnit
+		}
+	}
+	t.Fatalf("%s: no per-qualified component %q in %+v", name, key, v)
+	return 0
+}
+
 func assertNumericAverages(t *testing.T, ms MilestoneSummary) {
 	t.Helper()
-	if ms.AvgWallSecondsNum == nil || *ms.AvgWallSecondsNum != 180.0 {
-		t.Errorf("expected avg wall seconds 180 (360/2), got %v", ms.AvgWallSecondsNum)
-	}
-	if ms.AvgReviewRoundsNum == nil || *ms.AvgReviewRoundsNum != 3.0 {
-		t.Errorf("expected avg review rounds 3.0 (6/2), got %v", ms.AvgReviewRoundsNum)
-	}
-	if ms.AvgRetriesNum == nil || *ms.AvgRetriesNum != 1.0 {
-		t.Errorf("expected avg retries 1.0 (2/2), got %v", ms.AvgRetriesNum)
-	}
-	if ms.AvgOperatorMinutesNum == nil || *ms.AvgOperatorMinutesNum != 12.0 {
-		t.Errorf("expected avg operator minutes 12.0 (24/2), got %v", ms.AvgOperatorMinutesNum)
+	for name, c := range map[string]struct {
+		v    VectorSummary
+		want float64
+	}{
+		"wall seconds (360/2)":    {ms.WallSeconds, 180},
+		"review rounds (6/2)":     {ms.ReviewRounds, 3},
+		"retries (2/2)":           {ms.Retries, 1},
+		"operator minutes (24/2)": {ms.OperatorMinutes, 12},
+		"escaped defects (1/2)":   {ms.EscapedDefects, 0.5},
+	} {
+		if got := perQualified(t, name, c.v, ""); got != c.want {
+			t.Errorf("%s: got %v", name, got)
+		}
 	}
 }
 
 func assertDefectsAndTokens(t *testing.T, ms MilestoneSummary) {
 	t.Helper()
-	if ms.TokensByProvider["anthropic"] != 1700.0 {
-		t.Errorf("expected anthropic token rate 1700.0 (3400/2), got %f", ms.TokensByProvider["anthropic"])
+	if got := perQualified(t, "tokens", ms.TokensByProvider, "anthropic"); got != 1700.0 {
+		t.Errorf("expected anthropic token rate 1700.0 (3400/2), got %f", got)
 	}
-	if ms.EscapedDefectsNum == nil || *ms.EscapedDefectsNum != 1 {
-		t.Errorf("expected 1 defect, got %v", ms.EscapedDefectsNum)
+	if ms.EscapedDefects.Components[0].Total != 1 {
+		t.Errorf("expected 1 defect in total, got %+v", ms.EscapedDefects)
 	}
-	if !strings.Contains(ms.EscapedDefects, "0.50 per qualified unit") {
-		t.Errorf("expected defect rate divided by 2, got %q", ms.EscapedDefects)
+	if !strings.HasPrefix(ms.EscapedDefects.Display, "0.50 per qualified unit (total 1 over 3 units / 2 qualified)") {
+		t.Errorf("expected defect rate divided by 2 with the rule named, got %q", ms.EscapedDefects.Display)
 	}
 }
 
@@ -553,9 +579,9 @@ func TestCollector_Positive_ZeroFailureRuleOfThreeBound(t *testing.T) {
 	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
 
 	ms := report.MilestoneSummary
-	expectedClaim := "0 (n=2, rule-of-three bound <= 1.50)"
-	if ms.EscapedDefects != expectedClaim {
-		t.Errorf("zero-failure claim must print n and rule-of-three bound, want %q, got %q", expectedClaim, ms.EscapedDefects)
+	expectedClaim := "0 (n=2, rule-of-three bound <= 1.50) [measured 2]"
+	if ms.EscapedDefects.Display != expectedClaim {
+		t.Errorf("zero-failure claim must print n and rule-of-three bound, want %q, got %q", expectedClaim, ms.EscapedDefects.Display)
 	}
 }
 
@@ -589,21 +615,27 @@ func TestCollector_Boundary_ZeroQualifiedUnitsPrintsUndefinedNeverZero(t *testin
 		val  string
 	}{
 		{"AvgIssueToMerge", ms.AvgIssueToMerge},
-		{"AvgWallSeconds", ms.AvgWallSeconds},
-		{"AvgReviewRounds", ms.AvgReviewRounds},
-		{"AvgRetries", ms.AvgRetries},
-		{"AvgOperatorMinutes", ms.AvgOperatorMinutes},
-		{"EscapedDefects", ms.EscapedDefects},
-		{"EscapedDefectsRate", ms.EscapedDefectsRate},
+		{"WallSeconds", ms.WallSeconds.Display},
+		{"ReviewRounds", ms.ReviewRounds.Display},
+		{"Retries", ms.Retries.Display},
+		{"OperatorMinutes", ms.OperatorMinutes.Display},
+		{"EscapedDefects", ms.EscapedDefects.Display},
+		{"TokensByProvider", ms.TokensByProvider.Display},
 		{"OperatorTouches", ms.OperatorTouches},
 		{"FrontierTokens", ms.FrontierTokens},
-		{"PromptCacheHitRate", ms.PromptCacheHitRate},
-		{"LocalFirstRatio", ms.LocalFirstRatio},
+		{"SpendPerQualifiedUnit", ms.SpendPerQualifiedUnit},
 	}
 	for _, r := range rates {
 		if r.val != UndefinedRate {
 			t.Errorf("rate %s with 0 qualified units must be %q, got %q", r.name, UndefinedRate, r.val)
 		}
+	}
+	// Ratios pool usage, not qualified units: with no session source they are not measured.
+	if ms.PromptCacheHitRate != NotMeasured || ms.LocalFirstRatio != NotMeasured {
+		t.Errorf("ratios without a usage source: cache %q local %q", ms.PromptCacheHitRate, ms.LocalFirstRatio)
+	}
+	if got := ms.WallSeconds.Components; len(got) != 1 || got[0].Total != 50 || got[0].PerQualifiedUnit != nil {
+		t.Errorf("the total stays visible while the per-qualified rate is undefined: %+v", got)
 	}
 }
 
@@ -616,7 +648,12 @@ func TestCollector_Negative_RowWithoutProvenanceRefused(t *testing.T) {
     "title": "Missing provenance",
     "disposition": "qualified",
     "metric_epoch": "2026-10-10",
-    "wall_seconds": {"value": 100}
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 100},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
   }
 ]`
 	prsPath := filepath.Join(t.TempDir(), "prs.json")
@@ -661,12 +698,12 @@ func TestCollector_Negative_MissingMetricEpochRefused(t *testing.T) {
 	row := UnitReport{
 		PullRequestNumber: 1,
 		Disposition:       DispositionQualified,
-		TokensByProvider:  VectorField[map[string]int64]{Provenance: ProvenanceMeasured},
-		WallSeconds:       VectorField[int64]{Provenance: ProvenanceMeasured},
-		ReviewRounds:      VectorField[int]{Provenance: ProvenanceMeasured},
-		Retries:           VectorField[int]{Provenance: ProvenanceMeasured},
-		OperatorMinutes:   VectorField[float64]{Provenance: ProvenanceMeasured},
-		EscapedDefects:    VectorField[int]{Provenance: ProvenanceMeasured},
+		TokensByProvider:  &VectorField[map[string]int64]{Provenance: ProvenanceMeasured},
+		WallSeconds:       &VectorField[int64]{Provenance: ProvenanceMeasured},
+		ReviewRounds:      &VectorField[int]{Provenance: ProvenanceMeasured},
+		Retries:           &VectorField[int]{Provenance: ProvenanceMeasured},
+		OperatorMinutes:   &VectorField[float64]{Provenance: ProvenanceMeasured},
+		EscapedDefects:    &VectorField[int]{Provenance: ProvenanceMeasured},
 	}
 	if err := ValidateRow(row); err == nil {
 		t.Fatal("expected ValidateRow to refuse row with missing metric_epoch")
@@ -678,12 +715,12 @@ func TestCollector_Negative_MixedMetricEpochsRefused(t *testing.T) {
 		PullRequestNumber: 1,
 		MetricEpoch:       CurrentMetricEpoch,
 		Disposition:       DispositionQualified,
-		TokensByProvider:  VectorField[map[string]int64]{Provenance: ProvenanceMeasured},
-		WallSeconds:       VectorField[int64]{Provenance: ProvenanceMeasured},
-		ReviewRounds:      VectorField[int]{Provenance: ProvenanceMeasured},
-		Retries:           VectorField[int]{Provenance: ProvenanceMeasured},
-		OperatorMinutes:   VectorField[float64]{Provenance: ProvenanceMeasured},
-		EscapedDefects:    VectorField[int]{Provenance: ProvenanceMeasured},
+		TokensByProvider:  &VectorField[map[string]int64]{Provenance: ProvenanceMeasured},
+		WallSeconds:       &VectorField[int64]{Provenance: ProvenanceMeasured},
+		ReviewRounds:      &VectorField[int]{Provenance: ProvenanceMeasured},
+		Retries:           &VectorField[int]{Provenance: ProvenanceMeasured},
+		OperatorMinutes:   &VectorField[float64]{Provenance: ProvenanceMeasured},
+		EscapedDefects:    &VectorField[int]{Provenance: ProvenanceMeasured},
 	}
 	row2 := row1
 	row2.PullRequestNumber = 2
@@ -780,8 +817,8 @@ func TestCollector_Positive_ProbeQualifiedAndRevertedUnitRates(t *testing.T) {
 	if ms.QualifiedUnits != 1 {
 		t.Fatalf("expected 1 qualified unit, got %d", ms.QualifiedUnits)
 	}
-	if !strings.Contains(ms.AvgIssueToMerge, "1 of 1 units measured") {
-		t.Errorf("probe failure: expected '1 of 1 units measured', got %q", ms.AvgIssueToMerge)
+	if !strings.Contains(ms.AvgIssueToMerge, "mean over 1 of 1 qualified units measured") {
+		t.Errorf("probe failure: expected 'mean over 1 of 1 qualified units measured', got %q", ms.AvgIssueToMerge)
 	}
 	if strings.Contains(ms.AvgIssueToMerge, "2 of 2") {
 		t.Errorf("probe failure: reverted unit must not be in rate denominator: %q", ms.AvgIssueToMerge)
@@ -973,8 +1010,12 @@ func TestCollector_Negative_UnmarshalVectorTypeError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Collect to fail on vector field unmarshal type error")
 	}
-	if !strings.Contains(err.Error(), `field "wall_seconds": unmarshal value`) {
+	if !strings.Contains(err.Error(), `field "wall_seconds": value:`) {
 		t.Errorf("expected error to wrap field name with context, got: %v", err)
+	}
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		t.Errorf("the underlying json error must survive the wrapping: %v", err)
 	}
 }
 
@@ -1012,34 +1053,5 @@ func TestLaneCounts_PositiveAndBoundary(t *testing.T) {
 	str := lc.String()
 	if !strings.Contains(str, "2 qualified") || !strings.Contains(str, "1 reverted") || !strings.Contains(str, "7 offered") {
 		t.Errorf("unexpected string: %q", str)
-	}
-}
-
-func TestVectorField_UnmarshalJSON_PositiveAndBoundary(t *testing.T) {
-	// Full object
-	var f1 VectorField[int64]
-	if err := json.Unmarshal([]byte(`{"value": 42, "provenance": "measured"}`), &f1); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if f1.Value != 42 || f1.Provenance != ProvenanceMeasured {
-		t.Errorf("f1: %+v", f1)
-	}
-
-	// Missing provenance
-	var f2 VectorField[int64]
-	if err := json.Unmarshal([]byte(`{"value": 42}`), &f2); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if f2.Provenance != "" {
-		t.Errorf("expected empty provenance, got %q", f2.Provenance)
-	}
-
-	// Raw number
-	var f3 VectorField[int64]
-	if err := json.Unmarshal([]byte(`42`), &f3); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if f3.Value != 42 || f3.Provenance != "" {
-		t.Errorf("f3: %+v", f3)
 	}
 }

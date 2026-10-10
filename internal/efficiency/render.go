@@ -68,55 +68,56 @@ func RenderTable(report *Report, out io.Writer) error {
 	return nil
 }
 
+// summaryLabelWidth fits the longest summary label, "Tokens by Provider per Qualified Unit:".
+const summaryLabelWidth = 38
+
+func summaryLine(label, value string) string {
+	return fmt.Sprintf("%-*s %s", summaryLabelWidth, label+":", value)
+}
+
+// renderSummary prints the milestone summary. Each label names its rule: "per Qualified Unit"
+// is the total over every unit divided by the qualified units, "Qualified Mean" averages
+// qualified units only, "All Usage" pools every unit's usage.
 func renderSummary(report *Report, out io.Writer) error {
 	ms := report.MilestoneSummary
 	title := ms.Milestone
 	if title == "" {
 		title = "All Landed Units"
 	}
-
 	lines := []string{
 		fmt.Sprintf("\n--- Milestone Summary: %s ---", title),
-		fmt.Sprintf("Units:                   %d", ms.UnitsCount),
-		fmt.Sprintf("Qualified Units:         %d", ms.QualifiedUnits),
-		fmt.Sprintf("Lane Counts:             %s", ms.LaneCounts.String()),
+		summaryLine("Units", fmt.Sprintf("%d", ms.UnitsCount)),
+		summaryLine("Qualified Units", fmt.Sprintf("%d", ms.QualifiedUnits)),
+		summaryLine("Lane Counts", ms.LaneCounts.String()),
 	}
-	if len(ms.PerLane) > 0 {
-		laneKeys := make([]string, 0, len(ms.PerLane))
-		for k := range ms.PerLane {
-			laneKeys = append(laneKeys, k)
-		}
-		sort.Strings(laneKeys)
-		for _, k := range laneKeys {
-			label := fmt.Sprintf("Lane Counts (%s):", k)
-			pad := 25 - len(label)
-			if pad < 1 {
-				pad = 1
-			}
-			lines = append(lines, fmt.Sprintf("%s%s%s", label, strings.Repeat(" ", pad), ms.PerLane[k].String()))
-		}
+	laneKeys := make([]string, 0, len(ms.PerLane))
+	for k := range ms.PerLane {
+		laneKeys = append(laneKeys, k)
+	}
+	sort.Strings(laneKeys)
+	for _, k := range laneKeys {
+		lines = append(lines, summaryLine(fmt.Sprintf("Lane Counts (%s)", k), ms.PerLane[k].String()))
 	}
 	lines = append(lines,
-		fmt.Sprintf("Avg Issue-to-Merge:      %s", ms.AvgIssueToMerge),
-		fmt.Sprintf("Avg Wall Seconds:        %s", ms.AvgWallSeconds),
-		fmt.Sprintf("Avg Review Rounds:       %s", ms.AvgReviewRounds),
-		fmt.Sprintf("Avg Retries:             %s", ms.AvgRetries),
-		fmt.Sprintf("Avg Operator Minutes:    %s", ms.AvgOperatorMinutes),
-		fmt.Sprintf("Escaped Defects:         %s", ms.EscapedDefects),
-		fmt.Sprintf("Operator Touches:        %s", ms.OperatorTouches),
-		fmt.Sprintf("Frontier Tokens:         %s", ms.FrontierTokens),
-		fmt.Sprintf("Attributed Spend:        %s", ms.AttributedSpend),
-		fmt.Sprintf("Other Units Spend:       %s", ms.OtherUnitsSpend),
-		fmt.Sprintf("Unattributed Spend:      %s", ms.UnattributedSpend),
-		fmt.Sprintf("Total Spend:             %s", ms.TotalSpend),
-		fmt.Sprintf("Prompt-Cache Hit Rate:   %s", ms.PromptCacheHitRate),
-		fmt.Sprintf("Local-First Ratio:       %s", ms.LocalFirstRatio),
-		fmt.Sprintf("Fact-Hit Ratio:          %s", ms.FactHitRatio),
-		fmt.Sprintf("Checks-Before-Reviews:   %s", ms.ChecksBeforeReviews),
+		summaryLine("Issue-to-Merge (Qualified Mean)", ms.AvgIssueToMerge),
+		summaryLine("Wall Seconds per Qualified Unit", ms.WallSeconds.Display),
+		summaryLine("Review Rounds per Qualified Unit", ms.ReviewRounds.Display),
+		summaryLine("Retries per Qualified Unit", ms.Retries.Display),
+		summaryLine("Operator Minutes per Qualified Unit", ms.OperatorMinutes.Display),
+		summaryLine("Escaped Defects per Qualified Unit", ms.EscapedDefects.Display),
+		summaryLine("Tokens by Provider per Qualified Unit", ms.TokensByProvider.Display),
+		summaryLine("Operator Touches per Qualified Unit", ms.OperatorTouches),
+		summaryLine("Frontier Tokens per Qualified Unit", ms.FrontierTokens),
+		summaryLine("Spend per Qualified Unit", ms.SpendPerQualifiedUnit),
+		summaryLine("Attributed Spend", ms.AttributedSpend),
+		summaryLine("Other Units Spend", ms.OtherUnitsSpend),
+		summaryLine("Unattributed Spend", ms.UnattributedSpend),
+		summaryLine("Total Spend", ms.TotalSpend),
+		summaryLine("Prompt-Cache Hit Rate (All Usage)", ms.PromptCacheHitRate),
+		summaryLine("Local-First Ratio (All Usage)", ms.LocalFirstRatio),
+		summaryLine("Fact-Hit Ratio", ms.FactHitRatio),
+		summaryLine("Checks-Before-Reviews", ms.ChecksBeforeReviews),
 	)
-	if ms.TokensByProviderDisplay != "" && ms.TokensByProviderDisplay != UndefinedRate {
-		lines = append(lines, fmt.Sprintf("Tokens by Provider:      %s", ms.TokensByProviderDisplay))
-	}
 	if len(report.Notes) > 0 {
 		lines = append(lines, "\n--- Notes ---")
 		for _, note := range report.Notes {

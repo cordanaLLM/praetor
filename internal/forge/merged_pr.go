@@ -25,29 +25,10 @@ const (
 	MaxMergedPRBytes = 16 * 1024 * 1024
 )
 
-// VectorFieldRaw captures raw vector values and provenance from JSON fixtures.
-type VectorFieldRaw struct {
-	Value      json.RawMessage `json:"value"`
-	Provenance string          `json:"provenance"`
-}
-
-// UnmarshalJSON unmarshals either an object with value and provenance or raw value bytes.
-func (v *VectorFieldRaw) UnmarshalJSON(data []byte) error {
-	var obj struct {
-		Value      json.RawMessage `json:"value"`
-		Provenance string          `json:"provenance"`
-	}
-	if err := json.Unmarshal(data, &obj); err == nil && len(obj.Value) > 0 {
-		v.Value = obj.Value
-		v.Provenance = obj.Provenance
-		return nil
-	}
-	v.Value = data
-	v.Provenance = ""
-	return nil
-}
-
-// MergedPullRequest represents a landed pull request and its closing issues.
+// MergedPullRequest represents a landed pull request and its closing issues. Disposition, Lane,
+// MetricEpoch and the vector fields come only from a records file; a live listing leaves them
+// empty. The vector fields stay raw JSON here: the efficiency ledger is their one parser. A field
+// absent from the record is nil, an explicit null is the four bytes "null".
 type MergedPullRequest struct {
 	Number           int             `json:"number"`
 	PRNumber         int             `json:"pull_request_number,omitempty"`
@@ -60,12 +41,12 @@ type MergedPullRequest struct {
 	Disposition      string          `json:"disposition,omitempty"`
 	Lane             string          `json:"lane,omitempty"`
 	MetricEpoch      string          `json:"metric_epoch,omitempty"`
-	TokensByProvider *VectorFieldRaw `json:"tokens_by_provider,omitempty"`
-	WallSeconds      *VectorFieldRaw `json:"wall_seconds,omitempty"`
-	ReviewRounds     *VectorFieldRaw `json:"review_rounds,omitempty"`
-	Retries          *VectorFieldRaw `json:"retries,omitempty"`
-	OperatorMinutes  *VectorFieldRaw `json:"operator_minutes,omitempty"`
-	EscapedDefects   *VectorFieldRaw `json:"escaped_defects,omitempty"`
+	TokensByProvider json.RawMessage `json:"tokens_by_provider,omitempty"`
+	WallSeconds      json.RawMessage `json:"wall_seconds,omitempty"`
+	ReviewRounds     json.RawMessage `json:"review_rounds,omitempty"`
+	Retries          json.RawMessage `json:"retries,omitempty"`
+	OperatorMinutes  json.RawMessage `json:"operator_minutes,omitempty"`
+	EscapedDefects   json.RawMessage `json:"escaped_defects,omitempty"`
 }
 
 // EffectiveNumber returns the PR number, checking pull_request_number if number is zero.
