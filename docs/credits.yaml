@@ -1552,6 +1552,15 @@ entries:
       - ".github/workflows/pages.yml"
     packages:
       - "download:chromium"
+  - name: "Probity"
+    url: "https://github.com/nizos/probity"
+    section: "tooling"
+    kind: "tool"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Optional test-first edit guard for AI coding assistants"
+    paths:
+      - "probity.config.ts"
   - name: "esbuild"
     url: "https://github.com/evanw/esbuild"
     section: "development"

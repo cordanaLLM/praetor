@@ -55,6 +55,45 @@ builds and scans this repository on the host and in CI:
 - Renovate's `gomod` manager proposes updates to the directive by default, so a Go security
   release arrives as a dependency pull request, not as a CI change.
 
+### Optional: Probity Test-First Guard
+
+Probity is an optional client-side edit guard for contributors using AI coding assistants. When enabled, it enforces a test-first workflow by requiring an observed failing test before an implementation edit is allowed. Probity is an open-source tool created by [nizos/probity](https://github.com/nizos/probity) and licensed under the MIT license. Running Probity requires Node.js >= 22.
+
+The repository root includes `probity.config.ts`, which scopes enforcement to Go source files under `internal/`, `cmd/`, and `tools/` (excluding `**/testdata/**`). The configuration pins the validation judge model to `claude-haiku-5-5` through the `ai` override using the Claude Agent SDK resolved from the pinned package install. The judge resolves its modules only when it judges a write. If a required module (such as `@anthropic-ai/claude-agent-sdk` or `./vendors/to-verdict.js`) cannot be resolved, each judged Go write is denied with a reason naming the missing module and the pinned Probity version (`1.10.1`), instead of being judged by the session model; shell commands and other files keep working, so you can reinstall the pinned version from the same session. Measured floor on 2026-10-08 (Probity 1.10.1, branch config, 4-line new Go file, no transcript): about 5.2k tokens per judged write across the claude-haiku-5-5 judge and an auxiliary claude-haiku-4-5 harness call, about 0.04 USD at the time of measuring. It grows with file size and the recent history Probity embeds (up to 10 events of 6000 characters by default). Contributors without the hook installed are unaffected.
+
+Fail-closed warning: Probity fails closed when no configuration file is found. Installing the plugin at global (user) scope will block edits across every other repository on the machine that lacks a `probity.config.ts`. Always install with local scope (`--scope local`) or configure project-local hooks in `.claude/settings.local.json`. Never edit the tracked, Praetor-owned `.claude/settings.json`.
+
+To enable Probity in Claude Code via the CLI:
+
+```bash
+claude plugin marketplace add nizos/probity
+claude plugin install --scope local probity@probity
+```
+
+Note that the marketplace plugin tracks upstream HEAD because its hook executes unpinned `npx @nizos/probity`.
+
+Alternatively, configure a pinned `PreToolUse` hook in `.claude/settings.local.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx --yes @nizos/probity@1.10.1 --agent claude-code"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Contributors who installed `@nizos/probity` globally on their `PATH` may substitute `probity` for `npx --yes @nizos/probity@1.10.1`.
+
 ---
 
 ## Pull Request Lifecycle
