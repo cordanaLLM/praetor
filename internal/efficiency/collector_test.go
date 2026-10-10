@@ -1093,7 +1093,7 @@ func TestCollector_Positive_OutcomesPopulateUnitAndSummary(t *testing.T) {
 			ContextDigest:  "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
 			ContextBytes:   4096,
 			ToolSet:        []string{"bash", "view"},
-			CostEstimate:   0.010,
+			CostEstimate:   ptrFloat64(0.010),
 		},
 	}
 	o2 := router.Outcome{
@@ -1111,7 +1111,7 @@ func TestCollector_Positive_OutcomesPopulateUnitAndSummary(t *testing.T) {
 			ContextDigest:  "sha256:2222222222222222222222222222222222222222222222222222222222222222",
 			ContextBytes:   1024,
 			ToolSet:        []string{"view"},
-			CostEstimate:   0.005,
+			CostEstimate:   ptrFloat64(0.005),
 		},
 	}
 	if err := router.AppendOutcome(context.Background(), outcomesPath, o1); err != nil {

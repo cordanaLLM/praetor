@@ -241,7 +241,7 @@ func TestRenderJSON_Positive_IdentityAndEstimateError(t *testing.T) {
 		ToolSet:        []string{"bash", "view"},
 		PriorRounds:    2,
 		Retries:        1,
-		CostEstimate:   0.015,
+		CostEstimate:   ptrFloat64(0.015),
 	}
 	rep.Units[0].ResolvedModel = id.PhysicalModel
 	rep.Units[0].Identity = id

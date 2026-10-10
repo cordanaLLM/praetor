@@ -354,18 +354,7 @@ func applyOutcomesToUnit(unit *UnitReport, outcomes []router.Outcome) {
 	if unit.IdentityKey == "" && unit.Identity != nil {
 		unit.IdentityKey = unit.Identity.Key()
 	}
-
-	var totalEstimated, totalActual float64
-	measured := 0
-	for _, o := range outcomes {
-		if o.ActualCost != nil {
-			totalEstimated += o.Identity.CostEstimate
-			totalActual += *o.ActualCost
-			measured++
-		}
-	}
-	if measured > 0 {
-		diff := router.EstimateError(totalEstimated, totalActual)
+	if diff, ok := router.TallyCosts(outcomes).EstimateError(); ok {
 		unit.EstimateErrorAmount = &diff
 		unit.EstimateError = formatEstimateErrorSpend(diff)
 	}

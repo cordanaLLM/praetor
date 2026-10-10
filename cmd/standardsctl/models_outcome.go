@@ -14,9 +14,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// defaultOutcomeLog is the private, git-ignored log the efficiency ledger reads later.
-const defaultOutcomeLog = ".workingdir/routing/outcomes.jsonl"
-
 type modelOutcomeFlags struct {
 	fs                              *flag.FlagSet
 	lane, target, result, note, log *string
@@ -28,6 +25,7 @@ type modelOutcomeFlags struct {
 	contextDigest                   *string
 	contextBytes                    *int64
 	tools                           *string
+	recordToolList                  *bool
 	rounds                          *int
 	retries                         *int
 	costEstimate                    *float64
@@ -44,19 +42,20 @@ func addModelOutcomeFlags(fs *flag.FlagSet) modelOutcomeFlags {
 		target:         fs.String("target", "", "models outcome: alias or model ID the harness ran"),
 		result:         fs.String("result", "", "models outcome: ok, fail or timeout"),
 		note:           fs.String("note", "", "models outcome: short note, at most 256 bytes"),
-		log:            fs.String("outcome-log", defaultOutcomeLog, "models outcome: JSON Lines log the record is appended to"),
+		log:            fs.String("outcome-log", router.DefaultOutcomeLogPath, "models outcome: JSON Lines log the record is appended to"),
 		durationMS:     fs.Int64("duration-ms", 0, "models outcome: how long the run took"),
-		physicalModel:  fs.String("physical-model", "", "models outcome: resolved physical model behind the alias"),
+		physicalModel:  fs.String("physical-model", "", "models outcome: physical model that ran (required; never a catalog alias)"),
 		harness:        fs.String("harness", "", "models outcome: harness name that executed the task"),
 		harnessVersion: fs.String("harness-version", "", "models outcome: version of the harness"),
 		promptDigest:   fs.String("prompt-digest", "", "models outcome: SHA-256 digest of prompt template or brief"),
 		contextDigest:  fs.String("context-digest", "", "models outcome: SHA-256 digest of compiled context"),
 		contextBytes:   fs.Int64("context-bytes", 0, "models outcome: bytes of compiled context"),
-		tools:          fs.String("tools", "", "models outcome: comma-separated list of available tools"),
+		tools:          fs.String("tools", "", "models outcome: comma-separated tools available to the run; recorded as digest and count"),
+		recordToolList: fs.Bool("record-tool-list", false, "models outcome: also keep the full --tools list in the record (refused when the record then exceeds 4096 bytes)"),
 		rounds:         fs.Int("rounds", 0, "models outcome: prior interaction rounds"),
 		retries:        fs.Int("retries", 0, "models outcome: retry attempts before outcome"),
-		costEstimate:   fs.Float64("cost-estimate", 0, "models outcome: cost estimate before dispatch"),
-		actualCost:     fs.Float64("actual-cost", 0, "models outcome: actual cost measured after run"),
+		costEstimate:   fs.Float64("cost-estimate", 0, "models outcome: cost estimate made before dispatch; omitted means no estimate, not zero"),
+		actualCost:     fs.Float64("actual-cost", 0, "models outcome: actual cost measured after the run; omitted means not measured, not zero"),
 		reconcile:      fs.Bool("reconcile", false, "models outcome: reconcile and print estimate-error metric per lane"),
 		branch:         fs.String("branch", "", "models outcome: git branch associated with the run"),
 	}
@@ -71,16 +70,14 @@ func handleModelsOutcome(ctx context.Context, configPath, task string, flags mod
 		}
 		return handleModelsOutcomeReconcile(ctx, *flags.log)
 	}
-	configExplicit := isFlagPassed(flags.fs, "config")
-	physical, err := resolvePhysicalModel(ctx, configPath, configExplicit, *flags.target, *flags.physicalModel)
+	physical, err := checkPhysicalModel(ctx, configPath, flagWasSet(flags.fs, "config"), *flags.target, *flags.physicalModel)
 	if err != nil {
 		return err
 	}
-	tools, err := parseOutcomeTools(*flags.tools)
-	if err != nil {
+	outcome := buildOutcomeRecord(ctx, task, physical, flags)
+	if err := setOutcomeToolSet(&outcome.Identity, flags); err != nil {
 		return err
 	}
-	outcome := buildOutcomeRecord(ctx, task, physical, flags, tools)
 	router.PrepareOutcome(&outcome)
 	if err := router.AppendOutcome(ctx, *flags.log, outcome); err != nil {
 		return fmt.Errorf("record outcome: %w", err)
@@ -88,7 +85,7 @@ func handleModelsOutcome(ctx context.Context, configPath, task string, flags mod
 	return printRecordedOutcome(outcome)
 }
 
-func buildOutcomeRecord(ctx context.Context, task, physical string, flags modelOutcomeFlags, tools []string) router.Outcome {
+func buildOutcomeRecord(ctx context.Context, task, physical string, flags modelOutcomeFlags) router.Outcome {
 	identity := router.RunIdentity{
 		PhysicalModel:  physical,
 		Harness:        *flags.harness,
@@ -96,10 +93,12 @@ func buildOutcomeRecord(ctx context.Context, task, physical string, flags modelO
 		PromptDigest:   *flags.promptDigest,
 		ContextDigest:  *flags.contextDigest,
 		ContextBytes:   *flags.contextBytes,
-		ToolSet:        tools,
 		PriorRounds:    *flags.rounds,
 		Retries:        *flags.retries,
-		CostEstimate:   *flags.costEstimate,
+	}
+	if flagWasSet(flags.fs, "cost-estimate") {
+		estimate := *flags.costEstimate
+		identity.CostEstimate = &estimate
 	}
 	outcome := router.Outcome{
 		Time:          time.Now().UTC(),
@@ -113,7 +112,7 @@ func buildOutcomeRecord(ctx context.Context, task, physical string, flags modelO
 		Identity:      identity,
 		Branch:        resolveOutcomeBranch(ctx, flags),
 	}
-	if isFlagPassed(flags.fs, "actual-cost") {
+	if flagWasSet(flags.fs, "actual-cost") {
 		cost := *flags.actualCost
 		outcome.ActualCost = &cost
 	}
@@ -132,50 +131,44 @@ func resolveOutcomeBranch(ctx context.Context, flags modelOutcomeFlags) string {
 	return ""
 }
 
-func isFlagPassed(fs *flag.FlagSet, name string) bool {
-	if fs == nil {
-		return false
+// setOutcomeToolSet records the --tools set as its digest and count, and the full list only when
+// --record-tool-list asks for it.
+func setOutcomeToolSet(identity *router.RunIdentity, flags modelOutcomeFlags) error {
+	tools := splitCommaList(*flags.tools)
+	digest, count, err := router.DigestToolSet(tools)
+	if err != nil {
+		return fmt.Errorf("--tools: %w", err)
 	}
-	passed := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			passed = true
-		}
-	})
-	return passed
+	identity.ToolSetDigest, identity.ToolCount = digest, count
+	if *flags.recordToolList {
+		identity.ToolSet = tools
+	}
+	return nil
 }
 
-func resolvePhysicalModel(ctx context.Context, configPath string, configExplicit bool, target, explicit string) (string, error) {
-	if configPath == "" || target == "" {
-		if explicit != "" {
-			return explicit, nil
-		}
-		return target, nil
+// checkPhysicalModel returns the --physical-model value after refusing what cannot be the model
+// that ran. The flag is always required: the target may be a gateway alias the catalog does not
+// declare, and copying it would record the alias as the physical model. A value naming an alias,
+// or the catalog ID of an alias entry, of the loaded routing catalog is refused.
+func checkPhysicalModel(ctx context.Context, configPath string, configExplicit bool, target, physical string) (string, error) {
+	if physical == "" {
+		return "", fmt.Errorf("outcome for target %q needs --physical-model naming the model that ran; "+
+			"the target may be a gateway alias, and an alias is never recorded as the physical model", target)
 	}
-	catalogID, isAlias, err := lookupAliasEntry(ctx, configPath, configExplicit, target)
+	cfg, err := loadAliasConfig(ctx, configPath, configExplicit)
 	if err != nil {
 		return "", err
 	}
-	if isAlias {
-		if err := validateAliasExplicit(target, explicit, catalogID); err != nil {
-			return "", err
+	if cfg == nil {
+		if _, err := fmt.Fprintf(os.Stderr, "models outcome: routing config %s not found; --physical-model %q not checked against catalog aliases\n", configPath, physical); err != nil {
+			return "", fmt.Errorf("write config note: %w", err)
 		}
-		return explicit, nil
+		return physical, nil
 	}
-	if explicit != "" {
-		return explicit, nil
+	if entry, ok := catalogAliasEntry(cfg, physical); ok {
+		return "", fmt.Errorf("--physical-model %q names gateway alias %q (catalog entry %s), not the model that ran", physical, entry.Alias, entry.ID)
 	}
-	return target, nil
-}
-
-func validateAliasExplicit(target, explicit, catalogID string) error {
-	if explicit == "" {
-		return fmt.Errorf("outcome written through alias %q requires explicit --physical-model", target)
-	}
-	if explicit == target || (catalogID != "" && explicit == catalogID) {
-		return fmt.Errorf("outcome written through alias %q must name the resolved physical model, not the alias", target)
-	}
-	return nil
+	return physical, nil
 }
 
 func loadAliasConfig(ctx context.Context, configPath string, configExplicit bool) (*router.RoutingConfig, error) {
@@ -200,55 +193,17 @@ func loadAliasConfig(ctx context.Context, configPath string, configExplicit bool
 	return cfg, nil
 }
 
-func findAliasInConfig(cfg *router.RoutingConfig, target string) (string, bool) {
-	if cfg == nil {
-		return "", false
-	}
+// catalogAliasEntry returns the alias entry of cfg whose alias or catalog ID is name.
+func catalogAliasEntry(cfg *router.RoutingConfig, name string) (router.ModelDescriptor, bool) {
 	for _, tier := range cfg.Tiers {
 		for i := 0; i < len(tier.Models) && i < router.MaxModelsPerTier; i++ {
 			m := tier.Models[i]
-			if m.Alias != "" && (m.Alias == target || m.ID == target) {
-				return m.ID, true
+			if m.Alias != "" && (m.Alias == name || m.ID == name) {
+				return m, true
 			}
 		}
 	}
-	return "", false
-}
-
-func lookupAliasEntry(ctx context.Context, configPath string, configExplicit bool, target string) (string, bool, error) {
-	cfg, err := loadAliasConfig(ctx, configPath, configExplicit)
-	if err != nil {
-		return "", false, err
-	}
-	id, ok := findAliasInConfig(cfg, target)
-	return id, ok, nil
-}
-
-func parseOutcomeTools(raw string) ([]string, error) {
-	if raw == "" {
-		return nil, nil
-	}
-	parts := strings.Split(raw, ",")
-	if len(parts) > router.MaxRoutingTags {
-		return nil, fmt.Errorf("tool count %d exceeds maximum of %d", len(parts), router.MaxRoutingTags)
-	}
-	tools := make([]string, 0, len(parts))
-	seen := make(map[string]bool, len(parts))
-	for i := 0; i < len(parts); i++ {
-		trimmed := strings.TrimSpace(parts[i])
-		if trimmed == "" {
-			continue
-		}
-		if seen[trimmed] {
-			return nil, fmt.Errorf("duplicate tool name %q in tools list", trimmed)
-		}
-		seen[trimmed] = true
-		tools = append(tools, trimmed)
-	}
-	if len(tools) > router.MaxRoutingTags {
-		return nil, fmt.Errorf("tool count %d exceeds maximum of %d", len(tools), router.MaxRoutingTags)
-	}
-	return tools, nil
+	return router.ModelDescriptor{}, false
 }
 
 func printRecordedOutcome(outcome router.Outcome) error {
@@ -259,16 +214,15 @@ func printRecordedOutcome(outcome router.Outcome) error {
 	if _, err := fmt.Fprintln(os.Stdout, string(data)); err != nil {
 		return fmt.Errorf("write outcome: %w", err)
 	}
-	if outcome.Lane != "" {
-		var err error
-		if outcome.ActualCost == nil {
-			_, err = fmt.Fprintf(os.Stderr, "estimate-error [%s]: not measured\n", outcome.Lane)
-		} else {
-			_, err = fmt.Fprintf(os.Stderr, "estimate-error [%s]: %s\n", outcome.Lane, router.FormatEstimateError(outcome.Identity.CostEstimate, *outcome.ActualCost))
-		}
-		if err != nil {
-			return fmt.Errorf("write estimate-error: %w", err)
-		}
+	if outcome.Lane == "" {
+		return nil
+	}
+	line := "not measured (needs --cost-estimate and --actual-cost)"
+	if estimate, actual, ok := outcome.MeasuredCosts(); ok {
+		line = router.FormatEstimateError(estimate, actual)
+	}
+	if _, err := fmt.Fprintf(os.Stderr, "estimate-error [%s]: %s\n", outcome.Lane, line); err != nil {
+		return fmt.Errorf("write estimate-error: %w", err)
 	}
 	return nil
 }

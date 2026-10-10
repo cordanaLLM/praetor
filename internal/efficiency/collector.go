@@ -5,7 +5,6 @@ package efficiency
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,8 +18,6 @@ import (
 
 // DefaultLimit is the number of landed pull requests reported when no limit is given.
 const DefaultLimit = 20
-
-const defaultOutcomeLogPath = ".workingdir/routing/outcomes.jsonl"
 
 // CollectorOptions sets configuration, input sources and overrides for the collector. Policy
 // is the efficiency section of the manifest the caller already loaded (nil selects defaults);
@@ -146,7 +143,7 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	outcomes, err := c.loadOutcomes(ctx, report)
+	outcomes, err := c.loadOutcomes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -168,23 +165,15 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 	return report, nil
 }
 
-func (c *Collector) loadOutcomes(ctx context.Context, _ *Report) (map[string][]router.Outcome, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+// loadOutcomes reads the router outcome log and groups its records by branch. An explicit
+// --outcomes path must exist; the default log may be absent (an empty history), but any other
+// error reading either fails the report instead of dropping the outcomes.
+func (c *Collector) loadOutcomes(ctx context.Context) (map[string][]router.Outcome, error) {
 	path := c.opts.OutcomeLogPath
-	isExplicit := path != ""
 	if path == "" {
-		path = filepath.Join(c.opts.Root, defaultOutcomeLogPath)
-	}
-	if _, err := os.Stat(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) && !isExplicit {
-			return nil, nil
-		}
-		if isExplicit {
-			return nil, fmt.Errorf("read outcomes from %s: %w", path, err)
-		}
-		return nil, nil
+		path = filepath.Join(c.opts.Root, router.DefaultOutcomeLogPath)
+	} else if _, err := os.Lstat(path); err != nil {
+		return nil, fmt.Errorf("read outcomes from %s: %w", path, err)
 	}
 	outcomes, err := router.ReadOutcomes(ctx, path)
 	if err != nil {

@@ -178,7 +178,7 @@ func TestModelsOutcomeCLIRejectsInvalidArguments(t *testing.T) {
 }
 
 func outcomeCLIBadArgs(log string) map[string][]string {
-	tooManyTools := make([]string, 65)
+	tooManyTools := make([]string, router.MaxIdentityTools+1)
 	for i := range tooManyTools {
 		tooManyTools[i] = fmt.Sprintf("tool%d", i)
 	}
