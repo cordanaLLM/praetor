@@ -19,9 +19,8 @@ import (
 // Positive: an own Makefile with the main-era appended block and the docs block:
 // after adopt, `make praetor-engine-path` resolves to the pinned launcher path.
 // A rerun changes nothing and warns nothing (#906).
-// A rerun changes nothing and warns nothing (#906).
 func TestEngineMakefile_Positive_OwnMakefileMainEraAppendedBlockResolvesToPinnedLauncher(t *testing.T) {
-	root, wantPath := setupPinnedEngineRepo(t, "engine-mk-own-makefile")
+	root, wantPath, makePath := setupPinnedEngineRepo(t, "engine-mk-own-makefile")
 	plan, err := resolveVerificationPlan(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +34,7 @@ func TestEngineMakefile_Positive_OwnMakefileMainEraAppendedBlockResolvesToPinned
 		t.Fatal(err)
 	}
 
-	verifyMakePraetorEnginePath(t, root, wantPath)
+	verifyMakePraetorEnginePath(t, makePath, root, wantPath)
 
 	report2, err := Adopt(t.Context(), opts)
 	if err != nil {
@@ -44,9 +43,33 @@ func TestEngineMakefile_Positive_OwnMakefileMainEraAppendedBlockResolvesToPinned
 	assertNoMakefileWarningsOnRerun(t, report1, report2)
 }
 
-func setupPinnedEngineRepo(t *testing.T, name string) (string, string) {
+// makeToolNames are the tools a Makefile under test runs besides the stubs of its test: make,
+// the echo its recipes name, which make executes from PATH without a shell, and the engine
+// launcher's tools (hookToolNames), which engine.mk runs through $(shell sh ...).
+var makeToolNames = append([]string{"make", "echo"}, hookToolNames...)
+
+// newMakeTestRepo is newTestRepo for a test that runs make, and returns make's path. It links
+// makeToolNames into a directory from the PATH the test starts with, before hermeticPath narrows
+// PATH to the stubs and git's directory, and appends that directory behind them. git's directory
+// need not hold make, sh or echo: in Praetor's devcontainer it is /usr/local/bin, which holds
+// none of them, so make tests there skipped as if make were absent, and a test that looked make
+// up before the narrowing failed on "make: echo: No such file or directory".
+func newMakeTestRepo(t *testing.T, name string) (string, string) {
 	t.Helper()
+	if os.PathSeparator == '\\' {
+		t.Skip("POSIX shell stubs required")
+	}
+	toolbox := linkTools(t, makeToolNames...)
 	root := newTestRepo(t, name)
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+toolbox)
+	return root, filepath.Join(toolbox, "make")
+}
+
+// setupPinnedEngineRepo is newMakeTestRepo with a Cargo project whose workflow pins the engine,
+// and that pin's engine cached as a stub. It returns the root, the stub's path and make's path.
+func setupPinnedEngineRepo(t *testing.T, name string) (string, string, string) {
+	t.Helper()
+	root, makePath := newMakeTestRepo(t, name)
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
 	mustWrite(t, filepath.Join(root, ".github", "workflows", "gate.yml"), "env:\n  PRAETOR_REF: "+enginePin+"\n")
 
@@ -57,7 +80,7 @@ func setupPinnedEngineRepo(t *testing.T, name string) (string, string) {
 		t.Fatal(err)
 	}
 	writeStub(t, pinDir, "standardsctl", "echo \"pinned-standardsctl $*\"\n")
-	return root, filepath.Join(pinDir, "standardsctl")
+	return root, filepath.Join(pinDir, "standardsctl"), makePath
 }
 
 func writeMainEraAppendedMakefile(t *testing.T, root string, plan *VerificationPlan) {
@@ -74,12 +97,8 @@ func writeMainEraAppendedMakefile(t *testing.T, root string, plan *VerificationP
 	mustWrite(t, filepath.Join(root, "Makefile"), withDocs)
 }
 
-func verifyMakePraetorEnginePath(t *testing.T, root, wantPath string) {
+func verifyMakePraetorEnginePath(t *testing.T, makePath, root, wantPath string) {
 	t.Helper()
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
 	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "praetor-engine-path")
 	if err != nil {
 		t.Fatalf("make praetor-engine-path failed: %v, output: %q", err, out)
@@ -128,7 +147,7 @@ func TestEngineMakefile_Positive_GreenfieldMakefileIncludesEngineMk(t *testing.T
 
 // Positive: an explicit := override is kept and reported (#906).
 func TestEngineMakefile_Positive_ExplicitAssignmentOverrideKeptAndReported(t *testing.T) {
-	root := newTestRepo(t, "engine-mk-override")
+	root, makePath := newMakeTestRepo(t, "engine-mk-override")
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
 	ownMakefile := "# Project Makefile\nPRAETORCTL := /custom/bin/my-praetor\nall: build\nbuild:\n\t@cargo build\ntest:\n\t@cargo test\n"
 	mustWrite(t, filepath.Join(root, "Makefile"), ownMakefile)
@@ -147,10 +166,6 @@ func TestEngineMakefile_Positive_ExplicitAssignmentOverrideKeptAndReported(t *te
 		t.Fatalf("expected warning naming line 2 override, got: %v", report.Warnings)
 	}
 
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
 	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "praetor-engine-path")
 	if err != nil {
 		t.Fatalf("make praetor-engine-path failed: %v, output: %q", err, out)
@@ -281,7 +296,7 @@ func findLastAction(details []ActionDetail, path string) *ActionDetail {
 // Negative: when git-hooks is declined, engine.mk is neither created nor included,
 // and make compile-context runs the PATH stub without failing (MAJOR 1).
 func TestEngineMakefile_Negative_DeclinedGitHooksRunsStubFromPath(t *testing.T) {
-	root := newTestRepo(t, "declined-hooks-stub")
+	root, makePath := newMakeTestRepo(t, "declined-hooks-stub")
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
 	mustWrite(t, filepath.Join(root, ".standards.yaml"), "version: 1\nadoption:\n  decline:\n    - git-hooks\n")
 
@@ -303,10 +318,6 @@ func TestEngineMakefile_Negative_DeclinedGitHooksRunsStubFromPath(t *testing.T) 
 		t.Fatalf("Makefile included engine.mk when git-hooks was declined:\n%s", makefile)
 	}
 
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
 	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "compile-context")
 	if err != nil {
 		t.Fatalf("make compile-context failed: %v, output: %q", err, out)
@@ -319,7 +330,7 @@ func TestEngineMakefile_Negative_DeclinedGitHooksRunsStubFromPath(t *testing.T) 
 // Negative: when a custom lefthook.yml is kept, engine.mk is neither created nor included,
 // and make compile-context runs the PATH stub without failing (MAJOR 1).
 func TestEngineMakefile_Negative_KeptCustomLefthookRunsStubFromPath(t *testing.T) {
-	root := newTestRepo(t, "kept-custom-lefthook-stub")
+	root, makePath := newMakeTestRepo(t, "kept-custom-lefthook-stub")
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
 	mustWrite(t, filepath.Join(root, "lefthook.yml"), "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n")
 
@@ -345,10 +356,6 @@ func TestEngineMakefile_Negative_KeptCustomLefthookRunsStubFromPath(t *testing.T
 		t.Fatalf("Makefile included engine.mk when custom lefthook was kept:\n%s", makefile)
 	}
 
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
 	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "compile-context")
 	if err != nil {
 		t.Fatalf("make compile-context failed: %v, output: %q", err, out)
@@ -429,9 +436,11 @@ func TestEngineMakefile_Positive_AllAssignmentOverrideShapesDetectedAndReported(
 	}
 }
 
-// Negative: a non-pin PRAETOR_REF fails closed with exit code 2 and refuses (MINOR 5).
+// Negative: a non-pin PRAETOR_REF fails closed with exit code 2 and refuses (MINOR 5). The
+// launcher's own refusal must reach the output: make exits 2 on any failure of engine.mk,
+// a missing sh included, so the exit status alone does not show the launcher refused the pin.
 func TestEngineMakefile_Negative_NonPinRefFailsClosed(t *testing.T) {
-	root := newTestRepo(t, "non-pin-ref-fails")
+	root, makePath := newMakeTestRepo(t, "non-pin-ref-fails")
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
 	mustWrite(t, filepath.Join(root, ".github", "workflows", "gate.yml"), "env:\n  PRAETOR_REF: main\n")
 
@@ -441,29 +450,52 @@ func TestEngineMakefile_Negative_NonPinRefFailsClosed(t *testing.T) {
 	}
 	assertNoIssues(t, report)
 
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
 	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "praetor-engine-path")
 	if err == nil {
 		t.Fatalf("make praetor-engine-path succeeded unexpectedly: output: %q", out)
 	}
-	if !strings.Contains(err.Error(), "exit status 2") {
-		t.Fatalf("expected exit status 2, got: %v", err)
+	for _, want := range []string{"exit status 2", "praetor hooks: PRAETOR_REF='main' in .github/workflows/gate.yml is no usable pin",
+		"praetor hooks: engine launcher failed to resolve praetorctl"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("make praetor-engine-path failure does not say %q: %v", want, err)
+		}
+	}
+}
+
+// Boundary: a make test finds make, sh and echo when git's directory holds none of them, as
+// /usr/local/bin does in Praetor's devcontainer. Narrowed to the stubs and git's directory
+// alone, PATH there made make tests skip as if make were absent, and fail on a missing echo.
+func TestNewMakeTestRepo_Boundary_GitDirectoryWithoutMakeTools(t *testing.T) {
+	gitDir := t.TempDir()
+	if err := os.Symlink(requireGit(t), filepath.Join(gitDir, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", gitDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	root, makePath := newMakeTestRepo(t, "git-dir-without-make-tools")
+	for _, name := range []string{"make", "sh", "echo"} {
+		if _, err := exec.LookPath(name); err != nil {
+			t.Fatalf("%s is not on the PATH a make test runs with (%s): %v", name, os.Getenv("PATH"), err)
+		}
+	}
+	// engine.mk's shape: make runs a command without shell syntax from PATH, without a shell.
+	mustWrite(t, filepath.Join(root, "probe.sh"), "echo SH-RAN\n")
+	mustWrite(t, filepath.Join(root, "Makefile"), "all:\n\t@echo MAKE-TOOLS-RAN $(shell sh probe.sh)\n")
+	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory")
+	if err != nil || strings.TrimSpace(out) != "MAKE-TOOLS-RAN SH-RAN" {
+		t.Fatalf("make with the narrowed PATH: %v, output: %q", err, out)
 	}
 }
 
 // Boundary: if .config/lefthook/engine.sh is later removed, make falls back to PATH (MAJOR 1).
 func TestEngineMakefile_Boundary_LauncherRemovedFallsBackToPath(t *testing.T) {
-	root, wantPath := setupPinnedEngineRepo(t, "launcher-removed")
+	root, wantPath, makePath := setupPinnedEngineRepo(t, "launcher-removed")
 	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertNoIssues(t, report)
 
-	verifyMakePraetorEnginePath(t, root, wantPath)
+	verifyMakePraetorEnginePath(t, makePath, root, wantPath)
 
 	// Remove launcher script
 	if err := os.Remove(filepath.Join(root, filepath.FromSlash(engineLauncherFile))); err != nil {
@@ -474,10 +506,6 @@ func TestEngineMakefile_Boundary_LauncherRemovedFallsBackToPath(t *testing.T) {
 	writeStub(t, stubDir, "praetorctl", "echo \"path-praetorctl $*\"\n")
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
 	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "praetor-engine-path")
 	if err != nil {
 		t.Fatalf("make praetor-engine-path failed after launcher removal: %v, output: %q", err, out)
@@ -489,11 +517,7 @@ func TestEngineMakefile_Boundary_LauncherRemovedFallsBackToPath(t *testing.T) {
 
 // Positive: a generated Makefile runs its first real target when make runs with no goal (#906).
 func TestEngineMakefile_Positive_GeneratedMakefileRunsFirstTargetWithoutGoal(t *testing.T) {
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
-	root, _ := setupPinnedEngineRepo(t, "default-goal-generated")
+	root, _, makePath := setupPinnedEngineRepo(t, "default-goal-generated")
 	stubs := t.TempDir()
 	writeStub(t, stubs, "cargo", "echo GENERATED-CARGO-BUILD-RAN\n")
 	t.Setenv("PATH", stubs+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -515,11 +539,7 @@ func TestEngineMakefile_Positive_GeneratedMakefileRunsFirstTargetWithoutGoal(t *
 
 // Positive: an adopter Makefile with all: build runs the build when make runs with no goal (#906).
 func TestEngineMakefile_Positive_AdopterMakefileRunsBuildWithoutGoal(t *testing.T) {
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
-	root, _ := setupPinnedEngineRepo(t, "default-goal-adopter")
+	root, _, makePath := setupPinnedEngineRepo(t, "default-goal-adopter")
 	ownMakefile := "# Project\nall: build\nbuild:\n\t@echo OWN-BUILD-RAN\n"
 	mustWrite(t, filepath.Join(root, "Makefile"), ownMakefile)
 
@@ -540,11 +560,7 @@ func TestEngineMakefile_Positive_AdopterMakefileRunsBuildWithoutGoal(t *testing.
 
 // Positive: make praetor-engine-path prints the launcher path (#906).
 func TestEngineMakefile_Positive_ExplicitPraetorEnginePathPrintsLauncherPath(t *testing.T) {
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
-	root, wantPath := setupPinnedEngineRepo(t, "default-goal-explicit")
+	root, wantPath, makePath := setupPinnedEngineRepo(t, "default-goal-explicit")
 	ownMakefile := "# Project\nall: build\nbuild:\n\t@echo OWN-BUILD-RAN\n"
 	mustWrite(t, filepath.Join(root, "Makefile"), ownMakefile)
 

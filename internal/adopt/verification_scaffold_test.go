@@ -3,7 +3,6 @@ package adopt
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -218,7 +217,7 @@ func preparePriorPathResolvedRepo(t *testing.T) (string, *VerificationPlan, stri
 // the existing contract and resolves PRAETORCTL from PATH (util.MakefileCLIVariable),
 // and make executes the binary on PATH rather than failing on a missing launcher.
 func TestVerificationDeclinedGitHooksResolvesFromPath(t *testing.T) {
-	root := newTestRepo(t, "declined-hooks-makefile")
+	root, makePath := newMakeTestRepo(t, "declined-hooks-makefile")
 	mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
 	mustWrite(t, filepath.Join(root, ".standards.yaml"), "version: 1\nadoption:\n  decline:\n    - git-hooks\n")
 
@@ -240,10 +239,6 @@ func TestVerificationDeclinedGitHooksResolvesFromPath(t *testing.T) {
 		t.Fatalf("engine.mk was installed when git-hooks was declined: %v", err)
 	}
 
-	makePath, err := exec.LookPath("make")
-	if err != nil {
-		t.Skip("make is absent; skipping make execution (HISS-21)")
-	}
 	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "compile-context")
 	if err != nil {
 		t.Fatalf("make compile-context failed: %v, output: %q", err, out)
