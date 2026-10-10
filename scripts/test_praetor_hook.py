@@ -175,6 +175,17 @@ class Launcher(unittest.TestCase):
                     self.assertIn("falling back to checkpoint.py", stderr)
                     self.assertEqual(self.stdout, "")
 
+    def test_stop_fallback_waits_for_the_adapters_own_backstop(self):
+        seen = []
+
+        def run(argv, **kwargs):
+            seen.append(kwargs["timeout"])
+            return subprocess.CompletedProcess(argv, 0)
+
+        LAUNCHER.serve("checkpoint.py", ["claude", "stop"], run, ["python3", "checkpoint.py"])
+        self.assertEqual(seen.pop(), LAUNCHER.STOP_FALLBACK_TIMEOUT)
+        self.assertGreater(LAUNCHER.STOP_FALLBACK_TIMEOUT, LAUNCHER.STOP_RUN_TIMEOUT)
+
     def test_stop_fallback_is_not_taken_when_an_engine_serves_or_the_pair_is_not_stop(self):
         self.adapter()
         engines = FakeEngines({self.installed: NEW_LISTING}, exits={self.installed: 2})

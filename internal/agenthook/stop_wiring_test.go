@@ -123,6 +123,45 @@ func TestStopLauncherTimeouts(t *testing.T) {
 	}
 }
 
+// TestStopFallbackOutwaitsTheAdapterBackstop pins the no-engine fallback wait: it must exceed
+// checkpoint.py's HOOK_LIMIT plus its stop allowance HOOK_STOP, so the adapter's own block
+// answers a hang before the launcher kills it, and with both probes still end before the
+// client timeout.
+func TestStopFallbackOutwaitsTheAdapterBackstop(t *testing.T) {
+	fallback := launcherSeconds(t, "STOP_FALLBACK_TIMEOUT")
+	probe := launcherSeconds(t, "PROBE_TIMEOUT")
+	const adapter = ".config/agent/hooks/checkpoint.py"
+	limit := scriptSeconds(t, adapter, "HOOK_LIMIT")
+	if problems := fallbackProblems(fallback, probe, limit, 2*scriptSeconds(t, adapter, "JOB_GRACE"), stopTimeout); len(problems) != 0 {
+		t.Errorf("%q", problems)
+	}
+	for _, tc := range []struct {
+		fallback time.Duration
+		pass     bool
+	}{
+		{70 * time.Second, true},
+		{limit + 12*time.Second + launcherTimingMargin - time.Second, false}, // below the bound
+		{limit + 12*time.Second + launcherTimingMargin, true},                // boundary
+		{55 * time.Second, false},                                            // the old value
+		{80 * time.Second, false},                                            // probes push past 90 s
+	} {
+		if problems := fallbackProblems(tc.fallback, probe, limit, 12*time.Second, stopTimeout); (len(problems) == 0) != tc.pass {
+			t.Errorf("fallback %s: %q, want pass=%t", tc.fallback, problems, tc.pass)
+		}
+	}
+}
+
+func fallbackProblems(fallback, probe, limit, stop, timeout time.Duration) []string {
+	var problems []string
+	if limit+stop+launcherTimingMargin > fallback {
+		problems = append(problems, "fallback wait "+fallback.String()+" ends before the adapter backstop at "+(limit+stop).String())
+	}
+	if worst := launcherCandidates*probe + fallback + launcherTimingMargin; worst > timeout {
+		problems = append(problems, "probes plus fallback take up to "+worst.String()+", past the client timeout "+timeout.String())
+	}
+	return problems
+}
+
 func stopLauncherProblems(run, probe, timeout time.Duration) []string {
 	var problems []string
 	if budget := budgetFor(EventStop); budget+launcherTimingMargin > run {

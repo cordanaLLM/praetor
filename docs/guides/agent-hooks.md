@@ -484,9 +484,23 @@ praetor hook: no engine serves claude stop; falling back to checkpoint.py (check
 ```
 
 The stop gate is then as strict as before the engine row, minus the prose-question check,
-which only the engine has; the stderr line says so. It also covers an older engine that
+which only the engine has; the stderr line says so. The launcher waits `STOP_FALLBACK_TIMEOUT`
+(70 s) for the adapter, longer than the adapter's own backstop (`HOOK_LIMIT` 55 s plus the
+12 s stop allowance `HOOK_STOP` in `.config/agent/hooks/checkpoint.py`), so an adapter that
+hangs answers with its own block and the launcher never turns it into a non-blocking exit 1;
+both 5 s probes plus 70 s still end before the 90 s client timeout
+(`TestStopFallbackOutwaitsTheAdapterBackstop`). It also covers an older engine that
 lists no stop row, so that engine never answers `stop` with its usage and exit 2 on every
-pass. agy has no adapter, and a checkout without the adapter file has nothing to fall back
+pass.
+
+Installed-engine skew remains for the other direction. An installed engine that already lists
+`praetorctl hook claude|codex|gemini stop` (since 15d69c050, 2026-09-19) but predates the
+stop semantics of this change is handed the call whenever `bin/praetorctl` is missing or
+stale, as in a fresh worktree before `make hook-cli`. That engine ignores `stop_hook_active`
+for the stop event and exits 2 on every pass: no `continue:false` halt, no state audit and
+no prose check, so an agent cannot clear a checkpoint loop. The launcher does not detect this
+(the listing carries no semantics version); rebuild `bin/praetorctl` with `make hook-cli` or
+reinstall the engine (`make dev-install`) after pulling this change. agy has no adapter, and a checkout without the adapter file has nothing to fall back
 to; both stay a stated skip. `test_stop_without_an_engine_falls_back_to_the_checkpoint_adapter`,
 `test_stop_fallback_is_not_taken_when_an_engine_serves_or_the_pair_is_not_stop` and
 `test_stop_without_engine_or_adapter_and_agy_stop_stay_stated_skips` in
@@ -975,7 +989,7 @@ the governed repository root, with no Lefthook hop:
 | :-- | :-- | :-- | :-- |
 | `pre-edit` | `.config/lefthook/scripts/checkpoint_scope.py` | stdin: `{"hook_event_name", "tool_name", "tool_input":{"file_path"}, "cwd"}` normalised from the decoded payload | `PRAETOR_CHECKPOINT_SCOPE_OK` |
 | `post-tool` | `.config/lefthook/scripts/checkpoint.py` | `--event tool --json --marker` | `PRAETOR_CHECKPOINT_RESULT=<json>` |
-| `stop` | same script | `--event stop --json --marker`, after the prose-question check and `state.VerifyStateSync` pass | same |
+| `stop` | same script | `--event stop --json --marker`; runs on every stop pass, independent of the prose-question check and the ledger checks (`state.VerifyStateSync`, `state.AuditWorkingDirContext`) | same |
 
 Neither script changes; the marker contract is the one the Lefthook job already relied on
 (exactly one marker line, JSON that satisfies `schema_version: 1`, and a `due` result that
@@ -1003,10 +1017,10 @@ annotate, so it is a stated skip. A `stop` deny after a Python failure reads `ch
 evaluator unavailable: no Python interpreter` the same way a due checkpoint reads `Praetor
 checkpoint due: …`; both are `[BLOCKED BY HISS]` on `claude`/`codex`/`gemini`.
 
-**`stop` state verification.** Before the checkpoint itself, `stop` calls the Go state-sync
+**`stop` state verification.** Besides the checkpoint, which runs on every pass on its own, `stop` calls the Go state-sync
 verifier (`internal/state.VerifyStateSync`, the function behind `praetorctl state sync
---verify .`) and the state audit (`internal/state.AuditWorkingDir`, the function behind
-`praetorctl state audit .`) against the governed root, the two steps the former
+--verify .`) and the state audit (`internal/state.AuditWorkingDirContext`, the cancellable form of `AuditWorkingDir`, which is the
+function behind `praetorctl state audit .`) against the governed root, the two steps the former
 `agent-state-stop` job ran. A missing, stale or unverifiable `.workingdir` ledger, or an
 audit violation such as an unresolved P0 row, blocks on its own, independent of whether a
 checkpoint is due; the reason names the repair (`praetorctl state sync .`,
@@ -1040,9 +1054,9 @@ repository's `.claude/settings.json` (`Stop`), `.codex/hooks.json` (`Stop`) and
 `checkpoint.py` stop call instead of adding a second one (two different files
 share the name `checkpoint.py`: the engine runs `.config/lefthook/scripts/checkpoint.py`
 (`checkpointScriptDir` in `internal/agenthook/python.go`), the claude and gemini post-tool
-rows and the launcher's no-engine stop fallback run the adapter
-`.config/agent/hooks/checkpoint.py`, and the codex post-tool row runs its own adapter
-wrapper)
+rows, the codex post-tool row (`.codex/hooks.json`, PostToolUse) and the launcher's
+no-engine stop fallback all run the same adapter `.config/agent/hooks/checkpoint.py`;
+see `checkpoint-cadence.md`, "Agent activation and failure handling")
 (`TestTrackedStopRegistrationReachesTheEngine`, `TestRegisteredStopCommandDeniesAClosingQuestion`).
 A repository that adopted Praetor does not get the stop rows yet: adoption registers
 pre-tool rows only (`internal/adopt/agent_hooks.go`, `NativeHooks(..., EventPreTool)`), so
@@ -1059,7 +1073,7 @@ message to judge.
 
 Fenced code (read by `util.MarkdownFence`, the one fence tracker; a fence closes only on the same character and at least the opener's length, and ```` ```make``` passes ```` is an inline span), inline code (`util.MarkdownCodeSpans`),
 4-space or tab indented code, blockquotes, table rows with or without leading
-pipes and URLs are removed first (a URL's trailing punctuation stays, so `merge <url>?` is still a
+pipes (a delimiter cell needs one or more hyphens, `-|-` included, as GFM allows) and URLs are removed first (a URL's trailing punctuation stays, so `merge <url>?` is still a
 question). Code spans are masked one paragraph at a time, so a lone backtick cannot pair with
 one in a later paragraph and hide the closing question. Only the last two paragraphs are
 judged. The stop is denied once when any sentence of the closing prose paragraph ends in `?`
@@ -1067,10 +1081,13 @@ or the full-width `？` (a trailing `Happy to.` does not hide it). Nothing else 
 a choice written without a question mark (`Let me know which one.`) passes, because every
 phrase heuristic tried for it added false positives. A question in an earlier paragraph,
 followed by more report, passes as rhetorical. A list in the last paragraph counts as a
-question when one of its items itself ends in `?` or `？` (`Two decisions needed:` then `1.
+question when one of its items holds a `?` or `？` (rule below) (`Two decisions needed:` then `1.
 Rebase or merge?`), because a list of questions is the usual way to ask in prose; a list in
 the earlier paragraph, followed by more report, is not judged. A `?` inside a quoted word
-mid-sentence (`the 'why?' case`) still counts. The fixtures are `stopFixtures` in
+mid-sentence (`the 'why?' case`) still counts, in a list item as in prose: both use one
+rule, a `?` followed by whitespace or the end of the text (`questionEnd`), so `- Fixed the
+why? case.` is denied like `Fixed the why? case.`, while `a?b` is not a question
+(`stopFixtures`). The false positive is bounded to one turn by the `stop_hook_active` skip. The fixtures are `stopFixtures` in
 `internal/agenthook/stop_question_test.go`, replayed for every client.
 
 Trade-off: the check cannot tell a rhetorical question from a real one inside a single

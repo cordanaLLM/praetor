@@ -419,13 +419,19 @@ const launcherCandidates = 2
 // launcherSeconds reads one integer seconds constant of the tracked launcher.
 func launcherSeconds(t *testing.T, name string) time.Duration {
 	t.Helper()
-	source, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(launcherScript)))
+	return scriptSeconds(t, launcherScript, name)
+}
+
+// scriptSeconds reads the integer seconds constant name from the repository script path.
+func scriptSeconds(t *testing.T, path, name string) time.Duration {
+	t.Helper()
+	source, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(path)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	seconds, err := launcherConstant(source, name)
 	if err != nil {
-		t.Fatalf("%s: %v", launcherScript, err)
+		t.Fatalf("%s: %v", path, err)
 	}
 	return seconds
 }
