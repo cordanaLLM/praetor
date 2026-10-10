@@ -153,3 +153,13 @@ func TestCollector_Negative_RecordsRowOmittingAVectorFieldRefused(t *testing.T) 
 		t.Errorf("a records row without a vector field must be refused naming it: %v", err)
 	}
 }
+
+// A zero-failure claim rests on measured zeros only: modeled zeros print as a plain rate.
+func TestSummary_Negative_ZeroClaimNeedsMeasuredZeros(t *testing.T) {
+	modeled := strings.Replace(recordRow("2", "feat/b", "qualified", labelled("1", "measured")),
+		`"escaped_defects":`+labelled("0", "measured"), `"escaped_defects":`+labelled("0", "modeled"), 1)
+	ms := collectRows(t, false, recordRow("1", "feat/a", "qualified", labelled("1", "measured")), modeled)
+	if want := "0.00 per qualified unit (total 0 over 2 units / 2 qualified) [measured 1, modeled 1]"; ms.EscapedDefects.Display != want {
+		t.Errorf("display = %q, want %q", ms.EscapedDefects.Display, want)
+	}
+}

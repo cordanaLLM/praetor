@@ -4,6 +4,7 @@
 package efficiency
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -62,7 +63,7 @@ func recordVectorFields(pr forge.MergedPullRequest, unit *UnitReport) error {
 const LiveUnmeasuredFields = "live forge: tokens_by_provider, review_rounds, retries, operator_minutes and escaped_defects are not measured (the merged pull request listing carries no per-provider token, review round, retry, operator time or escaped defect data; pass --forge-records with labelled values to report them)"
 
 // LiveDispositionNote states how a live listing row gets its disposition.
-const LiveDispositionNote = "live forge: a merged pull request counts as qualified unless a later merged revert names its title; check and review results are not read"
+const LiveDispositionNote = "live forge: a merged pull request counts as qualified unless a later merged revert among the listed pull requests names its title (--limit and --milestone narrow that list, so a revert outside it is missed); check and review results are not read"
 
 // stampLiveUnit fills the ledger fields of a live listing row, which carries none: the current
 // metric epoch, since the collector builds the row under the current schema, and wall_seconds
@@ -76,46 +77,80 @@ func stampLiveUnit(pr forge.MergedPullRequest, unit *UnitReport) {
 	unit.WallSeconds = &VectorField[int64]{Value: int64(pr.MergedAt.Sub(pr.CreatedAt).Seconds()), Provenance: ProvenanceMeasured}
 }
 
-func resolveUnitDisposition(pr forge.MergedPullRequest) string {
-	if pr.Disposition != "" {
-		return normalizeDisposition(pr.Disposition)
+// resolveUnitDisposition returns the row's disposition. A records row must name one; a live
+// listing row is a merged pull request and starts as qualified (LiveDispositionNote).
+func resolveUnitDisposition(pr forge.MergedPullRequest, live bool) (string, error) {
+	if live {
+		return DispositionQualified, nil
 	}
-	return DispositionQualified
+	if pr.Disposition == "" {
+		return "", errors.New("disposition missing: a records row names one of qualified, offered, rejected, abandoned, reverted or timed_out")
+	}
+	return pr.Disposition, nil
 }
 
-func targetRevertedTitle(title string) string {
+// revertedTitle returns the title a revert pull request names, for the two revert title forms:
+// `Revert "<title>"` (git and GitHub) and `revert: <title>` (conventional commits). Any other
+// title names nothing.
+func revertedTitle(title string) string {
 	t := strings.TrimSpace(title)
 	lower := strings.ToLower(t)
-	if strings.HasPrefix(lower, "revert \"") {
-		rest := t[8:]
-		if idx := strings.LastIndex(rest, "\""); idx != -1 {
-			return strings.TrimSpace(rest[:idx])
-		}
-		return strings.TrimSpace(rest)
+	switch {
+	case strings.HasPrefix(lower, `revert "`) && strings.HasSuffix(t, `"`) && len(t) > len(`revert ""`):
+		return strings.TrimSpace(t[len(`revert "`) : len(t)-1])
+	case strings.HasPrefix(lower, "revert: "):
+		return strings.TrimSpace(t[len("revert: "):])
+	default:
+		return ""
 	}
-	if strings.HasPrefix(lower, "revert: ") {
-		return strings.TrimSpace(t[8:])
-	}
-	if strings.HasPrefix(lower, "revert ") {
-		return strings.TrimSpace(t[7:])
-	}
-	return ""
 }
 
-func applyRevertDispositions(units []UnitReport) {
-	for i := range units {
-		revertTitle := targetRevertedTitle(units[i].Title)
-		if revertTitle == "" {
+// revert is one qualified pull request whose title reverts another.
+type revert struct {
+	number   int
+	target   string
+	mergedAt time.Time
+}
+
+// revertsOf lists the reverts among every loaded row, not only the selected units, so a revert
+// outside --milestone or --limit still counts. Only a qualified revert counts: a revert that was
+// rejected, abandoned or never landed reverted nothing. Live rows are merged, hence qualified.
+func revertsOf(all []forge.MergedPullRequest, live bool) []revert {
+	var out []revert
+	for _, pr := range all {
+		target := revertedTitle(pr.Title)
+		if target == "" || (!live && pr.Disposition != DispositionQualified) {
 			continue
 		}
-		for j := range units {
-			if i == j {
-				continue
-			}
-			if strings.EqualFold(strings.TrimSpace(units[j].Title), revertTitle) {
-				units[j].Disposition = DispositionReverted
-				break
-			}
+		out = append(out, revert{number: pr.Number, target: target, mergedAt: pr.MergedAt})
+	}
+	return out
+}
+
+// revertTarget finds the landing a revert undid: the latest qualified unit with the reverted
+// title that merged before the revert (or whose merge time is unknown). Units are ordered newest
+// merge first, so a later re-land under the same title is skipped. -1 means none.
+func revertTarget(units []UnitReport, r revert) int {
+	for i, u := range units {
+		if u.PullRequestNumber == r.number || u.Disposition != DispositionQualified {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(u.Title), r.target) {
+			continue
+		}
+		if r.mergedAt.IsZero() || u.MergedAt.IsZero() || u.MergedAt.Before(r.mergedAt) {
+			return i
+		}
+	}
+	return -1
+}
+
+// applyRevertDispositions marks the target of every qualified revert as reverted. Only a
+// qualified target changes; a disposition the records name explicitly is kept.
+func applyRevertDispositions(units []UnitReport, reverts []revert) {
+	for _, r := range reverts {
+		if i := revertTarget(units, r); i >= 0 {
+			units[i].Disposition = DispositionReverted
 		}
 	}
 }
@@ -128,7 +163,10 @@ func newUnit(pr forge.MergedPullRequest, live bool) (UnitReport, error) {
 		closing = append(closing, ci.Number)
 	}
 	itm, secs := calculateIssueToMerge(pr)
-	disp := resolveUnitDisposition(pr)
+	disp, err := resolveUnitDisposition(pr, live)
+	if err != nil {
+		return UnitReport{}, fmt.Errorf("unit #%d: %w", pr.EffectiveNumber(), err)
+	}
 
 	unit := UnitReport{
 		PullRequestNumber:   pr.EffectiveNumber(),

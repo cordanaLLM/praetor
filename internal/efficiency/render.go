@@ -38,14 +38,10 @@ func RenderTable(report *Report, out io.Writer) error {
 	}
 
 	for _, u := range report.Units {
-		disp := u.Disposition
-		if disp == "" {
-			disp = DispositionQualified
-		}
 		line := fmt.Sprintf("#%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			u.PullRequestNumber,
 			u.HeadBranch,
-			disp,
+			u.Disposition,
 			u.IssueToMerge,
 			u.OperatorTouches,
 			u.FrontierTokens,

@@ -61,8 +61,9 @@ func TestParseVectorField_Negative_ShapesRefusedWithCause(t *testing.T) {
 }
 
 func TestValidateRow_Negative_IntervalBoundsSignAndLabels(t *testing.T) {
-	low, high, outside := int64(10), int64(20), int64(5)
+	low, high, outside, negative := int64(10), int64(20), int64(5), int64(-5)
 	cases := map[string]*VectorField[int64]{
+		"negative low bound":        {Value: 15, Provenance: ProvenanceInterval, Low: &negative, High: &high},
 		"interval without bounds":   {Value: 15, Provenance: ProvenanceInterval},
 		"interval without high":     {Value: 15, Provenance: ProvenanceInterval, Low: &low},
 		"value below the low bound": {Value: 5, Provenance: ProvenanceInterval, Low: &low, High: &high},
@@ -119,5 +120,23 @@ func validRow() UnitReport {
 		Retries:           &VectorField[int]{Value: 0, Provenance: ProvenanceMeasured},
 		OperatorMinutes:   &VectorField[float64]{Value: 1, Provenance: ProvenanceMeasured},
 		EscapedDefects:    &VectorField[int]{Value: 0, Provenance: ProvenanceMeasured},
+	}
+}
+
+// A records row names one of six dispositions, spelled exactly; there are no aliases.
+func TestValidateRow_Negative_DispositionSpellings(t *testing.T) {
+	for _, disp := range []string{"", "merged", "passed", "timeout", "timed-out", "Qualified", " qualified"} {
+		row := validRow()
+		row.Disposition = disp
+		if err := ValidateRow(row); err == nil || !strings.Contains(err.Error(), "invalid disposition") {
+			t.Errorf("disposition %q must be refused: %v", disp, err)
+		}
+	}
+	for _, disp := range []string{DispositionQualified, DispositionOffered, DispositionRejected, DispositionAbandoned, DispositionReverted, "timed_out"} {
+		row := validRow()
+		row.Disposition = disp
+		if err := ValidateRow(row); err != nil {
+			t.Errorf("disposition %q is a documented spelling: %v", disp, err)
+		}
 	}
 }

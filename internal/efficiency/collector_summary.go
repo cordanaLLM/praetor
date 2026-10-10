@@ -335,14 +335,14 @@ func (v vectorTotals) components(qualified int) []VectorComponent {
 	return out
 }
 
-// zeroClaim reports a fully measured, unbounded total of zero: the case FormatZeroFailureClaim
-// words with its rule-of-three bound.
+// zeroClaim reports a total of zero that every unit measured: the case FormatZeroFailureClaim
+// words with its rule-of-three bound. A modeled, cited or interval zero supports no such claim.
 func (v vectorTotals) zeroClaim(units int) bool {
-	if v.carried < units {
+	if v.carried < units || v.mix.Measured != v.carried {
 		return false
 	}
 	for _, t := range v.byKey {
-		if t.value != 0 || t.bounded {
+		if t.value != 0 {
 			return false
 		}
 	}
@@ -358,7 +358,7 @@ func (v vectorTotals) summary(units, qualified int, f figureFormat, failureCount
 	scope := ruleScope{carried: v.carried, units: units, qualified: qualified}
 	s.Display = perQualifiedText(scope, func() (string, string) { return v.texts(qualified, f) })
 	if failureCounter && qualified > 0 && v.zeroClaim(units) {
-		s.Display = FormatZeroFailureClaim(qualified)
+		s.Display = FormatZeroFailureClaim(qualified, units)
 	}
 	if qualified > 0 && v.carried > 0 {
 		s.Display += " [" + v.mix.String() + "]"

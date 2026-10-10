@@ -202,6 +202,9 @@ func (r vectorReading) validateBounds() error {
 		if !okLow || !okHigh {
 			return fmt.Errorf("interval bounds miss component%s", componentSuffix(key))
 		}
+		if low < 0 {
+			return fmt.Errorf("negative low bound %v%s", low, componentSuffix(key))
+		}
 		if v := r.value[key]; low > v || v > high {
 			return fmt.Errorf("interval bounds [%v, %v] do not hold value %v%s", low, high, v, componentSuffix(key))
 		}

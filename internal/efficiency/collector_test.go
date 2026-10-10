@@ -480,7 +480,7 @@ func TestCollector_Positive_QualifiedDenominatorAndLaneCounts(t *testing.T) {
 		if ms.QualifiedUnits != 2 {
 			t.Errorf("expected 2 qualified units, got %d", ms.QualifiedUnits)
 		}
-		if ms.LaneCounts.Qualified != 2 || ms.LaneCounts.Reverted != 1 || ms.LaneCounts.Offered != 3 {
+		if ms.LaneCounts != (LaneCounts{Qualified: 2, Reverted: 1, Total: 3}) {
 			t.Errorf("unexpected lane counts: %+v", ms.LaneCounts)
 		}
 		laneStr := ms.LaneCounts.String()
@@ -583,7 +583,7 @@ func TestCollector_Positive_ZeroFailureRuleOfThreeBound(t *testing.T) {
 	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
 
 	ms := report.MilestoneSummary
-	expectedClaim := "0 (n=2, rule-of-three bound <= 1.50) [measured 2]"
+	expectedClaim := "0 (rule-of-three bound <= 1.50 per qualified unit; n=2 qualified units, 2 units observed) [measured 2]"
 	if ms.EscapedDefects.Display != expectedClaim {
 		t.Errorf("zero-failure claim must print n and rule-of-three bound, want %q, got %q", expectedClaim, ms.EscapedDefects.Display)
 	}
@@ -836,6 +836,7 @@ func TestCollector_Positive_RevertRuleMarksOriginalReverted(t *testing.T) {
     "number": 10,
     "head_branch": "feat/orig",
     "title": "Add super feature",
+    "disposition": "qualified",
     "metric_epoch": "2026-10-10",
     "created_at": "2026-10-01T10:00:00Z",
     "merged_at": "2026-10-01T12:00:00Z",
@@ -850,6 +851,7 @@ func TestCollector_Positive_RevertRuleMarksOriginalReverted(t *testing.T) {
     "number": 11,
     "head_branch": "revert-10",
     "title": "Revert \"Add super feature\"",
+    "disposition": "qualified",
     "metric_epoch": "2026-10-10",
     "created_at": "2026-10-02T10:00:00Z",
     "merged_at": "2026-10-02T12:00:00Z",
@@ -882,6 +884,7 @@ func TestCollector_Negative_RevertRuleNonMatchingTitle(t *testing.T) {
     "number": 20,
     "head_branch": "feat/first",
     "title": "Add widget A",
+    "disposition": "qualified",
     "metric_epoch": "2026-10-10",
     "created_at": "2026-10-01T10:00:00Z",
     "merged_at": "2026-10-01T12:00:00Z",
@@ -896,6 +899,7 @@ func TestCollector_Negative_RevertRuleNonMatchingTitle(t *testing.T) {
     "number": 21,
     "head_branch": "feat/second",
     "title": "Add widget B",
+    "disposition": "qualified",
     "metric_epoch": "2026-10-10",
     "created_at": "2026-10-02T10:00:00Z",
     "merged_at": "2026-10-02T12:00:00Z",
@@ -975,11 +979,11 @@ func TestCollector_Positive_PerLaneAggregation(t *testing.T) {
 		t.Fatalf("expected 2 lanes, got %d", len(ms.PerLane))
 	}
 	fast := ms.PerLane["fast-lane"]
-	if fast.Qualified != 1 || fast.Reverted != 1 || fast.Offered != 2 {
+	if fast.Qualified != 1 || fast.Reverted != 1 || fast.Total != 2 {
 		t.Errorf("unexpected fast-lane counts: %+v", fast)
 	}
 	batch := ms.PerLane["batch-lane"]
-	if batch.Qualified != 1 || batch.Offered != 1 {
+	if batch.Qualified != 1 || batch.Total != 1 {
 		t.Errorf("unexpected batch-lane counts: %+v", batch)
 	}
 
@@ -1026,38 +1030,37 @@ func TestCollector_Negative_UnmarshalVectorTypeError(t *testing.T) {
 }
 
 func TestFormatZeroFailureClaim_PositiveAndBoundary(t *testing.T) {
-	if got := FormatZeroFailureClaim(0); got != UndefinedRate {
-		t.Errorf("n=0 must be undefined, got %q", got)
-	}
-	if got := FormatZeroFailureClaim(1); got != "0 (n=1, rule-of-three bound <= 3.00)" {
-		t.Errorf("n=1 got %q", got)
-	}
-	if got := FormatZeroFailureClaim(2); got != "0 (n=2, rule-of-three bound <= 1.50)" {
-		t.Errorf("n=2 got %q", got)
-	}
-	if got := FormatZeroFailureClaim(10); got != "0 (n=10, rule-of-three bound <= 0.30)" {
-		t.Errorf("n=10 got %q", got)
-	}
-	if got := FormatZeroFailureClaim(100); got != "0 (n=100, rule-of-three bound <= 0.03)" {
-		t.Errorf("n=100 got %q", got)
+	for _, c := range []struct {
+		qualified, observed int
+		want                string
+	}{
+		{0, 3, UndefinedRate},
+		{1, 1, "0 (rule-of-three bound <= 3.00 per qualified unit; n=1 qualified units, 1 units observed)"},
+		{2, 3, "0 (rule-of-three bound <= 1.50 per qualified unit; n=2 qualified units, 3 units observed)"},
+		{10, 10, "0 (rule-of-three bound <= 0.30 per qualified unit; n=10 qualified units, 10 units observed)"},
+		{100, 120, "0 (rule-of-three bound <= 0.03 per qualified unit; n=100 qualified units, 120 units observed)"},
+	} {
+		if got := FormatZeroFailureClaim(c.qualified, c.observed); got != c.want {
+			t.Errorf("qualified %d observed %d: got %q, want %q", c.qualified, c.observed, got, c.want)
+		}
 	}
 }
 
+// Offered is one disposition among six; Total counts every unit.
 func TestLaneCounts_PositiveAndBoundary(t *testing.T) {
 	var lc LaneCounts
-	lc.Add(DispositionQualified)
-	lc.Add(DispositionQualified)
-	lc.Add(DispositionReverted)
-	lc.Add(DispositionRejected)
-	lc.Add(DispositionAbandoned)
-	lc.Add(DispositionTimedOut)
-	lc.Add(DispositionOffered)
-
-	if lc.Qualified != 2 || lc.Reverted != 1 || lc.Rejected != 1 || lc.Abandoned != 1 || lc.TimedOut != 1 || lc.Offered != 7 {
-		t.Errorf("unexpected counts: %+v", lc)
+	for _, d := range []string{DispositionQualified, DispositionQualified, DispositionReverted, DispositionRejected, DispositionAbandoned, DispositionTimedOut, DispositionOffered} {
+		lc.Add(d)
 	}
-	str := lc.String()
-	if !strings.Contains(str, "2 qualified") || !strings.Contains(str, "1 reverted") || !strings.Contains(str, "7 offered") {
-		t.Errorf("unexpected string: %q", str)
+	want := LaneCounts{Qualified: 2, Reverted: 1, Rejected: 1, Abandoned: 1, TimedOut: 1, Offered: 1, Total: 7}
+	if lc != want {
+		t.Errorf("counts %+v, want %+v", lc, want)
+	}
+	if got := lc.String(); got != "2 qualified, 1 reverted, 1 rejected, 1 abandoned, 1 timed_out, 1 offered, 7 total" {
+		t.Errorf("unexpected string: %q", got)
+	}
+	var empty LaneCounts
+	if got := empty.String(); got != "0 qualified, 0 total" {
+		t.Errorf("empty lane counts: %q", got)
 	}
 }

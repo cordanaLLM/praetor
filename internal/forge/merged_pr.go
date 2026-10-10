@@ -153,7 +153,9 @@ func ParseMergedPullRequests(data []byte) ([]MergedPullRequest, error) {
 	if len(prs) > MaxMergedPRsLimit {
 		return nil, fmt.Errorf("merged pull requests count %d exceeds limit %d", len(prs), MaxMergedPRsLimit)
 	}
-	normalizePRNumbers(prs)
+	if err := normalizePRNumbers(prs); err != nil {
+		return nil, err
+	}
 	return prs, nil
 }
 
@@ -180,12 +182,21 @@ func decodeMergedPullRequests(data []byte) ([]MergedPullRequest, error) {
 	return prs, nil
 }
 
-func normalizePRNumbers(prs []MergedPullRequest) {
+// normalizePRNumbers fills number from its alias pull_request_number. A record without either,
+// or with both naming different pull requests, is refused.
+func normalizePRNumbers(prs []MergedPullRequest) error {
 	for i := range prs {
-		if prs[i].Number == 0 && prs[i].PRNumber != 0 {
-			prs[i].Number = prs[i].PRNumber
+		pr := &prs[i]
+		switch {
+		case pr.Number == 0 && pr.PRNumber == 0:
+			return fmt.Errorf("merged pull request record %d carries no number", i+1)
+		case pr.Number != 0 && pr.PRNumber != 0 && pr.Number != pr.PRNumber:
+			return fmt.Errorf("merged pull request record %d: number %d and pull_request_number %d name different pull requests", i+1, pr.Number, pr.PRNumber)
+		case pr.Number == 0:
+			pr.Number = pr.PRNumber
 		}
 	}
+	return nil
 }
 
 // ReadMergedPullRequestsFile reads a local JSON file containing merged pull request records.

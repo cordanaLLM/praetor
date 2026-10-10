@@ -136,7 +136,7 @@ func TestRenderTable_Positive_LabelsNameTheirRule(t *testing.T) {
 	for _, want := range []string{
 		"Issue-to-Merge (Qualified Mean):       2h00m (mean over 1 of 1 qualified units measured)",
 		"Wall Seconds per Qualified Unit:       2h00m per qualified unit (total 2h00m over 1 units / 1 qualified) [measured 1]",
-		"Escaped Defects per Qualified Unit:    0 (n=1, rule-of-three bound <= 3.00) [measured 1]",
+		"Escaped Defects per Qualified Unit:    0 (rule-of-three bound <= 3.00 per qualified unit; n=1 qualified units, 1 units observed) [measured 1]",
 		"Tokens by Provider per Qualified Unit: anthropic: 500.00 per qualified unit (total anthropic: 500 over 1 units / 1 qualified) [measured 1]",
 		"Spend per Qualified Unit:              $0.15 per qualified unit (total $0.15 over 1 units / 1 qualified)",
 		"Prompt-Cache Hit Rate (All Usage):     75.0% (pooled over the usage of 1 of 1 units)",
@@ -178,7 +178,7 @@ func assertEmptyLedgerTable(t *testing.T, rep *Report) {
 			t.Errorf("empty ledger table output missing %q, got:\n%s", want, tableOut)
 		}
 	}
-	if want := summaryLine("Lane Counts", "0 qualified, 0 offered"); !strings.Contains(tableOut, want) {
+	if want := summaryLine("Lane Counts", "0 qualified, 0 total"); !strings.Contains(tableOut, want) {
 		t.Errorf("empty ledger lane counts missing %q:\n%s", want, tableOut)
 	}
 }
@@ -210,5 +210,19 @@ func assertEmptyLedgerJSON(t *testing.T, rep *Report) {
 	}
 	if ms.FrontierTokensNum != nil {
 		t.Errorf("an empty ledger carries no token total that reads as zero: %v", *ms.FrontierTokensNum)
+	}
+}
+
+// The table prints a unit's disposition as the row carries it, never a default.
+func TestRenderTable_Boundary_DispositionPrintedAsIs(t *testing.T) {
+	report := newReport("")
+	report.Units = []UnitReport{{PullRequestNumber: 1, HeadBranch: "b"}, {PullRequestNumber: 2, HeadBranch: "c", Disposition: DispositionTimedOut}}
+	var out bytes.Buffer
+	if err := RenderTable(report, &out); err != nil {
+		t.Fatal(err)
+	}
+	rows := strings.Split(out.String(), "\n")
+	if strings.Contains(rows[1], DispositionQualified) || !strings.Contains(rows[2], DispositionTimedOut) {
+		t.Errorf("rows must carry their own disposition:\n%s", out.String())
 	}
 }

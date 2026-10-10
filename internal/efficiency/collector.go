@@ -147,7 +147,7 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 		}
 		report.Units = append(report.Units, unit)
 	}
-	applyRevertDispositions(report.Units)
+	applyRevertDispositions(report.Units, revertsOf(prs.all, prs.live))
 	if err := ValidateRows(report.Units); err != nil {
 		return nil, fmt.Errorf("validate efficiency units: %w", err)
 	}

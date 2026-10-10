@@ -54,41 +54,20 @@ func ValidProvenance(p Provenance) bool {
 	}
 }
 
-// Dispositions for unit outcomes.
+// Dispositions for unit outcomes. A records row names one of these exact spellings; there are
+// no aliases.
 const (
 	DispositionQualified = "qualified"
 	DispositionOffered   = "offered"
 	DispositionRejected  = "rejected"
 	DispositionAbandoned = "abandoned"
 	DispositionReverted  = "reverted"
-	DispositionTimedOut  = "timed-out"
+	DispositionTimedOut  = "timed_out"
 )
 
-// normalizeDisposition standardizes disposition strings (handling underscores/dashes).
-func normalizeDisposition(disp string) string {
-	d := strings.ToLower(strings.TrimSpace(disp))
-	d = strings.ReplaceAll(d, "_", "-")
-	switch d {
-	case "qualified", "pass", "passed":
-		return DispositionQualified
-	case "reverted", "revert":
-		return DispositionReverted
-	case "rejected", "reject":
-		return DispositionRejected
-	case "abandoned", "abandon":
-		return DispositionAbandoned
-	case "timed-out", "timedout", "timeout":
-		return DispositionTimedOut
-	case "offered":
-		return DispositionOffered
-	default:
-		return d
-	}
-}
-
-// ValidDisposition checks if disp is a recognized unit outcome disposition.
+// ValidDisposition checks if disp is a recognized unit outcome disposition, spelled exactly.
 func ValidDisposition(disp string) bool {
-	switch normalizeDisposition(disp) {
+	switch disp {
 	case DispositionQualified, DispositionOffered, DispositionRejected, DispositionAbandoned, DispositionReverted, DispositionTimedOut:
 		return true
 	default:
@@ -106,25 +85,26 @@ type VectorField[T any] struct {
 	High       *T         `json:"high,omitempty"`
 }
 
-// LaneCounts tracks unit outcomes in a lane or milestone.
-// Offered is the total count of all units offered/attempted across all outcomes
-// (qualified + reverted + rejected + abandoned + timed-out + offered).
+// LaneCounts tracks unit outcomes in a lane or milestone: one count per disposition, and Total
+// over every unit whatever its disposition.
 type LaneCounts struct {
 	Qualified int `json:"qualified"`
-	Offered   int `json:"offered"` // Total units offered across all dispositions
+	Offered   int `json:"offered"`
 	Rejected  int `json:"rejected"`
 	Abandoned int `json:"abandoned"`
 	Reverted  int `json:"reverted"`
 	TimedOut  int `json:"timed_out"`
+	Total     int `json:"total"`
 }
 
-// Add counts one unit disposition. Offered is incremented for every unit as the total offered.
+// Add counts one unit under its disposition and in Total.
 func (lc *LaneCounts) Add(disp string) {
-	norm := normalizeDisposition(disp)
-	lc.Offered++
-	switch norm {
+	lc.Total++
+	switch disp {
 	case DispositionQualified:
 		lc.Qualified++
+	case DispositionOffered:
+		lc.Offered++
 	case DispositionReverted:
 		lc.Reverted++
 	case DispositionRejected:
@@ -133,29 +113,22 @@ func (lc *LaneCounts) Add(disp string) {
 		lc.Abandoned++
 	case DispositionTimedOut:
 		lc.TimedOut++
-	case DispositionOffered:
-		// Counted in Offered total
 	}
 }
 
-// String formats lane counts for human display.
+// String formats lane counts for human display: the qualified count, every other disposition
+// that occurs, and the total.
 func (lc LaneCounts) String() string {
-	parts := []string{
-		fmt.Sprintf("%d qualified", lc.Qualified),
+	parts := []string{fmt.Sprintf("%d %s", lc.Qualified, DispositionQualified)}
+	for _, c := range []struct {
+		n    int
+		disp string
+	}{{lc.Reverted, DispositionReverted}, {lc.Rejected, DispositionRejected}, {lc.Abandoned, DispositionAbandoned}, {lc.TimedOut, DispositionTimedOut}, {lc.Offered, DispositionOffered}} {
+		if c.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.disp))
+		}
 	}
-	if lc.Reverted > 0 {
-		parts = append(parts, fmt.Sprintf("%d reverted", lc.Reverted))
-	}
-	if lc.Rejected > 0 {
-		parts = append(parts, fmt.Sprintf("%d rejected", lc.Rejected))
-	}
-	if lc.Abandoned > 0 {
-		parts = append(parts, fmt.Sprintf("%d abandoned", lc.Abandoned))
-	}
-	if lc.TimedOut > 0 {
-		parts = append(parts, fmt.Sprintf("%d timed-out", lc.TimedOut))
-	}
-	parts = append(parts, fmt.Sprintf("%d offered", lc.Offered))
+	parts = append(parts, fmt.Sprintf("%d total", lc.Total))
 	return strings.Join(parts, ", ")
 }
 
@@ -328,11 +301,12 @@ type Report struct {
 	Notes            []string         `json:"notes,omitempty"`
 }
 
-// FormatZeroFailureClaim prints n and the rule-of-three 95% upper bound.
-func FormatZeroFailureClaim(n int) string {
-	if n <= 0 {
+// FormatZeroFailureClaim words a failure count of zero per qualified unit: with no failure in
+// the observed units, the rule of three bounds the expected failures at 3, so at most 3/qualified
+// per qualified unit (95 %). It is undefined without a qualified unit.
+func FormatZeroFailureClaim(qualified, observed int) string {
+	if qualified <= 0 {
 		return UndefinedRate
 	}
-	bound := 3.0 / float64(n)
-	return fmt.Sprintf("0 (n=%d, rule-of-three bound <= %.2f)", n, bound)
+	return fmt.Sprintf("0 (rule-of-three bound <= %.2f per qualified unit; n=%d qualified units, %d units observed)", 3.0/float64(qualified), qualified, observed)
 }

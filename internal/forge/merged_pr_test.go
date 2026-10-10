@@ -323,6 +323,8 @@ func TestParseMergedPullRequests_Negative_StrictShapes(t *testing.T) {
 		"misspelled key in units": `{"units":[{"number":1,"metric_epoc":"2026-10-10"}]}`,
 		"repeated record key":     `[{"number":1,"number":2}]`,
 		"second document":         `[] []`,
+		"number conflict":         `[{"number":1,"pull_request_number":2}]`,
+		"no number":               `[{"head_branch":"b"}]`,
 	} {
 		prs, err := ParseMergedPullRequests([]byte(input))
 		if err == nil {
