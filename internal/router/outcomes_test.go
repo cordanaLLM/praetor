@@ -526,20 +526,22 @@ func TestReconcileLanes_LegacyMixCountsRunsOnly(t *testing.T) {
 	legacy := Outcome{Time: time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC), Task: "stubs", Lane: "gateway-coding", Target: "light", Result: OutcomeOK}
 	legacyWithCost := legacy
 	legacyWithCost.ActualCost = ptrFloat64(9)
+	unidentifiedWithCosts := legacyWithCost
+	unidentifiedWithCosts.Identity = RunIdentity{CostEstimate: ptrFloat64(1)}
 	measured := sampleOutcome("stubs", OutcomeOK)
-	recs := ReconcileLanes([]Outcome{legacy, legacyWithCost, measured, {Task: "stubs", Target: "light", Result: OutcomeOK}})
+	recs := ReconcileLanes([]Outcome{legacy, legacyWithCost, unidentifiedWithCosts, measured, {Task: "stubs", Target: "light", Result: OutcomeOK}})
 	if len(recs) != 2 || recs[0].Lane != "default" || recs[0].MeasuredRuns != 0 {
 		t.Fatalf("an outcome without lane groups under default, unmeasured: %+v", recs)
 	}
 	coding := recs[1]
-	if coding.Runs != 3 || coding.MeasuredRuns != 1 || coding.ActualCost != 0.048 || coding.EstimatedCost != 0.05 {
+	if coding.Runs != 4 || coding.MeasuredRuns != 1 || coding.ActualCost != 0.048 || coding.EstimatedCost != 0.05 {
 		t.Fatalf("unidentified records count as runs but never as measured costs: %+v", coding)
 	}
 	if coding.ErrorRatio == nil || math.Abs(*coding.ErrorRatio-(-0.04)) > 1e-9 {
 		t.Fatalf("error ratio over the measured run: %v", coding.ErrorRatio)
 	}
 	rendered := RenderLaneReconciliation(recs)
-	for _, want := range []string{"lane default: estimate-error not measured (runs: 1,", "lane gateway-coding: estimate-error -0.0020 (-4.0%)", "measured runs: 1 of 3"} {
+	for _, want := range []string{"lane default: estimate-error not measured (runs: 1,", "lane gateway-coding: estimate-error -0.0020 (-4.0%)", "measured runs: 1 of 4"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("rendered table lacks %q:\n%s", want, rendered)
 		}
@@ -574,5 +576,25 @@ func TestTallyCosts_MeasuresOnlyIdentifiedRunsWithBothCosts(t *testing.T) {
 	}
 	if _, ok := TallyCosts(nil).EstimateError(); ok {
 		t.Fatal("an empty tally must not report an estimate error")
+	}
+}
+
+// Encoding refuses NaN and infinity on write, so the validators are checked directly: they also
+// guard records built in memory and never encoded.
+func TestValidateOutcome_NonFiniteCostsRefused(t *testing.T) {
+	for name, mutate := range map[string]func(*Outcome){
+		"nan estimate":      func(o *Outcome) { o.Identity.CostEstimate = ptrFloat64(math.NaN()) },
+		"infinite estimate": func(o *Outcome) { o.Identity.CostEstimate = ptrFloat64(math.Inf(1)) },
+		"nan actual":        func(o *Outcome) { o.ActualCost = ptrFloat64(math.NaN()) },
+		"infinite actual":   func(o *Outcome) { o.ActualCost = ptrFloat64(math.Inf(1)) },
+	} {
+		o := sampleOutcome("stubs", OutcomeOK)
+		mutate(&o)
+		if err := ValidateOutcome(o); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if err := ValidateOutcome(sampleOutcome("stubs", OutcomeOK)); err != nil {
+		t.Fatalf("finite costs refused: %v", err)
 	}
 }
