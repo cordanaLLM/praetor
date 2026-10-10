@@ -2,7 +2,7 @@
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 report-error refusing to remove drifted documentation asset tools/markdownlint/package.json
 error refusing to remove drifted documentation asset tools/markdownlint/package.json
-file .github/workflows/praetor-docs.yml sha256:9b91f7cbcd861ea9844ad498ad727c2fcdce091f74d5a7f2a156ce0b7bbe6332
+file .github/workflows/praetor-docs.yml sha256:4df1894780cf41670c59b4b1eace88218168f7dbed8ee0f219156fc8af20c038
 file tools/markdownlint/package.json sha256:814f0b111bbd33310d28e9307d3ca07556631e895002729953c06f0c1ef6859a
 file tools/markdownlint/package-lock.json sha256:dc250eced16decfc99f38e830952d1e8679e2a2e68cd0faa7b893cd7aef8e795
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -14,7 +14,7 @@ file .prettierignore absent
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 report-error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
 error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
-file .github/workflows/praetor-docs.yml sha256:9b91f7cbcd861ea9844ad498ad727c2fcdce091f74d5a7f2a156ce0b7bbe6332
+file .github/workflows/praetor-docs.yml sha256:4df1894780cf41670c59b4b1eace88218168f7dbed8ee0f219156fc8af20c038
 file tools/markdownlint/package.json sha256:478075b86e983158355cb48f3fdd7630b2217b5855be6bfa69c4428b6ae58a25
 file tools/markdownlint/package-lock.json sha256:dc250eced16decfc99f38e830952d1e8679e2a2e68cd0faa7b893cd7aef8e795
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3

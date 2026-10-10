@@ -117,6 +117,8 @@ var priorDigests = map[string]string{
 	"51b53cde08a626fc77eae5c4f1134cff81fc7038baeb7b4e673129d6629da0fe": WorkflowFile,
 	// The hosted documentation gate on actions/setup-node v7.0.0 before the v7.1.0 update.
 	"9b91f7cbcd861ea9844ad498ad727c2fcdce091f74d5a7f2a156ce0b7bbe6332": WorkflowFile,
+	// The draft skip rendering of the gate on actions/setup-node v7.0.0 before the v7.1.0 update.
+	"3ac7dc11439891197d4d6b1ce608328ef4d756fa909a2c83e767ecdd64cb7db9": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked
