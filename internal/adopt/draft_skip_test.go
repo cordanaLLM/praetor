@@ -131,13 +131,15 @@ func TestFamilyClaimsBothDraftShapes(t *testing.T) {
 // text, LF or CRLF, are earlier texts of the family selecting the skip shape.
 func assertEarlierShapesRefreshToSkip(t *testing.T, family, skip managedasset.Family) {
 	t.Helper()
-	prior, err := os.ReadFile(hostedGatePriors[family.WorkflowFile])
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, text := range []string{string(prior), strings.ReplaceAll(family.Workflow, "\n", "\r\n"), family.Workflow} {
-		if known, _ := skip.PriorRendering(family.WorkflowFile, []byte(text)); !known {
-			t.Fatalf("%s: an earlier shape is not refreshed to the skip shape:\n%s", family.WorkflowFile, text)
+	for _, priorPath := range hostedGatePriors[family.WorkflowFile] {
+		prior, err := os.ReadFile(priorPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, text := range []string{string(prior), strings.ReplaceAll(family.Workflow, "\n", "\r\n"), family.Workflow} {
+			if known, _ := skip.PriorRendering(family.WorkflowFile, []byte(text)); !known {
+				t.Fatalf("%s: an earlier shape is not refreshed to the skip shape:\n%s", family.WorkflowFile, text)
+			}
 		}
 	}
 }

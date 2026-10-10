@@ -1,0 +1,4 @@
+type: changed
+title: Stop praetorctl adopt and init printing a fixed upstream repository name, report the configured repository name in their closing output, and rewrite the onboarding and adoption quickstart with prerequisites, the full scaffold table, a flavor table and the gaps init leaves in the audit
+issue: "#955"
+breaking: false

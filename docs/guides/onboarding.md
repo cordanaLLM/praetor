@@ -6,30 +6,85 @@ Onboard one of your existing repositories into declarative governance with Praet
 onboarding-path
 ```
 
-## 1. Quickstart Onboarding Command
+## 1. Quickstart
 
-The five-step onboarding pipeline requires a repository with canonical `AGENTS.md` instructions: `praetorctl init` compiles the agent files from it and writes none without it.
-
-[`praetorctl adopt`](../adoption.md) is an alternate entry point, not a step before `init`. One adopt run writes what steps 1 to 4 write (manifest, lockfile, debt baseline, `AGENTS.md` when it is missing, vendor files and DevContainer; `adoptSteps` in `internal/adopt/adopt.go`), so after it you continue at step 5, `praetorctl audit`. Do not run `praetorctl init` afterwards: it refuses because `.standards.yaml` already exists (`ensureManifestAbsent` in `cmd/standardsctl/init.go`).
-
-Execute the onboarding pipeline in your repository root:
+Prerequisites: `praetorctl` installed ([workstation install](workstation-update.md)); a Praetor
+Git checkout (adopt refuses a `git archive` export, see [source roots](../adoption.md)), written
+`/path/to/praetor` below, which `--lock-source-root` names so
+the lock can pin your profile and facets to content digests; a Git repository with your
+files committed; a known hosting forge, meaning an `origin` remote on `github.com` or
+`repository.forge` declared in `.standards.yaml` (any other host gets no Paperclip harness and the
+audit fails on its absence; [Hosting forge](../adoption.md#what-adoption-reads-before-it-writes)). Run these in the
+repository root. Each command exits 0 in a new Go module (a `go.mod` and one source file, a
+`github.com` `origin` remote, committed):
 
 ```bash
-# 1. Initialize configuration with declared profiles and compile the agent files from AGENTS.md
+# 1. Preview what adoption would write; the plan needs the lock source, as the real run does
+praetorctl adopt --dry-run --lock-source-root=/path/to/praetor
+
+# 2. Adopt: manifest, pinned lock and catalog, baseline, agent files, DevContainer, hooks, CI gates
+praetorctl adopt --lock-source-root=/path/to/praetor
+
+# 3. Stage what adoption wrote; audit reads tracked files
+git add -A
+
+# 4. Verify the configured governance contract
+praetorctl audit --offline
+```
+
+One adopt run is the whole onboarding. It detects the profile (the report's `Archetype:` line);
+when that is not the profile you want, pass `--profile` on the first run, or move an adopted
+repository with `praetorctl profile set <profile> --lock-source-root=/path/to/praetor`, then refresh
+with `praetorctl adopt --lock-source-root=/path/to/praetor` (add `--force` for the files `profile
+set` lists; the plain run also refreshes the Paperclip harness, which `profile set` does not check)
+([Changing the profile, facets or catalog](../adoption.md#changing-the-profile-facets-or-catalog)).
+`--dry-run` needs `--lock-source-root` on a first adoption because the plan resolves the policy the
+lock would pin; without it the dry run exits 1 with `new lock pins require an explicit verified
+lock source root`. The files adoption writes are listed step by step in
+[What Adoption Scaffolds Automatically](../adoption.md#what-adoption-scaffolds-automatically).
+`--offline` makes the audit read nothing from the forge: the live Actions permission, workflow
+run and branch-protection checks report as not made.
+
+## Staged onboarding with `praetorctl init`
+
+`praetorctl init` is the staged alternative. It requires canonical `AGENTS.md` instructions:
+it compiles the agent files from it and writes none without it. It is not a step before
+`adopt`, and it refuses once `.standards.yaml` exists (`ensureManifestAbsent` in
+`cmd/standardsctl/init.go`), so do not run it after adoption.
+
+```bash
+# 1. Initialize configuration: writes .standards.yaml, baseline, and placeholder lockfile
 praetorctl init --profile framework --facets security:high,api:public-contract
 
-# 2. Recompile the agent files and persona copies (rerun after every AGENTS.md edit)
+# 2. Pin the lockfile and write the policy catalog from the Praetor checkout
+praetorctl profile set --lock-source-root=/path/to/praetor
+
+# 3. Recompile the agent files and persona copies (rerun after every AGENTS.md edit)
 praetorctl compile-context
 
-# 3. Snapshot legacy technical debt infractions to prevent CI failure
+# 4. Snapshot legacy technical debt infractions to prevent CI failure
 praetorctl baseline --record --allow-increase --reason "<why>"
 
-# 4. Prepare a portable devcontainer from reviewed Praetor sources
-praetorctl devcontainer generate --source-root /path/to/reviewed/praetor
+# 5. Prepare a portable devcontainer from reviewed Praetor sources
+praetorctl devcontainer generate --source-root /path/to/praetor
 
-# 5. Verify the configured governance contract
-praetorctl audit
+# 6. Verify the configured governance contract
+praetorctl audit --offline
 ```
+
+`praetorctl init` writes `.standards.yaml`, a zero-debt `.standards-baseline.json` and an
+unpinned `.standards.lock` placeholder with no content digests, and prints a warning saying so.
+`devcontainer generate` and `audit` then fail on the missing digest; pin the lock afterwards with
+`praetorctl profile set --lock-source-root=/path/to/praetor` (which also materializes the policy
+catalog under `.config/archetypes/`).
+
+Init does not make the audit pass on its own. The audit stops at its first failing gate, so an
+init-only repository meets the gaps one at a time: no branch ruleset (`praetorctl sync` writes
+it), with `docs:seo-portal` no documentation gate (missing `tools/markdownlint`), with
+`api:public-contract` in a Go module no API compatibility gate (missing `tools/apicompat/gate`),
+no HISS-11 supply-chain exception, no `.paperclip/harness.json`, no agent definitions and no
+git hooks. Adoption writes all of them, which is why the quickstart uses it; `init` is a staged
+alternative that does not pass the audit on its own.
 
 Step 1 writes your repository's identity into `.standards.yaml`. `repository.owner` and
 `repository.name` come from the origin remote. Without a remote the owner is
@@ -69,11 +124,12 @@ activation. Those stages need their own selected checks and execution evidence.
 
 | Step | Action | Command | Expected Output |
 | :--- | :--- | :--- | :--- |
-| **1. Scaffolding** | Create declarative configuration and compile agent files | `praetorctl init` | `.standards.yaml`, `.standards.lock` and a zero-debt `.standards-baseline.json` created. The agent files are then written the way step 2 writes them (`initAgentContext` in `cmd/standardsctl/init.go`, `adopt.CompileAgentContext`): in a Git work tree the Praetor private-artifact block is merged into `.gitignore` unless Git already ignores `.workingdir/evidence/`; the text register is spliced into `AGENTS.md`; the six vendor files `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md` and the persona copies are compiled. An `AGENTS.md` the caveman lint rejects fails init after the files are written; fix it and run step 2 (`cmd/standardsctl/init_evidence_test.go`). |
-| **2. Context Recompilation** | Recompile vendor files and persona copies | `praetorctl compile-context` | The vendor files rewritten from `AGENTS.md` (all six unless `agent_clients` in `.standards.yaml` selects fewer); each persona in `.agents/agents` copied to `.claude/agents`, `.github/agents`, `.gemini/agents` and `.codex/agents`. `praetorctl compile-context --verify` checks the same files and writes nothing. |
-| **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record --allow-increase --reason "<why>"` | `.standards-baseline.json` populated with existing debt. |
-| **4. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
-| **5. Audit Verification** | Verify configured governance and debt-ratchet gates | `praetorctl audit` | Every executed gate reports pass; skipped or unsupported coverage remains explicit. |
+| **1. Scaffolding** | Create declarative configuration and compile agent files | `praetorctl init` | `.standards.yaml`, an unpinned `.standards.lock` placeholder and a zero-debt `.standards-baseline.json` created. The agent files are then written the way step 3 writes them (`initAgentContext` in `cmd/standardsctl/init.go`, `adopt.CompileAgentContext`): in a Git work tree the Praetor private-artifact block is merged into `.gitignore` unless Git already ignores `.workingdir/evidence/`; the text register is spliced into `AGENTS.md`; the six vendor files `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md` and the persona copies are compiled. An `AGENTS.md` the caveman lint rejects fails init after the files are written; fix it and run step 3 (`cmd/standardsctl/init_evidence_test.go`). |
+| **2. Lockfile Pinning** | Pin the lockfile and write the policy catalog from the Praetor checkout | `praetorctl profile set --lock-source-root=/path/to/praetor` | `.standards.lock` pinned with sha256 digests; policy catalog written under `.config/archetypes/`. Devcontainer generation and audit require this pin. |
+| **3. Context Recompilation** | Recompile vendor files and persona copies | `praetorctl compile-context` | The vendor files rewritten from `AGENTS.md` (all six unless `agent_clients` in `.standards.yaml` selects fewer); each persona in `.agents/agents` copied to `.claude/agents`, `.github/agents`, `.gemini/agents` and `.codex/agents`. `praetorctl compile-context --verify` checks the same files and writes nothing. |
+| **4. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record --allow-increase --reason "<why>"` | `.standards-baseline.json` populated with existing debt. |
+| **5. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
+| **6. Audit Verification** | Verify configured governance and debt-ratchet gates | `praetorctl audit --offline` | After `init` alone the audit fails at the first gate init leaves open (see the gaps above); once those are filled every executed gate reports pass, and skipped or unsupported coverage remains explicit. |
 
 ---
 
@@ -89,6 +145,36 @@ Legacy infractions recorded in `.standards-baseline.json` will not fail CI statu
 - **After a Praetor upgrade**: a newer build can add a check that finds debt in code nobody changed. The ratchet still refuses the higher count, but it no longer calls those findings introduced: when the scanned code is unchanged since the commit `commit_sha` names in `.standards-baseline.json`, or since the commit that last changed that file, the rejection tags them `(check added or changed since the baseline)`; a baseline without `commit_sha` gets the neutral `(not in the baseline)`. Either way the rejection names the remedy: fix the findings, or record them with `praetorctl baseline --record --allow-increase --reason "<why>"`. `praetorctl baseline --verify --all-violations` lists every failing finding first without rewriting the file ([A HISS rejection names the violations](adoption-verification.md#a-hiss-rejection-names-the-violations)).
 
 ---
+
+## Flavors
+
+A flavor names the stack of a repository within its profile and decides which templates, settings
+and toolchains `flavor audit` expects. `praetorctl flavor list` prints the table below and
+`praetorctl flavor inspect <name>` prints one flavor's required templates, settings and
+toolchains. Detection tries the flavors in this order and stops at the first match
+(`builtinFlavorList` in `internal/flavor/definitions.go`); rows and order are checked against that
+list by `TestFlavorTable_MatchesTheBuiltinFlavors` in `internal/flavor/flavor_table_test.go`.
+
+| Flavor | Profile | Detected by |
+| :-- | :-- | :-- |
+| `os-image` | `os-image` | `packer/*.pkr.hcl`, `mkosi.conf`, `build/mkosi.conf` or Kconfig fragments under `kconfig/` |
+| `infra-k8s` | `container-image` | `Chart.yaml`, `kustomization.yaml` or `helmfile.yaml` at the root |
+| `python-ml` | `app-service` | a machine-learning dependency in `pyproject.toml` or `requirements.txt` |
+| `native-gpu-systems` | `native-gpu-systems` | `meson.build` (root, `core/` or `libvmaf/`) or `CMakeLists.txt` |
+| `rust-systems` | `native-gpu-systems` | `Cargo.toml` |
+| `frontend-svelte` | `app-service` | `package.json` with `svelte.config.js`, `src/routes` or `vite.config.ts` |
+| `typescript-node` | `app-service` | `package.json` without `svelte.config.js` or `src/routes` |
+| `mobile-flutter` | `app-service` | `pubspec.yaml` |
+| `jvm-service` | `app-service` | `pom.xml`, `build.gradle`, `build.gradle.kts`, `mvnw` or `gradlew` |
+| `go-service` | `framework` | `go.mod` with `cmd/`, `Dockerfile` or `docker/` |
+| `go-library` | `framework` | `go.mod` with `pkg/` or `internal/` |
+| `agentic-autonomous` | `framework` | never detected; select it by name |
+
+When your repository matches no row, adoption still succeeds: it scaffolds no flavor templates and
+prints a "Not applicable" warning that names `praetorctl flavor apply --flavor=<name>`. `flavor
+audit` and `flavor apply` refuse until you either add one of the markers above or pass
+`--flavor=<name>`; `gate run` has no such flag, so there the remedy is the marker or a declared
+profile that fits.
 
 ## Flavor detection does not guess
 

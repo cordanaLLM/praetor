@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const adoptSuccessLine = "Repository successfully adopted into cordanaLLM/praetor governance!"
+const adoptSuccessLine = "Repository successfully onboarded: example/adopted"
 
 // adoptSuccessLineFixture is a git repository with an origin remote holding files, adopted with
 // lefthook stubbed out so adoption installs no hooks, and the source checkout it pins its lock

@@ -64,7 +64,7 @@ func runInit(args []string) error {
 		return err
 	}
 
-	fmt.Println("\nRepository successfully onboarded into cordanaLLM/praetor!")
+	fmt.Println("\n" + onboardedMessage(identity))
 	fmt.Println("Next steps: run 'praetorctl audit' and 'make verify-all'.")
 	return nil
 }
@@ -127,6 +127,22 @@ func initRepositoryIdentity(ctx context.Context, rootDir string, settings *opera
 		return config.RepositoryMetadata{}, fmt.Errorf("init: %w", err)
 	}
 	return config.RepositoryMetadata{Owner: owner, Name: name, Visibility: "public", DefaultBranch: branch}, nil
+}
+
+// onboardedMessage is the closing line of init and adopt. It names the repository the manifest records
+// (owner/name) and nothing else: Praetor ships no repository name of its own to print.
+func onboardedMessage(identity config.RepositoryMetadata, pending ...string) string {
+	if len(pending) == 0 {
+		if identity.Owner != "" && identity.Name != "" {
+			return fmt.Sprintf("Repository successfully onboarded: %s/%s", identity.Owner, identity.Name)
+		}
+		return "Repository successfully onboarded."
+	}
+	prefix := "Repository onboarded"
+	if identity.Owner != "" && identity.Name != "" {
+		prefix = fmt.Sprintf("Repository onboarded: %s/%s", identity.Owner, identity.Name)
+	}
+	return fmt.Sprintf("%s; not ready yet: %s. See the warnings above.", prefix, strings.Join(pending, ", "))
 }
 
 func createInitialManifest(outputPath, profile string, facets []string, identity config.RepositoryMetadata) error {

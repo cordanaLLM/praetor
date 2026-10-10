@@ -592,7 +592,7 @@ func TestPraetorAdoptAction_Negative_FailingRunStillPublishesItsReport(t *testin
 // job summary unchanged, and the step keeps the command's exit status.
 func TestPraetorAdoptAction_Boundary_PendingBaselineReachesReportAndSummary(t *testing.T) {
 	closing := []string{
-		"Repository adopted into cordanaLLM/praetor governance; not ready yet: Debt Baseline. See the warnings above.",
+		"Repository onboarded: example/adopted; not ready yet: Debt Baseline. See the warnings above.",
 		"  Debt Baseline: Baseline kept, not re-recorded; HISS-13 ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline",
 		"  Resolve: fix the findings, or accept them deliberately with 'praetorctl adopt --rerecord-baseline --allow-increase --reason=<why>'",
 	}
@@ -610,7 +610,7 @@ func TestPraetorAdoptAction_Boundary_PendingBaselineReachesReportAndSummary(t *t
 			t.Errorf("the job summary lost %q:\n%s", line, got.summary)
 		}
 	}
-	if strings.Contains(got.outputs["report"], "successfully adopted") {
+	if strings.Contains(got.outputs["report"], "successfully onboarded") {
 		t.Errorf("the action added a success line of its own:\n%s", got.outputs["report"])
 	}
 }

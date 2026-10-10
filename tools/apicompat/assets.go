@@ -62,9 +62,14 @@ const (
 // A pull request compares its base commit with the merge commit the checkout action checks
 // out; a push compares HEAD with the newest root release tag, and passes saying so while there
 // is none. fetch-depth 0 fetches every commit and tag that comparison may name. setup-go
-// installs the newest stable Go, whose toolchain switching (GOTOOLCHAIN=auto) honours a
-// module's newer go directive. The job keeps module and build caches of its own, keyed by its
-// job name, instead of setup-go's shared one (internal/forge/go_cache_checks.go).
+// pins stable so the gate runs on every runner without relying on a pre-installed toolchain
+// or assuming a root go.mod exists. Because setup-go exports GOTOOLCHAIN=local unconditionally,
+// the compare step sets GOTOOLCHAIN: auto in its environment so a module go or toolchain
+// directive selects the toolchain (#1037). This fixes root modules and patch-level nested
+// modules requiring a newer toolchain; a nested module whose go language version is newer than
+// the checker toolchain is not covered (docs/guides/api-compatibility.md).
+// The job keeps module and build caches of its own, keyed by its job name, instead of
+// setup-go's shared one (internal/forge/go_cache_checks.go).
 //
 // Audit locks an adopter's copy to these bytes, so the text holds to the policies an adopter
 // may enforce without being able to edit it: every action is pinned by full commit SHA with its
@@ -116,6 +121,7 @@ jobs:
       - name: Compare the API of every Go module` + ghworkflow.HostedGateStepIf + `
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
+          GOTOOLCHAIN: auto
         run: go run tools/apicompat/gate/main.go -base="$BASE"
 `
 
@@ -147,6 +153,11 @@ var priorDigests = map[string]string{
 	"d64b71821e056174c3127244483c916a3baa646b6f37f419eac44102c8c30dbd": WorkflowFile,
 	// The gate in the draft skip shape before it ran on merge_group (#893).
 	"2c9bafc92efe6d114d15881f3659020624a2e37920aab9628196a06d30b9816e": WorkflowFile,
+	// The gate before the compare step set GOTOOLCHAIN: auto to override setup-go's
+	// GOTOOLCHAIN=local (#1037).
+	"f7e57ed83e70886bb6a37906d040d4e6352c71d79e3da67215d0243f6ad02a4c": WorkflowFile,
+	// The draft skip rendering of the gate before the compare step set GOTOOLCHAIN: auto.
+	"63c91ef6890b046db5a87ad1ec222e4db8a680f4350350b60e5db2934f74f35a": WorkflowFile,
 }
 
 var assetNames = [...]string{GateFile, PlaceholderFile}

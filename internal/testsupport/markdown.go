@@ -204,3 +204,49 @@ func (s *markdownScan) heading(i int, text string) {
 		}
 	}
 }
+
+// MarkdownTableRowsUnderHeading extracts table rows located after heading up to the next
+// heading (a line beginning with '#'). It returns only rows whose first cell opens with a
+// backtick. Each returned row is a slice of strings containing the trimmed content of each cell.
+// CRLF line endings are normalized to LF so Windows checkouts behave identically (HISS-21).
+func MarkdownTableRowsUnderHeading(text, heading string) [][]string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	_, section, found := strings.Cut(text, heading)
+	if !found {
+		return nil
+	}
+	if idx := strings.IndexByte(section, '\n'); idx >= 0 {
+		section = section[idx+1:]
+	}
+	lines := strings.Split(section, "\n")
+	var rows [][]string
+	for i := 0; i < len(lines) && i < maxMarkdownLines; i++ {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "#") {
+			break
+		}
+		if !strings.HasPrefix(line, "| `") && !strings.HasPrefix(line, "|`") {
+			continue
+		}
+		cells := splitTableRow(lines[i])
+		if len(cells) > 0 {
+			rows = append(rows, cells)
+		}
+	}
+	return rows
+}
+
+// splitTableRow splits a markdown table row into trimmed cell contents, omitting the
+// outer empty elements produced by leading and trailing pipes.
+func splitTableRow(line string) []string {
+	raw := strings.Split(line, "|")
+	var cells []string
+	for i, c := range raw {
+		if (i == 0 || i == len(raw)-1) && strings.TrimSpace(c) == "" {
+			continue
+		}
+		cells = append(cells, strings.TrimSpace(c))
+	}
+	return cells
+}
