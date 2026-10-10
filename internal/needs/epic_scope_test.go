@@ -329,9 +329,10 @@ func TestGeneratePreMigrationEpic_Negative_AnalyzedSourceIsNotUnverified(t *test
 			t.Errorf("fully analyzed repository names unanalyzed source:\n%s", renderEpicDocument(epic))
 		}
 	}
-	// A .git directory git does not accept as a repository fails the listing.
+	// A .git file that is no gitlink makes git die, which fails the listing. (A .git directory
+	// git does not accept is skipped like any non-repository, so it cannot plant this.)
 	broken := t.TempDir()
-	writeRepoFile(t, filepath.Join(broken, ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeRepoFile(t, filepath.Join(broken, ".git"), "junk\n")
 	writeRepoFile(t, filepath.Join(broken, "requirements.txt"), "pytest\n")
 	writeRepoFile(t, filepath.Join(broken, "build.sh"), "#!/bin/sh\n")
 	epic, err := GeneratePreMigrationEpic(t.Context(), broken, FrameworkSource{}, nil)

@@ -1,0 +1,4 @@
+type: fixed
+title: "Make git worktree detection agree with git: skip dangling .git symlinks, incomplete .git directories and directories with an unusable HEAD, stop at malformed gitlinks"
+breaking: false
+issue: "1100"
