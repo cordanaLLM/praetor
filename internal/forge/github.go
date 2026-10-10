@@ -330,6 +330,13 @@ func (g *GitHubDriver) ReconcileProtectionReport(ctx context.Context, branch str
 	if err != nil {
 		return nil, err
 	}
+	return g.convergeRuleset(ctx, branch, listPath, name, desired)
+}
+
+// convergeRuleset writes the desired ruleset named name (a new one, or the live one of that name
+// merged and updated in place), reads it back and requires that it converged. It returns the
+// parameters the merge lowered, with the readback error too, since the write happened.
+func (g *GitHubDriver) convergeRuleset(ctx context.Context, branch, listPath, name string, desired map[string]any) ([]LoweredParameter, error) {
 	id, err := g.findRulesetID(ctx, listPath, name)
 	if err != nil {
 		return nil, fmt.Errorf("reconcile branch protection for %s: %w", branch, err)

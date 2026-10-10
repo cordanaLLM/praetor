@@ -34,6 +34,8 @@ runner `praetor-api.yml` runs on is declared exactly while adoption emits the ga
 
 ## When the workflow runs
 
+The locked workflow also triggers on `merge_group`, so the **Go API Compatibility** check reports for a merge group when the repository declares a merge queue ([Merge queue](../adoption.md#merge-queue)); an unedited copy without the trigger refreshes without `--force`.
+
 Adoption renders the workflow for the repository's default branch, resolved as for the branch
 ruleset: `repository.default_branch` in `.standards.yaml`, else the origin remote's `HEAD`, else
 `main` (`forge.RepositoryDefaultBranch` in `internal/forge/default_branch.go`). The rendering is

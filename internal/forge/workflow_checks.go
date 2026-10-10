@@ -43,8 +43,8 @@ const (
 // (aggregateCoveredJobs): the aggregate is required in their place (workflowContextsIn). It never
 // substitutes Praetor's own gates. Reads are bounded and reject symlink paths; incomplete
 // inventories fail.
-func RequiredStatusContexts(ctx context.Context, repoPath string) ([]string, error) {
-	return RequiredStatusContextsPlanned(ctx, repoPath, nil)
+func RequiredStatusContexts(ctx context.Context, repoPath string, opts ...ContextOption) ([]string, error) {
+	return RequiredStatusContextsPlanned(ctx, repoPath, nil, opts...)
 }
 
 // RequiredStatusContextsPlanned is RequiredStatusContexts over the workflows repoPath holds once
@@ -52,8 +52,8 @@ func RequiredStatusContexts(ctx context.Context, repoPath string) ([]string, err
 // would write there, or to nil for a file it would remove (overlayWorkflowFiles). An entry that
 // is not a workflow document directly under .github/workflows is not read. A nil planned reads
 // the workflows on disk alone.
-func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned map[string][]byte) ([]string, error) {
-	return requiredStatusContexts(ctx, repoPath, planned, nil)
+func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned map[string][]byte, opts ...ContextOption) ([]string, error) {
+	return requiredStatusContexts(ctx, repoPath, planned, nil, newContextOptions(opts))
 }
 
 // RequiredStatusContextsOf is RequiredStatusContexts over the named workflows alone: workflows
@@ -62,7 +62,7 @@ func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned
 // whose contexts its file cannot show does not fail a caller that needs only its own workflows'
 // contexts, such as the documentation gate while the branch ruleset is declined (#324). A named
 // workflow the repository lacks contributes nothing.
-func RequiredStatusContextsOf(ctx context.Context, repoPath string, workflows []string) ([]string, error) {
+func RequiredStatusContextsOf(ctx context.Context, repoPath string, workflows []string, opts ...ContextOption) ([]string, error) {
 	if len(workflows) > maxWorkflowFiles {
 		return nil, fmt.Errorf("workflow selection exceeds %d entries", maxWorkflowFiles)
 	}
@@ -74,12 +74,12 @@ func RequiredStatusContextsOf(ctx context.Context, repoPath string, workflows []
 		}
 		selected[name] = true
 	}
-	return requiredStatusContexts(ctx, repoPath, nil, selected)
+	return requiredStatusContexts(ctx, repoPath, nil, selected, newContextOptions(opts))
 }
 
 // requiredStatusContexts is RequiredStatusContextsPlanned over the workflows selected names, or
 // over every workflow when selected is nil.
-func requiredStatusContexts(ctx context.Context, repoPath string, planned map[string][]byte, selected map[string]bool) (_ []string, err error) {
+func requiredStatusContexts(ctx context.Context, repoPath string, planned map[string][]byte, selected map[string]bool, opts contextOptions) (_ []string, err error) {
 	if ctx == nil {
 		return nil, errors.New("workflow context discovery requires a context")
 	}
@@ -100,7 +100,7 @@ func requiredStatusContexts(ctx context.Context, repoPath string, planned map[st
 	if err != nil {
 		return nil, err
 	}
-	return filesContextsIn(files, identity)
+	return selectContexts(files, identity, opts)
 }
 
 // RequiredStatusContextsIn is RequiredStatusContexts for the checks that report inside the forge
@@ -113,8 +113,8 @@ func requiredStatusContexts(ctx context.Context, repoPath string, planned map[st
 // fork's forge: there the guard is false, a matrix job it skips is skipped before its matrix
 // expands, and none of its per-leg contexts is ever reported (actions/runner#952). Requiring them
 // would leave every pull request of the fork waiting forever.
-func RequiredStatusContextsIn(ctx context.Context, repoPath, repository string) ([]string, error) {
-	return requiredStatusContextsIn(ctx, repository, func(ctx context.Context) ([]workflowFile, error) {
+func RequiredStatusContextsIn(ctx context.Context, repoPath, repository string, opts ...ContextOption) ([]string, error) {
+	return requiredStatusContextsIn(ctx, repository, newContextOptions(opts), func(ctx context.Context) ([]workflowFile, error) {
 		return readWorkflowFiles(ctx, repoPath)
 	})
 }
@@ -124,8 +124,8 @@ func RequiredStatusContextsIn(ctx context.Context, repoPath, repository string) 
 // live branch protection of a branch can require only the checks of the workflows on that
 // branch, so the audit compares it with the commit the branch points at, not with a change that
 // has not landed there yet.
-func RequiredStatusContextsAt(ctx context.Context, repoPath, commit, repository string) ([]string, error) {
-	return requiredStatusContextsIn(ctx, repository, func(ctx context.Context) ([]workflowFile, error) {
+func RequiredStatusContextsAt(ctx context.Context, repoPath, commit, repository string, opts ...ContextOption) ([]string, error) {
+	return requiredStatusContextsIn(ctx, repository, newContextOptions(opts), func(ctx context.Context) ([]workflowFile, error) {
 		return readCommittedWorkflowFiles(ctx, repoPath, commit)
 	})
 }
@@ -133,7 +133,7 @@ func RequiredStatusContextsAt(ctx context.Context, repoPath, commit, repository 
 // requiredStatusContextsIn collects the required check contexts inside the repository named
 // repository of the workflows read returns (filesContextsIn), with every read bounded by one
 // workflowDiscoveryTimeout.
-func requiredStatusContextsIn(ctx context.Context, repository string, read func(context.Context) ([]workflowFile, error)) ([]string, error) {
+func requiredStatusContextsIn(ctx context.Context, repository string, opts contextOptions, read func(context.Context) ([]workflowFile, error)) ([]string, error) {
 	if ctx == nil {
 		return nil, errors.New("workflow context discovery requires a context")
 	}
@@ -146,7 +146,7 @@ func requiredStatusContextsIn(ctx context.Context, repository string, read func(
 	if err != nil {
 		return nil, err
 	}
-	return filesContextsIn(files, repository)
+	return selectContexts(files, repository, opts)
 }
 
 // filesContextsIn collects, in file order, the required check contexts of every workflow in files

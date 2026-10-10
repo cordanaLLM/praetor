@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -93,6 +94,9 @@ const rulesetEnforcementActive = "active"
 // default branch (RepositoryDefaultBranch) is branch: that branch and every lts-* branch, the
 // release line .config/flavors.yaml tracks. The local file and a remote sync share it, so neither
 // narrows the other.
+//
+// The merge_queue rule is not part of this ruleset: it lives in its own ruleset on the default
+// branch alone (MergeQueueRulesetName), because this one holds the lts-* wildcard.
 func RepositoryRulesetRefs(branch string) []string {
 	return []string{"refs/heads/" + branch, "refs/heads/lts-*"}
 }
@@ -129,7 +133,7 @@ func RenderRulesetForRepository(ctx context.Context, repoPath string, policy con
 	if err != nil {
 		return nil, nil, fmt.Errorf("render %s: %w", RepositoryRulesetPath, err)
 	}
-	contexts, err := RequiredStatusContextsPlanned(ctx, repoPath, planned)
+	contexts, err := RequiredStatusContextsPlanned(ctx, repoPath, planned, ForMergeQueue(policy.MergeQueue))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -148,6 +152,17 @@ type RulesetBaseline struct {
 	Branch   string
 	Policy   config.BranchProtectionPolicy
 	Contexts []string
+	// UnqueuedContexts are the contexts of every workflow, read only when Policy declares a merge
+	// queue (Contexts then holds the merge_group workflows alone): with the policy minus its queue
+	// they render the ruleset the repository carried before the queue was declared.
+	UnqueuedContexts []string
+	// QueuedContexts are the contexts of the merge_group workflows alone, read only when Policy
+	// declares no queue (Contexts then holds every workflow): with the policy plus a queue they
+	// render the ruleset the repository carried before the operator removed the declaration.
+	QueuedContexts []string
+	// queuedRead records that QueuedContexts was read (it may be empty), so a baseline built
+	// without it yields no queue prior.
+	queuedRead bool
 }
 
 // ReadRulesetBaseline reads the baseline of the repository at repoPath as it stands. A writer
@@ -163,11 +178,22 @@ func ReadRulesetBaseline(ctx context.Context, repoPath string) (RulesetBaseline,
 	if err != nil {
 		return RulesetBaseline{}, fmt.Errorf("read the default branch for %s: %w", RepositoryRulesetPath, err)
 	}
-	contexts, err := RequiredStatusContexts(ctx, repoPath)
+	contexts, err := RequiredStatusContexts(ctx, repoPath, ForMergeQueue(policy.MergeQueue))
 	if err != nil {
 		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
 	}
-	return RulesetBaseline{Branch: branch, Policy: policy, Contexts: contexts}, nil
+	baseline := RulesetBaseline{Branch: branch, Policy: policy, Contexts: contexts}
+	if policy.MergeQueue {
+		if baseline.UnqueuedContexts, err = RequiredStatusContexts(ctx, repoPath); err != nil {
+			return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
+		}
+		return baseline, nil
+	}
+	if baseline.QueuedContexts, err = RequiredStatusContexts(ctx, repoPath, ForMergeQueue(true)); err != nil {
+		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
+	}
+	baseline.queuedRead = true
+	return baseline, nil
 }
 
 // RepositoryBranchPolicy is the branch protection the repository at repoPath renders its ruleset
@@ -203,17 +229,39 @@ func RepositoryBranchPolicy(ctx context.Context, repoPath string) (config.Branch
 // review count, a signature rule, a status check) as much as an operator's own, matches no digest
 // and keeps the --force contract.
 func PriorRulesetDigests(baseline RulesetBaseline, current []byte) map[string]string {
-	priors := make(map[string]string, 2)
-	addPriorRuleset(priors, baseline.Branch, baseline, current,
-		"the ruleset of the repository's policy and workflows before this run")
-	if baseline.Branch != FallbackDefaultBranch {
-		addPriorRuleset(priors, FallbackDefaultBranch, baseline, current,
-			"the ruleset of the repository's policy and workflows before this run, for main as Praetor rendered it before it read the default branch")
+	priors := make(map[string]string, 4)
+	addPriorBranches(priors, baseline, current, "the ruleset of the repository's policy and workflows before this run")
+	if !baseline.Policy.MergeQueue && baseline.queuedRead {
+		// The operator removed the queue declaration: the ruleset on disk is still the queue
+		// rendering, which is Praetor's too, and the run that removes the queue refreshes it.
+		queued := baseline
+		queued.Policy.MergeQueue = true
+		queued.Contexts = baseline.QueuedContexts
+		addPriorBranches(priors, queued, current, "the ruleset of the repository's policy before it removed its merge queue")
+	}
+	if baseline.Policy.MergeQueue {
+		// The policy is read after the operator declared the queue, so the ruleset on disk is
+		// still the queue-less one: it is Praetor's too, and the run that adds the queue refreshes it.
+		unqueued := baseline
+		unqueued.Policy.MergeQueue, unqueued.Policy.CodeQLDefaultSetup = false, false
+		unqueued.Contexts = baseline.UnqueuedContexts
+		addPriorBranches(priors, unqueued, current, "the ruleset of the repository's policy before it declared a merge queue")
 	}
 	if len(priors) == 0 {
 		return nil
 	}
 	return priors
+}
+
+// addPriorBranches adds the rendering of baseline for its default branch to priors and, when that
+// branch is not FallbackDefaultBranch, for main as Praetor rendered it before it read the default
+// branch.
+func addPriorBranches(priors map[string]string, baseline RulesetBaseline, current []byte, label string) {
+	addPriorRuleset(priors, baseline.Branch, baseline, current, label)
+	if baseline.Branch != FallbackDefaultBranch {
+		addPriorRuleset(priors, FallbackDefaultBranch, baseline, current,
+			label+", for main as Praetor rendered it before it read the default branch")
+	}
 }
 
 // addPriorRuleset adds to priors, under label, the digest of the ruleset baseline's policy and
@@ -314,6 +362,9 @@ func protectionDocument(name string, refs []string, policy config.BranchProtecti
 		return nil, err
 	}
 	rules := protectionRules(policy, reviewCount, requireCodeOwner)
+	if policy.MergeQueue && policy.CodeQLDefaultSetup {
+		contexts = slices.DeleteFunc(slices.Clone(contexts), IsDefaultSetupContext)
+	}
 	if len(contexts) > 0 {
 		checks := make([]map[string]string, 0, len(contexts))
 		for i := 0; i < len(contexts) && i < maxRulesetContexts; i++ {
@@ -354,11 +405,15 @@ func protectionRules(policy config.BranchProtectionPolicy, reviewCount int, requ
 	if policy.RequireSignedCommits {
 		rules = append(rules, map[string]any{"type": "required_signatures"})
 	}
-	return append(rules, map[string]any{"type": "pull_request", "parameters": map[string]any{
+	rules = append(rules, map[string]any{"type": "pull_request", "parameters": map[string]any{
 		"required_approving_review_count":   reviewCount,
 		"dismiss_stale_reviews_on_push":     policy.DismissStaleReviews,
 		"require_code_owner_review":         requireCodeOwner,
 		"require_last_push_approval":        false,
 		"required_review_thread_resolution": true,
 	}})
+	if policy.MergeQueue && policy.CodeQLDefaultSetup {
+		rules = append(rules, codeScanningRuleOf())
+	}
+	return rules
 }

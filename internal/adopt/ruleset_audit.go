@@ -79,7 +79,7 @@ func auditRulesetContent(ctx context.Context, manifest *config.Manifest, rootDir
 	if !exists {
 		return fmt.Errorf("[FAIL] Branch protection ruleset %s is missing while policy requires linear history or signed commits; run 'praetorctl sync' to reconcile", rulesetFile)
 	}
-	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
+	contexts, err := forge.RequiredStatusContexts(ctx, rootDir, forge.ForMergeQueue(policy.MergeQueue))
 	if err != nil {
 		return fmt.Errorf("[FAIL] Branch protection ruleset audit failed: discover required status checks: %w", err)
 	}
@@ -87,9 +87,45 @@ func auditRulesetContent(ctx context.Context, manifest *config.Manifest, rootDir
 	if err != nil {
 		return fmt.Errorf("[FAIL] Branch protection ruleset audit failed: %w", err)
 	}
+	if err := auditMergeQueueContexts(ctx, rootDir, data, policy); err != nil {
+		return err
+	}
 	if err := forge.ValidateRepositoryRuleset(data, branch, policy, contexts); err != nil {
 		return fmt.Errorf("[FAIL] Branch protection ruleset %s does not match the declared policy: %w; "+
 			"'praetorctl sync' writes the declared ruleset when the file is absent", rulesetFile, err)
 	}
 	return nil
+}
+
+// auditMergeQueueContexts fails a stored ruleset that requires a status check no merge group
+// reports (#893): the branch is queue-protected, by the declared policy or by a merge_queue rule
+// the file carries, and a workflow that lacks the merge_group trigger owns a required context.
+// The failure names the workflow path and the missing trigger, which the generic drift error
+// would hide. A ruleset that requires only contexts of merge_group workflows passes here.
+func auditMergeQueueContexts(ctx context.Context, rootDir string, ruleset []byte, policy config.BranchProtectionPolicy) error {
+	required, queued := queueRequiredContexts(ruleset, policy)
+	if !queued {
+		return nil
+	}
+	findings, err := forge.MergeQueueFindings(ctx, rootDir, nil)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Branch protection ruleset audit failed: read the merge_group triggers: %w", err)
+	}
+	if text := forge.MergeQueueFailure("Branch protection ruleset "+rulesetFile, forge.RequiredWithoutMergeGroup(findings, required)); text != "" {
+		return errors.New("[FAIL] " + text)
+	}
+	return nil
+}
+
+// queueRequiredContexts returns the status contexts ruleset requires and whether the branch is
+// queue-protected, by policy or by a merge_queue rule in the file. A file that is not one JSON
+// document is no queue ruleset here: the content check that follows
+// (forge.ValidateRepositoryRuleset) reports it.
+func queueRequiredContexts(ruleset []byte, policy config.BranchProtectionPolicy) (required []string, queued bool) {
+	has, hasErr := forge.RulesetHasRule(ruleset, forge.MergeQueueRule)
+	contexts, contextsErr := forge.RulesetStatusContexts(ruleset)
+	if hasErr != nil || contextsErr != nil {
+		return nil, false
+	}
+	return contexts, policy.MergeQueue || has
 }

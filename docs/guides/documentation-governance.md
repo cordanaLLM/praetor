@@ -527,6 +527,8 @@ copy an entire scratch directory to make the diagnostic disappear.
 
 ## Adoption, audit, and CI
 
+`praetor-docs.yml` also triggers on `merge_group`, so **Documentation Governance** reports for a merge group when the repository declares a merge queue ([Merge queue](../adoption.md#merge-queue)); an unedited copy without the trigger refreshes without `--force`.
+
 Repositories declaring the `docs:seo-portal` facet receive the five canonical
 assets under `tools/markdownlint/`, the figure engine's 18 files under
 `tools/figures/` ([figures guide](figures.md#in-adopting-repositories)),

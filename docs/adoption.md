@@ -310,6 +310,102 @@ approvals, no code-owner review, the repository admin role as a pull-request byp
 aggregate as the only required check, is the one the audit accepts
 (`TestAdopt_Positive_SoloPathFilteredRulesetIsMergeable` in `internal/adopt/ruleset_solo_test.go`).
 
+### Merge queue
+
+A branch protected by a GitHub merge queue starts a run for a merge group, not a pull request, and
+a required check reports for a group only when its workflow triggers on `merge_group`. A ruleset
+that requires a context of any other workflow leaves every queued group waiting until the queue's
+check timeout, and the queue then removes it. Declare the queue in `.standards.yaml`:
+
+```yaml
+overrides:
+  branch_protection:
+    merge_queue: true
+    codeql_default_setup: true # only when CodeQL default setup scans the repository
+```
+
+Both keys are repository-only: a catalog archetype or facet that sets either fails to decode
+(`ArchetypeControls.validate`, `TestMergeQueueIsRepositoryOnly`). With `merge_queue: true`:
+
+- `sync --remote` writes a second Praetor-managed ruleset, named `praetor-main-protection merge
+  queue` (`forge.MergeQueueRulesetName`), that includes the default branch alone and carries the
+  `merge_queue` rule alone, with the seven parameters GitHub requires at GitHub's documented
+  defaults. The merge method is `SQUASH` while the policy enforces linear history and `MERGE`
+  otherwise (`TestRenderMergeQueueRuleset`). The main ruleset (`praetor-main-protection`,
+  `.github/rulesets/main.json`) keeps its includes, the default branch and `lts-*`, and carries no
+  `merge_queue` rule (`TestMergeQueueRendersOnlyMergeGroupContexts`). There is no committed file
+  for the queue ruleset.
+- The required status checks come only from workflows that declare a `merge_group` trigger
+  (`forge.ForMergeQueue`). A workflow that would otherwise require a check but lacks the trigger
+  is left out. `adopt`, `flavor apply` and `sync` (with or without `--remote`) print a warning
+  per omitted workflow with its path and contexts (`forge.QueueOmissions`,
+  `TestQueueOmissions`, `TestSync_Remote_DeclaredMergeQueueGetsItsOwnRuleset`). Add
+  `merge_group:` to the workflow to require it again. A workflow that requires no pull request
+  check is no finding.
+- Praetor's locked `praetor-docs.yml` and `praetor-api.yml` declare `merge_group`
+  (`ghworkflow.HostedGateOn`), so their `Documentation Governance` and `Go API Compatibility`
+  contexts stay required. An unedited earlier copy refreshes without `--force` because its text is
+  recorded as a prior
+  (`TestPriorDigestsReproduce` in `tools/markdownlint/assets_test.go`, `TestPriorDigests` in
+  `tools/apicompat/assets_test.go`).
+- CodeQL default setup never runs for a merge group and has no workflow file, so no check context
+  can require it. With `codeql_default_setup: true` the ruleset gates pull requests with a
+  `code_scanning` rule for CodeQL instead (`TestMergeQueueRendersCodeScanningForDefaultSetup`).
+  A CodeQL workflow of your own that triggers on `merge_group` is an ordinary required check.
+
+The audit fails a stored ruleset that requires a context whose workflow lacks `merge_group` while
+the policy declares a queue, and a live branch that has
+an active `merge_queue` rule and requires such a context
+(`TestAuditBranchProtection_MergeQueue_Negative`, `TestLiveMergeQueueFindings`). The failure names
+the workflow path and the missing trigger. Without a queue the rendering is the previous ruleset
+byte for byte (`TestNoMergeQueueRendersTheOldRuleset`).
+
+The declared `merge_queue: true` key is the only switch that selects the `merge_group` checks, in
+`sync --remote`, `plan --remote` and the audit alike, so `plan --remote` previews exactly what
+`sync --remote` writes. A merge queue configured only on GitHub does not switch it: the audit
+fails a live branch with an active `merge_queue` rule while the policy declares none, names the
+branch and says to declare `merge_queue: true` and run `sync --remote`
+(`TestAuditLiveBranchProtection_MergeQueueWiring`,
+`TestSync_Remote_UndeclaredLiveMergeQueueRulesetIsReportedNotWritten`). The merge into a live ruleset (each ruleset by its name) keeps
+the operator's `merge_queue` parameters (timeout, entry counts, grouping, merge method) and every
+tool a live `code_scanning` rule lists, adding only what the live rule lacks
+(`TestMergeRulesetKeepsLiveMergeQueueParameters`, `TestMergeRulesetUnionsLiveCodeScanningTools`).
+It also keeps every live required check, so a check an earlier `sync --remote` wrote for a
+workflow without `merge_group` stays required: with a declared queue `sync --remote` reads the
+ruleset back, prints a `[WARN]` naming that workflow instead of reporting the ruleset as
+synchronized, and leaves the removal to you
+(`TestSync_Remote_DeclaredMergeQueueWarnsAboutAStaleCheck`). It does drop CodeQL default setup
+contexts (`CodeQL`, `CodeQL / Analyze (...)`, `Analyze (...)`) from the required checks under
+`codeql_default_setup: true` (`TestMergeQueueDropsCodeQLDefaultSetupContexts`).
+The queue parameters have no policy key: change them on GitHub.
+
+To move a repository that already has a committed ruleset onto a queue, declare `merge_queue: true`
+and run `praetorctl adopt` or `praetorctl flavor apply`. The unedited queue-less ruleset is
+recognised as Praetor's and refreshed without `--force`
+(`TestAdopt_Positive_DeclaringAMergeQueueRefreshesTheUneditedRuleset`); a ruleset with a value
+edited is kept and warned about, and `--force` replaces it. `praetorctl sync` writes the ruleset
+only when it is absent and otherwise reports drift, so it does not perform this refresh.
+
+Declaring `merge_queue` drops the scaffolded CI contexts of the flavor templates (Go, Rust, Node,
+JVM, Flutter) from the required checks until their workflows trigger on `merge_group`: the
+templates do not declare it yet, so add `merge_group:` to the emitted workflow yourself. An edited
+workflow is not refreshed by adoption. Removing `merge_queue: true` refreshes the unedited queue
+rendering back to the queue-less ruleset without `--force`.
+
+GitHub documents that "a merge queue cannot be enabled with branch protection rules that use
+wildcard characters (*) in the branch name pattern"
+([managing a merge queue](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)).
+That is why the queue is not in the main ruleset, whose includes hold `lts-*`: its own ruleset
+targets the default branch alone, so the main ruleset and the `lts-*` coverage stay as they are.
+`sync --remote`, `plan --remote` and the audit read and write both rulesets by name, and the union
+merge of live includes applies per ruleset, so Praetor never adds a wildcard to the queue ruleset.
+A wildcard an operator adds to it stays, and `plan --remote`, `sync --remote` and the audit report
+it as drift in `Merge queue ruleset refs` (`TestAuditLiveBranchProtection_MergeQueueWiring`,
+`TestPlanRemote_PreviewsWhatSyncWritesForTheQueueRuleset`). Removing `merge_queue: true` does not
+delete the queue ruleset: `sync --remote` and `plan --remote` print a `[WARN]` that it still
+exists, and the audit fails while it applies, so delete it on GitHub by hand
+(`TestSync_Remote_UndeclaredLiveMergeQueueRulesetIsReportedNotWritten`).
+
 ### Refreshing a ruleset Praetor rendered earlier
 
 The ruleset is rendered from the effective policy and the workflows present, so it goes stale when
@@ -342,7 +438,8 @@ Keep a hand-managed ruleset with `adoption.decline: [branch-ruleset]`.
 ### Protected default branch
 
 The ruleset protects the repository's default branch and every `lts-*` branch
-(`forge.RepositoryRulesetRefs`). Adoption, `flavor apply`, `sync` (local and `--remote`) and the
+(`forge.RepositoryRulesetRefs`); a declared merge queue lives in a second ruleset on the default
+branch alone (see Merge queue). Adoption, `flavor apply`, `sync` (local and `--remote`) and the
 audit resolve that branch the same way (`forge.RepositoryDefaultBranch`); the first source that
 names one wins:
 

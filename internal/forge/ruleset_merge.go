@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"strings"
 )
 
 // maxRulesetRefs bounds the ref patterns of one ruleset condition (HISS-02).
@@ -45,7 +46,8 @@ func normalizeRuleset(doc map[string]any) (map[string]any, error) {
 // relaxation the policy declares included, and each rendered parameter whose live value was
 // stricter is returned as lowered (loweredParameters) for sync --remote to report. The live
 // ruleset keeps its bypass actors, other conditions, every ref it includes, every status check
-// context it requires, and every rule and rule parameter praetor does not render. Removing
+// context it requires (less the CodeQL default setup contexts a merge group never reports, when
+// desired carries a code_scanning rule), and every rule and rule parameter praetor does not render. Removing
 // any of those from a live ruleset is a deliberate manual change.
 func mergeRuleset(live, desired map[string]any) (map[string]any, []LoweredParameter, error) {
 	merged := map[string]any{"name": desired["name"], "target": desired["target"], "enforcement": desired["enforcement"]}
@@ -123,6 +125,9 @@ func mergeRules(liveRaw, desiredRaw any) ([]any, []LoweredParameter, error) {
 			merged.rules = append(merged.rules, live[i])
 		}
 	}
+	if hasRuleType(desired, codeScanningRule) {
+		dropDefaultSetupChecks(merged.rules)
+	}
 	if len(merged.rules) > maxRulesetRules {
 		return nil, nil, fmt.Errorf("merged ruleset exceeds %d rules", maxRulesetRules)
 	}
@@ -179,18 +184,80 @@ func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, [
 	if len(liveParams) == 0 && len(desiredParams) == 0 {
 		return rule, nil, nil
 	}
-	params := make(map[string]any, len(liveParams)+len(desiredParams))
-	maps.Copy(params, liveParams)
-	maps.Copy(params, desiredParams)
-	if ruleType == statusChecksParameter {
-		checks, checkErr := unionStatusChecks(liveParams[statusChecksParameter], desiredParams[statusChecksParameter])
-		if checkErr != nil {
-			return nil, nil, checkErr
-		}
-		params[statusChecksParameter] = checks
+	params, err := mergeRuleParameters(ruleType, liveParams, desiredParams)
+	if err != nil {
+		return nil, nil, err
 	}
 	rule["parameters"] = params
 	return rule, loweredParameters(ruleType, liveParams, desiredParams), nil
+}
+
+// mergeRuleParameters merges the desired parameters of a rule over the live ones. Most rules take
+// the declared value for every parameter praetor renders. The two rules a merge queue renders
+// take no declared values (there is no policy key for the queue sizes, timeout or grouping, nor
+// for the scanning thresholds), so the live ones are the operator's: a live merge_queue keeps
+// every parameter it has, and a live code_scanning keeps every tool it lists (#893).
+func mergeRuleParameters(ruleType string, liveParams, desiredParams map[string]any) (map[string]any, error) {
+	params := make(map[string]any, len(liveParams)+len(desiredParams))
+	switch ruleType {
+	case MergeQueueRule:
+		maps.Copy(params, desiredParams)
+		maps.Copy(params, liveParams)
+		return params, nil
+	case codeScanningRule:
+		maps.Copy(params, liveParams)
+		maps.Copy(params, desiredParams)
+		tools, err := unionCodeScanningTools(liveParams[codeScanningToolsParameter], desiredParams[codeScanningToolsParameter])
+		if err != nil {
+			return nil, err
+		}
+		params[codeScanningToolsParameter] = tools
+		return params, nil
+	}
+	maps.Copy(params, liveParams)
+	maps.Copy(params, desiredParams)
+	if ruleType == statusChecksParameter {
+		checks, err := unionStatusChecks(liveParams[statusChecksParameter], desiredParams[statusChecksParameter])
+		if err != nil {
+			return nil, err
+		}
+		params[statusChecksParameter] = checks
+	}
+	return params, nil
+}
+
+// codeScanningToolsParameter is the code_scanning rule parameter that lists the required tools.
+const codeScanningToolsParameter = "code_scanning_tools"
+
+// maxCodeScanningTools bounds the tools one code_scanning rule lists (HISS-02).
+const maxCodeScanningTools = 64
+
+// unionCodeScanningTools keeps every live tool entry as it is, thresholds included, and appends
+// each desired tool the live rule does not list yet.
+func unionCodeScanningTools(liveRaw, desiredRaw any) ([]any, error) {
+	live, err := objectList(liveRaw, codeScanningToolsParameter, maxCodeScanningTools)
+	if err != nil {
+		return nil, err
+	}
+	desired, err := objectList(desiredRaw, codeScanningToolsParameter, maxCodeScanningTools)
+	if err != nil {
+		return nil, err
+	}
+	merged := make([]any, 0, len(live)+len(desired))
+	present := make(map[any]bool, len(live))
+	for i := 0; i < len(live) && i < maxCodeScanningTools; i++ {
+		present[live[i]["tool"]] = true
+		merged = append(merged, live[i])
+	}
+	for i := 0; i < len(desired) && i < maxCodeScanningTools; i++ {
+		if !present[desired[i]["tool"]] {
+			merged = append(merged, desired[i])
+		}
+	}
+	if len(merged) > maxCodeScanningTools {
+		return nil, fmt.Errorf("merged %s exceed %d tools", codeScanningToolsParameter, maxCodeScanningTools)
+	}
+	return merged, nil
 }
 
 // LoweredParameter is a rendered ruleset parameter whose live value was stricter than the
@@ -527,4 +594,58 @@ func toAnyList(values []string) []any {
 		out = append(out, values[i])
 	}
 	return out
+}
+
+// hasRuleType reports whether rules holds a rule of type ruleType.
+func hasRuleType(rules []map[string]any, ruleType string) bool {
+	for i := 0; i < len(rules) && i < maxRulesetRules; i++ {
+		if rules[i]["type"] == ruleType {
+			return true
+		}
+	}
+	return false
+}
+
+// IsDefaultSetupContext reports whether a status context is one CodeQL default setup reports,
+// "CodeQL" or "CodeQL / Analyze (<language>)" or "Analyze (<language>)": default setup never
+// runs for a merge group, so a queue-protected branch must not require it as a status check (it
+// requires the results through a code_scanning rule instead).
+func IsDefaultSetupContext(context string) bool {
+	return context == "CodeQL" || strings.HasPrefix(context, "CodeQL / ") || strings.HasPrefix(context, "Analyze (")
+}
+
+// dropDefaultSetupChecks removes, in place, every CodeQL default setup context (IsDefaultSetupContext)
+// from the required_status_checks rules among rules. The union merge keeps every live required
+// check, so a context an earlier sync wrote would otherwise stay required and stall the queue.
+func dropDefaultSetupChecks(rules []any) {
+	for i := 0; i < len(rules) && i < maxRulesetRules; i++ {
+		rule, ok := rules[i].(map[string]any)
+		if !ok || rule["type"] != statusChecksParameter {
+			continue
+		}
+		params, ok := rule["parameters"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if checks, isList := params[statusChecksParameter].([]any); isList {
+			params[statusChecksParameter] = withoutDefaultSetupChecks(checks)
+		}
+	}
+}
+
+// withoutDefaultSetupChecks returns checks less the entries whose context is a CodeQL default
+// setup context.
+func withoutDefaultSetupChecks(checks []any) []any {
+	kept := make([]any, 0, len(checks))
+	for j := 0; j < len(checks) && j < maxRulesetContexts; j++ {
+		check, isObject := checks[j].(map[string]any)
+		name, isString := "", false
+		if isObject {
+			name, isString = check["context"].(string)
+		}
+		if !isString || !IsDefaultSetupContext(name) {
+			kept = append(kept, checks[j])
+		}
+	}
+	return kept
 }

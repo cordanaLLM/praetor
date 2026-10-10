@@ -43,7 +43,7 @@ func liveProtectionTarget(ctx context.Context, rootDir string, manifest *config.
 		return protectionTarget{}, err
 	}
 	repository := manifest.Repository.Owner + "/" + manifest.Repository.Name
-	contexts, _, err := remoteStatusContexts(ctx, rootDir, repository, nil)
+	contexts, _, err := remoteStatusContexts(ctx, rootDir, repository, policy.MergeQueue, nil)
 	if err != nil {
 		return protectionTarget{}, err
 	}
@@ -99,6 +99,9 @@ func reportLiveProtection(ctx context.Context, reader protectionReader, target p
 			"to the declared value and prints it as [LOWERED]; it leaves a rule it does not render, other rulesets and %s as they are, "+
 			"so change those on GitHub by hand if the declared policy is intended\n", forge.RepositoryRulesetName, forge.LegacyProtectionMechanism)
 	}
+	if !target.policy.MergeQueue && live.QueueRuleset != nil {
+		fmt.Println("    [WARN] " + forge.UndeclaredQueueRulesetNote(target.branch))
+	}
 	return drifted, nil
 }
 
@@ -118,10 +121,10 @@ func describeMechanisms(live *forge.LiveBranchProtection) string {
 
 // printLoweredParameters names each rendered parameter a ruleset write lowered from a stricter
 // live value to the declared one (forge.GitHubDriver.ReconcileProtectionReport).
-func printLoweredParameters(lowered []forge.LoweredParameter) {
+func printLoweredParameters(ruleset string, lowered []forge.LoweredParameter) {
 	for i := 0; i < len(lowered); i++ {
 		fmt.Printf("  [LOWERED] Ruleset %q rule %s: %s was %v on GitHub, now %v as declared\n",
-			forge.RepositoryRulesetName, lowered[i].Rule, lowered[i].Parameter, lowered[i].Live, lowered[i].Declared)
+			ruleset, lowered[i].Rule, lowered[i].Parameter, lowered[i].Live, lowered[i].Declared)
 	}
 }
 

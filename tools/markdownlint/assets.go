@@ -110,6 +110,11 @@ var priorDigests = map[string]string{
 	// The gate whose draft step ran under the runner's default shell, which is pwsh on a Windows
 	// runner and cannot read the step's script.
 	"0a2adf287a81d548a8ee2f32e28f92ffeba997a4c5189085538d8fdd0bff3d7a": WorkflowFile,
+	// The gate before it ran on merge_group, so a merge queue never got its Documentation
+	// Governance context (#893).
+	"5a8932a0b5535c934f5eb00bf097e7f9cdcfe94053f82941aa2ff7a6bd4f7803": WorkflowFile,
+	// The gate in the draft skip shape before it ran on merge_group (#893).
+	"51b53cde08a626fc77eae5c4f1134cff81fc7038baeb7b4e673129d6629da0fe": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked

@@ -133,7 +133,7 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 		return fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
 	}
 	printLines(notes)
-	return liveProtectionVerdict(target, protection, findings)
+	return errors.Join(liveProtectionVerdict(target, protection, findings), liveMergeQueueVerdict(ctx, rootDir, target, protection))
 }
 
 // auditProtectionTarget is what the audit compares the live branch protection with: the
@@ -159,7 +159,7 @@ func auditProtectionTarget(ctx context.Context, rootDir string, manifest *config
 	if commit == "" {
 		return target, []string{workingTreeChecksNote(target.branch, ref+" is not in this checkout")}, nil
 	}
-	committed, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository)
+	committed, err := forge.RequiredStatusContextsAt(ctx, rootDir, commit, target.repository, forge.ForMergeQueue(policy.MergeQueue))
 	if errors.Is(err, forge.ErrCommittedWorkflowAbsent) {
 		return target, []string{workingTreeChecksNote(target.branch, fmt.Sprintf(
 			"the workflows of %s (%s) are not all in this checkout, as in a partial clone (%v)", ref, shortHead(commit), err))}, nil
@@ -298,4 +298,24 @@ func printPlanActionsPermissions(ctx context.Context, manifest *config.Manifest,
 		return
 	}
 	fmt.Printf("  - %s: %s\n", finding.Verdict, finding.Detail)
+}
+
+// liveMergeQueueVerdict fails a branch the forge protects with a merge queue and a required
+// status check whose workflow lacks the merge_group trigger (#893): no group reports it, so
+// every queued group waits for it until the queue's check timeout. It passes silently for a
+// branch without a merge_queue rule, and names the workflow path and the missing trigger. A queue
+// the policy does not declare fails first: the declared key alone selects the merge_group
+// contexts, so the branch is not judged against a selection the policy never made.
+func liveMergeQueueVerdict(ctx context.Context, rootDir string, target protectionTarget, live *forge.LiveBranchProtection) error {
+	if !target.policy.MergeQueue && live != nil && live.HasActiveRule(forge.MergeQueueRule) {
+		return errors.New("[FAIL] " + forge.UndeclaredMergeQueueFailure(target.branch))
+	}
+	findings, err := forge.LiveMergeQueueFindings(ctx, rootDir, live)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Live branch protection of %s: read the merge_group triggers: %w", target.branch, err)
+	}
+	if text := forge.MergeQueueFailure("Live branch protection of "+target.branch, findings); text != "" {
+		return errors.New("[FAIL] " + text)
+	}
+	return nil
 }

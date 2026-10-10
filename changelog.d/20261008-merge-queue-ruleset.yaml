@@ -1,0 +1,4 @@
+type: fixed
+title: Support a GitHub merge queue - the declared overrides.branch_protection.merge_queue key (the only switch) makes sync --remote write the queue as its own Praetor-managed ruleset "praetor-main-protection merge queue" that includes the default branch alone and carries the merge_queue rule alone, because GitHub enables no merge queue under a wildcard pattern and the main ruleset keeps lts-*; the required checks come only from workflows that trigger on merge_group and codeql_default_setup gates CodeQL with a code_scanning rule; the locked docs, API and REUSE workflows now trigger on merge_group; BREAKING a live merge queue without the declared key fails the audit (migration - declare merge_queue true and run sync --remote); plan --remote previews what sync --remote writes, a wildcard added to the queue ruleset is reported as drift, and removing the key only reports the queue ruleset still on GitHub
+issue: "#893"
+breaking: true

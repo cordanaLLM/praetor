@@ -639,3 +639,47 @@ func TestAuditLiveBranchProtection_Boundary_AbsentDefaultBranchWorkflowIsNamed(t
 		"), so the status checks are compared with the ones this checkout's workflows report.",
 		"[PASS] Live branch protection of main compared with the forge")
 }
+
+// withQueueRuleset adds the live merge queue ruleset over includes (id 2) to rulesets.
+func withQueueRuleset(rulesets map[int]map[string]any, includes ...string) map[int]map[string]any {
+	rulesets[2] = liveQueueRuleset(includes...)
+	return rulesets
+}
+
+// Negative (rule 13, #893): auditLiveBranchProtection fails a branch whose live rulesets hold an
+// active merge_queue rule while the policy does not declare one, naming the branch and the
+// remedy; with the declaration it fails a required check whose workflow lacks merge_group, a
+// declared queue the forge lacks, and a queue ruleset that gained a wildcard; and a branch with
+// the queue ruleset on the default branch alone passes. Dropping the liveMergeQueueVerdict term
+// makes the first two fail, dropping MergeQueueRulesetFindings the last two.
+func TestAuditLiveBranchProtection_MergeQueueWiring(t *testing.T) {
+	queued := declaredProtection(false)
+	queued.MergeQueue = true
+	declared := config.DefaultPolicy()
+	declared.BranchProtection.MergeQueue = true
+	audit := func(rulesets map[int]map[string]any, policy *config.ResolvedPolicy) (string, error) {
+		return liveProtectionAudit(t, protectedFixture(t, false, "", &forgeStub{rulesets: rulesets}), policy)
+	}
+
+	_, err := audit(withQueueRuleset(liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"), "refs/heads/main"), config.DefaultPolicy())
+	mustErrContain(t, err, "carries an active merge_queue rule that the policy does not declare")
+	mustErrContain(t, err, "overrides.branch_protection.merge_queue: true")
+	mustErrContain(t, err, "main")
+
+	_, err = audit(withQueueRuleset(liveRuleset(t, queued, []string{"CI"}, "active"), "refs/heads/main"), declared)
+	mustErrContain(t, err, ".github/workflows/ci.yml: no merge_group trigger")
+
+	_, err = audit(liveRuleset(t, queued, nil, "active"), declared)
+	mustErrContain(t, err, "Merge queue")
+
+	_, err = audit(withQueueRuleset(liveRuleset(t, queued, nil, "active"), "refs/heads/main", "refs/heads/lts-*"), declared)
+	mustErrContain(t, err, "Merge queue ruleset refs")
+	mustErrContain(t, err, "wildcard refs/heads/lts-*")
+
+	if out, err := audit(withQueueRuleset(liveRuleset(t, queued, nil, "active"), "refs/heads/main"), declared); err != nil {
+		t.Fatalf("a queue ruleset on the default branch alone failed: %v\n%s", err, out)
+	}
+	if out, err := audit(liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"), config.DefaultPolicy()); err != nil {
+		t.Fatalf("a branch without a queue failed: %v\n%s", err, out)
+	}
+}

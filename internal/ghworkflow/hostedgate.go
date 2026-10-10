@@ -52,9 +52,18 @@ const (
 	HostedGateReadyType = "ready_for_review"
 	// hostedGateTypes are the pull_request activity types a gate runs on, in their order.
 	hostedGateTypes = "opened, synchronize, reopened, " + HostedGateReadyType
+	// HostedGateMergeGroup is the event GitHub raises for a merge group, the temporary branch a
+	// merge queue builds before it merges. A required check reports for a group only when its
+	// workflow triggers on it, so a gate that can be a required context declares it (#893).
+	HostedGateMergeGroup = "merge_group"
+	// HostedGateMergeGroupTrigger is the gate's merge_group line of its 'on' block. It names no
+	// activity type, so it runs on the one GitHub defines, checks_requested. The job's draft step
+	// reads github.event.pull_request, which a group run lacks, so it skips there and the gate
+	// runs.
+	HostedGateMergeGroupTrigger = "  " + HostedGateMergeGroup + ":\n"
 	// HostedGateOn is a gate's whole 'on' block, rendered for HostedGateDefaultBranch.
 	HostedGateOn = "'on':\n  pull_request:\n    types: [" + hostedGateTypes + "]\n  push:" +
-		HostedGatePushBranchesPrefix + HostedGateDefaultBranch + "']\n"
+		HostedGatePushBranchesPrefix + HostedGateDefaultBranch + "']\n" + HostedGateMergeGroupTrigger
 	// PullRequestDraftField is the event payload field that is true on a draft pull request; a
 	// condition that reads it decides on drafts.
 	PullRequestDraftField = "github.event.pull_request.draft"
@@ -145,8 +154,12 @@ func HostedGateFault(spec *Spec, jobID, branch string) error {
 
 // hostedGateTriggerFault reports how an 'on' node departs from HostedGateOn rendered for branch.
 func hostedGateTriggerFault(on *yaml.Node, branch string) error {
-	if on.Kind != yaml.MappingNode || len(on.Content) != 4 {
-		return errors.New("the hosted gate's trigger is not exactly pull_request and push")
+	if on.Kind != yaml.MappingNode || len(on.Content) != 6 {
+		return errors.New("the hosted gate's trigger is not exactly pull_request, push and merge_group")
+	}
+	if group := util.YAMLMappingValue(on, HostedGateMergeGroup); group == nil || group.Kind != yaml.ScalarNode || group.ShortTag() != "!!null" {
+		return errors.New("the hosted gate's merge_group trigger is missing or names a filter or activity type: " +
+			"a merge queue needs the gate to report for every group")
 	}
 	types := sequenceValues(onlyKey(util.YAMLMappingValue(on, "pull_request"), "types"))
 	if !slices.Equal(types, strings.Split(hostedGateTypes, ", ")) {

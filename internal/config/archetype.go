@@ -157,6 +157,9 @@ func (c ArchetypeControls) validate() error {
 	if c.BranchProtection.ReviewMode != "" {
 		return errors.New("branch_protection.review_mode is a repository-only setting")
 	}
+	if c.BranchProtection.MergeQueue || c.BranchProtection.CodeQLDefaultSetup {
+		return errors.New("branch_protection.merge_queue and codeql_default_setup are repository-only settings")
+	}
 	if c.BranchProtection.RequiredApprovingReviewers < 0 || c.SupplyChain.SLSALevel < 0 {
 		return errors.New("required_approving_reviewers and slsa_level cannot be negative")
 	}

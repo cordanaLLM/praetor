@@ -233,11 +233,13 @@ func TestShippedTextLedgerBoundary(t *testing.T) {
 	moved := mustCurrentDigests(t, family)
 	appended := mustParseLedger(t, appendChangedTexts(family, text, entries, moved))
 	family.Prior[outgoing] = family.WorkflowFile
-	if problems := ledgerProblems(family, appended, moved, nil); len(problems) != 0 {
+	_, skipEntries, _ := readSkipLedger(t, family)
+	_, skipEarlier, _ := splitLedger(family, skipEntries)
+	if problems := ledgerProblems(family, appended, moved, skipEarlier); len(problems) != 0 {
 		t.Fatalf("a recorded outgoing text still fails the ledger: %v", problems)
 	}
 	back := append(slices.Clone(appended), shippedText{digest: outgoing, rel: family.WorkflowFile})
-	assertLedgerProblem(t, ledgerProblems(family, back, current, nil), "is listed twice")
+	assertLedgerProblem(t, ledgerProblems(family, back, current, skipEarlier), "is listed twice")
 	if _, err := parseLedger(strings.Repeat("\n", maxLedgerLines)); err == nil {
 		t.Fatal("a ledger past its line bound parsed")
 	}

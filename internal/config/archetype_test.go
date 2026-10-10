@@ -175,6 +175,7 @@ var archetypeKeyProbes = map[string]string{
 	"error_unwraps": "strict_ban", "branch_protection.enforce_linear_history": "true",
 	"branch_protection.require_signed_commits": "true", "branch_protection.required_approving_reviewers": "2",
 	"branch_protection.dismiss_stale_reviews": "true", "branch_protection.review_mode": "independent",
+	"branch_protection.merge_queue": "true", "branch_protection.codeql_default_setup": "true",
 	"supply_chain.slsa_level": "2", "supply_chain.enforce_cosign": "true", "supply_chain.require_sbom": "true",
 	"linters": "[semgrep]", "devcontainer_features": `["ghcr.io/devcontainers/features/go:1"]`,
 	"backlog.caps.defects.max": "80", "backlog.caps.defects.action": "gate",
@@ -196,8 +197,14 @@ func probeDocument(key, value string) string {
 	return document.String() + " " + value + "\n"
 }
 
+// repositoryOnlyKeys are the keys a catalog file may name only to be refused (validate).
+var repositoryOnlyKeys = map[string]bool{
+	"branch_protection.review_mode": true, "branch_protection.merge_queue": true,
+	"branch_protection.codeql_default_setup": true,
+}
+
 // ArchetypeKeys lists the closed schema with sections spelled dotted and never bare, and
-// every key it lists decodes in a catalog file except review_mode, which validate refuses.
+// every key it lists decodes in a catalog file except the repository-only keys, which validate refuses.
 func TestArchetypeKeysListTheClosedSchema(t *testing.T) {
 	keys := ArchetypeKeys()
 	if len(keys) != len(archetypeKeyProbes) || !slices.IsSorted(keys) {
@@ -215,7 +222,7 @@ func TestArchetypeKeysListTheClosedSchema(t *testing.T) {
 			continue
 		}
 		_, err := decodeArchetype(t.Context(), "catalog/probe.yaml", []byte(probeDocument(key, value)))
-		if refused := key == "branch_protection.review_mode"; (err != nil) != refused {
+		if refused := repositoryOnlyKeys[key]; (err != nil) != refused {
 			t.Errorf("%s: decode error %v, refused %t", key, err, refused)
 		}
 	}
