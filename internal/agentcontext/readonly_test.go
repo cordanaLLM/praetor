@@ -61,22 +61,85 @@ func TestReadOnlyProjection_Positive(t *testing.T) {
 		}
 	}
 
-	// Verify HISS-17 row is replaced
+	// Verify HISS-17 row is replaced while retaining praetor gate enforcement
 	if !strings.Contains(got, "read-only: no ledger mutation") {
 		t.Errorf("read-only projection missing HISS-17 read-only replacement")
+	}
+	if !strings.Contains(got, "| pre-commit / CI | gate |") {
+		t.Errorf("read-only projection missing praetor HISS-17 gate enforcement")
 	}
 
 	// Verify Rule 2 runs inside verification gate
 	if !strings.Contains(got, "runs inside verification gate") {
 		t.Errorf("read-only projection missing Rule 2 gate replacement")
 	}
+
+	// Verify Primary Verification Commands does not contain bare verification gate line
+	if strings.Contains(got, "\nverification gate\n") || strings.Contains(got, "# all format, lint, security gates") {
+		t.Errorf("Primary Verification Commands contains bare verification gate or dangling comment")
+	}
+}
+
+func TestReadOnlyProjection_AdopterHarness(t *testing.T) {
+	input := strings.Join([]string{
+		"# Adopter Harness",
+		"",
+		"| **HISS-17** state ledger | turn start `praetorctl state status`; turn end `praetorctl state sync .` | not enforced | advisory |",
+		"",
+		"## Operational Rules",
+		"",
+		"1. **Act on verified state.**",
+		"- end: run `praetorctl state sync .`",
+		"",
+		"## Primary Verification Commands",
+		"",
+		"```bash",
+		"# Repository gate; steps live in Makefile",
+		"make verify-all",
+		"```",
+	}, "\n")
+
+	got, err := ReadOnlyProjection(input)
+	if err != nil {
+		t.Fatalf("ReadOnlyProjection failed on adopter harness: %v", err)
+	}
+
+	// Adopter row must retain 'not enforced | advisory |'
+	if !strings.Contains(got, "| not enforced | advisory |") {
+		t.Errorf("adopter row enforcement/failure mode altered: %s", got)
+	}
+	if strings.Contains(got, "| pre-commit / CI | gate |") {
+		t.Errorf("adopter row falsely gained praetor enforcement: %s", got)
+	}
+	// '- end: run `praetorctl state sync .`' must be dropped
+	if strings.Contains(got, "state sync") {
+		t.Errorf("mutating command survived in adopter projection: %s", got)
+	}
+	// 'make verify-all' and comment must be dropped, not replaced by bare 'verification gate'
+	if strings.Contains(got, "verification gate") {
+		t.Errorf("Primary Verification Commands contains bare verification gate: %s", got)
+	}
+}
+
+func TestAssertNoMutatingCommands_GitGuards(t *testing.T) {
+	for _, cmd := range []string{
+		"git commit -s",
+		"git commit",
+		"git push",
+		"git push origin main",
+		"git add .",
+		"git add -A",
+	} {
+		if err := assertNoMutatingCommands("some text with " + cmd + " included"); err == nil {
+			t.Errorf("assertNoMutatingCommands(%q) expected error, got nil", cmd)
+		}
+	}
 }
 
 func TestReadOnlyProjection_Negative(t *testing.T) {
 	for name, input := range map[string]string{
-		"empty":             "",
-		"whitespace":        "   \n\t  \n  ",
-		"mutating survivor": "# Harness\n\nSome unhandled command `state sync`\n",
+		"empty":      "",
+		"whitespace": "   \n\t  \n  ",
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := ReadOnlyProjection(input)

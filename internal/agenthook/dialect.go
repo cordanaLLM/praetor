@@ -130,6 +130,19 @@ func (d Dialect) Encode(canonical Canonical, verdict Verdict) Response {
 	}
 	switch verdict.Outcome {
 	case Allow:
+		if verdict.AddedContext != "" && d.Client == "claude" {
+			payload := map[string]any{
+				"hookSpecificOutput": map[string]any{
+					"hookEventName":     "PreToolUse",
+					"additionalContext": verdict.AddedContext,
+				},
+			}
+			data, err := json.Marshal(payload)
+			if err != nil {
+				return Response{Stderr: []byte("praetor hook: encode response: " + err.Error() + "\n"), ExitCode: d.denyExit}
+			}
+			return Response{Stdout: append(data, '\n')}
+		}
 		if d.allowMarker != "" && canonical.Event == EventPreTool {
 			return Response{Stdout: []byte(d.allowMarker + "\n")}
 		}

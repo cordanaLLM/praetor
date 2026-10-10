@@ -60,9 +60,10 @@ Session start: `python3 scripts/dev_mcp.py probe`; verify source identity.
 
 9. **Anti-loop interception.** Same AST diff + error category repeats $\ge 3$ times -> halt immediately. Re-evaluate design; no micro-textual retries.
 
-10. **State ledger discipline (HISS-17).** Read-only session maintains no state ledger mutations. Whole `.workingdir` private + Git-ignored. Never stage its contents. Read existing context without writes.
-    - Turn start: read `.workingdir/OPEN.md` or `praetorctl state status` read-only when needed; never read whole `.workingdir/STATE.md` at turn start (~45k tokens).
+10. **State ledger discipline (HISS-17).** Read-only session maintains no state ledger mutations. Whole dir private + Git-ignored (cluster connection guides, backend settings, memory, scratch). Never stage its contents, force included. Publish reviewed, sanitized docs under `docs/` instead.
+    - Turn start: `praetorctl state status` (9 lines) + open tasks in `.workingdir/OPEN.md`. Never read whole `.workingdir/STATE.md` at turn start (~45k tokens); look up one entry only when decision needs it.
     - Read-only execution: no task additions, ledger mutations, checkpoint hooks, commits.
+
 11. **Diff-aware CI efficiency (HISS-18).** CI pipelines MUST evaluate git diffs via `standardsctl ci filter`, run targeted gates. Pure docs or session-state changes MUST skip heavy race detectors + security suites; invariant integrity kept.
 
 12. **No tool attribution in repository history.** Never append authorship/provenance marker for producing agent: no `Co-Authored-By:` trailer naming model or coding tool, no "generated with <tool>" footer, no equivalent badge in commit message, PR body, issue, review comment. Vendor-neutral: binds every assistant harness compiles context for.
@@ -112,7 +113,4 @@ go run ./cmd/standardsctl audit
 
 # audit workstation dir topology (DEV-01..DEV-05)
 go run ./cmd/standardsctl topology audit "${PRAETOR_DEV_ROOT:-$HOME/dev}"
-
-# all format, lint, security gates
-verification gate
 ```

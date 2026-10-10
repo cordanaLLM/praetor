@@ -33,10 +33,10 @@ Known URL/path props backed by non-literal JSX expressions, and JSX spread
 attributes that could introduce one, fail closed as unsupported instead of
 being silently skipped.
 
-The style linter excludes generated agent projections (`AGENTS.md`, `CLAUDE.md`,
-and their vendor directories), generated `CHANGELOG.md`, caveman fixtures,
-private scratch/worktree trees, and dependency/vendor trees. Those files are not
-public author-written documentation: they have a generator, fixture-byte,
+The style linter excludes generated agent projections (`AGENTS.md`,
+`AGENTS.readonly.md`, `CLAUDE.md`, and their vendor directories), generated
+`CHANGELOG.md`, caveman fixtures, private scratch/worktree trees, and
+dependency/vendor trees. Those files are not public author-written documentation: they have a generator, fixture-byte,
 caveman, or upstream format contract. Except for ignored untracked content, they
 remain in the broader private-link scan. A repository adds its own style
 exclusions for partial, generated, or fixture Markdown in `.standards.yaml`

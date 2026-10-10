@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
-	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -59,21 +58,11 @@ func VerifyReadOnlyContext(ctx context.Context, source, targetDir string) error 
 // ContextForBrief returns the read-only context projection if brief is marked read-only,
 // or the full content unchanged if brief is not read-only.
 func ContextForBrief(content, brief string) (string, error) {
-	isReadOnly, err := caveman.ExtractBriefReadOnly(brief)
-	if err != nil {
-		return "", err
-	}
-	if isReadOnly {
-		return agentcontext.ReadOnlyProjection(content)
-	}
-	return content, nil
+	return agentcontext.ContextForBrief(content, brief)
 }
 
 // ContextForRole returns the read-only context projection if role represents a read-only agent,
 // or the full content unchanged otherwise.
 func ContextForRole(content, role string) (string, error) {
-	if agentcontext.IsReadOnlyRole(role) {
-		return agentcontext.ReadOnlyProjection(content)
-	}
-	return content, nil
+	return agentcontext.ContextForRole(content, role)
 }

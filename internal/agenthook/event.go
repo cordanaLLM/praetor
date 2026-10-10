@@ -104,6 +104,8 @@ type Canonical struct {
 	ToolUseID string
 	// AgentID identifies the launched subagent across a dispatch receipt and its return.
 	AgentID string
+	// Role identifies the dispatched subagent persona or role.
+	Role string
 }
 
 // Outcome is the decision class of a verdict.
@@ -118,8 +120,9 @@ const (
 
 // Verdict is one decision with the reason a dialect reports for Deny and Skip.
 type Verdict struct {
-	Outcome Outcome
-	Reason  string
+	Outcome      Outcome
+	Reason       string
+	AddedContext string
 }
 
 // Response is what the process writes and the code it exits with.

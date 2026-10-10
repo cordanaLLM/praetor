@@ -56,6 +56,7 @@ type agyPreToolPayload struct {
 
 type agySubagent struct {
 	Prompt string `json:"Prompt"`
+	Role   string `json:"Role"`
 }
 
 type agyDispatchArgs struct {
@@ -94,33 +95,37 @@ func agyDecodePreDispatch(payload []byte) (Canonical, error) {
 	if doc.ToolCall == nil || doc.ToolCall.Name != "invoke_subagent" {
 		return Canonical{}, errors.New("toolCall.name must be invoke_subagent")
 	}
-	briefs, err := agyDispatchBriefs(doc.ToolCall.Args)
+	briefs, role, err := agyDispatchBriefs(doc.ToolCall.Args)
 	if err != nil {
 		return Canonical{}, err
 	}
-	canonical.Tool, canonical.Briefs = doc.ToolCall.Name, briefs
+	canonical.Tool, canonical.Briefs, canonical.Role = doc.ToolCall.Name, briefs, role
 	return canonical, nil
 }
 
 // agyDispatchBriefs reads the documented 1..MaxDispatchBriefs Subagents[].Prompt values of
 // an invoke_subagent call; each must be nonempty text.
-func agyDispatchBriefs(raw json.RawMessage) ([]string, error) {
+func agyDispatchBriefs(raw json.RawMessage) ([]string, string, error) {
 	var args agyDispatchArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
-		return nil, errors.New("toolCall.args.Subagents must be an array")
+		return nil, "", errors.New("toolCall.args.Subagents must be an array")
 	}
 	if len(args.Subagents) == 0 || len(args.Subagents) > MaxDispatchBriefs {
-		return nil, fmt.Errorf("toolCall.args.Subagents must contain 1..%d entries", MaxDispatchBriefs)
+		return nil, "", fmt.Errorf("toolCall.args.Subagents must contain 1..%d entries", MaxDispatchBriefs)
 	}
 	briefs := make([]string, 0, len(args.Subagents))
+	role := ""
 	for index := 0; index < len(args.Subagents) && index < MaxDispatchBriefs; index++ {
 		prompt := args.Subagents[index].Prompt
 		if strings.TrimFunc(prompt, isPythonSpace) == "" {
-			return nil, fmt.Errorf("toolCall.args.Subagents[%d].Prompt must be nonempty text", index)
+			return nil, "", fmt.Errorf("toolCall.args.Subagents[%d].Prompt must be nonempty text", index)
 		}
 		briefs = append(briefs, prompt)
+		if role == "" && args.Subagents[index].Role != "" {
+			role = args.Subagents[index].Role
+		}
 	}
-	return briefs, nil
+	return briefs, role, nil
 }
 
 // agyDecodeToolPayload is the prologue agy's PreToolUse-shaped events share: one JSON
@@ -250,6 +255,9 @@ func agyEncodePreTool(verdict Verdict) Response {
 	var stderr []byte
 	switch verdict.Outcome {
 	case Allow:
+		if verdict.AddedContext != "" {
+			body["additionalContext"] = verdict.AddedContext
+		}
 	case Skip:
 		stderr = []byte("praetor hook: " + boundReason(verdict.Reason) + ", skipped\n")
 	default: // Deny and any outcome this dialect does not recognise fail closed.

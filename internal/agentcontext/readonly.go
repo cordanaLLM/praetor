@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -26,6 +27,9 @@ var forbiddenMutatingCommands = []string{
 	"agent-checkpoint-tool",
 	"agent-checkpoint-stop",
 	"commit with sign-off",
+	"git commit",
+	"git push",
+	"git add",
 }
 
 // ReadOnlyProjection transforms canonical AGENTS.md content into a read-only projection.
@@ -41,8 +45,8 @@ func ReadOnlyProjection(content string) (string, error) {
 	lines := strings.Split(content, "\n")
 	lines = insertReadOnlyBanner(lines)
 	lines = dropTurnEndBlock(lines)
-	lines = filterMutatingLines(lines)
 	lines = filterPrimaryCommands(lines)
+	lines = filterMutatingLines(lines)
 
 	result := strings.Join(lines, "\n")
 	if !strings.HasSuffix(result, "\n") {
@@ -96,44 +100,69 @@ func dropTurnEndBlock(lines []string) []string {
 // filterMutatingLines rewrites HISS-17 table row, Rule 2, and Rule 10 to eliminate mutating instructions.
 func filterMutatingLines(lines []string) []string {
 	result := make([]string, 0, len(lines))
-	inRule10 := false
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "10. **State ledger discipline (HISS-17).**") {
-			inRule10 = true
-			result = append(result, readOnlyRule10Lines...)
+		if strings.Contains(trimmed, "**State ledger discipline") && strings.Contains(trimmed, "HISS-17") {
+			rule10Lines, next := filterRule10(lines, i)
+			result = append(result, rule10Lines...)
+			i = next
 			continue
 		}
-		if inRule10 {
-			if isRule10Terminator(trimmed) {
-				inRule10 = false
-				result = append(result, filterMutatingLine(line))
-			}
-			continue
+		if filtered, ok := filterMutatingLine(line); ok {
+			result = append(result, filtered)
 		}
-		result = append(result, filterMutatingLine(line))
 	}
 	return result
 }
 
-var readOnlyRule10Lines = []string{
-	"10. **State ledger discipline (HISS-17).** Read-only session maintains no state ledger mutations. Whole `.workingdir` private + Git-ignored. Never stage its contents. Read existing context without writes.",
-	"    - Turn start: read `.workingdir/OPEN.md` or `praetorctl state status` read-only when needed; never read whole `.workingdir/STATE.md` at turn start (~45k tokens).",
-	"    - Read-only execution: no task additions, ledger mutations, checkpoint hooks, commits.",
+func filterRule10(lines []string, start int) ([]string, int) {
+	result := make([]string, 0, 8)
+	lead := lines[start]
+	lead = strings.ReplaceAll(lead, "Agents MUST maintain local `.workingdir` ledger every turn.", "Read-only session maintains no state ledger mutations.")
+	lead = strings.ReplaceAll(lead, "Agents MUST maintain local .workingdir ledger every turn.", "Read-only session maintains no state ledger mutations.")
+	result = append(result, lead)
+	i := start + 1
+	for ; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if isRule10Terminator(trimmed) {
+			break
+		}
+		if trimmed == "" || containsForbiddenCommand(lines[i]) || strings.Contains(lines[i], "state-audit") {
+			continue
+		}
+		result = append(result, lines[i])
+	}
+	result = append(result, "    - Read-only execution: no task additions, ledger mutations, checkpoint hooks, commits.", "")
+	return result, i - 1
 }
 
 func isRule10Terminator(trimmed string) bool {
-	if strings.HasPrefix(trimmed, "11. ") || strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "<!-- ") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(trimmed, "11. ") || strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "<!-- ")
 }
 
-func filterMutatingLine(line string) string {
+func filterHISS17Row(line string) string {
+	parts := strings.Split(line, "|")
+	if len(parts) < 5 {
+		return line
+	}
+	rule := strings.TrimSpace(parts[2])
+	if idx := strings.Index(rule, "; tasks via"); idx != -1 {
+		rule = rule[:idx] + "; read-only: no ledger mutation"
+	} else if idx := strings.Index(rule, "; turn end"); idx != -1 {
+		rule = rule[:idx] + "; read-only: no ledger mutation"
+	} else if idx := strings.Index(rule, "turn end"); idx != -1 {
+		rule = rule[:idx] + "read-only: no ledger mutation"
+	} else {
+		rule = "read-only: no ledger mutation"
+	}
+	parts[2] = " " + rule + " "
+	return strings.Join(parts, "|")
+}
+
+func filterMutatingLine(line string) (string, bool) {
 	if strings.Contains(line, "**HISS-17**") && strings.Contains(line, "state ledger") {
-		return "| **HISS-17** state ledger | turn start: `praetorctl state status` + `.workingdir/OPEN.md`, never whole `.workingdir/STATE.md`; read-only: no ledger mutation | pre-commit / CI | gate |"
+		return filterHISS17Row(line), true
 	}
 	if strings.Contains(line, "`make verify-all`") {
 		line = strings.ReplaceAll(line, "`make verify-all`", "verification gate")
@@ -141,7 +170,10 @@ func filterMutatingLine(line string) string {
 	if strings.Contains(line, "make verify-all") {
 		line = strings.ReplaceAll(line, "make verify-all", "verification gate")
 	}
-	return line
+	if containsForbiddenCommand(line) {
+		return "", false
+	}
+	return line, true
 }
 
 // filterPrimaryCommands removes make verify-all and its introducing comment from Primary Verification Commands.
@@ -160,11 +192,23 @@ func filterPrimaryCommands(lines []string) []string {
 			if len(result) > 0 && strings.HasPrefix(strings.TrimSpace(result[len(result)-1]), "#") {
 				result = result[:len(result)-1]
 			}
+			if len(result) > 0 && strings.TrimSpace(result[len(result)-1]) == "" {
+				result = result[:len(result)-1]
+			}
 			continue
 		}
 		result = append(result, line)
 	}
 	return result
+}
+
+func containsForbiddenCommand(s string) bool {
+	for _, cmd := range forbiddenMutatingCommands {
+		if strings.Contains(s, cmd) {
+			return true
+		}
+	}
+	return false
 }
 
 // assertNoMutatingCommands verifies that zero mutating gate commands remain in the text.
@@ -175,6 +219,28 @@ func assertNoMutatingCommands(text string) error {
 		}
 	}
 	return nil
+}
+
+// ContextForBrief returns the read-only context projection if brief is marked read-only,
+// or the full content unchanged if brief is not read-only.
+func ContextForBrief(content, brief string) (string, error) {
+	isReadOnly, err := caveman.ExtractBriefReadOnly(brief)
+	if err != nil {
+		return "", err
+	}
+	if isReadOnly {
+		return ReadOnlyProjection(content)
+	}
+	return content, nil
+}
+
+// ContextForRole returns the read-only context projection if role represents a read-only agent,
+// or the full content unchanged otherwise.
+func ContextForRole(content, role string) (string, error) {
+	if IsReadOnlyRole(role) {
+		return ReadOnlyProjection(content)
+	}
+	return content, nil
 }
 
 // IsReadOnlyRole reports whether role describes a read-only agent (e.g. audit, review, research).

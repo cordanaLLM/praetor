@@ -219,6 +219,10 @@ dialect encoder as command hooks. `pre-dispatch` extracts the brief's `task:` fi
 the Caveman scanner, verifies that routing declares the label, resolves
 `register.tasks.<label>`, and calls the shared runtime validator with kind `brief`. An
 internal result must pass Caveman; docs and social results remain full prose by policy.
+When a brief sets `readonly: true` or `read-only: true`, or dispatches to a read-only role,
+`pre-dispatch` injects the compiled read-only context projection (`AGENTS.readonly.md`) via
+the dialect's additional context field (`hookSpecificOutput.additionalContext` for Claude
+Code; `additionalContext` for Antigravity).
 The label and the manifest resolve through `config.LoadRegisterTaskAuthority`, the same
 digest-bound `config.RegisterAuthority` snapshot that `compile-context` renders, so every
 resolution names the manifest SHA-256 that `config.ValidateEmission` requires

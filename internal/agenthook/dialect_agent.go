@@ -105,18 +105,28 @@ func decodeNativeBrief(client string, canonical Canonical, object map[string]jso
 	}
 	canonical.Briefs = []string{brief}
 	if client == "claude" {
-		background, present, boolErr := optionalBool(input, "run_in_background")
-		if boolErr != nil {
-			return Canonical{}, fmt.Errorf("tool_input.%w", boolErr)
-		}
-		if present && !background {
-			return Canonical{}, errors.New("tool_input.run_in_background must not be false: foreground return precedes correlation")
+		if err := checkClaudeBriefInput(input, &canonical); err != nil {
+			return Canonical{}, err
 		}
 	}
 	if client != "gemini" {
 		canonical.ToolUseID, err = requiredString(object, "tool_use_id")
 	}
 	return canonical, err
+}
+
+func checkClaudeBriefInput(input map[string]json.RawMessage, canonical *Canonical) error {
+	if subagentType, sErr := optionalString(input, "subagent_type"); sErr == nil && subagentType != "" {
+		canonical.Role = subagentType
+	}
+	background, present, err := optionalBool(input, "run_in_background")
+	if err != nil {
+		return fmt.Errorf("tool_input.%w", err)
+	}
+	if present && !background {
+		return errors.New("tool_input.run_in_background must not be false: foreground return precedes correlation")
+	}
+	return nil
 }
 
 func decodeNativeReceipt(client string, canonical Canonical, object map[string]json.RawMessage) (Canonical, error) {

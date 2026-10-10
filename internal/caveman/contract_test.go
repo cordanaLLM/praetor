@@ -101,9 +101,31 @@ func TestContractBriefSchema(t *testing.T) {
 	if report := Check(positive, Options{Kind: KindBrief}); !report.Passed() {
 		t.Fatalf("documented brief shape must pass: %+v", report.Findings)
 	}
+	proseReadOnly := strings.Join([]string{
+		"goal: review diff, stay read-only: no writes",
+		"inputs: internal/caveman/check.go",
+		"return: verdict",
+		"evidence: none",
+		"task: ci_debugging",
+	}, "\n")
+	if report := Check(proseReadOnly, Options{Kind: KindBrief}); !report.Passed() {
+		t.Fatalf("brief with mid-line read-only prose must pass: %+v", report.Findings)
+	}
+	briefWithReadOnly := strings.Join([]string{
+		"goal: review diff",
+		"inputs: internal/caveman/check.go",
+		"return: verdict",
+		"evidence: none",
+		"task: ci_debugging",
+		"readonly: true",
+	}, "\n")
+	if report := Check(briefWithReadOnly, Options{Kind: KindBrief}); !report.Passed() {
+		t.Fatalf("brief with readonly field must pass: %+v", report.Findings)
+	}
 	for name, text := range map[string]string{
-		"goal not first": "inputs: internal/caveman/check.go\ngoal: enforce contract\nreturn: verdict\nevidence: none\ntask: ci_debugging",
-		"missing task":   "goal: enforce contract\ninputs: internal/caveman/check.go\nreturn: verdict\nevidence: none",
+		"goal not first":                  "inputs: internal/caveman/check.go\ngoal: enforce contract\nreturn: verdict\nevidence: none\ntask: ci_debugging",
+		"missing task":                    "goal: enforce contract\ninputs: internal/caveman/check.go\nreturn: verdict\nevidence: none",
+		"fields share line with readonly": "goal: review diff\ninputs: internal/caveman/check.go\nreturn: verdict\nevidence: none\ntask: ci_debugging\nreadonly: true goal: extra",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if report := Check(text, Options{Kind: KindBrief}); report.Passed() || !hasRule(report, RuleMessageShape) {

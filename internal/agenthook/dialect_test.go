@@ -64,12 +64,12 @@ func TestDialectEncode(t *testing.T) {
 		want    Response
 	}{
 		{"native allow", claude, EventPreTool, Verdict{Outcome: Allow}, Response{}},
-		{"native deny", claude, EventPreTool, Verdict{Deny, "why"}, Response{Stderr: []byte("why\n"), ExitCode: 2}},
-		{"native skip", claude, EventPreTool, Verdict{Skip, "no repository"}, Response{Stderr: []byte("praetor hook: no repository, skipped\n")}},
+		{"native deny", claude, EventPreTool, Verdict{Outcome: Deny, Reason: "why"}, Response{Stderr: []byte("why\n"), ExitCode: 2}},
+		{"native skip", claude, EventPreTool, Verdict{Outcome: Skip, Reason: "no repository"}, Response{Stderr: []byte("praetor hook: no repository, skipped\n")}},
 		{"lefthook allow", lefthook, EventPreTool, Verdict{Outcome: Allow}, Response{Stdout: []byte("PRAETOR_COMMAND_POLICY_OK\n")}},
 		{"lefthook environment allow has no marker", lefthook, EventEnvironment, Verdict{Outcome: Allow}, Response{}},
-		{"lefthook skip has no marker", lefthook, EventPreTool, Verdict{Skip, "workspace not governed"}, Response{Stderr: []byte("praetor hook: workspace not governed, skipped\n")}},
-		{"lefthook deny", lefthook, EventPreTool, Verdict{Deny, "why"}, Response{Stderr: []byte("why\n"), ExitCode: 1}},
+		{"lefthook skip has no marker", lefthook, EventPreTool, Verdict{Outcome: Skip, Reason: "workspace not governed"}, Response{Stderr: []byte("praetor hook: workspace not governed, skipped\n")}},
+		{"lefthook deny", lefthook, EventPreTool, Verdict{Outcome: Deny, Reason: "why"}, Response{Stderr: []byte("why\n"), ExitCode: 1}},
 		{"unknown outcome denies", claude, EventPreTool, Verdict{Outcome: Outcome(9), Reason: "?"}, Response{Stderr: []byte("?\n"), ExitCode: 2}},
 	} {
 		if got := tc.dialect.Encode(Canonical{Event: tc.event}, tc.verdict); !reflect.DeepEqual(got, tc.want) {
@@ -81,12 +81,12 @@ func TestDialectEncode(t *testing.T) {
 func TestDialectEncodeBoundsTheReason(t *testing.T) {
 	claude, _ := DialectFor("claude")
 	atBound := strings.Repeat("a", MaxReasonBytes)
-	if got := claude.Encode(Canonical{Event: EventPreTool}, Verdict{Deny, atBound}); len(got.Stderr) != MaxReasonBytes+1 {
+	if got := claude.Encode(Canonical{Event: EventPreTool}, Verdict{Outcome: Deny, Reason: atBound}); len(got.Stderr) != MaxReasonBytes+1 {
 		t.Errorf("reason at the bound changed: %d", len(got.Stderr))
 	}
 	// A three-byte rune straddles the bound: the cut must not leave half of it behind.
 	straddling := strings.Repeat("a", MaxReasonBytes-1) + "€" + strings.Repeat("b", 100)
-	got := claude.Encode(Canonical{Event: EventPreTool}, Verdict{Deny, straddling})
+	got := claude.Encode(Canonical{Event: EventPreTool}, Verdict{Outcome: Deny, Reason: straddling})
 	if len(got.Stderr) != MaxReasonBytes || !utf8.Valid(got.Stderr) || got.ExitCode != 2 {
 		t.Errorf("reason over the bound: %d bytes, valid=%v", len(got.Stderr), utf8.Valid(got.Stderr))
 	}

@@ -7,6 +7,9 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // syncWriter prints progress lines and keeps the first write error, so a caller checks once.
@@ -213,11 +216,22 @@ func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler,
 	if err != nil {
 		return fmt.Errorf("compilation failed: %w", err)
 	}
+	contentBytes, err := contextopt.ReadSnapshot(ctx, source)
+	if err != nil {
+		return fmt.Errorf("read source %s: %w", source, err)
+	}
+	if _, err := agentcontext.ReadOnlyProjection(string(contentBytes)); err != nil {
+		return fmt.Errorf("compile read-only projection: %w", err)
+	}
+	roFile := projectionFile{rel: ReadOnlyFile}
 	reservedTargets := append([]projectionFile(nil), vendor...)
-	reservedTargets = append(reservedTargets, projectionFile{rel: ReadOnlyFile})
+	reservedTargets = append(reservedTargets, roFile)
 	plan, err := planAgentSurfaces(ctx, targetDir, reservedTargets, PendingSources{})
 	if err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
+	}
+	if err := checkProjectionFiles(ctx, targetDir, []projectionFile{roFile}); err != nil {
+		return err
 	}
 	if err := CompileVendorTargets(ctx, w, tr, source, targetDir); err != nil {
 		return err

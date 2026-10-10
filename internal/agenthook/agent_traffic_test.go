@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -478,4 +479,124 @@ func oversizedBriefPayload(t *testing.T, client string) []byte {
 		tool, key, event = "spawn_agent", "message", "PreToolUse"
 	}
 	return nativePayload(t, event, "session", tool, "tool", map[string]any{key: body}, nil)
+}
+
+func TestDispatchReadOnlyBrief_3D(t *testing.T) {
+	root, state := repository(t, true), t.TempDir()
+	agentsContent := "# Project\n\n## Turn end\nBefore concluding any turn:\n```bash\nmake verify-all\n```\n\n## Rules\n10. **State ledger discipline (HISS-17).** Maintain state.\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(agentsContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	roContent, err := agentcontext.ReadOnlyProjection(agentsContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, agentcontext.CanonicalReadOnlyFile), []byte(roContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("Positive_ClaudeReadOnlyBriefReceivesReadOnlyProjection", func(t *testing.T) {
+		roBrief := validBrief + "readonly: true\n"
+		pre := nativePayload(t, "PreToolUse", "sess-ro", "Agent", "tool-ro",
+			map[string]any{"prompt": roBrief, "run_in_background": true}, nil)
+		resp := runAgentHook(t, root, state, "claude", EventPreDispatch, pre)
+		if resp.ExitCode != 0 {
+			t.Fatalf("expected exit 0, got %d: stderr=%s", resp.ExitCode, string(resp.Stderr))
+		}
+		var output map[string]any
+		if err := json.Unmarshal(resp.Stdout, &output); err != nil {
+			t.Fatalf("unmarshal stdout: %v, raw=%s", err, string(resp.Stdout))
+		}
+		hso, ok := output["hookSpecificOutput"].(map[string]any)
+		if !ok {
+			t.Fatalf("missing hookSpecificOutput in response: %s", string(resp.Stdout))
+		}
+		added, ok := hso["additionalContext"].(string)
+		if !ok || added == "" {
+			t.Fatalf("missing or empty additionalContext in response: %s", string(resp.Stdout))
+		}
+		if !strings.Contains(added, agentcontext.ReadOnlyBanner) {
+			t.Errorf("additionalContext missing ReadOnlyBanner: %s", added)
+		}
+		if strings.Contains(added, "make verify-all") {
+			t.Errorf("additionalContext must not contain make verify-all: %s", added)
+		}
+	})
+
+	t.Run("Positive_AgyReadOnlyBriefReceivesReadOnlyProjection", func(t *testing.T) {
+		roBrief := validBrief + "readonly: true\n"
+		agyPayload := commandPayload(t, map[string]any{
+			"conversationId": "sess-agy",
+			"toolCall": map[string]any{
+				"name": "invoke_subagent",
+				"args": map[string]any{
+					"Subagents": []map[string]any{{"Prompt": roBrief}},
+				},
+			},
+		})
+		resp := runAgentHook(t, root, state, "agy", EventPreDispatch, agyPayload)
+		if resp.ExitCode != 0 {
+			t.Fatalf("expected exit 0, got %d: stderr=%s", resp.ExitCode, string(resp.Stderr))
+		}
+		var output map[string]any
+		if err := json.Unmarshal(resp.Stdout, &output); err != nil {
+			t.Fatalf("unmarshal stdout: %v, raw=%s", err, string(resp.Stdout))
+		}
+		if output["decision"] != "allow" {
+			t.Fatalf("expected decision allow, got %v", output["decision"])
+		}
+		added, ok := output["additionalContext"].(string)
+		if !ok || added == "" {
+			t.Fatalf("missing or empty additionalContext in agy response: %s", string(resp.Stdout))
+		}
+		if !strings.Contains(added, agentcontext.ReadOnlyBanner) {
+			t.Errorf("additionalContext missing ReadOnlyBanner: %s", added)
+		}
+	})
+
+	t.Run("Negative_InvalidReadOnlyValueDenied", func(t *testing.T) {
+		badBrief := validBrief + "readonly: maybe\n"
+		pre := nativePayload(t, "PreToolUse", "sess-bad", "Agent", "tool-bad",
+			map[string]any{"prompt": badBrief, "run_in_background": true}, nil)
+		resp := runAgentHook(t, root, state, "claude", EventPreDispatch, pre)
+		if resp.ExitCode != 2 {
+			t.Fatalf("expected exit 2 for invalid readonly, got %d: stdout=%s", resp.ExitCode, string(resp.Stdout))
+		}
+		if !strings.Contains(string(resp.Stderr), "invalid boolean value") {
+			t.Errorf("expected stderr to mention invalid boolean value, got: %s", string(resp.Stderr))
+		}
+	})
+
+	t.Run("Boundary_DefaultReadWriteBriefHasNoAdditionalContext", func(t *testing.T) {
+		pre := nativePayload(t, "PreToolUse", "sess-norm", "Agent", "tool-norm",
+			map[string]any{"prompt": validBrief, "run_in_background": true}, nil)
+		resp := runAgentHook(t, root, state, "claude", EventPreDispatch, pre)
+		if resp.ExitCode != 0 {
+			t.Fatalf("expected exit 0, got %d: stderr=%s", resp.ExitCode, string(resp.Stderr))
+		}
+		if len(bytes.TrimSpace(resp.Stdout)) != 0 {
+			t.Fatalf("expected empty stdout for default non-readonly brief, got %s", string(resp.Stdout))
+		}
+	})
+
+	t.Run("Positive_ReadOnlyRoleReceivesReadOnlyProjection", func(t *testing.T) {
+		pre := nativePayload(t, "PreToolUse", "sess-role", "Agent", "tool-role",
+			map[string]any{"prompt": validBrief, "subagent_type": "praetor-auditor", "run_in_background": true}, nil)
+		resp := runAgentHook(t, root, state, "claude", EventPreDispatch, pre)
+		if resp.ExitCode != 0 {
+			t.Fatalf("expected exit 0, got %d: stderr=%s", resp.ExitCode, string(resp.Stderr))
+		}
+		var output map[string]any
+		if err := json.Unmarshal(resp.Stdout, &output); err != nil {
+			t.Fatalf("unmarshal stdout: %v", err)
+		}
+		hso, ok := output["hookSpecificOutput"].(map[string]any)
+		if !ok {
+			t.Fatalf("missing hookSpecificOutput for auditor role: %s", string(resp.Stdout))
+		}
+		added, ok := hso["additionalContext"].(string)
+		if !ok || !strings.Contains(added, agentcontext.ReadOnlyBanner) {
+			t.Errorf("additionalContext missing ReadOnlyBanner for auditor role: %s", added)
+		}
+	})
 }

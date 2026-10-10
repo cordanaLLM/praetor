@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/router"
 )
 
@@ -100,6 +103,32 @@ func evaluateHandbackAbort(ctx context.Context, row Registration, canonical Cano
 	return Verdict{Outcome: Allow}
 }
 
+func validateAllBriefs(authority briefAuthority, briefs []string) (config.Resolution, error) {
+	var resolution config.Resolution
+	for index := 0; index < len(briefs) && index < MaxDispatchBriefs; index++ {
+		resolved, err := validateAgentBrief(authority, briefs[index])
+		if err != nil {
+			return config.Resolution{}, fmt.Errorf("brief %d: %w", index, err)
+		}
+		resolution = resolved
+	}
+	return resolution, nil
+}
+
+func reserveClaudeDispatch(ctx context.Context, canonical Canonical, in Invocation, root string, res config.Resolution) error {
+	if len(canonical.Briefs) != 1 {
+		return errors.New("client dispatch must carry exactly one brief")
+	}
+	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
+	if err != nil {
+		return fmt.Errorf("reserve dispatch: %w", err)
+	}
+	if err := store.reserve(ctx, "claude", canonical.ConversationID, canonical.ToolUseID, res); err != nil {
+		return fmt.Errorf("reserve dispatch: %w", err)
+	}
+	return nil
+}
+
 func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
 	if len(canonical.Briefs) == 0 || len(canonical.Briefs) > MaxDispatchBriefs {
 		return trafficDenied(fmt.Errorf("dispatch must carry 1..%d briefs", MaxDispatchBriefs))
@@ -108,28 +137,56 @@ func evaluateAgentBriefs(ctx context.Context, row Registration, canonical Canoni
 	if err != nil {
 		return trafficDenied(err)
 	}
-	var resolution config.Resolution
-	for index := 0; index < len(canonical.Briefs) && index < MaxDispatchBriefs; index++ {
-		resolved, err := validateAgentBrief(authority, canonical.Briefs[index])
-		if err != nil {
-			return trafficDenied(fmt.Errorf("brief %d: %w", index, err))
-		}
-		resolution = resolved
-	}
-	if row.Client != "claude" {
-		return Verdict{Outcome: Allow}
-	}
-	if len(canonical.Briefs) != 1 {
-		return trafficDenied(errors.New("client dispatch must carry exactly one brief"))
-	}
-	store, err := newCorrelationStore(ctx, root, in.CorrelationDir)
-	if err == nil {
-		err = store.reserve(ctx, row.Client, canonical.ConversationID, canonical.ToolUseID, resolution)
-	}
+	resolution, err := validateAllBriefs(authority, canonical.Briefs)
 	if err != nil {
-		return trafficDenied(fmt.Errorf("reserve dispatch: %w", err))
+		return trafficDenied(err)
 	}
-	return Verdict{Outcome: Allow}
+	addedContext := resolveDispatchContext(ctx, root, canonical)
+	if row.Client == "claude" {
+		if err := reserveClaudeDispatch(ctx, canonical, in, root, resolution); err != nil {
+			return trafficDenied(err)
+		}
+	}
+	return Verdict{Outcome: Allow, AddedContext: addedContext}
+}
+
+func isDispatchReadOnly(canonical Canonical) bool {
+	for _, brief := range canonical.Briefs {
+		if caveman.IsBriefReadOnly(brief) {
+			return true
+		}
+	}
+	return canonical.Role != "" && agentcontext.IsReadOnlyRole(canonical.Role)
+}
+
+func readOnlyContextFor(ctx context.Context, root string, canonical Canonical) string {
+	roPath := filepath.Join(root, agentcontext.CanonicalReadOnlyFile)
+	if data, err := contextopt.ReadSnapshot(ctx, roPath); err == nil {
+		return string(data)
+	}
+	agentsPath := filepath.Join(root, "AGENTS.md")
+	data, err := contextopt.ReadSnapshot(ctx, agentsPath)
+	if err != nil {
+		return ""
+	}
+	if len(canonical.Briefs) > 0 {
+		if proj, err := agentcontext.ContextForBrief(string(data), canonical.Briefs[0]); err == nil {
+			return proj
+		}
+	}
+	if canonical.Role != "" {
+		if proj, err := agentcontext.ContextForRole(string(data), canonical.Role); err == nil {
+			return proj
+		}
+	}
+	return ""
+}
+
+func resolveDispatchContext(ctx context.Context, root string, canonical Canonical) string {
+	if !isDispatchReadOnly(canonical) {
+		return ""
+	}
+	return readOnlyContextFor(ctx, root, canonical)
 }
 
 func evaluateDispatchReceipt(ctx context.Context, row Registration, canonical Canonical, root string, in Invocation) Verdict {
@@ -223,6 +280,9 @@ func loadBriefAuthority(ctx context.Context, root string) (briefAuthority, error
 // stored return contract require. The label must be declared by the routing vocabulary
 // that governs root; compile-context validates manifest task rows against the same set.
 func validateAgentBrief(authority briefAuthority, text string) (config.Resolution, error) {
+	if _, err := caveman.ExtractBriefReadOnly(text); err != nil {
+		return config.Resolution{}, err
+	}
 	task, err := caveman.ExtractBriefTask(text)
 	if err != nil {
 		return config.Resolution{}, err
