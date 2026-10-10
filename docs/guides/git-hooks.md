@@ -416,8 +416,10 @@ runs stub binaries that print their identity with a different `praetorctl` first
 and `TestEngineLauncher_Boundary_NoSleepSurvivesInstall` cover the cache, the pin sources, `--print-path` and the refusals;
 `TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo` the unpinned case;
 `TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk`,
+`TestEngineMakefile_Positive_KeptCustomLefthookCallingLauncherOmitsPrefixHint`,
 `TestEngineMakefile_Negative_KeptCustomLefthookWithDeclinedGitHooksGetsNeitherFile`,
-`TestEngineMakefile_Boundary_KeptCustomLefthookKeepsEditedLauncherWithWarning` and
+`TestEngineMakefile_Boundary_KeptCustomLefthookKeepsEditedLauncherWithWarning`,
+`TestEngineMakefile_Boundary_KeptCustomLefthookCommentOnlyMentionGetsPrefixHint` and
 `TestEngineMakefile_Positive_OverrideWarningPresentWithEngineMkAbsentWithout` cover kept hook configurations and conditional override warnings (#1172).
 
 ## The make the hooks run

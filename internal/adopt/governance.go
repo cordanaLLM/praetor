@@ -78,10 +78,7 @@ func buildMakefileFormat(plan *VerificationPlan, prefix string, sourceGate, with
 }
 
 func reconcileMakefile(ctx context.Context, s *adoptSession) error {
-	withLauncher, err := launcherInstalledOrPlanned(ctx, s)
-	if err != nil {
-		return err
-	}
+	withLauncher := launcherInstalledOrPlanned(s)
 	if withLauncher {
 		if err := reconcileEngineMakefile(ctx, s); err != nil {
 			return err

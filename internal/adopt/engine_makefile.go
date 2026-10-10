@@ -51,12 +51,8 @@ func reconcileEngineMakefile(ctx context.Context, s *adoptSession) error {
 
 // launcherInstalledOrPlanned reports whether the engine launcher is planned or installed.
 // When git-hooks is declined, the launcher is neither installed nor planned (#1172).
-func launcherInstalledOrPlanned(_ context.Context, s *adoptSession) (bool, error) {
-	declined, err := ArtifactDeclined(s.declined, "git-hooks")
-	if err != nil {
-		return false, err
-	}
-	return !declined, nil
+func launcherInstalledOrPlanned(s *adoptSession) bool {
+	return !s.declines("git-hooks")
 }
 
 func hasEngineMakefileInclude(normalized string) bool {

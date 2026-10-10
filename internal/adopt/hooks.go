@@ -15,8 +15,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -595,11 +597,7 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 // reconcilePlannedEngineLauncher reconciles the hook engine launcher when it is planned or
 // installed (#1172).
 func reconcilePlannedEngineLauncher(ctx context.Context, s *adoptSession) error {
-	withLauncher, err := launcherInstalledOrPlanned(ctx, s)
-	if err != nil {
-		return err
-	}
-	if !withLauncher {
+	if !launcherInstalledOrPlanned(s) {
 		return nil
 	}
 	return reconcileEngineLauncher(ctx, s)
@@ -626,15 +624,30 @@ func keepLefthookConfig(ctx context.Context, s *adoptSession, identity lefthookI
 	if _, err := reconcileCheckpointLifecycle(ctx, s, true); err != nil {
 		return err
 	}
-	s.report.recordSkipped(lefthookFile, identity.reason)
-	warnKeptLefthookLauncher(s, existing)
+	detail := identity.reason
+	if !lefthookCallsEngineLauncher(existing) {
+		detail += "; " + keptLefthookLauncherNote()
+	}
+	s.report.recordSkipped(lefthookFile, detail)
 	return reconcileEvasionHook(ctx, s, identity.canonical)
 }
 
-func warnKeptLefthookLauncher(s *adoptSession, existing []byte) {
-	if !bytes.Contains(existing, []byte(engineLauncherFile)) {
-		s.report.addWarning("existing lefthook.yml does not call the engine launcher yet; run hooks through sh %s <args>", engineLauncherFile)
+func keptLefthookLauncherNote() string {
+	return "existing lefthook.yml does not call the engine launcher yet; run hooks through sh " + engineLauncherFile + " <args>"
+}
+
+func lefthookCallsEngineLauncher(existing []byte) bool {
+	var parsed map[string]any
+	if err := yaml.Unmarshal(existing, &parsed); err != nil {
+		return false
 	}
+	jobs := lefthookconfig.Jobs(parsed)
+	for i := 0; i < len(jobs) && i < maxLefthookJobs; i++ {
+		if strings.Contains(jobs[i].Run, engineLauncherFile) {
+			return true
+		}
+	}
+	return false
 }
 
 // lefthookTarget is the rendering this run writes: the jobs of shape, and the checkpoint

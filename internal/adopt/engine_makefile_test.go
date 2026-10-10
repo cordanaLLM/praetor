@@ -553,6 +553,7 @@ func TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk(t
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertNoIssues(t, report)
 
 	launcherPath := filepath.Join(root, filepath.FromSlash(engineLauncherFile))
 	if _, err := os.Stat(launcherPath); err != nil {
@@ -572,6 +573,24 @@ func TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk(t
 
 	verifyMakePraetorEnginePath(t, makePath, root, wantPath)
 
+	hooksDir := filepath.Join(root, ".git", "hooks")
+	if fileExists(filepath.Join(hooksDir, preCommitHook)) {
+		t.Fatal("pre-commit hook was written beside kept lefthook.yml")
+	}
+	entries, err := os.ReadDir(hooksDir)
+	if err == nil {
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".sample") {
+				t.Fatalf("unexpected hook file written to hooks directory: %s", e.Name())
+			}
+		}
+	}
+	for _, d := range report.ActionDetails {
+		if strings.HasPrefix(filepath.ToSlash(d.Path), ".git/hooks") || strings.Contains(d.Details, "Git hooks") {
+			t.Fatalf("unexpected hook activation entry in report: %+v", d)
+		}
+	}
+
 	out, err := util.RunCommand(t.Context(), root, "sh", engineLauncherFile, "--print-path")
 	if err != nil {
 		t.Fatalf("launcher --print-path failed: %v, output: %q", err, out)
@@ -581,10 +600,88 @@ func TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk(t
 	}
 
 	wantPrefix := "sh " + engineLauncherFile + " <args>"
-	if !slices.ContainsFunc(report.Warnings, func(w string) bool {
-		return strings.Contains(w, wantPrefix)
-	}) {
-		t.Fatalf("expected report to name launcher prefix %q, got warnings: %v", wantPrefix, report.Warnings)
+	if !strings.Contains(lefthookDetails(report), wantPrefix) {
+		t.Fatalf("expected lefthook details to name launcher prefix %q, got: %s", wantPrefix, lefthookDetails(report))
+	}
+	for _, w := range report.Warnings {
+		if strings.Contains(w, wantPrefix) && !strings.Contains(w, lefthookFile+":") {
+			t.Fatalf("unexpected standalone launcher prefix warning: %s", w)
+		}
+	}
+}
+
+// Positive: a repository with a custom lefthook.yml whose job already runs the engine launcher
+// installs the launcher and engine.mk, and the report omits the launcher-prefix hint (#1172).
+func TestEngineMakefile_Positive_KeptCustomLefthookCallingLauncherOmitsPrefixHint(t *testing.T) {
+	root, wantPath, makePath := setupPinnedEngineRepo(t, "kept-custom-lefthook-already-calls-launcher")
+	customLefthook := "pre-commit:\n  commands:\n    audit:\n      run: sh " + engineLauncherFile + " audit\n"
+	mustWrite(t, filepath.Join(root, "lefthook.yml"), customLefthook)
+
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+
+	launcherPath := filepath.Join(root, filepath.FromSlash(engineLauncherFile))
+	if _, err := os.Stat(launcherPath); err != nil {
+		t.Fatalf("engine launcher was not installed: %v", err)
+	}
+	engineMkPath := filepath.Join(root, filepath.FromSlash(engineMakefile))
+	if _, err := os.Stat(engineMkPath); err != nil {
+		t.Fatalf("engine.mk was not installed: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(root, "lefthook.yml")); got != customLefthook {
+		t.Fatalf("custom lefthook.yml was modified:\n%s", got)
+	}
+
+	verifyMakePraetorEnginePath(t, makePath, root, wantPath)
+
+	wantPrefix := "sh " + engineLauncherFile + " <args>"
+	if strings.Contains(lefthookDetails(report), wantPrefix) {
+		t.Fatalf("expected report to omit launcher-prefix hint %q when lefthook.yml already runs it, got: %s",
+			wantPrefix, lefthookDetails(report))
+	}
+	for _, w := range report.Warnings {
+		if strings.Contains(w, wantPrefix) {
+			t.Fatalf("unexpected launcher-prefix warning %q in report: %s", wantPrefix, w)
+		}
+	}
+}
+
+// Boundary: a repository with a custom lefthook.yml that mentions the launcher only in a comment
+// still receives the launcher-prefix hint (#1172).
+func TestEngineMakefile_Boundary_KeptCustomLefthookCommentOnlyMentionGetsPrefixHint(t *testing.T) {
+	root, wantPath, makePath := setupPinnedEngineRepo(t, "kept-custom-lefthook-comment-mention")
+	commentMentionLefthook := "# Note: " + engineLauncherFile + " is not called by jobs below\n" +
+		"pre-commit:\n  commands:\n    custom:\n      run: echo custom\n"
+	mustWrite(t, filepath.Join(root, "lefthook.yml"), commentMentionLefthook)
+
+	report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoIssues(t, report)
+
+	launcherPath := filepath.Join(root, filepath.FromSlash(engineLauncherFile))
+	if _, err := os.Stat(launcherPath); err != nil {
+		t.Fatalf("engine launcher was not installed: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(root, "lefthook.yml")); got != commentMentionLefthook {
+		t.Fatalf("custom lefthook.yml was modified:\n%s", got)
+	}
+
+	verifyMakePraetorEnginePath(t, makePath, root, wantPath)
+
+	wantPrefix := "sh " + engineLauncherFile + " <args>"
+	if !strings.Contains(lefthookDetails(report), wantPrefix) {
+		t.Fatalf("expected report to name launcher prefix %q when mentioned only in comment; note=%q",
+			wantPrefix, lefthookDetails(report))
+	}
+	for _, w := range report.Warnings {
+		if strings.Contains(w, wantPrefix) && !strings.Contains(w, lefthookFile+":") {
+			t.Fatalf("unexpected standalone launcher prefix warning: %s", w)
+		}
 	}
 }
 
