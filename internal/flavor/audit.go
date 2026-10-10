@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -18,8 +20,11 @@ import (
 // nothing else. Toolchain counts are advisory: they describe the machine running the audit,
 // so folding them into the score made the same commit pass on one host and fail on another.
 type FlavorAuditReport struct {
-	Flavor           string         `json:"flavor"`
-	RepoPath         string         `json:"repo_path"`
+	Flavor   string `json:"flavor"`
+	RepoPath string `json:"repo_path"`
+	// Path is the repository-relative directory a pinned flavor was audited against, "." for
+	// the root; it is set by AuditTargetsContext.
+	Path             string         `json:"path,omitempty"`
 	Score            float64        `json:"score"`
 	Passed           bool           `json:"passed"`
 	TemplatesTotal   int            `json:"templates_total"`
@@ -125,7 +130,7 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 		return nil, fmt.Errorf("audit flavor cancelled: %w", err)
 	}
 	if targetFlavor == "" || targetFlavor == "auto" {
-		resolved, err := Resolve(repoPath)
+		resolved, err := resolveAutoTarget(repoPath)
 		if err != nil {
 			return nil, err
 		}
@@ -136,12 +141,37 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 	if err != nil {
 		return nil, fmt.Errorf("audit flavor: %w", err)
 	}
+	return auditFlavorAt(ctx, repoPath, repoPath, flv)
+}
 
+// auditScoped audits one target of ResolveTargets. A target at the root is AuditFlavorContext's
+// audit. One scoped to a directory audits the stack there and the repository-level items at the
+// root, because a workflow, a ruleset or the editor settings sit at the root whichever
+// directory holds the stack: a pin scoped to api/ never passed while they were required below it.
+func auditScoped(ctx context.Context, repoPath string, target Target) (*FlavorAuditReport, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("audit flavor cancelled: %w", err)
+	}
+	flv, err := Get(target.Flavor)
+	if err != nil {
+		return nil, fmt.Errorf("audit flavor: %w", err)
+	}
+	report, err := auditFlavorAt(ctx, repoPath, filepath.Join(repoPath, filepath.FromSlash(target.Path)), flv)
+	if err != nil {
+		return nil, err
+	}
+	report.Path = target.Path
+	return report, nil
+}
+
+// auditFlavorAt audits rootDir against flv, reading the stack's own items from stackDir; the two
+// are one directory for an unscoped audit.
+func auditFlavorAt(ctx context.Context, rootDir, stackDir string, flv Flavor) (*FlavorAuditReport, error) {
 	report := &FlavorAuditReport{
 		Flavor:   flv.Name(),
-		RepoPath: repoPath,
+		RepoPath: stackDir,
 	}
-	if err := auditRequiredItems(ctx, repoPath, flv, report); err != nil {
+	if err := auditRequiredItems(ctx, rootDir, stackDir, flv, report); err != nil {
 		return nil, err
 	}
 
@@ -150,17 +180,86 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 	return report, nil
 }
 
+// resolveAutoTarget names the one flavor a repository without an explicit target audits
+// against; a repository with several pin targets is refused, since one report cannot cover them.
+func resolveAutoTarget(repoPath string) (string, error) {
+	targets, err := ResolveTargets(repoPath)
+	if err != nil {
+		return "", err
+	}
+	if len(targets) != 1 || targets[0].Path != "." {
+		return "", fmt.Errorf("audit flavor: %s pins %d flavor targets; audit them with AuditTargetsContext", repoPath, len(targets))
+	}
+	return targets[0].Flavor, nil
+}
+
 // auditRequiredItems records flv's required templates, settings and toolchains in report,
-// stopping at the first cancellation. It keeps AuditFlavorContext within HISS-04's
-// cyclomatic cap of 10.
-func auditRequiredItems(ctx context.Context, repoPath string, flv Flavor, report *FlavorAuditReport) error {
-	if err := auditTemplates(ctx, repoPath, flv.RequiredTemplates(), report); err != nil {
+// stopping at the first cancellation. Repository-level items are read from rootDir and the
+// rest from stackDir (repositoryLevel); when the two are one directory the order is flv's own.
+func auditRequiredItems(ctx context.Context, rootDir, stackDir string, flv Flavor, report *FlavorAuditReport) error {
+	rootTemplates, stackTemplates := splitTemplates(flv.RequiredTemplates(), rootDir != stackDir)
+	rootSettings, stackSettings := splitSettings(flv.RequiredSettings(), rootDir != stackDir)
+	if err := auditTemplates(ctx, rootDir, rootTemplates, report); err != nil {
 		return err
 	}
-	if err := auditSettings(ctx, repoPath, flv.RequiredSettings(), report); err != nil {
+	if err := auditTemplates(ctx, stackDir, stackTemplates, report); err != nil {
 		return err
 	}
-	return auditToolchains(ctx, repoPath, flv.RequiredToolchains(), report)
+	if err := auditSettings(ctx, rootDir, rootSettings, report); err != nil {
+		return err
+	}
+	if err := auditSettings(ctx, stackDir, stackSettings, report); err != nil {
+		return err
+	}
+	return auditToolchains(ctx, stackDir, flv.RequiredToolchains(), report)
+}
+
+// repositoryLevelPrefixes and repositoryLevelFiles name the items that belong to the
+// repository, not to one stack directory: CI workflows, the branch ruleset, editor settings and
+// the agent harness directories, the git hook manifest, the standards declaration and lock, and
+// the agent context files.
+var (
+	repositoryLevelPrefixes = []string{".github/", ".vscode/", ".paperclip/"}
+	repositoryLevelFiles    = []string{"lefthook.yml", ".standards.yaml", ".standards.lock", "AGENTS.md", "CLAUDE.md"}
+)
+
+// repositoryLevel reports whether a template or setting path is read at the repository root
+// when a flavor is pinned to a directory.
+func repositoryLevel(path string) bool {
+	if slices.Contains(repositoryLevelFiles, path) {
+		return true
+	}
+	for _, prefix := range repositoryLevelPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitTemplates divides templates into repository-level and stack ones when scoped; unscoped,
+// every template is a stack one, which keeps the flavor's order.
+func splitTemplates(items []TemplateItem, scoped bool) (root, stack []TemplateItem) {
+	for _, item := range items {
+		if scoped && repositoryLevel(item.Path) {
+			root = append(root, item)
+		} else {
+			stack = append(stack, item)
+		}
+	}
+	return root, stack
+}
+
+// splitSettings is splitTemplates for settings.
+func splitSettings(items []SettingItem, scoped bool) (root, stack []SettingItem) {
+	for _, item := range items {
+		if scoped && repositoryLevel(item.Path) {
+			root = append(root, item)
+		} else {
+			stack = append(stack, item)
+		}
+	}
+	return root, stack
 }
 
 // passingScore is the share of required templates and settings a repository must carry.
@@ -194,7 +293,7 @@ func auditCancelled(ctx context.Context, what, path string) error {
 }
 
 func auditTemplates(ctx context.Context, repoPath string, templates []TemplateItem, report *FlavorAuditReport) error {
-	report.TemplatesTotal = len(templates)
+	report.TemplatesTotal += len(templates)
 	for _, t := range templates {
 		if err := auditCancelled(ctx, "template", t.Path); err != nil {
 			return err
@@ -271,7 +370,7 @@ func TemplateSatisfied(repoPath string, t TemplateItem) bool {
 }
 
 func auditSettings(ctx context.Context, repoPath string, settings []SettingItem, report *FlavorAuditReport) error {
-	report.SettingsTotal = len(settings)
+	report.SettingsTotal += len(settings)
 	for _, s := range settings {
 		if err := auditCancelled(ctx, "setting", s.Path); err != nil {
 			return err

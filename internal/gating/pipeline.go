@@ -566,7 +566,7 @@ func requireScanner(cfg *stageConfig, binary, installHint string) error {
 func runFlavorStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	fCtx, cancel := context.WithTimeout(ctx, flavor.DefaultAuditTimeout)
 	defer cancel()
-	rep, err := flavor.AuditFlavorContext(fCtx, cfg.repoDir, "auto")
+	reports, err := flavor.AuditTargetsContext(fCtx, cfg.repoDir)
 	if errors.Is(err, flavor.ErrFlavorNotApplicable) {
 		// Not a pass and not a failure: this repository's declared profile has no flavor, so
 		// there is nothing for this stage to check. Reporting it is the point -- a skipped
@@ -579,11 +579,23 @@ func runFlavorStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("flavor audit cancelled: %w", err)
 	}
-	if !rep.Passed {
-		return "", fmt.Errorf("flavor audit failed (score: %.1f%%, %d missing templates%s)",
-			rep.Score, len(rep.MissingTemplates), invalidSettingsClause(rep))
+	for i := 0; i < len(reports) && i < config.MaxFlavorPins; i++ {
+		rep := reports[i]
+		if !rep.Passed {
+			return "", fmt.Errorf("flavor audit failed%s (score: %.1f%%, %d missing templates%s)",
+				pinnedScope(rep), rep.Score, len(rep.MissingTemplates), invalidSettingsClause(rep))
+		}
 	}
 	return "", nil
+}
+
+// pinnedScope names the flavor and directory of a failing report that was audited under a pin,
+// so a repository with several components says which one fell below the bar.
+func pinnedScope(rep *flavor.FlavorAuditReport) string {
+	if rep.Path == "" || rep.Path == "." {
+		return ""
+	}
+	return fmt.Sprintf(" for %s at %s", rep.Flavor, rep.Path)
 }
 
 // invalidSettingsClause names the settings that cost the score, or nothing when none did.

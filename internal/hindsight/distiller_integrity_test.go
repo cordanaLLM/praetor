@@ -100,3 +100,25 @@ func TestDistillFlavorFacts(t *testing.T) {
 		}
 	})
 }
+
+// TestDistillFlavorFacts_Pins: the distiller reads the manifest's flavors pins through the same
+// resolver as the audit, one fact per pin, and a pin scoped to a directory says so.
+func TestDistillFlavorFacts_Pins(t *testing.T) {
+	root := t.TempDir()
+	writeDistillerFile(t, root, "go.mod", "module x\n")
+	writeDistillerFile(t, root, filepath.Join("cmd", "x", "main.go"), "package main\n")
+	writeDistillerFile(t, root, filepath.Join("web", "package.json"), `{"name": "web"}`)
+	writeDistillerFile(t, root, ".standards.yaml",
+		"version: 1\nflavors:\n  - name: go-library\n  - name: typescript-node\n    path: web\n")
+	facts, err := distillFlavorFacts(context.Background(), root)
+	if err != nil || len(facts) != 2 || facts[0].Subject != "go-library" || facts[1].Subject != "typescript-node" {
+		t.Fatalf("expected the two pinned flavors rather than detected go-service, got %+v, %v", facts, err)
+	}
+	if !strings.HasPrefix(facts[1].Statement, "Directory web uses flavor typescript-node") {
+		t.Errorf("scoped pin statement = %q", facts[1].Statement)
+	}
+	writeDistillerFile(t, root, ".standards.yaml", "version: 1\nflavors:\n  - name: no-such-flavor\n")
+	if _, err := distillFlavorFacts(context.Background(), root); err == nil {
+		t.Error("an unknown pinned flavor must be an error, not a silent fall back to detection")
+	}
+}

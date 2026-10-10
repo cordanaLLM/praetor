@@ -69,6 +69,11 @@ func (f *GoServiceFlavor) Name() string        { return "go-service" }
 func (f *GoServiceFlavor) Description() string { return "Go Microservice, Daemon, or HTTP/gRPC API" }
 func (f *GoServiceFlavor) HISSProfile() string { return "framework" }
 
+// AlsoImplements lists app-service: a Go service is the commonest application backend, and
+// its profile could not reach this flavor, so a conforming Go service failed auto detection
+// (#1103). There is no rust-service flavor; rust-systems implements native-gpu-systems.
+func (f *GoServiceFlavor) AlsoImplements() []string { return []string{"app-service"} }
+
 func (f *GoServiceFlavor) Detect(repoPath string) bool {
 	hasMod := CheckFileExists(filepath.Join(repoPath, "go.mod"))
 	hasCmd := CheckFileExists(filepath.Join(repoPath, "cmd"))

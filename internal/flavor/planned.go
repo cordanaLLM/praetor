@@ -26,8 +26,8 @@ type PlannedTemplate struct {
 }
 
 // PlannedWorkflows returns the CI workflows of the flavor of profile that matches repoPath
-// (ResolveForProfile, the flavor adoption applies for the profile it records) that ApplyFlavor
-// without --force leaves as the flavor's own rendering: an absent workflow it writes, and a
+// (ResolveTargetsForProfile, the flavor adoption applies for the profile it records, a manifest
+// pin first) that ApplyFlavor without --force leaves as the flavor's own rendering: an absent workflow it writes, and a
 // present one canonically equal to that rendering (an earlier apply's). A present workflow that
 // differs is the repository's own, and one a requirement or an alternative withholds is never
 // written, so neither is listed; a profile with no flavor, or none that matches, has none.
@@ -73,18 +73,24 @@ func plannedWorkflowBodies(ctx context.Context, repoPath string, items []Templat
 }
 
 // plannedFlavorName resolves the flavor of profile ApplyFlavor scaffolds for repoPath, as
-// adoption's flavor step does (ResolveForProfile). A profile with no flavor, or none that
-// matches, yields an empty name and no error, like the skipped flavor step in adoption; any
-// other failure is returned.
+// adoption's flavor step does (ResolveTargetsForProfile: the manifest's pin, else the profile's
+// flavor). A profile with no flavor, none that matches, or a pin the root scaffold cannot
+// express (ErrPinNotScaffoldable) yields an empty name and no error, like the skipped flavor
+// step in adoption; any other failure is returned.
 func plannedFlavorName(repoPath, profile string) (string, error) {
-	name, err := ResolveForProfile(repoPath, profile)
+	targets, err := ResolveTargetsForProfile(repoPath, profile)
+	if err == nil {
+		var name string
+		if name, err = SingleRootFlavor(targets); err == nil {
+			return name, nil
+		}
+	}
 	switch {
-	case errors.Is(err, ErrNoFlavorMatched), errors.Is(err, ErrFlavorNotApplicable):
+	case errors.Is(err, ErrNoFlavorMatched), errors.Is(err, ErrFlavorNotApplicable), errors.Is(err, ErrPinNotScaffoldable):
 		return "", nil
-	case err != nil:
+	default:
 		return "", fmt.Errorf("planned workflows: %w", err)
 	}
-	return name, nil
 }
 
 // plannedBody renders one template and reports whether an apply without --force leaves that

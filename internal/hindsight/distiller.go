@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dedupe"
 	"github.com/cordanaLLM/praetor/internal/docdistill"
 	"github.com/cordanaLLM/praetor/internal/flavor"
@@ -93,28 +94,36 @@ func distillSources(ctx context.Context, repoPath string, sources []distillSourc
 	}, nil
 }
 
-// distillFlavorFacts records the repository's flavor as one fact. The flavor is resolved the
-// way adoption and the flavor audit resolve it (flavor.Resolve): among the flavors of the
-// profile the repository declares, else of the profile its markers classify. It used to be
-// detected across the whole catalog, so the distiller could record python-ml for a repository
-// declaring native-gpu-systems, and the statement called the flavor an archetype (BUG-940).
-// A repository no flavor of its profile matches, or whose profile has no flavor, yields no
-// fact rather than a guess.
+// distillFlavorFacts records the repository's flavors as one fact each. They are resolved the
+// way adoption, flavor apply and the flavor audit resolve them (flavor.ResolveTargets): the
+// manifest's flavors pins, else the flavor among those of the profile the repository declares,
+// or of the profile its markers classify. It used to be detected across the whole catalog, so
+// the distiller could record python-ml for a repository declaring native-gpu-systems, and the
+// statement called the flavor an archetype (BUG-940). A repository no flavor of its profile
+// matches, or whose profile has no flavor, yields no fact rather than a guess.
 func distillFlavorFacts(_ context.Context, repoPath string) ([]MemoryFact, error) {
-	resolved, err := flavor.Resolve(repoPath)
+	targets, err := flavor.ResolveTargets(repoPath)
 	if errors.Is(err, flavor.ErrNoFlavorMatched) || errors.Is(err, flavor.ErrFlavorNotApplicable) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve repository flavor: %w", err)
 	}
-	flv, err := flavor.Get(resolved)
-	if err != nil {
-		return nil, fmt.Errorf("resolve flavor %q: %w", resolved, err)
+	facts := make([]MemoryFact, 0, len(targets))
+	for i := 0; i < len(targets) && i < config.MaxFlavorPins; i++ {
+		flv, err := flavor.Get(targets[i].Flavor)
+		if err != nil {
+			return nil, fmt.Errorf("resolve flavor %q: %w", targets[i].Flavor, err)
+		}
+		stmt := fmt.Sprintf("Repository uses flavor %s under profile %s. Description: %s.",
+			flv.Name(), flv.HISSProfile(), flv.Description())
+		if targets[i].Path != "." {
+			stmt = fmt.Sprintf("Directory %s uses flavor %s under profile %s. Description: %s.",
+				targets[i].Path, flv.Name(), flv.HISSProfile(), flv.Description())
+		}
+		facts = append(facts, createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()}))
 	}
-	stmt := fmt.Sprintf("Repository uses flavor %s under profile %s. Description: %s.",
-		flv.Name(), flv.HISSProfile(), flv.Description())
-	return []MemoryFact{createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()})}, nil
+	return facts, nil
 }
 
 func distillStateFacts(ctx context.Context, repoPath string) ([]MemoryFact, error) {

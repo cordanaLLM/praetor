@@ -232,7 +232,10 @@ type Manifest struct {
 	Repository RepositoryMetadata `yaml:"repository"`
 	Profiles   []string           `yaml:"profiles"`
 	Facets     []string           `yaml:"facets"`
-	Overrides  Overrides          `yaml:"overrides,omitempty"`
+	// Flavors pins the flavor each component is audited against, replacing detection for
+	// `flavor audit`, `gate run` and the pre-push hook alike (FlavorPin, #1103).
+	Flavors   []FlavorPin `yaml:"flavors,omitempty"`
+	Overrides Overrides   `yaml:"overrides,omitempty"`
 	// Receipt and Needs are consumed by internal/lockdown and internal/needs through their
 	// own narrow parses of this same file. They are declared here because this is the
 	// canonical manifest type: a schema that omits keys the file legitimately carries
@@ -392,6 +395,7 @@ var manifestValidators = [...]func(*Manifest) error{
 	validateManifestDocumentation,
 	validateManifestHostedGates,
 	func(m *Manifest) error { return ValidateDocsSurfaces(m.DocsSurfaces) },
+	func(m *Manifest) error { return ValidateFlavorPins(m.Flavors) },
 	validateManifestActions,
 	validateManifestDevContainer,
 	// The repository-only sections no other one refers to are checked together, so one

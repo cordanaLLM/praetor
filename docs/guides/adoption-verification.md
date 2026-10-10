@@ -769,6 +769,9 @@ A skipped or not-applicable stage names its reason and does not fail the reposit
   ([below](#no-receipt-when-no-toolchain-stage-ran)).
 - Flavor conformance is **not applicable** where the repository's declared profile has no
   flavor implementing it -- an OS image forge is not a Go service and should not be measured as one.
+  The stage takes no flag: a `flavors` list in `.standards.yaml` pins the flavor, or one flavor per
+  path, and a repository matching no flavor fails the stage naming that setting
+  ([onboarding guide](onboarding.md), `internal/gating/flavor_pin_stage_test.go`).
 - The race-detector stage is **skipped** where the race detector cannot build, naming what is
   missing:
 

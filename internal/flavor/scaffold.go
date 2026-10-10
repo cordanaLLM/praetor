@@ -197,16 +197,21 @@ func flavorIdentity(ctx context.Context, repoPath string) (owner, repoName strin
 }
 
 // resolveApplyTarget names the flavor an apply scaffolds: the explicit one, or for "" and "auto"
-// the one Resolve names, which is the flavor the audit then measures. It used to detect across
-// the whole catalog while the audit narrowed to the declared profile, so apply could scaffold a
-// flavor the audit never checked. A repository nothing matches is refused, never given a guess.
+// the one ResolveTargets names, which is the flavor the audit then measures: the manifest's
+// pin, else detection. It used to detect across the whole catalog while the audit narrowed to
+// the declared profile, so apply could scaffold a flavor the audit never checked, and it then
+// ignored the pin the audit honours. A pin the root scaffold cannot express (a directory-scoped
+// or a second pin) is ErrPinNotScaffoldable. A repository nothing matches is refused, never
+// given a guess.
 func resolveApplyTarget(repoPath, targetFlavor string) (Flavor, error) {
 	if targetFlavor == "" || targetFlavor == "auto" {
-		resolved, err := Resolve(repoPath)
+		targets, err := ResolveTargets(repoPath)
 		if err != nil {
 			return nil, err
 		}
-		targetFlavor = resolved
+		if targetFlavor, err = SingleRootFlavor(targets); err != nil {
+			return nil, err
+		}
 	}
 	flv, err := Get(targetFlavor)
 	if err != nil {

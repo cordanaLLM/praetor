@@ -1169,7 +1169,9 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 // what it did.
 //
 // The flavor is resolved under s.arch, the profile adoption writes into .standards.yaml or reads
-// from it, so adoption scaffolds exactly the flavor `flavor audit` measures afterwards. It used
+// from it, and a flavors pin in the manifest wins (flavor.ResolveTargetsForProfile), so adoption
+// scaffolds exactly the flavor `flavor audit` measures afterwards. A pin scoped to a directory,
+// or several pins, name no one root flavor to scaffold and are skipped with that reason. It used
 // to detect across the whole flavor catalog and ignore that profile (BUG-940): a Go service whose
 // package.json only held commit tooling was adopted as framework and scaffolded as
 // typescript-node, and a repository declaring gitops-infra received python-ml templates for a
@@ -1181,7 +1183,7 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 // it lists every template the real run writes, refreshes or keeps, and writes none (#366). It
 // used to skip the flavor entirely, and a reviewer never saw the templates the real run created.
 func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
-	name, err := flavor.ResolveForProfile(s.repoPath, s.arch)
+	name, err := resolveAdoptionFlavor(s.repoPath, s.arch)
 	if err != nil {
 		s.report.recordSkipped(flavorReportPath, flavorSkipDetail(s.arch, err))
 		return
@@ -1196,6 +1198,15 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 	}
 }
 
+// resolveAdoptionFlavor names the one root flavor adoption scaffolds for profile.
+func resolveAdoptionFlavor(repoPath, profile string) (string, error) {
+	targets, err := flavor.ResolveTargetsForProfile(repoPath, profile)
+	if err != nil {
+		return "", err
+	}
+	return flavor.SingleRootFlavor(targets)
+}
+
 // flavorSkipDetail says why adoption scaffolded no flavor for profile: the profile has no flavor
 // at all, or none of its flavors matches the repository. Neither is replaced by a guess.
 func flavorSkipDetail(profile string, err error) string {
@@ -1203,6 +1214,8 @@ func flavorSkipDetail(profile string, err error) string {
 	switch {
 	case errors.Is(err, flavor.ErrFlavorNotApplicable):
 		reason = fmt.Sprintf("profile %s has no flavor", profile)
+	case errors.Is(err, flavor.ErrPinNotScaffoldable):
+		reason = "the flavors pins in .standards.yaml are scoped to a directory or several"
 	case profile != "":
 		reason = fmt.Sprintf("no registered flavor of profile %s matches this repository", profile)
 	}
