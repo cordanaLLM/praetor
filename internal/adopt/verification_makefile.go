@@ -74,6 +74,7 @@ func documentationMakefileBlockPrior(state documentationMarkerState) bool {
 // defined by outside, the rest of the Makefile: Make would then warn "overriding recipe" and run
 // only one of the two recipes.
 func documentationTargetCollision(outside, inside string, expand makefileExpander) error {
+	outside = withoutEngineMakefileInclude(outside)
 	outside, notes := expand(outside)
 	for _, target := range documentationMakefileTargets {
 		if !util.MakefileHasTarget(inside, target) && util.MakefileMayDefineTarget(outside, target) {
@@ -353,8 +354,9 @@ func isLegacyVerificationMakefile(data string) bool {
 // Where both renderings coincide -- a plan with no runnable commands -- the file is already current.
 func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
 	data = withoutDocumentationMakefileBlock(data)
-	prior := buildMakefileWith(plan, priorVerificationRecipePrefix)
-	return data == prior && prior != buildMakefile(plan)
+	priorWithInclude := buildMakefileWith(plan, priorVerificationRecipePrefix)
+	priorWithoutInclude := buildMakefileLegacy(plan, priorVerificationRecipePrefix, true)
+	return (data == priorWithInclude || data == priorWithoutInclude) && data != buildMakefile(plan)
 }
 
 // isPlaceholderVerificationMakefile reports whether data is exactly the placeholder Makefile
@@ -371,7 +373,9 @@ func isPlaceholderVerificationMakefile(data string, plan *VerificationPlan) bool
 		return false
 	}
 	placeholder := &VerificationPlan{Status: verificationUnavailable}
-	return data == buildMakefile(placeholder) || data == priorSourceGateMakefile(placeholder)
+	return data == buildMakefile(placeholder) ||
+		data == priorSourceGateMakefile(placeholder) ||
+		data == priorPathResolvedMakefile(placeholder)
 }
 
 // isReplaceableVerificationMakefile reports whether data is earlier Praetor output that adoption
@@ -383,8 +387,12 @@ func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool
 	if err != nil {
 		return false
 	}
-	return isLegacyVerificationMakefile(normalized) || isPriorGeneratedMakefile(normalized, plan) || normalized == priorSourceGateMakefile(plan) ||
-		isPlaceholderVerificationMakefile(normalized, plan)
+	stripped := withoutDocumentationMakefileBlock(normalized)
+	return isLegacyVerificationMakefile(stripped) ||
+		isPriorGeneratedMakefile(stripped, plan) ||
+		stripped == priorSourceGateMakefile(plan) ||
+		stripped == priorPathResolvedMakefile(plan) ||
+		isPlaceholderVerificationMakefile(stripped, plan)
 }
 
 const legacyVerificationStub = "\n.PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n"
@@ -458,5 +466,5 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 // answer is the shared Makefile reader's (util.MakefileMayDefineTarget), the one editor
 // generation reads the same file with, so the two cannot disagree on what a line declares (#304).
 func mayDefineVerificationTarget(data string) bool {
-	return util.MakefileMayDefineTarget(data, verificationTarget)
+	return util.MakefileMayDefineTarget(withoutEngineMakefileInclude(data), verificationTarget)
 }

@@ -15,9 +15,9 @@ const (
 )
 
 // ShellCLIResolution is the POSIX shell command list that prints the path of whichever name is
-// installed, PraetorCLI first, and fails when neither is. Generated Makefiles and generated
-// hooks both resolve through it, so a repository's make targets and its hooks never pick
-// different binaries.
+// installed, PraetorCLI first, and fails when neither is. The hook engine launcher uses it
+// when no engine is pinned, and generated Makefiles use it when no launcher is installed
+// (MakefileCLIVariable), so unpinned resolution stays consistent across tools.
 const ShellCLIResolution = "command -v " + PraetorCLI + " 2>/dev/null || command -v " + LegacyCLI + " 2>/dev/null"
 
 // MakefileCLIVariable is the make assignment generated Makefiles use to resolve the binary.
@@ -29,14 +29,4 @@ const MakefileCLIVariable = "# Praetor ships one binary under two names; resolve
 // MakefileCLI renders one generated make recipe body invoking the resolved binary.
 func MakefileCLI(arguments string) string {
 	return "\t@$(PRAETORCTL) " + arguments + "\n"
-}
-
-// ShellCLI renders one POSIX shell command that runs arguments with the resolved binary and,
-// when neither name is installed, prints missing to standard error and exits 1. It fails
-// closed on both counts: a failing command keeps its exit status, and a missing binary blocks.
-// It never builds from source, because an adopted repository has no ./cmd/standardsctl: that
-// fallback only ever ran in Praetor's own checkout and hid a missing binary there (BUG-805).
-func ShellCLI(arguments, missing string) string {
-	return "if praetor_cli=$(" + ShellCLIResolution + "); then \"$praetor_cli\" " + arguments +
-		"; else echo " + missing + " >&2; exit 1; fi"
 }

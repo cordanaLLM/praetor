@@ -344,7 +344,7 @@ func TestAdoptionAppendsBesideSilentWarning(t *testing.T) {
 		t.Fatalf("adoption beside a silent $(warning ...) failed: %v", err)
 	}
 	got := mustRead(t, filepath.Join(root, makefileName))
-	if !strings.HasPrefix(got, cobraShapedMakefile) || !util.MakefileHasTarget(got, verificationTarget) ||
+	if !strings.HasPrefix(withoutEngineMakefileInclude(got), cobraShapedMakefile) || !util.MakefileHasTarget(got, verificationTarget) ||
 		strings.Count(got, DocumentationMakefileBlock()) != 1 {
 		t.Fatalf("the Makefile did not gain verify-all and exactly one documentation block:\n%s", got)
 	}

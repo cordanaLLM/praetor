@@ -41,7 +41,10 @@ const (
 // did not change. The "plain govulncheck" entries, one per language set holding Go with and
 // without checkpoint jobs, are the renderings whose pre-push security job ran govulncheck ./...
 // instead of the Go vulnerability gate (govulnGateArgs, #778); a rendering without Go jobs has no
-// security job and did not change.
+// security job and did not change. The "engine from PATH" entries, one per language set with and
+// without the REUSE job and with and without checkpoint jobs, are the renderings whose governance
+// jobs ran whichever praetorctl came first on PATH instead of the engine the repository pins
+// (engineLauncherFile, #906).
 var priorLefthookDigests = map[string]string{
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
@@ -77,6 +80,22 @@ var priorLefthookDigests = map[string]string{
 	"aa95033d2df0024b2b67d1408175027c39b05524a57e89ba84019b9abc9fd9d5": "plain govulncheck, Go jobs, checkpoint jobs",
 	"56adc7c4a9aa1c73cf2d919853acb8a6c8dce1c7350f8c61362bdf63fcd902e8": "plain govulncheck, Go and Rust jobs",
 	"b8be208e7174c611714c17664ac172ae7f1a95032afa4bfdca4dfb818939ca8c": "plain govulncheck, Go and Rust jobs, checkpoint jobs",
+	"708fb4c2326e510de23efa8b8989cad17abe5d743b674f775d452821d80d9325": "engine from PATH, governance jobs only",
+	"50f3a00e99e637ce80b9b3bd08197889e11a25e200e102066ad6476e69253e93": "engine from PATH, governance jobs only, checkpoint jobs",
+	"7a9b196ddaf6eefb3d70dbfb1c6c406219b2d4e2ec9254f426cf23affe146842": "engine from PATH, governance jobs only, REUSE job",
+	"fbdcb855f76713df09e627896342b7242ad1ca8dc14955d43579f46d54f9908c": "engine from PATH, governance jobs only, REUSE job, checkpoint jobs",
+	"6e8397f4c5b56f8227ce5b40da28a35963cd8824e86416773cbb13a8822fce24": "engine from PATH, Go jobs",
+	"1b34854125913918d8ef86cf576c3d74668810f708e1bf17973d1f79cb657eb5": "engine from PATH, Go jobs, checkpoint jobs",
+	"50c7595c88c12014cb7ad8752e04a75881254fa7e937c3f6584fe9f47a081dc5": "engine from PATH, Go jobs, REUSE job",
+	"526de57f2c8001ccd9a2632009fbe196ce8b74a373e552f7485772ae559070a2": "engine from PATH, Go jobs, REUSE job, checkpoint jobs",
+	"98928f337e930b0a75c13d3158474ab65014fd3b13d79651e13fc55ff4454bb6": "engine from PATH, Rust jobs",
+	"3267062423c743a045f2266ee8696bf42f59bcb0ba4cc07498788bf47b52a39c": "engine from PATH, Rust jobs, checkpoint jobs",
+	"fc895b8f7e7c71b8c7065f7018bdf8c34381bd99e06ba47aaf7c7b3ecea9cda3": "engine from PATH, Rust jobs, REUSE job",
+	"78e1c5409c04f6ec7a47ff8c9559f00bfc578e75ab2571e3a71a179b609ccbef": "engine from PATH, Rust jobs, REUSE job, checkpoint jobs",
+	"c0dae53a3d657cd03aa2125c08508448c528a39732306f286e233fc530673517": "engine from PATH, Go and Rust jobs",
+	"2681812cd4b8d0789f633cf4b154fa488fd097094082711b464a911b3bbe1a5f": "engine from PATH, Go and Rust jobs, checkpoint jobs",
+	"914f94f2ffc841524179447d91d30bc371703f17f01210a4815173bd03c4cc03": "engine from PATH, Go and Rust jobs, REUSE job",
+	"473316395ce9616099baf56df3d3cd399fbd2e961c5faa47150ee0483d7a685a": "engine from PATH, Go and Rust jobs, REUSE job, checkpoint jobs",
 }
 
 // lefthookIdentity is what adoption concluded about an existing lefthook.yml.

@@ -74,14 +74,19 @@ func ResolveGitHooksDir(ctx context.Context, repoPath string) (string, error) {
 	return filepath.Clean(hooksDir), nil
 }
 
-// lefthookGovernedCommand renders a lefthook run line that executes a praetor
-// subcommand and fails closed: a failing command blocks, and so does a missing binary.
-// It resolves either installed name through util.ShellCLI, the same resolution generated
-// Makefiles use, so a repository whose make verify-all passes cannot fail every hook
-// because only the legacy name is on PATH (BUG-805).
+// lefthookGovernedCommand renders a lefthook run line or make variable value that executes
+// a praetor subcommand through the engine launcher (engineLauncherFile), which fails closed:
+// a failing command blocks, and so does an engine that cannot be resolved. The launcher runs the
+// engine the repository pins and, only where it pins none, the binary on PATH under either installed
+// name (util.ShellCLIResolution, BUG-805), so a newer binary on PATH never judges a repository
+// pinned to an older engine (#906). Like lefthookPythonCommand, the line holds a path to a script
+// and plain arguments: no quote and no expansion, which lefthook's Windows executor cannot split
+// wrongly.
 func lefthookGovernedCommand(args string) string {
-	return util.ShellCLI(args, "HISS governance hook cannot run because neither "+
-		util.PraetorCLI+" nor "+util.LegacyCLI+" is installed")
+	if args == "" {
+		return "sh " + engineLauncherFile
+	}
+	return "sh " + engineLauncherFile + " " + args
 }
 
 // lefthookPythonCommand renders a lefthook run line that starts a Python hook script through
@@ -518,15 +523,17 @@ func pythonStringTuple(values []string) string {
 }
 
 // buildFallbackPreCommitScript renders the hook installed when lefthook is unavailable.
-// It only runs binaries found on PATH and fails closed when none is installed.
+// It runs the same engine launcher as the lefthook jobs (engineLauncherFile) and fails closed
+// when the launcher is absent or cannot resolve an engine.
 func buildFallbackPreCommitScript() string {
-	missing := "'[HISS] neither " + util.PraetorCLI + " nor " + util.LegacyCLI +
-		" is installed; refusing to commit unverified changes'"
+	missing := "'[HISS] " + engineLauncherFile + " is missing; refusing to commit unverified changes. " +
+		"Run praetorctl adopt to restore it'"
 	return "#!/usr/bin/env bash\n" +
 		fallbackPreCommitMarker + " (installed because lefthook is not available)\n" +
 		"set -euo pipefail\n" +
-		util.ShellCLI("compile-context --verify", missing) + "\n" +
-		util.ShellCLI(preCommitAuditArgs, missing) + "\n"
+		"if [ ! -f " + engineLauncherFile + " ]; then echo " + missing + " >&2; exit 1; fi\n" +
+		lefthookGovernedCommand("compile-context --verify") + "\n" +
+		lefthookGovernedCommand(preCommitAuditArgs) + "\n"
 }
 
 // reconcileGitHooks classifies an existing lefthook.yml before it installs anything
@@ -552,6 +559,9 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	}
 	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s, false)
 	if err != nil {
+		return err
+	}
+	if err := reconcileEngineLauncher(ctx, s); err != nil {
 		return err
 	}
 	lefthookWritten, err := s.renderLefthook(ctx, lefthookTarget{shape: shape, checkpoint: checkpointReady}, existing, identity.prior)

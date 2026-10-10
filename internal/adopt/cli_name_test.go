@@ -97,9 +97,47 @@ func runHookLine(t *testing.T, shell, line, stubDir, workDir string) (string, in
 	if err != nil {
 		t.Skipf("%s required", shell)
 	}
-	cmd := exec.Command(shellPath, "-c", line)
+	return runHookLineEnv(t, shellPath, line, stubDir, workDir, nil)
+}
+
+// hookToolNames are the utilities the engine launcher and the fallback hook use, and nothing else:
+// a hook run sees only these and the stubs of the test, so a binary of the machine the test runs on
+// can never answer for an absent one.
+var hookToolNames = []string{"sh", "bash", "sed", "tr", "cut", "sort", "wc", "head", "env", "mkdir", "rm", "mv", "sleep", "cat", "chmod"}
+
+// linkTools links named tools into a fresh directory and returns it.
+func linkTools(t *testing.T, names ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			t.Skipf("%s required", name)
+		}
+		if err := os.Symlink(path, filepath.Join(dir, name)); err != nil {
+			t.Fatalf("link %s: %v", name, err)
+		}
+	}
+	return dir
+}
+
+// hookToolbox links hookToolNames into a fresh directory and returns it.
+func hookToolbox(t *testing.T) string {
+	t.Helper()
+	return linkTools(t, hookToolNames...)
+}
+
+// runHookLineEnv is runHookLine with extra environment entries. It installs the engine launcher
+// into workDir first, as adoption does beside the lefthook.yml whose jobs run it.
+func runHookLineEnv(t *testing.T, shellPath, line, stubDir, workDir string, env []string) (string, int) {
+	t.Helper()
+	launcher := filepath.Join(workDir, filepath.FromSlash(engineLauncherFile))
+	if !fileExists(launcher) {
+		mustWrite(t, launcher, engineLauncherScript)
+	}
+	cmd := exec.CommandContext(t.Context(), shellPath, "-c", line)
 	cmd.Dir = workDir
-	cmd.Env = []string{"PATH=" + stubDir}
+	cmd.Env = append([]string{"PATH=" + stubDir + string(os.PathListSeparator) + hookToolbox(t)}, env...)
 	out, err := cmd.CombinedOutput()
 	var exitErr *exec.ExitError
 	switch {
@@ -108,7 +146,7 @@ func runHookLine(t *testing.T, shell, line, stubDir, workDir string) (string, in
 	case errors.As(err, &exitErr):
 		return string(out), exitErr.ExitCode()
 	default:
-		t.Fatalf("run %s: %v", shell, err)
+		t.Fatalf("run %s: %v", shellPath, err)
 		return "", -1
 	}
 }

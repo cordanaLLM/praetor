@@ -56,17 +56,32 @@ pre-commit:
         REUSE.toml or LICENSES/ at the repository root, skipping reuse lint >&2;
         fi
     context-check:
-      run: sh .config/lefthook/engine.sh compile-context --verify
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" compile-context --verify;
+        else echo HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi
     hiss-audit:
-      run: sh .config/lefthook/engine.sh audit --offline
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" audit --offline; else
+        echo HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi
 
 post-commit:
   commands:
     state-sync:
-      run: sh .config/lefthook/engine.sh state sync .
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" state sync .; else echo
+        HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi
     dedupe-cadence:
       run: >-
-        sh .config/lefthook/engine.sh dedupe cadence --threshold=20 --record .
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" dedupe cadence
+        --threshold=20 --record .; else echo HISS governance hook cannot run
+        because neither praetorctl nor standardsctl is installed >&2; exit 1; fi
 
 pre-push:
   parallel: false
@@ -74,12 +89,27 @@ pre-push:
     security:
       run: >-
         if [ -f go.mod ]; then if command -v govulncheck >/dev/null 2>&1; then
-        sh .config/lefthook/engine.sh security govuln; else echo govulncheck is
-        not installed, skipping >&2; fi; else echo no go.mod at the repository
-        root, skipping govulncheck >&2; fi
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" security govuln; else
+        echo HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi; else echo govulncheck is not
+        installed, skipping >&2; fi; else echo no go.mod at the repository root,
+        skipping govulncheck >&2; fi
     flavor-audit:
-      run: sh .config/lefthook/engine.sh flavor audit .
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" flavor audit .; else echo
+        HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi
     audit:
-      run: sh .config/lefthook/engine.sh audit
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" audit; else echo HISS
+        governance hook cannot run because neither praetorctl nor standardsctl
+        is installed >&2; exit 1; fi
     gate:
-      run: sh .config/lefthook/engine.sh gate run --path=. --admit-unsupported
+      run: >-
+        if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
+        standardsctl 2>/dev/null); then "$praetor_cli" gate run --path=.
+        --admit-unsupported; else echo HISS governance hook cannot run because
+        neither praetorctl nor standardsctl is installed >&2; exit 1; fi

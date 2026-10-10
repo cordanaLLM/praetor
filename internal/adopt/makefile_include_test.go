@@ -423,7 +423,7 @@ func TestReconcileMakefileFollowsTrackedIncludeThroughSession(t *testing.T) {
 	if err := reconcileMakefile(t.Context(), s); err != nil {
 		t.Fatalf("tracked include refused through the session: %v", err)
 	}
-	if got := mustRead(t, filepath.Join(s.repoPath, makefileName)); !strings.Contains(got, DocumentationMakefileBlock()) || !strings.HasPrefix(got, makefile) {
+	if got := mustRead(t, filepath.Join(s.repoPath, makefileName)); !strings.Contains(got, DocumentationMakefileBlock()) || !strings.HasPrefix(withoutEngineMakefileInclude(got), makefile) {
 		t.Fatalf("block not attached:\n%s", got)
 	}
 	bad := includeDocsSession(t, map[string]string{

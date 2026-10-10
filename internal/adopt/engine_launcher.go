@@ -1,0 +1,46 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package adopt
+
+import (
+	"context"
+)
+
+// engineLauncherFile is the launcher every governance job of the generated lefthook.yml and the
+// fallback pre-commit hook run (lefthookGovernedCommand). It chooses the engine that judges the
+// repository: the one the repository pins with PRAETOR_REF in a workflow under .github/workflows,
+// installed once per pin into a cache keyed by the pin, and only where the repository pins none the
+// binary on PATH (#906). Without it a hook judged a repository pinned to an older engine by
+// whatever newer binary came first on PATH.
+const engineLauncherFile = ".config/lefthook/engine.sh"
+
+// priorEngineLauncherDigests are the digests (priorRendering) of every text a Praetor release wrote
+// at engineLauncherFile, keyed to what produced it; the current text is one of them. Audit does not
+// read the launcher, so --force keeps an edited copy: these texts are what adoption refreshes to
+// the current one without --force, in the file's own line-ending style.
+// TestPriorEngineLauncherDigests_Boundary_CurrentTextRecorded fails until a changed launcher is
+// recorded here, so the next release still refreshes it.
+var priorEngineLauncherDigests = map[string]string{
+	"3ba512b82b0f461443b3d268bb5dbd2df6e9f420840d83e1210078e8f94d28a8": "engine pinned by PRAETOR_REF (#906)",
+	"93387a66f5c910bd4df4dbe11bd016d489af208620f7c0deea69777cdad00387": "engine launcher with --print-path, uses-pin, full semver (#906)",
+	"888b3442bf8381166b8623c195c887260a68672ce5795bf327ae5ce8b77fcc7b": "engine launcher with explicit PRAETOR_REF priority (#906)",
+	"26a458c46116cce38b23e591902ce0ed1541b6f3cedf77807743edd2298fcff5": "engine launcher with install_pinned split under the strict function length (#906)",
+}
+
+// reconcileEngineLauncher scaffolds the launcher beside the lefthook.yml jobs that run it. An
+// existing copy that is the current text is verified, an unedited earlier text is refreshed, and
+// an edited one is the repository's and is kept with a warning, --force included.
+func reconcileEngineLauncher(ctx context.Context, s *adoptSession) error {
+	_, err := s.scaffoldFile(ctx, scaffold{
+		rel:       engineLauncherFile,
+		perm:      filePerm,
+		content:   []byte(engineLauncherScript),
+		created:   "Installed the hook engine launcher: hooks run the engine PRAETOR_REF pins, cached per pin, and the binary on PATH only where no pin is declared",
+		verified:  "Existing hook engine launcher verified present",
+		refreshed: "Refreshed an unedited earlier Praetor hook engine launcher to the current text",
+		prior:     priorEngineLauncherDigests,
+	})
+	return err
+}

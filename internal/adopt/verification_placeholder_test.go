@@ -96,6 +96,7 @@ func TestVerificationPlaceholderRenderingsAreReplaceable(t *testing.T) {
 	for name, rendering := range map[string]string{
 		"current":            buildMakefile(placeholderPlan()),
 		"before-source-gate": priorSourceGateMakefile(placeholderPlan()),
+		"before-launcher":    priorPathResolvedMakefile(placeholderPlan()),
 	} {
 		withBlock, mergeErr := mergeDocumentationMakefile(rendering, false)
 		if mergeErr != nil {
