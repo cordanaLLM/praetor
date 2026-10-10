@@ -381,13 +381,19 @@ in a comment sign for the reason given for the [Python launcher](#the-launcher-a
 Generated `Makefile`s and adopted `Makefile`s include `.config/praetor/engine.mk` when the hook launcher is installed or planned,
 a Praetor-managed file that resolves `$(PRAETORCTL)` through `.config/lefthook/engine.sh`
 and provides the `praetor-engine-path` target, aligning Make targets and hooks with the repository's pinned
-engine (#906, HISS-19). To avoid becoming Make's default goal when included before the first target,
+engine (#906, HISS-19). Adoption installs the launcher and `engine.mk` (and offers the include) independently
+of whether it writes `lefthook.yml`: when a repository keeps its own `lefthook.yml`, adoption leaves that
+configuration untouched and unactivated, installs the launcher and `engine.mk`, and reports that the kept
+hook file does not call the launcher yet, naming the command prefix `sh .config/lefthook/engine.sh <args>` to use (#1172).
+To avoid becoming Make's default goal when included before the first target,
 `engine.mk` guards `praetor-engine-path` by saving `$(.DEFAULT_GOAL)` before the rule and restoring it afterward.
 For an adopter-owned `Makefile`, adoption inserts
 `-include .config/praetor/engine.mk` near the top (after leading comments), leaving existing rules in place.
 Because the first `?=` assignment wins in Make, any later fallback assignment becomes a
-no-op without needing to recognize or edit existing verification blocks. An adopter's assignment
-using `:=`, `::=`, `=`, `!=`, `+=`, or `define` is respected and reported as a warning naming the line. An assignment using `?=` is shadowed by `.config/praetor/engine.mk` and is reported as a warning advising `:=` or `=` to override.
+no-op without needing to recognize or edit existing verification blocks. When `engine.mk` is installed or planned,
+an adopter's assignment using `:=`, `::=`, `=`, `!=`, `+=`, or `define` is respected and reported as a warning naming the line,
+and an assignment using `?=` is shadowed by `.config/praetor/engine.mk` and is reported as a warning advising `:=` or `=` to override.
+Where `engine.mk` is neither installed nor planned (such as when `git-hooks` is declined), neither warning is emitted.
 
 **One pin reader.** `.config/lefthook/engine.sh` is also a standalone entry point: an adopter
 `Makefile` target or script runs `sh .config/lefthook/engine.sh <arguments>` from the repository
@@ -399,7 +405,7 @@ only the path of the resolved binary, which `.config/praetor/engine.mk` uses:
 -include .config/praetor/engine.mk
 ```
 
-Tests (`internal/adopt/engine_launcher_test.go`): `TestEngineLauncher_Positive_PinnedEngineWinsOverPath`
+Tests (`internal/adopt/engine_launcher_test.go` and `internal/adopt/engine_makefile_test.go`): `TestEngineLauncher_Positive_PinnedEngineWinsOverPath`
 runs stub binaries that print their identity with a different `praetorctl` first on `PATH`;
 `TestEngineLauncher_Positive_InstallsOncePerPin`, `TestEngineLauncher_Negative_UninstallablePinFailsClosed`,
 `TestEngineLauncher_Negative_NoGoToolchainFailsClosed`, `TestEngineLauncher_Boundary_InstallTimeout`,
@@ -408,7 +414,11 @@ runs stub binaries that print their identity with a different `praetorctl` first
 `TestEngineLauncher_Negative_UnreadableWorkflowFailsClosed`, `TestEngineLauncher_Positive_PrintPath`,
 `TestEngineLauncher_Negative_PrintPathFailsClosedOnUnusablePin`, `TestEngineLauncher_Boundary_InstallTimeoutZeroFailsClosed`
 and `TestEngineLauncher_Boundary_NoSleepSurvivesInstall` cover the cache, the pin sources, `--print-path` and the refusals;
-`TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo` the unpinned case.
+`TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo` the unpinned case;
+`TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk`,
+`TestEngineMakefile_Negative_KeptCustomLefthookWithDeclinedGitHooksGetsNeitherFile`,
+`TestEngineMakefile_Boundary_KeptCustomLefthookKeepsEditedLauncherWithWarning` and
+`TestEngineMakefile_Positive_OverrideWarningPresentWithEngineMkAbsentWithout` cover kept hook configurations and conditional override warnings (#1172).
 
 ## The make the hooks run
 
@@ -717,13 +727,16 @@ in its own line endings. An edited one is kept, `--force` included, with a warni
 | --- | --- | --- | --- |
 | `.config/agent/hooks/block_evasion.py` | refreshed to the current rendering (`priorEvasionHookDigests`, `testdata/evasion`) | kept | `TestAdopt_Positive_PriorEvasionHookRefreshedOnPlainRun`, `TestAdopt_Negative_EditedEvasionHookKeptUnderForce` |
 | `.config/lefthook/scripts/checkpoint.py` and `common.py`, and `.config/lefthook/python.sh` | refreshed to the `--lock-source-root` bundle (`priorCheckpointDigests`, `testdata/checkpoint`) | kept; the checkpoint lifecycle is unavailable and no other bundle file is written | `TestReconcileCheckpointBundle_Positive_PriorScriptRefreshedOnPlainRun`, `TestReconcileCheckpointBundle_Negative_NoHalfRefreshBesideAKeptFile`, `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable` |
-| `.config/lefthook/engine.sh` ([the engine the hooks run](#the-engine-the-hooks-run)) | refreshed to the current text (`priorEngineLauncherDigests`) | kept | `TestAdopt_EngineLauncher_InstalledAndRefreshed`, `TestAdopt_EngineLauncher_EditedCopyKept`, `TestPriorEngineLauncherDigests_Boundary_CurrentTextRecorded` |
+| `.config/lefthook/engine.sh` ([the engine the hooks run](#the-engine-the-hooks-run)) | refreshed to the current text (`priorEngineLauncherDigests`) | kept | `TestAdopt_EngineLauncher_InstalledAndRefreshed`, `TestAdopt_EngineLauncher_EditedCopyKept`, `TestPriorEngineLauncherDigests_Boundary_CurrentTextRecorded`, `TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk`, `TestEngineMakefile_Boundary_KeptCustomLefthookKeepsEditedLauncherWithWarning` |
 | the `pre-commit` hook in the directory git reports, written only when lefthook cannot install | not applicable | a hook praetor did not write is kept; the audit accepts it only when lefthook or the pre-commit framework wrote it ([the hook runner the audit accepts](#the-hook-runner-the-audit-accepts)) | `TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce` |
 
 Beside a `lefthook.yml` that extends the canonical policy, the interceptor and the checkpoint
 scripts belong to that vendored bundle and are never refreshed
 (`TestReconcileEvasionHook_Boundary_VendoredPriorKeptAndUnreadableUnverified`,
-`TestReconcileCheckpointBundle_Boundary_VendoredPriorScriptKept`). Earlier releases renamed a
+`TestReconcileCheckpointBundle_Boundary_VendoredPriorScriptKept`). Adoption reconciles
+`.config/lefthook/engine.sh` and `.config/praetor/engine.mk` independently of whether `lefthook.yml`
+is written (#1172): a repository whose own hook file is kept still receives the launcher and Makefile include
+to resolve its pinned engine, without overwriting or activating its hook file. Earlier releases renamed a
 foreign `pre-commit` hook to `pre-commit.bak` under `--force`. Adoption now reports such a
 file and leaves it in place (`TestAdopt_Hooks_LegacyPreCommitBackupReportedNotRemoved`).
 
