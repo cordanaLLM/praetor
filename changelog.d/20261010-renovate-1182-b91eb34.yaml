@@ -1,0 +1,3 @@
+type: changed
+title: "Dependencies: update dependency pymdown-extensions to v12.2"
+breaking: false
