@@ -16,7 +16,7 @@ const (
 	// MaxScanEntries limits directory scan iterations to prevent unbounded execution (HISS-02).
 	MaxScanEntries = 1000
 	// maxGitlinkBytes caps a .git gitlink file. Real gitlinks are one short line.
-	maxGitlinkBytes = 4096
+	maxGitlinkBytes = util.MaxGitlinkBytes
 )
 
 var (
@@ -139,13 +139,12 @@ func (e *deletionSafetyError) Unwrap() error {
 	return e.err
 }
 
-type gitMetadataState uint8
+type gitMetadataState = util.GitMetadataState
 
 const (
-	gitMetadataUnknown gitMetadataState = iota
-	gitMetadataAbsent
-	gitMetadataHeadless
-	gitMetadataLive
+	gitMetadataAbsent   = util.GitMetadataAbsent
+	gitMetadataHeadless = util.GitMetadataHeadless
+	gitMetadataLive     = util.GitMetadataLive
 )
 
 // TopologyReport contains the full audit results for the workstation dev tree.
@@ -397,7 +396,7 @@ func gitlinkWithin(ctx context.Context, child, store string) (bool, error) {
 		return false, err
 	}
 	if !ok {
-		return false, errors.New("gitlink target vanished")
+		return false, errors.New("gitlink target is missing or .git is no gitlink")
 	}
 	resolvedStore, err := util.ResolveExistingPath(ctx, store)
 	if err != nil {
@@ -548,7 +547,7 @@ func auditGovernanceEntry(entry os.DirEntry, entryPath, relPath, orgName string,
 		if state == gitMetadataLive {
 			return
 		}
-		if inspectErr != nil || state == gitMetadataUnknown {
+		if inspectErr != nil || state.Indeterminate() {
 			finding.Reason = "governance-named directory contains git metadata that could not be inspected safely"
 			finding.IsSafeToDelete = false
 			report.StrayFiles = append(report.StrayFiles, finding)
@@ -614,95 +613,20 @@ func headlessGitFinding(path, relPath string) StrayFile {
 }
 
 func isProtectedGitState(state gitMetadataState, inspectErr error) bool {
-	return inspectErr != nil || state == gitMetadataUnknown || state == gitMetadataLive
+	return inspectErr != nil || state.Indeterminate() || state == gitMetadataLive
 }
 
 func inspectGitMetadata(gitPath string) (gitMetadataState, error) {
-	info, err := os.Lstat(gitPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return gitMetadataAbsent, nil
-	}
-	if err != nil {
-		return gitMetadataUnknown, fmt.Errorf("lstat git metadata: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return gitMetadataUnknown, nil
-	}
-	if info.Mode().IsRegular() {
-		return inspectGitlink(filepath.Dir(gitPath))
-	}
-	if !info.IsDir() {
-		return gitMetadataUnknown, nil
-	}
-	return inspectGitDirectory(gitPath)
-}
-
-func inspectGitDirectory(gitPath string) (gitMetadataState, error) {
-	headInfo, err := os.Lstat(filepath.Join(gitPath, "HEAD"))
-	if errors.Is(err, os.ErrNotExist) {
-		return gitMetadataHeadless, nil
-	}
-	if err != nil {
-		return gitMetadataUnknown, fmt.Errorf("lstat git HEAD: %w", err)
-	}
-	if headInfo.Mode().IsRegular() || headInfo.Mode()&os.ModeSymlink != 0 {
-		return gitMetadataLive, nil
-	}
-	return gitMetadataUnknown, nil
+	return util.InspectGitMetadata(gitPath)
 }
 
 func inspectWorktreeGitMetadata(path string) (gitMetadataState, error) {
-	if strings.TrimSpace(path) == "" {
-		return gitMetadataAbsent, nil
-	}
-	return inspectGitMetadata(filepath.Join(path, ".git"))
+	return util.InspectWorktreeGitMetadata(path)
 }
 
-func inspectGitlink(worktree string) (gitMetadataState, error) {
-	target, ok, err := resolveGitlinkTarget(worktree)
-	if err != nil || !ok {
-		return gitMetadataUnknown, err
-	}
-	state, inspectErr := inspectGitDirectory(target)
-	if inspectErr != nil {
-		return gitMetadataUnknown, inspectErr
-	}
-	if state != gitMetadataLive {
-		return gitMetadataUnknown, nil
-	}
-	return gitMetadataLive, nil
-}
-
-// resolveGitlinkTarget reads the "gitdir: <path>" line of the .git file in worktree and
-// returns the directory it names, cleaned and joined onto worktree when relative. ok is
-// false when the file is no gitlink or its target is not an existing directory; err
-// carries read and stat failures.
-func resolveGitlinkTarget(worktree string) (target string, ok bool, err error) {
-	data, err := util.ReadConfinedLimited(worktree, ".git", maxGitlinkBytes)
-	if err != nil {
-		return "", false, fmt.Errorf("read gitlink: %w", err)
-	}
-	line := strings.TrimRight(string(data), "\r\n")
-	const prefix = "gitdir: "
-	if !strings.HasPrefix(line, prefix) {
-		return "", false, nil
-	}
-	target = line[len(prefix):]
-	if target == "" {
-		return "", false, nil
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(worktree, target)
-	}
-	target = filepath.Clean(target)
-	info, err := os.Stat(target)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("stat gitlink target: %w", err)
-	}
-	return target, info.IsDir(), nil
+// resolveGitlinkTarget forwards to util.ResolveGitlinkTarget, which documents the contract.
+func resolveGitlinkTarget(worktree string) (string, bool, error) {
+	return util.ResolveGitlinkTarget(worktree)
 }
 
 // ErrNotCheckout is returned by GitCommonDir for a path HasValidGitRepo does not accept.
@@ -743,7 +667,7 @@ func checkoutGitDir(path string) (string, error) {
 		return "", err
 	}
 	if !ok {
-		return "", fmt.Errorf("%w: %s: gitlink target vanished", ErrNotCheckout, path)
+		return "", fmt.Errorf("%w: %s: gitlink target is missing or .git is no gitlink", ErrNotCheckout, path)
 	}
 	return target, nil
 }
@@ -779,8 +703,7 @@ func resolveCommonDir(ctx context.Context, gitDir string) (string, error) {
 // metadata has a regular or legacy symbolic HEAD. An empty path is never a repository,
 // including when the process working directory itself is a checkout.
 func HasValidGitRepo(path string) bool {
-	state, err := inspectWorktreeGitMetadata(path)
-	return err == nil && state == gitMetadataLive
+	return util.HasValidGitRepo(path)
 }
 
 // CleanWorkstationTopology removes safe stray files and returns their paths. Unsafe
@@ -880,6 +803,10 @@ func verifyDeletionSafety(ctx context.Context, devRoot, path string, containers 
 	if err := verifyDirectGitMetadataTarget(cleanPath); err != nil {
 		return err
 	}
+	return verifyDirectoryDeletionTarget(cleanPath, pathInfo, pathIsSymlink)
+}
+
+func verifyDirectoryDeletionTarget(cleanPath string, pathInfo os.FileInfo, pathIsSymlink bool) error {
 	if pathIsSymlink || !pathInfo.IsDir() {
 		return nil
 	}
@@ -946,7 +873,7 @@ func verifyOrganizationGitBoundary(devRoot, candidate string) error {
 	if inspectErr != nil {
 		return fmt.Errorf("cannot inspect organization git metadata safely: %w", inspectErr)
 	}
-	if state == gitMetadataLive || state == gitMetadataUnknown {
+	if state == gitMetadataLive || state.Indeterminate() {
 		return fmt.Errorf("cannot delete content beneath live or indeterminate organization repository: %s", candidate)
 	}
 	return nil
@@ -993,7 +920,7 @@ func verifyWorktreeDeletionTarget(candidate string) error {
 	if inspectErr != nil {
 		return fmt.Errorf("cannot inspect nested git metadata safely: %w", inspectErr)
 	}
-	if state == gitMetadataLive || state == gitMetadataUnknown {
+	if state == gitMetadataLive || state.Indeterminate() {
 		return fmt.Errorf("cannot delete directory with live or indeterminate git metadata: %s", candidate)
 	}
 	return nil

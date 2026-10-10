@@ -323,6 +323,27 @@ func TestCleanWorkstationTopology_PreservesIndeterminateOrganizationContents(t *
 	assertPathsExist(t, governancePaths)
 }
 
+func TestCleanWorkstationTopology_PreservesDanglingGitlinkOrganizationContents(t *testing.T) {
+	devRoot := t.TempDir()
+	orgDir := filepath.Join(devRoot, "acme-labs")
+	if err := os.MkdirAll(orgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orgDir, ".git"), []byte("gitdir: nonexistent-target\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	governancePaths := writeGovernancePayload(t, orgDir)
+
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
+	if err != nil {
+		t.Fatalf("CleanWorkstationTopologyDetailed: %v", err)
+	}
+	if len(result.Cleaned) != 0 || len(result.Blocked) == 0 {
+		t.Fatalf("dangling gitlink organization result = %+v, want blocked-only", result)
+	}
+	assertPathsExist(t, governancePaths)
+}
+
 func TestCleanWorkstationTopology_PreservesLiveOrganizationGitlink(t *testing.T) {
 	devRoot := t.TempDir()
 	orgDir := filepath.Join(devRoot, "acme-labs")

@@ -1433,6 +1433,45 @@ class ScopeAndGuard(unittest.TestCase):
             self.assertIn(vendor, written)
         self.assertEqual([name for name in written if not context_changed([name])], [])
 
+    def _compile_context_below_planted_git(self, plant):
+        # Plants a .git entry above a temporary tree with plant(parent), then compiles the child.
+        with tempfile.TemporaryDirectory(prefix="praetor-context-planted-") as temp:
+            parent = Path(temp)
+            plant(parent)
+            root = parent / "child"
+            persona = "---\nname: demo\ndescription: demo\n---\n\nRun tests.\n"
+            for name, text in {"AGENTS.md": "# Demo\n\nRun tests before commit.\n",
+                               ".agents/agents/demo.md": persona,
+                               ".agents/skills/demo/SKILL.md": persona,
+                               ".agents/skills/caveman/SKILL.md": persona,
+                               ".agents/plugins/praetor/plugin.json": '{"name": "praetor"}\n'}.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(text, encoding="utf-8")
+            run(["go", "run", "./cmd/standardsctl", "compile-context", "--source",
+                 str(root / "AGENTS.md"), "--target-dir", str(root)],
+                cwd=ROOT, env=clean_env(), timeout=600)
+            written = sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file())
+            self.assertIn(".claude/agents/demo.md", written)
+
+    def test_compile_context_succeeds_with_planted_empty_git_above_temp_dir(self):
+        # A planted empty .git above a temporary tree must not count as a repository (#1100).
+        # Previously, GitWorktreePresent treated any .git entry as a worktree root, causing
+        # compile-context to invoke git ignore and ls-files against an invalid repository.
+        self._compile_context_below_planted_git(lambda parent: (parent / ".git").mkdir())
+
+    @unittest.skipIf(os.name == "nt", "creating symlinks requires optional Windows privileges")
+    def test_compile_context_succeeds_with_dangling_git_symlink_above_temp_dir(self):
+        # Git skips a dangling .git symlink and keeps walking up, so it is no repository (#1100).
+        self._compile_context_below_planted_git(
+            lambda parent: (parent / ".git").symlink_to(parent / "nowhere"))
+
+    def test_compile_context_succeeds_with_planted_head_only_git_above_temp_dir(self):
+        # git requires objects/ and refs/ and walks past a .git holding only HEAD (#1100).
+        def plant(parent):
+            (parent / ".git").mkdir()
+            (parent / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        self._compile_context_below_planted_git(plant)
+
     def test_context_changed_ignores_paths_compile_context_does_not_touch(self):
         # Negative and boundary: documentation, vendor settings beside the persona directories,
         # workflows and lookalike prefixes do not start compile-context --verify.
