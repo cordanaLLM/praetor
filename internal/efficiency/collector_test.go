@@ -6,6 +6,7 @@ package efficiency
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -148,7 +149,7 @@ func TestCollector_Negative_ZeroDenominatorsPrintNotMeasured(t *testing.T) {
 	}
 	empty := collect(t, CollectorOptions{ForgeJSONPath: prs, Milestone: "none"})
 	ms := empty.MilestoneSummary
-	if ms.UnitsCount != 0 || ms.LocalFirstRatio != NotMeasured || ms.PromptCacheHitRate != NotMeasured || ms.AvgIssueToMerge != NotMeasured {
+	if ms.UnitsCount != 0 || ms.LocalFirstRatio != UndefinedRate || ms.PromptCacheHitRate != UndefinedRate || ms.AvgIssueToMerge != UndefinedRate {
 		t.Errorf("empty summary: %+v", ms)
 	}
 	none := collect(t, CollectorOptions{})
@@ -349,5 +350,348 @@ func TestRenderTable_Positive_PrintsNotes(t *testing.T) {
 	var out bytes.Buffer
 	if err := RenderTable(report, &out); err != nil || !strings.Contains(out.String(), "- forge listing incomplete: x") {
 		t.Fatalf("%v %q", err, out.String())
+	}
+}
+
+func TestCollector_Positive_QualifiedDenominatorAndLaneCounts(t *testing.T) {
+	// Acceptance: A fixture with two qualified units and one reverted unit reports the revert in the lane counts and divides by 2.
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/first",
+    "title": "First qualified unit",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {"anthropic": 1000}, "provenance": "measured"},
+    "wall_seconds": {"value": 100, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 5.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  },
+  {
+    "number": 2,
+    "head_branch": "feat/second",
+    "title": "Second qualified unit",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {"anthropic": 2000}, "provenance": "measured"},
+    "wall_seconds": {"value": 200, "provenance": "measured"},
+    "review_rounds": {"value": 3, "provenance": "measured"},
+    "retries": {"value": 2, "provenance": "measured"},
+    "operator_minutes": {"value": 15.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  },
+  {
+    "number": 3,
+    "head_branch": "feat/third",
+    "title": "Third reverted unit",
+    "disposition": "reverted",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {"anthropic": 400}, "provenance": "measured"},
+    "wall_seconds": {"value": 60, "provenance": "measured"},
+    "review_rounds": {"value": 2, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 4.0, "provenance": "measured"},
+    "escaped_defects": {"value": 1, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
+
+	if len(report.Units) != 3 {
+		t.Fatalf("expected 3 units, got %d", len(report.Units))
+	}
+	ms := report.MilestoneSummary
+	if ms.QualifiedUnits != 2 {
+		t.Errorf("expected 2 qualified units, got %d", ms.QualifiedUnits)
+	}
+	if ms.LaneCounts.Qualified != 2 || ms.LaneCounts.Reverted != 1 || ms.LaneCounts.Offered != 3 {
+		t.Errorf("unexpected lane counts: %+v", ms.LaneCounts)
+	}
+	laneStr := ms.LaneCounts.String()
+	if !strings.Contains(laneStr, "1 reverted") || !strings.Contains(laneStr, "2 qualified") {
+		t.Errorf("lane counts string must report revert: %q", laneStr)
+	}
+
+	// Verify denominator is 2 (divides by 2):
+	// Wall seconds: (100 + 200 + 60) / 2 = 180s = 3m
+	if ms.AvgWallSecondsNum == nil || *ms.AvgWallSecondsNum != 180.0 {
+		t.Errorf("expected avg wall seconds 180 (360/2), got %v", ms.AvgWallSecondsNum)
+	}
+	// Review rounds: (1 + 3 + 2) / 2 = 3.00
+	if ms.AvgReviewRoundsNum == nil || *ms.AvgReviewRoundsNum != 3.0 {
+		t.Errorf("expected avg review rounds 3.0 (6/2), got %v", ms.AvgReviewRoundsNum)
+	}
+	// Retries: (0 + 2 + 0) / 2 = 1.00
+	if ms.AvgRetriesNum == nil || *ms.AvgRetriesNum != 1.0 {
+		t.Errorf("expected avg retries 1.0 (2/2), got %v", ms.AvgRetriesNum)
+	}
+	// Operator minutes: (5.0 + 15.0 + 4.0) / 2 = 12.0m
+	if ms.AvgOperatorMinutesNum == nil || *ms.AvgOperatorMinutesNum != 12.0 {
+		t.Errorf("expected avg operator minutes 12.0 (24/2), got %v", ms.AvgOperatorMinutesNum)
+	}
+	// Tokens by provider: anthropic (1000 + 2000 + 400) / 2 = 1700.0/unit
+	if ms.TokensByProvider["anthropic"] != 1700.0 {
+		t.Errorf("expected anthropic token rate 1700.0 (3400/2), got %f", ms.TokensByProvider["anthropic"])
+	}
+	// Escaped defects: 1 defect across 2 qualified units = 0.50 per qualified unit
+	if ms.EscapedDefectsNum == nil || *ms.EscapedDefectsNum != 1 {
+		t.Errorf("expected 1 defect, got %v", ms.EscapedDefectsNum)
+	}
+	if !strings.Contains(ms.EscapedDefects, "0.50 per qualified unit") {
+		t.Errorf("expected defect rate divided by 2, got %q", ms.EscapedDefects)
+	}
+
+	var tableBuf bytes.Buffer
+	if err := RenderTable(report, &tableBuf); err != nil {
+		t.Fatalf("render table: %v", err)
+	}
+	tableOut := tableBuf.String()
+	if !strings.Contains(tableOut, "1 reverted") {
+		t.Errorf("table output must report revert in lane counts:\n%s", tableOut)
+	}
+}
+
+func TestCollector_Positive_ZeroFailureRuleOfThreeBound(t *testing.T) {
+	// Honest edge case: a zero-failure claim prints its n and the rule-of-three bound
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/a",
+    "title": "Unit A",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 10, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  },
+  {
+    "number": 2,
+    "head_branch": "feat/b",
+    "title": "Unit B",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 10, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
+
+	ms := report.MilestoneSummary
+	expectedClaim := "0 (n=2, rule-of-three bound <= 1.50)"
+	if ms.EscapedDefects != expectedClaim {
+		t.Errorf("zero-failure claim must print n and rule-of-three bound, want %q, got %q", expectedClaim, ms.EscapedDefects)
+	}
+}
+
+func TestCollector_Boundary_ZeroQualifiedUnitsPrintsUndefinedNeverZero(t *testing.T) {
+	// Honest edge case: zero qualified units prints undefined, never 0
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/rev",
+    "title": "Reverted unit only",
+    "disposition": "reverted",
+    "metric_epoch": "2026-10-10",
+    "tokens_by_provider": {"value": {}, "provenance": "measured"},
+    "wall_seconds": {"value": 50, "provenance": "measured"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	report := collect(t, CollectorOptions{ForgeJSONPath: prsPath})
+
+	ms := report.MilestoneSummary
+	if ms.QualifiedUnits != 0 {
+		t.Fatalf("expected 0 qualified units, got %d", ms.QualifiedUnits)
+	}
+	rates := []struct {
+		name string
+		val  string
+	}{
+		{"AvgIssueToMerge", ms.AvgIssueToMerge},
+		{"AvgWallSeconds", ms.AvgWallSeconds},
+		{"AvgReviewRounds", ms.AvgReviewRounds},
+		{"AvgRetries", ms.AvgRetries},
+		{"AvgOperatorMinutes", ms.AvgOperatorMinutes},
+		{"EscapedDefects", ms.EscapedDefects},
+		{"EscapedDefectsRate", ms.EscapedDefectsRate},
+		{"OperatorTouches", ms.OperatorTouches},
+		{"FrontierTokens", ms.FrontierTokens},
+		{"PromptCacheHitRate", ms.PromptCacheHitRate},
+		{"LocalFirstRatio", ms.LocalFirstRatio},
+	}
+	for _, r := range rates {
+		if r.val != UndefinedRate {
+			t.Errorf("rate %s with 0 qualified units must be %q, got %q", r.name, UndefinedRate, r.val)
+		}
+	}
+}
+
+func TestCollector_Negative_RowWithoutProvenanceRefused(t *testing.T) {
+	// Acceptance: A row without provenance labels is refused.
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/no-prov",
+    "title": "Missing provenance",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "wall_seconds": {"value": 100}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	_, err := NewCollector(CollectorOptions{ForgeJSONPath: prsPath}).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected Collect to fail and refuse row without provenance labels")
+	}
+	if !strings.Contains(err.Error(), "missing or invalid provenance label") {
+		t.Errorf("expected error to name missing provenance label, got: %v", err)
+	}
+}
+
+func TestCollector_Negative_InvalidProvenanceRefused(t *testing.T) {
+	fixture := `[
+  {
+    "number": 1,
+    "head_branch": "feat/bad-prov",
+    "title": "Bad provenance",
+    "disposition": "qualified",
+    "metric_epoch": "2026-10-10",
+    "wall_seconds": {"value": 100, "provenance": "guessed"},
+    "review_rounds": {"value": 1, "provenance": "measured"},
+    "retries": {"value": 0, "provenance": "measured"},
+    "operator_minutes": {"value": 1.0, "provenance": "measured"},
+    "escaped_defects": {"value": 0, "provenance": "measured"},
+    "tokens_by_provider": {"value": {}, "provenance": "measured"}
+  }
+]`
+	prsPath := filepath.Join(t.TempDir(), "prs.json")
+	writeFile(t, prsPath, []byte(fixture))
+	_, err := NewCollector(CollectorOptions{ForgeJSONPath: prsPath}).Collect(context.Background())
+	if err == nil {
+		t.Fatal("expected Collect to fail and refuse row with invalid provenance label")
+	}
+	if !strings.Contains(err.Error(), "missing or invalid provenance label") {
+		t.Errorf("expected error to name provenance, got: %v", err)
+	}
+}
+
+func TestCollector_Negative_MissingMetricEpochRefused(t *testing.T) {
+	row := UnitReport{
+		PullRequestNumber: 1,
+		Disposition:       DispositionQualified,
+		TokensByProvider:  VectorField[map[string]int64]{Provenance: ProvenanceMeasured},
+		WallSeconds:       VectorField[int64]{Provenance: ProvenanceMeasured},
+		ReviewRounds:      VectorField[int]{Provenance: ProvenanceMeasured},
+		Retries:           VectorField[int]{Provenance: ProvenanceMeasured},
+		OperatorMinutes:   VectorField[float64]{Provenance: ProvenanceMeasured},
+		EscapedDefects:    VectorField[int]{Provenance: ProvenanceMeasured},
+	}
+	if err := ValidateRow(row); err == nil {
+		t.Fatal("expected ValidateRow to refuse row with missing metric_epoch")
+	}
+}
+
+func TestCollector_Negative_MixedMetricEpochsRefused(t *testing.T) {
+	row1 := UnitReport{
+		PullRequestNumber: 1,
+		MetricEpoch:       CurrentMetricEpoch,
+		Disposition:       DispositionQualified,
+		TokensByProvider:  VectorField[map[string]int64]{Provenance: ProvenanceMeasured},
+		WallSeconds:       VectorField[int64]{Provenance: ProvenanceMeasured},
+		ReviewRounds:      VectorField[int]{Provenance: ProvenanceMeasured},
+		Retries:           VectorField[int]{Provenance: ProvenanceMeasured},
+		OperatorMinutes:   VectorField[float64]{Provenance: ProvenanceMeasured},
+		EscapedDefects:    VectorField[int]{Provenance: ProvenanceMeasured},
+	}
+	row2 := row1
+	row2.PullRequestNumber = 2
+	row2.MetricEpoch = "2025-01-01"
+
+	if err := ValidateRows([]UnitReport{row1, row2}); err == nil {
+		t.Fatal("expected ValidateRows to refuse mixed metric epochs")
+	}
+}
+
+func TestFormatZeroFailureClaim_PositiveAndBoundary(t *testing.T) {
+	if got := FormatZeroFailureClaim(0); got != UndefinedRate {
+		t.Errorf("n=0 must be undefined, got %q", got)
+	}
+	if got := FormatZeroFailureClaim(1); got != "0 (n=1, rule-of-three bound <= 3.00)" {
+		t.Errorf("n=1 got %q", got)
+	}
+	if got := FormatZeroFailureClaim(2); got != "0 (n=2, rule-of-three bound <= 1.50)" {
+		t.Errorf("n=2 got %q", got)
+	}
+	if got := FormatZeroFailureClaim(10); got != "0 (n=10, rule-of-three bound <= 0.30)" {
+		t.Errorf("n=10 got %q", got)
+	}
+	if got := FormatZeroFailureClaim(100); got != "0 (n=100, rule-of-three bound <= 0.03)" {
+		t.Errorf("n=100 got %q", got)
+	}
+}
+
+func TestLaneCounts_PositiveAndBoundary(t *testing.T) {
+	var lc LaneCounts
+	lc.Add(DispositionQualified)
+	lc.Add(DispositionQualified)
+	lc.Add(DispositionReverted)
+	lc.Add(DispositionRejected)
+	lc.Add(DispositionAbandoned)
+	lc.Add(DispositionTimedOut)
+	lc.Add(DispositionOffered)
+
+	if lc.Qualified != 2 || lc.Reverted != 1 || lc.Rejected != 1 || lc.Abandoned != 1 || lc.TimedOut != 1 || lc.Offered != 7 {
+		t.Errorf("unexpected counts: %+v", lc)
+	}
+	str := lc.String()
+	if !strings.Contains(str, "2 qualified") || !strings.Contains(str, "1 reverted") || !strings.Contains(str, "7 offered") {
+		t.Errorf("unexpected string: %q", str)
+	}
+}
+
+func TestVectorField_UnmarshalJSON_PositiveAndBoundary(t *testing.T) {
+	// Full object
+	var f1 VectorField[int64]
+	if err := json.Unmarshal([]byte(`{"value": 42, "provenance": "measured"}`), &f1); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if f1.Value != 42 || f1.Provenance != ProvenanceMeasured {
+		t.Errorf("f1: %+v", f1)
+	}
+
+	// Missing provenance
+	var f2 VectorField[int64]
+	if err := json.Unmarshal([]byte(`{"value": 42}`), &f2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if f2.Provenance != "" {
+		t.Errorf("expected empty provenance, got %q", f2.Provenance)
+	}
+
+	// Raw number
+	var f3 VectorField[int64]
+	if err := json.Unmarshal([]byte(`42`), &f3); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if f3.Value != 42 || f3.Provenance != "" {
+		t.Errorf("f3: %+v", f3)
 	}
 }

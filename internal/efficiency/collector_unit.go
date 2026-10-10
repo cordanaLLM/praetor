@@ -4,7 +4,9 @@
 package efficiency
 
 import (
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -39,14 +41,63 @@ func calculateIssueToMerge(pr forge.MergedPullRequest) (string, *int64) {
 	return formatDuration(dur), &secs
 }
 
+func unmarshalVectorValue[T any](raw *forge.VectorFieldRaw, target *VectorField[T]) {
+	if raw == nil {
+		return
+	}
+	var val T
+	if len(raw.Value) > 0 {
+		if err := json.Unmarshal(raw.Value, &val); err == nil {
+			target.Value = val
+		}
+	}
+	target.Provenance = Provenance(raw.Provenance)
+}
+
+func initUnitVectorFields(pr forge.MergedPullRequest, itmSecs *int64, unit *UnitReport) {
+	unit.TokensByProvider = VectorField[map[string]int64]{Value: make(map[string]int64), Provenance: ProvenanceMeasured}
+	unit.WallSeconds = VectorField[int64]{Provenance: ProvenanceMeasured}
+	if itmSecs != nil {
+		unit.WallSeconds.Value = *itmSecs
+	}
+	unit.ReviewRounds = VectorField[int]{Value: 1, Provenance: ProvenanceMeasured}
+	unit.Retries = VectorField[int]{Provenance: ProvenanceMeasured}
+	unit.OperatorMinutes = VectorField[float64]{Provenance: ProvenanceMeasured}
+	unit.EscapedDefects = VectorField[int]{Provenance: ProvenanceMeasured}
+
+	unmarshalVectorValue(pr.TokensByProvider, &unit.TokensByProvider)
+	unmarshalVectorValue(pr.WallSeconds, &unit.WallSeconds)
+	unmarshalVectorValue(pr.ReviewRounds, &unit.ReviewRounds)
+	unmarshalVectorValue(pr.Retries, &unit.Retries)
+	unmarshalVectorValue(pr.OperatorMinutes, &unit.OperatorMinutes)
+	unmarshalVectorValue(pr.EscapedDefects, &unit.EscapedDefects)
+}
+
+func resolveUnitDisposition(pr forge.MergedPullRequest) string {
+	if pr.Disposition != "" {
+		return normalizeDisposition(pr.Disposition)
+	}
+	lowerTitle := strings.ToLower(pr.Title)
+	if strings.HasPrefix(lowerTitle, "revert ") || strings.HasPrefix(lowerTitle, "revert:") {
+		return DispositionReverted
+	}
+	return DispositionQualified
+}
+
 func newUnit(pr forge.MergedPullRequest) UnitReport {
 	closing := make([]int, 0, len(pr.ClosingIssues))
 	for _, ci := range pr.ClosingIssues {
 		closing = append(closing, ci.Number)
 	}
 	itm, secs := calculateIssueToMerge(pr)
-	return UnitReport{
-		PullRequestNumber:   pr.Number,
+	disp := resolveUnitDisposition(pr)
+	epoch := pr.MetricEpoch
+	if epoch == "" {
+		epoch = CurrentMetricEpoch
+	}
+
+	unit := UnitReport{
+		PullRequestNumber:   pr.EffectiveNumber(),
 		HeadBranch:          pr.HeadBranch,
 		Title:               pr.Title,
 		Milestone:           pr.Milestone,
@@ -55,6 +106,9 @@ func newUnit(pr forge.MergedPullRequest) UnitReport {
 		ClosingIssues:       closing,
 		IssueToMerge:        itm,
 		IssueToMergeSecs:    secs,
+		Disposition:         disp,
+		Lane:                pr.Lane,
+		MetricEpoch:         epoch,
 		FrontierTokens:      NotMeasured,
 		Spend:               NotMeasured,
 		OperatorTouches:     NotMeasured,
@@ -64,6 +118,8 @@ func newUnit(pr forge.MergedPullRequest) UnitReport {
 		ChecksBeforeReviews: FollowUpRefs,
 		Sources:             NotMeasured,
 	}
+	initUnitVectorFields(pr, secs, &unit)
+	return unit
 }
 
 // unitUsage is the request and frontier-token count of one unit and where it came from.

@@ -1,0 +1,4 @@
+type: added
+title: "efficiency ledger qualifies unit denominators, tracks lane dispositions, enforces vector provenance and metric epoch, and bounds zero-failure claims"
+issue: "#1132"
+breaking: false

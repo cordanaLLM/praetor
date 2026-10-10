@@ -31,15 +31,20 @@ func RenderTable(report *Report, out io.Writer) error {
 	}
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	header := "PR\tBRANCH\tISSUE-TO-MERGE\tTOUCHES\tFRONTIER TOKENS\tSPEND\tCACHE HIT\tLOCAL-1ST\tSOURCES\n"
+	header := "PR\tBRANCH\tSTATUS\tISSUE-TO-MERGE\tTOUCHES\tFRONTIER TOKENS\tSPEND\tCACHE HIT\tLOCAL-1ST\tSOURCES\n"
 	if _, err := fmt.Fprint(w, header); err != nil {
 		return err
 	}
 
 	for _, u := range report.Units {
-		line := fmt.Sprintf("#%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		disp := u.Disposition
+		if disp == "" {
+			disp = DispositionQualified
+		}
+		line := fmt.Sprintf("#%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			u.PullRequestNumber,
 			u.HeadBranch,
+			disp,
 			u.IssueToMerge,
 			u.OperatorTouches,
 			u.FrontierTokens,
@@ -72,7 +77,14 @@ func renderSummary(report *Report, out io.Writer) error {
 	lines := []string{
 		fmt.Sprintf("\n--- Milestone Summary: %s ---", title),
 		fmt.Sprintf("Units:                   %d", ms.UnitsCount),
+		fmt.Sprintf("Qualified Units:         %d", ms.QualifiedUnits),
+		fmt.Sprintf("Lane Counts:             %s", ms.LaneCounts.String()),
 		fmt.Sprintf("Avg Issue-to-Merge:      %s", ms.AvgIssueToMerge),
+		fmt.Sprintf("Avg Wall Seconds:        %s", ms.AvgWallSeconds),
+		fmt.Sprintf("Avg Review Rounds:       %s", ms.AvgReviewRounds),
+		fmt.Sprintf("Avg Retries:             %s", ms.AvgRetries),
+		fmt.Sprintf("Avg Operator Minutes:    %s", ms.AvgOperatorMinutes),
+		fmt.Sprintf("Escaped Defects:         %s", ms.EscapedDefects),
 		fmt.Sprintf("Operator Touches:        %s", ms.OperatorTouches),
 		fmt.Sprintf("Frontier Tokens:         %s", ms.FrontierTokens),
 		fmt.Sprintf("Attributed Spend:        %s", ms.AttributedSpend),
@@ -83,6 +95,9 @@ func renderSummary(report *Report, out io.Writer) error {
 		fmt.Sprintf("Local-First Ratio:       %s", ms.LocalFirstRatio),
 		fmt.Sprintf("Fact-Hit Ratio:          %s", ms.FactHitRatio),
 		fmt.Sprintf("Checks-Before-Reviews:   %s", ms.ChecksBeforeReviews),
+	}
+	if ms.TokensByProviderDisplay != "" && ms.TokensByProviderDisplay != UndefinedRate {
+		lines = append(lines, fmt.Sprintf("Tokens by Provider:      %s", ms.TokensByProviderDisplay))
 	}
 	if len(report.Notes) > 0 {
 		lines = append(lines, "\n--- Notes ---")

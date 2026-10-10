@@ -84,17 +84,24 @@ func newReport(milestone string) *Report {
 		Units: make([]UnitReport, 0),
 		MilestoneSummary: MilestoneSummary{
 			Milestone:           milestone,
-			FrontierTokens:      NotMeasured,
+			MetricEpoch:         CurrentMetricEpoch,
+			FrontierTokens:      UndefinedRate,
 			AttributedSpend:     NotMeasured,
 			UnattributedSpend:   NotMeasured,
 			OtherUnitsSpend:     NotMeasured,
 			TotalSpend:          NotMeasured,
-			AvgIssueToMerge:     NotMeasured,
-			OperatorTouches:     NotMeasured,
-			PromptCacheHitRate:  NotMeasured,
-			LocalFirstRatio:     NotMeasured,
-			FactHitRatio:        FollowUpRefs,
-			ChecksBeforeReviews: FollowUpRefs,
+			AvgIssueToMerge:     UndefinedRate,
+			AvgWallSeconds:      UndefinedRate,
+			AvgReviewRounds:     UndefinedRate,
+			AvgRetries:          UndefinedRate,
+			AvgOperatorMinutes:  UndefinedRate,
+			EscapedDefects:      UndefinedRate,
+			EscapedDefectsRate:  UndefinedRate,
+			OperatorTouches:     UndefinedRate,
+			PromptCacheHitRate:  UndefinedRate,
+			LocalFirstRatio:     UndefinedRate,
+			FactHitRatio:        UndefinedRate,
+			ChecksBeforeReviews: UndefinedRate,
 		},
 	}
 }
@@ -132,6 +139,9 @@ func (c *Collector) Collect(ctx context.Context) (*Report, error) {
 	owners := branchOwners(prs.all)
 	for _, pr := range prs.units {
 		report.Units = append(report.Units, c.buildUnitReport(pr, owners, transStats, spend, report.Sources, report))
+	}
+	if err := ValidateRows(report.Units); err != nil {
+		return nil, fmt.Errorf("validate efficiency units: %w", err)
 	}
 	c.buildMilestoneSummary(report, spend)
 	return report, nil

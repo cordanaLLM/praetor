@@ -164,11 +164,42 @@ Default cheap markers: `mini`, `nano`, `flash`, `lite`, `haiku`
 When a source is omitted, a metric that needs it prints `not measured`, **never zero**; the same
 holds for any ratio with a zero denominator and for a unit that no session or spend entry joins.
 
+### Vector fields and provenance
+
+The ledger reports multi-dimensional vector fields rather than composite scores:
+
+- **Tokens by provider:** Token distribution map keyed by provider (`tokens_by_provider`).
+- **Wall seconds:** Total duration from issue or creation to landed state (`wall_seconds`).
+- **Review rounds:** Number of review cycles prior to landing (`review_rounds`).
+- **Retries:** Number of retry attempts or test re-executions (`retries`).
+- **Operator minutes:** Human operator intervention time in minutes (`operator_minutes`).
+- **Escaped defects:** Defects escaping to production or subsequent gates (`escaped_defects`).
+
+Each vector field carries a strict provenance label: `measured`, `modeled`, `cited`, or `interval`.
+A row missing provenance labels or containing an unrecognized label is refused.
+
+Every row carries a `metric_epoch` tag (`2026-10-10`). Ledgers mixing metric epochs or omitting
+the epoch tag are refused to prevent silent schema drift.
+
+### Qualified-unit denominator and honest edge cases
+
+- **Qualified denominator:** Rates in milestone and cohort summaries divide strictly by the number of
+  landed units that passed reviews and gates (`qualified` disposition). Units with dispositions
+  `offered`, `rejected`, `abandoned`, `reverted`, or `timed_out` stay visible in summary lane counts
+  (`X qualified, Y reverted, ...`) and their failures remain in the numerator base.
+- **Undefined rates:** When qualified units equal zero (including empty ledgers), rates print
+  `undefined`, never `0`.
+- **Zero-failure claims:** For non-negative failure counters like escaped defects where zero failures
+  are observed in $n$ qualified units, the claim prints with sample size $n$ and the rule-of-three upper
+  confidence bound: `0 (n=X, rule-of-three bound <= 3/X)`.
+
 ## Milestone summary
 
 The summary aggregates over the selected units and states how many units each figure covers:
-average issue-to-merge, operator touches, frontier tokens, the mean prompt-cache hit rate and
-local-first ratio, and the spend split:
+qualified units, lane counts, average issue-to-merge, operator touches, frontier tokens,
+average wall seconds, review rounds, retries, operator minutes, escaped defects (with rule-of-three
+bound when 0), aggregated tokens by provider, the mean prompt-cache hit rate and local-first ratio,
+and the spend split:
 
 - **Attributed:** spend of the listed units.
 - **Other units:** spend attributed to pull requests that were loaded but are not listed.

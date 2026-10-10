@@ -23,15 +23,55 @@ const (
 	MaxMergedPRBytes = 16 * 1024 * 1024
 )
 
+// VectorFieldRaw captures raw vector values and provenance from JSON fixtures.
+type VectorFieldRaw struct {
+	Value      json.RawMessage `json:"value"`
+	Provenance string          `json:"provenance"`
+}
+
+// UnmarshalJSON unmarshals either an object with value and provenance or raw value bytes.
+func (v *VectorFieldRaw) UnmarshalJSON(data []byte) error {
+	var obj struct {
+		Value      json.RawMessage `json:"value"`
+		Provenance string          `json:"provenance"`
+	}
+	if err := json.Unmarshal(data, &obj); err == nil && len(obj.Value) > 0 {
+		v.Value = obj.Value
+		v.Provenance = obj.Provenance
+		return nil
+	}
+	v.Value = data
+	v.Provenance = ""
+	return nil
+}
+
 // MergedPullRequest represents a landed pull request and its closing issues.
 type MergedPullRequest struct {
-	Number        int            `json:"number"`
-	HeadBranch    string         `json:"head_branch"`
-	Title         string         `json:"title"`
-	Milestone     string         `json:"milestone,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	MergedAt      time.Time      `json:"merged_at"`
-	ClosingIssues []ClosingIssue `json:"closing_issues,omitempty"`
+	Number           int             `json:"number"`
+	PRNumber         int             `json:"pull_request_number,omitempty"`
+	HeadBranch       string          `json:"head_branch"`
+	Title            string          `json:"title"`
+	Milestone        string          `json:"milestone,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	MergedAt         time.Time       `json:"merged_at"`
+	ClosingIssues    []ClosingIssue  `json:"closing_issues,omitempty"`
+	Disposition      string          `json:"disposition,omitempty"`
+	Lane             string          `json:"lane,omitempty"`
+	MetricEpoch      string          `json:"metric_epoch,omitempty"`
+	TokensByProvider *VectorFieldRaw `json:"tokens_by_provider,omitempty"`
+	WallSeconds      *VectorFieldRaw `json:"wall_seconds,omitempty"`
+	ReviewRounds     *VectorFieldRaw `json:"review_rounds,omitempty"`
+	Retries          *VectorFieldRaw `json:"retries,omitempty"`
+	OperatorMinutes  *VectorFieldRaw `json:"operator_minutes,omitempty"`
+	EscapedDefects   *VectorFieldRaw `json:"escaped_defects,omitempty"`
+}
+
+// EffectiveNumber returns the PR number, checking pull_request_number if number is zero.
+func (m MergedPullRequest) EffectiveNumber() int {
+	if m.Number != 0 {
+		return m.Number
+	}
+	return m.PRNumber
 }
 
 // ClosingIssue represents an issue linked to and closed by a pull request.
@@ -119,13 +159,32 @@ func ParseMergedPullRequests(data []byte) ([]MergedPullRequest, error) {
 		return nil, errors.New("merged pull requests data is empty")
 	}
 	var prs []MergedPullRequest
-	if err := json.Unmarshal(data, &prs); err != nil {
-		return nil, fmt.Errorf("parse merged pull requests: %w", err)
+	if strings.HasPrefix(trimmed, "{") {
+		var wrapper struct {
+			Units []MergedPullRequest `json:"units"`
+		}
+		if err := json.Unmarshal(data, &wrapper); err == nil && len(wrapper.Units) > 0 {
+			prs = wrapper.Units
+		}
+	}
+	if prs == nil {
+		if err := json.Unmarshal(data, &prs); err != nil {
+			return nil, fmt.Errorf("parse merged pull requests: %w", err)
+		}
 	}
 	if len(prs) > MaxMergedPRsLimit {
 		return nil, fmt.Errorf("merged pull requests count %d exceeds limit %d", len(prs), MaxMergedPRsLimit)
 	}
+	normalizePRNumbers(prs)
 	return prs, nil
+}
+
+func normalizePRNumbers(prs []MergedPullRequest) {
+	for i := range prs {
+		if prs[i].Number == 0 && prs[i].PRNumber != 0 {
+			prs[i].Number = prs[i].PRNumber
+		}
+	}
 }
 
 // ReadMergedPullRequestsFile reads a local JSON file containing merged pull request records.
