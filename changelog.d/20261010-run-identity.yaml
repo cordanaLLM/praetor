@@ -1,4 +1,4 @@
 type: added
-title: "Breaking change: record run identity on router outcomes and efficiency ledger rows, refuse outcomes without identity or physical model, tolerate legacy outcomes, and reconcile estimates per lane"
+title: "Breaking change: router outcomes and efficiency ledger rows record the run identity (physical model, harness and version, prompt and context digests, context bytes, tool-set digest and count, rounds, retries, pre-dispatch estimate); models outcome always requires --physical-model and refuses any catalog alias or alias entry ID as its value, a missing cost estimate stays absent instead of zero, --record-tool-list keeps the full tool list optionally, models outcome --reconcile prints the estimate-error metric per lane over runs with both costs, and pre-identity log records stay readable"
 issue: "#1133"
 breaking: true
