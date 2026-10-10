@@ -4,7 +4,7 @@
 # pin here, then regenerate the lock from this directory with the command recorded in the
 # requirements.txt header (Renovate runs the same command). Keep '=' between each option
 # and its argument: Renovate skips a lock whose header separates them with a space.
-black==26.10.0
+black==26.10.1
 flake8==7.4.1
 yamllint==1.38.0
 ruff==0.17.0
