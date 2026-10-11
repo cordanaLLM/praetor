@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/buildid"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -107,11 +111,54 @@ func resolvePinnedReceiptKey(ctx context.Context, manifestPath string, allowUnpi
 	return nil, fmt.Errorf("cannot verify the Exit-0 receipt: %w", err)
 }
 
+func closingPolicyForCI(ctx context.Context, repoDir, explicitToken, endpoint, explicitAuthor string) (forge.ClosingReferencePolicy, error) {
+	token := resolveSyncToken(explicitToken)
+	if token == "" || (explicitToken == "" && os.Getenv("GITHUB_ACTIONS") != "true") {
+		return forge.ClosingReferencePolicy{}, nil
+	}
+	owner, name, err := config.ResolveRepositoryIdentity(ctx, repoDir, "", "")
+	if err != nil {
+		return forge.ClosingReferencePolicy{}, fmt.Errorf("closing reference resolution: %w", err)
+	}
+	driver := forge.NewGitHubDriver(token, endpoint)
+	driver.SetRepository(owner, name)
+	return forge.ClosingReferencePolicy{Resolver: driver, PullRequestAuthor: pullRequestAuthor(explicitAuthor)}, nil
+}
+
+func pullRequestAuthor(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	path := os.Getenv("GITHUB_EVENT_PATH")
+	if path == "" {
+		return ""
+	}
+	data, err := util.ReadFileLimited(filepath.Clean(path), maxCommitMessageBytes)
+	if err != nil {
+		return ""
+	}
+	var event struct {
+		PullRequest struct {
+			User struct {
+				Login string `json:"login"`
+			} `json:"user"`
+		} `json:"pull_request"`
+	}
+	if err := json.Unmarshal(data, &event); err != nil {
+		return ""
+	}
+	return event.PullRequest.User.Login
+}
+
 func runForgeValidatePR(args []string) error {
 	fs := flag.NewFlagSet("forge validate-pr", flag.ContinueOnError)
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml carrying receipt.public_key")
 	headSHA := fs.String("head-sha", "", "Commit SHA the receipt must certify (the PR head)")
 	allowUnpinned := fs.Bool("allow-unpinned", false, "Accept a receipt without checking it against the pinned public key")
+	repoDir := fs.String("repo", ".", "Repository directory")
+	token := fs.String("token", "", "Forge API token for closing-reference resolution in CI (default: GITHUB_TOKEN, then GH_TOKEN)")
+	endpoint := fs.String("endpoint", "", "Forge API endpoint for closing-reference resolution")
+	prAuthor := fs.String("pr-author", "", "Author login of the pull request being checked (default: GITHUB_EVENT_PATH pull_request.user.login)")
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -133,8 +180,12 @@ func runForgeValidatePR(args []string) error {
 		return err
 	}
 
+	closingPolicy, err := closingPolicyForCI(ctx, *repoDir, *token, *endpoint, *prAuthor)
+	if err != nil {
+		return err
+	}
 	res, err := forge.ValidatePRChecklistWithPolicy(string(data),
-		forge.ReceiptPolicy{PinnedKey: pinned, HeadSHA: *headSHA})
+		forge.ReceiptPolicy{PinnedKey: pinned, HeadSHA: *headSHA, ClosingReferences: closingPolicy})
 	if err != nil && res == nil {
 		return fmt.Errorf("PR checklist validation failed: %w", err)
 	}
@@ -144,6 +195,9 @@ func runForgeValidatePR(args []string) error {
 	fmt.Printf("  Ed25519 Exit-0 Receipt:  %v\n", res.HasReceipt)
 	if res.ReceiptProof != "" {
 		fmt.Printf("  Verified Receipt:        %s\n", res.ReceiptProof)
+	}
+	for _, warning := range res.Warnings {
+		fmt.Printf("[WARN] %s\n", warning)
 	}
 	if !res.Valid {
 		return fmt.Errorf("PR validation failed: %s", strings.Join(res.Errors, "; "))
@@ -192,6 +246,9 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	base := fs.String("base", "", "Base revision of the range to analyze (required)")
 	head := fs.String("head", "HEAD", "Head revision of the range to analyze")
 	repoDir := fs.String("repo", ".", "Repository directory")
+	token := fs.String("token", "", "Forge API token for closing-reference resolution in CI (default: GITHUB_TOKEN, then GH_TOKEN)")
+	endpoint := fs.String("endpoint", "", "Forge API endpoint for closing-reference resolution")
+	prAuthor := fs.String("pr-author", "", "Author login of the pull request being checked (default: GITHUB_EVENT_PATH pull_request.user.login)")
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -207,13 +264,20 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	closingPolicy, err := closingPolicyForCI(ctx, *repoDir, *token, *endpoint, *prAuthor)
+	if err != nil {
+		return err
+	}
 
 	var failures []string
 	for i := 0; i < len(messages); i++ {
 		sha, message, _ := strings.Cut(messages[i], commitFieldSep)
-		analysis, err := forge.AnalyzeCommit(message)
+		analysis, err := forge.AnalyzeCommitWithPolicy(ctx, message, closingPolicy)
 		if err != nil {
 			return fmt.Errorf("failed analyzing commit %s: %w", sha, err)
+		}
+		for _, warning := range analysis.Warnings {
+			fmt.Printf("[WARN] %s: %s\n", buildid.Short(sha), warning)
 		}
 		if analysis.Valid {
 			continue
@@ -257,6 +321,9 @@ func runForgeCheckMessage(args []string) error {
 	analysis, err := forge.AnalyzeCommit(message)
 	if err != nil {
 		return fmt.Errorf("commit message %s: %w", rest[0], err)
+	}
+	for _, warning := range analysis.Warnings {
+		fmt.Printf("[WARN] %s\n", warning)
 	}
 	if !analysis.Valid {
 		for _, reason := range analysis.Errors {

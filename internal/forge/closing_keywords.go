@@ -4,10 +4,15 @@
 package forge
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // A closing keyword next to a reference closes that issue or pull request when the text reaches
@@ -17,12 +22,12 @@ import (
 // case-insensitive and may carry a colon ("Closes: #10").
 //
 // closingKeywordRegex is the one reader of closing references (HISS-19): ParseClosingIssueNumbers
-// reads closed issue numbers through it, and closingReferenceErrors refuses commit messages and
-// pull request bodies through it. Submatches: 1 the keyword; 2 the whole reference; 3-5 a URL's
-// owner, kind (issues, pull or pulls) and number; 6-8 a short reference's owner, repository and
-// number; 9 the number of a GH-N reference.
+// reads closed issue numbers through it, and closingReferenceFindings checks commit messages and
+// pull request bodies through it. Submatches: 1 the keyword; 2 the whole reference; 3-6 a URL's
+// owner, repository, kind (issues, pull or pulls) and number; 7-9 a short reference's owner,
+// repository and number; 10 the number of a GH-N reference.
 var closingKeywordRegex = regexp.MustCompile(`(?i)\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b[ \t]*:?\s*(` +
-	`https?://[^\s/]+/([a-z0-9][\w.-]*)/[\w.-]+/(issues|pulls?)/(\d+)` +
+	`https?://[^\s/]+/([a-z0-9][\w.-]*)/([\w.-]+)/(issues|pulls?)/(\d+)` +
 	`|(?:([a-z0-9][\w.-]*)/)?([\w.-]+)?#(\d+)` +
 	`|gh-(\d+))\b`)
 
@@ -40,6 +45,8 @@ const maxClosingReferences = 1000
 type closingReference struct {
 	keyword string
 	ref     string
+	owner   string
+	repo    string
 	// pull is true for a pull request URL; every other form may name an issue or a pull
 	// request, which share one number space.
 	pull bool
@@ -71,16 +78,27 @@ func newClosingReference(text string, m []int) closingReference {
 	ref := closingReference{
 		keyword: group(1),
 		ref:     group(2),
-		pull:    strings.HasPrefix(strings.ToLower(group(4)), "pull"),
-		local:   group(8) != "" && group(6) == "" && group(7) == "",
+		owner:   firstNonEmpty(group(3), group(7)),
+		repo:    firstNonEmpty(group(4), group(8)),
+		pull:    strings.HasPrefix(strings.ToLower(group(5)), "pull"),
+		local:   group(9) != "" && group(7) == "" && group(8) == "",
 		line:    strings.Count(text[:m[0]], "\n") + 1,
 	}
-	for _, n := range []int{5, 8, 9} {
+	for _, n := range []int{6, 9, 10} {
 		if num, err := strconv.Atoi(group(n)); err == nil {
 			ref.number = num
 		}
 	}
 	return ref
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // allowedClosingReferences returns the references the closingAllowMarker lines among lines mark
@@ -104,38 +122,162 @@ func cutPrefixFold(s, prefix string) (string, bool) {
 	return strings.TrimSpace(s[len(prefix):]), true
 }
 
-// closingReferenceErrors returns one refusal for each closing reference in text, where names
-// the text ("commit message", "pull request body"), that no closingAllowMarker line marks as
-// intended. Every line counts, inside a code fence and a quoted line too: a commit message is
-// plain text, and a squash merge copies the pull request body into one.
-//
-// It runs offline, with no forge to ask whether a number is an issue or a pull request the
-// author opened, so it fails closed: every reference is refused unless marked, and the refusal
-// says the forge was not asked. Only a /pull/ URL is known to name a pull request.
+// ClosingReferenceTarget is the forge object a closing keyword names.
+type ClosingReferenceTarget struct {
+	Ref    string
+	Owner  string
+	Repo   string
+	Number int
+}
+
+// ClosingReferenceResolution is the forge answer for one closing reference.
+type ClosingReferenceResolution struct {
+	Kind   string
+	Author string
+}
+
+const (
+	ClosingTargetIssue       = "issue"
+	ClosingTargetPullRequest = "pull_request"
+)
+
+// ClosingReferenceResolver resolves a closing reference to an issue or pull request.
+type ClosingReferenceResolver interface {
+	ResolveClosingReference(context.Context, ClosingReferenceTarget) (ClosingReferenceResolution, error)
+}
+
+// ClosingReferencePolicy selects offline warning mode or forge-backed resolution mode.
+type ClosingReferencePolicy struct {
+	Resolver          ClosingReferenceResolver
+	PullRequestAuthor string
+}
+
+// closingReferenceErrors is the legacy offline caller: explicit pull request URLs are errors;
+// ambiguous references are warnings and therefore omitted here.
 func closingReferenceErrors(text, where string) []string {
-	refs, over := findClosingReferences(text, maxClosingReferences)
-	if over {
-		return []string{fmt.Sprintf("the %s holds more than %d closing references (close, fix or resolve next to an issue or "+
-			"pull request reference); it is refused rather than checked in part", where, maxClosingReferences)}
-	}
-	allowed := allowedClosingReferences(strings.Split(text, "\n"))
-	var errs []string
-	for i := 0; i < len(refs); i++ {
-		if !allowed[strings.ToLower(refs[i].ref)] {
-			errs = append(errs, closingReferenceError(refs[i], where))
-		}
-	}
+	errs, _ := closingReferenceFindings(context.Background(), text, where, ClosingReferencePolicy{})
 	return errs
 }
 
-// closingReferenceError is the refusal of one unmarked closing reference.
-func closingReferenceError(ref closingReference, where string) string {
-	what := "may name a pull request the author did not open: issues and pull requests share one number space, " +
-		"and this offline check cannot tell an issue from a pull request without the forge"
-	if ref.pull {
-		what = "names a pull request, which the author may not have opened"
+func closingReferenceFindings(ctx context.Context, text, where string, policy ClosingReferencePolicy) ([]string, []string) {
+	refs, over := findClosingReferences(text, maxClosingReferences)
+	if over {
+		return []string{fmt.Sprintf("the %s holds more than %d closing references (close, fix or resolve next to an issue or "+
+			"pull request reference); it is refused rather than checked in part", where, maxClosingReferences)}, nil
 	}
-	return fmt.Sprintf("%s line %d: closing keyword %q next to %q closes it when the text reaches the default branch, "+
-		"and it %s. Reword the line so no closing keyword stands before the reference, or, when closing it is "+
-		"intended, add the line \"%s %s\"", where, ref.line, ref.keyword, ref.ref, what, closingAllowMarker, ref.ref)
+	allowed := allowedClosingReferences(strings.Split(text, "\n"))
+	var errs []string
+	var warnings []string
+	for i := 0; i < len(refs); i++ {
+		if allowed[strings.ToLower(refs[i].ref)] {
+			continue
+		}
+		if policy.Resolver == nil {
+			err, warning := offlineClosingReferenceFinding(refs[i], where)
+			if err != "" {
+				errs = append(errs, err)
+			}
+			if warning != "" {
+				warnings = append(warnings, warning)
+			}
+			continue
+		}
+		if err := resolvedClosingReferenceError(ctx, refs[i], where, policy); err != "" {
+			errs = append(errs, err)
+		}
+	}
+	return errs, warnings
+}
+
+func offlineClosingReferenceFinding(ref closingReference, where string) (string, string) {
+	base := fmt.Sprintf("%s line %d: closing keyword %q next to %q", where, ref.line, ref.keyword, ref.ref)
+	if ref.pull {
+		return fmt.Sprintf("%s names a pull request URL; offline hooks refuse pull request closures unless the line \"%s %s\" marks it as intended",
+			base, closingAllowMarker, ref.ref), ""
+	}
+	return "", fmt.Sprintf("%s will be resolved by `praetorctl forge check-commits` in CI; the offline hook cannot tell an issue from a pull request",
+		base)
+}
+
+func resolvedClosingReferenceError(ctx context.Context, ref closingReference, where string, policy ClosingReferencePolicy) string {
+	resolved, err := policy.Resolver.ResolveClosingReference(ctx, closingReferenceTarget(ref))
+	if err != nil {
+		return fmt.Sprintf("%s line %d: closing reference %q could not be resolved: %v", where, ref.line, ref.ref, err)
+	}
+	switch resolved.Kind {
+	case ClosingTargetIssue:
+		return ""
+	case ClosingTargetPullRequest:
+		return pullRequestClosingError(ref, where, resolved.Author, policy.PullRequestAuthor)
+	default:
+		return fmt.Sprintf("%s line %d: closing reference %q resolved to unknown target kind %q", where, ref.line, ref.ref, resolved.Kind)
+	}
+}
+
+func pullRequestClosingError(ref closingReference, where, author, currentAuthor string) string {
+	if author != "" && currentAuthor != "" && strings.EqualFold(author, currentAuthor) {
+		return ""
+	}
+	reason := fmt.Sprintf("pull request author %q differs from checked pull request author %q", author, currentAuthor)
+	if currentAuthor == "" {
+		reason = fmt.Sprintf("pull request author %q cannot be compared because the checked pull request author is unknown", author)
+	}
+	return fmt.Sprintf("%s line %d: closing keyword %q next to %q would close a pull request; %s. Add \"%s %s\" only when this closure is intentional",
+		where, ref.line, ref.keyword, ref.ref, reason, closingAllowMarker, ref.ref)
+}
+
+func closingReferenceTarget(ref closingReference) ClosingReferenceTarget {
+	return ClosingReferenceTarget{Ref: ref.ref, Owner: ref.owner, Repo: ref.repo, Number: ref.number}
+}
+
+// ResolveClosingReference resolves one closing reference through GitHub's issues endpoint. GitHub
+// exposes pull requests through that endpoint with a "pull_request" member, so this distinguishes
+// ordinary issues from pull requests without listing either collection.
+func (g *GitHubDriver) ResolveClosingReference(ctx context.Context, target ClosingReferenceTarget) (ClosingReferenceResolution, error) {
+	owner, repo, err := g.referenceRepository(target)
+	if err != nil {
+		return ClosingReferenceResolution{}, err
+	}
+	path := fmt.Sprintf("/repos/%s/%s/issues/%d", owner, repo, target.Number)
+	body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return ClosingReferenceResolution{}, err
+	}
+	if status == http.StatusNotFound {
+		return ClosingReferenceResolution{}, fmt.Errorf("%s not found", target.Ref)
+	}
+	if status != http.StatusOK {
+		return ClosingReferenceResolution{}, fmt.Errorf("github returned HTTP %d for %s: %s", status, target.Ref, util.BodyPreview(body))
+	}
+	return parseClosingReferenceResolution(target.Ref, body)
+}
+
+func (g *GitHubDriver) referenceRepository(target ClosingReferenceTarget) (string, string, error) {
+	if target.Number <= 0 {
+		return "", "", fmt.Errorf("%s carries no numeric issue or pull request id", target.Ref)
+	}
+	owner, repo := target.Owner, target.Repo
+	if owner == "" || repo == "" {
+		return g.resolveRepository()
+	}
+	if err := util.ValidateGitHubRepositoryIdentity(owner, repo); err != nil {
+		return "", "", fmt.Errorf("closing reference %s: %w", target.Ref, err)
+	}
+	return owner, repo, nil
+}
+
+func parseClosingReferenceResolution(ref string, data []byte) (ClosingReferenceResolution, error) {
+	var raw struct {
+		User struct {
+			Login string `json:"login"`
+		} `json:"user"`
+		PullRequest json.RawMessage `json:"pull_request"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return ClosingReferenceResolution{}, fmt.Errorf("parse %s: %w", ref, err)
+	}
+	if len(raw.PullRequest) == 0 {
+		return ClosingReferenceResolution{Kind: ClosingTargetIssue, Author: raw.User.Login}, nil
+	}
+	return ClosingReferenceResolution{Kind: ClosingTargetPullRequest, Author: raw.User.Login}, nil
 }

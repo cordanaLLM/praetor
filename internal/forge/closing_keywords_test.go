@@ -4,6 +4,9 @@
 package forge
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,38 +39,44 @@ func closingRefusal(errs []string, keyword, ref string, line int) string {
 	return ""
 }
 
-// Negative: each planted closing reference is refused in a commit message (the commit-msg hook
-// and check-commits) and in a pull request body (validate-pr), naming the keyword, the reference
-// and its line. The commit subject is line 1, so a body line moves down by two.
-func TestClosingKeywords_Negative_PlantedReferencesAreRefused(t *testing.T) {
+// The six planted references remain covered: offline, explicit pull request URLs fail, while
+// ambiguous references warn and stay valid until CI resolves them with forge access.
+func TestClosingKeywords_PlantedReferencesOffline(t *testing.T) {
 	for _, c := range plantedClosingCases {
 		analysis, err := AnalyzeCommit("fix(forge): planted\n\n" + c.text)
-		if err != nil || analysis.Valid || closingRefusal(analysis.Errors, c.keyword, c.ref, c.line+2) == "" {
-			t.Errorf("commit message %q: %+v, %v; want a refusal naming %q, %q and line %d", c.text, analysis, err, c.keyword, c.ref, c.line+2)
+		if err != nil {
+			t.Errorf("commit message %q: %v", c.text, err)
+			continue
 		}
-		res, err := ValidatePRChecklist(c.text)
-		if err != nil || res.Valid || closingRefusal(res.Errors, c.keyword, c.ref, c.line) == "" {
-			t.Errorf("pull request body %q: %+v, %v; want a refusal naming %q, %q and line %d", c.text, res, err, c.keyword, c.ref, c.line)
+		if strings.Contains(c.ref, "/pull/") || strings.Contains(c.ref, "/pulls/") {
+			if analysis.Valid || closingRefusal(analysis.Errors, c.keyword, c.ref, c.line+2) == "" {
+				t.Errorf("pull URL %q: %+v; want refusal naming %q, %q and line %d", c.text, analysis, c.keyword, c.ref, c.line+2)
+			}
+			continue
+		}
+		if !analysis.Valid || len(analysis.Errors) != 0 || closingRefusal(analysis.Warnings, c.keyword, c.ref, c.line+2) == "" {
+			t.Errorf("ambiguous ref %q: %+v; want valid with warning naming %q, %q and line %d", c.text, analysis, c.keyword, c.ref, c.line+2)
 		}
 	}
 }
 
-// Negative: a short reference cannot be told apart from a pull request offline, so the refusal
-// says the forge was not asked; a /pull/ URL names a pull request outright; an allow marker for
-// another reference allows nothing.
-func TestClosingKeywords_Negative_MessageAndMismatchedMarker(t *testing.T) {
-	errs := closingReferenceErrors("closes #28", "commit message")
-	if len(errs) != 1 || !strings.Contains(errs[0], "cannot tell an issue from a pull request without the forge") ||
-		!strings.Contains(errs[0], closingAllowMarker+" #28") {
-		t.Errorf("short reference: %q; want the offline reason and the allow marker", errs)
+// Negative and boundary: offline warnings name the CI resolver; pull request URLs fail; an
+// allow marker for another reference allows nothing.
+func TestClosingKeywords_OfflineWarningAndPullURLRefusal(t *testing.T) {
+	errs, warnings := closingReferenceFindings(context.Background(), "closes #28", "commit message", ClosingReferencePolicy{})
+	if len(errs) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "praetorctl forge check-commits") {
+		t.Errorf("short reference: errors=%q warnings=%q; want one CI warning", errs, warnings)
 	}
-	errs = closingReferenceErrors("resolved https://github.com/o/r/pull/7", "commit message")
+	errs, warnings = closingReferenceFindings(context.Background(), "resolved https://github.com/o/r/pull/7", "commit message", ClosingReferencePolicy{})
 	if len(errs) != 1 || !strings.Contains(errs[0], "names a pull request") {
 		t.Errorf("pull request URL: %q; want it named as a pull request", errs)
 	}
-	errs = closingReferenceErrors("closes #28\n\n"+closingAllowMarker+" #29\n"+closingAllowMarker+" o/r#28", "commit message")
-	if closingRefusal(errs, "closes", "#28", 1) == "" {
-		t.Errorf("a marker for #29 or o/r#28 allowed #28: %q", errs)
+	if len(warnings) != 0 {
+		t.Errorf("pull request URL produced warnings too: %q", warnings)
+	}
+	errs, warnings = closingReferenceFindings(context.Background(), "closes #28\n\n"+closingAllowMarker+" #29\n"+closingAllowMarker+" o/r#28", "commit message", ClosingReferencePolicy{})
+	if len(errs) != 0 || closingRefusal(warnings, "closes", "#28", 1) == "" {
+		t.Errorf("a marker for #29 or o/r#28 allowed #28: errors=%q warnings=%q", errs, warnings)
 	}
 }
 
@@ -89,9 +98,84 @@ func TestClosingKeywords_Positive_CleanAndMarkedText(t *testing.T) {
 	}
 }
 
+type stubClosingResolver map[string]struct {
+	res ClosingReferenceResolution
+	err error
+}
+
+func (s stubClosingResolver) ResolveClosingReference(_ context.Context, target ClosingReferenceTarget) (ClosingReferenceResolution, error) {
+	item, ok := s[target.Ref]
+	if !ok {
+		return ClosingReferenceResolution{}, errors.New("missing stub")
+	}
+	return item.res, item.err
+}
+
+// Positive and negative: online resolution allows issues and same-author pull requests, and
+// refuses foreign humans, foreign bots, and API failures.
+func TestClosingKeywords_OnlineResolution(t *testing.T) {
+	policy := ClosingReferencePolicy{
+		PullRequestAuthor: "alice",
+		Resolver: stubClosingResolver{
+			"#1": {res: ClosingReferenceResolution{Kind: ClosingTargetIssue, Author: "reporter"}},
+			"#2": {res: ClosingReferenceResolution{Kind: ClosingTargetPullRequest, Author: "alice"}},
+			"#3": {res: ClosingReferenceResolution{Kind: ClosingTargetPullRequest, Author: "bob"}},
+			"#4": {res: ClosingReferenceResolution{Kind: ClosingTargetPullRequest, Author: "renovate[bot]"}},
+			"#5": {err: errors.New("api unavailable")},
+		},
+	}
+	for _, text := range []string{"fix(x): issue\n\nCloses #1", "fix(x): own pr\n\nCloses #2"} {
+		if analysis, err := AnalyzeCommitWithPolicy(context.Background(), text, policy); err != nil || !analysis.Valid {
+			t.Errorf("%q: %+v, %v; want valid", text, analysis, err)
+		}
+	}
+	for _, c := range []struct {
+		ref, author string
+	}{
+		{"#3", "bob"},
+		{"#4", "renovate[bot]"},
+		{"#5", "api unavailable"},
+	} {
+		analysis, err := AnalyzeCommitWithPolicy(context.Background(), "fix(x): foreign\n\nCloses "+c.ref, policy)
+		joined := strings.Join(analysis.Errors, "\n")
+		if err != nil || analysis.Valid || !strings.Contains(joined, c.ref) || !strings.Contains(joined, "line 3:") ||
+			!strings.Contains(joined, c.author) {
+			t.Errorf("%s: %+v, %v; want refusal naming author/reason %q", c.ref, analysis, err, c.author)
+		}
+	}
+}
+
+func TestGitHubDriverResolveClosingReference(t *testing.T) {
+	gh, _ := newFakeForge(t, func(w http.ResponseWriter, r *http.Request, index int) {
+		switch r.URL.Path {
+		case "/repos/acme/widgets/issues/1":
+			writeJSON(t, w, http.StatusOK, map[string]any{"number": 1, "user": map[string]string{"login": "reporter"}})
+		case "/repos/acme/widgets/issues/2":
+			writeJSON(t, w, http.StatusOK, map[string]any{"number": 2, "user": map[string]string{"login": "alice"},
+				"pull_request": map[string]string{"url": "u"}})
+		case "/repos/other/repo/issues/3":
+			writeJSON(t, w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		default:
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+	})
+	issue, err := gh.ResolveClosingReference(context.Background(), ClosingReferenceTarget{Ref: "#1", Number: 1})
+	if err != nil || issue.Kind != ClosingTargetIssue {
+		t.Fatalf("issue resolution = %+v, %v", issue, err)
+	}
+	pr, err := gh.ResolveClosingReference(context.Background(), ClosingReferenceTarget{Ref: "#2", Number: 2})
+	if err != nil || pr.Kind != ClosingTargetPullRequest || pr.Author != "alice" {
+		t.Fatalf("pull resolution = %+v, %v", pr, err)
+	}
+	_, err = gh.ResolveClosingReference(context.Background(), ClosingReferenceTarget{Ref: "other/repo#3", Owner: "other", Repo: "repo", Number: 3})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("not found resolution = %v", err)
+	}
+}
+
 // Boundary: words that only start like a keyword, a number not right after the keyword and a
 // reference glued to more text are not closing references. A keyword inside a code fence or a
-// quoted line is refused: a commit message is plain text and a squash merge copies the pull
+// quoted line is still scanned: a commit message is plain text and a squash merge copies the pull
 // request body into it, so the forge reads the fence as prose there. A marker line is never a
 // finding itself, and more references than the bound are refused, not checked in part.
 func TestClosingKeywords_Boundary_WordsFencesAndBound(t *testing.T) {
@@ -107,8 +191,9 @@ func TestClosingKeywords_Boundary_WordsFencesAndBound(t *testing.T) {
 		text string
 		line int
 	}{{"```\ncloses #28\n```", 2}, {"> nobody closes #28", 1}, {"`closes #28`", 1}} {
-		if errs := closingReferenceErrors(c.text, "pull request body"); closingRefusal(errs, "closes", "#28", c.line) == "" {
-			t.Errorf("%q: %q; want a refusal at line %d", c.text, errs, c.line)
+		_, warnings := closingReferenceFindings(context.Background(), c.text, "pull request body", ClosingReferencePolicy{})
+		if closingRefusal(warnings, "closes", "#28", c.line) == "" {
+			t.Errorf("%q: %q; want a warning at line %d", c.text, warnings, c.line)
 		}
 	}
 	over := strings.Repeat("closes #1\n", maxClosingReferences+1)
@@ -116,7 +201,8 @@ func TestClosingKeywords_Boundary_WordsFencesAndBound(t *testing.T) {
 		t.Errorf("past the bound: %d errors (%.200q); want one bound refusal", len(errs), errs)
 	}
 	at := strings.Repeat("closes #1\n", maxClosingReferences)
-	if errs := closingReferenceErrors(at, "commit message"); len(errs) != maxClosingReferences {
-		t.Errorf("at the bound: %d errors, want %d findings", len(errs), maxClosingReferences)
+	errs, warnings := closingReferenceFindings(context.Background(), at, "commit message", ClosingReferencePolicy{})
+	if len(errs) != 0 || len(warnings) != maxClosingReferences {
+		t.Errorf("at the bound: %d errors and %d warnings, want %d warnings", len(errs), len(warnings), maxClosingReferences)
 	}
 }
