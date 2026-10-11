@@ -1,0 +1,4 @@
+type: fixed
+title: Adoption installs the engine launcher, engine.mk and Makefile include for repositories whose own lefthook.yml is kept, reports the launcher command prefix, and restricts Makefile PRAETORCTL override warnings to when engine.mk is installed or planned
+issue: "#1172"
+breaking: false

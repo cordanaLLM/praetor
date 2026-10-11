@@ -229,9 +229,12 @@ line (file and line number) and its shape in the message:
   `TestMakefileExpandIncludesRemadeIncludeStaysAmbiguous` in `internal/util/makefile_include_test.go` and
   `TestRemadeIncludeCasesMatchGNUMake` in `internal/adopt/makefile_include_test.go`): it has a deferred `$(shell ...)` and, because no
   other line outside recipes may contain `$`, is never expanded while Make reads the files
-  (`makefileIsCLIVariableLine` in `internal/util/makefile_shapes.go`). When `git-hooks` is declined
-  or a custom `lefthook.yml` is kept, the Makefile resolves `PRAETORCTL` from PATH using this line
+  (`makefileIsCLIVariableLine` in `internal/util/makefile_shapes.go`). When `git-hooks` is declined,
+  the Makefile resolves `PRAETORCTL` from PATH using this line
   (`TestVerificationDeclinedGitHooksResolvesFromPath` in `internal/adopt/verification_scaffold_test.go`).
+  A repository that keeps its own `lefthook.yml` still gets the launcher, `engine.mk` and the include,
+  and adoption warns about a shadowed `PRAETORCTL ?=` line only when `engine.mk` is installed or planned
+  (`internal/adopt/engine_makefile_test.go`).
   The Praetor engine include `-include .config/praetor/engine.mk` is a literal include of a Praetor-managed
   fragment that sets `PRAETORCTL` through the hook launcher (`internal/adopt/engine_makefile.go`). Any other line
   (`export`, `unexport`, `override`, `private`, `define`/`endef`, `vpath`, `undefine`, `load`, or any `$`
