@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Focused real-Git tests for the read-only checkpoint planner."""
 
+import errno
 import json
 import os
 from pathlib import Path
@@ -634,12 +635,8 @@ class CheckpointTests(unittest.TestCase):
                 self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
 
 
-class CheckedPolicyRead(unittest.TestCase):
-    """The reader used where descriptor-relative opens are unavailable, exercised on every host.
-
-    Windows selects it automatically; calling it directly keeps its refusals covered on the
-    POSIX legs as well, where the descriptor-relative reader is the one in use.
-    """
+class PolicyRoot(unittest.TestCase):
+    """A repository root holding one checkpoint policy, for the tests of its two readers."""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-policy-")
@@ -651,6 +648,90 @@ class CheckedPolicyRead(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+
+class PolicyDescriptors(PolicyRoot):
+    """Both readers close every descriptor they open, on every path (#1219).
+
+    The descriptors are asked of the operating system once the reader is done, so the check
+    holds however the reader closes them. Nothing else opens a file in between, so a number
+    that still answers is a descriptor the reader left open.
+    """
+
+    def read(self, reader, fail_at=None):
+        """Run reader over the root; return what it returned or raised, and what it opened.
+
+        With fail_at set, the open with that index (0 is the first) fails instead.
+        """
+        opened, real_open = [], os.open
+
+        def counted_open(path, flags, *args, **kwargs):
+            if len(opened) == fail_at:
+                raise PermissionError(errno.EACCES, "planted failure", os.fspath(path))
+            opened.append(real_open(path, flags, *args, **kwargs))
+            return opened[-1]
+
+        with mock.patch.object(checkpoint.os, "open", counted_open):
+            try:
+                result = reader(self.root)
+            except (OSError, checkpoint.CheckpointError) as error:
+                result = error
+        left_open = [number for number in sorted(set(opened)) if self.answers(number)]
+        self.assertEqual(left_open, [], f"descriptors left open after {opened}")
+        return result, opened
+
+    @staticmethod
+    def answers(descriptor):
+        """Whether descriptor is open; one that is gets closed, so the test leaks nothing."""
+        try:
+            os.fstat(descriptor)
+        except OSError:
+            return False
+        os.close(descriptor)
+        return True
+
+    @unittest.skipUnless(
+        checkpoint.DESCRIPTOR_RELATIVE,
+        "this platform has no descriptor-relative opens; its reader is the checked one",
+    )
+    def test_positive_relative_reader_closes_each_component_and_the_policy(self):
+        result, opened = self.read(checkpoint._policy_bytes_relative)
+        self.assertEqual(result, json.dumps(CONFIG).encode())
+        self.assertEqual(len(opened), len(checkpoint.POLICY_PARTS) + 2)
+
+    @unittest.skipUnless(
+        checkpoint.DESCRIPTOR_RELATIVE,
+        "this platform has no descriptor-relative opens; its reader is the checked one",
+    )
+    def test_negative_a_failing_later_open_closes_every_earlier_descriptor(self):
+        for fail_at in range(1, len(checkpoint.POLICY_PARTS) + 2):
+            with self.subTest(fail_at=fail_at):
+                result, opened = self.read(checkpoint._policy_bytes_relative, fail_at=fail_at)
+                self.assertIsInstance(result, PermissionError)
+                self.assertEqual(len(opened), fail_at)
+
+    def test_boundary_a_policy_that_cannot_be_wrapped_or_found_leaves_nothing_open(self):
+        readers = [checkpoint._policy_bytes_checked]
+        if checkpoint.DESCRIPTOR_RELATIVE:
+            readers.append(checkpoint._policy_bytes_relative)
+        self.policy.unlink()
+        for reader in readers:
+            with self.subTest(reader=reader.__name__, policy="absent"):
+                self.assertIsNone(self.read(reader)[0])
+        # A directory opens read-only on POSIX and cannot be wrapped in a stream; Windows
+        # refuses to open it. Either way the reader raises and holds no descriptor.
+        self.policy.mkdir()
+        for reader in readers:
+            with self.subTest(reader=reader.__name__, policy="directory"):
+                self.assertIsInstance(self.read(reader)[0], OSError)
+
+
+class CheckedPolicyRead(PolicyRoot):
+    """The reader used where descriptor-relative opens are unavailable, exercised on every host.
+
+    Windows selects it automatically; calling it directly keeps its refusals covered on the
+    POSIX legs as well, where the descriptor-relative reader is the one in use.
+    """
 
     def test_positive_reads_the_policy_bytes(self):
         self.assertEqual(checkpoint._policy_bytes_checked(self.root), json.dumps(CONFIG).encode())

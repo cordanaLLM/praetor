@@ -605,7 +605,10 @@ The exemption sources are `ReadOnlyWords` and `ReadOnlyVeto` in
 `TestEmittedInterceptorScanBounds` holds the costliest shapes to a work budget counted in
 passes over the scan bound. The corpus
 holds the allow cases and the escaped, quoted, substituted, stop-parsing, line-continued and
-exported shapes the rules keep refusing.
+exported shapes the rules keep refusing. It also pins the veto's word edges (a listed word at the
+start of the command, after a separator, after a hyphen and inside a longer word), so a
+changed anchor fails the replay in the Go policy, in praetor's own guard and in the emitted
+interceptor (`internal/agenthook/testdata/pre-tool/cases.json`).
 
 ### Where the rules live
 

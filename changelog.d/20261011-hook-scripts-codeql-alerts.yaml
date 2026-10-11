@@ -1,0 +1,4 @@
+type: fixed
+title: Write the adopted hook scripts without the four alerts CodeQL for Python raised in them, and close the checkpoint policy descriptor that stayed open when the policy path was a directory
+issue: "#1219"
+breaking: false

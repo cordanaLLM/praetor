@@ -389,10 +389,13 @@ def unresolved_relative_to(path, root):
         raise ValueError(f"{os.fspath(root)!r} cannot be inspected") from err
     for ancestor in (*reversed(candidate.parents), candidate):
         try:
-            if os.path.samestat(os.stat(ancestor), target):
-                return candidate.relative_to(ancestor)
+            found = os.path.samestat(os.stat(ancestor), target)
         except OSError:
-            pass
+            # A component that cannot be inspected is not ``root``: a file not written
+            # yet, or one below a directory this user may not search. The walk goes on.
+            continue
+        if found:
+            return candidate.relative_to(ancestor)
     raise ValueError(f"{os.fspath(path)!r} is not below {os.fspath(root)!r}")
 
 

@@ -231,7 +231,13 @@ const ReadOnlyWords = `((?:;|&&|\|\|?)[ \t]*(?:git[ \t]+(?:--no-pager[ \t]+)?(?:
 //     letter case.
 //
 // It is linear in both engines: one character class or a fixed word per alternative.
-const ReadOnlyVeto = `[^\t\x20-\x7e]|[\\\x60$(){}<>^!]|--%|%[;&|]|(?i:(?:^|[^-A-Za-z0-9_])(?:export|declare|typeset|set|setenv|alias|function|sal|nal|set-alias|new-alias|doskey|hash)(?:[^-A-Za-z0-9_]|$))`
+//
+// The start of the text is written `\A`, not `^`. Neither engine runs this pattern in
+// multiline mode, so both anchors match the same one position. CodeQL's parser of Python
+// patterns ends the start of a scoped flag group at `(?i` and reads the `:` after it as a
+// literal, so it reported a caret behind it as unmatchable (py/regex/unmatchable-caret) in
+// every adopted interceptor (#1219).
+const ReadOnlyVeto = `[^\t\x20-\x7e]|[\\\x60$(){}<>^!]|--%|%[;&|]|(?i:(?:\A|[^-A-Za-z0-9_])(?:export|declare|typeset|set|setenv|alias|function|sal|nal|set-alias|new-alias|doskey|hash)(?:[^-A-Za-z0-9_]|$))`
 
 // ReadOnlyKept names the groups of ReadOnlyWords a replacement keeps, in RE2's replacement
 // syntax; Python's re.sub writes the same groups as \1\2.

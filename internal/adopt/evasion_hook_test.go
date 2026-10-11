@@ -9,6 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -41,23 +44,134 @@ func emittedInterceptor(t *testing.T) (string, string) {
 	return python, script
 }
 
-// interceptorRules loads the emitted script as a module, without running main, and returns
-// its RULES as (pattern, refusal) pairs: the values Python reads back from the adjacent
-// literals the layout splits long patterns into.
-func interceptorRules(t *testing.T, python, script string) [][2]string {
+// interceptorModule is what the emitted script declares at module level, as Python reads it
+// back from the adjacent literals the layout splits long values into: RULES as (pattern,
+// refusal) pairs and the read-only exemption.
+type interceptorModule struct {
+	Rules  [][2]string `json:"RULES"`
+	Exempt []string    `json:"READ_ONLY_EXEMPT"`
+	Words  string      `json:"READ_ONLY_WORDS"`
+	Veto   string      `json:"READ_ONLY_VETO"`
+}
+
+// loadInterceptorModule loads the emitted script as a module, without running main.
+func loadInterceptorModule(t *testing.T, python, script string) interceptorModule {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), interceptorWallClock)
 	defer cancel()
-	const program = "import json, runpy, sys; module = runpy.run_path(sys.argv[1]); print(json.dumps(module['RULES']))"
-	out, err := exec.CommandContext(ctx, python, "-B", "-c", program, script).Output() //nolint:gosec // fixed interpreter and test script
+	const program = "import json, runpy, sys; module = runpy.run_path(sys.argv[1]); " +
+		"print(json.dumps({name: module[name] for name in sys.argv[2:]}))"
+	names := []string{"RULES", "READ_ONLY_EXEMPT", "READ_ONLY_WORDS", "READ_ONLY_VETO"}
+	out, err := exec.CommandContext(ctx, python, append([]string{"-B", "-c", program, script}, names...)...).Output() //nolint:gosec // fixed interpreter and test script
 	if err != nil {
-		t.Fatalf("load the emitted script's rules: %v", err)
+		t.Fatalf("load the emitted script as a module: %v", err)
 	}
-	var rules [][2]string
-	if err := json.Unmarshal(out, &rules); err != nil {
-		t.Fatalf("decode the emitted script's rules: %v", err)
+	var module interceptorModule
+	if err := json.Unmarshal(out, &module); err != nil {
+		t.Fatalf("decode the emitted script's module values: %v", err)
 	}
-	return rules
+	return module
+}
+
+// interceptorRules returns the RULES of the emitted script (loadInterceptorModule).
+func interceptorRules(t *testing.T, python, script string) [][2]string {
+	t.Helper()
+	return loadInterceptorModule(t, python, script).Rules
+}
+
+// wrappedListItems returns the lines of the named list in a rendered interceptor that are not
+// one bare name and a comma. A pattern too long for one line is laid out as adjacent literals,
+// and inside a list that reads as two items with the comma between them forgotten: CodeQL
+// reports it in every adopter (py/implicit-string-concatenation-in-list, #1219).
+func wrappedListItems(t *testing.T, rendering, list string) []string {
+	t.Helper()
+	_, rest, found := strings.Cut(rendering, "\n"+list+" = [\n")
+	body, _, closed := strings.Cut(rest, "]\n")
+	if !found || !closed || body == "" {
+		t.Fatalf("the rendering has no %s list", list)
+	}
+	var wrapped []string
+	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
+		if !bareNameItem.MatchString(line) {
+			wrapped = append(wrapped, line)
+		}
+	}
+	return wrapped
+}
+
+// bareNameItem matches one list item that is a module-level name alone.
+var bareNameItem = regexp.MustCompile(`^    [A-Z][A-Z0-9_]*,$`)
+
+// TestEmittedInterceptorCarriesTheReadOnlyExemption holds the read-only exemption the
+// interceptor declares to the engine's, as Python reads it: the exempt rule sources in order,
+// the read-only command pattern and the veto. Positive: every pattern text is the engine's, so
+// naming the exempt patterns outside the list changed no pattern. Boundary: the list itself
+// holds names alone. Negative: the same check finds the wrapped pattern in the rendering
+// before #1219, so it can fail.
+func TestEmittedInterceptorCarriesTheReadOnlyExemption(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	module := loadInterceptorModule(t, python, script)
+	var exempt []string
+	for _, rule := range agenthook.BuiltinRules() {
+		if rule.ReadOnlyExempt {
+			exempt = append(exempt, rule.Source)
+		}
+	}
+	if len(exempt) == 0 || !slices.Equal(module.Exempt, exempt) {
+		t.Errorf("READ_ONLY_EXEMPT is %q, the engine's exempt rules are %q", module.Exempt, exempt)
+	}
+	if module.Words != agenthook.ReadOnlyWords || module.Veto != agenthook.ReadOnlyVeto {
+		t.Errorf("READ_ONLY_WORDS %q and READ_ONLY_VETO %q are not the engine's", module.Words, module.Veto)
+	}
+	if wrapped := wrappedListItems(t, buildBlockEvasionPY(), "READ_ONLY_EXEMPT"); len(wrapped) != 0 {
+		t.Errorf("READ_ONLY_EXEMPT holds items that are not one name: %q", wrapped)
+	}
+	previous := string(readFixtureDir(t, priorEvasionFixtures)[wrappedExemptFixture])
+	if wrapped := wrappedListItems(t, previous, "READ_ONLY_EXEMPT"); len(wrapped) == 0 {
+		t.Errorf("the check found no wrapped pattern in %s, which holds one", wrappedExemptFixture)
+	}
+}
+
+// wrappedExemptFixture and namedExemptFixture are the renderings on either side of #1219: the
+// last one that wrapped an exempt pattern inside the list and anchored the veto with a caret,
+// and the first one that names each exempt pattern and anchors with \A.
+const (
+	wrappedExemptFixture = "first-word-anchor.block_evasion.py"
+	namedExemptFixture   = "scanner-clean.block_evasion.py"
+)
+
+// renderedModule loads the text of one interceptor rendering as a module.
+func renderedModule(t *testing.T, python, text string) interceptorModule {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "block_evasion.py")
+	mustWrite(t, script, text)
+	return loadInterceptorModule(t, python, script)
+}
+
+// TestScannerCleanRenderingKeptThePolicy compares the renderings on either side of #1219, both
+// kept as earlier texts, as Python reads them. Positive: the rules, the exempt patterns and
+// the read-only command pattern are the same texts. Boundary: the veto differs in its start
+// anchor and in nothing else. Negative: one character less in an exempt pattern is a
+// difference, so the comparison can fail.
+func TestScannerCleanRenderingKeptThePolicy(t *testing.T) {
+	python, _ := emittedInterceptor(t)
+	fixtures := readFixtureDir(t, priorEvasionFixtures)
+	before := renderedModule(t, python, string(fixtures[wrappedExemptFixture]))
+	after := renderedModule(t, python, string(fixtures[namedExemptFixture]))
+	if len(before.Exempt) == 0 || !slices.Equal(before.Exempt, after.Exempt) {
+		t.Errorf("an exempt pattern changed:\nbefore %q\nafter  %q", before.Exempt, after.Exempt)
+	}
+	if !reflect.DeepEqual(before.Rules, after.Rules) || before.Words != after.Words {
+		t.Errorf("the rules or the read-only command pattern changed between %s and %s", wrappedExemptFixture, namedExemptFixture)
+	}
+	if anchored := strings.Replace(before.Veto, "(?:^|", `(?:\A|`, 1); anchored == before.Veto || anchored != after.Veto {
+		t.Errorf("the veto changed beyond its start anchor:\nbefore %q\nafter  %q", before.Veto, after.Veto)
+	}
+	const exempt = `READ_ONLY_EXEMPT_2 = r"SKIP=.*git"`
+	shortened := strings.Replace(string(fixtures[namedExemptFixture]), exempt, strings.TrimSuffix(exempt, `t"`)+`"`, 1)
+	if planted := renderedModule(t, python, shortened); slices.Equal(before.Exempt, planted.Exempt) {
+		t.Errorf("a shortened exempt pattern passed the comparison: %q", planted.Exempt)
+	}
 }
 
 // runInterceptor feeds stdin (and optional argv) to the emitted script under a clean

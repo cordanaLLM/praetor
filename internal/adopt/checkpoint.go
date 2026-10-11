@@ -50,6 +50,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"8ca7e7926028b518902006ced9f59cce952eee5e056cd690c39a43455c2d0278": "neutrality sweep (#509)",
 		"00bb0ecb2e3c257d23cb2719c7c5513461e0386c3e9795d259f273283bc6f8cd": "re-run supersedes its earlier run (#786)",
 		"2c65c03d940b25ccfa90041d90aabb57ed400c5253158c798163bddfc32e523c": "draft gate refusal reads as draft pending (#815)",
+		"ffb3fc5d33818c465b57f5bfd758a45c72ea05d60c794750915756189f553941": "policy descriptors closed where they are opened (#1219)",
 	},
 	checkpointCommon: {
 		"61ccf1481d43073ca29aab6c6e6b78cc6f5cb4a86bf1e7603b8b0e01d02f71a9": "platform promotion (#14)",
@@ -62,6 +63,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"2464805e827368e22b3299f8296c3a6c06f100576e0ec248281f3ac607e3a9ed": "hook client roots (#461)",
 		"a414804b60c86153208c0265b824a759e01c06b43ab4810d57ffd20c5d5b30aa": "Platform Neutrality gaps (#469)",
 		"c1572868510a383605b92cd80fad267c1a0b3d14e2bfd3dadd4d29db1aa5907a": "neutrality sweep (#509)",
+		"23dc3a3f64fcf17d5fb1a3aac8b0b42d5f266470bd8a67579dbcca6cd533c0ed": "stated reason for a component the root walk skips (#1219)",
 	},
 	checkpointLauncher: {
 		"8b6266ea16912a362c2e26d9a936887ca955ecf68f69744c935f2259d1a2c8dc": "proven interpreter candidates (#339)",
