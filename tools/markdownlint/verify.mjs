@@ -2123,7 +2123,7 @@ function readLintSource(relative) {
   let descriptor;
   try {
     descriptor = fs.openSync(relative, "r");
-  } catch (error) {
+  } catch {
     fail(`refusing to lint non-file Markdown source ${relative}`);
   }
   try {

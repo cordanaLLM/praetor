@@ -345,13 +345,16 @@ function blockScalarLines(following) {
 }
 
 
+/** Characters with a meaning inside a class of a v-flag regular expression, escaped in one pass (backslash included). */
+const CLASS_SYNTAX = /[\\&~|[\]-]/g;
+
 /**
  * The members of a bracket expression `pattern[start, end)` as a regular-expression class body, as
  * Python's fnmatch.translate writes it: empty ranges dropped, a hyphen that makes no range escaped.
  */
 function bracketBody(pattern, start, end) {
   const stuff = pattern.slice(start, end);
-  if (!stuff.includes('-')) return stuff.replaceAll('\\', '\\\\');
+  if (!stuff.includes('-')) return stuff.replace(CLASS_SYNTAX, '\\$&');
   const chunks = [];
   let from = start;
   let k = pattern[start] === '!' ? start + 2 : start + 1;
@@ -368,7 +371,7 @@ function bracketBody(pattern, start, end) {
   for (let i = chunks.length - 1; i > 0; i--) {
     if (chunks[i - 1].at(-1) > chunks[i][0]) chunks.splice(i - 1, 2, chunks[i - 1].slice(0, -1) + chunks[i].slice(1));
   }
-  return chunks.map((chunk) => chunk.replaceAll('\\', '\\\\').replaceAll('-', '\\-')).join('-');
+  return chunks.map((chunk) => chunk.replace(CLASS_SYNTAX, '\\$&')).join('-');
 }
 
 /** One bracket expression starting after the `[` at `start`: its regular expression and where it ends. */
@@ -381,7 +384,7 @@ function bracket(pattern, start) {
   const body = bracketBody(pattern, start, end);
   if (!body) return { source: '(?!)', next: end + 1 };
   if (body === '!') return { source: '[\\s\\S]', next: end + 1 };
-  let members = body.replace(/[&~|[\]]/g, '\\$&');
+  let members = body;
   if (members[0] === '!') members = `^${members.slice(1)}`;
   else if (members[0] === '^') members = `\\${members}`;
   return { source: `[${members}]`, next: end + 1 };
