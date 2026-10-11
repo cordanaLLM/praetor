@@ -18,11 +18,15 @@ const MarkdownLineLimit = 80
 // maxMarkdownLines bounds one MarkdownFindings scan (HISS-02).
 const maxMarkdownLines = 20000
 
+// maxQuoteDepth bounds the block quote markers unquote strips from one line (HISS-02).
+const maxQuoteDepth = 16
+
 var (
 	markdownHeading  = regexp.MustCompile(`^#{1,6} `)
 	markdownListItem = regexp.MustCompile(`^\s*(?:[-*+]|\d+[.)]) `)
 	markdownFence    = regexp.MustCompile("^\\s*(`{3,}|~{3,})(.*)$")
 	markdownDisable  = regexp.MustCompile(`^<!-- markdownlint-(disable|enable)((?: MD\d{3})*) -->$`)
+	markdownQuote    = regexp.MustCompile(`^ {0,3}> ?`)
 )
 
 // markdownScan is the state of one pass over a document.
@@ -32,6 +36,7 @@ type markdownScan struct {
 	inFence  bool
 	marker   string // the opening fence's run of backticks or tildes while inFence
 	inList   bool
+	inTable  bool
 	disabled map[string]bool
 	h1       int
 	findings []string
@@ -39,9 +44,11 @@ type markdownScan struct {
 
 // MarkdownFindings reports where md breaks the markdownlint rules Praetor's generators
 // must hold under markdownlint's default configuration: blank lines around headings
-// (MD022), fences (MD031) and lists (MD032), no repeated blank lines (MD012), no line over
-// MarkdownLineLimit with whitespace from the limit's last column on (MD013, default
-// strict: false), a single H1 (MD025) and one final newline (MD047). A
+// (MD022), fences (MD031), lists (MD032) and tables (MD058), no repeated blank lines
+// (MD012), no line over MarkdownLineLimit with whitespace from the limit's last column on
+// (MD013, default strict: false), a single H1 (MD025) and one final newline (MD047). The
+// block rules read a line inside a block quote by its content, so a quoted heading, list,
+// fence or table needs its blank lines too, and a line holding only quote markers is one. A
 // `<!-- markdownlint-disable MDnnn -->` line suspends that rule until the matching enable
 // line, as markdownlint does, so a scoped disable is honoured and a file-wide one shows up
 // as exactly that. A leading YAML front matter block is skipped, as markdownlint skips it,
@@ -75,14 +82,27 @@ func (s *markdownScan) report(index int, rule, detail string) {
 	s.findings = append(s.findings, fmt.Sprintf("line %d: %s %s", s.offset+index+1, rule, detail))
 }
 
-// blank reports whether line index separates blocks: an empty line, a line holding only an
-// HTML comment (markdownlint blanks comment text before its rules run), or a position
-// outside the document.
+// unquote returns text without its leading block quote markers, at most maxQuoteDepth of
+// them, which is the content the block rules apply to.
+func unquote(text string) string {
+	for depth := 0; depth < maxQuoteDepth; depth++ {
+		loc := markdownQuote.FindStringIndex(text)
+		if loc == nil {
+			return text
+		}
+		text = text[loc[1]:]
+	}
+	return text
+}
+
+// blank reports whether line index separates blocks: an empty line, a line holding only
+// block quote markers or an HTML comment (markdownlint blanks comment text before its rules
+// run), or a position outside the document.
 func (s *markdownScan) blank(index int) bool {
 	if index < 0 || index >= len(s.lines) {
 		return true
 	}
-	text := strings.TrimSpace(s.lines[index])
+	text := strings.TrimSpace(unquote(s.lines[index]))
 	return text == "" || (strings.HasPrefix(text, "<!--") && strings.HasSuffix(text, "-->"))
 }
 
@@ -93,8 +113,11 @@ func (s *markdownScan) empty(index int) bool {
 
 // line applies every rule to one line.
 func (s *markdownScan) line(i int) {
-	text := s.lines[i]
-	s.lineLength(i, text)
+	s.lineLength(i, s.lines[i])
+	text := unquote(s.lines[i])
+	if !s.inFence {
+		s.table(i, text)
+	}
 	if m := markdownFence.FindStringSubmatch(text); m != nil && s.fenceLine(m[1], m[2]) {
 		s.fence(i, m[1])
 		return
@@ -120,6 +143,21 @@ func (s *markdownScan) lineLength(i int, text string) {
 	if len(text) > MarkdownLineLimit && strings.ContainsAny(text[MarkdownLineLimit-1:], " \t") {
 		s.report(i, "MD013", fmt.Sprintf("line length %d exceeds %d", len(text), MarkdownLineLimit))
 	}
+}
+
+// table applies MD058 to a line outside fences. A table is a run of lines whose content opens
+// with a pipe, the form Praetor's generators write; a table without leading pipes is not
+// seen. The missing blank line below is reported on the table's last row, as markdownlint
+// reports it.
+func (s *markdownScan) table(i int, text string) {
+	row := strings.HasPrefix(strings.TrimSpace(text), "|")
+	if row && !s.inTable && !s.blank(i-1) {
+		s.report(i, "MD058", "table must follow a blank line")
+	}
+	if !row && s.inTable && !s.blank(i) {
+		s.report(i-1, "MD058", "table must be followed by a blank line")
+	}
+	s.inTable = row
 }
 
 // fenceLine reports whether a line made of the fence run marker and the text after it opens or
@@ -148,7 +186,7 @@ func (s *markdownScan) fence(i int, marker string) {
 // toggle applies a disable or enable comment; no rule names means every rule.
 func (s *markdownScan) toggle(disable bool, rules []string) {
 	if len(rules) == 0 {
-		rules = []string{"MD012", "MD013", "MD022", "MD025", "MD031", "MD032"}
+		rules = []string{"MD012", "MD013", "MD022", "MD025", "MD031", "MD032", "MD058"}
 	}
 	for i := 0; i < len(rules); i++ {
 		s.disabled[rules[i]] = disable
@@ -159,7 +197,7 @@ func (s *markdownScan) toggle(disable bool, rules []string) {
 func (s *markdownScan) structure(i int, text string) {
 	switch {
 	case strings.TrimSpace(text) == "":
-		if s.empty(i - 1) {
+		if s.empty(i) && s.empty(i-1) {
 			s.report(i, "MD012", "multiple consecutive blank lines")
 		}
 	case markdownListItem.MatchString(text):
