@@ -2187,6 +2187,36 @@ class ScopeAndGuard(unittest.TestCase):
             with self.assertRaises(ValueError):
                 relative(root / "file.go", root / "missing")
 
+    def test_unresolved_relative_to_walks_past_a_component_it_cannot_inspect(self):
+        """A component whose stat fails is not the root, and the walk goes on with the next.
+
+        Positive: with an ancestor above the root refusing inspection, the root below it is
+        still found. Boundary: a path not written yet is found the same way, its missing
+        components never inspected before the root matches. Negative: when the one component
+        that names the root is the one refusing, the path is not below it, and the refusal
+        is the function's ValueError, never the OSError of the stat (#1219).
+        """
+        with tempfile.TemporaryDirectory(prefix="praetor-unresolved-denied-") as temp:
+            root = Path(temp).resolve() / "repository"
+            (root / "sub").mkdir(parents=True)
+            alias = root.parent / "alias"
+            alias.symlink_to(root)
+            real_stat = os.stat
+
+            def refusing(refused):
+                def stat(path, *args, **kwargs):
+                    if Path(path) == refused:
+                        raise PermissionError(13, "planted refusal", os.fspath(path))
+                    return real_stat(path, *args, **kwargs)
+                return mock.patch.object(common.os, "stat", stat)
+
+            relative = common.unresolved_relative_to
+            with refusing(root.parent):
+                self.assertEqual(relative(root / "sub/file.go", alias), Path("sub/file.go"))
+                self.assertEqual(relative(root / "new/dir/file.go", alias), Path("new/dir/file.go"))
+            with refusing(root), self.assertRaisesRegex(ValueError, "is not below"):
+                relative(root / "sub/file.go", alias)
+
     def test_process_failure_and_timeout_are_not_swallowed(self):
         with self.assertRaises(HookError):
             run([sys.executable, "-c", "raise SystemExit(7)"])
