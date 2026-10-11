@@ -125,6 +125,11 @@ func NativeHookFile(client string) (HookFile, bool) {
 	return file, ok
 }
 
+// stopTimeout is the budget the native stop rows declare: the engine's own stop budget (state
+// verification, then the checkpoint due check; budgetFor) plus the launcher's two probes and its
+// start-up room, so the launcher's stated fallback lands before the client gives up.
+const stopTimeout = 90 * time.Second
+
 // registrationTable is the support matrix of the entrypoint. A pair without a row is
 // rejected before any input is read. The checkpoint rows (pre-edit, post-tool, stop) reach
 // the native clients only (H2); Lefthook keeps its H1 rows until its jobs are re-pointed at
@@ -136,7 +141,7 @@ var registrationTable = []Registration{
 	{Client: "claude", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventPreEdit, NativeEvent: "PreToolUse", Matcher: "^(Edit|Write)$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
-	{Client: "claude", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
+	{Client: "claude", Event: EventStop, NativeEvent: "Stop", Timeout: stopTimeout},
 	{Client: "claude", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^Agent$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventDispatchReceipt, NativeEvent: "PostToolUse", Matcher: "^Agent$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventDispatchAbort, NativeEvent: "PostToolUseFailure", Matcher: "^Agent$", Timeout: 15 * time.Second},
@@ -156,13 +161,13 @@ var registrationTable = []Registration{
 	{Client: "claude", Event: EventSubagentStart, NativeEvent: "SubagentStart", Matcher: "^.+$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
-	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
+	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: stopTimeout},
 	{Client: "codex", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^spawn_agent$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostReturn, NativeEvent: "SubagentStop", Timeout: 60 * time.Second},
 	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "^run_shell_command$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPreEdit, NativeEvent: "BeforeTool", Matcher: "^(replace|write_file)$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPostTool, NativeEvent: "AfterTool", Timeout: 60 * time.Second},
-	{Client: "gemini", Event: EventStop, NativeEvent: "AfterAgent", Timeout: 60 * time.Second},
+	{Client: "gemini", Event: EventStop, NativeEvent: "AfterAgent", Timeout: stopTimeout},
 	{Client: "gemini", Event: EventPreDispatch, NativeEvent: "BeforeTool", Matcher: "^invoke_agent$", Timeout: 15 * time.Second},
 	{Client: "lefthook", Event: EventPreTool, NativeEvent: "agent-pre-tool"},
 	{Client: "lefthook", Event: EventEnvironment, NativeEvent: "pre-rebase"},

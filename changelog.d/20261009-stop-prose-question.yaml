@@ -1,0 +1,4 @@
+type: added
+title: Refuse a stop whose closing paragraph holds a sentence ending in a question mark (a choice written without one now passes), naming the client's structured question tool in the deny; every stop check (question, ledger with audit, checkpoint) runs on each pass and the first deny lists all failures; a stop still denied on the repeated pass now ends the session with continue:false and exit 0 instead of exit 2 again; with no engine the stop launcher falls back to the checkpoint adapter and says so on stderr
+issue: "#1095"
+breaking: false

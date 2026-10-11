@@ -133,6 +133,9 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 		return evaluateAgentTraffic(ctx, row, canonical, root, in)
 	}
 	if !checkpointWired(row.Client) {
+		if row.Event == EventStop {
+			return evaluateStopQuestion(row, canonical)
+		}
 		return evaluateCommand(canonical, in)
 	}
 	switch row.Event {
@@ -141,7 +144,7 @@ func dispatch(ctx context.Context, row Registration, canonical Canonical, root s
 	case EventPostTool:
 		return evaluatePostTool(ctx, root, in)
 	case EventStop:
-		return evaluateStop(ctx, root, canonical, in)
+		return evaluateStop(ctx, row, root, canonical, in)
 	default:
 		return evaluateCommand(canonical, in)
 	}
@@ -211,9 +214,45 @@ func evaluatePostTool(ctx context.Context, root string, in Invocation) Verdict {
 	return Verdict{Outcome: Skip, Reason: "Praetor checkpoint due: " + strings.Join(report.Actions, "; ")}
 }
 
-// evaluateStop verifies the state ledger before the checkpoint itself (3.3): a stale or
-// unverifiable ledger blocks on its own, independent of whether a checkpoint is due.
-func evaluateStop(ctx context.Context, root string, canonical Canonical, in Invocation) Verdict {
+// evaluateStop runs every stop check on each pass: the prose-question check
+// (stop_question.go, no I/O), the state ledger verify and the checkpoint (3.3: a stale or
+// unverifiable ledger blocks on its own, independent of whether a checkpoint is due). On the
+// first pass one deny lists each failing check, so the single continuation a block-once stop
+// grants is not spent on the question alone. On the repeated pass (StopActive) the question
+// is a stated skip and a still-failing ledger or checkpoint halts, naming what remains.
+// The question's stated skip survives an otherwise clean stop.
+func evaluateStop(ctx context.Context, row Registration, root string, canonical Canonical, in Invocation) Verdict {
+	question := evaluateStopQuestion(row, canonical)
+	ledger := evaluateStopLedger(ctx, root, canonical)
+	checkpoint := evaluateStopCheckpoint(ctx, root, canonical, in)
+	var denies []Verdict
+	for _, v := range []Verdict{question, ledger, checkpoint} {
+		if v.Outcome == Deny {
+			denies = append(denies, v)
+		}
+	}
+	if len(denies) > 0 {
+		return joinStopDenies(denies)
+	}
+	for _, v := range []Verdict{ledger, checkpoint} {
+		if v.Outcome != Allow {
+			return v
+		}
+	}
+	return question
+}
+
+// joinStopDenies merges every failing stop check into one deny: the first reason leads and
+// each further one follows "Also failing:", so no check hides behind another.
+func joinStopDenies(denies []Verdict) Verdict {
+	reason := denies[0].Reason
+	for _, v := range denies[1:] {
+		reason += " Also failing: " + strings.TrimPrefix(v.Reason, "[BLOCKED BY HISS] ")
+	}
+	return Verdict{Outcome: Deny, Reason: reason}
+}
+
+func evaluateStopLedger(ctx context.Context, root string, canonical Canonical) Verdict {
 	verifyCtx, cancel := context.WithTimeout(ctx, stateVerifyBudget)
 	defer cancel()
 	if err := state.VerifyStateSync(verifyCtx, root); err != nil {
@@ -222,7 +261,19 @@ func evaluateStop(ctx context.Context, root string, canonical Canonical, in Invo
 			"do not report completion while state is unverified."
 		return Verdict{Outcome: Deny, Reason: stopReason(reason, canonical.StopActive)}
 	}
-	return evaluateStopCheckpoint(ctx, root, canonical, in)
+	report, err := state.AuditWorkingDirContext(verifyCtx, root)
+	if err != nil || !report.Valid {
+		detail := "ledger audit failed"
+		if err != nil {
+			detail = err.Error()
+		} else if len(report.Violations) > 0 {
+			detail = strings.Join(report.Violations, "; ")
+		}
+		reason := "Praetor state audit failed: " + detail +
+			". Resolve the listed ledger rows, run praetorctl state audit ., then retry."
+		return Verdict{Outcome: Deny, Reason: stopReason(reason, canonical.StopActive)}
+	}
+	return Verdict{Outcome: Allow}
 }
 
 func evaluateStopCheckpoint(ctx context.Context, root string, canonical Canonical, in Invocation) Verdict {

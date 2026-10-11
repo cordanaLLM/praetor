@@ -17,7 +17,10 @@ the first one that lists this pair:
    registers;
 2. `praetorctl` from PATH, the installed engine.
 
-When no candidate serves the pair, or none exists, the call is a stated skip: exit 0 and the
+When no candidate serves a native client's stop pair, the launcher falls back to the checkpoint
+adapter (.config/agent/hooks/checkpoint.py) that gated stop before the engine row existed, and
+prints one stderr line naming the fallback, so the stop gate is never weaker than it was.
+When no candidate serves any other pair, or none exists, the call is a stated skip: exit 0 and the
 reason on stderr, the same shape the engine gives an event newer than itself. AGY also needs
 a decision object on stdout, so the launcher prints the one the engine's agy encoder prints
 for a skip. The gate is then not enforced, and the reason says so. A version-skewed or
@@ -51,6 +54,16 @@ PROBE_LIMIT = 64 * 1024
 # this wait end before the longest launcher row (60 s) gives up; a shorter row's client timeout
 # ends that row first. TestLauncherTimeoutsOutwaitEngineBudgets pins both bounds.
 RUN_TIMEOUT = 45
+# The stop row outlasts the others: the engine verifies the state ledger (20 s) and then asks
+# the checkpoint evaluator (30 s) before it answers. The stop client timeout is 90 s, so both
+# probes plus this wait still end before the client gives up. TestStopLauncherTimeouts pins both.
+STOP_RUN_TIMEOUT = 55
+# The no-engine stop fallback runs checkpoint.py, whose own backstop answers a hang with a
+# block after HOOK_LIMIT (55 s) plus its stop allowance HOOK_STOP (12 s), counted from the
+# adapter's start. This wait must outlast that, or the launcher kills the adapter first and
+# the client sees exit 1, a non-blocking fault, instead of the block. Both probes plus this
+# wait still end before the 90 s client timeout. TestStopLauncherTimeouts pins both bounds.
+STOP_FALLBACK_TIMEOUT = 70
 # The engine reads at most 1 MiB + 1 byte of payload (agenthook.MaxInputBytes).
 DRAIN_LIMIT = 1024 * 1024 + 1
 DRAIN_CHUNK = 64 * 1024
@@ -99,12 +112,16 @@ def serves(engine, pair, run=subprocess.run):
     return any(line.strip() == wanted for line in listing.decode("utf-8", "replace").splitlines())
 
 
-def serve(engine, pair, run=subprocess.run):
-    """Run the engine on the inherited streams and return its exit code unchanged."""
+def serve(engine, pair, run=subprocess.run, argv=None):
+    """Run the engine (or, for the stop fallback, argv) on the inherited streams and return
+    its exit code unchanged."""
+    limit = STOP_RUN_TIMEOUT if pair[-1] == "stop" else RUN_TIMEOUT
+    if argv:
+        limit = STOP_FALLBACK_TIMEOUT
     try:
-        return run([engine, "hook", *pair], timeout=RUN_TIMEOUT, check=False).returncode
+        return run(argv or [engine, "hook", *pair], timeout=limit, check=False).returncode
     except subprocess.TimeoutExpired:
-        reason = f"{engine} did not answer within {RUN_TIMEOUT} s"
+        reason = f"{engine} did not answer within {limit} s"
     except OSError as error:
         reason = f"{engine} could not start: {error}"
     sys.stderr.write("praetor hook: " + reason[:1000] + "\n")
@@ -162,11 +179,15 @@ def skip(pair, engines):
     return proceed(pair, 0)
 
 
-def well_formed(argv):
-    """The engine's argument grammar; an agy event also needs a known answer shape."""
-    if len(argv) != 2 or not all(ARGUMENT.fullmatch(value) for value in argv):
-        return False
-    return argv[0] != "agy" or tuple(argv) in PROCEED
+def stop_fallback(pair, root):
+    """The checkpoint adapter that gated stop before the engine row existed, or None.
+
+    Only the native clients' stop falls back (agy's stop never had an adapter), and only
+    where the adapter sits beside this launcher in a checkout."""
+    adapter = root / ".config" / "agent" / "hooks" / "checkpoint.py"
+    if pair[-1] != "stop" or pair[0] == "agy" or not adapter.is_file():
+        return None
+    return adapter
 
 
 def main(argv, root=ROOT, which=shutil.which, run=subprocess.run, stdin=None):
@@ -178,8 +199,24 @@ def main(argv, root=ROOT, which=shutil.which, run=subprocess.run, stdin=None):
     for engine in engines:
         if serves(engine, argv, run):
             return serve(engine, argv, run)
+    adapter = stop_fallback(argv, root)
+    if adapter is not None:
+        # The stop gate stays as strict as before the engine row: the adapter reads the
+        # payload from the inherited stdin and answers in the client's own protocol. The
+        # prose-question check is the engine's, so it is not enforced on this path.
+        sys.stderr.write(
+            f"praetor hook: no engine serves {' '.join(argv)}; falling back to {adapter.name} "
+            "(checkpoint and ledger only, prose questions not judged)\n")
+        return serve(str(adapter), argv, run, [sys.executable, "-B", str(adapter)])
     drain(stdin.read if stdin is not None else read_stdin)
     return skip(argv, engines)
+
+
+def well_formed(argv):
+    """The engine's argument grammar; an agy event also needs a known answer shape."""
+    if len(argv) != 2 or not all(ARGUMENT.fullmatch(value) for value in argv):
+        return False
+    return argv[0] != "agy" or tuple(argv) in PROCEED
 
 
 if __name__ == "__main__":
