@@ -1,0 +1,4 @@
+type: changed
+title: Require short paragraphs, lists for parallel items, blank lines around blocks and two-dimension tables in social-register forge text
+issue: "#1099"
+breaking: false

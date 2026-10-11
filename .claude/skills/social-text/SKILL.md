@@ -16,10 +16,15 @@ Use this skill for forge text a person reads: issue, pull-request body, review c
 
 ## Inherited from adhd-format
 
-Skill inherits 3 `adhd-format` principles by reference; not restated here:
+Skill inherits 3 `adhd-format` principles; item 2 adds the line-break and list rules:
 
 1. **Bottom line first**: first sentence = decision, defect or ask.
-2. **Scannable structure**: paragraphs <=3 sentences; bold operative words of action bullet.
+2. **Scannable structure**:
+   - paragraphs of one to three sentences, one idea each;
+   - bold operative words of action bullet;
+   - a list whenever three or more parallel items appear, never a comma chain;
+   - a blank line before and after every list, table and heading;
+   - a table when three or more items are compared across two dimensions.
 3. **Progressive disclosure**: summary first, commands second, detail linked or collapsed below.
 
 Overrides rest of adhd-format for humans: at most 1 GitHub alert per text; no Mermaid unless flow is point of change; tables only for 3+ rows; no emoji headings; no anchor bolding in running prose.
