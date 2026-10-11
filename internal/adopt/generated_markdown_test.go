@@ -112,14 +112,17 @@ func TestInstalledSkillLintSeesEachStructure(t *testing.T) {
 		{"caveman", " |\n\n2. ", "MD058"},
 	}
 	for _, tc := range cases {
-		doc := sourceSkillText(t, tc.skill)
+		// A CRLF checkout (core.autocrlf=true on Windows) holds the same text.
+		doc := strings.ReplaceAll(sourceSkillText(t, tc.skill), "\r\n", "\n")
 		if strings.Count(doc, tc.glued) != 1 {
 			t.Fatalf("%s holds %q %d times, want once", tc.skill, tc.glued, strings.Count(doc, tc.glued))
 		}
 		planted := strings.Replace(doc, tc.glued, glue(tc.glued), 1)
-		findings := testsupport.MarkdownFindings(planted)
-		if !slices.ContainsFunc(findings, func(finding string) bool { return strings.Contains(finding, tc.rule) }) {
-			t.Errorf("%s without the blank line in %q: findings %v do not report %s", tc.skill, tc.glued, findings, tc.rule)
+		for ending, text := range map[string]string{"LF": planted, "CRLF": strings.ReplaceAll(planted, "\n", "\r\n")} {
+			findings := testsupport.MarkdownFindings(text)
+			if !slices.ContainsFunc(findings, func(finding string) bool { return strings.Contains(finding, tc.rule) }) {
+				t.Errorf("%s (%s) without the blank line in %q: findings %v do not report %s", tc.skill, ending, tc.glued, findings, tc.rule)
+			}
 		}
 	}
 }
