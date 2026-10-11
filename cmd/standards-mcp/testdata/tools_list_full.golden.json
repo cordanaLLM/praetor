@@ -456,6 +456,117 @@
     },
     {
       "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "description": "Claim forge issue before work, as praetorctl issue claim. Full text: standards_tool_describe.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string",
+            "description": "Branch carrying work"
+          },
+          "lane": {
+            "type": "string",
+            "description": "Lane session works in"
+          },
+          "ref": {
+            "type": "string",
+            "description": "Issue reference \u003cowner\u003e/\u003crepo\u003e#\u003cnumber\u003e, any repository token reaches"
+          },
+          "session": {
+            "type": "string",
+            "description": "Identifier of agent session holding claim"
+          }
+        },
+        "required": [
+          "branch",
+          "lane",
+          "ref",
+          "session"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_issue_claim"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "description": "Release session issue claim, as praetorctl issue release. Finalises claim comment with outcome, removes status labels; pull request closes issue. Writes to forge.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "description": "Short note shown on claim comment"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "landed, abandoned or handed-over"
+          },
+          "ref": {
+            "type": "string",
+            "description": "Issue reference \u003cowner\u003e/\u003crepo\u003e#\u003cnumber\u003e, any repository token reaches"
+          },
+          "session": {
+            "type": "string",
+            "description": "Identifier of agent session holding claim"
+          }
+        },
+        "required": [
+          "outcome",
+          "ref",
+          "session"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_issue_release"
+    },
+    {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "description": "Record stage on session issue claim by editing single claim comment, as praetorctl issue status. Stage blocked adds status:blocked label. Without stage, reads claim only. Writes to forge.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "description": "Short note shown on claim comment"
+          },
+          "ref": {
+            "type": "string",
+            "description": "Issue reference \u003cowner\u003e/\u003crepo\u003e#\u003cnumber\u003e, any repository token reaches"
+          },
+          "session": {
+            "type": "string",
+            "description": "Identifier of agent session holding claim"
+          },
+          "stage": {
+            "type": "string",
+            "description": "claimed, implementing, review, fix-round-N, blocked, queued, landing; omit to read claim"
+          }
+        },
+        "required": [
+          "ref",
+          "session"
+        ],
+        "additionalProperties": false
+      },
+      "name": "standards_issue_status"
+    },
+    {
+      "annotations": {
         "readOnlyHint": true,
         "destructiveHint": false,
         "idempotentHint": true,

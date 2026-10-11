@@ -141,6 +141,21 @@ type ForgeSettings struct {
 	ReconcileRepos []string `json:"reconcile_repos,omitzero"`
 	// ReviewBot is the bot account requested as a reviewer; empty requests none.
 	ReviewBot string `json:"review_bot,omitzero"`
+	// ClaimStale is how long an issue claim may go without an update before another session
+	// may take it over (`praetorctl issue claim`, #937).
+	// Unset (zero) means DefaultClaimStale.
+	ClaimStale time.Duration `json:"claim_stale,omitzero"`
+}
+
+// DefaultClaimStale is the built-in stale window of an issue claim.
+const DefaultClaimStale = 6 * time.Hour
+
+// ClaimStaleWindow is the configured stale window, or DefaultClaimStale when none is set.
+func (f ForgeSettings) ClaimStaleWindow() time.Duration {
+	if f.ClaimStale <= 0 {
+		return DefaultClaimStale
+	}
+	return f.ClaimStale
 }
 
 // TopologySettings names the organisation folders of the workstation dev root that the

@@ -13,6 +13,9 @@ repository policy from the client-specific adapters the other pages configure.
   `AGENTS.md` that keep the compiled files a stable prompt prefix, and `--verify-stable`.
 - [Agent hooks](../agent-hooks.md): the single `praetorctl hook <client> <event>` entrypoint
   and the native hook coverage of each client.
+- [Issue claims](../issue-claims.md): `praetorctl issue claim`, `status` and `release` report
+  which session works an issue and at which stage; the dispatch gate refuses an issue another
+  live session holds.
 - [Shared client configuration](../client-bootstrap.md): `praetorctl clients` projects the
   MCP server registry into client settings.
 - [Configurable backend connections](../client-connections.md): `praetorctl clients connect`

@@ -31,6 +31,9 @@ type Invocation struct {
 	// leave it empty so one deterministic path under Git's shared directory bridges hook
 	// processes and isolated worktrees without entering the tracked working tree.
 	CorrelationDir string
+	// IssueClaims reads the live claim on an issue a brief names (#937). Nil means no lookup
+	// is wired, which refuses every brief that names an issue.
+	IssueClaims IssueClaimLookup
 }
 
 // Run serves one hook call: parse, read, decode, resolve, judge, encode. It never
