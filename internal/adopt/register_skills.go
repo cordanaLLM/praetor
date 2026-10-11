@@ -41,14 +41,17 @@ var priorSkillDigests = map[string]map[string]string{
 		"a128a86ad170bfaf89012567e1405693006627e260cd18c420f3abb500dd6d9e": "first shipped, REUSE header and upstream credit (#235)",
 		"5f142b7db4b084bd6168bcad862e7860688b4b8e43f3ed997dd5ed0cc77b05f2": "inline credit, no repository path an adopter lacks (#850)",
 		"fe90eab731a01498ea5e18e8af0af6c935e780bd11567c2a54d3db96b72d954b": "line breaks and lists in forge text (#1099)",
+		"6e07a86ad75526dcba168c3ff18a5d90eb2ca0da2cda41ca5d543acf36dead4d": "passes markdownlint's default rules: 80 columns, blank lines around blocks (#70)",
 	},
 	compiler.CanonicalSkillRel("caveman"): {
 		"c0ab6d15d42d9dab2640eb53abf7865495ab99979931cd463540646974d59b49": "first shipped, REUSE header and upstream credit (#235)",
 		"7f76820594f9792d620eb1aa9fbe5f5b9e67c7fe0dbd256d46dd329078862cef": "inline credit, no repository path an adopter lacks (#850)",
+		"e41df51da59f984e672f0fed8a066b2f3903c026dfc72516c258a526b4cc03ca": "passes markdownlint's default rules: 80 columns, blank lines around blocks (#70)",
 	},
 	compiler.CanonicalSkillRel("adhd-format"): {
 		"1db3a6e0ec137143cb81002491bab5f5ae6a9331333126423de199a1c66edb44": "first shipped, REUSE header and upstream credit (#235)",
 		"1d5efc9bf3e177ddb016daf50663cd7554bac8495b408fa5e784ebfc6cfdd8ac": "inline credit, no repository path an adopter lacks (#850)",
+		"c334cfdc52c33159f6a78e120283aae74aaa91c0fc3afd15d1d49cd3a95d85ce": "passes markdownlint's default rules: 80 columns, blank lines around blocks (#70)",
 	},
 }
 

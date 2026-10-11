@@ -1,9 +1,13 @@
 package adopt
 
 import (
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -44,6 +48,91 @@ func TestGeneratedPersonasPassDefaultMarkdownlint(t *testing.T) {
 			t.Errorf("%s disables a lint rule it should satisfy", personas[i].rel)
 		}
 	}
+}
+
+// skillLintRules are the markdownlint rules the register skills shipped before #70 broke in a
+// repository that lints every Markdown file with the default rules, per skill, at its last
+// text before the fix.
+var skillLintRules = map[string]struct {
+	prior string
+	rules []string
+}{
+	"social-text": {"ship-1099.SKILL.md.prior", []string{"MD013"}},
+	"caveman":     {"ship-850.SKILL.md.prior", []string{"MD013", "MD058"}},
+	"adhd-format": {"ship-850.SKILL.md.prior", []string{"MD013", "MD022", "MD032"}},
+}
+
+// Positive: the register skills adoption installs, in .agents/skills and in the copy Claude
+// Code reads, pass markdownlint's default rules without disabling any of them, so an adopter
+// whose Markdown gate covers the whole tree stays green after adoption (#70). The audit holds
+// each client copy to its source byte for byte, so an adopter cannot fix a finding there.
+func TestAdopt_Positive_InstalledSkillsPassDefaultMarkdownlint(t *testing.T) {
+	repoPath := newTestRepo(t, "register-skills-markdownlint")
+	adoptWithSource(t, repoPath, newAdoptLockSource(t), false)
+	bundle := config.RegisterSkillBundle()
+	if len(bundle) != len(skillLintRules) {
+		t.Fatalf("the bundle holds %d skills, skillLintRules %d", len(bundle), len(skillLintRules))
+	}
+	for _, dir := range []string{compiler.CanonicalSkillsRel, ".claude/skills"} {
+		for _, name := range bundle {
+			rel := compiler.SkillEntryRel(dir, name)
+			doc := repoText(t, repoPath, rel)
+			if findings := testsupport.MarkdownFindings(doc); len(findings) != 0 {
+				t.Errorf("%s breaks markdownlint defaults: %v", rel, findings)
+			}
+			if strings.Contains(doc, "markdownlint-disable") {
+				t.Errorf("%s disables a lint rule it should satisfy", rel)
+			}
+		}
+	}
+}
+
+// Negative (rule 13): the same check refuses each skill's last text before the fix, naming
+// every rule that text broke under markdownlint-cli2 with the default rules, so the clean
+// result above is not a check that finds nothing.
+func TestInstalledSkillLintRefusesThePriorTexts(t *testing.T) {
+	for name, want := range skillLintRules {
+		prior := mustRead(t, filepath.Join(priorSkillFixtures, name, want.prior))
+		findings := strings.Join(testsupport.MarkdownFindings(prior), "\n")
+		for _, rule := range want.rules {
+			if !strings.Contains(findings, rule) {
+				t.Errorf("%s/%s: findings do not report %s:\n%s", name, want.prior, rule, findings)
+			}
+		}
+	}
+}
+
+// Boundary: one blank line taken away around a heading, a quoted list or a table of an
+// installed skill is reported under the rule that asks for it, so the check sees each of the
+// three structures the skills hold, not only a long line.
+func TestInstalledSkillLintSeesEachStructure(t *testing.T) {
+	cases := []struct{ skill, glued, rule string }{
+		{"adhd-format", "\n\n> ### ", "MD022"},
+		{"adhd-format", ":\n>\n> - ", "MD032"},
+		{"caveman", " |\n\n2. ", "MD058"},
+	}
+	for _, tc := range cases {
+		doc := sourceSkillText(t, tc.skill)
+		if strings.Count(doc, tc.glued) != 1 {
+			t.Fatalf("%s holds %q %d times, want once", tc.skill, tc.glued, strings.Count(doc, tc.glued))
+		}
+		planted := strings.Replace(doc, tc.glued, glue(tc.glued), 1)
+		findings := testsupport.MarkdownFindings(planted)
+		if !slices.ContainsFunc(findings, func(finding string) bool { return strings.Contains(finding, tc.rule) }) {
+			t.Errorf("%s without the blank line in %q: findings %v do not report %s", tc.skill, tc.glued, findings, tc.rule)
+		}
+	}
+}
+
+// glue returns separator without its blank line: the first empty line, or the first line
+// holding only a quote marker.
+func glue(separator string) string {
+	for _, blank := range []string{"\n>\n", "\n\n"} {
+		if strings.Contains(separator, blank) {
+			return strings.Replace(separator, blank, "\n", 1)
+		}
+	}
+	return separator
 }
 
 // adoptionHarness renders the harness for a fixture repository.
