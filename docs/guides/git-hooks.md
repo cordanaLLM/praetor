@@ -1196,7 +1196,9 @@ CLI had already started:
   wherever the platform supports it. Elsewhere a checked reader inspects each component without
   following it, refuses links — junctions and other reparse points included — and non-directories
   with the same errors, and requires the file it opened to be the file it inspected. It *detects*
-  a component replaced between the two, rather than preventing it, and says so.
+  a component replaced between the two, rather than preventing it, and says so. Both readers
+  hold one directory descriptor at a time and close every descriptor they open, also when the
+  policy path turns out to be a directory (`.config/lefthook/scripts/test_checkpoint.py`).
 - **Bounded subprocess output.** `common.py` waited on pipes with `selectors`; `select()` on
   Windows accepts only sockets, so every bounded `git` call raised `OSError`. Windows drains each
   pipe on its own thread under the same shared byte limit and deadline.
