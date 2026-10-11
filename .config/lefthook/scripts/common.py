@@ -3,13 +3,13 @@
 import contextlib
 import math
 import os
-from pathlib import Path
-import subprocess
-import signal
 import selectors
+import signal
+import subprocess
 import tempfile
 import threading
 import time
+from pathlib import Path
 
 
 class HookError(Exception):

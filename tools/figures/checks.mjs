@@ -46,7 +46,7 @@
 // anchors a pattern at docs_dir, a trailing slash matches directories only, and `*`, `?` and `[...]`
 // (negated with `!` or `^`) match within one path component. It refuses a leading `!`, `**` and `\`
 // instead of guessing.
-import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENGINE_FILES, SLOTS, SPEC_CLOSE, SPEC_OPEN, escapeHtml, markup, sha256 } from './core.mjs';
@@ -112,8 +112,9 @@ const FENCE_LINE = new RegExp(`^(${S}*)(\`{3,}|~{3,})${S}*([^${WS}\`{]*)(${ANY}*
 /** A figure slug: lowercase kebab-case, the name of docs/figures/<slug>.ts and of its outputs. */
 export const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MARKER = /<!-- figure:([a-z0-9-]+) -->\n([\s\S]*?)<!-- \/figure -->/g;
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
 /** The slots of a figure's JSON `html` (SLOTS and markup in core.mjs). */
-const SLOT = new RegExp(Object.values(SLOTS).map((slot) => slot.replace(/[{}]/g, '\\$&')).join('|'), 'g');
+const SLOT = new RegExp(Object.values(SLOTS).map(escapeRegExp).join('|'), 'g');
 /** gitignore negates a bracket expression with `!` or `^`; the glob translation knows only `!`. */
 const CARET_BRACKET = /\[\^/g;
 const FOLD_CASE = process.platform === 'win32';
@@ -176,17 +177,21 @@ function inside(base, target) {
 
 /** The bytes of `path`, refusing files over MAX_FILE_BYTES. */
 function readBytes(path) {
-  let size;
+  let fd;
   try {
-    size = statSync(path).size;
+    fd = openSync(path, 'r');
   } catch (error) {
     throw new CheckError(`cannot read ${path}: ${error.message}`);
   }
-  if (size > MAX_FILE_BYTES) throw new CheckError(`${path} exceeds ${MAX_FILE_BYTES} bytes`);
   try {
-    return readFileSync(path);
+    const size = fstatSync(fd).size;
+    if (size > MAX_FILE_BYTES) throw new CheckError(`${path} exceeds ${MAX_FILE_BYTES} bytes`);
+    return readFileSync(fd);
   } catch (error) {
+    if (error instanceof CheckError) throw error;
     throw new CheckError(`cannot read ${path}: ${error.message}`);
+  } finally {
+    closeSync(fd);
   }
 }
 
@@ -339,7 +344,6 @@ function blockScalarLines(following) {
   return patterns;
 }
 
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
 
 /**
  * The members of a bracket expression `pattern[start, end)` as a regular-expression class body, as
@@ -377,9 +381,9 @@ function bracket(pattern, start) {
   const body = bracketBody(pattern, start, end);
   if (!body) return { source: '(?!)', next: end + 1 };
   if (body === '!') return { source: '[\\s\\S]', next: end + 1 };
-  let members = body.replace(/[&~|\]]/g, '\\$&');
+  let members = body.replace(/[&~|[\]]/g, '\\$&');
   if (members[0] === '!') members = `^${members.slice(1)}`;
-  else if (members[0] === '^' || members[0] === '[') members = `\\${members}`;
+  else if (members[0] === '^') members = `\\${members}`;
   return { source: `[${members}]`, next: end + 1 };
 }
 
