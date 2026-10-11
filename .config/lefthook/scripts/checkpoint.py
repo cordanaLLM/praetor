@@ -4,11 +4,11 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import re
-import sys
 import stat
+import sys
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from common import HookError, run_bounded
@@ -345,11 +345,10 @@ def _paths(raw):
 
 
 def _public(path):
-    return (
-        path != ".standards-receipt.json"
-        and path != ".workingdir"
-        and not path.startswith(".workingdir/")
-    )
+    return path not in (
+        ".standards-receipt.json",
+        ".workingdir",
+    ) and not path.startswith(".workingdir/")
 
 
 WORKTREE_DIFF = ("--no-ext-diff", "--no-textconv", "--ignore-submodules=all")

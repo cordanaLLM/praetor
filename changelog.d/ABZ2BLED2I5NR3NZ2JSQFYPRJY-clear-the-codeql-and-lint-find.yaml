@@ -1,0 +1,3 @@
+type: fixed
+title: Clear the CodeQL and lint findings in the scripts and hook files adoption ships (file-system races, incomplete escapes, useless escapes, import order, exception chaining), keep each outgoing text as a recognised earlier version, and refuse a dangling symbolic link in place of the manifest
+issue: '#1248'
