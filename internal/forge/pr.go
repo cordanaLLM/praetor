@@ -97,6 +97,7 @@ func ValidatePRChecklistWithPolicy(prBody string, policy ReceiptPolicy) (*PRChec
 
 	res := &PRChecklistResult{}
 	scanChecklistLines(lines, res)
+	res.Errors = append(res.Errors, closingReferenceErrors(strings.Join(lines, "\n"), "pull request body")...)
 	receipt, err := extractReceiptBlock(lines)
 	if err != nil {
 		res.Errors = append(res.Errors, err.Error())
@@ -397,6 +398,7 @@ func AnalyzeCommit(message string) (*CommitAnalysis, error) {
 	if reason := commitSubjectError(header); reason != "" {
 		res.Errors = append(res.Errors, reason)
 	}
+	res.Errors = append(res.Errors, closingReferenceErrors(trimmed, "commit message")...)
 	if breakingHeaderRegex.MatchString(header) {
 		res.IsBreaking = true
 		res.HasBreakingIndicator = true

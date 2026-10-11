@@ -1,0 +1,2 @@
+type: added
+title: 'The commit message policy (forge check-message, check-commits) and the pull request body check (forge validate-pr) refuse a closing keyword (close, fix, resolve and their forms) next to an issue or pull request reference unless a ''Closes-own: <reference>'' line marks it as intended; offline they cannot tell an issue from a pull request, so every reference is refused by default, and adopters whose messages use the keywords will see new refusals'
