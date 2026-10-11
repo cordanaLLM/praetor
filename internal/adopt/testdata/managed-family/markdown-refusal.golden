@@ -6,7 +6,7 @@ file .github/workflows/praetor-docs.yml sha256:4df1894780cf41670c59b4b1eace88218
 file tools/markdownlint/package.json sha256:814f0b111bbd33310d28e9307d3ca07556631e895002729953c06f0c1ef6859a
 file tools/markdownlint/package-lock.json sha256:dc250eced16decfc99f38e830952d1e8679e2a2e68cd0faa7b893cd7aef8e795
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:91bc63a7141e3962f9134e645fe6d09ef7262c21fb0dac18c98843f7061d82a2
+file tools/markdownlint/verify.mjs sha256:3d65af5a190f353525bb909b540d2cbc1359da1e356e866afb0d7e85f56abed0
 file tools/markdownlint/no-private-scratch-links.mjs sha256:fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 file .prettierignore absent
@@ -18,7 +18,7 @@ file .github/workflows/praetor-docs.yml sha256:4df1894780cf41670c59b4b1eace88218
 file tools/markdownlint/package.json sha256:478075b86e983158355cb48f3fdd7630b2217b5855be6bfa69c4428b6ae58a25
 file tools/markdownlint/package-lock.json sha256:dc250eced16decfc99f38e830952d1e8679e2a2e68cd0faa7b893cd7aef8e795
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:91bc63a7141e3962f9134e645fe6d09ef7262c21fb0dac18c98843f7061d82a2
+file tools/markdownlint/verify.mjs sha256:3d65af5a190f353525bb909b540d2cbc1359da1e356e866afb0d7e85f56abed0
 file tools/markdownlint/no-private-scratch-links.mjs sha256:fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 file .prettierignore absent

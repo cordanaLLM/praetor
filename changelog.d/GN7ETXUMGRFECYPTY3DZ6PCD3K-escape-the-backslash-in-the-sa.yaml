@@ -1,0 +1,3 @@
+type: fixed
+title: Escape the backslash in the same pass as the other class characters in the shipped figure checks (CodeQL incomplete sanitization) and drop an unused catch binding in the shipped Markdown gate, both introduced by the previous fix
+issue: '#1248'
