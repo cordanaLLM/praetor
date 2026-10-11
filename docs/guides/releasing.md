@@ -522,6 +522,17 @@ the commit that lands. The tag is therefore made after the merge, on `main`, and
 temporary copy on every `go test`, so a fragment that would stop step 1 fails the change
 that adds it.
 
+### Fragment schema
+
+Each YAML fragment in `changelog.d/` ([`internal/changelog/fragments.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/changelog/fragments.go)) adheres to a strict schema:
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `type` | string | Mandatory category: `added`, `changed`, `deprecated`, `removed`, `fixed`, or `security`. |
+| `title` | string | Mandatory one-sentence summary of the change. |
+| `issue` | string | Optional issue identifier or comma-separated list of issue identifiers (with optional spaces after commas). Each item takes digits with no leading zero and one optional leading `#` (e.g. `502` or `#502`), or a cross-repository reference (`owner/repo#n`). A single leading `#` is normalised on decode ([`internal/changelog/changelog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/changelog/changelog.go)). Quote a value that starts with `#` (`issue: "#502"`): unquoted it is a YAML comment and reads as empty, which is refused. An unquoted integer (`issue: 502`) is accepted. |
+| `breaking` | boolean | Optional flag (`true` indicates a breaking change). |
+
 ## Release flavors
 
 `.config/flavors.yaml` declares each flavor and the ref it follows:

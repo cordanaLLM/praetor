@@ -43,6 +43,9 @@ func TestTrackedFragments_Positive_RenderIntoCopy(t *testing.T) {
 	if !strings.Contains(string(data), "## [0.0.0-test] - 2026-09-18") {
 		t.Errorf("rendered changelog lacks the release heading:\n%.400s", data)
 	}
+	if strings.Contains(string(data), "(##") {
+		t.Errorf("rendered changelog contains invalid '(##' sequence:\n%.1000s", data)
+	}
 }
 
 func TestTrackedFragments_Negative_UnknownKeyIsRejected(t *testing.T) {
@@ -80,7 +83,7 @@ func TestTrackedFragments_Boundary_OptionalKeysOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a fragment using every known key must load: %v", err)
 	}
-	if len(frags) != 1 || frags[0].Issue != "194" || !frags[0].Breaking {
+	if len(frags) != 1 || frags[0].Issue != "#194" || !frags[0].Breaking {
 		t.Errorf("unexpected decode: %+v", frags)
 	}
 }

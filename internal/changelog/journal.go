@@ -75,7 +75,7 @@ func validContentHash(value string) bool {
 }
 
 func prepareRenderJournal(ctx context.Context, repoPath string, repo, fragmentsRoot *os.Root, version, date string) (*renderJournal, []byte, error) {
-	fragments, snapshots, err := loadFragmentSnapshots(ctx, fragmentsRoot)
+	fragments, snapshots, err := loadFragmentSnapshots(ctx, repoPath, fragmentsRoot)
 	if err != nil {
 		return nil, nil, err
 	}
