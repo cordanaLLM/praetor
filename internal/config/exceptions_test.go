@@ -443,3 +443,137 @@ func TestLoadExceptionsFor_Negative_CanceledContextFails(t *testing.T) {
 		t.Fatalf("LoadExceptionsFor with canceled context: %v, want context.Canceled", err)
 	}
 }
+
+func TestExceptionDaysLeft_3D(t *testing.T) {
+	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
+
+	// Positive: future date
+	future := Exception{Expires: "2026-10-24"}
+	days, err := future.DaysLeft(today)
+	if err != nil || days != 14 {
+		t.Fatalf("future.DaysLeft() = (%d, %v), want (14, nil)", days, err)
+	}
+
+	// Boundary: today, tomorrow, yesterday
+	onToday := Exception{Expires: "2026-10-10"}
+	if days, err := onToday.DaysLeft(today); err != nil || days != 0 {
+		t.Fatalf("onToday.DaysLeft() = (%d, %v), want (0, nil)", days, err)
+	}
+	tomorrow := Exception{Expires: "2026-10-11"}
+	if days, err := tomorrow.DaysLeft(today); err != nil || days != 1 {
+		t.Fatalf("tomorrow.DaysLeft() = (%d, %v), want (1, nil)", days, err)
+	}
+	yesterday := Exception{Expires: "2026-10-09"}
+	if days, err := yesterday.DaysLeft(today); err != nil || days != -1 {
+		t.Fatalf("yesterday.DaysLeft() = (%d, %v), want (-1, nil)", days, err)
+	}
+
+	// Negative: malformed date
+	bad := Exception{Expires: "not-a-date"}
+	if _, err := bad.DaysLeft(today); err == nil {
+		t.Fatal("bad.DaysLeft() want error, got nil")
+	}
+}
+
+func TestExceptionExpiringWithin_3D(t *testing.T) {
+	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
+
+	// Positive: within window
+	e7 := Exception{Expires: "2026-10-17"}
+	if !e7.ExpiringWithin(today, 14) {
+		t.Fatal("e7 (7 days left) want ExpiringWithin(14) == true")
+	}
+
+	// Boundary: exactly 14, 15, and 0 days
+	e14 := Exception{Expires: "2026-10-24"}
+	if !e14.ExpiringWithin(today, 14) {
+		t.Fatal("e14 (14 days left) want ExpiringWithin(14) == true")
+	}
+	e15 := Exception{Expires: "2026-10-25"}
+	if e15.ExpiringWithin(today, 14) {
+		t.Fatal("e15 (15 days left) want ExpiringWithin(14) == false")
+	}
+	e0 := Exception{Expires: "2026-10-10"}
+	if !e0.ExpiringWithin(today, 14) {
+		t.Fatal("e0 (0 days left) want ExpiringWithin(14) == true")
+	}
+
+	// Negative: already expired (-1 days) and malformed
+	eExpired := Exception{Expires: "2026-10-09"}
+	if eExpired.ExpiringWithin(today, 14) {
+		t.Fatal("eExpired (-1 days left) want ExpiringWithin(14) == false")
+	}
+	bad := Exception{Expires: "invalid"}
+	if bad.ExpiringWithin(today, 14) {
+		t.Fatal("bad date want ExpiringWithin(14) == false")
+	}
+}
+
+func TestFormatDaysLeft_Cases(t *testing.T) {
+	cases := []struct {
+		days int
+		want string
+	}{
+		{14, "14 days left"},
+		{1, "1 day left"},
+		{0, "0 days left"},
+		{-1, "expired 1 day ago (-1 days left)"},
+		{-5, "expired 5 days ago (-5 days left)"},
+	}
+	for _, tc := range cases {
+		if got := FormatDaysLeft(tc.days); got != tc.want {
+			t.Errorf("FormatDaysLeft(%d) = %q, want %q", tc.days, got, tc.want)
+		}
+	}
+}
+
+func assertFilteredPaths(t *testing.T, got []Exception, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d entries, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Path != want[i] {
+			t.Errorf("got[%d].Path = %q, want %q", i, got[i].Path, want[i])
+		}
+	}
+}
+
+func TestFilterExceptionsExpiringWithin_3D(t *testing.T) {
+	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
+	entries := []Exception{
+		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/a.yml", Expires: "2026-10-15"}, // 5 days
+		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/b.yml", Expires: "2026-10-24"}, // 14 days
+		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/c.yml", Expires: "2026-10-25"}, // 15 days
+		{Rule: ExceptionRuleSupplyChain, Path: ".github/workflows/d.yml", Expires: "2026-10-09"}, // -1 days (expired)
+	}
+
+	t.Run("Positive_Window14", func(t *testing.T) {
+		res, err := FilterExceptionsExpiringWithin(entries, today, 14)
+		if err != nil {
+			t.Fatalf("FilterExceptionsExpiringWithin(14) failed: %v", err)
+		}
+		assertFilteredPaths(t, res, ".github/workflows/a.yml", ".github/workflows/b.yml", ".github/workflows/d.yml")
+	})
+
+	t.Run("Boundary_Window5And4", func(t *testing.T) {
+		res5, err := FilterExceptionsExpiringWithin(entries, today, 5)
+		if err != nil {
+			t.Fatalf("FilterExceptionsExpiringWithin(5) failed: %v", err)
+		}
+		assertFilteredPaths(t, res5, ".github/workflows/a.yml", ".github/workflows/d.yml")
+
+		res4, err := FilterExceptionsExpiringWithin(entries, today, 4)
+		if err != nil {
+			t.Fatalf("FilterExceptionsExpiringWithin(4) failed: %v", err)
+		}
+		assertFilteredPaths(t, res4, ".github/workflows/d.yml")
+	})
+
+	t.Run("Negative_MalformedDate", func(t *testing.T) {
+		broken := []Exception{{Expires: "not-a-date"}}
+		if _, err := FilterExceptionsExpiringWithin(broken, today, 14); err == nil {
+			t.Fatal("FilterExceptionsExpiringWithin on broken date want error, got nil")
+		}
+	})
+}

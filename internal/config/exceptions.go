@@ -90,6 +90,8 @@ const (
 	// with a due date, reviewed again when it falls due; scripts/npm_audit_gate.py applies the
 	// same bound to its own list.
 	MaxExceptionDays = 90
+	// ExceptionExpiryWarningDays is how many days before an expiry the audit begins warning.
+	ExceptionExpiryWarningDays = 14
 	// MaxExceptionReasonBytes bounds one entry's reason.
 	MaxExceptionReasonBytes = 1024
 	// maxExceptionPathSegments bounds the segments of a path an entry is matched against.
@@ -330,4 +332,55 @@ func exceptionExpiryProblem(expires string, today time.Time) string {
 			expires, MaxExceptionDays, latest.Format(ExceptionDateLayout))
 	}
 	return ""
+}
+
+// DaysLeft returns how many calendar days remain until e expires, judged against today:
+// 0 on the expires day itself, positive before, and negative after. If e.Expires is not a
+// valid date, DaysLeft returns a negative number and the parsing error.
+func (e Exception) DaysLeft(today time.Time) (int, error) {
+	expires, err := time.Parse(ExceptionDateLayout, e.Expires)
+	if err != nil {
+		return -1, fmt.Errorf("expires %q must be a YYYY-MM-DD date: %w", e.Expires, err)
+	}
+	return int(expires.Sub(ExceptionDay(today)).Hours() / 24), nil
+}
+
+// ExpiringWithin reports whether the entry expires within days from today (including today,
+// when 0 days remain) and has not already expired.
+func (e Exception) ExpiringWithin(today time.Time, days int) bool {
+	daysLeft, err := e.DaysLeft(today)
+	if err != nil {
+		return false
+	}
+	return daysLeft >= 0 && daysLeft <= days
+}
+
+// FormatDaysLeft formats the remaining days into human-readable text.
+func FormatDaysLeft(days int) string {
+	switch {
+	case days == 1:
+		return "1 day left"
+	case days >= 0:
+		return fmt.Sprintf("%d days left", days)
+	case days == -1:
+		return "expired 1 day ago (-1 days left)"
+	default:
+		return fmt.Sprintf("expired %d days ago (%d days left)", -days, days)
+	}
+}
+
+// FilterExceptionsExpiringWithin returns the entries of entries whose expiry is at or before
+// today + days (daysLeft <= days).
+func FilterExceptionsExpiringWithin(entries []Exception, today time.Time, days int) ([]Exception, error) {
+	var filtered []Exception
+	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
+		daysLeft, err := entries[index].DaysLeft(today)
+		if err != nil {
+			return nil, err
+		}
+		if daysLeft <= days {
+			filtered = append(filtered, entries[index])
+		}
+	}
+	return filtered, nil
 }
