@@ -1,6 +1,8 @@
 package agenthook
 
 import (
+	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -147,6 +149,7 @@ func TestReadOnlyExemption_Boundary_ReadOnlyCommandShape(t *testing.T) {
 // Boundary: the exemption sources keep the contract both Python renderings rely on: the
 // replacement keeps groups 1 and 2, which are the only groups, and neither source uses `\s`,
 // whose class differs between RE2 and Python, or a double quote, which ends a raw string.
+// Neither anchors with a caret either: the start of the text is `\A` (#1219, caretVetoForm).
 func TestReadOnlyExemption_Boundary_SourceContract(t *testing.T) {
 	if groups := readOnlyWordsPattern.NumSubexp(); groups != 2 || ReadOnlyKept != "${1}${2}" {
 		t.Errorf("ReadOnlyWords has %d groups, replacement %q", groups, ReadOnlyKept)
@@ -158,5 +161,116 @@ func TestReadOnlyExemption_Boundary_SourceContract(t *testing.T) {
 		if strings.Contains(source, `\s`) || strings.ContainsAny(source, "\"\n") || strings.HasSuffix(source, `\`) {
 			t.Errorf("%q cannot be shared with the Python renderings", source)
 		}
+		if anchors := caretAnchors(source); anchors != 0 {
+			t.Errorf("%q anchors with %d carets; a scanner of the Python renderings reads one as unmatchable, so the anchor is \\A", source, anchors)
+		}
 	}
+	if caretAnchors(caretVetoForm) != 1 || caretAnchors(`[^a]\^[b^]`) != 0 {
+		t.Error("caretAnchors must count the anchor of the caret form and no caret that is escaped or inside a bracket expression")
+	}
+}
+
+// caretAnchors counts the carets of a pattern source that anchor: those neither escaped nor
+// inside a bracket expression.
+func caretAnchors(source string) int {
+	anchors, bracket := 0, false
+	for i := 0; i < len(source); i++ {
+		switch c := source[i]; {
+		case c == '\\':
+			i++
+		case bracket:
+			bracket = c != ']'
+		case c == '[':
+			bracket = true
+		case c == '^':
+			anchors++
+		}
+	}
+	return anchors
+}
+
+// caretVetoForm is ReadOnlyVeto as it stood before #1219, with `^` where `\A` stands now.
+// CodeQL's parser of Python patterns ends the start of a scoped flag group at `(?i` and reads
+// the `:` after it as a literal, so it reported the caret behind it as unmatchable
+// (py/regex/unmatchable-caret) in every adopted interceptor.
+var caretVetoForm = strings.Replace(ReadOnlyVeto, `(?:\A|`, `(?:^|`, 1)
+
+// vetoWordEdges are texts whose veto turns on one edge of a listed word alone: no other
+// alternative of ReadOnlyVeto matches any of them.
+var vetoWordEdges = map[string]bool{
+	"set -a":        true,  // a listed word at the start
+	"export":        true,  // a listed word alone: both ends of the text
+	"x;set y":       true,  // after a separator
+	"x && EXPORT A": true,  // after a blank, in another letter case
+	"x set":         true,  // at the end
+	"pre-set y":     false, // after a hyphen
+	"set-x y":       false, // before a hyphen
+	"reset y":       false, // inside a longer word
+	"x_set y":       false, // after an underscore
+	"settings":      false, // an unlisted word at the start that begins with a listed one
+	"sets -a":       false,
+	"":              false,
+}
+
+// Boundary: where a listed word counts. The table holds for ReadOnlyVeto and for the caret form
+// it replaced, and the two agree on every corpus command, so the anchor changed and the
+// language did not (#1219).
+func TestReadOnlyVeto_Boundary_ListedWordEdges(t *testing.T) {
+	caret := regexp.MustCompile(caretVetoForm)
+	if caretVetoForm == ReadOnlyVeto {
+		t.Fatal("ReadOnlyVeto no longer holds the anchored alternation this test rewrites")
+	}
+	for text, vetoed := range vetoWordEdges {
+		if got := readOnlyVetoPattern.MatchString(text); got != vetoed {
+			t.Errorf("%q: vetoed %v, want %v", text, got, vetoed)
+		}
+		if got := caret.MatchString(text); got != vetoed {
+			t.Errorf("%q: the caret form vetoed %v, want %v", text, got, vetoed)
+		}
+	}
+	for _, fixture := range loadCases(t) {
+		command := fixtureCommand(fixture.Payload)
+		if readOnlyVetoPattern.MatchString(command) != caret.MatchString(command) {
+			t.Errorf("%s: ReadOnlyVeto and its caret form disagree on %q", fixture.Name, command)
+		}
+	}
+}
+
+// Negative (rule 13): the edge table refuses a veto whose word edges moved. Each plant changes
+// one edge of the anchored alternation and must change the verdict of at least one text.
+func TestReadOnlyVeto_Negative_EdgeTableRefusesPlantedEdges(t *testing.T) {
+	for name, plant := range map[string][2]string{
+		"no start of text":            {`(?:\A|[^-A-Za-z0-9_])`, `[^-A-Za-z0-9_]`},
+		"word boundary for the start": {`(?:\A|[^-A-Za-z0-9_])`, `\b`},
+		"hyphen ends a word":          {`(?:\A|[^-A-Za-z0-9_])`, `(?:\A|[^A-Za-z0-9_])`},
+		"no end of text":              {`(?:[^-A-Za-z0-9_]|$)`, `[^-A-Za-z0-9_]`},
+	} {
+		source := strings.Replace(ReadOnlyVeto, plant[0], plant[1], 1)
+		if source == ReadOnlyVeto {
+			t.Fatalf("%s: ReadOnlyVeto no longer holds %q", name, plant[0])
+		}
+		planted, refused := regexp.MustCompile(source), 0
+		for text, vetoed := range vetoWordEdges {
+			if planted.MatchString(text) != vetoed {
+				refused++
+			}
+		}
+		if refused == 0 {
+			t.Errorf("%s: the edge table passed %q", name, source)
+		}
+	}
+}
+
+// fixtureCommand returns tool_input.command of a corpus payload, or "" when it holds no text
+// there.
+func fixtureCommand(payload []byte) string {
+	var decoded struct {
+		ToolInput struct {
+			Command string `json:"command"`
+		} `json:"tool_input"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return ""
+	}
+	return decoded.ToolInput.Command
 }
