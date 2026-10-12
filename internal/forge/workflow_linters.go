@@ -156,11 +156,18 @@ func scriptRunsTool(ctx context.Context, run, tool string, makeTargets map[strin
 	return false
 }
 
-func commandRunsTool(ctx context.Context, cmd shellCommand, toolLower string, makeTargets map[string]*makeTargetDef) bool {
+func directCommandRunsTool(cmd shellCommand, toolLower string) bool {
 	if cmd.program == toolLower {
 		return true
 	}
 	if checkRunnerTool(cmd, toolLower) {
+		return true
+	}
+	return checkScriptTool(cmd, toolLower)
+}
+
+func commandRunsTool(ctx context.Context, cmd shellCommand, toolLower string, makeTargets map[string]*makeTargetDef) bool {
+	if directCommandRunsTool(cmd, toolLower) {
 		return true
 	}
 	if cmd.program == "make" && makeTargets != nil {
@@ -178,11 +185,22 @@ func checkRunnerTool(cmd shellCommand, toolLower string) bool {
 			return true
 		}
 	}
-	if cmd.program == "go" && len(cmd.args) > 0 && cmd.args[0] == "run" {
-		pkg := firstNonFlagArg(cmd.args[1:])
-		pkg, _, _ = strings.Cut(pkg, "@")
-		if programName(pkg) == toolLower || matchesDashWord(programName(pkg), toolLower) {
-			return true
+	if cmd.program == "go" && len(cmd.args) > 0 {
+		if cmd.args[0] == "tool" {
+			target := firstGoTarget(cmd.args[1:])
+			target, _, _ = strings.Cut(target, "@")
+			targetLower := strings.ToLower(target)
+			if targetLower == toolLower || strings.HasSuffix(targetLower, "/"+toolLower) {
+				return true
+			}
+		}
+		if cmd.args[0] == "run" {
+			pkg := firstGoTarget(cmd.args[1:])
+			pkg, _, _ = strings.Cut(pkg, "@")
+			pkgLower := strings.ToLower(pkg)
+			if pkgLower == toolLower || strings.HasSuffix(pkgLower, "/"+toolLower) {
+				return true
+			}
 		}
 	}
 	switch cmd.program {
@@ -194,6 +212,73 @@ func checkRunnerTool(cmd shellCommand, toolLower string) bool {
 		return checkSubcommandRunner(cmd.args, "dlx", toolLower)
 	case "docker", "podman":
 		return checkContainerRun(cmd.args, toolLower)
+	}
+	return false
+}
+
+func firstGoTarget(args []string) string {
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			if !strings.Contains(arg, "=") && isGoFlagWithValue(arg) && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		return arg
+	}
+	return ""
+}
+
+func isGoFlagWithValue(flag string) bool {
+	switch flag {
+	case "-modfile", "-mod", "-C", "-tags", "-overlay", "-pkgdir", "-p":
+		return true
+	}
+	return false
+}
+
+func checkScriptTool(cmd shellCommand, toolLower string) bool {
+	var scriptPath string
+	if isInterpreter(cmd.program) {
+		scriptPath = firstNonFlagArg(cmd.args)
+	} else if strings.ContainsAny(cmd.word, "/\\") {
+		scriptPath = cmd.word
+	}
+	if scriptPath == "" {
+		return false
+	}
+	return scriptPathMatchesTool(scriptPath, toolLower)
+}
+
+func isInterpreter(prog string) bool {
+	switch prog {
+	case "python", "python3", "node", "deno", "bun", "bash", "sh", "ruby", "perl", "pwsh":
+		return true
+	}
+	return false
+}
+
+func scriptPathMatchesTool(scriptPath, toolLower string) bool {
+	normalized := filepath.ToSlash(scriptPath)
+	parts := strings.Split(normalized, "/")
+	for i := 0; i < len(parts)-1; i++ {
+		comp := strings.ToLower(parts[i])
+		if comp == "." || comp == "" {
+			continue
+		}
+		if comp == toolLower {
+			return true
+		}
+	}
+	base := parts[len(parts)-1]
+	words := strings.FieldsFunc(base, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.'
+	})
+	for _, w := range words {
+		if strings.ToLower(w) == toolLower {
+			return true
+		}
 	}
 	return false
 }
@@ -315,6 +400,8 @@ type makeTargetDef struct {
 	recipes       []string
 }
 
+const maxMakeVariables = 64
+
 func readRootMakefile(repoPath string) map[string]*makeTargetDef {
 	data, err := os.ReadFile(filepath.Join(repoPath, "Makefile"))
 	if err != nil {
@@ -324,54 +411,192 @@ func readRootMakefile(repoPath string) map[string]*makeTargetDef {
 		}
 	}
 	lines := joinMakefileLines(string(data))
+	makeVars := collectMakeVariables(lines)
 	targets := make(map[string]*makeTargetDef)
 	var currentTargets []string
 
 	for i := 0; i < len(lines) && i < maxLogicalLines; i++ {
 		line := lines[i]
 		if strings.HasPrefix(line, "\t") {
-			recipe := stripMakePrefixes(line)
+			recipe := stripMakeRecipePrefixes(line)
+			recipe = expandMakeVariables(recipe, makeVars)
 			for _, t := range currentTargets {
 				targets[t].recipes = append(targets[t].recipes, recipe)
 			}
 			continue
 		}
-		currentTargets = nil
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			currentTargets = nil
+			continue
+		}
+		currentTargets = parseTargetLine(trimmed, makeVars, targets)
+	}
+	return targets
+}
+
+func parseTargetLine(trimmed string, makeVars map[string]string, targets map[string]*makeTargetDef) []string {
+	colon := strings.Index(trimmed, ":")
+	if colon < 0 || isMakeAssignment(trimmed, colon) {
+		return nil
+	}
+	head := strings.TrimSpace(trimmed[:colon])
+	targetNames := strings.Fields(head)
+	rest := trimmed[colon+1:]
+	inlineRecipe := ""
+	if semi := strings.Index(rest, ";"); semi >= 0 {
+		inlineRecipe = strings.TrimSpace(rest[semi+1:])
+		rest = rest[:semi]
+	}
+	if commentIdx := strings.Index(rest, "#"); commentIdx >= 0 {
+		rest = rest[:commentIdx]
+	}
+	prereqs := strings.Fields(rest)
+	var active []string
+	for _, name := range targetNames {
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if targets[name] == nil {
+			targets[name] = &makeTargetDef{}
+		}
+		targets[name].prerequisites = append(targets[name].prerequisites, prereqs...)
+		if inlineRecipe != "" {
+			rec := stripMakeRecipePrefixes(inlineRecipe)
+			rec = expandMakeVariables(rec, makeVars)
+			targets[name].recipes = append(targets[name].recipes, rec)
+		}
+		active = append(active, name)
+	}
+	return active
+}
+
+func collectMakeVariables(lines []string) map[string]string {
+	vars := make(map[string]string)
+	for i := 0; i < len(lines) && i < maxLogicalLines && len(vars) < maxMakeVariables; i++ {
+		line := lines[i]
+		if strings.HasPrefix(line, "\t") {
+			continue
+		}
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		colon := strings.Index(trimmed, ":")
-		if colon < 0 || isMakeAssignment(trimmed, colon) {
+		varName, op, val, ok := parseMakeSimpleAssignment(trimmed)
+		if !ok {
 			continue
 		}
-		head := strings.TrimSpace(trimmed[:colon])
-		targetNames := strings.Fields(head)
-		rest := trimmed[colon+1:]
-		inlineRecipe := ""
-		if semi := strings.Index(rest, ";"); semi >= 0 {
-			inlineRecipe = strings.TrimSpace(rest[semi+1:])
-			rest = rest[:semi]
-		}
-		if commentIdx := strings.Index(rest, "#"); commentIdx >= 0 {
-			rest = rest[:commentIdx]
-		}
-		prereqs := strings.Fields(rest)
-		for _, name := range targetNames {
-			if strings.HasPrefix(name, ".") {
-				continue
+		if op == "?=" {
+			if _, exists := vars[varName]; !exists && len(vars) < maxMakeVariables {
+				vars[varName] = val
 			}
-			if targets[name] == nil {
-				targets[name] = &makeTargetDef{}
+		} else {
+			if _, exists := vars[varName]; exists || len(vars) < maxMakeVariables {
+				vars[varName] = val
 			}
-			targets[name].prerequisites = append(targets[name].prerequisites, prereqs...)
-			if inlineRecipe != "" {
-				targets[name].recipes = append(targets[name].recipes, stripMakePrefixes(inlineRecipe))
-			}
-			currentTargets = append(currentTargets, name)
 		}
 	}
-	return targets
+	return vars
+}
+
+func parseMakeSimpleAssignment(line string) (name, op, val string, ok bool) {
+	opIdx, opLen, chosenOp := findMakeAssignmentOp(line)
+	if opIdx < 0 {
+		return "", "", "", false
+	}
+	head := line[:opIdx]
+	if strings.Contains(head, ":") {
+		return "", "", "", false
+	}
+	head = stripMakeDirectivePrefixes(head)
+	varName := strings.TrimSpace(head)
+	if varName == "" || strings.ContainsAny(varName, " \t$(){}") {
+		return "", "", "", false
+	}
+	rawVal := line[opIdx+opLen:]
+	if commentIdx := strings.Index(rawVal, "#"); commentIdx >= 0 {
+		rawVal = rawVal[:commentIdx]
+	}
+	return varName, chosenOp, strings.TrimSpace(rawVal), true
+}
+
+func findMakeAssignmentOp(line string) (int, int, string) {
+	if idx := strings.Index(line, "::="); idx >= 0 {
+		return idx, 3, "::="
+	}
+	if idx := strings.Index(line, ":="); idx >= 0 {
+		return idx, 2, ":="
+	}
+	if idx := strings.Index(line, "?="); idx >= 0 {
+		return idx, 2, "?="
+	}
+	if idx := strings.Index(line, "="); idx >= 0 {
+		if idx > 0 && (line[idx-1] == '!' || line[idx-1] == '+') {
+			return -1, 0, ""
+		}
+		return idx, 1, "="
+	}
+	return -1, 0, ""
+}
+
+func stripMakeDirectivePrefixes(s string) string {
+	s = strings.TrimSpace(s)
+	for i := 0; i < 4; i++ {
+		stripped := false
+		for _, prefix := range []string{"override", "export", "private"} {
+			if strings.HasPrefix(s, prefix) && (len(s) == len(prefix) || s[len(prefix)] == ' ' || s[len(prefix)] == '\t') {
+				s = strings.TrimSpace(s[len(prefix):])
+				stripped = true
+			}
+		}
+		if !stripped {
+			break
+		}
+	}
+	return s
+}
+
+func expandMakeVariables(line string, vars map[string]string) string {
+	if len(vars) == 0 || (!strings.Contains(line, "$(") && !strings.Contains(line, "${")) {
+		return line
+	}
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		if strings.HasPrefix(line[i:], "$$") {
+			b.WriteString("$$")
+			i += 2
+			continue
+		}
+		if strings.HasPrefix(line[i:], "$(") || strings.HasPrefix(line[i:], "${") {
+			closer := byte(')')
+			if line[i+1] == '{' {
+				closer = '}'
+			}
+			end := strings.IndexByte(line[i+2:], closer)
+			if end >= 0 {
+				varName := line[i+2 : i+2+end]
+				if val, ok := vars[varName]; ok {
+					b.WriteString(val)
+					i += 2 + end + 1
+					continue
+				}
+				b.WriteString(line[i : i+2+end+1])
+				i += 2 + end + 1
+				continue
+			}
+		}
+		b.WriteByte(line[i])
+		i++
+	}
+	return b.String()
+}
+
+func stripMakeRecipePrefixes(s string) string {
+	s = strings.TrimLeft(s, "\t ")
+	for len(s) > 0 && (s[0] == '@' || s[0] == '-' || s[0] == '+') {
+		s = strings.TrimLeft(s[1:], "\t ")
+	}
+	return s
 }
 
 func isMakeAssignment(line string, colon int) bool {
@@ -403,14 +628,6 @@ func joinMakefileLines(content string) []string {
 		lines = append(lines, current.String())
 	}
 	return lines
-}
-
-func stripMakePrefixes(s string) string {
-	s = strings.TrimLeft(s, "\t ")
-	for len(s) > 0 && (s[0] == '@' || s[0] == '-' || s[0] == '+') {
-		s = strings.TrimLeft(s[1:], "\t ")
-	}
-	return s
 }
 
 func parseMakeTargets(args []string) []string {
@@ -485,7 +702,7 @@ func makeRunsTool(ctx context.Context, cmd shellCommand, toolLower string, targe
 			cmds := scriptCommands(fields)
 			for _, c := range cmds {
 				shCmd := parseShellCommand(c)
-				if shCmd.program == toolLower || checkRunnerTool(shCmd, toolLower) {
+				if directCommandRunsTool(shCmd, toolLower) {
 					return true
 				}
 			}
@@ -526,7 +743,7 @@ func readGolangciConfig(repoPath string) (map[string]bool, bool) {
 	enabled := make(map[string]bool)
 	switch {
 	case cfg.Linters.Default == "all" || cfg.Linters.EnableAll:
-		for _, l := range allGolangciLinters {
+		for _, l := range AllGolangciLinters {
 			enabled[l] = true
 		}
 	case cfg.Linters.Default == "standard" || (cfg.Linters.Default == "" && !cfg.Linters.DisableAll):
@@ -547,7 +764,8 @@ var standardGolangciLinters = []string{
 	"errcheck", "gosimple", "govet", "ineffassign", "staticcheck", "unused",
 }
 
-var allGolangciLinters = []string{
+// AllGolangciLinters lists known linters that golangci-lint can run.
+var AllGolangciLinters = []string{
 	"asasalint", "asciicheck", "bidichk", "bodyclose", "canonicalheader",
 	"containedctx", "contextcheck", "copyloopvar", "cyclop", "decorder",
 	"depguard", "dogsled", "dupl", "dupword", "durationcheck",

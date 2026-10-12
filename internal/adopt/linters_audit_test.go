@@ -126,6 +126,7 @@ func TestAuditDeclaredLinters_GolangciSubLinter(t *testing.T) {
 
 	t.Run("enabled in .golangci.yml passes", func(t *testing.T) {
 		root := t.TempDir()
+		writeLinterFixtureFile(t, root, "main.go", "package main\nfunc main() {}\n")
 		writeLinterFixtureFile(t, root, ".golangci.yml", "version: \"2\"\nlinters:\n  enable:\n    - gocyclo\n")
 		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", `name: CI
 on: push
@@ -145,6 +146,7 @@ jobs:
 
 	t.Run("not enabled in .golangci.yml fails", func(t *testing.T) {
 		root := t.TempDir()
+		writeLinterFixtureFile(t, root, "main.go", "package main\nfunc main() {}\n")
 		writeLinterFixtureFile(t, root, ".golangci.yml", "version: \"2\"\nlinters:\n  default: none\n")
 		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", `name: CI
 on: push
@@ -334,5 +336,189 @@ func TestAuditDeclaredLinters_BoundaryNoDeclaredLinters(t *testing.T) {
 	})
 	if err != nil || !strings.Contains(out, "policy declares no linters") {
 		t.Fatalf("expected empty linters policy to pass, got err: %v, out: %s", err, out)
+	}
+}
+
+// 14. Script named after tool: positive and negative cases.
+func TestAuditDeclaredLinters_ScriptNamedAfterTool_Positive(t *testing.T) {
+	ctx := t.Context()
+	cases := []struct {
+		tool, relScript, runCmd, markerFile string
+	}{
+		{"markdownlint", "tools/markdownlint/verify.mjs", "node tools/markdownlint/verify.mjs", "README.md"},
+		{"semgrep", "scripts/test_hiss_semgrep.py", "python3 -B scripts/test_hiss_semgrep.py", ""},
+		{"gitleaks", "scripts/run-gitleaks.sh", "./scripts/run-gitleaks.sh", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.markerFile != "" {
+				writeLinterFixtureFile(t, root, tc.markerFile, "# doc\n")
+			}
+			writeLinterFixtureFile(t, root, tc.relScript, "#!/bin/sh\n")
+			writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: "+tc.runCmd+"\n")
+			out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+				RootDir: root, Policy: singleLinterPolicy("profile", tc.tool), Today: testToday,
+			})
+			if err != nil || !strings.Contains(out, "[PASS]") {
+				t.Fatalf("expected script %s to pass for %s, got: %v, out: %s", tc.runCmd, tc.tool, err, out)
+			}
+		})
+	}
+}
+
+func TestAuditDeclaredLinters_ScriptNamedAfterTool_Negative(t *testing.T) {
+	ctx := t.Context()
+	cases := []struct {
+		name, runCmd string
+	}{
+		{"notsemgrepish is not a word match", "python3 scripts/notsemgrepish.py"},
+		{"echo is not interpreter", "echo semgrep"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeLinterFixtureFile(t, root, "scripts/notsemgrepish.py", "print(1)\n")
+			writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: "+tc.runCmd+"\n")
+			_, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+				RootDir: root, Policy: singleLinterPolicy("profile", "semgrep"), Today: testToday,
+			})
+			if err == nil || !strings.Contains(err.Error(), "semgrep") {
+				t.Fatalf("expected command %s to fail for semgrep, got: %v", tc.runCmd, err)
+			}
+		})
+	}
+}
+
+// 15. Go runners: go tool and go run.
+func TestAuditDeclaredLinters_GoRunners(t *testing.T) {
+	ctx := t.Context()
+	cases := []struct {
+		name, tool, runCmd, markerFile string
+	}{
+		{"go tool with modfile", "gitleaks", "go tool -modfile=tools/go/go.mod gitleaks detect", ""},
+		{"go run versioned", "golangci-lint", "go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.60.0 run", "main.go"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.markerFile != "" {
+				writeLinterFixtureFile(t, root, tc.markerFile, "package main\n")
+			}
+			writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: "+tc.runCmd+"\n")
+			out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+				RootDir: root, Policy: singleLinterPolicy("profile", tc.tool), Today: testToday,
+			})
+			if err != nil || !strings.Contains(out, "[PASS]") {
+				t.Fatalf("expected runner %s to pass for %s, got: %v, out: %s", tc.runCmd, tc.tool, err, out)
+			}
+		})
+	}
+}
+
+// 16. Makefile variable expansion.
+func TestAuditDeclaredLinters_MakeVariables(t *testing.T) {
+	ctx := t.Context()
+	t.Run("known variable expands and passes", func(t *testing.T) {
+		root := t.TempDir()
+		writeLinterFixtureFile(t, root, "Makefile", "GO_SEC := go tool -modfile=tools/go/go.mod\nlint:\n\t$(GO_SEC) gitleaks detect\n")
+		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: make lint\n")
+		out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+			RootDir: root, Policy: singleLinterPolicy("profile", "gitleaks"), Today: testToday,
+		})
+		if err != nil || !strings.Contains(out, "[PASS]") {
+			t.Fatalf("expected make variable expansion to pass, got: %v, out: %s", err, out)
+		}
+	})
+
+	t.Run("unknown variable stays as written", func(t *testing.T) {
+		root := t.TempDir()
+		writeLinterFixtureFile(t, root, "Makefile", "RUN_CMD := gitleaks\nlint:\n\t$(RUN_CMD) $(UNKNOWN_FLAG) detect\n")
+		writeLinterFixtureFile(t, root, ".github/workflows/ci.yml", "name: CI\non: push\njobs:\n  b:\n    runs-on: u\n    steps:\n      - run: make lint\n")
+		out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+			RootDir: root, Policy: singleLinterPolicy("profile", "gitleaks"), Today: testToday,
+		})
+		if err != nil || !strings.Contains(out, "[PASS]") {
+			t.Fatalf("expected unknown variable to pass if tool is recognized, got: %v, out: %s", err, out)
+		}
+	})
+}
+
+// 17. Applicability: skipping when inputs are absent.
+func TestAuditDeclaredLinters_Applicability_Skip(t *testing.T) {
+	ctx := t.Context()
+	cases := []struct {
+		tool, wantInput string
+	}{
+		{"golangci-lint", "Go sources"},
+		{"clippy", "Cargo.toml"},
+		{"cppcheck", "C or C++ sources"},
+		{"buf", "*.proto or buf.yaml"},
+		{"spectral", "OpenAPI or AsyncAPI document"},
+		{"packer", "*.pkr.hcl"},
+		{"shellcheck", "shell scripts"},
+		{"markdownlint", "*.md"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool+" absent", func(t *testing.T) {
+			root := t.TempDir()
+			out, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+				RootDir: root, Policy: singleLinterPolicy("profile", tc.tool), Today: testToday,
+			})
+			if err != nil {
+				t.Fatalf("expected skip to not fail, got err: %v", err)
+			}
+			wantSkip := fmt.Sprintf("[SKIP] %s: not applicable, no %s", tc.tool, tc.wantInput)
+			if !strings.Contains(out, wantSkip) {
+				t.Fatalf("expected output to contain %q, got: %s", wantSkip, out)
+			}
+			if !strings.Contains(out, "[PASS]") {
+				t.Fatalf("expected output to contain [PASS], got: %s", out)
+			}
+		})
+	}
+}
+
+// 18. Applicability: required when inputs are present.
+func TestAuditDeclaredLinters_Applicability_Present(t *testing.T) {
+	ctx := t.Context()
+	cases := []struct {
+		tool, markerPath, markerBody string
+	}{
+		{"golangci-lint", "pkg/app.go", "package pkg\n"},
+		{"clippy", "Cargo.toml", "[package]\nname = \"demo\"\n"},
+		{"cppcheck", "src/main.c", "int main() {}\n"},
+		{"buf", "buf.yaml", "version: v1\n"},
+		{"buf", "proto/service.proto", "syntax = \"proto3\";\n"},
+		{"spectral", "openapi.yaml", "openapi: 3.0.0\ninfo:\n  title: API\n"},
+		{"spectral", "asyncapi.json", "{\"asyncapi\": \"2.0.0\"}\n"},
+		{"spectral", ".spectral.yaml", "extends: spectral:oas\n"},
+		{"packer", "build.pkr.hcl", "source \"null\" \"example\" {}\n"},
+		{"shellcheck", "scripts/deploy.sh", "#!/bin/sh\n"},
+		{"markdownlint", "docs/index.md", "# Guide\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool+" present", func(t *testing.T) {
+			root := t.TempDir()
+			writeLinterFixtureFile(t, root, tc.markerPath, tc.markerBody)
+			_, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+				RootDir: root, Policy: singleLinterPolicy("profile", tc.tool), Today: testToday,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.tool) {
+				t.Fatalf("expected missing %s to fail when inputs present, got err: %v", tc.tool, err)
+			}
+		})
+	}
+}
+
+// 19. Unknown linter: always required (fail closed).
+func TestAuditDeclaredLinters_UnknownLinterRequired(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	_, err := AuditDeclaredLinters(ctx, DeclaredLintersOptions{
+		RootDir: root, Policy: singleLinterPolicy("profile", "trivy"), Today: testToday,
+	})
+	if err == nil || !strings.Contains(err.Error(), "trivy") {
+		t.Fatalf("expected unknown linter trivy to fail in empty directory, got: %v", err)
 	}
 }

@@ -5,18 +5,30 @@
 package adopt
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/dedupe"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // declaredLintersGate is the title used on every audit verdict line.
 const declaredLintersGate = "Declared linters"
+
+const maxArtifactWalkEntries = 50000
 
 // DeclaredLintersOptions is what AuditDeclaredLinters reads: the repository root,
 // the effective policy, the manifest's exceptions list (rule "declared-linters"),
@@ -52,34 +64,300 @@ func AuditDeclaredLinters(ctx context.Context, opts DeclaredLintersOptions) (str
 		return "", fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
 	}
 	if len(declared) == 0 {
-		if len(entries) > 0 {
-			return "", errors.New(staleExceptionEntries(declaredLintersGate, config.ExceptionRuleDeclaredLinters, "linter", entries, "policy declares no linters"))
-		}
-		return "[PASS] " + declaredLintersGate + ": policy declares no linters; no workflow is required.", nil
+		return handleEmptyDeclared(entries)
 	}
 
-	names := make([]string, 0, len(declared))
-	for _, l := range declared {
-		names = append(names, l.Name)
-	}
-
-	present, err := forge.MeasureWorkflowLinters(ctx, opts.RootDir, names)
+	inputs, err := loadRepoLinterInputs(ctx, opts.RootDir)
 	if err != nil {
-		return "", fmt.Errorf("[FAIL] %s: cannot inspect workflows: %w", declaredLintersGate, err)
+		return "", fmt.Errorf("[FAIL] %s: cannot inspect repository inputs: %w", declaredLintersGate, err)
 	}
 
-	var missing []config.DeclaredLinter
-	for _, l := range declared {
-		if !present[l.Name] {
-			missing = append(missing, l)
-		}
+	applicable, skipLines := filterApplicableLinters(declared, inputs)
+	if len(applicable) == 0 {
+		return handleNoneApplicable(entries, skipLines)
+	}
+
+	missing, err := checkMissingWorkflowLinters(ctx, opts.RootDir, applicable)
+	if err != nil {
+		return strings.Join(skipLines, "\n"), fmt.Errorf("[FAIL] %s: cannot inspect workflows: %w", declaredLintersGate, err)
 	}
 
 	judged := judgeDeclaredLinters(missing, entries, today)
 	if len(judged.unexcused) > 0 || len(judged.stale) > 0 {
-		return "", errors.New(judged.failure())
+		return strings.Join(skipLines, "\n"), errors.New(judged.failure())
 	}
-	return judged.pass(len(declared)), nil
+	passMsg := judged.pass(len(applicable))
+	if len(skipLines) > 0 {
+		passMsg = strings.Join(skipLines, "\n") + "\n" + passMsg
+	}
+	return passMsg, nil
+}
+
+func handleEmptyDeclared(entries []config.Exception) (string, error) {
+	if len(entries) > 0 {
+		return "", errors.New(staleExceptionEntries(declaredLintersGate, config.ExceptionRuleDeclaredLinters, "linter", entries, "policy declares no linters"))
+	}
+	return "[PASS] " + declaredLintersGate + ": policy declares no linters; no workflow is required.", nil
+}
+
+func handleNoneApplicable(entries []config.Exception, skipLines []string) (string, error) {
+	if len(entries) > 0 {
+		return strings.Join(skipLines, "\n"), errors.New(staleExceptionEntries(declaredLintersGate, config.ExceptionRuleDeclaredLinters, "linter", entries, "policy declares no applicable linters"))
+	}
+	passMsg := "[PASS] " + declaredLintersGate + ": policy declares no applicable linters; no workflow is required."
+	if len(skipLines) > 0 {
+		passMsg = strings.Join(skipLines, "\n") + "\n" + passMsg
+	}
+	return passMsg, nil
+}
+
+func filterApplicableLinters(declared []config.DeclaredLinter, inputs repoLinterInputs) ([]config.DeclaredLinter, []string) {
+	var applicable []config.DeclaredLinter
+	var skipLines []string
+	for i := 0; i < len(declared); i++ {
+		l := declared[i]
+		if req, ok := linterRequirementFor(l.Name); ok && !req.isApplicable(inputs) {
+			skipLines = append(skipLines, fmt.Sprintf("[SKIP] %s: not applicable, no %s", l.Name, req.inputDesc))
+			continue
+		}
+		applicable = append(applicable, l)
+	}
+	return applicable, skipLines
+}
+
+func checkMissingWorkflowLinters(ctx context.Context, rootDir string, applicable []config.DeclaredLinter) ([]config.DeclaredLinter, error) {
+	names := make([]string, 0, len(applicable))
+	for _, l := range applicable {
+		names = append(names, l.Name)
+	}
+	present, err := forge.MeasureWorkflowLinters(ctx, rootDir, names)
+	if err != nil {
+		return nil, err
+	}
+	var missing []config.DeclaredLinter
+	for _, l := range applicable {
+		if !present[l.Name] {
+			missing = append(missing, l)
+		}
+	}
+	return missing, nil
+}
+
+type repoLinterInputs struct {
+	hasGoSources      bool
+	hasCargoToml      bool
+	hasCSources       bool
+	hasProtoOrBufYaml bool
+	hasOpenAPI        bool
+	hasPackerHcl      bool
+	hasShellScripts   bool
+	hasMarkdown       bool
+}
+
+type linterRequirement struct {
+	inputDesc    string
+	isApplicable func(in repoLinterInputs) bool
+}
+
+// linterRequirementFor maps declared linter names to their input requirements.
+// Linters not present in this table are always required (fail closed).
+func linterRequirementFor(name string) (linterRequirement, bool) {
+	lower := strings.ToLower(name)
+	switch {
+	case isGoLinter(lower):
+		return linterRequirement{
+			inputDesc:    "Go sources",
+			isApplicable: func(in repoLinterInputs) bool { return in.hasGoSources },
+		}, true
+	case lower == "clippy":
+		return linterRequirement{
+			inputDesc:    "Cargo.toml",
+			isApplicable: func(in repoLinterInputs) bool { return in.hasCargoToml },
+		}, true
+	case lower == "cppcheck" || lower == "clang-tidy":
+		return linterRequirement{
+			inputDesc:    "C or C++ sources",
+			isApplicable: func(in repoLinterInputs) bool { return in.hasCSources },
+		}, true
+	case lower == "buf":
+		return linterRequirement{
+			inputDesc:    "*.proto or buf.yaml",
+			isApplicable: func(in repoLinterInputs) bool { return in.hasProtoOrBufYaml },
+		}, true
+	case lower == "spectral" || lower == "oapi-codegen":
+		return linterRequirement{
+			inputDesc:    "OpenAPI or AsyncAPI document",
+			isApplicable: func(in repoLinterInputs) bool { return in.hasOpenAPI },
+		}, true
+	case lower == "packer":
+		return linterRequirement{
+			inputDesc:    "*.pkr.hcl",
+			isApplicable: func(in repoLinterInputs) bool { return in.hasPackerHcl },
+		}, true
+	case lower == "shellcheck" || lower == "shfmt":
+		return linterRequirement{
+			inputDesc:    "shell scripts",
+			isApplicable: func(in repoLinterInputs) bool { return in.hasShellScripts },
+		}, true
+	case lower == "markdownlint":
+		return linterRequirement{
+			inputDesc:    "*.md",
+			isApplicable: func(in repoLinterInputs) bool { return in.hasMarkdown },
+		}, true
+	default:
+		return linterRequirement{}, false
+	}
+}
+
+func isGoLinter(lower string) bool {
+	if lower == "golangci-lint" || lower == "govet" || lower == "go vet" ||
+		lower == "staticcheck" || lower == "errcheck" || lower == "gosec" ||
+		lower == "gocyclo" || lower == "gocognit" {
+		return true
+	}
+	for i := 0; i < len(forge.AllGolangciLinters); i++ {
+		if lower == forge.AllGolangciLinters[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func loadRepoLinterInputs(ctx context.Context, rootDir string) (repoLinterInputs, error) {
+	if ctx == nil {
+		return repoLinterInputs{}, errors.New("context is required")
+	}
+	var in repoLinterInputs
+	initInputsFromPlanAndDedupe(ctx, rootDir, &in)
+	if err := scanLinterArtifacts(ctx, rootDir, &in); err != nil {
+		return repoLinterInputs{}, err
+	}
+	return in, nil
+}
+
+func initInputsFromPlanAndDedupe(ctx context.Context, rootDir string, in *repoLinterInputs) {
+	if plan, err := ObserveVerificationPlanWithLimits(ctx, rootDir, nil); err == nil && plan != nil {
+		langs := planLanguages(plan)
+		in.hasGoSources = in.hasGoSources || (langs&hisscatalog.LanguageGo != 0)
+		in.hasCargoToml = in.hasCargoToml || (langs&hisscatalog.LanguageRust != 0)
+		in.hasCSources = in.hasCSources || (langs&hisscatalog.LanguageC != 0)
+	}
+	if counts, err := dedupe.SourceLanguageCounts(ctx, rootDir); err == nil && counts != nil {
+		in.hasGoSources = in.hasGoSources || (counts["go"] > 0)
+		in.hasCSources = in.hasCSources || (counts["c"]+counts["cpp"] > 0)
+		in.hasShellScripts = in.hasShellScripts || (counts["shell"]+counts["zsh"]+counts["ksh"] > 0)
+	}
+}
+
+func scanLinterArtifacts(ctx context.Context, rootDir string, in *repoLinterInputs) error {
+	visible := hiss.GitVisiblePaths(ctx, rootDir)
+	entries := 0
+	return filepath.WalkDir(rootDir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		entries++
+		if entries > maxArtifactWalkEntries {
+			return filepath.SkipAll
+		}
+		return visitLinterArtifact(ctx, rootDir, p, d, visible, in)
+	})
+}
+
+func visitLinterArtifact(ctx context.Context, rootDir, fullPath string, d fs.DirEntry, visible *hiss.GitVisibleTree, in *repoLinterInputs) error {
+	name := d.Name()
+	if d.IsDir() {
+		if name == ".git" || shouldSkipLinterDir(name) {
+			return filepath.SkipDir
+		}
+		rel, err := filepath.Rel(rootDir, fullPath)
+		if err == nil && visible != nil && !visible.HasDir(filepath.ToSlash(rel)) {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	rel, err := filepath.Rel(rootDir, fullPath)
+	if err != nil {
+		return nil
+	}
+	relSlash := filepath.ToSlash(rel)
+	if visible != nil && !visible.HasFile(relSlash) {
+		return nil
+	}
+	classifyLinterArtifactFile(ctx, fullPath, name, in)
+	return nil
+}
+
+func shouldSkipLinterDir(name string) bool {
+	if util.IsScratchDir(name) || util.IsToolchainTreeDir(name) {
+		return true
+	}
+	switch name {
+	case "vendor", "node_modules", "bin", "obj", "build", "dist", "target", ".venv", "__pycache__":
+		return true
+	default:
+		return false
+	}
+}
+
+func classifyLinterArtifactFile(ctx context.Context, fullPath, name string, in *repoLinterInputs) {
+	lower := strings.ToLower(name)
+	switch {
+	case lower == "cargo.toml":
+		in.hasCargoToml = true
+	case lower == "buf.yaml" || lower == "buf.yml" || strings.HasSuffix(lower, ".proto"):
+		in.hasProtoOrBufYaml = true
+	case strings.HasSuffix(lower, ".pkr.hcl"):
+		in.hasPackerHcl = true
+	case strings.HasSuffix(lower, ".md"):
+		in.hasMarkdown = true
+	case strings.HasSuffix(lower, ".go"):
+		in.hasGoSources = true
+	case isCSuffix(lower):
+		in.hasCSources = true
+	case strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash"):
+		in.hasShellScripts = true
+	}
+	if !in.hasOpenAPI {
+		in.hasOpenAPI = checkOpenAPIFile(ctx, fullPath, lower)
+	}
+}
+
+func isCSuffix(lower string) bool {
+	ext := filepath.Ext(lower)
+	switch ext {
+	case ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh", ".hxx":
+		return true
+	default:
+		return false
+	}
+}
+
+func checkOpenAPIFile(ctx context.Context, fullPath, lowerName string) bool {
+	if strings.HasPrefix(lowerName, ".spectral.") {
+		return true
+	}
+	ext := filepath.Ext(lowerName)
+	if ext != ".yaml" && ext != ".yml" && ext != ".json" {
+		return false
+	}
+	data, err := contextopt.ReadSnapshot(ctx, fullPath)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	if !bytes.Contains(data, []byte("openapi")) && !bytes.Contains(data, []byte("asyncapi")) {
+		return false
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil || doc == nil {
+		return false
+	}
+	_, hasOpen := doc["openapi"]
+	_, hasAsync := doc["asyncapi"]
+	return hasOpen || hasAsync
 }
 
 type declaredLintersJudgement struct {

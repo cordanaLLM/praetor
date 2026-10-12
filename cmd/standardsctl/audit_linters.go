@@ -26,9 +26,8 @@ func auditDeclaredLinters(ctx context.Context, manifest *config.Manifest, rootDi
 		Exceptions: exceptions,
 		Today:      time.Now(),
 	})
-	if err != nil {
-		return err
+	if line != "" {
+		fmt.Println(line)
 	}
-	fmt.Println(line)
-	return nil
+	return err
 }
