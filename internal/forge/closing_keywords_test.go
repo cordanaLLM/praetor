@@ -225,10 +225,20 @@ func (r *contextRecordingResolver) ResolveClosingReference(ctx context.Context, 
 // otherwise (HISS-02).
 func TestValidatePRChecklistWithPolicyContext_PassesCallerContext(t *testing.T) {
 	body := "- [x] done\n\nCloses #12\n"
+	// The body carries no receipt, so validation reports findings; only a failure that yields no
+	// result at all is a broken test.
+	validate := func(run func() (*PRChecklistResult, error)) {
+		t.Helper()
+		if res, err := run(); err != nil && res == nil {
+			t.Fatalf("validation returned no result: %v", err)
+		}
+	}
 	resolver := &contextRecordingResolver{}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	_, _ = ValidatePRChecklistWithPolicyContext(ctx, body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: resolver}})
+	validate(func() (*PRChecklistResult, error) {
+		return ValidatePRChecklistWithPolicyContext(ctx, body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: resolver}})
+	})
 	if resolver.err != nil {
 		t.Fatalf("a live caller context reached the resolver as done: %v", resolver.err)
 	}
@@ -239,7 +249,9 @@ func TestValidatePRChecklistWithPolicyContext_PassesCallerContext(t *testing.T) 
 	// Negative: a caller that brings no context must not reach the forge unbounded; the variant
 	// without a context derives its own deadline (closingLookupTimeout).
 	plain := &contextRecordingResolver{}
-	_, _ = ValidatePRChecklistWithPolicy(body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: plain}})
+	validate(func() (*PRChecklistResult, error) {
+		return ValidatePRChecklistWithPolicy(body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: plain}})
+	})
 	if !plain.sawDeadline {
 		t.Fatal("the variant without a context reached the resolver with no deadline")
 	}
@@ -248,7 +260,9 @@ func TestValidatePRChecklistWithPolicyContext_PassesCallerContext(t *testing.T) 
 	cancelled, stop := context.WithCancel(context.Background())
 	stop()
 	late := &contextRecordingResolver{}
-	_, _ = ValidatePRChecklistWithPolicyContext(cancelled, body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: late}})
+	validate(func() (*PRChecklistResult, error) {
+		return ValidatePRChecklistWithPolicyContext(cancelled, body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: late}})
+	})
 	if late.err == nil {
 		t.Fatal("a cancelled caller context did not reach the resolver")
 	}
