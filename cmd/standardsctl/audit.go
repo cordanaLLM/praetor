@@ -189,7 +189,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		},
 		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir) },
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
-		func() error { return auditDeclaredLinters(ctx, rootDir, opts.effective) },
+		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },

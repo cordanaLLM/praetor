@@ -65,4 +65,27 @@ jobs:
 		t.Fatalf("expected audit pass when gitleaks is run, got: %v\nOutput: %s", err, out)
 	}
 	mustContain(t, out, "[PASS] Declared linters: every declared linter is run by a CI workflow (1 verified).")
+
+	// 5. Positive: declared-linters exception in .standards.yaml excuses missing linter -> passes
+	writeFixtureFile(t, f.dir, ".github/workflows/ci.yml", `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "build"
+`)
+	manifestContent := fixtureManifest("acme", "widgets", false) + `exceptions:
+  - rule: "declared-linters"
+    tool: "gitleaks"
+    reason: "scheduled for next quarter"
+    expires: "2026-11-01"
+`
+	writeFixtureFile(t, f.dir, ".standards.yaml", manifestContent)
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("expected audit pass when gitleaks is excused by exception, got: %v\nOutput: %s", err, out)
+	}
+	mustContain(t, out, "[PASS] Declared linters: 0 declared linters run; 1 excepted:")
+	mustContain(t, out, "gitleaks, excepted until 2026-11-01")
 }
