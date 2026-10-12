@@ -851,8 +851,14 @@ instead of it ([`internal/gating/cargo.go`](https://github.com/cordanaLLM/praeto
   the same for every linked worktree of the clone, sits outside every working tree (the tree the
   receipt certifies stays clean), and does not contend with your own `target/`. Only the first run
   in a clone builds cold; give that run a raised bound on a large workspace.
-  - An absolute `CARGO_TARGET_DIR` is used instead, without a flag. A relative one would resolve
-    inside the removed worktree, so the gate's directory is used.
+  - An absolute `CARGO_TARGET_DIR` names the disk to build on, and the gate builds into
+    `praetor-gate` below that value, passed as `--target-dir`, never into the folder itself. A
+    checkout that builds into the same value keeps its own test binaries: Cargo gives a workspace
+    member's test binary the same file name in every tree and compiles `CARGO_MANIFEST_DIR` into
+    it, so a shared folder would hand the checkout a binary that reads the removed gate worktree
+    (`TestRunCargoTests_Negative_OperatorTargetDirKeepsCheckoutBinaries` builds a fixture crate,
+    runs the stage and runs the checkout's test again). A relative value would resolve inside the
+    removed worktree, so the gate's directory under the git common directory is used.
   - Where no git common directory resolves, for example when `--path` names a subdirectory of the
     checkout, the commands run without the flag, and the stage reason says the run compiled every
     dependency.
