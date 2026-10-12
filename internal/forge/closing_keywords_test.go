@@ -220,8 +220,9 @@ func (r *contextRecordingResolver) ResolveClosingReference(ctx context.Context, 
 	return ClosingReferenceResolution{Kind: ClosingTargetIssue}, nil
 }
 
-// The forge lookups of a pull request body must run under the caller's context: one request per
-// reference, up to maxClosingReferences of them, has no total bound otherwise (HISS-02).
+// The forge lookups of a pull request body must run under a deadline, the caller's or the
+// variant's own: one request per reference, up to maxClosingReferences of them, has no total bound
+// otherwise (HISS-02).
 func TestValidatePRChecklistWithPolicyContext_PassesCallerContext(t *testing.T) {
 	body := "- [x] done\n\nCloses #12\n"
 	resolver := &contextRecordingResolver{}
@@ -235,12 +236,12 @@ func TestValidatePRChecklistWithPolicyContext_PassesCallerContext(t *testing.T) 
 		t.Fatal("the resolver did not receive the caller's deadline")
 	}
 
-	// Negative: the variant without a context gives the resolver no deadline, which is why the
-	// command must not call it for forge-backed policies.
+	// Negative: a caller that brings no context must not reach the forge unbounded; the variant
+	// without a context derives its own deadline (closingLookupTimeout).
 	plain := &contextRecordingResolver{}
 	_, _ = ValidatePRChecklistWithPolicy(body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: plain}})
-	if plain.sawDeadline {
-		t.Fatal("the context-free variant unexpectedly carries a deadline")
+	if !plain.sawDeadline {
+		t.Fatal("the variant without a context reached the resolver with no deadline")
 	}
 
 	// Boundary: a context that is already cancelled reaches the resolver as cancelled.

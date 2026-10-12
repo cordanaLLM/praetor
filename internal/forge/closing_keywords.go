@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -40,6 +41,10 @@ const closingAllowMarker = "Closes-own:"
 // maxClosingReferences bounds the closing references one text is checked for (HISS-02). A text
 // with more is refused, not checked in part.
 const maxClosingReferences = 1000
+
+// closingLookupTimeout bounds the forge lookups of one text for a caller that brings no context of
+// its own (HISS-02): the callers without a context derive theirs from it.
+const closingLookupTimeout = 2 * time.Minute
 
 // closingReference is one closing keyword and the reference it closes.
 type closingReference struct {
@@ -155,7 +160,9 @@ type ClosingReferencePolicy struct {
 // closingReferenceErrors is the legacy offline caller: explicit pull request URLs are errors;
 // ambiguous references are warnings and therefore omitted here.
 func closingReferenceErrors(text, where string) []string {
-	errs, _ := closingReferenceFindings(context.Background(), text, where, ClosingReferencePolicy{})
+	ctx, cancel := context.WithTimeout(context.Background(), closingLookupTimeout)
+	defer cancel()
+	errs, _ := closingReferenceFindings(ctx, text, where, ClosingReferencePolicy{})
 	return errs
 }
 

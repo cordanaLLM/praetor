@@ -87,7 +87,9 @@ func ValidatePRChecklist(prBody string) (*PRChecklistResult, error) {
 // ValidatePRChecklistWithPolicy verifies the checklist and cryptographically verifies the
 // Ed25519 Exit-0 receipt block against the supplied trust anchor.
 func ValidatePRChecklistWithPolicy(prBody string, policy ReceiptPolicy) (*PRChecklistResult, error) {
-	return ValidatePRChecklistWithPolicyContext(context.Background(), prBody, policy)
+	ctx, cancel := context.WithTimeout(context.Background(), closingLookupTimeout)
+	defer cancel()
+	return ValidatePRChecklistWithPolicyContext(ctx, prBody, policy)
 }
 
 func ValidatePRChecklistWithPolicyContext(ctx context.Context, prBody string, policy ReceiptPolicy) (*PRChecklistResult, error) {
@@ -396,7 +398,9 @@ func matchFrom(patSegs, pathSegs []string, dirRule bool) bool {
 // merge or a revert (commitSubjectError), and a breaking change must carry the mandatory HISS-14
 // Migration: footer.
 func AnalyzeCommit(message string) (*CommitAnalysis, error) {
-	return AnalyzeCommitWithPolicy(context.Background(), message, ClosingReferencePolicy{})
+	ctx, cancel := context.WithTimeout(context.Background(), closingLookupTimeout)
+	defer cancel()
+	return AnalyzeCommitWithPolicy(ctx, message, ClosingReferencePolicy{})
 }
 
 func AnalyzeCommitWithPolicy(ctx context.Context, message string, closingPolicy ClosingReferencePolicy) (*CommitAnalysis, error) {
