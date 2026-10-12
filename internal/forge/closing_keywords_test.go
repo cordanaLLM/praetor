@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // plantedClosingCases are texts the forge reads as closing a pull request or an issue on merge,
@@ -204,5 +205,50 @@ func TestClosingKeywords_Boundary_WordsFencesAndBound(t *testing.T) {
 	errs, warnings := closingReferenceFindings(context.Background(), at, "commit message", ClosingReferencePolicy{})
 	if len(errs) != 0 || len(warnings) != maxClosingReferences {
 		t.Errorf("at the bound: %d errors and %d warnings, want %d warnings", len(errs), len(warnings), maxClosingReferences)
+	}
+}
+
+// contextRecordingResolver records whether the caller's deadline and cancellation reach it.
+type contextRecordingResolver struct {
+	sawDeadline bool
+	err         error
+}
+
+func (r *contextRecordingResolver) ResolveClosingReference(ctx context.Context, _ ClosingReferenceTarget) (ClosingReferenceResolution, error) {
+	_, r.sawDeadline = ctx.Deadline()
+	r.err = ctx.Err()
+	return ClosingReferenceResolution{Kind: ClosingTargetIssue}, nil
+}
+
+// The forge lookups of a pull request body must run under the caller's context: one request per
+// reference, up to maxClosingReferences of them, has no total bound otherwise (HISS-02).
+func TestValidatePRChecklistWithPolicyContext_PassesCallerContext(t *testing.T) {
+	body := "- [x] done\n\nCloses #12\n"
+	resolver := &contextRecordingResolver{}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	_, _ = ValidatePRChecklistWithPolicyContext(ctx, body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: resolver}})
+	if resolver.err != nil {
+		t.Fatalf("a live caller context reached the resolver as done: %v", resolver.err)
+	}
+	if !resolver.sawDeadline {
+		t.Fatal("the resolver did not receive the caller's deadline")
+	}
+
+	// Negative: the variant without a context gives the resolver no deadline, which is why the
+	// command must not call it for forge-backed policies.
+	plain := &contextRecordingResolver{}
+	_, _ = ValidatePRChecklistWithPolicy(body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: plain}})
+	if plain.sawDeadline {
+		t.Fatal("the context-free variant unexpectedly carries a deadline")
+	}
+
+	// Boundary: a context that is already cancelled reaches the resolver as cancelled.
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	late := &contextRecordingResolver{}
+	_, _ = ValidatePRChecklistWithPolicyContext(cancelled, body, ReceiptPolicy{ClosingReferences: ClosingReferencePolicy{Resolver: late}})
+	if late.err == nil {
+		t.Fatal("a cancelled caller context did not reach the resolver")
 	}
 }

@@ -184,7 +184,11 @@ func runForgeValidatePR(args []string) error {
 	if err != nil {
 		return err
 	}
-	res, err := forge.ValidatePRChecklistWithPolicy(string(data),
+	// The closing references are resolved at the forge, one request each: they get a deadline of
+	// their own instead of the ten seconds the body read and the key lookup share.
+	validateCtx, cancelValidate := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelValidate()
+	res, err := forge.ValidatePRChecklistWithPolicyContext(validateCtx, string(data),
 		forge.ReceiptPolicy{PinnedKey: pinned, HeadSHA: *headSHA, ClosingReferences: closingPolicy})
 	if err != nil && res == nil {
 		return fmt.Errorf("PR checklist validation failed: %w", err)
