@@ -281,7 +281,7 @@ func visitLinterArtifact(ctx context.Context, rootDir, fullPath string, d fs.Dir
 	}
 	rel, err := filepath.Rel(rootDir, fullPath)
 	if err != nil {
-		return nil
+		return err
 	}
 	relSlash := filepath.ToSlash(rel)
 	if visible != nil && !visible.HasFile(relSlash) {
