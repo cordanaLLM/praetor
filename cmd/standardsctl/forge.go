@@ -193,6 +193,12 @@ func runForgeValidatePR(args []string) error {
 	if err != nil && res == nil {
 		return fmt.Errorf("PR checklist validation failed: %w", err)
 	}
+	return reportPRChecklist(res)
+}
+
+// reportPRChecklist prints the checklist result with its warnings and returns the failure of an
+// invalid one.
+func reportPRChecklist(res *forge.PRChecklistResult) error {
 	fmt.Println("=== PR Checklist Validation ===")
 	fmt.Printf("  HISS-16 Invariant Check: %v\n", res.HasHISS16Check)
 	fmt.Printf("  3D Tests (Pos/Neg/Bound): %v\n", res.Has3DTestsCheck)
@@ -200,8 +206,8 @@ func runForgeValidatePR(args []string) error {
 	if res.ReceiptProof != "" {
 		fmt.Printf("  Verified Receipt:        %s\n", res.ReceiptProof)
 	}
-	for _, warning := range res.Warnings {
-		fmt.Printf("[WARN] %s\n", warning)
+	for i := 0; i < len(res.Warnings); i++ {
+		fmt.Printf("[WARN] %s\n", res.Warnings[i])
 	}
 	if !res.Valid {
 		return fmt.Errorf("PR validation failed: %s", strings.Join(res.Errors, "; "))
@@ -275,20 +281,13 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 
 	var failures []string
 	for i := 0; i < len(messages); i++ {
-		sha, message, _ := strings.Cut(messages[i], commitFieldSep)
-		analysis, err := forge.AnalyzeCommitWithPolicy(ctx, message, closingPolicy)
+		failure, err := commitMessageFailure(ctx, messages[i], closingPolicy)
 		if err != nil {
-			return fmt.Errorf("failed analyzing commit %s: %w", sha, err)
+			return err
 		}
-		for _, warning := range analysis.Warnings {
-			fmt.Printf("[WARN] %s: %s\n", buildid.Short(sha), warning)
+		if failure != "" {
+			failures = append(failures, failure)
 		}
-		if analysis.Valid {
-			continue
-		}
-		failure := buildid.Short(sha) + ": " + strings.Join(analysis.Errors, "; ")
-		failures = append(failures, failure)
-		fmt.Printf("[FAIL] %s\n", failure)
 	}
 
 	fmt.Printf("=== Commit Message Policy: %d commit(s) in %s..%s ===\n", len(messages), *base, *head)
@@ -297,6 +296,25 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	}
 	fmt.Println("[PASS] Every commit carries a Conventional Commits subject, and every breaking commit a mandatory Migration: footer.")
 	return nil
+}
+
+// commitMessageFailure applies the commit message policy to one entry of commitRange, prints its
+// warnings and its failure line, and returns that line, empty for a commit that passes.
+func commitMessageFailure(ctx context.Context, entry string, closingPolicy forge.ClosingReferencePolicy) (string, error) {
+	sha, message, _ := strings.Cut(entry, commitFieldSep)
+	analysis, err := forge.AnalyzeCommitWithPolicy(ctx, message, closingPolicy)
+	if err != nil {
+		return "", fmt.Errorf("failed analyzing commit %s: %w", sha, err)
+	}
+	for i := 0; i < len(analysis.Warnings); i++ {
+		fmt.Printf("[WARN] %s: %s\n", buildid.Short(sha), analysis.Warnings[i])
+	}
+	if analysis.Valid {
+		return "", nil
+	}
+	failure := buildid.Short(sha) + ": " + strings.Join(analysis.Errors, "; ")
+	fmt.Printf("[FAIL] %s\n", failure)
+	return failure, nil
 }
 
 // maxCommitMessageBytes bounds the commit message file check-message reads.
