@@ -208,6 +208,7 @@ func devcontainerConfig(t *testing.T, repo string, runtime *fakeRuntime) *stageC
 // the built image by its ID, the race stage in the stage worktree mounted at its own path with
 // HOME in the user cache directory, and the signed stage output names the image.
 func TestGoStagesRunInTheDevcontainer(t *testing.T) {
+	t.Setenv(TestStageTimeoutEnv, "") // the expected command line carries the default bound
 	repo, resolved := devcontainerRepo(t)
 	runtime := newFakeRuntime("go", "gcc")
 	cfg := devcontainerConfig(t, repo, runtime)

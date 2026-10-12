@@ -40,8 +40,12 @@ const (
 	// cargoTargetDirRel is where the test stage keeps its Cargo build output, relative to the
 	// repository's git common directory (cargoTargetDir).
 	cargoTargetDirRel = "praetor/cargo-target"
-	// cargoTargetDirEnv is Cargo's own target-directory variable. An absolute value is the
-	// operator's persistent build directory, and the gate leaves it to cargo.
+	// cargoGateDirName is the gate's own folder below an absolute CARGO_TARGET_DIR.
+	cargoGateDirName = "praetor-gate"
+	// cargoTargetDirEnv is Cargo's own target-directory variable. An absolute value names the
+	// operator's persistent disk, and the gate builds into its own folder below it. Test binaries
+	// of workspace members get the same file name in every tree and embed CARGO_MANIFEST_DIR, so a
+	// shared folder hands the checkout a stale binary that reads the removed gate worktree.
 	cargoTargetDirEnv = "CARGO_TARGET_DIR"
 )
 
@@ -165,12 +169,18 @@ func runCargoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 // shared by every linked worktree of the clone and outside every working tree, so it neither
 // dirties the tree the receipt certifies nor competes with the developer's own target/. Cargo
 // reuses a dependency's build there whatever path the worktree has. An absolute CARGO_TARGET_DIR
-// is the operator's own persistent directory, and cargo uses it without a flag.
+// names the operator's persistent disk, and the gate builds into its own folder below it. Test
+// binaries of workspace members get the same file name in every tree and embed CARGO_MANIFEST_DIR,
+// so a shared folder hands the checkout a stale binary that reads the removed gate worktree.
 func cargoTargetDir(ctx context.Context, repoDir string) (args []string, note string) {
-	if filepath.IsAbs(os.Getenv(cargoTargetDirEnv)) {
-		return nil, ""
-	}
 	cold := "no persistent Cargo target directory (%v), so this run compiled every dependency"
+	if v := os.Getenv(cargoTargetDirEnv); filepath.IsAbs(v) {
+		dir, err := util.ConfinePath(v, cargoGateDirName)
+		if err != nil {
+			return nil, fmt.Sprintf(cold, err)
+		}
+		return []string{"--target-dir", dir}, ""
+	}
 	gitCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
 	defer cancel()
 	common, err := topology.GitCommonDir(gitCtx, repoDir)
