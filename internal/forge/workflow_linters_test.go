@@ -180,3 +180,213 @@ func TestMakeVariableExpansion(t *testing.T) {
 		})
 	}
 }
+
+func TestCommandRunsTool_OptionNamedAfterTool(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		line      string
+		tool      string
+		wantMatch bool
+	}{
+		{
+			name:      "python3 script with --gitleaks flag",
+			line:      `python3 -I tools/ci/secret_scan.py --gitleaks "$gitleaks"`,
+			tool:      "gitleaks",
+			wantMatch: true,
+		},
+		{
+			name:      "python3 script with --gitleaks= value flag",
+			line:      `python3 tools/ci/secret_scan.py --gitleaks=/usr/bin/gitleaks`,
+			tool:      "gitleaks",
+			wantMatch: true,
+		},
+		{
+			name:      "direct repo script with --gitleaks",
+			line:      `./tools/ci/secret_scan.py --gitleaks "$gitleaks"`,
+			tool:      "gitleaks",
+			wantMatch: true,
+		},
+		{
+			name:      "near-miss --not-gitleaks must not count",
+			line:      `python3 -I tools/ci/secret_scan.py --not-gitleaks "$gitleaks"`,
+			tool:      "gitleaks",
+			wantMatch: false,
+		},
+		{
+			name:      "echo --gitleaks is not run by an interpreter or repo path",
+			line:      `echo --gitleaks`,
+			tool:      "gitleaks",
+			wantMatch: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := cmdFromLine(t, tc.line)
+			got := commandRunsTool(ctx, cmd, tc.tool, nil)
+			if got != tc.wantMatch {
+				t.Fatalf("commandRunsTool(%q, %q) = %v; want %v", tc.line, tc.tool, got, tc.wantMatch)
+			}
+		})
+	}
+}
+
+func TestCommandRunsTool_RunnerSpecs(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		line      string
+		tool      string
+		wantMatch bool
+	}{
+		{
+			name:      "pipx run with quoted version pinned spec",
+			line:      `pipx run "yamllint==${YAMLLINT_VERSION}" .`,
+			tool:      "yamllint",
+			wantMatch: true,
+		},
+		{
+			name:      "pipx run with >= version spec",
+			line:      `pipx run 'yamllint>=1.2.0' .`,
+			tool:      "yamllint",
+			wantMatch: true,
+		},
+		{
+			name:      "pipx run with ~= version spec",
+			line:      `pipx run "yamllint~=1.2.0" .`,
+			tool:      "yamllint",
+			wantMatch: true,
+		},
+		{
+			name:      "npx with quoted @version spec and flags",
+			line:      `npx --yes "markdownlint-cli2@${MARKDOWNLINT_VERSION}"`,
+			tool:      "markdownlint",
+			wantMatch: true,
+		},
+		{
+			name:      "go run with version spec and env var",
+			line:      `go run "github.com/golangci/golangci-lint/cmd/golangci-lint@${VERSION}" run`,
+			tool:      "golangci-lint",
+			wantMatch: true,
+		},
+		{
+			name:      "docker run with image tag and env var",
+			line:      `docker run --rm ghcr.io/aquasecurity/trivy:${TRIVY_VERSION} fs .`,
+			tool:      "trivy",
+			wantMatch: true,
+		},
+		{
+			name:      "near-miss pipx run yamllint-extra must not count",
+			line:      `pipx run yamllint-extra`,
+			tool:      "yamllint",
+			wantMatch: false,
+		},
+		{
+			name:      "near-miss pipx run with versioned yamllint-extra must not count",
+			line:      `pipx run "yamllint-extra==1.0"`,
+			tool:      "yamllint",
+			wantMatch: false,
+		},
+		{
+			name:      "near-miss uvx yamllint-extra must not count",
+			line:      `uvx yamllint-extra`,
+			tool:      "yamllint",
+			wantMatch: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := cmdFromLine(t, tc.line)
+			got := commandRunsTool(ctx, cmd, tc.tool, nil)
+			if got != tc.wantMatch {
+				t.Fatalf("commandRunsTool(%q, %q) = %v; want %v", tc.line, tc.tool, got, tc.wantMatch)
+			}
+		})
+	}
+}
+
+func TestCommandRunsTool_WrapperPrograms(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		line      string
+		tool      string
+		wantMatch bool
+	}{
+		{
+			name:      "xargs -r shellcheck -x",
+			line:      `xargs -r shellcheck -x`,
+			tool:      "shellcheck",
+			wantMatch: true,
+		},
+		{
+			name:      "xargs with -I placeholder flag",
+			line:      `xargs -I {} shellcheck {}`,
+			tool:      "shellcheck",
+			wantMatch: true,
+		},
+		{
+			name:      "xargs with multiple value flags",
+			line:      `xargs -n 1 -P 4 shellcheck`,
+			tool:      "shellcheck",
+			wantMatch: true,
+		},
+		{
+			name:      "find -exec shellcheck",
+			line:      `find . -name '*.sh' -exec shellcheck {} +`,
+			tool:      "shellcheck",
+			wantMatch: true,
+		},
+		{
+			name:      "env with VAR=x assignments",
+			line:      `env VAR=x shellcheck -x`,
+			tool:      "shellcheck",
+			wantMatch: true,
+		},
+		{
+			name:      "sudo shellcheck",
+			line:      `sudo shellcheck -x`,
+			tool:      "shellcheck",
+			wantMatch: true,
+		},
+		{
+			name:      "time shellcheck",
+			line:      `time shellcheck -x`,
+			tool:      "shellcheck",
+			wantMatch: true,
+		},
+		{
+			name:      "nice -n 10 shellcheck",
+			line:      `nice -n 10 shellcheck -x`,
+			tool:      "shellcheck",
+			wantMatch: true,
+		},
+		{
+			name:      "near-miss xargs echo shellcheck must not count",
+			line:      `xargs echo shellcheck`,
+			tool:      "shellcheck",
+			wantMatch: false,
+		},
+		{
+			name:      "near-miss find -exec echo shellcheck must not count",
+			line:      `find . -exec echo shellcheck {} +`,
+			tool:      "shellcheck",
+			wantMatch: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := cmdFromLine(t, tc.line)
+			got := commandRunsTool(ctx, cmd, tc.tool, nil)
+			if got != tc.wantMatch {
+				t.Fatalf("commandRunsTool(%q, %q) = %v; want %v", tc.line, tc.tool, got, tc.wantMatch)
+			}
+		})
+	}
+}

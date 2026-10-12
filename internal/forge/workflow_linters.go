@@ -156,7 +156,7 @@ func scriptRunsTool(ctx context.Context, run, tool string, makeTargets map[strin
 	return false
 }
 
-func directCommandRunsTool(cmd shellCommand, toolLower string) bool {
+func directProgramRunsTool(cmd shellCommand, toolLower string) bool {
 	if cmd.program == toolLower {
 		return true
 	}
@@ -164,6 +164,24 @@ func directCommandRunsTool(cmd shellCommand, toolLower string) bool {
 		return true
 	}
 	return checkScriptTool(cmd, toolLower)
+}
+
+func directCommandRunsTool(cmd shellCommand, toolLower string) bool {
+	curr := cmd
+	for step := 0; step < 4; step++ {
+		if directProgramRunsTool(curr, toolLower) {
+			return true
+		}
+		if curr.program == "find" {
+			return findExecRunsTool(curr.args, toolLower)
+		}
+		words, ok := unwrapWrapper(curr)
+		if !ok || len(words) == 0 {
+			break
+		}
+		curr = parseShellCommand(words)
+	}
+	return false
 }
 
 func commandRunsTool(ctx context.Context, cmd shellCommand, toolLower string, makeTargets map[string]*makeTargetDef) bool {
@@ -186,30 +204,22 @@ func checkRunnerTool(cmd shellCommand, toolLower string) bool {
 		}
 	}
 	if cmd.program == "go" && len(cmd.args) > 0 {
-		if cmd.args[0] == "tool" {
+		if cmd.args[0] == "tool" || cmd.args[0] == "run" {
 			target := firstGoTarget(cmd.args[1:])
-			target, _, _ = strings.Cut(target, "@")
-			targetLower := strings.ToLower(target)
-			if targetLower == toolLower || strings.HasSuffix(targetLower, "/"+toolLower) {
-				return true
-			}
-		}
-		if cmd.args[0] == "run" {
-			pkg := firstGoTarget(cmd.args[1:])
-			pkg, _, _ = strings.Cut(pkg, "@")
-			pkgLower := strings.ToLower(pkg)
-			if pkgLower == toolLower || strings.HasSuffix(pkgLower, "/"+toolLower) {
+			clean := cleanRunnerSpec(target)
+			cleanLower := strings.ToLower(clean)
+			if cleanLower == toolLower || strings.HasSuffix(cleanLower, "/"+toolLower) {
 				return true
 			}
 		}
 	}
 	switch cmd.program {
 	case "npx", "bunx", "uvx":
-		return checkJsRunner(cmd.args, toolLower)
+		return checkJsOrUvxRunner(cmd.program, cmd.args, toolLower)
 	case "pipx":
-		return checkSubcommandRunner(cmd.args, "run", toolLower)
+		return checkPipxRunner(cmd.args, toolLower)
 	case "pnpm":
-		return checkSubcommandRunner(cmd.args, "dlx", toolLower)
+		return checkPnpmRunner(cmd.args, toolLower)
 	case "docker", "podman":
 		return checkContainerRun(cmd.args, toolLower)
 	}
@@ -239,16 +249,36 @@ func isGoFlagWithValue(flag string) bool {
 }
 
 func checkScriptTool(cmd shellCommand, toolLower string) bool {
+	isInterp := isInterpreter(cmd.program)
+	isRepoPath := strings.ContainsAny(cmd.word, "/\\")
+	if !isInterp && !isRepoPath {
+		return false
+	}
+	if hasToolOption(cmd.args, toolLower) {
+		return true
+	}
 	var scriptPath string
-	if isInterpreter(cmd.program) {
+	if isInterp {
 		scriptPath = firstNonFlagArg(cmd.args)
-	} else if strings.ContainsAny(cmd.word, "/\\") {
+	} else {
 		scriptPath = cmd.word
 	}
 	if scriptPath == "" {
 		return false
 	}
 	return scriptPathMatchesTool(scriptPath, toolLower)
+}
+
+func hasToolOption(args []string, toolLower string) bool {
+	target := "--" + toolLower
+	prefix := target + "="
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		arg := strings.ToLower(args[i])
+		if arg == target || strings.HasPrefix(arg, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func isInterpreter(prog string) bool {
@@ -301,13 +331,62 @@ func argsAfterWord(args []string, word string) []string {
 	return nil
 }
 
-func checkJsRunner(args []string, toolLower string) bool {
+func cleanRunnerSpec(raw string) string {
+	s := unquoter.Replace(raw)
+	s = stripVarRefs(s)
+	s = stripVersionSuffix(s)
+	return strings.TrimSpace(s)
+}
+
+func stripVarRefs(s string) string {
+	for i := 0; i < maxRunScriptFields; i++ {
+		start := strings.Index(s, "${")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s[start:], "}")
+		if end < 0 {
+			break
+		}
+		s = s[:start] + s[start+end+1:]
+	}
+	return s
+}
+
+func stripVersionSuffix(spec string) string {
+	cutIdx := -1
+	for _, sep := range []string{"==", ">=", "~="} {
+		if idx := strings.Index(spec, sep); idx >= 0 {
+			if cutIdx < 0 || idx < cutIdx {
+				cutIdx = idx
+			}
+		}
+	}
+	if cutIdx >= 0 {
+		spec = spec[:cutIdx]
+	}
+	if atIdx := strings.LastIndex(spec, "@"); atIdx > 0 {
+		spec = spec[:atIdx]
+	}
+	if colonIdx := strings.LastIndex(spec, ":"); colonIdx > 0 {
+		lastSlash := strings.LastIndex(spec, "/")
+		if colonIdx > lastSlash {
+			spec = spec[:colonIdx]
+		}
+	}
+	return spec
+}
+
+func checkJsOrUvxRunner(prog string, args []string, toolLower string) bool {
 	t := firstRunnerTarget(args)
 	if t == "" {
 		return false
 	}
-	t, _, _ = strings.Cut(t, "@")
-	base := programName(t)
+	clean := cleanRunnerSpec(t)
+	base := programName(clean)
+	if prog == "uvx" {
+		return base == toolLower
+	}
 	return base == toolLower || matchesDashWord(base, toolLower)
 }
 
@@ -330,14 +409,50 @@ func firstRunnerTarget(args []string) string {
 
 func isJsRunnerValOption(opt string) bool {
 	switch opt {
-	case "-p", "--package", "-c", "--from", "--with", "--python", "--spec", "--index-url", "--pip-args":
+	case "-p", "--package", "-c", "--from", "--with":
 		return true
 	}
 	return false
 }
 
-func checkSubcommandRunner(args []string, subcmd, toolLower string) bool {
-	rest := argsAfterWord(args, subcmd)
+func checkPipxRunner(args []string, toolLower string) bool {
+	rest := argsAfterWord(args, "run")
+	if len(rest) == 0 {
+		return false
+	}
+	t := firstPipxTarget(rest)
+	if t == "" {
+		return false
+	}
+	clean := cleanRunnerSpec(t)
+	base := programName(clean)
+	return base == toolLower
+}
+
+func firstPipxTarget(args []string) string {
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			if isPipxValOption(arg) && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		return arg
+	}
+	return ""
+}
+
+func isPipxValOption(opt string) bool {
+	switch opt {
+	case "--spec", "--index-url", "--pip-args", "--python":
+		return true
+	}
+	return false
+}
+
+func checkPnpmRunner(args []string, toolLower string) bool {
+	rest := argsAfterWord(args, "dlx")
 	if len(rest) == 0 {
 		return false
 	}
@@ -345,8 +460,8 @@ func checkSubcommandRunner(args []string, subcmd, toolLower string) bool {
 	if t == "" {
 		return false
 	}
-	t, _, _ = strings.Cut(t, "@")
-	base := programName(t)
+	clean := cleanRunnerSpec(t)
+	base := programName(clean)
 	return base == toolLower || matchesDashWord(base, toolLower)
 }
 
@@ -375,11 +490,10 @@ func checkContainerRun(args []string, toolLower string) bool {
 }
 
 func containerImageMatches(image, toolLower string) bool {
-	img, _, _ := strings.Cut(image, "@")
-	lastSlash := strings.LastIndex(img, "/")
-	lastSegment := img[lastSlash+1:]
-	repoBase, _, _ := strings.Cut(lastSegment, ":")
-	return strings.ToLower(repoBase) == toolLower
+	clean := cleanRunnerSpec(image)
+	lastSlash := strings.LastIndex(clean, "/")
+	lastSegment := clean[lastSlash+1:]
+	return strings.ToLower(lastSegment) == toolLower
 }
 
 func isDockerValOption(opt string) bool {
@@ -393,6 +507,169 @@ func isDockerValOption(opt string) bool {
 		return true
 	}
 	return false
+}
+
+func findExecRunsTool(args []string, toolLower string) bool {
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		if (args[i] == "-exec" || args[i] == "-execdir") && i+1 < len(args) {
+			subCmd := parseShellCommand(args[i+1:])
+			if directProgramRunsTool(subCmd, toolLower) {
+				return true
+			}
+			if unwrap, ok := unwrapWrapper(subCmd); ok && len(unwrap) > 0 {
+				innerCmd := parseShellCommand(unwrap)
+				if directProgramRunsTool(innerCmd, toolLower) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func unwrapWrapper(cmd shellCommand) ([]string, bool) {
+	switch cmd.program {
+	case "xargs":
+		res := unwrapXargs(cmd.args)
+		return res, len(res) > 0
+	case "env":
+		return unwrapEnv(cmd.args)
+	case "sudo":
+		return unwrapSudo(cmd.args)
+	case "time":
+		return unwrapTime(cmd.args)
+	case "nice":
+		return unwrapNice(cmd.args)
+	}
+	return nil, false
+}
+
+func unwrapXargs(args []string) []string {
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1:]
+			}
+			return nil
+		}
+		if strings.HasPrefix(arg, "-") {
+			if isXargsValOption(arg) && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		return args[i:]
+	}
+	return nil
+}
+
+func isXargsValOption(opt string) bool {
+	switch opt {
+	case "-I", "-n", "-P", "-L", "-s", "-d", "-a", "-E":
+		return true
+	}
+	return false
+}
+
+func unwrapEnv(args []string) ([]string, bool) {
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1:], true
+			}
+			return nil, false
+		}
+		if strings.HasPrefix(arg, "-") {
+			if isEnvValOption(arg) && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if shellAssignmentWord.MatchString(arg) {
+			continue
+		}
+		return args[i:], true
+	}
+	return nil, false
+}
+
+func isEnvValOption(opt string) bool {
+	switch opt {
+	case "-u", "--unset", "-C", "--chdir", "-S", "--split-string", "-a", "--argv0":
+		return true
+	}
+	return false
+}
+
+func unwrapSudo(args []string) ([]string, bool) {
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1:], true
+			}
+			return nil, false
+		}
+		if strings.HasPrefix(arg, "-") {
+			if isSudoValOption(arg) && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		return args[i:], true
+	}
+	return nil, false
+}
+
+func isSudoValOption(opt string) bool {
+	switch opt {
+	case "-C", "--close-from", "-D", "--chdir", "-g", "--group", "-h", "--host",
+		"-p", "--prompt", "-R", "--chroot", "-T", "--command-timeout", "-U", "--other-user", "-u", "--user":
+		return true
+	}
+	return false
+}
+
+func unwrapTime(args []string) ([]string, bool) {
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1:], true
+			}
+			return nil, false
+		}
+		if strings.HasPrefix(arg, "-") {
+			if (arg == "-f" || arg == "--format" || arg == "-o" || arg == "--output") && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		return args[i:], true
+	}
+	return nil, false
+}
+
+func unwrapNice(args []string) ([]string, bool) {
+	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1:], true
+			}
+			return nil, false
+		}
+		if strings.HasPrefix(arg, "-") {
+			if (arg == "-n" || arg == "--adjustment") && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		return args[i:], true
+	}
+	return nil, false
 }
 
 type makeTargetDef struct {
