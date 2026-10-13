@@ -323,6 +323,86 @@ are the adopter's.
 exact `command`. A pick with no lane declared returns `lane_note` instead of a guess.
 `TestEveryDeclaredLabelRoutesToAnExecutableLane` routes every declared label.
 
+### Subscription windows
+
+A subscription lane (a CLI on a flat-rate plan) shares one rolling usage window with every
+session and subagent on its account. When the window runs out, all of them stop at once.
+The window governor (`internal/router/window.go`, #1142) refuses new work on such a lane
+before that happens, and tells admitted work how fast it may spend.
+
+A lane becomes governed when it names an account, and the account names the snapshot
+record that holds its window:
+
+```yaml
+lanes:
+  claude:
+    harness: claude-code
+    command: [claude, -p, "{task}"]
+    account: max-a
+governance:
+  window:
+    warn_percent: 65              # default 65
+    stop_percent: 80              # default 80; 0 < warn < stop <= 100
+    max_reading_age_seconds: 600  # default 600
+    stop_horizon_minutes: 30      # default 30
+    per_agent_percent_per_hour: 0 # burn floor per active agent; 0 turns it off
+    accounts:
+      max-a: {window_record: claude-code/five_hour}
+```
+
+Readings come from a tribunus snapshot (`tribunusctl sync --out`): a record with
+`access_path: subscription_cli` and a `usage_window` (`used_percent`, `resets_at`, and,
+when the source measures them, `burn_percent_per_hour` and `active_agents`). The
+record's `provenance` gives the source and the age. `praetorctl models route --windows
+<snapshot>` decides each governed candidate:
+
+| Level | When | Admission |
+| :--- | :--- | :--- |
+| `unknown` | no snapshot, no record, a reading older than the maximum age or dated in the future, no `used_percent`, or a reset already past | refused |
+| `stop` | used at or above the stop line, or the projected burn reaches it within the horizon and before the reset | refused |
+| `warn` | used at or above the warn line, or the projected burn reaches the stop line before the reset | admitted, with advice to finish the unit and checkpoint |
+| `ok` | otherwise | admitted |
+
+The projected burn is the larger of the measured burn and active agents times the
+per-agent floor. The floor covers the minutes after a reset, when many agents wake
+together and the measured burn still reads low. A refused candidate appears in
+`skipped` with a reason that names the window, and the route falls through to
+ungoverned lanes. With none left, the command fails with the existing no-eligible-model
+error. An admitted pick carries `window`, the pacing signal: the level,
+`used_percent`, `resets_at`, `projected_burn_percent_per_hour` and
+`pace_percent_per_agent_hour`, which is the burn each agent may spend so the fleet
+reaches the stop line no earlier than the reset.
+
+The tests in `internal/router/window_test.go` replay the acceptance cases of #1142, the
+warn and stop boundaries, and the agent-scaling fixture from the issue thread.
+Two sources write window records today: `codex-local`
+(`tribunus/internal/sources/codexlocal`), which copies the provider's own
+`used_percent`, and `claude-local` (`tribunus/internal/sources/claudelocal`), which
+derives one from the Claude Code session logs (`tribunusctl sync --sources=claude-local
+[--claude-projects-dir <dir>]`). A lane on any other client stays `unknown` until a
+source writes its records.
+
+`claude-local` reads only usage fields: per-response token counts, the model, the
+timestamp, and the `quotaLimits` of rejected requests. Message content is never
+decoded. It reports `claude-code/five_hour`, `claude-code/seven_day`, and every other
+`rateLimitType` a rejection names (a suffix such as `seven_day_opus` counts only that
+model family). For each window:
+
+- Usage is priced at first-party API rates (cost-equivalent) and counted once per
+  response.
+- The ceiling is the smallest usage a fully logged window held at its first rejected
+  request.
+- The reset is the last reported `resetsAt`, advanced in whole window steps.
+- `used_percent` is the current window's usage over the ceiling.
+- `burn_percent_per_hour` and `active_agents` cover the last 15 minutes.
+
+Without an observed rejection, or with usage of a model the rate table lacks, the
+record has no `used_percent` and says why in `absent`, so the governor refuses as
+unknown. Files last written more than seven days ago are not read. The tests in
+`tribunus/internal/sources/claudelocal` use synthetic logs only;
+`tribunus/cmd/tribunusctl/sync_windows_test.go` runs a produced snapshot through the
+governor.
+
 `praetorctl models outcome --task <label> --target <t> --result ok|fail|timeout
 [--lane <name>] [--duration-ms n] [--note text] [identity flags]` appends one
 record to `.workingdir/routing/outcomes.jsonl` (`--outcome-log` changes it), a

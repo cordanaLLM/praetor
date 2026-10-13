@@ -100,9 +100,16 @@ func TestRunSync_Positive(t *testing.T) {
 		t.Fatalf("setup token: %v", err)
 	}
 
+	claudeDir := t.TempDir()
+	claudeLine := `{"type":"assistant","timestamp":"2026-10-13T09:00:00Z","requestId":"r1","sessionId":"s1","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"output_tokens":5}}}`
+	if err := os.WriteFile(filepath.Join(claudeDir, "s.jsonl"), []byte(claudeLine), 0o600); err != nil {
+		t.Fatalf("setup claude fixture: %v", err)
+	}
+
 	out := filepath.Join(t.TempDir(), "out.json")
 	args := []string{
 		"--sessions-dir=" + sessionsDir,
+		"--claude-projects-dir=" + claudeDir,
 		"--ollama=" + ollama.URL,
 		"--litellm-base=" + gateway.URL,
 		"--litellm-token-file=" + tokenFile,
@@ -122,12 +129,12 @@ func TestRunSync_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSnapshot() = %v", err)
 	}
-	// codex-local(1) + litellm-gateway(1) + ollama-local(1) + public-catalog(2)
-	if len(snap.Records) != 5 {
-		t.Fatalf("got %d records, want 5: %+v", len(snap.Records), snap.Records)
+	// codex-local(1) + claude-local(2) + litellm-gateway(1) + ollama-local(1) + public-catalog(2)
+	if len(snap.Records) != 7 {
+		t.Fatalf("got %d records, want 7: %+v", len(snap.Records), snap.Records)
 	}
-	if len(snap.SourceRuns) != 4 {
-		t.Fatalf("got %d source runs, want 4", len(snap.SourceRuns))
+	if len(snap.SourceRuns) != 5 {
+		t.Fatalf("got %d source runs, want 5", len(snap.SourceRuns))
 	}
 	for _, run := range snap.SourceRuns {
 		if run.Status != catalog.StatusOK {

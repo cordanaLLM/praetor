@@ -152,7 +152,7 @@ func validateRoutingGovernance(policy GovernancePolicy) error {
 	if !finiteNonnegative(threshold) || threshold > 100 || policy.MaxConcurrentSameModel < 0 {
 		return fmt.Errorf("%w: invalid governance limits", ErrInvalidRoutingConfig)
 	}
-	return nil
+	return validateWindowPolicy(policy.Window)
 }
 
 func validateRoutingTier(name string, tier Tier, cfg *RoutingConfig, seen map[string]bool) error {

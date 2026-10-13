@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/tribunus/catalog"
+	"github.com/cordanaLLM/praetor/tribunus/internal/sources/claudelocal"
 	"github.com/cordanaLLM/praetor/tribunus/internal/sources/codexlocal"
 	"github.com/cordanaLLM/praetor/tribunus/internal/sources/litellmgateway"
 	"github.com/cordanaLLM/praetor/tribunus/internal/sources/ollamalocal"
@@ -34,6 +35,7 @@ const maxSnapshotFileBytes = 64 << 20
 // attempts them.
 var allSourceNames = []string{
 	codexlocal.SourceName,
+	claudelocal.SourceName,
 	litellmgateway.SourceName,
 	ollamalocal.SourceName,
 	publiccatalog.SourceName,
@@ -49,6 +51,7 @@ type syncFlags struct {
 	openRouterURL    string
 	litellmPricesURL string
 	sessionsDir      string
+	claudeDir        string
 }
 
 func parseSyncFlags(args []string) (syncFlags, error) {
@@ -62,6 +65,7 @@ func parseSyncFlags(args []string) (syncFlags, error) {
 	fs.StringVar(&f.openRouterURL, "openrouter-url", publiccatalog.DefaultOpenRouterURL, "OpenRouter public models API URL")
 	fs.StringVar(&f.litellmPricesURL, "litellm-prices-url", publiccatalog.DefaultLiteLLMPriceMapURL, "LiteLLM public price map URL")
 	fs.StringVar(&f.sessionsDir, "sessions-dir", "", "Codex CLI sessions directory (default: ~/.codex/sessions)")
+	fs.StringVar(&f.claudeDir, "claude-projects-dir", "", "Claude Code projects directory (default: ~/.claude/projects)")
 	if err := fs.Parse(args); err != nil {
 		return syncFlags{}, err
 	}
@@ -153,6 +157,8 @@ func runOneSource(ctx context.Context, name string, f syncFlags) sourceOutcome {
 	switch name {
 	case codexlocal.SourceName:
 		return runCodexLocal(ctx, f)
+	case claudelocal.SourceName:
+		return runClaudeLocal(ctx, f)
 	case litellmgateway.SourceName:
 		return runLiteLLMGateway(ctx, f)
 	case ollamalocal.SourceName:
@@ -176,6 +182,19 @@ func runCodexLocal(ctx context.Context, f syncFlags) sourceOutcome {
 		dir = resolved
 	}
 	res := codexlocal.Fetch(ctx, dir)
+	return sourceOutcome{Records: res.Records, Status: res.Status, Count: res.Count, Detail: res.Detail}
+}
+
+func runClaudeLocal(ctx context.Context, f syncFlags) sourceOutcome {
+	dir := f.claudeDir
+	if dir == "" {
+		resolved, err := claudelocal.DefaultProjectsDir()
+		if err != nil {
+			return sourceOutcome{Status: catalog.StatusFail, Detail: err.Error()}
+		}
+		dir = resolved
+	}
+	res := claudelocal.Fetch(ctx, dir, time.Now().UTC())
 	return sourceOutcome{Records: res.Records, Status: res.Status, Count: res.Count, Detail: res.Detail}
 }
 

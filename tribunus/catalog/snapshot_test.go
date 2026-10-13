@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -55,5 +56,34 @@ func TestSnapshotValidate_Boundary(t *testing.T) {
 	snap := Snapshot{GeneratedAt: time.Now(), Records: records}
 	if err := snap.Validate(); err == nil {
 		t.Fatal("Validate() = nil, want error one past MaxSnapshotRecords")
+	}
+}
+
+func TestUsageWindowBurnAndAgentsRoundTrip(t *testing.T) {
+	used, burn, agents := 42.5, 12.25, 7
+	resets := time.Date(2026, 10, 13, 14, 0, 0, 0, time.UTC)
+	withWindow := validRecord()
+	withWindow.AccessPath = AccessSubscriptionCLI
+	withWindow.UsageWindow = &UsageWindow{UsedPercent: &used, ResetsAt: &resets, BurnPercentPerHour: &burn, ActiveAgents: &agents}
+	bare := validRecord()
+	bare.AccessPath = AccessSubscriptionCLI
+	bare.UsageWindow = &UsageWindow{UsedPercent: &used}
+	data, err := Snapshot{GeneratedAt: resets, Records: []Record{withWindow, bare}}.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal() = %v, want nil", err)
+	}
+	got, err := ParseSnapshot(data)
+	if err != nil {
+		t.Fatalf("ParseSnapshot() = %v, want nil", err)
+	}
+	window := got.Records[0].UsageWindow
+	if window == nil || window.BurnPercentPerHour == nil || *window.BurnPercentPerHour != burn || window.ActiveAgents == nil || *window.ActiveAgents != agents {
+		t.Fatalf("burn and agents lost in round-trip: %+v", window)
+	}
+	if empty := got.Records[1].UsageWindow; empty.BurnPercentPerHour != nil || empty.ActiveAgents != nil {
+		t.Fatalf("absent burn and agents must stay absent, not zero: %+v", empty)
+	}
+	if count := strings.Count(string(data), "burn_percent_per_hour"); count != 1 {
+		t.Fatalf("an absent burn must be omitted from the JSON, found %d keys", count)
 	}
 }
