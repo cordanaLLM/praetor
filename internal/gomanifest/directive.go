@@ -124,6 +124,9 @@ func ParseReplaceDirective(line string) (ReplaceDirective, bool) {
 	return directive, true
 }
 
+// EngineModulePath is the module path declared by the engine repository.
+const EngineModulePath = "github.com/cordanaLLM/praetor"
+
 // moduleKeyword is the directive that names the module a manifest defines.
 const moduleKeyword = "module"
 
