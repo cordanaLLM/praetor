@@ -198,6 +198,14 @@ a Go library.
   describe the tooling rather than the product. The Packer marker is a glob and matches only regular
   files: an empty `packer/`, or one holding only a README, is not a forge. See
   [archetype authoring](archetype-authoring.md#the-os-image-flavor-a-forge-is-what-it-builds).
+- A repository with two kinds of infrastructure as code, from Terraform (`*.tf`), Ansible
+  (`ansible.cfg` or `roles/*/tasks/main.yml`), Helm (`Chart.yaml` or `helmfile.yaml`) and
+  Kustomize (`kustomization.yaml`), each looked for at the root and up to three directories below
+  it, gets the `gitops-infra` profile ahead of `os-image`. A cluster repository that keeps one
+  Packer template for its node image is classified by what it deploys, and one kind alone, such as
+  an image forge's Terraform test environment, decides nothing (`TestByMarkers_Positive_ClusterRepositoryIsGitOps`
+  in `internal/classify/gitops_test.go`). `gitops-infra` has no flavor, so flavor detection reports
+  not applicable for it.
 - `agentic-autonomous` never auto-detects and must be selected by name. Its markers — `.agents/` and
   `.paperclip/harness.json` — are both written by adoption itself, so detecting on them describes
   the governance tool rather than the repository.

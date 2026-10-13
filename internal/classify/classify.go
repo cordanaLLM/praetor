@@ -79,10 +79,46 @@ const maxMarkers = 16
 // fragment anyone declared. As with every glob marker, an empty kconfig/ matches nothing.
 const kernelConfigFragments = "kconfig/[^.]*.config"
 
-// rule maps the presence of any one marker to an archetype.
+// rule maps the presence of any one marker to an archetype, or, for a rule with groups, the
+// presence of markers from at least minGroups of them.
 type rule struct {
 	markers   []string
 	archetype string
+	groups    [][]string
+	minGroups int
+}
+
+// maxInfraMarkerDepth is how many directory levels below the root an infrastructure marker is
+// looked for (HISS-02): a cluster repository keeps its charts, roles and modules in
+// subdirectories (charts/<name>/Chart.yaml), so a root-only probe missed them (#1074).
+const maxInfraMarkerDepth = 3
+
+// infraGroupsForGitOps is how many kinds of infrastructure a repository must hold to be a GitOps
+// and infrastructure repository. One kind alone is a helper of something else: an image forge
+// may keep a Terraform test environment, an application its Helm chart.
+const infraGroupsForGitOps = 2
+
+// infraMarkerGroups lists the kinds of infrastructure as code, each as the markers of one tool
+// at the root and up to maxInfraMarkerDepth levels below it: Terraform modules, Ansible
+// configuration and roles, Helm charts and helmfiles, and Kustomize overlays.
+func infraMarkerGroups() [][]string {
+	return [][]string{
+		atDepths("*.tf"),
+		atDepths("ansible.cfg", "roles/*/tasks/main.yml"),
+		atDepths("Chart.yaml", "helmfile.yaml"),
+		atDepths("kustomization.yaml"),
+	}
+}
+
+// atDepths returns each marker at the root and below one to maxInfraMarkerDepth directories.
+func atDepths(markers ...string) []string {
+	out := make([]string, 0, len(markers)*(maxInfraMarkerDepth+1))
+	for depth := 0; depth <= maxInfraMarkerDepth; depth++ {
+		for _, marker := range markers {
+			out = append(out, strings.Repeat("*/", depth)+marker)
+		}
+	}
+	return out
 }
 
 // rules is the single ordered marker table, most specific first.
@@ -94,20 +130,26 @@ type rule struct {
 // Dockerfile is therefore last, exactly where the adoption table already had it.
 func rules() []rule {
 	return []rule{
-		{[]string{"harness.json"}, "framework"},
+		{markers: []string{"harness.json"}, archetype: "framework"},
+		// A repository is classified by what it deploys, not by one build helper. Two kinds
+		// of infrastructure as code (Terraform, Ansible, Helm, Kustomize) make it a GitOps and
+		// infrastructure repository, ahead of the image forge: a cluster repository that keeps
+		// one Packer template for its node image was classified os-image and got that policy
+		// and a .clang-tidy it has no use for (#1074).
+		{archetype: "gitops-infra", groups: infraMarkerGroups(), minGroups: infraGroupsForGitOps},
 		// An image forge is known by what it builds, and its Go, Python and shell content is
 		// the tooling that builds it. Ahead of go.mod for that reason: an adopter's OS image forge
 		// has a go.mod for its CLI and was classified framework by it, which described the tool
 		// rather than the product.
-		{[]string{"packer/*.pkr.hcl", "mkosi.conf", "build/mkosi.conf", kernelConfigFragments}, "os-image"},
-		{[]string{"Chart.yaml", "kustomization.yaml", "helmfile.yaml"}, "container-image"},
-		{[]string{"meson.build", "core/meson.build", "libvmaf/meson.build", "CMakeLists.txt"}, "native-gpu-systems"},
-		{[]string{"Cargo.toml"}, "native-gpu-systems"},
-		{[]string{"go.mod"}, "framework"},
-		{[]string{"pubspec.yaml", "pom.xml", "build.gradle", "build.gradle.kts"}, "app-service"},
-		{[]string{"package.json"}, "app-service"},
-		{[]string{"pyproject.toml", "requirements.txt"}, "app-service"},
-		{[]string{"Dockerfile"}, "container-image"},
+		{markers: []string{"packer/*.pkr.hcl", "mkosi.conf", "build/mkosi.conf", kernelConfigFragments}, archetype: "os-image"},
+		{markers: []string{"Chart.yaml", "kustomization.yaml", "helmfile.yaml"}, archetype: "container-image"},
+		{markers: []string{"meson.build", "core/meson.build", "libvmaf/meson.build", "CMakeLists.txt"}, archetype: "native-gpu-systems"},
+		{markers: []string{"Cargo.toml"}, archetype: "native-gpu-systems"},
+		{markers: []string{"go.mod"}, archetype: "framework"},
+		{markers: []string{"pubspec.yaml", "pom.xml", "build.gradle", "build.gradle.kts"}, archetype: "app-service"},
+		{markers: []string{"package.json"}, archetype: "app-service"},
+		{markers: []string{"pyproject.toml", "requirements.txt"}, archetype: "app-service"},
+		{markers: []string{"Dockerfile"}, archetype: "container-image"},
 	}
 }
 
@@ -126,9 +168,19 @@ func ByMarkers(repoPath string) Result {
 	return Result{Source: SourceNone}
 }
 
-// ruleMatches reports whether any of the rule's markers is present.
+// ruleMatches reports whether any of the rule's markers is present, or for a rule with groups,
+// whether markers of at least minGroups groups are.
 func ruleMatches(repoPath string, r rule) bool {
-	return util.AnyMarkerExists(repoPath, r.markers)
+	if len(r.groups) == 0 {
+		return util.AnyMarkerExists(repoPath, r.markers)
+	}
+	present := 0
+	for i := 0; i < len(r.groups) && i < maxRules; i++ {
+		if util.AnyMarkerExists(repoPath, r.groups[i]) {
+			present++
+		}
+	}
+	return present >= r.minGroups
 }
 
 // HasMarkerOf reports whether the working tree holds any marker the table maps to archetype,
