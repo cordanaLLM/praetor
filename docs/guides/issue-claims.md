@@ -29,29 +29,41 @@ refused.
 
 ## What a claim writes
 
-A claim does three things on the issue:
+A claim needs an open issue. On an issue the forge reports in any other state, such as
+`closed`, the claim is refused with `forge.ErrIssueNotOpen`, the refusal names the state, and
+nothing is written: reopening an issue stays a deliberate act on the forge
+(`TestClaim_Negative_ClosedIssueIsRefusedNamingItsState`,
+`TestClaim_Boundary_OnlyTheOpenStateIsClaimable`).
+
+On an open issue, a claim does three things:
 
 - It posts one claim comment. That comment is the only place the claim lives; every later
   stage of the session edits it in place, so an issue never collects one comment per stage.
 - It adds the `status:in-progress` label, creating the label first when the repository has
   none.
-- It assigns the authenticated account.
+- It assigns the authenticated account, and records whether the account was assigned before
+  the claim.
 
 The comment starts with a marker line, an HTML comment the forge does not render, followed by
 human text:
 
 ```text
-<!-- praetor-claim v=1 session=s1 lane=agy branch=feat/x started=2026-10-08T12:00:00Z updated=2026-10-08T12:30:00Z stage=review -->
+<!-- praetor-claim v=1 session=s1 lane=agy branch=feat/x started=2026-10-08T12:00:00Z updated=2026-10-08T12:30:00Z stage=review assignee=claim -->
 **Praetor claim** - session `s1`, lane `agy`, branch `feat/x`
 
 - Stage: review
 - Started: 2026-10-08T12:00:00Z
 - Updated: 2026-10-08T12:30:00Z
+- Assignee: added by this claim; release removes it
 - Note: round one
 ```
 
-The marker keys are `v`, `session`, `lane`, `branch`, `started`, `updated`, `stage` and, once
-released, `outcome`. Times are RFC 3339.
+The marker keys are `v`, `session`, `lane`, `branch`, `started`, `updated`, `stage`,
+`assignee` and, once released, `outcome`. Times are RFC 3339. `assignee` is `claim` when the
+claim assigned the account and `before` when the issue listed the account already; the human
+text repeats it. A resumed claim keeps the value its comment records. A takeover of a stale
+claim that the same account wrote and whose assignment it added keeps `claim`. A marker
+written before this key existed has none.
 
 ### How the marker is read
 
@@ -123,11 +135,18 @@ own pipeline, for example one worktree per branch and serialized merges. Tests:
 
 ## Release
 
-`release` removes `status:in-progress` and `status:blocked`, then rewrites the comment with
-stage `released` and the outcome, and leaves the issue open. The pull request closes
-the issue. Subsequent claims on the same issue write a new claim comment, leaving earlier
-released comments as historical records. Labels go first, so a label failure leaves the claim
-live and a retried release succeeds (`TestRelease_Negative_LabelFailureKeepsClaimReleasable`).
+`release` removes `status:in-progress` and `status:blocked`. When the claim recorded
+`assignee=claim`, it also unassigns the account that wrote the claim comment and keeps every
+other assignee. With `assignee=before`, or no `assignee` key, the assignees stay as they are.
+It then rewrites the comment with stage `released` and the outcome, and leaves the issue open.
+The pull request closes the issue, and a closed issue can still be released
+(`TestRelease_Positive_RemovesTheAssigneeTheClaimAdded`,
+`TestRelease_Boundary_KeepsAnAssigneeFromBeforeTheClaim`,
+`TestRelease_Positive_ClosedIssueStillReleasesAndUnassigns`). Subsequent claims on the same issue write a new claim comment, leaving earlier
+released comments as historical records. Labels and the assignee go first, so a failure to remove
+either leaves the claim live and a retried release succeeds
+(`TestRelease_Negative_LabelFailureKeepsClaimReleasable`,
+`TestRelease_Negative_UnassignFailureKeepsTheClaimReleasable`).
 
 ## Failure behaviour
 

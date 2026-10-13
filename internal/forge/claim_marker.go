@@ -37,13 +37,21 @@ const (
 	claimMarkerClose = " -->"
 )
 
+// Assignee cases a claim records (#1292): whether the claim assigned the account or found it
+// assigned already. Release removes the account only in the first case. A marker without the
+// key predates the record; release then leaves the assignees as they are.
+const (
+	ClaimAssigneeAdded  = "claim"
+	ClaimAssigneeBefore = "before"
+)
+
 // ClaimOutcomes are the outcomes a release may name.
 var ClaimOutcomes = []string{"landed", "abandoned", "handed-over"}
 
 var (
 	claimValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/:+@-]{0,127}$`)
 	claimStagePattern = regexp.MustCompile(`^(claimed|implementing|review|blocked|queued|landing|released|fix-round-[1-9][0-9]{0,2})$`)
-	claimKeys         = []string{"v", "session", "lane", "branch", "started", "updated", "stage", "outcome"}
+	claimKeys         = []string{"v", "session", "lane", "branch", "started", "updated", "stage", "outcome", "assignee"}
 )
 
 // Claim is the state one claim comment records.
@@ -55,6 +63,9 @@ type Claim struct {
 	Updated time.Time `json:"updated"`
 	Stage   string    `json:"stage"`
 	Outcome string    `json:"outcome,omitempty"`
+	// Assignee is ClaimAssigneeAdded when the claim assigned the account, ClaimAssigneeBefore
+	// when the account was assigned before the claim, and empty on a marker that predates it.
+	Assignee string `json:"assignee,omitempty"`
 	// Note is the free text of the latest stage update. It lives in the human part of the
 	// comment, not in the marker, so it is empty on a claim read back from a comment.
 	Note string `json:"note,omitempty"`
@@ -92,6 +103,9 @@ func validateClaim(c Claim) error {
 	if c.Outcome != "" && !ValidClaimOutcome(c.Outcome) {
 		return fmt.Errorf("claim outcome %q is not one of %s", c.Outcome, strings.Join(ClaimOutcomes, ", "))
 	}
+	if c.Assignee != "" && c.Assignee != ClaimAssigneeAdded && c.Assignee != ClaimAssigneeBefore {
+		return fmt.Errorf("claim assignee %q is not %s or %s", c.Assignee, ClaimAssigneeAdded, ClaimAssigneeBefore)
+	}
 	return nil
 }
 
@@ -107,6 +121,9 @@ func RenderClaimMarker(c Claim) (string, error) {
 	}
 	if c.Outcome != "" {
 		parts = append(parts, "outcome="+c.Outcome)
+	}
+	if c.Assignee != "" {
+		parts = append(parts, "assignee="+c.Assignee)
 	}
 	return claimMarkerOpen + strings.Join(parts, " ") + claimMarkerClose, nil
 }
@@ -171,6 +188,7 @@ func claimFromFields(fields map[string]string) (Claim, bool) {
 	claim := Claim{
 		Session: fields["session"], Lane: fields["lane"], Branch: fields["branch"],
 		Started: started, Updated: updated, Stage: fields["stage"], Outcome: fields["outcome"],
+		Assignee: fields["assignee"],
 	}
 	if validateClaim(claim) != nil {
 		return Claim{}, false

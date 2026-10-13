@@ -758,6 +758,9 @@ type ghIssueRaw struct {
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	Assignees []struct {
+		Login string `json:"login"`
+	} `json:"assignees"`
 	// PullRequest is non-nil when the item is a pull request rather than an issue.
 	PullRequest *struct {
 		URL string `json:"url"`
@@ -805,12 +808,17 @@ func issueSpecFromRaw(r ghIssueRaw) IssueSpec {
 	for _, d := range deps {
 		depStrs = append(depStrs, d.Raw)
 	}
+	var assignees []string
+	for _, a := range r.Assignees {
+		assignees = append(assignees, a.Login)
+	}
 	return IssueSpec{
 		ID:        r.Number,
 		Title:     r.Title,
 		Body:      r.Body,
 		State:     r.State,
 		Labels:    lbls,
+		Assignees: assignees,
 		DependsOn: depStrs,
 		SubIssues: r.SubIssues,
 	}
