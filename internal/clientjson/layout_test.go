@@ -87,6 +87,7 @@ func TestSetAt_Boundary_LayoutEdges(t *testing.T) {
 		want      string
 	}{
 		{"empty one-line object", "{}\n", []string{"a"}, `[1]`, "{\n  \"a\": [\n    1\n  ]\n}\n"},
+		{"one-line object, final newline", "{\"a\":{\"p\":\"s\"}}\n", []string{"b"}, `2`, "{\n  \"a\": {\n    \"p\": \"s\"\n  },\n  \"b\": 2\n}\n"},
 		{"no final newline", "{\n\t\"a\": 1\n}", []string{"b"}, `2`, "{\n\t\"a\": 1,\n\t\"b\": 2\n}"},
 		{"CRLF", "{\r\n  \"a\": 1\r\n}\r\n", []string{"b"}, `{"c":1}`, "{\r\n  \"a\": 1,\r\n  \"b\": {\r\n    \"c\": 1\r\n  }\r\n}\r\n"},
 		{"inline object", "{\n  \"o\": {\"x\": 1}\n}\n", []string{"o", "y"}, `[2]`, "{\n  \"o\": {\"x\": 1, \"y\": [2]}\n}\n"},

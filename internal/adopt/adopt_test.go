@@ -1957,7 +1957,7 @@ func TestAdopt_EditorsPreservedWithoutForce(t *testing.T) {
 	}
 	assertNoIssues(t, rep)
 	got := mustRead(t, filepath.Join(repoPath, ".vscode", "settings.json"))
-	if !strings.Contains(got, `"editor.fontSize": 42`) || !strings.Contains(got, `"standards.sentinel.headroomMB": 1024`) {
+	if members := jsonMembers(t, got); members["editor.fontSize"] != float64(42) || members["standards.sentinel.headroomMB"] != float64(1024) {
 		t.Fatalf("--force must merge the managed values and keep the adopter's keys, got:\n%s", got)
 	}
 	if !hasAction(rep, ".vscode/settings.json", actionMerge) {

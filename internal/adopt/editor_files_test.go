@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -109,7 +110,7 @@ func TestAdopt_Positive_ForceMergesEditorJSONKeepingAdopterKeys(t *testing.T) {
 	}
 	assertNoIssues(t, rep)
 	got := mustRead(t, filepath.Join(repoPath, rel))
-	if !strings.Contains(got, `"adopter.custom": "keep"`) || !strings.Contains(got, `"standards.sentinel.headroomMB": 1024`) {
+	if members := jsonMembers(t, got); members["adopter.custom"] != "keep" || members["standards.sentinel.headroomMB"] != float64(1024) {
 		t.Fatalf("--force must keep the adopter key and add the managed ones, got:\n%s", got)
 	}
 	detail := actionDetail(rep, rel, actionMerge)
@@ -181,6 +182,17 @@ func TestAdopt_Negative_ForceKeepsUnmergeableEditorJSON(t *testing.T) {
 	}
 }
 
+// jsonMembers decodes the JSON object text holds. Adoption keeps the layout of an editor file it
+// merges into (#1251), so a test asserts the members it wrote, not how they are formatted.
+func jsonMembers(t *testing.T, text string) map[string]any {
+	t.Helper()
+	var members map[string]any
+	if err := json.Unmarshal([]byte(text), &members); err != nil {
+		t.Fatalf("not one JSON object: %v\n%s", err, text)
+	}
+	return members
+}
+
 // Boundary: --force keeps a drifted lua/standards.lua, a non-JSON file nothing audits, and says
 // how to regenerate it; it merges a .sublime-project, which is JSON, keeping the adopter's
 // folder and setting; a dry run plans that merge and writes nothing.
@@ -210,11 +222,25 @@ func TestAdopt_Boundary_ForceKeepsNonJSONDriftAndMergesSublimeProject(t *testing
 	if hasWarningContaining(rep, module+": kept unchanged") && hasWarningContaining(rep, "editors generate`, to regenerate") {
 		t.Errorf("drifted %s warning points at the profile-blind editors generate: %v", module, rep.Warnings)
 	}
+	// The merge keeps the adopter's layout (#1251), so the result is compared as JSON: the
+	// adopter's folder and setting stay, the managed ones are added.
 	got := mustRead(t, filepath.Join(repoPath, project))
-	for _, want := range []string{`"path": "src"`, `"font_size": 12`, `"path": "."`, `"tab_size": 4`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("merged %s lacks %s:\n%s", project, want, got)
-		}
+	var merged struct {
+		Folders []struct {
+			Path string `json:"path"`
+		} `json:"folders"`
+		Settings map[string]any `json:"settings"`
+	}
+	if err := json.Unmarshal([]byte(got), &merged); err != nil {
+		t.Fatalf("merged %s is not JSON: %v\n%s", project, err, got)
+	}
+	var paths []string
+	for _, folder := range merged.Folders {
+		paths = append(paths, folder.Path)
+	}
+	if !slices.Contains(paths, "src") || !slices.Contains(paths, ".") ||
+		merged.Settings["font_size"] != float64(12) || merged.Settings["tab_size"] != float64(4) {
+		t.Errorf("merged %s lacks the adopter's src folder and font_size 12 or the managed . folder and tab_size 4:\n%s", project, got)
 	}
 	if !hasAction(rep, project, actionMerge) {
 		t.Errorf("%s merge not reported, warnings %v", project, rep.Warnings)

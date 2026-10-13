@@ -172,7 +172,7 @@ func checkEdit(raw []byte, path []string, value jsontext.Value, removable bool) 
 // finishEdit returns out, the edited raw, expanded when raw was written on one line, and refuses
 // it unless it loads as one JSON value without a duplicate member name.
 func finishEdit(raw, out []byte) ([]byte, error) {
-	if !bytes.Contains(raw, []byte("\n")) {
+	if writtenOnOneLine(raw) {
 		var err error
 		if out, err = expandOneLine(out); err != nil {
 			return nil, err
@@ -182,6 +182,14 @@ func finishEdit(raw, out []byte) ([]byte, error) {
 		return nil, errors.New("the edit did not leave one valid JSON object")
 	}
 	return out, nil
+}
+
+// writtenOnOneLine reports whether the root object of raw stands on one line. A final newline,
+// or other whitespace around the object, does not count: {"a": 1} followed by a newline is a
+// document on one line (#1251 train 2).
+func writtenOnOneLine(raw []byte) bool {
+	start, end := bytes.IndexByte(raw, '{'), bytes.LastIndexByte(raw, '}')
+	return start >= 0 && end > start && !bytes.Contains(raw[start:end], []byte("\n"))
 }
 
 // objectSpan returns the byte span of the object path names in raw, the root object for an
