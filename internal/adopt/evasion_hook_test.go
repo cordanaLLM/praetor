@@ -459,11 +459,10 @@ func benignBoundCommand() string { return boundLines("x") }
 // the line bound: a read-only command with a full line of words, separators back to back, a
 // separator before blanks, a Git name before blanks.
 //
-// One shape is left to test_guard_answers_the_slowest_admitted_commands_inside_the_bound in
-// .config/lefthook/scripts/test_hooks.py: Git global options repeated to the line bound (` -git`).
-// The commit rule restarts at every git word of the chain and reads the options after it, so
-// it costs quadratic time in the line, about 300 passes, and no anchor keeps that rule's
-// language.
+// Git global options repeated to the line bound (` -git`, ` --a=git`, ` -C /git`) put a git
+// word inside every option of a chain. The commit rule restarted at each one and read the rest
+// of the chain again, quadratic in the line, about 300 passes; no anchor keeps that rule's
+// language, so the interceptor's search walks each option run once instead (#1283).
 func scanBoundShapes() []scanShape {
 	width := agenthook.MaxScanLineChars
 	blanks := strings.Repeat(" \t", width)
@@ -476,6 +475,9 @@ func scanBoundShapes() []scanShape {
 		{"command over the bound", full + "x", 2},
 		{"find lines", boundLines("find .git/hooks "), 0},
 		{"in-place edit lines", boundLines("sed -i "), 0},
+		{"git option chains", boundLines(" -git"), 0},
+		{"git option values naming git", boundLines(" --a=git"), 0},
+		{"git directory options naming git", boundLines(" -C /git"), 0},
 		{"am before odd dollar runs", boundLines(`git am "$$$$$$$$$${`), 0},
 		{"am before even dollar run", boundLines(`git am "$$$${`), 0},
 		{"skip variable dollar runs", boundLines(`SKIP="$$$$$${`), 0},
@@ -625,5 +627,27 @@ func TestEmittedInterceptorRefusesInTheEngineWordsUnderTheWindowsNewline(t *test
 		if stderr != tc.want || (code == 0) != (tc.want == "") {
 			t.Errorf("%s: exit %d\ngot  %q\nwant %q", tc.name, code, stderr, tc.want)
 		}
+	}
+}
+
+// TestEmittedInterceptorSearchesLikeTheEngineGuard pins #1283: the interceptor adoption renders
+// carries the engine guard's option-run search byte for byte and judges every rule through it,
+// so an adopter's interceptor walks a git option run once, as praetor's own guard does.
+func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(evasionHookFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard := string(data)
+	start, end := strings.Index(guard, "# The git rule with an option run"), strings.Index(guard, "def audit_command")
+	if start < 0 || end <= start {
+		t.Fatalf("the engine guard has no option-run search before audit_command")
+	}
+	rendered := buildBlockEvasionPY()
+	if !strings.Contains(rendered, guard[start:end]) {
+		t.Fatal("the rendered interceptor does not carry the engine guard's option-run search byte for byte")
+	}
+	if !strings.Contains(rendered, "        if search(pattern, text):\n") || strings.Contains(rendered, "        if re.search(pattern, text):\n") {
+		t.Fatal("the rendered interceptor does not judge its rules through search")
 	}
 }
