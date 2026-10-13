@@ -172,6 +172,29 @@ func parseShellCommand(words []string) shellCommand {
 	return cmd
 }
 
+// SoleCommand reads a shell script that is one plain command, with the reader the build-warning
+// and declared-linter audits use, and returns the program's base name (lower-cased, without
+// .exe) and its arguments with their quotes removed. ok is false for a script of more than one
+// command, a command sent to the background (&), a command behind a reserved word, a wrapper or
+// a variable assignment, and a script with no program: such a script does other than run its
+// program to the end, so a caller must not read it as the program alone (#1264).
+func SoleCommand(script string) (program string, args []string, ok bool) {
+	fields, err := scriptFields(script)
+	if err != nil || slices.Contains(fields, "&") {
+		return "", nil, false
+	}
+	commands := scriptCommands(fields)
+	if len(commands) != 1 {
+		return "", nil, false
+	}
+	first := commands[0][0]
+	cmd := parseShellCommand(commands[0])
+	if cmd.program == "" || cmd.word != first || len(cmd.assigns) > 0 || len(cmd.outer) > 0 {
+		return "", nil, false
+	}
+	return cmd.program, cmd.args, true
+}
+
 // prefix reads words[i] when it comes before the program: a reserved word, a wrapper with its
 // options, or an assignment. It returns the index after it, and false at the program. The "("
 // that opens a subshell is cut from the word it starts, unless it opens a $( ) substitution.

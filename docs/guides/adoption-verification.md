@@ -1849,6 +1849,14 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   decisions. The `typescript-node` CI scaffold reads `packageManager` and the
   test script the same way, and installs with pnpm, Yarn or Bun where the
   repository uses one ([archetype authoring](archetype-authoring.md)).
+  A check or test script that only runs the other one, such as
+  `"check": "npm test"`, is left out of the test recipe so the suite runs
+  once, and the adoption report says so. Only exact alias forms count
+  (`npm test`, `npm t`, `npm run <script>`, `pnpm test`, `yarn run <script>`
+  and the like, read with the engine's shell reader `forge.SoleCommand`);
+  a script with further arguments or commands, two scripts that call each
+  other, and the build script all stay
+  (`internal/adopt/verification_scripts.go`, #1264).
 - C# project files: locked restore and Release build with warnings as errors;
   explicit unconditional test projects receive `dotnet test`. Conditional,
   contradictory, or disabled test markers cannot establish a test gate.
