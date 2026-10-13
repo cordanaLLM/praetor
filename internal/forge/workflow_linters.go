@@ -57,7 +57,7 @@ func MeasureWorkflowLinters(ctx context.Context, repoPath string, candidates []s
 	present := make(map[string]bool, len(candidates))
 	golangciRuns := false
 
-	if err := scanWorkflowFiles(ctx, files, candidates, makeTargets, present, &golangciRuns); err != nil {
+	if err := scanWorkflowFiles(ctx, repoPath, files, candidates, makeTargets, present, &golangciRuns); err != nil {
 		return nil, err
 	}
 
@@ -68,7 +68,8 @@ func MeasureWorkflowLinters(ctx context.Context, repoPath string, candidates []s
 	return present, nil
 }
 
-func scanWorkflowFiles(ctx context.Context, files []workflowFile, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) error {
+func scanWorkflowFiles(ctx context.Context, repoPath string, files []workflowFile, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) error {
+	pkgCache := newPackageScriptsCache()
 	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -77,7 +78,7 @@ func scanWorkflowFiles(ctx context.Context, files []workflowFile, candidates []s
 		if err != nil {
 			return fmt.Errorf("workflow %s: %w", files[i].Name, err)
 		}
-		scanWorkflowSteps(ctx, spec, candidates, makeTargets, present, golangciRuns)
+		scanWorkflowSteps(ctx, repoPath, spec, candidates, makeTargets, pkgCache, present, golangciRuns)
 	}
 	return nil
 }
@@ -91,42 +92,43 @@ func applyGolangciPresent(candidates []string, golangciEnabled map[string]bool, 
 	}
 }
 
-func scanSingleStep(ctx context.Context, step ghworkflow.Step, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) {
+func scanSingleStep(ctx context.Context, repoPath string, step ghworkflow.Step, candidates []string, makeTargets map[string]*makeTargetDef, pkgCache *packageScriptsCache, present map[string]bool, golangciRuns *bool) {
 	if ghworkflow.NeverRuns(step.If) || advisoryJob(step.ContinueOnError) {
 		return
 	}
-	if !*golangciRuns && stepRunsTool(ctx, step, "golangci-lint", makeTargets) {
+	pkgScripts := pkgCache.get(ctx, repoPath, step.WorkingDirectory)
+	if !*golangciRuns && stepRunsTool(ctx, step, "golangci-lint", makeTargets, pkgScripts) {
 		*golangciRuns = true
 	}
 	for c := 0; c < len(candidates) && c < maxLinterCandidates; c++ {
 		tool := candidates[c]
-		if !present[tool] && stepRunsTool(ctx, step, tool, makeTargets) {
+		if !present[tool] && stepRunsTool(ctx, step, tool, makeTargets, pkgScripts) {
 			present[tool] = true
 		}
 	}
 }
 
-func scanJobSteps(ctx context.Context, job ghworkflow.Job, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) {
+func scanJobSteps(ctx context.Context, repoPath string, job ghworkflow.Job, candidates []string, makeTargets map[string]*makeTargetDef, pkgCache *packageScriptsCache, present map[string]bool, golangciRuns *bool) {
 	if ghworkflow.NeverRuns(job.If) || advisoryJob(job.ContinueOnError) {
 		return
 	}
 	for s := 0; s < len(job.Steps) && s < ghworkflow.MaxStepsPerJob; s++ {
-		scanSingleStep(ctx, job.Steps[s], candidates, makeTargets, present, golangciRuns)
+		scanSingleStep(ctx, repoPath, job.Steps[s], candidates, makeTargets, pkgCache, present, golangciRuns)
 	}
 }
 
-func scanWorkflowSteps(ctx context.Context, spec ghworkflow.Spec, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) {
+func scanWorkflowSteps(ctx context.Context, repoPath string, spec ghworkflow.Spec, candidates []string, makeTargets map[string]*makeTargetDef, pkgCache *packageScriptsCache, present map[string]bool, golangciRuns *bool) {
 	for _, job := range spec.Jobs {
-		scanJobSteps(ctx, job, candidates, makeTargets, present, golangciRuns)
+		scanJobSteps(ctx, repoPath, job, candidates, makeTargets, pkgCache, present, golangciRuns)
 	}
 }
 
 // stepRunsTool reports whether step's run: or uses: names the tool or runs it via a runner form or makefile target.
-func stepRunsTool(ctx context.Context, step ghworkflow.Step, tool string, makeTargets map[string]*makeTargetDef) bool {
+func stepRunsTool(ctx context.Context, step ghworkflow.Step, tool string, makeTargets map[string]*makeTargetDef, pkgScripts map[string]string) bool {
 	if step.Uses != "" && stepActionRunsTool(step.Uses, tool) {
 		return true
 	}
-	if step.Run != "" && scriptRunsTool(ctx, step.Run, tool, makeTargets) {
+	if step.Run != "" && scriptRunsTool(ctx, step.Run, tool, makeTargets, pkgScripts) {
 		return true
 	}
 	return false
@@ -159,7 +161,7 @@ func matchesDashWord(s, t string) bool {
 	return strings.HasPrefix(s, t+"-") || strings.HasSuffix(s, "-"+t) || strings.Contains(s, "-"+t+"-")
 }
 
-func scriptRunsTool(ctx context.Context, run, tool string, makeTargets map[string]*makeTargetDef) bool {
+func scriptRunsTool(ctx context.Context, run, tool string, makeTargets map[string]*makeTargetDef, pkgScripts map[string]string) bool {
 	fields, err := scriptFields(run)
 	if err != nil {
 		return false
@@ -168,31 +170,31 @@ func scriptRunsTool(ctx context.Context, run, tool string, makeTargets map[strin
 	toolLower := strings.ToLower(tool)
 	for i := 0; i < len(commands) && i < maxRunScriptFields; i++ {
 		cmd := parseShellCommand(commands[i])
-		if commandRunsTool(ctx, cmd, toolLower, makeTargets) {
+		if commandRunsTool(ctx, cmd, toolLower, makeTargets, pkgScripts) {
 			return true
 		}
 	}
 	return false
 }
 
-func directProgramRunsTool(cmd shellCommand, toolLower string) bool {
+func directProgramRunsTool(cmd shellCommand, toolLower string, pkgScripts map[string]string) bool {
 	if cmd.program == toolLower {
 		return true
 	}
-	if checkRunnerTool(cmd, toolLower) {
+	if checkRunnerTool(cmd, toolLower, pkgScripts) {
 		return true
 	}
 	return checkScriptTool(cmd, toolLower)
 }
 
-func directCommandRunsTool(cmd shellCommand, toolLower string) bool {
+func directCommandRunsTool(cmd shellCommand, toolLower string, pkgScripts map[string]string) bool {
 	curr := cmd
 	for step := 0; step < 4; step++ {
-		if directProgramRunsTool(curr, toolLower) {
+		if directProgramRunsTool(curr, toolLower, pkgScripts) {
 			return true
 		}
 		if curr.program == "find" {
-			return findExecRunsTool(curr.args, toolLower)
+			return findExecRunsTool(curr.args, toolLower, pkgScripts)
 		}
 		words, ok := unwrapWrapper(curr)
 		if !ok || len(words) == 0 {
@@ -203,12 +205,15 @@ func directCommandRunsTool(cmd shellCommand, toolLower string) bool {
 	return false
 }
 
-func commandRunsTool(ctx context.Context, cmd shellCommand, toolLower string, makeTargets map[string]*makeTargetDef) bool {
-	if directCommandRunsTool(cmd, toolLower) {
+func commandRunsTool(ctx context.Context, cmd shellCommand, toolLower string, makeTargets map[string]*makeTargetDef, pkgScripts map[string]string) bool {
+	if directCommandRunsTool(cmd, toolLower, pkgScripts) {
 		return true
 	}
 	if cmd.program == "make" && makeTargets != nil {
 		return makeRunsTool(ctx, cmd, toolLower, makeTargets)
+	}
+	if len(pkgScripts) > 0 && packageScriptRunsTool(ctx, cmd, toolLower, pkgScripts, makeTargets) {
+		return true
 	}
 	return false
 }
@@ -239,7 +244,7 @@ func checkCargoRunner(args []string, toolLower string) bool {
 	return strings.HasPrefix(args[0], "+") && len(args) > 1 && args[1] == "clippy"
 }
 
-func checkRunnerTool(cmd shellCommand, toolLower string) bool {
+func checkRunnerTool(cmd shellCommand, toolLower string, pkgScripts map[string]string) bool {
 	switch cmd.program {
 	case "go":
 		return checkGoRunner(cmd.args, toolLower)
@@ -251,6 +256,12 @@ func checkRunnerTool(cmd shellCommand, toolLower string) bool {
 		return checkPipxRunner(cmd.args, toolLower)
 	case "pnpm":
 		return checkPnpmRunner(cmd.args, toolLower)
+	case "npm":
+		return checkNpmRunner(cmd.args, toolLower)
+	case "yarn":
+		return checkYarnRunner(cmd.args, toolLower, pkgScripts)
+	case "bun":
+		return checkBunRunner(cmd.args, toolLower)
 	case "docker", "podman":
 		return checkContainerRun(cmd.args, toolLower)
 	default:
@@ -486,6 +497,9 @@ func isPipxValOption(opt string) bool {
 func checkPnpmRunner(args []string, toolLower string) bool {
 	rest := argsAfterWord(args, "dlx")
 	if len(rest) == 0 {
+		rest = argsAfterWord(args, "exec")
+	}
+	if len(rest) == 0 {
 		return false
 	}
 	t := firstNonFlagArg(rest)
@@ -541,9 +555,9 @@ func isDockerValOption(opt string) bool {
 	return false
 }
 
-func execSliceRunsTool(execArgs []string, toolLower string) bool {
+func execSliceRunsTool(execArgs []string, toolLower string, pkgScripts map[string]string) bool {
 	subCmd := parseShellCommand(execArgs)
-	if directProgramRunsTool(subCmd, toolLower) {
+	if directProgramRunsTool(subCmd, toolLower, pkgScripts) {
 		return true
 	}
 	unwrap, ok := unwrapWrapper(subCmd)
@@ -551,17 +565,17 @@ func execSliceRunsTool(execArgs []string, toolLower string) bool {
 		return false
 	}
 	innerCmd := parseShellCommand(unwrap)
-	return directProgramRunsTool(innerCmd, toolLower)
+	return directProgramRunsTool(innerCmd, toolLower, pkgScripts)
 }
 
 func isFindExecArg(arg string) bool {
 	return arg == "-exec" || arg == "-execdir"
 }
 
-func findExecRunsTool(args []string, toolLower string) bool {
+func findExecRunsTool(args []string, toolLower string, pkgScripts map[string]string) bool {
 	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
 		if isFindExecArg(args[i]) && i+1 < len(args) {
-			if execSliceRunsTool(args[i+1:], toolLower) {
+			if execSliceRunsTool(args[i+1:], toolLower, pkgScripts) {
 				return true
 			}
 		}
@@ -1026,7 +1040,7 @@ func recipeRunsTool(recipe, toolLower string) bool {
 	cmds := scriptCommands(fields)
 	for _, c := range cmds {
 		shCmd := parseShellCommand(c)
-		if directCommandRunsTool(shCmd, toolLower) {
+		if directCommandRunsTool(shCmd, toolLower, nil) {
 			return true
 		}
 	}

@@ -70,7 +70,7 @@ func TestCommandRunsTool_ScriptTools(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := cmdFromLine(t, tc.line)
-			got := commandRunsTool(ctx, cmd, tc.tool, nil)
+			got := commandRunsTool(ctx, cmd, tc.tool, nil, nil)
 			if got != tc.wantMatch {
 				t.Fatalf("commandRunsTool(%q, %q) = %v; want %v", tc.line, tc.tool, got, tc.wantMatch)
 			}
@@ -124,7 +124,7 @@ func TestCommandRunsTool_GoRunners(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := cmdFromLine(t, tc.line)
-			got := commandRunsTool(ctx, cmd, tc.tool, nil)
+			got := commandRunsTool(ctx, cmd, tc.tool, nil, nil)
 			if got != tc.wantMatch {
 				t.Fatalf("commandRunsTool(%q, %q) = %v; want %v", tc.line, tc.tool, got, tc.wantMatch)
 			}
@@ -225,7 +225,7 @@ func TestCommandRunsTool_OptionNamedAfterTool(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := cmdFromLine(t, tc.line)
-			got := commandRunsTool(ctx, cmd, tc.tool, nil)
+			got := commandRunsTool(ctx, cmd, tc.tool, nil, nil)
 			if got != tc.wantMatch {
 				t.Fatalf("commandRunsTool(%q, %q) = %v; want %v", tc.line, tc.tool, got, tc.wantMatch)
 			}
@@ -301,7 +301,7 @@ func TestCommandRunsTool_RunnerSpecs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := cmdFromLine(t, tc.line)
-			got := commandRunsTool(ctx, cmd, tc.tool, nil)
+			got := commandRunsTool(ctx, cmd, tc.tool, nil, nil)
 			if got != tc.wantMatch {
 				t.Fatalf("commandRunsTool(%q, %q) = %v; want %v", tc.line, tc.tool, got, tc.wantMatch)
 			}
@@ -383,7 +383,7 @@ func TestCommandRunsTool_WrapperPrograms(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := cmdFromLine(t, tc.line)
-			got := commandRunsTool(ctx, cmd, tc.tool, nil)
+			got := commandRunsTool(ctx, cmd, tc.tool, nil, nil)
 			if got != tc.wantMatch {
 				t.Fatalf("commandRunsTool(%q, %q) = %v; want %v", tc.line, tc.tool, got, tc.wantMatch)
 			}
