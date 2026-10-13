@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import random
 import re
 import shutil
 import signal
@@ -1730,10 +1731,14 @@ class ScopeAndGuard(unittest.TestCase):
                 result, _ = self.guard_command(command)
                 self.assertEqual(result.returncode == 0, allowed, result.stderr)
 
-    def guard_scan_bounds(self):
+    def guard_module(self):
         spec = importlib.util.spec_from_file_location("tested_block_evasion", GUARD)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        return module
+
+    def guard_scan_bounds(self):
+        module = self.guard_module()
         return module.MAX_SCAN_CHARS, module.MAX_SCAN_LINE_CHARS
 
     def test_guard_refuses_commands_over_the_scan_bound_without_scanning(self):
@@ -1762,12 +1767,77 @@ class ScopeAndGuard(unittest.TestCase):
     def test_guard_answers_the_slowest_admitted_commands_inside_the_bound(self):
         """The costliest shapes the bound admits, every line at the limit, still pass in time."""
         characters, per_line = self.guard_scan_bounds()
-        for unit in ("find .git/hooks ", "sed -i ", " -git", "git -C\r-C\r"):
+        for unit in ("find .git/hooks ", "sed -i ", " -git", " --a=git", " -C /git", "git -C\r-C\r"):
             with self.subTest(unit=unit):
                 line = (unit * per_line)[:per_line - 1] + "\n"
                 result, elapsed = self.guard_command(line * (characters // per_line))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertLess(elapsed, GUARD_TIMING_BOUND)
+
+    def test_guard_search_answers_like_re_search(self):
+        """search() answers re.search for every rule, the option-run rule walked once (#1283)."""
+        guard = self.guard_module()
+        tokens = ["git", " ", "\t", "\n", "\r", "-", "-C", "-c", "-Cx", "-n", "-an", "-mn",
+                  "-3n", "--x", "--no-pager", "=", "/", "'", '"', "x", "commit", "am", " -git",
+                  "dir/git", "'a git b'"]
+        options = [" -C dir", " -C 'a git b'", ' -C "x"', " -c a=b", " --no-pager", " -git",
+                   " --a=git", " -C /git", " -Cx", "\t-p", " -C", " -c", " -C 'x git commit -n'",
+                   ' -C "d git am -3n"']
+        tails = [" -n", " -an", " -mn", " -3n", " -m x", " --x", " -v", " -sn", " x"]
+        rng = random.Random(1283)
+        option_run_rule = guard.BLOCKED_PATTERNS[1]
+        matched = 0
+
+        def shaped():
+            # A git call with an option chain before commit or am, then flags: the rule's own
+            # shape, with a random token dropped in at any place.
+            parts = [rng.choice(["", "x ", "cd d && ", "-"]), "git"]
+            parts += [rng.choice(options) for _ in range(rng.randint(0, 8))]
+            parts += [rng.choice([" ", "\n", "\t", " \r"]), rng.choice(["commit", "am", "status"])]
+            parts += [rng.choice(tails) for _ in range(rng.randint(0, 4))]
+            parts.insert(rng.randint(0, len(parts)), rng.choice(tokens))
+            return "".join(parts)
+
+        # A git inside a quoted argument starts in the middle of a run, not at a boundary of it:
+        # only that git matches here, so search must not skip it.
+        edges = {"git -C 'x git commit -n'": True, 'git -C "d git am -3n" status': True,
+                 "git -git commit -n": True, "git --a=git commit -an": True,
+                 "git -C dir/git commit -n": True, "git -C 'x git status' commit -m n": False,
+                 "git -git -git": False, "x-git commit -n": True}
+        for text, expected in edges.items():
+            self.assertEqual(re.search(option_run_rule, text) is not None, expected, text)
+            self.assertEqual(guard.search(option_run_rule, text), expected, text)
+        for case in range(20000):
+            if case % 2:
+                text = shaped()
+            else:
+                text = "".join(rng.choice(tokens) for _ in range(rng.randint(1, 30)))
+            patterns = guard.BLOCKED_PATTERNS if case < 2000 else [option_run_rule]
+            for pattern in patterns:
+                expected = re.search(pattern, text) is not None
+                self.assertEqual(guard.search(pattern, text), expected, (pattern, text))
+                matched += expected and pattern == option_run_rule
+        self.assertGreater(matched, 2000, "the comparison must hold matching texts too")
+
+    def test_guard_option_run_costs_about_what_a_benign_command_costs(self):
+        """A git word in every option of a chain cost 30 benign commands before #1283."""
+        guard = self.guard_module()
+        characters, per_line = guard.MAX_SCAN_CHARS, guard.MAX_SCAN_LINE_CHARS
+
+        def cost(unit):
+            line = (unit * per_line)[:per_line - 1] + "\n"
+            command = line * (characters // per_line)
+            readings = []
+            for _ in range(3):
+                started = time.perf_counter()
+                self.assertTrue(guard.audit_command(command))
+                readings.append(time.perf_counter() - started)
+            return min(readings)
+
+        benign = cost("x")
+        for unit in (" -git", " --a=git", " -C /git"):
+            with self.subTest(unit=unit):
+                self.assertLess(cost(unit), 10 * benign)
 
     def test_guard_preserves_argv_and_environment_entry_points(self):
         for args in (("git", "status"), ("--environment",)):
