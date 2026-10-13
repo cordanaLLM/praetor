@@ -318,9 +318,13 @@ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
 // directory as a prefix (Go modules reference, "Mapping versions to commits"), and a
 // pre-release or build suffix does not publish a release, so neither matches.
 var (
-	releaseTagPattern    = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
-	breakingSubjectRegex = regexp.MustCompile(`^(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(?:\([^()\n]+\))?!: \S.*$`)
-	migrationRegex       = regexp.MustCompile(`(?i)(?:\r?\n|^)Migration:\s*([\s\S]+)`)
+	releaseTagPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+	// The breaking marker and the Migration footer are read with the patterns of the engine's commit
+	// policy (internal/forge/pr.go), copied because this file runs stdlib-only in adopted repositories;
+	// TestGatePatternsMatchCommitPolicy keeps the copies equal (#1317).
+	breakingHeaderRegex = regexp.MustCompile(`(?i)^[a-z]+(\([^\)]+\))?!:\s*.+`)
+	breakingFooterRegex = regexp.MustCompile(`(?m)^BREAKING[ -]CHANGE:`)
+	migrationRegex      = regexp.MustCompile(`(?i)(?:\r?\n|^)Migration:\s*([\s\S]+)`)
 )
 
 // The canary module verifyChecker compares: its second commit removes the exported function
@@ -1311,8 +1315,8 @@ func findBreakingCommit(ctx context.Context, repo repository) (string, error) {
 	return "", nil
 }
 
-// isBreakingCommit reports whether message carries a Conventional Commits subject with a
-// breaking marker (!) and a non-empty Migration: footer.
+// isBreakingCommit reports whether message is a breaking commit as the engine's commit policy reads
+// it (a ! subject or a BREAKING CHANGE footer) with a non-empty Migration: footer.
 func isBreakingCommit(message string) bool {
 	trimmed := strings.TrimSpace(message)
 	if trimmed == "" {
@@ -1320,7 +1324,7 @@ func isBreakingCommit(message string) bool {
 	}
 	header, _, _ := strings.Cut(trimmed, "\n")
 	header = strings.TrimSuffix(header, "\r")
-	if !breakingSubjectRegex.MatchString(header) {
+	if !breakingHeaderRegex.MatchString(header) && !breakingFooterRegex.MatchString(trimmed) {
 		return false
 	}
 	m := migrationRegex.FindStringSubmatch(trimmed)
