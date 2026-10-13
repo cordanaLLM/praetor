@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
-	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -159,11 +158,11 @@ func (s *adoptSession) readExistingLefthook() ([]byte, bool, error) {
 }
 
 // lefthookShape returns what this run's lefthook.yml carries jobs for: the languages
-// (lefthookLanguages) and, when the root declares its licensing the REUSE way, the reuse-lint
-// job (supplychain.ReuseDeclared). A root it cannot inspect is an error, never a repository
-// without REUSE.
+// (lefthookLanguages) and, when this run emits the REUSE gate (reuseGateApplies: the root
+// declares its licensing the REUSE way and adoption.decline does not name reuse-gate), the
+// reuse-lint job. A root it cannot inspect is an error, never a repository without REUSE.
 func (s *adoptSession) lefthookShape(ctx context.Context) (lefthookShape, error) {
-	reuse, err := supplychain.ReuseDeclared(ctx, s.repoPath)
+	reuse, err := s.reuseGateApplies(ctx)
 	if err != nil {
 		return lefthookShape{}, fmt.Errorf("decide the reuse-lint job of %s: %w", lefthookFile, err)
 	}

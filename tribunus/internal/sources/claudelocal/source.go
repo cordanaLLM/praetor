@@ -76,14 +76,29 @@ func DefaultProjectsDir() (string, error) {
 	return filepath.Join(home, ".claude", "projects"), nil
 }
 
+// Options are the ceiling store settings of one fetch.
+type Options struct {
+	// StateDir holds the ceiling store; empty keeps no store, so a ceiling
+	// lives only as long as its rejection stays in the scanned logs.
+	StateDir string
+	// Account names the store file; empty is DefaultAccount.
+	Account string
+	// MaxCeilingAge is how old a ceiling's rejection may be; zero is DefaultMaxCeilingAge.
+	MaxCeilingAge time.Duration
+}
+
 // Fetch reads every session file under projectsDir written within the
 // weekly window and returns one record per usage window: five_hour and
 // seven_day always, plus every other rateLimitType a rejection names. A
-// missing directory or one without session files is a skip.
-func Fetch(ctx context.Context, projectsDir string, now time.Time) Result {
-	logs := newLogScan(now)
-	found, err := sessionlog.WalkJSONL(ctx, projectsDir, maxEntriesWalked, func(path string, info fs.FileInfo) error {
-		return logs.readFile(ctx, path, info)
+// missing directory or one without session files is a skip; a corrupt
+// ceiling store is a failure.
+func Fetch(ctx context.Context, projectsDir string, now time.Time, opts Options) Result {
+	logs, path, err := openLogScan(now, opts)
+	if err != nil {
+		return Result{Status: catalog.StatusFail, Detail: "claude-local: " + err.Error()}
+	}
+	found, err := sessionlog.WalkJSONL(ctx, projectsDir, maxEntriesWalked, func(file string, info fs.FileInfo) error {
+		return logs.readFile(ctx, projectsDir, file, info)
 	})
 	if err != nil {
 		return Result{Status: catalog.StatusFail, Detail: "claude-local: " + err.Error()}
@@ -92,13 +107,52 @@ func Fetch(ctx context.Context, projectsDir string, now time.Time) Result {
 		return Result{Status: catalog.StatusSkip, Detail: fmt.Sprintf("no *.jsonl session files under %s", projectsDir)}
 	}
 	records := logs.records()
-	return Result{Records: records, Status: catalog.StatusOK, Count: len(records), Detail: logs.detail()}
+	detail := logs.detail()
+	if logs.storeChanged {
+		if err := saveStore(path, logs.store); err != nil {
+			detail += "; ceiling store not written: " + err.Error()
+		}
+	}
+	return Result{Records: records, Status: catalog.StatusOK, Count: len(records), Detail: detail}
+}
+
+// openLogScan prepares a scan and loads the account's ceiling store, if any.
+func openLogScan(now time.Time, opts Options) (*logScan, string, error) {
+	logs := newLogScan(now)
+	if opts.MaxCeilingAge < 0 {
+		return nil, "", fmt.Errorf("maximum ceiling age %s is negative", opts.MaxCeilingAge)
+	}
+	if opts.MaxCeilingAge > 0 {
+		logs.maxAge = opts.MaxCeilingAge
+	}
+	if opts.StateDir == "" {
+		return logs, "", nil
+	}
+	account := opts.Account
+	if account == "" {
+		account = DefaultAccount
+	}
+	if !accountName.MatchString(account) {
+		return nil, "", fmt.Errorf("account %q must match %s", account, accountName)
+	}
+	path := storePath(opts.StateDir, account)
+	store, err := loadStore(path, account)
+	if err != nil {
+		return nil, "", err
+	}
+	logs.store = store
+	return logs, path, nil
 }
 
 // readFile scans one session file, unless it was last written before the weekly window.
-func (s *logScan) readFile(ctx context.Context, path string, info fs.FileInfo) error {
+func (s *logScan) readFile(ctx context.Context, root, path string, info fs.FileInfo) error {
 	if info.ModTime().Before(s.now.Add(-weeklyWindow)) {
 		return nil
+	}
+	if rel, err := filepath.Rel(root, path); err == nil {
+		s.currentFile = filepath.ToSlash(rel)
+	} else {
+		s.currentFile = filepath.Base(path)
 	}
 	s.files++
 	if s.files > maxFilesRead {

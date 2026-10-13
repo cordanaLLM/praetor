@@ -73,13 +73,23 @@ func newGateFixture(t *testing.T) *gateFixture {
 
 func runFixtureGit(t *testing.T, dir string, env []string, args ...string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	return runFixtureGitWithin(fixtureGitBound, dir, env, args...)
+}
+
+// fixtureGitBound bounds one fixture git command (HISS-02).
+const fixtureGitBound = 20 * time.Second
+
+// runFixtureGitWithin is runFixtureGit under bound. A command the bound cut says so
+// (testsupport.FixtureCommandError): on Windows the kill alone reads as a silent exit status 1.
+func runFixtureGitWithin(bound time.Duration, dir string, env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = env
+	start := time.Now()
 	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return string(out), testsupport.FixtureCommandError(ctx, bound, time.Since(start), err)
 }
 
 // pin writes a .standards.yaml carrying the given public key.

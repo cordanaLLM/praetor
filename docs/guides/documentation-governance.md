@@ -549,10 +549,13 @@ and the other private adoption artifacts. Audit uses `git check-ignore` to prove
 the rules are effective, so a later negation or a visually similar pattern with
 leading spaces cannot pass.
 
-The block ignores `.workingdir/` and, by default, the legacy `.workingdir2/`.
+The block ignores `.workingdir/` and, by default, the legacy `.workingdir2/`, at every
+depth: its rules carry no leading slash, so a nested tool's `tooling/.workingdir/` stays
+out of Git and out of every gate that lists untracked files (#1263). Blocks up to v2
+anchored both rules at the root; adoption replaces such a block with the current one.
 Adoption writes the full block into a `.gitignore` that holds none yet, so a
 `.workingdir2/` created after adoption is already ignored. A repository that
-retired `.workingdir2/` deletes the `/.workingdir2/` line from the block. While
+retired `.workingdir2/` deletes the `.workingdir2/` line from the block. While
 no entry of that name is on disk, adoption keeps the line out, audit no longer
 demands it, and Git keeps the path visible
 (`TestLegacyScratch_Positive_RetiredRootStaysVisible`,
@@ -847,7 +850,7 @@ actionlint configuration alone and creates none. Declining
 `git-ignore` waives only the managed `.gitignore` tail block; audit still runs
 `git check-ignore` and fails until the operator's own rules exclude
 `.workingdir/`, and `.workingdir2/` while that directory is on disk or the rules
-carry the exact `/.workingdir2/` line. A `.gitignore` that audit cannot read as
+carry the exact `.workingdir2/` or `/.workingdir2/` line. A `.gitignore` that audit cannot read as
 text (over 1 MiB, not UTF-8) still applies in Git, so audit then demands both
 roots (`TestAuditDocumentationGateDeclinedUnreadableIgnoreProbesEveryRoot`). A
 decline list with an unknown or mandatory name fails audit as it fails

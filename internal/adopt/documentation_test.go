@@ -30,7 +30,7 @@ func TestAdoptionDocumentationGatePositive(t *testing.T) {
 		t.Fatal("verify-all lacks the managed documentation gate")
 	}
 	ignore := mustRead(t, filepath.Join(root, gitIgnoreFile))
-	for _, rule := range []string{"/.workingdir/", "/.workingdir2/"} {
+	for _, rule := range []string{workingDirIgnore, legacyScratchIgnore} {
 		if countIgnoreRule(ignore, rule) != 1 {
 			t.Fatalf("privacy rule %q is absent or duplicated", rule)
 		}

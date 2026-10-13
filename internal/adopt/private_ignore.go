@@ -111,8 +111,8 @@ func PrivateIgnoreNotice(outcome PrivateIgnoreOutcome, dir string) (line string,
 	case PrivateIgnoreWritten:
 		return fmt.Sprintf("Added the Praetor private-artifact block to .gitignore in %s; Git now ignores %s/", dir, state.WorkingDirName), false
 	case PrivateIgnoreDeclined:
-		return fmt.Sprintf("Warning: Git does not ignore %s/ in %s and adoption.decline declines git-ignore; add /%s/ to the operator-owned .gitignore",
-			state.WorkingDirName, dir, state.WorkingDirName), true
+		return fmt.Sprintf("Warning: Git does not ignore %s/ in %s and adoption.decline declines git-ignore; add %s to the operator-owned .gitignore",
+			state.WorkingDirName, dir, workingDirIgnore), true
 	default:
 		return "", false
 	}

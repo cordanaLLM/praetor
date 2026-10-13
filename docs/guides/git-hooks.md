@@ -480,7 +480,8 @@ gets the Rust jobs. The header comment names the languages the file carries jobs
 `internal/adopt/lefthook_languages_test.go`, and the `TestCargoJobs_*` and `TestGoModuleJobs_*`
 cases in `internal/adopt/hooks_gomod_test.go`, which run the job lines against stub tools.
 
-A root that carries `REUSE.toml` or a `LICENSES/` directory also gets a `reuse-lint` pre-commit
+A root that carries `REUSE.toml` or `.reuse/dep5`, in a repository that does not decline
+`reuse-gate`, also gets a `reuse-lint` pre-commit
 job (`reuseLintCommand`): `reuse lint` with the reuse major that `fsfe/reuse-action@v6` runs in
 the hosted REUSE gate adoption writes beside it
 ([what adoption scaffolds](../adoption.md#what-adoption-scaffolds-automatically)). It skips,

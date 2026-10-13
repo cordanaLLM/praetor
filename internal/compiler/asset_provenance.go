@@ -113,20 +113,30 @@ func readAssets(ctx context.Context, rootDir string, names []string,
 	return assets, nil
 }
 
-// AssetDerivedFrom returns the trimmed metadata.derived_from value of the YAML front matter
-// that opens data, or "" when data opens none or it declares no upstream.
-func AssetDerivedFrom(data []byte) (string, error) {
+// frontMatterBlock returns the YAML between the fences of the front matter that opens data,
+// with opened false when data opens none. A block that opens and never closes, within
+// maxFrontMatterLines, is errUnclosedFrontMatter.
+func frontMatterBlock(data []byte) (block []byte, opened bool, err error) {
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 	end, opened := util.FrontMatterEnd(lines, maxFrontMatterLines)
 	if !opened {
-		return "", nil
+		return nil, false, nil
 	}
 	if end == 0 {
-		return "", errUnclosedFrontMatter
+		return nil, true, errUnclosedFrontMatter
+	}
+	return []byte(strings.Join(lines[1:end-1], "\n")), true, nil
+}
+
+// AssetDerivedFrom returns the trimmed metadata.derived_from value of the YAML front matter
+// that opens data, or "" when data opens none or it declares no upstream.
+func AssetDerivedFrom(data []byte) (string, error) {
+	block, opened, err := frontMatterBlock(data)
+	if err != nil || !opened {
+		return "", err
 	}
 	var front assetFrontMatter
-	block := strings.Join(lines[1:end-1], "\n")
-	if err := util.DecodeYAMLDocument([]byte(block), &front, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
+	if err := util.DecodeYAMLDocument(block, &front, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
 		return "", fmt.Errorf("front matter: %w", err)
 	}
 	if front.TopLevelDerivedFrom != nil {

@@ -62,7 +62,9 @@ func runFixtureGitCommands(t testing.TB, dir string, commands [][]string) string
 	last := ""
 	for _, args := range commands {
 		runCtx, cancel := context.WithTimeout(ctx, fixtureGitTimeout)
+		start := time.Now()
 		out, runErr := util.RunGit(runCtx, dir, args...)
+		runErr = FixtureCommandError(runCtx, fixtureGitTimeout, time.Since(start), runErr)
 		cancel()
 		if runErr != nil {
 			t.Fatalf("testsupport: git %v in %s: %v: %s", args, dir, runErr, out)

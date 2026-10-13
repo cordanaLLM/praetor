@@ -527,7 +527,10 @@ stand-in; every shipped archetype requires signed commits, which the defaults do
 `.agents/agents/<name>.md`. The gate reads them through `compiler.ReadAgentInventory`
 ([`internal/compiler/agent_projection.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/compiler/agent_projection.go)),
 the walk `compile-context` and its `--verify` project from, so the count and the projected set
-cannot differ. A pass prints `[PASS] Agent definitions verified (2 agents registered).`
+cannot differ. The gate then decodes the YAML front matter of every counted persona with the
+strict reader the engine uses for persona metadata; a persona without front matter, with a block
+that does not close or parse, or without a non-empty `name` and `description` fails the audit,
+naming the file and the key. A pass prints `[PASS] Agent definitions verified (2 agents registered).`
 
 A subdirectory of `.agents/agents`, such as `<name>/AGENTS.md` next to an `agent.json`, is not
 a persona file: `compile-context` neither projects nor lints it. The gate names every such
@@ -1849,6 +1852,14 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   decisions. The `typescript-node` CI scaffold reads `packageManager` and the
   test script the same way, and installs with pnpm, Yarn or Bun where the
   repository uses one ([archetype authoring](archetype-authoring.md)).
+  A check or test script that only runs the other one, such as
+  `"check": "npm test"`, is left out of the test recipe so the suite runs
+  once, and the adoption report says so. Only exact alias forms count
+  (`npm test`, `npm t`, `npm run <script>`, `pnpm test`, `yarn run <script>`
+  and the like, read with the engine's shell reader `forge.SoleCommand`);
+  a script with further arguments or commands, two scripts that call each
+  other, and the build script all stay
+  (`internal/adopt/verification_scripts.go`, #1264).
 - C# project files: locked restore and Release build with warnings as errors;
   explicit unconditional test projects receive `dotnet test`. Conditional,
   contradictory, or disabled test markers cannot establish a test gate.

@@ -1,18 +1,22 @@
 # Licensing gates
 
-A repository that declares its licensing the [REUSE](https://reuse.software/spec-3.3/) way, with
-`REUSE.toml` or a `LICENSES/` directory at its root, gets three checks from Praetor:
+A repository that declares its licensing the [REUSE](https://reuse.software/spec-3.3/) way gets
+three checks from Praetor:
 
 1. [`reuse lint`](#reuse-lint-in-hooks-and-ci) before every commit and in CI, written by
-   `praetorctl adopt`;
+   `praetorctl adopt` where the root carries `REUSE.toml` or `.reuse/dep5` and the manifest
+   does not decline `reuse-gate` (a `LICENSES/` directory alone declares nothing, #1244);
 2. the [annotation order check](#annotation-order) of `praetorctl audit`, which fails an
    override in `REUSE.toml` that never takes effect;
 3. the [root licence check](#one-root-licence) of `praetorctl audit`, which holds the root to one
    `LICENSE` with the declared licence's text.
 
-A repository with neither marker gets none of them, and the audit says that it skipped each. No
-profile writes a `LICENSE` or `LICENSES/` for the repository, so the checks follow the markers,
-whatever the profile.
+The annotation order check reads `REUSE.toml`, and the root licence check runs where `LICENSES/`
+is a directory. A repository with none of these gets none of the checks, and the audit says that
+it skipped each. One whose `LICENSES/` and file headers label it the REUSE way without
+`REUSE.toml` or `.reuse/dep5` gets an audit warning that names `REUSE.toml`, since adoption
+renders no REUSE gate there. No profile writes a `LICENSE` or `LICENSES/` for the repository,
+so the checks follow the files, whatever the profile.
 
 ## `reuse lint` in hooks and CI
 
