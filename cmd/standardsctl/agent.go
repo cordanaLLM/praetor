@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hiss"
@@ -50,22 +51,90 @@ func runAgent(args []string) error {
 	return fmt.Errorf("unknown agent subcommand: %s (available: list, run)", args[0])
 }
 
-func listAgents() error {
-	agentsDir := filepath.Join(".agents", "agents")
-	entries, err := os.ReadDir(agentsDir)
-	if err != nil {
-		return fmt.Errorf("read agents directory: %w", err)
-	}
+// agentHelper is one helper 'agent run' can run: its name and its implementation.
+type agentHelper struct {
+	name string
+	run  func(context.Context) error
+}
 
+// agentHelpers is the one registry of runnable helpers: 'agent run' dispatches from it and
+// 'agent list' offers exactly these as runnable, so the list never names a helper the run
+// refuses (#1277, HISS-19). A persona file under .agents/agents without an entry here is
+// persona only: the list names it separately as not runnable, and the run refuses it by name.
+var agentHelpers = []agentHelper{
+	{name: "praetor-auditor", run: runAuditorAgent},
+	{name: "praetor-dogfooder", run: runDogfooderAgent},
+	{name: "praetor-gatekeeper", run: runGatekeeperAgent},
+	{name: "praetor-needs-miner", run: runNeedsMinerAgent},
+}
+
+// canonicalAgentName is name in the dashed form the registry and the persona files use;
+// 'agent run' also accepts the underscored form.
+func canonicalAgentName(name string) string {
+	return strings.ReplaceAll(name, "_", "-")
+}
+
+// findAgentHelper returns the registry entry for name, in either form.
+func findAgentHelper(name string) (agentHelper, bool) {
+	canonical := canonicalAgentName(name)
+	for i := 0; i < len(agentHelpers); i++ {
+		if agentHelpers[i].name == canonical {
+			return agentHelpers[i], true
+		}
+	}
+	return agentHelper{}, false
+}
+
+// personaOnlyAgents returns the persona names under .agents/agents in the working directory,
+// read through the walk compile-context projects from (compiler.ReadAgentInventory), that the
+// registry cannot run. A directory without personas holds none.
+func personaOnlyAgents(ctx context.Context) ([]string, error) {
+	inventory, err := compiler.ReadAgentInventory(ctx, ".")
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", compiler.CanonicalAgentsRel, err)
+	}
+	var names []string
+	for i := 0; i < len(inventory.Personas); i++ {
+		name := strings.TrimSuffix(inventory.Personas[i], ".md")
+		if _, runnable := findAgentHelper(name); !runnable {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+// listAgents names the helpers 'agent run' can run, from the registry, with the persona file
+// of each where the repository holds one, and then, apart, the persona files no helper
+// implements.
+func listAgents() error {
+	ctx, cancel := commandContext(agentTimeout)
+	defer cancel()
+	personaOnly, err := personaOnlyAgents(ctx)
+	if err != nil {
+		return err
+	}
 	fmt.Printf("=== Available Praetor Autonomous Agent Helpers ===\n\n")
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-			name := strings.TrimSuffix(e.Name(), ".md")
-			fmt.Printf("  • %-25s (.agents/agents/%s)\n", name, e.Name())
+	for i := 0; i < len(agentHelpers); i++ {
+		fmt.Printf("  • %-25s (%s)\n", agentHelpers[i].name, agentPersonaSource(agentHelpers[i].name))
+	}
+	if len(personaOnly) > 0 {
+		fmt.Printf("\nPersona only, not runnable by 'agent run' (no implementation):\n\n")
+		for i := 0; i < len(personaOnly); i++ {
+			fmt.Printf("  • %-25s (%s/%s.md)\n", personaOnly[i], compiler.CanonicalAgentsRel, personaOnly[i])
 		}
 	}
 	fmt.Printf("\nExecute an agent helper: praetorctl agent run <agent-name>\n")
 	return nil
+}
+
+// agentPersonaSource names the persona file of the helper name in the working directory, or
+// says that the helper runs without one.
+func agentPersonaSource(name string) string {
+	rel := compiler.CanonicalAgentsRel + "/" + name + ".md"
+	if info, err := os.Lstat(filepath.FromSlash(rel)); err == nil && info.Mode().IsRegular() {
+		return rel
+	}
+	return "built in, no persona file here"
 }
 
 func dispatchAgentTask(agentName string, extraArgs []string) error {
@@ -75,30 +144,32 @@ func dispatchAgentTask(agentName string, extraArgs []string) error {
 	if len(extraArgs) != 0 {
 		return fmt.Errorf("agent run %s: unexpected extra argument(s) %v (agent helpers take no arguments)", agentName, extraArgs)
 	}
+	helper, runnable := findAgentHelper(agentName)
+	if !runnable {
+		return refuseAgentPersona(agentName)
+	}
 
 	ctx, cancel := agentContext(agentName)
 	defer cancel()
 
 	fmt.Printf("[Agent Dispatch] Activating autonomous agent helper: %s\n", agentName)
-	switch agentName {
-	case "praetor-auditor", "praetor_auditor":
-		return runAuditorAgent(ctx)
-	case "praetor-gatekeeper", "praetor_gatekeeper":
-		return runGatekeeperAgent(ctx)
-	case "praetor-dogfooder", "praetor_dogfooder":
-		return runDogfooderAgent(ctx)
-	case "praetor-needs-miner", "praetor_needs_miner":
-		return runNeedsMinerAgent(ctx)
-	case "praetor-fuzzer", "praetor_fuzzer", "praetor-packager", "praetor_packager":
-		// listAgents() enumerates every *.md file under .agents/agents, which includes
-		// these two personas; dispatch has no Go implementation for either yet (BUG-726).
-		// Naming them here refuses by name instead of falling into the generic "unknown
-		// persona" branch below, which would wrongly conflate an advertised-but-
-		// unimplemented persona with a genuine typo.
-		return fmt.Errorf("agent persona %s is listed by 'agent list' but has no dispatchable implementation yet", agentName)
-	default:
-		return fmt.Errorf("unknown agent persona: %s (run 'praetorctl agent list' to view available agents)", agentName)
+	return helper.run(ctx)
+}
+
+// refuseAgentPersona is the error for a name the registry cannot run: a persona file with no
+// implementation is refused by name, as 'agent list' marks it, and anything else is unknown.
+func refuseAgentPersona(agentName string) error {
+	ctx, cancel := commandContext(agentTimeout)
+	defer cancel()
+	personaOnly, err := personaOnlyAgents(ctx)
+	if err != nil {
+		return err
 	}
+	if slices.Contains(personaOnly, canonicalAgentName(agentName)) {
+		return fmt.Errorf("agent persona %s has a persona file but no implementation 'agent run' can run; "+
+			"'praetorctl agent list' names it as not runnable", agentName)
+	}
+	return fmt.Errorf("unknown agent persona: %s (run 'praetorctl agent list' to view available agents)", agentName)
 }
 
 // agentTimeout bounds every agent helper except the gatekeeper.
