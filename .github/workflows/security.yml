@@ -118,12 +118,17 @@ jobs:
           rm -f /tmp/trivy.tar.gz
 
       # Planted-case verification (HISS-20 negative case, Rule 13 "Proven checks"):
-      # Scan a tiny fixture pinning a vulnerable dependency (golang.org/x/net v0.16.0)
-      # with published advisory GHSA-4v7x-pqxf-cx7x / CVE-2023-39325 (HTTP/2 Rapid Reset, HIGH).
-      # Require trivy to report it; if trivy reports clean or fails to run, the step fails closed.
+      # scan a go.mod that pins golang.org/x/net v0.16.0, which carries the published HIGH advisory
+      # GHSA-4v7x-pqxf-cx7x / CVE-2023-39325 (HTTP/2 Rapid Reset), and require trivy to report it; a
+      # clean report or a scanner that fails to run fails the step. The fixture is written at run time
+      # into the runner's temporary folder, never committed: a vulnerable go.mod in the tree would
+      # raise dependency alerts and Renovate updates against it, and an update would defuse the plant.
       - name: Verify Trivy Vulnerability Detection (planted case)
         run: |
-          output=$(trivy fs --scanners vuln --severity HIGH,CRITICAL testdata/trivy-planted)
+          plant="$RUNNER_TEMP/trivy-planted"
+          mkdir -p "$plant"
+          printf 'module example.com/trivy-planted\n\ngo 1.21\n\nrequire golang.org/x/net v0.16.0\n' > "$plant/go.mod"
+          output=$(trivy fs --scanners vuln --severity HIGH,CRITICAL "$plant")
           echo "$output"
           if ! echo "$output" | grep -q "CVE-2023-39325"; then
             echo "::error::Planted vulnerability test failed: trivy reported no findings for CVE-2023-39325" >&2
@@ -132,8 +137,7 @@ jobs:
 
       # Trivy filesystem scan of repository for vulnerabilities and secrets (security:high facet).
       # Fail closed: exit code 1 on HIGH or CRITICAL findings.
-      # Skips only vendored test fixtures holding deliberate bad values:
+      # Skips only a fixture holding deliberate bad values:
       # - .config/hiss/testdata/HISS-12: deliberately fake secrets for HISS-12 gitleaks verification
-      # - testdata/trivy-planted: deliberate vulnerable dependency for Trivy planted detection gate
       - name: Run Filesystem Vulnerability & Secret Scan (trivy)
-        run: trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .config/hiss/testdata/HISS-12 --skip-dirs testdata/trivy-planted .
+        run: trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .config/hiss/testdata/HISS-12 .
