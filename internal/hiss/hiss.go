@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	slashpath "path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -314,6 +316,16 @@ func (t *GitVisibleTree) HasFile(rel string) bool {
 	}
 	_, ok := t.files[rel]
 	return ok
+}
+
+// Files returns every file the listing holds, slash-separated and sorted. A nil tree, git having
+// given no answer, holds none: a caller that needs the repository's own files cannot read them
+// without git, and says so (supplychain.ReuseHeadersOnlyNotice).
+func (t *GitVisibleTree) Files() []string {
+	if t == nil {
+		return nil
+	}
+	return slices.Sorted(maps.Keys(t.files))
 }
 
 // HasDir reports whether a directory, a slash-separated path relative to the listed directory,

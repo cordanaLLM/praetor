@@ -184,16 +184,24 @@ func declinedDetail(step string) string {
 // Only the policy-catalog step has such an output: the effective policy (#603).
 var declinedReaders = map[string]adoptStep{"policy-catalog": readDeclinedPolicyCatalog}
 
+// declinedRemovals are the declined steps that take back Praetor's unedited output of an earlier
+// adoption, so the decline removes what the step would otherwise keep running: the hosted REUSE
+// gate, whose required check fails every pull request where reuse lint cannot pass (#1244). An
+// edited file is the repository's and stays, with a warning.
+var declinedRemovals = map[string]adoptStep{reuseGateStep: removeDeclinedReuseGate}
+
 // skipDeclinedStep records a step the manifest declines instead of running it. A decline is
 // recorded, not silent: the report says the manifest refused the artefact, so a reader can tell a
 // declined surface from one adoption forgot. A step whose output later steps read resolves it
 // read-only first (declinedReaders).
 func skipDeclinedStep(ctx context.Context, s *adoptSession, name string) error {
 	from := s.report.mark()
-	if read, ok := declinedReaders[name]; ok {
-		if err := read(ctx, s); err != nil {
-			s.report.recordStep(name, StepFailed, from)
-			return err
+	for _, steps := range []map[string]adoptStep{declinedReaders, declinedRemovals} {
+		if run, ok := steps[name]; ok {
+			if err := run(ctx, s); err != nil {
+				s.report.recordStep(name, StepFailed, from)
+				return err
+			}
 		}
 	}
 	s.report.recordSkipped(name, declinedDetail(name))

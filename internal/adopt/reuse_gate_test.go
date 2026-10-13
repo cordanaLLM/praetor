@@ -183,12 +183,13 @@ func TestReuseLintCommand_Negative_UnlabelledFileFailsTheJob(t *testing.T) {
 }
 
 // Positive: adoption writes the hosted REUSE gate and the reuse-lint job into a repository whose
-// root carries LICENSES/, derives the gate's job into the ruleset and names what it runs in the
+// root carries REUSE.toml beside LICENSES/, derives the gate's job into the ruleset and names what it runs in the
 // harness. Negative: a repository with neither marker gets neither. Boundary: a declined
 // reuse-gate step writes no workflow and the harness claims none.
 func TestAdopt_ReuseGateFollowsTheRoot(t *testing.T) {
 	reuseRepo := newTestRepo(t, "reuse-gate")
 	mustWrite(t, filepath.Join(reuseRepo, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(reuseRepo, supplychain.ReuseFile), "version = 1\n")
 	rep := adoptWithSource(t, reuseRepo, newAdoptLockSource(t), false)
 	if got := mustRead(t, filepath.Join(reuseRepo, filepath.FromSlash(reuseWorkflowFile))); got != mustReuseWorkflow(t, forge.FallbackDefaultBranch) {
 		t.Fatalf("the hosted REUSE gate is not the rendering:\n%s", got)
@@ -210,10 +211,10 @@ func TestAdopt_ReuseGateFollowsTheRoot(t *testing.T) {
 	plain := newTestRepo(t, "no-reuse-gate")
 	adoptWithSource(t, plain, newAdoptLockSource(t), false)
 	if fileExists(filepath.Join(plain, filepath.FromSlash(reuseWorkflowFile))) {
-		t.Error("a repository without REUSE.toml or LICENSES/ got the hosted REUSE gate")
+		t.Error("a repository without REUSE.toml or .reuse/dep5 got the hosted REUSE gate")
 	}
 	if strings.Contains(mustRead(t, filepath.Join(plain, lefthookFile)), reuseLintJob) {
-		t.Error("a repository without REUSE.toml or LICENSES/ got the reuse-lint job")
+		t.Error("a repository without REUSE.toml or .reuse/dep5 got the reuse-lint job")
 	}
 
 	declined := newTestRepo(t, "declined-reuse-gate")
@@ -227,6 +228,23 @@ func TestAdopt_ReuseGateFollowsTheRoot(t *testing.T) {
 	}
 	if strings.Contains(mustRead(t, filepath.Join(declined, agentsFile)), reuseWorkflowFile) {
 		t.Error("the harness claims a declined hosted REUSE gate")
+	}
+	if strings.Contains(mustRead(t, filepath.Join(declined, lefthookFile)), reuseLintJob) {
+		t.Error("a declined reuse-gate step left the reuse-lint job in lefthook.yml (#1244)")
+	}
+
+	// The layout #1244 measured: LICENSES/ with third-party texts, no REUSE.toml. It declares
+	// nothing, so it gets neither the workflow nor the job.
+	measured := newTestRepo(t, "third-party-licenses")
+	for rel, text := range thirdPartyLicenses {
+		mustWrite(t, filepath.Join(measured, filepath.FromSlash(rel)), text)
+	}
+	adoptWithSource(t, measured, newAdoptLockSource(t), false)
+	if fileExists(filepath.Join(measured, filepath.FromSlash(reuseWorkflowFile))) {
+		t.Error("LICENSES/ with third-party texts and no REUSE.toml got the hosted REUSE gate")
+	}
+	if strings.Contains(mustRead(t, filepath.Join(measured, lefthookFile)), reuseLintJob) {
+		t.Error("LICENSES/ with third-party texts and no REUSE.toml got the reuse-lint job")
 	}
 }
 
@@ -269,6 +287,7 @@ func TestAdopt_Boundary_LefthookFollowsTheReuseSwitch(t *testing.T) {
 func TestAdopt_Boundary_EditedReuseGateIsKept(t *testing.T) {
 	repoPath := newTestRepo(t, "edited-reuse-gate")
 	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
 	edited := strings.Replace(mustReuseWorkflow(t, forge.FallbackDefaultBranch), "name: REUSE\n", "name: Licensing\n", 1)
 	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile)), edited)
 	adoptWithSource(t, repoPath, newAdoptLockSource(t), true)
@@ -419,6 +438,7 @@ func TestAdopt_ReuseGateFollowsTheDefaultBranch(t *testing.T) {
 		repoPath := newTestRepo(t, "reuse-gate-master-"+strings.ReplaceAll(name, " ", "-"))
 		mustWrite(t, filepath.Join(repoPath, manifestFile), "version: 1\nrepository:\n  owner: acme\n  name: x\n  default_branch: master\n")
 		mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+		mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
 		if existing != "" {
 			mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile)), existing)
 		}
@@ -469,7 +489,7 @@ func TestAdopt_ReuseGateRemovedWithTheMarkers(t *testing.T) {
 		t.Fatalf("the edited gate was not kept:\n%s", got)
 	}
 	if !slices.ContainsFunc(rep.Warnings, func(warning string) bool {
-		return strings.Contains(warning, reuseWorkflowFile+" kept: the root carries neither REUSE.toml nor LICENSES/")
+		return strings.Contains(warning, reuseWorkflowFile+" kept: the root carries no REUSE.toml or .reuse/dep5")
 	}) {
 		t.Fatalf("no warning about the kept gate: %v", rep.Warnings)
 	}
@@ -608,6 +628,7 @@ func TestRenderReuseWorkflow_LacksPinnedCheckout_Negative(t *testing.T) {
 func TestAdopt_RefreshesPriorTagPinnedReuseWorkflow(t *testing.T) {
 	repoPath := newTestRepo(t, "refresh-prior-reuse-gate")
 	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
 	priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", "reuse-action-v6.yml"))
 	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
 	mustWrite(t, workflowPath, priorText)
@@ -642,6 +663,7 @@ func TestAdopt_RefreshesRenovatePinnedReuseWorkflow(t *testing.T) {
 		t.Run(fixture, func(t *testing.T) {
 			repoPath := newTestRepo(t, "refresh-renovate-pinned")
 			mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+			mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
 			priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", fixture))
 			renovatePinnedText := applyRenovateRewrite(priorText)
 			workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
@@ -667,6 +689,7 @@ func TestAdopt_RefreshesRenovatePinnedReuseWorkflow(t *testing.T) {
 func TestAdopt_KeepsHandEditedReuseWorkflow_Negative(t *testing.T) {
 	repoPath := newTestRepo(t, "keep-hand-edited-reuse-gate")
 	mustWrite(t, filepath.Join(repoPath, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(repoPath, supplychain.ReuseFile), "version = 1\n")
 	priorText := mustRead(t, filepath.Join("testdata", "reuse-workflow", "reuse-action-v6-draft-bash.yml"))
 	handEdited := applyRenovateRewrite(priorText) + "\n        # custom adopter step or comment\n"
 	workflowPath := filepath.Join(repoPath, filepath.FromSlash(reuseWorkflowFile))
@@ -695,6 +718,7 @@ func TestAdopt_MixedLineEndingsReuseWorkflow_PreservedUnverified(t *testing.T) {
 	// Test dry-run preserves the file and reports preserved unverified
 	dryRepo := newTestRepo(t, "mixed-endings-reuse-dry")
 	mustWrite(t, filepath.Join(dryRepo, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(dryRepo, supplychain.ReuseFile), "version = 1\n")
 	workflowPathDry := filepath.Join(dryRepo, filepath.FromSlash(reuseWorkflowFile))
 	mustWrite(t, workflowPathDry, mixedText)
 
@@ -712,6 +736,7 @@ func TestAdopt_MixedLineEndingsReuseWorkflow_PreservedUnverified(t *testing.T) {
 	// Test adopt preserves the file and reports preserved unverified
 	adoptRepo := newTestRepo(t, "mixed-endings-reuse-adopt")
 	mustWrite(t, filepath.Join(adoptRepo, supplychain.LicensesDir, "MIT.txt"), "MIT License\n")
+	mustWrite(t, filepath.Join(adoptRepo, supplychain.ReuseFile), "version = 1\n")
 	workflowPathAdopt := filepath.Join(adoptRepo, filepath.FromSlash(reuseWorkflowFile))
 	mustWrite(t, workflowPathAdopt, mixedText)
 
