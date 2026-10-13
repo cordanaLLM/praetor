@@ -18,8 +18,8 @@ import (
 const modelRouteLimitations = "Configured cost estimates and task/capability declarations only; no current-price, measured latency/quality, provider availability, concurrency reservation or dispatch claim"
 
 type modelRouteFlags struct {
-	task, capabilities, usage *string
-	input, output             *int64
+	task, capabilities, usage, windows *string
+	input, output                      *int64
 }
 
 type modelRouteReport struct {
@@ -43,13 +43,14 @@ func addModelRouteFlags(fs *flag.FlagSet) modelRouteFlags {
 		input:        fs.Int64("input-tokens", 0, "Optional estimated input tokens for cost and projected quota checks; with neither estimate the route ranks by configured rates"),
 		output:       fs.Int64("output-tokens", 0, "Optional estimated output tokens for cost and projected quota checks"),
 		usage:        fs.String("usage", "", "Optional bounded JSON capacity snapshot; requires an observation and positive RPM/TPM limits for the selected model"),
+		windows:      fs.String("windows", "", "Tribunus snapshot (tribunusctl sync --out) holding subscription window readings; without it every lane naming a governance.window account is refused as unknown"),
 	}
 }
 
 // modelFlagActions names the models actions each action-specific flag applies to.
 var modelFlagActions = map[string][]string{
 	"task": {"route", "outcome"}, "capabilities": {"route"}, "input-tokens": {"route"}, "output-tokens": {"route"},
-	"usage": {"route"}, "lane": {"outcome"}, "target": {"outcome"}, "result": {"outcome"}, "note": {"outcome"},
+	"usage": {"route"}, "windows": {"route"}, "lane": {"outcome"}, "target": {"outcome"}, "result": {"outcome"}, "note": {"outcome"},
 	"outcome-log": {"outcome"}, "duration-ms": {"outcome"}, "probe-aliases": {"sync"}, "prune": {"sync"},
 	"physical-model": {"outcome"}, "harness": {"outcome"}, "harness-version": {"outcome"},
 	"prompt-digest": {"outcome"}, "context-digest": {"outcome"}, "context-bytes": {"outcome"},
@@ -90,7 +91,11 @@ func handleModelsRoute(ctx context.Context, configPath string, flags modelRouteF
 	if err != nil {
 		return err
 	}
-	route, err := router.NewModelCapacityArbiter(cfg, tracker).SelectForTask(ctx, request)
+	arbiter := router.NewModelCapacityArbiter(cfg, tracker)
+	if arbiter.Windows, err = modelRouteWindows(ctx, cfg, *flags.windows); err != nil {
+		return err
+	}
+	route, err := arbiter.SelectForTask(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -159,6 +164,23 @@ func modelRouteRequest(flags modelRouteFlags) (router.TaskRequest, error) {
 		}
 	}
 	return request, nil
+}
+
+// modelRouteWindows builds the subscription window governor from a tribunus snapshot read
+// now; no path leaves it nil, and governed lanes then refuse as unknown.
+func modelRouteWindows(ctx context.Context, cfg *router.RoutingConfig, path string) (*router.WindowGovernor, error) {
+	if path == "" {
+		return nil, nil
+	}
+	snapshot, err := router.LoadWindowSnapshot(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	governor, err := router.NewWindowGovernor(cfg, snapshot, time.Now().UTC())
+	if err != nil {
+		return nil, fmt.Errorf("--windows: %w", err)
+	}
+	return governor, nil
 }
 
 func modelRouteTracker(ctx context.Context, cfg *router.RoutingConfig, path string) (*router.LimitTracker, *time.Time, error) {

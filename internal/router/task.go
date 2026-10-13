@@ -42,8 +42,11 @@ type TaskRoute struct {
 	// Lane is the executable lane of the pick; LaneNote says why there is none.
 	Lane     *LaneRoute `json:"lane,omitempty"`
 	LaneNote string     `json:"lane_note,omitempty"`
-	// Skipped lists candidates of the task's tiers the gateway rules excluded, with the reason.
+	// Skipped lists candidates of the task's tiers the gateway rules or a subscription window
+	// excluded, with the reason.
 	Skipped []RouteSkip `json:"skipped,omitempty"`
+	// Window is the pacing signal of the pick's governed lane; nil when the lane names no account.
+	Window *WindowDecision `json:"window,omitempty"`
 	// rank orders candidates: the estimated cost, or the summed per-million rates without estimates.
 	rank float64
 }
@@ -163,7 +166,7 @@ func validateTaskRequest(request TaskRequest) error {
 }
 
 func (a *ModelCapacityArbiter) selectTaskTier(pass *taskPass, name string) (*TaskRoute, error) {
-	request, reserving := pass.request, pass.reserving
+	request := pass.request
 	tier := a.Config.Tiers[name]
 	if !hasRoutingTag(tier.TargetTasks, request.Task) {
 		return nil, nil
@@ -171,17 +174,7 @@ func (a *ModelCapacityArbiter) selectTaskTier(pass *taskPass, name string) (*Tas
 	serves := TierServesAliases(tier)
 	var best *TaskRoute
 	for i := 0; i < len(tier.Models) && i < MaxModelsPerTier; i++ {
-		model := tier.Models[i]
-		if !hasTaskCapabilities(model.Capabilities, request.Capabilities) {
-			continue
-		}
-		if !pass.admit(model, serves) {
-			continue
-		}
-		if reserving && !a.reservationAvailableLocked(model.ID) {
-			continue
-		}
-		candidate, err := a.taskCandidate(request, name, model)
+		candidate, err := a.tierCandidate(pass, name, tier.Models[i], serves)
 		if err != nil {
 			return nil, err
 		}
@@ -190,6 +183,26 @@ func (a *ModelCapacityArbiter) selectTaskTier(pass *taskPass, name string) (*Tas
 		}
 	}
 	return best, nil
+}
+
+// tierCandidate applies the capability, gateway, reservation and subscription window
+// filters to one model of a tier; nil means the model is not a candidate.
+func (a *ModelCapacityArbiter) tierCandidate(pass *taskPass, tier string, model ModelDescriptor, serves bool) (*TaskRoute, error) {
+	if !hasTaskCapabilities(model.Capabilities, pass.request.Capabilities) || !pass.admit(model, serves) {
+		return nil, nil
+	}
+	if pass.reserving && !a.reservationAvailableLocked(model.ID) {
+		return nil, nil
+	}
+	window, governed := a.windowFor(tier, model)
+	if governed && !pass.admitWindow(model, window) {
+		return nil, nil
+	}
+	candidate, err := a.taskCandidate(pass.request, tier, model)
+	if candidate != nil && governed {
+		candidate.Window = &window
+	}
+	return candidate, err
 }
 
 func (a *ModelCapacityArbiter) taskCandidate(request TaskRequest, tier string, model ModelDescriptor) (*TaskRoute, error) {

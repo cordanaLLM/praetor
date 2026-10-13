@@ -10,8 +10,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/router"
+	"github.com/cordanaLLM/praetor/tribunus/catalog"
 )
 
 const cliRouteFixture = `version: 1
@@ -533,5 +535,71 @@ func TestModelsRouteCLIAliasExclusionPerTierLightNeverReturnsPinned(t *testing.T
 	}
 	if stubsReport.Model.ID == "pinned-light" {
 		t.Fatalf("light tier must never return its pinned model, got %s", stubsReport.Model.ID)
+	}
+}
+
+const cliWindowFixture = `version: 1
+lanes:
+  claude-sub:
+    harness: claude-code
+    command: [claude, -p, "{task}"]
+    account: max-a
+tiers:
+  work:
+    target_tasks: [review]
+    lane: claude-sub
+    models:
+      - {id: sub-review, family: anthropic, cost_per_m_in: 0, cost_per_m_out: 0}
+governance:
+  exhaustion_threshold_percent: 80
+  window:
+    accounts:
+      max-a: {window_record: claude-code/five_hour}
+`
+
+func writeWindowSnapshot(t *testing.T, used float64) string {
+	t.Helper()
+	now := time.Now().UTC()
+	resets := now.Add(2 * time.Hour)
+	data, err := catalog.Snapshot{GeneratedAt: now, Records: []catalog.Record{{
+		ModelID: "claude-code/five_hour", AccessPath: catalog.AccessSubscriptionCLI,
+		Provenance:  catalog.Provenance{Source: "claude-local", FetchedAt: now, Kind: catalog.KindMeasured},
+		UsageWindow: &catalog.UsageWindow{UsedPercent: &used, ResetsAt: &resets},
+	}}}.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return writeRouteCLIInput(t, string(data))
+}
+
+func TestModelsRouteCLIWindowGovernor(t *testing.T) {
+	config := writeRouteCLIInput(t, cliWindowFixture)
+	route := func(extra ...string) (string, error) {
+		args := append([]string{"route", "--config=" + config, "--task=review"}, extra...)
+		return captureStdout(t, func() error { return runModels(args) })
+	}
+	out, err := route("--windows=" + writeWindowSnapshot(t, 70))
+	if err != nil {
+		t.Fatalf("a reading between warn and stop must admit: %v", err)
+	}
+	var report struct {
+		Window *router.WindowDecision `json:"window"`
+	}
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Window == nil || report.Window.Level != router.WindowWarn || report.Window.Advice == "" || report.Window.PacePercentPerAgentHour == nil {
+		t.Fatalf("warn must carry the pacing signal: %s", out)
+	}
+	_, err = route("--windows=" + writeWindowSnapshot(t, 90))
+	if !errors.Is(err, router.ErrNoEligibleModel) || !strings.Contains(err.Error(), "window claude-code/five_hour (account max-a) stop") {
+		t.Fatalf("a reading above stop must refuse and name the window: %v", err)
+	}
+	_, err = route()
+	if !errors.Is(err, router.ErrNoEligibleModel) || !strings.Contains(err.Error(), "unknown: no window readings supplied") {
+		t.Fatalf("a governed lane without readings must refuse as unknown: %v", err)
+	}
+	if _, err = route("--windows=" + filepath.Join(t.TempDir(), "missing.json")); err == nil {
+		t.Fatal("a missing window snapshot must fail")
 	}
 }

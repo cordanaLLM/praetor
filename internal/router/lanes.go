@@ -32,6 +32,9 @@ var placeholderShape = regexp.MustCompile(`\{[a-z_]+\}`)
 type Lane struct {
 	Harness string   `yaml:"harness" json:"harness"`
 	Command []string `yaml:"command" json:"command"`
+	// Account names the governance.window account whose usage window the lane draws on;
+	// a lane with an account is a governed subscription lane.
+	Account string `yaml:"account,omitempty" json:"account,omitempty"`
 }
 
 // LaneRoute is the executable lane of a route: the lane name, its harness, the target the
@@ -52,6 +55,9 @@ func validateLanes(cfg *RoutingConfig) error {
 			return fmt.Errorf("%w: invalid lane or harness name %q", ErrInvalidRoutingConfig, name)
 		}
 		if err := validateLaneCommand(name, lane.Command); err != nil {
+			return err
+		}
+		if err := checkLaneAccount(cfg, name, lane.Account); err != nil {
 			return err
 		}
 	}
@@ -115,13 +121,18 @@ func ModelTarget(model ModelDescriptor) string {
 	return model.ID
 }
 
+// laneName is the lane a model executes on: its own lane, else its tier's; empty when neither names one.
+func laneName(cfg *RoutingConfig, tier string, model ModelDescriptor) string {
+	if model.Lane != "" {
+		return model.Lane
+	}
+	return cfg.Tiers[tier].Lane
+}
+
 // ResolveLane returns the lane of a selected model: the model's own lane, else its tier's.
 // ok is false when neither declares one, so a route reports the gap instead of inventing a lane.
 func ResolveLane(cfg *RoutingConfig, tier string, model ModelDescriptor, task string) (*LaneRoute, bool) {
-	name := model.Lane
-	if name == "" {
-		name = cfg.Tiers[tier].Lane
-	}
+	name := laneName(cfg, tier, model)
 	lane, ok := cfg.Lanes[name]
 	if name == "" || !ok {
 		return nil, false
