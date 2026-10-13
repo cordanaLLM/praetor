@@ -697,6 +697,16 @@ The groups with behavior of their own:
     REUSE (`internal/adopt/reuse_gate_test.go`). Decline `reuse-gate` to skip the workflow; the
     hook job follows the `git-hooks` step.
 
+### Exceptions on a re-adoption
+
+A re-adoption keeps the manifest it finds, but it records the dated exceptions a first adoption
+records, in the same `exceptions` list. When the release workflows fall short of the supply chain
+the policy declares and the manifest holds no `HISS-11` entry, as a manifest an older engine wrote
+does not, the run adds the entry a first adoption adds and warns that it did. An entry the
+manifest already declares, renewed or narrowed by hand, stands. The `declared-linters` entries for
+declared linters no workflow runs are recorded the same way (`syncDeclaredLintersExceptions` and
+`withSupplyChainException` in `internal/adopt`, `TestAdopt_Readoption_RecordsTheSupplyChainGap`).
+
 ### The baseline on a re-adoption
 
 Adoption records `.standards-baseline.json` once. A repository that already has the file keeps it
