@@ -28,10 +28,11 @@ no `--catalog-root` is given, sync has no policy to check against: it prints
 incomplete without reaching the forge. A lock the catalog cannot verify is the
 same cause and is counted once
 (`TestSyncLeavesTheRulesetUncheckedWhileThePolicyIsUnresolved`,
-`TestSyncCountsAnUnresolvedPolicyOnceBesideAVerifiedLock`). Linters, memory
-and error unwraps are resolved and sealed into the digest; no gate executes the
-linter list yet, and the coverage manifest records all three as `unconsumed`
+`TestSyncCountsAnUnresolvedPolicyOnceBesideAVerifiedLock`). Memory and error
+unwraps are resolved and sealed into the digest; no gate reads them yet, and the
+coverage manifest records both as `unconsumed`
 ([Every key names its consumer](archetype-authoring.md#every-key-names-its-consumer)).
+The linter list is read by the audit's declared-linters gate ([Declared linters](#declared-linters)).
 
 Public adoption loops resolve their policy during the dry run, then independently
 scan the original source under that policy before applying changes. Applied
@@ -43,6 +44,48 @@ do not establish verification under a stricter policy; rerun those cases.
 Public loops currently select repository and pinned-catalog constraints;
 external fleet/organization/deployment/workstation paths are audit arguments,
 not public-loop options.
+
+## Declared linters
+
+A profile or facet can declare linters, for example `security:high` declares `gitleaks` and
+`trivy`. `praetorctl audit` fails when a declared linter is run by no CI workflow under
+`.github/workflows`, because a declared scanner that never runs protects nothing
+(`internal/adopt/linters_audit.go`, `cmd/standardsctl/audit_linters.go`, `TestAuditDeclaredLinters_CLI`).
+The verdict names each missing linter and the profile or facet that declared it
+(`config.EffectivePolicy.DeclaredLinters` in `internal/config/effective_linters.go`).
+
+A step runs a linter when its `uses:` action, or a command in its `run:`, invokes the tool:
+
+- the program itself, or a runner that names it: `npx`, `bunx`, `uvx`, `pipx run`, `pnpm dlx`,
+  `go tool`, `go run`, a container image named after it; version pins and quotes are ignored
+  (`TestCommandRunsTool_RunnerSpecs`, `TestCommandRunsTool_GoRunners`);
+- a wrapper such as `xargs`, `env`, `find -exec`, `sudo` (`TestCommandRunsTool_WrapperPrograms`);
+- a repository script named after the tool, or one handed the tool through `--<tool>`
+  (`TestCommandRunsTool_ScriptTools`, `TestCommandRunsTool_OptionNamedAfterTool`);
+- a `make` target whose recipe runs it, followed through prerequisites and Makefile variables
+  (`TestAuditDeclaredLinters_PositiveMakeDepth2`, `TestMakeVariableExpansion`);
+- a golangci-lint linter counts as run when `golangci-lint` runs and the repository's
+  golangci configuration enables it (`TestAuditDeclaredLinters_GolangciSubLinter`).
+
+A name in `echo` or in a comment does not count, nor does a step with `continue-on-error` or a
+job whose `if:` is false (`TestAuditDeclaredLinters_NegativeEchoOnlyPlanted`,
+`TestAuditDeclaredLinters_NegativeCommentOnly`, `TestAuditDeclaredLinters_NegativeContinueOnError`,
+`TestAuditDeclaredLinters_NegativeIfFalseJob`).
+
+A linter whose input files the repository does not have is skipped with a `[SKIP]` line, never
+silently: a Go linter without Go sources, `buf` without `.proto` files, `spectral` or
+`oapi-codegen` without an OpenAPI or AsyncAPI document, and so on. A linter that table does not
+know is always required (`TestAuditDeclaredLinters_Applicability_Skip`,
+`TestAuditDeclaredLinters_UnknownLinterRequired`).
+
+To schedule a missing CI job instead of failing today, add a dated `declared-linters` entry to
+the exceptions list ([Exceptions](clang-tidy-coverage.md#exceptions)). An expired entry fails like
+a missing one, and an entry for a linter a workflow now runs is stale and fails until it is
+removed (`TestAuditDeclaredLinters_ExceptionsLifecycle`). `praetorctl adopt` writes such an entry
+for every declared linter that no workflow it scaffolds runs, keeps live entries on re-adoption
+and drops one once a workflow runs the linter
+(`internal/adopt/linters_exception.go`, `TestAdopt_DeclaredLintersExceptionsFreshAdoption`,
+`TestAdopt_DeclaredLintersReAdoptDropsWhenWorkflowAdded`).
 
 ## Sources and strictness
 
