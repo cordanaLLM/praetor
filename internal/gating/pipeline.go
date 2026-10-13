@@ -228,6 +228,10 @@ type stageConfig struct {
 	// host (resolveExecution, goToolchain). Its commands start through run, so a test's fake
 	// runner sees the container runtime's command lines.
 	container *devcontainerExec
+	// containerStart bounds the toolchain probe that starts an entered devcontainer. Production
+	// leaves it zero, so devcontainerStartBound derives it from the run's budget; tests shorten it
+	// to reach the bound without waiting for it.
+	containerStart time.Duration
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.

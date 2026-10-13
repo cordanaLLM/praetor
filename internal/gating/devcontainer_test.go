@@ -7,6 +7,7 @@ package gating
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -43,6 +44,10 @@ type fakeRuntime struct {
 	failEnv   error            // what go env fails with inside the container
 	failWhich map[string]error // what the PATH probe for a command fails with inside the container
 	failRun   map[string]error
+	// startDelay is how long a container takes to start, or until the run's context ends.
+	startDelay time.Duration
+	// runDeadlines are the context deadlines the container runs were started under, zero when none.
+	runDeadlines []time.Time
 }
 
 func newFakeRuntime(onImagePath ...string) *fakeRuntime {
@@ -53,7 +58,7 @@ func newFakeRuntime(onImagePath ...string) *fakeRuntime {
 	return &fakeRuntime{has: has, failRun: map[string]error{}, failWhich: map[string]error{}}
 }
 
-func (f *fakeRuntime) run(_ context.Context, dir, name string, args ...string) (string, error) {
+func (f *fakeRuntime) run(ctx context.Context, dir, name string, args ...string) (string, error) {
 	if filepath.Base(name) != "docker" || len(args) == 0 {
 		f.host = append(f.host, recordedCommand{dir: dir, name: name, args: args})
 		return "", installCLI(dir, args)
@@ -75,7 +80,7 @@ func (f *fakeRuntime) run(_ context.Context, dir, name string, args ...string) (
 		f.removed = append(f.removed, args[len(args)-1])
 		return "", nil
 	case "run":
-		return f.inContainer(args)
+		return f.startContainer(ctx, args)
 	}
 	return "", nil
 }
@@ -98,6 +103,21 @@ func installCLI(dir string, args []string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(pkg, "devcontainer.js"), []byte("cli"), 0o600)
+}
+
+// startContainer records the deadline a `docker run` line was started under and waits startDelay
+// for the container to start, failing as a killed runtime CLI does when ctx ends first.
+func (f *fakeRuntime) startContainer(ctx context.Context, args []string) (string, error) {
+	deadline, _ := ctx.Deadline()
+	f.runDeadlines = append(f.runDeadlines, deadline)
+	if f.startDelay > 0 {
+		select {
+		case <-time.After(f.startDelay):
+		case <-ctx.Done():
+			return "", fmt.Errorf("signal: killed: %w", ctx.Err())
+		}
+	}
+	return f.inContainer(args)
 }
 
 // inContainer answers the command a `docker run` line carries after its --workdir and image.
