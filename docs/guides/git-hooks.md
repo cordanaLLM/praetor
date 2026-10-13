@@ -494,8 +494,10 @@ against the installed one.
 The pre-push `gate` job runs `gate run --path=. --admit-unsupported` (`prePushGateArgs`). A root
 with neither `go.mod` nor `Cargo.lock`, such as a Meson, CMake, npm or Python repository, gets no
 receipt, because the gate runs no toolchain for it: the job runs every other stage, names the
-languages it could not verify and admits the push instead of refusing every one. A root with either
-marker still fails the job when its toolchain stages did not run
+languages it could not verify and admits the push instead of refusing every one. Where such a root's
+makefile declares `verify-all`, the job runs it first, and a failing `verify-all` refuses the push
+([A declared `verify-all` runs where no toolchain stage applies](adoption-verification.md#a-declared-verify-all-runs-where-no-toolchain-stage-applies)).
+A root with either marker still fails the job when its toolchain stages did not run
 ([The pre-push hook admits languages the gate has no runner for](adoption-verification.md#the-pre-push-hook-admits-languages-the-gate-has-no-runner-for)).
 `TestLefthookGate_Positive_PrePushGateAdmitsUnsupportedLanguages` in
 `internal/adopt/lefthook_gate_admit_test.go` runs the job line against a stub.
