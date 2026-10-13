@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -15,6 +16,9 @@ import (
 
 func TestAuditExceptionsExpiry_3D(t *testing.T) {
 	today := time.Date(2026, time.October, 10, 0, 0, 0, 0, time.UTC)
+	// The entries name files that exist, so only the expiry warning is under test here.
+	root := exceptionTargetRoot(t, ".github/workflows/rel.yml", "boundary-14.yml", "boundary-15.yml", "boundary-0.yml",
+		"expired.yml", "future.yml")
 
 	// Positive: exception expiring within 14 days produces warning
 	manifestPos := &config.Manifest{
@@ -28,7 +32,7 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 		},
 	}
 	out, err := captureStdout(t, func() error {
-		return auditExceptionsExpiry(manifestPos, today)
+		return auditExceptionsExpiry(context.Background(), manifestPos, root, today)
 	})
 	if err != nil {
 		t.Fatalf("auditExceptionsExpiry failed: %v", err)
@@ -61,7 +65,7 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 		},
 	}
 	out, err = captureStdout(t, func() error {
-		return auditExceptionsExpiry(manifestBoundary, today)
+		return auditExceptionsExpiry(context.Background(), manifestBoundary, root, today)
 	})
 	if err != nil {
 		t.Fatalf("auditExceptionsExpiry boundary failed: %v", err)
@@ -92,7 +96,7 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 		},
 	}
 	out, err = captureStdout(t, func() error {
-		return auditExceptionsExpiry(manifestNeg, today)
+		return auditExceptionsExpiry(context.Background(), manifestNeg, root, today)
 	})
 	if err != nil {
 		t.Fatalf("auditExceptionsExpiry negative failed: %v", err)
@@ -103,7 +107,7 @@ func TestAuditExceptionsExpiry_3D(t *testing.T) {
 
 	// Negative: nil manifest
 	out, err = captureStdout(t, func() error {
-		return auditExceptionsExpiry(nil, today)
+		return auditExceptionsExpiry(context.Background(), nil, root, today)
 	})
 	if err != nil || out != "" {
 		t.Errorf("nil manifest want (empty, nil), got (%q, %v)", out, err)

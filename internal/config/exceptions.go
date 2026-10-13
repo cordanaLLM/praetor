@@ -157,6 +157,22 @@ func (e Exception) Matches(rel string) bool {
 	return util.MatchGlobSegments(strings.Split(e.Glob, "/"), segments)
 }
 
+// MatchesAny reports whether the entry's glob matches at least one of files, the repository's
+// files as slash paths (#1259). A glob that matches no file excuses nothing, like a path that
+// names no file. An entry without a glob reports false: a path is checked on disk by the caller,
+// and a tool names no file.
+func (e Exception) MatchesAny(files []string) bool {
+	if e.Glob == "" {
+		return false
+	}
+	for index := 0; index < len(files); index++ {
+		if e.Matches(files[index]) {
+			return true
+		}
+	}
+	return false
+}
+
 // ExceptionDay returns the calendar day of t, in t's location, as midnight UTC: the form an
 // entry's expires date parses to, so the two compare as days.
 func ExceptionDay(t time.Time) time.Time {
