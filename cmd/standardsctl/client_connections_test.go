@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -59,5 +60,42 @@ func TestConnectionCLIFailureDoesNotPublish(t *testing.T) {
 		if _, err := os.Stat(output); !os.IsNotExist(err) {
 			t.Fatalf("rejected operation created backup: %v", err)
 		}
+	}
+}
+
+func TestConnectionCLILocalOnlyConnectsPreparesApplies(t *testing.T) {
+	root := t.TempDir()
+	profile := filepath.Join(root, "profile.json")
+	writeClientFixture(t, profile, []byte(`{"version":1,"gateway":{"local_servers":[{"name":"local-tools","command":`+quoted(trueCommand)+`,"args":[]}]}}`))
+	output := filepath.Join(root, "connections")
+	if err := runClients([]string{"connect", "--profile", profile, "--out", output}); err != nil {
+		t.Fatalf("connect refused a local-only profile: %v", err)
+	}
+	registry := filepath.Join(output, "registry.json")
+	if err := runClients([]string{"prepare", "--registry", registry, "--client", "gemini", "--out", filepath.Join(root, "prepared")}); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	target := filepath.Join(root, "settings.json")
+	writeClientFixture(t, target, []byte(`{"preferences":{"theme":"dark"}}`))
+	if err := runClients([]string{"apply", "--registry", registry, "--client", "gemini", "--target", target, "--out", filepath.Join(root, "backup")}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || !bytes.Contains(got, []byte(`"local-tools"`)) || !bytes.Contains(got, []byte(`"dark"`)) {
+		t.Fatalf("apply lost the local server or existing settings: %s %v", got, err)
+	}
+}
+
+func TestConnectionCLIRefusesEmptyProfile(t *testing.T) {
+	root := t.TempDir()
+	profile := filepath.Join(root, "profile.json")
+	writeClientFixture(t, profile, []byte(`{"version":1,"gateway":{}}`))
+	output := filepath.Join(root, "connections")
+	err := runClients([]string{"connect", "--profile", profile, "--out", output})
+	if err == nil || !strings.Contains(err.Error(), "gateway.endpoints") || !strings.Contains(err.Error(), "gateway.local_servers") {
+		t.Fatalf("empty profile not refused by name: %v", err)
+	}
+	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
+		t.Fatalf("refused profile created output: %v", statErr)
 	}
 }
