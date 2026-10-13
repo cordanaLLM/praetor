@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl adopt classifies a repository with two kinds of infrastructure as code (Terraform, Ansible, Helm, Kustomize, found up to three directories below the root) as gitops-infra, so a cluster repository holding one Packer template is no longer classified os-image
+issue: '#1074'
