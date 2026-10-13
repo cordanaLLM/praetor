@@ -324,9 +324,9 @@ func prepareRepairRoute(ctx context.Context, policy RepairPolicy) (*router.TaskR
 	if err != nil {
 		return nil, "", nil, err
 	}
-	if err := policy.registerAuthority.ValidateTaskLabels(router.DeclaredTaskLabels(cfg)); err != nil {
-		return nil, "", nil, fmt.Errorf("repair register tasks: %w", err)
-	}
+	// The repository's register rows were checked against its own router where the manifest was
+	// loaded (config.LoadCheckedRegisterAuthority); the repair router may declare only the repair
+	// task, and a task it does not declare plans an unroutable job (#765).
 	tracker := router.NewLimitTracker()
 	var usage *router.UsageSnapshot
 	if policy.UsagePath != "" {

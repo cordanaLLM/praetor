@@ -19,6 +19,7 @@ import (
 type scheduleSnapshot struct {
 	config            *ScheduleConfig
 	files             map[string][]byte
+	sourceTaskLabels  []string // target_tasks of the source repository's own router: the vocabulary its register rows may name
 	fingerprint       string
 	runnerSHA         string
 	registerAuthority config.RegisterAuthority
@@ -99,6 +100,9 @@ func (s *scheduleSnapshot) captureBundle(ctx context.Context) (err error) {
 		return errors.New("schedule source requires a manifest")
 	}
 	s.registerAuthority = authority
+	if s.sourceTaskLabels, err = captureSourceTaskLabels(ctx, root, filepath.Join(s.config.SourceRoot, router.DefaultConfigPath)); err != nil {
+		return err
+	}
 	if _, err := config.ValidateLockfile(ctx, s.config.SourceRoot, manifest); err != nil {
 		return err
 	}
@@ -232,12 +236,13 @@ func (s *scheduleSnapshot) captureRepairFiles(ctx context.Context, p *RepairPoli
 }
 
 func (s *scheduleSnapshot) validateCapturedRepairTasks(p *RepairPolicy) error {
-	routing, err := router.ParseRoutingConfig(s.files["routing.json"], p.RoutingConfig)
-	if err != nil {
+	// Rows are checked against the source repository's own router; the repair router only has
+	// to parse, and a repair task it does not declare plans an unroutable job (#765).
+	if _, err := router.ParseRoutingConfig(s.files["routing.json"], p.RoutingConfig); err != nil {
 		return err
 	}
-	if err := s.registerAuthority.ValidateTaskLabels(router.DeclaredTaskLabels(routing)); err != nil {
-		return fmt.Errorf("repair register tasks: %w", err)
+	if err := s.registerAuthority.ValidateTaskLabels(s.sourceTaskLabels); err != nil {
+		return fmt.Errorf("source register tasks: %w", err)
 	}
 	return nil
 }
@@ -288,4 +293,22 @@ func (s *scheduleSnapshot) captureArchetypeDirectory(ctx context.Context, root *
 		}
 	}
 	return dirs, total, nil
+}
+
+// captureSourceTaskLabels reads the source repository's own routing config, the vocabulary its
+// register rows are checked against; without one the router's built-in labels govern, as in
+// config.LoadCheckedRegisterAuthority.
+func captureSourceTaskLabels(ctx context.Context, root *os.Root, source string) ([]string, error) {
+	data, err := readScheduleFile(ctx, root, filepath.FromSlash(router.DefaultConfigPath), 1<<20, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return router.DefaultTaskLabels(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := router.ParseRoutingConfig(data, source)
+	if err != nil {
+		return nil, err
+	}
+	return router.DeclaredTaskLabels(cfg), nil
 }

@@ -325,13 +325,10 @@ func TestLoadConfigRejectsCanonicalRegisterMismatch(t *testing.T) {
 	t.Run("manifest task outside routing vocabulary", func(t *testing.T) {
 		f := newRunFixture(t, 1)
 		commitRegisterManifest(t, f, []byte("version: 1\nregister:\n  tasks:\n    undeclared_task: internal\n"))
-		authority, err := loadPinnedRegisterAuthority(t.Context(), f.config)
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.config.RepairPolicy, err = dogfood.CanonicalRepairPolicy(f.config.RepairPolicy, authority)
-		if err != nil {
-			t.Fatal(err)
+		// Rows are judged by the pinned source repository's router (built-in labels here), at load (#765).
+		_, err := loadPinnedRegisterAuthority(t.Context(), f.config)
+		if err == nil || !strings.Contains(err.Error(), `register task "undeclared_task" is not a declared target_tasks label`) {
+			t.Fatalf("pinned manifest row outside the source router accepted: %v", err)
 		}
 		f.save(t)
 		if loaded, err := loadConfig(t.Context(), f.configPath, f.root); err == nil || loaded != nil {
