@@ -414,7 +414,13 @@ def without_read_only_words(command):
     return re.sub(READ_ONLY_WORDS, r"\1\2", command)
 
 
+def join_line_continuations(command):
+    # A backslash followed by a newline (LF or CRLF) joins lines without regex backtracking.
+    return re.sub(r"\\\r?\n", " ", command)
+
+
 def check_command(command):
+    command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
     # hook timeout. Such a command is refused, never truncated.
     if len(command) > MAX_SCAN_CHARS:
@@ -772,7 +778,7 @@ var priorEvasionHookDigests = map[string]string{
 	"332845d1088325c24cd747bfc4e8c5e415132a46f06204fffcc267bc8af5d8f7": "find and in-place edit rules start at the first command word",
 	"9db442d72dc16b74ce88250c1dbf1a0b05830bdc6716ab4b705c5aa1c7531a02": "named exempt patterns and a start-of-text veto anchor, clean under CodeQL (#1219)",
 	"74a3c9cb08bd3afeaf4c0e0e3b05f0b9ad7518beee1173465477270ed71f569d": "raise from error in pending_command under adopter ruff B904",
-	"861d8953285e88398c165fd103aa22e8d4b3d8af5946187aff6f39de4aa32bd3": "refuse admin and API merges that bypass rulesets (#1300)",
+	"e69d49af323fcd3b1d23394bc6736afa115629ff7925ffec664404bd048ec169": "refuse admin and API merges that bypass rulesets (#1300)",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

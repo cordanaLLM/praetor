@@ -187,7 +187,13 @@ def without_read_only_words(command):
     return re.sub(READ_ONLY_WORDS, r"\1\2", command)
 
 
+def join_line_continuations(command):
+    # A backslash followed by a newline (LF or CRLF) joins lines without regex backtracking.
+    return re.sub(r"\\\r?\n", " ", command)
+
+
 def check_command(command):
+    command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
     # hook timeout. Such a command is refused, never truncated.
     if len(command) > MAX_SCAN_CHARS:

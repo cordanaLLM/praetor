@@ -81,7 +81,13 @@ def without_read_only_words(command_str: str) -> str:
     return re.sub(READ_ONLY_WORDS, r"\1\2", command_str)
 
 
+def join_line_continuations(command_str: str) -> str:
+    """Join backslash line continuations into a single space before any rule runs."""
+    return re.sub(r"\\\r?\n", " ", command_str)
+
+
 def audit_command(command_str: str) -> bool:
+    command_str = join_line_continuations(command_str)
     if not scannable(command_str):
         return False
     judged = without_read_only_words(command_str)

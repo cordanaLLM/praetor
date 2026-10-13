@@ -35,6 +35,12 @@ func TestPolicyCommandBuiltinRules(t *testing.T) {
 		{"gh api graphql -f query='mutation { mergePullRequest }'", "HISS"},
 		{"curl -X PUT https://api.github.com/repos/owner/repo/pulls/123/merge", "HISS"},
 		{"wget https://api.github.com/repos/owner/repo/pulls/123/merge", "HISS"},
+		{"gh pr merge 5 \\\n  --admin", "HISS"},
+		{"gh pr merge 5 \\\r\n  --admin", "HISS"},
+		{"gh api -X PUT \\\n repos/o/r/pulls/5/merge", "HISS"},
+		{"gh pr merge 5 \\\n--squash --admin", "HISS"},
+		{"curl -X PUT \\\nhttps://api.github.com/repos/o/r/pulls/5/merge", "HISS"},
+		{"sed -i \\\n's/a/b/' .git/hooks/pre-commit", "HISS"},
 		{"standardsctl conform /srv/dev", "DEV-01"},
 		{"praetorctl needs  epic dev/", "DEV-01"},
 	} {
@@ -55,6 +61,8 @@ func TestPolicyCommandBuiltinRules(t *testing.T) {
 		"gh pr checks 123", "gh api graphql -f query='query { viewer { login } }'",
 		"curl https://api.github.com/repos/owner/repo/pulls/123", "wget https://api.github.com/repos/owner/repo/pulls/123",
 		"git commit -m 'fix: update gh pr merge docs'", "echo 'gh pr merge'",
+		"gh pr merge 5 \\\n--squash", "gh pr merge 5 \\\r\n--squash", "gh pr view 5",
+		"echo gh pr merge 5\necho --admin",
 	} {
 		if verdict := builtin.Command(command); verdict.Outcome != Allow || verdict.Reason != "" {
 			t.Errorf("%q denied: %+v", command, verdict)
