@@ -5,12 +5,16 @@
 package supplychain
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // The REUSE lint gate runs one reuse release line everywhere: praetor's own Compliance workflow
@@ -29,6 +33,16 @@ const (
 	ReuseActionCommit = "676e2d560c9a403aa252096d99fcab3e1132b0f5"
 	// LicensesDir holds the full text of every license REUSE names, one <id>.txt each.
 	LicensesDir = "LICENSES"
+	// ReuseDep5File is the deprecated machine-readable declaration REUSE still reads beside
+	// ReuseFile (REUSE Specification 3.3).
+	ReuseDep5File = ".reuse/dep5"
+	// reuseHeaderTag is the comment tag a file states its license with (REUSE Specification 3.3).
+	reuseHeaderTag = "SPDX-License-Identifier:"
+	// reuseHeaderBytes is how much of a file ReuseHeadersOnlyNotice reads for reuseHeaderTag:
+	// the first chunk reuse 6.x reads (reuse.extract.CHUNK_SIZE, 64 KiB), where a header stands.
+	reuseHeaderBytes = 64 << 10
+	// maxReuseHeaderFiles bounds the files ReuseHeadersOnlyNotice reads (HISS-02).
+	maxReuseHeaderFiles = 20000
 )
 
 // ReuseActionRef is ReuseAction pinned at ReuseActionVersion, the form the hook job output uses.
@@ -47,10 +61,13 @@ func ReuseMajor() string {
 	return strings.TrimPrefix(ReuseActionVersion, "v")
 }
 
-// ReuseDeclared reports whether the repository at root declares its licensing the REUSE way:
-// it carries ReuseFile, anything but a directory, or LICENSES/ as a directory. Neither is
-// followed through a symlink. A path that exists but cannot be inspected is an error, never a
-// repository without REUSE.
+// ReuseDeclared reports whether the repository at root declares its licensing the REUSE way
+// in one of the two files REUSE Specification 3.3 reads for the whole tree: ReuseFile or the
+// deprecated ReuseDep5File, each a file, not a directory, and neither followed through a symlink.
+// LICENSES/ alone declares nothing: it is where REUSE keeps license texts, and where repositories
+// that never used the reuse tool keep third-party notices (#1244). A repository that labels its
+// files by headers alone is not counted either; ReuseHeadersOnlyNotice names it. A path that
+// exists but cannot be inspected is an error, never a repository without REUSE.
 func ReuseDeclared(ctx context.Context, root string) (bool, error) {
 	if ctx == nil {
 		return false, errors.New("REUSE detection requires a context")
@@ -58,20 +75,107 @@ func ReuseDeclared(ctx context.Context, root string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	for _, marker := range []struct {
-		name string
-		dir  bool
-	}{{ReuseFile, false}, {LicensesDir, true}} {
-		info, err := os.Lstat(filepath.Join(root, marker.name))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return false, fmt.Errorf("inspect %s: %w", marker.name, err)
-		}
-		if info.IsDir() == marker.dir && info.Mode()&os.ModeSymlink == 0 {
-			return true, nil
+	for _, name := range []string{ReuseFile, ReuseDep5File} {
+		present, err := rootEntry(root, name, false)
+		if err != nil || present {
+			return present, err
 		}
 	}
 	return false, nil
+}
+
+// ReuseDeclarationFiles names the files ReuseDeclared reads, for messages.
+func ReuseDeclarationFiles() string {
+	return ReuseFile + " or " + ReuseDep5File
+}
+
+// rootEntry reports whether root holds name as a directory (dir) or as anything else, not
+// through a symlink. A path that exists but cannot be inspected is an error.
+func rootEntry(root, name string, dir bool) (bool, error) {
+	info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(name)))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", name, err)
+	}
+	return info.IsDir() == dir && info.Mode()&os.ModeSymlink == 0, nil
+}
+
+// ReuseHeadersOnlyNotice returns the line that names a repository labelling its files the REUSE
+// way by headers alone: LICENSES/ is a directory, neither ReuseFile nor ReuseDep5File is there,
+// and repository files outside LICENSES/ and .reuse/ carry the SPDX-License-Identifier tag in
+// their first reuseHeaderBytes, or are .license companions. Since #1244 such a repository gets no
+// REUSE gate, and adoption and audit both print this line, so the drop is visible. It returns ""
+// for every other repository, and when git lists no files (no work tree): the files are the
+// repository's own only by git's answer (hiss.GitVisiblePaths).
+func ReuseHeadersOnlyNotice(ctx context.Context, root string) (string, error) {
+	declared, err := ReuseDeclared(ctx, root)
+	if err != nil || declared {
+		return "", err
+	}
+	licenses, err := rootEntry(root, LicensesDir, true)
+	if err != nil || !licenses {
+		return "", err
+	}
+	count, err := reuseHeaderFiles(ctx, root, hiss.GitVisiblePaths(ctx, root).Files())
+	if err != nil || count == 0 {
+		return "", err
+	}
+	return fmt.Sprintf("REUSE by headers only, no %s: the REUSE gate is not rendered; add %s to keep it "+
+		"(%d file(s) carry %s headers or .license companions, %s/ holds the texts)",
+		ReuseFile, ReuseFile, count, strings.TrimSuffix(reuseHeaderTag, ":"), LicensesDir), nil
+}
+
+// reuseHeaderFiles counts the files among rels, outside LICENSES/ and .reuse/, that are .license
+// companions or carry reuseHeaderTag in their first reuseHeaderBytes. A file that is not a regular
+// file, or no longer exists, is skipped.
+func reuseHeaderFiles(ctx context.Context, root string, rels []string) (int, error) {
+	count := 0
+	for i := 0; i < len(rels) && i < maxReuseHeaderFiles; i++ {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		rel := rels[i]
+		if strings.HasPrefix(rel, LicensesDir+"/") || strings.HasPrefix(rel, ".reuse/") {
+			continue
+		}
+		if strings.HasSuffix(rel, ".license") {
+			count++
+			continue
+		}
+		tagged, err := carriesReuseHeader(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return 0, err
+		}
+		if tagged {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// carriesReuseHeader reports whether the regular file at path holds reuseHeaderTag in its first
+// reuseHeaderBytes.
+func carriesReuseHeader(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && !info.Mode().IsRegular()) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", path, err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return false, fmt.Errorf("open %s: %w", path, err)
+	}
+	head, err := io.ReadAll(io.LimitReader(file, reuseHeaderBytes))
+	closeErr := file.Close()
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+	if closeErr != nil {
+		return false, fmt.Errorf("close %s: %w", path, closeErr)
+	}
+	return bytes.Contains(head, []byte(reuseHeaderTag)), nil
 }

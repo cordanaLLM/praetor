@@ -607,7 +607,7 @@ Each row is one step, named as `adoption.decline` and the adoption report name i
 files it writes in a repository that declares the default facets. Which of them are mandatory
 and which a repository may decline is in
 [adoption verification](guides/adoption-verification.md). A step writes only what its inputs call
-for: the API gate needs a tracked `go.mod`, the REUSE gate a `REUSE.toml` or `LICENSES/`, and a
+for: the API gate needs a tracked `go.mod`, the REUSE gate a `REUSE.toml` or `.reuse/dep5`, and a
 flavor only where one matches. `praetorctl adopt --dry-run --lock-source-root=/path/to/praetor`
 prints the exact list for your repository, about a hundred files for a Go module, before it
 writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
@@ -634,7 +634,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `security-policy` | `SECURITY.md` |
 | `adr` | `docs/adr/README.md` and `docs/adr/0000-template.md` |
 | `readme` | the governance block in an existing `README.md` |
-| `reuse-gate` | `.github/workflows/reuse.yml`, where the root carries `REUSE.toml` or `LICENSES/` |
+| `reuse-gate` | `.github/workflows/reuse.yml`, where the root carries `REUSE.toml` or `.reuse/dep5` |
 | `working-dir-and-flavor` | the private `.workingdir/` ledger and the detected flavor's templates ([flavors](guides/onboarding.md#flavors)) |
 | `branch-ruleset` | `.github/rulesets/main.json`, the branch ruleset with the required status checks |
 | `labels` | `.config/labels.yaml`, the label taxonomy |
@@ -680,7 +680,9 @@ The groups with behavior of their own:
     untouched, with a warning naming the labels
     ([actionlint runner labels](guides/documentation-governance.md#adoption-audit-and-ci),
     `internal/adopt/actionlint.go`). Decline `actionlint-labels` to opt out.
-11. **REUSE gate**: when the repository root carries `REUSE.toml` or a `LICENSES/` directory,
+11. **REUSE gate**: when the repository root carries `REUSE.toml` or `.reuse/dep5`, the two files
+    [REUSE Specification 3.3](https://reuse.software/spec-3.3/) reads for the whole tree (a
+    `LICENSES/` directory alone declares nothing: it may hold third-party notices, #1244),
     adoption writes `.github/workflows/reuse.yml`, whose **REUSE lint** job runs
     `fsfe/reuse-action@v6` within a 10-minute timeout in the shared hosted gate shape (`internal/ghworkflow/hostedgate.go`:
     pull request activity and a push to the default branch the branch ruleset protects, a first
@@ -689,13 +691,18 @@ The groups with behavior of their own:
     `reuse lint` with reuse 6.x, skips where reuse is not installed, and fails on another major.
     The action tag is the one pin both read (`supplychain.ReuseActionVersion` in
     `internal/supplychain/reuse_lint.go`, also the tag `praetorctl bump` expects). A root with
-    neither marker gets neither. When the root loses both markers, adoption removes its unedited
+    neither file gets neither; one whose `LICENSES/` and file headers label it the REUSE way
+    without either file gets a warning, from adoption and from every audit, that names
+    `REUSE.toml` (`supplychain.ReuseHeadersOnlyNotice`). When the root loses its declaration,
+    adoption removes its unedited
     `reuse.yml`, so the ruleset stops requiring a check that cannot pass, and migrates
     `lefthook.yml` to the matching rendering; it does the same in reverse when the root gains
     them. An unedited `reuse.yml` rendered for another default branch is refreshed. An edited
     `reuse.yml` is kept, `--force` included, with a warning when the root no longer declares
-    REUSE (`internal/adopt/reuse_gate_test.go`). Decline `reuse-gate` to skip the workflow; the
-    hook job follows the `git-hooks` step.
+    REUSE (`internal/adopt/reuse_gate_test.go`). Decline `reuse-gate` to drop both: no workflow
+    and no `reuse-lint` job is rendered, a declined step removes an unedited `reuse.yml` an
+    earlier adoption wrote, and `lefthook.yml` migrates to the rendering without the job
+    (`internal/adopt/reuse_decline_test.go`).
 
 ### The baseline on a re-adoption
 
