@@ -1,0 +1,3 @@
+type: fixed
+title: The command guard and the adopter interceptor search the git short skip flag rule once per option run, so a git word inside every option of a chain no longer costs quadratic time
+issue: '#1283'
