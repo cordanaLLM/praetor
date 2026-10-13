@@ -83,6 +83,20 @@ func TestScheduleActualSuiteAndReadOnlyStatus(t *testing.T) {
 	assertSuitePrivate(t, cfg.StateDir)
 }
 
+// A schedule whose repair router declares only the repair task loads: the source repository's
+// register rows (this repository's .standards.yaml) are checked against its own router (#765).
+func TestScheduleAcceptsNarrowRepairRouter(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	policy := repairTestPolicy(t)
+	policy.RoutingConfig = repairTestFile(t, narrowRepairRoutingFixture)
+	cfg.RepairPolicy = &policy
+	writeScheduleFixture(t, path, cfg)
+	if report, err := ScheduleStatus(context.Background(), path); err != nil || report == nil || report.Config.RepairPolicy == nil {
+		t.Fatalf("narrow repair router refused: %+v %v", report, err)
+	}
+}
+
 func TestScheduleCanonicalizesCallerRepairRegisterPolicy(t *testing.T) {
 	requireScheduling(t)
 	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")

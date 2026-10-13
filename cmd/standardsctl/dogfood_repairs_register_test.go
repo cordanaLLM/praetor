@@ -64,3 +64,48 @@ func TestDogfoodRepairCLIRejectsUndeclaredRegisterRow(t *testing.T) {
 		t.Fatal("a rejected manifest must not leave a plan behind")
 	}
 }
+
+// narrowRepairRouting writes a repair routing config that declares only the given labels, the
+// shape a dogfood schedule's repair_policy.routing_config has on a workstation (#765).
+func narrowRepairRouting(t *testing.T, path string, labels string) {
+	t.Helper()
+	body := "version: 1\ntiers:\n  debug:\n    target_tasks: [" + labels + "]\n    models:\n      - id: cheap\n        family: openai\n        cost_per_m_in: 1\n        cost_per_m_out: 1\ngovernance:\n  exhaustion_threshold_percent: 80\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The repository's register rows are checked against the repository's own router; a narrow
+// repair router only has to declare the repair task (#765).
+func TestDogfoodRepairCLIChecksRowsAgainstTheRepositoryRouter(t *testing.T) {
+	args := repairCLIFixture(t)
+	t.Chdir(t.TempDir())
+	writeFixtureFile(t, ".", ".config/models/routing.yaml", readFixtureFile(t, filepath.Dir(args[3]), filepath.Base(args[3])))
+	writeFixtureFile(t, ".", ".standards.yaml", "version: 1\nregister:\n  tasks:\n    architecture_synthesis: docs\n    commit_message_synthesis: social\n")
+	narrowRepairRouting(t, args[3], "ci_debugging")
+	if err := runDogfoodRepairs(context.Background(), args); err != nil {
+		t.Fatalf("rows the repository's router declares must not need the repair router: %v", err)
+	}
+	if plan := readRepairPlan(t, args); len(plan.Jobs) == 0 {
+		t.Fatal("no repair job planned")
+	}
+}
+
+// Negative: a repair router that does not declare the repair task plans an unroutable job, and
+// a row the repository's own router does not declare is still refused.
+func TestDogfoodRepairCLIRejectsRepairTaskMissingFromRepairRouter(t *testing.T) {
+	args := repairCLIFixture(t)
+	t.Chdir(t.TempDir())
+	narrowRepairRouting(t, args[3], "function_docstrings")
+	mustErrContain(t, runDogfoodRepairs(context.Background(), args), "blocked jobs")
+	if plan := readRepairPlan(t, args); len(plan.Jobs) == 0 || plan.Jobs[0].Status != "unroutable" {
+		t.Fatalf("repair task missing from the repair router: %+v", plan.Jobs)
+	}
+
+	args = repairCLIFixture(t)
+	t.Chdir(t.TempDir())
+	writeFixtureFile(t, ".", ".config/models/routing.yaml", readFixtureFile(t, filepath.Dir(args[3]), filepath.Base(args[3])))
+	writeFixtureFile(t, ".", ".standards.yaml", "version: 1\nregister:\n  tasks:\n    deploy_prod: docs\n")
+	narrowRepairRouting(t, args[3], "ci_debugging")
+	mustErrContain(t, runDogfoodRepairs(context.Background(), args), `register task "deploy_prod" is not a declared target_tasks label`)
+}
