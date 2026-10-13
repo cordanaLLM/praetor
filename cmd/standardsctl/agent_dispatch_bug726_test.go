@@ -96,11 +96,13 @@ func TestDispatchAgentTask_Positive_AuditorStillDispatches(t *testing.T) {
 	// A hermetic, empty scan target: dispatch routing is under test, not the HISS
 	// scanner itself.
 	t.Chdir(t.TempDir())
-	if err := dispatchAgentTask("praetor-auditor", nil); err != nil {
-		t.Fatalf("praetor-auditor must still dispatch to the HISS scan: %v", err)
-	}
-	if err := dispatchAgentTask("praetor_auditor", nil); err != nil {
-		t.Fatalf("the underscored form must dispatch too: %v", err)
+	for _, name := range []string{"praetor-auditor", "praetor_auditor"} {
+		out, err := captureStdout(t, func() error { return dispatchAgentTask(name, nil) })
+		if err != nil {
+			t.Fatalf("%s must still dispatch to the HISS scan: %v", name, err)
+		}
+		// The helper's own line shows the registry entry ran, not only that nothing failed.
+		mustContain(t, out, "[praetor-auditor] AST sweep complete")
 	}
 }
 
