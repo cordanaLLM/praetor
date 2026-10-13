@@ -79,22 +79,6 @@ var gitIgnoreBlockHistory = []gitIgnoreBlockVersion{
 	},
 }
 
-// unmarkedIgnoreRules returns every rule of the canonical block and of each earlier version,
-// once each: the exact unmarked lines the managed block supersedes. Praetor's former format
-// wrote them outside any block, and an operator may have written one by hand; either way the
-// merge drops the line, so the block that follows does not repeat it.
-func unmarkedIgnoreRules() []string {
-	rules := slices.Clone(canonicalGitIgnoreBlockVersion.Rules)
-	for i := 0; i < len(gitIgnoreBlockHistory) && i < maxHistoryVersions; i++ {
-		for _, rule := range gitIgnoreBlockHistory[i].Rules {
-			if !slices.Contains(rules, rule) {
-				rules = append(rules, rule)
-			}
-		}
-	}
-	return rules
-}
-
 // GitIgnoreTailMatch describes whether text matches an accepted managed tail block.
 type GitIgnoreTailMatch struct {
 	Matched bool
@@ -170,11 +154,14 @@ func checkBlockHistoryTransition(previous, current gitIgnoreBlockVersion, histor
 }
 
 // gitIgnoreTailBlock is the private-artifact block adoption owns at the tail of .gitignore.
-// Exact unmarked rules of any block version (unmarkedIgnoreRules) are migrated into it.
+// Exact unmarked lines equal to one of the block's own rules (managedIgnoreRules) are migrated
+// into it, so the block does not repeat them. Every other line outside the block is the
+// operator's and stays as written: an operator's root-anchored /.workingdir/, the rule blocks up
+// to v2 carried, is no rule of the current block and is kept (#1263).
 func gitIgnoreTailBlock() managedTailBlock {
 	return managedTailBlock{
 		file: gitIgnoreFile, begin: gitIgnoreManagedBegin, end: gitIgnoreManagedEnd,
-		maxLines: maxGitIgnoreLines, duplicate: "duplicate managed markers", legacy: unmarkedIgnoreRules(),
+		maxLines: maxGitIgnoreLines, duplicate: "duplicate managed markers", legacy: managedIgnoreRules,
 	}
 }
 

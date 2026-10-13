@@ -128,7 +128,7 @@ func TestManagedGitIgnore_Boundary_V2BlockUpgradedWithoutDuplicates(t *testing.T
 		}
 	}
 
-	operator := "node_modules/\n.workingdir/\ncoverage/\n.workingdir2/\n"
+	operator := "node_modules/\n.workingdir/\ncoverage/\n.workingdir2/\n/.workingdir/\n"
 	merged, err := mergeGitIgnore(operator)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,9 @@ func TestManagedGitIgnore_Boundary_V2BlockUpgradedWithoutDuplicates(t *testing.T
 			t.Errorf("%s appears %d times after the merge:\n%s", rule, count, merged)
 		}
 	}
-	if !slices.Equal(lines[:3], []string{"node_modules/", "coverage/", ""}) {
+	// An operator's root-anchored /.workingdir/ is no rule of the current block: it is the
+	// operator's line and stays where it was written.
+	if !slices.Equal(lines[:4], []string{"node_modules/", "coverage/", "/.workingdir/", ""}) {
 		t.Errorf("the operator's other lines were not kept in order:\n%s", merged)
 	}
 }

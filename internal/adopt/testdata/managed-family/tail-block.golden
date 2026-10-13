@@ -35,7 +35,7 @@ verify formatter documentation=true error .prettierignore line endings are incon
 formatter documentation=false error .prettierignore line endings are inconsistent: text contains mixed LF and CRLF line endings
 verify formatter documentation=false error .prettierignore line endings are inconsistent: text contains mixed LF and CRLF line endings
 == legacy unmarked rule
-gitignore ok "node_modules/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n.workingdir/\n.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
+gitignore ok "node_modules/\n/.workingdir/\n/.workingdir2/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n.workingdir/\n.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n# END praetor private artifacts\n"
 formatter documentation=true ok 1428 bytes sha256:03b39a56460556c6ea854180a4b835bf555e5bb3610bc50dcfc90cb449ea4047
 verify formatter documentation=true error .prettierignore managed artifact block is stale
 formatter documentation=false ok 564 bytes sha256:496e95dfec1d52d01b23bc353c3db267a590a86db7ae7bd28a7ab3de0c08c676

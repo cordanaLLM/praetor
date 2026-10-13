@@ -36,7 +36,13 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := mustRead(t, path)
-			for _, line := range strings.Split(existing, "\n") {
+			// The operator's lines are the ones outside an earlier managed block; the block's own
+			// lines, such as the root-anchored rules of v2, are Praetor's and are replaced (#1263).
+			operator, _, err := gitIgnoreTailBlock().strip(existing)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range strings.Split(operator, "\n") {
 				if line == "" || slices.Contains(managedIgnoreRules, line) {
 					continue
 				}
