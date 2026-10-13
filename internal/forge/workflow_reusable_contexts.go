@@ -58,8 +58,10 @@ func (c calledWorkflows) spec(job, uses string) (*workflowSpec, error) {
 	if spec, ok := c.parsed[name]; ok {
 		return spec, nil
 	}
+	// Files are indexed by name, so a call into a subdirectory, where GitHub runs no
+	// reusable workflow, finds none.
 	data, ok := c.data[name]
-	if !ok || strings.Contains(name, "/") {
+	if !ok {
 		return nil, fmt.Errorf("job %q calls %s, which is no workflow in %s", job, uses, plannedWorkflowDir)
 	}
 	var spec workflowSpec
