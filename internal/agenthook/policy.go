@@ -345,12 +345,21 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	return &Policy{rules: rules}, nil
 }
 
+var lineContinuationReplacer = strings.NewReplacer("\\\r\n", " ", "\\\n", " ")
+
+// joinLineContinuations replaces backslash line continuations (a backslash followed by \r\n or
+// \n) with a single space before any rule runs.
+func joinLineContinuations(command string) string {
+	return lineContinuationReplacer.Replace(command)
+}
+
 // Command judges one proposed command line. The first matching rule denies; a
 // readOnlyExempt rule judges the command without the words of chained read-only commands.
 func (p *Policy) Command(command string) Verdict {
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
+	command = joinLineContinuations(command)
 	judged := withoutReadOnlyWords(command)
 	for _, rule := range p.rules {
 		text := command
