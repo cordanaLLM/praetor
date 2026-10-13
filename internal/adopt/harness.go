@@ -432,6 +432,11 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	// Before the vendor files are rewritten from AGENTS.md, the text they hold that AGENTS.md
+	// lacks moves into it (#1073).
+	if err := foldAuthoredVendorContext(ctx, s, declared.AgentClients, prior); err != nil {
+		return err
+	}
 	agentsContent, err := resolveAgentsContent(ctx, s, facts)
 	if err != nil {
 		return err
@@ -485,7 +490,12 @@ func resolveAgentsContent(ctx context.Context, s *adoptSession, facts harnessFac
 	if err != nil {
 		return "", err
 	}
-	if !fileExists(full) {
+	// A dry run reads the AGENTS.md it planned, the folded vendor text included.
+	existingBytes, exists, err := s.agentsSource(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
 		if err := validateHarnessProjection(harness); err != nil {
 			return "", err
 		}
@@ -494,10 +504,6 @@ func resolveAgentsContent(ctx context.Context, s *adoptSession, facts harnessFac
 		}
 		s.report.recordCreated(agentsFile, "Synthesized canonical Praetor Agent Operating Harness and HISS invariants")
 		return harness, nil
-	}
-	existingBytes, err := readRepoFile(full)
-	if err != nil {
-		return "", err
 	}
 	return mergeExistingAgentsContent(ctx, s, full, string(existingBytes), harness)
 }
