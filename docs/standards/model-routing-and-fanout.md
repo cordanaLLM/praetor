@@ -375,8 +375,33 @@ reaches the stop line no earlier than the reset.
 
 The tests in `internal/router/window_test.go` replay the acceptance cases of #1142, the
 warn and stop boundaries, and the agent-scaling fixture from the issue thread.
-Today only the Codex CLI source (`tribunus/internal/sources/codexlocal`) writes window
-records. A lane on any other client stays `unknown` until a source writes its records.
+Two sources write window records today: `codex-local`
+(`tribunus/internal/sources/codexlocal`), which copies the provider's own
+`used_percent`, and `claude-local` (`tribunus/internal/sources/claudelocal`), which
+derives one from the Claude Code session logs (`tribunusctl sync --sources=claude-local
+[--claude-projects-dir <dir>]`). A lane on any other client stays `unknown` until a
+source writes its records.
+
+`claude-local` reads only usage fields: per-response token counts, the model, the
+timestamp, and the `quotaLimits` of rejected requests. Message content is never
+decoded. It reports `claude-code/five_hour`, `claude-code/seven_day`, and every other
+`rateLimitType` a rejection names (a suffix such as `seven_day_opus` counts only that
+model family). For each window:
+
+- Usage is priced at first-party API rates (cost-equivalent) and counted once per
+  response.
+- The ceiling is the smallest usage a fully logged window held at its first rejected
+  request.
+- The reset is the last reported `resetsAt`, advanced in whole window steps.
+- `used_percent` is the current window's usage over the ceiling.
+- `burn_percent_per_hour` and `active_agents` cover the last 15 minutes.
+
+Without an observed rejection, or with usage of a model the rate table lacks, the
+record has no `used_percent` and says why in `absent`, so the governor refuses as
+unknown. Files last written more than seven days ago are not read. The tests in
+`tribunus/internal/sources/claudelocal` use synthetic logs only;
+`tribunus/cmd/tribunusctl/sync_windows_test.go` runs a produced snapshot through the
+governor.
 
 `praetorctl models outcome --task <label> --target <t> --result ok|fail|timeout
 [--lane <name>] [--duration-ms n] [--note text] [identity flags]` appends one
