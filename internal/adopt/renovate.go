@@ -322,24 +322,24 @@ func publishRenovateConfig(ctx context.Context, s *adoptSession, rel string, dat
 // renovatePublishDetail returns the report action and detail of a rewrite whose managed entry
 // lists declared of the managed paths.
 func renovatePublishDetail(managed, declared int) (string, string) {
-	const reindented = "; the file is re-indented with two spaces"
 	switch {
 	case managed == 0:
 		return actionRemove, "Removed the Praetor-managed packageRules entry: no Praetor-managed file needs it"
 	case declared == 0:
-		return actionRemove, "Removed the Praetor-managed packageRules entry: the configuration's own rules already disable Renovate for every Praetor-managed file" + reindented
+		return actionRemove, "Removed the Praetor-managed packageRules entry: the configuration's own rules already disable Renovate for every Praetor-managed file"
 	case declared < managed:
-		return actionMerge, fmt.Sprintf("Declared to Renovate, in a packageRules entry that disables their updates, the %d of %d Praetor-managed files its own rules do not already disable", declared, managed) + reindented
+		return actionMerge, fmt.Sprintf("Declared to Renovate, in a packageRules entry that disables their updates, the %d of %d Praetor-managed files its own rules do not already disable", declared, managed)
 	}
-	return actionMerge, "Declared the Praetor-managed files to Renovate in a packageRules entry that disables their updates" + reindented
+	return actionMerge, "Declared the Praetor-managed files to Renovate in a packageRules entry that disables their updates"
 }
 
 // mergeRenovateRule returns data with at most one managed packageRules entry, listing the
 // paths no adopter rule already covers (uncoveredRenovatePaths), or none when that leaves no
 // path; those declared paths; and whether that changed anything. An entry already equal to
-// the rule, in any formatting, is a no-op. Every other member and entry keeps its order and
-// value; the rewritten document is re-indented with two spaces (clientjson.Object.Encode)
-// in data's line-ending style. A *renovateUnsafeError marks a document it will not rewrite.
+// the rule, in any formatting, is a no-op. Only the packageRules member is rewritten, in data's
+// own indentation and line endings (clientjson.SetAt); every other byte stays as written, so a
+// tab-indented configuration keeps its tabs (#1251). A *renovateUnsafeError marks a document it
+// will not rewrite.
 func mergeRenovateRule(ctx context.Context, data []byte, paths []string) ([]byte, []string, bool, error) {
 	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
 	if err != nil {
@@ -360,19 +360,32 @@ func mergeRenovateRule(ctx context.Context, data []byte, paths []string) ([]byte
 		return nil, nil, false, err
 	}
 	declared := uncoveredRenovatePaths(rules, paths)
-	next, changed, err := withRenovateRule(rules, declared)
+	edit, changed, err := withRenovateRule(rules, declared)
 	if err != nil || !changed {
 		return nil, declared, false, err
 	}
-	encodedRules, err := json.Marshal(next)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("encode Renovate packageRules: %w", err)
-	}
-	encoded, err := root.With("packageRules", encodedRules).Encode()
+	encoded, err := writeRenovateRule([]byte(text), root, edit)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("encode Renovate configuration: %w", err)
 	}
 	return []byte(util.RestoreLineEndings(string(encoded), crlf)), declared, true, nil
+}
+
+// renovateEdit is one change to the packageRules array: the entry at index replaced by rule,
+// rule appended when index is the array's length, or the entry removed when rule is nil.
+type renovateEdit struct {
+	index int
+	rule  jsontext.Value
+}
+
+// writeRenovateRule applies edit to text, whose root object is root, changing only the managed
+// entry (clientjson.SetElement); a configuration without packageRules gets the member, holding
+// that entry (clientjson.SetAt). Either keeps the file's indentation and every other byte.
+func writeRenovateRule(text []byte, root clientjson.Object, edit renovateEdit) ([]byte, error) {
+	if _, declared := root.Get("packageRules"); declared {
+		return clientjson.SetElement(text, []string{"packageRules"}, edit.index, edit.rule)
+	}
+	return clientjson.SetAt(text, []string{"packageRules"}, jsontext.Value("["+string(edit.rule)+"]"))
 }
 
 // renovatePackageRules returns the packageRules entries of root; none when root declares no
@@ -406,38 +419,33 @@ func findManagedRenovateRule(rules []jsontext.Value) (int, error) {
 	return found, nil
 }
 
-// withRenovateRule returns rules with the managed entry replaced in place, appended when
-// absent, or removed when paths is empty, and whether that differs from rules. Two managed
+// withRenovateRule returns the edit that leaves rules with the managed entry replaced in place,
+// appended when absent, or removed when paths is empty, and whether there is one. Two managed
 // entries are ambiguous and refused, and so is an append past maxRenovateRules: the written
 // configuration stays within the bound renovatePackageRules reads back, so the rerun finds
 // the entry instead of refusing the file.
-func withRenovateRule(rules []jsontext.Value, paths []string) ([]jsontext.Value, bool, error) {
+func withRenovateRule(rules []jsontext.Value, paths []string) (renovateEdit, bool, error) {
 	found, err := findManagedRenovateRule(rules)
 	if err != nil {
-		return nil, false, err
+		return renovateEdit{}, false, err
 	}
 	if len(paths) == 0 {
-		if found < 0 {
-			return rules, false, nil
-		}
-		return append(rules[:found:found], rules[found+1:]...), true, nil
+		return renovateEdit{index: found}, found >= 0, nil
 	}
 	rule, err := renderRenovateRule(paths)
 	if err != nil {
-		return nil, false, err
+		return renovateEdit{}, false, err
 	}
 	if found < 0 {
 		if len(rules) >= maxRenovateRules {
-			return nil, false, renovateUnsafe("its packageRules holds %d entries, and the managed entry would exceed %d", len(rules), maxRenovateRules)
+			return renovateEdit{}, false, renovateUnsafe("its packageRules holds %d entries, and the managed entry would exceed %d", len(rules), maxRenovateRules)
 		}
-		return append(rules, rule), true, nil
+		return renovateEdit{index: len(rules), rule: rule}, true, nil
 	}
 	if sameJSON(rules[found], rule) {
-		return rules, false, nil
+		return renovateEdit{}, false, nil
 	}
-	next := append([]jsontext.Value(nil), rules...)
-	next[found] = rule
-	return next, true, nil
+	return renovateEdit{index: found, rule: rule}, true, nil
 }
 
 // isManagedRenovateRule reports whether rule is an object carrying the managed description.

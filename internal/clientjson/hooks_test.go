@@ -1,9 +1,22 @@
 package clientjson
 
 import (
+	"bytes"
+	"encoding/json/jsontext"
 	"strings"
 	"testing"
 )
+
+// compact returns content without insignificant whitespace, so an assertion about what a plan
+// wrote holds whatever layout the edited file had: a plan keeps that layout (hookFileContent).
+func compact(t *testing.T, content []byte) string {
+	t.Helper()
+	value := jsontext.Value(bytes.Clone(content))
+	if err := value.Compact(); err != nil {
+		t.Fatalf("plan content is not one JSON value: %v\n%s", err, content)
+	}
+	return string(value)
+}
 
 // bashHook leaves ExactLiteral false, the matcher reading of a client that tests every matcher
 // as an unanchored regular expression; literalHook sets it, as Claude Code and Codex read one.
@@ -28,9 +41,8 @@ func TestPlanHooks_Positive_CreatesMissingSections(t *testing.T) {
 		if !plan.Changed || len(plan.Added) != 1 || plan.Added[0] != bashHook.Command || len(plan.Present) != 0 {
 			t.Fatalf("%s: plan %+v", name, plan)
 		}
-		want := `"matcher": "^Bash$",` + "\n" + `        "hooks": [` + "\n" + `          {` + "\n" +
-			`            "type": "command",` + "\n" + `            "command": "engine hook pre-tool",` + "\n" + `            "timeout": 15`
-		if !strings.Contains(string(plan.Content), want) {
+		want := `{"matcher":"^Bash$","hooks":[{"type":"command","command":"engine hook pre-tool","timeout":15}]}`
+		if !strings.Contains(compact(t, plan.Content), want) {
 			t.Fatalf("%s: content lacks the new group:\n%s", name, plan.Content)
 		}
 	}
@@ -75,7 +87,7 @@ func TestPlanHooks_Negative_HandlerUnderOtherMatcherServesNothing(t *testing.T) 
 		if !plan.Changed || len(plan.Added) != 1 || len(plan.Present) != 0 {
 			t.Fatalf("matcher %s: plan %+v", matcher, plan)
 		}
-		if !strings.Contains(string(plan.Content), `"matcher": "^Bash$"`) {
+		if !strings.Contains(compact(t, plan.Content), `"matcher":"^Bash$"`) {
 			t.Fatalf("matcher %s: no ^Bash$ group:\n%s", matcher, plan.Content)
 		}
 	}
@@ -164,8 +176,8 @@ func TestPlanHooks_Positive_LiteralAndAnchoredNameAreOneSelection(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		content := string(plan.Content)
-		if !plan.Changed || strings.Count(content, `"matcher"`) != 1 || !strings.Contains(content, `"matcher": "`+group+`"`) ||
+		content := compact(t, plan.Content)
+		if !plan.Changed || strings.Count(content, `"matcher"`) != 1 || !strings.Contains(content, `"matcher":"`+group+`"`) ||
 			strings.Index(content, "lint.sh") > strings.Index(content, hook.Command) {
 			t.Fatalf("hook %s, group %s: handler not appended to the one group:\n%s", want, group, content)
 		}
@@ -212,7 +224,7 @@ func TestPlanHooks_Boundary_LiteralEquivalenceEdges(t *testing.T) {
 		hook := literalHook
 		hook.Matcher = pair[1]
 		plan, err := PlanHooks(t.Context(), []byte(groupDocument(pair[0], lintHandler)), []Hook{hook})
-		if err != nil || len(plan.Added) != 1 || strings.Count(string(plan.Content), `"hooks": [`) != 2 {
+		if err != nil || len(plan.Added) != 1 || strings.Count(compact(t, plan.Content), `"hooks":[`) != 2 {
 			t.Fatalf("group %q, hook %q: %v\n%s", pair[0], pair[1], err, plan.Content)
 		}
 	}
@@ -224,7 +236,7 @@ func TestPlanHooks_Boundary_LiteralEquivalenceEdges(t *testing.T) {
 	}
 	existing := groupDocument("Bash", `{"type": "command", "command": "lint.sh", "timeout": 15000}`)
 	plan, err := PlanHooks(t.Context(), []byte(existing), []Hook{literalHook})
-	if err != nil || !strings.Contains(string(plan.Content), `"timeout": 15000`) || !strings.Contains(string(plan.Content), `"timeout": 15`+"\n") {
+	if err != nil || !strings.Contains(compact(t, plan.Content), `"timeout":15000`) || !strings.Contains(compact(t, plan.Content), `"timeout":15}`) {
 		t.Fatalf("timeouts changed: %v\n%s", err, plan.Content)
 	}
 }
@@ -301,5 +313,34 @@ func TestPlanHooks_Boundary_DuplicateServingHandlers(t *testing.T) {
 	plan, err := PlanHooks(t.Context(), []byte(groupDocument("Bash", lintHandler)), []Hook{bashHook})
 	if err != nil || !plan.Changed || strings.Count(string(plan.Content), `"matcher"`) != 2 || len(plan.Duplicates) != 0 {
 		t.Fatalf("regex client joined a covering bare group: %v\n%s", err, plan.Content)
+	}
+}
+
+// Positive, negative and boundary of the layout a plan writes (#1251): a tab-indented file keeps
+// its tabs and every member the plan does not touch, a new file is rendered in two spaces, and
+// an event list the plan leaves alone keeps its one-line form.
+func TestPlanHooks_KeepsTheFileLayout(t *testing.T) {
+	existing := "{\n\t\"model\": \"x\",\n\t\"hooks\": {\n\t\t\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"notify\"}]}]\n\t},\n\t\"zeta\": 1\n}\n"
+	plan, err := PlanHooks(t.Context(), []byte(existing), []Hook{bashHook})
+	if err != nil || !plan.Changed {
+		t.Fatalf("plan %+v, %v", plan, err)
+	}
+	content := string(plan.Content)
+	for _, kept := range []string{"{\n\t\"model\": \"x\",\n\t\"hooks\": {\n", "\t\t\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"notify\"}]}],\n", "\t},\n\t\"zeta\": 1\n}\n"} {
+		if !strings.Contains(content, kept) {
+			t.Errorf("plan rewrote %q:\n%s", kept, content)
+		}
+	}
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, " ") {
+			t.Errorf("line %q is indented with spaces in a tab-indented file", line)
+		}
+	}
+	if err := Validate(t.Context(), plan.Content); err != nil {
+		t.Fatalf("plan output does not load with the duplicate-refusing reader: %v", err)
+	}
+	fresh, err := PlanHooks(t.Context(), nil, []Hook{bashHook})
+	if err != nil || !strings.HasPrefix(string(fresh.Content), "{\n  \"hooks\": {\n    \"PreToolUse\": [") {
+		t.Fatalf("a new file is not rendered in two spaces: %q, %v", fresh.Content, err)
 	}
 }

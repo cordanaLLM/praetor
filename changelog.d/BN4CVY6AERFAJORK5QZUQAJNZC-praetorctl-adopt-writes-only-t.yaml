@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl adopt writes only the entries it owns into renovate.json, agent hook files and editor JSON, in the file's own indentation and line endings, so a tab-indented renovate.json keeps its tabs and its diff holds only the added entry; before, adoption re-indented the whole file with two spaces
+issue: '#1251'

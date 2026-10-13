@@ -63,7 +63,8 @@ func decodeMembers(raw []byte) (Object, []int, error) {
 // Object.Encode, which re-renders the whole object, a replace touches only the value's bytes.
 // raw must be one valid JSON object without a duplicate member name (jsontext.Value.IsValid),
 // value one valid JSON value, and the member must exist: an absent member has no place whose
-// layout the text could keep, so it is refused.
+// layout the text could keep, so it is refused. SetAt sets a member in raw's own layout instead,
+// appending an absent one.
 func ReplaceMember(raw []byte, name string, value jsontext.Value) ([]byte, error) {
 	if !value.IsValid() {
 		return nil, fmt.Errorf("replacement for member %q is not one valid JSON value", name)
@@ -79,11 +80,7 @@ func ReplaceMember(raw []byte, name string, value jsontext.Value) ([]byte, error
 		if member.Name != name {
 			continue
 		}
-		start := ends[i] - len(member.Value)
-		out := make([]byte, 0, len(raw)-len(member.Value)+len(value))
-		out = append(out, raw[:start]...)
-		out = append(out, value...)
-		return append(out, raw[ends[i]:]...), nil
+		return splice(raw, ends[i]-len(member.Value), ends[i], value), nil
 	}
 	return nil, fmt.Errorf("%w: %q", errNoMember, name)
 }

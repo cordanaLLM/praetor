@@ -3,6 +3,7 @@ package editor
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
@@ -160,11 +162,70 @@ func mergeJSONDocument(existing, desired []byte, dialect strictjson.Dialect) ([]
 	if carriesJSONCSyntax(existing, dialect) {
 		return nil, nil, &CommentedJSONError{Lacks: added}
 	}
-	data, err := encodeEditorJSON(merged)
+	data, err := writeAddedMembers(existing, merged, added)
 	if err != nil {
 		return nil, nil, err
 	}
 	return data, added, nil
+}
+
+// jsonPointerUnescaper reverses jsonPointerEscaper for one reference token.
+var jsonPointerUnescaper = strings.NewReplacer("~1", "/", "~0", "~")
+
+// writeAddedMembers returns existing with every member the merge added (its JSON Pointers in
+// added) set where it belongs, in existing's own indentation and line endings
+// (clientjson.SetAt). Every byte existing held stays as written, so a tab-indented settings
+// file keeps its tabs and its member order (#1251). A pointer ending in "-" names an array the
+// merge appended to, which is set whole. A document whose root is not an object, or an append
+// to the root, is rendered whole.
+func writeAddedMembers(existing []byte, merged any, added []string) ([]byte, error) {
+	if _, isObject := merged.(map[string]any); !isObject {
+		return encodeEditorJSON(merged)
+	}
+	data := existing
+	for _, pointer := range added {
+		path := jsonPointerPath(pointer)
+		if len(path) == 0 {
+			return encodeEditorJSON(merged)
+		}
+		value, err := mergedValueAt(merged, path)
+		if err != nil {
+			return nil, err
+		}
+		if data, err = clientjson.SetAt(data, path, value); err != nil {
+			return nil, fmt.Errorf("write merged editor JSON member %s: %w", pointer, err)
+		}
+	}
+	return data, nil
+}
+
+// jsonPointerPath returns the member names of pointer, without the "-" an array append ends in.
+func jsonPointerPath(pointer string) []string {
+	tokens := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
+	if tokens[len(tokens)-1] == "-" {
+		tokens = tokens[:len(tokens)-1]
+	}
+	for i, token := range tokens {
+		tokens[i] = jsonPointerUnescaper.Replace(token)
+	}
+	return tokens
+}
+
+// mergedValueAt returns the encoded value merged holds at path, a path of object members.
+func mergedValueAt(merged any, path []string) (jsontext.Value, error) {
+	node := merged
+	for _, name := range path {
+		object, isObject := node.(map[string]any)
+		if !isObject {
+			return nil, fmt.Errorf("merged editor JSON holds no object above member %q", name)
+		}
+		node = object[name]
+	}
+	raw, err := encodeEditorJSON(node)
+	if err != nil {
+		return nil, err
+	}
+	return jsontext.Value(bytes.TrimSpace(raw)), nil
 }
 
 // carriesJSONCSyntax reports whether raw, which decodeEditorJSON accepted in dialect, uses what

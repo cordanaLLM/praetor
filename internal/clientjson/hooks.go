@@ -67,9 +67,9 @@ type hookGroup struct {
 // hook's (coversMatcher) is reported as present and left alone; every further handler serving
 // it is reported as a duplicate and left alone too. A missing file, hooks object,
 // event list or matcher group is created; a handler is appended to the first group whose
-// matcher selects the same tools as the hook's (sameSelection). Every member the plan does not
-// touch keeps its place and its number literals; the document is re-indented and its string
-// escapes normalised. A section of the wrong type fails the plan.
+// matcher selects the same tools as the hook's (sameSelection). Only the event lists the plan
+// changes are rewritten, in the file's own indentation and line endings; every other byte stays
+// as written (hookFileContent). A section of the wrong type fails the plan.
 func PlanHooks(ctx context.Context, existing []byte, hooks []Hook) (*HookPlan, error) {
 	if len(hooks) > MaxHooks {
 		return nil, fmt.Errorf("hook plan exceeds %d hooks", MaxHooks)
@@ -121,12 +121,16 @@ func planHook(plan *HookPlan, events Object, hook Hook) (Object, error) {
 	return events.With(hook.Event, list), nil
 }
 
+// encodePlan writes the planned hooks section into plan.Content, the existing file's bytes. A new
+// file is rendered whole (Object.Encode); an existing one gets only the event lists the plan
+// changed, or the hooks member when it had none, in its own layout (SetAt), so every other byte
+// stays as written (#1251).
 func encodePlan(plan *HookPlan, root, events Object) error {
 	section, err := events.Encode()
 	if err != nil {
 		return err
 	}
-	content, err := root.With("hooks", section).Encode()
+	content, err := hookFileContent(plan.Content, root, events, section)
 	if err != nil {
 		return err
 	}
@@ -135,6 +139,31 @@ func encodePlan(plan *HookPlan, root, events Object) error {
 	}
 	plan.Content, plan.Changed = content, true
 	return nil
+}
+
+// hookFileContent returns existing with events as its hooks member: rendered whole for a new
+// file, else set member by member where events differs from the hooks root holds.
+func hookFileContent(existing []byte, root, events Object, section []byte) ([]byte, error) {
+	if len(existing) == 0 {
+		return root.With("hooks", section).Encode()
+	}
+	if _, declared := root.Get("hooks"); !declared {
+		return SetAt(existing, []string{"hooks"}, section)
+	}
+	before, err := objectMember(root, "hooks")
+	if err != nil {
+		return nil, err
+	}
+	content := existing
+	for _, member := range events {
+		if old, ok := before.Get(member.Name); ok && bytes.Equal(old, member.Value) {
+			continue
+		}
+		if content, err = SetAt(content, []string{"hooks", member.Name}, member.Value); err != nil {
+			return nil, err
+		}
+	}
+	return content, nil
 }
 
 // decodeDocument validates a whole hook file and returns its root object; no bytes are an

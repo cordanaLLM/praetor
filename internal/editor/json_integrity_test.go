@@ -291,8 +291,13 @@ func TestEditorJSONMergeKeepsLiteralsAndUnchangedBytes(t *testing.T) {
 			t.Errorf("merged JSON lost literal %s: %s", literal, merged)
 		}
 	}
-	if !bytes.HasSuffix(merged, []byte("}\n")) {
-		t.Errorf("merged JSON lacks a final newline: %q", merged)
+	// The final newline stays as found (#1251): none here, and one when the file had it.
+	if bytes.HasSuffix(merged, []byte("\n")) {
+		t.Errorf("merged JSON gained a final newline the file did not have: %q", merged)
+	}
+	withNewline, _, err := mergeJSONDocument(append(bytes.Clone(existing), '\n'), []byte(`{"managed":true}`), strictjson.StrictJSON)
+	if err != nil || !bytes.HasSuffix(withNewline, []byte("}\n")) {
+		t.Errorf("merged JSON lost the final newline the file had: %q, %v", withNewline, err)
 	}
 
 	compact := []byte(`{"b":2,"managed":true,"a":1}`)
@@ -479,4 +484,24 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// Positive, negative and boundary of the layout a merge writes (#1251): a tab-indented settings
+// file keeps its tabs and its member order, unsorted, with only the added member new; a
+// four-space file keeps four spaces.
+func TestEditorJSONMergeKeepsTheFileLayout(t *testing.T) {
+	existing := "{\n\t\"zeta.setting\": true,\n\t\"alpha.list\": [\"a\", \"b\"]\n}\n"
+	merged, added, err := mergeJSONDocument([]byte(existing), []byte(`{"managed.key":1,"alpha.list":["c"]}`), strictjson.StrictJSON)
+	if err != nil || !slices.Equal(added, []string{"/managed.key", "/alpha.list/-"}) {
+		t.Fatalf("merge: %v %v", added, err)
+	}
+	want := "{\n\t\"zeta.setting\": true,\n\t\"alpha.list\": [\n\t\t\"a\",\n\t\t\"b\",\n\t\t\"c\"\n\t],\n\t\"managed.key\": 1\n}\n"
+	if string(merged) != want {
+		t.Fatalf("merged =\n%q\nwant\n%q", merged, want)
+	}
+	spaced := strings.ReplaceAll(existing, "\t", "    ")
+	merged, _, err = mergeJSONDocument([]byte(spaced), []byte(`{"managed.key":1}`), strictjson.StrictJSON)
+	if err != nil || string(merged) != "{\n    \"zeta.setting\": true,\n    \"alpha.list\": [\"a\", \"b\"],\n    \"managed.key\": 1\n}\n" {
+		t.Fatalf("four-space merge = %q, %v", merged, err)
+	}
 }

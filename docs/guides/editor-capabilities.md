@@ -398,7 +398,10 @@ them unchanged:
 | JSON adoption cannot merge: a duplicate key, a conflicting managed value, or outside `.vscode` a comment or a trailing comma | kept, with a warning naming the reason and the fix | kept, with a warning; adoption continues |
 | any other file that differs, such as `lua/standards.lua` | kept, with a warning and the line delta regenerating would apply | kept, with a warning |
 
-A merge re-indents the file with two spaces and sorts its keys. Its report entry
+A merge writes only the members it adds, in the file's own indentation (tabs or the
+measured number of spaces) and line endings (`clientjson.SetAt`); every other line keeps
+its bytes, so key order and the final newline stay as found. A list the merge extends is
+written whole, and a file on one line comes back indented with two spaces. Its report entry
 carries the line delta and the backup location that every adoption overwrite records
 ([replaced files](../adoption.md)); a dry run plans the merge and writes nothing.
 

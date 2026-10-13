@@ -648,9 +648,11 @@ and the timeout unit of the registration row (`agenthook.NativeHookFile`,
 (`internal/adopt/agent_hooks.go`) creates a missing file, `hooks` object, event list or
 matcher group, and adds the handler to a group whose matcher selects the same tools as the
 row's (see matcher equivalence below). The merge
-(`internal/clientjson/hooks.go`) keeps every other member in its place and every number
-literal as written, so no key is reordered and no number is rounded; the file is re-indented
-and string escapes are normalised (`"\/"` becomes `"/"`). A file the step changes is first
+(`internal/clientjson/hooks.go`) writes only the event lists it changes, in the file's own
+indentation and line endings (`clientjson.SetAt`); every other member keeps its place and
+its bytes, so no key is reordered and no number is rounded. Within a changed event list
+string escapes are normalised (`"\/"` becomes `"/"`), and a new file is written with two
+spaces. A file the step changes is first
 copied to `.workingdir/adopt-backups/<UTC stamp>/<file>`, then replaced only while it still
 holds the bytes the plan was made from, and read back; each write goes through the root-pinned
 `contextopt` writers, which refuse a symlink below the repository. The copy is taken only when

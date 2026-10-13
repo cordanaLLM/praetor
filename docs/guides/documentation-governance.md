@@ -707,10 +707,12 @@ tells the adopter's Renovate to leave the managed files alone
   an escape is not counted. No later rule sets `enabled` to anything but
   `false`, since Renovate applies `packageRules` in order. A rule adoption
   cannot read this way costs a redundant entry, never an unprotected file.
-- Every other member and entry keeps its order and value. The file is
-  re-indented with two spaces when the entry is added or changed; an entry
-  already present, however formatted, leaves the file untouched, so a formatter
-  and adoption do not take turns rewriting it.
+- Only the managed entry is written, in the file's own indentation (tabs or the
+  measured number of spaces) and line endings (`clientjson.SetElement`, or
+  `clientjson.SetAt` when the file has no `packageRules`); every other member,
+  entry and byte stays as written, so a tab-indented file keeps its tabs. An
+  entry already present, however formatted, leaves the file untouched, so a
+  formatter and adoption do not take turns rewriting it.
 - A file it cannot read or rewrite without risking the adopter's settings is
   reported with the entry to add by hand and left byte for byte, and adoption
   goes on with its other steps: a symbolic link, a directory or other
