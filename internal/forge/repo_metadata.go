@@ -30,6 +30,35 @@ type RepositoryMetadataReport struct {
 	// is declared, and otherwise states both. Visibility is reported and never written: making
 	// a repository public or private is a decision for the operator, not for a sync.
 	VisibilityDrift string
+	// UndeclaredDescription and UndeclaredHomepage hold the repository's value of a field the
+	// manifest leaves unset (empty or blank), and UndeclaredTopics the repository's topics the
+	// manifest does not name, in the repository's order. None of them is written or cleared;
+	// they are reported so a manifest that is no record of the repository's metadata says so
+	// instead of reading as matched (#1285).
+	UndeclaredDescription string
+	UndeclaredHomepage    string
+	UndeclaredTopics      []string
+}
+
+// HasUndeclared reports whether the repository holds metadata the manifest does not declare.
+func (r *RepositoryMetadataReport) HasUndeclared() bool {
+	return r.UndeclaredDescription != "" || r.UndeclaredHomepage != "" || len(r.UndeclaredTopics) > 0
+}
+
+// recordUndeclared fills the report's undeclared fields from the repository's live metadata.
+// topics are the normalized declared topics.
+func (r *RepositoryMetadataReport) recordUndeclared(declared config.RepositoryMetadata, topics []string, live ghRepositoryMetadata) {
+	if strings.TrimSpace(declared.Description) == "" {
+		r.UndeclaredDescription = strings.TrimSpace(live.Description)
+	}
+	if strings.TrimSpace(declared.Homepage) == "" {
+		r.UndeclaredHomepage = strings.TrimSpace(live.Homepage)
+	}
+	for i := 0; i < len(live.Topics) && i < MaxRepositoryTopics; i++ {
+		if !containsFold(topics, live.Topics[i]) {
+			r.UndeclaredTopics = append(r.UndeclaredTopics, live.Topics[i])
+		}
+	}
 }
 
 // ghRepositoryMetadata is the part of GitHub's repository object this reconciliation reads.
@@ -70,6 +99,7 @@ func (g *GitHubDriver) ReconcileRepositoryMetadata(ctx context.Context, declared
 		return nil, err
 	}
 	report := &RepositoryMetadataReport{VisibilityDrift: visibilityDrift(declared.Visibility, live.Visibility)}
+	report.recordUndeclared(declared, topics, live)
 	if report.Updated, err = g.patchRepositoryFields(ctx, declared, live); err != nil {
 		return report, err
 	}

@@ -1,0 +1,3 @@
+type: fixed
+title: sync --remote reports a description, homepage or topic GitHub holds and the manifest leaves unset as undeclared, with GitHub's value, instead of calling the repository already matched
+issue: '#1285'

@@ -844,7 +844,13 @@ func TestSync_Remote_RepositoryMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second remote sync: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[OK] Repository metadata synchronized on GitHub (already matched .standards.yaml;")
+	// The operator's topic stays on GitHub and is reported as undeclared, so the run does not
+	// read as matched (#1285).
+	mustContain(t, out, "[OK] Repository metadata synchronized on GitHub (nothing written;",
+		"[UNDECLARED] Repository metadata GitHub holds and .standards.yaml does not declare: topics operator-topic;")
+	if strings.Contains(out, "already matched") {
+		t.Fatalf("a repository holding an undeclared topic reads as matched:\n%s", out)
+	}
 	for _, write := range stub.recorded()[before:] {
 		if write == "PATCH /repos/acme/widgets" || write == "PUT /repos/acme/widgets/topics" {
 			t.Fatalf("a converged repository was written again: %v", stub.recorded()[before:])

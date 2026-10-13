@@ -457,8 +457,9 @@ func printOmittedStatusChecks(repository string, absent, stale []string) {
 	}
 }
 
-// printRepositoryMetadataReport prints what the metadata reconciliation wrote, and any
-// visibility drift it left for the operator.
+// printRepositoryMetadataReport prints what the metadata reconciliation wrote, the metadata
+// GitHub holds that the manifest does not declare, and any visibility drift it left for the
+// operator. "already matched" is printed only when nothing is undeclared (#1285).
 func printRepositoryMetadataReport(r *forge.RepositoryMetadataReport) {
 	changes := make([]string, 0, 2)
 	if len(r.Updated) > 0 {
@@ -467,14 +468,40 @@ func printRepositoryMetadataReport(r *forge.RepositoryMetadataReport) {
 	if len(r.AddedTopics) > 0 {
 		changes = append(changes, "topics added: "+strings.Join(r.AddedTopics, ", "))
 	}
-	if len(changes) == 0 {
+	switch {
+	case len(changes) > 0:
+	case r.HasUndeclared():
+		changes = append(changes, "nothing written")
+	default:
 		changes = append(changes, "already matched .standards.yaml")
 	}
 	fmt.Printf("  [OK] Repository metadata synchronized on GitHub (%s; fields .standards.yaml leaves unset and topics it does not name are left alone)\n",
 		strings.Join(changes, "; "))
+	if r.HasUndeclared() {
+		fmt.Printf("  [UNDECLARED] Repository metadata GitHub holds and .standards.yaml does not declare: %s; "+
+			"kept on GitHub, declare it in the repository block to make the manifest its record\n", undeclaredMetadata(r))
+	}
 	if r.VisibilityDrift != "" {
 		fmt.Printf("  [DRIFT] Repository visibility: %s; left unchanged, because changing visibility is the operator's decision\n", r.VisibilityDrift)
 	}
+}
+
+// maxUndeclaredValue bounds a forge value quoted in the undeclared line.
+const maxUndeclaredValue = 200
+
+// undeclaredMetadata renders the repository's undeclared description, homepage and topics.
+func undeclaredMetadata(r *forge.RepositoryMetadataReport) string {
+	parts := make([]string, 0, 3)
+	if r.UndeclaredDescription != "" {
+		parts = append(parts, fmt.Sprintf("description %q", util.TruncateExcerpt(r.UndeclaredDescription, maxUndeclaredValue)))
+	}
+	if r.UndeclaredHomepage != "" {
+		parts = append(parts, fmt.Sprintf("homepage %q", util.TruncateExcerpt(r.UndeclaredHomepage, maxUndeclaredValue)))
+	}
+	if len(r.UndeclaredTopics) > 0 {
+		parts = append(parts, "topics "+strings.Join(r.UndeclaredTopics, ", "))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // syncFlags are the parsed command-line inputs of sync.

@@ -706,6 +706,13 @@ standardsctl sync --remote --forge-host=ghe.example.com \
   those were written names them in the error. `repository.visibility` is compared and a mismatch
   printed as `[DRIFT]`, but never written: making a repository public or private stays the
   operator's decision (`internal/forge/repo_metadata.go`, `TestSync_Remote_RepositoryMetadata`).
+  A description or homepage GitHub holds while the manifest leaves it empty or blank, and every
+  GitHub topic the manifest does not name, is printed as `[UNDECLARED]` with GitHub's value and
+  kept. The `[OK]` line then reads `nothing written` instead of `already matched
+  .standards.yaml`, which it says only when nothing is undeclared, so a manifest that is no
+  record of the repository's metadata says so (#1285,
+  `TestReconcileRepositoryMetadata_Negative_EmptyManifestReportsEveryUndeclaredField`). No audit
+  rule reads these fields yet.
 
 ### Comparing live branch protection with `plan --remote`
 
