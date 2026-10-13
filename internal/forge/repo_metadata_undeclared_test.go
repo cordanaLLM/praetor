@@ -68,7 +68,7 @@ func TestReconcileRepositoryMetadata_Boundary_PartlyDeclaredManifest(t *testing.
 	if !reflect.DeepEqual(report.Updated, []string{"homepage"}) || forge.live["homepage"] != "https://widgets.example" {
 		t.Fatalf("updated %v, live homepage %v; the declared homepage must be written", report.Updated, forge.live["homepage"])
 	}
-	if topics, _ := forge.live["topics"].([]any); len(topics) != 2 {
+	if topics, ok := forge.live["topics"].([]any); !ok || len(topics) != 2 {
 		t.Fatalf("an undeclared topic was removed: %v (writes %v)", forge.live["topics"], writes(fake))
 	}
 
