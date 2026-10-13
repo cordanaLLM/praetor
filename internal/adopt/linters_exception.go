@@ -18,7 +18,8 @@ import (
 
 // reconcileDeclaredLintersExceptions measures which declared linters under the effective policy
 // are not run by any workflow after workflows are rendered, and records or updates exception
-// entries in .standards.yaml (#1289).
+// entries in .standards.yaml (#1289). The same write records the HISS-11 entry a first adoption
+// records, when an existing manifest declares none (withSupplyChainException, #1069).
 func (s *adoptSession) reconcileDeclaredLintersExceptions(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("reconcile declared linters exceptions requires a context")
@@ -77,8 +78,13 @@ func (s *adoptSession) syncDeclaredLintersExceptions(ctx context.Context, full s
 		return err
 	}
 	nextExceptions, changed := reconcileLintersExceptionsList(manifest.Exceptions, missing, time.Now())
-	if !changed {
+	nextExceptions, recorded := s.withSupplyChainException(ctx, nextExceptions)
+	if !changed && recorded == nil {
 		return nil
+	}
+	if recorded != nil {
+		s.report.addWarning("%s declared no %s exception, so this adoption recorded the one a first adoption records%s",
+			manifestFile, config.ExceptionRuleSupplyChain, supplyChainExceptionNote(*recorded))
 	}
 	updated, err := setManifestExceptions(ctx, data, nextExceptions)
 	if err != nil {

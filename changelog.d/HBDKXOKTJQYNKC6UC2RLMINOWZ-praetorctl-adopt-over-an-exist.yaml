@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl adopt over an existing manifest records the HISS-11 exception a first adoption records when the release workflows fall short of the declared supply chain and the manifest declares none, so a re-adoption no longer reports success over a tree its next audit refuses
+issue: '#1069'
