@@ -530,7 +530,7 @@ func isEngineRepo(repoPath string) (bool, error) {
 	if err == nil {
 		return modPath == gomanifest.EngineModulePath, nil
 	}
-	if errors.Is(err, os.ErrNotExist) || strings.Contains(err.Error(), "no module path") {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, gomanifest.ErrNoModulePath) {
 		return false, nil
 	}
 	return false, fmt.Errorf("read module path: %w", err)

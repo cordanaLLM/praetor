@@ -127,6 +127,9 @@ func ParseReplaceDirective(line string) (ReplaceDirective, bool) {
 // EngineModulePath is the module path declared by the engine repository.
 const EngineModulePath = "github.com/cordanaLLM/praetor"
 
+// ErrNoModulePath reports a go.mod that declares no module directive (ReadModulePath).
+var ErrNoModulePath = errors.New("go.mod declares no module path")
+
 // moduleKeyword is the directive that names the module a manifest defines.
 const moduleKeyword = "module"
 
@@ -157,7 +160,7 @@ func ReadModulePath(root string) (string, error) {
 	if module, ok := ModuleDirective(data); ok {
 		return module, nil
 	}
-	return "", errors.New("go.mod declares no module path")
+	return "", ErrNoModulePath
 }
 
 // ModulePath extracts the module directive's path from a single go.mod line, e.g.

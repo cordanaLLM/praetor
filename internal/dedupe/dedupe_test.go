@@ -1575,6 +1575,28 @@ func Helper() {
 	}
 }
 
+// TestScanRepo_Boundary_GoModWithoutModuleIsAdopter verifies that a go.mod declaring no module
+// directive counts as an adopted repository (gomanifest.ErrNoModulePath), not as a scan error:
+// a second git-starting function gets the adopter advice naming the repository's own helper.
+func TestScanRepo_Boundary_GoModWithoutModuleIsAdopter(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "go 1.27\n")
+	writeFile(t, tmp, "helper/git.go", "package helper\n\nimport \"os/exec\"\n\nfunc Helper() {\n\t_ = exec.Command(\"git\", \"status\")\n\t_ = exec.Command(\"git\", \"log\")\n}\n")
+	writeFile(t, tmp, "other/run.go", "package other\n\nimport \"os/exec\"\n\nfunc Run() {\n\t_ = exec.Command(\"git\", \"fetch\")\n}\n")
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 1 || report.SprawlItems[0].File != "other/run.go" {
+		t.Fatalf("SprawlItems = %+v, want exactly the git start in other/run.go", report.SprawlItems)
+	}
+	advice := report.SprawlItems[0].Replacement
+	if !strings.Contains(advice, "helper/git.go:Helper") || strings.Contains(advice, "util.") {
+		t.Errorf("advice = %q, want the repository's own helper and no engine-internal util helper", advice)
+	}
+}
+
 // TestScanRepo_Boundary_AdopterTiedHelpersBreaksTieBySmallerFilePath verifies that when two
 // functions tie with one git start each, the function with the smaller file path is chosen as
 // the helper and the other function is reported.
