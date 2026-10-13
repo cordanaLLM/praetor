@@ -76,6 +76,9 @@ type GovernancePolicy struct {
 	// CatalogMaxAgeDays is the freshness window of a catalog entry's as_of date; zero
 	// takes DefaultCatalogMaxAgeDays.
 	CatalogMaxAgeDays int `yaml:"catalog_max_age_days,omitempty"`
+	// Window governs subscription lanes by their account's usage window (#1142); nil
+	// leaves every lane ungoverned, and a lane naming an account then fails validation.
+	Window *WindowPolicy `yaml:"window,omitempty"`
 }
 
 // RoutingConfig represents .config/models/routing.yaml.
