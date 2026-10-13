@@ -100,6 +100,12 @@ func validateClaim(c Claim) error {
 	if c.Started.IsZero() || c.Updated.IsZero() {
 		return errors.New("claim needs a start and an update time")
 	}
+	return validateClaimOptionals(c)
+}
+
+// validateClaimOptionals checks the marker values a claim may leave empty: the outcome and the
+// assignee case.
+func validateClaimOptionals(c Claim) error {
 	if c.Outcome != "" && !ValidClaimOutcome(c.Outcome) {
 		return fmt.Errorf("claim outcome %q is not one of %s", c.Outcome, strings.Join(ClaimOutcomes, ", "))
 	}
