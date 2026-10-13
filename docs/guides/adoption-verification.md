@@ -1668,6 +1668,15 @@ record. Praetor's own `.devcontainer/devcontainer.json` declares the `common-uti
 features, so Praetor's gate builds it with the pinned CLI wherever docker or podman answers on one
 of those platforms.
 
+**A busy host delays the container, it does not refuse the push.** The first command inside the
+container, the toolchain probe, waits for the container to start. It runs under
+`devcontainerStartBound`, the run budget's allowance for the stages other than the tests
+(`stageBudget`: 5 minutes for a Go repository, more with a `Cargo.lock`), and the run's own deadline
+still applies ([#1260](https://github.com/cordanaLLM/praetor/issues/1260)). When that bound fires, the
+reason says the container did not start in time and that this does not mean Go is missing; any
+other probe failure keeps the message that names the missing toolchain. Before #1260 the probe ran
+under the 15-second git query limit and refused pushes at load averages of 30 and above.
+
 #### The pinned devcontainer CLI
 
 A configuration with features is built by the reference CLI, `@devcontainers/cli`, at a version
