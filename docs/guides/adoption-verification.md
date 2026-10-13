@@ -527,7 +527,10 @@ stand-in; every shipped archetype requires signed commits, which the defaults do
 `.agents/agents/<name>.md`. The gate reads them through `compiler.ReadAgentInventory`
 ([`internal/compiler/agent_projection.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/compiler/agent_projection.go)),
 the walk `compile-context` and its `--verify` project from, so the count and the projected set
-cannot differ. A pass prints `[PASS] Agent definitions verified (2 agents registered).`
+cannot differ. The gate then decodes the YAML front matter of every counted persona with the
+strict reader the engine uses for persona metadata; a persona without front matter, with a block
+that does not close or parse, or without a non-empty `name` and `description` fails the audit,
+naming the file and the key. A pass prints `[PASS] Agent definitions verified (2 agents registered).`
 
 A subdirectory of `.agents/agents`, such as `<name>/AGENTS.md` next to an `agent.json`, is not
 a persona file: `compile-context` neither projects nor lints it. The gate names every such
