@@ -147,7 +147,7 @@ func matchCLIVariableOverride(line string) (bool, string) {
 	if trimmed == "" {
 		return false, ""
 	}
-	stripped := stripMakePrefixes(trimmed)
+	stripped := util.StripMakeDirectivePrefixes(trimmed)
 	if ok, op := matchDefineCLIVariable(stripped); ok {
 		return true, op
 	}
@@ -179,20 +179,4 @@ func matchAssignCLIVariable(stripped string) (bool, string) {
 		}
 	}
 	return false, ""
-}
-
-func stripMakePrefixes(s string) string {
-	for i := 0; i < 4; i++ {
-		stripped := false
-		for _, prefix := range []string{"override", "export", "private"} {
-			if strings.HasPrefix(s, prefix) && (len(s) == len(prefix) || s[len(prefix)] == ' ' || s[len(prefix)] == '\t') {
-				s = strings.TrimSpace(s[len(prefix):])
-				stripped = true
-			}
-		}
-		if !stripped {
-			break
-		}
-	}
-	return s
 }

@@ -270,31 +270,39 @@ func (e Exception) problem(today time.Time) string {
 	return exceptionExpiryProblem(e.Expires, today)
 }
 
-// targetProblem requires exactly one of path and glob (or tool for declared-linters),
-// each in its repository-relative form.
 func (e Exception) targetProblem() string {
 	if e.Rule == ExceptionRuleDeclaredLinters {
-		if e.Tool == "" {
-			return "rule declared-linters must name one tool"
-		}
-		if e.Path != "" || e.Glob != "" {
-			return "rule declared-linters must not set path or glob"
-		}
-		return ""
+		return e.declaredLintersTargetProblem()
 	}
 	if e.Tool != "" {
 		return fmt.Sprintf("rule %s must not set tool", e.Rule)
 	}
-	switch {
-	case (e.Path == "") == (e.Glob == ""):
+	return e.pathOrGlobTargetProblem()
+}
+
+func (e Exception) declaredLintersTargetProblem() string {
+	if e.Tool == "" {
+		return "rule declared-linters must name one tool"
+	}
+	if e.Path != "" || e.Glob != "" {
+		return "rule declared-linters must not set path or glob"
+	}
+	return ""
+}
+
+func (e Exception) pathOrGlobTargetProblem() string {
+	if (e.Path == "") == (e.Glob == "") {
 		return "must name exactly one of path and glob"
-	case e.Path != "" && (!ValidRepositoryPath(e.Path) || strings.ContainsAny(e.Path, globCharacters)):
-		return fmt.Sprintf("path %q must be one clean repository-relative file path of at most %d bytes, without glob characters",
-			e.Path, maxRepositoryPath)
-	case e.Glob != "":
-		if problem := StyleExclusionProblem(e.Glob); problem != "" {
-			return fmt.Sprintf("glob %q %s", e.Glob, problem)
+	}
+	if e.Path != "" {
+		if !ValidRepositoryPath(e.Path) || strings.ContainsAny(e.Path, globCharacters) {
+			return fmt.Sprintf("path %q must be one clean repository-relative file path of at most %d bytes, without glob characters",
+				e.Path, maxRepositoryPath)
 		}
+		return ""
+	}
+	if problem := StyleExclusionProblem(e.Glob); problem != "" {
+		return fmt.Sprintf("glob %q %s", e.Glob, problem)
 	}
 	return ""
 }

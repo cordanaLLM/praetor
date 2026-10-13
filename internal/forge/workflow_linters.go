@@ -8,11 +8,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -51,54 +52,72 @@ func MeasureWorkflowLinters(ctx context.Context, repoPath string, candidates []s
 		return nil, err
 	}
 
-	makeTargets := readRootMakefile(repoPath)
-	golangciEnabled, hasGolangci := readGolangciConfig(repoPath)
+	makeTargets := readRootMakefile(ctx, repoPath)
+	golangciEnabled, hasGolangci := readGolangciConfig(ctx, repoPath)
 	present := make(map[string]bool, len(candidates))
 	golangciRuns := false
 
-	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		spec, err := ghworkflow.Parse(files[i].Data)
-		if err != nil {
-			return nil, fmt.Errorf("workflow %s: %w", files[i].Name, err)
-		}
-		scanWorkflowSteps(ctx, spec, candidates, makeTargets, present, &golangciRuns)
+	if err := scanWorkflowFiles(ctx, files, candidates, makeTargets, present, &golangciRuns); err != nil {
+		return nil, err
 	}
 
 	if golangciRuns && hasGolangci {
-		for c := 0; c < len(candidates) && c < maxLinterCandidates; c++ {
-			tool := candidates[c]
-			if !present[tool] && golangciEnabled[strings.ToLower(tool)] {
-				present[tool] = true
-			}
-		}
+		applyGolangciPresent(candidates, golangciEnabled, present)
 	}
 
 	return present, nil
 }
 
+func scanWorkflowFiles(ctx context.Context, files []workflowFile, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) error {
+	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		spec, err := ghworkflow.Parse(files[i].Data)
+		if err != nil {
+			return fmt.Errorf("workflow %s: %w", files[i].Name, err)
+		}
+		scanWorkflowSteps(ctx, spec, candidates, makeTargets, present, golangciRuns)
+	}
+	return nil
+}
+
+func applyGolangciPresent(candidates []string, golangciEnabled map[string]bool, present map[string]bool) {
+	for c := 0; c < len(candidates) && c < maxLinterCandidates; c++ {
+		tool := candidates[c]
+		if !present[tool] && golangciEnabled[strings.ToLower(tool)] {
+			present[tool] = true
+		}
+	}
+}
+
+func scanSingleStep(ctx context.Context, step ghworkflow.Step, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) {
+	if ghworkflow.NeverRuns(step.If) || advisoryJob(step.ContinueOnError) {
+		return
+	}
+	if !*golangciRuns && stepRunsTool(ctx, step, "golangci-lint", makeTargets) {
+		*golangciRuns = true
+	}
+	for c := 0; c < len(candidates) && c < maxLinterCandidates; c++ {
+		tool := candidates[c]
+		if !present[tool] && stepRunsTool(ctx, step, tool, makeTargets) {
+			present[tool] = true
+		}
+	}
+}
+
+func scanJobSteps(ctx context.Context, job ghworkflow.Job, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) {
+	if ghworkflow.NeverRuns(job.If) || advisoryJob(job.ContinueOnError) {
+		return
+	}
+	for s := 0; s < len(job.Steps) && s < ghworkflow.MaxStepsPerJob; s++ {
+		scanSingleStep(ctx, job.Steps[s], candidates, makeTargets, present, golangciRuns)
+	}
+}
+
 func scanWorkflowSteps(ctx context.Context, spec ghworkflow.Spec, candidates []string, makeTargets map[string]*makeTargetDef, present map[string]bool, golangciRuns *bool) {
 	for _, job := range spec.Jobs {
-		if ghworkflow.NeverRuns(job.If) || advisoryJob(job.ContinueOnError) {
-			continue
-		}
-		for s := 0; s < len(job.Steps) && s < ghworkflow.MaxStepsPerJob; s++ {
-			step := job.Steps[s]
-			if ghworkflow.NeverRuns(step.If) || advisoryJob(step.ContinueOnError) {
-				continue
-			}
-			if !*golangciRuns && stepRunsTool(ctx, step, "golangci-lint", makeTargets) {
-				*golangciRuns = true
-			}
-			for c := 0; c < len(candidates) && c < maxLinterCandidates; c++ {
-				tool := candidates[c]
-				if !present[tool] && stepRunsTool(ctx, step, tool, makeTargets) {
-					present[tool] = true
-				}
-			}
-		}
+		scanJobSteps(ctx, job, candidates, makeTargets, present, golangciRuns)
 	}
 }
 
@@ -194,26 +213,38 @@ func commandRunsTool(ctx context.Context, cmd shellCommand, toolLower string, ma
 	return false
 }
 
-func checkRunnerTool(cmd shellCommand, toolLower string) bool {
-	if toolLower == "govet" && cmd.program == "go" && len(cmd.args) > 0 && cmd.args[0] == "vet" {
+func checkGoRunner(args []string, toolLower string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if toolLower == "govet" && args[0] == "vet" {
 		return true
 	}
-	if toolLower == "clippy" && cmd.program == "cargo" && len(cmd.args) > 0 {
-		if cmd.args[0] == "clippy" || (strings.HasPrefix(cmd.args[0], "+") && len(cmd.args) > 1 && cmd.args[1] == "clippy") {
-			return true
-		}
+	if args[0] == "tool" || args[0] == "run" {
+		target := firstGoTarget(args[1:])
+		clean := cleanRunnerSpec(target)
+		cleanLower := strings.ToLower(clean)
+		return cleanLower == toolLower || strings.HasSuffix(cleanLower, "/"+toolLower)
 	}
-	if cmd.program == "go" && len(cmd.args) > 0 {
-		if cmd.args[0] == "tool" || cmd.args[0] == "run" {
-			target := firstGoTarget(cmd.args[1:])
-			clean := cleanRunnerSpec(target)
-			cleanLower := strings.ToLower(clean)
-			if cleanLower == toolLower || strings.HasSuffix(cleanLower, "/"+toolLower) {
-				return true
-			}
-		}
+	return false
+}
+
+func checkCargoRunner(args []string, toolLower string) bool {
+	if toolLower != "clippy" || len(args) == 0 {
+		return false
 	}
+	if args[0] == "clippy" {
+		return true
+	}
+	return strings.HasPrefix(args[0], "+") && len(args) > 1 && args[1] == "clippy"
+}
+
+func checkRunnerTool(cmd shellCommand, toolLower string) bool {
 	switch cmd.program {
+	case "go":
+		return checkGoRunner(cmd.args, toolLower)
+	case "cargo":
+		return checkCargoRunner(cmd.args, toolLower)
 	case "npx", "bunx", "uvx":
 		return checkJsOrUvxRunner(cmd.program, cmd.args, toolLower)
 	case "pipx":
@@ -222,8 +253,9 @@ func checkRunnerTool(cmd shellCommand, toolLower string) bool {
 		return checkPnpmRunner(cmd.args, toolLower)
 	case "docker", "podman":
 		return checkContainerRun(cmd.args, toolLower)
+	default:
+		return false
 	}
-	return false
 }
 
 func firstGoTarget(args []string) string {
@@ -509,18 +541,28 @@ func isDockerValOption(opt string) bool {
 	return false
 }
 
+func execSliceRunsTool(execArgs []string, toolLower string) bool {
+	subCmd := parseShellCommand(execArgs)
+	if directProgramRunsTool(subCmd, toolLower) {
+		return true
+	}
+	unwrap, ok := unwrapWrapper(subCmd)
+	if !ok || len(unwrap) == 0 {
+		return false
+	}
+	innerCmd := parseShellCommand(unwrap)
+	return directProgramRunsTool(innerCmd, toolLower)
+}
+
+func isFindExecArg(arg string) bool {
+	return arg == "-exec" || arg == "-execdir"
+}
+
 func findExecRunsTool(args []string, toolLower string) bool {
 	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
-		if (args[i] == "-exec" || args[i] == "-execdir") && i+1 < len(args) {
-			subCmd := parseShellCommand(args[i+1:])
-			if directProgramRunsTool(subCmd, toolLower) {
+		if isFindExecArg(args[i]) && i+1 < len(args) {
+			if execSliceRunsTool(args[i+1:], toolLower) {
 				return true
-			}
-			if unwrap, ok := unwrapWrapper(subCmd); ok && len(unwrap) > 0 {
-				innerCmd := parseShellCommand(unwrap)
-				if directProgramRunsTool(innerCmd, toolLower) {
-					return true
-				}
 			}
 		}
 	}
@@ -679,13 +721,25 @@ type makeTargetDef struct {
 
 const maxMakeVariables = 64
 
-func readRootMakefile(repoPath string) map[string]*makeTargetDef {
-	data, err := os.ReadFile(filepath.Join(repoPath, "Makefile"))
-	if err != nil {
-		data, err = os.ReadFile(filepath.Join(repoPath, "makefile"))
-		if err != nil {
-			return nil
+func readRootMakefileData(ctx context.Context, repoPath string) ([]byte, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	for _, name := range []string{"Makefile", "makefile"} {
+		if err := ctx.Err(); err != nil {
+			return nil, false
 		}
+		if data, err := contextopt.ReadSnapshot(ctx, filepath.Join(repoPath, name)); err == nil {
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+func readRootMakefile(ctx context.Context, repoPath string) map[string]*makeTargetDef {
+	data, ok := readRootMakefileData(ctx, repoPath)
+	if !ok {
+		return nil
 	}
 	lines := joinMakefileLines(string(data))
 	makeVars := collectMakeVariables(lines)
@@ -748,29 +802,36 @@ func parseTargetLine(trimmed string, makeVars map[string]string, targets map[str
 	return active
 }
 
+func recordMakeVariable(vars map[string]string, varName, op, val string) {
+	_, exists := vars[varName]
+	if op == "?=" {
+		if !exists && len(vars) < maxMakeVariables {
+			vars[varName] = val
+		}
+		return
+	}
+	if exists || len(vars) < maxMakeVariables {
+		vars[varName] = val
+	}
+}
+
+func parseMakeVariableLine(line string) (name, op, val string, ok bool) {
+	if strings.HasPrefix(line, "\t") {
+		return "", "", "", false
+	}
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return "", "", "", false
+	}
+	return parseMakeSimpleAssignment(trimmed)
+}
+
 func collectMakeVariables(lines []string) map[string]string {
 	vars := make(map[string]string)
 	for i := 0; i < len(lines) && i < maxLogicalLines && len(vars) < maxMakeVariables; i++ {
-		line := lines[i]
-		if strings.HasPrefix(line, "\t") {
-			continue
-		}
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		varName, op, val, ok := parseMakeSimpleAssignment(trimmed)
-		if !ok {
-			continue
-		}
-		if op == "?=" {
-			if _, exists := vars[varName]; !exists && len(vars) < maxMakeVariables {
-				vars[varName] = val
-			}
-		} else {
-			if _, exists := vars[varName]; exists || len(vars) < maxMakeVariables {
-				vars[varName] = val
-			}
+		varName, op, val, ok := parseMakeVariableLine(lines[i])
+		if ok {
+			recordMakeVariable(vars, varName, op, val)
 		}
 	}
 	return vars
@@ -785,7 +846,7 @@ func parseMakeSimpleAssignment(line string) (name, op, val string, ok bool) {
 	if strings.Contains(head, ":") {
 		return "", "", "", false
 	}
-	head = stripMakeDirectivePrefixes(head)
+	head = util.StripMakeDirectivePrefixes(head)
 	varName := strings.TrimSpace(head)
 	if varName == "" || strings.ContainsAny(varName, " \t$(){}") {
 		return "", "", "", false
@@ -816,21 +877,19 @@ func findMakeAssignmentOp(line string) (int, int, string) {
 	return -1, 0, ""
 }
 
-func stripMakeDirectivePrefixes(s string) string {
-	s = strings.TrimSpace(s)
-	for i := 0; i < 4; i++ {
-		stripped := false
-		for _, prefix := range []string{"override", "export", "private"} {
-			if strings.HasPrefix(s, prefix) && (len(s) == len(prefix) || s[len(prefix)] == ' ' || s[len(prefix)] == '\t') {
-				s = strings.TrimSpace(s[len(prefix):])
-				stripped = true
-			}
-		}
-		if !stripped {
-			break
-		}
+func matchMakeVarRef(s string) (varName string, consumed int, ok bool) {
+	if !strings.HasPrefix(s, "$(") && !strings.HasPrefix(s, "${") {
+		return "", 0, false
 	}
-	return s
+	closer := byte(')')
+	if s[1] == '{' {
+		closer = '}'
+	}
+	end := strings.IndexByte(s[2:], closer)
+	if end < 0 {
+		return "", 0, false
+	}
+	return s[2 : 2+end], 2 + end + 1, true
 }
 
 func expandMakeVariables(line string, vars map[string]string) string {
@@ -844,23 +903,14 @@ func expandMakeVariables(line string, vars map[string]string) string {
 			i += 2
 			continue
 		}
-		if strings.HasPrefix(line[i:], "$(") || strings.HasPrefix(line[i:], "${") {
-			closer := byte(')')
-			if line[i+1] == '{' {
-				closer = '}'
+		if varName, consumed, ok := matchMakeVarRef(line[i:]); ok {
+			if val, exists := vars[varName]; exists {
+				b.WriteString(val)
+			} else {
+				b.WriteString(line[i : i+consumed])
 			}
-			end := strings.IndexByte(line[i+2:], closer)
-			if end >= 0 {
-				varName := line[i+2 : i+2+end]
-				if val, ok := vars[varName]; ok {
-					b.WriteString(val)
-					i += 2 + end + 1
-					continue
-				}
-				b.WriteString(line[i : i+2+end+1])
-				i += 2 + end + 1
-				continue
-			}
+			i += consumed
+			continue
 		}
 		b.WriteByte(line[i])
 		i++
@@ -907,30 +957,54 @@ func joinMakefileLines(content string) []string {
 	return lines
 }
 
+func isSupportedMakeFile(f string) bool {
+	switch f {
+	case "Makefile", "./Makefile", "makefile", "./makefile":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSupportedMakeDir(d string) bool {
+	return d == "." || d == "./"
+}
+
+func consumeMakeOption(args []string, i int) (int, bool, bool) {
+	arg := args[i]
+	if arg == "-C" {
+		if i+1 < len(args) {
+			if !isSupportedMakeDir(args[i+1]) {
+				return i, false, true
+			}
+			return i + 1, true, true
+		}
+		return i, true, true
+	}
+	if arg == "-f" || arg == "--file" {
+		if i+1 < len(args) {
+			if !isSupportedMakeFile(args[i+1]) {
+				return i, false, true
+			}
+			return i + 1, true, true
+		}
+		return i, true, true
+	}
+	return i, true, false
+}
+
 func parseMakeTargets(args []string) []string {
 	var targets []string
 	for i := 0; i < len(args) && i < maxRunScriptFields; i++ {
+		newI, valid, consumed := consumeMakeOption(args, i)
+		if !valid {
+			return nil
+		}
+		if consumed {
+			i = newI
+			continue
+		}
 		arg := args[i]
-		if arg == "-C" {
-			if i+1 < len(args) {
-				dir := args[i+1]
-				if dir != "." && dir != "./" {
-					return nil
-				}
-				i++
-			}
-			continue
-		}
-		if arg == "-f" || arg == "--file" {
-			if i+1 < len(args) {
-				f := args[i+1]
-				if f != "Makefile" && f != "./Makefile" && f != "makefile" && f != "./makefile" {
-					return nil
-				}
-				i++
-			}
-			continue
-		}
 		if strings.HasPrefix(arg, "-") || strings.Contains(arg, "=") {
 			continue
 		}
@@ -939,19 +1013,61 @@ func parseMakeTargets(args []string) []string {
 	return targets
 }
 
+type makeQueueItem struct {
+	target string
+	depth  int
+}
+
+func recipeRunsTool(recipe, toolLower string) bool {
+	fields, err := scriptFields(recipe)
+	if err != nil {
+		return false
+	}
+	cmds := scriptCommands(fields)
+	for _, c := range cmds {
+		shCmd := parseShellCommand(c)
+		if directCommandRunsTool(shCmd, toolLower) {
+			return true
+		}
+	}
+	return false
+}
+
+func targetRecipesRunTool(recipes []string, toolLower string) bool {
+	for _, recipe := range recipes {
+		if recipeRunsTool(recipe, toolLower) {
+			return true
+		}
+	}
+	return false
+}
+
+func enqueuePrerequisites(queue []makeQueueItem, prereqs []string, depth int, visited map[string]bool) []makeQueueItem {
+	if depth >= maxMakePrereqDepth {
+		return queue
+	}
+	for _, prereq := range prereqs {
+		if !visited[prereq] {
+			queue = append(queue, makeQueueItem{target: prereq, depth: depth + 1})
+		}
+	}
+	return queue
+}
+
+func initMakeQueue(targets []string) []makeQueueItem {
+	queue := make([]makeQueueItem, 0, len(targets))
+	for _, t := range targets {
+		queue = append(queue, makeQueueItem{target: t, depth: 1})
+	}
+	return queue
+}
+
 func makeRunsTool(ctx context.Context, cmd shellCommand, toolLower string, targets map[string]*makeTargetDef) bool {
 	initialTargets := parseMakeTargets(cmd.args)
 	if len(initialTargets) == 0 {
 		return false
 	}
-	type queueItem struct {
-		target string
-		depth  int
-	}
-	queue := make([]queueItem, 0, len(initialTargets))
-	for _, t := range initialTargets {
-		queue = append(queue, queueItem{target: t, depth: 1})
-	}
+	queue := initMakeQueue(initialTargets)
 	visited := make(map[string]bool, maxMakeTargets)
 	totalVisited := 0
 
@@ -967,56 +1083,29 @@ func makeRunsTool(ctx context.Context, cmd shellCommand, toolLower string, targe
 		visited[item.target] = true
 		totalVisited++
 
-		def, ok := targets[item.target]
-		if !ok || def == nil {
+		def := targets[item.target]
+		if def == nil {
 			continue
 		}
-		for _, recipe := range def.recipes {
-			fields, err := scriptFields(recipe)
-			if err != nil {
-				continue
-			}
-			cmds := scriptCommands(fields)
-			for _, c := range cmds {
-				shCmd := parseShellCommand(c)
-				if directCommandRunsTool(shCmd, toolLower) {
-					return true
-				}
-			}
+		if targetRecipesRunTool(def.recipes, toolLower) {
+			return true
 		}
-		if item.depth < maxMakePrereqDepth {
-			for _, prereq := range def.prerequisites {
-				if !visited[prereq] {
-					queue = append(queue, queueItem{target: prereq, depth: item.depth + 1})
-				}
-			}
-		}
+		queue = enqueuePrerequisites(queue, def.prerequisites, item.depth, visited)
 	}
 	return false
 }
 
-func readGolangciConfig(repoPath string) (map[string]bool, bool) {
-	p := filepath.Join(repoPath, ".golangci.yml")
-	data, err := os.ReadFile(p)
-	if err != nil {
-		p = filepath.Join(repoPath, ".golangci.yaml")
-		data, err = os.ReadFile(p)
-		if err != nil {
-			return nil, false
-		}
-	}
-	var cfg struct {
-		Linters struct {
-			Default    string   `yaml:"default"`
-			Enable     []string `yaml:"enable"`
-			Disable    []string `yaml:"disable"`
-			EnableAll  bool     `yaml:"enable-all"`
-			DisableAll bool     `yaml:"disable-all"`
-		} `yaml:"linters"`
-	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, false
-	}
+type golangciLintersConfig struct {
+	Linters struct {
+		Default    string   `yaml:"default"`
+		Enable     []string `yaml:"enable"`
+		Disable    []string `yaml:"disable"`
+		EnableAll  bool     `yaml:"enable-all"`
+		DisableAll bool     `yaml:"disable-all"`
+	} `yaml:"linters"`
+}
+
+func initialGolangciLinters(cfg golangciLintersConfig) map[string]bool {
 	enabled := make(map[string]bool)
 	switch {
 	case cfg.Linters.Default == "all" || cfg.Linters.EnableAll:
@@ -1028,12 +1117,44 @@ func readGolangciConfig(repoPath string) (map[string]bool, bool) {
 			enabled[l] = true
 		}
 	}
-	for _, l := range cfg.Linters.Enable {
+	return enabled
+}
+
+func applyGolangciOverrides(enabled map[string]bool, enable, disable []string) {
+	for _, l := range enable {
 		enabled[strings.ToLower(l)] = true
 	}
-	for _, l := range cfg.Linters.Disable {
+	for _, l := range disable {
 		delete(enabled, strings.ToLower(l))
 	}
+}
+
+func readGolangciData(ctx context.Context, repoPath string) ([]byte, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	for _, name := range []string{".golangci.yml", ".golangci.yaml"} {
+		if err := ctx.Err(); err != nil {
+			return nil, false
+		}
+		if data, err := contextopt.ReadSnapshot(ctx, filepath.Join(repoPath, name)); err == nil {
+			return data, true
+		}
+	}
+	return nil, false
+}
+
+func readGolangciConfig(ctx context.Context, repoPath string) (map[string]bool, bool) {
+	data, ok := readGolangciData(ctx, repoPath)
+	if !ok {
+		return nil, false
+	}
+	var cfg golangciLintersConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, false
+	}
+	enabled := initialGolangciLinters(cfg)
+	applyGolangciOverrides(enabled, cfg.Linters.Enable, cfg.Linters.Disable)
 	return enabled, true
 }
 

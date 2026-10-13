@@ -52,18 +52,30 @@ func (p *EffectivePolicy) DeclaredLinters(ctx context.Context) ([]DeclaredLinter
 		if err != nil {
 			return nil, err
 		}
-		kind := "profile"
-		if path.Dir(artifact.RelativePath) == facetDir {
-			kind = "facet"
-		}
-		source := fmt.Sprintf("%s %q", kind, archetype.ID)
-		for _, linter := range archetype.Controls.Linters {
-			if !slices.Contains(sources[linter], source) {
-				sources[linter] = append(sources[linter], source)
-			}
-		}
+		source := formatArtifactSource(artifact.RelativePath, facetDir, archetype.ID)
+		recordLinterSources(sources, archetype.Controls.Linters, source)
 	}
 
+	return formatDeclaredLinters(sources), nil
+}
+
+func formatArtifactSource(relPath, facetDir, id string) string {
+	kind := "profile"
+	if path.Dir(relPath) == facetDir {
+		kind = "facet"
+	}
+	return fmt.Sprintf("%s %q", kind, id)
+}
+
+func recordLinterSources(sources map[string][]string, linters []string, source string) {
+	for _, linter := range linters {
+		if !slices.Contains(sources[linter], source) {
+			sources[linter] = append(sources[linter], source)
+		}
+	}
+}
+
+func formatDeclaredLinters(sources map[string][]string) []DeclaredLinter {
 	result := make([]DeclaredLinter, 0, len(sources))
 	for name, srcList := range sources {
 		result = append(result, DeclaredLinter{
@@ -74,7 +86,7 @@ func (p *EffectivePolicy) DeclaredLinters(ctx context.Context) ([]DeclaredLinter
 	slices.SortFunc(result, func(a, b DeclaredLinter) int {
 		return cmp.Compare(a.Name, b.Name)
 	})
-	return result, nil
+	return result
 }
 
 func defaultDeclaredLinters(linters []string) []DeclaredLinter {

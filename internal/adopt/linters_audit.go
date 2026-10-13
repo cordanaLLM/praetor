@@ -40,16 +40,12 @@ type DeclaredLintersOptions struct {
 	Today      time.Time
 }
 
-// AuditDeclaredLinters verifies that every linter declared by the profiles or facets in policy
-// is run by at least one CI workflow under .github/workflows in rootDir (#1289). Each missing
-// linter is reported as one finding naming the linter and where it was declared, unless excused
-// by a live exception entry.
-func AuditDeclaredLinters(ctx context.Context, opts DeclaredLintersOptions) (string, error) {
+func prepareDeclaredLintersAudit(ctx context.Context, opts DeclaredLintersOptions) (time.Time, []config.Exception, []config.DeclaredLinter, error) {
 	if ctx == nil {
-		return "", errors.New("[FAIL] " + declaredLintersGate + ": the audit requires a context")
+		return time.Time{}, nil, nil, errors.New("[FAIL] " + declaredLintersGate + ": the audit requires a context")
 	}
 	if opts.Policy == nil {
-		return "", errors.New("[FAIL] " + declaredLintersGate + ": policy is required")
+		return time.Time{}, nil, nil, errors.New("[FAIL] " + declaredLintersGate + ": policy is required")
 	}
 	today := opts.Today
 	if today.IsZero() {
@@ -57,11 +53,34 @@ func AuditDeclaredLinters(ctx context.Context, opts DeclaredLintersOptions) (str
 	}
 	entries := config.ExceptionsFor(opts.Exceptions, config.ExceptionRuleDeclaredLinters)
 	if err := config.ValidateExceptions(entries, today); err != nil {
-		return "", fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
+		return time.Time{}, nil, nil, fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
 	}
 	declared, err := opts.Policy.DeclaredLinters(ctx)
 	if err != nil {
-		return "", fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
+		return time.Time{}, nil, nil, fmt.Errorf("[FAIL] %s: %w", declaredLintersGate, err)
+	}
+	return today, entries, declared, nil
+}
+
+func finalizeDeclaredLintersAudit(judged declaredLintersJudgement, applicableCount int, skipLines []string) (string, error) {
+	if len(judged.unexcused) > 0 || len(judged.stale) > 0 {
+		return strings.Join(skipLines, "\n"), errors.New(judged.failure())
+	}
+	passMsg := judged.pass(applicableCount)
+	if len(skipLines) > 0 {
+		passMsg = strings.Join(skipLines, "\n") + "\n" + passMsg
+	}
+	return passMsg, nil
+}
+
+// AuditDeclaredLinters verifies that every linter declared by the profiles or facets in policy
+// is run by at least one CI workflow under .github/workflows in rootDir (#1289). Each missing
+// linter is reported as one finding naming the linter and where it was declared, unless excused
+// by a live exception entry.
+func AuditDeclaredLinters(ctx context.Context, opts DeclaredLintersOptions) (string, error) {
+	today, entries, declared, err := prepareDeclaredLintersAudit(ctx, opts)
+	if err != nil {
+		return "", err
 	}
 	if len(declared) == 0 {
 		return handleEmptyDeclared(entries)
@@ -83,14 +102,7 @@ func AuditDeclaredLinters(ctx context.Context, opts DeclaredLintersOptions) (str
 	}
 
 	judged := judgeDeclaredLinters(missing, entries, today)
-	if len(judged.unexcused) > 0 || len(judged.stale) > 0 {
-		return strings.Join(skipLines, "\n"), errors.New(judged.failure())
-	}
-	passMsg := judged.pass(len(applicable))
-	if len(skipLines) > 0 {
-		passMsg = strings.Join(skipLines, "\n") + "\n" + passMsg
-	}
-	return passMsg, nil
+	return finalizeDeclaredLintersAudit(judged, len(applicable), skipLines)
 }
 
 func handleEmptyDeclared(entries []config.Exception) (string, error) {
@@ -159,54 +171,61 @@ type linterRequirement struct {
 	isApplicable func(in repoLinterInputs) bool
 }
 
+var simpleLinterRequirements = map[string]linterRequirement{
+	"clippy": {
+		inputDesc:    "Cargo.toml",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasCargoToml },
+	},
+	"cppcheck": {
+		inputDesc:    "C or C++ sources",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasCSources },
+	},
+	"clang-tidy": {
+		inputDesc:    "C or C++ sources",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasCSources },
+	},
+	"buf": {
+		inputDesc:    "*.proto or buf.yaml",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasProtoOrBufYaml },
+	},
+	"spectral": {
+		inputDesc:    "OpenAPI or AsyncAPI document",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasOpenAPI },
+	},
+	"oapi-codegen": {
+		inputDesc:    "OpenAPI or AsyncAPI document",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasOpenAPI },
+	},
+	"packer": {
+		inputDesc:    "*.pkr.hcl",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasPackerHcl },
+	},
+	"shellcheck": {
+		inputDesc:    "shell scripts",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasShellScripts },
+	},
+	"shfmt": {
+		inputDesc:    "shell scripts",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasShellScripts },
+	},
+	"markdownlint": {
+		inputDesc:    "*.md",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasMarkdown },
+	},
+}
+
 // linterRequirementFor maps declared linter names to their input requirements.
 // Linters not present in this table are always required (fail closed).
 func linterRequirementFor(name string) (linterRequirement, bool) {
 	lower := strings.ToLower(name)
-	switch {
-	case isGoLinter(lower):
+	if isGoLinter(lower) {
 		return linterRequirement{
 			inputDesc:    "Go sources",
 			isApplicable: func(in repoLinterInputs) bool { return in.hasGoSources },
 		}, true
-	case lower == "clippy":
-		return linterRequirement{
-			inputDesc:    "Cargo.toml",
-			isApplicable: func(in repoLinterInputs) bool { return in.hasCargoToml },
-		}, true
-	case lower == "cppcheck" || lower == "clang-tidy":
-		return linterRequirement{
-			inputDesc:    "C or C++ sources",
-			isApplicable: func(in repoLinterInputs) bool { return in.hasCSources },
-		}, true
-	case lower == "buf":
-		return linterRequirement{
-			inputDesc:    "*.proto or buf.yaml",
-			isApplicable: func(in repoLinterInputs) bool { return in.hasProtoOrBufYaml },
-		}, true
-	case lower == "spectral" || lower == "oapi-codegen":
-		return linterRequirement{
-			inputDesc:    "OpenAPI or AsyncAPI document",
-			isApplicable: func(in repoLinterInputs) bool { return in.hasOpenAPI },
-		}, true
-	case lower == "packer":
-		return linterRequirement{
-			inputDesc:    "*.pkr.hcl",
-			isApplicable: func(in repoLinterInputs) bool { return in.hasPackerHcl },
-		}, true
-	case lower == "shellcheck" || lower == "shfmt":
-		return linterRequirement{
-			inputDesc:    "shell scripts",
-			isApplicable: func(in repoLinterInputs) bool { return in.hasShellScripts },
-		}, true
-	case lower == "markdownlint":
-		return linterRequirement{
-			inputDesc:    "*.md",
-			isApplicable: func(in repoLinterInputs) bool { return in.hasMarkdown },
-		}, true
-	default:
-		return linterRequirement{}, false
 	}
+	req, ok := simpleLinterRequirements[lower]
+	return req, ok
 }
 
 func isGoLinter(lower string) bool {
@@ -303,13 +322,20 @@ func shouldSkipLinterDir(name string) bool {
 	}
 }
 
-func classifyLinterArtifactFile(ctx context.Context, fullPath, name string, in *repoLinterInputs) {
-	lower := strings.ToLower(name)
-	switch {
-	case lower == "cargo.toml":
+func classifyKnownFilename(lower string, in *repoLinterInputs) bool {
+	if lower == "cargo.toml" {
 		in.hasCargoToml = true
-	case lower == "buf.yaml" || lower == "buf.yml" || strings.HasSuffix(lower, ".proto"):
+		return true
+	}
+	if lower == "buf.yaml" || lower == "buf.yml" || strings.HasSuffix(lower, ".proto") {
 		in.hasProtoOrBufYaml = true
+		return true
+	}
+	return false
+}
+
+func classifySourceExtension(lower string, in *repoLinterInputs) {
+	switch {
 	case strings.HasSuffix(lower, ".pkr.hcl"):
 		in.hasPackerHcl = true
 	case strings.HasSuffix(lower, ".md"):
@@ -320,6 +346,13 @@ func classifyLinterArtifactFile(ctx context.Context, fullPath, name string, in *
 		in.hasCSources = true
 	case strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash"):
 		in.hasShellScripts = true
+	}
+}
+
+func classifyLinterArtifactFile(ctx context.Context, fullPath, name string, in *repoLinterInputs) {
+	lower := strings.ToLower(name)
+	if !classifyKnownFilename(lower, in) {
+		classifySourceExtension(lower, in)
 	}
 	if !in.hasOpenAPI {
 		in.hasOpenAPI = checkOpenAPIFile(ctx, fullPath, lower)
@@ -336,18 +369,11 @@ func isCSuffix(lower string) bool {
 	}
 }
 
-func checkOpenAPIFile(ctx context.Context, fullPath, lowerName string) bool {
-	if strings.HasPrefix(lowerName, ".spectral.") {
-		return true
-	}
-	ext := filepath.Ext(lowerName)
-	if ext != ".yaml" && ext != ".yml" && ext != ".json" {
-		return false
-	}
-	data, err := contextopt.ReadSnapshot(ctx, fullPath)
-	if err != nil || len(data) == 0 {
-		return false
-	}
+func isCandidateOpenAPIExtension(ext string) bool {
+	return ext == ".yaml" || ext == ".yml" || ext == ".json"
+}
+
+func docHasOpenAPIKey(data []byte) bool {
 	if !bytes.Contains(data, []byte("openapi")) && !bytes.Contains(data, []byte("asyncapi")) {
 		return false
 	}
@@ -358,6 +384,20 @@ func checkOpenAPIFile(ctx context.Context, fullPath, lowerName string) bool {
 	_, hasOpen := doc["openapi"]
 	_, hasAsync := doc["asyncapi"]
 	return hasOpen || hasAsync
+}
+
+func checkOpenAPIFile(ctx context.Context, fullPath, lowerName string) bool {
+	if strings.HasPrefix(lowerName, ".spectral.") {
+		return true
+	}
+	if !isCandidateOpenAPIExtension(filepath.Ext(lowerName)) {
+		return false
+	}
+	data, err := contextopt.ReadSnapshot(ctx, fullPath)
+	if err != nil || len(data) == 0 {
+		return false
+	}
+	return docHasOpenAPIKey(data)
 }
 
 type declaredLintersJudgement struct {
