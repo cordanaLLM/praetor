@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 )
 
@@ -88,7 +89,7 @@ func TestBootstrapCapturesDeclaredFamilyAssets(t *testing.T) {
 			writeBootstrapFile(t, root, family.Source, assetSource)
 			// The capture holds the build closure, so the CLI imports the embedding package.
 			writeBootstrapFile(t, root, bootstrapBuildPackage+"/main.go",
-				"package main\n\nimport _ \""+praetorModulePath+"/"+family.Directory+"\"\n\nfunc main() {}\n")
+				"package main\n\nimport _ \""+gomanifest.EngineModulePath+"/"+family.Directory+"\"\n\nfunc main() {}\n")
 			assets := family.AssetPaths()
 			for _, asset := range assets {
 				writeBootstrapFile(t, root, asset, assetFixture(asset, "fixture\n"))

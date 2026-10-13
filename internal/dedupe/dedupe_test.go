@@ -21,6 +21,7 @@ import (
 
 func TestScanRepo_Positive_DuplicatesAndSprawl(t *testing.T) {
 	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
 
 	file1 := `package test
 import "fmt"
@@ -97,6 +98,7 @@ func CallGit() {
 // BasicLit, so the arm was dead by construction and the call was never reported.
 func TestScanRepo_Positive_CommandContextGitIsReported(t *testing.T) {
 	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
 	source := `package test
 
 import (
@@ -165,6 +167,7 @@ func CallGit(ctx context.Context, dir, tool string) {
 // ran git outside the git helpers with a clean scan.
 func TestScanRepo_Positive_UtilCommandGitIsReported(t *testing.T) {
 	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
 	writeFile(t, tmp, "cmd/sample/git.go", utilCommandGitSource)
 
 	report, err := dedupe.ScanRepo(tmp)
@@ -196,6 +199,7 @@ func TestScanRepo_Positive_UtilCommandGitIsReported(t *testing.T) {
 // of these entry points.
 func TestScanRepo_Boundary_UtilPackageIsExempt(t *testing.T) {
 	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
 	writeFile(t, tmp, "internal/util/git.go", utilCommandGitSource)
 
 	report, err := dedupe.ScanRepo(tmp)
@@ -212,6 +216,7 @@ func TestScanRepo_Boundary_UtilPackageIsExempt(t *testing.T) {
 // internal/util, and fails again one directory over.
 func TestScanRepo_Boundary_ManagedAssetIsExempt(t *testing.T) {
 	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
 	writeFile(t, tmp, "tools/apicompat/gate/main.go", utilCommandGitSource)
 	report, err := dedupe.ScanRepo(tmp)
 	if err != nil {
@@ -221,6 +226,7 @@ func TestScanRepo_Boundary_ManagedAssetIsExempt(t *testing.T) {
 		t.Fatalf("the managed gate asset reported %+v (passed %v), want it exempt", report.SprawlItems, report.Passed)
 	}
 	other := t.TempDir()
+	writeFile(t, other, "go.mod", "module github.com/cordanaLLM/praetor\n")
 	writeFile(t, other, "tools/apicompat/other/main.go", utilCommandGitSource)
 	report, err = dedupe.ScanRepo(other)
 	if err != nil {
@@ -727,6 +733,7 @@ func forbiddenExecMessage(t *testing.T) (string, bool) {
 // fails (HISS-20).
 func TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule(t *testing.T) {
 	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module github.com/cordanaLLM/praetor\n")
 	source := `package test
 
 import "os/exec"
@@ -1429,5 +1436,215 @@ func DuplicateHelperB() {
 	}
 	if report.Passed {
 		t.Fatal("expected scan to fail because clone was not fully excused")
+	}
+}
+
+// TestScanRepo_Positive_AdopterOneGitHelperIsPermitted verifies that an adopted repository
+// declaring its own git helper with multiple git starts reports zero sprawl items when callers
+// route through that helper (HISS-19).
+func TestScanRepo_Positive_AdopterOneGitHelperIsPermitted(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module example.com/adopter\n")
+
+	helperSource := `package gitutil
+
+import (
+	"context"
+	"os/exec"
+)
+
+func RunGit(ctx context.Context, args ...string) error {
+	_ = exec.CommandContext(ctx, "git", args...)
+	_ = exec.Command("git", "version")
+	return nil
+}
+`
+	callerSource := `package app
+
+import (
+	"context"
+
+	"example.com/adopter/gitutil"
+)
+
+func DoWork(ctx context.Context) error {
+	return gitutil.RunGit(ctx, "status")
+}
+
+func OtherCaller(ctx context.Context) error {
+	return gitutil.RunGit(ctx, "diff")
+}
+`
+	writeFile(t, tmp, "gitutil/helper.go", helperSource)
+	writeFile(t, tmp, "app/caller.go", callerSource)
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 0 {
+		t.Fatalf("SprawlItems = %+v, want zero sprawl items in adopter with one helper", report.SprawlItems)
+	}
+	if !report.Passed {
+		t.Error("an adopted repository with one centralized git helper must pass")
+	}
+}
+
+// TestScanRepo_Negative_AdopterMultipleGitHelpersReported verifies that an adopted repository
+// where multiple functions start git reports exactly the sites outside the chosen helper,
+// names the helper file and function, contains HISS-19, and mentions no internal/util symbols.
+func TestScanRepo_Negative_AdopterMultipleGitHelpersReported(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module example.com/adopter\n")
+
+	helperSource := `package gitutil
+
+import (
+	"context"
+	"os/exec"
+)
+
+func RunGit(ctx context.Context, args ...string) error {
+	_ = exec.CommandContext(ctx, "git", args...)
+	_ = exec.Command("git", "version")
+	return nil
+}
+`
+	rogueSource := `package app
+
+import (
+	"context"
+	"os/exec"
+)
+
+func AdHocGit(ctx context.Context) {
+	_ = exec.CommandContext(ctx, "git", "status")
+}
+`
+	writeFile(t, tmp, "gitutil/helper.go", helperSource)
+	writeFile(t, tmp, "app/rogue.go", rogueSource)
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 1 {
+		t.Fatalf("SprawlItems = %+v, want exactly 1 sprawl item outside the chosen helper", report.SprawlItems)
+	}
+	item := report.SprawlItems[0]
+	if item.File != "app/rogue.go" {
+		t.Errorf("sprawl item file = %q, want app/rogue.go", item.File)
+	}
+	if strings.Contains(item.Replacement, "util.") {
+		t.Errorf("sprawl replacement %q must not name internal/util symbols in adopter mode", item.Replacement)
+	}
+	if !strings.Contains(item.Replacement, "gitutil/helper.go:RunGit") {
+		t.Errorf("sprawl replacement %q must name the helper gitutil/helper.go:RunGit", item.Replacement)
+	}
+	if !strings.Contains(item.Replacement, "HISS-19") {
+		t.Errorf("sprawl replacement %q must mention HISS-19", item.Replacement)
+	}
+	if report.Passed {
+		t.Error("a repository with an unresolved sprawl finding must not pass")
+	}
+}
+
+// TestScanRepo_Boundary_AdopterMissingGoModPassesWithOneGitHelper verifies that a repository
+// without go.mod and one git helper reports zero sprawl items.
+func TestScanRepo_Boundary_AdopterMissingGoModPassesWithOneGitHelper(t *testing.T) {
+	tmp := t.TempDir()
+	helperSource := `package helper
+
+import "os/exec"
+
+func Helper() {
+	_ = exec.Command("git", "status")
+}
+`
+	writeFile(t, tmp, "helper/git.go", helperSource)
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 0 {
+		t.Fatalf("SprawlItems = %+v, want 0 sprawl items for repository without go.mod and one helper", report.SprawlItems)
+	}
+	if !report.Passed {
+		t.Error("expected repository without go.mod and one helper to pass")
+	}
+}
+
+// TestScanRepo_Boundary_GoModWithoutModuleIsAdopter verifies that a go.mod declaring no module
+// directive counts as an adopted repository (gomanifest.ErrNoModulePath), not as a scan error:
+// a second git-starting function gets the adopter advice naming the repository's own helper.
+func TestScanRepo_Boundary_GoModWithoutModuleIsAdopter(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "go 1.27\n")
+	writeFile(t, tmp, "helper/git.go", "package helper\n\nimport \"os/exec\"\n\nfunc Helper() {\n\t_ = exec.Command(\"git\", \"status\")\n\t_ = exec.Command(\"git\", \"log\")\n}\n")
+	writeFile(t, tmp, "other/run.go", "package other\n\nimport \"os/exec\"\n\nfunc Run() {\n\t_ = exec.Command(\"git\", \"fetch\")\n}\n")
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 1 || report.SprawlItems[0].File != "other/run.go" {
+		t.Fatalf("SprawlItems = %+v, want exactly the git start in other/run.go", report.SprawlItems)
+	}
+	advice := report.SprawlItems[0].Replacement
+	if !strings.Contains(advice, "helper/git.go:Helper") || strings.Contains(advice, "util.") {
+		t.Errorf("advice = %q, want the repository's own helper and no engine-internal util helper", advice)
+	}
+}
+
+// TestScanRepo_Boundary_AdopterTiedHelpersBreaksTieBySmallerFilePath verifies that when two
+// functions tie with one git start each, the function with the smaller file path is chosen as
+// the helper and the other function is reported.
+func TestScanRepo_Boundary_AdopterTiedHelpersBreaksTieBySmallerFilePath(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "go.mod", "module example.com/adopter\n")
+
+	alphaSource := `package alpha
+
+import "os/exec"
+
+func AlphaGit() {
+	_ = exec.Command("git", "status")
+}
+`
+	betaSource := `package beta
+
+import "os/exec"
+
+func BetaGit() {
+	_ = exec.Command("git", "status")
+}
+`
+	writeFile(t, tmp, "a/helper.go", alphaSource)
+	writeFile(t, tmp, "b/helper.go", betaSource)
+
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 1 {
+		t.Fatalf("SprawlItems = %+v, want exactly 1 sprawl item for tied helpers", report.SprawlItems)
+	}
+	item := report.SprawlItems[0]
+	// "a/helper.go" < "b/helper.go", so a/helper.go:AlphaGit is chosen as helper; b/helper.go is reported.
+	if item.File != "b/helper.go" {
+		t.Errorf("reported file = %q, want b/helper.go", item.File)
+	}
+	if !strings.Contains(item.Replacement, "a/helper.go:AlphaGit") {
+		t.Errorf("sprawl replacement %q must name winning helper a/helper.go:AlphaGit", item.Replacement)
+	}
+	if strings.Contains(item.Replacement, "util.") {
+		t.Errorf("sprawl replacement %q must not name internal/util symbols", item.Replacement)
+	}
+	if !strings.Contains(item.Replacement, "HISS-19") {
+		t.Errorf("sprawl replacement %q must mention HISS-19", item.Replacement)
+	}
+	if report.Passed {
+		t.Error("a repository with an unresolved sprawl finding must not pass")
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 )
 
@@ -146,7 +147,7 @@ func checkClosureFamilyAssets(t *testing.T, family managedasset.Family) {
 		return root
 	}
 	t.Run("reached family", func(t *testing.T) {
-		got := capturedNames(t, fixture(t, `_ "`+praetorModulePath+"/"+family.Directory+`"`))
+		got := capturedNames(t, fixture(t, `_ "`+gomanifest.EngineModulePath+"/"+family.Directory+`"`))
 		want := append([]string{"LICENSE", "cmd/standardsctl/main.go", "go.mod", "go.sum", family.Source}, assets...)
 		slices.Sort(want)
 		if !reflect.DeepEqual(got, want) {
