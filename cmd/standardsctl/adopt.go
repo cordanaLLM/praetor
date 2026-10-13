@@ -88,7 +88,7 @@ func runAdopt(args []string) error {
 	}
 
 	// The options every adopted repository shares; --all-missing passes exactly these.
-	opts := adopt.AdoptOptions{LockSourceRoot: resolvedLockSource, DryRun: *dryRun, Force: *force}
+	opts := adopt.AdoptOptions{LockSourceRoot: resolvedLockSource, DryRun: *dryRun, Force: *force, Engine: runningBuild()}
 	baselineFlags.apply(&opts)
 	if *allMissing {
 		root, err := resolveDevRootDir(*devDir, "--dev-dir")
