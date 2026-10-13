@@ -328,6 +328,17 @@ func TestAuditLiveBranchProtection_Positive_MatchingProtectionPasses(t *testing.
 		t.Fatalf("matching classic protection failed the audit: %v\n%s", err, out)
 	}
 	mustContain(t, out, "[PASS] Live branch protection of main compared with the forge: GitHub enforces every declared property (protected by branch protection).")
+
+	forbiddenLegacy := &forgeStub{
+		legacyStatus: http.StatusForbidden,
+		rulesets:     liveRuleset(t, declaredProtection(false), []string{"CI"}, "active"),
+	}
+	f = protectedFixture(t, false, "", forbiddenLegacy)
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("matching ruleset with forbidden legacy failed the audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, `[PASS] Live branch protection of main compared with the forge: GitHub enforces every declared property (protected by ruleset "praetor-main-protection" #1; legacy protection object unread (403); judged from rulesets alone).`)
 	if writes := append(stub.recorded(), classic.recorded()...); len(writes) != 0 {
 		t.Fatalf("the audit wrote to the forge: %v", writes)
 	}
@@ -344,6 +355,16 @@ func TestAuditLiveBranchProtection_Negative_DriftFailsNamingEachProperty(t *test
 	}{
 		"missing context": {stub: &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), nil, "active")},
 			want: []string{"  Required status checks: declared 1, live 0 of 1 required; missing: CI"}},
+		"forbidden legacy missing context": {
+			stub: &forgeStub{
+				legacyStatus: http.StatusForbidden,
+				rulesets:     liveRuleset(t, declaredProtection(false), nil, "active"),
+			},
+			want: []string{
+				`(protected by ruleset "praetor-main-protection" #1; legacy protection object unread (403); judged from rulesets alone)`,
+				"  Required status checks: declared 1, live 0 of 1 required; missing: CI",
+			},
+		},
 		"signatures": {signed: true, stub: &forgeStub{rulesets: liveRuleset(t, declaredProtection(false), []string{"CI"}, "active")},
 			want: []string{"  Signed commits: declared required, live not enforced"}},
 		"review count": {stub: &forgeStub{rulesets: liveRuleset(t, config.BranchProtectionPolicy{
@@ -401,10 +422,10 @@ func TestAuditLiveBranchProtection_Boundary_NotComparedIsNamed(t *testing.T) {
 	resolveActionsToken = func(context.Context) string { return "" }
 	mustContain(t, audit(f), "[SKIP] Live branch protection not compared with the forge: no forge token")
 
-	refused := &forgeStub{legacyStatus: http.StatusForbidden}
+	refused := &forgeStub{rulesStatus: http.StatusForbidden}
 	mustContain(t, audit(protectedFixture(t, false, "", refused)),
 		"[SKIP] Live branch protection not compared with the forge: read the live branch protection of main: "+
-			"read the legacy branch protection of main: unexpected status 403")
+			"read the active rules of main: unexpected status 403")
 
 	declined := &forgeStub{}
 	mustContain(t, audit(protectedFixture(t, false, "branch-ruleset", declined)),
