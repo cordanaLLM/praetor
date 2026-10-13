@@ -559,6 +559,16 @@ resolves to a prerelease tag. `TestPlanSelected_Negative_StabilityNeverChangesTh
 [`internal/flavors/stability_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavors/stability_test.go)
 pins this.
 
+Each flavor's moving tag is named after the flavor: `sync` runs
+`git tag --no-sign -f <flavor> <commit>`, so the tags are `bleeding`, `edge`, `latest` and
+`lts`. Version tags (`v*`) are cut by hand ([Cutting a release](#cutting-a-release)), and
+`latest` follows the highest of them. The `tag_pattern` key the flavors once declared was
+decoded and never read, because no step plans a versioned tag it could check. It left the
+file and the code (#1279). A config that still declares it loads, plans the same, and `plan`
+and `sync` print a `Note:` line naming each flavor whose `tag_pattern` is ignored
+(`TestLoadConfig_Negative_DeclaredTagPatternIsReportedAndDecidesNothing` in
+[`internal/flavors/ignored_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavors/ignored_test.go)).
+
 ```bash
 praetorctl flavors plan                 # print each flavor's current and target commit
 praetorctl flavors sync                 # move the local tags

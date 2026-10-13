@@ -11,11 +11,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Flavor defines a release track and its tag convention.
+// Flavor defines a release track: the ref its moving tag follows. The moving tag is named after
+// the flavor (bleeding, edge, latest, lts); version tags (v*) are cut by hand
+// (docs/guides/releasing.md).
 type Flavor struct {
 	Description string `yaml:"description"`
 	SourceRef   string `yaml:"source_ref"`
-	TagPattern  string `yaml:"tag_pattern"`
 	// UpdateFrequency decides whether a sync moves the flavor's tag on its own: one of the
 	// Frequency constants, or empty for automatic.
 	UpdateFrequency string `yaml:"update_frequency"`
@@ -60,7 +61,18 @@ func validateFrequency(name string, f Flavor) error {
 type Config struct {
 	Version int               `yaml:"version"`
 	Flavors map[string]Flavor `yaml:"flavors"`
+	// Ignored lists, one note per flavor, the declared keys no step reads (IgnoredKeys), so a
+	// reader is told the setting has no effect instead of taking it for one.
+	Ignored []string `yaml:"-"`
 }
+
+// IgnoredKeys are flavor keys that load but decide nothing. tag_pattern was declared for every
+// flavor yet never evaluated: the moving tag is named after the flavor, and no step plans a
+// versioned tag it could be checked against (#1279).
+var IgnoredKeys = []string{"tag_pattern"}
+
+// ignoredKeyNote says what a flavor's ignored key would have to do and why it does not.
+const ignoredKeyNote = "is ignored: the flavor's moving tag is named after the flavor and version tags are cut by hand (docs/guides/releasing.md)"
 
 // TagTransition represents a proposed or applied moving tag update.
 type TagTransition struct {
@@ -132,6 +144,11 @@ func LoadConfigContext(ctx context.Context, path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse flavors config at %s: %w", path, err)
 	}
+	ignored, err := ignoredKeyNotes(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse flavors config at %s: %w", path, err)
+	}
+	cfg.Ignored = ignored
 	names := FlavorNames(&cfg)
 	for i := 0; i < len(names) && i < MaxFlavors; i++ {
 		if err := validateFrequency(names[i], cfg.Flavors[names[i]]); err != nil {
@@ -140,6 +157,30 @@ func LoadConfigContext(ctx context.Context, path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// ignoredKeyNotes names, in flavor order, every flavor that declares one of IgnoredKeys.
+func ignoredKeyNotes(data []byte) ([]string, error) {
+	var raw struct {
+		Flavors map[string]map[string]yaml.Node `yaml:"flavors"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(raw.Flavors))
+	for name := range raw.Flavors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var notes []string
+	for i := 0; i < len(names) && i < MaxFlavors; i++ {
+		for _, key := range IgnoredKeys {
+			if _, declared := raw.Flavors[names[i]][key]; declared {
+				notes = append(notes, fmt.Sprintf("flavor %q declares %s, which %s", names[i], key, ignoredKeyNote))
+			}
+		}
+	}
+	return notes, nil
 }
 
 // FlavorNames returns the declared flavor names in deterministic order, bounded by
