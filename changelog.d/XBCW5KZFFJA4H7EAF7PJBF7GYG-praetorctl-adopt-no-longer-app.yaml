@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl adopt no longer appends /.workingdir2/ to the managed .gitignore block of a repository that keeps that directory in Git (HEAD tracks a file below it, or its own .gitignore un-ignores it), and says in the report why the rule is left out; audit leaves the root to the repository too
+issue: '#1072'
