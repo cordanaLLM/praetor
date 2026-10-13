@@ -697,6 +697,18 @@ The groups with behavior of their own:
     REUSE (`internal/adopt/reuse_gate_test.go`). Decline `reuse-gate` to skip the workflow; the
     hook job follows the `git-hooks` step.
 
+### The audit engine pin on a re-adoption
+
+A re-adoption writes the managed files of the engine that runs it. A repository whose CI runs
+the audit engine it pins in `tools/go/go.mod` (a `tool github.com/cordanaLLM/praetor/cmd/standardsctl`
+directive and a `require` of the engine module) keeps that pin: adoption does not edit the tools
+module or its `go.sum`. When the pin names another build than the running engine, adoption warns
+with the file, the pinned version, the running engine and the command that moves the pin in the
+same change, `go get -modfile=tools/go/go.mod github.com/cordanaLLM/praetor@<engine>`. Without it,
+CI's audit with the old engine refuses the refreshed files as differing from its locked assets
+(`reportStaleEnginePin` in `internal/adopt/engine_pin.go`, `TestReportStaleEnginePin_Positive_OlderPinIsReported`).
+A pin or an engine that identifies no build is not compared.
+
 ### The baseline on a re-adoption
 
 Adoption records `.standards-baseline.json` once. A repository that already has the file keeps it
