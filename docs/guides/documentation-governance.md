@@ -559,7 +559,12 @@ demands it, and Git keeps the path visible
 `TestAuditDocumentationGateLegacyScratchRootIsOptional`). If the directory
 reappears, adoption restores the rule and audit fails until it does
 (`TestLegacyScratch_Negative_DefaultAndPresentRootAreIgnored`,
-`TestAuditDocumentationGateLegacyScratchRootOnDiskIsDemanded`). A retired
+`TestAuditDocumentationGateLegacyScratchRootOnDiskIsDemanded`). A repository
+that keeps `.workingdir2/` in Git, because `HEAD` tracks a file below it or its
+own `.gitignore` un-ignores it with a negation such as `!.workingdir2/**/*.md`,
+never gets the rule: adoption leaves it out of the block and says why in the
+report, and audit leaves the root to the repository
+(`TestLegacyScratch_Positive_OwnedRootStaysVisible`). A retired
 block keeps the `!/.config/` negation adoption adds where a Kconfig-style rule
 hides `.config/` ([Adoption](../adoption.md#what-adoption-reads-before-it-writes),
 `TestLegacyScratch_Boundary_RetiredBlockKeepsConfigNegation`). Adoption

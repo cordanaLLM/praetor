@@ -53,7 +53,7 @@ func TestLookupManagedGitIgnoreTail_Positive(t *testing.T) {
 					block := tc.version.Render(keepLegacy, negateConfig)
 					text := "dist/\n\n" + block
 
-					match, ok := LookupManagedGitIgnoreTail(root, text)
+					match, ok := LookupManagedGitIgnoreTail(t.Context(), root, text)
 					if !ok {
 						t.Fatalf("keepLegacy=%v negateConfig=%v: block not recognized:\n%s", keepLegacy, negateConfig, text)
 					}
@@ -64,12 +64,12 @@ func TestLookupManagedGitIgnoreTail_Positive(t *testing.T) {
 						t.Fatalf("keepLegacy=%v negateConfig=%v: got Version=%q, want %q", keepLegacy, negateConfig, match.Version, tc.wantVersion)
 					}
 
-					if !HasManagedGitIgnoreTail(root, text) {
+					if !HasManagedGitIgnoreTail(t.Context(), root, text) {
 						t.Fatalf("HasManagedGitIgnoreTail returned false for valid block:\n%s", text)
 					}
 
 					crlfText := strings.ReplaceAll(text, "\n", "\r\n")
-					crlfMatch, crlfOk := LookupManagedGitIgnoreTail(root, crlfText)
+					crlfMatch, crlfOk := LookupManagedGitIgnoreTail(t.Context(), root, crlfText)
 					if !crlfOk || crlfMatch.Version != tc.wantVersion {
 						t.Fatalf("CRLF block lookup failed: ok=%v, match=%+v", crlfOk, crlfMatch)
 					}
@@ -102,11 +102,11 @@ func TestLookupManagedGitIgnoreTail_Negative(t *testing.T) {
 			gitIgnoreManagedEnd + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			match, ok := LookupManagedGitIgnoreTail(root, text)
+			match, ok := LookupManagedGitIgnoreTail(t.Context(), root, text)
 			if ok || match.Matched {
 				t.Fatalf("invalid block was accepted: %+v", match)
 			}
-			if HasManagedGitIgnoreTail(root, text) {
+			if HasManagedGitIgnoreTail(t.Context(), root, text) {
 				t.Fatalf("HasManagedGitIgnoreTail accepted invalid block:\n%s", text)
 			}
 		})
@@ -124,11 +124,11 @@ func TestLookupManagedGitIgnoreTail_Boundary(t *testing.T) {
 		"unmarked rules":         "/.workingdir/\n/.workingdir2/\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			match, ok := LookupManagedGitIgnoreTail(root, text)
+			match, ok := LookupManagedGitIgnoreTail(t.Context(), root, text)
 			if ok || match.Matched {
 				t.Fatalf("boundary text %s matched: %+v", name, match)
 			}
-			if HasManagedGitIgnoreTail(root, text) {
+			if HasManagedGitIgnoreTail(t.Context(), root, text) {
 				t.Fatalf("HasManagedGitIgnoreTail returned true for boundary text %s", name)
 			}
 		})

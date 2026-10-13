@@ -1,12 +1,14 @@
 package adopt
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -44,6 +46,57 @@ func managedGitIgnoreBlockHeld(text string) bool {
 	return err == nil && held
 }
 
+// legacyScratchOwnedTimeout bounds the git query legacyScratchOwned asks (HISS-02).
+const legacyScratchOwnedTimeout = 10 * time.Second
+
+// legacyScratchOwned reports whether the repository at repoPath, whose .gitignore reads text,
+// keeps its legacy scratch root in Git, so the managed block must not ignore it (#1072): HEAD
+// tracks an entry below it, or text un-ignores it with a negation such as
+// !.workingdir2/**/*.md. A block rule appended after the repository's own rules would hide
+// every new file there. The reason names which, for the report; a git that cannot answer
+// counts as tracking nothing, so the default (keepsLegacyScratch) decides.
+func legacyScratchOwned(ctx context.Context, repoPath, text string) (bool, string) {
+	normalized, _ := util.NormalizeLineEndings(text)
+	for _, line := range strings.Split(normalized, "\n") {
+		if trimmed := strings.TrimSpace(line); negatesLegacyScratch(trimmed) {
+			return true, ".gitignore un-ignores it with " + trimmed
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, legacyScratchOwnedTimeout)
+	defer cancel()
+	result, err := util.RunGitProbe(ctx, repoPath, maxLegacyScratchTreeBytes, "ls-tree", "--name-only", "HEAD", "--", state.LegacyWorkingDirName)
+	if err == nil && strings.TrimSpace(string(result.Stdout)) != "" {
+		return true, "git tracks files below it"
+	}
+	return false, ""
+}
+
+// negatesLegacyScratch reports whether rule, one trimmed .gitignore line, un-ignores the legacy
+// scratch root or a path below it: a negation whose pattern, without a leading slash or **/,
+// is the root's name or starts with it and a slash. A sibling such as .workingdir2-archive is
+// another directory.
+func negatesLegacyScratch(rule string) bool {
+	pattern, negated := strings.CutPrefix(rule, "!")
+	if !negated {
+		return false
+	}
+	pattern = strings.TrimPrefix(strings.TrimPrefix(pattern, "**/"), "/")
+	return pattern == state.LegacyWorkingDirName || strings.HasPrefix(pattern, state.LegacyWorkingDirName+"/")
+}
+
+// maxLegacyScratchTreeBytes bounds the ls-tree answer legacyScratchOwned reads: the one entry
+// for the root itself.
+const maxLegacyScratchTreeBytes = 4096
+
+// keepsLegacyScratchIn is keepsLegacyScratch for the repository at repoPath: the rule is never
+// required while the repository keeps the root in Git (legacyScratchOwned).
+func keepsLegacyScratchIn(ctx context.Context, repoPath, text string, declined bool) bool {
+	if owned, _ := legacyScratchOwned(ctx, repoPath, text); owned {
+		return false
+	}
+	return keepsLegacyScratch(text, legacyScratchPresent(repoPath), declined)
+}
+
 // legacyScratchPresent reports whether the repository at repoPath holds an entry named
 // state.LegacyWorkingDirName, of any kind, a dangling symbolic link included. An entry that
 // cannot be inspected (an Lstat error other than not-exist) counts as present, so the rule
@@ -75,8 +128,8 @@ var everyPrivateScratchRoot = []string{state.WorkingDirName, state.LegacyWorking
 // requires it. declined says the git-ignore adoption step is declined. Audit probes these
 // roots, so with the managed block it demands what adoption writes (HasManagedGitIgnoreTail)
 // and no more.
-func PrivateScratchRoots(repoPath, text string, declined bool) []string {
-	if keepsLegacyScratch(text, legacyScratchPresent(repoPath), declined) {
+func PrivateScratchRoots(ctx context.Context, repoPath, text string, declined bool) []string {
+	if keepsLegacyScratchIn(ctx, repoPath, text, declined) {
 		return slices.Clone(everyPrivateScratchRoot)
 	}
 	return []string{state.WorkingDirName}
