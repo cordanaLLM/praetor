@@ -222,3 +222,19 @@ func TestRunning(t *testing.T) {
 		t.Error("a test binary is built with module support and must carry build information")
 	}
 }
+
+// FromModuleVersion reads a version a go.mod requires as Identify reads a module build:
+// positive for a pseudo-version (its revision) and a tag (a release), negative for a word that
+// is no version, and at the boundary a pseudo-version with build metadata.
+func TestFromModuleVersion_3D(t *testing.T) {
+	for version, want := range map[string]Identity{
+		"v0.0.0-20261009120000-b0d27ad5a227": {Revision: "b0d27ad5a227"},
+		"v1.4.0":                             {Release: "v1.4.0"},
+		"latest":                             {Unknown: "untagged build, no VCS stamp"},
+		"v2.0.1-0.20261009120000-b0d27ad5a227+incompat": {Revision: "b0d27ad5a227"},
+	} {
+		if got := FromModuleVersion(version); got != want {
+			t.Errorf("FromModuleVersion(%q) = %+v, want %+v", version, got, want)
+		}
+	}
+}

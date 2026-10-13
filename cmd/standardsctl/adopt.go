@@ -88,6 +88,7 @@ func runAdopt(args []string) error {
 		return err
 	}
 
+	// The options every adopted repository shares; --all-missing passes exactly these.
 	opts := newCommandAdoptOptions(resolvedLockSource, *dryRun, *force)
 	baselineFlags.apply(&opts)
 	if *allMissing {
@@ -118,7 +119,7 @@ func runAdopt(args []string) error {
 }
 
 func newCommandAdoptOptions(source string, dryRun, force bool) adopt.AdoptOptions {
-	return adopt.AdoptOptions{LockSourceRoot: source, DryRun: dryRun, Force: force,
+	return adopt.AdoptOptions{LockSourceRoot: source, DryRun: dryRun, Force: force, Engine: runningBuild(),
 		DecisionMCPReconcile: adoptclients.ReconcileAsDecided}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -86,6 +87,10 @@ type AdoptOptions struct {
 	SkipHookActivation bool `json:"skip_hook_activation,omitempty"`
 	// LockSourceRoot selects the verified Praetor bundle used for new lock pins.
 	LockSourceRoot string `json:"lock_source_root,omitempty"`
+	// Engine is the build identity of the engine running the adoption (buildid). A tools module
+	// that pins another engine for CI's audit is reported (reportStaleEnginePin); an unidentified
+	// engine skips that check.
+	Engine buildid.Identity `json:"-"`
 	// VerificationLimits raises the bounds of metadata discovery for this run: a non-zero field
 	// overrides the bound the manifest's verification section declares, or the default
 	// (ResolveVerificationLimits).
@@ -535,6 +540,9 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		}
 	}
 	reportIgnoredWrites(ctx, s)
+	if err := reportStaleEnginePin(ctx, s); err != nil {
+		return err
+	}
 	verifyAgentContext(ctx, s, declined)
 	return nil
 }

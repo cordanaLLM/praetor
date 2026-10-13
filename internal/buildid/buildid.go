@@ -132,6 +132,13 @@ func (id Identity) String() string {
 // so one commit reads the same however it was built. Any other valid SemVer version is a tag,
 // a release. Go records "(devel)" for a checkout build without a VCS stamp; that and an empty
 // version identify nothing.
+// FromModuleVersion is the identity a Go module version proves: the short revision of a
+// pseudo-version, the version itself for a SemVer tag, unknown otherwise. It reads a version a
+// go.mod requires the way Identify reads the one a build records.
+func FromModuleVersion(moduleVersion string) Identity {
+	return moduleIdentity(moduleVersion)
+}
+
 func moduleIdentity(moduleVersion string) Identity {
 	moduleVersion = strings.TrimSpace(moduleVersion)
 	if revision, ok := pseudoVersionRevision(moduleVersion); ok {
