@@ -79,7 +79,7 @@ func triggersOnMergeGroup(on *yaml.Node) bool {
 // splitMergeGroupFiles partitions files into the workflows that trigger on merge_group and the
 // findings for those that do not and would otherwise require a context in the repository named
 // identity. A workflow that requires no context loses nothing in a queue and is no finding.
-func splitMergeGroupFiles(files []workflowFile, identity string) (kept []workflowFile, findings []MergeQueueFinding, err error) {
+func splitMergeGroupFiles(files []workflowFile, called calledWorkflows, identity string) (kept []workflowFile, findings []MergeQueueFinding, err error) {
 	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
 		var spec workflowSpec
 		if err := yaml.Unmarshal(files[i].Data, &spec); err != nil {
@@ -89,7 +89,7 @@ func splitMergeGroupFiles(files []workflowFile, identity string) (kept []workflo
 			kept = append(kept, files[i])
 			continue
 		}
-		contexts, err := workflowContextsIn(files[i].Data, identity)
+		contexts, err := workflowCallContextsIn(files[i].Data, identity, called)
 		if err != nil {
 			return nil, nil, fmt.Errorf("workflow %s: %w", files[i].Name, err)
 		}
@@ -102,15 +102,15 @@ func splitMergeGroupFiles(files []workflowFile, identity string) (kept []workflo
 
 // selectContexts collects the required contexts of files inside the repository named identity,
 // leaving out the workflows a merge queue never runs when opts asks for a queue.
-func selectContexts(files []workflowFile, identity string, opts contextOptions) ([]string, error) {
+func selectContexts(files []workflowFile, called calledWorkflows, identity string, opts contextOptions) ([]string, error) {
 	if opts.mergeQueue {
-		kept, _, err := splitMergeGroupFiles(files, identity)
+		kept, _, err := splitMergeGroupFiles(files, called, identity)
 		if err != nil {
 			return nil, err
 		}
 		files = kept
 	}
-	return filesContextsIn(files, identity)
+	return filesContextsIn(files, called, identity)
 }
 
 // MergeQueueFindings lists, for the repository at repoPath with planned applied over its
@@ -134,7 +134,7 @@ func MergeQueueFindings(ctx context.Context, repoPath string, planned map[string
 	if err != nil {
 		return nil, err
 	}
-	_, findings, err := splitMergeGroupFiles(files, identity)
+	_, findings, err := splitMergeGroupFiles(files, newCalledWorkflows(files), identity)
 	return findings, err
 }
 
