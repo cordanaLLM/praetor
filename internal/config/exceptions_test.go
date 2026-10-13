@@ -61,8 +61,15 @@ clang_tidy:
 	}
 	credits := validException()
 	credits.Rule = ExceptionRuleCredits
-	if err := ValidateExceptions([]Exception{validException(), credits}, exceptionsToday); err != nil {
-		t.Fatalf("an entry of the credits gate's rule was refused: %v", err)
+	lintersEx := validException()
+	lintersEx.Rule = ExceptionRuleDeclaredLinters
+	lintersEx.Path = ""
+	lintersEx.Tool = "gitleaks"
+	if err := ValidateExceptions([]Exception{validException(), credits, lintersEx}, exceptionsToday); err != nil {
+		t.Fatalf("an entry of the credits or declared-linters gate's rule was refused: %v", err)
+	}
+	if got := ExceptionsFor([]Exception{validException(), credits, lintersEx}, ExceptionRuleDeclaredLinters); len(got) != 1 || got[0].Tool != "gitleaks" {
+		t.Fatalf("ExceptionsFor(declared-linters) = %+v", got)
 	}
 	if got := ExceptionsFor([]Exception{validException(), credits}, ExceptionRuleCredits); len(got) != 1 || got[0].Rule != ExceptionRuleCredits {
 		t.Fatalf("ExceptionsFor(credits) = %+v", got)
@@ -87,22 +94,27 @@ func TestValidateExceptionsNegative(t *testing.T) {
 		edit func(*Exception)
 		want string
 	}{
-		"unknown rule":        {func(e *Exception) { e.Rule = "clang-tidy-coverag" }, `rule "clang-tidy-coverag" is not a rule`},
-		"neither target":      {func(e *Exception) { e.Path = "" }, "exactly one of path and glob"},
-		"both targets":        {func(e *Exception) { e.Glob = "src/**/*.c" }, "exactly one of path and glob"},
-		"absolute path":       {func(e *Exception) { e.Path = "/src/a.c" }, "clean repository-relative file path"},
-		"parent path":         {func(e *Exception) { e.Path = "../a.c" }, "clean repository-relative file path"},
-		"pattern as path":     {func(e *Exception) { e.Path = "src/*.c" }, "without glob characters"},
-		"unclean path":        {func(e *Exception) { e.Path = "src//a.c" }, "clean repository-relative file path"},
-		"wildcard-only glob":  {func(e *Exception) { e.Path, e.Glob = "", "**/*" }, "must name a path"},
-		"negated glob":        {func(e *Exception) { e.Path, e.Glob = "", "!src/*.c" }, "repository-relative"},
-		"empty reason":        {func(e *Exception) { e.Reason = "  " }, "reason must say why"},
-		"multi-line reason":   {func(e *Exception) { e.Reason = "one\ntwo" }, "reason must be one line"},
-		"oversized reason":    {func(e *Exception) { e.Reason = strings.Repeat("r", MaxExceptionReasonBytes+1) }, "exceeds 1024 bytes"},
-		"no date":             {func(e *Exception) { e.Expires = "next year" }, "must be a YYYY-MM-DD date"},
-		"unpadded date":       {func(e *Exception) { e.Expires = "2026-12-1" }, "must be a YYYY-MM-DD date"},
-		"too far ahead":       {func(e *Exception) { e.Expires = "2027-01-05" }, "more than 90 days after today; the latest date allowed is 2027-01-04"},
-		"missing expiry date": {func(e *Exception) { e.Expires = "" }, "must be a YYYY-MM-DD date"},
+		"unknown rule":                  {func(e *Exception) { e.Rule = "clang-tidy-coverag" }, `rule "clang-tidy-coverag" is not a rule`},
+		"neither target":                {func(e *Exception) { e.Path = "" }, "exactly one of path and glob"},
+		"both targets":                  {func(e *Exception) { e.Glob = "src/**/*.c" }, "exactly one of path and glob"},
+		"absolute path":                 {func(e *Exception) { e.Path = "/src/a.c" }, "clean repository-relative file path"},
+		"parent path":                   {func(e *Exception) { e.Path = "../a.c" }, "clean repository-relative file path"},
+		"pattern as path":               {func(e *Exception) { e.Path = "src/*.c" }, "without glob characters"},
+		"unclean path":                  {func(e *Exception) { e.Path = "src//a.c" }, "clean repository-relative file path"},
+		"wildcard-only glob":            {func(e *Exception) { e.Path, e.Glob = "", "**/*" }, "must name a path"},
+		"negated glob":                  {func(e *Exception) { e.Path, e.Glob = "", "!src/*.c" }, "repository-relative"},
+		"empty reason":                  {func(e *Exception) { e.Reason = "  " }, "reason must say why"},
+		"multi-line reason":             {func(e *Exception) { e.Reason = "one\ntwo" }, "reason must be one line"},
+		"oversized reason":              {func(e *Exception) { e.Reason = strings.Repeat("r", MaxExceptionReasonBytes+1) }, "exceeds 1024 bytes"},
+		"no date":                       {func(e *Exception) { e.Expires = "next year" }, "must be a YYYY-MM-DD date"},
+		"unpadded date":                 {func(e *Exception) { e.Expires = "2026-12-1" }, "must be a YYYY-MM-DD date"},
+		"too far ahead":                 {func(e *Exception) { e.Expires = "2027-01-05" }, "more than 90 days after today; the latest date allowed is 2027-01-04"},
+		"missing expiry date":           {func(e *Exception) { e.Expires = "" }, "must be a YYYY-MM-DD date"},
+		"declared-linters without tool": {func(e *Exception) { e.Rule, e.Path, e.Tool = ExceptionRuleDeclaredLinters, "", "" }, "rule declared-linters must name one tool"},
+		"declared-linters with path":    {func(e *Exception) { e.Rule, e.Path, e.Tool = ExceptionRuleDeclaredLinters, "a.go", "gitleaks" }, "rule declared-linters must not set path or glob"},
+		"other rule with tool": {func(e *Exception) {
+			e.Rule, e.Path, e.Tool = ExceptionRuleBuildWarnings, ".github/workflows/ci.yml", "gitleaks"
+		}, "rule HISS-10 must not set tool"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

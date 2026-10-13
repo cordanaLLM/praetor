@@ -124,6 +124,10 @@ fields:
         effect: >-
           keys each retained catalog text's share of the join by kind and id,
           so the facet effects name the profile or facet that raised a setting
+      - func: internal/config.EffectivePolicy.DeclaredLinters
+        kind: reports
+        effect: >-
+          names the profile or facet id declaring each linter
   - key: name
     go: [Archetype.Name]
     state: unconsumed
@@ -639,6 +643,11 @@ fields:
           when the list names clang-tidy, as native-gpu-systems does (#778);
           no gate, emitted workflow or editor configuration reads any other
           name (#353)
+      - func: internal/config.EffectivePolicy.DeclaredLinters
+        kind: reports
+        effect: >-
+          returns every linter declared by retained profiles and facets, or the
+          resolved policy fallback, paired with its source
   - key: devcontainer_features
     go: [ArchetypeControls.DevFeatures, ResolvedPolicy.DevFeatures]
     state: consumed

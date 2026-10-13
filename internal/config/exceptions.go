@@ -66,12 +66,17 @@ const ExceptionRuleReuseAnnotationOrder = "reuse-annotation-order"
 // generator's repeated output.
 const ExceptionRuleDedupe = "HISS-19"
 
+// ExceptionRuleDeclaredLinters is the rule of the declared-linters gate
+// (internal/adopt.AuditDeclaredLinters): an entry excuses one declared linter
+// that is not run by any CI workflow, naming the tool by tool.
+const ExceptionRuleDeclaredLinters = "declared-linters"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
 var exceptionRules = []string{
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
 	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
-	ExceptionRuleDedupe,
+	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters,
 }
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -114,16 +119,20 @@ type Exception struct {
 	Rule    string `yaml:"rule"`
 	Path    string `yaml:"path,omitempty"`
 	Glob    string `yaml:"glob,omitempty"`
+	Tool    string `yaml:"tool,omitempty"`
 	Reason  string `yaml:"reason"`
 	Expires string `yaml:"expires"`
 }
 
-// Target returns the path or glob the entry names.
+// Target returns the path, glob or tool the entry names.
 func (e Exception) Target() string {
 	if e.Path != "" {
 		return e.Path
 	}
-	return e.Glob
+	if e.Glob != "" {
+		return e.Glob
+	}
+	return e.Tool
 }
 
 // Expired reports whether the entry stopped holding before today; it still holds on its
@@ -220,13 +229,13 @@ func ValidateExceptions(entries []Exception, today time.Time) error {
 	if len(entries) > MaxExceptions {
 		return fmt.Errorf("exceptions has %d entries; maximum is %d", len(entries), MaxExceptions)
 	}
-	seen := make(map[[3]string]int, len(entries))
+	seen := make(map[[4]string]int, len(entries))
 	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
 		entry := entries[index]
 		if problem := entry.problem(today); problem != "" {
 			return fmt.Errorf("exceptions[%d] %s", index, problem)
 		}
-		key := [3]string{entry.Rule, entry.Path, entry.Glob}
+		key := [4]string{entry.Rule, entry.Path, entry.Glob, entry.Tool}
 		if first, repeated := seen[key]; repeated {
 			return fmt.Errorf("exceptions[%d] repeats exceptions[%d] (rule %s, %s)", index, first, entry.Rule, entry.Target())
 		}
@@ -261,18 +270,39 @@ func (e Exception) problem(today time.Time) string {
 	return exceptionExpiryProblem(e.Expires, today)
 }
 
-// targetProblem requires exactly one of path and glob, each in its repository-relative form.
 func (e Exception) targetProblem() string {
-	switch {
-	case (e.Path == "") == (e.Glob == ""):
+	if e.Rule == ExceptionRuleDeclaredLinters {
+		return e.declaredLintersTargetProblem()
+	}
+	if e.Tool != "" {
+		return fmt.Sprintf("rule %s must not set tool", e.Rule)
+	}
+	return e.pathOrGlobTargetProblem()
+}
+
+func (e Exception) declaredLintersTargetProblem() string {
+	if e.Tool == "" {
+		return "rule declared-linters must name one tool"
+	}
+	if e.Path != "" || e.Glob != "" {
+		return "rule declared-linters must not set path or glob"
+	}
+	return ""
+}
+
+func (e Exception) pathOrGlobTargetProblem() string {
+	if (e.Path == "") == (e.Glob == "") {
 		return "must name exactly one of path and glob"
-	case e.Path != "" && (!ValidRepositoryPath(e.Path) || strings.ContainsAny(e.Path, globCharacters)):
-		return fmt.Sprintf("path %q must be one clean repository-relative file path of at most %d bytes, without glob characters",
-			e.Path, maxRepositoryPath)
-	case e.Glob != "":
-		if problem := StyleExclusionProblem(e.Glob); problem != "" {
-			return fmt.Sprintf("glob %q %s", e.Glob, problem)
+	}
+	if e.Path != "" {
+		if !ValidRepositoryPath(e.Path) || strings.ContainsAny(e.Path, globCharacters) {
+			return fmt.Sprintf("path %q must be one clean repository-relative file path of at most %d bytes, without glob characters",
+				e.Path, maxRepositoryPath)
 		}
+		return ""
+	}
+	if problem := StyleExclusionProblem(e.Glob); problem != "" {
+		return fmt.Sprintf("glob %q %s", e.Glob, problem)
 	}
 	return ""
 }

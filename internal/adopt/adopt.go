@@ -1162,7 +1162,7 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		Details: "Initialized canonical session state ledger and bug/question journals",
 	})
 	s.applyDetectedFlavor(ctx)
-	return nil
+	return s.reconcileDeclaredLintersExceptions(ctx)
 }
 
 // applyDetectedFlavor scaffolds the flavor of the profile this adoption records, and records

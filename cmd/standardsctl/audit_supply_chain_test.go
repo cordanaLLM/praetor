@@ -131,7 +131,7 @@ func TestAdoptThenAuditDeclaresTheSupplyChainGap(t *testing.T) {
 	mustErrContain(t, err, "rule HISS-11, path .github/workflows/release.yml")
 
 	root, adopted = adoptedGoRepository(t, "--profile", "org-health", "--facets", "docs:seo-portal")
-	if strings.Contains(adopted, "exceptions: recorded") || strings.Contains(readFixtureFile(t, root, ".standards.yaml"), "exceptions:") {
+	if strings.Contains(adopted, "exceptions: recorded rule HISS-11") || strings.Contains(readFixtureFile(t, root, ".standards.yaml"), `rule: "HISS-11"`) {
 		t.Fatalf("adoption recorded an exception for a policy declaring no supply-chain control:\n%s", adopted)
 	}
 	manifestPath = filepath.Join(root, ".standards.yaml")
