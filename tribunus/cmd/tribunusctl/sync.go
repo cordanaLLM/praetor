@@ -52,6 +52,9 @@ type syncFlags struct {
 	litellmPricesURL string
 	sessionsDir      string
 	claudeDir        string
+	claudeStateDir   string
+	claudeAccount    string
+	claudeMaxAge     time.Duration
 }
 
 func parseSyncFlags(args []string) (syncFlags, error) {
@@ -66,6 +69,9 @@ func parseSyncFlags(args []string) (syncFlags, error) {
 	fs.StringVar(&f.litellmPricesURL, "litellm-prices-url", publiccatalog.DefaultLiteLLMPriceMapURL, "LiteLLM public price map URL")
 	fs.StringVar(&f.sessionsDir, "sessions-dir", "", "Codex CLI sessions directory (default: ~/.codex/sessions)")
 	fs.StringVar(&f.claudeDir, "claude-projects-dir", "", "Claude Code projects directory (default: ~/.claude/projects)")
+	fs.StringVar(&f.claudeStateDir, "claude-state-dir", "", "folder of the Claude ceiling store (default: <user state folder>/praetor/tribunus)")
+	fs.StringVar(&f.claudeAccount, "claude-account", claudelocal.DefaultAccount, "account name of the Claude ceiling store file")
+	fs.DurationVar(&f.claudeMaxAge, "claude-ceiling-max-age", claudelocal.DefaultMaxCeilingAge, "age past which a stored Claude ceiling counts as unknown")
 	if err := fs.Parse(args); err != nil {
 		return syncFlags{}, err
 	}
@@ -194,7 +200,16 @@ func runClaudeLocal(ctx context.Context, f syncFlags) sourceOutcome {
 		}
 		dir = resolved
 	}
-	res := claudelocal.Fetch(ctx, dir, time.Now().UTC())
+	stateDir := f.claudeStateDir
+	if stateDir == "" {
+		resolved, err := claudelocal.DefaultStateDir()
+		if err != nil {
+			return sourceOutcome{Status: catalog.StatusFail, Detail: err.Error()}
+		}
+		stateDir = resolved
+	}
+	opts := claudelocal.Options{StateDir: stateDir, Account: f.claudeAccount, MaxCeilingAge: f.claudeMaxAge}
+	res := claudelocal.Fetch(ctx, dir, time.Now().UTC(), opts)
 	return sourceOutcome{Records: res.Records, Status: res.Status, Count: res.Count, Detail: res.Detail}
 }
 

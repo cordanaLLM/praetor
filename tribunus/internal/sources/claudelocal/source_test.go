@@ -67,7 +67,7 @@ func writeLog(t *testing.T, dir, name string, modTime time.Time, lines ...string
 
 func fetchOK(t *testing.T, dir string) map[string]catalog.Record {
 	t.Helper()
-	res := Fetch(context.Background(), dir, fixtureNow)
+	res := Fetch(context.Background(), dir, fixtureNow, Options{})
 	if res.Status != catalog.StatusOK {
 		t.Fatalf("Status = %v, detail %q, want ok", res.Status, res.Detail)
 	}
@@ -91,18 +91,18 @@ func assertNear(t *testing.T, name string, got *float64, want float64) {
 }
 
 func TestFetchWithoutLogsSkips(t *testing.T) {
-	if res := Fetch(context.Background(), filepath.Join(t.TempDir(), "missing"), fixtureNow); res.Status != catalog.StatusSkip {
+	if res := Fetch(context.Background(), filepath.Join(t.TempDir(), "missing"), fixtureNow, Options{}); res.Status != catalog.StatusSkip {
 		t.Fatalf("missing directory: Status = %v, want skip", res.Status)
 	}
 	dir := t.TempDir()
 	writeLog(t, dir, "notes.txt", fixtureNow, "not a session log")
-	if res := Fetch(context.Background(), dir, fixtureNow); res.Status != catalog.StatusSkip {
+	if res := Fetch(context.Background(), dir, fixtureNow, Options{}); res.Status != catalog.StatusSkip {
 		t.Fatalf("no *.jsonl: Status = %v, want skip", res.Status)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	writeLog(t, dir, "p/s.jsonl", fixtureNow, usageLine(usageFixture{at: fixtureNow, id: "m1", input: 10}))
-	if res := Fetch(ctx, dir, fixtureNow); res.Status != catalog.StatusFail {
+	if res := Fetch(ctx, dir, fixtureNow, Options{}); res.Status != catalog.StatusFail {
 		t.Fatalf("canceled context: Status = %v, want fail", res.Status)
 	}
 }
@@ -262,7 +262,7 @@ func TestFetchCountsOneResponseOnceAndKeepsNoContent(t *testing.T) {
 		usageLine(usageFixture{at: fixtureNow.Add(-time.Minute), id: "m4", model: "<synthetic>", contentTxt: secretBody}),
 	)
 	writeLog(t, dir, "p/subagents/agent-1.jsonl", fixtureNow, usageLine(repeated))
-	res := Fetch(context.Background(), dir, fixtureNow)
+	res := Fetch(context.Background(), dir, fixtureNow, Options{})
 	// Ceiling 8 units; m3, logged four times in two files, counts once: 4 of 8.
 	assertNear(t, "used_percent", fetchOK(t, dir)["claude-code/five_hour"].UsageWindow.UsedPercent, 50)
 	data, err := json.Marshal(res)

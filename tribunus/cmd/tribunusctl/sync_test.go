@@ -110,6 +110,7 @@ func TestRunSync_Positive(t *testing.T) {
 	args := []string{
 		"--sessions-dir=" + sessionsDir,
 		"--claude-projects-dir=" + claudeDir,
+		"--claude-state-dir=" + t.TempDir(),
 		"--ollama=" + ollama.URL,
 		"--litellm-base=" + gateway.URL,
 		"--litellm-token-file=" + tokenFile,

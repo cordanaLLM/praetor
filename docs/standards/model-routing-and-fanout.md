@@ -396,9 +396,29 @@ model family). For each window:
 - `used_percent` is the current window's usage over the ceiling.
 - `burn_percent_per_hour` and `active_agents` cover the last 15 minutes.
 
-Without an observed rejection, or with usage of a model the rate table lacks, the
-record has no `used_percent` and says why in `absent`, so the governor refuses as
-unknown. Files last written more than seven days ago are not read. The tests in
+Without a ceiling (no rejection in the logs and none stored), or with usage of a
+model the rate table lacks, the record has no `used_percent` and says why in `absent`,
+so the governor refuses as unknown. Files last written more than seven days ago are not
+read.
+
+A ceiling outlives the logs it came from. `sync` keeps one store per account,
+`claude-ceilings/<account>.json` below `--claude-state-dir`. The default state dir is
+`praetor/tribunus` under the user's state folder: `$XDG_STATE_HOME` or
+`~/.local/state`, `%LOCALAPPDATA%` on Windows. The store records each window's
+ceiling, the rejection that set it (time and log file), the reset it reported, and
+when it was recorded.
+
+- A rejection in the logs newer than the stored one replaces the stored entry.
+- A stored ceiling serves after a reset or a restart until its rejection is older than
+  `--claude-ceiling-max-age` (default 720h). After that the window is unknown again.
+- The store is written whole to `<file>.new` and renamed into place.
+- A store that does not decode or validate fails the source; it is never repaired or
+  overwritten.
+
+`tribunusctl claude-limits` prints how often each `rateLimitType` and `quotaLimits`
+status value occurs in all session logs, and nothing else. On the office workstation
+on 2026-10-13 it found `five_hour` 148 times, all `rejected`, across 742 files; the
+weekly names (`seven_day`, `seven_day_<family>`) were not observed there. The tests in
 `tribunus/internal/sources/claudelocal` use synthetic logs only;
 `tribunus/cmd/tribunusctl/sync_windows_test.go` runs a produced snapshot through the
 governor.
