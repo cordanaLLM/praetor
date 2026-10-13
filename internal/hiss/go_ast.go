@@ -72,18 +72,34 @@ func (g *goScanner) noteFunctions(file *ast.File) {
 	}
 }
 
-// measure reports every production function whose complexity exceeds limits. The values
+// measure reports every function whose complexity exceeds limits. The values
 // are measurements, not violations: they never reach the infraction list, so no scan result,
-// baseline or gate changes because of them. Test files are exempt, as they are from the
-// length rule and from gocyclo, gocognit and funlen in .golangci.yml.
+// baseline or gate changes because of them. Test files are measured with the same limits for
+// complexity and length, and their findings are named as test functions so an adopter can burn
+// them down (#1316).
 func (g *goScanner) measure(file *ast.File, limits ComplexityLimits) {
-	if g.isTest {
-		return
-	}
 	units := MeasureFile(g.fset, file)
+	maxLOC := g.maxLOC
+	if maxLOC <= 0 {
+		maxLOC = DefaultMaxFuncLOC
+	}
 	for i := 0; i < len(units); i++ {
 		for _, m := range units[i].Measurements(g.fset, g.rel, limits) {
+			m.IsTest = g.isTest
 			recordMeasurement(g.rep, m)
+		}
+		if g.isTest && units[i].Metrics.LOC > maxLOC {
+			recordMeasurement(g.rep, Measurement{
+				RuleID:     complexityRule,
+				FilePath:   g.rel,
+				LineNumber: g.fset.Position(units[i].Node.Pos()).Line,
+				Symbol:     units[i].Name,
+				Kind:       KindLength,
+				Value:      units[i].Metrics.LOC,
+				Limit:      maxLOC,
+				Severity:   SeverityReport,
+				IsTest:     true,
+			})
 		}
 	}
 }
