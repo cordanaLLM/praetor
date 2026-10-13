@@ -121,6 +121,14 @@ a valid declaration: the gate treats it as missing and fails on its files. An en
 excuses no unit every lane leaves unread, because a lane now reads the file or the file is gone,
 is stale and fails until it is removed (`TestCheck_Negative_ExpiredAndStaleExceptions`).
 
+The audit also fails every entry whose `path` names a file that does not exist, or whose `glob`
+matches none, the same way it fails an expired entry, and the message names the rule, the entry
+and the missing path (#1259; `auditExceptionsExpiry` in `cmd/standardsctl/audit_exceptions.go`).
+One planned file is the exception: the `HISS-11` entry adoption writes for
+`.github/workflows/release.yml`, the release workflow still to be added, passes while no workflow
+writes provenance. The audit asks the code that writes that entry, and once a provenance workflow
+exists the entry fails like any other stale one.
+
 Inspect declared exceptions and their remaining validity with `praetorctl exceptions list`
 (`cmd/standardsctl/exceptions.go`, `TestExceptionsList_Positive_ListsEntries`):
 

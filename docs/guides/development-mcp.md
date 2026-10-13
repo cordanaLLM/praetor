@@ -813,3 +813,7 @@ stale window comes from `forge.claim_stale` in the operator settings. Never poin
 live issue: exercise them through the test seam (`newClaimDesk`, a fake forge) as
 `cmd/standards-mcp/tools_issue_claims_test.go` does. The protocol is in
 [issue claims](issue-claims.md).
+
+A claim on a closed issue is refused and names the issue's state; reopening stays a deliberate
+act. A release removes the assignee the claim added, and keeps an assignee who was on the issue
+before the claim; the claim comment records which case applies (#1292).
