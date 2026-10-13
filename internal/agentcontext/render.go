@@ -397,8 +397,17 @@ func countLines(s string) int {
 	return strings.Count(s, "\n") + 1
 }
 
+// generatedNotice is the line every vendor wrapper compile-context writes carries.
+const generatedNotice = "<!-- Compiled automatically by praetorctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->"
+
 // Vendor wrappers carry metadata only. Policy must come entirely from AGENTS.md.
-const generatedHeader = "<!-- markdownlint-disable MD013 -->\n" +
-	"<!-- Compiled automatically by praetorctl compile-context from AGENTS.md. DO NOT EDIT DIRECTLY. -->\n\n"
+const generatedHeader = "<!-- markdownlint-disable MD013 -->\n" + generatedNotice + "\n\n"
+
+// IsCompiledProjection reports whether text, a vendor context file, carries the notice
+// compile-context writes into every projection of AGENTS.md: a compiled file, edited or not,
+// as opposed to one a person wrote.
+func IsCompiledProjection(text string) bool {
+	return strings.Contains(text, generatedNotice)
+}
 
 const cursorFrontmatter = "---\ndescription: Canonical agent instructions\nglobs: \"*\"\nalwaysApply: true\n---\n\n"

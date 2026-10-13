@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl adopt folds the text a vendor context file such as CLAUDE.md holds and AGENTS.md lacks into AGENTS.md before it recompiles the file, so a hand-written CLAUDE.md is no longer replaced with its content left only in a git-ignored backup
+issue: '#1073'
