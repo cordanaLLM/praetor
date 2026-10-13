@@ -1,0 +1,3 @@
+type: fixed
+title: Accept a client connection profile that declares only local servers; the profile needs one to 32 servers across gateway.endpoints and gateway.local_servers, and the bridge command and token file are required only when a gateway endpoint uses them
+issue: '#1096'

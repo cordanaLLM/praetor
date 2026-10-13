@@ -77,11 +77,14 @@ func ConnectionRegistry(ctx context.Context, profile ConnectionProfile) (Registr
 
 func validateConnections(profile ConnectionProfile) error {
 	gateway := profile.Gateway
-	if profile.Version != 1 || len(gateway.Endpoints) < 1 || len(gateway.Endpoints)+len(gateway.LocalServers) > MaxServers {
-		return errors.New("connections require version 1 and 1..32 servers including a gateway endpoint")
+	if profile.Version != 1 {
+		return errors.New("connections require version 1")
 	}
-	if !absoluteLiteral(gateway.BridgeCommand) || !absoluteLiteral(gateway.TokenFile) {
-		return errors.New("gateway bridge and token file require clean absolute literal paths")
+	if total := len(gateway.Endpoints) + len(gateway.LocalServers); total < 1 || total > MaxServers {
+		return fmt.Errorf("connections require 1..%d servers across gateway.endpoints and gateway.local_servers", MaxServers)
+	}
+	if err := validateGatewayPaths(gateway); err != nil {
+		return err
 	}
 	if profile.Provider != nil {
 		if err := repairrun.ValidateProviderConfig(*profile.Provider); err != nil {
@@ -90,6 +93,18 @@ func validateConnections(profile ConnectionProfile) error {
 	}
 	if profile.Memory != nil {
 		return validateMemoryBinding(*profile.Memory)
+	}
+	return nil
+}
+
+// validateGatewayPaths requires the bridge and token file only when a gateway endpoint
+// uses them; a profile with only local servers may leave both empty.
+func validateGatewayPaths(gateway GatewayConnection) error {
+	if len(gateway.Endpoints) == 0 && gateway.BridgeCommand == "" && gateway.TokenFile == "" {
+		return nil
+	}
+	if !absoluteLiteral(gateway.BridgeCommand) || !absoluteLiteral(gateway.TokenFile) {
+		return errors.New("gateway bridge and token file require clean absolute literal paths")
 	}
 	return nil
 }
