@@ -946,7 +946,7 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   and where the prior bytes went:
   `.workingdir/adopt-backups/<UTC stamp>/<path>`, written only when `git check-ignore`
   confirms that path is ignored. The `git-ignore` step, which writes the managed
-  `/.workingdir/` rule, runs right after the manifest step and before every step that can
+  `.workingdir/` rule, runs right after the manifest step and before every step that can
   replace a file, so a first adoption keeps a backup of every file it replaces, editor merges
   included, and a dry run plans the same backups without writing the rule or a copy
   (`adoptSteps` in `internal/adopt/adopt.go`, `backupIgnored` in `internal/adopt/replace.go`,
@@ -1083,7 +1083,7 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
     (`TestAdopt_Negative_ClientPersonaDirFileWithoutCanonicalPersona`). Adoption never rewrites
     or removes such a file.
   - A manifest that declines `git-ignore` while Git does not ignore `.workingdir/evidence/`.
-    Add `/.workingdir/` to the repository's own `.gitignore`
+    Add `.workingdir/` to the repository's own `.gitignore`
     (`TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule`).
   - Any other failure `compile-context --verify` names: fix what it names, or run
     `praetorctl compile-context`.

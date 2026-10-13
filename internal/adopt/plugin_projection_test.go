@@ -280,7 +280,7 @@ func TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule(t *testing.T) {
 			if len(rep.Errors) != 1 {
 				t.Fatalf("errors = %v, want the one verification error", rep.Errors)
 			}
-			for _, want := range []string{verifyRejection + ": ", ".workingdir/evidence/", "add /.workingdir/ to the operator-owned .gitignore"} {
+			for _, want := range []string{verifyRejection + ": ", ".workingdir/evidence/", "add .workingdir/ to the operator-owned .gitignore"} {
 				if !strings.Contains(rep.Errors[0], want) {
 					t.Errorf("error lacks %q: %s", want, rep.Errors[0])
 				}

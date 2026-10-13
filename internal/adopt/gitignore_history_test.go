@@ -24,6 +24,13 @@ var pinnedGitIgnoreBlockVersions = map[string][]string{
 		"/.agents/mcp_config.json",
 		"/.standards/cache/",
 	},
+	"v3": {
+		".workingdir/",
+		".workingdir2/",
+		"/.standards/worktrees/",
+		"/.agents/mcp_config.json",
+		"/.standards/cache/",
+	},
 }
 
 // Positive: LookupManagedGitIgnoreTail recognizes current and earlier versions across all
@@ -36,9 +43,14 @@ func TestLookupManagedGitIgnoreTail_Positive(t *testing.T) {
 		wantCurrent bool
 		wantVersion string
 	}{
-		"current v2 canonical block": {
-			version:     gitIgnoreBlockVersion{Version: "v2", Rules: pinnedGitIgnoreBlockVersions["v2"]},
+		"current v3 canonical block": {
+			version:     gitIgnoreBlockVersion{Version: "v3", Rules: pinnedGitIgnoreBlockVersions["v3"]},
 			wantCurrent: true,
+			wantVersion: "v3",
+		},
+		"historical v2 root-anchored block": {
+			version:     gitIgnoreBlockVersion{Version: "v2", Rules: pinnedGitIgnoreBlockVersions["v2"]},
+			wantCurrent: false,
 			wantVersion: "v2",
 		},
 		"historical v1 four-rule block": {

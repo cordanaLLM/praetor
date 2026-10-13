@@ -80,7 +80,7 @@ func TestCompileContextEvidence_Boundary_DeclinedWarns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile-context: %v\n%s", err, out)
 	}
-	mustContain(t, out, "Warning: Git does not ignore .workingdir/", "add /.workingdir/ to the operator-owned .gitignore")
+	mustContain(t, out, "Warning: Git does not ignore .workingdir/", "add .workingdir/ to the operator-owned .gitignore")
 	if _, statErr := os.Stat(filepath.Join(dir, ".gitignore")); !os.IsNotExist(statErr) {
 		t.Fatalf("a declined git-ignore step wrote .gitignore: %v", statErr)
 	}
