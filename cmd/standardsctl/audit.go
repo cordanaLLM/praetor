@@ -172,7 +172,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 	gates := []func() error{
 		func() error { return auditRepoIdentity(manifest, rootDir) },
 		func() error { return auditLockDigestsContext(ctx, manifest, rootDir, opts.policy.CatalogRoot) },
-		func() error { return auditExceptionsExpiry(manifest, time.Now()) },
+		func() error { return auditExceptionsExpiry(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
 		func() error {

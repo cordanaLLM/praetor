@@ -589,3 +589,29 @@ func TestFilterExceptionsExpiringWithin_3D(t *testing.T) {
 		}
 	})
 }
+
+// MatchesAny (#1259). Positive: a glob matching one file, also through a "**" segment.
+// Negative: a glob matching none. Boundary: an empty file list, and a path or tool entry,
+// which MatchesAny never reports (the audit checks a path on disk).
+func TestExceptionMatchesAny(t *testing.T) {
+	files := []string{"src/gen/a.pb.go", "docs/deep/x/y.md"}
+	cases := []struct {
+		name  string
+		entry Exception
+		files []string
+		want  bool
+	}{
+		{"glob matches a file", Exception{Glob: "src/gen/*.pb.go"}, files, true},
+		{"double star spans segments", Exception{Glob: "docs/**/*.md"}, files, true},
+		{"glob matches nothing", Exception{Glob: "src/gen/*.pb.c"}, files, false},
+		{"star stays inside one segment", Exception{Glob: "src/*.pb.go"}, files, false},
+		{"no files", Exception{Glob: "src/gen/*.pb.go"}, nil, false},
+		{"path entry", Exception{Path: "src/gen/a.pb.go"}, files, false},
+		{"tool entry", Exception{Tool: "gitleaks"}, files, false},
+	}
+	for _, tc := range cases {
+		if got := tc.entry.MatchesAny(tc.files); got != tc.want {
+			t.Errorf("%s: MatchesAny = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

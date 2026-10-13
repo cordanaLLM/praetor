@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 // supplyChainException returns the HISS-11 exceptions entry the manifest a fresh adoption
@@ -61,6 +62,22 @@ func newSupplyChainException(gap supplyChainGap, today time.Time) config.Excepti
 			"%s in Praetor describes, then remove this entry", gap.summary(), supplyChainGuide),
 		Expires: config.ExceptionDay(today).AddDate(0, 0, config.MaxExceptionDays).Format(config.ExceptionDateLayout),
 	}
+}
+
+// PlannedReleaseWorkflow returns the release workflow a HISS-11 entry may name before the file
+// exists: while no workflow under root writes provenance, the path newSupplyChainException
+// records for a fresh repository (supplyChainGap.releaseWorkflow), and "" once one does. The
+// exceptions audit asks it, so a planned file is told from a stale one by the code that writes
+// the entry, not by a second copy of the path (#1259).
+func PlannedReleaseWorkflow(ctx context.Context, root string) (string, error) {
+	measured, err := forge.MeasureProvenance(ctx, root)
+	if err != nil {
+		return "", fmt.Errorf("measure the release workflows: %w", err)
+	}
+	if measured.LevelWorkflow != "" {
+		return "", nil
+	}
+	return supplyChainGap{Measured: measured}.releaseWorkflow(), nil
 }
 
 // supplyChainExceptionNote is what the manifest's report line says about the entry it declares.
