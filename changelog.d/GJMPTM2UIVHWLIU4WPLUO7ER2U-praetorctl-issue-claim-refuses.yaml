@@ -1,0 +1,3 @@
+type: fixed
+title: praetorctl issue claim refuses an issue that is not open and names its state, and issue release removes the assignee the claim added; an account assigned before the claim stays assigned, and the claim comment records which case applies
+issue: '#1292'

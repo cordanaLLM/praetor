@@ -499,7 +499,7 @@
         "idempotentHint": true,
         "openWorldHint": true
       },
-      "description": "Release session issue claim, as praetorctl issue release. Finalises claim comment with outcome, removes status labels; pull request closes issue. Writes to forge.",
+      "description": "Release session issue claim, as praetorctl issue release. Finalises claim comment, removes status labels and assignee claim added; pull request closes issue. Writes to forge.",
       "inputSchema": {
         "type": "object",
         "properties": {

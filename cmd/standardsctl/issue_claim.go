@@ -25,12 +25,14 @@ func printIssueClaimUsage() {
 	fmt.Println("  claim <owner/repo#n> --session <id> --lane <lane> --branch <branch>")
 	fmt.Println("            Claim an issue before working on it: one comment with a machine-readable marker, the")
 	fmt.Println("            status:in-progress label and the account as assignee; refused while another session holds")
-	fmt.Println("            a live claim, a claim without an update for forge.claim_stale (default 6h) is taken over")
+	fmt.Println("            a live claim, a claim without an update for forge.claim_stale (default 6h) is taken over;")
+	fmt.Println("            refused on an issue that is not open")
 	fmt.Println("  status <owner/repo#n> --session <id> [--stage <stage>] [--note <text>]")
 	fmt.Println("            Record a stage on the claim comment (claimed, implementing, review, fix-round-N, blocked,")
 	fmt.Println("            queued, landing); without --stage, report the current claim and change nothing")
 	fmt.Println("  release <owner/repo#n> --session <id> --outcome landed|abandoned|handed-over [--note <text>]")
-	fmt.Println("            Finalise the claim comment and remove the status labels; the pull request closes the issue")
+	fmt.Println("            Finalise the claim comment, remove the status labels and the assignee the claim added (an")
+	fmt.Println("            account assigned before the claim stays); the pull request closes the issue")
 }
 
 // newForgeClaimDesk is the production desk: the GitHub forge with the stale window of the

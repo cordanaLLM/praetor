@@ -25,6 +25,8 @@ func claimRoutes(t *testing.T) func(w http.ResponseWriter, r *http.Request, inde
 		{http.MethodPost, "/issues/7/comments", http.StatusCreated, map[string]any{"id": 6, "user": map[string]any{"login": "operator"}, "author_association": "OWNER", "body": "x"}},
 		{http.MethodPatch, "/issues/comments/6", http.StatusOK, map[string]any{"id": 6}},
 		{http.MethodPost, "/issues/7/assignees", http.StatusCreated, map[string]any{}},
+		{http.MethodDelete, "/issues/7/assignees", http.StatusOK, map[string]any{}},
+		{http.MethodGet, "/issues/7", http.StatusOK, map[string]any{"number": 7, "title": "t", "state": "closed", "assignees": []map[string]any{{"login": "operator"}, {"login": "alice"}}}},
 	}
 	return func(w http.ResponseWriter, r *http.Request, _ int) {
 		for _, route := range routes {
@@ -68,6 +70,26 @@ func TestGitHubClaim_Positive_AssigneesPayload(t *testing.T) {
 	}
 }
 
+func TestGitHubClaim_Positive_RemoveAssigneesSendsTheLoginsToDelete(t *testing.T) {
+	gh, fake := newFakeForge(t, claimRoutes(t))
+	if err := gh.RemoveAssignees(context.Background(), 7, []string{"operator"}); err != nil {
+		t.Fatalf("unassign: %v", err)
+	}
+	last := fake.requests[len(fake.requests)-1]
+	got, ok := last.Body["assignees"].([]any)
+	if last.Method != http.MethodDelete || !strings.HasSuffix(last.Path, "/issues/7/assignees") || !ok || len(got) != 1 || got[0] != "operator" {
+		t.Fatalf("unassign request: %s %s %v", last.Method, last.Path, last.Body)
+	}
+}
+
+func TestGitHubClaim_Positive_IssueCarriesStateAndAssignees(t *testing.T) {
+	gh, _ := newFakeForge(t, claimRoutes(t))
+	issue, err := gh.GetIssue(context.Background(), 7)
+	if err != nil || issue.State != "closed" || len(issue.Assignees) != 2 || issue.Assignees[0] != "operator" || issue.Assignees[1] != "alice" {
+		t.Fatalf("issue: %+v %v", issue, err)
+	}
+}
+
 func TestGitHubClaim_Negative_ForbiddenStatusesFail(t *testing.T) {
 	gh, _ := newFakeForge(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
 		writeJSON(t, w, http.StatusForbidden, map[string]any{"message": "no"})
@@ -79,6 +101,7 @@ func TestGitHubClaim_Negative_ForbiddenStatusesFail(t *testing.T) {
 		"create":       func() error { _, err := gh.CreateIssueComment(ctx, 7, "x"); return err },
 		"edit":         func() error { return gh.EditIssueComment(ctx, 6, "x") },
 		"assign":       func() error { return gh.AddAssignees(ctx, 7, []string{"a"}) },
+		"unassign":     func() error { return gh.RemoveAssignees(ctx, 7, []string{"a"}) },
 		"ensure label": func() error { return gh.EnsureLabel(ctx, Label{Name: "x", Color: "ffffff"}) },
 	}
 	for name, call := range calls {
@@ -96,6 +119,8 @@ func TestGitHubClaim_Negative_BadInputIsRefusedBeforeTheWire(t *testing.T) {
 		"create issue -1": func() error { _, err := gh.CreateIssueComment(ctx, -1, "x"); return err },
 		"edit comment 0":  func() error { return gh.EditIssueComment(ctx, 0, "x") },
 		"no logins":       func() error { return gh.AddAssignees(ctx, 7, nil) },
+		"unassign none":   func() error { return gh.RemoveAssignees(ctx, 7, nil) },
+		"unassign #0":     func() error { return gh.RemoveAssignees(ctx, 0, []string{"a"}) },
 		"unnamed label":   func() error { return gh.EnsureLabel(ctx, Label{}) },
 	}
 	for name, call := range calls {
