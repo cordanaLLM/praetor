@@ -20,18 +20,16 @@
 package codexlocal
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/cordanaLLM/praetor/tribunus/catalog"
+	"github.com/cordanaLLM/praetor/tribunus/internal/sources/sessionlog"
 )
 
 // SourceName identifies this source in Snapshot.SourceRuns and CLI flags.
@@ -50,6 +48,9 @@ const (
 	// maxLineBytes bounds a single JSONL line the scanner will accept.
 	maxLineBytes = 4 << 20
 )
+
+// scanLimits bounds the scan of the newest session file.
+var scanLimits = sessionlog.Limits{MaxFileBytes: maxSessionFileBytes, MaxLines: maxScanLines, MaxLineBytes: maxLineBytes}
 
 // Result is one Fetch attempt's outcome.
 type Result struct {
@@ -101,63 +102,19 @@ func Fetch(ctx context.Context, sessionsDir string) Result {
 // newestSessionFile walks sessionsDir and returns the *.jsonl path with the
 // latest modification time. A missing directory is reported as found=false,
 // err=nil: that is a skip, not a failure.
-// sessionScan accumulates the newest matching session file seen across a
-// filepath.WalkDir, keeping newestSessionFile's own complexity to setting
-// this up and interpreting the final result.
-type sessionScan struct {
-	root     string
-	best     string
-	bestTime time.Time
-	scanned  int
-}
-
-// consider evaluates one WalkDir entry, updating s.best when p is a newer
-// .jsonl session file. It returns the error WalkDir should propagate, if
-// any: a real filesystem error, context cancellation, or the scanned-files
-// bound (HISS-02).
-func (s *sessionScan) consider(ctx context.Context, p string, d fs.DirEntry, walkErr error) error {
-	if walkErr != nil {
-		if errors.Is(walkErr, fs.ErrNotExist) {
-			return nil
-		}
-		return walkErr
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
-	}
-	if d.IsDir() {
-		return nil
-	}
-	s.scanned++
-	if s.scanned > maxSessionFilesScanned {
-		return fmt.Errorf("codex-local: %s exceeds %d files scanned", s.root, maxSessionFilesScanned)
-	}
-	if filepath.Ext(p) != ".jsonl" {
-		return nil
-	}
-	info, infoErr := d.Info()
-	if infoErr != nil {
-		return infoErr
-	}
-	if info.ModTime().After(s.bestTime) {
-		s.bestTime = info.ModTime()
-		s.best = p
-	}
-	return nil
-}
-
 func newestSessionFile(ctx context.Context, root string) (path string, found bool, err error) {
-	scan := &sessionScan{root: root}
-	walkErr := filepath.WalkDir(root, func(p string, d fs.DirEntry, walkErr error) error {
-		return scan.consider(ctx, p, d, walkErr)
-	})
-	if walkErr != nil {
-		if errors.Is(walkErr, fs.ErrNotExist) {
-			return "", false, nil
+	var best string
+	var bestTime time.Time
+	found, err = sessionlog.WalkJSONL(ctx, root, maxSessionFilesScanned, func(p string, info fs.FileInfo) error {
+		if info.ModTime().After(bestTime) {
+			bestTime, best = info.ModTime(), p
 		}
-		return "", false, fmt.Errorf("codex-local: walk %s: %w", root, walkErr)
+		return nil
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("codex-local: %w", err)
 	}
-	return scan.best, scan.best != "", nil
+	return best, found && best != "", nil
 }
 
 // sessionLine is the JSONL envelope; only the fields Fetch needs are typed.
@@ -180,48 +137,19 @@ type window struct {
 }
 
 // latestRateLimits scans path and returns the last non-null rate_limits
-// object logged, or nil if the file has none. Malformed lines are skipped:
-// a session log can carry lines this parser does not model, and skipping
-// them is correct, not a data loss, because only rate_limits lines matter.
-func latestRateLimits(ctx context.Context, path string) (result *rateLimits, err error) {
-	// #nosec G304 -- path is always the output of newestSessionFile's own
-	// WalkDir scan under the caller-supplied sessions root, not untrusted input.
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("codex-local: open %s: %w", path, err)
-	}
-	defer func() { err = errors.Join(err, f.Close()) }()
-
-	info, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("codex-local: stat %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("codex-local: %s is not a regular file", path)
-	}
-	if info.Size() > maxSessionFileBytes {
-		return nil, fmt.Errorf("codex-local: %s exceeds %d bytes", path, maxSessionFileBytes)
-	}
-
-	scanner := bufio.NewScanner(io.LimitReader(f, maxSessionFileBytes+1))
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
-
+// object logged, or nil if the file has none. Malformed and overlong lines
+// are skipped: a session log can carry lines this parser does not model, and
+// skipping them is correct, not a data loss, because only rate_limits lines
+// matter.
+func latestRateLimits(ctx context.Context, path string) (*rateLimits, error) {
 	var latest *rateLimits
-	lines := 0
-	for scanner.Scan() {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
-		}
-		lines++
-		if lines > maxScanLines {
-			return nil, fmt.Errorf("codex-local: %s exceeds %d lines scanned", path, maxScanLines)
-		}
-		if rl := parseRateLimitsLine(scanner.Bytes()); rl != nil {
+	_, err := sessionlog.ScanLines(ctx, path, scanLimits, func(line []byte) {
+		if rl := parseRateLimitsLine(line); rl != nil {
 			latest = rl
 		}
-	}
-	if scanErr := scanner.Err(); scanErr != nil {
-		return nil, fmt.Errorf("codex-local: scan %s: %w", path, scanErr)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("codex-local: %w", err)
 	}
 	return latest, nil
 }
