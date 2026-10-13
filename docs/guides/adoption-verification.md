@@ -1062,7 +1062,7 @@ runs as without the flag, so a HISS or flavor failure still rejects the run. The
 refusal's own text followed by the admission, and the report ends with a line saying so:
 
 ```text
-6. [N/A]  Ed25519 Exit-0 Receipt    (1ms)
+7. [N/A]  Ed25519 Exit-0 Receipt    (1ms)
    Reason: no verification stage ran for any language: ... the gate runs the toolchains of Go
            (go.mod) and Cargo (Cargo.lock); unsupported languages at the repository root: meson
            (meson.build); admitted without a receipt (--admit-unsupported): verify these languages
@@ -1088,6 +1088,44 @@ a receipt and run the gate without the flag. Tests:
 [`internal/gating/admit_unsupported_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/admit_unsupported_test.go),
 [`cmd/standardsctl/gate_admit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/gate_admit_test.go) and
 [`internal/adopt/lefthook_gate_admit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/lefthook_gate_admit_test.go).
+
+### A declared `verify-all` runs where no toolchain stage applies
+
+Admitting a root the gate has no toolchain for left the repository's own checks unrun before a
+push (#1218). The **Declared Verification** stage closes that gap.
+
+A repository declares its verification command as the Makefile target `verify-all`. Adoption
+writes or preserves that target, and the managed README names it as the configured verification
+cascade. The stage reads the makefile GNU Make would read (`GNUmakefile`, `makefile`, `Makefile`,
+in that order) through `util.MakefileHasTarget`.
+
+Where the root holds neither a `go.mod` nor a `Cargo.lock` and the target is declared, the stage
+runs `make verify-all`:
+
+- **Where:** in an isolated worktree of `HEAD`, as the test suites run, so it checks what is pushed
+  and writes nothing into the working tree.
+- **Bound:** the race stage's bound (`PRAETOR_TEST_STAGE_TIMEOUT`). Output capture is bounded by
+  `util.RunCommand`.
+- **Non-zero exit:** fails the stage and refuses the push. The reason names the command, its exit
+  code and the end of its output, for example
+  `declared verification make verify-all exited 2: ... Error 1` (GNU Make exits 2 when a recipe
+  fails).
+- **Exit 0:** passes the stage (`make verify-all exited 0`). The run is admitted, and the receipt
+  stage says the command ran and passed but signs no receipt. Signing a receipt for such a run is
+  a separate question.
+
+The stage runs nothing in these cases:
+
+- **Not applicable:** a root with a `go.mod` or `Cargo.lock` (its toolchain stages verify it); a
+  root without the target (today's admission, naming the unsupported languages); and a gate run
+  started from inside `verify-all` (`PRAETOR_GATE_DECLARED_VERIFY` is set in the command's
+  environment, so a `verify-all` that runs the gate does not recurse).
+- **Skipped, with the reason:** a dry run, and a host without `make` on `PATH`.
+
+Tests:
+[`internal/gating/declared_verify_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/declared_verify_test.go),
+which runs the acceptance fixtures (a `pyproject.toml` root whose `verify-all` exits 1, exits 0, or
+is not declared) through the real pipeline with GNU Make.
 
 ### A receipt is signed only by the pinned key
 
@@ -1629,6 +1667,15 @@ Any check that fails runs the stages on the host, and its reason is what the rep
 record. Praetor's own `.devcontainer/devcontainer.json` declares the `common-utils`, `go` and `node`
 features, so Praetor's gate builds it with the pinned CLI wherever docker or podman answers on one
 of those platforms.
+
+**A busy host delays the container, it does not refuse the push.** The first command inside the
+container, the toolchain probe, waits for the container to start. It runs under
+`devcontainerStartBound`, the run budget's allowance for the stages other than the tests
+(`stageBudget`: 5 minutes for a Go repository, more with a `Cargo.lock`), and the run's own deadline
+still applies ([#1260](https://github.com/cordanaLLM/praetor/issues/1260)). When that bound fires, the
+reason says the container did not start in time and that this does not mean Go is missing; any
+other probe failure keeps the message that names the missing toolchain. Before #1260 the probe ran
+under the 15-second git query limit and refused pushes at load averages of 30 and above.
 
 #### The pinned devcontainer CLI
 

@@ -134,6 +134,14 @@ func refusalCases() []struct {
 		want          []byte
 	}{
 		{"evasion flag", "git push --no-verify origin main", []byte(BuiltinRules()[0].RefusalPrefix() + builtinEvasion[0] + "\n")},
+		{"gh pr merge admin", "gh pr merge 123 --admin", []byte(BuiltinRules()[10].RefusalPrefix() + builtinEvasion[10] + "\n")},
+		{"gh api merge", "gh api repos/owner/repo/pulls/123/merge", []byte(BuiltinRules()[11].RefusalPrefix() + builtinEvasion[11] + "\n")},
+		{"gh api graphql merge", "gh api graphql -f query='mutation { mergePullRequest }'", []byte(BuiltinRules()[12].RefusalPrefix() + builtinEvasion[12] + "\n")},
+		{"curl pulls merge", "curl https://api.github.com/repos/owner/repo/pulls/123/merge", []byte(BuiltinRules()[13].RefusalPrefix() + builtinEvasion[13] + "\n")},
+		{"gh pr merge admin continuation", "gh pr merge 5 \\\n  --admin", []byte(BuiltinRules()[10].RefusalPrefix() + builtinEvasion[10] + "\n")},
+		{"gh api merge continuation", "gh api -X PUT \\\n repos/owner/repo/pulls/5/merge", []byte(BuiltinRules()[11].RefusalPrefix() + builtinEvasion[11] + "\n")},
+		{"continuation allowed", "gh pr merge 5 \\\n--squash", nil},
+		{"plain newline allowed", "echo gh pr merge 5\necho --admin", nil},
 		{"dev root", "praetorctl adopt /home/user/dev", []byte(BuiltinRules()[len(builtinEvasion)].RefusalPrefix() + builtinDevRoot + "\n")},
 		{"scan bound exceeded", strings.Repeat("x", MaxScanLineChars+1), []byte(ScanBoundRefusal() + "\n")},
 		{"scan bound exactly", strings.Repeat("x", MaxScanLineChars), nil},

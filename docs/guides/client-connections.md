@@ -27,7 +27,11 @@ The bridge must already exist and accept `--endpoint URL --token-file PATH`.
 Token contents are not read by the generator or placed in argv. The registry
 contains references only. Optional `gateway.local_servers` uses the existing
 explicit stdio `name`, `command`, `args` contract. All projected server names must
-be unique. Optional `provider` uses the existing
+be unique. A profile needs 1 to 32 servers across `gateway.endpoints` and
+`gateway.local_servers`; a profile with only local servers may leave out
+`bridge_command`, `token_file` and `endpoints`. The bridge and token file are
+required as soon as one endpoint is declared, and every endpoint must be an HTTPS
+URL. Optional `provider` uses the existing
 [repair provider fields](dogfood-repair-execution.md), including the exact helper
 digest and logical model selector; `provider.json` is that subsection, not a
 complete repair execution configuration. The generator does not execute helpers,

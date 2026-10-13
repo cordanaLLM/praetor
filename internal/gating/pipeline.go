@@ -65,14 +65,16 @@ const (
 
 // The stage names, in pipeline order. The prefetch, security and test stages are the toolchain
 // stages: they run a language's own commands, and the receipt stage signs nothing unless one of
-// them ran for some language (requireVerification).
+// them ran for some language (requireVerification). The declared-verification stage runs the
+// repository's own verify-all where no toolchain stage applies; it signs no receipt.
 const (
-	stagePrefetch = "Prefetch & Lockfiles"
-	stageHISS     = "HISS Invariant Scan"
-	stageSecurity = "Security & SCA Scan"
-	stageFlavor   = "Flavor Conformance"
-	stageTests    = "Race-Detector Tests"
-	stageReceipt  = "Ed25519 Exit-0 Receipt"
+	stagePrefetch       = "Prefetch & Lockfiles"
+	stageHISS           = "HISS Invariant Scan"
+	stageSecurity       = "Security & SCA Scan"
+	stageFlavor         = "Flavor Conformance"
+	stageTests          = "Race-Detector Tests"
+	stageDeclaredVerify = "Declared Verification"
+	stageReceipt        = "Ed25519 Exit-0 Receipt"
 )
 
 // ErrMissingScanner reports that a required security scanner is absent, which must fail
@@ -217,6 +219,9 @@ type stageConfig struct {
 	verified []string
 	// admitUnsupported is RunOptions.AdmitUnsupported (requireVerification).
 	admitUnsupported bool
+	// declaredVerified is set when the declared-verification stage ran the repository's own
+	// verification command and it passed (runDeclaredVerifyStage). It signs no receipt.
+	declaredVerified bool
 	// goos and goarch are the host platform the devcontainer plan is made for. Production uses
 	// runtime.GOOS and runtime.GOARCH; tests set others to reach the Windows refusal and the
 	// Node platforms on every host.
@@ -228,6 +233,10 @@ type stageConfig struct {
 	// host (resolveExecution, goToolchain). Its commands start through run, so a test's fake
 	// runner sees the container runtime's command lines.
 	container *devcontainerExec
+	// containerStart bounds the toolchain probe that starts an entered devcontainer. Production
+	// leaves it zero, so devcontainerStartBound derives it from the run's budget; tests shorten it
+	// to reach the bound without waiting for it.
+	containerStart time.Duration
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
@@ -358,6 +367,7 @@ func executeStages(ctx context.Context, cfg *stageConfig) error {
 		{stageSecurity, runSecurityStage},
 		{stageFlavor, runFlavorStage},
 		{stageTests, runTestStage},
+		{stageDeclaredVerify, runDeclaredVerifyStage},
 		{stageReceipt, runReceiptStage},
 	}
 

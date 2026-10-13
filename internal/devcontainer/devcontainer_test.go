@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // TestSynthesize_3D verifies Synthesize against positive, negative, and boundary inputs.
@@ -256,8 +256,7 @@ func TestWriteAndLoadDevContainer_3D(t *testing.T) {
 	}
 
 	// 1. Positive Test: Write and load back
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := testsupport.DeadlineContext(t)
 
 	if err := WriteDevContainer(ctx, filePath, dc); err != nil {
 		t.Fatalf("expected nil error writing devcontainer, got: %v", err)
@@ -314,8 +313,7 @@ func TestVerify_3D(t *testing.T) {
 		PostCreateCommand: "make verify-all",
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := testsupport.DeadlineContext(t)
 
 	if err := WriteDevContainer(ctx, filePath, dc); err != nil {
 		t.Fatalf("failed to write test devcontainer: %v", err)
@@ -376,8 +374,7 @@ func TestDogfoodingSynthesis(t *testing.T) {
 		t.Fatalf("expected name %s, got: %s", expectedName, dc.Name)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	ctx := testsupport.DeadlineContext(t)
 
 	if err := Verify(ctx, "../../.devcontainer/devcontainer.json", dc); err != nil {
 		t.Fatalf("verification of dogfooding .devcontainer/devcontainer.json failed: %v", err)

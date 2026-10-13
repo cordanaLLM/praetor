@@ -183,6 +183,9 @@ func requireVerification(cfg *stageConfig) error {
 		return refusal
 	}
 	cfg.rep.AdmittedUnverified = true
+	if cfg.declaredVerified {
+		return notApplicable(refusal.Error() + "; " + declaredVerifyCommand + " ran and passed, but signs no receipt; " + admittedUnsupportedNote)
+	}
 	return notApplicable(refusal.Error() + "; " + admittedUnsupportedNote)
 }
 

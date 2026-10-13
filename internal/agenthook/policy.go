@@ -84,17 +84,26 @@ const shortSkipFlagRule = `\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*
 // skipVariableRule refuses the skip variable ahead of a Git call (builtinEvasion).
 const skipVariableRule = `SKIP=.*git`
 
-// The in-place edit rule and the find rule (builtinEvasion) are a command word, the first one
-// of its line (lineThroughFirstWord), followed by a tail that starts with a `[^\n]*` gap. The
-// words are lowercase ASCII letters with pairwise distinct first letters within a list.
+// The in-place edit rule, find rule, GitHub merge rules and HTTP fetch merge rules
+// (builtinEvasion) are command words, the first one of their line (lineThroughFirstWord),
+// followed by a tail that starts with a `[^\n]*` gap. The words are lowercase ASCII letters with
+// pairwise distinct first letters within each list.
 var (
 	inPlaceEditorWords = []string{"sed", "perl"}
 	findWords          = []string{"find"}
+	ghWords            = []string{"gh"}
+	httpFetchWords     = []string{"curl", "wget"}
 )
 
 const (
-	inPlaceEditTail = `[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*` + hooksDir
-	findTail        = `[^\n]*` + hooksDir + `[^\n]*\s-(delete|exec|execdir|ok)\b`
+	inPlaceEditTail    = `[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*` + hooksDir
+	findTail           = `[^\n]*` + hooksDir + `[^\n]*\s-(delete|exec|execdir|ok)\b`
+	adminFlag          = `(?:\s|[\x22\x27])--admin(?:\s|$|[;&|\x22\x27]|=true\b)`
+	ghMergeAdminTail   = `[^\n]*(?:\bpr\s+merge\b[^\n]*` + adminFlag + `|` + adminFlag + `[^\n]*\bpr\s+merge\b|\bpr\s+--admin(?:\s|$|[;&|\x22\x27]|=true\b)[^\n]*\bmerge\b)`
+	pullsMergeEndpoint = `\bpulls/[0-9]+/merge/?(?:\?|\s|$|[;&|\x22\x27])`
+	ghAPIPullsTail     = `[^\n]*\bapi\b[^\n]*` + pullsMergeEndpoint
+	ghGraphQLTail      = `[^\n]*\bapi\s+graphql\b[^\n]*\bmergePullRequest\b`
+	httpMergeTail      = `[^\n]*\bapi\.github\.com/[^\n]*` + pullsMergeEndpoint
 )
 
 // lineThroughFirstWord returns a pattern for a line from its start through the first whole
@@ -169,6 +178,14 @@ func lineThroughFirstWord(words ...string) string {
 //     first find word, of a line (lineThroughFirstWord): they refuse what `\b(sed|perl)\b` and
 //     `\bfind\b` at any word did, and Python's re no longer retries them at every such word,
 //     which cost cubic time in the line length (#829).
+//   - Pull request merge bypasses (cordanaLLM/praetor#1300): gh pr merge with --admin (or
+//     --admin=true) in any position, gh api calls whose path ends in pulls/<n>/merge, gh api
+//     graphql calls whose query holds mergePullRequest, and curl or wget against an
+//     api.github.com .../pulls/<n>/merge URL are refused so agent sessions cannot use the
+//     operator's ruleset bypass. Each rule is anchored via lineThroughFirstWord and keeps at
+//     most two gap expressions per line for linear/quadratic execution. Plain gh pr merge
+//     without --admin, gh api pulls/<n> reads, and mentions that omit the refusal triggers stay
+//     allowed.
 //
 // The short skip flag rule and the skip variable rule judge the command without the words of
 // chained read-only commands (readOnlyExemptRules); every other rule judges the whole command.
@@ -183,6 +200,10 @@ var builtinEvasion = []string{
 	lineThroughFirstWord(findWords...) + findTail,
 	`>\s*[\x22\x27]?[^ \t\n\x22\x27]*` + hooksDir,
 	`\blefthook\s+uninstall\b`,
+	lineThroughFirstWord(ghWords...) + ghMergeAdminTail,
+	lineThroughFirstWord(ghWords...) + ghAPIPullsTail,
+	lineThroughFirstWord(ghWords...) + ghGraphQLTail,
+	lineThroughFirstWord(httpFetchWords...) + httpMergeTail,
 }
 
 // readOnlyExemptRules are the built-in rules that judge the command without the words of
@@ -324,12 +345,21 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 	return &Policy{rules: rules}, nil
 }
 
+var lineContinuationReplacer = strings.NewReplacer("\\\r\n", " ", "\\\n", " ")
+
+// joinLineContinuations replaces backslash line continuations (a backslash followed by \r\n or
+// \n) with a single space before any rule runs.
+func joinLineContinuations(command string) string {
+	return lineContinuationReplacer.Replace(command)
+}
+
 // Command judges one proposed command line. The first matching rule denies; a
 // readOnlyExempt rule judges the command without the words of chained read-only commands.
 func (p *Policy) Command(command string) Verdict {
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
+	command = joinLineContinuations(command)
 	judged := withoutReadOnlyWords(command)
 	for _, rule := range p.rules {
 		text := command

@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"testing"
 
@@ -19,8 +20,10 @@ import (
 // ClaimFake is an in-memory forge for one repository that implements forge.ClaimForge.
 // FailOn names a method that fails with an error.
 type ClaimFake struct {
-	mu        sync.Mutex
-	PR        bool
+	mu sync.Mutex
+	PR bool
+	// State is the issue state GetIssue reports: "open" from NewClaimFake.
+	State     string
 	Comments  []forge.IssueComment
 	NextID    int64
 	Labels    map[string]bool // labels the repository has
@@ -37,9 +40,9 @@ type ClaimFake struct {
 
 var _ forge.ClaimForge = (*ClaimFake)(nil)
 
-// NewClaimFake returns an empty fake issue.
+// NewClaimFake returns an empty open fake issue.
 func NewClaimFake() *ClaimFake {
-	return &ClaimFake{NextID: 100, Labels: map[string]bool{}, OnIssue: map[string]bool{}}
+	return &ClaimFake{State: "open", NextID: 100, Labels: map[string]bool{}, OnIssue: map[string]bool{}}
 }
 
 // Opener returns an opener that serves this fake for every repository.
@@ -57,7 +60,8 @@ func (f *ClaimFake) record(name string) error {
 	return nil
 }
 
-// GetIssue answers an issue, or fails when PR marks the number as a pull request.
+// GetIssue answers the issue with its state and assignees, or fails when PR marks the number
+// as a pull request.
 func (f *ClaimFake) GetIssue(_ context.Context, number int) (forge.IssueSpec, error) {
 	if err := f.record("GetIssue"); err != nil {
 		return forge.IssueSpec{}, err
@@ -65,7 +69,7 @@ func (f *ClaimFake) GetIssue(_ context.Context, number int) (forge.IssueSpec, er
 	if f.PR {
 		return forge.IssueSpec{}, errors.New("fake forge: number is a pull request")
 	}
-	return forge.IssueSpec{ID: number}, nil
+	return forge.IssueSpec{ID: number, State: f.State, Assignees: slices.Clone(f.Assignees)}, nil
 }
 
 // Viewer answers the login "operator".
@@ -149,12 +153,25 @@ func (f *ClaimFake) RemoveLabel(_ context.Context, _ int, label string) error {
 	return nil
 }
 
-// AddAssignees records the assigned logins.
+// AddAssignees assigns the logins; one already assigned stays once, as on GitHub.
 func (f *ClaimFake) AddAssignees(_ context.Context, _ int, logins []string) error {
 	if err := f.record("AddAssignees"); err != nil {
 		return err
 	}
-	f.Assignees = append(f.Assignees, logins...)
+	for _, login := range logins {
+		if !slices.Contains(f.Assignees, login) {
+			f.Assignees = append(f.Assignees, login)
+		}
+	}
+	return nil
+}
+
+// RemoveAssignees unassigns the logins and keeps every other assignee.
+func (f *ClaimFake) RemoveAssignees(_ context.Context, _ int, logins []string) error {
+	if err := f.record("RemoveAssignees"); err != nil {
+		return err
+	}
+	f.Assignees = slices.DeleteFunc(f.Assignees, func(a string) bool { return slices.Contains(logins, a) })
 	return nil
 }
 

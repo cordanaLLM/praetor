@@ -556,7 +556,20 @@ text. A command is denied when it
   `cmd /c` or `powershell -c` wrapper, or runs `lefthook uninstall` (listing, printing or
   searching the directory stays allowed);
 - runs `adopt`, `conform`, `bootstrap` or a `needs` scan, report, migration or epic
-  against the workstation dev root instead of a leaf repository (DEV-01).
+  against the workstation dev root instead of a leaf repository (DEV-01);
+- merges a pull request past the forge's own merge rules (#1300): `gh pr merge` with
+  `--admin` (or `--admin=true`) in any position, a `gh api` call whose path ends in
+  `pulls/<n>/merge`, a `gh api graphql` call whose query holds `mergePullRequest`, or
+  `curl`/`wget` against an `api.github.com/.../pulls/<n>/merge` URL. Agent sessions act with
+  the operator's forge login, which may carry a ruleset bypass; these forms would merge past
+  red required checks. A plain `gh pr merge` (`--squash`, `--auto`, `--delete-branch`), reading
+  a pull request through `gh api .../pulls/<n>`, `gh pr view` and `gh pr checks` stay allowed.
+
+Before any rule runs, a backslash at the end of a line joins it with the next one (`\` before
+LF or CRLF becomes one space), the way the shell reads it, so a command split over lines is
+judged as one line. A line break without a backslash still separates two commands. Like every
+rule here, the merge rules match from the first `gh`, `curl` or `wget` word of a line, so a
+commit message or `echo` that quotes such a command on one line is refused too.
 
 The rules see only the commands that reach the pre-tool hook. A `core.hooksPath` set by any
 other route fails `praetorctl audit`

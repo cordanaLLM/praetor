@@ -583,6 +583,7 @@ func TestExecuteStages_DryRunInvokesNoCommand(t *testing.T) {
 		"Security & SCA Scan":    StageSkipped,
 		"Flavor Conformance":     StagePassed,
 		"Race-Detector Tests":    StageSkipped,
+		"Declared Verification":  StageNotApplicable,
 		"Ed25519 Exit-0 Receipt": StageSkipped,
 	}
 	if len(cfg.rep.Stages) != len(want) {

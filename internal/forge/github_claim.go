@@ -163,22 +163,34 @@ func (g *GitHubDriver) EnsureLabel(ctx context.Context, label Label) error {
 
 // AddAssignees assigns accounts to an issue without removing the ones it has.
 func (g *GitHubDriver) AddAssignees(ctx context.Context, number int, logins []string) error {
+	return g.changeAssignees(ctx, http.MethodPost, "add assignees", number, logins)
+}
+
+// RemoveAssignees unassigns accounts from an issue and keeps every other assignee. An account
+// that is not assigned is not an error: the desired end state is already reached.
+func (g *GitHubDriver) RemoveAssignees(ctx context.Context, number int, logins []string) error {
+	return g.changeAssignees(ctx, http.MethodDelete, "remove assignees", number, logins)
+}
+
+// changeAssignees sends one assignees request: POST adds the logins, DELETE removes them.
+// GitHub answers 201 on an add and 200 on a removal.
+func (g *GitHubDriver) changeAssignees(ctx context.Context, method, what string, number int, logins []string) error {
 	if number <= 0 {
-		return fmt.Errorf("add assignees: issue number must be positive, got %d", number)
+		return fmt.Errorf("%s: issue number must be positive, got %d", what, number)
 	}
 	if len(logins) == 0 {
-		return errors.New("add assignees: login set cannot be empty")
+		return fmt.Errorf("%s: login set cannot be empty", what)
 	}
 	path, err := g.repoPath(fmt.Sprintf("issues/%d/assignees", number))
 	if err != nil {
-		return fmt.Errorf("add assignees to issue #%d: %w", number, err)
+		return fmt.Errorf("%s on issue #%d: %w", what, number, err)
 	}
-	body, status, err := g.sendRequest(ctx, http.MethodPost, path, map[string]any{"assignees": logins})
+	body, status, err := g.sendRequest(ctx, method, path, map[string]any{"assignees": logins})
 	if err != nil {
-		return fmt.Errorf("failed assigning issue #%d: %w", number, err)
+		return fmt.Errorf("failed to %s on issue #%d: %w", what, number, err)
 	}
 	if status != http.StatusCreated && status != http.StatusOK {
-		return fmt.Errorf("unexpected status %d assigning issue #%d: %s", status, number, util.BodyPreview(body))
+		return fmt.Errorf("unexpected status %d to %s on issue #%d: %s", status, what, number, util.BodyPreview(body))
 	}
 	return nil
 }

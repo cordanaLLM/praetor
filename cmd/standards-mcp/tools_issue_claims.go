@@ -46,7 +46,7 @@ func (s *Server) createIssueClaimTool() (mcp.Tool, error) {
 		"branch":  {Type: "string", Description: "Branch carrying work"},
 	}}
 	return mcp.NewOpenWorldTool("standards_issue_claim",
-		"Claim forge issue before work, as praetorctl issue claim. Posts one claim comment with machine-readable marker, adds status:in-progress label, assigns account. Refused while another session holds live claim; claim idle past stale window gets taken over. Writes to forge.",
+		"Claim forge issue before work, as praetorctl issue claim. Posts one claim comment with machine-readable marker, adds status:in-progress label, assigns account, records prior assignment. Refused on issue not open, naming state; refused while another session holds live claim; claim idle past stale window gets taken over. Writes to forge.",
 		schema, s.runIssueClaim(forge.ClaimOpClaim), false, true)
 }
 
@@ -70,7 +70,7 @@ func (s *Server) createIssueReleaseTool() (mcp.Tool, error) {
 		"note":    {Type: "string", Description: "Short note shown on claim comment"},
 	}}
 	return mcp.NewOpenWorldTool("standards_issue_release",
-		"Release session issue claim, as praetorctl issue release. Finalises claim comment with outcome, removes status labels; pull request closes issue. Writes to forge.",
+		"Release session issue claim, as praetorctl issue release. Finalises claim comment, removes status labels and assignee claim added; pull request closes issue. Writes to forge.",
 		schema, s.runIssueClaim(forge.ClaimOpRelease), false, true)
 }
 

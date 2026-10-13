@@ -37,6 +37,9 @@ var (
 	ErrClaimHeld         = errors.New("issue is claimed by another live session")
 	ErrNoClaim           = errors.New("issue has no live claim of this session")
 	ErrClaimUnverifiable = errors.New("claim could not be verified on the forge")
+	// ErrIssueNotOpen refuses a claim on an issue that is not open (#1292): reopening is a
+	// deliberate act on the forge, never a side effect of a claim.
+	ErrIssueNotOpen = errors.New("issue is not open")
 )
 
 // ClaimHeldError names the live claim that refused a claim, a status update or a dispatch.
@@ -130,6 +133,8 @@ type ClaimForge interface {
 	AddLabels(ctx context.Context, number int, labels []string) error
 	RemoveLabel(ctx context.Context, number int, label string) error
 	AddAssignees(ctx context.Context, number int, logins []string) error
+	// RemoveAssignees unassigns accounts and keeps every other assignee.
+	RemoveAssignees(ctx context.Context, number int, logins []string) error
 }
 
 // ClaimForgeOpener returns the claim forge of one repository.
@@ -171,6 +176,8 @@ type ClaimResult struct {
 type claimComment struct {
 	claim Claim
 	body  string
+	// author is the login that wrote the comment: the account the claim assigned.
+	author string
 }
 
 // claimLabels are the labels the protocol manages, with the colour and text they are created with.
@@ -179,25 +186,44 @@ var claimLabels = map[string]Label{
 	LabelBlocked:    {Name: LabelBlocked, Color: "d93f0b", Description: "The claimed work is blocked; see the claim comment"},
 }
 
+// claimSession is the forge of one prepared operation and the issue as the forge reported it.
+type claimSession struct {
+	forge ClaimForge
+	issue IssueSpec
+}
+
 // session prepares one operation: a bounded context, the forge of ref and its verified issue.
-func (d *ClaimDesk) session(ctx context.Context, ref ClaimRef) (context.Context, context.CancelFunc, ClaimForge, error) {
+func (d *ClaimDesk) session(ctx context.Context, ref ClaimRef) (context.Context, context.CancelFunc, claimSession, error) {
 	if ctx == nil {
-		return nil, nil, nil, errors.New("claim operation needs a context")
+		return nil, nil, claimSession{}, errors.New("claim operation needs a context")
 	}
 	if d == nil || d.Open == nil || d.Now == nil || d.Stale <= 0 {
-		return nil, nil, nil, errors.New("claim desk needs a forge opener, a clock and a positive stale window")
+		return nil, nil, claimSession{}, errors.New("claim desk needs a forge opener, a clock and a positive stale window")
 	}
 	ctx, cancel := context.WithTimeout(ctx, claimOpTimeout)
 	f, err := d.Open(ref.Owner, ref.Repo)
 	if err != nil {
 		cancel()
-		return nil, nil, nil, fmt.Errorf("%w: open %s/%s: %w", ErrClaimUnverifiable, ref.Owner, ref.Repo, err)
+		return nil, nil, claimSession{}, fmt.Errorf("%w: open %s/%s: %w", ErrClaimUnverifiable, ref.Owner, ref.Repo, err)
 	}
-	if _, err := f.GetIssue(ctx, ref.Number); err != nil {
+	issue, err := f.GetIssue(ctx, ref.Number)
+	if err != nil {
 		cancel()
-		return nil, nil, nil, fmt.Errorf("%w: %w", ErrClaimUnverifiable, err)
+		return nil, nil, claimSession{}, fmt.Errorf("%w: %w", ErrClaimUnverifiable, err)
 	}
-	return ctx, cancel, f, nil
+	return ctx, cancel, claimSession{forge: f, issue: issue}, nil
+}
+
+// requireOpen refuses a claim on an issue the forge does not report as open, naming the state.
+func requireOpen(ref ClaimRef, issue IssueSpec) error {
+	if issue.State == "open" {
+		return nil
+	}
+	state := issue.State
+	if state == "" {
+		state = "in no reported state"
+	}
+	return fmt.Errorf("%w: %s is %s; reopen it on the forge first if the work is still due", ErrIssueNotOpen, ref, state)
 }
 
 func unverifiable(what string, err error) error {
@@ -220,7 +246,7 @@ func readClaims(ctx context.Context, f ClaimForge, number int) ([]claimComment, 
 			continue
 		}
 		claim.CommentID = comments[i].ID
-		found = append(found, claimComment{claim: claim, body: comments[i].Body})
+		found = append(found, claimComment{claim: claim, body: comments[i].Body, author: comments[i].Author})
 	}
 	return found, nil
 }
@@ -307,6 +333,12 @@ func sanitizeNote(note string) (string, error) {
 	return cleaned, nil
 }
 
+// claimAssigneeLines is the human line of each assignee case a claim records.
+var claimAssigneeLines = map[string]string{
+	ClaimAssigneeAdded:  "- Assignee: added by this claim; release removes it",
+	ClaimAssigneeBefore: "- Assignee: assigned before this claim; release keeps it",
+}
+
 // renderClaimBody renders the marker line and the human text of a claim.
 func renderClaimBody(c Claim, takeover string) (string, error) {
 	marker, err := RenderClaimMarker(c)
@@ -323,6 +355,9 @@ func renderClaimBody(c Claim, takeover string) (string, error) {
 	}
 	if c.Outcome != "" {
 		lines = append(lines, "- Outcome: "+c.Outcome)
+	}
+	if line, ok := claimAssigneeLines[c.Assignee]; ok {
+		lines = append(lines, line)
 	}
 	if c.Note != "" {
 		lines = append(lines, "- Note: "+c.Note)
@@ -350,38 +385,44 @@ func (d *ClaimDesk) Claim(ctx context.Context, ref ClaimRef, req ClaimRequest) (
 	if err := validateClaim(probe); err != nil {
 		return ClaimResult{}, err
 	}
-	ctx, cancel, f, err := d.session(ctx, ref)
+	ctx, cancel, s, err := d.session(ctx, ref)
 	if err != nil {
 		return ClaimResult{}, err
 	}
 	defer cancel()
-	found, err := readClaims(ctx, f, ref.Number)
+	if err := requireOpen(ref, s.issue); err != nil {
+		return ClaimResult{}, err
+	}
+	found, err := readClaims(ctx, s.forge, ref.Number)
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	heldComment, held, err := d.reconcile(ctx, f, ref, req.Session, found)
+	target, held, err := d.reconcile(ctx, s.forge, ref, req.Session, found)
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	return d.writeClaim(ctx, f, ref, req, found, heldComment, held)
+	if !held {
+		target, held = d.pickClaimTarget(found, req.Session)
+	}
+	return d.writeClaim(ctx, s, ref, req, target, held)
 }
 
-// writeClaim writes the claim comment and the labels once no other session holds the issue.
-func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, req ClaimRequest, found []claimComment, heldComment claimComment, held bool) (ClaimResult, error) {
+// writeClaim writes the claim comment, the labels and the assignee once no other session holds
+// the issue. target is the comment the claim resumes or takes over, when hasTarget is set.
+func (d *ClaimDesk) writeClaim(ctx context.Context, s claimSession, ref ClaimRef, req ClaimRequest, target claimComment, hasTarget bool) (ClaimResult, error) {
+	f := s.forge
 	now := d.Now().UTC().Truncate(time.Second)
 	claim := Claim{Session: req.Session, Lane: req.Lane, Branch: req.Branch, Stage: "claimed", Started: now, Updated: now}
-	var target claimComment
-	var hasTarget bool
-	if held {
-		target, hasTarget = heldComment, true
-	} else {
-		target, hasTarget = d.pickClaimTarget(found, req.Session)
-	}
 	action, tookOver, takeover := resolveClaimAction(target, hasTarget, req.Session)
 	if action == "resumed" {
 		claim.Started, claim.Stage = target.claim.Started, target.claim.Stage
 		takeover = takeoverNote(target.body)
 	}
+	login, err := f.Viewer(ctx)
+	if err != nil {
+		return ClaimResult{}, unverifiable("read account", err)
+	}
+	claim.Assignee = claimAssigneeCase(s.issue, login, action, target)
 	body, err := renderClaimBody(claim, takeover)
 	if err != nil {
 		return ClaimResult{}, err
@@ -400,7 +441,7 @@ func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, 
 	if err := d.confirmHold(ctx, f, ref, claim, resumed, isTakeover); err != nil {
 		return ClaimResult{}, err
 	}
-	if err := d.applyClaimLabels(ctx, f, ref.Number, claim.Stage == claimBlockedStage); err != nil {
+	if err := d.applyClaimLabels(ctx, f, ref.Number, claim.Stage == claimBlockedStage, login); err != nil {
 		if resumed {
 			// The session's earlier claim was valid and stays live; a retry repairs the labels.
 			return ClaimResult{}, err
@@ -408,6 +449,25 @@ func (d *ClaimDesk) writeClaim(ctx context.Context, f ClaimForge, ref ClaimRef, 
 		return ClaimResult{}, errors.Join(d.abandon(ctx, f, claim, err), d.clearLabels(ctx, f, ref.Number))
 	}
 	return ClaimResult{Ref: ref.String(), Action: action, Claim: claim, TookOver: tookOver}, nil
+}
+
+// claimAssigneeCase decides which assignee case a claim records. A resumed claim keeps the case
+// its comment already records. A takeover of a claim this account wrote, whose assignment that
+// claim added, inherits the case: the account is assigned only because of it. Any other claim
+// records ClaimAssigneeBefore when the issue already lists the account.
+func claimAssigneeCase(issue IssueSpec, login, action string, target claimComment) string {
+	switch {
+	case action == "resumed":
+		return target.claim.Assignee
+	case action == "took-over" && target.claim.Assignee == ClaimAssigneeAdded && strings.EqualFold(target.author, login):
+		return ClaimAssigneeAdded
+	}
+	for i := 0; i < len(issue.Assignees) && i < MaxIssueCommentsLimit; i++ {
+		if strings.EqualFold(issue.Assignees[i], login) {
+			return ClaimAssigneeBefore
+		}
+	}
+	return ClaimAssigneeAdded
 }
 
 func (d *ClaimDesk) finaliseStaleTarget(ctx context.Context, f ClaimForge, ref ClaimRef, session string, target claimComment) error {
@@ -449,6 +509,7 @@ func markersEqual(a, b Claim) bool {
 		a.Branch == b.Branch &&
 		a.Stage == b.Stage &&
 		a.Outcome == b.Outcome &&
+		a.Assignee == b.Assignee &&
 		a.Started.Equal(b.Started) &&
 		a.Updated.Equal(b.Updated)
 }
@@ -572,7 +633,8 @@ func (d *ClaimDesk) finalise(ctx context.Context, f ClaimForge, c Claim, outcome
 	return nil
 }
 
-func (d *ClaimDesk) applyClaimLabels(ctx context.Context, f ClaimForge, number int, blocked bool) error {
+// applyClaimLabels adds the status labels and assigns login, the account the claim runs as.
+func (d *ClaimDesk) applyClaimLabels(ctx context.Context, f ClaimForge, number int, blocked bool, login string) error {
 	want := []string{LabelInProgress}
 	if blocked {
 		want = append(want, LabelBlocked)
@@ -584,10 +646,6 @@ func (d *ClaimDesk) applyClaimLabels(ctx context.Context, f ClaimForge, number i
 	}
 	if err := f.AddLabels(ctx, number, want); err != nil {
 		return unverifiable("add labels", err)
-	}
-	login, err := f.Viewer(ctx)
-	if err != nil {
-		return unverifiable("read account", err)
 	}
 	if err := f.AddAssignees(ctx, number, []string{login}); err != nil {
 		return unverifiable("assign account", err)
@@ -605,26 +663,26 @@ func (d *ClaimDesk) Status(ctx context.Context, ref ClaimRef, req StatusRequest)
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	ctx, cancel, f, err := d.session(ctx, ref)
+	ctx, cancel, s, err := d.session(ctx, ref)
 	if err != nil {
 		return ClaimResult{}, err
 	}
 	defer cancel()
-	found, err := readClaims(ctx, f, ref.Number)
+	found, err := readClaims(ctx, s.forge, ref.Number)
 	if err != nil {
 		return ClaimResult{}, err
 	}
 	if req.Stage == "" {
 		return d.readStatus(ref, found), nil
 	}
-	heldComment, held, err := d.reconcile(ctx, f, ref, req.Session, found)
+	heldComment, held, err := d.reconcile(ctx, s.forge, ref, req.Session, found)
 	if err != nil {
 		return ClaimResult{}, err
 	}
 	if !held {
 		return ClaimResult{}, fmt.Errorf("%w: %s (claim it first)", ErrNoClaim, ref)
 	}
-	return d.recordStage(ctx, f, ref, heldComment, req, note)
+	return d.recordStage(ctx, s.forge, ref, heldComment, req, note)
 }
 
 // recordStage edits the session's claim comment to the requested stage and syncs the blocked label.
@@ -670,8 +728,9 @@ func (d *ClaimDesk) syncBlocked(ctx context.Context, f ClaimForge, number int, b
 	return nil
 }
 
-// Release finalises the session's claim with an outcome and removes the status labels. It
-// does not close the issue: the pull request does.
+// Release finalises the session's claim with an outcome, removes the status labels and removes
+// the assignee the claim added. It does not close the issue: the pull request does, so a
+// closed issue can still be released.
 func (d *ClaimDesk) Release(ctx context.Context, ref ClaimRef, req ReleaseRequest) (ClaimResult, error) {
 	if !ValidClaimOutcome(req.Outcome) {
 		return ClaimResult{}, fmt.Errorf("outcome %q is not one of %s", req.Outcome, strings.Join(ClaimOutcomes, ", "))
@@ -680,16 +739,16 @@ func (d *ClaimDesk) Release(ctx context.Context, ref ClaimRef, req ReleaseReques
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	ctx, cancel, f, err := d.session(ctx, ref)
+	ctx, cancel, s, err := d.session(ctx, ref)
 	if err != nil {
 		return ClaimResult{}, err
 	}
 	defer cancel()
-	found, err := readClaims(ctx, f, ref.Number)
+	found, err := readClaims(ctx, s.forge, ref.Number)
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	heldComment, held, err := d.reconcile(ctx, f, ref, req.Session, found)
+	heldComment, held, err := d.reconcile(ctx, s.forge, ref, req.Session, found)
 	if err != nil {
 		return ClaimResult{}, err
 	}
@@ -703,7 +762,7 @@ func (d *ClaimDesk) Release(ctx context.Context, ref ClaimRef, req ReleaseReques
 		}
 		own = target
 	}
-	return d.finaliseRelease(ctx, f, ref, own, req, note)
+	return d.finaliseRelease(ctx, s.forge, ref, own, req, note)
 }
 
 func (d *ClaimDesk) finaliseRelease(ctx context.Context, f ClaimForge, ref ClaimRef, own claimComment, req ReleaseRequest, note string) (ClaimResult, error) {
@@ -714,15 +773,34 @@ func (d *ClaimDesk) finaliseRelease(ctx context.Context, f ClaimForge, ref Claim
 	if err != nil {
 		return ClaimResult{}, err
 	}
-	// Labels go first: when the label removal fails the claim stays live and a retried release
-	// finds it, instead of ErrNoClaim with labels left behind.
+	// Labels and the assignee go first: when their removal fails the claim stays live and a
+	// retried release finds it, instead of ErrNoClaim with labels or an assignee left behind.
 	if err := d.clearLabels(ctx, f, ref.Number); err != nil {
+		return ClaimResult{}, err
+	}
+	if err := releaseAssignee(ctx, f, ref.Number, own); err != nil {
 		return ClaimResult{}, err
 	}
 	if err := f.EditIssueComment(ctx, claim.CommentID, body); err != nil {
 		return ClaimResult{}, unverifiable("finalise claim comment", err)
 	}
 	return ClaimResult{Ref: ref.String(), Claim: claim, Action: "released"}, nil
+}
+
+// releaseAssignee unassigns the account that wrote the claim when the claim recorded that it
+// added the assignment. A claim that found the account assigned, or predates the record,
+// leaves the assignees as they are.
+func releaseAssignee(ctx context.Context, f ClaimForge, number int, own claimComment) error {
+	if own.claim.Assignee != ClaimAssigneeAdded {
+		return nil
+	}
+	if own.author == "" {
+		return unverifiable("unassign account", errors.New("the claim comment names no author"))
+	}
+	if err := f.RemoveAssignees(ctx, number, []string{own.author}); err != nil {
+		return unverifiable("unassign account", err)
+	}
+	return nil
 }
 
 func findOwnUnreleased(found []claimComment, session string) (claimComment, bool) {
@@ -737,12 +815,12 @@ func findOwnUnreleased(found []claimComment, session string) (claimComment, bool
 // LiveClaim returns the fresh live claim on the issue, or nil when none holds it. A forge
 // failure is ErrClaimUnverifiable, never "no claim".
 func (d *ClaimDesk) LiveClaim(ctx context.Context, ref ClaimRef) (*Claim, error) {
-	ctx, cancel, f, err := d.session(ctx, ref)
+	ctx, cancel, s, err := d.session(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
 	defer cancel()
-	found, err := readClaims(ctx, f, ref.Number)
+	found, err := readClaims(ctx, s.forge, ref.Number)
 	if err != nil {
 		return nil, err
 	}
