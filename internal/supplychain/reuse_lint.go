@@ -130,52 +130,67 @@ func ReuseHeadersOnlyNotice(ctx context.Context, root string) (string, error) {
 // reuseHeaderFiles counts the files among rels, outside LICENSES/ and .reuse/, that are .license
 // companions or carry reuseHeaderTag in their first reuseHeaderBytes. A file that is not a regular
 // file, or no longer exists, is skipped.
-func reuseHeaderFiles(ctx context.Context, root string, rels []string) (int, error) {
-	count := 0
+func reuseHeaderFiles(ctx context.Context, root string, rels []string) (count int, err error) {
+	// Every read goes through one handle on root, which follows a path only while it stays inside
+	// root (os.Root), so a tracked path cannot reach a file outside the repository.
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return 0, fmt.Errorf("open %s: %w", root, err)
+	}
+	defer func() {
+		if closeErr := dir.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close %s: %w", root, closeErr)
+		}
+	}()
 	for i := 0; i < len(rels) && i < maxReuseHeaderFiles; i++ {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		rel := rels[i]
-		if strings.HasPrefix(rel, LicensesDir+"/") || strings.HasPrefix(rel, ".reuse/") {
-			continue
-		}
-		if strings.HasSuffix(rel, ".license") {
-			count++
-			continue
-		}
-		tagged, err := carriesReuseHeader(filepath.Join(root, filepath.FromSlash(rel)))
+		labelled, err := reuseLabelled(dir, rels[i])
 		if err != nil {
 			return 0, err
 		}
-		if tagged {
+		if labelled {
 			count++
 		}
 	}
 	return count, nil
 }
 
-// carriesReuseHeader reports whether the regular file at path holds reuseHeaderTag in its first
-// reuseHeaderBytes.
-func carriesReuseHeader(path string) (bool, error) {
-	info, err := os.Lstat(path)
+// reuseLabelled reports whether rel counts for reuseHeaderFiles: a .license companion, or a file
+// that carries reuseHeaderTag. Paths under LICENSES/ and .reuse/ never count.
+func reuseLabelled(dir *os.Root, rel string) (bool, error) {
+	if strings.HasPrefix(rel, LicensesDir+"/") || strings.HasPrefix(rel, ".reuse/") {
+		return false, nil
+	}
+	if strings.HasSuffix(rel, ".license") {
+		return true, nil
+	}
+	return carriesReuseHeader(dir, filepath.FromSlash(rel))
+}
+
+// carriesReuseHeader reports whether the regular file name inside dir holds reuseHeaderTag in its
+// first reuseHeaderBytes. Only the head is read: a large file is not refused, unlike the
+// whole-file readers in internal/util, because the header sits at its top.
+func carriesReuseHeader(dir *os.Root, name string) (bool, error) {
+	info, err := dir.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) || (err == nil && !info.Mode().IsRegular()) {
 		return false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("inspect %s: %w", path, err)
+		return false, fmt.Errorf("inspect %s: %w", name, err)
 	}
-	file, err := os.Open(path)
+	file, err := dir.Open(name)
 	if err != nil {
-		return false, fmt.Errorf("open %s: %w", path, err)
+		return false, fmt.Errorf("open %s: %w", name, err)
 	}
 	head, err := io.ReadAll(io.LimitReader(file, reuseHeaderBytes))
 	closeErr := file.Close()
 	if err != nil {
-		return false, fmt.Errorf("read %s: %w", path, err)
+		return false, fmt.Errorf("read %s: %w", name, err)
 	}
 	if closeErr != nil {
-		return false, fmt.Errorf("close %s: %w", path, closeErr)
+		return false, fmt.Errorf("close %s: %w", name, closeErr)
 	}
 	return bytes.Contains(head, []byte(reuseHeaderTag)), nil
 }
