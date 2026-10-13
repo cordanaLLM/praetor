@@ -458,6 +458,10 @@ func TestAuditDeclaredLinters_Applicability_Skip(t *testing.T) {
 		{"packer", "*.pkr.hcl"},
 		{"shellcheck", "shell scripts"},
 		{"markdownlint", "*.md"},
+		{"kubeconform", "Kubernetes manifests (YAML documents with apiVersion and kind)"},
+		{"tflint", "*.tf"},
+		{"yamllint", "*.yml or *.yaml"},
+		{"checkov", checkovInputDesc},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool+" absent", func(t *testing.T) {
@@ -496,6 +500,22 @@ func TestAuditDeclaredLinters_Applicability_Present(t *testing.T) {
 		{"packer", "build.pkr.hcl", "source \"null\" \"example\" {}\n"},
 		{"shellcheck", "scripts/deploy.sh", "#!/bin/sh\n"},
 		{"markdownlint", "docs/index.md", "# Guide\n"},
+		{"kubeconform", "deploy/app.yaml", "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\n"},
+		{"kubeconform", "deploy/all.yml", "# the first document is no object\nfoo: bar\n---\napiVersion: v1\nkind: Service\n"},
+		{"tflint", "infra/main.tf", "terraform {}\n"},
+		{"tflint", "infra/main.tf.json", "{\"terraform\": {}}\n"},
+		{"yamllint", "config/app.yml", "key: value\n"},
+		{"checkov", "infra/main.tf", "terraform {}\n"},
+		{"checkov", "infra/main.tf.json", "{\"terraform\": {}}\n"},
+		{"checkov", "deploy/app.yaml", "apiVersion: apps/v1\nkind: Deployment\n"},
+		{"checkov", "charts/app/Chart.yaml", "apiVersion: v2\nname: app\n"},
+		{"checkov", "overlays/prod/kustomization.yaml", "resources: []\n"},
+		{"checkov", "Dockerfile", "FROM scratch\n"},
+		{"checkov", "images/Containerfile", "FROM scratch\n"},
+		{"checkov", "infra/main.bicep", "param name string\n"},
+		{"checkov", "stack/template.yaml", "AWSTemplateFormatVersion: '2010-09-09'\nResources: {}\n"},
+		{"checkov", "stack/template.json", "{\"AWSTemplateFormatVersion\": \"2010-09-09\"}\n"},
+		{"checkov", "serverless.yml", "service: app\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool+" present", func(t *testing.T) {

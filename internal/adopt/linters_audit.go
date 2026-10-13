@@ -146,6 +146,13 @@ func checkMissingWorkflowLinters(ctx context.Context, rootDir string, applicable
 	if err != nil {
 		return nil, err
 	}
+	viaHooks, err := hookRunLinters(ctx, rootDir, names)
+	if err != nil {
+		return nil, err
+	}
+	for name := range viaHooks {
+		present[name] = true
+	}
 	var missing []config.DeclaredLinter
 	for _, l := range applicable {
 		if !present[l.Name] {
@@ -164,6 +171,34 @@ type repoLinterInputs struct {
 	hasPackerHcl      bool
 	hasShellScripts   bool
 	hasMarkdown       bool
+	hasYAML           bool
+	hasKubernetes     bool
+	hasTerraform      bool
+	// hasCheckovTemplate is set by an infrastructure template checkov scans other than
+	// Terraform and Kubernetes manifests, which have flags of their own (checkovApplies).
+	hasCheckovTemplate bool
+}
+
+// checkovInputDesc names the infrastructure templates that make checkov applicable (decision
+// office-general-engine-1313-checkov: its IaC role in the gitops-infra profile; a repository
+// that runs it for other frameworks is credited by running it).
+const checkovInputDesc = "infrastructure templates checkov scans (*.tf, *.tf.json, Kubernetes manifests, Chart.yaml, " +
+	"kustomization.yaml, Dockerfile, Containerfile, *.bicep, CloudFormation, serverless.yml)"
+
+// checkovApplies reports whether the tree holds an input of checkovInputDesc.
+func checkovApplies(in repoLinterInputs) bool {
+	return in.hasTerraform || in.hasKubernetes || in.hasCheckovTemplate
+}
+
+// classifyCheckovName marks the templates checkov scans that a file name alone shows.
+func classifyCheckovName(lower string, in *repoLinterInputs) {
+	switch {
+	case lower == "chart.yaml", lower == "kustomization.yaml", lower == "kustomization.yml",
+		lower == "serverless.yml", lower == "serverless.yaml", strings.HasSuffix(lower, ".bicep"),
+		lower == "dockerfile", lower == "containerfile", strings.HasPrefix(lower, "dockerfile."),
+		strings.HasSuffix(lower, ".dockerfile"), strings.HasSuffix(lower, ".containerfile"):
+		in.hasCheckovTemplate = true
+	}
 }
 
 type linterRequirement struct {
@@ -211,6 +246,24 @@ var simpleLinterRequirements = map[string]linterRequirement{
 	"markdownlint": {
 		inputDesc:    "*.md",
 		isApplicable: func(in repoLinterInputs) bool { return in.hasMarkdown },
+	},
+	// #1313: the infrastructure linters a gitops profile declares apply only where their inputs
+	// are.
+	"kubeconform": {
+		inputDesc:    "Kubernetes manifests (YAML documents with apiVersion and kind)",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasKubernetes },
+	},
+	"tflint": {
+		inputDesc:    "*.tf",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasTerraform },
+	},
+	"yamllint": {
+		inputDesc:    "*.yml or *.yaml",
+		isApplicable: func(in repoLinterInputs) bool { return in.hasYAML },
+	},
+	"checkov": {
+		inputDesc:    checkovInputDesc,
+		isApplicable: checkovApplies,
 	},
 }
 
@@ -346,6 +399,10 @@ func classifySourceExtension(lower string, in *repoLinterInputs) {
 		in.hasCSources = true
 	case strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash"):
 		in.hasShellScripts = true
+	case strings.HasSuffix(lower, ".tf") || strings.HasSuffix(lower, ".tf.json"):
+		in.hasTerraform = true
+	case isYAMLName(lower):
+		in.hasYAML = true
 	}
 }
 
@@ -354,9 +411,85 @@ func classifyLinterArtifactFile(ctx context.Context, fullPath, name string, in *
 	if !classifyKnownFilename(lower, in) {
 		classifySourceExtension(lower, in)
 	}
-	if !in.hasOpenAPI {
-		in.hasOpenAPI = checkOpenAPIFile(ctx, fullPath, lower)
+	classifyCheckovName(lower, in)
+	classifyDocumentContent(ctx, fullPath, lower, in)
+}
+
+// classifyDocumentContent reads a YAML or JSON file once, and only while a content rule still
+// needs it: whether it is an OpenAPI or AsyncAPI document, and, for YAML, whether one of its
+// documents is a Kubernetes manifest.
+func classifyDocumentContent(ctx context.Context, fullPath, lower string, in *repoLinterInputs) {
+	if strings.HasPrefix(lower, ".spectral.") {
+		in.hasOpenAPI = true
+		return
 	}
+	need := contentRulesFor(lower, *in)
+	if need == (contentRules{}) {
+		return
+	}
+	data, err := contextopt.ReadSnapshot(ctx, fullPath)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	need.apply(data, in)
+}
+
+// contentRules says which content rules a file still has to answer.
+type contentRules struct {
+	openAPI, kubernetes, cloudFormation bool
+}
+
+// apply answers the rules need holds from a file's content.
+func (need contentRules) apply(data []byte, in *repoLinterInputs) {
+	if need.openAPI && docHasOpenAPIKey(data) {
+		in.hasOpenAPI = true
+	}
+	if need.kubernetes && docIsKubernetesManifest(data) {
+		in.hasKubernetes = true
+	}
+	// A CloudFormation template declares its format version; checkov reads it from YAML or JSON.
+	if need.cloudFormation && bytes.Contains(data, []byte("AWSTemplateFormatVersion")) {
+		in.hasCheckovTemplate = true
+	}
+}
+
+// contentRulesFor returns the content rules a YAML or JSON file named lower answers that the
+// tree read so far, in, has not answered yet.
+func contentRulesFor(lower string, in repoLinterInputs) contentRules {
+	document := isCandidateOpenAPIExtension(filepath.Ext(lower))
+	return contentRules{
+		openAPI:        document && !in.hasOpenAPI,
+		kubernetes:     isYAMLName(lower) && !in.hasKubernetes,
+		cloudFormation: document && !in.hasCheckovTemplate,
+	}
+}
+
+// isYAMLName reports whether a lower-case file name is a YAML file.
+func isYAMLName(lower string) bool {
+	return strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml")
+}
+
+// maxManifestDocuments bounds the documents read from one YAML stream (HISS-02).
+const maxManifestDocuments = 64
+
+// docIsKubernetesManifest reports whether one document of a YAML stream is a Kubernetes object:
+// a mapping whose apiVersion and kind are non-empty strings, the two fields kubeconform resolves
+// a schema from. A stream that stops parsing is judged on the documents read so far.
+func docIsKubernetesManifest(data []byte) bool {
+	if !bytes.Contains(data, []byte("apiVersion")) || !bytes.Contains(data, []byte("kind")) {
+		return false
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	for i := 0; i < maxManifestDocuments; i++ {
+		var doc map[string]any
+		if err := decoder.Decode(&doc); err != nil {
+			return false
+		}
+		if nonEmptyString(doc["apiVersion"]) && nonEmptyString(doc["kind"]) {
+			return true
+		}
+	}
+	return false
 }
 
 func isCSuffix(lower string) bool {
@@ -384,20 +517,6 @@ func docHasOpenAPIKey(data []byte) bool {
 	_, hasOpen := doc["openapi"]
 	_, hasAsync := doc["asyncapi"]
 	return hasOpen || hasAsync
-}
-
-func checkOpenAPIFile(ctx context.Context, fullPath, lowerName string) bool {
-	if strings.HasPrefix(lowerName, ".spectral.") {
-		return true
-	}
-	if !isCandidateOpenAPIExtension(filepath.Ext(lowerName)) {
-		return false
-	}
-	data, err := contextopt.ReadSnapshot(ctx, fullPath)
-	if err != nil || len(data) == 0 {
-		return false
-	}
-	return docHasOpenAPIKey(data)
 }
 
 type declaredLintersJudgement struct {
@@ -469,4 +588,10 @@ func (j declaredLintersJudgement) pass(totalDeclared int) string {
 			e.Name, live.Expires, live.Rule, live.Target(), live.Reason)
 	}
 	return b.String()
+}
+
+// nonEmptyString reports whether value is a string holding more than white space.
+func nonEmptyString(value any) bool {
+	text, ok := value.(string)
+	return ok && strings.TrimSpace(text) != ""
 }
