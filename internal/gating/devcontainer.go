@@ -231,16 +231,51 @@ func enterDevcontainer(ctx context.Context, cfg *stageConfig, plan *devcontainer
 	if err != nil {
 		return nil, "", err
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
-	defer cancel()
-	err = dc.toolchain(cfg.run).have(probeCtx, plan.RepoDir, "go")
+	err = probeGo(ctx, cfg, dc, plan.RepoDir, img.ID)
 	if errors.Is(err, errNotOnPath) {
 		return nil, "", nil
 	}
 	if err != nil {
-		return nil, "", fmt.Errorf("probing image %s for go failed: %w", img.ID, err)
+		return nil, "", err
 	}
 	return dc, "", nil
+}
+
+// devcontainerStartBound bounds the first command the gate runs in an image it entered: the
+// toolchain probe, which waits for the container to start. A loaded host starts a container far
+// slower than it answers a git query, and under GitQueryTimeout the probe refused pushes at load
+// averages of 30 and 86 with nothing wrong (#1260). Starting the container is gate work like the
+// stages other than the tests, so it gets their allowance from the run's budget; the run
+// deadline still bounds it.
+func devcontainerStartBound(budget RunBudget) time.Duration {
+	return budget.Allowance
+}
+
+// errContainerStartBound is the cause a probe context carries when devcontainerStartBound fired.
+var errContainerStartBound = errors.New("devcontainer start bound fired")
+
+// probeGo asks the entered image dc for go under devcontainerStartBound, or under
+// cfg.containerStart when a test set it. It returns errNotOnPath when the image has no go. A
+// probe cut off by its own bound is reported as a container that did not start in time, not as a
+// missing go: the command it runs answers at once once the container is up.
+func probeGo(ctx context.Context, cfg *stageConfig, dc *devcontainerExec, dir, image string) error {
+	bound := cfg.containerStart
+	if bound <= 0 {
+		bound = devcontainerStartBound(stageBudget(cfg.repoDir))
+	}
+	probeCtx, cancel := context.WithTimeoutCause(ctx, bound, errContainerStartBound)
+	defer cancel()
+	err := dc.toolchain(cfg.run).have(probeCtx, dir, "go")
+	switch {
+	case err == nil, errors.Is(err, errNotOnPath):
+		return err
+	case errors.Is(context.Cause(probeCtx), errContainerStartBound):
+		return fmt.Errorf("the devcontainer of image %s did not start within %s, the gate's allowance for "+
+			"the stages other than the tests; a busy host starts containers slowly, and this does not "+
+			"mean go is missing: %w", image, bound, err)
+	default:
+		return fmt.Errorf("probing image %s for go failed: %w", image, err)
+	}
 }
 
 // imageRefs names the image a run builds. The stable tag is keyed by the repository's origin
