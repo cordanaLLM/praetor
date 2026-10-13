@@ -136,9 +136,9 @@ const maxHistoryVersions = 64
 // LookupManagedGitIgnoreTail inspects text (the .gitignore content of the repository at repoPath)
 // and reports whether it ends with an accepted managed private-artifact block: the current
 // canonical block or a known historical version in gitIgnoreBlockHistory.
-func LookupManagedGitIgnoreTail(repoPath, text string) (GitIgnoreTailMatch, bool) {
+func LookupManagedGitIgnoreTail(ctx context.Context, repoPath, text string) (GitIgnoreTailMatch, bool) {
 	normalized, _ := util.NormalizeLineEndings(text)
-	keep := keepsLegacyScratch(normalized, legacyScratchPresent(repoPath), false)
+	keep := keepsLegacyScratchIn(ctx, repoPath, normalized, false)
 
 	if versionMatchesTail(normalized, canonicalGitIgnoreBlockVersion, keep) {
 		return GitIgnoreTailMatch{
@@ -232,8 +232,8 @@ func RetiredLegacyScratchBlock() string {
 // at repoPath, ends with the canonical managed block adoption writes there: the current canonical
 // block or an earlier accepted version in gitIgnoreBlockHistory. Audit and verify paths route
 // through LookupManagedGitIgnoreTail.
-func HasManagedGitIgnoreTail(repoPath, text string) bool {
-	_, ok := LookupManagedGitIgnoreTail(repoPath, text)
+func HasManagedGitIgnoreTail(ctx context.Context, repoPath, text string) bool {
+	_, ok := LookupManagedGitIgnoreTail(ctx, repoPath, text)
 	return ok
 }
 
@@ -242,23 +242,39 @@ func HasManagedGitIgnoreTail(repoPath, text string) bool {
 // remain operator-owned. Exact unmarked rules are migrated from Praetor's former format. It is
 // mergeGitIgnoreRules with no legacy scratch root on disk and no configDirNegation request.
 func mergeGitIgnore(text string) (string, error) {
-	return mergeGitIgnoreRules(text, false, false)
+	return mergeGitIgnoreRules(text, false, false, false)
 }
 
 // mergeGitIgnoreRules is mergeGitIgnore for a repository whose legacy scratch root is present
 // or not (legacyPresent), which with text decides whether the block keeps legacyScratchIgnore
-// (keepsLegacyScratch). The block carries configDirNegation when negateConfig is set or the
+// (keepsLegacyScratch), never while the repository keeps that root in Git (legacyOwned,
+// legacyScratchOwned). The block carries configDirNegation when negateConfig is set or the
 // block in text already holds it. Once written, the negation stays: a writer that does not
 // probe (EnsurePrivateIgnore), and a probe the negation itself answers, would otherwise drop it
 // and hide the directory again.
-func mergeGitIgnoreRules(text string, legacyPresent, negateConfig bool) (string, error) {
+func mergeGitIgnoreRules(text string, legacyPresent, legacyOwned, negateConfig bool) (string, error) {
 	block := gitIgnoreTailBlock()
 	held, _, err := block.held(text)
 	if err != nil {
 		return "", err
 	}
 	negate := negateConfig || slices.Contains(held, configDirNegation)
-	return block.merge(text, renderManagedGitIgnore(keepsLegacyScratch(text, legacyPresent, false), negate))
+	return block.merge(text, renderManagedGitIgnore(!legacyOwned && keepsLegacyScratch(text, legacyPresent, false), negate))
+}
+
+// legacyScratchWithheldNote returns the report note for a managed block that leaves
+// legacyScratchIgnore out because the repository keeps its legacy scratch root in Git
+// (legacyScratchOwned), or "" when the rule is not withheld for that reason (#1072).
+func legacyScratchWithheldNote(ctx context.Context, repoPath string) (string, error) {
+	data, _, err := contextopt.ObserveSnapshotIn(ctx, repoPath, gitIgnoreFile)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", gitIgnoreFile, err)
+	}
+	owned, reason := legacyScratchOwned(ctx, repoPath, string(data))
+	if !owned {
+		return "", nil
+	}
+	return "; left " + legacyScratchIgnore + " out of the block because " + reason + ", so new files there stay visible to Git", nil
 }
 
 // adoptGitIgnoreSeed is the file adoption starts a repository without .gitignore from: the
@@ -275,21 +291,25 @@ const adoptGitIgnoreSeed = "bin/\n*.test\n*.out\n.DS_Store\n"
 // real run leaves ignored and every run names the other files the negation re-includes.
 func reconcileGitIgnore(ctx context.Context, s *adoptSession) error {
 	rule, negate := kconfigConfigRule(ctx, s.repoPath)
+	withheld, err := legacyScratchWithheldNote(ctx, s.repoPath)
+	if err != nil {
+		return err
+	}
 	existed, changed, err := writeManagedGitIgnore(ctx, s.repoPath, adoptGitIgnoreSeed, s.opts.DryRun, negate)
 	if err == nil && changed && s.opts.DryRun {
 		s.privateIgnorePlanned = true
 	}
-	note := ""
+	note := withheld
 	if negate {
 		s.configNegationAdded = err == nil
-		note = "; re-included the " + configDir + "/ directory Praetor writes to with " + configDirNegation +
+		note += "; re-included the " + configDir + "/ directory Praetor writes to with " + configDirNegation +
 			", because " + rule.Rule() + " ignores it (Kconfig " + configDir + " files stay ignored at every depth)"
 	}
 	switch {
 	case err != nil:
 		return err
 	case !changed:
-		s.report.recordReconciled(gitIgnoreFile, "Private artifact ignore tail block already effective")
+		s.report.recordReconciled(gitIgnoreFile, "Private artifact ignore tail block already effective"+note)
 	case existed:
 		s.report.recordReconciledAs(gitIgnoreFile, actionAppend, "Preserved existing rules and excluded private working directory, gate worktrees and the AGY workspace configuration"+note)
 	default:
@@ -317,7 +337,8 @@ func writeManagedGitIgnore(ctx context.Context, repoPath, seed string, dryRun, n
 	if !exists {
 		text = seed
 	}
-	merged, err := mergeGitIgnoreRules(text, legacyScratchPresent(repoPath), negateConfig)
+	owned, _ := legacyScratchOwned(ctx, repoPath, text)
+	merged, err := mergeGitIgnoreRules(text, legacyScratchPresent(repoPath), owned, negateConfig)
 	if err != nil {
 		return exists, false, err
 	}
