@@ -73,6 +73,30 @@ RULES = [
     (r">\s*[\x22\x27]?[^ \t\n\x22\x27]*(?i:\.git[/\\]hooks)", HISS_REFUSAL),
     (r"\blefthook\s+uninstall\b", HISS_REFUSAL),
     (
+        r"(?m)^(?:(?:[^\Wg]\w*|g(?:[^\Wh]\w*|h\w+)?)?[^\w\n])*(gh)\b[^\n]*(?:\bpr\s+me"
+        r"rge\b[^\n]*(?:\s|[\x22\x27])--admin(?:\s|$|[;&|\x22\x27]|=true\b)|(?:\s|[\x2"
+        r"2\x27])--admin(?:\s|$|[;&|\x22\x27]|=true\b)[^\n]*\bpr\s+merge\b|\bpr\s+--ad"
+        r"min(?:\s|$|[;&|\x22\x27]|=true\b)[^\n]*\bmerge\b)",
+        HISS_REFUSAL,
+    ),
+    (
+        r"(?m)^(?:(?:[^\Wg]\w*|g(?:[^\Wh]\w*|h\w+)?)?[^\w\n])*(gh)\b[^\n]*\bapi\b[^\n]"
+        r"*\bpulls/[0-9]+/merge/?(?:\?|\s|$|[;&|\x22\x27])",
+        HISS_REFUSAL,
+    ),
+    (
+        r"(?m)^(?:(?:[^\Wg]\w*|g(?:[^\Wh]\w*|h\w+)?)?[^\w\n])*(gh)\b[^\n]*\bapi\s+grap"
+        r"hql\b[^\n]*\bmergePullRequest\b",
+        HISS_REFUSAL,
+    ),
+    (
+        r"(?m)^(?:(?:[^\Wcw]\w*|c(?:[^\Wu]\w*|u(?:[^\Wr]\w*|r(?:[^\Wl]\w*|l\w+)?)?)?|w"
+        r"(?:[^\Wg]\w*|g(?:[^\We]\w*|e(?:[^\Wt]\w*|t\w+)?)?)?)?[^\w\n])*(curl|wget)\b["
+        r"^\n]*\bapi\.github\.com/[^\n]*\bpulls/[0-9]+/merge/?(?:\?|\s|$|[;&|\x22\x27]"
+        r")",
+        HISS_REFUSAL,
+    ),
+    (
         r"(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|repor"
         r"t|migrate|epic))\b.*\bdev/?(\s|$)",
         DEV_01_REFUSAL,

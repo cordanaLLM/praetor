@@ -27,6 +27,14 @@ func TestPolicyCommandBuiltinRules(t *testing.T) {
 		{"git config core.hooksPath hooks-off", "HISS"},
 		{"chmod 000 .git/hooks", "HISS"},
 		{"lefthook uninstall --aggressive", "HISS"},
+		{"gh pr merge 123 --admin", "HISS"},
+		{"gh pr merge 123 --admin=true", "HISS"},
+		{"gh pr merge --admin 123", "HISS"},
+		{"gh --admin pr merge 123", "HISS"},
+		{"gh api repos/owner/repo/pulls/123/merge", "HISS"},
+		{"gh api graphql -f query='mutation { mergePullRequest }'", "HISS"},
+		{"curl -X PUT https://api.github.com/repos/owner/repo/pulls/123/merge", "HISS"},
+		{"wget https://api.github.com/repos/owner/repo/pulls/123/merge", "HISS"},
 		{"standardsctl conform /srv/dev", "DEV-01"},
 		{"praetorctl needs  epic dev/", "DEV-01"},
 	} {
@@ -42,6 +50,11 @@ func TestPolicyCommandBuiltinRules(t *testing.T) {
 		"git commit -s -m 'docs: explain the no-verify rule'", "git commit --name-only", "LEFTHOOK=1 git commit",
 		"rm -rf build/hooks", "praetorctl adopt ~/dev/org/repo", "praetorctl audit ~/dev", "ls /dev/null",
 		"git config core.hooksPath", "git log -n 3 --grep commit", "grep -rn hooks .git/hooks", "lefthook run pre-commit",
+		"gh pr merge 123", "gh pr merge 123 --squash", "gh pr merge 123 --auto --delete-branch",
+		"gh pr merge 123 --admin=false", "gh api repos/owner/repo/pulls/123", "gh pr view 123",
+		"gh pr checks 123", "gh api graphql -f query='query { viewer { login } }'",
+		"curl https://api.github.com/repos/owner/repo/pulls/123", "wget https://api.github.com/repos/owner/repo/pulls/123",
+		"git commit -m 'fix: update gh pr merge docs'", "echo 'gh pr merge'",
 	} {
 		if verdict := builtin.Command(command); verdict.Outcome != Allow || verdict.Reason != "" {
 			t.Errorf("%q denied: %+v", command, verdict)

@@ -772,6 +772,7 @@ var priorEvasionHookDigests = map[string]string{
 	"332845d1088325c24cd747bfc4e8c5e415132a46f06204fffcc267bc8af5d8f7": "find and in-place edit rules start at the first command word",
 	"9db442d72dc16b74ce88250c1dbf1a0b05830bdc6716ab4b705c5aa1c7531a02": "named exempt patterns and a start-of-text veto anchor, clean under CodeQL (#1219)",
 	"74a3c9cb08bd3afeaf4c0e0e3b05f0b9ad7518beee1173465477270ed71f569d": "raise from error in pending_command under adopter ruff B904",
+	"861d8953285e88398c165fd103aa22e8d4b3d8af5946187aff6f39de4aa32bd3": "refuse admin and API merges that bypass rulesets (#1300)",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an
