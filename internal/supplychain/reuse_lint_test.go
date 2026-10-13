@@ -126,6 +126,8 @@ func gitRoot(t *testing.T, files map[string]string) string {
 	return root
 }
 
+// REUSE-IgnoreStart: the strings below hold licence lines as test data, not this file's licence.
+
 // headerLabelled is a repository that labels its files the REUSE way by headers alone: a source
 // with the tag, a binary with a .license companion, and the texts under LICENSES/.
 var headerLabelled = map[string]string{
@@ -192,6 +194,8 @@ func TestReuseHeadersOnlyNotice_Boundary(t *testing.T) {
 		t.Errorf("a tag ending at the last byte read: notice %q, %v; want one file", notice, err)
 	}
 }
+
+// REUSE-IgnoreEnd
 
 type renovatePackageRule struct {
 	MatchManagers     []string `json:"matchManagers"`

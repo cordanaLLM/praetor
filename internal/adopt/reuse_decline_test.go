@@ -145,6 +145,7 @@ func TestDeclinedReuseGate_Negative_EditedKeptAndDryRunWritesNothing(t *testing.
 // whose earlier adoption wrote the gate loses it with the job, for the root, not a decline. A
 // repository that labels its files by headers alone gets the gate's absence named in the report.
 func TestReuseGate_Boundary_RealRepositoryKeepsAndHeaderOnlyIsNamed(t *testing.T) {
+	// REUSE-IgnoreStart: the strings below hold licence lines as test data, not this file's licence.
 	reuseRepo := reuseSession(t, withReuseFile(map[string]string{lefthookFile: reuseRendering(true)}))
 	shape, err := reuseRepo.lefthookShape(t.Context())
 	if err != nil || !shape.reuse {
@@ -188,4 +189,5 @@ func TestReuseGate_Boundary_RealRepositoryKeepsAndHeaderOnlyIsNamed(t *testing.T
 	}) {
 		t.Errorf("the header-only repository was not named: %v", headers.report.Warnings)
 	}
+	// REUSE-IgnoreEnd
 }

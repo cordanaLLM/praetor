@@ -36,8 +36,10 @@ const (
 	// ReuseDep5File is the deprecated machine-readable declaration REUSE still reads beside
 	// ReuseFile (REUSE Specification 3.3).
 	ReuseDep5File = ".reuse/dep5"
+	// REUSE-IgnoreStart: the tag below is the string the scan looks for, not this file's licence.
 	// reuseHeaderTag is the comment tag a file states its license with (REUSE Specification 3.3).
 	reuseHeaderTag = "SPDX-License-Identifier:"
+	// REUSE-IgnoreEnd
 	// reuseHeaderBytes is how much of a file ReuseHeadersOnlyNotice reads for reuseHeaderTag:
 	// the first chunk reuse 6.x reads (reuse.extract.CHUNK_SIZE, 64 KiB), where a header stands.
 	reuseHeaderBytes = 64 << 10

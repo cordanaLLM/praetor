@@ -41,6 +41,7 @@ func headerAuditRoot(t *testing.T, files map[string]string) string {
 // REUSE.toml, and the measured layout of third-party texts without headers, get no line.
 // Boundary: a tree git cannot list prints nothing and passes.
 func TestAuditReuseHeadersOnly_3D(t *testing.T) {
+	// REUSE-IgnoreStart: the strings below hold licence lines as test data, not this file's licence.
 	headerOnly := map[string]string{"LICENSES/MIT.txt": "MIT License\n", "main.go": "// SPDX-License-Identifier: MIT\npackage main\n"}
 	out, err := captureStdout(t, func() error { return auditReuseHeadersOnly(t.Context(), headerAuditRoot(t, headerOnly)) })
 	if err != nil || !strings.Contains(out, "[WARN] REUSE by headers only, no REUSE.toml: the REUSE gate is not rendered; add REUSE.toml to keep it (1 file(s)") {
@@ -62,4 +63,5 @@ func TestAuditReuseHeadersOnly_3D(t *testing.T) {
 	if out, err := captureStdout(t, func() error { return auditReuseHeadersOnly(t.Context(), plain) }); err != nil || out != "" {
 		t.Errorf("no work tree: err %v, output %q; want no line", err, out)
 	}
+	// REUSE-IgnoreEnd
 }
