@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
@@ -26,15 +27,20 @@ const (
 	maxGitIgnoreLines     = 4096
 )
 
+// workingDirIgnore ignores the private session ledger (state.WorkingDirName) at every depth. A
+// rule without a leading slash matches a directory of that name in any directory, so the ledger
+// of a nested tool (tooling/.workingdir/) stays out of Git and out of every gate that lists
+// untracked files, as the root ledger does (#1263). Blocks up to v2 anchored it at the root.
+const workingDirIgnore = state.WorkingDirName + "/"
+
 // managedIgnoreRules are the ignore rules of the managed block, in block order: the
-// private session ledger, the legacy scratch root, the container for the isolated gate
-// worktrees, whose leftovers would otherwise be scanned as repository content and would
-// keep the tree dirty for receipt minting, the per-host AGY workspace configuration, and the
-// standards-mcp output cache.
+// private session ledger and the legacy scratch root, both at every depth, the container for
+// the isolated gate worktrees, whose leftovers would otherwise be scanned as repository
+// content and would keep the tree dirty for receipt minting, the per-host AGY workspace
+// configuration, and the standards-mcp output cache.
 // Adoption guarantees each in every adopted repository, except that a repository may
-// retire legacyScratchIgnore (keepsLegacyScratch). The whole list is also the set of
-// unmarked lines Praetor's former format wrote.
-var managedIgnoreRules = []string{"/.workingdir/", legacyScratchIgnore, "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore, mcpOutputCacheIgnore}
+// retire legacyScratchIgnore (keepsLegacyScratch).
+var managedIgnoreRules = []string{workingDirIgnore, legacyScratchIgnore, "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore, mcpOutputCacheIgnore}
 
 // gitIgnoreBlockVersion identifies an accepted version of the managed .gitignore block.
 type gitIgnoreBlockVersion struct {
@@ -44,7 +50,7 @@ type gitIgnoreBlockVersion struct {
 
 // canonicalGitIgnoreBlockVersion is the current canonical version of the managed .gitignore block.
 var canonicalGitIgnoreBlockVersion = gitIgnoreBlockVersion{
-	Version: "v2",
+	Version: "v3",
 	Rules:   managedIgnoreRules,
 }
 
@@ -56,11 +62,37 @@ var gitIgnoreBlockHistory = []gitIgnoreBlockVersion{
 		Version: "v1",
 		Rules: []string{
 			"/.workingdir/",
-			legacyScratchIgnore,
-			"/" + worktree.WorktreeSubdir + "/",
-			agyWorkspaceIgnore,
+			"/.workingdir2/",
+			"/.standards/worktrees/",
+			"/.agents/mcp_config.json",
 		},
 	},
+	{
+		Version: "v2",
+		Rules: []string{
+			"/.workingdir/",
+			"/.workingdir2/",
+			"/.standards/worktrees/",
+			"/.agents/mcp_config.json",
+			"/.standards/cache/",
+		},
+	},
+}
+
+// unmarkedIgnoreRules returns every rule of the canonical block and of each earlier version,
+// once each: the exact unmarked lines the managed block supersedes. Praetor's former format
+// wrote them outside any block, and an operator may have written one by hand; either way the
+// merge drops the line, so the block that follows does not repeat it.
+func unmarkedIgnoreRules() []string {
+	rules := slices.Clone(canonicalGitIgnoreBlockVersion.Rules)
+	for i := 0; i < len(gitIgnoreBlockHistory) && i < maxHistoryVersions; i++ {
+		for _, rule := range gitIgnoreBlockHistory[i].Rules {
+			if !slices.Contains(rules, rule) {
+				rules = append(rules, rule)
+			}
+		}
+	}
+	return rules
 }
 
 // GitIgnoreTailMatch describes whether text matches an accepted managed tail block.
@@ -138,11 +170,11 @@ func checkBlockHistoryTransition(previous, current gitIgnoreBlockVersion, histor
 }
 
 // gitIgnoreTailBlock is the private-artifact block adoption owns at the tail of .gitignore.
-// Exact unmarked rules Praetor's former format wrote are migrated into it.
+// Exact unmarked rules of any block version (unmarkedIgnoreRules) are migrated into it.
 func gitIgnoreTailBlock() managedTailBlock {
 	return managedTailBlock{
 		file: gitIgnoreFile, begin: gitIgnoreManagedBegin, end: gitIgnoreManagedEnd,
-		maxLines: maxGitIgnoreLines, duplicate: "duplicate managed markers", legacy: managedIgnoreRules,
+		maxLines: maxGitIgnoreLines, duplicate: "duplicate managed markers", legacy: unmarkedIgnoreRules(),
 	}
 }
 

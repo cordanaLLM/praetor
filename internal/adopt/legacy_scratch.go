@@ -13,24 +13,34 @@ import (
 )
 
 // legacyScratchIgnore is the rule the managed block carries for the legacy scratch root
-// (state.LegacyWorkingDirName). The block ignores that root by default; a repository that
-// retired it can take the rule out and keep the path visible to Git (#641).
-const legacyScratchIgnore = "/" + state.LegacyWorkingDirName + "/"
+// (state.LegacyWorkingDirName), at every depth like workingDirIgnore (#1263). The block ignores
+// that root by default; a repository that retired it can take the rule out and keep the path
+// visible to Git (#641).
+const legacyScratchIgnore = state.LegacyWorkingDirName + "/"
+
+// rootLegacyScratchIgnore is the root-anchored form of legacyScratchIgnore that blocks up to v2
+// carried. It still counts as the rule wherever a repository holds it.
+const rootLegacyScratchIgnore = "/" + legacyScratchIgnore
+
+// isLegacyScratchRule reports whether rule is the legacy scratch rule in either form.
+func isLegacyScratchRule(rule string) bool {
+	return rule == legacyScratchIgnore || rule == rootLegacyScratchIgnore
+}
 
 // keepsLegacyScratch reports whether legacyScratchIgnore is required of a repository whose
 // .gitignore reads text. present says the repository holds an entry named
 // state.LegacyWorkingDirName; declined says the git-ignore adoption step is declined, so no
 // managed block is ever written and the operator's own rules decide.
 //
-// The rule is kept while the root is present, or while text carries the exact rule, inside the
-// block or as the unmarked line Praetor's former format wrote. Beyond that it is the default:
+// The rule is kept while the root is present, or while text carries the exact rule in either
+// form (isLegacyScratchRule), inside the block or as an unmarked line. Beyond that it is the default:
 // a .gitignore without a managed block gets the full block, so a root created after adoption
 // is already ignored. An adopter retires the root by deleting the rule from an existing block
 // (or, with git-ignore declined, by leaving it out of the operator-owned rules) while no entry
 // of that name is on disk.
 func keepsLegacyScratch(text string, present, declined bool) bool {
 	normalized, _ := util.NormalizeLineEndings(text)
-	if present || strings.Contains("\n"+normalized+"\n", "\n"+legacyScratchIgnore+"\n") {
+	if present || slices.ContainsFunc(strings.Split(normalized, "\n"), isLegacyScratchRule) {
 		return true
 	}
 	return !declined && !managedGitIgnoreBlockHeld(text)
@@ -53,16 +63,14 @@ func legacyScratchPresent(repoPath string) bool {
 	return !errors.Is(err, fs.ErrNotExist)
 }
 
-// privateIgnoreRules returns rules, in block order, without legacyScratchIgnore
-// unless keepLegacy is set. It always returns a new slice to prevent callers from
-// mutating the underlying rules.
+// privateIgnoreRules returns rules, in block order, without the legacy scratch rule in either
+// form (isLegacyScratchRule) unless keepLegacy is set. It always returns a new slice to prevent
+// callers from mutating the underlying rules.
 func privateIgnoreRules(rules []string, keepLegacy bool) []string {
 	if keepLegacy {
 		return slices.Clone(rules)
 	}
-	return slices.DeleteFunc(slices.Clone(rules), func(rule string) bool {
-		return rule == legacyScratchIgnore
-	})
+	return slices.DeleteFunc(slices.Clone(rules), isLegacyScratchRule)
 }
 
 // everyPrivateScratchRoot lists the private scratch roots a repository that keeps the legacy

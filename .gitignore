@@ -76,8 +76,8 @@ all_github_repos.json
 /deploy/k8s/
 
 # BEGIN praetor private artifacts (praetorctl adopt)
-/.workingdir/
-/.workingdir2/
+.workingdir/
+.workingdir2/
 /.standards/worktrees/
 /.agents/mcp_config.json
 /.standards/cache/
