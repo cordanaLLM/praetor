@@ -76,26 +76,21 @@ func (s *logScan) record(spec windowSpec) catalog.Record {
 	}
 	minutes := int(spec.length / time.Minute)
 	window.WindowMinutes = &minutes
-	hits := s.hitsFor(spec.limitType)
-	if len(hits) == 0 {
-		record.Absent["used_percent"] = "no rejected " + spec.limitType + " request in the logs of the last 7 days, so the ceiling is unknown"
-		return record
-	}
-	reset := currentReset(hits[len(hits)-1].resetsAt, spec.length, s.now)
-	window.ResetsAt = &reset
-	ceiling, reason := s.ceiling(spec, hits)
+	ceiling, reason := s.calibrate(spec, s.hitsFor(spec.limitType))
 	if reason != "" {
 		record.Absent["used_percent"] = reason
 		return record
 	}
+	reset := currentReset(ceiling.WindowReset, spec.length, s.now)
+	window.ResetsAt = &reset
 	used, ok := s.sum(spec.family, reset.Add(-spec.length), s.now)
 	if !ok {
 		record.Absent["used_percent"] = "usage of a model without rates falls in the current window"
 		return record
 	}
-	usedPercent := used / ceiling * 100
+	usedPercent := used / ceiling.Ceiling * 100
 	window.UsedPercent = &usedPercent
-	s.addBurn(record, window, spec.family, ceiling)
+	s.addBurn(record, window, spec.family, ceiling.Ceiling)
 	return record
 }
 
@@ -149,35 +144,78 @@ func currentReset(last time.Time, length time.Duration, now time.Time) time.Time
 	return last.Add(steps * length)
 }
 
-// ceiling is the smallest cost-equivalent a window held at its first
-// rejection, over the windows whose usage the scanned logs hold completely.
-func (s *logScan) ceiling(spec windowSpec, hits []rejection) (float64, string) {
+// calibrate returns the window's ceiling: the one the logs show, or the
+// stored one when it comes from a later rejection or the logs show none. A
+// ceiling whose rejection is older than the maximum age is unknown. A newer
+// ceiling from the logs replaces the stored one. WindowReset is the newest
+// reset reported for the window, the anchor the current reset advances from.
+func (s *logScan) calibrate(spec windowSpec, hits []rejection) (storedCeiling, string) {
+	observed, found := s.observedCeiling(spec, hits)
+	stored, haveStored := s.storedCeiling(spec.limitType)
+	choice := stored
+	switch {
+	case found && (!haveStored || observed.RejectedAt.After(stored.RejectedAt)):
+		choice = observed
+		s.remember(spec.limitType, observed)
+	case !haveStored:
+		return storedCeiling{}, fmt.Sprintf("no rejected %s request with fully logged, priced usage in the last 7 days and none stored, so the ceiling is unknown", spec.limitType)
+	}
+	if age := s.now.Sub(choice.RejectedAt); age > s.maxAge {
+		return storedCeiling{}, fmt.Sprintf("the %s ceiling comes from a rejection on %s, older than %s, so it is unknown again",
+			spec.limitType, choice.RejectedAt.UTC().Format(time.RFC3339), s.maxAge)
+	}
+	if len(hits) > 0 && hits[len(hits)-1].resetsAt.After(choice.WindowReset) {
+		choice.WindowReset = hits[len(hits)-1].resetsAt
+	}
+	return choice, ""
+}
+
+func (s *logScan) storedCeiling(limitType string) (storedCeiling, bool) {
+	if s.store == nil {
+		return storedCeiling{}, false
+	}
+	entry, ok := s.store.Ceilings[limitType]
+	return entry, ok
+}
+
+// remember puts a ceiling observed in the logs into the store, when one is kept.
+func (s *logScan) remember(limitType string, observed storedCeiling) {
+	if s.store == nil {
+		return
+	}
+	observed.RecordedAt = s.now
+	s.store.Ceilings[limitType] = observed
+	s.storeChanged = true
+}
+
+// observedCeiling is the smallest cost-equivalent a window held at its first
+// rejection, over the windows whose usage the scanned logs hold completely,
+// with the rejection that set it.
+func (s *logScan) observedCeiling(spec windowSpec, hits []rejection) (storedCeiling, bool) {
 	first, resets := firstRejections(hits)
-	best := 0.0
+	var best storedCeiling
 	for i := 0; i < len(resets) && i < maxCeilingWindows; i++ {
-		held := s.heldAtRejection(spec, resets[i], first[resets[i]])
-		if held > 0 && (best == 0 || held < best) {
-			best = held
+		hit := first[resets[i]]
+		held := s.heldAtRejection(spec, resets[i], hit.at)
+		if held > 0 && (best.Ceiling == 0 || held < best.Ceiling) {
+			best = storedCeiling{Ceiling: held, RejectedAt: hit.at, SourceFile: hit.file, WindowReset: hit.resetsAt}
 		}
 	}
-	if best == 0 {
-		return 0, fmt.Sprintf("no rejected %s request with fully logged, priced usage in the last 7 days, so the ceiling is unknown", spec.limitType)
-	}
-	return best, ""
+	return best, best.Ceiling > 0
 }
 
 // firstRejections maps each reported reset to its window's earliest
 // rejection and lists the resets newest first.
-func firstRejections(hits []rejection) (map[time.Time]time.Time, []time.Time) {
-	first := make(map[time.Time]time.Time)
+func firstRejections(hits []rejection) (map[time.Time]rejection, []time.Time) {
+	first := make(map[time.Time]rejection)
 	var resets []time.Time
 	for _, hit := range hits {
-		at, ok := first[hit.resetsAt]
+		earliest, ok := first[hit.resetsAt]
 		if !ok {
 			resets = append(resets, hit.resetsAt)
 		}
-		if !ok || hit.at.Before(at) {
-			first[hit.resetsAt] = hit.at
+		if !ok || hit.at.Before(earliest.at) {
+			first[hit.resetsAt] = hit
 		}
 	}
 	sort.Slice(resets, func(i, j int) bool { return resets[i].After(resets[j]) })

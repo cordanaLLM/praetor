@@ -57,16 +57,22 @@ type usageEvent struct {
 	unpriced bool
 }
 
-// rejection is one request the provider refused for a usage window.
+// rejection is one request the provider refused for a usage window, and the
+// log file (relative to the projects folder) that recorded it.
 type rejection struct {
 	at        time.Time
 	limitType string
 	resetsAt  time.Time
+	file      string
 }
 
 // logScan accumulates usage and rejections across every file of one fetch.
 type logScan struct {
 	now          time.Time
+	currentFile  string
+	store        *ceilingStore
+	maxAge       time.Duration
+	storeChanged bool
 	files        int
 	skippedLines int
 	seen         map[string]bool
@@ -76,7 +82,7 @@ type logScan struct {
 }
 
 func newLogScan(now time.Time) *logScan {
-	return &logScan{now: now, seen: make(map[string]bool)}
+	return &logScan{now: now, seen: make(map[string]bool), maxAge: DefaultMaxCeilingAge}
 }
 
 var (
@@ -87,7 +93,7 @@ var (
 // line handles one session log line. Lines without a usage or quota marker
 // are not decoded at all; malformed lines are skipped.
 func (s *logScan) line(raw []byte) {
-	hasUsage, hasQuota := bytes.Contains(raw, usageMarker), bytes.Contains(raw, quotaMarker)
+	hasUsage, hasQuota := bytes.Contains(raw, usageMarker), containsQuota(raw)
 	if !hasUsage && !hasQuota {
 		return
 	}
@@ -103,6 +109,10 @@ func (s *logScan) line(raw []byte) {
 	}
 }
 
+func containsQuota(raw []byte) bool {
+	return bytes.Contains(raw, quotaMarker)
+}
+
 func (s *logScan) addRejection(entry logLine) {
 	quota := entry.QuotaLimits
 	if quota.Status != "rejected" || quota.RateLimitType == "" || quota.ResetsAt == nil {
@@ -113,7 +123,7 @@ func (s *logScan) addRejection(entry logLine) {
 		return
 	}
 	s.rejections = append(s.rejections, rejection{at: entry.Timestamp.UTC(), limitType: quota.RateLimitType,
-		resetsAt: time.Unix(*quota.ResetsAt, 0).UTC()})
+		resetsAt: time.Unix(*quota.ResetsAt, 0).UTC(), file: s.currentFile})
 }
 
 func (s *logScan) addUsage(entry logLine) {
