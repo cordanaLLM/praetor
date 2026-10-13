@@ -72,14 +72,14 @@ func TestDevcontainerProbeFailureWithinTheBoundKeepsItsMessage(t *testing.T) {
 func TestDevcontainerStartBoundFollowsTheGateBudget(t *testing.T) {
 	repo, resolved := devcontainerRepo(t)
 	goOnly := devcontainerStartBound(stageBudget(resolved))
-	if goOnly != OtherStagesAllowance || goOnly <= GitQueryTimeout {
+	if goOnly != OtherStagesAllowance+LintAllowance || goOnly <= GitQueryTimeout {
 		t.Fatalf("a Go repository's start bound is %s, want the %s allowance above the %s git query limit",
-			goOnly, OtherStagesAllowance, GitQueryTimeout)
+			goOnly, OtherStagesAllowance+LintAllowance, GitQueryTimeout)
 	}
 	mixed := t.TempDir()
 	writeFile(t, filepath.Join(mixed, "go.mod"), "module example.com/mixed\n")
 	writeFile(t, filepath.Join(mixed, CargoLockFile), "version = 3\n")
-	if got, want := devcontainerStartBound(stageBudget(mixed)), OtherStagesAllowance+CargoStagesAllowance; got != want {
+	if got, want := devcontainerStartBound(stageBudget(mixed)), OtherStagesAllowance+LintAllowance+CargoStagesAllowance; got != want {
 		t.Fatalf("with a Cargo.lock the start bound is %s, want %s", got, want)
 	}
 

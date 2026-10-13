@@ -70,6 +70,7 @@ const (
 const (
 	stagePrefetch       = "Prefetch & Lockfiles"
 	stageHISS           = "HISS Invariant Scan"
+	stageLint           = "Lint (golangci-lint, REUSE)"
 	stageSecurity       = "Security & SCA Scan"
 	stageFlavor         = "Flavor Conformance"
 	stageTests          = "Race-Detector Tests"
@@ -255,10 +256,10 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 	}
 }
 
-// RunGatedPipeline executes the six-stage anti-direct-merge gating pipeline: prefetch and
-// lockfiles, HISS invariants against the debt baseline, security and SCA scanning, flavor
-// conformance, race-detector tests in an isolated worktree, and the Ed25519 Exit-0
-// receipt. The prefetch, security and test stages run the Go toolchain where a go.mod is
+// RunGatedPipeline executes the anti-direct-merge gating pipeline: prefetch and lockfiles, HISS
+// invariants against the debt baseline, golangci-lint on the changed packages and reuse lint
+// (runLintStage), security and SCA scanning, flavor conformance, race-detector tests in an
+// isolated worktree, the repository's declared verification, and the Ed25519 Exit-0 receipt. The prefetch, security and test stages run the Go toolchain where a go.mod is
 // present and the Cargo toolchain where a Cargo.lock is (cargo.go); the receipt is refused
 // when neither ran any of them (requireVerification), unless opts.AdmitUnsupported admits a root
 // holding neither marker without one.
@@ -364,6 +365,7 @@ func executeStages(ctx context.Context, cfg *stageConfig) error {
 	stages := []stage{
 		{stagePrefetch, runPrefetchStage},
 		{stageHISS, runHissStage},
+		{stageLint, runLintStage},
 		{stageSecurity, runSecurityStage},
 		{stageFlavor, runFlavorStage},
 		{stageTests, runTestStage},

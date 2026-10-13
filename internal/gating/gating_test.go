@@ -580,6 +580,7 @@ func TestExecuteStages_DryRunInvokesNoCommand(t *testing.T) {
 	want := map[string]StageStatus{
 		"Prefetch & Lockfiles":   StageSkipped,
 		"HISS Invariant Scan":    StagePassed,
+		stageLint:                StageSkipped,
 		"Security & SCA Scan":    StageSkipped,
 		"Flavor Conformance":     StagePassed,
 		"Race-Detector Tests":    StageSkipped,

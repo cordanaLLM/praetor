@@ -391,7 +391,9 @@ func TestExecuteStageAttributesARunCut(t *testing.T) {
 func TestResolveRepoRunBudget_3D(t *testing.T) {
 	const bound = 12 * time.Minute
 	cargoAllowance := OtherStagesAllowance + DefaultPrefetchTimeout + CargoAuditTimeout
-	goForm := "12m0s race stage bound + 5m0s for the other stages"
+	goAllowance := OtherStagesAllowance + LintAllowance
+	goForm := "12m0s race stage bound + 8m0s for the other stages"
+	noGoForm := "12m0s race stage bound + 5m0s for the other stages"
 	cases := []struct {
 		name      string
 		markers   []string
@@ -400,15 +402,17 @@ func TestResolveRepoRunBudget_3D(t *testing.T) {
 		form      string
 	}{
 		// Positive: a mixed repository reserves a bound per suite and the Cargo commands' bounds.
-		{"go and cargo", []string{"go.mod", CargoLockFile}, 2, cargoAllowance,
-			"2 test suites at a 12m0s stage bound each + 9m0s for the other stages"},
+		{"go and cargo", []string{"go.mod", CargoLockFile}, 2, cargoAllowance + LintAllowance,
+			"2 test suites at a 12m0s stage bound each + 12m0s for the other stages"},
 		{"cargo only", []string{"Cargo.toml", CargoLockFile}, 1, cargoAllowance,
 			"12m0s race stage bound + 9m0s for the other stages"},
-		// Negative: a Go repository keeps exactly the budget it had before Cargo support.
-		{"go only", []string{"go.mod"}, 1, OtherStagesAllowance, goForm},
-		// Boundary: a Cargo.toml without its Cargo.lock runs no Cargo command and adds nothing.
-		{"cargo without a lock", []string{"go.mod", "Cargo.toml"}, 1, OtherStagesAllowance, goForm},
-		{"no marker", nil, 1, OtherStagesAllowance, goForm},
+		// Negative: a Go repository keeps the budget it had before Cargo support, plus the lint
+		// stage's allowance (#1312).
+		{"go only", []string{"go.mod"}, 1, goAllowance, goForm},
+		// Boundary: a Cargo.toml without its Cargo.lock runs no Cargo command and adds nothing; a
+		// root without go.mod runs no golangci-lint and adds no lint allowance.
+		{"cargo without a lock", []string{"go.mod", "Cargo.toml"}, 1, goAllowance, goForm},
+		{"no marker", nil, 1, OtherStagesAllowance, noGoForm},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -429,7 +433,7 @@ func TestResolveRepoRunBudget_3D(t *testing.T) {
 		})
 	}
 	// Boundary: the ceiling applies per suite, so a mixed repository at 30m gets 2 x 30m + 9m.
-	if got, want := ResolveRepoRunBudget("31m", mixedMarkers(t)).Timeout(), 2*MaxTestStageTimeout+cargoAllowance; got != want {
+	if got, want := ResolveRepoRunBudget("31m", mixedMarkers(t)).Timeout(), 2*MaxTestStageTimeout+cargoAllowance+LintAllowance; got != want {
 		t.Errorf("mixed repository at the ceiling = %s, want %s", got, want)
 	}
 }

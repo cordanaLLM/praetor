@@ -99,6 +99,10 @@ func ResolveRunBudget(raw string) RunBudget {
 // PRAETOR_TEST_STAGE_TIMEOUT was raised: the #314 failure, back for mixed repositories.
 func ResolveRepoRunBudget(raw, repoDir string) RunBudget {
 	budget := ResolveRunBudget(raw)
+	if util.FileExists(filepath.Join(repoDir, "go.mod")) {
+		// The lint stage runs golangci-lint where a go.mod is (runLintStage, #1312).
+		budget.Allowance += LintAllowance
+	}
 	if !util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
 		return budget
 	}
