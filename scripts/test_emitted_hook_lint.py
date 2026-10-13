@@ -548,9 +548,11 @@ class RenderedTemplateTest(LintCase):
         files = only(hook_files(), ("engine.sh",))
         self.assertEqual(sorted(files), [".config/lefthook/engine.sh"])
         path, text = next(iter(files.items()))
-        self.assertIn("  pin=$1 #\n", text)
-        self.assertLintFails("shellcheck", {path: text.replace("  pin=$1 #\n", "  pin=$1 #\n  ls $pin #\n", 1)},
-                             "SC2086")
+        # The launcher aligns its carriage-return guards as shfmt -i 2 -ci writes them (#1282).
+        line = re.search(r"^  pin=\$1 +#\n", text, re.MULTILINE)
+        self.assertIsNotNone(line)
+        planted = text[: line.end()] + "  ls $pin #\n" + text[line.end():]
+        self.assertLintFails("shellcheck", {path: planted}, "SC2086")
 
     def test_flake8_rejects_a_long_line_in_the_rendered_interceptor(self):
         files = only(hook_files(), ("block_evasion.py",))
