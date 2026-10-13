@@ -266,24 +266,78 @@ func TestGate_Positive_RejectsAnIncompatibleNestedModuleFromV1(t *testing.T) {
 	}
 }
 
-// Positive: before v1 the same change is reported as a warning and does not fail the gate.
+// Positive: before v1 the same change is reported as a warning and does not fail the gate when
+// the commit range carries a breaking marker and a Migration: footer (#1317).
 func TestGate_Positive_WarnsBeforeV1(t *testing.T) {
 	t.Parallel()
 	h := newGateHarness(t)
 	f := newFixture(t, h)
 	f.widget()
 	f.git("tag", "v0.4.0")
-	f.commit("break lib", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	head := f.commit("feat(lib)!: break lib\n\nMigration: update callers\n", map[string]string{"lib/stub-verdict": "incompatible\n"})
 	run := h.run(t, f.dir, nil)
 	if run.status != 0 {
 		t.Fatalf("status %d, want 0:\n%s\n%s", run.status, run.stdout, run.stderr)
 	}
 	requireContains(t, run.stdout, "warning: 1 incompatible module change(s) from v0.4.0",
-		"reported, not rejected (auto: newest root release tag v0.4.0 is pre-v1)")
+		"reported, not rejected (auto: newest root release tag v0.4.0 is pre-v1)", head[:12])
 	reject := h.run(t, f.dir, nil, "-policy=reject")
 	if reject.status != 1 {
 		t.Fatalf("-policy=reject status %d, want 1:\n%s", reject.status, reject.stderr)
 	}
+}
+
+// Negative: before v1 an incompatible change without a breaking marker fails under policy auto,
+// and passes under -policy=warn (#1317).
+func TestGate_Negative_PreV1BreakWithoutMarkerFails(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	f.widget()
+	f.git("tag", "v0.4.0")
+	f.commit("feat(lib): break lib\n\nMigration: update callers\n", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	run := h.run(t, f.dir, nil)
+	if run.status != 1 {
+		t.Fatalf("status %d, want 1:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	requireContains(t, run.stderr, "rejected (auto: newest root release tag v0.4.0 is pre-v1: missing breaking marker (! in subject) with Migration: footer)")
+	warn := h.run(t, f.dir, nil, "-policy=warn")
+	if warn.status != 0 {
+		t.Fatalf("-policy=warn status %d, want 0:\n%s", warn.status, warn.stderr)
+	}
+}
+
+// Negative: before v1 a breaking marker without a Migration: footer fails under policy auto (#1317).
+func TestGate_Negative_PreV1BreakWithMarkerWithoutMigrationFails(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	f.widget()
+	f.git("tag", "v0.4.0")
+	f.commit("feat(lib)!: break lib\n", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	run := h.run(t, f.dir, nil)
+	if run.status != 1 {
+		t.Fatalf("status %d, want 1:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	requireContains(t, run.stderr, "rejected (auto: newest root release tag v0.4.0 is pre-v1: missing breaking marker (! in subject) with Migration: footer)")
+}
+
+// Boundary: before v1 an incompatible change passes if any commit in base..HEAD carries the
+// breaking marker and Migration: footer, naming that breaking commit (#1317).
+func TestGate_Boundary_PreV1BreakMultipleCommitsRange(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	f.widget()
+	f.git("tag", "v0.4.0")
+	breaking := f.commit("feat(lib)!: break lib\n\nMigration: update callers\n", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	f.commit("docs: update documentation\n", map[string]string{"README.md": "new readme\n"})
+	run := h.run(t, f.dir, nil)
+	if run.status != 0 {
+		t.Fatalf("status %d, want 0:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	requireContains(t, run.stdout, "warning: 1 incompatible module change(s) from v0.4.0",
+		"reported, not rejected (auto: newest root release tag v0.4.0 is pre-v1)", breaking[:12])
 }
 
 // Positive: on GitHub Actions the verdict is a workflow command, which renders an annotation.
