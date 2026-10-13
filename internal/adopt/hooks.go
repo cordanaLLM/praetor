@@ -12,7 +12,9 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
@@ -47,6 +49,19 @@ const (
 	// OpenVEX document (internal/govuln), the check the gate run's security stage makes. The job
 	// ran `govulncheck ./...` before, which failed on a called symbol only (#778).
 	govulnGateArgs = "security govuln"
+	// toolGoModFile is the repository-relative path to the Go tool module that pins CLI tools.
+	toolGoModFile = "tools/go/go.mod"
+	// govulnToolScanner is the scanner command that runs govulncheck through the repository's
+	// tool module.
+	govulnToolScanner = "go tool -modfile=" + toolGoModFile + " govulncheck"
+	// govulnInstallHint is the instruction printed when a declared tool is missing on PATH.
+	govulnInstallHint = "go install golang.org/x/vuln/cmd/govulncheck@latest"
+	// govulnModule is the module path of the Go vulnerability scanner.
+	govulnModule = "golang.org/x/vuln"
+	// govulnToolPackage is the package path run with go tool.
+	govulnToolPackage = "golang.org/x/vuln/cmd/govulncheck"
+	// maxGoModScanLines bounds the line walk of a tool module (HISS-02).
+	maxGoModScanLines = 4096
 )
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
@@ -115,6 +130,48 @@ func optionalToolCommand(tool, args string) string {
 func optionalToolGuard(tool, command string) string {
 	return "if command -v " + tool + " >/dev/null 2>&1; then " + command +
 		"; else echo " + tool + " is not installed, skipping >&2; fi"
+}
+
+// requiredToolGuard renders a lefthook run line that runs command only where the tool it needs
+// is installed, and otherwise fails closed naming how to install it.
+func requiredToolGuard(tool, installHint, command string) string {
+	return "if command -v " + tool + " >/dev/null 2>&1; then " + command +
+		"; else echo " + tool + " is not installed, install it with " + installHint + " >&2; exit 1; fi"
+}
+
+// repoRequiresToolGovuln reports whether the repository at repoPath pins govulncheck in its
+// tool module (tools/go/go.mod).
+func repoRequiresToolGovuln(ctx context.Context, repoPath string) (bool, error) {
+	data, exists, err := contextopt.ObserveSnapshotIn(ctx, repoPath, filepath.FromSlash(toolGoModFile))
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", toolGoModFile, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	return toolModuleRequiresGovuln(data), nil
+}
+
+// toolModuleRequiresGovuln reports whether tool module data declares golang.org/x/vuln
+// as a requirement or as a tool directive.
+func toolModuleRequiresGovuln(data []byte) bool {
+	manifest := gomanifest.ParseManifest(data)
+	for i := 0; i < len(manifest.Requires) && i < maxGoModScanLines; i++ {
+		if manifest.Requires[i].Path == govulnModule {
+			return true
+		}
+	}
+	lines := strings.Split(string(gomanifest.TrimBOM(data)), "\n")
+	inTool := false
+	for i := 0; i < len(lines) && i < maxGoModScanLines; i++ {
+		if line, isTool := gomanifest.ToolLine(lines[i], &inTool); isTool {
+			fields := strings.Fields(line)
+			if len(fields) > 0 && (fields[0] == govulnToolPackage || fields[0] == govulnModule) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // rootMarkerCommand renders a lefthook run line for a language tool. It runs command only where
@@ -192,13 +249,20 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 }
 
 // lefthookPrePushJobs renders the pre-push jobs of languages: the Go vulnerability gate for Go
-// (govulnGateArgs). The gate job runs cargo audit for a Cargo.lock itself.
-func lefthookPrePushJobs(languages hisscatalog.Language) string {
-	if languages&hisscatalog.LanguageGo == 0 {
+// (govulnGateArgs). When shape carries toolGovuln, the job runs govulncheck through the
+// repository's tool module; otherwise it looks up govulncheck on PATH and fails when missing.
+// The gate job runs cargo audit for a Cargo.lock itself.
+func lefthookPrePushJobs(shape lefthookShape) string {
+	if shape.languages&hisscatalog.LanguageGo == 0 {
 		return ""
 	}
-	return "    security:\n" + lefthookRun(goModuleCommand(govuln.DefaultScanner,
-		optionalToolGuard(govuln.DefaultScanner, lefthookGovernedCommand(govulnGateArgs))))
+	var command string
+	if shape.toolGovuln {
+		command = lefthookGovernedCommand(govulnGateArgs + " -- " + govulnToolScanner)
+	} else {
+		command = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
+	}
+	return "    security:\n" + lefthookRun(goModuleCommand(govuln.DefaultScanner, command))
 }
 
 // reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line
@@ -257,19 +321,26 @@ func lefthookHeader(shape lefthookShape) string {
 }
 
 // lefthookShape is what one lefthook.yml rendering carries jobs for: the languages
-// (lefthookLanguages) and, with reuse set, the reuse-lint pre-commit job of a repository that
-// declares its licensing the REUSE way (supplychain.ReuseDeclared). A rendering without the job
-// is byte for byte the one adoption wrote before the job existed.
+// (lefthookLanguages), with reuse set, the reuse-lint pre-commit job of a repository that
+// declares its licensing the REUSE way (supplychain.ReuseDeclared), and with toolGovuln set,
+// the go tool pre-push security job for a repository that pins govulncheck in its tool module.
 type lefthookShape struct {
-	languages hisscatalog.Language
-	reuse     bool
+	languages  hisscatalog.Language
+	reuse      bool
+	toolGovuln bool
 }
 
 // otherReuse is shape with the reuse-lint job switched: the rendering adoption wrote while the
 // repository did, or did not, declare REUSE. It is Praetor's own text, which adoption migrates
 // like an earlier rendering (classifyLefthookConfig).
 func (shape lefthookShape) otherReuse() lefthookShape {
-	return lefthookShape{languages: shape.languages, reuse: !shape.reuse}
+	return lefthookShape{languages: shape.languages, reuse: !shape.reuse, toolGovuln: shape.toolGovuln}
+}
+
+// otherToolGovuln is shape with the tool module govulncheck switch inverted: the rendering adoption
+// wrote while the repository did, or did not, declare govulncheck in tools/go/go.mod.
+func (shape lefthookShape) otherToolGovuln() lefthookShape {
+	return lefthookShape{languages: shape.languages, reuse: shape.reuse, toolGovuln: !shape.toolGovuln}
 }
 
 // buildLefthookYAMLFor renders lefthook.yml with the jobs of shape (the languages, and the
@@ -303,7 +374,7 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"pre-push:\n" +
 		"  parallel: false\n" +
 		"  commands:\n" +
-		lefthookPrePushJobs(shape.languages) +
+		lefthookPrePushJobs(shape) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
 		"    audit:\n" + lefthookRun(governed(prePushAuditArgs)) +
 		"    gate:\n" + lefthookRun(governed(prePushGateArgs))

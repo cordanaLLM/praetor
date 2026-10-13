@@ -25,24 +25,43 @@ var plainGovulncheckRenderings = []struct {
 	{"plain-govulncheck-go-rust", map[string]string{"go.mod": goModMarker, "Cargo.toml": cargoTOMLBody}, lefthookJobLanguages},
 }
 
-// Positive (#778): every rendering holding Go jobs runs the Go vulnerability gate in its pre-push
-// security job, spelled from govulnGateArgs, and no rendering without Go has a security job.
+// Positive (#778, #1315): every rendering holding Go jobs runs the Go vulnerability gate in its pre-push
+// security job, spelled from govulnGateArgs. When toolGovuln is declared, it runs govulncheck
+// through the tool module; otherwise it checks PATH and fails when missing.
 func TestLefthookSecurityJob_Positive_RunsTheVulnerabilityGate(t *testing.T) {
 	for _, languages := range lefthookLanguageSets {
 		for _, checkpoint := range []bool{false, true} {
-			var decoded map[string]any
-			if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(lefthookShape{languages: languages}, checkpoint)), &decoded); err != nil {
-				t.Fatalf("languages=%v checkpoint=%v: %v", languages, checkpoint, err)
-			}
-			if languages&hisscatalog.LanguageGo == 0 {
-				if strings.Contains(buildLefthookYAMLFor(lefthookShape{languages: languages}, checkpoint), "    security:\n") {
-					t.Errorf("languages=%v: a security job without Go jobs", languages)
+			for _, toolGovuln := range []bool{false, true} {
+				shape := lefthookShape{languages: languages, toolGovuln: toolGovuln}
+				var decoded map[string]any
+				if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(shape, checkpoint)), &decoded); err != nil {
+					t.Fatalf("languages=%v checkpoint=%v toolGovuln=%v: %v", languages, checkpoint, toolGovuln, err)
 				}
-				continue
-			}
-			run, isString := decodedJob(t, decoded, "pre-push", "security")["run"].(string)
-			if !isString || !strings.Contains(run, "sh "+engineLauncherFile+" "+govulnGateArgs+";") || strings.Contains(run, "govulncheck ./...") {
-				t.Errorf("languages=%v checkpoint=%v: security job runs %q", languages, checkpoint, run)
+				if languages&hisscatalog.LanguageGo == 0 {
+					if strings.Contains(buildLefthookYAMLFor(shape, checkpoint), "    security:\n") {
+						t.Errorf("languages=%v: a security job without Go jobs", languages)
+					}
+					continue
+				}
+				run, isString := decodedJob(t, decoded, "pre-push", "security")["run"].(string)
+				if !isString || strings.Contains(run, "govulncheck ./...") {
+					t.Errorf("languages=%v checkpoint=%v: security job runs %q", languages, checkpoint, run)
+				}
+				if toolGovuln {
+					if !strings.Contains(run, "sh "+engineLauncherFile+" "+govulnGateArgs+" -- "+govulnToolScanner+";") {
+						t.Errorf("toolGovuln=true: security job runs %q, want tool module scanner", run)
+					}
+					if strings.Contains(run, "command -v govulncheck") {
+						t.Errorf("toolGovuln=true: security job checks PATH: %q", run)
+					}
+				} else {
+					if !strings.Contains(run, "sh "+engineLauncherFile+" "+govulnGateArgs+";") {
+						t.Errorf("toolGovuln=false: security job runs %q, want governed gate", run)
+					}
+					if !strings.Contains(run, "command -v govulncheck") || !strings.Contains(run, "exit 1") {
+						t.Errorf("toolGovuln=false: security job should fail when missing on PATH: %q", run)
+					}
+				}
 			}
 		}
 	}
