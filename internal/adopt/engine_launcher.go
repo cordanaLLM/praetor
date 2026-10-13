@@ -27,6 +27,7 @@ var priorEngineLauncherDigests = map[string]string{
 	"93387a66f5c910bd4df4dbe11bd016d489af208620f7c0deea69777cdad00387": "engine launcher with --print-path, uses-pin, full semver (#906)",
 	"888b3442bf8381166b8623c195c887260a68672ce5795bf327ae5ce8b77fcc7b": "engine launcher with explicit PRAETOR_REF priority (#906)",
 	"26a458c46116cce38b23e591902ce0ed1541b6f3cedf77807743edd2298fcff5": "engine launcher with install_pinned split under the strict function length (#906)",
+	"dcc6f72f566d73616174ee763d5bac12171ed4d0bec979ed3a5e8e9992fec2f9": "engine launcher with its SPDX-License-Identifier line behind the shebang (#1281)",
 }
 
 // reconcileEngineLauncher scaffolds the launcher beside the lefthook.yml jobs that run it. An

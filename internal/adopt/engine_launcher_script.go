@@ -11,6 +11,7 @@ package adopt
 // testdata/emitted holds the same text, which scripts/test_emitted_hook_lint.py lints with
 // shellcheck, and engine_launcher_test.go runs it against stub binaries.
 const engineLauncherScript = `#!/bin/sh
+# SPDX-License-Identifier: EUPL-1.2
 # The one place a Praetor Git hook chooses which engine judges the repository (#906).
 # Every governance job in lefthook.yml and the fallback pre-commit hook run
 # "sh .config/lefthook/engine.sh <praetorctl arguments>" from the repository root.

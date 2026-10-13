@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: EUPL-1.2
 # The one place a Praetor Git hook chooses which engine judges the repository (#906).
 # Every governance job in lefthook.yml and the fallback pre-commit hook run
 # "sh .config/lefthook/engine.sh <praetorctl arguments>" from the repository root.

@@ -122,6 +122,9 @@ var priorDigests = map[string]string{
 	// checks.mjs whose bracket() escaped class syntax without the backslash in the same pass (CodeQL
 	// incomplete sanitization at that site), shipped by #1252.
 	"2e10d401929e7880d606f4e7721727c546ad3c3d0790826910eda5ef7a9c9bce": Directory + "/checks.mjs",
+	// mkdocs_hook.py before it carried its SPDX-License-Identifier line, which an adopter's
+	// licence-header gate requires of every tracked Python file (#1281).
+	"a4a98cb1195488fbf1d7812bfb021fd5ac5f562f42dcbb2368758b6da3087b69": Directory + "/mkdocs_hook.py",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md

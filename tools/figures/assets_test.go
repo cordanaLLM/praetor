@@ -404,3 +404,61 @@ func TestPriorDigestsBoundary(t *testing.T) {
 		t.Fatal("the CRLF form of a text does not reduce to its LF digest")
 	}
 }
+
+// pythonLicenceLine is the first line of every managed Python asset: an adopter's licence-header
+// gate reads every tracked Python file, and the audit refuses an edited copy (#1281).
+const pythonLicenceLine = "# SPDX-License-Identifier: EUPL-1.2\n"
+
+// pythonLicenceProblems names each Python asset in texts whose first line is not its licence line.
+func pythonLicenceProblems(texts map[string]string) []string {
+	var problems []string
+	for _, name := range slices.Sorted(maps.Keys(texts)) {
+		if strings.HasSuffix(name, ".py") && !strings.HasPrefix(strings.ReplaceAll(texts[name], "\r\n", "\n"), pythonLicenceLine) {
+			problems = append(problems, name+" does not start with "+strings.TrimSpace(pythonLicenceLine))
+		}
+	}
+	return problems
+}
+
+// managedTexts reads every asset of the inventory.
+func managedTexts(t *testing.T) map[string]string {
+	t.Helper()
+	texts := map[string]string{}
+	for _, name := range Names() {
+		data, err := Read(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts[name] = string(data)
+	}
+	return texts
+}
+
+// Positive: every managed Python asset carries its licence line.
+func TestPythonAssetsCarryTheLicenceLine(t *testing.T) {
+	texts := managedTexts(t)
+	if _, ok := texts["mkdocs_hook.py"]; !ok {
+		t.Fatal("mkdocs_hook.py is not in the inventory; the check would pass on nothing")
+	}
+	for _, problem := range pythonLicenceProblems(texts) {
+		t.Error(problem)
+	}
+}
+
+// Negative: a Python asset without the line, or with it below the docstring, fails; a non-Python
+// asset is not read. Boundary: a CRLF checkout of the asset passes.
+func TestPythonAssetsLicenceLineNegativeAndBoundary(t *testing.T) {
+	hook := managedTexts(t)["mkdocs_hook.py"]
+	headerless := strings.TrimPrefix(hook, pythonLicenceLine)
+	for name, text := range map[string]string{"headerless": headerless, "below the docstring": headerless + pythonLicenceLine} {
+		if len(pythonLicenceProblems(map[string]string{"mkdocs_hook.py": text})) != 1 {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if problems := pythonLicenceProblems(map[string]string{
+		"mkdocs_hook.py": strings.ReplaceAll(hook, "\n", "\r\n"),
+		"figures.css":    "body {}\n",
+	}); len(problems) != 0 {
+		t.Errorf("a CRLF checkout or a non-Python asset was refused: %v", problems)
+	}
+}
