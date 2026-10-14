@@ -326,22 +326,27 @@ func (f WorkflowRunFinding) line(branch string) string {
 	case f.Covered():
 		return fmt.Sprintf("[INFO] Workflow %s: %s as declared (%s): %s", f.Workflow, f.Expected.State, f.Expected.Reason, f.state(branch))
 	case f.Unhealthy():
-		if f.Expected != nil && f.Expected.Expired(f.today()) {
-			if f.Expected.Expires != "" {
-				return fmt.Sprintf("[WARN] Workflow %s: %s; the declaration expired on %s", f.Workflow, f.state(branch), f.Expected.Expires)
-			}
-			return fmt.Sprintf("[WARN] Workflow %s: %s; declare it in workflow_runs.expected with state failing, a reason and an expiry while the fix lands", f.Workflow, f.state(branch))
-		}
-		if f.Health == WorkflowFailing {
-			return fmt.Sprintf("[WARN] Workflow %s: %s; declare it in workflow_runs.expected with state failing, a reason and an expiry while the fix lands", f.Workflow, f.state(branch))
-		}
-		return fmt.Sprintf("[WARN] Workflow %s: %s", f.Workflow, f.state(branch))
+		return fmt.Sprintf("[WARN] Workflow %s: %s%s", f.Workflow, f.state(branch), f.unhealthyHint())
 	case f.Expected != nil:
 		return fmt.Sprintf("[WARN] Workflow %s: declared %s, but %s; the declaration no longer applies", f.Workflow, f.Expected.State, f.state(branch))
 	case f.Health == WorkflowHealthy:
 		return ""
 	default:
 		return fmt.Sprintf("[INFO] Workflow %s: %s", f.Workflow, f.state(branch))
+	}
+}
+
+// unhealthyHint ends an unhealthy finding's line: the date an expired declaration stopped
+// holding, else for a failing workflow the declaration route, so a local gate on a red main
+// says what to do while the fix lands.
+func (f WorkflowRunFinding) unhealthyHint() string {
+	switch {
+	case f.Expected != nil && f.Expected.Expires != "" && f.Expected.Expired(f.today()):
+		return "; the declaration expired on " + f.Expected.Expires
+	case f.Health == WorkflowFailing:
+		return "; declare it in workflow_runs.expected with state failing, a reason and an expiry while the fix lands"
+	default:
+		return ""
 	}
 }
 
