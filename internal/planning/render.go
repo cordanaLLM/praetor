@@ -94,6 +94,9 @@ func renderRoadmap(result *Result) string {
 		writeNumbered(&builder, "Actions", step.Actions)
 		writeOutputs(&builder, step.ExpectedOutputs)
 		writeAcceptance(&builder, step.Acceptance)
+		if step.Experiment != nil {
+			writeExperiment(&builder, step.Experiment)
+		}
 	}
 	return builder.String()
 }
@@ -147,6 +150,28 @@ func writeCases(builder *strings.Builder, label string, values []string) {
 		fmt.Fprintf(builder, "  - %s\n", markdownText(value))
 	}
 	builder.WriteByte('\n')
+}
+
+func writeExperiment(builder *strings.Builder, exp *Experiment) {
+	builder.WriteString("### Experiment\n\n")
+	disposition := exp.Disposition
+	if disposition == "" {
+		disposition = "pending"
+	}
+	fmt.Fprintf(builder, "- Evidence status: %s\n", markdownText(exp.EvidenceStatus))
+	if exp.Null != "" {
+		fmt.Fprintf(builder, "- Null: %s\n", markdownText(exp.Null))
+	}
+	if exp.KillCriterion != "" {
+		fmt.Fprintf(builder, "- Kill criterion: %s\n", markdownText(exp.KillCriterion))
+	}
+	if exp.Margin != "" {
+		fmt.Fprintf(builder, "- Margin: %s\n", markdownText(exp.Margin))
+	}
+	fmt.Fprintf(builder, "- Disposition: %s\n\n", markdownText(disposition))
+	if len(exp.ProtectedOutcomes) > 0 {
+		writeNumbered(builder, "Protected outcomes", exp.ProtectedOutcomes)
+	}
 }
 
 func anchorID(prefix, value string) string {

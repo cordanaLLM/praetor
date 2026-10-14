@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "plan-example-workshop",
   "project": {
     "id": "project-example-workshop",
@@ -96,7 +96,8 @@
         "negative": ["Rendered text does not claim source verification."],
         "boundary": ["Generated output stays below the configured byte ceiling."]
       },
-      "link": {"todo_id": "todo-render", "roadmap_id": "roadmap-render", "milestone_id": "milestone-projection"}
+      "link": {"todo_id": "todo-render", "roadmap_id": "roadmap-render", "milestone_id": "milestone-projection"},
+      "experiment": {"evidence_status": "established", "null": "", "kill_criterion": "", "margin": "", "protected_outcomes": [], "disposition": ""}
     },
     {
       "id": "step-research",

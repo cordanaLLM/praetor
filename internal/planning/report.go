@@ -14,6 +14,7 @@ type Report struct {
 	MilestoneOrder   []string `json:"milestone_order"`
 	StepOrder        []string `json:"step_order"`
 	Unsupported      []string `json:"unsupported"`
+	Deprecations     []string `json:"deprecations"`
 	Artifacts        []string `json:"artifacts"`
 	ArtifactsWritten bool     `json:"artifacts_written"`
 }
@@ -29,5 +30,5 @@ func (result *Result) Report(written bool) Report {
 		Status: result.Status, ReviewRequired: result.ReviewRequired, ProvenanceStatus: result.ProvenanceStatus,
 		Digest: result.Digest, MilestoneOrder: append([]string(nil), result.MilestoneOrder...),
 		StepOrder: append([]string(nil), result.StepOrder...), Unsupported: append([]string(nil), result.Unsupported...),
-		Artifacts: artifacts, ArtifactsWritten: written}
+		Deprecations: append([]string{}, result.Deprecations...), Artifacts: artifacts, ArtifactsWritten: written}
 }

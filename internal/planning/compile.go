@@ -35,7 +35,7 @@ func Compile(ctx context.Context, raw []byte) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	milestoneOrder, stepOrder, err := validateDraft(ctx, &draft)
+	milestoneOrder, stepOrder, deprecations, err := validateDraft(ctx, &draft)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func Compile(ctx context.Context, raw []byte) (*Result, error) {
 	result := &Result{Status: StatusStructurallyValid, ReviewRequired: true,
 		ProvenanceStatus: ProvenanceUnverified, Digest: hex.EncodeToString(sum[:]),
 		MilestoneOrder: append([]string(nil), milestoneOrder...), StepOrder: append([]string(nil), stepOrder...),
-		Unsupported: append([]string(nil), unsupportedStages...), Draft: draft}
+		Unsupported: append([]string(nil), unsupportedStages...), Deprecations: deprecations, Draft: draft}
 	if err := renderArtifacts(ctx, result); err != nil {
 		return nil, err
 	}
