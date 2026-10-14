@@ -178,6 +178,9 @@ jobs:
           # scripts/test_emitted_hook_lint.py fails instead of skipping any tool that is missing
           # or not the pinned version while PRAETOR_HOOK_LINT_BIN is set.
           GOBIN="$RUNNER_TEMP/praetor-hook-lint/bin" go install -modfile=tools/go/go.mod mvdan.cc/gofumpt
+          # ESLint for the shipped JavaScript assets comes from its own npm lock (#1247).
+          npm ci --ignore-scripts --no-audit --no-fund --prefix .config/hook-lint/eslint
+          ln -s "$GITHUB_WORKSPACE/.config/hook-lint/eslint/node_modules/.bin/eslint" "$RUNNER_TEMP/praetor-hook-lint/bin/eslint"
           echo "PRAETOR_HOOK_LINT_BIN=$RUNNER_TEMP/praetor-hook-lint/bin" >> "$GITHUB_ENV"
 
       - name: Verify Go Formatting (gofmt)

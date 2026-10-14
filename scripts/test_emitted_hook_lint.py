@@ -40,6 +40,9 @@ The policy is the one such a repository gets without configuring anything, per l
 - YAML: yamllint in strict mode with its defaults.
 - Go: gofmt, gofumpt and `go vet` on each package directory alone, with no build tag.
 - Shell: shellcheck at its defaults.
+- JavaScript: ESLint with the recommended rule set of @eslint/js and Node's globals
+  (.config/hook-lint/eslint/eslint.config.mjs), the flat config an adopter starts from (#1247).
+  An adopter hook that runs `eslint --fix` would otherwise rewrite a locked file.
 
 Each file is linted from a copy in an empty temporary directory and each tool is told to ignore
 configuration files, so no project or user configuration can loosen the check.
@@ -50,6 +53,11 @@ one version source for Go tools:
     python3 -m pip install --require-hashes -r .config/hook-lint/requirements.txt
     GOBIN=<dir> go install -modfile=tools/go/go.mod mvdan.cc/gofumpt
 
+ESLint comes from its npm lock beside the Python one; its bin is linked into the tool directory:
+
+    npm ci --ignore-scripts --prefix .config/hook-lint/eslint
+    ln -s "$PWD/.config/hook-lint/eslint/node_modules/.bin/eslint" <dir>/eslint
+
 go, gofmt and shellcheck are taken from PATH, since they come with the toolchain and the runner
 image. A test skips, naming the reason, when its tool is missing or is not the pinned version,
 because another version formats differently. With PRAETOR_HOOK_LINT_BIN set to the
@@ -58,6 +66,7 @@ taken only from there and a missing or mismatched tool, system tools included, f
 a gate that cannot run is not a passing gate (HISS-21).
 """
 
+import json
 import os
 import re
 import shutil
@@ -81,6 +90,18 @@ TOOL_DIR_ENV = "PRAETOR_HOOK_LINT_BIN"
 # looked up in PRAETOR_HOOK_LINT_BIN where it is set, and their version must be the pin.
 TOOLS = ("black", "flake8", "yamllint", "ruff")
 GO_PINNED_TOOLS = ("gofumpt",)
+# The npm-pinned tool: its version is the exact devDependencies entry of ESLINT_PACKAGE, and its
+# configuration file sits beside that lock, where the config's imports resolve.
+NPM_PINNED_TOOLS = ("eslint",)
+ESLINT_DIR = ROOT / ".config" / "hook-lint" / "eslint"
+ESLINT_PACKAGE = ESLINT_DIR / "package.json"
+ESLINT_CONFIG = ESLINT_DIR / "eslint.config.mjs"
+JAVASCRIPT_SUFFIXES = (".mjs", ".js", ".cjs")
+# Shipped JavaScript that ESLint does not hold: the figure engine's dist/ bundles are minified
+# builds of pinned third-party code (tools/figures/bundle.mjs), not source anyone edits, and an
+# adopter's configuration ignores build output; their 119 recommended-rule findings are
+# upstream's. Every other shipped script is held.
+GENERATED_JAVASCRIPT = ("tools/figures/dist/",)
 # Tools that come with the platform or the Go toolchain: taken from PATH, with no pin to
 # compare, and required (not skipped) where PRAETOR_HOOK_LINT_BIN is set.
 SYSTEM_TOOLS = ("go", "gofmt", "shellcheck")
@@ -171,10 +192,19 @@ def go_tool_pins(text):
     return pins
 
 
+def npm_tool_pins(text):
+    """Return {tool: version} for each tool in `NPM_PINNED_TOOLS` that the package.json text
+    pins to an exact version in devDependencies."""
+    dependencies = json.loads(text).get("devDependencies", {})
+    return {tool: dependencies[tool] for tool in NPM_PINNED_TOOLS
+            if VERSION.fullmatch(dependencies.get(tool, ""))}
+
+
 def toolchain_pins():
-    """Return {tool: pinned version} from the lock and from tools/go/go.mod."""
+    """Return {tool: pinned version} from the lock, tools/go/go.mod and the ESLint package."""
     pins = pinned_versions(LOCK.read_text(encoding="utf-8"))
     pins.update(go_tool_pins(GO_TOOLS_MOD.read_text(encoding="utf-8")))
+    pins.update(npm_tool_pins(ESLINT_PACKAGE.read_text(encoding="utf-8")))
     return pins
 
 
@@ -221,6 +251,11 @@ def install_hint(name):
         return "GOBIN=<dir> go install -modfile=tools/go/go.mod " + GO_TOOL_MODULES[name]
     if name in SYSTEM_TOOLS:
         return "your platform's package manager or the Go toolchain"
+    if name in NPM_PINNED_TOOLS:
+        package = ESLINT_DIR.relative_to(ROOT).as_posix()
+        return (f"npm ci --ignore-scripts --prefix {package}, then link "
+                f"{package}/node_modules/.bin/{name} into {TOOL_DIR_ENV} "
+                "or put that directory on PATH")
     lock = LOCK.relative_to(ROOT).as_posix()
     return f"python3 -m pip install --require-hashes -r {lock}"
 
@@ -315,6 +350,8 @@ class LintCase(unittest.TestCase):
             "gofumpt": [[executable, "-l", "."]],
             "go-vet": [[executable, "vet", f"./{directory}"] for directory in go_package_dirs(paths)],
             "shellcheck": [[executable, *paths]],
+            "eslint": [[executable, "--no-config-lookup", "--config", str(ESLINT_CONFIG),
+                        "--max-warnings", "0", *paths]],
         }
         return commands[name]
 
@@ -423,6 +460,17 @@ class ManagedAssetsTest(LintCase):
         files = only(self.registry(), (".sh",))
         if files:  # no family ships shell today; a family that does is held to shellcheck
             self.assertLintPasses("shellcheck", files)
+
+    def test_eslint_accepts_managed_javascript(self):
+        files = {path: text for path, text in self.assets(JAVASCRIPT_SUFFIXES).items()
+                 if not path.startswith(GENERATED_JAVASCRIPT)}
+        # Boundary: the documentation gate's two scripts and the figure engine's checks, the
+        # files of #1247 and #1252, are among the linted ones.
+        for path in ("tools/markdownlint/verify.mjs",
+                     "tools/markdownlint/no-private-scratch-links.mjs",
+                     "tools/figures/checks.mjs"):
+            self.assertIn(path, files)
+        self.assertLintPasses("eslint", files)
 
     def test_the_registry_reaches_the_named_assets(self):
         files = self.registry()
@@ -533,6 +581,18 @@ class PolicyFixtureTest(LintCase):
         self.assertLintFails("yamllint", {"next.yml": f"{exempt}{next_line}\n"},
                              "line-length")
 
+    def test_eslint_rejects_the_findings_of_1247(self):
+        # The two rules #1247 measured in shipped assets: one auto-fixable (the silent rewrite),
+        # one not.
+        self.assertLintFails("eslint", {"spaces.mjs": "export const pattern = /a  b/u;\n"},
+                             "no-regex-spaces")
+        self.assertLintFails("eslint", {"escape.mjs": 'export const text = `say \\"x\\"`;\n'},
+                             "no-useless-escape")
+
+    def test_eslint_knows_node_globals_and_refuses_undefined_names(self):
+        self.assertLintPasses("eslint", {"node.mjs": "process.stdout.write(Buffer.from('x'));\n"})
+        self.assertLintFails("eslint", {"undefined.mjs": "missingFunction();\n"}, "no-undef")
+
 
 class RenderedTemplateTest(LintCase):
     """Negative: a defect in a generated or locked file fails the gate that passes it clean."""
@@ -584,6 +644,14 @@ class RenderedTemplateTest(LintCase):
         self.assertLintFails("gofmt", {path: text.replace(code, code + "\nvar _ = [] int{1,2}\n", 1)},
                              path)
 
+    def test_eslint_rejects_the_markdown_gate_with_a_plant(self):
+        # #1247: a planted no-regex-spaces finding in the shipped verifier fails here, before an
+        # adopter's `eslint --fix` hook can rewrite the locked file.
+        path = "tools/markdownlint/verify.mjs"
+        text = self.registry()[path]
+        self.assertLintFails("eslint", {path: text + "export const planted = /a  b/u;\n"},
+                             "no-regex-spaces")
+
 
 class ResolutionTest(unittest.TestCase):
     """Tool resolution: skip locally, fail where the pinned toolchain is required."""
@@ -599,6 +667,15 @@ class ResolutionTest(unittest.TestCase):
     def test_lock_pins_every_tool(self):
         self.assertEqual(sorted(pinned_versions(LOCK.read_text(encoding="utf-8"))),
                          sorted(TOOLS))
+
+    def test_npm_tools_are_pinned_exactly_in_the_eslint_package(self):
+        text = '{"devDependencies": {"eslint": "10.11.0", "globals": "17.12.0"}}'
+        self.assertEqual(npm_tool_pins(text), {"eslint": "10.11.0"})
+        # Negative: a range is no pin.
+        self.assertEqual(npm_tool_pins('{"devDependencies": {"eslint": "^10.11.0"}}'), {})
+        self.assertEqual(npm_tool_pins("{}"), {})
+        self.assertEqual(sorted(npm_tool_pins(ESLINT_PACKAGE.read_text(encoding="utf-8"))),
+                         sorted(NPM_PINNED_TOOLS))
 
     def test_go_tools_are_pinned_in_the_go_tools_module(self):
         text = "tool (\n\tmvdan.cc/gofumpt\n)\nrequire (\n\tmvdan.cc/gofumpt v0.12.0 // indirect\n)\n"

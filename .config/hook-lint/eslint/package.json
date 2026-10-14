@@ -1,0 +1,15 @@
+{
+  "name": "@cordanallm/praetor-hook-lint-eslint",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned ESLint for scripts/test_emitted_hook_lint.py: the rule set an adopter gets without configuring anything",
+  "type": "module",
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.11.0",
+    "globals": "17.12.0"
+  },
+  "overrides": {
+    "acorn": "8.18.0"
+  }
+}

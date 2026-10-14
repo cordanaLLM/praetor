@@ -1,0 +1,3 @@
+type: added
+title: The shipped JavaScript assets are linted with ESLint's recommended rule set in the managed-asset lint harness, so a finding fails the engine's CI instead of an adopter's hook
+issue: '#1247'

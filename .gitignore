@@ -37,6 +37,7 @@ __pycache__/
 # Dependency directories
 /vendor/
 /tools/figures/node_modules/
+/.config/hook-lint/eslint/node_modules/
 
 # IDE and OS files
 .DS_Store
