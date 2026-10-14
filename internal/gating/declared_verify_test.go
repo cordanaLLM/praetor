@@ -29,8 +29,9 @@ func declaredVerifyRepo(t *testing.T, recipe string) string {
 	return dir
 }
 
-// recipeStatus matches GNU Make's failed-recipe line in any locale: "[Makefile:3: verify-all] Error 1".
-var recipeStatus = regexp.MustCompile(`\[Makefile:\d+: verify-all\] \S+ 1\b`)
+// recipeStatus matches GNU Make's failed-recipe line in any locale and version: "[Makefile:3:
+// verify-all] Error 1" from Make 4, "[verify-all] Error 1" from the Make 3.81 macOS ships.
+var recipeStatus = regexp.MustCompile(`\[(?:Makefile:\d+: )?verify-all\] \S+ 1\b`)
 
 // requireMake skips where the stage's make is not on PATH (HISS-21): the acceptance runs below
 // run the real command.
