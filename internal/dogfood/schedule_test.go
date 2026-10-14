@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -294,6 +295,7 @@ func TestScheduleConfigStrictAndBoundary(t *testing.T) {
 		strings.Replace(string(valid), `"max_consecutive_failures":3`, `"max_consecutive_failures":4`, 1),
 		strings.Replace(string(valid), `"max_runs":32`, `"max_runs":1025`, 1),
 		strings.Replace(string(valid), `"max_bytes":2147483648`, `"max_bytes":1048575`, 1),
+		strings.Replace(string(valid), `"version":1`, `"retention":"unknown","version":1`, 1),
 		strings.Replace(string(valid), `"allow_remote":false,`, ``, 1),
 		string(valid) + `{}`,
 	}
@@ -306,7 +308,7 @@ func TestScheduleConfigStrictAndBoundary(t *testing.T) {
 	minimal := map[string]any{"version": 1, "suite_config": cfg.SuiteConfig, "source_root": cfg.SourceRoot, "state_dir": cfg.StateDir, "allow_remote": false, "runner_binary": cfg.RunnerBinary}
 	writeScheduleFixture(t, path, minimal)
 	got, err := LoadScheduleConfig(context.Background(), path)
-	if err != nil || got.IntervalSeconds != 86400 || got.RetrySeconds != 3600 || got.MaxRuns != 32 || got.MaxBytes != 2<<30 {
+	if err != nil || got.IntervalSeconds != 86400 || got.RetrySeconds != 3600 || got.MaxRuns != 32 || got.MaxBytes != 2<<30 || got.Retention != "block" {
 		t.Fatalf("defaults %+v %v", got, err)
 	}
 	if err := os.Chmod(path, 0o644); err != nil {
@@ -560,6 +562,263 @@ func TestScheduleInterruptedClockRollbackKeepsValidState(t *testing.T) {
 	}
 }
 
+func TestSchedulePruneOldestPositive(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	cfg.MaxRuns = 5
+	writeScheduleFixture(t, path, cfg)
+	now := fixedScheduleTime()
+	for i := 1; i <= 5; i++ {
+		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
+		report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+		if err != nil || !report.Verified || report.Attempts != i {
+			t.Fatalf("run %d failed: %+v %v", i, report, err)
+		}
+	}
+	cfg.Retention = "prune-oldest"
+	cfg.MaxRuns = 4
+	writeScheduleFixture(t, path, cfg)
+
+	clock := func() time.Time { return now.Add(6 * time.Hour) }
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	if err != nil || !report.Verified {
+		t.Fatalf("tick 6 failed: %+v %v", report, err)
+	}
+	if report.Attempts != 6 || report.PrunedThrough != 1 {
+		t.Fatalf("unexpected state: attempts=%d pruned_through=%d", report.Attempts, report.PrunedThrough)
+	}
+	if len(report.PrunedRuns) != 1 || report.PrunedRuns[0] != "run-000001" {
+		t.Fatalf("expected pruned_runs [run-000001], got %v", report.PrunedRuns)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "run-000001")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("run-000001 not removed: %v", err)
+	}
+	for i := 2; i <= 6; i++ {
+		if _, err := os.Stat(filepath.Join(cfg.StateDir, scheduleRunName(i))); err != nil {
+			t.Fatalf("run %d missing: %v", i, err)
+		}
+	}
+}
+
+func TestSchedulePruneOldestBoundaryEntries(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	cfg.Retention = "prune-oldest"
+	cfg.MaxRuns = 10
+	writeScheduleFixture(t, path, cfg)
+	now := fixedScheduleTime()
+	for i := 1; i <= 2; i++ {
+		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
+		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := scanScheduleUsage(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	origMax := maxScheduleEntries
+	defer func() { maxScheduleEntries = origMax }()
+	maxScheduleEntries = usage.entries * 2
+
+	clock := func() time.Time { return now.Add(3 * time.Hour) }
+	status, err := ScheduleStatus(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.PrunedRuns) != 0 {
+		t.Fatalf("expected 0 pruned runs at exact boundary, got %v", status.PrunedRuns)
+	}
+
+	extra := filepath.Join(cfg.StateDir, "run-000001", "extra.txt")
+	if err := os.WriteFile(extra, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	if err != nil || !report.Verified {
+		t.Fatalf("tick with boundary+1 failed: %+v %v", report, err)
+	}
+	if len(report.PrunedRuns) != 1 || report.PrunedRuns[0] != "run-000001" {
+		t.Fatalf("expected run-000001 pruned when above boundary, got %v", report.PrunedRuns)
+	}
+}
+
+func TestScheduleBlockModeEntryCapResourceBlocked(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	cfg.Retention = "block"
+	writeScheduleFixture(t, path, cfg)
+	now := fixedScheduleTime()
+	if _, err := scheduleTick(context.Background(), path, true, func() time.Time { return now }, verifiedScheduleRunner); err != nil {
+		t.Fatal(err)
+	}
+	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := scanScheduleUsage(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	origMax := maxScheduleEntries
+	defer func() { maxScheduleEntries = origMax }()
+	maxScheduleEntries = usage.entries - 1
+
+	later := func() time.Time { return now.Add(2 * time.Hour) }
+	report, err := scheduleTick(context.Background(), path, true, later, verifiedScheduleRunner)
+	if err != nil {
+		t.Fatalf("expected nil error on resource_blocked, got %v", err)
+	}
+	if report.Status != "resource_blocked" {
+		t.Fatalf("expected status resource_blocked, got %s", report.Status)
+	}
+	expectedReason := fmt.Sprintf("retained evidence exceeds %d entries", maxScheduleEntries)
+	if report.Reason != expectedReason {
+		t.Fatalf("expected reason %q, got %q", expectedReason, report.Reason)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "run-000001")); err != nil {
+		t.Fatalf("expected run-000001 retained, stat failed: %v", err)
+	}
+}
+
+func TestSchedulePrunedThroughValidation(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+		t.Fatal(err)
+	}
+	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := readScheduleState(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PrunedThrough = state.Attempts + 1
+	if err := validateScheduleState(state, cfg.StateDir); err == nil {
+		t.Fatal("pruned_through > attempts was accepted")
+	}
+	state.PrunedThrough = -1
+	if err := validateScheduleState(state, cfg.StateDir); err == nil {
+		t.Fatal("negative pruned_through was accepted")
+	}
+	state.Attempts = 3
+	state.PrunedThrough = 1
+	state.LastAttempt.Number = 3
+	state.LastAttempt.ArtifactDir = filepath.Join(cfg.StateDir, "run-000003")
+	if err := saveScheduleJSON(t.Context(), root, "state.json", state); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(cfg.StateDir, "run-000002"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(cfg.StateDir, "run-000004"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanScheduleUsage(context.Background(), root); err == nil {
+		t.Fatal("gap was accepted by scanScheduleUsage")
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSchedulePruneOldestDryRunDeletesNothing(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	cfg.MaxRuns = 5
+	writeScheduleFixture(t, path, cfg)
+	now := fixedScheduleTime()
+	for i := 1; i <= 5; i++ {
+		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
+		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg.Retention = "prune-oldest"
+	cfg.MaxRuns = 4
+	writeScheduleFixture(t, path, cfg)
+
+	status, err := ScheduleStatus(context.Background(), path)
+	if err != nil {
+		t.Fatalf("ScheduleStatus failed: %v", err)
+	}
+	if len(status.PrunedRuns) != 1 || status.PrunedRuns[0] != "run-000001" {
+		t.Fatalf("expected PrunedRuns [run-000001], got %v", status.PrunedRuns)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.StateDir, "run-000001")); err != nil {
+		t.Fatalf("run-000001 missing after dry run: %v", err)
+	}
+	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := readScheduleState(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if state.PrunedThrough != 0 {
+		t.Fatalf("expected disk state pruned_through 0, got %d", state.PrunedThrough)
+	}
+}
+
+func TestScheduleOldStateLoadsWithoutPrunedThrough(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	if _, err := scheduleTick(context.Background(), path, true, fixedScheduleTime, verifiedScheduleRunner); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(cfg.StateDir, "state.json")
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		t.Fatal(err)
+	}
+	delete(obj, "pruned_through")
+	clean, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, clean, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := readScheduleState(context.Background(), root)
+	if err != nil {
+		t.Fatalf("readScheduleState failed on old state: %v", err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if state.PrunedThrough != 0 {
+		t.Fatalf("expected pruned_through 0, got %d", state.PrunedThrough)
+	}
+	status, err := ScheduleStatus(context.Background(), path)
+	if err != nil || status.PrunedThrough != 0 {
+		t.Fatalf("ScheduleStatus failed on old state: %+v %v", status, err)
+	}
+}
+
 // requireScheduling skips a case where dogfood scheduling cannot run, naming why.
 //
 // Scheduling identifies its own executable through Linux procfs, and the non-Linux
@@ -573,5 +832,53 @@ func requireScheduling(t *testing.T) {
 	t.Helper()
 	if _, err := scheduleExecutableSHA(context.Background()); err != nil {
 		t.Skipf("scheduling unavailable on this platform: %v", err)
+	}
+}
+
+// Boundary: a prune a crash interrupted after pruned_through was saved and before the directory was
+// removed leaves run-000001 behind with pruned_through 1. A status run names it and deletes nothing;
+// the next tick removes it and runs, instead of refusing the disagreement for good.
+func TestSchedulePruneOldestResumesAnInterruptedPrune(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	now := fixedScheduleTime()
+	for i := 1; i <= 3; i++ {
+		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
+		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+	cfg.Retention = "prune-oldest"
+	writeScheduleFixture(t, path, cfg)
+	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := readScheduleState(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PrunedThrough = 1
+	if err := saveScheduleJSON(t.Context(), root, "state.json", state); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(cfg.StateDir, "run-000001")
+	clock := func() time.Time { return now.Add(4 * time.Hour) }
+	status, err := scheduleTick(context.Background(), path, false, clock, verifiedScheduleRunner)
+	if err != nil || len(status.PrunedRuns) != 1 || status.PrunedRuns[0] != "run-000001" {
+		t.Fatalf("status run: %+v %v; want run-000001 named", status, err)
+	}
+	if _, err := os.Stat(leftover); err != nil {
+		t.Fatalf("status run deleted the leftover: %v", err)
+	}
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	if err != nil || !report.Verified || report.Attempts != 4 {
+		t.Fatalf("tick after the interrupted prune: %+v %v", report, err)
+	}
+	if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("leftover run-000001 not removed: %v", err)
 	}
 }

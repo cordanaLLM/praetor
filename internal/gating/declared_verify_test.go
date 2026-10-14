@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,10 @@ func declaredVerifyRepo(t *testing.T, recipe string) string {
 	}
 	return dir
 }
+
+// recipeStatus matches GNU Make's failed-recipe line in any locale and version: "[Makefile:3:
+// verify-all] Error 1" from Make 4, "[verify-all] Error 1" from the Make 3.81 macOS ships.
+var recipeStatus = regexp.MustCompile(`\[(?:Makefile:\d+: )?verify-all\] \S+ 1\b`)
 
 // requireMake skips where the stage's make is not on PATH (HISS-21): the acceptance runs below
 // run the real command.
@@ -51,7 +56,9 @@ func stageNamed(t *testing.T, rep *PipelineReport, name string) StageResult {
 
 // Negative (#1218 acceptance 1): a declared verify-all that fails refuses the push under
 // --admit-unsupported, and the reason names the command and its exit code. GNU Make exits 2 when
-// a recipe fails and reports the recipe's own status ("Error 1"), so both are named.
+// a recipe fails and reports the recipe's own status ("Error 1"), so both are named. Make
+// translates the word "Error" (German hosts print "Fehler 1"), so the recipe status is matched
+// without it: the target in brackets, then the status.
 func TestRunGatedPipeline_Negative_DeclaredVerifyFailureRefuses(t *testing.T) {
 	requireMake(t)
 	rep := gatedRun(t, declaredVerifyRepo(t, "@exit 1"), RunOptions{AdmitUnsupported: true})
@@ -59,10 +66,11 @@ func TestRunGatedPipeline_Negative_DeclaredVerifyFailureRefuses(t *testing.T) {
 	if rep.Status != StatusRejected || got.Name != stageDeclaredVerify || got.Status != StageFailed {
 		t.Fatalf("status %s, last stage %s %s; want rejected at the declared verification: %+v", rep.Status, got.Name, got.Status, rep.Stages)
 	}
-	for _, want := range []string{"make verify-all exited 2", "Error 1"} {
-		if !strings.Contains(got.Message, want) {
-			t.Errorf("reason %q does not name %q", got.Message, want)
-		}
+	if !strings.Contains(got.Message, "make verify-all exited 2") {
+		t.Errorf("reason %q does not name %q", got.Message, "make verify-all exited 2")
+	}
+	if !recipeStatus.MatchString(got.Message) {
+		t.Errorf("reason %q does not name the recipe status (%s)", got.Message, recipeStatus)
 	}
 }
 

@@ -9,10 +9,9 @@ import (
 	"path/filepath"
 )
 
-const (
-	maxScheduleEntries    = 200000
-	maxScheduleInputBytes = 16 << 20
-)
+const maxScheduleInputBytes = 16 << 20
+
+var maxScheduleEntries = 200000
 
 // ScheduleConfig is an explicit local schedule, never an instruction from a transcript.
 // Defaults apply only to omitted numeric limits; zero is rejected.
@@ -28,6 +27,7 @@ type ScheduleConfig struct {
 	MaxConsecutiveFailures int           `json:"max_consecutive_failures"`
 	MaxRuns                int           `json:"max_runs"`
 	MaxBytes               int64         `json:"max_bytes"`
+	Retention              string        `json:"retention,omitempty"`
 	RepairPolicy           *RepairPolicy `json:"repair_policy,omitempty"`
 }
 
@@ -45,7 +45,7 @@ func readScheduleConfig(ctx context.Context, path string) ([]byte, *ScheduleConf
 	if err != nil {
 		return nil, nil, err
 	}
-	names := []string{"version", "suite_config", "source_root", "state_dir", "runner_binary", "allow_remote", "interval_seconds", "retry_seconds", "max_consecutive_failures", "max_runs", "max_bytes", "repair_policy"}
+	names := []string{"version", "suite_config", "source_root", "state_dir", "runner_binary", "allow_remote", "interval_seconds", "retry_seconds", "max_consecutive_failures", "max_runs", "max_bytes", "retention", "repair_policy"}
 	fields, err := scheduleObject(data, names)
 	if err != nil {
 		return nil, nil, err
@@ -61,7 +61,7 @@ func readScheduleConfig(ctx context.Context, path string) ([]byte, *ScheduleConf
 			return nil, nil, err
 		}
 	}
-	config := &ScheduleConfig{IntervalSeconds: 86400, RetrySeconds: 3600, MaxConsecutiveFailures: 3, MaxRuns: 32, MaxBytes: 2 << 30}
+	config := &ScheduleConfig{IntervalSeconds: 86400, RetrySeconds: 3600, MaxConsecutiveFailures: 3, MaxRuns: 32, MaxBytes: 2 << 30, Retention: "block"}
 	if err := json.Unmarshal(data, config); err != nil {
 		return nil, nil, errors.New("invalid schedule field type")
 	}
@@ -122,9 +122,23 @@ func validateScheduleConfig(config *ScheduleConfig) error {
 }
 
 func validateScheduleBounds(config *ScheduleConfig) error {
+	if config.Retention != "block" && config.Retention != "prune-oldest" {
+		return errors.New("schedule retention must be block or prune-oldest")
+	}
+	if err := validateScheduleIntervals(config); err != nil {
+		return err
+	}
+	return validateScheduleLimits(config)
+}
+
+func validateScheduleIntervals(config *ScheduleConfig) error {
 	if config.IntervalSeconds < 60 || config.IntervalSeconds > 2592000 || config.RetrySeconds < 60 || config.RetrySeconds > 86400 {
 		return errors.New("schedule interval must be 60..2592000 seconds and retry 60..86400 seconds")
 	}
+	return nil
+}
+
+func validateScheduleLimits(config *ScheduleConfig) error {
 	if config.MaxConsecutiveFailures < 1 || config.MaxConsecutiveFailures > 3 || config.MaxRuns < 1 || config.MaxRuns > 1024 {
 		return errors.New("schedule failure limit must be 1..3 and run limit 1..1024")
 	}
