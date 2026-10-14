@@ -250,6 +250,8 @@ func TestEvaluateCalledJobName(t *testing.T) {
 	inputs := map[string]exprValue{
 		"root": {text: "."},
 		"flag": {isBool: true, bval: true, text: "true"},
+		"zero": {text: "0", isNum: true},
+		"held": {text: "{1}"},
 	}
 
 	cases := []struct {
@@ -267,6 +269,12 @@ func TestEvaluateCalledJobName(t *testing.T) {
 		{"unallowed identifier", "${{ github.ref }}", "", true},
 		{"unallowed syntax", "${{ 123 + 456 }}", "", true},
 		{"unclosed string", "${{ 'unclosed }}", "", true},
+		{"number zero is false", "${{ inputs.zero && 'set' || 'unset' }}", "unset", false},
+		{"format brace escape", "${{ format('{{{0}}}', inputs.root) }}", "{.}", false},
+		{"format value holding a placeholder", "${{ format('{0}-{1}', inputs.held, 'x') }}", "{1}-x", false},
+		{"format placeholder without argument", "${{ format('{1}', inputs.root) }}", "", true},
+		{"format lone brace", "${{ format('a}b', inputs.root) }}", "", true},
+		{"input without default or caller value", "${{ inputs.missing || 'fallback' }}", "", true},
 	}
 
 	for _, tc := range cases {
