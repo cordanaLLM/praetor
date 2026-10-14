@@ -69,18 +69,19 @@ type RunDefaults struct {
 // repository ("./.github/workflows/<file>") or "<owner>/<repo>/.github/workflows/<file>@<ref>".
 // Env is raw for the reason Step.Env is.
 type Job struct {
-	Name            string    `yaml:"name"`
-	Uses            string    `yaml:"uses"`
-	If              string    `yaml:"if"`
-	Needs           yaml.Node `yaml:"needs"`
-	ContinueOnError string    `yaml:"continue-on-error"`
-	Permissions     yaml.Node `yaml:"permissions"`
-	Env             yaml.Node `yaml:"env"`
-	Strategy        Strategy  `yaml:"strategy"`
-	Steps           []Step    `yaml:"steps"`
-	RunsOn          yaml.Node `yaml:"runs-on"`
-	Defaults        Defaults  `yaml:"defaults"`
-	Container       yaml.Node `yaml:"container"`
+	Name            string         `yaml:"name"`
+	Uses            string         `yaml:"uses"`
+	With            map[string]any `yaml:"with"`
+	If              string         `yaml:"if"`
+	Needs           yaml.Node      `yaml:"needs"`
+	ContinueOnError string         `yaml:"continue-on-error"`
+	Permissions     yaml.Node      `yaml:"permissions"`
+	Env             yaml.Node      `yaml:"env"`
+	Strategy        Strategy       `yaml:"strategy"`
+	Steps           []Step         `yaml:"steps"`
+	RunsOn          yaml.Node      `yaml:"runs-on"`
+	Defaults        Defaults       `yaml:"defaults"`
+	Container       yaml.Node      `yaml:"container"`
 }
 
 // Step is the step subset the Go cache audit and the portability checks decide on, plus the id

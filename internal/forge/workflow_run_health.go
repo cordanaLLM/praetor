@@ -70,12 +70,21 @@ type WorkflowRunFinding struct {
 	Latest *WorkflowRunRecord
 	// Expected is the manifest's workflow_runs.expected entry for the workflow, if any.
 	Expected *config.WorkflowRunExpectation
+	// Today is the date against which expectation expiry is judged; defaults to time.Now().
+	Today time.Time
 }
 
-// Covered reports whether the workflow's declaration names exactly the state found: failing
-// for a failing workflow, unexercised for one that never ran.
+func (f WorkflowRunFinding) today() time.Time {
+	if f.Today.IsZero() {
+		return time.Now()
+	}
+	return f.Today
+}
+
+// Covered reports whether the workflow's declaration names exactly the state found and
+// has not expired: failing for a failing workflow, unexercised for one that never ran.
 func (f WorkflowRunFinding) Covered() bool {
-	if f.Expected == nil {
+	if f.Expected == nil || f.Expected.Expired(f.today()) {
 		return false
 	}
 	switch f.Health {
@@ -160,7 +169,12 @@ func checkWorkflowRuns(ctx context.Context, file workflowFile, branch string, re
 	if err := yaml.Unmarshal(file.Data, &spec); err != nil {
 		return WorkflowRunFinding{}, fmt.Errorf("parse workflow %s: %w", file.Name, err)
 	}
-	finding := WorkflowRunFinding{Workflow: file.Name, Triggers: triggerNames(&spec.On), Expected: policy.Expectation(file.Name)}
+	finding := WorkflowRunFinding{
+		Workflow: file.Name,
+		Triggers: triggerNames(&spec.On),
+		Expected: policy.Expectation(file.Name),
+		Today:    time.Now(),
+	}
 	if len(finding.Triggers) == 1 && finding.Triggers[0] == "workflow_call" {
 		finding.Health = WorkflowCalledOnly
 		return finding, nil
@@ -312,13 +326,27 @@ func (f WorkflowRunFinding) line(branch string) string {
 	case f.Covered():
 		return fmt.Sprintf("[INFO] Workflow %s: %s as declared (%s): %s", f.Workflow, f.Expected.State, f.Expected.Reason, f.state(branch))
 	case f.Unhealthy():
-		return fmt.Sprintf("[WARN] Workflow %s: %s", f.Workflow, f.state(branch))
+		return fmt.Sprintf("[WARN] Workflow %s: %s%s", f.Workflow, f.state(branch), f.unhealthyHint())
 	case f.Expected != nil:
-		return fmt.Sprintf("[INFO] Workflow %s: declared %s, but %s; the declaration no longer applies", f.Workflow, f.Expected.State, f.state(branch))
+		return fmt.Sprintf("[WARN] Workflow %s: declared %s, but %s; the declaration no longer applies", f.Workflow, f.Expected.State, f.state(branch))
 	case f.Health == WorkflowHealthy:
 		return ""
 	default:
 		return fmt.Sprintf("[INFO] Workflow %s: %s", f.Workflow, f.state(branch))
+	}
+}
+
+// unhealthyHint ends an unhealthy finding's line: the date an expired declaration stopped
+// holding, else for a failing workflow the declaration route, so a local gate on a red main
+// says what to do while the fix lands.
+func (f WorkflowRunFinding) unhealthyHint() string {
+	switch {
+	case f.Expected != nil && f.Expected.Expires != "" && f.Expected.Expired(f.today()):
+		return "; the declaration expired on " + f.Expected.Expires
+	case f.Health == WorkflowFailing:
+		return "; declare it in workflow_runs.expected with state failing, a reason and an expiry while the fix lands"
+	default:
+		return ""
 	}
 }
 

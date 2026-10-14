@@ -444,7 +444,7 @@ func jobCheckContexts(id string, job workflowJob) ([]string, error) {
 		return matrixJobContexts(id, name, matrix)
 	}
 	if strings.Contains(name, expressionOpen) {
-		return nil, fmt.Errorf("job %q: name %q holds an expression but the job declares no strategy.matrix to evaluate it from; a required check context that no run reports blocks the branch permanently", id, name)
+		return nil, fmt.Errorf("job %q: name %q holds an expression but the job declares no strategy.matrix to evaluate it from; a required check context that no run reports blocks the branch permanently; report the result through an aggregate job with a literal name", id, name)
 	}
 	return []string{name}, nil
 }

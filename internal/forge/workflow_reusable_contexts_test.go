@@ -175,3 +175,117 @@ func TestRequiredStatusContextsOf_ReadsUnselectedCalledWorkflow(t *testing.T) {
 		t.Fatalf("planned removal of the called workflow: contexts %q, err %v", got, err)
 	}
 }
+
+// Issue #1334: resolve called job name expressions from input defaults and literal with values.
+func TestReusableCallContexts_JobNameExpression(t *testing.T) {
+	horistesCalled := "on:\n  workflow_call:\n    inputs:\n      root:\n        default: .\n" +
+		"jobs:\n  lint:\n    name: ${{ inputs.root == '.' && 'REUSE lint' || format('REUSE lint ({0})', inputs.root) }}\n" +
+		"    runs-on: ubuntu-latest\n    steps:\n      - run: reuse lint\n"
+
+	// 1. horistes shape: caller without with uses default "." -> "Licence / REUSE lint"
+	got, err := reusableContexts(t, map[string]string{
+		"caller.yml":  licenceCaller,
+		"licence.yml": horistesCalled,
+	})
+	if err != nil {
+		t.Fatalf("horistes default: %v", err)
+	}
+	if !slices.Equal(got, []string{"Licence / REUSE lint"}) {
+		t.Fatalf("contexts = %q, want [Licence / REUSE lint]", got)
+	}
+
+	// 2. caller with root: sub overlays default -> "Licence / REUSE lint (sub)"
+	callerWithSub := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
+		"    uses: ./.github/workflows/licence.yml\n    with:\n      root: sub\n"
+	got, err = reusableContexts(t, map[string]string{
+		"caller.yml":  callerWithSub,
+		"licence.yml": horistesCalled,
+	})
+	if err != nil {
+		t.Fatalf("caller with sub: %v", err)
+	}
+	if !slices.Equal(got, []string{"Licence / REUSE lint (sub)"}) {
+		t.Fatalf("contexts = %q, want [Licence / REUSE lint (sub)]", got)
+	}
+
+	// 3. github.ref in the name -> refusal naming the aggregate route
+	calledWithRef := "on:\n  workflow_call:\njobs:\n  lint:\n" +
+		"    name: ${{ github.ref == 'refs/heads/main' && 'REUSE lint' || 'other' }}\n" +
+		"    runs-on: ubuntu-latest\n    steps:\n      - run: reuse lint\n"
+	_, err = reusableContexts(t, map[string]string{
+		"caller.yml":  licenceCaller,
+		"licence.yml": calledWithRef,
+	})
+	wantAggregate := "report the result through an aggregate job with a literal name"
+	if err == nil || !strings.Contains(err.Error(), wantAggregate) {
+		t.Fatalf("github.ref err = %v, want containing %q", err, wantAggregate)
+	}
+
+	// 4. caller with value holding an expression -> refusal
+	callerWithExpr := "on:\n  pull_request:\njobs:\n  licence:\n    name: Licence\n" +
+		"    uses: ./.github/workflows/licence.yml\n    with:\n      root: ${{ inputs.root }}\n"
+	_, err = reusableContexts(t, map[string]string{
+		"caller.yml":  callerWithExpr,
+		"licence.yml": horistesCalled,
+	})
+	if err == nil || !strings.Contains(err.Error(), wantAggregate) {
+		t.Fatalf("caller with expr: err = %v, want containing %q", err, wantAggregate)
+	}
+
+	// 5. plain literal names unchanged
+	got, err = reusableContexts(t, map[string]string{
+		"caller.yml":  licenceCaller,
+		"licence.yml": licenceCalled,
+	})
+	if err != nil {
+		t.Fatalf("plain literal: %v", err)
+	}
+	if !slices.Equal(got, []string{"Licence / REUSE lint"}) {
+		t.Fatalf("contexts = %q, want [Licence / REUSE lint]", got)
+	}
+}
+
+// Unit tests for the allow-listed expression evaluator (#1334).
+func TestEvaluateCalledJobName(t *testing.T) {
+	inputs := map[string]exprValue{
+		"root": {text: "."},
+		"flag": {isBool: true, bval: true, text: "true"},
+		"zero": {text: "0", isNum: true},
+		"held": {text: "{1}"},
+	}
+
+	cases := []struct {
+		name string
+		expr string
+		want string
+		fail bool
+	}{
+		{"comparison equal", "${{ inputs.root == '.' && 'yes' || 'no' }}", "yes", false},
+		{"comparison not equal", "${{ inputs.root != '.' && 'yes' || 'no' }}", "no", false},
+		{"format single arg", "${{ format('lint ({0})', inputs.root) }}", "lint (.)", false},
+		{"format multi arg", "${{ format('{0}/{1}', inputs.root, 'sub') }}", "./sub", false},
+		{"parentheses", "${{ (inputs.root == '.' || inputs.root == 'other') && 'matched' }}", "matched", false},
+		{"escaped single quote", "${{ 'It''s fine' }}", "It's fine", false},
+		{"unallowed identifier", "${{ github.ref }}", "", true},
+		{"unallowed syntax", "${{ 123 + 456 }}", "", true},
+		{"unclosed string", "${{ 'unclosed }}", "", true},
+		{"number zero is false", "${{ inputs.zero && 'set' || 'unset' }}", "unset", false},
+		{"format brace escape", "${{ format('{{{0}}}', inputs.root) }}", "{.}", false},
+		{"format value holding a placeholder", "${{ format('{0}-{1}', inputs.held, 'x') }}", "{1}-x", false},
+		{"format placeholder without argument", "${{ format('{1}', inputs.root) }}", "", true},
+		{"format lone brace", "${{ format('a}b', inputs.root) }}", "", true},
+		{"input without default or caller value", "${{ inputs.missing || 'fallback' }}", "", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := evaluateCalledJobName(tc.expr, inputs)
+			if tc.fail && err == nil {
+				t.Fatalf("evaluate(%q) = %q, want error", tc.expr, got)
+			}
+			if !tc.fail && (err != nil || got != tc.want) {
+				t.Fatalf("evaluate(%q) = %q, err = %v; want %q", tc.expr, got, err, tc.want)
+			}
+		})
+	}
+}
