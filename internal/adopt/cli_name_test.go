@@ -91,7 +91,7 @@ func TestLegacyMakefileDetection_Boundary_RejectsUnrelatedMakefiles(t *testing.T
 func runHookLine(t *testing.T, shell, line, stubDir, workDir string) (string, int) {
 	t.Helper()
 	if os.PathSeparator == '\\' {
-		t.Skip("POSIX shell stubs required")
+		t.Skip("POSIX shell stubs required: the hook line's stubs are shell scripts, which Windows does not start by their shebang")
 	}
 	shellPath, err := exec.LookPath(shell)
 	if err != nil {
