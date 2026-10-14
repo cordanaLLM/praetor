@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"github.com/cordanaLLM/praetor/internal/router"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -83,22 +85,61 @@ func loadPinnedRegisterAuthority(ctx context.Context, cfg Config) (config.Regist
 	if err != nil || string(kind) != "commit\n" {
 		return config.RegisterAuthority{}, errors.New("source_sha must identify an immutable commit")
 	}
-	entry, err := runGit(ctx, cfg.SourceRoot, 512, "ls-tree", "-z", cfg.SourceSHA, "--", ".standards.yaml")
+	data, found, err := pinnedBlob(ctx, cfg, ".standards.yaml", "pinned register manifest")
+	if err != nil || !found {
+		return config.AbsentRegisterAuthority(), err
+	}
+	authority, err := config.ParseRegisterAuthority(data, cfg.SourceSHA+":.standards.yaml")
+	if err != nil || !authority.HasDeclaredTasks() {
+		return authority, err
+	}
+	labels, err := pinnedTaskLabels(ctx, cfg)
 	if err != nil {
-		return config.RegisterAuthority{}, errors.New("pinned register manifest lookup failed")
+		return config.RegisterAuthority{}, err
+	}
+	if err := authority.ValidateTaskLabels(labels); err != nil {
+		return config.RegisterAuthority{}, fmt.Errorf("pinned register manifest: %w", err)
+	}
+	return authority, nil
+}
+
+// pinnedTaskLabels returns the target_tasks vocabulary of the source repository's own router at
+// the pinned commit, or the router's built-in labels when it has none. Register rows are judged
+// by that router, never by the repair router, which may declare only the repair task (#765).
+func pinnedTaskLabels(ctx context.Context, cfg Config) ([]string, error) {
+	data, found, err := pinnedBlob(ctx, cfg, router.DefaultConfigPath, "pinned routing config")
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return router.DefaultTaskLabels(), nil
+	}
+	routing, err := router.ParseRoutingConfig(data, cfg.SourceSHA+":"+router.DefaultConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	return router.DeclaredTaskLabels(routing), nil
+}
+
+// pinnedBlob reads the regular file at path in the pinned source commit; found is false when the
+// commit has no entry there.
+func pinnedBlob(ctx context.Context, cfg Config, path, what string) (data []byte, found bool, err error) {
+	entry, err := runGit(ctx, cfg.SourceRoot, 512, "ls-tree", "-z", cfg.SourceSHA, "--", path)
+	if err != nil {
+		return nil, false, errors.New(what + " lookup failed")
 	}
 	if len(entry) == 0 {
-		return config.AbsentRegisterAuthority(), nil
+		return nil, false, nil
 	}
 	record, err := util.ParseGitTreeEntry(strings.TrimSuffix(string(entry), "\x00"), false)
-	if err != nil || record.Path != ".standards.yaml" || !validBlob(record) {
-		return config.RegisterAuthority{}, errors.New("pinned register manifest is not a regular file")
+	if err != nil || record.Path != path || !validBlob(record) {
+		return nil, false, errors.New(what + " is not a regular file")
 	}
-	data, err := runGit(ctx, cfg.SourceRoot, contextopt.MaxSourceBytes, "cat-file", "blob", record.Object)
+	data, err = runGit(ctx, cfg.SourceRoot, contextopt.MaxSourceBytes, "cat-file", "blob", record.Object)
 	if err != nil {
-		return config.RegisterAuthority{}, errors.New("pinned register manifest read failed")
+		return nil, false, errors.New(what + " read failed")
 	}
-	return config.ParseRegisterAuthority(data, cfg.SourceSHA+":.standards.yaml")
+	return data, true, nil
 }
 
 func validateConfig(c Config) error {

@@ -133,6 +133,9 @@ jobs:
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	// The gate that passed every pre-v1 incompatible change under policy auto as a warning, marked or
+	// not (#1317).
+	"fd668d77af454da56c6299dfcc1e4f5f49f8d007465489af0ead0067e96fc07d": Directory + "/" + GateFile,
 	// The first gate, which ran on every push to every branch and tag and on every draft pull
 	// request (#815).
 	"a123aa00616a9ee913dda943e288a64f8f3e3518b7777a4f8ed866c10c47f37e": WorkflowFile,

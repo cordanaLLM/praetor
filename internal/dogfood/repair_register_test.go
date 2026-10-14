@@ -165,14 +165,18 @@ func TestRepairPolicyRejectsCanonicalRegisterMismatch(t *testing.T) {
 	}
 }
 
-func TestRepairPolicyRejectsRegisterTaskOutsideRoutingVocabulary(t *testing.T) {
+// The repository's register rows are judged against the repository's own router where the
+// manifest is loaded (config.LoadCheckedRegisterAuthority, the schedule snapshot's source
+// router); the repair router only routes the repair task and does not judge them (#765).
+func TestRepairPolicyLeavesRegisterRowsToTheRepositoryRouter(t *testing.T) {
 	policy := repairTestPolicy(t)
-	authority := repairRegisterAuthority(t, "undeclared_task: internal")
+	policy.RoutingConfig = repairTestFile(t, narrowRepairRoutingFixture)
+	authority := repairRegisterAuthority(t, "architecture_synthesis: docs")
 	policy = canonicalRepairTestPolicy(t, policy, authority)
-	if err := ValidateRepairPolicy(t.Context(), policy); err == nil {
-		t.Fatal("register task outside captured routing vocabulary accepted")
+	if err := ValidateRepairPolicy(t.Context(), policy); err != nil {
+		t.Fatalf("a row the repair router does not route was judged by it: %v", err)
 	}
-	if plan, err := PlanRepairs(t.Context(), repairTestReport(t, 1), policy); err == nil || plan != nil {
-		t.Fatalf("undeclared register task planned: plan=%+v err=%v", plan, err)
+	if plan, err := PlanRepairs(t.Context(), repairTestReport(t, 1), policy); plan == nil || len(plan.Jobs) == 0 {
+		t.Fatalf("repair not planned: plan=%+v err=%v", plan, err)
 	}
 }

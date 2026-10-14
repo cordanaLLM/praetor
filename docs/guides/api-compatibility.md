@@ -3,8 +3,11 @@
 The `api:public-contract` facet, part of the default facet set, adds a hosted check to every
 repository whose `go.mod` git tracks. The check compares the exported API of every Go module in
 the repository with a base revision. A removed or
-changed exported identifier in any module, a nested one included, reaches review as a warning
-before the repository's first v1 release and as a failed required check from v1 on. The gate is
+changed exported identifier in any module, a nested one included, fails the required check from
+v1 on. Before the repository's first v1 release it passes only when a commit in the compared range
+marks the break: a Conventional Commits `!` subject or a `BREAKING CHANGE:` footer, with a
+non-empty `Migration:` footer (the same patterns `praetorctl forge check-commits` reads); an
+unmarked pre-v1 break fails the check. The gate is
 one Go program, [`tools/apicompat/gate/main.go`](https://github.com/cordanaLLM/praetor/blob/main/tools/apicompat/gate/main.go),
 run by the workflow `.github/workflows/praetor-api.yml` under the status context
 **Go API Compatibility**.
@@ -216,7 +219,7 @@ binary you built.
 | Flag | Default | Meaning |
 | :--- | :--- | :--- |
 | `-base` | empty | Base revision. Empty selects the newest root release tag merged into `HEAD`. |
-| `-policy` | `auto` | `auto` warns before v1 and rejects from v1; `warn` and `reject` fix the policy. |
+| `-policy` | `auto` | `auto` rejects from v1 and, before v1, rejects a break no commit marks with `!` or `BREAKING CHANGE:` plus `Migration:`; `warn` and `reject` fix the policy. |
 | `-checker` | empty | A go-apidiff binary; empty builds the pinned one. |
 | `-repo` | `.` | Any directory inside the repository. |
 
@@ -263,7 +266,7 @@ there is no published API, and the gate passes saying so; a push builds on that.
 | Status | Meaning |
 | :--- | :--- |
 | `0` | Every compared module is compatible, nothing was there to compare, or incompatible changes were reported under the warn policy. |
-| `1` | Incompatible changes under the reject policy. |
+| `1` | Incompatible changes under the reject policy, or an unmarked pre-v1 break under `auto`. |
 | `2` | The comparison did not run: a git or discovery error, a malformed `go.mod`, a module that does not build at `HEAD`, a checker that cannot be built, misses the canary, exits with a status other than 0 or 1, or prints an error. |
 
 Compatibility policy never relaxes execution policy: status 2 holds under `-policy=warn` too.

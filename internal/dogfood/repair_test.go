@@ -41,6 +41,12 @@ func repairTestFile(t *testing.T, body string) string {
 	return path
 }
 
+// narrowRepairRoutingFixture declares only the repair task, the shape of a workstation's repair
+// router (#765).
+var narrowRepairRoutingFixture = strings.Replace(repairRoutingFixture,
+	"target_tasks: [ci_debugging, architecture_synthesis, function_docstrings, commit_message_synthesis, waiver_signoff]",
+	"target_tasks: [ci_debugging]", 1)
+
 func repairTestPolicy(t *testing.T) RepairPolicy {
 	t.Helper()
 	policy := RepairPolicy{RoutingConfig: repairTestFile(t, repairRoutingFixture), Task: "ci_debugging",

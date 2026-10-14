@@ -275,6 +275,7 @@ type forgeStub struct {
 	repo            map[string]any
 	legacy          map[string]any
 	legacyStatus    int
+	rulesStatus     int
 	rulesUnenforced bool
 	branchMissing   bool
 }
@@ -331,6 +332,10 @@ func (s *forgeStub) handler() http.HandlerFunc {
 // serveBranchRules lists the rules of every stored active ruleset whose ref_name includes
 // refs/heads/branch, each with its ruleset id, as GET .../rules/branches/{branch} does.
 func (s *forgeStub) serveBranchRules(w http.ResponseWriter, branch string) {
+	if s.rulesStatus >= http.StatusMultipleChoices {
+		stubRespond(w, s.rulesStatus, map[string]any{"message": "stub rejection"})
+		return
+	}
 	rules := []map[string]any{}
 	ids := make([]int, 0, len(s.rulesets))
 	for id := range s.rulesets {

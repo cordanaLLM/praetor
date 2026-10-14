@@ -106,15 +106,22 @@ func reportLiveProtection(ctx context.Context, reader protectionReader, target p
 }
 
 // describeMechanisms names the mechanisms that protect the branch live describes, or says that
-// none does, and says so when GitHub has no such branch yet.
+// none does, and says so when GitHub has no such branch yet. It names the unread legacy protection
+// object when GitHub answered the legacy read with 403 Forbidden.
 func describeMechanisms(live *forge.LiveBranchProtection) string {
 	mechanisms := live.Mechanisms()
 	text := "protected by " + strings.Join(mechanisms, ", ")
 	if len(mechanisms) == 0 {
-		text = "no active ruleset rule applies to " + live.Branch + " and it has no " + forge.LegacyProtectionMechanism + " object"
+		text = "no active ruleset rule applies to " + live.Branch
+		if !live.LegacyUnread {
+			text += " and it has no " + forge.LegacyProtectionMechanism + " object"
+		}
 	}
 	if live.Missing {
 		text += " (" + live.Branch + " does not exist on GitHub yet; a ruleset that targets it applies once it is pushed)"
+	}
+	if live.LegacyUnread {
+		text += "; " + forge.LegacyProtectionUnreadNote
 	}
 	return text
 }

@@ -158,31 +158,45 @@ func (s *adoptSession) readExistingLefthook() ([]byte, bool, error) {
 }
 
 // lefthookShape returns what this run's lefthook.yml carries jobs for: the languages
-// (lefthookLanguages) and, when this run emits the REUSE gate (reuseGateApplies: the root
-// declares its licensing the REUSE way and adoption.decline does not name reuse-gate), the
-// reuse-lint job. A root it cannot inspect is an error, never a repository without REUSE.
+// (lefthookLanguages), the reuse-lint job when this run emits the REUSE gate (reuseGateApplies:
+// the root declares its licensing the REUSE way and adoption.decline does not name reuse-gate),
+// and the tool module govulncheck job when the repository declares govulncheck in its tool
+// module (tools/go/go.mod). A root it cannot inspect is an error.
 func (s *adoptSession) lefthookShape(ctx context.Context) (lefthookShape, error) {
 	reuse, err := s.reuseGateApplies(ctx)
 	if err != nil {
 		return lefthookShape{}, fmt.Errorf("decide the reuse-lint job of %s: %w", lefthookFile, err)
 	}
-	return lefthookShape{languages: lefthookLanguages(s.verification), reuse: reuse}, nil
+	toolGovuln, err := repoRequiresToolGovuln(ctx, s.repoPath)
+	if err != nil {
+		return lefthookShape{}, fmt.Errorf("inspect tool module of %s: %w", lefthookFile, err)
+	}
+	return lefthookShape{
+		languages:  lefthookLanguages(s.verification),
+		reuse:      reuse,
+		toolGovuln: toolGovuln,
+	}, nil
 }
 
 // classifyLefthookConfig decides how adoption treats an existing lefthook.yml. Praetor's own
 // renderings come first: a current one for shape, line endings aside, is verified, and an
-// earlier one (priorLefthookDigests) or the current one for the other REUSE switch
-// (lefthookShape.otherReuse) is migrated, neither needing --force. Every other configuration is
-// the repository's and is kept, --force included, and not activated, because the audit checks
-// only that the file exists and replacing it would drop whatever the repository composed in
-// (#502). The reason says why: a configuration that extends the canonical policy names that
-// policy; one that does not parse as a YAML mapping says so; any other names the generated jobs
-// it lacks and the jobs it adds, so an operator can merge them by hand.
+// earlier one (priorLefthookDigests), the current one for the other REUSE switch
+// (lefthookShape.otherReuse) or the other tool module govulncheck switch
+// (lefthookShape.otherToolGovuln) is migrated, neither needing --force. Every other
+// configuration is the repository's and is kept, --force included, and not activated, because
+// the audit checks only that the file exists and replacing it would drop whatever the
+// repository composed in (#502). The reason says why: a configuration that extends the
+// canonical policy names that policy; one that does not parse as a YAML mapping says so; any
+// other names the generated jobs it lacks and the jobs it adds, so an operator can merge them
+// by hand.
 func classifyLefthookConfig(existing []byte, shape lefthookShape) lefthookIdentity {
 	if matchCurrentLefthook(existing, shape).found {
 		return lefthookIdentity{}
 	}
-	if isPriorLefthookConfig(existing) || matchCurrentLefthook(existing, shape.otherReuse()).found {
+	if isPriorLefthookConfig(existing) ||
+		matchCurrentLefthook(existing, shape.otherReuse()).found ||
+		matchCurrentLefthook(existing, shape.otherToolGovuln()).found ||
+		matchCurrentLefthook(existing, shape.otherReuse().otherToolGovuln()).found {
 		return lefthookIdentity{prior: true}
 	}
 	var parsed map[string]any

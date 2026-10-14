@@ -18,12 +18,16 @@ const (
 	legacyProtectionAbsent = "Branch not protected"
 	// legacyBranchAbsent is the message of the same GET when the repository has no such branch
 	// yet, such as a default branch not pushed yet: a missing branch carries no legacy
-	// protection object, while a ruleset that targets its name already applies to it. Any
-	// other 404, or a 403, does not say the branch is unprotected and is an error.
+	// protection object, while a ruleset that targets its name already applies to it. A 403
+	// leaves the legacy object unread; any other 404 does not say the branch is unprotected and is
+	// an error.
 	legacyBranchAbsent = "Branch not found"
 	// LegacyProtectionMechanism names the legacy branch protection object as the mechanism that
 	// enforces a property, beside the rulesets LiveBranchProtection.RulesetLabel names.
 	LegacyProtectionMechanism = "branch protection"
+	// LegacyProtectionUnreadNote names the unread legacy protection object when GitHub answers
+	// the legacy read with 403 Forbidden.
+	LegacyProtectionUnreadNote = "legacy protection object unread (403); judged from rulesets alone"
 	// maxBranchRulePages bounds the listing of a branch's active rules (HISS-02): at most 1000.
 	maxBranchRulePages = maxRulesetPages
 	// maxBranchRules bounds every walk over a branch's active rules (HISS-02).
@@ -104,6 +108,10 @@ type LiveBranchProtection struct {
 	// Missing reports that the repository on GitHub has no such branch yet. Its rulesets are
 	// still read: GitHub lists the rules of every ruleset that targets the branch's name.
 	Missing bool
+	// LegacyUnread reports that GitHub answered the legacy protection object read with 403
+	// Forbidden, so the legacy object could not be read and live protection is judged from
+	// the rulesets alone.
+	LegacyUnread bool
 }
 
 // RulesetLabel names the ruleset rule comes from, such as ruleset "praetor-main-protection" #7,
@@ -148,10 +156,11 @@ func (l *LiveBranchProtection) Mechanisms() []string {
 // ReadBranchProtection reads what GitHub enforces on branch from both mechanisms: the active
 // rules of every ruleset that targets it (GET .../rules/branches/{branch}), named from the
 // ruleset listing, and the legacy protection object (GET .../branches/{branch}/protection),
-// where GitHub's "Branch not protected" answer means the branch has none and its "Branch not
-// found" answer means the branch does not exist yet, so it has none either (Missing). The
-// listing is read even when no rule applies: it is the only place a ruleset in evaluate or
-// disabled enforcement shows (RulesetEnforcement). It only reads.
+// where GitHub's "Branch not protected" answer means the branch has none, its "Branch not
+// found" answer means the branch does not exist yet, so it has none either (Missing), and a 403
+// Forbidden answer leaves the legacy object unread (LegacyUnread) so the branch is judged from
+// the rulesets alone. The listing is read even when no rule applies: it is the only place a
+// ruleset in evaluate or disabled enforcement shows (RulesetEnforcement). It only reads.
 func (g *GitHubDriver) ReadBranchProtection(ctx context.Context, branch string) (*LiveBranchProtection, error) {
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, err
@@ -171,12 +180,12 @@ func (g *GitHubDriver) ReadBranchProtection(ctx context.Context, branch string) 
 	if err != nil {
 		return nil, fmt.Errorf("read the merge queue ruleset for %s: %w", branch, err)
 	}
-	legacy, missing, err := g.legacyProtection(ctx, branch)
+	legacy, missing, unread, err := g.legacyProtection(ctx, branch)
 	if err != nil {
 		return nil, fmt.Errorf("read the legacy branch protection of %s: %w", branch, err)
 	}
 	return &LiveBranchProtection{Branch: branch, Rules: rules, RulesetNames: names, RulesetEnforcement: enforcement,
-		Legacy: legacy, QueueRuleset: queue, Missing: missing}, nil
+		Legacy: legacy, QueueRuleset: queue, Missing: missing, LegacyUnread: unread}, nil
 }
 
 // branchRules lists every active rule GitHub enforces on branch, page by page.
@@ -223,32 +232,36 @@ func (g *GitHubDriver) rulesetListing(ctx context.Context) (names, enforcement m
 }
 
 // legacyProtection reads the legacy protection object of branch. It returns nil when GitHub
-// answers that the branch has none, and nil and true when GitHub has no such branch.
-func (g *GitHubDriver) legacyProtection(ctx context.Context, branch string) (*LegacyBranchProtection, bool, error) {
+// answers that the branch has none, nil and true when GitHub has no such branch, and nil,
+// false, true when GitHub answers with 403 Forbidden so the object is unread.
+func (g *GitHubDriver) legacyProtection(ctx context.Context, branch string) (*LegacyBranchProtection, bool, bool, error) {
 	path, err := g.repoPath("branches/" + url.PathEscape(branch) + "/protection")
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	if status == http.StatusOK {
 		var protection LegacyBranchProtection
 		if err := json.Unmarshal(body, &protection); err != nil {
-			return nil, false, fmt.Errorf("failed parsing branch protection (raw: %q): %w", util.BodyPreview(body), err)
+			return nil, false, false, fmt.Errorf("failed parsing branch protection (raw: %q): %w", util.BodyPreview(body), err)
 		}
-		return &protection, false, nil
+		return &protection, false, false, nil
 	}
 	if status == http.StatusNotFound {
 		switch responseMessage(body) {
 		case legacyProtectionAbsent:
-			return nil, false, nil
+			return nil, false, false, nil
 		case legacyBranchAbsent:
-			return nil, true, nil
+			return nil, true, false, nil
 		}
 	}
-	return nil, false, fmt.Errorf("unexpected status %d from GET %s: %s", status, path, util.BodyPreview(body))
+	if status == http.StatusForbidden {
+		return nil, false, true, nil
+	}
+	return nil, false, false, fmt.Errorf("unexpected status %d from GET %s: %s", status, path, util.BodyPreview(body))
 }
 
 // responseMessage returns the message field of a GitHub error body, or "" when it has none.

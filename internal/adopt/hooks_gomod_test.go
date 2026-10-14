@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -130,8 +131,8 @@ func TestCargoJobs_Boundary_NestedManifestAndRustGlob(t *testing.T) {
 }
 
 // Boundary: a go.mod in a subdirectory is not a root module, and a root module without
-// govulncheck installed still skips the scan rather than failing the push, without starting the
-// gate; with govulncheck installed and no praetorctl the job fails closed like every governed job.
+// govulncheck installed fails the push with an install instruction; with govulncheck installed
+// and no praetorctl the job fails closed like every governed job.
 func TestGoModuleJobs_Boundary_NestedModuleAndMissingScanner(t *testing.T) {
 	stubs, work := t.TempDir(), t.TempDir()
 	log := filepath.Join(work, "calls.log")
@@ -141,7 +142,7 @@ func TestGoModuleJobs_Boundary_NestedModuleAndMissingScanner(t *testing.T) {
 		t.Errorf("nested module: exit %d, output %q", code, out)
 	}
 	mustWrite(t, filepath.Join(work, "go.mod"), "module example.com/demo\n")
-	if out, code := runHookLine(t, "sh", goJobRun(t, "pre-push", "security"), stubs, work); code != 0 || !strings.Contains(out, "govulncheck is not installed") {
+	if out, code := runHookLine(t, "sh", goJobRun(t, "pre-push", "security"), stubs, work); code != 1 || !strings.Contains(out, "govulncheck is not installed") || !strings.Contains(out, "go install") {
 		t.Errorf("missing scanner: exit %d, output %q", code, out)
 	}
 	if fileExists(log) {
@@ -151,5 +152,137 @@ func TestGoModuleJobs_Boundary_NestedModuleAndMissingScanner(t *testing.T) {
 	recordingStub(t, scannerOnly, "govulncheck", log, 0)
 	if out, code := runHookLine(t, "sh", goJobRun(t, "pre-push", "security"), scannerOnly, work); code != 1 || !strings.Contains(out, "neither praetorctl nor standardsctl") {
 		t.Errorf("missing praetorctl: exit %d, output %q", code, out)
+	}
+}
+
+// goJobRunFor returns the run line of one job of the configuration rendered for shape.
+func goJobRunFor(t *testing.T, shape lefthookShape, hook, job string) string {
+	t.Helper()
+	var parsed map[string]map[string]any
+	if err := yamlUnmarshal([]byte(buildLefthookYAMLFor(shape, false)), &parsed); err != nil {
+		t.Fatalf("generated lefthook.yml does not parse: %v", err)
+	}
+	commands, ok := parsed[hook]["commands"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s has no commands", hook)
+	}
+	body, ok := commands[job].(map[string]any)
+	if !ok {
+		t.Fatalf("%s has no job %s", hook, job)
+	}
+	run, ok := body["run"].(string)
+	if !ok {
+		t.Fatalf("%s/%s has no run line", hook, job)
+	}
+	return run
+}
+
+// Positive (#1315): when the repository tool module pins govulncheck, the pre-push security job
+// runs the gate with go tool -modfile=tools/go/go.mod govulncheck without a PATH check.
+func TestGoModuleJobs_Positive_ToolModuleGovulncheck(t *testing.T) {
+	stubs, work := t.TempDir(), t.TempDir()
+	mustWrite(t, filepath.Join(work, "go.mod"), "module example.com/demo\n")
+	log := filepath.Join(work, "calls.log")
+	recordingStub(t, stubs, util.PraetorCLI, log, 7)
+	run := goJobRunFor(t, lefthookShape{languages: hisscatalog.LanguageGo, toolGovuln: true}, "pre-push", "security")
+	if strings.Contains(run, "command -v govulncheck") {
+		t.Errorf("tool module rendering checks PATH: %q", run)
+	}
+	if !strings.Contains(run, govulnToolScanner) {
+		t.Errorf("tool module rendering lacks scanner: %q", run)
+	}
+	if _, code := runHookLine(t, "sh", run, stubs, work); code != 7 {
+		t.Errorf("gate execution exited %d, want 7", code)
+	}
+	want := util.PraetorCLI + " " + govulnGateArgs + " -- " + govulnToolScanner + "\n"
+	if got := mustRead(t, log); got != want {
+		t.Errorf("calls = %q, want %q", got, want)
+	}
+}
+
+// Positive (#1315): adoption inspects tools/go/go.mod and renders the go tool scanner form when
+// govulncheck is pinned, and the requiredToolGuard form otherwise.
+func TestAdopt_Positive_ToolModuleRendersGoToolSecurity(t *testing.T) {
+	cases := []struct {
+		name      string
+		toolGoMod string
+		wantTool  bool
+	}{
+		{
+			name:      "requires govuln",
+			toolGoMod: "module example.com/tools\n\nrequire golang.org/x/vuln v1.8.0\n",
+			wantTool:  true,
+		},
+		{
+			name:      "tool block govulncheck",
+			toolGoMod: "module example.com/tools\n\ntool (\n\tgolang.org/x/vuln/cmd/govulncheck\n)\n",
+			wantTool:  true,
+		},
+		{
+			name:      "unrelated tool",
+			toolGoMod: "module example.com/tools\n\nrequire github.com/golangci/golangci-lint v1.60.0\n",
+			wantTool:  false,
+		},
+		{
+			name:      "no tool module",
+			toolGoMod: "",
+			wantTool:  false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newTestRepo(t, "toolmod-"+strings.ReplaceAll(tc.name, " ", "-"))
+			mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/demo\n")
+			if tc.toolGoMod != "" {
+				mustWrite(t, filepath.Join(repo, filepath.FromSlash(toolGoModFile)), tc.toolGoMod)
+			}
+			rep := adoptWithSource(t, repo, newAdoptLockSource(t), false)
+			if rep == nil {
+				t.Fatal("adopt returned nil report")
+			}
+			lefthookPath := filepath.Join(repo, lefthookFile)
+			content := mustRead(t, lefthookPath)
+			if tc.wantTool {
+				if !strings.Contains(content, govulnToolScanner) {
+					t.Errorf("expected %q in lefthook.yml, got:\n%s", govulnToolScanner, content)
+				}
+				if strings.Contains(content, "command -v govulncheck") {
+					t.Errorf("unexpected PATH check in lefthook.yml:\n%s", content)
+				}
+			} else {
+				if strings.Contains(content, govulnToolScanner) {
+					t.Errorf("unexpected %q in lefthook.yml:\n%s", govulnToolScanner, content)
+				}
+				if !strings.Contains(content, "command -v govulncheck") || !strings.Contains(content, "exit 1") {
+					t.Errorf("expected failing PATH check in lefthook.yml:\n%s", content)
+				}
+			}
+		})
+	}
+}
+
+// Table test of toolModuleRequiresGovuln across various directives and comments.
+func TestToolModuleRequiresGovuln(t *testing.T) {
+	cases := []struct {
+		name string
+		data string
+		want bool
+	}{
+		{"empty", "", false},
+		{"require single", "module x\nrequire golang.org/x/vuln v1.8.0\n", true},
+		{"require block", "module x\nrequire (\n\tgolang.org/x/vuln v1.8.0 // indirect\n)\n", true},
+		{"tool single", "module x\ntool golang.org/x/vuln/cmd/govulncheck\n", true},
+		{"tool block", "module x\ntool (\n\tgolang.org/x/vuln/cmd/govulncheck\n)\n", true},
+		{"unrelated requirement", "module x\nrequire golang.org/x/tools v0.30.0\n", false},
+		{"unrelated tool", "module x\ntool github.com/golangci/golangci-lint/cmd/golangci-lint\n", false},
+		{"commented require", "module x\n// require golang.org/x/vuln v1.8.0\n", false},
+		{"commented tool", "module x\n// tool golang.org/x/vuln/cmd/govulncheck\n", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := toolModuleRequiresGovuln([]byte(tc.data)); got != tc.want {
+				t.Errorf("toolModuleRequiresGovuln(%q) = %v, want %v", tc.data, got, tc.want)
+			}
+		})
 	}
 }

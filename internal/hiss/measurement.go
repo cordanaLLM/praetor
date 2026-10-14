@@ -23,12 +23,14 @@ const SeverityReport Severity = "report"
 // MeasurementKind names the HISS-04 metric a measurement exceeds.
 type MeasurementKind string
 
-// The complexity metrics the scanner measures. Function length is not among them: it is
-// enforced as a violation.
+// The complexity and length metrics the scanner measures. For production functions,
+// function length is enforced as a violation; for test functions, it is measured
+// and reported without enforcement (#1316).
 const (
 	KindCyclomatic MeasurementKind = "cyclomatic"
 	KindCognitive  MeasurementKind = "cognitive"
 	KindStatements MeasurementKind = "statements"
+	KindLength     MeasurementKind = "length"
 )
 
 // kindLabels renders each kind in a measurement line.
@@ -36,6 +38,7 @@ var kindLabels = map[MeasurementKind]string{
 	KindCyclomatic: "cyclomatic complexity",
 	KindCognitive:  "cognitive complexity",
 	KindStatements: "statement count",
+	KindLength:     "function length",
 }
 
 // ComplexityLimits are the cyclomatic, cognitive and statement limits a measurement is
@@ -72,6 +75,7 @@ type Measurement struct {
 	Value      int             `json:"value"`
 	Limit      int             `json:"limit"`
 	Severity   Severity        `json:"severity"`
+	IsTest     bool            `json:"is_test,omitempty"`
 }
 
 // Exceeded returns one unlocated measurement per metric over its limit, in the order
@@ -102,8 +106,10 @@ func (m FuncMetrics) Exceeded(limits ComplexityLimits) []Measurement {
 func (u FuncUnit) Measurements(fset *token.FileSet, file string, limits ComplexityLimits) []Measurement {
 	out := u.Metrics.Exceeded(limits)
 	line := fset.Position(u.Node.Pos()).Line
+	isTest := strings.HasSuffix(file, "_test.go")
 	for i := range out {
 		out[i].FilePath, out[i].LineNumber, out[i].Symbol = file, line, u.Name
+		out[i].IsTest = isTest
 	}
 	return out
 }
@@ -114,8 +120,12 @@ func (m Measurement) Detail() string {
 	if label == "" {
 		label = string(m.Kind)
 	}
-	return fmt.Sprintf("Function '%s' %s %d exceeds %d (%s: measured, not enforced)",
-		m.Symbol, label, m.Value, m.Limit, m.Severity)
+	subject := "Function"
+	if m.IsTest || strings.HasSuffix(m.FilePath, "_test.go") {
+		subject = "Test function"
+	}
+	return fmt.Sprintf("%s '%s' %s %d exceeds %d (%s: measured, not enforced)",
+		subject, m.Symbol, label, m.Value, m.Limit, m.Severity)
 }
 
 // String renders the measurement line every entry point prints.
@@ -143,9 +153,9 @@ func (c *ComplexityReport) Summary() string {
 		perKind[m.Kind]++
 		functions[fmt.Sprintf("%s:%d:%s", m.FilePath, m.LineNumber, m.Symbol)] = struct{}{}
 	}
-	summary := fmt.Sprintf("[%s] %s complexity measured, not enforced: %d measurements over limit in %d functions (cyclomatic %d, cognitive %d, statements %d)",
+	summary := fmt.Sprintf("[%s] %s complexity measured, not enforced: %d measurements over limit in %d functions (cyclomatic %d, cognitive %d, length %d, statements %d)",
 		strings.ToUpper(string(SeverityReport)), complexityRule, len(c.Measurements), len(functions),
-		perKind[KindCyclomatic], perKind[KindCognitive], perKind[KindStatements])
+		perKind[KindCyclomatic], perKind[KindCognitive], perKind[KindLength], perKind[KindStatements])
 	if c.Truncated {
 		summary += "; the list stopped at the scan cap, so these counts are a lower bound"
 	}

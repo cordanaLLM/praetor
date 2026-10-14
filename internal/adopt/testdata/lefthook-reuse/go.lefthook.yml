@@ -52,8 +52,9 @@ pre-push:
       run: >-
         if [ -f go.mod ]; then if command -v govulncheck >/dev/null 2>&1; then
         sh .config/lefthook/engine.sh security govuln; else echo govulncheck is
-        not installed, skipping >&2; fi; else echo no go.mod at the repository
-        root, skipping govulncheck >&2; fi
+        not installed, install it with go install
+        golang.org/x/vuln/cmd/govulncheck@latest >&2; exit 1; fi; else echo no
+        go.mod at the repository root, skipping govulncheck >&2; fi
     flavor-audit:
       run: sh .config/lefthook/engine.sh flavor audit .
     audit:
