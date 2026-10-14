@@ -25,6 +25,9 @@ func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest
 		return nil, harnessPlan{}, err
 	}
 	manifest := declaredAdoptionManifest(s)
+	if solo, _ := s.soloMaintainer(ctx); solo {
+		manifest.Overrides = soloOverrides()
+	}
 	if entry := s.supplyChainException(ctx); entry != nil {
 		manifest.Exceptions = []config.Exception{*entry}
 	}

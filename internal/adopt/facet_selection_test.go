@@ -16,8 +16,9 @@ func declaredFacetsManifest(name, facets string) string {
 
 // TestAdoptionFacets_3D: an existing manifest's declaration stands over --facets, an empty one
 // included (positive); without one, --facets names the facets and the defaults stand in for
-// none (negative: neither is reported as declared); an unreadable manifest resolves no facets
-// and no origin rather than the defaults a first adoption declares (boundary).
+// none, the defaults of the archetype (#1075) (negative: neither is reported as declared); an
+// unreadable manifest resolves no facets and no origin rather than the defaults a first adoption
+// declares (boundary).
 func TestAdoptionFacets_3D(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -31,10 +32,15 @@ func TestAdoptionFacets_3D(t *testing.T) {
 		{"declared empty", &config.Manifest{}, false, []string{"docs:seo-portal"}, nil, FacetsDeclared},
 		{"requested", nil, false, []string{"docs:seo-portal"}, []string{"docs:seo-portal"}, FacetsRequested},
 		{"defaulted", nil, false, nil, config.DefaultFacets(), FacetsDefaulted},
+		{"defaulted gitops", nil, false, nil, []string{"security:high", "agent:sandboxed"}, FacetsDefaulted},
 		{"unreadable", nil, true, []string{"docs:seo-portal"}, nil, ""},
 	}
 	for _, tc := range cases {
-		got, origin := adoptionFacets(tc.declared, tc.unreadable, tc.requested)
+		archetype := "framework"
+		if strings.HasSuffix(tc.name, "gitops") {
+			archetype = "gitops-infra"
+		}
+		got, origin := adoptionFacets(tc.declared, tc.unreadable, tc.requested, archetype)
 		if !slices.Equal(got, tc.want) || origin != tc.origin {
 			t.Errorf("%s: adoptionFacets = %v (%q), want %v (%q)", tc.name, got, origin, tc.want, tc.origin)
 		}
@@ -90,8 +96,8 @@ func TestAdopt_Negative_WarnsAboutIgnoredFacets(t *testing.T) {
 	}
 }
 
-// TestAdopt_Positive_DefaultFacetsSayWhatEachRaises (#596): a first adoption without --facets
-// reports each default facet as a default, names what each one raises over the profile alone
+// TestAdopt_Positive_DefaultFacetsSayWhatEachRaises (#596, #1075): a first adoption without
+// --facets reports each default facet of its archetype as a default, names what each one raises over the profile alone
 // from the pinned catalog, and names the commands that choose others.
 func TestAdopt_Positive_DefaultFacetsSayWhatEachRaises(t *testing.T) {
 	// template-seed declares Level 1, as the shipped profile does; the built-in default is 0.
@@ -104,14 +110,16 @@ func TestAdopt_Positive_DefaultFacetsSayWhatEachRaises(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.FacetOrigin != FacetsDefaulted || !slices.Equal(report.Facets, config.DefaultFacets()) {
+	// template-seed publishes neither an API nor documentation, so its defaults are the two
+	// facets every archetype gets (config.DefaultFacetsFor, #1075).
+	defaults := []string{"security:high", "agent:sandboxed"}
+	if report.FacetOrigin != FacetsDefaulted || !slices.Equal(report.Facets, defaults) {
 		t.Fatalf("a first adoption without --facets must report the defaults as such: %v (%q)", report.Facets, report.FacetOrigin)
 	}
 	want := []string{
-		"default facets: --facets was omitted, so adoption declares " + strings.Join(config.DefaultFacets(), ", ") + " in the .standards.yaml it creates",
+		"default facets: --facets was omitted, so adoption declares the defaults of profile template-seed, security:high, agent:sandboxed, " +
+			"in the .standards.yaml it creates",
 		"security:high raises over template-seed alone: branch_protection.required_approving_reviewers 1 -> 2, supply_chain.slsa_level 1 -> 3",
-		"api:public-contract raises over template-seed alone: no branch-protection or supply-chain setting",
-		"docs:seo-portal raises over template-seed alone: no branch-protection or supply-chain setting",
 		"agent:sandboxed raises over template-seed alone: no branch-protection or supply-chain setting",
 		"choose other facets with --facets=<id>,... on a first adoption, or afterwards with praetorctl profile set --facets=<id>,... " +
 			"--lock-source-root=" + source + " (--facets= declares none)",
