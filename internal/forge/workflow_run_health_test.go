@@ -244,3 +244,57 @@ func TestAuditWorkflowRunHealth_Boundary_OpenStreakAndNoWorkflows(t *testing.T) 
 		t.Fatalf("no-workflow report (asked %v):\n%s", empty.asked, text)
 	}
 }
+
+// Positive (latch, Aegis-OS 2026-10-14): inside a run of ci.yml the check does not judge ci.yml.
+// Its latest run on main failed once for a real reason, then only on this check's own finding;
+// judging it from inside made every later run red. The forge is not asked about ci.yml at all.
+func TestAuditWorkflowRunHealth_Positive_OwnWorkflowNotJudgedFromInside(t *testing.T) {
+	t.Setenv("GITHUB_WORKFLOW_REF", "o/r/.github/workflows/ci.yml@refs/heads/main")
+	root := runHealthRepo(t, map[string]string{"ci.yml": "push", "ok.yml": "push"})
+	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
+		"ci.yml": completedRuns("failure", "failure", "success"),
+		"ok.yml": completedRuns("success"),
+	}}
+	report, text := auditRuns(t, root, reader, nil)
+	if strings.Contains(text, "[WARN]") || !strings.Contains(text, "[INFO] Workflow ci.yml: not judged from inside its own run") {
+		t.Fatalf("own workflow judged from inside:\n%s", text)
+	}
+	if slices.Contains(reader.asked, "ci.yml@main") || report.Findings[0].Unhealthy() {
+		t.Fatalf("asked %v, findings %+v", reader.asked, report.Findings)
+	}
+}
+
+// Negative: another workflow's real failures still warn inside ci.yml's run; boundary: a streak
+// of one still warns; outside any workflow run every workflow is judged, ci.yml included.
+func TestAuditWorkflowRunHealth_Negative_OtherWorkflowsStillJudged(t *testing.T) {
+	t.Setenv("GITHUB_WORKFLOW_REF", "o/r/.github/workflows/ci.yml@refs/pull/7/merge")
+	root := runHealthRepo(t, map[string]string{"ci.yml": "push", "build.yml": "push", "nightly.yml": "schedule"})
+	histories := map[string]WorkflowRunHistory{
+		"ci.yml":      completedRuns("failure", "success"),
+		"build.yml":   completedRuns("failure", "failure", "success"),
+		"nightly.yml": completedRuns("failure", "success"),
+	}
+	_, text := auditRuns(t, root, &stubActionsReader{histories: histories}, nil)
+	for _, want := range []string{"[WARN] Workflow build.yml: failing on main, failed runs in a row: 2", "[WARN] Workflow nightly.yml: failing on main, failed runs in a row: 1"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("report lacks %q:\n%s", want, text)
+		}
+	}
+	t.Setenv("GITHUB_WORKFLOW_REF", "")
+	_, text = auditRuns(t, root, &stubActionsReader{histories: histories}, nil)
+	if !strings.Contains(text, "[WARN] Workflow ci.yml: failing on main, failed runs in a row: 1") {
+		t.Fatalf("outside a workflow run ci.yml must be judged:\n%s", text)
+	}
+}
+
+func TestRunningWorkflowFile_Boundary(t *testing.T) {
+	for ref, want := range map[string]string{
+		"o/r/.github/workflows/ci.yml@refs/heads/main": "ci.yml",
+		"o/r/.github/workflows/sub.dir.yaml@v1":        "sub.dir.yaml",
+		"":                                             "", "o/r/README.md@main": "",
+	} {
+		if got := runningWorkflowFile(ref); got != want {
+			t.Errorf("runningWorkflowFile(%q) = %q, want %q", ref, got, want)
+		}
+	}
+}
