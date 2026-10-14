@@ -41,7 +41,10 @@ var (
 	ErrInvalidState = errors.New("README governance state is invalid")
 
 	legacyBadge = regexp.MustCompile(`(?mi)^\[!\[HISS(?:-16)?[[:space:]]+(?:Compliant|Adopted)\]\(https://img\.shields\.io/badge/Standards-HISS(?:--16)?%20(?:Compliant|Adopted)(?:%20\([0-9]+%20baselined\))?-(?:brightgreen|yellow)\)\]\([^\r\n]+\)[[:space:]]*\r?\n?`)
-	customBadge = regexp.MustCompile(`(?mi)^.*\[!\[[^\]]*HISS[^\]]*\]\(https://img\.shields\.io/badge/[^\r\n]*HISS[^\r\n]*\).*$`)
+	// readmeDecoration matches the images and image links a README puts under its title, inline
+	// or by reference, and the space between them.
+	readmeDecoration = regexp.MustCompile(`\[!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])\](?:\([^)]*\)|\[[^\]]*\])|!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])|[[:space:]]+`)
+	customBadge      = regexp.MustCompile(`(?mi)^.*\[!\[[^\]]*HISS[^\]]*\]\(https://img\.shields\.io/badge/[^\r\n]*HISS[^\r\n]*\).*$`)
 )
 
 const legacyGovernanceCurrent = `
@@ -366,14 +369,59 @@ func baselineParagraph(state State) []string {
 	return []string{debtRecordedLine, count + debtRecordedSuffix}
 }
 
+// insertManagedBlock places a block the README does not carry yet. A newcomer reads what the
+// project is before how it is governed (#1262), so under a `# ` title the block goes after the
+// description: the first paragraph below the title that is more than badges, images or HTML.
+// A README whose title is followed by a heading, a code fence or nothing but badges has no
+// description yet, and the block goes right under the title; a README without a title gets it
+// at the end. An adopter who wants it elsewhere writes the Start and End markers there, and
+// Reconcile fills them in place, as it keeps an existing block where it sits.
 func insertManagedBlock(content, block string) string {
 	trimmed := strings.TrimRight(content, "\r\n")
 	if trimmed == "" {
 		return block + "\n"
 	}
-	lineEnd := strings.Index(trimmed, "\n")
-	if strings.HasPrefix(strings.TrimSpace(trimmed), "# ") && lineEnd >= 0 {
-		return trimmed[:lineEnd+1] + "\n" + block + "\n" + trimmed[lineEnd+1:] + "\n"
+	lines := strings.Split(trimmed, "\n")
+	title := slices.IndexFunc(lines, func(line string) bool { return strings.TrimSpace(line) != "" })
+	if !strings.HasPrefix(strings.TrimSpace(lines[title]), "# ") {
+		return trimmed + "\n\n" + block + "\n"
 	}
-	return trimmed + "\n\n" + block + "\n"
+	at := descriptionEnd(lines, title+1)
+	if at < 0 {
+		at = title + 1
+	}
+	head := strings.Join(lines[:at], "\n")
+	rest := strings.TrimLeft(strings.Join(lines[at:], "\n"), "\n")
+	if rest == "" {
+		return head + "\n\n" + block + "\n"
+	}
+	return head + "\n\n" + block + "\n\n" + rest + "\n"
+}
+
+// descriptionEnd returns the index of the line after the README's description, the first
+// paragraph from line from on that is more than badges, images or HTML, or -1 when a heading or
+// a code fence comes first or the README ends.
+func descriptionEnd(lines []string, from int) int {
+	for start := from; start < len(lines) && start < util.MaxMarkedBlockLines; {
+		first := strings.TrimSpace(lines[start])
+		if first == "" {
+			start++
+			continue
+		}
+		if strings.HasPrefix(first, "#") || strings.HasPrefix(first, "```") || strings.HasPrefix(first, "~~~") {
+			return -1
+		}
+		end := start
+		decorative := true
+		for end < len(lines) && end < util.MaxMarkedBlockLines && strings.TrimSpace(lines[end]) != "" {
+			line := strings.TrimSpace(lines[end])
+			decorative = decorative && (strings.HasPrefix(line, "<") || readmeDecoration.ReplaceAllString(line, "") == "")
+			end++
+		}
+		if !decorative {
+			return end
+		}
+		start = end
+	}
+	return -1
 }

@@ -398,7 +398,13 @@ inventory, diagnostics, adoption behavior, and bounds.
 When `README.md` exists, adoption owns only the region between
 `<!-- praetor:readme-governance:start -->` and
 `<!-- praetor:readme-governance:end -->`. It refreshes that region from the
-recorded debt baseline and preserves content outside it. The badge says
+recorded debt baseline and preserves content outside it. A README without the
+region gets it after its description, the first paragraph below the level-one title
+that is more than badges, images or HTML, so a reader learns what the project
+is before how it is governed (#1262). With no description yet it goes right
+under the title, and without a title at the end. To place it elsewhere, write
+the two markers where it belongs: adoption fills them in place, and an existing
+region stays where it is. The badge says
 **HISS Adopted**, never **HISS Compliant**: a baseline records existing scanner
 debt, while only a commit-bound signed Exit-0 receipt proves that a particular
 verification run passed.
