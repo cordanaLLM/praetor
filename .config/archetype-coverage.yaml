@@ -428,6 +428,11 @@ fields:
         effect: >-
           compares the setting GitHub enforces on the default branch with the
           declared one (plan --remote, sync --remote readback)
+      - func: internal/adopt.adoptSession.warnUnsatisfiableReview
+        kind: reports
+        effect: >-
+          warns on a re-adoption of a repository with one writer whose
+          manifest declares no single_maintainer mode
   - key: branch_protection.merge_queue
     go: [BranchProtectionPolicy.MergeQueue]
     state: refused
