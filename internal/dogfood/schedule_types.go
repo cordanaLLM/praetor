@@ -18,6 +18,7 @@ type scheduleState struct {
 	Version             int              `json:"version"`
 	Attempts            int              `json:"attempts"`
 	ConsecutiveFailures int              `json:"consecutive_failures"`
+	PrunedThrough       int              `json:"pruned_through,omitempty"`
 	LastAttempt         *ScheduleAttempt `json:"last_attempt,omitempty"`
 }
 
@@ -30,12 +31,15 @@ type ScheduleReport struct {
 	Config              *ScheduleConfig  `json:"config"`
 	Fingerprint         string           `json:"fingerprint"`
 	Status              string           `json:"status"`
+	Reason              string           `json:"reason,omitempty"`
 	Verified            bool             `json:"verified"`
 	NextDue             time.Time        `json:"next_due,omitempty"`
 	Attempts            int              `json:"attempts"`
 	ConsecutiveFailures int              `json:"consecutive_failures"`
+	PrunedThrough       int              `json:"pruned_through,omitempty"`
 	RetainedBytes       int64            `json:"retained_bytes"`
 	RetainedRuns        int              `json:"retained_runs"`
+	PrunedRuns          []string         `json:"pruned_runs,omitempty"`
 	LastAttempt         *ScheduleAttempt `json:"last_attempt,omitempty"`
 	Suite               *SuiteReport     `json:"suite,omitempty"`
 	Scope               string           `json:"scope"`

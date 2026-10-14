@@ -19,12 +19,13 @@ Create a private JSON configuration (`0600`) with clean absolute paths:
   "retry_seconds": 3600,
   "max_consecutive_failures": 3,
   "max_runs": 32,
-  "max_bytes": 2147483648
+  "max_bytes": 2147483648,
+  "retention": "block"
 }
 ```
 
 `version`, `runner_binary`, `suite_config`, `source_root`, `state_dir`, and
-`allow_remote` are required. Numeric limits may be
+`allow_remote` are required. Numeric limits and `retention` may be
 omitted to use the illustrated defaults. Nulls, duplicate fields (case variants
 included), unknown fields, incorrect types, relative paths and symlink inputs are rejected. The suite
 configuration must also be private. `state_dir` is created with mode `0700`
@@ -33,13 +34,21 @@ read-only state file is refused instead of broadening its permissions.
 
 Limits are 60..2592000 seconds between unchanged successful runs, 60..86400
 seconds between retries, 1..3 consecutive failures, 1..1024 retained attempts,
-and 1 MiB..16 GiB retained bytes. The byte limit is an admission threshold, not
+and 1 MiB..16 GiB retained bytes. Optional `retention` is either `"block"`
+(default) or `"prune-oldest"`. The byte limit is an admission threshold, not
 an in-flight disk quota: one running suite may cross it. Accounting includes all
-entries, hidden files, Git objects, caches, input snapshots and partial attempts.
-It stops safely at 200000 entries or 20000 entries in a directory. Nothing is
-automatically deleted. Reaching either retention limit blocks further runs until
-the operator reviews retained evidence and explicitly changes configuration or
-selects a new private state directory.
+entries, hidden files, Git objects, caches, input snapshots and partial attempts,
+stopping safely at a hard bound of 4 x the entry cap (800000 entries). In `block`
+mode, exceeding `max_runs`, `max_bytes`, or 200000 entries returns status
+`resource_blocked` (with the entry limit reason recorded in the report), and nothing
+is deleted. In `prune-oldest` mode, before admission, while retained runs exceed
+`max_runs`, entries exceed 100000 (half of the entry cap), or bytes reach `max_bytes`,
+the scheduler deletes the oldest retained run directory inside `state_dir` (never
+the newest attempt and never an attempt with `running` status). The durable state
+persists `pruned_through` with fsync before each directory deletion, and the report
+lists `pruned_runs`. Retained run directories `run-000001`..`run-N` must exist
+gapless from `pruned_through + 1` through `attempts`. Dry runs (`status`) report what
+would be pruned and delete nothing.
 
 The input fingerprint binds the exact schedule and suite bytes, configured CLI
 binary content, source manifest and lock, every file under

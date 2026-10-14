@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -128,7 +129,7 @@ func readScheduleState(ctx context.Context, root *os.Root) (*scheduleState, erro
 	if err != nil {
 		return nil, err
 	}
-	fields, err := scheduleObject(data, []string{"version", "attempts", "consecutive_failures", "last_attempt"})
+	fields, err := scheduleObject(data, []string{"version", "attempts", "consecutive_failures", "pruned_through", "last_attempt"})
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +150,7 @@ func readScheduleState(ctx context.Context, root *os.Root) (*scheduleState, erro
 }
 
 func validateScheduleState(state *scheduleState, dir string) error {
-	if state.Version != 1 || state.Attempts < 0 || state.Attempts > 1024 || state.ConsecutiveFailures < 0 || state.ConsecutiveFailures > state.Attempts {
+	if state.Version != 1 || state.Attempts < 0 || state.Attempts > 1024 || state.ConsecutiveFailures < 0 || state.ConsecutiveFailures > state.Attempts || state.PrunedThrough < 0 || state.PrunedThrough > state.Attempts {
 		return errors.New("invalid schedule state counters")
 	}
 	if state.Attempts == 0 {
@@ -190,23 +191,30 @@ func validateScheduleAttemptStatus(state *scheduleState) error {
 }
 
 type scheduleUsage struct {
-	bytes         int64
-	runs, entries int
-	maxRun        int
-	dirs          []string
+	bytes          int64
+	runs, entries  int
+	minRun, maxRun int
+	dirs           []string
+	runEntries     map[string]int
+	runBytes       map[string]int64
 }
 
 func scanScheduleUsage(ctx context.Context, root *os.Root) (*scheduleUsage, error) {
-	usage := &scheduleUsage{dirs: []string{"."}}
-	for i := 0; i < len(usage.dirs) && i < maxScheduleEntries; i++ {
+	hardBound := 4 * maxScheduleEntries
+	usage := &scheduleUsage{
+		dirs:       []string{"."},
+		runEntries: make(map[string]int),
+		runBytes:   make(map[string]int64),
+	}
+	for i := 0; i < len(usage.dirs) && i < hardBound; i++ {
 		if err := usage.add(ctx, root, usage.dirs[i]); err != nil {
 			return nil, err
 		}
 	}
-	if usage.maxRun != usage.runs {
+	if usage.runs > 0 && usage.maxRun-usage.minRun+1 != usage.runs {
 		return nil, errors.New("retained attempt directory sequence has gaps")
 	}
-	if len(usage.dirs) > maxScheduleEntries {
+	if len(usage.dirs) > hardBound {
 		return nil, errors.New("retained directory scan exceeded bound")
 	}
 	return usage, nil
@@ -273,8 +281,8 @@ func validateScheduleFileInfo(info os.FileInfo, limit int64, private bool) error
 
 func (u *scheduleUsage) addEntry(root *os.Root, dir, name string) error {
 	u.entries++
-	if u.entries > maxScheduleEntries {
-		return errors.New("retained evidence exceeds 200000 entries")
+	if u.entries > 4*maxScheduleEntries {
+		return fmt.Errorf("retained evidence exceeds %d entries", 4*maxScheduleEntries)
 	}
 	rel := filepath.Join(dir, name)
 	info, err := root.Lstat(rel)
@@ -288,6 +296,10 @@ func (u *scheduleUsage) addEntry(root *os.Root, dir, name string) error {
 		if err := u.addRun(info, name); err != nil {
 			return err
 		}
+	}
+	if run := topLevelRun(dir, name); run != "" {
+		u.runEntries[run]++
+		u.runBytes[run] += info.Size()
 	}
 	if info.IsDir() {
 		u.dirs = append(u.dirs, rel)
@@ -319,8 +331,24 @@ func (u *scheduleUsage) addRun(info os.FileInfo, name string) error {
 		return errors.New("retained attempt must be a real canonically numbered directory")
 	}
 	u.runs++
+	if u.minRun == 0 || number < u.minRun {
+		u.minRun = number
+	}
 	if number > u.maxRun {
 		u.maxRun = number
 	}
 	return nil
+}
+
+func topLevelRun(dir, name string) string {
+	top := dir
+	if dir == "." {
+		top = name
+	} else if idx := strings.IndexAny(dir, `/\`); idx >= 0 {
+		top = dir[:idx]
+	}
+	if strings.HasPrefix(top, "run-") {
+		return top
+	}
+	return ""
 }
