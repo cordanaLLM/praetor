@@ -62,12 +62,10 @@ func stageAdoptPaths(t *testing.T, dir string, paths ...string) {
 }
 
 // hermeticPath restricts PATH to a stub directory plus the directory holding git, so
-// that no lefthook or other tool from the developer machine is ever executed.
+// that no lefthook or other tool from the developer machine is ever executed. Its callers
+// put stand-ins built from Go source there (installStub), which run on every platform.
 func hermeticPath(t *testing.T, stubDir string) {
 	t.Helper()
-	if os.PathSeparator == '\\' {
-		t.Skip("POSIX shell stubs required")
-	}
 	gitPath := requireGit(t)
 	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+filepath.Dir(gitPath))
 }
@@ -80,19 +78,6 @@ func writeStub(t *testing.T, dir, name, body string) {
 	}
 }
 
-// stubMkdir resolves mkdir for a shell stub before hermeticPath narrows PATH. hermeticPath
-// keeps only git's directory, and that directory need not hold mkdir: inside a git hook
-// (the pre-push gate) git puts its exec-path first, so git resolves to /usr/lib/git-core,
-// and on macOS git lives in /usr/bin while mkdir lives in /bin.
-func stubMkdir(t *testing.T) string {
-	t.Helper()
-	path, err := exec.LookPath("mkdir")
-	if err != nil {
-		t.Skipf("mkdir required for the lefthook stub: %v", err)
-	}
-	return path
-}
-
 // newTestRepo creates a hermetic leaf checkout named name under a fresh temp dir, whose
 // origin remote names acme/<name> as a clone's does. Adoption reads identity from that
 // remote alone, so a fixture without one exercises the unresolved-identity path instead of
@@ -101,7 +86,7 @@ func stubMkdir(t *testing.T) string {
 func newTestRepo(t *testing.T, name string) string {
 	t.Helper()
 	stubDir := t.TempDir()
-	writeStub(t, stubDir, "lefthook", "exit 1\n")
+	installStub(t, stubDir, "lefthook", lefthookFailsSource)
 	hermeticPath(t, stubDir)
 	repoPath := filepath.Join(t.TempDir(), name)
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
@@ -780,7 +765,7 @@ func TestAdopt_Positive_BrownfieldWithDebtRatcheting(t *testing.T) {
 
 func TestAdopt_Positive_ExplicitFacetsAndSkipGitValidation(t *testing.T) {
 	stubDir := t.TempDir()
-	writeStub(t, stubDir, "lefthook", "exit 1\n")
+	installStub(t, stubDir, "lefthook", lefthookFailsSource)
 	hermeticPath(t, stubDir)
 	repoPath := filepath.Join(t.TempDir(), "no-git")
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
@@ -2100,11 +2085,14 @@ func adoptHooksPathError(t *testing.T, rep *AdoptReport) string {
 // install the hook where the audit refuses it.
 func TestAdopt_Hooks_Negative_LefthookInstallRefusesHooksPathOutsideManagedDir(t *testing.T) {
 	stubDir := t.TempDir()
-	ran := filepath.Join(t.TempDir(), "lefthook-install-ran")
+	ran := filepath.Join(stubDir, lefthookInstallRan)
 	// The stub installs the hook where git says hooks live, like real lefthook does, and records that it ran.
-	writeStub(t, stubDir, "lefthook", "if [ \"$1\" = install ]; then : > '"+ran+"'; d=$(git rev-parse --git-path hooks) && '"+
-		stubMkdir(t)+"' -p \"$d\" && printf '#!/bin/sh\\n# lefthook stub\\n' > \"$d/pre-commit\"; fi\n")
+	installStub(t, stubDir, "lefthook", lefthookRunsSource)
 	hermeticPath(t, stubDir)
+	// The assertion that install did not run holds only for a stub that can run at all.
+	if !lefthookRunnable(t.Context()) {
+		t.Fatal("the lefthook stub does not run on this PATH")
+	}
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	repoPath := filepath.Join(t.TempDir(), "hookspath")

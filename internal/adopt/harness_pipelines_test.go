@@ -114,11 +114,9 @@ func useLefthook(t *testing.T, binary lefthookBinary) {
 	stubDir := t.TempDir()
 	switch binary {
 	case lefthookRuns:
-		writeStub(t, stubDir, "lefthook", "case \"$1\" in\nversion) echo 2.1.14 ;;\n"+
-			"install) d=$(git rev-parse --git-path hooks) && '"+stubMkdir(t)+"' -p \"$d\" && printf '#!/bin/sh\\n"+lefthookStubMarker+"\\n' > \"$d/pre-commit\" ;;\n"+
-			"*) exit 1 ;;\nesac\n")
+		installStub(t, stubDir, "lefthook", lefthookRunsSource)
 	case lefthookFails:
-		writeStub(t, stubDir, "lefthook", "exit 1\n")
+		installStub(t, stubDir, "lefthook", lefthookFailsSource)
 	}
 	hermeticPath(t, stubDir)
 }
