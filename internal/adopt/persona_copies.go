@@ -124,7 +124,7 @@ func priorLegacyAgentSurfaces(ctx context.Context, repoPath string) (priorVendor
 	prior := make(priorVendorProjections, len(inventory.Personas)*len(dirs))
 	for i := 0; i < len(inventory.Personas) && i < compiler.MaxAgentFiles; i++ {
 		name := inventory.Personas[i]
-		data, err := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(compiler.CanonicalAgentsRel), name))
+		data, err := util.ReadConfined(repoPath, compiler.CanonicalAgentsRel+"/"+name)
 		if err != nil {
 			return nil, fmt.Errorf("read persona %s: %w", name, err)
 		}
@@ -236,10 +236,15 @@ func preflightPersonaBackupRoot(ctx context.Context, s *adoptSession) error {
 // preflightLegacyPersonaBackupRoot checks whether any legacy persona copy was hand-edited.
 func preflightLegacyPersonaBackupRoot(ctx context.Context, repoPath string, prior priorVendorProjections) error {
 	for rel := range prior {
-		if onDisk, readErr := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(rel))); readErr == nil {
-			if !prior.isPriorProjection(rel, onDisk) {
-				return checkBackupRoot(ctx, repoPath)
-			}
+		onDisk, readErr := util.ReadConfined(repoPath, rel)
+		if errors.Is(readErr, os.ErrNotExist) {
+			continue // no copy yet: nothing a write could replace
+		}
+		if readErr != nil {
+			return fmt.Errorf("read persona copy %s: %w", rel, readErr)
+		}
+		if !prior.isPriorProjection(rel, onDisk) {
+			return checkBackupRoot(ctx, repoPath)
 		}
 	}
 	return nil
