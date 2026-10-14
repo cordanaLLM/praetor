@@ -198,6 +198,9 @@ type adoptSession struct {
 	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
 	// the run leaves rather than the one on disk.
 	dryRunWrites map[string][]byte
+	// fold is AGENTS.md with the vendor context text foldAuthoredVendorContext folded into it,
+	// which the agent-harness step writes (#1073); nil when nothing was folded.
+	fold *agentsFold
 	// rulesetBaseline is the policy and the workflows of the repository as this adoption found
 	// it, read before any step writes (readRulesetBaseline); nil without a ruleset on disk.
 	rulesetBaseline *forge.RulesetBaseline

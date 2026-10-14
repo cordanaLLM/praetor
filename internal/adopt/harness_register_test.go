@@ -97,7 +97,7 @@ func TestHarnessRefreshKeepsOneRegisterSection(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := &adoptSession{repoPath: repo, repoName: "fixture", arch: "framework", report: &AdoptReport{}, verification: registerTestPlan(), opts: AdoptOptions{Force: tc.force}}
-			merged, err := mergeExistingAgentsContent(context.Background(), s, path, tc.initial, harness)
+			merged, err := mergeExistingAgentsContent(context.Background(), s, path, tc.initial, tc.initial, harness)
 			if err != nil {
 				t.Fatal(err)
 			}
