@@ -384,6 +384,22 @@ func (m *Manager) List(ctx context.Context) ([]WorktreeInfo, error) {
 	return m.listUnlocked(ctx)
 }
 
+// Move relocates the registered worktree at from to to with 'git worktree move', so Git's
+// administrative files follow the checkout and the worktree still resolves afterwards. Both
+// paths are filesystem paths; the parent of to must exist and to itself must not, which git
+// enforces. A locked worktree, or one with submodules, is refused by git and reported.
+func (m *Manager) Move(ctx context.Context, from, to string) error {
+	if m == nil {
+		return ErrNilManager
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := m.runGit(ctx, "worktree", "move", from, to); err != nil {
+		return fmt.Errorf("failed moving worktree %s: %w", from, err)
+	}
+	return nil
+}
+
 func (m *Manager) listUnlocked(ctx context.Context) ([]WorktreeInfo, error) {
 	out, err := m.runGit(ctx, "worktree", "list", "--porcelain")
 	if err != nil {

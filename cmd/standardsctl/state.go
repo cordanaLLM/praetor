@@ -29,6 +29,7 @@ var stateCommands = map[string]func([]string) error{
 	"compact":      runStateCompact,
 	"batch":        runStateBatch,
 	"migrate-bugs": runStateMigrateBugs,
+	"migrate":      runStateMigrate,
 	"task":         runStateTask,
 	"bug":          runStateBug,
 	"question":     runStateQuestion,
@@ -56,6 +57,7 @@ func printStateUsage() {
 	fmt.Println("  audit [dir|--dir=.]            Audit .workingdir/ for required files and P0 blockers")
 	fmt.Println("  compact [dir|--dir=.]          One-time: rewrite old STATE.md entries compact, drop old markers, resync")
 	fmt.Println("  migrate-bugs [dir|--dir=.]     One-time: move BUGS.md inline metadata to bugs.meta.json, verify, resync")
+	fmt.Println("  migrate [dir|--dir=.] [--apply] [--merge] Move a legacy .workingdir2/ into .workingdir/; dry run unless --apply")
 	fmt.Println("  task [add|complete|list|archive] Manage active tasks in OPEN.md & BACKLOG.md")
 	fmt.Println("  bug [add|list|resolve|kind] [args] Manage bugs ledger (BUGS.md)")
 	fmt.Println("  question [add|list|decide]     Manage user questions and decisions (QUESTIONS.md)")

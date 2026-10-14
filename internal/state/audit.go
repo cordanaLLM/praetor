@@ -30,6 +30,15 @@ func AuditWorkingDir(rootPath string) (*StateAuditReport, error) {
 		Violations:       make([]string, 0),
 	}
 
+	finding, err := LegacyWorkingDirFinding(rootPath)
+	if err != nil {
+		rep.Valid = false
+		return rep, fmt.Errorf("audit %s: %w", LegacyWorkingDirName, err)
+	}
+	if finding != "" {
+		rep.Violations = append(rep.Violations, finding)
+	}
+
 	if !rep.WorkingDirExists {
 		rep.Valid = false
 		rep.Violations = append(rep.Violations, fmt.Sprintf("working directory %s does not exist", WorkingDirName))

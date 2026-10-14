@@ -512,6 +512,47 @@ The `BUGS.md` rows and prose that carried no v1 metadata were byte-identical aft
 migration, and an independent decode of every original v1 comment matched its
 sidecar record.
 
+## Migrating a legacy `.workingdir2/` folder
+
+Earlier layouts kept private state in `.workingdir2/`. Nothing in the engine reads that
+folder, so after adoption its ledger is invisible to `state status` and the turn-start
+rules. `state audit` reports a populated legacy folder as a violation that names the
+`OPEN.md` in each folder, and `adopt` prints the same finding as a warning. An empty
+legacy folder, or none, is not a finding.
+
+```bash
+praetorctl state migrate .                  # dry run: prints the plan, writes nothing
+praetorctl state migrate . --apply          # move it
+praetorctl state migrate . --apply --merge  # also merge differing same-name ledgers
+praetorctl state sync .                     # record the migrated ledger
+```
+
+`state migrate` plans the whole move before it writes:
+
+| Legacy entry | Plan |
+| :--- | :--- |
+| file absent from `.workingdir/` | moved |
+| file identical in both folders | legacy copy dropped |
+| registered Git worktree | moved with `git worktree move`, so it still resolves |
+| same-name file that differs | conflict, unless `--merge` resolves it |
+| symbolic link or special file | conflict |
+
+With `--merge`, a `.workingdir/` ledger that still holds only its empty template takes the
+legacy ledger, and a populated `OPEN.md` or `BACKLOG.md` keeps its rows and gets the legacy
+file appended below a marker comment. The plan reports the open and completed rows the
+merged file will show, counted by the task parser. A populated `STATE.md`, `BUGS.md` or
+`QUESTIONS.md`, and any other differing file, stays a conflict even with `--merge`: rename
+the legacy copy and run again, and it moves beside the other.
+
+Any conflict refuses the run with nothing written. An existing `.workingdir/` file is never
+replaced, except by a requested merge that first checks the file still holds the bytes the
+merge was computed from. Each moved file is checked by SHA-256 at its new place before its
+legacy copy goes. The legacy folder is removed only once it is empty, so nothing the plan did
+not account for is deleted. A failed step leaves the earlier steps done and the rest in
+place; a second run plans only what is left, and a run with no legacy folder is a no-op. The
+plan also lists tracked files that still name `.workingdir2`. The cases are replayed in
+`internal/state/legacy_migrate_test.go` (#1233).
+
 ## Persistence and failure handling
 
 Initialization and snapshots reuse the confined directory and file operations in

@@ -1161,8 +1161,23 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		Action:  actionCreate,
 		Details: "Initialized canonical session state ledger and bug/question journals",
 	})
+	s.reportLegacyWorkingDir()
 	s.applyDetectedFlavor(ctx)
 	return s.reconcileDeclaredLintersExceptions(ctx)
+}
+
+// reportLegacyWorkingDir warns when the repository still keeps content in the legacy state
+// folder, which the ledger adoption creates does not read, and names the migrate command
+// (#1233). It is a warning, not an error: adoption leaves private state where it is.
+func (s *adoptSession) reportLegacyWorkingDir() {
+	finding, err := state.LegacyWorkingDirFinding(s.repoPath)
+	if err != nil {
+		s.report.addWarning("could not inspect %s/: %v", state.LegacyWorkingDirName, err)
+		return
+	}
+	if finding != "" {
+		s.report.addWarning("%s", finding)
+	}
 }
 
 // applyDetectedFlavor scaffolds the flavor of the profile this adoption records, and records
