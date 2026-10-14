@@ -422,19 +422,25 @@ func TestRepositoryReuseLabels(t *testing.T) {
 	assertSkillLicenseLabels(t, tables)
 }
 
-// assertSkillLicenseLabels checks that each shipped upstream licence text is labelled MIT alone and that
-// a skill without an upstream licence has no such label.
+// assertSkillLicenseLabels checks the shipped upstream licence texts beside the register skills:
+// the reuse tool never reads a file named LICENSE, so no table names one (#1287), and each text
+// carries the MIT terms and its upstream holder itself.
 func assertSkillLicenseLabels(t *testing.T, tables []ReuseAnnotation) {
 	t.Helper()
+	for _, path := range ReuseIgnoredPaths(tables) {
+		t.Errorf("%s", path)
+	}
+	holders := map[string]string{"caveman": "Julius Brussee", "adhd-format": "Ayoub Ghriss", "social-text": "Ayoub Ghriss"}
 	for _, dir := range []string{".agents/skills", ".agents/plugins/praetor/skills", ".claude/skills"} {
-		for _, name := range []string{"caveman", "adhd-format", "social-text"} {
+		for name, holder := range holders {
 			rel := dir + "/" + name + "/LICENSE"
-			if !labelled(t, tables, rel, "MIT") || labelled(t, tables, rel, "EUPL-1.2") {
-				t.Errorf("%s is not labelled MIT alone: the upstream licence text keeps its terms", rel)
+			data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		if rel := dir + "/hiss-audit/LICENSE"; labelled(t, tables, rel, "MIT") {
-			t.Errorf("%s is labelled MIT, though no upstream licence ships beside that skill", rel)
+			if !strings.Contains(string(data), "Permission is hereby granted") || !strings.Contains(string(data), holder) {
+				t.Errorf("%s does not carry the MIT terms of %s", rel, holder)
+			}
 		}
 	}
 }

@@ -35,30 +35,10 @@ SPDX-FileCopyrightText = [
 ]
 SPDX-License-Identifier = "EUPL-1.2 AND MIT"
 
-# The register skills adapted from MIT-licensed upstreams carry that upstream's licence text as a
-# LICENSE file beside each skill, copied byte for byte (docs/credits.yaml names the upstream
-# commit): the file keeps the upstream holder and the MIT identifier, in the checkout and in the
-# plugin and client copies compile-context projects. The skill texts themselves stay EUPL-1.2 with
-# their own header. Like the tables above, these must stay after the "**" table.
-[[annotations]]
-path = [
-  ".agents/skills/caveman/LICENSE",
-  ".agents/plugins/praetor/skills/caveman/LICENSE",
-  ".claude/skills/caveman/LICENSE",
-]
-precedence = "override"
-SPDX-FileCopyrightText = "2026 Julius Brussee"
-SPDX-License-Identifier = "MIT"
-
-[[annotations]]
-path = [
-  ".agents/skills/adhd-format/LICENSE",
-  ".agents/skills/social-text/LICENSE",
-  ".agents/plugins/praetor/skills/adhd-format/LICENSE",
-  ".agents/plugins/praetor/skills/social-text/LICENSE",
-  ".claude/skills/adhd-format/LICENSE",
-  ".claude/skills/social-text/LICENSE",
-]
-precedence = "override"
-SPDX-FileCopyrightText = "2026 Ayoub Ghriss"
-SPDX-License-Identifier = "MIT"
+# The register skills adapted from MIT-licensed upstreams (caveman, adhd-format, social-text)
+# carry that upstream's licence text as a LICENSE file beside each skill, copied byte for byte
+# from the commit docs/credits.yaml names; the skill texts themselves stay EUPL-1.2 with their own
+# header. No table here can label those LICENSE files: the reuse tool never reads a file named
+# LICENSE (reuse/covered_files.py), so such a table labels nothing and its MIT would count as
+# unused (#1287). The upstream holder stays in each LICENSE text and in docs/credits.yaml, and
+# praetorctl audit fails on a table that names a file the reuse tool skips.

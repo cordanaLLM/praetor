@@ -23,8 +23,38 @@ import (
 // and both verdicts are printed, before the first failure is returned. A repository labelling its
 // files the REUSE way by headers alone is named (auditReuseHeadersOnly).
 func auditLicensing(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
-	return errors.Join(auditReuseRecords(ctx, manifest, rootDir, today), auditRootLicense(ctx, manifest, rootDir, today),
-		auditReuseHeadersOnly(ctx, rootDir))
+	return errors.Join(auditReuseRecords(ctx, manifest, rootDir, today), auditReuseIgnoredPaths(ctx, rootDir),
+		auditRootLicense(ctx, manifest, rootDir, today), auditReuseHeadersOnly(ctx, rootDir))
+}
+
+// auditReuseIgnoredPaths fails when an annotation of the repository's REUSE.toml names a file the
+// reuse tool never reads (supplychain.ReuseIgnoredPaths), such as a LICENSE beside vendored
+// material: the table labels nothing, and the holder it names reaches no record (#1287). A
+// repository without REUSE.toml skips the check, saying so; one whose REUSE.toml cannot be read
+// fails it.
+func auditReuseIgnoredPaths(ctx context.Context, rootDir string) error {
+	data, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(rootDir, supplychain.ReuseFile))
+	if err != nil {
+		return fmt.Errorf("[FAIL] %s ignored paths not checked: %w", supplychain.ReuseFile, err)
+	}
+	if !exists {
+		fmt.Printf("[SKIP] %s ignored paths not checked: the repository has no %s.\n", supplychain.ReuseFile, supplychain.ReuseFile)
+		return nil
+	}
+	tables, err := supplychain.ReuseAnnotationTables(string(data))
+	if err != nil {
+		return fmt.Errorf("[FAIL] %s ignored paths not checked: %w", supplychain.ReuseFile, err)
+	}
+	ignored := supplychain.ReuseIgnoredPaths(tables)
+	for _, path := range ignored {
+		fmt.Printf("  - %s\n", path)
+	}
+	if len(ignored) > 0 {
+		return fmt.Errorf("[FAIL] %s ignored paths: %d path(s) name files the reuse tool never reads", supplychain.ReuseFile, len(ignored))
+	}
+	fmt.Printf("[PASS] %s ignored paths: none of its %d annotations names a file the reuse tool skips.\n",
+		supplychain.ReuseFile, len(tables))
+	return nil
 }
 
 // auditReuseHeadersOnly warns, with supplychain.ReuseHeadersOnlyNotice, about a repository that

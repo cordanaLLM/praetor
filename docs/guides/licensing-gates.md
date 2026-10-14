@@ -1,17 +1,19 @@
 # Licensing gates
 
 A repository that declares its licensing the [REUSE](https://reuse.software/spec-3.3/) way gets
-three checks from Praetor:
+four checks from Praetor:
 
 1. [`reuse lint`](#reuse-lint-in-hooks-and-ci) before every commit and in CI, written by
    `praetorctl adopt` where the root carries `REUSE.toml` or `.reuse/dep5` and the manifest
    does not decline `reuse-gate` (a `LICENSES/` directory alone declares nothing, #1244);
 2. the [annotation order check](#annotation-order) of `praetorctl audit`, which fails an
    override in `REUSE.toml` that never takes effect;
-3. the [root licence check](#one-root-licence) of `praetorctl audit`, which holds the root to one
+3. the [ignored path check](#paths-the-reuse-tool-skips) of `praetorctl audit`, which fails a
+   `REUSE.toml` table that names a file the reuse tool never reads;
+4. the [root licence check](#one-root-licence) of `praetorctl audit`, which holds the root to one
    `LICENSE` with the declared licence's text.
 
-The annotation order check reads `REUSE.toml`, and the root licence check runs where `LICENSES/`
+The annotation order and ignored path checks read `REUSE.toml`, and the root licence check runs where `LICENSES/`
 is a directory. A repository with none of these gets none of the checks, and the audit says that
 it skipped each. One whose `LICENSES/` and file headers label it the REUSE way without
 `REUSE.toml` or `.reuse/dep5` gets an audit warning that names `REUSE.toml`, since adoption
@@ -165,6 +167,24 @@ exceptions:
 The audit then prints the order as not checked, with the entry's reason and expiry, and never as a
 pass. An expired entry excuses nothing, and an entry for a file the audit checks in full is stale
 and fails the check until it is removed (`TestAuditReuseRecords_Bound`).
+
+## Paths the reuse tool skips
+
+The reuse tool never reads some files: a licence text named `LICENSE`, `LICENCE` or `COPYING`
+(with any `-` or `.` suffix), a `.license` sidecar, `REUSE.toml` itself, SPDX documents, and
+anything below `.git`, `LICENSES` or `.reuse` (`reuse/covered_files.py`). A table that names
+such a file labels nothing: `reuse lint` neither checks the file nor counts the table's licence
+as used, so the holder it names reaches no record, and a repository whose only MIT table names
+an upstream `LICENSE` fails with "Unused licenses: MIT" (#1287). The audit names every such path:
+
+```text
+  - REUSE.toml annotation 2 path ".agents/skills/caveman/LICENSE" labels nothing: the reuse tool never reads "LICENSE", ...
+[FAIL] REUSE.toml ignored paths: 1 path(s) name files the reuse tool never reads
+```
+
+Only a literal name is read this way: a glob segment holding `*` can match other files too and
+is left alone. Keep an upstream licence text as the file itself, and record its holder in a
+notices file or the credits, not in `REUSE.toml`.
 
 ## One root licence
 

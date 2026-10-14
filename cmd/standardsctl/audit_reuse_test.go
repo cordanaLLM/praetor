@@ -283,3 +283,36 @@ func TestAuditLicensing_Issue896(t *testing.T) {
 		t.Fatalf("issue #896 REUSE.toml did not pass both licence gates:\n%s", output)
 	}
 }
+
+// #1287. Negative: a REUSE.toml table that names a skill's LICENSE, a file the reuse tool never
+// reads, fails the licensing gate and names the path; the other gates still print their verdicts.
+// Positive: the same REUSE.toml without that table passes. Boundary: without REUSE.toml the check
+// skips, saying so.
+func TestAuditLicensing_IgnoredReusePath(t *testing.T) {
+	today := time.Date(2026, time.October, 14, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	writeFixtureFile(t, root, "LICENSES/EUPL-1.2.txt", "EUPL text\n")
+	writeFixtureFile(t, root, "LICENSES/MIT.txt", "MIT License\n")
+	writeFixtureFile(t, root, supplychain.RootLicenseFile, "EUPL text\n")
+	whole := "version = 1\n\n[[annotations]]\npath = [\"**\"]\nSPDX-License-Identifier = \"EUPL-1.2\"\n"
+	planted := whole + "\n[[annotations]]\npath = [\".agents/skills/caveman/LICENSE\"]\nprecedence = \"override\"\n" +
+		"SPDX-FileCopyrightText = \"2026 Julius Brussee\"\nSPDX-License-Identifier = \"MIT\"\n"
+	run := func() (string, error) {
+		return captureStdout(t, func() error { return auditLicensing(t.Context(), &config.Manifest{}, root, today) })
+	}
+	writeFixtureFile(t, root, supplychain.ReuseFile, planted)
+	output, err := run()
+	if err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml ignored paths: 1 path(s)") ||
+		!strings.Contains(output, `annotation 2 path ".agents/skills/caveman/LICENSE" labels nothing`) ||
+		!strings.Contains(output, "[PASS] REUSE.toml annotation order") {
+		t.Fatalf("planted LICENSE table: %v\n%s", err, output)
+	}
+	writeFixtureFile(t, root, supplychain.ReuseFile, whole)
+	if output, err = run(); err != nil || !strings.Contains(output, "[PASS] REUSE.toml ignored paths: none of its 1 annotations") {
+		t.Fatalf("whole-tree table: %v\n%s", err, output)
+	}
+	if output, err = captureStdout(t, func() error { return auditReuseIgnoredPaths(t.Context(), t.TempDir()) }); err != nil ||
+		!strings.Contains(output, "[SKIP] REUSE.toml ignored paths not checked") {
+		t.Fatalf("no REUSE.toml: %v\n%s", err, output)
+	}
+}
