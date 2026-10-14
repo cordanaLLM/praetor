@@ -57,7 +57,7 @@ var makeToolNames = append([]string{"make", "echo"}, hookToolNames...)
 func newMakeTestRepo(t *testing.T, name string) (string, string) {
 	t.Helper()
 	if os.PathSeparator == '\\' {
-		t.Skip("POSIX shell stubs required")
+		t.Skip("POSIX shell stubs required: the toolbox links make, sh and echo, MSYS tools that do not start from a link, and the engine stubs are shell scripts")
 	}
 	toolbox := linkTools(t, makeToolNames...)
 	root := newTestRepo(t, name)
