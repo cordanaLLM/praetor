@@ -108,7 +108,7 @@ func TestManagedGitIgnore_Boundary_V2BlockUpgradedWithoutDuplicates(t *testing.T
 		t.Fatal("no root-anchored v2 block in gitIgnoreBlockHistory")
 	}
 	old := "dist/\n\n" + v2.Render(true, false)
-	if match, ok := LookupManagedGitIgnoreTail(root, old); !ok || match.Current || match.Version != "v2" {
+	if match, ok := LookupManagedGitIgnoreTail(t.Context(), root, old); !ok || match.Current || match.Version != "v2" {
 		t.Fatalf("the v2 block reads as %+v, want a known, outdated v2", match)
 	}
 	for style, text := range map[string]string{"lf": old, "crlf": strings.ReplaceAll(old, "\n", "\r\n")} {
@@ -123,7 +123,7 @@ func TestManagedGitIgnore_Boundary_V2BlockUpgradedWithoutDuplicates(t *testing.T
 		if merged != want {
 			t.Errorf("%s: the v2 block was not replaced by the current one:\n%q", style, merged)
 		}
-		if match, ok := LookupManagedGitIgnoreTail(root, merged); !ok || !match.Current {
+		if match, ok := LookupManagedGitIgnoreTail(t.Context(), root, merged); !ok || !match.Current {
 			t.Errorf("%s: the upgraded block reads as %+v, want current", style, match)
 		}
 	}
