@@ -76,8 +76,15 @@ func TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup(t *test
 	if !strings.Contains(mustRead(t, filepath.Join(repoPath, agentsFile)), note) || !strings.Contains(mustRead(t, full), note) {
 		t.Fatal("the hand edit was not folded into AGENTS.md and its new projection")
 	}
-	if !hasWarningContaining(rep, vendorContextFile+" held text "+agentsFile+" lacked") || len(rep.Replaced()) != 1 {
+	// AGENTS.md is written once by the harness step, as a replacement whose backup holds the
+	// bytes the run found; only it and the vendor file are replaced.
+	folded := replacedEntry(t, rep, agentsFile)
+	if !hasWarningContaining(rep, vendorContextFile+" held text "+agentsFile+" lacked") || len(rep.Replaced()) != 2 ||
+		!strings.Contains(folded.Details, "vendor context text folded") {
 		t.Fatalf("fold not reported, or other files replaced: %v %+v", rep.Warnings, rep.Replaced())
+	}
+	if got := mustRead(t, backupNamedIn(t, repoPath, folded.Details)); got != agents {
+		t.Fatalf("AGENTS.md backup = %q, want the bytes the run found", got)
 	}
 }
 

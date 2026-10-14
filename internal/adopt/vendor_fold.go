@@ -14,17 +14,32 @@ import (
 // other compile-context projections) is always rewritten from AGENTS.md, so text it holds that
 // AGENTS.md lacks used to survive only in a backup under .workingdir, which git ignores. Before
 // the rewrite, that text moves into AGENTS.md below its instructions; the projection written
-// next then carries it, and it stays in the working tree for the next commit.
+// next then carries it, and it stays in the working tree for the next commit. The fold writes
+// nothing itself: the agent-harness step writes AGENTS.md once, after it validated the result,
+// with the backup and the write guard taken from the bytes the run found, so a run that fails
+// leaves AGENTS.md as it was.
+
+// agentsFold is AGENTS.md with the folded vendor text, held for the agent-harness step.
+type agentsFold struct {
+	// found is AGENTS.md as the run found it, and exists whether it existed.
+	found  []byte
+	exists bool
+	// text is found with the folded blocks appended, and from the vendor files they came from.
+	text string
+	from []string
+}
 
 // foldNoticeFormat opens a folded block; %s is the vendor file it came from.
 const foldNoticeFormat = "<!-- Folded by praetorctl adopt from %s: text that file held and AGENTS.md lacked. -->"
 
 // foldAuthoredVendorContext folds into AGENTS.md the text of every vendor context file clients
 // selects that is not a projection of AGENTS.md as the run found it (prior), before the
-// agent-harness step rewrites them. It writes AGENTS.md only when something is folded, and
-// warns with the files folded. A dry run plans the write (planDryRunWrite), so the harness
-// merge that follows reads the folded text either way (agentsSource).
-func foldAuthoredVendorContext(ctx context.Context, s *adoptSession, clients []string, prior priorVendorProjections) error {
+// agent-harness step rewrites them. A line harness, the harness this run renders, holds is not
+// folded: a projection compiled from an earlier AGENTS.md, or one compile-context spliced a
+// fresh register block into, carries praetor's text, which the harness step writes anyway. The
+// folded AGENTS.md is held in s.fold, which agentsSource returns, and written by the harness
+// step (resolveAgentsContent); warnFolded reports it once that write is done.
+func foldAuthoredVendorContext(ctx context.Context, s *adoptSession, clients []string, prior priorVendorProjections, harness string) error {
 	paths, _, err := agentcontext.TargetPaths(clients)
 	if err != nil {
 		return fmt.Errorf("agent_clients in %s: %w", manifestFile, err)
@@ -42,26 +57,33 @@ func foldAuthoredVendorContext(ctx context.Context, s *adoptSession, clients []s
 		if !found || prior.isPriorProjection(paths[i], before) {
 			continue
 		}
-		if block := vendorOnlyText(string(before), text); block != "" {
+		if block := vendorOnlyText(string(before), text+"\n"+harness, agentcontext.ProjectionFrame(paths[i])); block != "" {
 			text = appendFold(text, paths[i], block)
 			folded = append(folded, paths[i])
 		}
 	}
-	if len(folded) == 0 {
-		return nil
+	if len(folded) > 0 {
+		s.fold = &agentsFold{found: agents, exists: exists, text: text, from: folded}
 	}
-	if err := s.writeFoldedAgents(ctx, agents, exists, text); err != nil {
-		return err
-	}
-	s.report.addWarning("%s held text %s lacked; it is folded into %s below its instructions, so the projection "+
-		"compile-context writes next carries it and it stays in the working tree. Review it there and commit it.",
-		strings.Join(folded, ", "), agentsFile, agentsFile)
 	return nil
 }
 
-// agentsSource returns AGENTS.md as this run leaves it so far: the text a dry run planned for it,
-// else the bytes on disk, and whether it exists.
+// warnFolded warns, once the harness step wrote AGENTS.md, which vendor files were folded into it.
+func (s *adoptSession) warnFolded() {
+	if s.fold == nil {
+		return
+	}
+	s.report.addWarning("%s held text %s lacked; it is folded into %s below its instructions, so the projection "+
+		"compile-context writes next carries it and it stays in the working tree. Review it there and commit it.",
+		strings.Join(s.fold.from, ", "), agentsFile, agentsFile)
+}
+
+// agentsSource returns AGENTS.md as this run leaves it so far: the folded text (s.fold), else
+// the text a dry run planned for it, else the bytes on disk, and whether it exists.
 func (s *adoptSession) agentsSource(ctx context.Context) ([]byte, bool, error) {
+	if s.fold != nil {
+		return []byte(s.fold.text), true, nil
+	}
 	if planned, ok := s.dryRunWrites[agentsFile]; ok && planned != nil {
 		return planned, true, nil
 	}
@@ -72,28 +94,19 @@ func (s *adoptSession) agentsSource(ctx context.Context) ([]byte, bool, error) {
 	return data, exists, nil
 }
 
-// writeFoldedAgents writes text, AGENTS.md with folded blocks appended, over before: created
-// when AGENTS.md did not exist, else replaced only while it still holds before. The change only
-// appends, so nothing of before is lost and no backup is taken.
-func (s *adoptSession) writeFoldedAgents(ctx context.Context, before []byte, exists bool, text string) error {
-	s.planDryRunWrite(agentsFile, []byte(text))
-	if s.opts.DryRun {
-		return nil
-	}
-	options := contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: filePerm}
-	if err := contextopt.ReplaceSnapshotIn(ctx, s.repoPath, agentsFile, []byte(text), options); err != nil {
-		return fmt.Errorf("fold vendor context into %s: %w", agentsFile, err)
-	}
-	return nil
-}
-
 // vendorOnlyText returns the text of vendor, a vendor context file, that agents lacks. A file a
 // person wrote counts whole, unless every line of it already stands in agents. A compiled
 // projection someone edited counts only for its lines agents lacks, without the comment lines
-// compile-context writes, so the projection's own frame is never folded.
-func vendorOnlyText(vendor, agents string) string {
+// and the lines of frame (agentcontext.ProjectionFrame) compile-context writes, so the
+// projection's own frame, the Cursor frontmatter included, is never folded.
+func vendorOnlyText(vendor, agents, frame string) string {
 	vendor = strings.ReplaceAll(vendor, "\r\n", "\n")
 	have := lineSet(agents)
+	if agentcontext.IsCompiledProjection(vendor) {
+		for line := range lineSet(frame) {
+			have[line] = true
+		}
+	}
 	lines := strings.Split(vendor, "\n")
 	missing := make([]string, 0, len(lines))
 	for _, line := range lines {
