@@ -14,7 +14,7 @@ import (
 )
 
 // fixturePersona is a canonical persona terse enough for the caveman lint.
-const fixturePersona = "---\nname: reviewer\ndescription: Review diffs.\n---\n\nRead diff. Flag defects with path:line. Cite rule id.\n"
+const fixturePersona = "---\nname: reviewer\ndescription: Review diffs.\nmodel: pro\n---\n\nRead diff. Flag defects with path:line. Cite rule id.\n"
 
 // fixtureSkill is a canonical skill terse enough for the caveman lint.
 const fixtureSkill = "---\nname: brief\ndescription: Write briefs.\n---\n\nState task. List paths. Name verdict.\n"
@@ -92,7 +92,9 @@ func TestMCPVerifyIgnoresWhitespaceOnlyPersonaDrift(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	writePersona(t, root, "reviewer.md", fixturePersona)
 	compileInPlace(t, srv)
-	writePathFixture(t, filepath.Join(root, ".claude", "agents", "reviewer.md"), "\n"+fixturePersona+"\n\n  \n")
+	// The Claude copy carries the tier in Claude's vocabulary (pro -> sonnet); only whitespace differs.
+	claudeCopy := strings.Replace(fixturePersona, "model: pro", "model: sonnet", 1)
+	writePathFixture(t, filepath.Join(root, ".claude", "agents", "reviewer.md"), "\n"+claudeCopy+"\n\n  \n")
 	expectText(t, "whitespace-only persona drift", verifyInPlace(t, srv), "100% in sync")
 }
 
