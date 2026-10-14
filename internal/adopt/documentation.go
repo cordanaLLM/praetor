@@ -58,6 +58,13 @@ func reconcileDocumentationGate(ctx context.Context, s *adoptSession) error {
 			return err
 		}
 	}
+	warning, err := prettierTabWarning(ctx, s.repoPath)
+	if err != nil {
+		return err
+	}
+	if warning != "" {
+		s.report.Warnings = append(s.report.Warnings, warning)
+	}
 	return reconcileManagedAttributes(ctx, s, true)
 }
 

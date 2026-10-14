@@ -1583,6 +1583,45 @@ function lintOutputSelfTest(temporary) {
   process.stdout.write("lint output fixtures: findings, order and format match markdownlint-cli2 0.23.3\n");
 }
 
+// Hard tabs under the locked MD010 settings (#1246). Positive: fenced code of a language whose
+// syntax or formatter needs a tab (makefile, make, go, tsv, diff) passes, whatever the case of its
+// fence name. Negative: a tab-indented ts sample and a tab in prose are refused, naming MD010.
+// Boundary: markdownlint 0.41.1 (lib/md010.mjs) counts a fence with no language as ignored once
+// ignore_code_languages is set, since every() over its empty list of fence infos is true, so its
+// tab is not reported; MD040 still refuses the fence, so the gate passes no tab it refused before.
+const TAB_FIXTURES = Object.freeze({
+  "docs/makefile.md": "# Make\n\n```makefile\nbuild:\n\tgo build ./...\n```\n",
+  "docs/make.md": "# Make\n\n```Make\nbuild:\n\tgo build ./...\n```\n",
+  "docs/go.md": "# Go\n\n```go\nfunc main() {\n\tprintln(1)\n}\n```\n",
+  "docs/tsv.md": "# Table\n\n```tsv\nname\tvalue\n```\n",
+  "docs/diff.md": "# Diff\n\n```diff\n-\told()\n+\tnew()\n```\n",
+  "docs/ts.md": "# TypeScript\n\n```ts\nfunction f() {\n\treturn 1;\n}\n```\n",
+  "docs/bare.md": "# Bare\n\n```\n\tindented\n```\n",
+  "docs/prose.md": "# Prose\n\nA tab\there.\n",
+  "docs/inline.md": "# Inline\n\nRun `a\tb` here.\n",
+});
+
+function tabSelfTest(temporary) {
+  const fixture = path.join(temporary, "tab-fixture");
+  writeFixtureFiles(fixture, TAB_FIXTURES);
+  for (const file of ["docs/makefile.md", "docs/make.md", "docs/go.md", "docs/tsv.md", "docs/diff.md"]) {
+    const result = lintCommand(fixture, temporary, [file]);
+    assert.deepEqual([result.status, result.stderr], [0, ""], file);
+  }
+  // code_blocks: true is what refuses a tab in inline code: with ignore_code_languages set, the
+  // library checks the fences of other languages either way.
+  for (const [file, line] of [["docs/ts.md", 5], ["docs/prose.md", 3], ["docs/inline.md", 3]]) {
+    const result = lintCommand(fixture, temporary, [file]);
+    assert.equal(result.status, 1, file);
+    assert.match(result.stderr, new RegExp(`^${file}:${line}:\\d+ error MD010/no-hard-tabs Hard tabs`, "mu"), file);
+  }
+  const bare = lintCommand(fixture, temporary, ["docs/bare.md"]);
+  assert.deepEqual([bare.status, bare.stderr], [1, "docs/bare.md:3 error MD040/fenced-code-language Fenced code " +
+    "blocks should have a language specified [Context: \"```\"]\n"]);
+  process.stdout.write("hard tab fixtures: makefile, make, go, tsv and diff samples pass; ts and prose and inline code refused, " +
+    "a bare fence refused by MD040\n");
+}
+
 // outputCollector stands in for process in runMarkdownlint's streams and keeps what is written.
 function outputCollector() {
   const stream = () => ({ text: "", write(value) { this.text += value; return true; } });
@@ -2471,6 +2510,7 @@ function runSelfTest(toolDir, temporary) {
   hermeticConfigSelfTest(temporary);
   lintOutputSelfTest(temporary);
   captureOverflowSelfTest(temporary);
+  tabSelfTest(temporary);
   mathSelfTest(temporary);
   lintMemorySelfTest(temporary);
   styleExclusionSelfTest(temporary);

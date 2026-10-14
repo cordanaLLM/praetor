@@ -88,6 +88,16 @@ the gate with status 2, also when no file is selected for styling
 update leaves `verify.mjs` unchanged. The temporary installation is removed
 after success or failure.
 
+Hard tabs (MD010) stay refused in prose, in inline code and in code samples,
+except in fenced code of a language whose syntax or formatter needs a tab:
+`makefile`, `make`, `go`, `tsv` and `diff` (`ignore_code_languages` in
+`tools/markdownlint/markdownlint-cli2.yaml`, #1246). A repository whose Prettier
+configuration sets `useTabs: true` gets a tab in every indented line of every
+other sample, since Prettier formats embedded code with the Markdown file's
+options; adoption names that case in its report and the override that avoids it,
+`useTabs: false` for `*.md` and `*.mdx` files. A fence without a language is
+refused by MD040 either way.
+
 A finding prints as `markdownlint-cli2`'s default formatter printed it, one line
 per finding on standard error:
 

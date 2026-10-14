@@ -1,6 +1,16 @@
 ---
 config:
   default: true
+  # Hard tabs stay refused in prose and in code samples (#1246), except in fenced code of a
+  # language whose syntax or formatter needs them.
+  MD010:
+    code_blocks: true
+    ignore_code_languages:
+      - makefile  # a recipe line must start with a tab
+      - make  # the same language under its other fence name
+      - go  # gofmt indents with tabs
+      - tsv  # the tab is the field separator
+      - diff  # a hunk of a tab-indented file keeps its tabs
   MD013: false
   MD024:
     siblings_only: true

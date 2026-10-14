@@ -121,6 +121,8 @@ var priorDigests = map[string]string{
 	"3ac7dc11439891197d4d6b1ce608328ef4d756fa909a2c83e767ecdd64cb7db9": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
+	// The markdownlint configuration before MD010 ignored the fence languages that need a tab (#1246).
+	"42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked
 	// ancestor.
 	"8273fa87112eb15cc3382ba23ba894c542d2ae8352042eab253e9c8b503704f2": Directory + "/verify.mjs",
