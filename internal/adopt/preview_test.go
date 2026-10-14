@@ -16,10 +16,10 @@ const operatorRulesetPreview = "{\n  \"name\": \"team-protection\",\n  \"rules\"
 
 // dryRunRulesetPreview runs a dry adoption of repo and returns the ruleset preview, asserting
 // the run wrote nothing and recorded exactly one preview.
-func dryRunRulesetPreview(t *testing.T, repo string, force bool) FilePreview {
+func dryRunRulesetPreview(t *testing.T, repo string, force bool, facets ...string) FilePreview {
 	t.Helper()
 	before := snapshotTree(t, repo)
-	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, DryRun: true, Force: force, SkipGitValidation: true})
+	report, err := Adopt(t.Context(), AdoptOptions{Path: repo, DryRun: true, Force: force, SkipGitValidation: true, Facets: facets})
 	if err != nil {
 		t.Fatalf("dry-run adopt: %v", err)
 	}
