@@ -27,7 +27,7 @@ func TestCheckPersonaFrontMatter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("ok.md", "---\r\nname: ok\r\ndescription: \"Fine.\"\r\nmainAgent: true\r\n---\r\n\r\n# ok\r\n")
+	write("ok.md", "---\r\nname: ok\r\ndescription: \"Fine.\"\r\nmodel: flash\r\nmainAgent: true\r\n---\r\n\r\n# ok\r\n")
 	write("dup.md", "---\nname: a\nname: b\ndescription: d\n---\n")
 	write("tab.md", "---\nname: t\n\tdescription: d\n---\n")
 	problems, err := CheckPersonaFrontMatter(t.Context(), root, []string{"tab.md", "ok.md", "dup.md"})

@@ -99,7 +99,7 @@ func TestCompileContextProjections_Negative_UnobservableTargetLeavesTreeUnchange
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := skillFixture(t)
-			writeOutputFixture(t, filepath.Join(root, filepath.FromSlash(CanonicalAgentsRel), "helper.md"), "---\nname: helper\n---\n# Helper\n")
+			writeOutputFixture(t, filepath.Join(root, filepath.FromSlash(CanonicalAgentsRel), "helper.md"), "---\nname: helper\ndescription: d\nmodel: flash\n---\n# Helper\n")
 			writeCanonicalFixture(t, filepath.Join(root, "AGENTS.md"), fixtureSource)
 			writeOutputFixture(t, filepath.Join(root, "CLAUDE.md"), "old claude\n")
 			writeOutputFixture(t, filepath.Join(root, filepath.FromSlash(tc.rel)), tc.data)
@@ -129,7 +129,7 @@ func TestVerifyCompiledContext_MarksAgentSurfaceFailures(t *testing.T) {
 	compiled := func(t *testing.T) string {
 		t.Helper()
 		root := skillFixture(t)
-		writeOutputFixture(t, filepath.Join(root, filepath.FromSlash(CanonicalAgentsRel), "helper.md"), "---\nname: helper\n---\n# Helper\n")
+		writeOutputFixture(t, filepath.Join(root, filepath.FromSlash(CanonicalAgentsRel), "helper.md"), "---\nname: helper\ndescription: d\nmodel: flash\n---\n# Helper\n")
 		if err := compileFixture(t, root); err != nil {
 			t.Fatalf("compile: %v", err)
 		}

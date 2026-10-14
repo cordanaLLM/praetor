@@ -81,6 +81,29 @@ whenever `.agents/plugins/praetor/plugin.json` exists. Tests:
 `cmd/standardsctl/compile_context_clients_test.go`,
 `internal/adopt/client_selection_test.go`.
 
+### Persona model tiers and client projections
+
+Every canonical agent persona in `.agents/agents/*.md` declares a model tier key in its
+front matter (`model: flash` or `model: pro`). Missing keys, `inherit`, or any other
+values are refused by `compile-context`, `compile-context --verify`, and `audit` with an
+error naming the file and the allowed values (`flash, pro`).
+
+- `flash`: tier for mechanical runs, fuzzing, dogfooding, and packaging.
+- `pro`: tier for review and complex reasoning.
+
+Projections carry the tier in each client's own vocabulary or drop it with a stated reason:
+
+| Target directory | Client | Model policy | Reason | Source URL + read date |
+| :--- | :--- | :--- | :--- | :--- |
+| `.claude/agents` | Claude Code | `flash` -> `haiku`, `pro` -> `sonnet` | Claude Code accepts family aliases `sonnet`, `opus`, `haiku`, `fable`, full model ID, or `inherit` | <https://code.claude.com/docs/en/sub-agents> (read 2026-10-14) |
+| `.agents/plugins/praetor/agents` | Antigravity Plugin | byte copy, tier kept | Native Antigravity schema accepts `flash` and `pro` | <https://antigravity.google/docs/subagents/> (read 2026-10-14) |
+| `.github/agents` | GitHub Copilot | model line removed | Copilot value space unverified in docs | <https://docs.github.com/en/copilot/reference/custom-agents-configuration> (read 2026-10-14) |
+| `.gemini/agents` | Gemini CLI | model line removed | Gemini CLI documents no `.gemini/agents` persona files; subagents configure via `settings.json` | <https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md> (read 2026-10-14) |
+| `.codex/agents` | OpenAI Codex | model line removed | Codex reads standalone TOML files (#1076) | <https://developers.openai.com/codex/subagents> (read 2026-10-14) |
+
+The transform edits only the `model` line inside the leading front matter block; body bytes
+and line endings are preserved unchanged.
+
 ## Antigravity IDE
 
 `antigravity` (aliases `agy`, `antigravity-ide`) joins the VS Code-compatible

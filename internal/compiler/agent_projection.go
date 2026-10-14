@@ -85,8 +85,13 @@ func personaProjections(ctx context.Context, rootDir string, dirs []string, pend
 				return nil, err
 			}
 		}
+		canonicalRel := CanonicalAgentsRel + "/" + names[i]
 		for j := 0; j < len(dirs); j++ {
-			files = append(files, projectionFile{rel: dirs[j] + "/" + names[i], data: data})
+			projected, err := TransformPersonaForDir(dirs[j], canonicalRel, data)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, projectionFile{rel: dirs[j] + "/" + names[i], data: projected})
 		}
 	}
 	return files, nil
@@ -298,11 +303,16 @@ func VerifyAgentProjections(ctx context.Context, rootDir string) (int, error) {
 	}
 	verified := 0
 	for i := 0; i < len(names); i++ {
-		want, err := readCanonicalAgent(ctx, rootDir, names[i])
+		canonical, err := readCanonicalAgent(ctx, rootDir, names[i])
 		if err != nil {
 			return verified, err
 		}
+		canonicalRel := CanonicalAgentsRel + "/" + names[i]
 		for j := 0; j < len(dirs); j++ {
+			want, err := TransformPersonaForDir(dirs[j], canonicalRel, canonical)
+			if err != nil {
+				return verified, err
+			}
 			if err := verifyProjection(ctx, rootDir, dirs[j]+"/"+names[i], want); err != nil {
 				return verified, err
 			}
@@ -366,4 +376,88 @@ func verifyProjection(ctx context.Context, rootDir, rel string, want []byte) err
 		return fmt.Errorf("%w: %s%s (run 'praetorctl compile-context' to regenerate it)", ErrAgentProjectionDrift, rel, util.ByteExactNote(strict))
 	}
 	return nil
+}
+
+// Persona model tier projection policy per target directory:
+//
+// | Target directory | Client | Model policy | Reason |
+// | :--- | :--- | :--- | :--- |
+// | .claude/agents | Claude Code | flash -> haiku, pro -> sonnet | code.claude.com/docs/en/sub-agents: sonnet, opus, haiku, fable, full id, inherit |
+// | .agents/plugins/praetor/agents | Antigravity Plugin | byte copy, tier kept | Native Antigravity schema accepts flash and pro |
+// | .github/agents | GitHub Copilot | model line removed | Copilot value space unverified in docs |
+// | .gemini/agents | Gemini CLI | model line removed | Gemini CLI documents no .gemini/agents persona files |
+// | .codex/agents | OpenAI Codex | model line removed | Codex reads TOML (#1076) |
+
+// TransformPersonaForDir validates data as a canonical persona and projects its front matter
+// for targetDir. One transform function is used by both writing and verification (HISS-19).
+func TransformPersonaForDir(targetDir, rel string, data []byte) ([]byte, error) {
+	if problem := personaFrontMatterProblem(data); problem != "" {
+		return nil, fmt.Errorf("%s: %s", rel, problem)
+	}
+	switch targetDir {
+	case CanonicalAgentsRel, PluginAgentsRel:
+		return data, nil
+	case ".claude/agents":
+		return rewriteClaudePersonaModel(data)
+	case ".github/agents", ".gemini/agents", ".codex/agents":
+		return removePersonaModelLine(data)
+	default:
+		return removePersonaModelLine(data)
+	}
+}
+
+// rewriteClaudePersonaModel rewrites the model line inside the leading front matter block
+// from canonical tier (flash, pro) to Claude Code vocabulary (haiku, sonnet).
+func rewriteClaudePersonaModel(data []byte) ([]byte, error) {
+	lines := strings.Split(string(data), "\n")
+	end, opened := util.FrontMatterEnd(lines, maxFrontMatterLines)
+	if !opened || end == 0 {
+		return data, nil
+	}
+	for i := 1; i < end-1 && i < maxFrontMatterLines; i++ {
+		line := lines[i]
+		trimmed := strings.TrimRight(line, "\r")
+		key, val, found := strings.Cut(strings.TrimSpace(trimmed), ":")
+		if !found || strings.TrimSpace(key) != PersonaModelKey {
+			continue
+		}
+		modelVal := strings.Trim(strings.TrimSpace(val), "\"'")
+		var targetModel string
+		switch modelVal {
+		case PersonaModelFlash:
+			targetModel = "haiku"
+		case PersonaModelPro:
+			targetModel = "sonnet"
+		default:
+			return nil, fmt.Errorf("unknown canonical model tier %q", modelVal)
+		}
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		newLine := indent + PersonaModelKey + ": " + targetModel
+		if strings.HasSuffix(line, "\r") {
+			newLine += "\r"
+		}
+		lines[i] = newLine
+		return []byte(strings.Join(lines, "\n")), nil
+	}
+	return data, nil
+}
+
+// removePersonaModelLine removes the model line from inside the leading front matter block.
+func removePersonaModelLine(data []byte) ([]byte, error) {
+	lines := strings.Split(string(data), "\n")
+	end, opened := util.FrontMatterEnd(lines, maxFrontMatterLines)
+	if !opened || end == 0 {
+		return data, nil
+	}
+	for i := 1; i < end-1 && i < maxFrontMatterLines; i++ {
+		line := lines[i]
+		trimmed := strings.TrimRight(line, "\r")
+		key, _, found := strings.Cut(strings.TrimSpace(trimmed), ":")
+		if !found || strings.TrimSpace(key) != PersonaModelKey {
+			continue
+		}
+		lines = append(lines[:i], lines[i+1:]...)
+		return []byte(strings.Join(lines, "\n")), nil
+	}
+	return data, nil
 }

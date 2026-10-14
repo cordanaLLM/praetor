@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Adoption's record of the agent surfaces the agent-definitions step projects from the canonical
@@ -91,9 +94,42 @@ func plannedAgentSurfaces(ctx context.Context, repoPath string, pending compiler
 func priorAgentSurfaces(ctx context.Context, repoPath string) (priorVendorProjections, error) {
 	files, err := plannedAgentSurfaces(ctx, repoPath, compiler.PendingSources{})
 	if err != nil {
-		return nil, err
+		return priorLegacyAgentSurfaces(ctx, repoPath)
 	}
 	return agentSurfaceDigests(files), nil
+}
+
+// priorLegacyAgentSurfaces records the unedited earlier copies when the personas on disk
+// lack required front matter keys (such as model tier) that the current compiler demands,
+// so earlier unedited copies can still be synchronized rather than replaced.
+func priorLegacyAgentSurfaces(ctx context.Context, repoPath string) (priorVendorProjections, error) {
+	inventory, err := compiler.ReadAgentInventory(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	if !inventory.Present {
+		return nil, nil
+	}
+	dirs, _, err := compiler.SelectPersonaDirs(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	if util.FileExists(filepath.Join(repoPath, filepath.FromSlash(compiler.PluginManifestRel))) {
+		dirs = append(dirs, compiler.PluginAgentsRel)
+	}
+	prior := make(priorVendorProjections, len(inventory.Personas)*len(dirs))
+	for i := 0; i < len(inventory.Personas) && i < compiler.MaxAgentFiles; i++ {
+		name := inventory.Personas[i]
+		data, err := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(compiler.CanonicalAgentsRel), name))
+		if err != nil {
+			continue
+		}
+		for j := 0; j < len(dirs); j++ {
+			rel := dirs[j] + "/" + name
+			prior.record(rel, string(data), compiler.CanonicalAgentsRel)
+		}
+	}
+	return prior, nil
 }
 
 // agentSurfaceDigests returns the digest of each planned copy, in the form a write over the copy
@@ -168,7 +204,14 @@ func preflightPersonaBackupRoot(ctx context.Context, s *adoptSession) error {
 	}
 	files, err := plannedAgentSurfaces(ctx, s.repoPath, compiler.PendingSources{})
 	if err != nil {
-		return err
+		prior, legacyErr := priorLegacyAgentSurfaces(ctx, s.repoPath)
+		if legacyErr != nil {
+			return legacyErr
+		}
+		if len(prior) == 0 {
+			return err
+		}
+		return preflightLegacyPersonaBackupRoot(ctx, s.repoPath, prior)
 	}
 	targets, err := observeVendorTargets(ctx, s.repoPath, files)
 	if err != nil {
@@ -178,6 +221,18 @@ func preflightPersonaBackupRoot(ctx context.Context, s *adoptSession) error {
 	for i := 0; i < len(targets) && i < maxProjectionTargets; i++ {
 		if targets[i].replacesEdit(prior) {
 			return checkBackupRoot(ctx, s.repoPath)
+		}
+	}
+	return nil
+}
+
+// preflightLegacyPersonaBackupRoot checks whether any legacy persona copy was hand-edited.
+func preflightLegacyPersonaBackupRoot(ctx context.Context, repoPath string, prior priorVendorProjections) error {
+	for rel := range prior {
+		if onDisk, readErr := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(rel))); readErr == nil {
+			if !prior.isPriorProjection(rel, onDisk) {
+				return checkBackupRoot(ctx, repoPath)
+			}
 		}
 	}
 	return nil
