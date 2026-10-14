@@ -13,8 +13,12 @@ const worktreesIgnoreRule = "/.standards/worktrees/"
 // TestAdoptionReconcilesManagedIgnoreRulesOnce adopts a repository whose ignore file
 // already carries the private rule with further lines after it, which is exactly the
 // shape the old suffix test mistook for absent, and asserts both managed rules appear
-// exactly once no matter how often adoption runs.
+// exactly once no matter how often adoption runs. A repository whose own negation un-ignores
+// the legacy scratch root keeps it in Git (#1072): the block leaves legacyScratchIgnore out,
+// says why, and the root stays visible, while the private working directory, negated too,
+// is still ignored.
 func TestAdoptionReconcilesManagedIgnoreRulesOnce(t *testing.T) {
+	withheld := map[string]bool{"later-negations": true}
 	for name, existing := range map[string]string{
 		"rule-then-later-lines": "/.workingdir/\nbin/\ncoverage.txt\n",
 		"no-trailing-newline":   "bin/\n/.workingdir/",
@@ -29,14 +33,22 @@ func TestAdoptionReconcilesManagedIgnoreRulesOnce(t *testing.T) {
 			path := filepath.Join(root, ".gitignore")
 			mustWrite(t, path, existing)
 			opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
-			if _, err := Adopt(t.Context(), opts); err != nil {
+			report, err := Adopt(t.Context(), opts)
+			if err != nil {
 				t.Fatal(err)
 			}
 			first := mustRead(t, path)
 			for _, rule := range managedIgnoreRules {
-				if n := countIgnoreRule(first, rule); n != 1 {
-					t.Fatalf("rule %q appears %d times after one adoption:\n%s", rule, n, first)
+				want := 1
+				if rule == legacyScratchIgnore && withheld[name] {
+					want = 0
 				}
+				if n := countIgnoreRule(first, rule); n != want {
+					t.Fatalf("rule %q appears %d times after one adoption, want %d:\n%s", rule, n, want, first)
+				}
+			}
+			if note := findActionDetail(report.ActionDetails, gitIgnoreFile); withheld[name] != strings.Contains(note, "left "+legacyScratchIgnore+" out of the block") {
+				t.Fatalf("withheld=%v but the %s entry says %q", withheld[name], gitIgnoreFile, note)
 			}
 			if _, err := Adopt(t.Context(), opts); err != nil {
 				t.Fatal(err)
@@ -45,7 +57,14 @@ func TestAdoptionReconcilesManagedIgnoreRulesOnce(t *testing.T) {
 				t.Fatalf("second adoption rewrote the ignore file:\n%s\n---\n%s", first, second)
 			}
 			assertGateWorktreeIgnored(t, root)
-			assertPrivateRootsIgnored(t, root)
+			if withheld[name] {
+				assertPrivateRootsIgnored(t, root, ".workingdir/OPEN.md")
+				if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".workingdir2/evidence/kept.md"); err == nil {
+					t.Fatal("a legacy scratch root the repository un-ignores is still ignored")
+				}
+			} else {
+				assertPrivateRootsIgnored(t, root, ".workingdir/OPEN.md", ".workingdir2/evidence/private.md")
+			}
 			if name == "crlf-with-negation" && strings.Count(first, "\n") != strings.Count(first, "\r\n") {
 				t.Fatalf("CRLF ignore file gained mixed endings: %q", first)
 			}
@@ -92,9 +111,9 @@ func assertGateWorktreeIgnored(t *testing.T, root string) {
 	}
 }
 
-func assertPrivateRootsIgnored(t *testing.T, root string) {
+func assertPrivateRootsIgnored(t *testing.T, root string, paths ...string) {
 	t.Helper()
-	for _, private := range []string{".workingdir/OPEN.md", ".workingdir2/evidence/private.md"} {
+	for _, private := range paths {
 		if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", private); err != nil {
 			t.Fatalf("private path %s is not effectively ignored: %v", private, err)
 		}
