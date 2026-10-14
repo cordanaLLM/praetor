@@ -68,7 +68,7 @@ func scheduleTickWithinRoot(ctx context.Context, path, inputRoot string, execute
 	if err != nil {
 		return nil, err
 	}
-	report = &ScheduleReport{RunnerSHA256: snapshot.runnerSHA, RunnerIdentity: "configured_binary", Version: 1, Config: snapshot.config, Fingerprint: snapshot.fingerprint, Status: "due", Scope: "Finite local suite tick; retained-byte cap is an admission threshold, not an in-flight filesystem quota. No input pin updates, provider dispatch, deletion or promotion."}
+	report = &ScheduleReport{RunnerSHA256: snapshot.runnerSHA, RunnerIdentity: "configured_binary", Version: 1, Config: snapshot.config, Fingerprint: snapshot.fingerprint, Status: "due", Scope: "Finite local suite tick; retained-byte cap is an admission threshold, not an in-flight filesystem quota. No input pin updates, provider dispatch or promotion; deletion only of the oldest retained runs under retention prune-oldest."}
 	defer func() {
 		if err != nil {
 			report.Verified = false
@@ -117,6 +117,9 @@ func inspectScheduleSession(ctx context.Context, snapshot *scheduleSnapshot, rep
 func (s *scheduleSession) inspect(ctx context.Context, execute bool) error {
 	usage, err := scanScheduleUsage(ctx, s.root)
 	if err != nil {
+		return err
+	}
+	if err := s.resumePrune(usage, execute); err != nil {
 		return err
 	}
 	expectedRuns := s.state.Attempts - s.state.PrunedThrough
@@ -214,6 +217,24 @@ func (s *scheduleSession) pruneOldest(ctx context.Context, usage *scheduleUsage,
 	return nil
 }
 
+// resumePrune finishes a prune a crash interrupted: pruneOldest persists pruned_through before it removes
+// the directory, so a process that died between the two leaves run directories numbered at or below
+// pruned_through. They are already given up by durable state; without this every later tick would
+// refuse the disagreement and the schedule would stay stopped. A dry run only names them.
+func (s *scheduleSession) resumePrune(usage *scheduleUsage, execute bool) error {
+	for step := 0; step < 1024 && usage.runs > 0 && usage.minRun <= s.state.PrunedThrough; step++ {
+		name := scheduleRunName(usage.minRun)
+		if execute {
+			if err := s.root.RemoveAll(name); err != nil {
+				return err
+			}
+		}
+		s.report.PrunedRuns = append(s.report.PrunedRuns, name)
+		usage.forget(name)
+	}
+	return nil
+}
+
 func (s *scheduleSession) shouldPrune(retainedRuns, entries int, bytes int64) bool {
 	c := s.snapshot.config
 	return retainedRuns > c.MaxRuns || entries > maxScheduleEntries/2 || bytes >= c.MaxBytes
@@ -243,17 +264,16 @@ func (s *scheduleSession) applyPrune(ctx context.Context, usage *scheduleUsage, 
 		s.state.PrunedThrough = number
 	}
 	s.report.PrunedRuns = append(s.report.PrunedRuns, name)
-	usage.runs--
-	usage.minRun++
-	usage.entries -= usage.runEntries[name]
-	usage.bytes -= usage.runBytes[name]
-	if usage.entries < 0 {
-		usage.entries = 0
-	}
-	if usage.bytes < 0 {
-		usage.bytes = 0
-	}
+	usage.forget(name)
 	return nil
+}
+
+// forget drops the oldest retained run, name, from the usage counts after it was removed or would be.
+func (u *scheduleUsage) forget(name string) {
+	u.runs--
+	u.minRun++
+	u.entries = max(u.entries-u.runEntries[name], 0)
+	u.bytes = max(u.bytes-u.runBytes[name], 0)
 }
 
 func scheduleRunName(number int) string { return fmt.Sprintf("run-%06d", number) }

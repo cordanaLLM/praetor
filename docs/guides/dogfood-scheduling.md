@@ -47,8 +47,11 @@ the scheduler deletes the oldest retained run directory inside `state_dir` (neve
 the newest attempt and never an attempt with `running` status). The durable state
 persists `pruned_through` with fsync before each directory deletion, and the report
 lists `pruned_runs`. Retained run directories `run-000001`..`run-N` must exist
-gapless from `pruned_through + 1` through `attempts`. Dry runs (`status`) report what
-would be pruned and delete nothing.
+gapless from `pruned_through + 1` through `attempts`. A directory left at or below
+`pruned_through` by a process that stopped between saving the state and deleting is
+removed on the next tick and listed in `pruned_runs`, so an interrupted prune never
+stops the schedule (`TestSchedulePruneOldestResumesAnInterruptedPrune`). Dry runs
+(`status`) report what would be pruned and delete nothing.
 
 The input fingerprint binds the exact schedule and suite bytes, configured CLI
 binary content, source manifest and lock, every file under

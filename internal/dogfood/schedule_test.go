@@ -834,3 +834,51 @@ func requireScheduling(t *testing.T) {
 		t.Skipf("scheduling unavailable on this platform: %v", err)
 	}
 }
+
+// Boundary: a prune a crash interrupted after pruned_through was saved and before the directory was
+// removed leaves run-000001 behind with pruned_through 1. A status run names it and deletes nothing;
+// the next tick removes it and runs, instead of refusing the disagreement for good.
+func TestSchedulePruneOldestResumesAnInterruptedPrune(t *testing.T) {
+	requireScheduling(t)
+	path, cfg := scheduleFixture(t, suiteFixtureRecord+"\n")
+	now := fixedScheduleTime()
+	for i := 1; i <= 3; i++ {
+		clock := func() time.Time { return now.Add(time.Duration(i) * time.Hour) }
+		if _, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+	cfg.Retention = "prune-oldest"
+	writeScheduleFixture(t, path, cfg)
+	root, err := openScheduleState(context.Background(), cfg.StateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := readScheduleState(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.PrunedThrough = 1
+	if err := saveScheduleJSON(t.Context(), root, "state.json", state); err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Close(); err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(cfg.StateDir, "run-000001")
+	clock := func() time.Time { return now.Add(4 * time.Hour) }
+	status, err := scheduleTick(context.Background(), path, false, clock, verifiedScheduleRunner)
+	if err != nil || len(status.PrunedRuns) != 1 || status.PrunedRuns[0] != "run-000001" {
+		t.Fatalf("status run: %+v %v; want run-000001 named", status, err)
+	}
+	if _, err := os.Stat(leftover); err != nil {
+		t.Fatalf("status run deleted the leftover: %v", err)
+	}
+	report, err := scheduleTick(context.Background(), path, true, clock, verifiedScheduleRunner)
+	if err != nil || !report.Verified || report.Attempts != 4 {
+		t.Fatalf("tick after the interrupted prune: %+v %v", report, err)
+	}
+	if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("leftover run-000001 not removed: %v", err)
+	}
+}
