@@ -385,13 +385,16 @@ func verifyProjection(ctx context.Context, rootDir, rel string, want []byte) err
 // | .claude/agents | Claude Code | flash -> haiku, pro -> sonnet | code.claude.com/docs/en/sub-agents: sonnet, opus, haiku, fable, full id, inherit |
 // | .agents/plugins/praetor/agents | Antigravity Plugin | byte copy, tier kept | Native Antigravity schema accepts flash and pro |
 // | .github/agents | GitHub Copilot | model line removed | Copilot value space unverified in docs |
-// | .gemini/agents | Gemini CLI | model line removed | Gemini CLI documents no .gemini/agents persona files |
+// | .gemini/agents | Gemini CLI | model line removed | model takes a concrete Gemini id, no tier alias; inherits |
 // | .codex/agents | OpenAI Codex | model line removed | Codex reads TOML (#1076) |
 
 // TransformPersonaForDir validates data as a canonical persona and projects its front matter
 // for targetDir. One transform function is used by both writing and verification (HISS-19).
 func TransformPersonaForDir(targetDir, rel string, data []byte) ([]byte, error) {
-	if problem := personaFrontMatterProblem(data); problem != "" {
+	if problem, tier := personaFrontMatterProblemKind(data); problem != "" {
+		if tier {
+			return nil, fmt.Errorf("%s: %s: %w", rel, problem, ErrPersonaModelTier)
+		}
 		return nil, fmt.Errorf("%s: %s", rel, problem)
 	}
 	switch targetDir {

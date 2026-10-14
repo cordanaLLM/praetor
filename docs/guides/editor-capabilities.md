@@ -98,7 +98,7 @@ Projections carry the tier in each client's own vocabulary or drop it with a sta
 | `.claude/agents` | Claude Code | `flash` -> `haiku`, `pro` -> `sonnet` | Claude Code accepts family aliases `sonnet`, `opus`, `haiku`, `fable`, full model ID, or `inherit` | <https://code.claude.com/docs/en/sub-agents> (read 2026-10-14) |
 | `.agents/plugins/praetor/agents` | Antigravity Plugin | byte copy, tier kept | Native Antigravity schema accepts `flash` and `pro` | <https://antigravity.google/docs/subagents/> (read 2026-10-14) |
 | `.github/agents` | GitHub Copilot | model line removed | Copilot value space unverified in docs | <https://docs.github.com/en/copilot/reference/custom-agents-configuration> (read 2026-10-14) |
-| `.gemini/agents` | Gemini CLI | model line removed | Gemini CLI documents no `.gemini/agents` persona files; subagents configure via `settings.json` | <https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md> (read 2026-10-14) |
+| `.gemini/agents` | Gemini CLI | model line removed | Gemini CLI reads `.gemini/agents/*.md` with a `model` key, but it takes a concrete Gemini model id (default `inherit`) and no tier alias, so the tier is dropped and the persona inherits the session model | <https://github.com/google-gemini/gemini-cli/blob/main/docs/core/subagents.md> (read 2026-10-14) |
 | `.codex/agents` | OpenAI Codex | model line removed | Codex reads standalone TOML files (#1076) | <https://developers.openai.com/codex/subagents> (read 2026-10-14) |
 
 The transform edits only the `model` line inside the leading front matter block; body bytes

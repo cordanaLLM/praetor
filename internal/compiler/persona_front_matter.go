@@ -6,6 +6,7 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -55,19 +56,31 @@ func CheckPersonaFrontMatter(ctx context.Context, rootDir string, names []string
 	return problems, nil
 }
 
+// ErrPersonaModelTier marks a persona whose front matter is complete except for its model tier:
+// the one refusal adoption may get past when the persona is an unedited copy of a template it is
+// about to replace with the tiered one (priorLegacyAgentSurfaces).
+var ErrPersonaModelTier = errors.New("persona model tier missing or invalid")
+
 // personaFrontMatterProblem says why the front matter that opens data fails, or returns "".
 func personaFrontMatterProblem(data []byte) string {
+	problem, _ := personaFrontMatterProblemKind(data)
+	return problem
+}
+
+// personaFrontMatterProblemKind is personaFrontMatterProblem plus whether the problem is the model
+// tier alone.
+func personaFrontMatterProblemKind(data []byte) (string, bool) {
 	block, opened, err := frontMatterBlock(data)
 	if err != nil {
-		return err.Error()
+		return err.Error(), false
 	}
 	if !opened {
 		return "opens with no front matter; a persona starts with a --- block declaring " +
-			strings.Join(PersonaRequiredKeys, " and ")
+			strings.Join(PersonaRequiredKeys, " and "), false
 	}
 	var front map[string]any
 	if err := util.DecodeYAMLDocument(block, &front, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
-		return "front matter is not valid YAML: " + err.Error()
+		return "front matter is not valid YAML: " + err.Error(), false
 	}
 	var missing []string
 	for _, key := range PersonaRequiredKeys {
@@ -76,9 +89,10 @@ func personaFrontMatterProblem(data []byte) string {
 		}
 	}
 	if len(missing) > 0 {
-		return "front matter lacks the required key(s) " + strings.Join(missing, ", ") + " (each a non-empty string)"
+		return "front matter lacks the required key(s) " + strings.Join(missing, ", ") + " (each a non-empty string)", false
 	}
-	return personaModelProblem(front)
+	problem := personaModelProblem(front)
+	return problem, problem != ""
 }
 
 // personaModelProblem validates the model tier in front matter.

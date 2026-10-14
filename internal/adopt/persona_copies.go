@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -93,8 +94,11 @@ func plannedAgentSurfaces(ctx context.Context, repoPath string, pending compiler
 // unedited earlier run left, which a write over them synchronizes rather than replaces.
 func priorAgentSurfaces(ctx context.Context, repoPath string) (priorVendorProjections, error) {
 	files, err := plannedAgentSurfaces(ctx, repoPath, compiler.PendingSources{})
-	if err != nil {
+	if errors.Is(err, compiler.ErrPersonaModelTier) {
 		return priorLegacyAgentSurfaces(ctx, repoPath)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return agentSurfaceDigests(files), nil
 }
@@ -122,7 +126,7 @@ func priorLegacyAgentSurfaces(ctx context.Context, repoPath string) (priorVendor
 		name := inventory.Personas[i]
 		data, err := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(compiler.CanonicalAgentsRel), name))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("read persona %s: %w", name, err)
 		}
 		for j := 0; j < len(dirs); j++ {
 			rel := dirs[j] + "/" + name
@@ -203,6 +207,9 @@ func preflightPersonaBackupRoot(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	files, err := plannedAgentSurfaces(ctx, s.repoPath, compiler.PendingSources{})
+	if err != nil && !errors.Is(err, compiler.ErrPersonaModelTier) {
+		return err
+	}
 	if err != nil {
 		prior, legacyErr := priorLegacyAgentSurfaces(ctx, s.repoPath)
 		if legacyErr != nil {

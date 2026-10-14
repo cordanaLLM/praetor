@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -153,5 +154,33 @@ func TestRecordProjections_RemovalOfAStaleSkillLicence(t *testing.T) {
 	}
 	if len(report.CreatedFiles) != 0 {
 		t.Fatalf("a removal was reported created: %v", report.CreatedFiles)
+	}
+}
+
+// Negative: only a missing or invalid model tier lets adoption fall back to the earlier persona
+// copies it is about to refresh; any other persona defect still fails the run, named.
+func TestAdopt_Negative_PersonaDefectOtherThanTierStillFails(t *testing.T) {
+	repoPath := newTestRepo(t, "persona")
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(auditorAgentFile)), "---\nname: repo-auditor\nmodel: pro\n---\n\n# Auditor\n")
+	_, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err == nil || !strings.Contains(err.Error(), "description") {
+		t.Fatalf("Adopt over a persona without description: err %v, want the missing key named", err)
+	}
+	if errors.Is(err, compiler.ErrPersonaModelTier) {
+		t.Fatalf("a missing description was reported as a model tier problem: %v", err)
+	}
+}
+
+// Negative, unit level: the earlier-copy fallback answers only the model tier refusal; a persona
+// missing another key returns the planning error instead of an empty prior record.
+func TestPriorAgentSurfaces_Negative_OnlyTierFallsBack(t *testing.T) {
+	repoPath := newTestRepo(t, "persona")
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(auditorAgentFile)), "---\nname: repo-auditor\nmodel: pro\n---\n\n# Auditor\n")
+	if _, err := priorAgentSurfaces(context.Background(), repoPath); err == nil || !strings.Contains(err.Error(), "description") {
+		t.Fatalf("priorAgentSurfaces over a persona without description: err %v, want the missing key named", err)
+	}
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(auditorAgentFile)), "---\nname: repo-auditor\ndescription: \"Audit.\"\n---\n\n# Auditor\n")
+	if _, err := priorAgentSurfaces(context.Background(), repoPath); err != nil {
+		t.Fatalf("priorAgentSurfaces over an untiered earlier persona: %v, want the legacy record", err)
 	}
 }
