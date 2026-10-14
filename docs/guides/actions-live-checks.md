@@ -117,6 +117,7 @@ or neutral run neither extends nor ends a failure streak.
 | No completed run on the default branch, runs elsewhere | `[INFO]` with the newest run, such as a tag-triggered release. |
 | Only cancelled, skipped or neutral runs in the window | `[INFO]` with the newest completed run. |
 | Only `workflow_call` triggers | `[INFO]`; not read, since it runs inside its callers' runs. |
+| The workflow this check runs inside (`GITHUB_WORKFLOW_REF`) | `[INFO]`; not read. Its latest run on the branch can be the run that failed on this check's own finding, so judging it from inside would keep every later run red; audits outside it judge it (`TestAuditWorkflowRunHealth_Positive_OwnWorkflowNotJudgedFromInside`). |
 | Unknown to the forge | `[INFO]`; the file is not on the default branch yet. |
 
 These findings are reported and never fail the audit: the summary line ends with `reported, not

@@ -2680,6 +2680,44 @@ class HookInterpreter(unittest.TestCase):
         self.assertEqual(re.findall(r"\$\{?[A-Z_][A-Z0-9_]*", launcher), [])
         self.assertIsNotNone(re.search(r"\$\{?[A-Z_][A-Z0-9_]*", '"${PRAETOR_PYTHON:-python3}"'))
 
+    def test_git_repository_selection_is_dropped_by_default(self):
+        variables = {
+            "GIT_DIR": "/fake/git/dir",
+            "GIT_WORK_TREE": "/fake/work/tree",
+            "GIT_INDEX_FILE": "fake/index/file",
+            "GIT_COMMON_DIR": "/fake/common/dir",
+            "GIT_OBJECT_DIRECTORY": "/fake/objects",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/fake/alt/objects",
+        }
+        probe = (
+            "import os, json; "
+            "print(json.dumps([os.environ.get(k) for k in "
+            "('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', "
+            "'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES')]))"
+        )
+        result = self.launch("-c", probe, **variables)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [None, None, None, None, None, None])
+
+    def test_keep_index_preserves_git_index_file_only(self):
+        variables = {
+            "GIT_DIR": "/fake/git/dir",
+            "GIT_WORK_TREE": "/fake/work/tree",
+            "GIT_INDEX_FILE": "fake/index/file",
+            "GIT_COMMON_DIR": "/fake/common/dir",
+            "GIT_OBJECT_DIRECTORY": "/fake/objects",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/fake/alt/objects",
+        }
+        probe = (
+            "import os, json; "
+            "print(json.dumps([os.environ.get(k) for k in "
+            "('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', "
+            "'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES')]))"
+        )
+        result = self.launch("--keep-index", "-c", probe, **variables)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [None, None, "fake/index/file", None, None, None])
+
     def refused(self, result):
         self.assertEqual(result.returncode, 127, result.stdout + result.stderr)
         self.assertEqual(result.stdout, b"")

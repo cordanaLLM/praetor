@@ -69,6 +69,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 	},
 	checkpointLauncher: {
 		"8b6266ea16912a362c2e26d9a936887ca955ecf68f69744c935f2259d1a2c8dc": "proven interpreter candidates (#339)",
+		"28f19d46625ce26a3eeafd16d88abbc7fda68f46c677bcb6566cf8dc6c70f8fd": "drop Git repository selection before starting interpreter",
 	},
 }
 
