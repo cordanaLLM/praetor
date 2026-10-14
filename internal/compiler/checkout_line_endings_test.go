@@ -20,7 +20,7 @@ import (
 func crlfCompiledFixture(t *testing.T) string {
 	t.Helper()
 	root := skillFixture(t)
-	writeOutputFixture(t, filepath.Join(root, filepath.FromSlash(CanonicalAgentsRel), "helper.md"), "---\nname: helper\n---\n# Helper\n\nBlock merges without receipts.\n")
+	writeOutputFixture(t, filepath.Join(root, filepath.FromSlash(CanonicalAgentsRel), "helper.md"), "---\nname: helper\ndescription: d\nmodel: flash\n---\n# Helper\n\nBlock merges without receipts.\n")
 	if err := compileFixture(t, root); err != nil {
 		t.Fatalf("compile: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestCheckoutLineEndings_Negative_CRLFContentEditStillFails(t *testing.T) {
 		t.Fatalf("an edited CRLF vendor file: %v", err)
 	}
 	root = crlfCompiledFixture(t)
-	writeOutputFixture(t, filepath.Join(root, ".claude", "agents", "helper.md"), "---\r\nname: helper\r\n---\r\n# Helper\r\n\r\nMerges may skip receipts.\r\n")
+	writeOutputFixture(t, filepath.Join(root, ".claude", "agents", "helper.md"), "---\r\nname: helper\r\ndescription: d\r\nmodel: haiku\r\n---\r\n# Helper\r\n\r\nMerges may skip receipts.\r\n")
 	if _, err := VerifyAgentProjections(t.Context(), root); !errors.Is(err, ErrAgentProjectionDrift) || strings.Contains(err.Error(), "byte for byte") {
 		t.Fatalf("an edited CRLF persona copy: %v", err)
 	}

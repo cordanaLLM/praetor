@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -91,8 +92,9 @@ func TestCompileContext_Positive_AgentClientsSelectPersonaDirs(t *testing.T) {
 	}
 	mustContain(t, out, "[COMPILED] 1 autonomous agent vendor projections",
 		"[NOT_APPLICABLE] .github/agents", "[NOT_APPLICABLE] .gemini/agents", "[NOT_APPLICABLE] .codex/agents")
-	if got := readFixtureFile(t, dir, ".claude/agents/praetor-gatekeeper.md"); got != fixturePersona {
-		t.Fatalf("selected persona copy = %q", got)
+	wantClaude := strings.Replace(fixturePersona, "model: flash", "model: haiku", 1)
+	if got := readFixtureFile(t, dir, ".claude/agents/praetor-gatekeeper.md"); got != wantClaude {
+		t.Fatalf("selected persona copy = %q, want %q", got, wantClaude)
 	}
 	for _, rel := range []string{".github/agents", ".gemini/agents"} {
 		if util.DirExists(filepath.Join(dir, filepath.FromSlash(rel))) {

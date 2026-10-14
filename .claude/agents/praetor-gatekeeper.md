@@ -1,6 +1,7 @@
 ---
 name: praetor-gatekeeper
 description: "Autonomous subagent for running the six-stage gate: lockfiles and dependency prefetch, HISS ratchet, SCA security scans, flavor conformance, isolated-worktree race tests, and Ed25519 Exit-0 receipt signing."
+model: haiku
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto

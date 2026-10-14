@@ -18,7 +18,7 @@ func TestCompileAgentSurfaces_Positive(t *testing.T) {
 	}
 
 	testAgent := filepath.Join(srcDir, "test-helper.md")
-	content := "---\nname: test-helper\n---\n# Test Helper"
+	content := "---\nname: test-helper\ndescription: A test helper.\nmodel: flash\n---\n# Test Helper\n"
 	if err := os.WriteFile(testAgent, []byte(content), 0644); err != nil {
 		t.Fatalf("write test agent: %v", err)
 	}

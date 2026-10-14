@@ -1415,11 +1415,12 @@ class ScopeAndGuard(unittest.TestCase):
         # it gains fails here instead of going unverified by the pre-commit hook.
         with tempfile.TemporaryDirectory(prefix="praetor-context-") as temp:
             root = Path(temp)
-            persona = "---\nname: demo\ndescription: demo\n---\n\nRun tests.\n"
+            skill = "---\nname: demo\ndescription: demo\n---\n\nRun tests.\n"
+            persona = "---\nname: demo\ndescription: demo\nmodel: flash\n---\n\nRun tests.\n"  # personas carry a tier
             for name, text in {"AGENTS.md": "# Demo\n\nRun tests before commit.\n",
                                ".agents/agents/demo.md": persona,
-                               ".agents/skills/demo/SKILL.md": persona,
-                               ".agents/skills/caveman/SKILL.md": persona,
+                               ".agents/skills/demo/SKILL.md": skill,
+                               ".agents/skills/caveman/SKILL.md": skill,
                                ".agents/plugins/praetor/plugin.json": '{"name": "praetor"}\n'}.items():
                 (root / name).parent.mkdir(parents=True, exist_ok=True)
                 (root / name).write_text(text, encoding="utf-8")

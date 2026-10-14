@@ -32,12 +32,19 @@ func newPluginRepo(t *testing.T, name string) string {
 	repoPath := newTestRepo(t, name)
 	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.PluginManifestRel)), "{\"name\": \"praetor\"}\n")
 	mustWrite(t, filepath.Join(repoPath, ".agents", "skills", "lint", "SKILL.md"), pluginSkillText)
+	dirs, _, err := compiler.SelectPersonaDirs(t.Context(), repoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirs = append(dirs, compiler.PluginAgentsRel)
 	for _, persona := range generatedPersonas() {
-		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(persona.rel)), earlierPersonaText(t, persona))
+		text := earlierPersonaText(t, persona)
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(persona.rel)), text)
+		for _, dir := range dirs {
+			mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(dir), filepath.Base(persona.rel)), text)
+		}
 	}
-	if _, err := compiler.CompileAgentSurfaces(t.Context(), io.Discard, repoPath); err != nil {
-		t.Fatalf("project the earlier personas: %v", err)
-	}
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(compiler.PluginSkillsRel), "lint", compiler.SkillEntryName), pluginSkillText)
 	return repoPath
 }
 
@@ -208,8 +215,12 @@ func TestAdopt_Boundary_AgentClientsSubsetLeavesUnselectedDirsUntouched(t *testi
 		t.Errorf("unselected persona directory rewritten: %q", got)
 	}
 	for _, rel := range []string{".claude/agents/repo-auditor.md", pluginAuditorCopy} {
-		if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(rel))); got != defaultAuditorAgentMD {
-			t.Errorf("selected copy %s not projected", rel)
+		want := defaultAuditorAgentMD
+		if strings.HasPrefix(rel, ".claude/") {
+			want = strings.Replace(defaultAuditorAgentMD, "model: pro", "model: sonnet", 1)
+		}
+		if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(rel))); got != want {
+			t.Errorf("selected copy %s not projected: got %q, want %q", rel, got, want)
 		}
 	}
 	if notApplicableDetail(rep, ".codex/agents") == "" || hasAction(rep, ".codex/agents/repo-auditor.md", actionReplace) {

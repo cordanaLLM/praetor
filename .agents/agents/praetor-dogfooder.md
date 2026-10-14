@@ -1,6 +1,7 @@
 ---
 name: praetor-dogfooder
 description: "Autonomous background worker for simulating repository adoption across configured repository roots and dogfooding raw workstation bundles."
+model: flash
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto

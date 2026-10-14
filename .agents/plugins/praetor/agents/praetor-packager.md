@@ -1,6 +1,7 @@
 ---
 name: praetor-packager
 description: "Autonomous subagent for verifying cloud-native multi-arch distroless OCI container builds, Helm chart linting, and K8s admission rules."
+model: flash
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto
