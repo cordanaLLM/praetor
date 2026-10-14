@@ -54,7 +54,7 @@ LEFTHOOK_DISABLED = ("0", "false")
 # byte; TestPythonGuardCarriesTheBuiltinDevRootRule fails when the two differ. It names no
 # organisation folder: those are operator data, configured in hooks.command_policy.deny.
 TOPOLOGY_PATTERNS = [
-    r"(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*\bdev/?(\s|$)",
+    r"(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*\bdev[/\\]?(\s|$)",
 ]
 
 # Every refusal below is agenthook's wording (internal/agenthook/policy.go), character for

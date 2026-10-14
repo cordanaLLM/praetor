@@ -1,0 +1,3 @@
+type: fixed
+title: The dev-root rule of the command guard and the adopter interceptor also refuses a dev root written with a trailing backslash, so a Windows path is refused like a POSIX one
+issue: '#200'
