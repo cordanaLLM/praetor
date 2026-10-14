@@ -112,13 +112,15 @@ or neutral run neither extends nor ends a failure streak.
 | Finding | Line |
 | :--- | :--- |
 | Latest decisive run succeeded | Listed in the summary only. |
-| Latest decisive run failed | `[WARN]` with the number of failed runs in a row and the latest failed run; `at least 20` when the forge lists a full window of 20 and no success ends the streak inside it. A shorter history is the whole one, so its streak is exact (`TestAuditWorkflowRunHealth_Boundary_ShortFailureHistoryIsExact`). |
+| Latest decisive run failed | `[WARN]` with the number of failed runs in a row and the latest failed run; `at least 20` when the forge lists a full window of 20 and no success ends the streak inside it. A shorter history is the whole one, so its streak is exact (`TestAuditWorkflowRunHealth_Boundary_ShortFailureHistoryIsExact`). For an undeclared failing workflow, the line ends with the declaration route: `; declare it in workflow_runs.expected with state failing, a reason and an expiry while the fix lands`. |
 | No run on any branch | `[WARN]` naming the triggers from the workflow's `on:` key. |
 | No completed run on the default branch, runs elsewhere | `[INFO]` with the newest run, such as a tag-triggered release. |
 | Only cancelled, skipped or neutral runs in the window | `[INFO]` with the newest completed run. |
 | Only `workflow_call` triggers | `[INFO]`; not read, since it runs inside its callers' runs. |
 | The workflow this check runs inside (`GITHUB_WORKFLOW_REF`) | `[INFO]`; not read. Its latest run on the branch can be the run that failed on this check's own finding, so judging it from inside would keep every later run red; audits outside it judge it (`TestAuditWorkflowRunHealth_Positive_OwnWorkflowNotJudgedFromInside`). |
 | Unknown to the forge | `[INFO]`; the file is not on the default branch yet. |
+| Stale declaration (workflow healthy again) | `[WARN]` naming the declared state and that the declaration no longer applies, so strict zero-warning gates count it. |
+| Expired declaration | `[WARN]` naming the failure streak and the date the declaration expired on; behaves like no declaration. |
 
 These findings are reported and never fail the audit: the summary line ends with `reported, not
 enforced` (`TestAuditLiveActions_WorkflowRunsAreReportedNotEnforced`). The first read the forge
@@ -136,21 +138,33 @@ workflow_runs:
     - workflow: nightly-build.yml
       state: failing
       reason: the compile step refuses until its toolchain is packaged
+      expires: "2026-11-15"
     - workflow: release.yml
       state: unexercised
       reason: no release tag has been pushed yet
 ```
 
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `workflow` | string | Bare `.yml` or `.yaml` file name directly under `.github/workflows`. |
+| `state` | string | Expected state: `failing` or `unexercised`. |
+| `reason` | string | One nonempty line of at most 500 bytes. |
+| `expires` | string | Date after which the declaration stops holding (`YYYY-MM-DD`), at most 90 days ahead (`config.MaxExceptionDays`). Mandatory for `failing`, optional for `unexercised`. |
+
 A declaration covers only the state it names. A workflow declared `unexercised` that runs and
-fails, or one declared `failing` that has never run, is still warned about. A declared workflow
-that is healthy again is told the declaration no longer applies, and a declaration naming a file
-that is not under `.github/workflows` is warned about
+fails, or one declared `failing` that has never run, is still warned about. An expired declaration
+behaves exactly like no declaration: the finding warns, and its line says the declaration expired
+on `<date>`. A declared workflow that is healthy again prints a `[WARN]` stale-declaration line
+(the declaration no longer applies) so strict zero-warning gates count it, and a declaration naming
+a file that is not under `.github/workflows` is warned about
 (`TestAuditWorkflowRunHealth_Boundary_DeclarationsCoverOnlyTheirState`).
 
-`workflow` is a bare `.yml` or `.yaml` file name, `state` is `failing` or `unexercised`, and
-`reason` is one nonempty line of at most 500 bytes; at most 64 workflows can be declared, and
-each only once (`TestActionsPolicy_Boundary_BoundsAndAbsence`). The section is repository-only:
-no profile, facet or fleet file can set it.
+`workflow` is a bare `.yml` or `.yaml` file name, `state` is `failing` or `unexercised`, `reason` is
+one nonempty line of at most 500 bytes, and `expires` is a `YYYY-MM-DD` date at most 90 days ahead
+(`config.MaxExceptionDays`); `expires` is required for state `failing` and optional for `unexercised`.
+A missing `expires` on a `failing` declaration is a manifest validation error naming the field.
+At most 64 workflows can be declared, and each only once (`TestActionsPolicy_Boundary_BoundsAndAbsence`).
+The section is repository-only: no profile, facet or fleet file can set it.
 
 ## Branch protection
 

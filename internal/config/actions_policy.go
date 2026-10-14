@@ -7,6 +7,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -30,8 +31,9 @@ const (
 
 // WorkflowRunsPolicy is the manifest's workflow_runs section: the workflows whose state the
 // audit's run check (internal/forge.AuditWorkflowRunHealth) is told to expect, each with the
-// reason a reader of the report needs. It is repository-only and stays out of ResolvedPolicy,
-// like HISS: only the repository knows why one of its workflows fails or has not run yet.
+// reason and expiry a reader of the report needs. It is repository-only and stays out of
+// ResolvedPolicy, like HISS: only the repository knows why one of its workflows fails or has not
+// run yet.
 type WorkflowRunsPolicy struct {
 	Expected []WorkflowRunExpectation `yaml:"expected,omitempty"`
 }
@@ -47,6 +49,20 @@ type WorkflowRunExpectation struct {
 	State WorkflowRunState `yaml:"state"`
 	// Reason says why, in one line of at most 500 bytes.
 	Reason string `yaml:"reason"`
+	// Expires is the date after which the declaration stops holding (YYYY-MM-DD); required
+	// for failing and optional for unexercised.
+	Expires string `yaml:"expires,omitempty"`
+}
+
+// Expired reports whether the declaration stopped holding before today; it still holds on its
+// expires day. A declaration without an expires date (permitted for unexercised workflows)
+// never expires. An unparseable date counts as expired.
+func (e WorkflowRunExpectation) Expired(today time.Time) bool {
+	if e.Expires == "" {
+		return e.State == WorkflowRunFailing
+	}
+	expires, err := time.Parse(ExceptionDateLayout, e.Expires)
+	return err != nil || expires.Before(ExceptionDay(today))
 }
 
 // Expectation returns the declaration for the workflow file name workflow, or nil when the
@@ -64,9 +80,14 @@ func (p *WorkflowRunsPolicy) Expectation(workflow string) *WorkflowRunExpectatio
 }
 
 // validate refuses more than MaxWorkflowRunExpectations declarations, a workflow that is not a
-// bare .yml or .yaml file name, a workflow declared twice, an unknown state, and a reason that
-// is empty, longer than 500 bytes or spans lines. A nil section declares nothing.
+// bare .yml or .yaml file name, a workflow declared twice, an unknown state, a reason that
+// is empty, longer than 500 bytes or spans lines, and an expires value that is missing on state
+// failing, not a YYYY-MM-DD date, or more than MaxExceptionDays ahead. A nil section declares nothing.
 func (p *WorkflowRunsPolicy) validate() error {
+	return p.validateToday(time.Now())
+}
+
+func (p *WorkflowRunsPolicy) validateToday(today time.Time) error {
 	if p == nil {
 		return nil
 	}
@@ -77,7 +98,7 @@ func (p *WorkflowRunsPolicy) validate() error {
 	seen := make(map[string]bool, len(p.Expected))
 	for i := 0; i < len(p.Expected) && i < MaxWorkflowRunExpectations; i++ {
 		entry := p.Expected[i]
-		if err := entry.validate(); err != nil {
+		if err := entry.validateToday(today); err != nil {
 			return fmt.Errorf("workflow_runs.expected[%d]: %w", i, err)
 		}
 		if seen[entry.Workflow] {
@@ -88,13 +109,20 @@ func (p *WorkflowRunsPolicy) validate() error {
 	return nil
 }
 
-func (e WorkflowRunExpectation) validate() error {
+func (e WorkflowRunExpectation) validateToday(today time.Time) error {
 	if !validWorkflowFileName(e.Workflow) {
 		return fmt.Errorf("workflow %q must be the file name of a .yml or .yaml workflow under .github/workflows", e.Workflow)
 	}
 	if e.State != WorkflowRunFailing && e.State != WorkflowRunUnexercised {
 		return fmt.Errorf("state %q of %s must be %q or %q", e.State, e.Workflow, WorkflowRunFailing, WorkflowRunUnexercised)
 	}
+	if err := e.validateReason(); err != nil {
+		return err
+	}
+	return e.validateExpiry(today)
+}
+
+func (e WorkflowRunExpectation) validateReason() error {
 	reason := strings.TrimSpace(e.Reason)
 	switch {
 	case reason == "":
@@ -103,6 +131,18 @@ func (e WorkflowRunExpectation) validate() error {
 		return fmt.Errorf("the reason of %s must be valid UTF-8 of at most %d bytes", e.Workflow, maxWorkflowRunReason)
 	case strings.ContainsAny(e.Reason, "\r\n"):
 		return fmt.Errorf("the reason of %s must be one line", e.Workflow)
+	}
+	return nil
+}
+
+func (e WorkflowRunExpectation) validateExpiry(today time.Time) error {
+	if e.State == WorkflowRunFailing && strings.TrimSpace(e.Expires) == "" {
+		return fmt.Errorf("%s declares state %q with no expires; failing workflows require an expires date", e.Workflow, e.State)
+	}
+	if e.Expires != "" {
+		if problem := exceptionExpiryProblem(e.Expires, today); problem != "" {
+			return fmt.Errorf("%s %s", e.Workflow, problem)
+		}
 	}
 	return nil
 }

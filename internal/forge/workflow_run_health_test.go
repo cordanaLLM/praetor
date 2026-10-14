@@ -7,9 +7,11 @@ package forge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -120,6 +122,7 @@ func TestAuditWorkflowRunHealth_Negative_FailingStreakAndNeverRun(t *testing.T) 
 // still counted; one declared failing that now succeeds is told its declaration no longer
 // applies; a declaration naming no workflow is warned about.
 func TestAuditWorkflowRunHealth_Boundary_DeclarationsCoverOnlyTheirState(t *testing.T) {
+	future := time.Now().AddDate(0, 0, 14).Format(config.ExceptionDateLayout)
 	root := runHealthRepo(t, map[string]string{"build.yml": "schedule", "release.yml": "release", "fixed.yml": "push"})
 	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
 		"build.yml":   completedRuns("failure", "failure"),
@@ -127,9 +130,9 @@ func TestAuditWorkflowRunHealth_Boundary_DeclarationsCoverOnlyTheirState(t *test
 		"fixed.yml":   completedRuns("success"),
 	}}
 	policy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
-		{Workflow: "build.yml", State: config.WorkflowRunFailing, Reason: "compile step not implemented"},
+		{Workflow: "build.yml", State: config.WorkflowRunFailing, Reason: "compile step not implemented", Expires: future},
 		{Workflow: "release.yml", State: config.WorkflowRunUnexercised, Reason: "no tag yet"},
-		{Workflow: "fixed.yml", State: config.WorkflowRunFailing, Reason: "was broken"},
+		{Workflow: "fixed.yml", State: config.WorkflowRunFailing, Reason: "was broken", Expires: future},
 		{Workflow: "gone.yml", State: config.WorkflowRunUnexercised, Reason: "removed"},
 	}}
 	_, text := auditRuns(t, root, reader, policy)
@@ -137,12 +140,143 @@ func TestAuditWorkflowRunHealth_Boundary_DeclarationsCoverOnlyTheirState(t *test
 		"[WARN] workflow_runs.expected names gone.yml, which is not a workflow under .github/workflows",
 		"[INFO] Workflow build.yml: failing as declared (compile step not implemented): failing on main, failed runs in a row: 2 (latest: run #2",
 		"[WARN] Workflow release.yml: failing on main",
-		"[INFO] Workflow fixed.yml: declared failing, but latest run on main succeeded",
+		"[WARN] Workflow fixed.yml: declared failing, but latest run on main succeeded",
 		"1 of 3 workflows failing or never run (release.yml)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("report lacks %q:\n%s", want, text)
 		}
+	}
+}
+
+// Positive (#1333): valid declaration covers finding (INFO); expired declaration behaves like
+// no declaration (WARN) and names the expiry date. Tested both ways: valid vs expired.
+func TestAuditWorkflowRunHealth_Positive_ValidVsExpiredDeclaration(t *testing.T) {
+	root := runHealthRepo(t, map[string]string{"failing.yml": "push", "unexercised.yml": "schedule"})
+	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
+		"failing.yml":     completedRuns("failure", "failure"),
+		"unexercised.yml": {Known: true},
+	}}
+
+	// Valid (future expiry date): covered, no WARN.
+	future := time.Now().AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	validPolicy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
+		{Workflow: "failing.yml", State: config.WorkflowRunFailing, Reason: "wip step", Expires: future},
+		{Workflow: "unexercised.yml", State: config.WorkflowRunUnexercised, Reason: "no schedule yet", Expires: future},
+	}}
+	report, text := auditRuns(t, root, reader, validPolicy)
+	if strings.Contains(text, "[WARN]") {
+		t.Fatalf("valid declarations must not warn:\n%s", text)
+	}
+	for _, finding := range report.Findings {
+		if !finding.Covered() || finding.Unhealthy() {
+			t.Fatalf("finding %s must be covered and healthy: %+v", finding.Workflow, finding)
+		}
+	}
+	if !strings.Contains(text, "[INFO] Workflow failing.yml: failing as declared (wip step): failing on main") ||
+		!strings.Contains(text, "[INFO] Workflow unexercised.yml: unexercised as declared (no schedule yet): never run; started by schedule") ||
+		!strings.Contains(text, "none failing or never run") {
+		t.Fatalf("unexpected valid report:\n%s", text)
+	}
+
+	// Expired (past expiry date): behaves like no declaration, warns naming the expiry date.
+	expiredDate := "2026-10-01"
+	expiredPolicy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
+		{Workflow: "failing.yml", State: config.WorkflowRunFailing, Reason: "wip step", Expires: expiredDate},
+		{Workflow: "unexercised.yml", State: config.WorkflowRunUnexercised, Reason: "no schedule yet", Expires: expiredDate},
+	}}
+	report, text = auditRuns(t, root, reader, expiredPolicy)
+	for _, finding := range report.Findings {
+		if finding.Covered() || !finding.Unhealthy() {
+			t.Fatalf("expired finding %s must not be covered and must be unhealthy: %+v", finding.Workflow, finding)
+		}
+	}
+	wantFailing := fmt.Sprintf("[WARN] Workflow failing.yml: failing on main, failed runs in a row: 2 (latest: run #2, push, failure, 2026-09-27T07:46:55Z, https://forge.test/run); the declaration expired on %s", expiredDate)
+	wantUnexercised := fmt.Sprintf("[WARN] Workflow unexercised.yml: never run; started by schedule; the declaration expired on %s", expiredDate)
+	if !strings.Contains(text, wantFailing) {
+		t.Fatalf("report lacks expired failing finding %q:\n%s", wantFailing, text)
+	}
+	if !strings.Contains(text, wantUnexercised) {
+		t.Fatalf("report lacks expired unexercised finding %q:\n%s", wantUnexercised, text)
+	}
+	if !strings.Contains(text, "2 of 2 workflows failing or never run (failing.yml, unexercised.yml)") {
+		t.Fatalf("summary must count expired declarations:\n%s", text)
+	}
+}
+
+// Positive (#1333): applies vs stale: a declaration whose state no longer matches prints [WARN]
+// stale-declaration line so strict zero-warning gates count it.
+func TestAuditWorkflowRunHealth_Positive_AppliesVsStale(t *testing.T) {
+	future := time.Now().AddDate(0, 0, 14).Format(config.ExceptionDateLayout)
+	root := runHealthRepo(t, map[string]string{"build.yml": "push"})
+	policy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
+		{Workflow: "build.yml", State: config.WorkflowRunFailing, Reason: "wip", Expires: future},
+	}}
+
+	// Applies: workflow is failing as declared.
+	failingReader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
+		"build.yml": completedRuns("failure"),
+	}}
+	_, text := auditRuns(t, root, failingReader, policy)
+	if strings.Contains(text, "[WARN]") || !strings.Contains(text, "[INFO] Workflow build.yml: failing as declared") {
+		t.Fatalf("applicable declaration must report INFO:\n%s", text)
+	}
+
+	// Stale: workflow succeeded, so declaration no longer matches.
+	healthyReader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
+		"build.yml": completedRuns("success"),
+	}}
+	report, text := auditRuns(t, root, healthyReader, policy)
+	want := "[WARN] Workflow build.yml: declared failing, but latest run on main succeeded (latest: run #1, push, success, 2026-09-27T07:46:55Z, https://forge.test/run); the declaration no longer applies"
+	if !strings.Contains(text, want) {
+		t.Fatalf("stale declaration must emit [WARN] line:\n%s", text)
+	}
+	if report.Findings[0].Unhealthy() {
+		t.Fatalf("stale declaration for a healthy workflow must not be marked unhealthy: %+v", report.Findings[0])
+	}
+}
+
+// Positive (#1333): undeclared failing workflow names the declaration route in its warning.
+func TestAuditWorkflowRunHealth_Positive_UndeclaredFailingNamesRoute(t *testing.T) {
+	root := runHealthRepo(t, map[string]string{"ci.yml": "push"})
+	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
+		"ci.yml": completedRuns("failure", "failure"),
+	}}
+
+	// Undeclared (no policy).
+	_, text := auditRuns(t, root, reader, nil)
+	wantRoute := "; declare it in workflow_runs.expected with state failing, a reason and an expiry while the fix lands"
+	if !strings.Contains(text, wantRoute) {
+		t.Fatalf("undeclared failing workflow warning must end with route:\n%s", text)
+	}
+
+	// Declared: does not name route.
+	future := time.Now().AddDate(0, 0, 14).Format(config.ExceptionDateLayout)
+	policy := &config.WorkflowRunsPolicy{Expected: []config.WorkflowRunExpectation{
+		{Workflow: "ci.yml", State: config.WorkflowRunFailing, Reason: "known defect", Expires: future},
+	}}
+	_, text = auditRuns(t, root, reader, policy)
+	if strings.Contains(text, "declare it in workflow_runs.expected") {
+		t.Fatalf("declared workflow must not name the declaration route:\n%s", text)
+	}
+}
+
+// Positive (#1333): healthy workflow without a declaration remains unchanged (emits no line,
+// listed in summary only).
+func TestAuditWorkflowRunHealth_Positive_HealthyWorkflowUnchanged(t *testing.T) {
+	root := runHealthRepo(t, map[string]string{"ok.yml": "push"})
+	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
+		"ok.yml": completedRuns("success"),
+	}}
+	report, text := auditRuns(t, root, reader, nil)
+	if findingLine := report.Findings[0].line("main"); findingLine != "" {
+		t.Fatalf("healthy workflow line must be empty, got %q", findingLine)
+	}
+	if strings.Contains(text, "[WARN]") || strings.Contains(text, "[INFO] Workflow ok.yml") {
+		t.Fatalf("healthy workflow must emit no warning or info line:\n%s", text)
+	}
+	if !strings.Contains(text, "[PASS] Workflow runs on main read from the forge: 1 workflows checked, none failing or never run (ok.yml).") {
+		t.Fatalf("summary lacks expected pass:\n%s", text)
 	}
 }
 
