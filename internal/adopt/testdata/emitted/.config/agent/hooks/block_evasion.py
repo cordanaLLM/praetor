@@ -98,7 +98,7 @@ RULES = [
     ),
     (
         r"(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|repor"
-        r"t|migrate|epic))\b.*\bdev/?(\s|$)",
+        r"t|migrate|epic))\b.*\bdev[/\\]?(\s|$)",
         DEV_01_REFUSAL,
     ),
 ]

@@ -1726,6 +1726,12 @@ class ScopeAndGuard(unittest.TestCase):
             "praetorctl adopt ~/dev/acme": True,
             "praetorctl adopt ~/dev/scratch": True,
             "standardsctl needs scan /home/u/dev/acme-labs --json": True,
+            # A Windows dev root ends in a backslash or in nothing (#200).
+            "praetorctl adopt C:\\Users\\u\\dev\\": False,
+            "praetorctl adopt C:\\Users\\u\\dev": False,
+            "standardsctl needs scan C:/Users/u/dev\\ --json": False,
+            "praetorctl adopt C:\\Users\\u\\dev\\acme": True,
+            "praetorctl adopt C:\\Users\\u\\dev\\\\": True,
         }
         for command, allowed in cases.items():
             with self.subTest(command):

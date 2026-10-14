@@ -279,9 +279,10 @@ func withoutReadOnlyWords(command string) string {
 	return readOnlyWordsPattern.ReplaceAllString(command, ReadOnlyKept)
 }
 
-// builtinDevRoot is the generic half of the topology rule: it names no organisation.
+// builtinDevRoot is the generic half of the topology rule: it names no organisation. The dev
+// root ends in either path separator, so a Windows path is refused like a POSIX one (#200).
 // Organisation containers are operator data and arrive through the operator deny list.
-const builtinDevRoot = `(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*\bdev/?(\s|$)`
+const builtinDevRoot = `(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*\bdev[/\\]?(\s|$)`
 
 // BuiltinRule is one built-in command rule as source text: the Python-compatible pattern
 // the policy compiles and the invariant a match reports. A ReadOnlyExempt rule judges the

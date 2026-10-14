@@ -868,6 +868,7 @@ var priorEvasionHookDigests = map[string]string{
 	"74a3c9cb08bd3afeaf4c0e0e3b05f0b9ad7518beee1173465477270ed71f569d": "raise from error in pending_command under adopter ruff B904",
 	"e69d49af323fcd3b1d23394bc6736afa115629ff7925ffec664404bd048ec169": "refuse admin and API merges that bypass rulesets (#1300)",
 	"6b9ba7a53a4c2c3a28da48031983ff879aed3f925974fd84bba58be1da19bf0c": "git option run searched once per run, linear in the line (#1283)",
+	"526ccd7bd6ec2070ed8dc8dfb97a9f9857de99e9c49ae6359c15b5a88fc47273": "dev root ends in either path separator (#200)",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an
