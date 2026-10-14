@@ -82,8 +82,12 @@ exception, no Paperclip harness, agent definitions or git hooks, so use adoption
 that must audit clean.
 
 `--facets` names the facets adoption writes when it creates `.standards.yaml`. Omitted, adoption
-writes `security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`
-(`config.DefaultFacets` in `internal/config/facets.go`). An existing `.standards.yaml` keeps the
+writes the defaults of the detected profile (`config.DefaultFacetsFor` in
+`internal/config/facets.go`): `security:high` and `agent:sandboxed` for every profile,
+`api:public-contract` only for `framework`, `library-client` and `web-package`, which publish an
+API, and `docs:seo-portal` only for `pages-site`, `framework` and `library-client`, which publish
+documentation (`TestDefaultFacetsFor_3D`). A `gitops-infra` cluster repository gets neither an API
+gate over its tool modules nor a documentation portal it has no site for. An existing `.standards.yaml` keeps the
 facets it declares, none or an empty list included, and adoption ignores `--facets` for it
 (`TestManifestForLock_FacetsScaffoldOnlyANewManifest_3D` in `internal/adopt/paths_read_test.go`).
 `adopt --help` says both (`TestAdoptHelpStatesTheDefaultFacets` in
@@ -104,11 +108,9 @@ read from the pinned catalog (`config.EffectivePolicy.FacetEffects` in
 `internal/config/facet_effects.go`). For an empty repository adopted as `template-seed`:
 
 ```text
-Facets:             [security:high api:public-contract docs:seo-portal agent:sandboxed]
-  default facets: --facets was omitted, so adoption declares security:high, api:public-contract, docs:seo-portal, agent:sandboxed in the .standards.yaml it creates
+Facets:             [security:high agent:sandboxed]
+  default facets: --facets was omitted, so adoption declares the defaults of profile template-seed, security:high, agent:sandboxed, in the .standards.yaml it creates
   security:high raises over template-seed alone: branch_protection.required_approving_reviewers 1 -> 2, branch_protection.require_signed_commits false -> true, supply_chain.slsa_level 1 -> 3, supply_chain.enforce_cosign false -> true, supply_chain.require_sbom false -> true
-  api:public-contract raises over template-seed alone: branch_protection.required_approving_reviewers 1 -> 2, branch_protection.require_signed_commits false -> true
-  docs:seo-portal raises over template-seed alone: no branch-protection or supply-chain setting
   agent:sandboxed raises over template-seed alone: no branch-protection or supply-chain setting
   choose other facets with --facets=<id>,... on a first adoption, or afterwards with praetorctl profile set --facets=<id>,... --lock-source-root=<praetor checkout> (--facets= declares none)
 ```
@@ -357,7 +359,15 @@ requires (`TestSync_Remote_KeepsLiveLeafChecksAndAddsTheAggregate` in
 `praetorctl plan --remote` to read the result back.
 
 A repository with one maintainer declares `review_mode: single_maintainer` under
-`overrides.branch_protection` ([review policy](guides/review-policy.md)). Adoption, `sync` and the audit
+`overrides.branch_protection` ([review policy](guides/review-policy.md)). A first adoption on a
+GitHub origin writes it itself when `GITHUB_TOKEN` or `GH_TOKEN` is set and the forge lists exactly
+one collaborator with write access, who could not approve their own pull request; the
+`.standards.yaml` entry of the report says so (`TestSoloMaintainer_Positive_OneWriter` in
+`internal/adopt/review_mode_test.go`). Adoption reads the token from those variables only, never
+from the gh session. Without a token, on another forge, or when the forge cannot answer, the entry
+says approvals may exceed approvers instead, and a re-adoption warns the same way. A re-adoption of
+a one-writer repository whose manifest lacks the review mode warns and names the declaration to
+add, because adoption never rewrites `.standards.yaml` (`TestWarnUnsatisfiableReview_Boundary`). Adoption, `sync` and the audit
 render the ruleset from the same effective policy, so the file adoption writes, with zero
 approvals, no code-owner review, the repository admin role as a pull-request bypass actor and the
 aggregate as the only required check, is the one the audit accepts

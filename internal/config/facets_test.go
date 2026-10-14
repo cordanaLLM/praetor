@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 )
 
@@ -53,5 +54,35 @@ func TestDefaultFacets(t *testing.T) {
 	got2 := DefaultFacets()
 	if got2[0] == "mutated" {
 		t.Error("DefaultFacets() returned a shared mutable slice, violating the fresh-slice contract")
+	}
+}
+
+// DefaultFacetsFor (#1075): positive, the API and documentation facets only where the archetype
+// publishes them; negative, a cluster repository gets neither; boundary, an archetype nobody
+// named still gets the two that fit every archetype, in DefaultFacets order.
+func TestDefaultFacetsFor_3D(t *testing.T) {
+	for archetype, want := range map[string][]string{
+		"framework":      DefaultFacets(),
+		"library-client": DefaultFacets(),
+		"web-package":    {"security:high", "api:public-contract", "agent:sandboxed"},
+		"pages-site":     {"security:high", "docs:seo-portal", "agent:sandboxed"},
+		"gitops-infra":   {"security:high", "agent:sandboxed"},
+		"os-image":       {"security:high", "agent:sandboxed"},
+		"":               {"security:high", "agent:sandboxed"},
+	} {
+		if got := DefaultFacetsFor(archetype); !slices.Equal(got, want) {
+			t.Errorf("DefaultFacetsFor(%q) = %v, want %v", archetype, got, want)
+		}
+	}
+}
+
+// TestDescribeDefaultFacets_Positive_NamesEveryArchetypeLimit (#1075): the adopt help states the
+// facets every archetype gets and, for each limited facet, the archetypes DefaultFacetsFor gives
+// it to.
+func TestDescribeDefaultFacets_Positive_NamesEveryArchetypeLimit(t *testing.T) {
+	want := "security:high,agent:sandboxed, plus api:public-contract for framework, library-client, web-package " +
+		"and docs:seo-portal for pages-site, framework, library-client"
+	if got := DescribeDefaultFacets(); got != want {
+		t.Fatalf("DescribeDefaultFacets() = %q, want %q", got, want)
 	}
 }

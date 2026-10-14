@@ -79,7 +79,7 @@ func reconcileActionlintIn(t *testing.T, repo string) *AdoptReport {
 // the rerun leaves it as it is.
 func TestActionlintLabelsPositiveCreatesConfiguration(t *testing.T) {
 	repo := newTestRepo(t, "actionlint-create")
-	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Facets: config.DefaultFacets()}
 	report, err := Adopt(t.Context(), opts)
 	if err != nil {
 		t.Fatalf("adopt: %v", err)

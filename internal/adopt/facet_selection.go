@@ -20,8 +20,9 @@ const (
 	// FacetsRequested are the facets --facets named, which adoption declares in the
 	// .standards.yaml it creates.
 	FacetsRequested FacetOrigin = "requested"
-	// FacetsDefaulted are config.DefaultFacets, which adoption declares in the .standards.yaml it
-	// creates when --facets names none, and says so (defaultFacetNotes, #596).
+	// FacetsDefaulted are the archetype's default facets (config.DefaultFacetsFor), which adoption
+	// declares in the .standards.yaml it creates when --facets names none, and says so
+	// (defaultFacetNotes, #596, #1075).
 	FacetsDefaulted FacetOrigin = "default"
 )
 
@@ -29,9 +30,9 @@ const (
 // manifest's declaration stands, because adoption never rewrites it: the lock, the documentation
 // gate and the DevContainer all read it (manifestForLock, documentationEnabledForSession), so
 // the report shows it too rather than requested, the --facets value (#592). Without a manifest,
-// requested names them, and the defaults stand in when it names none. A manifest that exists but
-// cannot be read resolves none: the manifest step fails the run with the reason.
-func adoptionFacets(declared *config.Manifest, unreadable bool, requested []string) ([]string, FacetOrigin) {
+// requested names them, and the defaults of archetype stand in when it names none. A manifest
+// that exists but cannot be read resolves none: the manifest step fails the run with the reason.
+func adoptionFacets(declared *config.Manifest, unreadable bool, requested []string, archetype string) ([]string, FacetOrigin) {
 	switch {
 	case unreadable:
 		return nil, ""
@@ -40,7 +41,7 @@ func adoptionFacets(declared *config.Manifest, unreadable bool, requested []stri
 	case len(requested) > 0:
 		return requested, FacetsRequested
 	default:
-		return config.DefaultFacets(), FacetsDefaulted
+		return config.DefaultFacetsFor(archetype), FacetsDefaulted
 	}
 }
 
@@ -82,8 +83,8 @@ func defaultFacetNotes(ctx context.Context, s *adoptSession) []string {
 	if s.opts.SetFacets {
 		reason = "--facets named no facet"
 	}
-	notes := []string{fmt.Sprintf("default facets: %s, so adoption declares %s in the %s it creates",
-		reason, strings.Join(s.report.Facets, ", "), manifestFile)}
+	notes := []string{fmt.Sprintf("default facets: %s, so adoption declares the defaults of profile %s, %s, in the %s it creates",
+		reason, s.arch, strings.Join(s.report.Facets, ", "), manifestFile)}
 	notes = append(notes, facetEffectNotes(ctx, s)...)
 	return append(notes, "choose other facets with --facets=<id>,... on a first adoption, or afterwards with "+
 		profileSetCommand("--facets=<id>,...", s.opts.LockSourceRoot)+" (--facets= declares none)")

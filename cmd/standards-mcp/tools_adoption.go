@@ -23,6 +23,10 @@ const (
 	maxDogfoodScanTargets = 10
 )
 
+// adoptCollaborators counts the collaborators with write access standards_adopt asks the forge
+// about (adopt.AdoptOptions.Collaborators, #1075); TestMain clears it so no test reaches the forge.
+var adoptCollaborators adopt.CollaboratorCounter = adopt.GitHubWriteCollaborators
+
 // adoptArgs holds the parsed standards_adopt arguments.
 type adoptArgs struct {
 	path       string
@@ -131,6 +135,7 @@ func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.To
 		Force:                a.force,
 		RecordBaseline:       a.recordBase,
 		DecisionMCPReconcile: adoptclients.ReconcileAsDecided,
+		Collaborators:        adoptCollaborators,
 	})
 	if err != nil {
 		var details mcpTextBuilder

@@ -18,6 +18,7 @@ import (
 func TestMain(m *testing.M) {
 	installManifestPath = func() (string, error) { return "", nil }
 	resolveActionsToken = func(context.Context) string { return "" }
+	adoptCollaborators = nil
 	for _, name := range []string{config.FleetConfigEnv, config.WorkstationConfigEnv, frameworkDirEnv} {
 		if err := os.Unsetenv(name); err != nil {
 			fmt.Fprintf(os.Stderr, "isolate %s: %v\n", name, err)
