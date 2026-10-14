@@ -2684,7 +2684,7 @@ class HookInterpreter(unittest.TestCase):
         variables = {
             "GIT_DIR": "/fake/git/dir",
             "GIT_WORK_TREE": "/fake/work/tree",
-            "GIT_INDEX_FILE": "/fake/index/file",
+            "GIT_INDEX_FILE": "fake/index/file",
             "GIT_COMMON_DIR": "/fake/common/dir",
             "GIT_OBJECT_DIRECTORY": "/fake/objects",
             "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/fake/alt/objects",
@@ -2703,7 +2703,7 @@ class HookInterpreter(unittest.TestCase):
         variables = {
             "GIT_DIR": "/fake/git/dir",
             "GIT_WORK_TREE": "/fake/work/tree",
-            "GIT_INDEX_FILE": "/fake/index/file",
+            "GIT_INDEX_FILE": "fake/index/file",
             "GIT_COMMON_DIR": "/fake/common/dir",
             "GIT_OBJECT_DIRECTORY": "/fake/objects",
             "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/fake/alt/objects",
@@ -2716,7 +2716,7 @@ class HookInterpreter(unittest.TestCase):
         )
         result = self.launch("--keep-index", "-c", probe, **variables)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), [None, None, "/fake/index/file", None, None, None])
+        self.assertEqual(json.loads(result.stdout), [None, None, "fake/index/file", None, None, None])
 
     def refused(self, result):
         self.assertEqual(result.returncode, 127, result.stdout + result.stderr)
