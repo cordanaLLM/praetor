@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -188,15 +189,20 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 				filepath.FromSlash(engineLauncherFile): engineLauncherScript,
 			})
 			stubs := t.TempDir()
-			writeStub(t, stubs, "go", "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
+			mustWrite(t, filepath.Join(stubs, callFailOn), failure+"\n")
+			installStub(t, stubs, "go", callRecorderSource)
 			// The scaffold resolves praetorctl before standardsctl (util.ShellCLIResolution), and
 			// hermeticPath keeps git's directory, which may also hold an installed praetorctl, as
 			// /usr/local/bin does in Praetor's own devcontainer. Stubbing both names keeps the
 			// real binary out of the scaffold whichever one it resolves.
 			for _, cli := range []string{util.PraetorCLI, util.LegacyCLI} {
-				writeStub(t, stubs, cli, "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
+				installStub(t, stubs, cli, callRecorderSource)
 			}
+			shell := scaffoldShell(t)
 			hermeticPath(t, stubs)
+			if shell != "" {
+				t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+shell)
+			}
 			mustWrite(t, filepath.Join(root, "Makefile"), buildMakefile(plan))
 			// -j1 pins serial execution: this assertion compares an exact call order, and
 			// make inherits parallelism through MAKEFLAGS from whatever invoked the test.
@@ -210,6 +216,29 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 			if failure == "none" && calls != "compile-context --verify\ncaveman check --configured-sources\naudit\nbuild -v ./...\ntest -v -race ./...\n" {
 				t.Fatalf("scaffold did not exercise required commands: %q", calls)
 			}
+			// The failure is the stub's own: make stopped at the call that failed, not before it.
+			lines := strings.Split(strings.TrimSuffix(calls, "\n"), "\n")
+			if last := strings.Fields(lines[len(lines)-1]); failure != "none" && (len(last) == 0 || last[0] != failure) {
+				t.Fatalf("failure %q: make stopped after %q, not at the failing call", failure, calls)
+			}
 		})
 	}
+}
+
+// scaffoldShell returns the directory the scaffold's recipe shell joins the hermetic PATH from,
+// or "" where none needs to. The generated recipes start with the shell's exec builtin
+// (verificationRecipePrefix). POSIX make starts /bin/sh by its absolute path; GNU Make for
+// Windows32 looks sh up on PATH and, without one, starts each line as a program, so "exec" is
+// not found. hermeticPath keeps only git's directory, which need not hold sh, so on Windows sh's
+// directory comes after the stubs, which still shadow go and the engine CLI.
+func scaffoldShell(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("GNU Make for Windows runs the scaffold's exec recipes only through a sh on PATH: %v", err)
+	}
+	return filepath.Dir(sh)
 }
