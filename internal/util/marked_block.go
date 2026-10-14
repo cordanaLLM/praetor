@@ -248,8 +248,14 @@ func replaceMarkedBlock(content, start, end, body string, maxLines, scanLines in
 
 // CheckLineBudget reports an error if content has more lines than maxLines.
 func CheckLineBudget(content string, maxLines int) error {
-	if count := strings.Count(strings.TrimRight(content, "\n"), "\n") + 1; count > maxLines {
+	if count := BudgetLineCount(content); count > maxLines {
 		return fmt.Errorf("%w: %d lines, budget %d", ErrMarkedBlockBudget, count, maxLines)
 	}
 	return nil
+}
+
+// BudgetLineCount returns the lines CheckLineBudget charges content: trailing newlines open no
+// further line.
+func BudgetLineCount(content string) int {
+	return strings.Count(strings.TrimRight(content, "\n"), "\n") + 1
 }

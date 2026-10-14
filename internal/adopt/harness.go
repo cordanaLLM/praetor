@@ -309,11 +309,11 @@ const harnessAntiLoopRule = `6. **Anti-loop interception.** Same AST diff + erro
 `
 
 // harnessTitleSuffix ends the H1 of every harness praetor writes (agentHarnessTemplate).
-const harnessTitleSuffix = "Agent Operating Harness"
+const harnessTitleSuffix = agentcontext.HarnessTitleSuffix
 
 // harnessLintDisable opens the markdownlint comment every praetor harness has written on the
 // line above its H1, whatever rules it named (MD013 now; MD013 MD025, or none, earlier).
-const harnessLintDisable = "<!-- markdownlint-disable"
+const harnessLintDisable = agentcontext.HarnessLintDisable
 
 // maxHarnessLines bounds the line walk over an existing AGENTS.md (HISS-02). readRepoFile caps
 // the file at contextopt.MaxSourceBytes, so no file it returns comes near it.

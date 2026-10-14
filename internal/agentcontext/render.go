@@ -300,7 +300,7 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 		return nil, err
 	}
 	bands, layered := scanBands(lines)
-	files, err := t.renderTargets(targets, func(section string) string {
+	files, err := t.renderTargets(targets, newLineBudget(t.MaxLines, content), func(section string) string {
 		if layered {
 			return layoutBands(lines, owners, bands, section)
 		}
@@ -318,15 +318,16 @@ func (t *Transpiler) CompileContent(content string) (*CompileResult, error) {
 }
 
 // renderTargets renders every target through body, visiting them in the order the render env
-// chooses and returning the files in registry order whatever that order was.
-func (t *Transpiler) renderTargets(targets []vendorTarget, body func(section string) string) ([]TargetFile, error) {
+// chooses and returning the files in registry order whatever that order was. Each file is held
+// to budget, so engine block growth is not charged to the adopter's text (#1232).
+func (t *Transpiler) renderTargets(targets []vendorTarget, budget lineBudget, body func(section string) string) ([]TargetFile, error) {
 	files := make([]TargetFile, len(targets))
 	for _, i := range t.Env.order(len(targets)) {
 		target := targets[i]
 		text := target.prefix + generatedHeader + body(target.section)
 		count := countLines(text)
-		if count > t.MaxLines {
-			return nil, fmt.Errorf("target file %s exceeds max line budget (%d > %d)", target.path, count, t.MaxLines)
+		if !budget.allows(count) {
+			return nil, fmt.Errorf("target file %s exceeds max line budget (%d > %d%s)", target.path, count, t.MaxLines, budget.parts(count))
 		}
 		files[i] = TargetFile{RelativePath: target.path, Content: text, LineCount: count}
 	}

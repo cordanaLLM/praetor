@@ -170,14 +170,17 @@ func spliceRegister(content, block string) (out string, changed, missing bool, e
 		// document receives it in its config band, not at the end, which is the tail band.
 		block = config.RegisterSectionPrefix + block
 		if banded, layered := agentcontext.InsertIntoConfigBand(lf, block); layered {
-			if err := util.CheckLineBudget(banded, MaxLineBudget); err != nil {
+			if err := agentcontext.CheckContextBudget(banded); err != nil {
 				return "", false, false, err
 			}
 			return util.RestoreLineEndings(banded, crlf), true, true, nil
 		}
 	}
-	spliced, changed, err := util.ReplaceMarkedBlock(lf, config.RegisterBlockStart, config.RegisterBlockEnd, block, MaxLineBudget)
+	spliced, changed, err := util.ReplaceMarkedBlock(lf, config.RegisterBlockStart, config.RegisterBlockEnd, block, util.MaxMarkedBlockLines)
 	if err != nil {
+		return "", false, false, err
+	}
+	if err := agentcontext.CheckContextBudget(spliced); err != nil {
 		return "", false, false, err
 	}
 	return util.RestoreLineEndings(spliced, crlf), changed, first < 0, nil

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 )
 
@@ -85,6 +86,10 @@ func TestValidateHarnessProjectionExactBudget(t *testing.T) {
 	}
 	var exact string
 	base := strings.TrimSuffix(harness, "\n") + "\n"
+	// Engine block lines above the reserve, up to its own allowance, are not charged (#1232):
+	// the largest projection may run that many lines past MaxLineBudget.
+	owned := agentcontext.EngineOwnedLines(base)
+	limit := compiler.MaxLineBudget + max(0, min(owned, agentcontext.EngineBlockMaxLines)-agentcontext.EngineBlockReserve)
 	initial, compileErr := compiler.NewTranspiler().CompileContent(base)
 	if compileErr != nil {
 		t.Fatal(compileErr)
@@ -95,7 +100,7 @@ func TestValidateHarnessProjectionExactBudget(t *testing.T) {
 			maxLines = file.LineCount
 		}
 	}
-	for n := compiler.MaxLineBudget - maxLines - 2; n <= compiler.MaxLineBudget-maxLines+2; n++ {
+	for n := limit - maxLines - 2; n <= limit-maxLines+2; n++ {
 		if n < 0 {
 			continue
 		}
@@ -110,7 +115,7 @@ func TestValidateHarnessProjectionExactBudget(t *testing.T) {
 				maxLines = file.LineCount
 			}
 		}
-		if maxLines == compiler.MaxLineBudget {
+		if maxLines == limit {
 			exact = candidate
 			break
 		}

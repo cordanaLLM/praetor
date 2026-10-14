@@ -5,19 +5,21 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 )
 
 const (
 	// RegisterBlockHeading is the H2 that carries the rendered block in AGENTS.md. It is
 	// not a vendor name, so every compiled target keeps the section.
-	RegisterBlockHeading = "## Text Register"
+	RegisterBlockHeading = agentcontext.RegisterBlockHeading
 	// RegisterSectionPrefix precedes the block wherever the whole section is written at
 	// once: a document that has no markers yet, and the adopt harness.
 	RegisterSectionPrefix = RegisterBlockHeading + "\n\n"
 	// RegisterBlockStart and RegisterBlockEnd delimit the tool-written region. Between
 	// them .standards.yaml is the source and AGENTS.md only the carrier.
-	RegisterBlockStart = "<!-- praetor:register:start -->"
-	RegisterBlockEnd   = "<!-- praetor:register:end -->"
+	RegisterBlockStart = agentcontext.RegisterBlockStart
+	RegisterBlockEnd   = agentcontext.RegisterBlockEnd
 	// MaxRegisterBlockLines bounds the section prefix plus the rendered block, so the
 	// section can never eat the 300-line vendor budget.
 	MaxRegisterBlockLines = 15

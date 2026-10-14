@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -65,7 +66,7 @@ func (l ContextLint) Summary() string {
 
 // HarnessEndMarker terminates the Agent Operating Harness praetor adoption writes into an
 // adopted AGENTS.md (internal/adopt). Everything after it is the repository's own text.
-const HarnessEndMarker = "<!-- praetor:harness:end -->"
+const HarnessEndMarker = agentcontext.HarnessEndMarker
 
 // LintContext runs the caveman lint over the canonical AGENTS.md at agentsMdPath. It reads no
 // manifest: the context surface is fixed to the internal register in every repository, so
