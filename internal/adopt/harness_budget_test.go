@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,43 @@ func TestForceHarnessPreflightPreservesRecognizedTail(t *testing.T) {
 	}
 }
 
+// TestKeptHarnessFoldPreflightsProjectionBeforeWrite (#1073): text folded from an authored
+// CLAUDE.md into a harness a run without --force keeps is validated before AGENTS.md is written;
+// an oversized fold fails the step with AGENTS.md and CLAUDE.md as the run found them.
+func TestKeptHarnessFoldPreflightsProjectionBeforeWrite(t *testing.T) {
+	repo := newTestRepo(t, "harness-fold-budget")
+	plan := &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &adoptSession{repoPath: repo, repoName: "fixture", arch: "framework", report: &AdoptReport{}, verification: plan, opts: AdoptOptions{Force: false}}
+	// The kept harness carries the register block the run renders, so the run splices nothing and
+	// only the folded text can make the harness invalid.
+	block, err := s.registerBlock(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if harness, _, err = compiler.SpliceRegisterBlock(harness, block); err != nil {
+		t.Fatal(err)
+	}
+	path, claude := filepath.Join(repo, agentsFile), filepath.Join(repo, "CLAUDE.md")
+	mustWrite(t, path, harness)
+	// 192 lines keep the folded AGENTS.md inside the document budget the splice checks, while its
+	// Cursor projection, frontmatter and header added, exceeds the projection budget.
+	var authored strings.Builder
+	for i := 0; i < 192; i++ {
+		fmt.Fprintf(&authored, "authored rule %d\n", i)
+	}
+	mustWrite(t, claude, authored.String())
+	if err := reconcileAgentHarness(context.Background(), s); err == nil || !strings.Contains(err.Error(), "context composition cannot produce valid projections") {
+		t.Fatalf("oversized folded context not refused by the projection check: %v", err)
+	}
+	if mustRead(t, path) != harness || mustRead(t, claude) != authored.String() {
+		t.Fatal("a refused fold changed AGENTS.md or CLAUDE.md")
+	}
+}
+
 func TestMergeAgentsProjectionAcceptsShortTail(t *testing.T) {
 	repo := newTestRepo(t, "harness-short-tail")
 	path := filepath.Join(repo, agentsFile)
@@ -72,7 +110,7 @@ func TestMergeAgentsProjectionAcceptsShortTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	merged, err := mergeExistingAgentsContent(context.Background(), s, path, initial, harness)
+	merged, err := mergeExistingAgentsContent(context.Background(), s, path, initial, initial, harness)
 	if err != nil || !strings.Contains(merged, "Keep project instructions.") || mustRead(t, path) != merged {
 		t.Fatalf("short context merge failed: %v", err)
 	}
@@ -138,7 +176,11 @@ func TestResolveAgentsContentPreflightHonorsDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveAgentsContent(context.Background(), s, facts); err == nil {
+	harness, err := buildAgentHarness(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveAgentsContent(context.Background(), s, harness); err == nil {
 		t.Fatal("dry-run oversized context accepted")
 	}
 	if got := mustRead(t, path); got != initial {

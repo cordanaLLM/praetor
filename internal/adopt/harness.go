@@ -432,15 +432,20 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	// Before the vendor files are rewritten from AGENTS.md, the text they hold that AGENTS.md
-	// lacks moves into it (#1073).
-	if err := foldAuthoredVendorContext(ctx, s, declared.AgentClients, prior); err != nil {
-		return err
-	}
-	agentsContent, err := resolveAgentsContent(ctx, s, facts)
+	harness, err := buildAgentHarness(facts)
 	if err != nil {
 		return err
 	}
+	// Before the vendor files are rewritten from AGENTS.md, the text they hold that AGENTS.md
+	// lacks moves into it (#1073); resolveAgentsContent writes it.
+	if err := foldAuthoredVendorContext(ctx, s, declared.AgentClients, prior, harness); err != nil {
+		return err
+	}
+	agentsContent, err := resolveAgentsContent(ctx, s, harness)
+	if err != nil {
+		return err
+	}
+	s.warnFolded()
 	if err := projectVendorContext(ctx, s, agentsContent, declared.AgentClients, prior); err != nil {
 		return err
 	}
@@ -481,12 +486,12 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), register: register}, nil
 }
 
-func resolveAgentsContent(ctx context.Context, s *adoptSession, facts harnessFacts) (string, error) {
+// resolveAgentsContent writes AGENTS.md with harness, the harness this run renders: created,
+// merged above a foreign AGENTS.md, kept or refreshed (mergeExistingAgentsContent). It starts
+// from agentsSource, the folded vendor text included, and takes the backup and the write guard
+// from the bytes the run found.
+func resolveAgentsContent(ctx context.Context, s *adoptSession, harness string) (string, error) {
 	full, err := repoFile(s.repoPath, agentsFile)
-	if err != nil {
-		return "", err
-	}
-	harness, err := buildAgentHarness(facts)
 	if err != nil {
 		return "", err
 	}
@@ -505,7 +510,11 @@ func resolveAgentsContent(ctx context.Context, s *adoptSession, facts harnessFac
 		s.report.recordCreated(agentsFile, "Synthesized canonical Praetor Agent Operating Harness and HISS invariants")
 		return harness, nil
 	}
-	return mergeExistingAgentsContent(ctx, s, full, string(existingBytes), harness)
+	found := existingBytes
+	if s.fold != nil {
+		found = s.fold.found
+	}
+	return mergeExistingAgentsContent(ctx, s, full, string(found), string(existingBytes), harness)
 }
 
 func validateHarnessProjection(content string) error {
@@ -517,8 +526,10 @@ func validateHarnessProjection(content string) error {
 
 // mergeExistingAgentsContent prepends the harness to a foreign AGENTS.md, leaves an
 // existing harness alone without Force, and with Force regenerates the harness while keeping
-// what the repository added around it (refreshAgentHarness).
-func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, existing, harness string) (string, error) {
+// what the repository added around it (refreshAgentHarness). existing is AGENTS.md with any
+// folded vendor text (agentsSource), found the bytes the run found, which a replacement backs
+// up and writes over.
+func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, found, existing, harness string) (string, error) {
 	if !hasHarness(existing) {
 		merged := harness + harnessSeparator + "\n" + foreignInstructions(existing)
 		if err := validateHarnessProjection(merged); err != nil {
@@ -527,13 +538,18 @@ func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, exis
 		if err := s.write(full, []byte(merged), filePerm); err != nil {
 			return "", err
 		}
+		s.planDryRunWrite(agentsFile, []byte(merged))
+		if s.fold != nil && !s.fold.exists {
+			s.report.recordCreated(agentsFile, "Synthesized canonical Praetor Agent Operating Harness above the text folded from vendor context files")
+			return merged, nil
+		}
 		s.report.recordReconciledAs(agentsFile, actionMerge, "Merged Praetor Agent Operating Harness & HISS directives above existing instructions")
 		return merged, nil
 	}
 	if !s.opts.Force {
-		return keepAgentHarness(ctx, s, existing, harness)
+		return keepAgentHarness(ctx, s, found, existing, harness)
 	}
-	return refreshAgentHarness(ctx, s, existing, harness)
+	return refreshAgentHarness(ctx, s, found, existing, harness)
 }
 
 // keepAgentHarness keeps an existing harness on a run without --force, with its text register
@@ -543,8 +559,9 @@ func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, exis
 // runs after the chain (verifyAgentContext). Every other line stays as written. A splice goes
 // through replaceExisting, as refreshAgentHarness does: the prior bytes are backed up, the
 // report lists AGENTS.md as replaced with its line delta, and the write lands only over the
-// bytes this run read (ReplaceSnapshotIn with Expected).
-func keepAgentHarness(ctx context.Context, s *adoptSession, existing, harness string) (string, error) {
+// bytes this run read (ReplaceSnapshotIn with Expected). Folded vendor text (existing differs
+// from found) is written the same way, once the kept harness with it is validated.
+func keepAgentHarness(ctx context.Context, s *adoptSession, found, existing, harness string) (string, error) {
 	block, err := s.registerBlock(ctx)
 	if err != nil {
 		return "", err
@@ -554,17 +571,28 @@ func keepAgentHarness(ctx context.Context, s *adoptSession, existing, harness st
 		return "", err
 	}
 	detail := "Existing Praetor Agent Operating Harness preserved; command synchronization not verified"
-	if !spliced {
+	if spliced {
+		detail += "; text register block spliced from the manifest, as compile-context splices it"
+	}
+	if existing != found {
+		if !spliced {
+			if err := validateHarnessProjection(kept); err != nil {
+				return "", err
+			}
+		}
+		detail += "; vendor context text folded below its instructions"
+	}
+	if kept == found {
 		s.report.recordReconciled(agentsFile, detail)
 	} else if err := s.replaceExisting(ctx, replacement{
-		rel: agentsFile, before: []byte(existing), after: []byte(kept),
-		detail: detail + "; text register block spliced from the manifest, as compile-context splices it",
+		rel: agentsFile, before: []byte(found), after: []byte(kept),
+		detail: detail,
 		publish: func(ctx context.Context) error {
 			return contextopt.ReplaceSnapshotIn(ctx, s.repoPath, agentsFile, []byte(kept),
-				contextopt.ReplaceOptions{Expected: []byte(existing), Exists: true, Mode: filePerm})
+				contextopt.ReplaceOptions{Expected: []byte(found), Exists: true, Mode: filePerm})
 		},
 	}); err != nil {
-		return "", fmt.Errorf("splice the text register block into %s: %w", agentsFile, err)
+		return "", fmt.Errorf("write the kept harness into %s: %w", agentsFile, err)
 	}
 	if kept != harness {
 		s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or run %s "+
@@ -625,7 +653,7 @@ func preflightKeptHarness(ctx context.Context, s *adoptSession, block string) er
 // compile-context splices the register block. When the boundary of the harness cannot be
 // identified the file is left untouched and an error is recorded rather than silently
 // discarding repository instructions.
-func refreshAgentHarness(ctx context.Context, s *adoptSession, existing, harness string) (string, error) {
+func refreshAgentHarness(ctx context.Context, s *adoptSession, found, existing, harness string) (string, error) {
 	lf, crlf := util.NormalizeLineEndings(existing)
 	kept, ok, err := splitHarnessAdditions(lf, harness)
 	if err != nil {
@@ -644,16 +672,16 @@ func refreshAgentHarness(ctx context.Context, s *adoptSession, existing, harness
 	if err := validateHarnessProjection(merged); err != nil {
 		return "", err
 	}
-	if merged == existing {
+	if merged == found {
 		s.report.recordReconciled(agentsFile, "Praetor Agent Operating Harness already current"+kept.describe())
-		return existing, nil
+		return found, nil
 	}
 	err = s.replaceExisting(ctx, replacement{
-		rel: agentsFile, before: []byte(existing), after: []byte(merged),
+		rel: agentsFile, before: []byte(found), after: []byte(merged),
 		detail: "Refreshed Praetor Agent Operating Harness" + kept.describe(),
 		publish: func(ctx context.Context) error {
 			return contextopt.ReplaceSnapshotIn(ctx, s.repoPath, agentsFile, []byte(merged),
-				contextopt.ReplaceOptions{Expected: []byte(existing), Exists: true, Mode: filePerm})
+				contextopt.ReplaceOptions{Expected: []byte(found), Exists: true, Mode: filePerm})
 		},
 	})
 	if err != nil {

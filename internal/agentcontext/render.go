@@ -410,4 +410,16 @@ func IsCompiledProjection(text string) bool {
 	return strings.Contains(text, generatedNotice)
 }
 
+// ProjectionFrame returns the text compile-context writes into the projection at path around
+// what it takes from AGENTS.md: the target's prefix, such as the Cursor rule frontmatter, and the
+// generated header. A path no target names gets the header alone.
+func ProjectionFrame(path string) string {
+	for i := 0; i < len(vendorTargets); i++ {
+		if vendorTargets[i].path == path {
+			return vendorTargets[i].prefix + generatedHeader
+		}
+	}
+	return generatedHeader
+}
+
 const cursorFrontmatter = "---\ndescription: Canonical agent instructions\nglobs: \"*\"\nalwaysApply: true\n---\n\n"
