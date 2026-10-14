@@ -16,6 +16,7 @@ var (
 	priorGoCIDigests = map[string]string{
 		"cfe4c9e934d122e5588bde13252a1c17cb92c4231bf3528778134c0ec3dbad98": "the first embedded Go CI job, an unquoted 'on' key (#463)",
 		"68921b5bd34b95510d973496d267ddf900709afe0c56ecd9938d785e823f6072": "the Go CI job on every push to main and every draft pull request (#520 to #817)",
+		"36d5e19301f02efef3788fe3a1a7246fec40ea3a83c0358143d437652aba8cbc": "the Go CI job on the hosted gate shape, without a module tidiness check (#902 to #1214)",
 	}
 	// priorRustCIDigests are the earlier texts of rust/ci-rust.yml.tmpl.
 	priorRustCIDigests = map[string]string{

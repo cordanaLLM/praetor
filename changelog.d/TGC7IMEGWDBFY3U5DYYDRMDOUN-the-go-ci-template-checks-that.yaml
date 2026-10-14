@@ -1,0 +1,3 @@
+type: added
+title: The Go CI template checks that go.mod and go.sum are tidy (go mod tidy -diff) before Vet, so an unused requirement or a stale go.sum line fails the job
+issue: '#1214'

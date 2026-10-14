@@ -71,6 +71,13 @@ jobs:
             gobuild-${{ runner.os }}-${{ runner.arch }}-test-
       # yamllint enable rule:line-length
 
+      # go build and go test accept a module whose go.mod or go.sum names what
+      # the code no longer uses; tidy -diff changes no file and fails with the
+      # diff `go mod tidy` would make (Go 1.23 and later, #1214).
+      - name: Module metadata is tidy
+        if: github.event.pull_request.draft != true
+        run: go mod tidy -diff
+
       # Only the Go toolchain runs here. Praetor's gates (compile-context,
       # audit, flavor audit) need praetorctl, which no step installs; the git
       # hooks adoption writes run them.
