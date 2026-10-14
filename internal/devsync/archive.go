@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -208,16 +207,13 @@ func (u unit) skipCache(rel, name string) bool {
 // "git ls-files" call. When git cannot answer, u keeps the plain cache list and the returned
 // note says so.
 func withGitIgnores(ctx context.Context, u unit) (unit, string) {
-	result, err := util.RunGitProbe(ctx, u.dir, maxRcloneOutput,
-		"ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+	entries, err := util.GitIgnoredEntries(ctx, u.dir, maxRcloneOutput)
 	if err != nil {
 		return u, "git unavailable, cache folders left out by name"
 	}
-	u.ignored = map[string]bool{}
-	for _, entry := range strings.Split(string(result.Stdout), "\x00") {
-		if entry = strings.TrimSuffix(entry, "/"); entry != "" {
-			u.ignored[filepath.FromSlash(entry)] = true
-		}
+	u.ignored = make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		u.ignored[filepath.FromSlash(entry)] = true
 	}
 	return u, ""
 }

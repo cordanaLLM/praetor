@@ -202,3 +202,32 @@ func TestIsScratchDir(t *testing.T) {
 		}
 	}
 }
+
+// TestGitIgnoredEntries_PositiveNegativeBoundary: an ignored directory is listed once, without
+// its trailing slash and without what it holds, beside an ignored file; a tracked file a rule
+// matches, an unignored untracked path and the work tree root are not listed; a directory
+// outside any work tree and a listing past its byte bound are errors, never "nothing ignored".
+func TestGitIgnoredEntries_PositiveNegativeBoundary(t *testing.T) {
+	dir := ignoreRepo(t, "wt/\n*.log\n")
+	for _, rel := range []string{"wt/a/requirements.txt", "wt/b/x.go", "run.log", "kept.log", "src/main.go"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := RunGit(t.Context(), dir, "add", "-f", "kept.log"); err != nil {
+		t.Fatalf("git add: %v", err)
+	}
+	got, err := GitIgnoredEntries(t.Context(), dir, 1<<20)
+	if err != nil || !slices.Equal(got, []string{"run.log", "wt"}) {
+		t.Fatalf("ignored entries = %q, %v; want run.log and wt only", got, err)
+	}
+	if _, err := GitIgnoredEntries(t.Context(), dir, 4); err == nil {
+		t.Fatal("a listing past its byte bound was returned as an answer")
+	}
+	if _, err := GitIgnoredEntries(t.Context(), t.TempDir(), 1<<20); err == nil {
+		t.Fatal("a directory outside any work tree answered as if git had listed it")
+	}
+}

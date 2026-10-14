@@ -40,6 +40,24 @@ func GitIgnoredPaths(ctx context.Context, dir string, relPaths []string, noIndex
 	return splitNUL(out), nil
 }
 
+// GitIgnoredEntries lists the untracked paths the work tree at dir ignores, with one bounded
+// "git ls-files --others --ignored --exclude-standard --directory" call: an ignored directory
+// is one entry and git does not descend into it. Each entry is relative to dir in slash form,
+// without the trailing slash git gives a directory. The same isolation as GitIgnoredPaths
+// applies. A listing that reaches maxBytes is an error, never a partial answer.
+func GitIgnoredEntries(ctx context.Context, dir string, maxBytes int) ([]string, error) {
+	result, err := RunGitProbe(ctx, dir, maxBytes,
+		"ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files --ignored in %s: %w", dir, err)
+	}
+	entries := splitNUL(result.Stdout)
+	for i := range entries {
+		entries[i] = strings.TrimSuffix(entries[i], "/")
+	}
+	return entries, nil
+}
+
 // GitIgnoreMatch is one path git ignores and the rule that ignores it, as check-ignore -v
 // reports it. When a parent directory of Path is ignored, the rule is the one that ignores
 // that directory: git never looks inside it.

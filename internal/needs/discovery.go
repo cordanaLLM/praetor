@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -25,6 +26,11 @@ const (
 	// sub-project is scanned. A manifest deeper than that is listed in
 	// RepoNeeds.UnscannedSubprojects: reported, never scanned, never dropped.
 	maxSubprojectDepth = 5
+	// maxIgnoredListingBytes bounds the git listing of the paths a repository ignores
+	// (repositoryIgnoredPaths). A longer listing fails the scan instead of being cut short.
+	maxIgnoredListingBytes = 4 << 20
+	// gitNoRepositoryStatus is the exit status git answers with when dir is no work tree.
+	gitNoRepositoryStatus = 128
 )
 
 // ErrDiscoveryBound is returned when a discovery walk exceeds maxDiscoveryDirs or
@@ -99,6 +105,9 @@ type layoutWalker struct {
 	// rootOnly makes the walk root a repository whatever it holds and stops at every
 	// nested checkout, whose tree belongs to another repository.
 	rootOnly bool
+	// ignored holds the paths, relative to root in slash form, the repository's own ignore
+	// rules hide (repositoryIgnoredPaths); the walk never enters one.
+	ignored map[string]struct{}
 }
 
 // discoverFleet walks fleetRoot and returns every repository below it, fleetRoot included.
@@ -123,8 +132,18 @@ func discoverFleet(ctx context.Context, fleetRoot string) (*fleetLayout, error) 
 // discoverRepository returns the repository rooted at repoRoot with the sub-projects the
 // fleet walk would assign it. repoRoot is a repository whatever it holds: the caller named
 // it. Nested checkouts are other repositories and are not entered.
+//
+// Only the repository's own tree is scanned (#1234): a directory below the root holding a .git
+// entry is another checkout, and a path the repository's ignore rules hide (agent worktrees
+// under .claude/worktrees/, build output) holds nothing it commits. Neither is entered, so the
+// scan reads the same projects in a busy checkout as in a clean clone of the same commit.
 func discoverRepository(ctx context.Context, repoRoot string) (*fleetRepo, error) {
-	walker := &layoutWalker{ctx: ctx, root: filepath.Clean(repoRoot), rootOnly: true}
+	root := filepath.Clean(repoRoot)
+	ignored, err := repositoryIgnoredPaths(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	walker := &layoutWalker{ctx: ctx, root: root, rootOnly: true, ignored: ignored}
 	if err := walker.walk(); err != nil {
 		return nil, err
 	}
@@ -132,6 +151,30 @@ func discoverRepository(ctx context.Context, repoRoot string) (*fleetRepo, error
 		return nil, fmt.Errorf("%w: %s", ErrNoAnalyzer, repoRoot)
 	}
 	return walker.layout.repos[0], nil
+}
+
+// repositoryIgnoredPaths returns the untracked paths the repository at root ignores, as
+// util.GitIgnoredEntries lists them. A root git does not answer for, because no git is
+// installed or root is no work tree (git exits 128), has none: its walk still stops at every
+// nested checkout. Any other failure, an over-long listing and cancellation included, is an
+// error, because a scan that cannot tell ignored paths apart would count them.
+func repositoryIgnoredPaths(ctx context.Context, root string) (map[string]struct{}, error) {
+	entries, err := util.GitIgnoredEntries(ctx, root, maxIgnoredListingBytes)
+	var exitErr *exec.ExitError
+	switch {
+	case err == nil:
+	case ctx.Err() != nil || isContextError(err):
+		return nil, fmt.Errorf("list the paths repository %q ignores: %w", root, errors.Join(ctx.Err(), err))
+	case errors.Is(err, exec.ErrNotFound), errors.As(err, &exitErr) && exitErr.ExitCode() == gitNoRepositoryStatus:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("list the paths repository %q ignores: %w", root, err)
+	}
+	ignored := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		ignored[entry] = struct{}{}
+	}
+	return ignored, nil
 }
 
 // walk runs the bounded, iterative depth-first discovery walk in lexical order. Symlinked
@@ -154,7 +197,10 @@ func (w *layoutWalker) walk() error {
 }
 
 // visit classifies one directory and returns the child directories to walk, in reverse
-// lexical order so that the stack pops them lexically.
+// lexical order so that the stack pops them lexically. A repository walk (rootOnly) stops at
+// every directory below its root that holds a .git entry, live checkout or not: a nested clone,
+// a submodule, and a linked worktree, including one whose administrative directory is gone
+// (a leftover agent worktree), all hold another checkout's tree.
 func (w *layoutWalker) visit(item walkItem) ([]walkItem, error) {
 	if err := w.ctx.Err(); err != nil {
 		return nil, err
@@ -168,15 +214,15 @@ func (w *layoutWalker) visit(item walkItem) ([]walkItem, error) {
 		return nil, fmt.Errorf("read directory %q: %w", item.path, err)
 	}
 	marks := classifyEntries(entries)
-	owner, relDepth, opened, err := w.claim(item, marks)
+	if w.rootOnly && marks.gitEntry && item.path != w.root {
+		return nil, nil
+	}
+	owner, relDepth, err := w.claim(item, marks)
 	if err != nil {
 		return nil, err
 	}
 	if owner != nil && marks.manifest {
 		owner.addProject(item.path, relDepth)
-	}
-	if opened && w.rootOnly && item.path != w.root {
-		return nil, nil
 	}
 	return w.children(item, entries, owner, relDepth), nil
 }
@@ -201,27 +247,28 @@ func classifyEntries(entries []os.DirEntry) dirMarks {
 	return marks
 }
 
-// claim decides which repository the directory belongs to. opened reports that the
-// directory starts a repository of its own.
-func (w *layoutWalker) claim(item walkItem, marks dirMarks) (owner *fleetRepo, relDepth int, opened bool, err error) {
+// claim decides which repository the directory belongs to, starting a repository of its own
+// when the directory is a checkout, or a manifest or declaration directory outside every
+// repository.
+func (w *layoutWalker) claim(item walkItem, marks dirMarks) (owner *fleetRepo, relDepth int, err error) {
 	if marks.gitEntry && topology.HasValidGitRepo(item.path) {
 		identity, iErr := topology.ResolveCheckoutRepository(w.ctx, item.path)
 		if iErr != nil {
-			return nil, 0, false, fmt.Errorf("resolve the repository of checkout %q: %w", item.path, iErr)
+			return nil, 0, fmt.Errorf("resolve the repository of checkout %q: %w", item.path, iErr)
 		}
 		repo := &fleetRepo{root: item.path, checkout: true, declared: marks.declaration, identity: identity}
 		w.layout.repos = append(w.layout.repos, repo)
-		return repo, 0, true, nil
+		return repo, 0, nil
 	}
 	if item.owner != nil {
-		return item.owner, item.relDepth, false, nil
+		return item.owner, item.relDepth, nil
 	}
 	if marks.manifest || marks.declaration || (w.rootOnly && item.path == w.root) {
 		repo := &fleetRepo{root: item.path, declared: marks.declaration}
 		w.layout.repos = append(w.layout.repos, repo)
-		return repo, 0, true, nil
+		return repo, 0, nil
 	}
-	return nil, 0, false, nil
+	return nil, 0, nil
 }
 
 // addProject records dir as a sub-project, or as unscanned beyond maxSubprojectDepth.
@@ -241,14 +288,31 @@ func (w *layoutWalker) children(item walkItem, entries []os.DirEntry, owner *fle
 		if !entry.IsDir() || prunedFromDiscovery(entry.Name(), item.depth, owner != nil && relDepth == 0) {
 			continue
 		}
+		path := filepath.Join(item.path, entry.Name())
+		if w.ignores(path) {
+			continue
+		}
 		next = append(next, walkItem{
-			path:     filepath.Join(item.path, entry.Name()),
+			path:     path,
 			depth:    item.depth + 1,
 			owner:    owner,
 			relDepth: relDepth + 1,
 		})
 	}
 	return next
+}
+
+// ignores reports whether the repository's own ignore rules hide the directory at path.
+func (w *layoutWalker) ignores(path string) bool {
+	if len(w.ignored) == 0 {
+		return false
+	}
+	rel, err := filepath.Rel(w.root, path)
+	if err != nil {
+		return false
+	}
+	_, hidden := w.ignored[filepath.ToSlash(rel)]
+	return hidden
 }
 
 // prunedFromDiscovery reports whether discovery skips the child directory name of a
