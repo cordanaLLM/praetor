@@ -69,6 +69,64 @@ The first version has fixed conservative limits: 512 KiB input, 64 sources,
 and 16 actions per step. Text and generated output are bounded as well. Limits
 are checked before the result can be used for artifact preparation.
 
+## Experiment contract
+
+A step can carry an `experiment` object: its falsification contract. With
+`schema_version` 2, every `implementation` step must carry one, and the
+compiler refuses a draft that lacks it, naming the step. `research` and
+`manual` steps may carry one. When the object is present, all six fields
+must appear in it.
+
+The fields define:
+
+- `evidence_status`: how established the claim is. Allowed values are `established`, `hypothesis`, or `speculative`.
+- `null`: the strongest conventional baseline the step must beat.
+- `kill_criterion`: the measured result that falsifies the claim and terminates or alters the step.
+- `margin`: the measured improvement over the baseline that counts as a win.
+- `protected_outcomes`: a list of 1 to 8 invariants or baseline capabilities that must not degrade.
+- `disposition`: the measured outcome once evaluated. Permitted values are `""` (while proposed or pending), `reject`, `revise`, `promote`, or `no-change`.
+
+For `hypothesis` and `speculative` steps, `null`, `kill_criterion`, `margin`, and
+between 1 and 8 `protected_outcomes` entries are required non-empty text. For
+`established` steps, these fields may be empty strings and an empty list; when
+provided, they must contain valid text.
+
+A step whose claim is settled says so with the smallest block:
+
+```json
+{"experiment": {"evidence_status": "established", "null": "", "kill_criterion": "", "margin": "", "protected_outcomes": [], "disposition": ""}}
+```
+
+Example step contract for a new claim:
+
+```json
+{
+  "experiment": {
+    "evidence_status": "hypothesis",
+    "null": "Manual drafting of proposal documents without structured schemas.",
+    "kill_criterion": "Deterministic compilation fails to produce byte-identical proposal outputs across runs.",
+    "margin": "100% reproducible proposal artifacts from canonical graph inputs.",
+    "protected_outcomes": [
+      "Source provenance assertions remain strictly unverified.",
+      "Generated outputs stay below configured byte ceilings."
+    ],
+    "disposition": ""
+  }
+}
+```
+
+### Migrating from schema_version 1
+
+`schema_version` 1 drafts still compile until 2026-10-25 (UTC). Until then the
+report's `deprecations` list carries one line naming that date; from that day
+the compiler refuses them. To migrate a draft:
+
+1. Set `"schema_version": 2`.
+2. Add an `experiment` block to every `implementation` step. Use
+   `"evidence_status": "established"` with empty fields for work whose outcome is
+   not in doubt, and the full contract for a `hypothesis` or `speculative` step.
+3. Compile again; the report's `deprecations` list is empty.
+
 ## MCP
 
 `standards_planning_validate` takes `input_path` within the server root and returns

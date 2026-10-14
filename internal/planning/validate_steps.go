@@ -3,12 +3,22 @@ package planning
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-func validateSteps(ctx context.Context, list []Step, requirements, milestones map[string]bool,
-	milestoneOrder []string, prerequisites map[string]map[string]bool) ([]graphNode, error) {
+// stepRules is what every step is checked against.
+type stepRules struct {
+	requirements, milestones map[string]bool
+	milestoneOrder           []string
+	prerequisites            map[string]map[string]bool
+	// requireExperiment: schema_version 2 requires an experiment block on every implementation step.
+	requireExperiment bool
+}
+
+func validateSteps(ctx context.Context, list []Step, rules stepRules) ([]graphNode, error) {
+	requirements, milestones, milestoneOrder, prerequisites := rules.requirements, rules.milestones, rules.milestoneOrder, rules.prerequisites
 	stepIDs := make(map[string]bool, len(list))
 	stepMilestones := make(map[string]string, len(list))
 	milestoneRanks := util.PositionIndex(milestoneOrder)
@@ -20,7 +30,7 @@ func validateSteps(ctx context.Context, list []Step, requirements, milestones ma
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := validateStep(step, stepIDs, requirements, milestones, links, outputs); err != nil {
+		if err := validateStep(step, stepIDs, requirements, milestones, links, outputs, rules.requireExperiment); err != nil {
 			return nil, err
 		}
 		stepIDs[step.ID], stepMilestones[step.ID], coveredMilestones[step.MilestoneID] = true, step.MilestoneID, true
@@ -89,7 +99,7 @@ func milestonePrerequisites(milestones []Milestone) map[string]map[string]bool {
 	return result
 }
 
-func validateStep(step Step, stepIDs, requirements, milestones, links, outputs map[string]bool) error {
+func validateStep(step Step, stepIDs, requirements, milestones, links, outputs map[string]bool, requireExperiment bool) error {
 	if err := validateStepIdentity(step, stepIDs); err != nil {
 		return err
 	}
@@ -109,7 +119,16 @@ func validateStep(step Step, stepIDs, requirements, milestones, links, outputs m
 	if err := validateOutputs(step.ID, step.ExpectedOutputs, outputs); err != nil {
 		return err
 	}
-	return validateAcceptance("step "+step.ID, step.Acceptance)
+	if err := validateAcceptance("step "+step.ID, step.Acceptance); err != nil {
+		return err
+	}
+	if step.Experiment == nil {
+		if requireExperiment && step.Kind == "implementation" {
+			return fmt.Errorf("step %s: schema_version %d requires experiment.evidence_status on implementation steps", step.ID, SchemaVersion)
+		}
+		return nil
+	}
+	return validateExperiment(step.ID, step.Experiment)
 }
 
 func validateStepIdentity(step Step, seen map[string]bool) error {
@@ -183,6 +202,59 @@ func validateTextList(name string, values []string, minimum, maximum int) error 
 			return fmt.Errorf("%s contains invalid or duplicate text", name)
 		}
 		seen[value] = true
+	}
+	return nil
+}
+
+func validateExperiment(stepID string, e *Experiment) error {
+	allowedStatus := map[string]bool{"established": true, "hypothesis": true, "speculative": true}
+	if !allowedStatus[e.EvidenceStatus] {
+		return fmt.Errorf("step %s experiment: invalid evidence_status %q", stepID, e.EvidenceStatus)
+	}
+	if err := validateExperimentFields(stepID, e); err != nil {
+		return err
+	}
+	allowedDisposition := map[string]bool{"": true, "reject": true, "revise": true, "promote": true, "no-change": true}
+	if !allowedDisposition[e.Disposition] {
+		return fmt.Errorf("step %s experiment: invalid disposition %q", stepID, e.Disposition)
+	}
+	return nil
+}
+
+func validateExperimentFields(stepID string, e *Experiment) error {
+	if e.EvidenceStatus == "established" {
+		return validateEstablishedExperiment(stepID, e)
+	}
+	return validateActiveExperiment(stepID, e)
+}
+
+type namedText struct{ name, value string }
+
+// experimentTexts are the contract's text fields in a fixed order (one list for both evidence classes).
+func experimentTexts(e *Experiment) []namedText {
+	return []namedText{{"null", e.Null}, {"kill_criterion", e.KillCriterion}, {"margin", e.Margin}}
+}
+
+func validateActiveExperiment(stepID string, e *Experiment) error {
+	for _, f := range experimentTexts(e) {
+		if strings.TrimSpace(f.value) == "" {
+			return fmt.Errorf("step %s experiment: %s required for evidence_status %s", stepID, f.name, e.EvidenceStatus)
+		}
+		if !validText(f.value) {
+			return fmt.Errorf("step %s experiment: invalid %s", stepID, f.name)
+		}
+	}
+	return validateTextList(fmt.Sprintf("step %s experiment: protected_outcomes", stepID), e.ProtectedOutcomes, 1, MaxProtectedOutcomes)
+}
+
+func validateEstablishedExperiment(stepID string, e *Experiment) error {
+	for _, f := range experimentTexts(e) {
+		if f.value != "" && !validText(f.value) {
+			return fmt.Errorf("step %s experiment: invalid %s", stepID, f.name)
+		}
+	}
+	if len(e.ProtectedOutcomes) > 0 {
+		return validateTextList(fmt.Sprintf("step %s experiment: protected_outcomes", stepID), e.ProtectedOutcomes, 1, MaxProtectedOutcomes)
 	}
 	return nil
 }

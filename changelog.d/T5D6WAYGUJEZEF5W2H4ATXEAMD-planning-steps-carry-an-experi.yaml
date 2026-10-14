@@ -1,0 +1,4 @@
+type: added
+title: Planning steps carry an experiment contract (baseline, kill criterion, margin, protected outcomes, evidence status, disposition); schema version 2 requires it on every implementation step and schema version 1 drafts are refused from 2026-10-25
+issue: '#1345'
+breaking: true

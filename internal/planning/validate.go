@@ -5,44 +5,67 @@ import (
 	"fmt"
 )
 
-func validateDraft(ctx context.Context, draft *Draft) ([]string, []string, error) {
-	if err := validateDraftShape(draft); err != nil {
-		return nil, nil, err
+// validateDraft returns the milestone order, the step order and the deprecation lines of a valid draft.
+func validateDraft(ctx context.Context, draft *Draft) ([]string, []string, []string, error) {
+	deprecations, err := validateDraftShape(draft)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	sources, err := validateSources(ctx, draft.Sources)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	requirements, err := validateRequirements(ctx, draft.Requirements, sources)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	milestones, milestoneNodes, err := validateMilestones(ctx, draft.Milestones)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	milestoneOrder, err := graphOrder(ctx, "milestone", milestoneNodes, MaxMilestones)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	prerequisites := milestonePrerequisites(draft.Milestones)
-	stepNodes, err := validateSteps(ctx, draft.Steps, requirements, milestones, milestoneOrder, prerequisites)
+	stepNodes, err := validateSteps(ctx, draft.Steps, stepRules{requirements: requirements, milestones: milestones,
+		milestoneOrder: milestoneOrder, prerequisites: prerequisites, requireExperiment: draft.SchemaVersion >= SchemaVersion})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	stepOrder, err := graphOrder(ctx, "step", stepNodes, MaxSteps)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return milestoneOrder, stepOrder, nil
+	return milestoneOrder, stepOrder, deprecations, nil
 }
 
-func validateDraftShape(draft *Draft) error {
-	if draft.SchemaVersion != SchemaVersion || !validID(draft.ID) {
-		return fmt.Errorf("schema_version 1 and stable draft id required")
+// validateSchemaVersion accepts the current version, and version 1 until SchemaV1RefusedFrom with a deprecation line.
+func validateSchemaVersion(version int) ([]string, error) {
+	switch {
+	case version == SchemaVersion:
+		return []string{}, nil
+	case version == SchemaVersionV1 && now().Before(SchemaV1RefusedFrom):
+		return []string{fmt.Sprintf("schema_version 1 is deprecated and refused from %s: set schema_version 2 and add "+
+			"experiment.evidence_status to every implementation step", SchemaV1RefusedFrom.Format("2006-01-02"))}, nil
+	case version == SchemaVersionV1:
+		return nil, fmt.Errorf("schema_version 1 was refused from %s: set schema_version 2 and add experiment.evidence_status "+
+			"to every implementation step", SchemaV1RefusedFrom.Format("2006-01-02"))
+	default:
+		return nil, fmt.Errorf("schema_version %d unsupported: schema_version %d required", version, SchemaVersion)
+	}
+}
+
+func validateDraftShape(draft *Draft) ([]string, error) {
+	deprecations, err := validateSchemaVersion(draft.SchemaVersion)
+	if err != nil {
+		return nil, err
+	}
+	if !validID(draft.ID) {
+		return nil, fmt.Errorf("stable draft id required")
 	}
 	if err := validateProject(draft.Project); err != nil {
-		return err
+		return nil, err
 	}
 	counts := []struct{ count, maximum int }{
 		{len(draft.Sources), MaxSources}, {len(draft.Requirements), MaxRequirements},
@@ -50,10 +73,10 @@ func validateDraftShape(draft *Draft) error {
 	}
 	for _, item := range counts {
 		if !validCount(item.count, item.maximum) {
-			return fmt.Errorf("planning graph count limit exceeded or required collection empty")
+			return nil, fmt.Errorf("planning graph count limit exceeded or required collection empty")
 		}
 	}
-	return nil
+	return deprecations, nil
 }
 
 func validateProject(project Project) error {
