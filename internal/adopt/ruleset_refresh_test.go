@@ -44,10 +44,16 @@ func rulesetWarnings(rep *AdoptReport) []string {
 	return warnings
 }
 
+// rulesetFacets are the facets every adoption and dry run in this file declares: the four that
+// were every archetype's default before #1075, docs:seo-portal among them, whose documentation
+// gate these tests expect adoption to add to the required checks. Since #1075 the defaults
+// follow the archetype, so a preview and the adoption it previews name them alike.
+var rulesetFacets = config.DefaultFacets()
+
 // adoptForRuleset adopts repo for real with a verified lock source.
 func adoptForRuleset(t *testing.T, repo string, dryRun bool) *AdoptReport {
 	t.Helper()
-	rep, err := Adopt(t.Context(), AdoptOptions{Path: repo, DryRun: dryRun, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets()})
+	rep, err := Adopt(t.Context(), AdoptOptions{Path: repo, DryRun: dryRun, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: rulesetFacets})
 	if err != nil {
 		t.Fatalf("adopt (dry run %v): %v", dryRun, err)
 	}
@@ -76,7 +82,7 @@ func TestAdopt_Positive_RefreshesTheRulesetFlavorApplyWrote(t *testing.T) {
 		t.Fatalf("flavor apply must leave the built-in policy's rendering: %v\n%s", err, before)
 	}
 
-	preview := dryRunRulesetPreview(t, repo, false)
+	preview := dryRunRulesetPreview(t, repo, false, rulesetFacets...)
 	if preview.Action != PreviewUpdate || preview.Diff == "" {
 		t.Fatalf("the dry run must preview the refresh with its diff, got %+v", preview)
 	}
@@ -118,7 +124,7 @@ func TestAdopt_Negative_ValueEditAfterFlavorApplyIsKept(t *testing.T) {
 	edited := string(data)
 	mustWrite(t, filepath.Join(repo, rulesetFile), edited)
 
-	if preview := dryRunRulesetPreview(t, repo, false); preview.Action != PreviewKeep {
+	if preview := dryRunRulesetPreview(t, repo, false, rulesetFacets...); preview.Action != PreviewKeep {
 		t.Fatalf("a value-edited ruleset must preview as keep, got %+v", preview)
 	}
 	rep := adoptForRuleset(t, repo, false)
@@ -128,7 +134,7 @@ func TestAdopt_Negative_ValueEditAfterFlavorApplyIsKept(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(repo, rulesetFile)); err != nil || string(got) != edited {
 		t.Fatalf("the value-edited ruleset was changed without --force: %q, %v", got, err)
 	}
-	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets()}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: rulesetFacets}); err != nil {
 		t.Fatalf("adopt --force: %v", err)
 	}
 	if got, err := os.ReadFile(filepath.Join(repo, rulesetFile)); err != nil || string(got) == edited {
@@ -177,7 +183,7 @@ func TestAdopt_Negative_EditedRenderingIsKept(t *testing.T) {
 	}
 	edited := string(data) + "\n"
 	mustWrite(t, filepath.Join(repo, rulesetFile), edited)
-	if preview := dryRunRulesetPreview(t, repo, false); preview.Action != PreviewKeep {
+	if preview := dryRunRulesetPreview(t, repo, false, rulesetFacets...); preview.Action != PreviewKeep {
 		t.Fatalf("an edited rendering must preview as keep, got %+v", preview)
 	}
 	rep := adoptForRuleset(t, repo, false)
@@ -200,7 +206,7 @@ func TestAdoptDryRun_Positive_FirstAdoptionPreviewIsTheWrittenRuleset(t *testing
 		t.Fatalf("the fixture must start without workflow checks: %v, %v", onDisk, err)
 	}
 
-	preview := dryRunRulesetPreview(t, repo, false)
+	preview := dryRunRulesetPreview(t, repo, false, rulesetFacets...)
 	if preview.Action != PreviewCreate || !strings.Contains(preview.Content, "Documentation Governance") {
 		t.Fatalf("the preview must require the checks the run scaffolds, got %+v", preview)
 	}
@@ -224,7 +230,7 @@ func TestAdopt_Boundary_CRLFRenderingRefreshesInItsOwnLineEndings(t *testing.T) 
 	}
 	mustWrite(t, filepath.Join(repo, rulesetFile), strings.ReplaceAll(string(data), "\n", "\r\n"))
 
-	preview := dryRunRulesetPreview(t, repo, false)
+	preview := dryRunRulesetPreview(t, repo, false, rulesetFacets...)
 	if preview.Action != PreviewUpdate {
 		t.Fatalf("a CRLF earlier rendering must preview as update, got %+v", preview)
 	}
@@ -410,7 +416,7 @@ func TestAdopt_Positive_RefreshesTheEarlierMainRulesetOfAMasterRepository(t *tes
 	repo := newTestRepo(t, "master-earlier-main")
 	recordOriginHead(t, repo, "master")
 	mustWrite(t, filepath.Join(repo, rulesetFile), string(earlier))
-	if preview := dryRunRulesetPreview(t, repo, false); preview.Action != PreviewUpdate ||
+	if preview := dryRunRulesetPreview(t, repo, false, rulesetFacets...); preview.Action != PreviewUpdate ||
 		!strings.Contains(preview.Diff, "\n+        \"refs/heads/master\",\n") {
 		t.Fatalf("the dry run must preview the refresh to master, got %+v", preview)
 	}
@@ -428,7 +434,7 @@ func TestAdopt_Positive_RefreshesTheEarlierMainRulesetOfAMasterRepository(t *tes
 	mainRepo := newTestRepo(t, "main-earlier-main")
 	recordOriginHead(t, mainRepo, "main")
 	mustWrite(t, filepath.Join(mainRepo, rulesetFile), string(earlier))
-	if preview := dryRunRulesetPreview(t, mainRepo, false); preview.Action != PreviewUpdate {
+	if preview := dryRunRulesetPreview(t, mainRepo, false, rulesetFacets...); preview.Action != PreviewUpdate {
 		t.Fatalf("a main repository refreshes its earlier rendering to the adopted policy, got %+v", preview)
 	}
 	adoptForRuleset(t, mainRepo, false)
@@ -452,7 +458,7 @@ func TestAdopt_Negative_DeclaredBranchWinsAndAnEditedBranchIsKept(t *testing.T) 
 	if len(rulesetWarnings(rep)) != 1 || readRuleset(t, repo) != string(edited) {
 		t.Fatalf("a ruleset for another branch must be kept with one warning: %v", rep.Warnings)
 	}
-	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets()}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: rulesetFacets}); err != nil {
 		t.Fatalf("adopt --force: %v", err)
 	}
 	if written := readRuleset(t, repo); !strings.Contains(written, `"refs/heads/trunk"`) || strings.Contains(written, `"refs/heads/master"`) {
