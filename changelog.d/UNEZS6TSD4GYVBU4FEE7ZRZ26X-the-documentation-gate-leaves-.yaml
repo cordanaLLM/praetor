@@ -1,0 +1,3 @@
+type: fixed
+title: The documentation gate leaves a CHANGELOG.md at any depth out of its style rules and names an unread .markdownlintignore, and a lint run past the 1 MiB capture still prints its findings, a count per rule and the truncation
+issue: '#1284, #1245'

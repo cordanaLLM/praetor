@@ -198,6 +198,9 @@ var priorDigests = map[string]string{
 	"3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0": Directory + "/no-private-scratch-links.mjs",
 	// verify.mjs with an unused catch binding in readLintSource (ESLint no-unused-vars), shipped by #1252.
 	"91bc63a7141e3962f9134e645fe6d09ef7262c21fb0dac18c98843f7061d82a2": Directory + "/verify.mjs",
+	// verify.mjs before it styled no CHANGELOG.md below the root, named an unread .markdownlintignore
+	// (#1284) and reported the captured findings of a lint child that passed the capture limit (#1245).
+	"3d65af5a190f353525bb909b540d2cbc1359da1e356e866afb0d7e85f56abed0": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{

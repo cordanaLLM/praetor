@@ -35,12 +35,22 @@ being silently skipped.
 
 The style linter excludes generated agent projections (`AGENTS.md`,
 `AGENTS.readonly.md`, `CLAUDE.md`, and their vendor directories), generated
-`CHANGELOG.md`, caveman fixtures, private scratch/worktree trees, and
+`CHANGELOG.md` at any depth (a monorepo's release tool writes one per package),
+caveman fixtures, private scratch/worktree trees, and
 dependency/vendor trees. Those files are not public author-written documentation: they have a generator, fixture-byte,
 caveman, or upstream format contract. Except for ignored untracked content, they
 remain in the broader private-link scan. A repository adds its own style
 exclusions for partial, generated, or fixture Markdown in `.standards.yaml`
-([Repository settings](#repository-settings)). The runner refuses symbolic-link inputs
+([Repository settings](#repository-settings)). The gate reads no
+`.markdownlintignore`; when one sits at the root, the run says so and names
+`documentation.style_exclude` as the place for its entries.
+
+A lint child whose findings pass the 1 MiB capture is stopped, and the gate fails
+with status 2. It still prints the first findings, a count of the captured findings
+per rule and the number of bytes captured, so a first run on a newly adopted
+repository shows what to fix; `--only` lints fewer files at a time to see the rest.
+
+The runner refuses symbolic-link inputs
 and paths escaping the repository root; the self-test creates a Markdown symlink
 and proves the inventory fails closed. It also reads tracked symlink targets from
 the Git index and rejects an alias into either private scratch root, including an

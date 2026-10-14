@@ -108,9 +108,15 @@ const STYLE_EXCLUDED_FILES = new Set([
   ".github/copilot-instructions.md",
   "AGENTS.md",
   "AGENTS.readonly.md",
-  "CHANGELOG.md",
   "CLAUDE.md",
 ]);
+// A change log is a release tool's rendered output at any depth: in a monorepo the tool writes one
+// per package beside the root one (#1284), and each release prepends a section in the tool's own
+// layout. The private-link rule still reads every one.
+const STYLE_EXCLUDED_BASENAMES = new Set(["CHANGELOG.md"]);
+// Ignore files of other markdownlint front ends. The gate reads none of them, so the run names
+// each one present at the root instead of leaving its entries looking honoured (#1284).
+const UNREAD_IGNORE_FILES = Object.freeze([".markdownlintignore"]);
 const STYLE_EXCLUDED_PREFIXES = [
   ".agents/agents/",
   ".agents/plugins/",
@@ -240,7 +246,16 @@ function command(commandName, args, options = {}) {
     if (result.error.code === "ETIMEDOUT") {
       fail(options.timeoutReport?.(limit.deadline) ?? timeoutMessage(commandName, limit));
     }
-    fail(`${commandName} failed to start or exceeded ${options.maxBuffer ?? MAX_CAPTURE_BYTES} captured bytes: ${result.error.message}`);
+    // Node stops a child whose output passes maxBuffer and reports ENOBUFS; what it wrote up to
+    // the limit is still in the result. allowOverflow hands that part back to the caller (#1245).
+    if (result.error.code === "ENOBUFS") {
+      if (options.allowOverflow) {
+        return { ...result, overflowed: true };
+      }
+      fail(`${commandName} wrote more than the ${options.maxBuffer ?? MAX_CAPTURE_BYTES} bytes captured ` +
+        "from it and was stopped");
+    }
+    fail(`${commandName} failed to start: ${result.error.message}`);
   }
   if (result.signal) {
     fail(`${commandName} terminated by ${result.signal}`);
@@ -878,7 +893,8 @@ function isStyleSelected(relative) {
   if (!MARKDOWN_SUFFIXES.some((suffix) => lower.endsWith(suffix))) {
     return false;
   }
-  if (STYLE_EXCLUDED_FILES.has(normalized)) {
+  if (STYLE_EXCLUDED_FILES.has(normalized) ||
+    STYLE_EXCLUDED_BASENAMES.has(normalized.slice(normalized.lastIndexOf("/") + 1))) {
     return false;
   }
   if (lower.split("/").includes("node_modules")) {
@@ -931,6 +947,14 @@ function reportSettings(settings, selection) {
     process.stdout.write(`markdown-governance: style exclusion ${JSON.stringify(settings.styleExclude[index])} ` +
       `matched ${selection.counts[index]} files\n`);
   }
+}
+
+// unreadIgnoreNotices names each ignore file of another markdownlint front end present at the
+// root, which this gate does not read, and where its exclusions belong instead.
+function unreadIgnoreNotices(root) {
+  return UNREAD_IGNORE_FILES.filter((name) => fs.lstatSync(path.join(root, name), { throwIfNoEntry: false }))
+    .map((name) => `markdown-governance: ${name} is not read by this gate and exempts nothing; ` +
+      `declare style exclusions as documentation.style_exclude in ${MANIFEST_FILE}\n`).join("");
 }
 
 function summaryLine(settings, selection, scratchCount) {
@@ -1559,6 +1583,55 @@ function lintOutputSelfTest(temporary) {
   process.stdout.write("lint output fixtures: findings, order and format match markdownlint-cli2 0.23.3\n");
 }
 
+// outputCollector stands in for process in runMarkdownlint's streams and keeps what is written.
+function outputCollector() {
+  const stream = () => ({ text: "", write(value) { this.text += value; return true; } });
+  return { stdout: stream(), stderr: stream() };
+}
+
+// More lint output than the capture holds (#1245). Negative: a child that writes past maxBuffer
+// is named as such, not as one that failed to start, and a missing executable is named as one
+// that failed to start, not as an overflow. Positive: a fixture whose findings pass the capture
+// fails with status 2 and still prints findings with file, line and rule, their count by rule,
+// and the limit the list is truncated at. Boundary: below the limit the same file fails with
+// status 1 and no overflow report, and a finding line the capture cut off is not counted.
+function captureOverflowSelfTest(temporary) {
+  assert.throws(() => command(process.execPath, ["-e", "process.stdout.write('x'.repeat(2048))"], { maxBuffer: 1024 }),
+    (error) => error.message === `${process.execPath} wrote more than the 1024 bytes captured from it and was stopped`);
+  assert.throws(() => command(path.join(temporary, "no-such-executable"), []),
+    (error) => /failed to start: /u.test(error.message) && !/bytes/u.test(error.message));
+  const kept = command(process.execPath, ["-e", "process.stdout.write('x'.repeat(2048))"],
+    { maxBuffer: 1024, allowOverflow: true });
+  assert.equal(kept.overflowed, true);
+  // Node keeps the chunk that crossed the limit, so the captured part may run past it.
+  assert.ok(kept.stdout.length >= 1024);
+  assert.deepEqual(ruleCounts("a.md:1:1 error MD010/no-hard-tabs Hard tabs [Column: 1]\n" +
+    "a.md:2 error MD009/no-trailing-spaces Trailing spaces [Expected: 0 or 2; Actual: 1]\n" +
+    "a.md:3:1 error MD010/no-hard-tabs Hard tabs [Column: 1]\na.md:4:1 error MD010/no-hard-tabs Hard t"),
+  [["MD010/no-hard-tabs", 2], ["MD009/no-trailing-spaces", 1]]);
+  const fixture = path.join(temporary, "capture-overflow-fixture");
+  const tabs = (lines) => `# Tabs\n\n\`\`\`ts\n${"\tx\n".repeat(lines)}\`\`\`\n`;
+  writeFixtureFiles(fixture, { "docs/small.md": tabs(100), "docs/large.md": tabs(24_000) });
+  const small = outputCollector();
+  assert.equal(runMarkdownlint(fixture, temporary, ["docs/small.md"], true, DEFAULT_SETTINGS, null, small), 1);
+  assert.doesNotMatch(small.stderr.text, /wrote more than/u);
+  const large = outputCollector();
+  assert.equal(runMarkdownlint(fixture, temporary, ["docs/large.md"], true, DEFAULT_SETTINGS, null, large), 2);
+  assert.match(large.stderr.text, /^docs\/large\.md:4:1 error MD010\/no-hard-tabs Hard tabs/mu);
+  assert.match(large.stderr.text, new RegExp(`^markdown-governance: lint batch 1 of 1 wrote more than ` +
+    `${MAX_CAPTURE_BYTES} bytes of findings and was stopped; the list is truncated after the \\d+ bytes captured$`,
+  "mu"));
+  const total = /^markdown-governance: (\d+) findings in the captured part by rule: MD010\/no-hard-tabs (\d+);/mu
+    .exec(large.stderr.text);
+  assert.ok(total && Number(total[1]) === Number(total[2]) && Number(total[1]) > MAX_DIAGNOSTIC_OUTPUT_LINES &&
+    Number(total[1]) < 24_000, large.stderr.text.slice(-600));
+  // The overflow alone sets status 2, not the diagnostic budget it also exhausts.
+  const quiet = outputCollector();
+  assert.equal(runMarkdownlint(fixture, temporary, ["docs/large.md"], false, DEFAULT_SETTINGS, null, quiet), 2);
+  process.stdout.write("capture overflow fixtures: findings, counts by rule and the limit printed, " +
+    "start failure and overflow told apart\n");
+}
+
 // markdownlint parses math with micromark-extension-math, whose module load imports katex: the
 // package.json override lifts katex past the extension's ^0.16.0 range to a release free of
 // GHSA-238p-pmpm-9mq7 (#793), so this fixture proves the overridden katex still serves the
@@ -1617,6 +1690,35 @@ function lintMemorySelfTest(temporary) {
 // a declaration that removes every styled file fails the gate, and an excluded file still fails
 // the private-link rule. Boundary: all but one file excluded passes, and a repository whose only
 // Markdown is built-in excluded has nothing for a declaration to empty.
+// Change logs at any depth and unread ignore files (#1284). Positive: a CHANGELOG.md at the root
+// or below a package is left out of the style run, and a .markdownlintignore at the root is named
+// as unread. Negative: a nested change log is still read by the private-link rule, and other names
+// that hold the word stay styled. Boundary: without the ignore file nothing is named.
+function changelogSelfTest(temporary) {
+  for (const relative of ["CHANGELOG.md", "packages/core/CHANGELOG.md", "a/b/c/d/CHANGELOG.md"]) {
+    assert.equal(isStyleSelected(relative), false, relative);
+  }
+  for (const relative of ["docs/CHANGELOG-notes.md", "packages/core/xCHANGELOG.md", "packages/core/changelog.md",
+    "CHANGELOG.md/README.md"]) {
+    assert.equal(isStyleSelected(relative), true, relative);
+  }
+  const fixture = path.join(temporary, "changelog-fixture");
+  writeFixtureFiles(fixture, {
+    ".gitignore": "/.workingdir/\n",
+    "README.md": "# Root\n",
+    "packages/core/CHANGELOG.md": "# Changelog\n\n\n## 1.0.0\n\n* first\n- notes in [scratch](../../.workingdir/OPEN.md)\n",
+  });
+  command("git", ["init", "--quiet"], { cwd: fixture });
+  const real = fs.realpathSync(fixture);
+  const all = inventory(real);
+  assert.deepEqual(styleSelection(all, DEFAULT_SETTINGS, "linux").styled, ["README.md"]);
+  assert.equal(runScratchRule(fixture, temporary, all, false, false), 1);
+  assert.equal(unreadIgnoreNotices(real), "");
+  fs.writeFileSync(path.join(fixture, ".markdownlintignore"), "**/CHANGELOG.md\n");
+  assert.equal(unreadIgnoreNotices(real), "markdown-governance: .markdownlintignore is not read by this gate and " +
+    `exempts nothing; declare style exclusions as documentation.style_exclude in ${MANIFEST_FILE}\n`);
+}
+
 function styleExclusionSelfTest(temporary) {
   const platform = "linux";
   const files = ["AGENTS.md", "README.md", "changelog.d/fixed/fragment.md", "docs/adr/_index_fragments/0001.md",
@@ -1637,6 +1739,7 @@ function styleExclusionSelfTest(temporary) {
   assert.deepEqual(styleSelection(files, declared(["docs/**", "changelog.d/**", "pkg/**"]), platform).styled,
     ["README.md"]);
   assert.deepEqual(styleSelection(["AGENTS.md"], declared(["docs/**"]), platform).styled, []);
+  changelogSelfTest(temporary);
   const fixture = path.join(temporary, "exclusion-fixture");
   writeFixtureFiles(fixture, {
     ".gitignore": "/.workingdir/\n",
@@ -2238,7 +2341,8 @@ function lintBudgetReport(root, batch, position, seconds, deadline = false) {
 // installed library against the lock before the first child, even with no file to lint, so a
 // mismatch fails the gate with status 2 instead of reading as findings. child replaces the
 // command and leading arguments of every lint child; only lintBudgetSelfTest passes it.
-function runMarkdownlint(root, temporary, files, emitDiagnostics = true, settings = DEFAULT_SETTINGS, child = null) {
+function runMarkdownlint(root, temporary, files, emitDiagnostics = true, settings = DEFAULT_SETTINGS, child = null,
+  streams = process) {
   markdownlintEntry(temporary);
   const script = fileURLToPath(import.meta.url);
   const [file, ...leading] = child ?? [process.execPath, script, LINT_MODE, temporary];
@@ -2250,17 +2354,56 @@ function runMarkdownlint(root, temporary, files, emitDiagnostics = true, setting
     const result = command(file, [...leading, ...all[index]], {
       cwd: root,
       allowFailure: true,
+      allowOverflow: true,
       timeout: settings.lintTimeoutSeconds * 1_000,
       timeoutReport: (deadline) => lintBudgetReport(root, all[index], `${index + 1} of ${all.length}`,
         settings.lintTimeoutSeconds, deadline),
     });
-    failed ||= result.status !== 0;
-    if (emitDiagnostics && result.status !== 0) {
-      overflow ||= emitBounded(result.stdout, process.stdout, budget, "markdownlint");
-      overflow ||= emitBounded(result.stderr, process.stderr, budget, "markdownlint");
+    failed ||= result.overflowed || result.status !== 0;
+    if (emitDiagnostics && (result.overflowed || result.status !== 0)) {
+      overflow ||= emitBounded(result.stdout, streams.stdout, budget, "markdownlint");
+      overflow ||= emitBounded(result.stderr, streams.stderr, budget, "markdownlint");
+    }
+    if (result.overflowed) {
+      overflow = true;
+      if (emitDiagnostics) {
+        streams.stderr.write(captureOverflowReport(`${result.stdout ?? ""}${result.stderr ?? ""}`,
+          `${index + 1} of ${all.length}`));
+      }
     }
   }
   return overflow ? 2 : failed ? 1 : 0;
+}
+
+// LINT_FINDING_RULE reads the rule names of one complete line lintFinding wrote.
+const LINT_FINDING_RULE = /^\S.*?:\d+(?::\d+)? \w+ (MD\d{3}(?:\/[\w-]+)*) /u;
+
+// ruleCounts counts the complete finding lines of captured lint output by rule, most frequent
+// first; a line cut off by the capture limit is not counted.
+function ruleCounts(text) {
+  const counts = new Map();
+  const complete = text.slice(0, text.lastIndexOf("\n") + 1).split("\n");
+  for (let index = 0; index < complete.length && index < MAX_CAPTURE_BYTES; index += 1) {
+    const rule = LINT_FINDING_RULE.exec(complete[index])?.[1];
+    if (rule) {
+      counts.set(rule, (counts.get(rule) ?? 0) + 1);
+    }
+  }
+  return [...counts].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+}
+
+// captureOverflowReport says that a lint child wrote more than the captured bytes and was
+// stopped, and counts the findings of the captured part by rule (#1245): the list above it holds
+// the first of them, and a run over fewer files at a time (--only) shows the rest.
+function captureOverflowReport(captured, position) {
+  const counts = ruleCounts(captured);
+  const total = counts.reduce((sum, [, count]) => sum + count, 0);
+  const byRule = counts.map(([rule, count]) => `${rule} ${count}`).join(", ");
+  return `markdown-governance: lint batch ${position} wrote more than ${MAX_CAPTURE_BYTES} bytes of findings ` +
+    `and was stopped; the list is truncated after the ${Buffer.byteLength(captured)} bytes captured\n` +
+    `markdown-governance: ${counted(total, "finding")} in the captured part` +
+    `${byRule ? ` by rule: ${byRule}` : ""}; lint fewer files at a time with ` +
+    `node tools/markdownlint/verify.mjs ${ONLY_MODE} <file>... to see the rest\n`;
 }
 
 // namedStyleFiles resolves the files `--only` names, relative to cwd, to repository paths. Each
@@ -2299,6 +2442,7 @@ function runGate(root, temporary, settings) {
   const selection = styleSelection(scratchFiles, settings, process.platform);
   const styleFiles = selection.styled;
   reportSettings(settings, selection);
+  process.stdout.write(unreadIgnoreNotices(root));
   const scratchStatus = runScratchRule(root, temporary, scratchFiles, false);
   const lintStatus = runMarkdownlint(root, temporary, styleFiles, true, settings);
   process.stdout.write(summaryLine(settings, selection, scratchFiles.length));
@@ -2326,6 +2470,7 @@ function runSelfTest(toolDir, temporary) {
   lintEntrySelfTest(temporary);
   hermeticConfigSelfTest(temporary);
   lintOutputSelfTest(temporary);
+  captureOverflowSelfTest(temporary);
   mathSelfTest(temporary);
   lintMemorySelfTest(temporary);
   styleExclusionSelfTest(temporary);
