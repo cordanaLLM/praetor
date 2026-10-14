@@ -56,11 +56,15 @@ func splitCommaList(value string) []string {
 	return items
 }
 
+// adoptCollaborators counts the collaborators with write access adoption asks the forge about
+// (adopt.AdoptOptions.Collaborators, #1075); TestMain clears it so no test reaches the forge.
+var adoptCollaborators adopt.CollaboratorCounter = adopt.GitHubWriteCollaborators
+
 func runAdopt(args []string) error {
 	fs := flag.NewFlagSet("adopt", flag.ContinueOnError)
 	profile := fs.String("profile", "", "Primary repository profile (auto-detected if empty)")
 	facets := fs.String("facets", "", "Comma-separated facets written when adoption creates .standards.yaml "+
-		"(default when omitted: "+strings.Join(config.DefaultFacets(), ",")+"); an existing .standards.yaml keeps the facets it declares, "+
+		"(default when omitted: "+config.DescribeDefaultFacets()+"); an existing .standards.yaml keeps the facets it declares, "+
 		"change them with praetorctl profile set --facets")
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
 	force := fs.Bool("force", false, adopt.ForceContract+". --force needs --lock-source-root, --dry-run included")
@@ -88,7 +92,7 @@ func runAdopt(args []string) error {
 	}
 
 	// The options every adopted repository shares; --all-missing passes exactly these.
-	opts := adopt.AdoptOptions{LockSourceRoot: resolvedLockSource, DryRun: *dryRun, Force: *force, Engine: runningBuild()}
+	opts := adopt.AdoptOptions{LockSourceRoot: resolvedLockSource, DryRun: *dryRun, Force: *force, Engine: runningBuild(), Collaborators: adoptCollaborators}
 	baselineFlags.apply(&opts)
 	if *allMissing {
 		root, err := resolveDevRootDir(*devDir, "--dev-dir")

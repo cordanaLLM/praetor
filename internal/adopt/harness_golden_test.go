@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
@@ -45,7 +46,7 @@ func adoptedHarness(t *testing.T, profile string, markers map[string]string) str
 // adoptFrom adopts repo under profile with the pinned catalog at lockSource.
 func adoptFrom(t *testing.T, repo, profile, lockSource string) *AdoptReport {
 	t.Helper()
-	report, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: lockSource, Path: repo, Profile: profile})
+	report, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: lockSource, Path: repo, Profile: profile, Facets: config.DefaultFacets()})
 	if err != nil {
 		t.Fatalf("Adopt %s: %v", profile, err)
 	}

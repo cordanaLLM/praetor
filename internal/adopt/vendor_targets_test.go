@@ -7,16 +7,18 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 const vendorContextFile = "CLAUDE.md"
 
-// adoptedRepo runs a first plain adoption of a new repository and returns its path and the
-// catalog source it was adopted from.
+// adoptedRepo runs a first plain adoption of a new repository with the full facet surface,
+// which no single archetype defaults to (#1075), and returns its path and the catalog source it
+// was adopted from.
 func adoptedRepo(t *testing.T, name string) (repoPath, source string) {
 	t.Helper()
 	repoPath, source = newTestRepo(t, name), newAdoptLockSource(t)
-	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: source, Path: repoPath}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Facets: config.DefaultFacets()}); err != nil {
 		t.Fatalf("first adoption: %v", err)
 	}
 	return repoPath, source

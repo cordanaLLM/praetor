@@ -47,7 +47,7 @@ func rulesetWarnings(rep *AdoptReport) []string {
 // adoptForRuleset adopts repo for real with a verified lock source.
 func adoptForRuleset(t *testing.T, repo string, dryRun bool) *AdoptReport {
 	t.Helper()
-	rep, err := Adopt(t.Context(), AdoptOptions{Path: repo, DryRun: dryRun, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t)})
+	rep, err := Adopt(t.Context(), AdoptOptions{Path: repo, DryRun: dryRun, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets()})
 	if err != nil {
 		t.Fatalf("adopt (dry run %v): %v", dryRun, err)
 	}
@@ -128,7 +128,7 @@ func TestAdopt_Negative_ValueEditAfterFlavorApplyIsKept(t *testing.T) {
 	if got, err := os.ReadFile(filepath.Join(repo, rulesetFile)); err != nil || string(got) != edited {
 		t.Fatalf("the value-edited ruleset was changed without --force: %q, %v", got, err)
 	}
-	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t)}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets()}); err != nil {
 		t.Fatalf("adopt --force: %v", err)
 	}
 	if got, err := os.ReadFile(filepath.Join(repo, rulesetFile)); err != nil || string(got) == edited {
@@ -452,7 +452,7 @@ func TestAdopt_Negative_DeclaredBranchWinsAndAnEditedBranchIsKept(t *testing.T) 
 	if len(rulesetWarnings(rep)) != 1 || readRuleset(t, repo) != string(edited) {
 		t.Fatalf("a ruleset for another branch must be kept with one warning: %v", rep.Warnings)
 	}
-	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t)}); err != nil {
+	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t), Facets: config.DefaultFacets()}); err != nil {
 		t.Fatalf("adopt --force: %v", err)
 	}
 	if written := readRuleset(t, repo); !strings.Contains(written, `"refs/heads/trunk"`) || strings.Contains(written, `"refs/heads/master"`) {
