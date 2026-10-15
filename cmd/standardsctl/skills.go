@@ -27,6 +27,9 @@ const (
 	maxUpstreamSources      = 64
 	maxUpstreamSkills       = 256
 	maxSkillFiles           = 256
+	maxLicenseBytes         = 1 << 20
+	maxSkillEntryBytes      = 1 << 20
+	maxSkillFileBytes       = 1 << 20
 )
 
 func runSkills(args []string) error {
@@ -124,7 +127,7 @@ func syncOneUpstreamSource(ctx context.Context, rootDir string, source config.Up
 func findRepoLicense(tempDir string) []byte {
 	names := []string{"LICENSE", "LICENCE", "LICENSE.md", "LICENCE.md", "LICENSE.txt", "LICENCE.txt"}
 	for i := 0; i < len(names) && i < 16; i++ {
-		data, err := os.ReadFile(filepath.Join(tempDir, names[i]))
+		data, err := util.ReadConfinedLimited(tempDir, names[i], maxLicenseBytes)
 		if err == nil && len(data) > 0 {
 			return data
 		}
@@ -133,21 +136,28 @@ func findRepoLicense(tempDir string) []byte {
 }
 
 func copyAndPinOneSkill(rootDir, tempDir string, source config.UpstreamSkillSource, skillName string, repoLicense []byte) error {
+	if !config.ValidSkillName(skillName) {
+		return fmt.Errorf("skills: invalid skill name %q", skillName)
+	}
 	srcDir, err := findSkillSourceDir(tempDir, skillName)
 	if err != nil {
 		return err
 	}
-	targetDir := filepath.Join(rootDir, filepath.FromSlash(compiler.CanonicalSkillsRel), skillName)
+	skillRel := filepath.Join(filepath.FromSlash(compiler.CanonicalSkillsRel), skillName)
+	targetDir, err := util.ConfinePath(rootDir, skillRel)
+	if err != nil {
+		return fmt.Errorf("target skill dir %s: %w", skillName, err)
+	}
 	if err := os.RemoveAll(targetDir); err != nil {
 		return fmt.Errorf("clean target skill dir %s: %w", targetDir, err)
 	}
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	if err := util.MkdirSecure(targetDir, 0750); err != nil {
 		return fmt.Errorf("create target skill dir %s: %w", targetDir, err)
 	}
-	if err := copyDirectoryContents(srcDir, targetDir); err != nil {
+	if err := copyDirectoryContents(rootDir, srcDir, skillRel); err != nil {
 		return fmt.Errorf("copy skill %s contents: %w", skillName, err)
 	}
-	if err := ensureSkillLicense(targetDir, repoLicense); err != nil {
+	if err := ensureSkillLicense(rootDir, skillRel, repoLicense); err != nil {
 		return err
 	}
 	licence := determineSkillLicense(targetDir)
@@ -156,7 +166,7 @@ func copyAndPinOneSkill(rootDir, tempDir string, source config.UpstreamSkillSour
 		licErr := fmt.Errorf("skill %s: no licence could be identified from LICENSE text or front matter", skillName)
 		return errors.Join(licErr, cleanErr)
 	}
-	if err := writeSkillPinRecord(targetDir, source, licence); err != nil {
+	if err := writeSkillPinRecord(rootDir, skillRel, source, licence); err != nil {
 		return err
 	}
 	fmt.Printf("pinned skill %s from %s@%s (%s)\n", skillName, source.Repo, source.Tag, source.Commit[:8])
@@ -180,7 +190,7 @@ func findSkillSourceDir(tempDir, skillName string) (string, error) {
 	return "", fmt.Errorf("skill %q not found in upstream repository", skillName)
 }
 
-func copyDirectoryContents(srcDir, dstDir string) error {
+func copyDirectoryContents(rootDir, srcDir, skillRel string) error {
 	count := 0
 	return filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -192,53 +202,96 @@ func copyDirectoryContents(srcDir, dstDir string) error {
 			}
 			return nil
 		}
-		return copyDirectoryEntry(srcDir, dstDir, path, d, &count)
+		return copyDirectoryEntry(rootDir, srcDir, skillRel, path, d, &count)
 	})
 }
 
-func copyDirectoryEntry(srcDir, dstDir, path string, d fs.DirEntry, count *int) error {
+func checkCloneEntry(srcDir, path string, d fs.DirEntry) (string, error) {
+	if d.Type()&fs.ModeSymlink != 0 {
+		return "", fmt.Errorf("refuse symlink in skill source: %s", path)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("refuse symlink in skill source: %s", path)
+	}
 	rel, err := filepath.Rel(srcDir, path)
+	if err != nil {
+		return "", err
+	}
+	if rel != "." && (strings.HasPrefix(rel, "..") || filepath.IsAbs(rel)) {
+		return "", fmt.Errorf("skill file path %s leaves skill folder", rel)
+	}
+	if rel != "." {
+		if _, err := util.ConfinePath(srcDir, rel); err != nil {
+			return "", fmt.Errorf("skill file path %s leaves skill folder: %w", rel, err)
+		}
+	}
+	return rel, nil
+}
+
+func copyDirectoryEntry(rootDir, srcDir, skillRel, path string, d fs.DirEntry, count *int) error {
+	rel, err := checkCloneEntry(srcDir, path, d)
 	if err != nil {
 		return err
 	}
 	if rel == "." {
 		return nil
 	}
-	targetPath := filepath.Join(dstDir, rel)
+	targetRel := filepath.Join(skillRel, rel)
+	targetPath, err := util.ConfinePath(rootDir, targetRel)
+	if err != nil {
+		return fmt.Errorf("target path %s escapes repository root: %w", targetRel, err)
+	}
 	if d.IsDir() {
-		return os.MkdirAll(targetPath, 0755)
+		return util.MkdirSecure(targetPath, 0750)
 	}
 	*count++
 	if *count > maxSkillFiles {
 		return fmt.Errorf("skill directory %s contains more than %d files", srcDir, maxSkillFiles)
 	}
-	data, err := os.ReadFile(path)
+	data, err := util.ReadFileLimited(path, maxSkillFileBytes)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+	if err := util.MkdirSecure(filepath.Dir(targetPath), 0750); err != nil {
 		return err
 	}
-	return os.WriteFile(targetPath, data, 0644)
+	return util.WriteFileAtomic(targetPath, data, 0644)
 }
 
-func ensureSkillLicense(targetDir string, repoLicense []byte) error {
-	licensePath := filepath.Join(targetDir, compiler.SkillLicenseName)
+func ensureSkillLicense(rootDir, skillRel string, repoLicense []byte) error {
+	licenseRel := filepath.Join(skillRel, compiler.SkillLicenseName)
+	licensePath, err := util.ConfinePath(rootDir, licenseRel)
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(licensePath); err == nil {
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(targetDir, "LICENCE")); err == nil {
+	licenceRel := filepath.Join(skillRel, "LICENCE")
+	licencePath, err := util.ConfinePath(rootDir, licenceRel)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(licencePath); err == nil {
 		return nil
 	}
 	if len(repoLicense) > 0 {
-		if err := os.WriteFile(licensePath, repoLicense, 0644); err != nil {
+		if err := util.WriteFileAtomic(licensePath, repoLicense, 0644); err != nil {
 			return fmt.Errorf("write repository license to %s: %w", licensePath, err)
 		}
 	}
 	return nil
 }
 
-func writeSkillPinRecord(targetDir string, source config.UpstreamSkillSource, licence string) error {
+func writeSkillPinRecord(rootDir, skillRel string, source config.UpstreamSkillSource, licence string) error {
+	targetDir, err := util.ConfinePath(rootDir, skillRel)
+	if err != nil {
+		return err
+	}
 	if licence == "" || strings.EqualFold(licence, "UNKNOWN") {
 		return fmt.Errorf("refuse pin: invalid licence %q", licence)
 	}
@@ -259,8 +312,12 @@ func writeSkillPinRecord(targetDir string, source config.UpstreamSkillSource, li
 		return fmt.Errorf("marshal pin record for %s: %w", targetDir, err)
 	}
 	data = append(data, '\n')
-	recordPath := filepath.Join(targetDir, caveman.SkillPinRecordName)
-	if err := os.WriteFile(recordPath, data, 0644); err != nil {
+	recordRel := filepath.Join(skillRel, caveman.SkillPinRecordName)
+	recordPath, err := util.ConfinePath(rootDir, recordRel)
+	if err != nil {
+		return err
+	}
+	if err := util.WriteFileAtomic(recordPath, data, 0644); err != nil {
 		return fmt.Errorf("write pin record %s: %w", recordPath, err)
 	}
 	if _, err := caveman.VerifySkillPin(targetDir); err != nil {
@@ -277,6 +334,9 @@ func hashPinnedSkillFiles(skillDir string) (map[string]string, error) {
 		}
 		if d.IsDir() {
 			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("refuse symlink in pinned skill: %s", path)
 		}
 		rel, err := filepath.Rel(skillDir, path)
 		if err != nil {
@@ -317,10 +377,10 @@ func determineSkillLicense(skillDir string) string {
 }
 
 func readSkillLicenseFile(skillDir string) []byte {
-	if data, err := os.ReadFile(filepath.Join(skillDir, compiler.SkillLicenseName)); err == nil {
+	if data, err := util.ReadConfinedLimited(skillDir, compiler.SkillLicenseName, maxLicenseBytes); err == nil {
 		return data
 	}
-	if data, err := os.ReadFile(filepath.Join(skillDir, "LICENCE")); err == nil {
+	if data, err := util.ReadConfinedLimited(skillDir, "LICENCE", maxLicenseBytes); err == nil {
 		return data
 	}
 	return nil
@@ -382,7 +442,7 @@ type skillFrontMatter struct {
 }
 
 func extractFrontMatterLicense(skillDir string) string {
-	skillData, err := os.ReadFile(filepath.Join(skillDir, compiler.SkillEntryName))
+	skillData, err := util.ReadConfinedLimited(skillDir, compiler.SkillEntryName, maxSkillEntryBytes)
 	if err != nil {
 		return ""
 	}
@@ -463,7 +523,14 @@ func verifyOneUpstreamSource(rootDir string, source config.UpstreamSkillSource) 
 	verified := 0
 	for i := 0; i < len(source.Skills) && i < maxUpstreamSkills; i++ {
 		skillName := source.Skills[i]
-		skillDir := filepath.Join(rootDir, filepath.FromSlash(compiler.CanonicalSkillsRel), skillName)
+		if !config.ValidSkillName(skillName) {
+			return verified, fmt.Errorf("skill %q is not a valid skill name", skillName)
+		}
+		skillRel := filepath.Join(filepath.FromSlash(compiler.CanonicalSkillsRel), skillName)
+		skillDir, err := util.ConfinePath(rootDir, skillRel)
+		if err != nil {
+			return verified, fmt.Errorf("skill %s: %w", skillName, err)
+		}
 		record, exists, err := caveman.ReadSkillPinRecord(skillDir)
 		if err != nil {
 			return verified, fmt.Errorf("read pin record for %s: %w", skillName, err)

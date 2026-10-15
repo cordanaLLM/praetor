@@ -311,3 +311,38 @@ func TestPinnedSkills_Negative_ManifestCommitMismatchRefused(t *testing.T) {
 		t.Errorf("expected error mentioning pin mismatch, got: %v", err)
 	}
 }
+
+// Negative: pinned skill with traversal path in .pin.json is refused by projection
+func TestPinnedSkills_Negative_PinRecordFileTraversalRefused(t *testing.T) {
+	root := writeClientSkillFixture(t, "")
+	writeManifestWithUpstream(t, root, "https://github.com/upstream/skills", "v1.0.0", "0123456789abcdef0123456789abcdef01234567", "traversal-skill")
+	dir := filepath.Join(root, ".agents", "skills", "traversal-skill")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skillMD := []byte("---\nname: traversal-skill\n---\n# Traversal\n")
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), skillMD, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record := caveman.SkillPinRecord{
+		Repo:    "https://github.com/upstream/skills",
+		Tag:     "v1.0.0",
+		Commit:  "0123456789abcdef0123456789abcdef01234567",
+		License: "MIT",
+		Files: map[string]string{
+			"../../evil.txt": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		},
+	}
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, caveman.SkillPinRecordName), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = CompileAgentSurfaces(t.Context(), io.Discard, root)
+	if err == nil {
+		t.Fatal("CompileAgentSurfaces succeeded on traversal pin record file, want error")
+	}
+}

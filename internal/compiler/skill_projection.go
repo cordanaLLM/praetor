@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -421,6 +422,9 @@ func pinnedSkillProjections(ctx context.Context, rootDir string, dirs []string) 
 	return files, nil
 }
 
+// maxPinnedSkillFileBytes bounds the size of any one pinned skill file read for projection (HISS-02).
+const maxPinnedSkillFileBytes = 1 << 20
+
 // pinnedSkillCopies reads all files declared in record.Files and returns projection files for dirs.
 func pinnedSkillCopies(skillDir, skillName string, dirs []string, record *caveman.SkillPinRecord) ([]projectionFile, error) {
 	fileKeys := make([]string, 0, len(record.Files))
@@ -431,8 +435,11 @@ func pinnedSkillCopies(skillDir, skillName string, dirs []string, record *cavema
 
 	var files []projectionFile
 	for _, fileRel := range fileKeys {
-		filePath := filepath.Join(skillDir, filepath.FromSlash(fileRel))
-		data, err := os.ReadFile(filePath)
+		filePath, err := util.ConfinePath(skillDir, filepath.FromSlash(fileRel))
+		if err != nil {
+			return nil, fmt.Errorf("read pinned skill %s file %s: %w", skillName, fileRel, err)
+		}
+		data, err := util.ReadFileLimited(filePath, maxPinnedSkillFileBytes)
 		if err != nil {
 			return nil, fmt.Errorf("read pinned skill %s file %s: %w", skillName, fileRel, err)
 		}

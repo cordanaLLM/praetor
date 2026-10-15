@@ -126,6 +126,19 @@ skills:
 			wantErr: "not a valid skill name",
 		},
 		{
+			name: "skill name ../evil traversal refused",
+			content: `version: 1
+skills:
+  upstream:
+    - repo: https://github.com/example/skills
+      tag: v0.1.0
+      commit: 0123456789abcdef0123456789abcdef01234567
+      skills:
+        - ../evil
+`,
+			wantErr: "not a valid skill name",
+		},
+		{
 			name: "empty repo",
 			content: `version: 1
 skills:
@@ -253,5 +266,32 @@ skills:
 	}
 	if _, ok := pol.UpstreamSkillSourceFor("my-skill"); !ok {
 		t.Fatal("expected my-skill to be found in loaded policy")
+	}
+}
+
+// Planted test: skill name ../evil is refused by the validator.
+func TestValidSkillName_Planted_EvilRefused(t *testing.T) {
+	if ValidSkillName("../evil") {
+		t.Fatal("ValidSkillName(../evil) = true; want false")
+	}
+	for _, name := range []string{".", "..", ".hidden", "Upper"} {
+		if ValidSkillName(name) {
+			t.Fatalf("ValidSkillName(%q) = true; want false", name)
+		}
+	}
+	if !ValidSkillName("caveman") || !ValidSkillName("a.b-c_d9") {
+		t.Fatal("ValidSkillName refused a one-segment lower-case name")
+	}
+	if ValidSkillName("a/b") {
+		t.Fatal("ValidSkillName(a/b) = true; want false")
+	}
+	if ValidSkillName(`a\b`) {
+		t.Fatal("ValidSkillName(a\\b) = true; want false")
+	}
+	if !ValidSkillName("normal-skill") {
+		t.Fatal("ValidSkillName(normal-skill) = false; want true")
+	}
+	if !ValidSkillName("skill.1_2") {
+		t.Fatal("ValidSkillName(skill.1_2) = false; want true")
 	}
 }

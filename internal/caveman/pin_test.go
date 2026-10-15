@@ -219,3 +219,21 @@ func TestReadSkillPinRecord_Negative_EmptyOrUnknownLicenseRefused(t *testing.T) 
 		})
 	}
 }
+
+func TestReadSkillPinRecord_Boundary_OversizeRecordRefused(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "oversize-skill")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oversize := make([]byte, maxPinRecordBytes+1)
+	for i := range oversize {
+		oversize[i] = ' '
+	}
+	if err := os.WriteFile(filepath.Join(dir, SkillPinRecordName), oversize, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := ReadSkillPinRecord(dir)
+	if err == nil {
+		t.Fatal("expected error on pin record exceeding maxPinRecordBytes, got nil")
+	}
+}

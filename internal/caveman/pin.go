@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // SkillPinRecordName is the declaration file every pinned upstream skill carries.
@@ -22,6 +24,9 @@ const SkillPinRecordName = ".pin.json"
 
 // maxPinnedSkillFiles bounds the files one pinned skill may carry (HISS-02).
 const maxPinnedSkillFiles = 256
+
+// maxPinRecordBytes bounds the size of .pin.json (HISS-02).
+const maxPinRecordBytes = 256 * 1024
 
 // ErrPinHashMismatch indicates a file in a pinned skill does not match its pin record.
 var ErrPinHashMismatch = errors.New("pinned skill file hash mismatch")
@@ -60,7 +65,7 @@ func (r *SkillPinRecord) MatchesUpstream(repo, tag, commit string) bool {
 // If .pin.json exists but is malformed, it returns nil, true, error.
 func ReadSkillPinRecord(skillDir string) (*SkillPinRecord, bool, error) {
 	recordPath := filepath.Join(skillDir, SkillPinRecordName)
-	data, err := os.ReadFile(recordPath)
+	data, err := util.ReadFileLimited(recordPath, maxPinRecordBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -152,6 +157,7 @@ func checkMissingSkillFiles(skillDir string, record *SkillPinRecord, diskFiles m
 
 // HashFileSHA256 computes the lowercase hex SHA-256 of file at path.
 func HashFileSHA256(path string) (digest string, err error) {
+	// #nosec G304 -- path was enumerated by WalkDir within the verified skill directory.
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err

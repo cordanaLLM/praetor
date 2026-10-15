@@ -26,8 +26,8 @@ const (
 var (
 	// sha1CommitRe matches a 40-character hexadecimal git commit SHA.
 	sha1CommitRe = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
-	// skillNameRe matches a valid skill directory name: letters, digits, hyphens, underscores.
-	skillNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+	// skillNameRe matches a valid skill directory name: one path segment of [a-z0-9][a-z0-9._-]*.
+	skillNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
 )
 
 // SkillsPolicy represents the `skills` section of .standards.yaml.
@@ -86,9 +86,16 @@ func ValidCommitSHA(s string) bool {
 	return len(s) == 40 && sha1CommitRe.MatchString(s)
 }
 
-// ValidSkillName reports whether name is a valid skill directory name.
+// ValidSkillName reports whether name is a valid skill directory name: exactly one
+// path segment matching [a-z0-9][a-z0-9._-]*, at most MaxUpstreamSkillNameBytes.
 func ValidSkillName(name string) bool {
-	return len(name) > 0 && len(name) <= MaxUpstreamSkillNameBytes && skillNameRe.MatchString(name)
+	if len(name) == 0 || len(name) > MaxUpstreamSkillNameBytes {
+		return false
+	}
+	if filepath.Base(name) != name || strings.ContainsAny(name, "/\\") {
+		return false
+	}
+	return skillNameRe.MatchString(name)
 }
 
 // ValidRepoLocation reports whether repo is a non-empty, bounded repository URL or path.

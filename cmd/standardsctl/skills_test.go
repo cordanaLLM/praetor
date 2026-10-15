@@ -293,3 +293,81 @@ func TestSkillsPinSync_Positive_FrontMatterLicenseDetected(t *testing.T) {
 		t.Errorf("expected licence Apache-2.0, got %q", record.EffectiveLicense())
 	}
 }
+
+// Negative (planted test): a fixture clone whose skill folder holds a symlink to /etc/passwd is refused.
+func TestSkillsPinSync_Negative_SymlinkToPasswdRefused(t *testing.T) {
+	tag := "v1.0.0"
+	skillName := "symlink-skill"
+	skillMD := "---\nname: symlink-skill\ndescription: Test symlink refusal.\n---\n# Content\n"
+	license := "MIT License\n"
+
+	env := testsupport.HermeticGitEnv(t)
+	dir := t.TempDir()
+	if _, err := runFixtureGit(t, dir, env, "init", "-q", "-b", "main"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	if _, err := runFixtureGit(t, dir, env, "config", "user.name", "test"); err != nil {
+		t.Fatalf("git config user.name: %v", err)
+	}
+	if _, err := runFixtureGit(t, dir, env, "config", "user.email", "test@example.com"); err != nil {
+		t.Fatalf("git config user.email: %v", err)
+	}
+
+	skillDir := filepath.Join(dir, ".agents", "skills", skillName)
+	if err := os.MkdirAll(skillDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skillMD), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "LICENSE"), []byte(license), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/passwd", filepath.Join(skillDir, "leak")); err != nil {
+		t.Skipf("cannot create symlink on this filesystem: %v", err)
+	}
+	if _, err := runFixtureGit(t, dir, env, "add", "."); err != nil {
+		t.Fatalf("git add: %v", err)
+	}
+	if _, err := runFixtureGit(t, dir, env, "commit", "-q", "-m", "release "+tag); err != nil {
+		t.Fatalf("git commit: %v", err)
+	}
+	head, err := runFixtureGit(t, dir, env, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v", err)
+	}
+	head = strings.TrimSpace(head)
+	if _, err := runFixtureGit(t, dir, env, "tag", "-a", tag, "-m", "annotated release "+tag); err != nil {
+		t.Fatalf("git tag: %v", err)
+	}
+
+	adopterRoot := setupAdopterRepo(t, dir, tag, head, skillName)
+	err = runSkills([]string{"pin-sync", "--root", adopterRoot})
+	if err == nil {
+		t.Fatal("expected pin-sync to fail on symlink in skill folder, got nil")
+	}
+	if !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected error mentioning symlink, got: %v", err)
+	}
+}
+
+// Negative (planted test): manifest declaring skill name ../evil is refused.
+func TestSkillsPinSync_Negative_SkillNameEvilRefused(t *testing.T) {
+	root := t.TempDir()
+	manifestContent := `version: 1
+skills:
+  upstream:
+    - repo: https://github.com/example/skills
+      tag: v1.0.0
+      commit: 0123456789abcdef0123456789abcdef01234567
+      skills:
+        - ../evil
+`
+	if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte(manifestContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := runSkills([]string{"pin-sync", "--root", root})
+	if err == nil || !strings.Contains(err.Error(), "not a valid skill name") {
+		t.Fatalf("expected refusal of skill name ../evil, got: %v", err)
+	}
+}
