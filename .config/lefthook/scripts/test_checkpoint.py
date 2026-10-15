@@ -2,6 +2,7 @@
 """Focused real-Git tests for the read-only checkpoint planner."""
 
 import errno
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,69 @@ def git(root, *args, check=True):
     if check and result.returncode:
         raise AssertionError(result.stderr.decode())
     return result
+
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+ADAPTER_SPEC = importlib.util.spec_from_file_location(
+    "checkpoint_adapter", ROOT / ".config/agent/hooks/checkpoint.py"
+)
+
+
+ADAPTER = importlib.util.module_from_spec(ADAPTER_SPEC)
+ADAPTER_SPEC.loader.exec_module(ADAPTER)
+
+
+DETACHED_ENV_KEYS = {
+    "GH_CONFIG_DIR",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GIT_SSH_COMMAND",
+    "GIT_TERMINAL_PROMPT",
+    "PRAETOR_DETACHED_JOB",
+}
+
+
+class CheckpointAdapterTests(unittest.TestCase):
+    def test_deferred_report_is_feedback_without_a_block(self):
+        report = {
+            "enabled": True,
+            "due": False,
+            "actions": [],
+            "deferred": True,
+            "deferral": "detached job lane-1: no push transport, no forge token; "
+            "the launching session commits",
+        }
+        for payload in (
+            {"hook_event_name": "Stop"},
+            {"hook_event_name": "AfterAgent", "stop_hook_active": True},
+        ):
+            with self.subTest(payload=payload), mock.patch.object(
+                ADAPTER, "verify_state"
+            ), mock.patch.object(ADAPTER, "checkpoint", return_value=report):
+                result = ADAPTER.respond(payload)
+                self.assertEqual(
+                    result,
+                    {"systemMessage": "Praetor checkpoint deferred: " + report["deferral"]},
+                )
+                self.assertNotIn("decision", result)
+                self.assertNotIn("continue", result)
+
+    def test_due_report_still_blocks(self):
+        report = {"enabled": True, "due": True, "actions": ["commit"]}
+        for payload in (
+            {"hook_event_name": "Stop"},
+            {"hook_event_name": "AfterAgent", "stop_hook_active": True},
+        ):
+            with self.subTest(payload=payload), mock.patch.object(
+                ADAPTER, "verify_state"
+            ), mock.patch.object(ADAPTER, "checkpoint", return_value=report):
+                result = ADAPTER.respond(payload)
+                if payload.get("stop_hook_active"):
+                    self.assertIs(result["continue"], False)
+                else:
+                    self.assertEqual(result["decision"], "block")
 
 
 class CheckpointTests(unittest.TestCase):
@@ -633,6 +697,111 @@ class CheckpointTests(unittest.TestCase):
                 self.assertEqual(result["publication_status"], status, result)
                 self.assertEqual(result["due"], status != "base_current")
                 self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
+
+    def inspect_with_env(self, **updates):
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in DETACHED_ENV_KEYS and not key.startswith("GIT_CONFIG_")
+        }
+        env.update(updates)
+        with mock.patch.dict(os.environ, env, clear=True):
+            return checkpoint.inspect_checkpoint(self.root, "stop")
+
+    def prepare_detached_job(self, remote):
+        git(self.root, "remote", "add", "origin", remote)
+        (self.root / "public.txt").write_text("change\n")
+
+    def test_detached_job_without_ssh_transport_or_forge_token_defers(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        result = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-7", GIT_SSH_COMMAND="/bin/false"
+        )
+        self.assertTrue(result["deferred"])
+        self.assertFalse(result["due"])
+        self.assertEqual(result["actions"], [])
+        self.assertEqual(result["publication_status"], "deferred_detached_job")
+        self.assertIn("detached job cheap-lane-7", result["deferral"])
+
+    def test_detached_job_defers_on_a_branch_outside_the_checkpoint_prefixes(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        git(self.root, "switch", "-q", "-c", "job-lane-probe")
+        result = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-7", GIT_SSH_COMMAND="/bin/false"
+        )
+        self.assertNotIn("error", result)
+        self.assertTrue(result["deferred"])
+        self.assertFalse(result["due"])
+
+    def test_same_branch_without_marker_still_refuses(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        git(self.root, "switch", "-q", "-c", "job-lane-probe")
+        result = self.inspect_with_env(GIT_SSH_COMMAND="/bin/false")
+        self.assertFalse(result["deferred"])
+        self.assertIn("nonallowed branch", result.get("error", ""))
+
+    def test_detached_job_with_ssh_transport_keeps_commit_due(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        result = self.inspect_with_env(PRAETOR_DETACHED_JOB="cheap-lane-7")
+        self.assertFalse(result["deferred"])
+        self.assertTrue(result["due"])
+        self.assertNotIn("deferral", result)
+
+    def test_detached_job_with_forge_token_keeps_commit_due(self):
+        self.prepare_detached_job("ssh://git@github.com/acme/demo.git")
+        gh_dir = self.root / ".gh"
+        gh_dir.mkdir()
+        (gh_dir / "hosts.yml").write_text("github.com:\n  oauth_token: secret\n")
+        cases = (
+            {"GH_TOKEN": "token-present"},
+            {"GITHUB_TOKEN": "token-present"},
+            {"GH_CONFIG_DIR": str(gh_dir)},
+        )
+        for env in cases:
+            with self.subTest(env=env):
+                result = self.inspect_with_env(
+                    PRAETOR_DETACHED_JOB="cheap-lane-7",
+                    GIT_SSH_COMMAND="/usr/bin/false -v",
+                    **env,
+                )
+                self.assertFalse(result["deferred"])
+                self.assertTrue(result["due"])
+                self.assertNotIn("deferral", result)
+        empty_dir = self.root / ".empty-gh"
+        empty_dir.mkdir()
+        deferred = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-7",
+            GIT_SSH_COMMAND="/usr/bin/false -v",
+            GH_CONFIG_DIR=str(empty_dir),
+        )
+        self.assertTrue(deferred["deferred"])
+        self.assertFalse(deferred["due"])
+
+    def test_no_job_marker_keeps_commit_due_without_publish_access(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        result = self.inspect_with_env(GIT_SSH_COMMAND="/bin/false")
+        self.assertFalse(result["deferred"])
+        self.assertTrue(result["due"])
+
+    def test_detached_job_https_transport_depends_on_credential_helper(self):
+        self.prepare_detached_job("https://github.com/acme/demo.git")
+        git(self.root, "config", "credential.helper", "")
+        deferred = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-https", GIT_TERMINAL_PROMPT="0"
+        )
+        self.assertTrue(deferred["deferred"])
+        git(self.root, "config", "--replace-all", "credential.helper", "store")
+        self.assertEqual(
+            git(self.root, "config", "--get", "credential.helper")
+            .stdout.decode()
+            .strip(),
+            "store",
+        )
+        due = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-https", GIT_TERMINAL_PROMPT="0"
+        )
+        self.assertFalse(due["deferred"])
+        self.assertTrue(due["due"])
 
 
 class PolicyRoot(unittest.TestCase):
