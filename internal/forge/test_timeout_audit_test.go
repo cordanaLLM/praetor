@@ -29,6 +29,40 @@ func TestAuditTestTimeouts_Negative_LongTimeoutWithoutEntry(t *testing.T) {
 	}
 }
 
+// timeoutEntry is a test-timeout exceptions entry for the workflow file name.
+func timeoutEntry(name, expires string) config.Exception {
+	return config.Exception{Rule: config.ExceptionRuleTestTimeout, Path: ".github/workflows/" + name,
+		Reason: "category B: the Windows adopt tests run past the bound (#1381)", Expires: expires}
+}
+
+// Boundary: a live entry passes the workflow and names its reason and expiry.
+func TestAuditTestTimeouts_Boundary_LiveEntryPasses(t *testing.T) {
+	root := triggerRepository(t, map[string]string{"portability.yml": longWorkflow})
+	out, err := auditTimeouts(t, root, timeoutEntry("portability.yml", "2026-10-18"))
+	if err != nil || !strings.Contains(out, "until 2026-10-18") || !strings.Contains(out, "#1381") {
+		t.Fatalf("live entry: %q, %v; want the workflow passed with reason and expiry", out, err)
+	}
+}
+
+// Negative: an expired entry excuses nothing; the failure names the expiry.
+func TestAuditTestTimeouts_Negative_ExpiredEntryFails(t *testing.T) {
+	root := triggerRepository(t, map[string]string{"portability.yml": longWorkflow})
+	_, err := auditTimeouts(t, root, timeoutEntry("portability.yml", "2026-10-14"))
+	if err == nil || !strings.Contains(err.Error(), "expired 2026-10-14") {
+		t.Fatalf("expired entry: err = %v; want the expiry named", err)
+	}
+}
+
+// Negative: an entry for a workflow within the bound excuses nothing and fails, so the entry goes
+// once the timeout is back at the bound.
+func TestAuditTestTimeouts_Negative_StaleEntryFails(t *testing.T) {
+	root := triggerRepository(t, map[string]string{"ci.yml": boundWorkflow})
+	_, err := auditTimeouts(t, root, timeoutEntry("ci.yml", "2026-10-18"))
+	if err == nil || !strings.Contains(err.Error(), "excuses nothing") {
+		t.Fatalf("stale entry: err = %v; want it refused", err)
+	}
+}
+
 func auditTimeouts(t *testing.T, root string, entries ...config.Exception) (string, error) {
 	t.Helper()
 	return AuditTestTimeouts(t.Context(), TestTimeoutOptions{Root: root, Exceptions: entries, Today: timeoutsToday})
