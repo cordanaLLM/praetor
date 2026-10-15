@@ -36,17 +36,24 @@ const verifyRejection = "compile-context --verify rejects the repository's agent
 // finding on text adoption keeps as written is a warning instead, as the agent-harness step
 // already treats AGENTS.md (compiler.ErrContextProse, warned there, not repeated): a persona or
 // skill the repository wrote (compiler.ErrAgentTextProse) and a nested AGENTS.md
-// (compiler.ErrNestedContextProse) are warned here. A dry run wrote nothing
-// and verifies nothing, and neither does a run that declines agent-harness or agent-definitions:
-// adoption then leaves part of the agent context to the repository.
+// (compiler.ErrNestedContextProse) are warned here. A dry run wrote nothing, so it verifies
+// only what the repository holds that no write of the run changes: a file in a persona directory
+// that projects no canonical persona, with the personas the run adds counted as canonical
+// (compiler.CheckOrphanPersonaCopies), recorded as the real run records it, so the preview and
+// the run report the same error (#1079). A run that declines agent-harness or agent-definitions
+// verifies nothing: adoption then leaves part of the agent context to the repository.
 func verifyAgentContext(ctx context.Context, s *adoptSession, declined map[string]bool) {
-	if s.opts.DryRun || declined["agent-harness"] || declined["agent-definitions"] {
+	if declined["agent-harness"] || declined["agent-definitions"] {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, contextVerifyTimeout)
 	defer cancel()
-	source := filepath.Join(s.repoPath, agentsFile)
-	err := compiler.VerifyCompiledContext(ctx, io.Discard, compiler.NewTranspiler(), source, s.repoPath)
+	var err error
+	if s.opts.DryRun {
+		err = compiler.CheckOrphanPersonaCopies(ctx, s.repoPath, generatedPersonaNames())
+	} else {
+		err = compiler.VerifyCompiledContext(ctx, io.Discard, compiler.NewTranspiler(), filepath.Join(s.repoPath, agentsFile), s.repoPath)
+	}
 	if err == nil {
 		return
 	}

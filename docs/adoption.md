@@ -1080,8 +1080,11 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   on the step that writes what it rejects: `agent-definitions` for a persona or skill copy,
   `git-ignore` for the evidence ignore rule, `agent-harness` for `AGENTS.md` and the vendor
   files. The run is then incomplete and `praetorctl adopt` exits non-zero; a caveman finding on
-  text adoption keeps as written stays a warning. A dry run, and a manifest that declines
-  `agent-harness` or `agent-definitions`, skip the check (tests in
+  text adoption keeps as written stays a warning. A dry run wrote nothing, so it checks only a
+  file in a persona directory that projects no canonical persona, counting the personas the run
+  adds as canonical, and records that error word for word as the run does, so the preview and the
+  run report the same errors (#1079); a manifest that declines `agent-harness` or
+  `agent-definitions` skips the check (tests in
   `internal/adopt/plugin_projection_test.go` and `internal/adopt/context_verify_test.go`).
   Earlier releases exited 0 in these cases, which now fail the run:
   - A file in a persona directory that projects no canonical persona. `compile-context

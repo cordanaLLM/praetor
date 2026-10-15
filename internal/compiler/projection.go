@@ -529,3 +529,20 @@ func writeSkillSurfaces(ctx context.Context, sw *syncWriter, targetDir string, p
 	}
 	return nil
 }
+
+// CheckOrphanPersonaCopies returns the failure compile-context --verify reports for a file in a
+// persona directory that projects no canonical persona (rejectOrphanProjections), once the
+// canonical personas named in added exist, marked and worded as verifyAgentSurfaces marks and
+// words it. A run that writes nothing, adoption's dry run, checks with it what the verification
+// after its real run would refuse, so its preview names the same error (#1079).
+func CheckOrphanPersonaCopies(ctx context.Context, rootDir string, added []string) error {
+	dirs, err := agentProjectionDirs(ctx, rootDir)
+	if err != nil {
+		return err
+	}
+	names, err := canonicalAgentNames(ctx, rootDir, added)
+	if err != nil {
+		return err
+	}
+	return markAgentSurface(prefixError("agent persona verification failed", rejectOrphanProjections(ctx, rootDir, dirs, names)))
+}
