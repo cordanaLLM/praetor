@@ -181,6 +181,7 @@ whose use names a template.
 | [actions/setup-java](https://github.com/actions/setup-java) | JVM CI template | action, integrated | MIT |
 | [actions/setup-node](https://github.com/actions/setup-node) | Workflows; Node CI template | action, used by CI | MIT |
 | [actions/setup-python](https://github.com/actions/setup-python) | Workflows | action, used by CI | MIT |
+| [actions/upload-artifact](https://github.com/actions/upload-artifact) | Workflows; per-test timing files of the portability matrix | action, used by CI | MIT |
 | [actions/upload-pages-artifact](https://github.com/actions/upload-pages-artifact) | Workflows | action, used by CI | MIT |
 | [anchore/sbom-action](https://github.com/anchore/sbom-action) | Workflows: installs Syft | action, used by CI | Apache-2.0 |
 | [Azure/setup-helm](https://github.com/Azure/setup-helm) | Workflows: installs Helm | action, used by CI | MIT |
