@@ -116,7 +116,7 @@ fmt-check:
 lint: fmt-check
 	go vet ./...
 	go vet -tags=apicompatgate ./tools/apicompat/gate/
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run --allow-serial-runners
 
 # The security scanners and gitleaks are pinned in one place, tools/go/go.mod, which Renovate
 # keeps current; `go tool` builds and caches exactly that version, whatever is on PATH.

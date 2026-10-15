@@ -334,8 +334,10 @@ def source_checks(directory, names, gate="all", base=None):
     print("Go scope: " + ", ".join(packages))
     local = local_package_patterns(directory, packages) if gate in {"all", "lint", "sec"} else []
     commands = {"test": ["go", "test", "-race", "-count=1", "-timeout=5m", *packages],
+                # A second lint on this host waits for the first one's lock instead of failing
+                # the push with "parallel golangci-lint is running" (#855).
                 "lint": ["go", "run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest",
-                         "run", *local],
+                         "run", "--allow-serial-runners", *local],
                 "sec": ["gosec", "-conf", ".gosec.json", *local],
                 # The Go vulnerability gate (internal/govuln), the one implementation gate run's
                 # security stage and make vuln run. It judges the build of the whole module, so
