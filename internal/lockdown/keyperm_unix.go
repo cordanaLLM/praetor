@@ -18,7 +18,7 @@ import (
 // same comparison there enforces nothing (HISS-21).
 func verifyKeyPermissions(path string, info os.FileInfo) error {
 	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%w: %s is %#o", ErrInsecureKeyPerm, path, info.Mode().Perm())
+		return fmt.Errorf("%w: %s is %#o, want 0600 (chmod 600 it)", ErrInsecureKeyPerm, path, info.Mode().Perm())
 	}
 	return nil
 }
