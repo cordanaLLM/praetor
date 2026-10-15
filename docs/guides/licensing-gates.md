@@ -177,10 +177,25 @@ labelling. GitHub's licence detection, Licensee, reads more names as licence fil
 
 - **The declared licence** is the one SPDX identifier of the last `REUSE.toml` annotation whose
   paths cover the whole tree, such as `path = "**"` or
-  `path = ["*", ".*", "*/**", ".*/**"]`; without such an annotation, the one text
-  `LICENSES/` holds. A whole-tree annotation naming an expression, such as `MIT OR Apache-2.0`,
-  or a `LICENSES/` with several texts and no whole-tree annotation, declares no single licence,
-  and the check skips, saying so.
+  `path = ["*", ".*", "*/**", ".*/**"]`; without such an annotation, `repository.license` in
+  `.standards.yaml`; without either, the one text `LICENSES/` holds. A whole-tree annotation
+  naming an expression, such as `MIT OR Apache-2.0`, or a `LICENSES/` with several texts and no
+  whole-tree annotation, declares no single licence unless `repository.license` names one, and
+  otherwise the check skips, saying so and naming the key.
+
+  `repository.license` is for a repository whose `LICENSES/` holds a second text because some
+  files carry a third-party licence, and that keeps no whole-tree annotation so that a file
+  without its own header still fails `reuse lint` (#1236):
+
+  ```yaml
+  repository:
+    license: EUPL-1.2
+  ```
+
+  It is one SPDX identifier, `LicenseRef-` included, never an expression; anything else fails
+  when the manifest loads. Beside a whole-tree annotation naming an expression, such as
+  `EUPL-1.2 AND MIT`, it names the one licence the root holds; beside one naming another single
+  licence, the check reports the conflict.
 - **`LICENSE`** must be a regular file holding the text of `LICENSES/<id>.txt` for that licence.
   The comparison allows one consistent line-ending style, as every other text comparison of the
   audit does, so a CRLF checkout passes; a text with mixed line endings is compared byte for

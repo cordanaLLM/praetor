@@ -92,6 +92,9 @@ func (f licenceNameForm) matches(name string) bool {
 type RootLicenseOptions struct {
 	// Root is the repository root.
 	Root string
+	// Declared is the manifest's repository.license, the one licence the repository declares
+	// beside a LICENSES/ of several texts; empty when it declares none (#1236).
+	Declared string
 	// Exceptions is the manifest's exceptions list; the check reads the entries of
 	// config.ExceptionRuleRootLicenseNotice.
 	Exceptions []config.Exception
@@ -126,11 +129,14 @@ func CheckRootLicense(ctx context.Context, opts RootLicenseOptions) (RootLicense
 	if err != nil || skipped != "" {
 		return RootLicenseReport{Skipped: skipped}, err
 	}
-	license, skipped, err := declaredLicense(ctx, opts.Root)
+	license, skipped, conflict, err := declaredLicense(ctx, opts.Root, opts.Declared)
 	if err != nil || skipped != "" {
 		return RootLicenseReport{Skipped: skipped}, err
 	}
 	report := RootLicenseReport{License: license}
+	if conflict != "" {
+		report.Findings = append(report.Findings, conflict)
+	}
 	if err := compareRootLicense(ctx, opts.Root, &report); err != nil {
 		return RootLicenseReport{}, err
 	}
@@ -154,36 +160,56 @@ func licensesDirMissing(root string) (string, error) {
 }
 
 // declaredLicense returns the licence the repository at root declares: the one identifier of the
-// last REUSE.toml annotation whose path covers the whole tree, or, without such an annotation,
-// the one text LICENSES/ holds. A whole-tree annotation naming an expression, and a LICENSES/
-// holding several texts and no such annotation, declare no single licence: skipped says so.
-func declaredLicense(ctx context.Context, root string) (license, skipped string, err error) {
-	data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, ReuseFile)
+// last REUSE.toml annotation whose path covers the whole tree, else declared, the manifest's
+// repository.license, else the one text LICENSES/ holds. A whole-tree annotation naming an
+// expression, and a LICENSES/ holding several texts and no such annotation, declare no single
+// licence unless the manifest declares one: skipped says so. conflict is the finding about a
+// manifest declaration that names another licence than the whole-tree annotation.
+func declaredLicense(ctx context.Context, root, declared string) (license, skipped, conflict string, err error) {
+	expression, found, err := wholeTreeExpression(ctx, root)
 	if err != nil {
-		return "", "", fmt.Errorf("read %s: %w", ReuseFile, err)
+		return "", "", "", err
 	}
-	if exists {
-		tables, err := ReuseAnnotationTables(string(data))
-		if err != nil {
-			return "", "", err
+	if found {
+		license, skipped, err = singleLicense(expression, "the whole-tree "+ReuseFile+" annotation names")
+		switch {
+		case err != nil || declared == "":
+			return license, skipped, "", err
+		case skipped == "" && license != declared:
+			conflict = fmt.Sprintf("repository.license %s differs from %s, the licence the whole-tree %s annotation names: declare one licence",
+				declared, license, ReuseFile)
 		}
-		expression, found, err := wholeTreeLicense(tables, maxReuseGlobSteps)
-		if err != nil {
-			return "", "", err
-		}
-		if found {
-			return singleLicense(expression, "the whole-tree "+ReuseFile+" annotation names")
-		}
+		return declared, "", conflict, nil
+	}
+	if declared != "" {
+		return declared, "", "", nil
 	}
 	texts, err := licenseTextIDs(ctx, root)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if len(texts) != 1 {
-		return "", fmt.Sprintf("%s/ holds %d licence texts and no %s annotation labels the whole tree, so no one licence is declared",
-			LicensesDir, len(texts), ReuseFile), nil
+		return "", fmt.Sprintf("%s/ holds %d licence texts and no %s annotation labels the whole tree, so no one licence is declared; "+
+			"declare it as repository.license in .standards.yaml", LicensesDir, len(texts), ReuseFile), "", nil
 	}
-	return texts[0], "", nil
+	return texts[0], "", "", nil
+}
+
+// wholeTreeExpression returns the licence expression of root's whole-tree REUSE.toml annotation
+// (wholeTreeLicense), and whether there is one.
+func wholeTreeExpression(ctx context.Context, root string) (string, bool, error) {
+	data, exists, err := contextopt.ObserveSnapshotIn(ctx, root, ReuseFile)
+	if err != nil || !exists {
+		if err != nil {
+			err = fmt.Errorf("read %s: %w", ReuseFile, err)
+		}
+		return "", false, err
+	}
+	tables, err := ReuseAnnotationTables(string(data))
+	if err != nil {
+		return "", false, err
+	}
+	return wholeTreeLicense(tables, maxReuseGlobSteps)
 }
 
 // wholeTreeLicense returns the licence expression of the last table whose globs together match

@@ -214,3 +214,44 @@ func TestLicenceNamed_3D(t *testing.T) {
 		}
 	}
 }
+
+// The manifest's repository.license declares the one licence beside a LICENSES/ of several texts
+// (#1236). Positive: LICENSE holding the declared text passes, and a whole-tree expression such as
+// "EUPL-1.2 AND MIT" is resolved by the declaration. Negative: LICENSE holding another of the
+// texts, a declared licence without its text, and a whole-tree annotation naming another single
+// licence are findings. Boundary: the same tree without the declaration skips and names the key.
+func TestCheckRootLicense_3D_DeclaredLicense(t *testing.T) {
+	texts := map[string]string{LicensesDir + "/EUPL-1.2.txt": eupl, LicensesDir + "/MIT.txt": "m\n", LicensesDir + "/Unicode-3.0.txt": "u\n"}
+	declared := func(root, license string) RootLicenseReport {
+		t.Helper()
+		report, err := CheckRootLicense(context.Background(), RootLicenseOptions{Root: root, Declared: license, Today: rootLicenseToday})
+		if err != nil {
+			t.Fatalf("CheckRootLicense: %v", err)
+		}
+		return report
+	}
+	if report := declared(licensedRoot(t, withFile(texts, RootLicenseFile, eupl)), "EUPL-1.2"); report.License != "EUPL-1.2" || len(report.Findings) != 0 {
+		t.Errorf("LICENSE holding the declared text: %+v", report)
+	}
+	expression := withFile(withFile(texts, RootLicenseFile, eupl), ReuseFile, strings.Replace(rootDefault, `"EUPL-1.2"`, `"EUPL-1.2 AND MIT"`, 1))
+	if report := declared(licensedRoot(t, expression), "EUPL-1.2"); report.Skipped != "" || len(report.Findings) != 0 {
+		t.Errorf("a whole-tree expression resolved by the declaration: %+v", report)
+	}
+	if report := declared(licensedRoot(t, withFile(texts, RootLicenseFile, "m\n")), "EUPL-1.2"); len(report.Findings) != 1 ||
+		!strings.HasPrefix(report.Findings[0], "LICENSE differs from LICENSES/EUPL-1.2.txt") {
+		t.Errorf("LICENSE holding MIT under a declared EUPL-1.2: %+v", report)
+	}
+	if report := declared(licensedRoot(t, withFile(texts, RootLicenseFile, eupl)), "Apache-2.0"); len(report.Findings) != 1 ||
+		!strings.HasPrefix(report.Findings[0], "LICENSES/Apache-2.0.txt is missing") {
+		t.Errorf("a declared licence without its text: %+v", report)
+	}
+	conflicting := withFile(withFile(texts, RootLicenseFile, "m\n"), ReuseFile, strings.Replace(rootDefault, `"EUPL-1.2"`, `"MIT"`, 1))
+	if report := declared(licensedRoot(t, conflicting), "EUPL-1.2"); len(report.Findings) != 2 ||
+		!strings.HasPrefix(report.Findings[0], "repository.license EUPL-1.2 differs from MIT") {
+		t.Errorf("a whole-tree annotation naming another licence: %+v", report)
+	}
+	if report := declared(licensedRoot(t, withFile(texts, RootLicenseFile, "m\n")), ""); !strings.Contains(report.Skipped, "holds 3 licence texts") ||
+		!strings.Contains(report.Skipped, "repository.license") {
+		t.Errorf("no declaration: %+v", report)
+	}
+}

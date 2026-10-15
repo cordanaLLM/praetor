@@ -300,3 +300,25 @@ func TestValidRepositoryIdentity(t *testing.T) {
 		}
 	}
 }
+
+// repository.license (#1236) declares the one licence the root LICENSE holds. One SPDX identifier
+// round-trips, LicenseRef- included; omitting it is the zero value; an expression, a space or an
+// empty-looking value fails closed at load time and names the key.
+func TestLoadManifestRepositoryLicense_3D(t *testing.T) {
+	for _, license := range []string{"EUPL-1.2", "MIT", "GPL-3.0-or-later", "LicenseRef-Acme-1.0", "Unicode-3.0"} {
+		m, err := LoadManifest(writeManifest(t, "version: 1\nrepository:\n  license: \""+license+"\"\n"))
+		if err != nil || m.Repository.License != license {
+			t.Errorf("repository.license %q: %+v, %v", license, m, err)
+		}
+	}
+	omitted, err := LoadManifest(writeManifest(t, "version: 1\nrepository:\n  owner: \"acme\"\n"))
+	if err != nil || omitted.Repository.License != "" {
+		t.Errorf("omitted license: %+v, %v", omitted, err)
+	}
+	for _, license := range []string{"MIT OR Apache-2.0", "EUPL-1.2 AND MIT", " MIT", "-MIT", "(MIT)", strings.Repeat("a", 129)} {
+		if _, err := LoadManifest(writeManifest(t, "version: 1\nrepository:\n  license: \""+license+"\"\n")); err == nil ||
+			!strings.Contains(err.Error(), "repository.license") {
+			t.Errorf("repository.license %q was accepted or not named: %v", license, err)
+		}
+	}
+}

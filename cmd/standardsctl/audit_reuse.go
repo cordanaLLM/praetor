@@ -46,7 +46,8 @@ func auditReuseHeadersOnly(ctx context.Context, rootDir string) error {
 // and prints its verdict: a skip with the reason, a pass naming the licence and the kept upstream
 // notices, or every finding before the failure.
 func auditRootLicense(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
-	report, err := supplychain.CheckRootLicense(ctx, supplychain.RootLicenseOptions{Root: rootDir, Exceptions: manifest.Exceptions, Today: today})
+	report, err := supplychain.CheckRootLicense(ctx, supplychain.RootLicenseOptions{Root: rootDir,
+		Declared: manifest.Repository.License, Exceptions: manifest.Exceptions, Today: today})
 	if err != nil {
 		return fmt.Errorf("[FAIL] root licence not checked: %w", err)
 	}

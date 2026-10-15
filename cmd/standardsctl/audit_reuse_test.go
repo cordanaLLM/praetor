@@ -283,3 +283,45 @@ func TestAuditLicensing_Issue896(t *testing.T) {
 		t.Fatalf("issue #896 REUSE.toml did not pass both licence gates:\n%s", output)
 	}
 }
+
+// A repository whose LICENSES/ holds several texts, because some files carry a third-party
+// licence, and that has no whole-tree REUSE.toml annotation declares its one licence as
+// repository.license in .standards.yaml, and the root licence check runs on it (#1236). Without a
+// declaration it skipped, so a LICENSE holding another licence passed. Positive: LICENSE holding
+// the declared text passes. Negative: LICENSE holding another of the texts fails, and so does a
+// whole-tree annotation naming another licence than the manifest. Boundary: without the key the
+// check still skips and names the key.
+func TestAuditRootLicense_DeclaredBesideSeveralTexts(t *testing.T) {
+	today := time.Date(2026, time.October, 7, 12, 0, 0, 0, time.UTC)
+	root := t.TempDir()
+	writeFixtureFile(t, root, "LICENSES/EUPL-1.2.txt", "EUROPEAN UNION PUBLIC LICENCE v. 1.2\n")
+	writeFixtureFile(t, root, "LICENSES/MIT.txt", "MIT License\n")
+	writeFixtureFile(t, root, "LICENSES/Unicode-3.0.txt", "UNICODE LICENSE V3\n")
+	writeFixtureFile(t, root, supplychain.RootLicenseFile, "MIT License\n")
+	declared, err := config.ParseManifest(".standards.yaml", []byte("version: 1\nrepository:\n  license: EUPL-1.2\n"))
+	if err != nil {
+		t.Fatalf("a manifest declaring repository.license: %v", err)
+	}
+	run := func(manifest *config.Manifest) (string, error) {
+		return captureStdout(t, func() error { return auditRootLicense(t.Context(), manifest, root, today) })
+	}
+	output, err := run(declared)
+	if err == nil || !strings.Contains(output, "LICENSE differs from LICENSES/EUPL-1.2.txt") {
+		t.Fatalf("LICENSE holding MIT under a declared EUPL-1.2: %v\n%s", err, output)
+	}
+	writeFixtureFile(t, root, supplychain.RootLicenseFile, "EUROPEAN UNION PUBLIC LICENCE v. 1.2\n")
+	if output, err := run(declared); err != nil || !strings.Contains(output, "[PASS] root licence: LICENSE holds the text of LICENSES/EUPL-1.2.txt") {
+		t.Fatalf("LICENSE holding the declared text: %v\n%s", err, output)
+	}
+	writeFixtureFile(t, root, supplychain.ReuseFile, "version = 1\n\n[[annotations]]\npath = \"**\"\nSPDX-License-Identifier = \"MIT\"\n")
+	if output, err := run(declared); err == nil || !strings.Contains(output, "repository.license EUPL-1.2 differs from MIT") {
+		t.Fatalf("a whole-tree annotation naming another licence: %v\n%s", err, output)
+	}
+	if err := os.Remove(filepath.Join(root, supplychain.ReuseFile)); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := run(&config.Manifest{}); err != nil || !strings.Contains(output, "[SKIP] root licence not checked") ||
+		!strings.Contains(output, "repository.license") {
+		t.Fatalf("no declaration: %v\n%s", err, output)
+	}
+}

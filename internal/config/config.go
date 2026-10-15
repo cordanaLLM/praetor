@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,6 +36,11 @@ type RepositoryMetadata struct {
 	// needs the declaration when the default branch is not main. ValidBranchName decides what
 	// a declared name may be.
 	DefaultBranch string `yaml:"default_branch,omitempty"`
+	// License declares the repository's one licence as an SPDX identifier, the licence the root
+	// LICENSE holds (supplychain.CheckRootLicense). It is for a repository whose LICENSES/ holds
+	// several texts, because some files carry a third-party licence, and whose REUSE.toml has no
+	// whole-tree annotation (#1236). A whole-tree annotation naming another licence is a finding.
+	License string `yaml:"license,omitempty"`
 	// Forge declares the kind of forge hosting the repository: github, forgejo or gitlab
 	// (Forge). The Paperclip harness prescribes that forge's review push. Empty is GitHub on a
 	// github.com origin remote; any other host requires it (RepositoryForge).
@@ -465,11 +471,18 @@ func validateManifestReviewPolicy(m *Manifest) error {
 	return err
 }
 
-// validateManifestRepository rejects a repository.source or repository.default_branch that is
-// set and malformed.
+// spdxIdentifier is one SPDX licence identifier, LicenseRef- included: no expression, no space.
+var spdxIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+-]{0,127}$`)
+
+// validateManifestRepository rejects a repository.source, repository.default_branch or
+// repository.license that is set and malformed.
 func validateManifestRepository(m *Manifest) error {
 	if err := validateManifestRepositorySource(m); err != nil {
 		return err
+	}
+	if m != nil && m.Repository.License != "" && !spdxIdentifier.MatchString(m.Repository.License) {
+		return fmt.Errorf("repository.license %q must be one SPDX licence identifier, such as EUPL-1.2, not an expression",
+			m.Repository.License)
 	}
 	if m == nil || m.Repository.DefaultBranch == "" || ValidBranchName(m.Repository.DefaultBranch) {
 		return nil
