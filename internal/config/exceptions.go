@@ -71,6 +71,9 @@ const ExceptionRuleDedupe = "HISS-19"
 // that is not run by any CI workflow, naming the tool by tool.
 const ExceptionRuleDeclaredLinters = "declared-linters"
 
+// ExceptionRuleTestTimeout names the test-timeout rule.
+const ExceptionRuleTestTimeout = "test-timeout"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
 var exceptionRules = []string{
