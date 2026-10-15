@@ -17,15 +17,10 @@ pre-commit:
   commands:
     rustfmt:
       glob: "*.rs"
-      run: >-
-        if [ -f Cargo.toml ]; then cargo fmt --all --check; else echo no
-        Cargo.toml at the repository root, skipping cargo fmt >&2; fi
+      run: sh .config/lefthook/engine.sh cargo fmt
     clippy:
       glob: "*.rs"
-      run: >-
-        if [ -f Cargo.toml ]; then cargo clippy --workspace --all-targets -- -D
-        warnings; else echo no Cargo.toml at the repository root, skipping cargo
-        clippy >&2; fi
+      run: sh .config/lefthook/engine.sh cargo clippy
     reuse-lint:
       run: >-
         if [ -f REUSE.toml ] || [ -d LICENSES ]; then if command -v reuse

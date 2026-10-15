@@ -197,11 +197,6 @@ func goModuleCommand(skipped, command string) string {
 	return rootMarkerCommand("go.mod", skipped, command)
 }
 
-// cargoCommand is rootMarkerCommand for a Cargo tool.
-func cargoCommand(skipped, command string) string {
-	return rootMarkerCommand("Cargo.toml", skipped, command)
-}
-
 // lefthookJobLanguages are the languages lefthook.yml carries jobs for: Go (gofmt and go vet
 // before a commit, govulncheck before a push) and Rust (cargo fmt and cargo clippy before a
 // commit). Every other language gets the governance jobs alone.
@@ -231,8 +226,9 @@ func lefthookLanguageNames(languages hisscatalog.Language) string {
 	return strings.Join(names, ", ")
 }
 
-// lefthookPreCommitJobs renders the pre-commit jobs of languages. The Rust clippy job runs the
-// gate's own clippy command (gating.CargoClippyArgs), so a commit and a push lint alike.
+// lefthookPreCommitJobs renders the pre-commit jobs of languages. The Rust jobs run the engine's
+// cargo targets, which run cargo fmt and the gate's own clippy command (gating.CargoClippyArgs) in
+// every tracked Cargo workspace (#1102), so a commit and a push lint alike.
 func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 	jobs := ""
 	if languages&hisscatalog.LanguageGo != 0 {
@@ -240,9 +236,8 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 			"    govet:\n      glob: \"*.go\"\n" + lefthookRun(lefthookGovernedCommand("go vet"))
 	}
 	if languages&hisscatalog.LanguageRust != 0 {
-		clippy := "cargo " + strings.Join(gating.CargoClippyArgs(), " ")
-		jobs += "    rustfmt:\n      glob: \"*.rs\"\n" + lefthookRun(cargoCommand("cargo fmt", "cargo fmt --all --check")) +
-			"    clippy:\n      glob: \"*.rs\"\n" + lefthookRun(cargoCommand("cargo clippy", clippy))
+		jobs += "    rustfmt:\n      glob: \"*.rs\"\n" + lefthookRun(lefthookGovernedCommand("cargo fmt")) +
+			"    clippy:\n      glob: \"*.rs\"\n" + lefthookRun(lefthookGovernedCommand("cargo clippy"))
 	}
 	return jobs
 }

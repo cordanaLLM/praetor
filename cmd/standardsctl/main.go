@@ -113,6 +113,7 @@ func printCoreCommands() {
 	fmt.Println("  adr verify         Replay the machine-checkable clauses of decision records")
 	fmt.Println("  security govuln    Run govulncheck at symbol level and judge its findings against the OpenVEX document")
 	fmt.Println("  go vet            Run go vet ./... in every tracked Go module")
+	fmt.Println("  cargo fmt|clippy  Run cargo fmt --check or the gate's clippy in every tracked Cargo workspace")
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
@@ -259,6 +260,7 @@ func coreCommandTable() map[string]commandFunc {
 		"sync":                     runSync,
 		"security":                 runSecurity,
 		"go":                       runGo,
+		"cargo":                    runCargo,
 		"seo":                      runSEO,
 		"sentinel":                 runSentinel,
 		"efficiency":               runEfficiency,

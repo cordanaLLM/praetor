@@ -470,7 +470,7 @@ module does not require re-adoption:
 | Detected | Pre-commit jobs | Pre-push jobs | Each runs only where |
 | --- | --- | --- | --- |
 | Tracked Go modules (`go.mod` at any discoverable depth) | `gofmt` (`gofmt -w` on staged files), `govet` (`sh .config/lefthook/engine.sh go vet`, one `go vet ./...` per tracked module) | `security` (`sh .config/lefthook/engine.sh security govuln`, one symbol-level scan per tracked module; skipped when `govulncheck` is not installed) | Go files are staged for `gofmt`/`govet`; the engine discovers modules at hook time |
-| Rust (`Cargo.toml`) | `rustfmt` (`cargo fmt --all --check`), `clippy` (the gate's own `cargo clippy --workspace --all-targets -- -D warnings`, `gating.CargoClippyArgs`) | none: `gate run` runs `cargo audit` for a `Cargo.lock` | Rust files are staged and the root holds `Cargo.toml` |
+| Rust (`Cargo.toml`) | `rustfmt` (`sh .config/lefthook/engine.sh cargo fmt`, one `cargo fmt --all --check` per tracked Cargo workspace), `clippy` (`sh .config/lefthook/engine.sh cargo clippy`, the gate's own `cargo clippy --workspace --all-targets -- -D warnings` per workspace, `gating.CargoClippyArgs`) | none: `gate run` runs `cargo audit` for each tracked workspace's `Cargo.lock` | Rust files are staged; the engine discovers workspaces at hook time, a member crate counting with its workspace (#1102) |
 | no Rust marker | the Go jobs plus governance jobs | the Go security job plus governance jobs | Go jobs statefully skip when Git tracks no discoverable module |
 
 Any other detected language, such as Python, gets the Go and governance jobs; Go discovery happens

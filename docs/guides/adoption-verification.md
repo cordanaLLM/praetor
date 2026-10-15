@@ -848,15 +848,24 @@ prints a stated skip and exits successfully.
 
 ### Cargo repositories
 
-Where the repository root holds a `Cargo.lock`, the toolchain stages run Cargo besides the tracked
-Go modules, or
-instead of it ([`internal/gating/cargo.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo.go)):
+Where Git tracks a Cargo workspace with a `Cargo.lock`, the toolchain stages run Cargo besides the
+tracked Go modules, or instead of them
+([`internal/gating/cargo.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo.go)).
+`TrackedCargoRoots` ([`cargo_roots.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo_roots.go))
+finds every tracked `Cargo.toml` outside `target`, `vendor`, `testdata` and dot directories. One is a
+root unless an ancestor's `Cargo.toml` has a `[workspace]` table, so a workspace whose members are
+crates counts once; a crate below a workspace that commits its own `Cargo.lock` is a root too. Each
+Cargo command runs once in every root that commits a `Cargo.lock`, at most 64 (#1102):
 
 | Stage | Cargo command | Runs in | Bound |
 | :--- | :--- | :--- | :--- |
-| Prefetch & Lockfiles | `cargo fetch --locked` | the repository | `DefaultPrefetchTimeout`, 60 s |
-| Security & SCA Scan | `cargo audit`, when `cargo-audit` is on `PATH` | the repository | `CargoAuditTimeout`, 3 min |
-| Race-Detector Tests | `cargo test --workspace --locked`, then `cargo clippy --workspace --all-targets -- -D warnings` | the isolated worktree | a race stage bound of its own |
+| Prefetch & Lockfiles | `cargo fetch --locked` | each workspace's directory | `DefaultPrefetchTimeout`, 60 s |
+| Security & SCA Scan | `cargo audit`, when `cargo-audit` is on `PATH` | each workspace's directory | `CargoAuditTimeout`, 3 min |
+| Race-Detector Tests | `cargo test --workspace --locked`, then `cargo clippy --workspace --all-targets -- -D warnings` | each workspace's directory in the isolated worktree | a race stage bound of its own |
+
+- A repository whose one workspace is at its root keeps the stage reasons it had before discovery.
+  Otherwise each workspace adds a `<dir>/Cargo.lock: outcome` clause, a failure names its
+  `Cargo.lock`, and a part that did not run for one workspace leaves the stage skipped, not passed.
 
 - A `Cargo.toml` without a committed `Cargo.lock` runs no Cargo command: every command is held to
   the lockfile with `--locked`, and without one there is nothing to hold it to.
@@ -1620,8 +1629,8 @@ The deadline is sized to the repository `--path` names (`ResolveRepoRunBudget` i
 | Tracked toolchain state | Test suites, one bound each | Allowance for the other stages |
 | :--- | :--- | :--- |
 | N discoverable `go.mod` files, no `Cargo.lock` | N (at least 1 for the deadline calculation) | 5 min |
-| `Cargo.lock`, no discoverable `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
-| N discoverable `go.mod` files and `Cargo.lock` | N + 1 | 9 min |
+| M tracked Cargo workspaces with a `Cargo.lock`, no discoverable `go.mod` | M | 5 min + M × (1 min `cargo fetch` + 3 min `cargo audit`), 9 min for one |
+| N discoverable `go.mod` files and M locked Cargo workspaces | N + M | 5 min + M × 4 min |
 
 A mixed repository with one Go module therefore gets 2 × 3 + 9 = 15 minutes by default. Sized for one suite, the run
 deadline let the Go suite and the Cargo commands spend the time the Cargo suite needed, and no value

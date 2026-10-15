@@ -43,8 +43,23 @@ const (
 // security job and did not change. The "engine from PATH" entries, one per language set with and
 // without the REUSE job and with and without checkpoint jobs, are the renderings whose governance
 // jobs ran whichever praetorctl came first on PATH instead of the engine the repository pins
-// (engineLauncherFile, #906).
+// (engineLauncherFile, #906). The "root Cargo jobs" entries, one per language set holding Rust with
+// and without the REUSE job, the tool-module scanner and checkpoint jobs, are the renderings whose
+// rustfmt and clippy jobs ran cargo only where the repository root held a Cargo.toml instead of
+// the engine's cargo targets, which run in every tracked Cargo workspace (#1102).
 var priorLefthookDigests = map[string]string{
+	"ce5c42bfba106a7390e0610ef53cf21d5d1587838144ebee98b5f59e265470ea": "root Cargo jobs, Rust jobs",
+	"43d4c427df4a1241a492713f41e9784c6826b3d76ef77ad8a2f13ae6b44a44e5": "root Cargo jobs, Rust jobs, checkpoint jobs",
+	"4b73751cfc1e111b4ac612cd09526b4a72ce058125a27cccf9605823a2866968": "root Cargo jobs, Rust jobs, REUSE job",
+	"d7b6c6924443d7302359a2ccbb07d89b7dcfc1e3d6b3a35a3e1236864623c86b": "root Cargo jobs, Rust jobs, REUSE job, checkpoint jobs",
+	"fe2b4905e145969b6fa22f4fe56c907c068f0645df6476c4eab12d152f4dddb7": "root Cargo jobs, Go and Rust jobs",
+	"70cbcf97e6df285d9a109e4495c9fdfddc34a29ce43055e93a1290c5e0d5e2c0": "root Cargo jobs, Go and Rust jobs, checkpoint jobs",
+	"b80ef96dfa20fb31e5f21c2f6c581f9a4725dc615a4e39fb26be220902bcdee5": "root Cargo jobs, Go and Rust jobs, tool-module scanner",
+	"8f733dec866771e825bdf8ab89e7da053c6f2e803235305f9762bb0421883382": "root Cargo jobs, Go and Rust jobs, tool-module scanner, checkpoint jobs",
+	"cf6c108ef04e0b3b0a739f73ee6d9915efd3b4dbe2fdadfa745575c9f0f7f5b3": "root Cargo jobs, Go and Rust jobs, REUSE job",
+	"fc33389dd2b535e12098cc926a94434ca71af08f2756573c9df703df3b072ca9": "root Cargo jobs, Go and Rust jobs, REUSE job, checkpoint jobs",
+	"8ff1e86232149bf2863fedab56336cd4624672bf77281c9e2f43863ace90656e": "root Cargo jobs, Go and Rust jobs, REUSE job, tool-module scanner",
+	"56e00ccc9f3dc8d9aef516ef93b866155cccbd562662bd92a5bfff8337f6b6f2": "root Cargo jobs, Go and Rust jobs, REUSE job, tool-module scanner, checkpoint jobs",
 	"301340a764d8d9deec3c92963e47c4ea67bd09d155cc9d077a10f3df01944935": "current Go jobs before module discovery",
 	"36cfefcca951eb59d0f04e67867b8fb472b7734ba593b82bf2c72d2407c34647": "current Go jobs before module discovery, checkpoint jobs",
 	"d5652e2dcf90ba12f389ec4732e48136551f4f83c51c90f33f68b76f0234613d": "current Rust jobs before module discovery",

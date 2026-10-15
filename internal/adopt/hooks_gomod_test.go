@@ -70,47 +70,52 @@ func TestGoModuleJobs_Negative_SkipWithoutARootModule(t *testing.T) {
 	}
 }
 
-// Positive (#568): with a root Cargo.toml, the Rust pre-commit jobs run cargo fmt in check mode
-// and the gate's clippy command, and a failure of either blocks the commit.
-func TestCargoJobs_Positive_RunWhereTheRootHoldsACargoManifest(t *testing.T) {
+// Positive (#568, #1102): the Rust pre-commit jobs delegate to the engine, which runs cargo fmt in
+// check mode and the gate's clippy command in every tracked Cargo workspace, and a failure of
+// either blocks the commit.
+func TestCargoJobs_Positive_DelegateToTheEngine(t *testing.T) {
 	stubs, work := t.TempDir(), t.TempDir()
 	mustWrite(t, filepath.Join(work, "Cargo.toml"), "[package]\nname = \"demo\"\n")
 	log := filepath.Join(work, "calls.log")
-	recordingStub(t, stubs, "cargo", log, 5)
+	recordingStub(t, stubs, "cargo", log, 3)
+	recordingStub(t, stubs, util.PraetorCLI, log, 5)
 	for _, job := range []string{"rustfmt", "clippy"} {
 		if _, code := runHookLine(t, "sh", goJobRun(t, "pre-commit", job), stubs, work); code != 5 {
-			t.Errorf("%s failure exited %d, want 5", job, code)
+			t.Errorf("%s engine failure exited %d, want 5", job, code)
 		}
 	}
-	if got := mustRead(t, log); got != "cargo fmt --all --check\ncargo clippy --workspace --all-targets -- -D warnings\n" {
+	if got := mustRead(t, log); got != util.PraetorCLI+" cargo fmt\n"+util.PraetorCLI+" cargo clippy\n" {
 		t.Errorf("calls = %q", got)
 	}
 }
 
-// Negative: without a root Cargo.toml neither Rust job runs cargo or fails; each says why it
-// skipped, as the Go jobs do without a root go.mod.
-func TestCargoJobs_Negative_SkipWithoutARootCargoManifest(t *testing.T) {
+// Negative: where the engine finds no Cargo workspace neither Rust job runs cargo or fails; the
+// engine says why it skipped, as it does for go vet without a tracked module.
+func TestCargoJobs_Negative_EngineSkipPassesTheJob(t *testing.T) {
 	stubs, work := t.TempDir(), t.TempDir()
 	log := filepath.Join(work, "calls.log")
-	recordingStub(t, stubs, "cargo", log, 5)
+	recordingStub(t, stubs, "cargo", log, 3)
+	recordingStub(t, stubs, util.PraetorCLI, log, 0)
 	for _, job := range []string{"rustfmt", "clippy"} {
-		out, code := runHookLine(t, "sh", goJobRun(t, "pre-commit", job), stubs, work)
-		if code != 0 || !strings.Contains(out, "no Cargo.toml at the repository root, skipping cargo") {
-			t.Errorf("%s without Cargo.toml: exit %d, output %q", job, code, out)
+		if out, code := runHookLine(t, "sh", goJobRun(t, "pre-commit", job), stubs, work); code != 0 {
+			t.Errorf("%s without a Cargo workspace: exit %d, output %q", job, code, out)
 		}
 	}
-	if fileExists(log) {
-		t.Errorf("cargo ran without a root manifest: %s", mustRead(t, log))
+	if got := mustRead(t, log); got != util.PraetorCLI+" cargo fmt\n"+util.PraetorCLI+" cargo clippy\n" {
+		t.Errorf("engine calls = %q", got)
 	}
 }
 
-// Boundary: a Cargo.toml in a subdirectory is not a root manifest, and each Rust job runs only
-// for staged Rust files (glob *.rs), as the Go jobs run only for staged Go files.
+// Boundary: a Cargo.toml only in a subdirectory still reaches the engine, which discovers it
+// (#1102: the root guard printed "no Cargo.toml" and skipped it), and each Rust job runs only for
+// staged Rust files (glob *.rs), as the Go jobs run only for staged Go files.
 func TestCargoJobs_Boundary_NestedManifestAndRustGlob(t *testing.T) {
 	stubs, work := t.TempDir(), t.TempDir()
-	mustWrite(t, filepath.Join(work, "crates", "core", "Cargo.toml"), "[package]\nname = \"core\"\n")
-	if out, code := runHookLine(t, "sh", goJobRun(t, "pre-commit", "clippy"), stubs, work); code != 0 || !strings.Contains(out, "no Cargo.toml") {
-		t.Errorf("nested manifest: exit %d, output %q", code, out)
+	mustWrite(t, filepath.Join(work, "worker", "Cargo.toml"), "[package]\nname = \"worker\"\n")
+	log := filepath.Join(work, "calls.log")
+	recordingStub(t, stubs, util.PraetorCLI, log, 6)
+	if out, code := runHookLine(t, "sh", goJobRun(t, "pre-commit", "clippy"), stubs, work); code != 6 {
+		t.Errorf("nested manifest: exit %d, output %q; want the engine's 6", code, out)
 	}
 	var parsed map[string]map[string]any
 	if err := yamlUnmarshal([]byte(buildLefthookYAML()), &parsed); err != nil {
@@ -288,5 +293,15 @@ func TestToolModuleRequiresGovuln(t *testing.T) {
 				t.Errorf("toolModuleRequiresGovuln(%q) = %v, want %v", tc.data, got, tc.want)
 			}
 		})
+	}
+}
+
+// Boundary, on every platform (#1102): the Rust run lines are the engine's cargo targets and carry
+// no root-manifest guard, which skipped a Cargo workspace in a subdirectory as absent.
+func TestCargoJobs_Boundary_RunLinesHaveNoRootGuard(t *testing.T) {
+	for job, want := range map[string]string{"rustfmt": "cargo fmt", "clippy": "cargo clippy"} {
+		if got := goJobRun(t, "pre-commit", job); got != lefthookGovernedCommand(want) {
+			t.Errorf("%s run = %q, want %q", job, got, lefthookGovernedCommand(want))
+		}
 	}
 }
