@@ -1,0 +1,110 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package adopt
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// shippedCheckpointText returns the text this repository ships at the bundle path rel.
+func shippedCheckpointText(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// checkpointAuditRepo writes texts, keyed by repository path, into a fresh directory.
+func checkpointAuditRepo(t *testing.T, texts map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for rel, text := range texts {
+		mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), text)
+	}
+	return root
+}
+
+func auditCheckpointLines(t *testing.T, root string) []string {
+	t.Helper()
+	lines, err := AuditCheckpointBundle(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lines
+}
+
+// Negative (#239): a pre-#149 checkpoint.py, in either line-ending style, is reported once,
+// naming the file and the release that shipped it, so a stale copy is visible before a
+// Windows job fails on os.O_DIRECTORY.
+func TestAuditCheckpointBundle_Negative_PriorScriptWarns(t *testing.T) {
+	prior := firstPriorCheckpointText(t, checkpointScript)
+	for style, text := range map[string]string{"lf": prior, "crlf": crlfText(prior)} {
+		root := checkpointAuditRepo(t, map[string]string{
+			checkpointScript:   text,
+			checkpointCommon:   shippedCheckpointText(t, checkpointCommon),
+			checkpointLauncher: shippedCheckpointText(t, checkpointLauncher),
+		})
+		lines := auditCheckpointLines(t, root)
+		if len(lines) != 1 {
+			t.Fatalf("%s: lines = %q, want one warning", style, lines)
+		}
+		for _, want := range []string{"[WARN] ", checkpointScript, "platform promotion (#14)", "praetorctl adopt"} {
+			if !strings.Contains(lines[0], want) {
+				t.Fatalf("%s: warning lacks %q: %s", style, want, lines[0])
+			}
+		}
+	}
+}
+
+// Positive: the shipped bundle, an edited copy, a missing bundle and a vendored repository,
+// whose lefthook.yml extends the canonical policy and keeps its scripts on purpose (BUG-858),
+// stay quiet.
+func TestAuditCheckpointBundle_Positive_QuietCases(t *testing.T) {
+	prior := firstPriorCheckpointText(t, checkpointScript)
+	cases := map[string]map[string]string{
+		"current": {
+			checkpointScript:   shippedCheckpointText(t, checkpointScript),
+			checkpointCommon:   shippedCheckpointText(t, checkpointCommon),
+			checkpointLauncher: shippedCheckpointText(t, checkpointLauncher),
+		},
+		"edited":  {checkpointScript: prior + "# local edit\n"},
+		"missing": {},
+		"vendored": {
+			checkpointScript: prior,
+			lefthookFile:     "extends:\n  - " + canonicalLefthookPolicy + "\n",
+		},
+		"vendored by remote": {
+			checkpointScript: prior,
+			lefthookFile:     "remotes:\n  - git_url: https://example.invalid/praetor\n    configs:\n      - ./" + canonicalLefthookPolicy + "\n",
+		},
+	}
+	for name, texts := range cases {
+		if lines := auditCheckpointLines(t, checkpointAuditRepo(t, texts)); len(lines) != 0 {
+			t.Errorf("%s: lines = %q, want none", name, lines)
+		}
+	}
+}
+
+// Boundary: currentCheckpointDigests names exactly the bundle this repository ships, each also
+// recorded as a prior text, so a changed script fails here until both maps record it.
+func TestCurrentCheckpointDigests_Boundary_MatchShippedBundle(t *testing.T) {
+	if len(currentCheckpointDigests) != len(checkpointBundle) {
+		t.Fatalf("currentCheckpointDigests covers %d paths, want the %d bundle files", len(currentCheckpointDigests), len(checkpointBundle))
+	}
+	for _, rel := range checkpointBundle {
+		got := fixtureDigest(t, rel, []byte(shippedCheckpointText(t, rel)))
+		if currentCheckpointDigests[rel] != got {
+			t.Errorf("currentCheckpointDigests[%s] = %q, the shipped text is %s", rel, currentCheckpointDigests[rel], got)
+		}
+		if _, ok := priorCheckpointDigests[rel][got]; !ok {
+			t.Errorf("the shipped %s (%s) is not in priorCheckpointDigests", rel, got)
+		}
+	}
+}
