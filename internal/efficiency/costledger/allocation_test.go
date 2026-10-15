@@ -214,3 +214,45 @@ func sumShares(shares []int64) int64 {
 	}
 	return total
 }
+
+func TestFloorShare(t *testing.T) {
+	const big = int64(1_000_000_000_000_000_000)
+	cases := []struct {
+		name                  string
+		shared, weight, total int64
+		wantQuotient          int64
+		wantRemainder         uint64
+		wantErr               bool
+	}{
+		{name: "positive exact third", shared: 10, weight: 1, total: 3, wantQuotient: 3, wantRemainder: 1},
+		{name: "boundary 128-bit product", shared: big, weight: big, total: 3 * big, wantQuotient: big / 3, wantRemainder: uint64(big)},
+		{name: "boundary zero weight", shared: 10, weight: 0, total: 3, wantQuotient: 0, wantRemainder: 0},
+		{name: "negative shared", shared: -1, weight: 1, total: 3, wantErr: true},
+		{name: "negative weight", shared: 10, weight: -1, total: 3, wantErr: true},
+		{name: "negative zero total", shared: 10, weight: 0, total: 0, wantErr: true},
+		{name: "negative weight above total", shared: 10, weight: 4, total: 3, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			quotient, remainder, err := floorShare(tc.shared, tc.weight, tc.total)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("floorShare(%d, %d, %d) error = nil, want refusal", tc.shared, tc.weight, tc.total)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("floorShare: %v", err)
+			}
+			if quotient != tc.wantQuotient || remainder != tc.wantRemainder {
+				t.Fatalf("floorShare = (%d, %d), want (%d, %d)", quotient, remainder, tc.wantQuotient, tc.wantRemainder)
+			}
+		})
+	}
+}
+
+func TestLoad_Negative_RefusesNonRegularFile(t *testing.T) {
+	if _, err := Load(t.TempDir()); err == nil {
+		t.Fatal("Load(directory) error = nil, want refusal of a non-regular file")
+	}
+}
