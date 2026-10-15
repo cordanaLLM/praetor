@@ -113,18 +113,21 @@ func TestSecurityWorkflow_Positive_HostedGateAndPinnedInstalls(t *testing.T) {
 		`mkdir -p "$d"`,
 		`cd "$d"`,
 		"go mod init scanners",
-		"go get golang.org/x/vuln@" + templates.GoSecurityGovulnVersion +
-			" github.com/securego/gosec/v2@" + templates.GoSecurityGosecVersion +
-			" golang.org/x/tools@" + templates.GoSecurityXToolsVersion,
+		"go get golang.org/x/vuln@" + templates.GoSecurityGovulnVersion,
+		"go get github.com/securego/gosec/v2@" + templates.GoSecurityGosecVersion,
+		"go get golang.org/x/tools@" + templates.GoSecurityXToolsVersion,
 		"go mod download all",
-		"go install golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec",
+		"go install golang.org/x/vuln/cmd/govulncheck",
+		"go install github.com/securego/gosec/v2/cmd/gosec",
 	} {
 		if !strings.Contains(fallback, want) {
 			t.Errorf("fallback install lacks %q:\n%s", want, fallback)
 		}
 	}
 	toolModule := strings.TrimSpace(securityStep(t, renderedSecurityWorkflow(t, true), "Install Tools").Run)
-	wantToolModule := "go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec"
+	wantToolModule := "m=tools/go/go.mod\n" +
+		"go install -modfile=\"$m\" golang.org/x/vuln/cmd/govulncheck\n" +
+		"go install -modfile=\"$m\" github.com/securego/gosec/v2/cmd/gosec"
 	if toolModule != wantToolModule {
 		t.Errorf("tools-module install = %q, want %q", toolModule, wantToolModule)
 	}

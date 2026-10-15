@@ -72,9 +72,12 @@ jobs:
           mkdir -p "$d"
           cd "$d"
           go mod init scanners
-          go get golang.org/x/vuln@v1.8.0 github.com/securego/gosec/v2@v2.29.0 golang.org/x/tools@v0.50.0
+          go get golang.org/x/vuln@v1.8.0
+          go get github.com/securego/gosec/v2@v2.29.0
+          go get golang.org/x/tools@v0.50.0
           go mod download all
-          go install golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
+          go install golang.org/x/vuln/cmd/govulncheck
+          go install github.com/securego/gosec/v2/cmd/gosec
       - name: Run govulncheck
         if: github.event.pull_request.draft != true
         run: govulncheck ./...

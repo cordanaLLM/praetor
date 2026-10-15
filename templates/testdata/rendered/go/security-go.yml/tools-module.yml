@@ -67,7 +67,10 @@ jobs:
 
       - name: Install Tools
         if: github.event.pull_request.draft != true
-        run: go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
+        run: |
+          m=tools/go/go.mod
+          go install -modfile="$m" golang.org/x/vuln/cmd/govulncheck
+          go install -modfile="$m" github.com/securego/gosec/v2/cmd/gosec
       - name: Run govulncheck
         if: github.event.pull_request.draft != true
         run: govulncheck ./...

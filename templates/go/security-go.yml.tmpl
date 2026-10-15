@@ -48,15 +48,21 @@ jobs:
       # yamllint enable rule:line-length
 
       - name: Install Tools<% hostedGateStepIf %>
-<% if .GoSecurity.DeclaredScanners %>        run: go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
+<% if .GoSecurity.DeclaredScanners %>        run: |
+          m=tools/go/go.mod
+          go install -modfile="$m" golang.org/x/vuln/cmd/govulncheck
+          go install -modfile="$m" github.com/securego/gosec/v2/cmd/gosec
 <% else %>        run: |
           d="$RUNNER_TEMP/scanners"
           mkdir -p "$d"
           cd "$d"
           go mod init scanners
-          go get golang.org/x/vuln@<% securityGovulnVersion %> github.com/securego/gosec/v2@<% securityGosecVersion %> golang.org/x/tools@<% securityXToolsVersion %>
+          go get golang.org/x/vuln@<% securityGovulnVersion %>
+          go get github.com/securego/gosec/v2@<% securityGosecVersion %>
+          go get golang.org/x/tools@<% securityXToolsVersion %>
           go mod download all
-          go install golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
+          go install golang.org/x/vuln/cmd/govulncheck
+          go install github.com/securego/gosec/v2/cmd/gosec
 <% end %>      - name: Run govulncheck<% hostedGateStepIf %>
         run: govulncheck ./...
       - name: Run gosec<% hostedGateStepIf %>
