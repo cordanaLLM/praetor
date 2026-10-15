@@ -129,6 +129,81 @@ entries:
       - "docs/adr/README.md"
     match:
       - "decision record"
+  - name: "eval-harness"
+    url: "https://github.com/affaan-m/ecc/tree/1e8c7e7994223e0ff337d1626cd08e04a1ae67ed/skills/eval-harness"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Affaan Mustafa: the MIT terms of the upstream skill when this skill was adapted from it (2026-10-15),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 1e8c7e799
+    artifact: "`eval-harness` skill, `.agents/skills/eval-harness/SKILL.md`"
+    use: >-
+      Evaluation-driven development methodology: define task pass criteria before coding, track pass@k and pass^k
+      metrics, and run deterministic evaluations. Rewritten in praetor's internal caveman register.
+    paths:
+      - ".agents/skills/eval-harness/SKILL.md"
+    match:
+      - "eval-harness"
+      - "mustafa"
+  - name: "ecc-tools-cost-audit"
+    url: "https://github.com/affaan-m/ecc/tree/1e8c7e7994223e0ff337d1626cd08e04a1ae67ed/skills/ecc-tools-cost-audit"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Affaan Mustafa: the MIT terms of the upstream skill when this skill was adapted from it (2026-10-15),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 1e8c7e799
+    artifact: "`cost-audit` skill, `.agents/skills/cost-audit/SKILL.md`"
+    use: >-
+      Model token consumption and spend auditing methodology: track per-turn prompt and completion tokens, audit context
+      growth rate, and prevent prompt runaway. Rewritten in praetor's internal caveman register.
+    paths:
+      - ".agents/skills/cost-audit/SKILL.md"
+    match:
+      - "cost-audit"
+      - "ecc-tools-cost-audit"
+      - "mustafa"
+  - name: "deep-research"
+    url: "https://github.com/affaan-m/ecc/tree/2aebdd340860f2ca9f1cbebed9d85d90e9e4fb59/skills/deep-research"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Affaan Mustafa: the MIT terms of the upstream skill when this skill was adapted from it (2026-10-15),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 2aebdd340
+    artifact: "`research-method` skill, `.agents/skills/research-method/SKILL.md`"
+    use: >-
+      Systematic inquiry and evidence synthesis methodology: clarify scope, execute iterative search with primary source
+      prioritization, and cross-validate findings. Rewritten in praetor's internal caveman register.
+    paths:
+      - ".agents/skills/research-method/SKILL.md"
+    match:
+      - "research-method"
+      - "deep-research"
+      - "mustafa"
+  - name: "skill-comply"
+    url: "https://github.com/affaan-m/ecc/tree/2aebdd340860f2ca9f1cbebed9d85d90e9e4fb59/skills/skill-comply"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Affaan Mustafa: the MIT terms of the upstream skill when this skill was adapted from it (2026-10-15),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 2aebdd340
+    artifact: "`skill-compliance` skill, `.agents/skills/skill-compliance/SKILL.md`"
+    use: >-
+      Agent skill specification, scenario evaluation, and behavioral compliance audit methodology. Upstream test runner
+      scripts and network dependencies dropped; inspection protocol rewritten in praetor's internal caveman register.
+    paths:
+      - ".agents/skills/skill-compliance/SKILL.md"
+    match:
+      - "skill-compliance"
+      - "skill-comply"
+      - "mustafa"
   - name: "Go"
     url: "https://go.dev"
     detail: "standard library and runtime"
