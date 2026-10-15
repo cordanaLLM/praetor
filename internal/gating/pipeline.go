@@ -253,6 +253,11 @@ type stageConfig struct {
 	modules           []goModule
 	modulesDiscovered bool
 	moduleDiscovery   func(context.Context, string) ([]string, error)
+	// cargoRoots caches cargoDiscovery's answer (TrackedCargoRoots in production), the one
+	// discovery every Cargo-presence decision of the stages uses (#1102).
+	cargoRoots      []CargoRoot
+	cargoDiscovered bool
+	cargoDiscovery  func(context.Context, string) ([]CargoRoot, error)
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
@@ -269,6 +274,7 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 		goarch:          runtime.GOARCH,
 		fetch:           devcontainer.HTTPFetch,
 		moduleDiscovery: apiassets.TrackedModuleFiles,
+		cargoDiscovery:  TrackedCargoRoots,
 	}
 }
 

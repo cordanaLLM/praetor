@@ -110,16 +110,15 @@ func resolveRepoRunBudget(ctx context.Context, raw, repoDir string) (RunBudget, 
 	if err != nil {
 		return budget, err
 	}
-	if !util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
-		if count > 0 {
-			budget.Suites = count
-		}
-		return budget, nil
+	roots, err := TrackedCargoRoots(ctx, repoDir)
+	if err != nil {
+		return budget, fmt.Errorf("discover tracked Cargo workspaces for run budget: %w", err)
 	}
-	budget.Allowance += CargoStagesAllowance
-	if count > 0 {
-		budget.Suites = count
-		budget.Suites++
+	cargo := len(lockedRoots(roots))
+	// Each locked Cargo root runs its own fetch, audit and test suite (runCargoRoots).
+	budget.Allowance += time.Duration(cargo) * CargoStagesAllowance
+	if count+cargo > 0 {
+		budget.Suites = count + cargo
 	}
 	return budget, nil
 }

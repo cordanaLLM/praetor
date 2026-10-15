@@ -415,7 +415,7 @@ func TestResolveRepoRunBudget_3D(t *testing.T) {
 			repo := deadlineMarkerFixture(t, tc.markers)
 			for _, marker := range tc.markers {
 				if marker != "go.mod" {
-					writeFile(t, filepath.Join(repo, marker), "\n")
+					commitFile(t, repo, marker, "\n")
 				}
 			}
 			budget, err := ResolveRepoRunBudget("12m", repo)
@@ -529,7 +529,7 @@ func mixedMarkers(t *testing.T) string {
 	dir := newHermeticGitRepo(t)
 	commitFile(t, dir, "go.mod", "module gating.test\n")
 	commitFile(t, dir, "root.go", "package gating\n")
-	writeFile(t, filepath.Join(dir, CargoLockFile), "version = 4\n")
+	commitFile(t, dir, CargoLockFile, "version = 4\n")
 	return dir
 }
 
@@ -565,7 +565,7 @@ func deadlineMarkerFixture(t *testing.T, markers []string) string {
 			return dir
 		}
 	}
-	return t.TempDir()
+	return newHermeticGitRepo(t)
 }
 
 // A zero-valued Suites counts as one suite, so a budget literal keeps its pre-Cargo meaning.
@@ -584,7 +584,7 @@ func TestRunTestStage_MixedRepositoryReservesABoundPerSuite(t *testing.T) {
 	repoDir := newHermeticGitRepo(t)
 	commitFile(t, repoDir, "go.mod", "module gating.test\n")
 	commitFile(t, repoDir, "root.go", "package gating\n")
-	writeFile(t, filepath.Join(repoDir, CargoLockFile), "version = 4\n")
+	commitFile(t, repoDir, CargoLockFile, "version = 4\n")
 	cfg, _ := newTestConfig(t, repoDir, false)
 	seen := map[string]time.Time{}
 	cfg.run = func(runCtx context.Context, dir, name string, args ...string) (string, error) {

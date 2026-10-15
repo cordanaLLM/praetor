@@ -17,8 +17,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// The Cargo parts of the toolchain stages. Each runs only where a Cargo.lock is present
-// (withCargo), through the stage's command runner and lookPath seams like the Go commands, and
+// The Cargo parts of the toolchain stages. Each runs once for every Cargo root that commits a
+// Cargo.lock (TrackedCargoRoots, withCargo, runCargoRoots), through the stage's command runner and lookPath seams like the Go commands, and
 // none runs in a dry run: cargo fetch and cargo audit write caches and reach the network, and the
 // test commands execute repository code.
 
@@ -95,12 +95,14 @@ func runCargoPrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := requireCargo(cfg); err != nil {
 		return "", err
 	}
-	pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
-	defer cancel()
-	if out, err := cfg.run(pCtx, cfg.repoDir, "cargo", "fetch", "--locked"); err != nil {
-		return "", cargoFailure(ctx, pCtx, "cargo fetch --locked", DefaultPrefetchTimeout, out, err)
-	}
-	return "cargo fetch --locked passed", nil
+	return runCargoRoots(ctx, cfg, cfg.repoDir, func(ctx context.Context, dir string) (string, error) {
+		pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
+		defer cancel()
+		if out, err := cfg.run(pCtx, dir, "cargo", "fetch", "--locked"); err != nil {
+			return "", cargoFailure(ctx, pCtx, "cargo fetch --locked", DefaultPrefetchTimeout, out, err)
+		}
+		return "cargo fetch --locked passed", nil
+	})
 }
 
 // runCargoSecurity is the security stage's Cargo part: cargo audit checks Cargo.lock against the
@@ -117,12 +119,14 @@ func runCargoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if _, err := cfg.lookPath("cargo-audit"); err != nil {
 		return "", skipped(fmt.Sprintf("cargo audit not run: cargo-audit is not installed (%s)", cargoAuditInstallHint))
 	}
-	aCtx, cancel := context.WithTimeout(ctx, CargoAuditTimeout)
-	defer cancel()
-	if out, err := cfg.run(aCtx, cfg.repoDir, "cargo", "audit"); err != nil {
-		return "", cargoFailure(ctx, aCtx, "cargo audit", CargoAuditTimeout, out, err)
-	}
-	return "cargo audit passed", nil
+	return runCargoRoots(ctx, cfg, cfg.repoDir, func(ctx context.Context, dir string) (string, error) {
+		aCtx, cancel := context.WithTimeout(ctx, CargoAuditTimeout)
+		defer cancel()
+		if out, err := cfg.run(aCtx, dir, "cargo", "audit"); err != nil {
+			return "", cargoFailure(ctx, aCtx, "cargo audit", CargoAuditTimeout, out, err)
+		}
+		return "cargo audit passed", nil
+	})
 }
 
 // runCargoTests is the test stage's Cargo part: cargo test and cargo clippy with warnings denied,
@@ -143,18 +147,22 @@ func runCargoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	}
 	bound := budget.StageBound
 	targetArgs, targetNote := cargoTargetDir(ctx, cfg.repoDir)
-	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
-		for i := 0; i < len(cargoTestCommands); i++ {
-			if runErr := runCargoSuite(tCtx, cfg, bound, dir, cargoTestCommands[i], targetArgs); runErr != nil {
-				return runErr
+	msg := ""
+	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, worktree string) error {
+		var rootsErr error
+		msg, rootsErr = runCargoRoots(tCtx, cfg, worktree, func(tCtx context.Context, dir string) (string, error) {
+			for i := 0; i < len(cargoTestCommands); i++ {
+				if runErr := runCargoSuite(tCtx, cfg, bound, dir, cargoTestCommands[i], targetArgs); runErr != nil {
+					return "", runErr
+				}
 			}
-		}
-		return nil
+			return "cargo test --workspace --locked and cargo clippy --workspace --all-targets -- -D warnings passed", nil
+		})
+		return rootsErr
 	})
 	if err != nil {
 		return "", err
 	}
-	msg := "cargo test --workspace --locked and cargo clippy --workspace --all-targets -- -D warnings passed"
 	for _, note := range []string{targetNote, budget.Note} {
 		if note != "" {
 			msg += "; " + note

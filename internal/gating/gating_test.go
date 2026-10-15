@@ -103,6 +103,13 @@ func newTestConfig(t *testing.T, repoDir string, dryRun bool) (*stageConfig, *[]
 			}
 			return nil, nil
 		},
+		// Likewise a Cargo root only at the top; tests of discovery use TrackedCargoRoots.
+		cargoDiscovery: func(context.Context, string) ([]CargoRoot, error) {
+			if !util.FileExists(filepath.Join(repoDir, "Cargo.toml")) && !util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
+				return nil, nil
+			}
+			return []CargoRoot{{Dir: ".", Locked: util.FileExists(filepath.Join(repoDir, CargoLockFile))}}, nil
+		},
 	}, recorded
 }
 
@@ -959,6 +966,7 @@ func TestRunTestStage_Boundary_NonGoRepository(t *testing.T) {
 	cfg := &stageConfig{
 		repoDir:         dir,
 		moduleDiscovery: func(context.Context, string) ([]string, error) { return nil, nil },
+		cargoDiscovery:  func(context.Context, string) ([]CargoRoot, error) { return nil, nil },
 		run: func(context.Context, string, string, ...string) (string, error) {
 			ran = true
 			return "", nil

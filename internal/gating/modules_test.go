@@ -54,7 +54,7 @@ func TestHoldsToolchainMarker_PositiveAndBoundary_UsesRealDiscovery(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			repo := newHermeticGitRepo(t)
 			commitFile(t, repo, tc.file, "module example.test/fixture\n")
-			cfg := &stageConfig{repoDir: repo, moduleDiscovery: apiassets.TrackedModuleFiles}
+			cfg := &stageConfig{repoDir: repo, moduleDiscovery: apiassets.TrackedModuleFiles, cargoDiscovery: TrackedCargoRoots}
 			got, err := holdsToolchainMarker(t.Context(), cfg)
 			if err != nil || got != tc.want {
 				t.Fatalf("holdsToolchainMarker = %t, %v; want %t", got, err, tc.want)

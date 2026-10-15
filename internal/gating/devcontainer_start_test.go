@@ -6,7 +6,6 @@ package gating
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -80,9 +79,9 @@ func TestDevcontainerStartBoundFollowsTheGateBudget(t *testing.T) {
 		t.Fatalf("a Go repository's start bound is %s, want the %s allowance above the %s git query limit",
 			goOnly, OtherStagesAllowance, GitQueryTimeout)
 	}
-	mixed := t.TempDir()
-	writeFile(t, filepath.Join(mixed, "go.mod"), "module example.com/mixed\n")
-	writeFile(t, filepath.Join(mixed, CargoLockFile), "version = 3\n")
+	mixed := newHermeticGitRepo(t)
+	commitFile(t, mixed, "go.mod", "module example.com/mixed\n")
+	commitFile(t, mixed, CargoLockFile, "version = 3\n")
 	mixedBudget, err := stageBudget(t.Context(), mixed)
 	if err != nil {
 		t.Fatalf("resolve mixed budget: %v", err)
