@@ -7,8 +7,7 @@ body:
     attributes:
       value: |
         ## HISS-14 Breaking Change RFC Gate
-        Under **HISS-14**, public application binary interfaces and declarative schemas are append-only.
-        Any breaking change requires explicit architectural review, a conventional commit breaking indicator (`!`), and a mandatory `Migration:` footer.
+        Under **HISS-14**, public application binary interfaces and declarative schemas are append-only. Any breaking change requires explicit architectural review, a conventional commit breaking indicator (`!`), and a mandatory `Migration:` footer.
   - type: textarea
     id: summary
     attributes:

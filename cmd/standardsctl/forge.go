@@ -200,7 +200,12 @@ func runForgeValidatePR(args []string) error {
 	validateCtx, cancelValidate := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancelValidate()
 	res, err := forge.ValidatePRChecklistWithPolicyContext(validateCtx, string(data),
-		forge.ReceiptPolicy{PinnedKey: pinned, HeadSHA: *headSHA, ClosingReferences: closingPolicy})
+		forge.ReceiptPolicy{
+			PinnedKey:         pinned,
+			HeadSHA:           *headSHA,
+			ClosingReferences: closingPolicy,
+			Filename:          rest[0],
+		})
 	if err != nil && res == nil {
 		return fmt.Errorf("PR checklist validation failed: %w", err)
 	}

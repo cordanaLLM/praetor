@@ -28,6 +28,7 @@ rules:
 
 1. **Bottom line first**: first sentence = decision, defect or ask.
 2. **Scannable structure**:
+   - forge text keeps each paragraph and each list item on one line;
    - paragraphs of one to three sentences, one idea each;
    - bold operative words of action bullet;
    - a list whenever three or more parallel items appear, never a comma chain;
@@ -67,7 +68,8 @@ one exception, pasted where template asks for it.
 register governs only prose under `## Summary of Changes`. Sections 1-4 (HISS-16
 checklist, 3D-testing verification, context-integrity checklist, receipt) =
 filled, never rewritten, reordered or removed. Receipt goes inside fence
-labelled `receipt`; unlabelled fence not read by validator.
+labelled `receipt`; unlabelled fence not read by validator. Forge text keeps
+each paragraph and each list item on one line, never hard-wrapped.
 
 **Commit message.** Subject stays conventional commit, `type(scope): subject`,
 `type` one of `feat | fix | docs | style | refactor | perf | test | build | ci |
@@ -75,7 +77,9 @@ chore | revert`. Commit-msg hook rejects other shape, requires `Signed-off-by`
 trailer. Keep subject near 72 characters; hook does not measure it, reader's
 terminal does. Breaking change carries `!` in subject, `Migration:` footer
 (HISS-14). Only body written in this register: why first, then what, wrapped at
-72 columns.
+72 columns. Squash or train body built from commit bodies is unwrapped first:
+lines joined inside paragraph or list item, blank lines, fences, tables and
+list markers kept.
 
 **Changelog.** Never edit `CHANGELOG.md` directly. Write one fragment
 `<date>-<slug>.yaml` in the changelog fragment directory with `type` from
