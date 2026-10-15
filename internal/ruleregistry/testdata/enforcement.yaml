@@ -1,0 +1,10 @@
+version: 1
+rules:
+  - id: HISS-01
+    class: ci-gate
+    evidence:
+      - test:internal/check.TestEnforced
+      - hook:commit-msg.message-policy
+      - make:verify-all
+      - workflow:ci.yml#verify
+      - gate:HISS Invariant Scan
