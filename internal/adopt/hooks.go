@@ -50,7 +50,7 @@ const (
 	// ran `govulncheck ./...` before, which failed on a called symbol only (#778).
 	govulnGateArgs = "security govuln"
 	// toolGoModFile is the repository-relative path to the Go tool module that pins CLI tools.
-	toolGoModFile = "tools/go/go.mod"
+	toolGoModFile = gomanifest.ToolModuleFile
 	// govulnToolScanner is the scanner command that runs govulncheck through the repository's
 	// tool module.
 	govulnToolScanner = "go tool -modfile=" + toolGoModFile + " govulncheck"
@@ -60,8 +60,6 @@ const (
 	govulnModule = "golang.org/x/vuln"
 	// govulnToolPackage is the package path run with go tool.
 	govulnToolPackage = "golang.org/x/vuln/cmd/govulncheck"
-	// maxGoModScanLines bounds the line walk of a tool module (HISS-02).
-	maxGoModScanLines = 4096
 )
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
@@ -155,23 +153,7 @@ func repoRequiresToolGovuln(ctx context.Context, repoPath string) (bool, error) 
 // toolModuleRequiresGovuln reports whether tool module data declares golang.org/x/vuln
 // as a requirement or as a tool directive.
 func toolModuleRequiresGovuln(data []byte) bool {
-	manifest := gomanifest.ParseManifest(data)
-	for i := 0; i < len(manifest.Requires) && i < maxGoModScanLines; i++ {
-		if manifest.Requires[i].Path == govulnModule {
-			return true
-		}
-	}
-	lines := strings.Split(string(gomanifest.TrimBOM(data)), "\n")
-	inTool := false
-	for i := 0; i < len(lines) && i < maxGoModScanLines; i++ {
-		if line, isTool := gomanifest.ToolLine(lines[i], &inTool); isTool {
-			fields := strings.Fields(line)
-			if len(fields) > 0 && (fields[0] == govulnToolPackage || fields[0] == govulnModule) {
-				return true
-			}
-		}
-	}
-	return false
+	return gomanifest.DeclaresTool(data, govulnModule, govulnToolPackage)
 }
 
 // rootMarkerCommand renders a lefthook run line for a language tool. It runs command only where

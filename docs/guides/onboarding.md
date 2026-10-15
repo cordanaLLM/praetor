@@ -246,6 +246,11 @@ a Go library.
   `.gosec.json`, `Dockerfile`) under each pinned path; the list is built from the audit's own
   repository-level lists (`flavor.ScopedPinRemedy`, `internal/flavor/not_applicable_test.go`). To
   scaffold one flavor, pin it once without a path (`internal/flavor/pins_apply_test.go`).
+- The Go flavor's Security Scan workflow (`templates/go/security-go.yml.tmpl`) runs govulncheck
+  and gosec on pull requests (with the draft guard), pushes to main, merge groups and its
+  schedule. It installs both scanners through `tools/go/go.mod` when that module declares them,
+  and otherwise in a throwaway module pinned to the versions of the engine's own tools module,
+  never `@latest`, so an adoption pull request fails on the same findings main would (#1371).
 - `flavor apply` also renders the branch ruleset (`.github/rulesets/main.json`) and lists every
   other required setting with the command that writes it
   ([flavor settings](archetype-authoring.md#flavor-settings-the-ruleset-is-rendered-the-rest-are-deferred)).

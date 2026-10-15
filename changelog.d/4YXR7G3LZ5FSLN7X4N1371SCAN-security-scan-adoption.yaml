@@ -1,0 +1,3 @@
+type: fixed
+title: Go Security Scan adoption runs the hosted pull-request gate and installs pinned scanners with or without a repository tools module
+issue: '#1371'

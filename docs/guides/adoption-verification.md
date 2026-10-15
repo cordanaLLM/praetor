@@ -1021,10 +1021,45 @@ fails this way until the toolchain that scans is upgraded:
 - Until you can upgrade, a `not_affected` statement for the advisory is the stopgap:
   `vulnerable_code_not_present`, with an impact statement naming the affected packages the build
   does not import. After the upgrade the gate prints the statement as unused; remove it then.
-- The security workflow the `go-service` flavor writes
-  ([`templates/go/security-go.yml.tmpl`](https://github.com/cordanaLLM/praetor/blob/main/templates/go/security-go.yml.tmpl))
-  does not run the gate yet: it still runs `govulncheck ./...`, which fails on a called symbol
-  only. In an adopter repository these findings surface through `gate run` and the pre-push job.
+- The security workflow the `go-service` flavor writes runs `govulncheck ./...`, which fails on a
+  called symbol only. The fuller package/module/VEX judgement remains in `gate run` and the
+  pre-push job.
+
+#### Adopted Go Security Scan
+
+The `go-service` flavor writes `.github/workflows/security.yml` from
+[`templates/go/security-go.yml.tmpl`](https://github.com/cordanaLLM/praetor/blob/main/templates/go/security-go.yml.tmpl).
+The workflow runs before merge on pull request `opened`, `synchronize`, `reopened` and
+`ready_for_review`; on a push to `main`; for a merge group; and daily at 04:00 UTC. A draft fails
+in the hosted gate's first step and marking it ready starts a replacement run. The trigger and
+draft steps render from `internal/ghworkflow/hostedgate.go`, the same source as the other hosted
+gates, rather than carrying a second trigger definition.
+
+The workflow never resolves a scanner through `@latest`. A repository whose
+`tools/go/go.mod` declares both scanners uses its own pinned module:
+
+```bash
+go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
+```
+
+Otherwise the job creates a throwaway module below `$RUNNER_TEMP`, adds the exact
+`golang.org/x/vuln`, `github.com/securego/gosec/v2` and `golang.org/x/tools` versions required by
+Praetor's `tools/go/go.mod`, downloads the selected graph so Go 1.27 has every package checksum,
+and installs both commands from that module. Module selection raises the scanners' shared
+`golang.org/x/tools` to the Go 1.27.2-compatible pin. The version constants live beside the
+template context in `templates/embed.go`; `TestGoSecurityVersionsMatchToolsModule` fails with an
+update instruction when Renovate moves the tools module without them.
+
+Praetor does not create or alter an adopter's tools module. A missing or partial tools module is
+the normal fallback case, so flavor apply still writes the workflow and flavor audit accepts it
+as the managed template.
+
+The adopted workflow runs `govulncheck ./...` and `gosec -conf .gosec.json ./...`. It scans the
+whole module with gosec: the narrower `.config/lefthook/scripts/security_scope.py` wrapper is an
+engine file that adoption does not ship. An unedited workflow written before this trigger and
+pinned-install change is a recorded prior rendering and refreshes to the correct variant on the
+next adoption. A workflow the adopter edited is kept and reported; use the flavor apply force
+path only when replacement is intended.
 
 A toolchain whose version carries a suffix, such as `go1.27.1-X:nodwarf5` from a `GOEXPERIMENT`
 build, gives govulncheck no version it can read (`GoTagToSemver` in

@@ -230,8 +230,10 @@ func TestAuditBuildWarningsBoundaries(t *testing.T) {
 	}
 }
 
-// Every workflow template a flavor scaffolds passes the gate it is audited by: a fresh adoption
-// must not fail its own audit. The Rust template denies warnings for its test build too.
+// Every workflow template set a flavor scaffolds passes the gate it is audited by: a fresh
+// adoption must not fail its own audit. Go security is audited beside the Go CI workflow it is
+// always emitted with, whose vet step binds the repository build; Rust denies warnings for its
+// test build too.
 func TestAuditBuildWarningsPassesTheScaffoldedWorkflows(t *testing.T) {
 	names, err := templates.Names()
 	if err != nil {
@@ -246,7 +248,18 @@ func TestAuditBuildWarningsPassesTheScaffoldedWorkflows(t *testing.T) {
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
 		}
-		out, err := auditBuildWarningsIn(t, map[string]string{".github/workflows/ci.yml": body})
+		workflows := map[string]string{".github/workflows/ci.yml": body}
+		if name == "go/security-go.yml.tmpl" {
+			ci, renderErr := templates.RenderFile("go/ci-go.yml.tmpl", templates.Context{RepoName: "widget", Owner: "acme"})
+			if renderErr != nil {
+				t.Fatalf("render Go CI companion: %v", renderErr)
+			}
+			workflows = map[string]string{
+				".github/workflows/ci.yml":       ci,
+				".github/workflows/security.yml": body,
+			}
+		}
+		out, err := auditBuildWarningsIn(t, workflows)
 		if err != nil {
 			t.Errorf("%s fails the gate it is audited by: %v", name, err)
 		}
