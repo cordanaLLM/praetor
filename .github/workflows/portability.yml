@@ -194,22 +194,26 @@ jobs:
       # status fails the step; the file is written even when the job is cancelled midway. The file
       # goes to the runner's temporary folder, never the checkout: a test that copies the tracked
       # tree with its untracked files (internal/identity) refused the 12 MB file in the checkout.
-      # internal/adopt runs on its own after the other packages: on Windows it reached the bound,
-      # so there it gets a longer one under a dated test-timeout exception in .standards.yaml
-      # that fails the audit once it expires or excuses nothing (#1381). Both runs always go; the
-      # step fails when either does.
+      # internal/adopt and internal/operationalsync run on their own after the other packages:
+      # on Windows the adopt suite takes about 31 minutes since #166 runs its hermetic fixtures
+      # there, and operationalsync's identity suite runs that whole suite again nested over an
+      # overlaid copy. There they get a longer bound under a dated test-timeout exception in
+      # .standards.yaml that fails the audit once it expires or excuses nothing (#1381). Both
+      # runs always go; the step fails when either does.
       - name: Test Every Package
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: |
-          adopt=$(go list ./internal/adopt)
-          # A read loop, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
+          long=$(go list ./internal/adopt ./internal/operationalsync)
+          # Read loops, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF "$adopt")
+          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF "$long")
+          longs=()
+          while IFS= read -r package; do longs+=("$package"); done <<< "$long"
           {
             status=0
             go test -json -timeout 30m "${packages[@]}" || status=$?
-            go test -json -timeout "$ADOPT_TEST_TIMEOUT" "$adopt" || status=$?
+            go test -json -timeout "$LONG_TEST_TIMEOUT" "${longs[@]}" || status=$?
             exit "$status"
           } | tee "$RUNNER_TEMP/go-test-$RUNNER_OS.json" | "$PYTHON" -B -u -c 'import json, sys
           for line in sys.stdin:
@@ -218,7 +222,7 @@ jobs:
                   sys.stdout.write(event.get("Output", ""))'
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
-          ADOPT_TEST_TIMEOUT: ${{ matrix.name == 'Windows' && '60m' || '30m' }}
+          LONG_TEST_TIMEOUT: ${{ matrix.name == 'Windows' && '60m' || '30m' }}
 
       - name: Upload Per-Test Timing
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
