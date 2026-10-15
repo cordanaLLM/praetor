@@ -329,8 +329,9 @@ every text a release shipped is recorded with its digest (`priorCheckpointDigest
 `internal/adopt/checkpoint.go`, reproduced by `internal/adopt/testdata/checkpoint`). A change
 to the script records its new digest in the same change. The current script judges a re-run of
 a hosted check by its latest run on the head, and on a draft reads a hosted gate's failure that
-carries exactly the draft annotation as `draft_pending` rather than `failed`;
-[checkpoint cadence](checkpoint-cadence.md) states both rules.
+carries exactly the draft annotation as `draft_pending` rather than `failed`, and defers inside a
+detached job that has neither a push transport nor a forge token;
+[checkpoint cadence](checkpoint-cadence.md#detached-jobs-that-cannot-publish) states these rules.
 
 ## The engine the hooks run
 

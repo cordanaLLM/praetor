@@ -146,6 +146,30 @@ run `praetorctl state sync .` explicitly. Generated adoptee bundles still need
 their own compatible CLI/state-job bootstrap; this repository's wiring does not
 prove native activation or freshness enforcement for every adopter.
 
+### Detached jobs that cannot publish
+
+A job that a session hands to another coding client in a sandbox runs the same Stop checkpoint,
+but it has no way to publish: the sandbox carries no push transport and no forge token. The
+checkpoint defers inside such a job instead of asking it to commit, push or open a draft pull
+request, and the session that launched the job commits its result. Three conditions must all
+hold, or the checkpoint behaves as everywhere else:
+
+- `PRAETOR_DETACHED_JOB` is set; the job runner sets it to the job's label;
+- the remote's push transport is disabled: ssh with a `GIT_SSH_COMMAND` whose program is
+  `false`, or https with terminal prompts off and no credential helper;
+- no forge token is present: no `GH_TOKEN`, no `GITHUB_TOKEN` and no gh `hosts.yml`.
+
+The marker alone, or a sandbox that only looks closed, changes nothing. The deferral is decided
+before the checkpoint branch requirement, because a job never publishes from its own branch. The
+result carries `deferred: true`, the reason, and `publication_status: deferred_detached_job`. The
+agent adapter prints the reason as a message that does not block. The `agent-state-stop` job above
+still runs first, so a broken or missing ledger still blocks
+(`_detached_job_deferral` in `.config/lefthook/scripts/checkpoint.py`;
+`test_detached_job_without_ssh_transport_or_forge_token_defers`,
+`test_detached_job_with_ssh_transport_keeps_commit_due` and
+`test_detached_job_with_forge_token_keeps_commit_due` in
+`.config/lefthook/scripts/test_checkpoint.py`).
+
 Review the exact project definitions through the client's native hook discovery
 and trust flow. For Codex, `scripts/dev_codex_hooks.py` also supports inspection
 and reviewed activation; it does not configure other clients. Configuration

@@ -103,6 +103,7 @@ func printCoreCommands() {
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
 	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
 	fmt.Println("  hiss               Inspect and verify declared HISS enforcement evidence")
+	fmt.Println("  rules              Audit declared rule enforcement classes and evidence pointers")
 	fmt.Println("  hook               Serve one agent-hook event: praetorctl hook <client> <event>")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
@@ -248,6 +249,7 @@ func coreCommandTable() map[string]commandFunc {
 		"exceptions":               runExceptions,
 		"dedupe":                   runDedupe,
 		"hiss":                     runHiss,
+		"rules":                    runRules,
 		"hook":                     runHook,
 		"models":                   runModels,
 		"operational":              runOperational,

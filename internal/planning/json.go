@@ -46,5 +46,8 @@ func normalizeEmptyDependencies(draft *Draft) {
 		if len(draft.Steps[index].DependsOn) == 0 {
 			draft.Steps[index].DependsOn = []string{}
 		}
+		if draft.Steps[index].Experiment != nil && len(draft.Steps[index].Experiment.ProtectedOutcomes) == 0 {
+			draft.Steps[index].Experiment.ProtectedOutcomes = []string{}
+		}
 	}
 }
