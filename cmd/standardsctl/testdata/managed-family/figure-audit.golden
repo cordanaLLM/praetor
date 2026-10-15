@@ -28,7 +28,7 @@ stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, 
 stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == disabled retains figure asset
 stdout ""
-error [FAIL] Disabled documentation facet retains Praetor asset tools/figures/dist/player.js
+error [FAIL] Disabled documentation facet retains Praetor asset tools/figures/player/player.js
 == disabled retains attribute block
 stdout ""
 error [FAIL] Disabled documentation facet retains the Praetor .gitattributes block: it holds more than the DevContainer rule, or is not at the end of the file; run 'praetorctl adopt'

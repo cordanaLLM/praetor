@@ -459,7 +459,7 @@ test('build and the checks need Node only: the engine imports builtins and relat
 });
 
 // ---------------------------------------------------------------------------------------------
-// The committed player (bundle.mjs, tools/figures/dist/)
+// The committed player (bundle.mjs, tools/figures/player/)
 // ---------------------------------------------------------------------------------------------
 
 test('bundle.mjs takes no argument or --check, nothing else', async () => {
