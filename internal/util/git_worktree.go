@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -204,8 +205,11 @@ func inspectGitDirectoryEntry(gitPath string) (gitEntry, error) {
 	return gitEntry{state: state, stopsWalk: accepted}, err
 }
 
-// gitAcceptsDirectory mirrors git's is_git_directory: objects/ and refs/ are directories
-// and HEAD passes validateHeadRef. A missing entry rejects; any other failure propagates.
+// gitAcceptsDirectory mirrors git's is_git_directory: objects/ and refs/ pass
+// access(X_OK) and HEAD passes validateHeadRef. On POSIX that makes them searchable
+// directories; Git for Windows' access ignores X_OK and asks only that the entry exists,
+// so a file named objects passes there (#1225, probed against git 2.56.0.windows.2). A
+// missing entry rejects; any other failure propagates.
 func gitAcceptsDirectory(gitPath string) (bool, error) {
 	for _, name := range []string{"objects", "refs"} {
 		sub, err := os.Stat(filepath.Join(gitPath, name))
@@ -215,7 +219,7 @@ func gitAcceptsDirectory(gitPath string) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("stat git %s: %w", name, err)
 		}
-		if !sub.IsDir() {
+		if !sub.IsDir() && runtime.GOOS != "windows" {
 			return false, nil
 		}
 	}
@@ -242,6 +246,11 @@ func validateHeadRef(headPath string) (bool, error) {
 		target, err := os.Readlink(headPath)
 		if err != nil {
 			return false, fmt.Errorf("readlink git HEAD: %w", err)
+		}
+		// Windows stores a symlink target with backslashes, and Git for Windows reads
+		// refs\heads\main as refs/heads/main (#1225).
+		if runtime.GOOS == "windows" {
+			target = filepath.ToSlash(target)
 		}
 		return strings.HasPrefix(target, "refs/"), nil
 	}
