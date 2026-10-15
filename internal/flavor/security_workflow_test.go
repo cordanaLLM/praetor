@@ -394,7 +394,11 @@ func localVulnerabilityDatabase(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}).String()
+	path := filepath.ToSlash(abs)
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path // a Windows drive path, D:/...: file:///D:/..., not a host named D:
+	}
+	return (&url.URL{Scheme: "file", Path: path}).String()
 }
 
 func assertGosecFindsG101(t *testing.T, ctx context.Context, binDir string) {
