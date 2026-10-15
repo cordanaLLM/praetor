@@ -376,7 +376,7 @@ jobs:
       # TypeScript arrive as per-platform npm optional dependencies, so this leg proves the
       # locked --ignore-scripts install works, that a rebuild is byte-identical to the committed
       # SVG and JSON, that each platform's esbuild rebuilds the committed player in
-      # tools/figures/dist/ byte for byte from the lock within its budget (the player adopters
+      # tools/figures/player/ byte for byte from the lock within its budget (the player adopters
       # receive, ADR-0016 section 3), and that the Node figure checks and their tests pass, on
       # each OS (the hashed files and the player are pinned to LF by the managed attribute block
       # at the end of .gitattributes). The Chromium smoke test needs a built site and runs in
