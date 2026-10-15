@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
 const (
@@ -30,7 +31,18 @@ type PrefetchReport struct {
 // context timeout. Repositories without a go.mod are not Go repositories: the stage is
 // reported as skipped instead of rejecting a conforming polyglot repository.
 func PrefetchDependencies(ctx context.Context, repoDir string) (*PrefetchReport, error) {
-	return prefetchDependencies(ctx, repoDir, util.RunCommand)
+	if ctx == nil {
+		return nil, fmt.Errorf("prefetch: context cannot be nil")
+	}
+	modules, err := apiassets.TrackedModuleFiles(ctx, repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("prefetch: discover tracked Go modules: %w", err)
+	}
+	if len(modules) == 0 {
+		return &PrefetchReport{Skipped: true}, nil
+	}
+	moduleDir := filepath.Join(repoDir, filepath.Dir(filepath.FromSlash(modules[0])))
+	return prefetchDependencies(ctx, moduleDir, util.RunCommand)
 }
 
 // prefetchDependencies is PrefetchDependencies with the command runner injected, so the gate
@@ -45,10 +57,6 @@ func prefetchDependencies(ctx context.Context, repoDir string, run commandRunner
 	}
 
 	start := time.Now()
-	if !util.FileExists(filepath.Join(repoDir, "go.mod")) {
-		return &PrefetchReport{Skipped: true, Duration: time.Since(start)}, nil
-	}
-
 	pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
 	defer cancel()
 

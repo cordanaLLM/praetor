@@ -1,5 +1,6 @@
 # Lefthook Configuration (HISS Governance)
-# Go and Rust jobs follow the detected languages; both when none was detected.
+# Go jobs are always present so later tracked modules need no re-adoption;
+# Rust follows the detected languages.
 # Governance commands fail closed: a failing or missing praetorctl blocks the
 # commit or push. The pre-commit audit runs --offline; the pre-push audit
 # reads the forge's live Actions state when a token and a github.com origin

@@ -120,6 +120,10 @@ func (c *stageConfig) noteVerified(part languagePart) {
 func withCargo(ctx context.Context, cfg *stageConfig, goPart languagePart,
 	cargo func(context.Context, *stageConfig) (string, error)) (string, error) {
 	cfg.noteVerified(goPart)
+	modules, err := cfg.goModules(ctx)
+	if err != nil {
+		return "", err
+	}
 	if !util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)) || isFailure(goPart.err) {
 		return goPart.msg, goPart.err
 	}
@@ -129,7 +133,7 @@ func withCargo(ctx context.Context, cfg *stageConfig, goPart languagePart,
 	}
 	cargoPart := languagePart{language: languageCargo, msg: msg, err: err}
 	cfg.noteVerified(cargoPart)
-	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
+	if len(modules) == 0 {
 		return combineParts(cargoPart)
 	}
 	return combineParts(goPart, cargoPart)
@@ -174,12 +178,16 @@ func combineParts(parts ...languagePart) (string, error) {
 // language: the prefetch, security and test stages were each not applicable or skipped. Under
 // RunOptions.AdmitUnsupported a root holding no toolchain marker is not applicable instead: the
 // same reason, ending in admittedUnsupportedNote, and cfg.rep.AdmittedUnverified set.
-func requireVerification(cfg *stageConfig) error {
+func requireVerification(ctx context.Context, cfg *stageConfig) error {
 	if len(cfg.verified) > 0 {
 		return nil
 	}
-	refusal := nothingVerifiedError(cfg.repoDir)
-	if !cfg.admitUnsupported || holdsToolchainMarker(cfg.repoDir) {
+	refusal := nothingVerifiedError(cfg)
+	holdsMarker, err := holdsToolchainMarker(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if !cfg.admitUnsupported || holdsMarker {
 		return refusal
 	}
 	cfg.rep.AdmittedUnverified = true
@@ -191,13 +199,21 @@ func requireVerification(cfg *stageConfig) error {
 
 // holdsToolchainMarker reports whether the repository root holds the marker of a language whose
 // toolchain the gate runs: go.mod for Go, Cargo.lock for Cargo.
-func holdsToolchainMarker(repoDir string) bool {
-	return util.FileExists(filepath.Join(repoDir, "go.mod")) || util.FileExists(filepath.Join(repoDir, CargoLockFile))
+func holdsToolchainMarker(ctx context.Context, cfg *stageConfig) (bool, error) {
+	if ctx == nil && !cfg.modulesDiscovered {
+		return false, fmt.Errorf("%w: marker check has no discovery context", ErrModuleDiscoveryMissing)
+	}
+	modules, err := cfg.goModules(ctx)
+	if err != nil {
+		return false, err
+	}
+	return len(modules) > 0 || util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)), nil
 }
 
 // nothingVerifiedError names why nothing ran: a Cargo.lock whose stages could not run here, the
 // languages at the repository root the gate runs no toolchain for, or that it recognises none.
-func nothingVerifiedError(repoDir string) error {
+func nothingVerifiedError(cfg *stageConfig) error {
+	repoDir := cfg.repoDir
 	notes := make([]string, 0, 2)
 	if util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
 		notes = append(notes, "Cargo.lock is present, but no Cargo stage ran here; each stage's reason says why")

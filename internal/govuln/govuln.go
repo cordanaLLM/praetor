@@ -69,6 +69,9 @@ type Options struct {
 	// Dir is the root of the Go module to scan. Its manifest names the OpenVEX document
 	// (config.RepositoryGoVEXPath).
 	Dir string
+	// VEXRoot is the repository root whose manifest names the shared OpenVEX document. Empty
+	// uses Dir, preserving the single-module caller behavior.
+	VEXRoot string
 	// Scanner is the command that starts govulncheck, such as
 	// ["go", "tool", "-modfile=tools/go/go.mod", "govulncheck"]; ScanArgs follow it. Empty runs
 	// DefaultScanner.
@@ -103,7 +106,11 @@ func Check(ctx context.Context, opts Options) (*Report, error) {
 	if opts.Now != nil {
 		now = opts.Now
 	}
-	vexPath, err := config.RepositoryGoVEXPath(opts.Dir)
+	vexRoot := opts.VEXRoot
+	if vexRoot == "" {
+		vexRoot = opts.Dir
+	}
+	vexPath, err := config.RepositoryGoVEXPath(vexRoot)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s does not say which document to read: %w", ErrInvalidVEX, config.ManifestFileName, err)
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // pipelineCall is what a stubbed gating pipeline was handed.
@@ -161,6 +162,17 @@ func writeMarkers(t *testing.T, markers ...string) string {
 	dir := t.TempDir()
 	for _, marker := range markers {
 		writeFixtureFile(t, dir, marker, "\n")
+	}
+	env := testsupport.HermeticGitEnv(t)
+	if out, err := runFixtureGit(t, dir, env, "init", "-q"); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	addArgs := append([]string{"add", "--"}, markers...)
+	if out, err := runFixtureGit(t, dir, env, addArgs...); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	if out, err := runFixtureGit(t, dir, env, "commit", "-q", "-m", "fixture markers"); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
 	}
 	return dir
 }

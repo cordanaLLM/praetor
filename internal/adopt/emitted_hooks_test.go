@@ -103,11 +103,13 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			t.Fatalf("%s: the pre-push gate was not the strict one: %v", name, gate["run"])
 		}
 		gate["run"] = lefthookGovernedCommand(prePushGateArgs)
+		govet := decodedJob(t, prior, "pre-commit", "govet")
+		govet["run"] = lefthookGovernedCommand("go vet")
 		security := decodedJob(t, prior, "pre-push", "security")
 		if security["run"] != goModuleCommand("govulncheck", optionalToolCommand("govulncheck", "./...")) {
 			t.Fatalf("%s: the pre-push security job did not run govulncheck ./...: %v", name, security["run"])
 		}
-		security["run"] = goModuleCommand(govuln.DefaultScanner, requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs)))
+		security["run"] = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
 			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"

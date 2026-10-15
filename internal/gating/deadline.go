@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/util"
+	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
 // OtherStagesAllowance is the part of a gate run's deadline granted to every stage except the
@@ -97,16 +98,49 @@ func ResolveRunBudget(raw string) RunBudget {
 // bound of its own. A deadline sized for one suite let the Go suite and the Cargo commands spend
 // the time the Cargo suite needed, so the run deadline cut it however high
 // PRAETOR_TEST_STAGE_TIMEOUT was raised: the #314 failure, back for mixed repositories.
-func ResolveRepoRunBudget(raw, repoDir string) RunBudget {
+func ResolveRepoRunBudget(raw, repoDir string) (RunBudget, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return resolveRepoRunBudget(ctx, raw, repoDir)
+}
+
+func resolveRepoRunBudget(ctx context.Context, raw, repoDir string) (RunBudget, error) {
 	budget := ResolveRunBudget(raw)
+	count, err := trackedGoModuleCount(ctx, repoDir)
+	if err != nil {
+		return budget, err
+	}
 	if !util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
-		return budget
+		if count > 0 {
+			budget.Suites = count
+		}
+		return budget, nil
 	}
 	budget.Allowance += CargoStagesAllowance
-	if util.FileExists(filepath.Join(repoDir, "go.mod")) {
+	if count > 0 {
+		budget.Suites = count
 		budget.Suites++
 	}
-	return budget
+	return budget, nil
+}
+
+func trackedGoModuleCount(ctx context.Context, repoDir string) (int, error) {
+	modules, err := apiassets.TrackedModuleFiles(ctx, repoDir)
+	if err != nil {
+		return 0, fmt.Errorf("discover tracked Go modules for run budget: %w", err)
+	}
+	count := 0
+	for index := 0; index < len(modules) && index < apiassets.MaxTrackedModules; index++ {
+		moduleDir := filepath.Join(repoDir, filepath.Dir(filepath.FromSlash(modules[index])))
+		packages, listErr := ModulePackageCount(ctx, util.RunCommand, moduleDir)
+		// A failed listing counts as a suite so this budget can only be too large, never too
+		// small. The Go stages report the listing failure themselves; this 30-second budget
+		// only sizes the run and stays bounded by MaxTrackedModules.
+		if listErr != nil || packages > 0 {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // RunPlan is what a run over one repository decides before any stage starts: its budget, and
@@ -132,10 +166,14 @@ type plannedExecutionKey struct{}
 // reserves devcontainer.ImageBuildTimeout exactly when the run will build the repository's
 // devcontainer. A dry run builds nothing, so it reserves nothing and asks no container runtime.
 func PlanRun(repoDir string, dryRun bool) RunPlan {
-	budget := stageBudget(repoDir)
 	ctx, cancel := context.WithTimeout(context.Background(), devcontainerPlanTimeout)
 	defer cancel()
 	plan, reason := planDevcontainer(ctx, repoDir, dryRun, hostMachine())
+	budget, discoveryErr := resolveRepoRunBudget(ctx, os.Getenv(TestStageTimeoutEnv), repoDir)
+	if discoveryErr != nil {
+		plan = nil
+		reason = "Go module discovery failed: " + discoveryErr.Error()
+	}
 	if plan != nil {
 		budget.Devcontainer = devcontainer.ImageBuildTimeout
 	}
@@ -170,8 +208,8 @@ func EnvRunBudget(repoDir string, dryRun bool) RunBudget {
 
 // stageBudget is the budget sized to repoDir from PRAETOR_TEST_STAGE_TIMEOUT alone: the stage bound
 // and note a test stage runs under, which no devcontainer plan changes.
-func stageBudget(repoDir string) RunBudget {
-	return ResolveRepoRunBudget(os.Getenv(TestStageTimeoutEnv), repoDir)
+func stageBudget(ctx context.Context, repoDir string) (RunBudget, error) {
+	return resolveRepoRunBudget(ctx, os.Getenv(TestStageTimeoutEnv), repoDir)
 }
 
 // RunDeadlineError is the cause a run context carries once its deadline has fired. It names the

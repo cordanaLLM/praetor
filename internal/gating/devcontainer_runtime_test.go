@@ -44,6 +44,11 @@ func main() {
 			fmt.Println(map[string]string{"CGO_ENABLED": "1", "CC": "gcc"}[args[1]])
 			return
 		}
+		if len(args) == 5 && args[0] == "list" && args[1] == "-find" && args[2] == "-f" &&
+			args[3] == "{{.ImportPath}}" && args[4] == "./..." {
+			fmt.Println("example.test/pkg")
+			return
+		}
 		if err := test(args); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(3)
