@@ -2437,7 +2437,7 @@ class InstallRefresh(unittest.TestCase):
         self.assertEqual(
             out,
             "engine install: NOT refreshed, 7 commits behind 8d2d46183: checkout has modified tracked files; "
-            "fix it, then run make dev-install\n",
+            "next: clean checkout, run make dev-install\n",
         )
 
     def test_post_merge_refreshes_context_then_install(self):
