@@ -59,10 +59,13 @@ func validateClaudeEnvelope(record claudeRecord) error {
 
 func validateClaudeMetadata(kind string) error {
 	switch kind {
-	case "bridge-session", "queue-operation", "attachment", "file-history-snapshot", "atis-latch", "last-prompt", "ai-title", "file-history-delta", "system", "mode", "history-suppression", "frame-link", "artifact-comment-monitor", "artifact-autoreact-ledger", "progress", "summary":
+	case "bridge-session", "queue-operation", "attachment", "file-history-snapshot", "atis-latch", "last-prompt", "ai-title", "file-history-delta", "system", "mode", "history-suppression", "frame-link", "artifact-comment-monitor", "artifact-autoreact-ledger", "progress", "summary", "cost-state":
 		return nil
 	default:
-		return fmt.Errorf("unsupported claude record type")
+		// The value is not repeated: a record type comes from a private file, and errors must
+		// not echo its content (TestClaudeTranscriptErrorsDoNotEchoPrivateSourceCategories).
+		// The caller's error carries the line, so the operator reads the type there (#1362).
+		return fmt.Errorf("unsupported claude record type (value not shown; read the type field at this line)")
 	}
 }
 
