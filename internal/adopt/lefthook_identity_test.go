@@ -2,9 +2,11 @@ package adopt
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -49,8 +51,14 @@ func TestPriorLefthookDigests_Positive_ReproducedByFixtures(t *testing.T) {
 // Positive: an earlier Praetor rendering is migrated to the current one without --force and
 // then activated, instead of being treated as foreign and never fixed (BUG-859).
 func TestAdopt_Positive_PriorLefthookMigratedAndActivated(t *testing.T) {
-	for name, data := range readPriorLefthookFixtures(t) {
-		repoPath, rep := adoptLefthookFixture(t, "prior-"+strings.TrimSuffix(name, ".lefthook.yml"), string(data), false)
+	fixtures := readPriorLefthookFixtures(t)
+	names := slices.Sorted(maps.Keys(fixtures))
+	for _, name := range names {
+		data := fixtures[name]
+		// The first rendering migrates in a whole adoption, every other one through the git-hooks
+		// step alone (adoptOrStep, office-w19a-windows-20261015-d, #1381).
+		repoPath, rep := stepFixture(t, "prior-"+strings.TrimSuffix(name, ".lefthook.yml"), map[string]string{lefthookFile: string(data)},
+			name == names[0], reconcileGitHooks)
 		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() {
 			t.Errorf("%s: not migrated to the current rendering:\n%s", name, got)
 		}

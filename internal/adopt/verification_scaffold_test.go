@@ -22,18 +22,21 @@ func TestVerificationLegacyMigrationAndCustomPreservation(t *testing.T) {
 		"multi-target":      "verify-all other:\n\t@echo custom\n",
 	} {
 		t.Run(name, func(t *testing.T) {
+			// One fixture runs whole adoptions, the others the makefile step alone
+			// (adoptOrStep, office-w19a-windows-20261015-d, #1381).
+			whole := name == "old-go"
 			root := newTestRepo(t, name)
 			mustWrite(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = 'fixture'\nversion = '0.1.0'\n")
 			mustWrite(t, filepath.Join(root, "Makefile"), existing)
 			opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t), DryRun: true}
 			before := snapshotTree(t, root)
-			preview, err := Adopt(t.Context(), opts)
+			preview, err := adoptOrStep(t, opts, whole, reconcileMakefile)
 			if err != nil {
 				t.Fatal(err)
 			}
 			assertTreeUnchanged(t, before, snapshotTree(t, root))
 			opts.DryRun = false
-			applied, err := Adopt(t.Context(), opts)
+			applied, err := adoptOrStep(t, opts, whole, reconcileMakefile)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -61,7 +64,7 @@ func TestVerificationLegacyMigrationAndCustomPreservation(t *testing.T) {
 				}
 			}
 			after := snapshotTree(t, root)
-			if _, err := Adopt(t.Context(), opts); err != nil {
+			if _, err := adoptOrStep(t, opts, whole, reconcileMakefile); err != nil {
 				t.Fatal(err)
 			}
 			assertTreeUnchanged(t, after, snapshotTree(t, root))

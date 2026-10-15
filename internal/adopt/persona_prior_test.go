@@ -3,10 +3,12 @@ package adopt
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -63,9 +65,15 @@ func TestPriorPersonaDigests_Boundary_CurrentTextsRecorded(t *testing.T) {
 // Positive: every earlier persona text is refreshed on a plain run through the confined writer
 // and reported as a refresh; the current text is verified, never refreshed.
 func TestAdopt_Positive_PriorPersonaRefreshedOnPlainRun(t *testing.T) {
-	for _, persona := range generatedPersonas() {
-		for name, data := range readFixtureDir(t, personaFixtureDir(persona.rel)) {
-			repoPath, rep := adoptPersonaFixture(t, persona.rel, string(data), false)
+	for index, persona := range generatedPersonas() {
+		fixtures := readFixtureDir(t, personaFixtureDir(persona.rel))
+		names := slices.Sorted(maps.Keys(fixtures))
+		for _, name := range names {
+			data := fixtures[name]
+			// One fixture refreshes in a whole adoption, every other one through the
+			// agent-definitions step alone (adoptOrStep, office-w19a-windows-20261015-d, #1381).
+			repoPath, rep := stepFixture(t, "persona", map[string]string{persona.rel: string(data)},
+				index == 0 && name == names[0], reconcileAgentDefinitions)
 			want, detail := string(persona.content), "Refreshed the unedited earlier"
 			if string(data) == want {
 				detail = "verified present"

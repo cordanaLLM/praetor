@@ -43,7 +43,10 @@ func TestVerificationAssignmentIsNotAPreservedTarget(t *testing.T) {
 			root := newTestRepo(t, name)
 			mustWrite(t, filepath.Join(root, "go.mod"), "module fixture\n")
 			mustWrite(t, filepath.Join(root, "Makefile"), tc.makefile)
-			report, err := Adopt(t.Context(), AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)})
+			// One fixture runs a whole adoption, the others the makefile and editors steps alone
+			// (adoptOrStep, office-w19a-windows-20261015-d, #1381).
+			report, err := adoptOrStep(t, AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)},
+				name == "rule", makefileAndEditors)
 			if err != nil {
 				t.Fatal(err)
 			}

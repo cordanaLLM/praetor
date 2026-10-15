@@ -6,6 +6,7 @@ package adopt
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 )
 
@@ -24,4 +25,29 @@ func adoptOrStep(t *testing.T, opts AdoptOptions, whole bool, step func(context.
 		return report, err
 	}
 	return report, step(t.Context(), s)
+}
+
+// stepFixture writes files below a fresh test repository named name and runs adoptOrStep over it
+// with step, failing on an error or a report error.
+func stepFixture(t *testing.T, name string, files map[string]string, whole bool, step func(context.Context, *adoptSession) error) (string, *AdoptReport) {
+	t.Helper()
+	repoPath := newTestRepo(t, name)
+	for rel, body := range files {
+		mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(rel)), body)
+	}
+	rep, err := adoptOrStep(t, AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath}, whole, step)
+	if err != nil {
+		t.Fatalf("adopt %s: %v", name, err)
+	}
+	assertNoIssues(t, rep)
+	return repoPath, rep
+}
+
+// makefileAndEditors is the makefile step and the editors step after it, which offers the
+// verify-all rule the makefile step leaves (adoptSteps).
+func makefileAndEditors(ctx context.Context, s *adoptSession) error {
+	if err := reconcileMakefile(ctx, s); err != nil {
+		return err
+	}
+	return reconcileEditors(ctx, s)
 }
