@@ -46,7 +46,7 @@ import { FIGURES_URI, PLAYER_URI, basePath, mountFiles, publish, staticHandler }
 
 export const NAME = 'praetor-figures';
 /** The committed player files beside this module, as the MkDocs hook reads them beside itself. */
-const DIST = fileURLToPath(new URL('./dist', import.meta.url));
+const PLAYER_DIR = fileURLToPath(new URL('./player', import.meta.url));
 const LOADER_URI = `${PLAYER_URI}/loader.js`;
 /** Markdown nodes one page may hold before the walk stops (HISS-02). */
 export const MAX_NODES = 200_000;
@@ -63,7 +63,7 @@ export function rootPath(root) {
 /** The site paths of the figure files and of the player files, each with the directory it is served from. */
 export const figureMounts = (root) => [
   { uri: FIGURES_URI, dir: join(rootPath(root), ...OUT_DIR.split('/')) },
-  { uri: PLAYER_URI, dir: DIST },
+  { uri: PLAYER_URI, dir: PLAYER_DIR },
 ];
 
 /** The URL of docs/assets/figures on a site built for `base`: '/assets/figures', '/docs/assets/figures'. */
@@ -228,7 +228,7 @@ export function addFigurePlugin(config, updateConfig, options) {
 export function publishFigures(mounts, dir, logger) {
   const { copied, kept } = publish(mounts, rootPath(dir));
   for (const uri of kept) logger?.warn(`${uri}: the built site already holds this path, so the figures integration does not publish over it`);
-  if (!copied.includes(LOADER_URI) && !kept.includes(LOADER_URI)) logger?.warn(`${DIST} holds no loader.js, so every figure stays its SVG`);
+  if (!copied.includes(LOADER_URI) && !kept.includes(LOADER_URI)) logger?.warn(`${PLAYER_DIR} holds no loader.js, so every figure stays its SVG`);
   return { copied, kept };
 }
 

@@ -148,6 +148,12 @@ var priorDigests = map[string]string{
 	"8ead48a0270ab3c18d06a1be1fa545af576b1a92d31f023c35111bc363eef4df": Directory + "/checks.mjs",
 	"0eeb8c757e73dcb06007af467d979c275fa4a5c164ff73339985032edd90d115": Directory + "/serve.mjs",
 	"f25ec96946a63eca0aba9621d0c16553d906175e8c4243b5ca57761eaf0b5178": Directory + "/third_party/interfig/VENDOR.md",
+	// Texts that still read the player from tools/figures/dist/ after #1356 moved it.
+	"f43f86f52694396378a5ba52a405cd5566a38bd7164131813fc8c53833f528ba": Directory + "/astro.mjs",
+	"b48768908b0e088b2369ac9d0d6e797462e6609b9cca7930e6d7ba20e07d73ce": Directory + "/README.md",
+	"5fd25882376baf07f054f8e81486b98fdb049edbc8bae4301467494d0dce95a3": Directory + "/third_party/interfig/VENDOR.md",
+	"d3c1e4371141fe5ebd1eb52dac43b0a721e1956ef8d4e50a4492df6e5907b6aa": Directory + "/serve.mjs",
+	"a4a98cb1195488fbf1d7812bfb021fd5ac5f562f42dcbb2368758b6da3087b69": Directory + "/mkdocs_hook.py",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts player/loader.js player/player.js player/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md
