@@ -11,6 +11,11 @@ import (
 
 const maxSuitePages = (harvester.MaxTranscriptRecords + harvester.MaxTranscriptBatchRecords - 1) / harvester.MaxTranscriptBatchRecords
 
+// suitePageRecords is the records one ingestion page reads: the harvester's batch bound. The
+// pagination test lowers it, so two pages need eleven records instead of 10,001: each record is
+// a durable cache file, and on Windows the 10,001-record run took minutes (office-w19a-c1).
+var suitePageRecords = harvester.MaxTranscriptBatchRecords
+
 // SuiteReplayPass preserves every actual page, including partial cache failures.
 type SuiteReplayPass struct {
 	Pages          []*harvester.TranscriptIngestReport `json:"pages"`
@@ -50,7 +55,7 @@ func verifySuiteTranscript(ctx context.Context, dir string, result *SuiteCase) e
 }
 
 func suiteTranscriptPass(ctx context.Context, source SuiteTranscript, cache string, pass *SuiteReplayPass) error {
-	opts := harvester.TranscriptIngestOptions{Format: source.Format, SourcePath: source.SourcePath, ExpectedSHA256: source.SHA256, CacheDir: cache, MaxRecords: harvester.MaxTranscriptBatchRecords}
+	opts := harvester.TranscriptIngestOptions{Format: source.Format, SourcePath: source.SourcePath, ExpectedSHA256: source.SHA256, CacheDir: cache, MaxRecords: suitePageRecords}
 	for page := 0; page < maxSuitePages; page++ {
 		report, err := harvester.IngestTranscript(ctx, opts)
 		if report != nil {
@@ -102,7 +107,7 @@ func validateSuitePage(source SuiteTranscript, pass *SuiteReplayPass, report *ha
 }
 
 func validateSuiteCounters(pass *SuiteReplayPass, report *harvester.TranscriptIngestReport) error {
-	if report.Scanned < 1 || report.Scanned > harvester.MaxTranscriptBatchRecords || report.Stored < 0 || report.AlreadyPresent < 0 || report.Skipped < 0 || report.Scanned != report.Stored+report.AlreadyPresent+report.Skipped {
+	if report.Scanned < 1 || report.Scanned > suitePageRecords || report.Stored < 0 || report.AlreadyPresent < 0 || report.Skipped < 0 || report.Scanned != report.Stored+report.AlreadyPresent+report.Skipped {
 		return errors.New("invalid transcript page counters")
 	}
 	remaining := report.TotalRecords - pass.Scanned - report.Scanned

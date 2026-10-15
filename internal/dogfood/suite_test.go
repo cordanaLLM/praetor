@@ -41,7 +41,10 @@ func suiteOptions(t *testing.T, sources ...SuiteTranscript) SuiteOptions {
 }
 
 func TestSuiteCompleteReplayAndPagination(t *testing.T) {
-	for _, records := range []int{1, 10001} {
+	const pageRecords = 10
+	defer func(records int) { suitePageRecords = records }(suitePageRecords)
+	suitePageRecords = pageRecords
+	for _, records := range []int{1, pageRecords + 1} {
 		source := suiteFixture(t, strings.Repeat(suiteFixtureRecord+"\n", records))
 		opts := suiteOptions(t, source)
 		report, err := RunSuite(context.Background(), opts)
@@ -55,7 +58,7 @@ func TestSuiteCompleteReplayAndPagination(t *testing.T) {
 		if result.Ingestion.Stored != records || result.Replay.Stored != 0 || result.Replay.AlreadyPresent != records || !result.Replay.Complete {
 			t.Fatalf("wrong replay counters: %+v", result)
 		}
-		if len(result.Ingestion.Pages) != (records+9999)/10000 {
+		if len(result.Ingestion.Pages) != (records+pageRecords-1)/pageRecords {
 			t.Fatal("pagination skipped")
 		}
 		assertSuitePrivate(t, opts.ArtifactDir)
