@@ -25,11 +25,14 @@ func TestAdoptionReconcilesManagedIgnoreRulesOnce(t *testing.T) {
 		"empty-file":            "",
 	} {
 		t.Run(name, func(t *testing.T) {
+			// One fixture runs whole adoptions, the others the git-ignore step alone
+			// (adoptOrStep, office-w19a-c1-adopt).
+			whole := name == "rule-then-later-lines"
 			root := newTestRepo(t, name)
 			path := filepath.Join(root, ".gitignore")
 			mustWrite(t, path, existing)
 			opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
-			if _, err := Adopt(t.Context(), opts); err != nil {
+			if _, err := adoptOrStep(t, opts, whole, reconcileGitIgnore); err != nil {
 				t.Fatal(err)
 			}
 			first := mustRead(t, path)
@@ -38,7 +41,7 @@ func TestAdoptionReconcilesManagedIgnoreRulesOnce(t *testing.T) {
 					t.Fatalf("rule %q appears %d times after one adoption:\n%s", rule, n, first)
 				}
 			}
-			if _, err := Adopt(t.Context(), opts); err != nil {
+			if _, err := adoptOrStep(t, opts, whole, reconcileGitIgnore); err != nil {
 				t.Fatal(err)
 			}
 			if second := mustRead(t, path); second != first {
