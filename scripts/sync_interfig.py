@@ -62,7 +62,7 @@ LISTED_DIRS = ("src", "scripts")
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 REVERT_HINT = (
     "upstream/ and vendor.json are updated; revert with: "
-    f"git checkout -- tools/figures/third_party/interfig docs/assets/figures {PLAYER_DIR.relative_to(REPO_ROOT)} && "
+    f"git checkout -- tools/figures/third_party/interfig docs/assets/figures {PLAYER_DIR.relative_to(REPO_ROOT).as_posix()} && "
     f"git clean -fd -- {UPSTREAM_REL} docs/assets/figures"
 )
 
