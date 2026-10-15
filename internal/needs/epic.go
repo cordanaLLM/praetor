@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -832,13 +833,32 @@ func WriteEpicMarkdown(ctx context.Context, epic *PreMigrationEpic, outputPath s
 		return fmt.Errorf("needs: epic output path must not be empty")
 	}
 
-	if err := util.MkdirSecure(filepath.Dir(outputPath), util.SecureDirPerm); err != nil {
+	if err := epicOutputDirectory(filepath.Dir(outputPath)); err != nil {
 		return fmt.Errorf("failed to create directory for %s: %w", outputPath, err)
 	}
 	if err := util.WriteFileAt(outputPath, []byte(renderEpicDocument(epic)), util.SecureFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	return nil
+}
+
+// epicDirectoryMaker creates a missing output directory owner-only; a test replaces it to see
+// whether WriteEpicMarkdown asked for one.
+var epicDirectoryMaker = util.MkdirSecure
+
+// epicOutputDirectory creates the output's directory owner-only when it is missing. An existing
+// directory is the caller's, a shared one included, and is never tightened (#297).
+func epicOutputDirectory(dir string) error {
+	info, err := os.Stat(dir)
+	switch {
+	case err == nil && info.IsDir():
+		return nil
+	case err == nil:
+		return fmt.Errorf("%s is not a directory", dir)
+	case !errors.Is(err, os.ErrNotExist):
+		return err
+	}
+	return epicDirectoryMaker(dir, util.SecureDirPerm)
 }
 
 // renderEpicDocument renders the checklist plus the decomposed sub-issue definitions.
