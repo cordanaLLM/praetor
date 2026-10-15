@@ -191,12 +191,14 @@ jobs:
       # runs close to the 30-minute bound on one platform can be profiled from the uploaded file
       # (internal/adopt and operationalsync on Windows). The log stays the usual text: the stream's
       # output events, streamed as they arrive. GitHub runs bash with pipefail, so go's exit
-      # status fails the step; the file is written even when the job is cancelled midway.
+      # status fails the step; the file is written even when the job is cancelled midway. The file
+      # goes to the runner's temporary folder, never the checkout: a test that copies the tracked
+      # tree with its untracked files (internal/identity) refused the 12 MB file in the checkout.
       - name: Test Every Package
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: |
-          go test -json -timeout 30m ./... | tee "go-test-$RUNNER_OS.json" | "$PYTHON" -B -u -c 'import json, sys
+          go test -json -timeout 30m ./... | tee "$RUNNER_TEMP/go-test-$RUNNER_OS.json" | "$PYTHON" -B -u -c 'import json, sys
           for line in sys.stdin:
               event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
               if event.get("Action") in ("output", "build-output"):
