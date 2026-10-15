@@ -1,18 +1,22 @@
+<%- /*
+The trigger, draft step and later-step conditions use the hosted gate rendering shared with the
+CI templates. The schedule stays because scanner advisories can change without a repository
+event. internal/flavor/security_go.go selects the adopter's scanner module when it declares both
+tools; all other repositories get the pinned throwaway module.
+*/ -%>
 ---
 name: Security Scan
 
-'on':
-  schedule:
-    - cron: '0 4 * * *'
-  push:
-    branches: [main]
-
+<% hostedGateScheduledOn %>
 jobs:
   vulncheck:
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+<% hostedGateDraftStep %>
+      - name: Checkout source<% hostedGateStepIf %>
+        uses: actions/checkout@v7
+      - name: Setup Go<% hostedGateStepIf %>
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
           # See ci.yml: setup-go's cache key carries no job name, so every job
@@ -23,7 +27,7 @@ jobs:
       # the commit, and runs past 80 columns, so yamllint's line-length rule is
       # off for the two cache steps alone.
       # yamllint disable rule:line-length
-      - name: Restore Go module cache
+      - name: Restore Go module cache<% hostedGateStepIf %>
         uses: actions/cache@v6
         with:
           path: ~/go/pkg/mod
@@ -33,7 +37,7 @@ jobs:
 
       # `vulncheck` names this job's build cache and must differ from every
       # other job's.
-      - name: Restore Go build cache
+      - name: Restore Go build cache<% hostedGateStepIf %>
         uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
@@ -43,11 +47,17 @@ jobs:
             gobuild-${{ runner.os }}-${{ runner.arch }}-vulncheck-
       # yamllint enable rule:line-length
 
-      - name: Install Tools
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-      - name: Run govulncheck
+      - name: Install Tools<% hostedGateStepIf %>
+<% if .GoSecurity.DeclaredScanners %>        run: go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
+<% else %>        run: |
+          d="$RUNNER_TEMP/scanners"
+          mkdir -p "$d"
+          cd "$d"
+          go mod init scanners
+          go get golang.org/x/vuln@<% securityGovulnVersion %> github.com/securego/gosec/v2@<% securityGosecVersion %> golang.org/x/tools@<% securityXToolsVersion %>
+          go mod download all
+          go install golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
+<% end %>      - name: Run govulncheck<% hostedGateStepIf %>
         run: govulncheck ./...
-      - name: Run gosec
+      - name: Run gosec<% hostedGateStepIf %>
         run: gosec -conf .gosec.json ./...

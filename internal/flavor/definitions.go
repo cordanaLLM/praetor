@@ -86,7 +86,14 @@ func (f *GoServiceFlavor) RequiredTemplates() []TemplateItem {
 		{Path: ".golangci.yml", Description: "Unified Go linter configuration", Source: "go/.golangci.yml.tmpl", Validator: validYAMLMapping},
 		{Path: ".gosec.json", Description: "Go security analyzer configuration", Source: "go/.gosec.json.tmpl", Validator: validJSONObject},
 		{Path: ".github/workflows/ci.yml", Description: "Continuous integration matrix", Source: "go/ci-go.yml.tmpl", Validator: validWorkflow, Prior: priorGoCIDigests},
-		{Path: ".github/workflows/security.yml", Description: "Automated vulnerability scan", Source: "go/security-go.yml.tmpl", Validator: validWorkflow},
+		{
+			Path:        ".github/workflows/security.yml",
+			Description: "Automated vulnerability scan",
+			Source:      "go/security-go.yml.tmpl",
+			Validator:   validWorkflow,
+			Resolve:     securityWorkflowFacts,
+			Prior:       priorGoSecurityDigests,
+		},
 		// Multi-stage: a golang builder compiles the binary a distroless runtime copies, so
 		// `docker build .` works from source. The single-stage body this replaced copied a
 		// prebuilt binary that nothing had put in the build context (BUG-581).

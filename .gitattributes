@@ -102,6 +102,9 @@ internal/adopt/testdata/emitted/** text eol=lf
 # take no brace expansion.
 internal/adopt/testdata/evasion/** text eol=lf
 internal/adopt/testdata/checkpoint/** text eol=lf
+# internal/flavor/testdata/security-prior holds the Security Scan texts earlier adoptions wrote; their
+# digests (priorGoSecurityDigests) are taken over these exact bytes, so a CRLF checkout must not touch them.
+internal/flavor/testdata/security-prior/** text eol=lf
 internal/adopt/testdata/personas/** text eol=lf
 
 # internal/astmerge's corpus test splits testdata/probe_corpus.txt into cases on "\n" and

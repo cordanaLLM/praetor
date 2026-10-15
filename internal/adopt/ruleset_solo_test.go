@@ -125,17 +125,18 @@ func adoptSoloRepository(t *testing.T, name, reviewMode string) (string, string)
 
 // Positive: a single-maintainer repository with path-filtered CI adopts a ruleset its one
 // maintainer can merge under: no approval, no code-owner review, the repository admin role as a
-// pull-request bypass actor, and the aggregate merge gate as the only required check (#76). The
-// planner and the lane it gates are covered by the gate, which fails when either failed or was
-// cancelled. The audit accepts the file adoption wrote, because both render it the same way.
+// pull-request bypass actor, the aggregate merge gate for the path-filtered CI lanes, and the Go
+// Security Scan's vulncheck job as required checks (#76, #1371). The planner and the lane it gates
+// are covered by the merge gate, which fails when either failed or was cancelled. The audit
+// accepts the file adoption wrote, because both render it the same way.
 func TestAdopt_Positive_SoloPathFilteredRulesetIsMergeable(t *testing.T) {
 	repo, written := adoptSoloRepository(t, "solo-path-filtered", "single_maintainer")
 	got := parseSoloRuleset(t, written)
 	if !got.hasPRRule || got.approvals != 0 || got.codeOwner {
 		t.Fatalf("single_maintainer must render 0 approvals without code-owner review, got %+v\n%s", got, written)
 	}
-	if want := []string{"Merge gate"}; !slices.Equal(got.contexts, want) {
-		t.Fatalf("the proven merge gate must be the only required check, got %v, want %v", got.contexts, want)
+	if want := []string{"Merge gate", "vulncheck"}; !slices.Equal(got.contexts, want) {
+		t.Fatalf("the merge and security gates must be required, got %v, want %v", got.contexts, want)
 	}
 	if want := []soloBypassActor{{ActorID: 5, ActorType: "RepositoryRole", BypassMode: "pull_request"}}; !slices.Equal(got.bypass, want) {
 		t.Fatalf("single_maintainer must let the admin role bypass on pull requests, got %+v, want %+v", got.bypass, want)
@@ -163,8 +164,8 @@ func TestAdopt_Negative_IndependentReviewModeKeepsApprovals(t *testing.T) {
 	if len(got.bypass) != 0 || strings.Contains(written, "bypass_actors") {
 		t.Fatalf("independent review must render no bypass actor, got %+v", got.bypass)
 	}
-	if want := []string{"Merge gate"}; !slices.Equal(got.contexts, want) {
-		t.Fatalf("the merge gate is required whatever the review mode, got %v, want %v", got.contexts, want)
+	if want := []string{"Merge gate", "vulncheck"}; !slices.Equal(got.contexts, want) {
+		t.Fatalf("the merge and security gates are required whatever the review mode, got %v, want %v", got.contexts, want)
 	}
 	if _, err := auditAdoptedRuleset(t, repo); err != nil {
 		t.Fatalf("the audit must accept the ruleset adoption wrote: %v", err)
