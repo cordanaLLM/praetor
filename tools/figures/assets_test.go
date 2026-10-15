@@ -8,9 +8,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -19,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -60,6 +63,10 @@ var repositoryOnly = []string{
 // distFiles is the complete committed player (DIST_FILES in bundle.mjs).
 var distFiles = []string{"dist/THIRD-PARTY-LICENSES.txt", "dist/loader.js", "dist/player.js"}
 
+const maxNPMProjectDirectories = 64
+
+const nodeModulesIgnoreProbe = "PRAETOR-IGNORE-PROBE"
+
 // trackedFiles lists every file under Directory that git tracks or would track, relative to
 // Directory, sorted. ok is false outside a Git checkout, where there is no listing to compare.
 func trackedFiles(t *testing.T) (names []string, ok bool) {
@@ -85,6 +92,123 @@ func trackedFiles(t *testing.T) (names []string, ok bool) {
 	}
 	slices.Sort(names)
 	return names, true
+}
+
+func npmProjectDirectories(ctx context.Context, root string) ([]string, error) {
+	result, err := util.RunGitBytes(ctx, root, 1<<20, "ls-files", "-z", "--", "*package.json", "package.json")
+	if err != nil {
+		return nil, fmt.Errorf("list tracked package.json files: %w", err)
+	}
+	seen := make(map[string]bool)
+	dirs := make([]string, 0)
+	names := strings.Split(string(result.Stdout), "\x00")
+	packageFiles := 0
+	for index := 0; index < len(names) && packageFiles <= maxNPMProjectDirectories; index++ {
+		name := names[index]
+		if name == "" {
+			continue
+		}
+		packageFiles++
+		if packageFiles > maxNPMProjectDirectories {
+			return nil, fmt.Errorf("tracked package.json files exceed %d", maxNPMProjectDirectories)
+		}
+		dir := path.Dir(name)
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+	}
+	slices.Sort(dirs)
+	return dirs, nil
+}
+
+func unignoredNodeModules(ctx context.Context, root string) ([]string, int, error) {
+	dirs, err := npmProjectDirectories(ctx, root)
+	if err != nil {
+		return nil, 0, err
+	}
+	missing := make([]string, 0)
+	for _, dir := range dirs {
+		probe := path.Join(dir, "node_modules", nodeModulesIgnoreProbe)
+		_, status, err := util.RunGitProbeStatus(ctx, root, 1<<20, "check-ignore", "-q", "--", probe)
+		if err != nil {
+			return nil, 0, fmt.Errorf("check node_modules for %s: %w", dir, err)
+		}
+		if status != 0 {
+			missing = append(missing, dir)
+		}
+	}
+	return missing, len(dirs), nil
+}
+
+func npmIgnoreFixture(ctx context.Context, t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if _, err := util.RunGit(ctx, root, "init", "-q"); err != nil {
+		t.Fatalf("init npm ignore fixture: %v", err)
+	}
+	return root
+}
+
+func writeNPMFixture(ctx context.Context, t *testing.T, root, rel string) {
+	t.Helper()
+	file := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatalf("mkdir npm fixture: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write npm fixture: %v", err)
+	}
+	if _, err := util.RunGit(ctx, root, "add", "--", rel); err != nil {
+		t.Fatalf("stage npm fixture: %v", err)
+	}
+}
+
+// Positive: every tracked package.json directory in this repository has an ignored node_modules tree.
+// Negative: a temporary npm project without an ignore rule is reported by directory. Boundary: an
+// otherwise valid repository with no package.json has no directories to check.
+func TestNPMProjectNodeModulesIgnored(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	// Every git call runs without the developer's global and system configuration: a global
+	// excludes file that ignores node_modules would otherwise hide a missing repository rule and
+	// make the negative fixture pass for the wrong reason.
+	ctx, err := util.WithCommandEnvironment(ctx, testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing, checked, err := unignoredNodeModules(ctx, filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked == 0 {
+		t.Fatal("repository has no tracked package.json directories to check")
+	}
+	if len(missing) != 0 {
+		t.Fatalf("node_modules is not ignored for package.json directories: %s", strings.Join(missing, ", "))
+	}
+
+	negative := npmIgnoreFixture(ctx, t)
+	writeNPMFixture(ctx, t, negative, "packages/example/package.json")
+	missing, checked, err = unignoredNodeModules(ctx, negative)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked != 1 || !slices.Equal(missing, []string{"packages/example"}) {
+		t.Fatalf("unignored node_modules = %q, want [packages/example]", missing)
+	}
+
+	empty := npmIgnoreFixture(ctx, t)
+	missing, checked, err = unignoredNodeModules(ctx, empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked != 0 || len(missing) != 0 {
+		t.Fatalf("empty repository checked %d directories and reported %q", checked, missing)
+	}
 }
 
 // Positive: the inventory is exactly the tracked tree minus the repository-only files, every
