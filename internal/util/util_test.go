@@ -366,6 +366,7 @@ func TestResolveRepoIdentity_Positive_ReadsOriginRemote(t *testing.T) {
 }
 
 func TestResolveRepoIdentity_Negative_NeverGuessesOwner(t *testing.T) {
+	boundGitDiscovery(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -406,6 +407,7 @@ func TestResolveRemoteIdentity_Positive_ReadsOriginRemote(t *testing.T) {
 
 // The checkout layout that ResolveRepoIdentity falls back to is not a remote identity.
 func TestResolveRemoteIdentity_Negative_IgnoresCheckoutLayout(t *testing.T) {
+	boundGitDiscovery(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	nested := filepath.Join(t.TempDir(), "acme-org", "widget-lib")

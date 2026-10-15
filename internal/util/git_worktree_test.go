@@ -9,6 +9,7 @@ import (
 )
 
 func TestGitWorktreePresent(t *testing.T) {
+	boundGitDiscovery(t)
 	root := t.TempDir()
 	nested := filepath.Join(root, "nested")
 	if err := os.Mkdir(nested, 0755); err != nil {

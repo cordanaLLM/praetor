@@ -96,3 +96,18 @@ func hermeticGitCeiling(t testing.TB, home string) string {
 	}
 	return ceiling
 }
+
+// BoundGitDiscovery sets GIT_CEILING_DIRECTORIES in the process environment for the rest of
+// the test, to the temporary directory every test's scratch directories sit in, subtests'
+// included (each gets a scratch root of its own there). A test that runs git in process, through util.RunGit or a probe,
+// reads the process environment rather than a slice, so without this a scratch directory
+// inside a checkout (a runner whose TMPDIR or GOTMPDIR lies in its workspace) found that
+// checkout (#828).
+func BoundGitDiscovery(t testing.TB) {
+	t.Helper()
+	ceiling, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatalf("testsupport: resolve the temporary directory for the git ceiling: %v", err)
+	}
+	t.Setenv("GIT_CEILING_DIRECTORIES", ceiling)
+}

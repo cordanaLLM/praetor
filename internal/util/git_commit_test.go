@@ -61,6 +61,7 @@ func TestResolveGitCommit_Negative_AbsentCommitIsNone(t *testing.T) {
 // Boundary: a name that would reach git as an option, a directory outside any checkout and a
 // cancelled context are errors, never "none".
 func TestResolveGitCommit_Boundary_UnansweredIsAnError(t *testing.T) {
+	boundGitDiscovery(t)
 	dir, _ := committedRepo(t)
 	if got, err := ResolveGitCommit(t.Context(), dir, "--all"); err == nil || got != "" {
 		t.Fatalf("an option-shaped name: got %q, %v; want an error", got, err)

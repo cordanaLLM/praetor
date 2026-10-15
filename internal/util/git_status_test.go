@@ -87,6 +87,7 @@ func TestGitWorkingTreeChanges_Positive_ReportsEveryKindOfChange(t *testing.T) {
 // TestGitWorkingTreeChanges_Negative_RepositorySettingsCannotHideChanges: the settings a
 // repository can use to make a dirty tree look clean are overridden or refused.
 func TestGitWorkingTreeChanges_Negative_RepositorySettingsCannotHideChanges(t *testing.T) {
+	boundGitDiscovery(t)
 	t.Run("showUntrackedFiles=no", func(t *testing.T) {
 		dir := statusRepo(t)
 		statusGit(t, dir, "config", "status.showUntrackedFiles", "no")

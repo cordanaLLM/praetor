@@ -67,6 +67,7 @@ func TestGitIgnoredPaths_Negative_UnmatchedAndTrackedPathsAreNotIgnored(t *testi
 // a directory that is no work tree, or a host without git, is an error rather than "nothing
 // ignored".
 func TestGitIgnoredPaths_Boundary_EmptyOversizedMalformedAndUnanswerable(t *testing.T) {
+	boundGitDiscovery(t)
 	if got, err := GitIgnoredPaths(t.Context(), t.TempDir(), nil, false); got != nil || err != nil {
 		t.Fatalf("empty query = %q, %v", got, err)
 	}
@@ -143,6 +144,7 @@ func TestGitUntrackedPaths_Negative_TrackedFilesAreNotReportedWhateverTheirRules
 // refused before git runs, a directory prefix of tracked files is not a tracked file, and a
 // directory outside any work tree, or a host without git, is an error rather than "tracked".
 func TestGitUntrackedPaths_Boundary_EmptyOversizedMalformedDirectoryAndUnanswerable(t *testing.T) {
+	boundGitDiscovery(t)
 	if got, err := GitUntrackedPaths(t.Context(), t.TempDir(), nil); got != nil || err != nil {
 		t.Fatalf("empty query = %q, %v", got, err)
 	}

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 // GitWorktreePresent detects standard .git directory or linked-worktree metadata
@@ -26,6 +28,7 @@ func GitWorktreePresent(ctx context.Context, path string) (bool, error) {
 	if !info.IsDir() {
 		return false, fmt.Errorf("git worktree root is not a directory: %s", path)
 	}
+	ceilings := gitCeilings()
 	for depth := 0; depth < 1024; depth++ {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -35,12 +38,36 @@ func GitWorktreePresent(ctx context.Context, path string) (bool, error) {
 			return present, err
 		}
 		parent := filepath.Dir(abs)
-		if parent == abs {
+		if parent == abs || isGitCeiling(parent, ceilings) {
 			return false, nil
 		}
 		abs = parent
 	}
 	return false, errors.New("git worktree ancestry exceeds 1024 directories")
+}
+
+// gitCeilings returns the absolute directories of GIT_CEILING_DIRECTORIES, cleaned. Git
+// ignores an entry that is not absolute, and so does this.
+func gitCeilings() []string {
+	var ceilings []string
+	for _, entry := range filepath.SplitList(os.Getenv("GIT_CEILING_DIRECTORIES")) {
+		if filepath.IsAbs(entry) {
+			ceilings = append(ceilings, filepath.Clean(entry))
+		}
+	}
+	return ceilings
+}
+
+// isGitCeiling reports whether git, searching ancestors, would refuse to move up into dir
+// because it is a ceiling (#828). Windows compares the names without case, as its file system
+// does.
+func isGitCeiling(dir string, ceilings []string) bool {
+	for _, ceiling := range ceilings {
+		if dir == ceiling || (runtime.GOOS == "windows" && strings.EqualFold(dir, ceiling)) {
+			return true
+		}
+	}
+	return false
 }
 
 func gitMetadataPresent(path string) (bool, error) {

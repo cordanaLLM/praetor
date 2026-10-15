@@ -76,6 +76,7 @@ func TestReadOriginHeadBranch_Negative_NoneRecordedIsNotAnError(t *testing.T) {
 // Only git's own "not a git repository" exit is that answer: a success, a failure that is no git
 // exit, and a git exit with another message are not.
 func TestGitAnsweredNotARepository_3D(t *testing.T) {
+	boundGitDiscovery(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git unavailable: %v", err)
 	}

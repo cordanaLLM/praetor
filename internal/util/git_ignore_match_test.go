@@ -69,6 +69,7 @@ func TestGitIgnoreMatches_Negative_NegatedTrackedAndUnmatchedPathsAreNotIgnored(
 // nothing, a malformed answer is refused rather than half read, a lone negation record is no
 // match, and a host without git is an error naming git.
 func TestGitIgnoreMatches_Boundary_EmptyMalformedAndUnanswerable(t *testing.T) {
+	boundGitDiscovery(t)
 	if got, err := GitIgnoreMatches(t.Context(), t.TempDir(), nil, true); got != nil || err != nil {
 		t.Fatalf("empty query = %+v, %v", got, err)
 	}

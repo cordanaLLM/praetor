@@ -55,10 +55,17 @@ func RunGitProbeWithin(ctx context.Context, dir string, maxBytes int, timeout ti
 	if timeout <= 0 {
 		return CommandBytes{}, fmt.Errorf("git probe bound must be positive, got %v", timeout)
 	}
-	probeCtx, err := WithCommandEnvironment(ctx, []string{
+	env := []string{
 		"PATH=" + os.Getenv("PATH"), "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull,
 		"GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1",
-	})
+	}
+	// An inherited ceiling only narrows repository discovery, so carrying it cannot widen what
+	// a probe reads; dropping it let a probe from a scratch directory climb into the checkout
+	// that encloses it (#828).
+	if ceiling := os.Getenv("GIT_CEILING_DIRECTORIES"); ceiling != "" {
+		env = append(env, "GIT_CEILING_DIRECTORIES="+ceiling)
+	}
+	probeCtx, err := WithCommandEnvironment(ctx, env)
 	if err != nil {
 		return CommandBytes{}, err
 	}
