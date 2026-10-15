@@ -82,7 +82,7 @@ exceptions:
     expires: "2027-01-04"
   - rule: "test-timeout"
     path: ".github/workflows/portability.yml"
-    reason: "category B: internal/adopt on Windows reached the 30m bound (1800 s, run 38754744270); 60m there until the test-side fix brings it under 900 s (#1381)"
+    reason: "category B: internal/adopt on Windows reached the 30m bound (1800 s, run 38754744270; 1856 s with every hermetic fixture running, run 38778865104), and operationalsync nests that suite; 60m for both there until the test-side fix brings them under 900 s (#1381)"
     expires: "2026-10-18"
 
 # Text register per audience surface and task class (ADR-0010). Task keys are target_tasks
