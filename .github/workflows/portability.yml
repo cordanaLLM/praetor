@@ -187,9 +187,31 @@ jobs:
       # go test's 10-minute default per package: on windows-latest internal/operationalsync
       # alone took 557 s, most of it a nested go test over a repository copy, so the default
       # was one slow runner away from a panic that names no failing test.
+      # go test -json keeps each test's elapsed time, which the plain output drops, so a package that
+      # runs close to the 30-minute bound on one platform can be profiled from the uploaded file
+      # (internal/adopt and operationalsync on Windows). The log stays the usual text: the stream's
+      # output events, streamed as they arrive. GitHub runs bash with pipefail, so go's exit
+      # status fails the step; the file is written even when the job is cancelled midway.
       - name: Test Every Package
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
-        run: go test -timeout 30m ./...
+        shell: bash
+        run: |
+          go test -json -timeout 30m ./... | tee "go-test-$RUNNER_OS.json" | "$PYTHON" -B -u -c 'import json, sys
+          for line in sys.stdin:
+              event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
+              if event.get("Action") in ("output", "build-output"):
+                  sys.stdout.write(event.get("Output", ""))'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+
+      - name: Upload Per-Test Timing
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-json-${{ matrix.name }}
+          path: go-test-${{ runner.os }}.json
+          if-no-files-found: error
+          retention-days: 14
 
       # The self-tests drive the real hooks, so they need the pinned hook runner and the
       # binary the hooks invoke. Both are installed per platform rather than assumed present:
