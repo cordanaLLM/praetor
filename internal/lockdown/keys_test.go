@@ -531,3 +531,23 @@ func TestVerifyPinnedReceiptFile_Boundary(t *testing.T) {
 		t.Errorf("oversized header must be refused and truncated, got %v", err)
 	}
 }
+
+// Negative (#99): a key file the platform check refuses names the environment variable that
+// signs without it. Before this, the refusal on Windows named a mode the platform cannot
+// produce and sent the reader to chmod.
+func TestReadKeyFile_Negative_RefusalNamesTheEnvironmentRoute(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "receipt.key")
+	if err := os.WriteFile(path, []byte(strings.Repeat("ab", 32)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := readKeyFile(path)
+	if !errors.Is(err, ErrInsecureKeyPerm) {
+		t.Fatalf("key outside the protected location accepted or refused for another reason: %v", err)
+	}
+	if !strings.Contains(err.Error(), SigningKeyEnv) {
+		t.Fatalf("refusal does not name %s: %v", SigningKeyEnv, err)
+	}
+	if !util.ModeIsProtection() && strings.Contains(err.Error(), "0600") {
+		t.Fatalf("refusal names a mode this platform cannot produce: %v", err)
+	}
+}

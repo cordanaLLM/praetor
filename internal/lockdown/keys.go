@@ -36,9 +36,11 @@ var (
 	// provides a receipt signing key.
 	ErrNoSigningKey = errors.New("no Ed25519 receipt signing key available: set " +
 		SigningKeyEnv + " or run 'praetorctl gate keygen'")
-	// ErrInsecureKeyPerm is returned when the on-disk signing key is group- or
-	// world-accessible.
-	ErrInsecureKeyPerm = errors.New("receipt signing key must be mode 0600")
+	// ErrInsecureKeyPerm is returned when the on-disk signing key is not private to this
+	// user: on POSIX its mode grants group or other access, on Windows it lies outside the
+	// per-user configuration directory whose ACL protects it (keyperm_windows.go). The text
+	// names no mode, because Windows cannot express one (#99).
+	ErrInsecureKeyPerm = errors.New("receipt signing key file is not private to this user")
 	// ErrMalformedSigningKey is returned for a key that is not a hex-encoded Ed25519 seed
 	// or private key.
 	ErrMalformedSigningKey = errors.New("malformed Ed25519 receipt signing key: expected a " +
@@ -111,7 +113,7 @@ func readKeyFile(path string) (string, error) {
 		return "", fmt.Errorf("stat receipt signing key %s: %w", path, err)
 	}
 	if err := verifyKeyPermissions(path, info); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w; or set %s to sign without the key file", err, SigningKeyEnv)
 	}
 
 	// A key file past maxKeyFileBytes is refused, not cut to its prefix: a truncated read
