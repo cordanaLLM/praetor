@@ -35,16 +35,16 @@ rules:
     evidence: [make:secrets]
   - id: HISS-13
     class: ci-gate
-    evidence: [gate:HISS Invariant Scan]
+    evidence: [gate:HISS Invariant Scan, forge:required_checks]
   - id: HISS-14
     class: ci-gate
-    evidence: [workflow:praetor-api.yml#api-compatibility]
+    evidence: [workflow:praetor-api.yml#api-compatibility, forge:required_checks]
   - id: HISS-15
     class: ci-gate
-    evidence: [workflow:ci.yml#verify]
+    evidence: [workflow:ci.yml#verify, forge:required_checks]
   - id: HISS-16
     class: hook
-    evidence: [hook:pre-commit.staged-checks]
+    evidence: [hook:pre-commit.staged-checks, forge:required_checks]
   - id: HISS-17
     class: hook
     evidence: [hook:agent-state-stop.state-verify]

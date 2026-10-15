@@ -749,12 +749,30 @@ With `adoption.decline: [labels]` adoption writes none, and both audits pass wit
 every AGENTS.md operational rule an enforcement class (`ci-gate`, `hook`, `review-gate`,
 `guidance` or `staged`) and evidence pointers, and checks that each pointer resolves: `test:` to a
 Go test function, `hook:` to a lefthook hook command, `make:` to a Makefile target, `workflow:` to
-a workflow job, and `gate:` to a stage of `praetorctl gate run`. The stage names come from
+a workflow job, `gate:` to a stage of `praetorctl gate run`, and `forge:` to a closed branch
+protection setting: `required_signatures`, `linear_history`, `required_reviews` or
+`required_checks`. An unknown setting fails like an unknown pointer kind. The stage names come from
 `gating.StageNames()`, which reads the same list the pipeline executes (`pipelineStages` in
 [`internal/gating/pipeline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/pipeline.go)),
 so a stage the pipeline drops stops resolving and fails the audit
 (`TestStageNames_PipelineOrder` in `internal/gating/stages_test.go`). Rules with class `guidance`,
 or without an entry, are reported as prose-only; this slice reports them and does not fail.
+
+A committed branch-protection policy is an assertion, not evidence that the forge applies it.
+Without `--remote`, a `forge:` pointer therefore appears under `asserted, not read back` and does
+not count as an enforced path. Another resolved pointer on the same rule still enforces that rule.
+With `standardsctl rules audit --remote`, the command resolves the same effective policy and status
+contexts as `plan --remote`, reads the live branch protection once through the shared forge reader,
+and uses `forge.EvaluateBranchProtection` for the comparison. Text and JSON report the setting's
+asserted value, observed value and match result for each rule. Drift fails with the rule ID and all
+three values; a failed live read fails by name instead of falling back to the offline result. The
+remote flags use the same token, endpoint, origin-identity check and bounded command context as
+`plan --remote`.
+
+The report also lists guidance or unregistered rules containing the allow-listed instruction-only
+phrases `is told not to`, `must not` or `never` under `instruction-only prohibitions`. This is a
+non-failing conversion list; a rule with executable enforcement is not listed. Computing forge-app
+permissions as the intersection of task needs and policy remains outside this slice.
 
 ### Stages that do not apply are skipped, not failed
 

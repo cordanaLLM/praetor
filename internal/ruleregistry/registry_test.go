@@ -1,6 +1,8 @@
 package ruleregistry
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -50,6 +52,93 @@ func TestAudit_UnresolvablePointersFail(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAudit_ForgeEvidencePositiveOfflineAndRemote(t *testing.T) {
+	registry := "version: 1\nrules:\n  - id: HISS-01\n    class: ci-gate\n    evidence: [forge:required_signatures]\n"
+	root := fixtureRoot(t, registry)
+	offline := forgeState("required", "", false, false)
+	report, err := AuditWithOptions(t.Context(), root, forgeOptions(ForgeRequiredSignatures, offline, nil))
+	if err != nil {
+		t.Fatalf("offline AuditWithOptions() error = %v", err)
+	}
+	row := findRow(t, report, "HISS-01")
+	if row.Enforced || row.Evidence != "asserted, not read back" || len(row.Forge) != 1 {
+		t.Fatalf("offline HISS-01 = %#v", row)
+	}
+
+	remote := forgeState("required", "required", true, true)
+	report, err = AuditWithOptions(t.Context(), root, forgeOptions(ForgeRequiredSignatures, remote, nil))
+	if err != nil {
+		t.Fatalf("remote AuditWithOptions() error = %v", err)
+	}
+	row = findRow(t, report, "HISS-01")
+	if !row.Enforced || !row.Forge[0].Match || row.Forge[0].Observed != "required" {
+		t.Fatalf("remote HISS-01 = %#v", row)
+	}
+}
+
+func TestAudit_ForgeEvidenceNegative(t *testing.T) {
+	registry := "version: 1\nrules:\n  - id: HISS-01\n    class: ci-gate\n    evidence: [forge:required_signatures]\n"
+	root := fixtureRoot(t, registry)
+	drift := forgeState("required", "not enforced", true, false)
+	report, err := AuditWithOptions(t.Context(), root, forgeOptions(ForgeRequiredSignatures, drift, nil))
+	if err == nil || !strings.Contains(strings.Join(report.Problems, "\n"),
+		"HISS-01: forge setting required_signatures mismatch: asserted required, observed not enforced") {
+		t.Fatalf("drift AuditWithOptions() = (%#v, %v)", report, err)
+	}
+
+	readErr := errors.New("forge unavailable")
+	report, err = AuditWithOptions(t.Context(), root, forgeOptions(ForgeRequiredSignatures,
+		forgeState("required", "", false, false), readErr))
+	if err == nil || !strings.Contains(strings.Join(report.Problems, "\n"), "forge readback failed: forge unavailable") {
+		t.Fatalf("read error AuditWithOptions() = (%#v, %v)", report, err)
+	}
+
+	unknown := strings.Replace(registry, "required_signatures", "unknown", 1)
+	report, err = Audit(t.Context(), fixtureRoot(t, unknown))
+	problems := strings.Join(report.Problems, "\n")
+	if err == nil || !strings.Contains(problems, `unresolved evidence pointer "forge:unknown"`) {
+		t.Fatalf("unknown setting Audit() = (%#v, %v)", report, err)
+	}
+}
+
+func TestAudit_ForgeAndGateBoundary(t *testing.T) {
+	registry := "version: 1\nrules:\n" +
+		"  - id: HISS-01\n    class: ci-gate\n    evidence: [make:verify-all, forge:required_checks]\n" +
+		"  - id: AGENTS-OP-1\n    class: ci-gate\n    evidence: [make:verify-all]\n"
+	root := fixtureRoot(t, registry)
+	report, err := AuditWithOptions(t.Context(), root, forgeOptions(ForgeRequiredChecks,
+		forgeState("1", "", false, false), nil))
+	if err != nil {
+		t.Fatalf("AuditWithOptions() error = %v", err)
+	}
+	row := findRow(t, report, "HISS-01")
+	if !row.Enforced || row.Evidence != "resolved; forge asserted, not read back" {
+		t.Fatalf("HISS-01 = %#v", row)
+	}
+	if candidate := findRow(t, report, "AGENTS-OP-1"); candidate.Candidate {
+		t.Fatalf("enforced instruction-only rule = %#v, want no candidate", candidate)
+	}
+	remote := forgeState("1", "1 of 1 required", true, true)
+	report, err = AuditWithOptions(t.Context(), root, forgeOptions(ForgeRequiredChecks, remote, nil))
+	if err != nil {
+		t.Fatalf("remote AuditWithOptions() error = %v", err)
+	}
+	row = findRow(t, report, "HISS-01")
+	if !row.Enforced || len(row.Forge) != 1 || !row.Forge[0].Match || row.Forge[0].Observed != "1 of 1 required" {
+		t.Fatalf("remote gate and forge HISS-01 = %#v", row)
+	}
+}
+
+func forgeState(asserted, observed string, readBack, match bool) ForgeState {
+	return ForgeState{Asserted: asserted, Observed: observed, ReadBack: readBack, Match: match, AssertedEnforced: true}
+}
+
+func forgeOptions(setting ForgeSetting, state ForgeState, providerErr error) AuditOptions {
+	return AuditOptions{Forge: func(_ context.Context) (map[ForgeSetting]ForgeState, error) {
+		return map[ForgeSetting]ForgeState{setting: state}, providerErr
+	}}
 }
 
 func TestAudit_InvalidRegistry(t *testing.T) {
@@ -115,6 +204,21 @@ func TestParseOperationalRules_Bounds(t *testing.T) {
 				t.Fatal("ParseOperationalRules(65) error = nil")
 			}
 		})
+	}
+}
+
+func TestProhibited_AllowList(t *testing.T) {
+	tests := map[string]bool{
+		"The agent is told not to bypass it.": true,
+		"The agent MUST NOT bypass it.":       true,
+		"Never bypass it.":                    true,
+		"Do not bypass it.":                   false,
+		"No bypass is accepted.":              false,
+	}
+	for text, want := range tests {
+		if got := prohibited(text); got != want {
+			t.Errorf("prohibited(%q) = %t, want %t", text, got, want)
+		}
 	}
 }
 
