@@ -154,6 +154,8 @@ var priorDigests = map[string]string{
 	"5fd25882376baf07f054f8e81486b98fdb049edbc8bae4301467494d0dce95a3": Directory + "/third_party/interfig/VENDOR.md",
 	"d3c1e4371141fe5ebd1eb52dac43b0a721e1956ef8d4e50a4492df6e5907b6aa": Directory + "/serve.mjs",
 	"a4a98cb1195488fbf1d7812bfb021fd5ac5f562f42dcbb2368758b6da3087b69": Directory + "/mkdocs_hook.py",
+	// mkdocs_hook.py while a docstring line exceeded the 100 columns adopters' flake8 allows.
+	"c9c20ae005cabdf8e10d683f31e2e5159552b8f901995bec855184d22aeaf460": Directory + "/mkdocs_hook.py",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts player/loader.js player/player.js player/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md

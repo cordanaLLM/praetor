@@ -16,9 +16,9 @@ figure without docs/assets/figures/<slug>.json is logged as a warning, which fai
 figures.css and the committed player files under player/ (loader.js, player.js and their
 THIRD-PARTY-LICENSES.txt, written by tools/figures/bundle.mjs) sit beside this file, outside
 docs_dir, so the hook publishes them: `on_files` adds each to the site as a generated file, the CSS
-at CSS_URI and the player files under PLAYER_URI, and `on_config` links the stylesheet and the loader,
-as a module script, from every page. A site needs no `extra_css` or `extra_javascript` entry for
-them and no bundling step: the loader reads each figure's props from its SVG
+at CSS_URI and the player files under PLAYER_URI, and `on_config` links the stylesheet and the
+loader, as a module script, from every page. A site needs no `extra_css` or `extra_javascript`
+entry for them and no bundling step: the loader reads each figure's props from its SVG
 (docs/adr/0016-figures-for-adopters.md, section 3).
 """
 
