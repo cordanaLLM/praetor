@@ -11,8 +11,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/util"
 	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
@@ -49,6 +51,8 @@ type RunBudget struct {
 	Devcontainer time.Duration
 	// Note says why StageBound differs from the default; it is empty when it does not.
 	Note string
+	// BoundOrigin names where StageBound came from: "default", "environment", or ".standards.yaml".
+	BoundOrigin string
 }
 
 // TestSuites is how many stage bounds the run deadline reserves for the test stage: Suites, and at
@@ -89,7 +93,11 @@ func (b RunBudget) TimeoutSeconds() int64 {
 // budgets one test suite and the Go stages; ResolveRepoRunBudget sizes it to a repository.
 func ResolveRunBudget(raw string) RunBudget {
 	bound, note := testStageTimeout(raw)
-	return RunBudget{StageBound: bound, Suites: 1, Allowance: OtherStagesAllowance, Note: note}
+	origin := "default"
+	if strings.TrimSpace(raw) != "" {
+		origin = "environment"
+	}
+	return RunBudget{StageBound: bound, Suites: 1, Allowance: OtherStagesAllowance, Note: note, BoundOrigin: origin}
 }
 
 // ResolveRepoRunBudget is ResolveRunBudget sized to the repository at repoDir. Where its root
@@ -106,11 +114,23 @@ func ResolveRepoRunBudget(raw, repoDir string) (RunBudget, error) {
 
 func resolveRepoRunBudget(ctx context.Context, raw, repoDir string) (RunBudget, error) {
 	budget := ResolveRunBudget(raw)
+	manifest, manifestErr := config.LoadRepositoryManifest(ctx, repoDir)
+	if manifestErr != nil {
+		return budget, manifestErr
+	}
+	var declaredTimeout time.Duration
+	if manifest != nil && manifest.Gate != nil {
+		declaredTimeout = manifest.Gate.DeclaredVerifyTimeoutDuration()
+	}
 	count, err := trackedGoModuleCount(ctx, repoDir)
 	if err != nil {
 		return budget, err
 	}
-	if !util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
+	hasCargo := util.FileExists(filepath.Join(repoDir, CargoLockFile))
+	if count == 0 && !hasCargo {
+		return applyDeclaredVerifyBudget(budget, raw, declaredTimeout), nil
+	}
+	if !hasCargo {
 		if count > 0 {
 			budget.Suites = count
 		}
@@ -122,6 +142,21 @@ func resolveRepoRunBudget(ctx context.Context, raw, repoDir string) (RunBudget, 
 		budget.Suites++
 	}
 	return budget, nil
+}
+
+func applyDeclaredVerifyBudget(budget RunBudget, raw string, declaredTimeout time.Duration) RunBudget {
+	if strings.TrimSpace(raw) != "" {
+		budget.BoundOrigin = "environment"
+		return budget
+	}
+	if declaredTimeout > 0 {
+		budget.StageBound = declaredTimeout
+		budget.BoundOrigin = ".standards.yaml"
+		budget.Note = fmt.Sprintf("declared verification stage bound set to %s by .standards.yaml", declaredTimeout)
+		return budget
+	}
+	budget.BoundOrigin = "default"
+	return budget
 }
 
 func trackedGoModuleCount(ctx context.Context, repoDir string) (int, error) {

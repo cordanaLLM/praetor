@@ -64,15 +64,12 @@ func runDeclaredVerifyStage(ctx context.Context, cfg *stageConfig) (string, erro
 		return "", err
 	}
 	bound := budget.StageBound
+	origin := budget.BoundOrigin
+	if origin == "" {
+		origin = "default"
+	}
 	stageErr := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
-		runCtx, envErr := util.WithCommandEnvironment(tCtx, util.InheritedEnvironment([]string{DeclaredVerifyGuardEnv + "=1"}))
-		if envErr != nil {
-			return fmt.Errorf("%s: %w", declaredVerifyCommand, envErr)
-		}
-		if _, runErr := cfg.run(runCtx, dir, "make", declaredVerifyTarget); runErr != nil {
-			return declaredVerifyFailure(tCtx, bound, runErr)
-		}
-		return nil
+		return executeDeclaredVerify(tCtx, cfg, dir, bound, origin)
 	})
 	if stageErr != nil {
 		return "", stageErr
@@ -115,12 +112,12 @@ func declaresVerifyTarget(repoDir string) bool {
 
 // declaredVerifyFailure names the command, its exit code or why it has none, and the end of
 // what it reported.
-func declaredVerifyFailure(ctx context.Context, bound time.Duration, err error) error {
+func declaredVerifyFailure(ctx context.Context, bound time.Duration, origin string, err error) error {
 	outcome := "failed to run"
 	var exit interface{ ExitCode() int }
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		outcome = fmt.Sprintf("did not finish within %s", bound)
+		outcome = fmt.Sprintf("did not finish within %s (%s)", bound, origin)
 	case errors.As(err, &exit):
 		outcome = fmt.Sprintf("exited %d", exit.ExitCode())
 	}
