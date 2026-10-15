@@ -615,3 +615,16 @@ func TestExceptionMatchesAny(t *testing.T) {
 		}
 	}
 }
+
+// #1253: a runner-label entry names the one workflow whose floating hosted-runner label the
+// shared runner-label check excuses. Positive and negative: the workflow-target cases of the
+// other workflow rules. Boundary: an expired entry excuses nothing, as a missing one.
+func TestValidateExceptionsRunnerLabel(t *testing.T) {
+	const rule = "runner-label"
+	validateWorkflowTarget(t, rule)
+	entry := Exception{Rule: rule, Path: ".github/workflows/ci.yml", Reason: "ubuntu-24.04 until the 26.04 image builds the video jobs", Expires: "2026-10-05"}
+	live, expired := ExceptionFor([]Exception{entry}, ".github/workflows/ci.yml", exceptionsToday, nil)
+	if live != nil || expired == nil {
+		t.Fatalf("expired runner-label entry: live %+v, expired %+v; want it to excuse nothing", live, expired)
+	}
+}

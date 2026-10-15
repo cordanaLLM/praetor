@@ -71,12 +71,19 @@ const ExceptionRuleDedupe = "HISS-19"
 // that is not run by any CI workflow, naming the tool by tool.
 const ExceptionRuleDeclaredLinters = "declared-linters"
 
+// ExceptionRuleRunnerLabel is the rule of the shared CI runner-label check, which refuses
+// GitHub's floating hosted labels (ubuntu-latest, windows-latest, macos-latest and their size
+// variants): an entry names the one workflow file that may keep a dated floating or older
+// label, such as a job family held on ubuntu-24.04 while the 26.04 image breaks it (#1253).
+// The check runs in the fleet's shared CI and reads this list from the manifest.
+const ExceptionRuleRunnerLabel = "runner-label"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
 var exceptionRules = []string{
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
 	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
-	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters,
+	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters, ExceptionRuleRunnerLabel,
 }
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -85,6 +92,7 @@ var workflowRuleExamples = map[string]string{
 	ExceptionRuleSupplyChain:      "release.yml",
 	ExceptionRuleBuildWarnings:    "ci.yml",
 	ExceptionRuleWorkflowTriggers: "release.yml",
+	ExceptionRuleRunnerLabel:      "ci.yml",
 }
 
 // Bounds of the exceptions list (HISS-02).
