@@ -79,7 +79,7 @@ const ExceptionRuleTestTimeout = "test-timeout"
 var exceptionRules = []string{
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
 	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
-	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters,
+	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout,
 }
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -88,6 +88,7 @@ var workflowRuleExamples = map[string]string{
 	ExceptionRuleSupplyChain:      "release.yml",
 	ExceptionRuleBuildWarnings:    "ci.yml",
 	ExceptionRuleWorkflowTriggers: "release.yml",
+	ExceptionRuleTestTimeout:      "portability.yml",
 }
 
 // Bounds of the exceptions list (HISS-02).
