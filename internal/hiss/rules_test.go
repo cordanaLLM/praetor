@@ -21,7 +21,7 @@ func TestScanGoIgnoresCommentsAndAssertions(t *testing.T) {
 		t.Fatalf("write source: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := fixtureScanContext(t)
 	defer cancel()
 	rep, err := Scan(ctx, dir, ScanOptions{})
 	if err != nil {

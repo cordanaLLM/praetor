@@ -26,9 +26,21 @@ func writeFixture(t *testing.T, root, rel, content string) {
 	}
 }
 
+// fixtureScanContext bounds one fixture scan (HISS-02) by the test binary's deadline less
+// fixtureScanGrace, or by DefaultScanTimeout when the binary has none. The package's subtests
+// run in parallel, and a fixed 5 s deadline failed one-file scans on a loaded Windows runner
+// (#1127); TestScan_ContextGuards keeps the cancellation bound covered.
+func fixtureScanContext(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+	if deadline, ok := t.Deadline(); ok {
+		return context.WithDeadline(context.Background(), deadline.Add(-fixtureScanGrace))
+	}
+	return context.WithTimeout(context.Background(), DefaultScanTimeout)
+}
+
 func scanFixture(t *testing.T, root string, opts ScanOptions) *ScanReport {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := fixtureScanContext(t)
 	defer cancel()
 	rep, err := Scan(ctx, root, opts)
 	if err != nil {
@@ -840,3 +852,28 @@ func TestScan_OversizeFilesAreSkipped(t *testing.T) {
 		t.Error("readBounded must refuse paths outside the root")
 	}
 }
+
+// Boundary (#1127): a fixture scan ends at the test binary's own deadline, less a grace that
+// leaves room to report the failure, or after DefaultScanTimeout when the binary has none.
+// A fixed 5 s deadline failed one-file scans on a loaded Windows runner.
+func TestFixtureScanContext_Boundary_DeadlineFollowsTheTestBinary(t *testing.T) {
+	before := time.Now()
+	ctx, cancel := fixtureScanContext(t)
+	defer cancel()
+	got, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("fixture scan context carries no deadline (HISS-02)")
+	}
+	if testDeadline, has := t.Deadline(); has {
+		if want := testDeadline.Add(-fixtureScanGrace); !got.Equal(want) {
+			t.Fatalf("fixture scan deadline = %s, want the test deadline less %s: %s", got, fixtureScanGrace, want)
+		}
+		return
+	}
+	if earliest := before.Add(DefaultScanTimeout); got.Before(earliest) {
+		t.Fatalf("fixture scan deadline = %s, want DefaultScanTimeout from now: %s", got, earliest)
+	}
+}
+
+// fixtureScanGrace is the part of the test binary's deadline a fixture scan leaves unused.
+const fixtureScanGrace = 5 * time.Second
