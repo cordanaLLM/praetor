@@ -1,0 +1,3 @@
+type: fixed
+title: Report nested Go modules skipped by adoption hooks
+issue: '#1353'

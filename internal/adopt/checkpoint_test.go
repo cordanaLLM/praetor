@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -148,6 +149,7 @@ func TestAdoptCheckpointBundleRunsActualEvaluator(t *testing.T) {
 	}
 	cmd := exec.CommandContext(t.Context(), python, "-B", filepath.FromSlash(checkpointScript), "--event", "tool", "--json", "--marker")
 	cmd.Dir = session.repoPath
+	cmd.Env = withoutDetachedJobEnv(os.Environ())
 	raw, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("actual checkpoint evaluator failed: %v (%s)", err, raw)
@@ -232,4 +234,22 @@ func TestAdopt_Boundary_ForceKeepsCheckpointScriptBesideRemoteCanonicalPolicy(t 
 	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript))); got != vendored {
 		t.Fatalf("--force replaced the vendored checkpoint script:\n%s", got)
 	}
+}
+
+// detachedJobEnvKeys are the variables a cheap-lane job sets that make the checkpoint defer
+// (.config/lefthook/scripts/checkpoint.py _detached_job_deferral); the same set the Python tests
+// clear (DETACHED_ENV_KEYS in test_checkpoint.py).
+var detachedJobEnvKeys = []string{"PRAETOR_DETACHED_JOB", "GIT_SSH_COMMAND", "GIT_TERMINAL_PROMPT", "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR"}
+
+// withoutDetachedJobEnv returns env without the detached-job variables, so a test that expects a
+// due checkpoint does not see a deferral when the test process itself runs inside such a job.
+func withoutDetachedJobEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if !slices.Contains(detachedJobEnvKeys, key) {
+			out = append(out, entry)
+		}
+	}
+	return out
 }

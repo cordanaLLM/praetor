@@ -11,9 +11,26 @@ import (
 	"testing"
 )
 
-// playerCreditsRow is a credits row naming the player packages the checkout's lock installs.
-const playerCreditsRow = "| [React](https://github.com/facebook/react) 19.3.0, with react-dom 19.3.0 and scheduler 0.28.0 | " +
-	"Bundled into the figure player (`tools/figures/dist/player.js`) | MIT |"
+// playerTerms returns "<name> <version>" for every package the committed player bundles, at the
+// version the checkout's figure lock installs: the same derivation CheckCredits holds the page to,
+// so a dependency bump needs no edit here (#1354 moved react 19.3.0 to 19.3.1).
+func playerTerms(t *testing.T, sources NoticeSources) []string {
+	t.Helper()
+	components, err := figurePlayerRows(sources.FigureLicenses, sources.FigureLock)
+	if err != nil || len(components) < 2 {
+		t.Fatalf("player packages from the checkout's lock: %v (%d)", err, len(components))
+	}
+	terms := make([]string, 0, len(components))
+	for _, component := range components {
+		terms = append(terms, component.name+" "+component.version)
+	}
+	return terms
+}
+
+// playerCreditsRow is a minimal credits row naming terms as the player's packages.
+func playerCreditsRow(terms []string) string {
+	return "| " + strings.Join(terms, ", ") + " | Bundled into the figure player (`tools/figures/dist/player.js`) | MIT |"
+}
 
 func checkoutNoticeSources(t *testing.T) NoticeSources {
 	t.Helper()
@@ -31,7 +48,7 @@ func TestCreditsNameThePlayerPackagesAtTheirLockVersions(t *testing.T) {
 	if err := CheckCredits(string(readRepoFile(t, AcknowledgementsFile)), sources); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckCredits("| Project | Use | License |\n| :-- | :-- | :-- |\n"+playerCreditsRow+"\n", sources); err != nil {
+	if err := CheckCredits("| Project | Use | License |\n| :-- | :-- | :-- |\n"+playerCreditsRow(playerTerms(t, sources))+"\n", sources); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -40,19 +57,23 @@ func TestCreditsNameThePlayerPackagesAtTheirLockVersions(t *testing.T) {
 // or with two of them fail, naming the file and what is missing.
 func TestCreditsRejectStaleOrMissingPlayerRows(t *testing.T) {
 	sources := checkoutNoticeSources(t)
+	terms := playerTerms(t, sources)
+	first := strings.Fields(terms[0])
+	outgoing := append([]string{first[0] + " 0.0.0-outgoing"}, terms[1:]...)
+	row := playerCreditsRow(terms)
 	for name, credits := range map[string]string{
-		"outgoing React":    strings.Replace(playerCreditsRow, ") 19.3.0,", ") 19.2.0,", 1),
-		"missing scheduler": strings.Replace(playerCreditsRow, " and scheduler 0.28.0", "", 1),
-		"no row":            "| Project | Use | License |\n",
-		"two rows":          playerCreditsRow + "\n" + playerCreditsRow + "\n",
+		"outgoing first package": playerCreditsRow(outgoing),
+		"missing last package":   playerCreditsRow(terms[:len(terms)-1]),
+		"no row":                 "| Project | Use | License |\n",
+		"two rows":               row + "\n" + row + "\n",
 	} {
 		err := CheckCredits(credits, sources)
 		if err == nil || !strings.HasPrefix(err.Error(), AcknowledgementsFile) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	err := CheckCredits(strings.Replace(playerCreditsRow, ") 19.3.0,", ") 19.2.0,", 1), sources)
-	if err == nil || !strings.Contains(err.Error(), "does not name react 19.3.0;") {
+	err := CheckCredits(playerCreditsRow(outgoing), sources)
+	if err == nil || !strings.Contains(err.Error(), "does not name "+terms[0]+";") {
 		t.Fatalf("the stale package is not named: %v", err)
 	}
 }

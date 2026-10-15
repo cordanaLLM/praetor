@@ -1999,7 +1999,9 @@ jobs follow the languages the plan detects: `gofmt`, `govet` and `security` for 
 detected ([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adoption-writes)).
 Each runs only where the root holds its marker and otherwise prints
 `no <marker> at the repository root, skipping <tool>`, matching the gate stages above. A module
-kept in a subdirectory is not scanned by these jobs. The `gate` job runs
+kept in a subdirectory is not scanned by these jobs. For every tracked nested `go.mod`, adoption's
+`git-hooks` step warns with its directory and says that the module's declared verification command
+is what checks it; it does not alter `lefthook.yml` or the gate. The `gate` job runs
 `praetorctl gate run --path=. --admit-unsupported`: a root with neither a `go.mod` nor a
 `Cargo.lock` is admitted without a receipt and its languages are named, and a root with either
 fails where its toolchain stages did not run
