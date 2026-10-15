@@ -106,6 +106,10 @@ internal/adopt/testdata/checkpoint/** text eol=lf
 # digests (priorGoSecurityDigests) are taken over these exact bytes, so a CRLF checkout must not touch them.
 internal/flavor/testdata/security-prior/** text eol=lf
 internal/adopt/testdata/personas/** text eol=lf
+# testdata/managed-family holds released figure engine assets that tests identify by the
+# sha256 of their exact bytes (TestFigurePlayerDirectoryMigration); a CRLF checkout changed the
+# digest on the Windows leg of train 4 (#1369).
+internal/adopt/testdata/managed-family/*.js text eol=lf
 
 # internal/astmerge's corpus test splits testdata/probe_corpus.txt into cases on "\n" and
 # matches its "--- base" section headers exactly, and FuzzASTMerge seeds from the same
