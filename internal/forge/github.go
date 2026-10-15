@@ -74,6 +74,20 @@ type GitHubDriver struct {
 	RequiredStatusChecks []string
 	// StrictStatusChecks requires branches to be up to date before merging.
 	StrictStatusChecks bool
+	guard              *PublicTextGuard
+}
+
+// SetPublicTextGuard overrides the public text guard for this driver.
+func (g *GitHubDriver) SetPublicTextGuard(guard *PublicTextGuard) {
+	g.guard = guard
+}
+
+func (g *GitHubDriver) guardText(ctx context.Context, texts ...string) error {
+	guard := g.guard
+	if guard == nil {
+		guard = DefaultPublicTextGuard()
+	}
+	return guard.Check(ctx, texts...)
 }
 
 // NewGitHubDriver initializes a GitHub driver. util.GitHubAPIBase normalizes the endpoint:
@@ -587,6 +601,9 @@ func (g *GitHubDriver) PostStatusCheck(ctx context.Context, commitSHA string, ch
 }
 
 func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*PRResponse, error) {
+	if err := g.guardText(ctx, req.Title, req.Body); err != nil {
+		return nil, err
+	}
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, err
 	}
@@ -686,6 +703,9 @@ func (g *GitHubDriver) resolveMilestone(ctx context.Context, title string) (int,
 }
 
 func (g *GitHubDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
+	if err := g.guardText(ctx, spec.Title, spec.Body); err != nil {
+		return nil, err
+	}
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, err
 	}
@@ -877,6 +897,9 @@ func (g *GitHubDriver) UpdateIssue(ctx context.Context, number int, labels []str
 // EditIssueBody replaces the body of an existing issue. Labels, state and every other
 // field stay as they are: the PATCH carries the body alone.
 func (g *GitHubDriver) EditIssueBody(ctx context.Context, number int, body string) error {
+	if err := g.guardText(ctx, body); err != nil {
+		return err
+	}
 	if err := g.Authenticate(ctx); err != nil {
 		return err
 	}

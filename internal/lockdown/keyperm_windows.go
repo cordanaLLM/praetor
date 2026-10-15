@@ -33,7 +33,7 @@ import (
 // ACL has been widened inside that directory is not detected. Reading the ACL needs
 // golang.org/x/sys/windows, which this module does not depend on; see the discussion
 // in the private-artefact permissions issue.
-func verifyKeyPermissions(path string, info os.FileInfo) error {
+func VerifyKeyPermissions(path string, info os.FileInfo) error {
 	if info.IsDir() {
 		return fmt.Errorf("%w: %s is a directory", ErrInsecureKeyPerm, path)
 	}

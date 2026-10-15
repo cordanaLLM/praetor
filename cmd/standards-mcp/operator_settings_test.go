@@ -9,10 +9,16 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/needs"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
+
+var testConfigRoot string
 
 // TestMain keeps every tool call off the operator's own settings: no install manifest and no
 // settings or framework environment variable applies unless a test sets one.
+// It points the user configuration directory at a fresh temporary directory across
+// Linux (XDG_CONFIG_HOME/HOME), macOS (HOME), and Windows (AppData/APPDATA) so tests never touch
+// the developer's real configuration or claim keys.
 func TestMain(m *testing.M) {
 	installManifestPath = func() (string, error) { return "", nil }
 	for _, name := range []string{config.FleetConfigEnv, config.WorkstationConfigEnv, needs.FrameworkDirEnv} {
@@ -21,7 +27,17 @@ func TestMain(m *testing.M) {
 			os.Exit(2)
 		}
 	}
-	os.Exit(m.Run())
+
+	root, cleanup, err := testsupport.IsolateUserConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "isolate user config: %v\n", err)
+		os.Exit(2)
+	}
+	testConfigRoot = root
+
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 // selectAcmeTarget points PRAETOR_WORKSTATION_CONFIG at a workstation document whose go

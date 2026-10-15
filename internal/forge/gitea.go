@@ -76,17 +76,11 @@ func (gt *GiteaDriver) PostStatusCheck(ctx context.Context, commitSHA string, ch
 }
 
 func (gt *GiteaDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*PRResponse, error) {
-	if err := gt.Authenticate(ctx); err != nil {
-		return nil, err
-	}
-	return nil, gt.unsupported("CreatePullRequest")
+	return nil, stubWrite(ctx, gt.Authenticate, gt.unsupported, "CreatePullRequest", req.Title, req.Body)
 }
 
 func (gt *GiteaDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
-	if err := gt.Authenticate(ctx); err != nil {
-		return nil, err
-	}
-	return nil, gt.unsupported("CreateIssue")
+	return nil, stubWrite(ctx, gt.Authenticate, gt.unsupported, "CreateIssue", spec.Title, spec.Body)
 }
 
 func (gt *GiteaDriver) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
@@ -104,10 +98,7 @@ func (gt *GiteaDriver) UpdateIssue(ctx context.Context, number int, labels []str
 }
 
 func (gt *GiteaDriver) EditIssueBody(ctx context.Context, number int, body string) error {
-	if err := gt.Authenticate(ctx); err != nil {
-		return err
-	}
-	return gt.unsupported("EditIssueBody")
+	return stubWrite(ctx, gt.Authenticate, gt.unsupported, "EditIssueBody", body)
 }
 
 func (gt *GiteaDriver) WorkflowPermissions(ctx context.Context) (LiveWorkflowPermissions, error) {

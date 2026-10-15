@@ -1,0 +1,2 @@
+type: security
+title: 'Issue claims on public forges carry keyed tags instead of session and lane names: each claim marker records HMAC-SHA256 tags under a per-user key that never leaves the machine, a public text guard refuses forge text naming the session, the lane, the host or a name from the local private-names file, and forge claims migrate re-posts older claims with tags and deletes the plain ones'

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func useFakeClaimDesk(t *testing.T, fake *forgetest.ClaimFake, now func() time.T
 	var out bytes.Buffer
 	claimOutput = &out
 	claimDeskFactory = func(context.Context, string, string, *operatorSettingsFlags) (*forge.ClaimDesk, error) {
-		return &forge.ClaimDesk{Open: fake.Opener(), Stale: 6 * time.Hour, Now: now}, nil
+		return &forge.ClaimDesk{Open: fake.Opener(), Stale: 6 * time.Hour, Now: now, Key: fake.Key}, nil
 	}
 	t.Cleanup(func() { claimDeskFactory, claimOutput = previousFactory, previousOutput })
 	return &out
@@ -65,8 +66,10 @@ func TestIssueClaimCLI_Negative_SecondSessionRefusedNamingFirst(t *testing.T) {
 	if err := claimCLI("claim", "--session=first", "--lane=agy", "--branch=feat/first"); err != nil {
 		t.Fatal(err)
 	}
+	key := fake.Key
+	firstTag := forge.ClaimTag(key, "session", "first")
 	err := claimCLI("claim", "--session=second", "--lane=codex", "--branch=feat/second")
-	if !errors.Is(err, forge.ErrClaimHeld) || !strings.Contains(err.Error(), "session first") {
+	if !errors.Is(err, forge.ErrClaimHeld) || !strings.Contains(err.Error(), "session "+firstTag) {
 		t.Fatalf("second claim must be refused naming the first: %v", err)
 	}
 }
@@ -113,5 +116,27 @@ func TestIssueClaimCLI_Positive_HelpListsTheCommands(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("issue help lacks %q", want)
 		}
+	}
+}
+
+func TestClaimKey_DefaultPathUnderTempRoot(t *testing.T) {
+	if testConfigRoot == "" {
+		t.Fatal("testConfigRoot not initialized by TestMain")
+	}
+	p, err := forge.DefaultClaimKeyPath()
+	if err != nil {
+		t.Fatalf("DefaultClaimKeyPath: %v", err)
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(testConfigRoot)
+	if err != nil {
+		canonicalRoot = testConfigRoot
+	}
+	canonicalPath, err := filepath.EvalSymlinks(filepath.Dir(p))
+	if err != nil {
+		canonicalPath = filepath.Dir(p)
+	}
+	rel, err := filepath.Rel(canonicalRoot, canonicalPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		t.Fatalf("DefaultClaimKeyPath %s does not lie under testConfigRoot %s (rel: %s)", p, testConfigRoot, rel)
 	}
 }

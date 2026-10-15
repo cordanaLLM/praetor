@@ -74,17 +74,11 @@ func (gl *GitLabDriver) PostStatusCheck(ctx context.Context, commitSHA string, c
 }
 
 func (gl *GitLabDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*PRResponse, error) {
-	if err := gl.Authenticate(ctx); err != nil {
-		return nil, err
-	}
-	return nil, gl.unsupported("CreatePullRequest")
+	return nil, stubWrite(ctx, gl.Authenticate, gl.unsupported, "CreatePullRequest", req.Title, req.Body)
 }
 
 func (gl *GitLabDriver) CreateIssue(ctx context.Context, spec IssueSpec) (*IssueResponse, error) {
-	if err := gl.Authenticate(ctx); err != nil {
-		return nil, err
-	}
-	return nil, gl.unsupported("CreateIssue")
+	return nil, stubWrite(ctx, gl.Authenticate, gl.unsupported, "CreateIssue", spec.Title, spec.Body)
 }
 
 func (gl *GitLabDriver) ListIssues(ctx context.Context, state string) ([]IssueSpec, error) {
@@ -102,10 +96,7 @@ func (gl *GitLabDriver) UpdateIssue(ctx context.Context, number int, labels []st
 }
 
 func (gl *GitLabDriver) EditIssueBody(ctx context.Context, number int, body string) error {
-	if err := gl.Authenticate(ctx); err != nil {
-		return err
-	}
-	return gl.unsupported("EditIssueBody")
+	return stubWrite(ctx, gl.Authenticate, gl.unsupported, "EditIssueBody", body)
 }
 
 func (gl *GitLabDriver) WorkflowPermissions(ctx context.Context) (LiveWorkflowPermissions, error) {
