@@ -43,7 +43,7 @@ func hookRunnerRepo(t *testing.T, lefthook bool, preCommit string) (string, stri
 	root := filepath.Join(t.TempDir(), "repo")
 	initTestGit(t, root)
 	if lefthook {
-		mustWrite(t, filepath.Join(root, lefthookFile), "pre-commit:\n  commands: {}\n")
+		mustWrite(t, filepath.Join(root, lefthookFile), governanceJobs)
 	}
 	if preCommit != "" {
 		mustWrite(t, filepath.Join(root, preCommitConfigFile), preCommit)

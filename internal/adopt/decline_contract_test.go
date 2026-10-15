@@ -181,7 +181,7 @@ func TestAuditSharedDeclineGates_3D(t *testing.T) {
 		t.Fatalf("missing lefthook.yml passed: %v", err)
 	}
 	mustWrite(t, filepath.Join(root, ".config", "labels.yaml"), "version: 1\nlabels: []\n")
-	mustWrite(t, filepath.Join(root, lefthookFile), "pre-commit:\n  commands: {}\n")
+	mustWrite(t, filepath.Join(root, lefthookFile), governanceJobs)
 	if line, err := AuditLabelTaxonomy(nil, root); err != nil || !strings.HasPrefix(line, "[PASS] Repository label taxonomy") {
 		t.Fatalf("present labels: %q, %v", line, err)
 	}

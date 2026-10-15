@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -80,11 +81,12 @@ type GitHookConfig struct {
 }
 
 // AuditGitHookConfig is the hook configuration gate the CLI and MCP audits share, for a Git
-// checkout. A declined git-hooks step passes with the decline named. Otherwise lefthook.yml
-// passes; without it, a .pre-commit-config.yaml that runs praetorctl compile-context --verify and
-// praetorctl audit as local pre-commit hooks passes for the pre-commit framework. Which of the two
-// the checkout runs is decided by the installed hook (AuditInstalledGitHook), which this gate
-// does not read: with both files present lefthook.yml satisfies it.
+// checkout. A declined git-hooks step passes with the decline named. Otherwise a lefthook.yml
+// passes when its pre-commit hook runs praetorctl compile-context --verify and praetorctl audit
+// (auditLefthookConfig, #1077); without it, a .pre-commit-config.yaml that runs both as local
+// pre-commit hooks passes for the pre-commit framework, so both runners are held to one contract.
+// Which of the two the checkout runs is decided by the installed hook (AuditInstalledGitHook),
+// which this gate does not read: with both files present lefthook.yml decides it.
 func AuditGitHookConfig(ctx context.Context, manifest *config.Manifest, rootDir string) (GitHookConfig, error) {
 	verdict, err := AuditDecline(manifest, "git-hooks")
 	if err != nil {
@@ -94,8 +96,12 @@ func AuditGitHookConfig(ctx context.Context, manifest *config.Manifest, rootDir 
 		return GitHookConfig{Line: verdict.Line("Git hooks (" + lefthookFile + " and its activation)"), Declined: true}, nil
 	}
 	if fileExists(filepath.Join(rootDir, lefthookFile)) {
+		note, err := auditLefthookConfig(ctx, rootDir)
+		if err != nil {
+			return GitHookConfig{}, fmt.Errorf("[FAIL] %w", err)
+		}
 		return GitHookConfig{
-			Line: "[PASS] Git hook configuration " + lefthookFile + " verified.",
+			Line: "[PASS] Git hook configuration " + lefthookFile + " verified" + note + ".",
 			File: lefthookFile, Runner: string(runnerLefthook),
 		}, nil
 	}
@@ -307,6 +313,79 @@ var preCommitRequirements = [...]preCommitRequirement{
 	{label: util.PraetorCLI + " audit", runs: func(args []string) bool {
 		return len(args) > 0 && args[0] == "audit"
 	}},
+}
+
+// maxLefthookExtends bounds the extended files auditLefthookConfig reads (HISS-02).
+const maxLefthookExtends = 16
+
+// auditLefthookConfig reads lefthook.yml below rootDir with the repository's YAML reader and
+// fails unless its pre-commit hook runs every preCommitRequirements command, through praetorctl
+// or the engine launcher, in its own jobs or in those of a file it extends that lies inside the
+// repository (one level, as lefthook reads extends). A configuration that extends the canonical
+// policy passes on it: that policy is praetor's own, and the note says so.
+func auditLefthookConfig(ctx context.Context, rootDir string) (string, error) {
+	var parsed map[string]any
+	if err := config.ReadYAMLDocument(ctx, filepath.Join(rootDir, lefthookFile), &parsed, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
+		return "", fmt.Errorf("%s cannot be read: %w", lefthookFile, err)
+	}
+	if extendsCanonicalPolicy(parsed) {
+		return ": it extends the canonical Praetor hook policy " + canonicalLefthookPolicy, nil
+	}
+	runs := lefthookconfig.HookRuns(parsed, preCommitHook)
+	for _, extended := range lefthookExtends(parsed["extends"]) {
+		var included map[string]any
+		err := config.ReadYAMLDocument(ctx, filepath.Join(rootDir, filepath.FromSlash(extended)), &included, util.YAMLDocumentOptions{AllowEmpty: true})
+		if err == nil {
+			runs = append(runs, lefthookconfig.HookRuns(included, preCommitHook)...)
+		}
+	}
+	commands := make([][]string, 0, len(runs))
+	for _, run := range runs {
+		commands = append(commands, governedRunArgs(run)...)
+	}
+	var missing []string
+	for _, requirement := range preCommitRequirements {
+		if !slices.ContainsFunc(commands, requirement.runs) {
+			missing = append(missing, "'"+requirement.label+"'")
+		}
+	}
+	if len(missing) > 0 {
+		return "", fmt.Errorf("%s does not run %s at the pre-commit stage, through %s or %s, in its jobs or a local file it extends; "+
+			"'praetorctl adopt --force' regenerates it", lefthookFile, strings.Join(missing, " or "), util.PraetorCLI, engineLauncherFile)
+	}
+	return "", nil
+}
+
+// lefthookExtends returns the paths an extends value names, a string or a list of strings, that
+// lie inside the repository: relative, without a parent step. Others are not read.
+func lefthookExtends(value any) []string {
+	entries, ok := value.([]any)
+	if !ok {
+		entries = []any{value}
+	}
+	paths := make([]string, 0, len(entries))
+	for i := 0; i < len(entries) && len(paths) < maxLefthookExtends; i++ {
+		entry, isString := entries[i].(string)
+		clean := path.Clean(strings.ReplaceAll(strings.TrimSpace(entry), `\`, "/"))
+		if isString && entry != "" && !path.IsAbs(clean) && !filepath.IsAbs(entry) && clean != ".." && !strings.HasPrefix(clean, "../") {
+			paths = append(paths, clean)
+		}
+	}
+	return paths
+}
+
+// governedRunArgs returns the arguments a run line passes to praetor, once for every place it
+// names praetorctl (either name, bare or by path) or the engine launcher: a line such as
+// "sh .config/lefthook/engine.sh audit --offline" passes [audit --offline].
+func governedRunArgs(run string) [][]string {
+	fields := strings.Fields(run)
+	var commands [][]string
+	for i := 0; i < len(fields); i++ {
+		if isPraetorCommand(fields[i]) || strings.TrimPrefix(fields[i], "./") == engineLauncherFile {
+			commands = append(commands, fields[i+1:])
+		}
+	}
+	return commands
 }
 
 // auditPreCommitConfig reads .pre-commit-config.yaml below rootDir with the repository's YAML

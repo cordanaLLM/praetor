@@ -155,7 +155,7 @@ func newFixtureRepo(t *testing.T) string {
 		".standards-baseline.json":          `{"version":1,"generated_at":"2026-01-01T00:00:00Z","repository":"fixture/repo","commit_sha":"","total_infractions":0,"infractions":[]}` + "\n",
 		".config/labels.yaml":               "labels: []\n",
 		".github/rulesets/main.json":        fixtureRuleset(t),
-		"lefthook.yml":                      "pre-commit:\n  commands: {}\n",
+		"lefthook.yml":                      "pre-commit:\n  commands:\n    context:\n      run: praetorctl compile-context --verify\n    audit:\n      run: praetorctl audit --offline\n",
 		".gitignore":                        "/.workingdir/\n",
 		"go.mod":                            "module fixture\n\ngo 1.27\n",
 		"main.go":                           fixtureMainGo,

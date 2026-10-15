@@ -92,6 +92,11 @@ func readFixtureFile(t *testing.T, dir, rel string) string {
 	return string(data)
 }
 
+// fixtureLefthook is a lefthook.yml whose pre-commit hook runs both governance commands, the
+// contract the audit's hook configuration gate holds it to (#1077).
+const fixtureLefthook = "pre-commit:\n  commands:\n    context:\n      run: praetorctl compile-context --verify\n" +
+	"    audit:\n      run: praetorctl audit --offline\n"
+
 // initGitFixture turns dir into a repository with every file committed on main and a
 // lefthook.yml, so the audit's hook gate has its configuration. initArgs are appended to
 // git init. It skips the test when git is unavailable and returns the environment for
@@ -102,7 +107,7 @@ func initGitFixture(t *testing.T, dir string, initArgs ...string) []string {
 		t.Skipf("git not available: %v", err)
 	}
 	env := testsupport.HermeticGitEnv(t)
-	writeFixtureFile(t, dir, "lefthook.yml", "pre-commit:\n  commands: {}\n")
+	writeFixtureFile(t, dir, "lefthook.yml", fixtureLefthook)
 	initCmd := append([]string{"init", "-q", "-b", "main"}, initArgs...)
 	for _, args := range [][]string{initCmd, {"add", "-A"}, {"commit", "-q", "-m", "fixture"}} {
 		if out, err := runFixtureGit(t, dir, env, args...); err != nil {
