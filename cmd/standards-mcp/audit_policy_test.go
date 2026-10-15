@@ -101,7 +101,7 @@ func TestServerAuditExternalManifestPreservesExplicitAuthorization(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 11/11")
+	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 12/12")
 }
 
 func TestServerAuditUsesSelectedCatalog(t *testing.T) {
@@ -111,7 +111,7 @@ func TestServerAuditUsesSelectedCatalog(t *testing.T) {
 	relocateCatalog(t, root, "catalog")
 	expectError(t, "missing default catalog", callTool(t, srv, "standards_audit", nil), "materialized profile")
 	after := callTool(t, srv, "standards_audit", map[string]any{"catalog_root": "catalog"})
-	expectText(t, "selected catalog", after, "passed: 11/11")
+	expectText(t, "selected catalog", after, "passed: 12/12")
 	// Mounting identical catalog bytes at another path retains policy identity.
 	beforeLine := strings.Split(before.Content[0].Text, "\n")[2]
 	afterLine := strings.Split(after.Content[0].Text, "\n")[2]
@@ -158,7 +158,7 @@ func TestServerAuditRunsTheSupplyChainGate(t *testing.T) {
 		"    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/attest-build-provenance@v4\n")
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "declared level met", audit, "[PASS] Supply chain (HISS-11): SLSA Build Level 2 declared, Level 2 measured from release.yml.")
-	expectText(t, "declared level met", audit, "passed: 11/11")
+	expectText(t, "declared level met", audit, "passed: 12/12")
 }
 
 // TestServerAuditRunsTheWorkflowTriggerCheck (#817): standards_audit runs the HISS-18 workflow
@@ -172,7 +172,7 @@ func TestServerAuditRunsTheWorkflowTriggerCheck(t *testing.T) {
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "unfiltered push", audit,
 		"[WARN] Workflow triggers (HISS-18): .github/workflows/everywhere.yml:1: push runs on every branch and tag")
-	expectText(t, "unfiltered push", audit, "passed: 11/11")
+	expectText(t, "unfiltered push", audit, "passed: 12/12")
 	expires := config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
 	writeFixtureFile(t, root, ".standards.yaml", "version: 1\nrepository:\n  owner: fixture\n  name: repo\nprofiles: [framework]\n"+
 		"facets: []\nexceptions:\n  - rule: \"HISS-18\"\n    path: \".github/workflows/everywhere.yml\"\n"+
@@ -180,7 +180,7 @@ func TestServerAuditRunsTheWorkflowTriggerCheck(t *testing.T) {
 	excepted := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "excepted push", excepted, "[PASS] Workflow triggers (HISS-18): .github/workflows/everywhere.yml excepted until "+
 		expires+" by the exceptions entry (rule HISS-18, .github/workflows/everywhere.yml): builds every branch push by design")
-	expectText(t, "excepted push", excepted, "passed: 11/11")
+	expectText(t, "excepted push", excepted, "passed: 12/12")
 }
 
 // TestServerAuditRunsTheBuildWarningsGate (#816): standards_audit runs the HISS-10 gate the CLI
@@ -206,5 +206,5 @@ func TestServerAuditRunsTheBuildWarningsGate(t *testing.T) {
 		"    expires: \""+expires+"\"\n")
 	audit := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "excepted lane", audit, "0 build lanes fail on a warning; 1 excepted:")
-	expectText(t, "excepted lane", audit, "passed: 11/11")
+	expectText(t, "excepted lane", audit, "passed: 12/12")
 }
