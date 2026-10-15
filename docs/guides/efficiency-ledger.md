@@ -303,3 +303,69 @@ followed by the spend split:
 The Notes section lists everything the run could not do completely: a forge listing cut by a
 bound or by `--limit`, closing issues that could not be fetched, skipped transcript lines, a
 missing token and repeated spend-log requests.
+
+## Cost ledger
+
+`praetorctl efficiency costs --input <file>` reads a declared cost ledger and reports what each
+session cost by category. Shared overhead is split across sessions by a stated rule, and the
+same split is rerun under a second rule to show how much the result depends on the rule. Each
+mechanism (a rule, gate, hook, skill or cache) gets its break-even point. This slice reads a
+JSON file that you write; nothing yet fills it from transcripts or the gateway spend log.
+
+```json
+{
+  "schema_version": 1,
+  "allocation": {"rule": "by_tokens", "sensitivity_rule": "by_sessions"},
+  "entries": [
+    {"id": "e1", "session": "s1", "category": "task", "tokens": 1200, "spend": 0.04, "provenance": "measured"},
+    {"id": "e9", "category": "rule_context", "tokens": 8000, "spend": 0.2, "provenance": "measured", "shared": true}
+  ],
+  "mechanisms": [
+    {"id": "hook:commit-msg", "kind": "hook", "fixed_cost_tokens": 400, "saving_per_use_tokens": 120, "uses": 10,
+     "calls_delta": -3, "cost_delta": 0, "latency_delta_s": 2.0}
+  ]
+}
+```
+
+| Command / Flag | Description | On failure |
+| :--- | :--- | :--- |
+| `praetorctl efficiency costs` | Validates the ledger and renders the cost report | any validation error below, exit 1 |
+| `--input=<file>` | The cost ledger to read | file unreadable, invalid JSON, unknown field |
+| `--format=table\|json` | Output format (default `table`) | invalid format name |
+| `--json` | Alias for `--format=json` | |
+
+**Categories** form a closed list: `task`, `review`, `retry`, `orchestration`, `memory_recall`,
+`mcp_tool_schemas` and `rule_context`. The ledger is refused, naming the entry, when:
+
+- an entry has no category or an unknown one (unassigned cost);
+- two entries share an id, or the same session, category, tokens and spend appear under two
+  ids (double-counted cost; both ids are named);
+- a shared entry names a session, or an entry that is not shared names none;
+- tokens or spend are negative, or provenance is unknown;
+- shared entries are present without an allocation rule or sensitivity rule, a rule is unknown,
+  or both rules are the same.
+
+**Exact figures.** Spend is read as an exact decimal into integer micro-units, so totals never
+need a rounding tolerance. Plain and exponent forms are accepted (`0.00001` and `1e-05`); more
+than six decimal places is refused. The report's grand total, and the session totals plus the
+shared total, are checked against an independent sum over the entries (`checkTotals`).
+
+**Allocation rules:** `by_tokens` splits shared overhead by each session's own tokens, `by_spend`
+by its own spend, and `by_sessions` equally. Shares are whole tokens and whole micro-units by the
+largest-remainder method, with ties going to the session name first in order. They therefore sum
+exactly to the shared total under both rules. Each session shows its share under the rule, its
+share under the sensitivity rule, and the difference.
+
+**Break-even** per mechanism is `N* = ceil(fixed_cost_tokens / saving_per_use_tokens)`; the
+mechanism has reached it when `uses >= N*`. A saving of zero or less prints `no break-even`. A
+mechanism whose calls went down while its cost and latency did not (`calls_delta < 0`,
+`cost_delta >= 0`, `latency_delta_s >= 0`) is flagged as a cosmetic saving.
+
+**Bounds:** at most 10000 entries and 1000 mechanisms, 1e12 tokens and 1e8 currency units per
+entry. A spend number may be at most 40 bytes, with an exponent of at most 20 either way. The
+bounds keep every sum inside a 64-bit integer.
+
+Tests: `TestCostLedger_Positive`, `TestCostLedger_Negative_ValidationErrors` and
+`TestCostLedger_Boundary` in `internal/efficiency/costledger/costledger_test.go`;
+`TestAllocateSharesHamilton`, `TestReportOverflowBoundary` and `TestCheckTotals` in
+`internal/efficiency/costledger/allocation_test.go`.
