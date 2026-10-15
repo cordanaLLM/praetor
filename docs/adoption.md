@@ -1070,7 +1070,9 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   skill the repository carries in `.claude/skills/` when Claude Code is selected, and, when
   `.agents/plugins/praetor/plugin.json` exists, the plugin persona and skill copies. A
   hand-edited plugin copy is replaced with its line delta and backup like any persona copy, and
-  a symlinked plugin directory fails adoption before its first write. After the last step,
+  a symlinked plugin directory fails adoption before its first write. Every canonical persona
+  must declare a model tier (`model: flash` or `model: pro`), projected per-client or stripped
+  with a documented reason. After the last step,
   adoption runs the check `compile-context --verify` runs (`compiler.VerifyCompiledContext`,
   `verifyAgentContext` in `internal/adopt/context_verify.go`). The check reads the whole
   repository, not only the files adoption wrote. Each rejection is an error on the report,

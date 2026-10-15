@@ -743,6 +743,19 @@ An existing taxonomy is the repository's configuration: `adopt --force` keeps it
 With `adoption.decline: [labels]` adoption writes none, and both audits pass without one
 (`adopt.AuditLabelTaxonomy`, [declined steps](#what-audit-does-with-a-declined-step)).
 
+### Rule enforcement registry and gate stage names
+
+`standardsctl rules audit` reads `.config/rules/enforcement.yaml`, which gives every HISS rule and
+every AGENTS.md operational rule an enforcement class (`ci-gate`, `hook`, `review-gate`,
+`guidance` or `staged`) and evidence pointers, and checks that each pointer resolves: `test:` to a
+Go test function, `hook:` to a lefthook hook command, `make:` to a Makefile target, `workflow:` to
+a workflow job, and `gate:` to a stage of `praetorctl gate run`. The stage names come from
+`gating.StageNames()`, which reads the same list the pipeline executes (`pipelineStages` in
+[`internal/gating/pipeline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/pipeline.go)),
+so a stage the pipeline drops stops resolving and fails the audit
+(`TestStageNames_PipelineOrder` in `internal/gating/stages_test.go`). Rules with class `guidance`,
+or without an entry, are reported as prose-only; this slice reports them and does not fail.
+
 ### Stages that do not apply are skipped, not failed
 
 `praetorctl gate run` records one of four verdicts per stage (`StageStatus` in
@@ -1986,7 +1999,9 @@ jobs follow the languages the plan detects: `gofmt`, `govet` and `security` for 
 detected ([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adoption-writes)).
 Each runs only where the root holds its marker and otherwise prints
 `no <marker> at the repository root, skipping <tool>`, matching the gate stages above. A module
-kept in a subdirectory is not scanned by these jobs. The `gate` job runs
+kept in a subdirectory is not scanned by these jobs. For every tracked nested `go.mod`, adoption's
+`git-hooks` step warns with its directory and says that the module's declared verification command
+is what checks it; it does not alter `lefthook.yml` or the gate. The `gate` job runs
 `praetorctl gate run --path=. --admit-unsupported`: a root with neither a `go.mod` nor a
 `Cargo.lock` is admitted without a receipt and its languages are named, and a root with either
 fails where its toolchain stages did not run

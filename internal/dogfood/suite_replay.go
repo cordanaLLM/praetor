@@ -25,9 +25,10 @@ func verifySuiteTranscript(ctx context.Context, dir string, result *SuiteCase) e
 	if err := mkdirEvidenceDir(dir); err != nil {
 		return err
 	}
+	source := *result.Transcript
 	cache := filepath.Join(dir, "events")
 	result.Ingestion = &SuiteReplayPass{}
-	if err := suiteTranscriptPass(ctx, *result.Transcript, cache, result.Ingestion); err != nil {
+	if err := suiteTranscriptPass(ctx, source, cache, result.Ingestion); err != nil {
 		return fmt.Errorf("ingestion: %w", err)
 	}
 	first := result.Ingestion
@@ -35,7 +36,7 @@ func verifySuiteTranscript(ctx context.Context, dir string, result *SuiteCase) e
 		return errors.New("fresh transcript cache requires at least one newly stored observation")
 	}
 	result.Replay = &SuiteReplayPass{}
-	if err := suiteTranscriptPass(ctx, *result.Transcript, cache, result.Replay); err != nil {
+	if err := suiteTranscriptPass(ctx, source, cache, result.Replay); err != nil {
 		return fmt.Errorf("replay: %w", err)
 	}
 	replay := result.Replay

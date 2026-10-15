@@ -23,6 +23,8 @@ const (
 	// reports one check per job of the called workflow, named "<caller> / <called job>"
 	// (#1212, check runs of plurano/shared-ci pull request 5: "Licence / REUSE lint").
 	reusableContextSeparator = " / "
+	maxExprTokens            = 64
+	maxExprStack             = 32
 )
 
 // calledWorkflows holds the repository's workflow documents by file name, so a job that calls
@@ -79,13 +81,14 @@ func (c calledWorkflows) spec(job, uses string) (*workflowSpec, error) {
 }
 
 // reusableCall is one call still to expand: the contexts of the job that makes it, the
-// workflow it calls, the calling job's id for messages, and the level the called workflow
-// runs at (the workflow a trigger starts is level 1).
+// workflow it calls, the calling job's id for messages, the level the called workflow
+// runs at (the workflow a trigger starts is level 1), and the with inputs passed by the caller.
 type reusableCall struct {
 	prefixes []string
 	uses     string
 	job      string
 	level    int
+	with     map[string]any
 }
 
 // reusableCallContexts returns the check contexts a job that calls a reusable workflow reports
@@ -101,7 +104,7 @@ func reusableCallContexts(id string, job workflowJob, called calledWorkflows, id
 	if err != nil {
 		return nil, err
 	}
-	queue := []reusableCall{{prefixes: callers, uses: job.Uses, job: id, level: 2}}
+	queue := []reusableCall{{prefixes: callers, uses: job.Uses, job: id, level: 2, with: job.With}}
 	var contexts []string
 	for next := 0; next < len(queue); next++ {
 		if next >= maxReusableCalls {
@@ -136,7 +139,7 @@ func expandReusableCall(call reusableCall, called calledWorkflows, identity stri
 		if covered[ids[i]] || !requiredJob(&job, identity) {
 			continue
 		}
-		names, err := jobCheckContexts(ids[i], job)
+		names, err := calledJobContexts(ids[i], job, spec, call.with)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", call.uses, err)
 		}
@@ -149,9 +152,19 @@ func expandReusableCall(call reusableCall, called calledWorkflows, identity stri
 			return nil, nil, fmt.Errorf("%s: job %q calls %s at level %d, deeper than the %d levels GitHub runs",
 				call.uses, ids[i], job.Uses, call.level+1, maxReusableLevels)
 		}
-		calls = append(calls, reusableCall{prefixes: joined, uses: job.Uses, job: ids[i], level: call.level + 1})
+		calls = append(calls, reusableCall{prefixes: joined, uses: job.Uses, job: ids[i], level: call.level + 1, with: job.With})
 	}
 	return contexts, calls, nil
+}
+
+// calledJobContexts resolves a job's name expression before computing its check contexts.
+func calledJobContexts(id string, job workflowJob, spec *workflowSpec, with map[string]any) ([]string, error) {
+	if strings.Contains(job.Name, expressionOpen) && job.Strategy.Matrix.ShortTag() == "!!null" {
+		if resolved, ok := resolveCalledJobName(job.Name, spec, with); ok {
+			job.Name = resolved
+		}
+	}
+	return jobCheckContexts(id, job)
 }
 
 // joinReusableContexts names every called job context under every calling one.

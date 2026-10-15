@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {"id": "e1", "session": "s1", "category": "task", "tokens": 1200, "spend": 0.04, "provenance": "measured"},
+    {"id": "e2", "session": "s2", "category": "review", "tokens": 800, "spend": 0.02, "provenance": "measured"}
+  ]
+}

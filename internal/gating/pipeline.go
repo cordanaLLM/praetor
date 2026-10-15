@@ -77,6 +77,18 @@ const (
 	stageReceipt        = "Ed25519 Exit-0 Receipt"
 )
 
+// StageNames returns the gate stages in the order the pipeline executes them, read from the
+// same list executeStages runs, so a stage the pipeline drops cannot stay resolvable for the rule
+// registry. Callers receive a new slice and cannot alter the pipeline's declarations.
+func StageNames() []string {
+	stages := pipelineStages()
+	names := make([]string, 0, len(stages))
+	for i := 0; i < len(stages) && i < maxStages; i++ {
+		names = append(names, stages[i].name)
+	}
+	return names
+}
+
 // ErrMissingScanner reports that a required security scanner is absent, which must fail
 // the security stage instead of silently passing it.
 var ErrMissingScanner = errors.New("required security scanner is not installed")
@@ -360,8 +372,10 @@ type stage struct {
 	fn   func(context.Context, *stageConfig) (string, error)
 }
 
-func executeStages(ctx context.Context, cfg *stageConfig) error {
-	stages := []stage{
+// pipelineStages is the one list of gate stages, in execution order: executeStages runs it and
+// StageNames reports it.
+func pipelineStages() []stage {
+	return []stage{
 		{stagePrefetch, runPrefetchStage},
 		{stageHISS, runHissStage},
 		{stageSecurity, runSecurityStage},
@@ -370,7 +384,10 @@ func executeStages(ctx context.Context, cfg *stageConfig) error {
 		{stageDeclaredVerify, runDeclaredVerifyStage},
 		{stageReceipt, runReceiptStage},
 	}
+}
 
+func executeStages(ctx context.Context, cfg *stageConfig) error {
+	stages := pipelineStages()
 	for i := 0; i < len(stages) && i < maxStages; i++ {
 		if err := executeStage(ctx, stages[i], cfg); err != nil {
 			return err

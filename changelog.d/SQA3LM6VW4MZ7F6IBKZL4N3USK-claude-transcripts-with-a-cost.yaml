@@ -1,0 +1,3 @@
+type: fixed
+title: Claude transcripts with a cost-state record ingest; an unknown record type is refused at its line without repeating the value
+issue: '#1362'

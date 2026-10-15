@@ -18,6 +18,7 @@ import (
 
 type scheduleSnapshot struct {
 	config            *ScheduleConfig
+	suite             *SuiteConfig
 	files             map[string][]byte
 	sourceTaskLabels  []string // target_tasks of the source repository's own router: the vocabulary its register rows may name
 	fingerprint       string
@@ -40,11 +41,11 @@ func loadScheduleSnapshotWithinRoot(ctx context.Context, path, inputRoot string)
 	if err := confineScheduleConfig(inputRoot, configuration); err != nil {
 		return nil, err
 	}
-	suiteData, err := snapshotScheduleSuite(ctx, configuration, inputRoot)
+	suiteData, suite, err := snapshotScheduleSuite(ctx, configuration, inputRoot)
 	if err != nil {
 		return nil, err
 	}
-	snapshot := &scheduleSnapshot{config: configuration, files: map[string][]byte{"schedule.json": data, "suite.json": suiteData}}
+	snapshot := &scheduleSnapshot{config: configuration, suite: suite, files: map[string][]byte{"schedule.json": data, "suite.json": suiteData}}
 	if err := snapshot.captureBundle(ctx); err != nil {
 		return nil, err
 	}
@@ -128,7 +129,11 @@ func (s *scheduleSnapshot) captureArchetypes(ctx context.Context) (err error) {
 	return ctx.Err()
 }
 
-func (s *scheduleSnapshot) materialize(ctx context.Context, root *os.Root, name string) error {
+func (s *scheduleSnapshot) materialize(ctx context.Context, root, stateRoot *os.Root, name string) error {
+	suiteData, err := s.snapshotSuiteTranscripts(ctx, stateRoot)
+	if err != nil {
+		return err
+	}
 	if err := root.Mkdir(name, 0o700); err != nil {
 		return err
 	}
@@ -136,11 +141,11 @@ func (s *scheduleSnapshot) materialize(ctx context.Context, root *os.Root, name 
 	if err != nil {
 		return err
 	}
-	writeErr := s.writeInputs(ctx, inputs)
+	writeErr := s.writeInputs(ctx, inputs, suiteData)
 	return errors.Join(writeErr, inputs.Close())
 }
 
-func (s *scheduleSnapshot) writeInputs(ctx context.Context, root *os.Root) error {
+func (s *scheduleSnapshot) writeInputs(ctx context.Context, root *os.Root, suiteData []byte) error {
 	names := make([]string, 0, len(s.files))
 	for name := range s.files {
 		names = append(names, name)
@@ -157,7 +162,11 @@ func (s *scheduleSnapshot) writeInputs(ctx context.Context, root *os.Root) error
 		if err != nil {
 			return err
 		}
-		_, writeErr := file.Write(s.files[names[i]])
+		data := s.files[names[i]]
+		if names[i] == "suite.json" {
+			data = suiteData
+		}
+		_, writeErr := file.Write(data)
 		if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
 			return fmt.Errorf("persist schedule input: %w", err)
 		}
@@ -247,24 +256,24 @@ func (s *scheduleSnapshot) validateCapturedRepairTasks(p *RepairPolicy) error {
 	return nil
 }
 
-func snapshotScheduleSuite(ctx context.Context, configuration *ScheduleConfig, inputRoot string) ([]byte, error) {
+func snapshotScheduleSuite(ctx context.Context, configuration *ScheduleConfig, inputRoot string) ([]byte, *SuiteConfig, error) {
 	suite, suiteSum, err := loadSuiteConfig(ctx, configuration.SuiteConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateSuitePolicy(suite, SuiteOptions{SourceRoot: configuration.SourceRoot, Stage: "verify", AllowRemote: configuration.AllowRemote, InputRoot: inputRoot}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	suiteData, err := readSchedulePrivate(ctx, configuration.SuiteConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sum := sha256.Sum256(suiteData)
 	if hex.EncodeToString(sum[:]) != suiteSum {
-		return nil, errors.New("suite changed while snapshotting")
+		return nil, nil, errors.New("suite changed while snapshotting")
 	}
 
-	return suiteData, nil
+	return suiteData, suite, nil
 }
 
 func (s *scheduleSnapshot) captureArchetypeDirectory(ctx context.Context, root *os.Root, dirs []string, i, total int) ([]string, int, error) {

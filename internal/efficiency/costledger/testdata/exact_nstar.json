@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {"id": "e1", "session": "s1", "category": "task", "tokens": 500, "spend": 0.01, "provenance": "measured"}
+  ],
+  "mechanisms": [
+    {
+      "id": "skill:adhd",
+      "kind": "skill",
+      "fixed_cost_tokens": 300,
+      "saving_per_use_tokens": 100,
+      "uses": 3,
+      "calls_delta": 0,
+      "cost_delta": 0.0,
+      "latency_delta_s": 0.0
+    }
+  ]
+}

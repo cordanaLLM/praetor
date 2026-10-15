@@ -93,8 +93,9 @@ func TestInitEvidence_Boundary_IgnoredDirectoryAndPersonas(t *testing.T) {
 	if got := readFixtureFile(t, dir, ".gitignore"); got != "/.workingdir/\n" {
 		t.Fatalf(".gitignore rewritten: %q", got)
 	}
-	if got := readFixtureFile(t, dir, ".claude/agents/praetor-gatekeeper.md"); got != fixturePersona {
-		t.Fatalf("init must project the canonical persona, got %q", got)
+	wantClaude := strings.Replace(fixturePersona, "model: flash", "model: haiku", 1)
+	if got := readFixtureFile(t, dir, ".claude/agents/praetor-gatekeeper.md"); got != wantClaude {
+		t.Fatalf("init must project the canonical persona, got %q, want %q", got, wantClaude)
 	}
 	if out, err := runCompileContextCmd(t, dir, "--verify"); err != nil {
 		t.Fatalf("verify after init: %v\n%s", err, out)

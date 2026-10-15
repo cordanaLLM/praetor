@@ -68,7 +68,7 @@ func scheduleTickWithinRoot(ctx context.Context, path, inputRoot string, execute
 	if err != nil {
 		return nil, err
 	}
-	report = &ScheduleReport{RunnerSHA256: snapshot.runnerSHA, RunnerIdentity: "configured_binary", Version: 1, Config: snapshot.config, Fingerprint: snapshot.fingerprint, Status: "due", Scope: "Finite local suite tick; retained-byte cap is an admission threshold, not an in-flight filesystem quota. No input pin updates, provider dispatch, deletion or promotion."}
+	report = &ScheduleReport{RunnerSHA256: snapshot.runnerSHA, RunnerIdentity: "configured_binary", Version: 1, Config: snapshot.config, Fingerprint: snapshot.fingerprint, Status: "due", Scope: "Finite local suite tick; retained-byte cap is an admission threshold, not an in-flight filesystem quota. No input pin updates, provider dispatch or promotion; deletion only of the oldest retained runs under retention prune-oldest."}
 	defer func() {
 		if err != nil {
 			report.Verified = false
@@ -119,37 +119,62 @@ func (s *scheduleSession) inspect(ctx context.Context, execute bool) error {
 	if err != nil {
 		return err
 	}
-	if usage.runs != s.state.Attempts {
+	if err := s.resumePrune(usage, execute); err != nil {
+		return err
+	}
+	expectedRuns := s.state.Attempts - s.state.PrunedThrough
+	if usage.runs != expectedRuns {
 		return errors.New("retained attempt directories disagree with durable state; manual review required")
 	}
-	if s.state.LastAttempt != nil && s.state.LastAttempt.Status == "running" {
-		s.state.LastAttempt.Status = "interrupted"
-		s.state.LastAttempt.FinishedAt = s.now().UTC()
-		if s.state.LastAttempt.FinishedAt.Before(s.state.LastAttempt.StartedAt) {
-			s.state.LastAttempt.FinishedAt = s.state.LastAttempt.StartedAt
-		}
-		s.state.LastAttempt.Error = "Previous process exited before recording a result; retained evidence is incomplete"
-		if execute {
-			if err := saveScheduleJSON(ctx, s.root, "state.json", s.state); err != nil {
-				return err
-			}
-		}
+	if expectedRuns > 0 && (usage.minRun != s.state.PrunedThrough+1 || usage.maxRun != s.state.Attempts) {
+		return errors.New("retained attempt directories disagree with durable state; manual review required")
+	}
+	if err := s.handleInterrupted(ctx, execute); err != nil {
+		return err
+	}
+	if err := s.pruneOldest(ctx, usage, execute); err != nil {
+		return err
 	}
 	s.refreshReport()
 	s.report.RetainedBytes, s.report.RetainedRuns = usage.bytes, usage.runs
-	s.report.Status = s.decision()
+	s.report.Status = s.decision(usage.entries)
+	return nil
+}
+
+func (s *scheduleSession) handleInterrupted(ctx context.Context, execute bool) error {
+	if s.state.LastAttempt == nil || s.state.LastAttempt.Status != "running" {
+		return nil
+	}
+	s.state.LastAttempt.Status = "interrupted"
+	s.state.LastAttempt.FinishedAt = s.now().UTC()
+	if s.state.LastAttempt.FinishedAt.Before(s.state.LastAttempt.StartedAt) {
+		s.state.LastAttempt.FinishedAt = s.state.LastAttempt.StartedAt
+	}
+	s.state.LastAttempt.Error = "Previous process exited before recording a result; retained evidence is incomplete"
+	if execute {
+		return saveScheduleJSON(ctx, s.root, "state.json", s.state)
+	}
 	return nil
 }
 
 func (s *scheduleSession) refreshReport() {
 	s.report.Attempts = s.state.Attempts
 	s.report.ConsecutiveFailures = s.state.ConsecutiveFailures
+	s.report.PrunedThrough = s.state.PrunedThrough
 	s.report.LastAttempt = s.state.LastAttempt
 }
 
-func (s *scheduleSession) decision() string {
+func (s *scheduleSession) decision(entries int) string {
 	c, last := s.snapshot.config, s.state.LastAttempt
-	if s.report.RetainedRuns >= c.MaxRuns || s.report.RetainedBytes >= c.MaxBytes {
+	if entries > maxScheduleEntries {
+		s.report.Reason = fmt.Sprintf("retained evidence exceeds %d entries", maxScheduleEntries)
+		return "resource_blocked"
+	}
+	blocked := s.report.RetainedRuns >= c.MaxRuns
+	if c.Retention == "prune-oldest" {
+		blocked = s.report.RetainedRuns > c.MaxRuns
+	}
+	if blocked || s.report.RetainedBytes >= c.MaxBytes {
 		return "resource_blocked"
 	}
 	if last == nil {
@@ -171,6 +196,84 @@ func (s *scheduleSession) decision() string {
 		return "cooldown"
 	}
 	return "due"
+}
+
+func (s *scheduleSession) pruneOldest(ctx context.Context, usage *scheduleUsage, execute bool) error {
+	if s.snapshot.config.Retention != "prune-oldest" {
+		return nil
+	}
+	for step := 0; step < 1024; step++ {
+		if !s.shouldPrune(usage.runs, usage.entries, usage.bytes) {
+			break
+		}
+		nextPrune := s.state.PrunedThrough + 1
+		if !s.canPruneRun(nextPrune) {
+			break
+		}
+		if err := s.applyPrune(ctx, usage, nextPrune, execute); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resumePrune finishes a prune a crash interrupted: pruneOldest persists pruned_through before it removes
+// the directory, so a process that died between the two leaves run directories numbered at or below
+// pruned_through. They are already given up by durable state; without this every later tick would
+// refuse the disagreement and the schedule would stay stopped. A dry run only names them.
+func (s *scheduleSession) resumePrune(usage *scheduleUsage, execute bool) error {
+	for step := 0; step < 1024 && usage.runs > 0 && usage.minRun <= s.state.PrunedThrough; step++ {
+		name := scheduleRunName(usage.minRun)
+		if execute {
+			if err := s.root.RemoveAll(name); err != nil {
+				return err
+			}
+		}
+		s.report.PrunedRuns = append(s.report.PrunedRuns, name)
+		usage.forget(name)
+	}
+	return nil
+}
+
+func (s *scheduleSession) shouldPrune(retainedRuns, entries int, bytes int64) bool {
+	c := s.snapshot.config
+	return retainedRuns > c.MaxRuns || entries > maxScheduleEntries/2 || bytes >= c.MaxBytes
+}
+
+func (s *scheduleSession) canPruneRun(number int) bool {
+	if number >= s.state.Attempts {
+		return false
+	}
+	if s.state.LastAttempt != nil && s.state.LastAttempt.Number == number && s.state.LastAttempt.Status == "running" {
+		return false
+	}
+	return true
+}
+
+func (s *scheduleSession) applyPrune(ctx context.Context, usage *scheduleUsage, number int, execute bool) error {
+	name := scheduleRunName(number)
+	if execute {
+		s.state.PrunedThrough = number
+		if err := saveScheduleJSON(ctx, s.root, "state.json", s.state); err != nil {
+			return err
+		}
+		if err := s.root.RemoveAll(name); err != nil {
+			return err
+		}
+	} else {
+		s.state.PrunedThrough = number
+	}
+	s.report.PrunedRuns = append(s.report.PrunedRuns, name)
+	usage.forget(name)
+	return nil
+}
+
+// forget drops the oldest retained run, name, from the usage counts after it was removed or would be.
+func (u *scheduleUsage) forget(name string) {
+	u.runs--
+	u.minRun++
+	u.entries = max(u.entries-u.runEntries[name], 0)
+	u.bytes = max(u.bytes-u.runBytes[name], 0)
 }
 
 func scheduleRunName(number int) string { return fmt.Sprintf("run-%06d", number) }
@@ -211,7 +314,7 @@ func (s *scheduleSession) execute(ctx context.Context, name string) (*SuiteRepor
 	if err != nil {
 		return nil, err
 	}
-	writeErr := s.snapshot.materialize(ctx, attempt, "inputs")
+	writeErr := s.snapshot.materialize(ctx, attempt, s.root, "inputs")
 	if err := errors.Join(writeErr, attempt.Close()); err != nil {
 		return nil, err
 	}

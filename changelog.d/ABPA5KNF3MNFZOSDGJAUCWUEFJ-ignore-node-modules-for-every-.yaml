@@ -1,0 +1,3 @@
+type: fixed
+title: Ignore node_modules for every npm project
+issue: '#1351'

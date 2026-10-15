@@ -1,0 +1,3 @@
+type: fixed
+title: Preserve scheduled dogfood transcripts after source pruning
+issue: '#1357'

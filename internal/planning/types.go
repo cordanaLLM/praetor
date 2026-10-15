@@ -2,8 +2,13 @@
 // It validates structure only; source assertions and instructions remain inert, unverified data.
 package planning
 
+import "time"
+
 const (
-	SchemaVersion         = 1
+	// SchemaVersion 2 requires an experiment block with evidence_status on every implementation step.
+	SchemaVersion = 2
+	// SchemaVersionV1 drafts still compile until SchemaV1RefusedFrom, with a deprecation line in the report.
+	SchemaVersionV1       = 1
 	MaxJSONBytes          = 512 << 10
 	MaxArtifactBytes      = 1 << 20
 	MaxTotalArtifactBytes = 4 << 20
@@ -16,9 +21,17 @@ const (
 	MaxActions            = 16
 	MaxExpectedOutputs    = 16
 	MaxAcceptanceCases    = 8
+	MaxProtectedOutcomes  = 8
 	MaxIDBytes            = 128
 	MaxTextBytes          = 4096
 )
+
+// SchemaV1RefusedFrom ends the schema_version 1 window: 10 days from 2026-10-15 (exception category C, ledger
+// praetor-w7-experiment-contract-trigger). From this instant a version 1 draft is refused.
+var SchemaV1RefusedFrom = time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
+
+// now is the clock the version window reads; tests replace it.
+var now = time.Now
 
 const (
 	StatusStructurallyValid = "structurally_valid"
@@ -94,6 +107,18 @@ type ProjectLink struct {
 	MilestoneID string `json:"milestone_id"`
 }
 
+// Experiment is a step's falsification contract: the strongest conventional baseline it must beat, the
+// result that kills it, the margin that counts as a win, what must not get worse, how established the
+// claim is, and the outcome once measured.
+type Experiment struct {
+	EvidenceStatus    string   `json:"evidence_status"` // established | hypothesis | speculative
+	Null              string   `json:"null"`            // strongest conventional baseline
+	KillCriterion     string   `json:"kill_criterion"`
+	Margin            string   `json:"margin"`
+	ProtectedOutcomes []string `json:"protected_outcomes"`
+	Disposition       string   `json:"disposition"` // "" while proposed | reject | revise | promote | no-change
+}
+
 // Step actions are inert text. Kind classifies planned work; Compile never
 // interprets actions as shell, model, or tool commands.
 type Step struct {
@@ -109,6 +134,7 @@ type Step struct {
 	ExpectedOutputs []ExpectedOutput `json:"expected_outputs"`
 	Acceptance      Acceptance       `json:"acceptance"`
 	Link            ProjectLink      `json:"link"`
+	Experiment      *Experiment      `json:"experiment,omitempty"`
 }
 
 // Result is a structurally valid draft proposal. Files are derived from Draft
@@ -121,6 +147,7 @@ type Result struct {
 	MilestoneOrder   []string          `json:"milestone_order"`
 	StepOrder        []string          `json:"step_order"`
 	Unsupported      []string          `json:"unsupported"`
+	Deprecations     []string          `json:"deprecations"`
 	Draft            Draft             `json:"draft"`
 	Files            map[string][]byte `json:"-"`
 }

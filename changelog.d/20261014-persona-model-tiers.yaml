@@ -1,0 +1,4 @@
+type: added
+title: "Every agent persona declares a model tier, model: flash or model: pro, in .agents/agents; compile-context projects it per client (Claude Code haiku or sonnet, the Antigravity plugin copy keeps the tier, Copilot, Gemini CLI and Codex copies drop the line with the reason stated) through one transform used by write and verify. Migration: compile-context, verify and audit now refuse a canonical persona whose front matter lacks model or sets any other value, with the message 'front matter lacks the required key \"model\" (allowed values: flash, pro)'; add model: flash (mechanical runs) or model: pro (review and implementation) to each .agents/agents/*.md and run praetorctl compile-context; praetorctl adopt refreshes unedited template personas itself"
+breaking: true
+issue: '#1340'

@@ -15,7 +15,7 @@ func declineManifest(names ...string) *config.Manifest {
 
 // validPersona is a persona whose front matter declares every required key.
 func validPersona(name string) string {
-	return "---\nname: " + name + "\ndescription: \"Fixture persona " + name + ".\"\n---\n\n# " + name + "\n"
+	return "---\nname: " + name + "\ndescription: \"Fixture persona " + name + ".\"\nmodel: flash\n---\n\n# " + name + "\n"
 }
 
 // runAgentDefinitions runs the gate against root and returns what it printed and its error.
@@ -122,11 +122,14 @@ func TestAuditAgentDefinitionsDecodesFrontMatter(t *testing.T) {
 // skips the decoding.
 func TestAuditAgentDefinitionsFrontMatterBoundaries(t *testing.T) {
 	cases := map[string]struct{ persona, want string }{
-		"unclosed":     {"---\nname: open\ndescription: never closed\n", "opens a front matter block that does not close"},
-		"empty value":  {"---\nname: x\ndescription: \"  \"\n---\n", "lacks the required key(s) description"},
-		"not a string": {"---\nname: [a, b]\ndescription: d\n---\n", "lacks the required key(s) name"},
-		"both missing": {"---\nmainAgent: true\n---\n", "lacks the required key(s) name, description"},
-		"empty block":  {"---\n---\n# empty\n", "lacks the required key(s) name, description"},
+		"unclosed":      {"---\nname: open\ndescription: never closed\n", "opens a front matter block that does not close"},
+		"empty value":   {"---\nname: x\ndescription: \"  \"\nmodel: flash\n---\n", "lacks the required key(s) description"},
+		"not a string":  {"---\nname: [a, b]\ndescription: d\nmodel: flash\n---\n", "lacks the required key(s) name"},
+		"both missing":  {"---\nmainAgent: true\n---\n", "lacks the required key(s) name, description"},
+		"empty block":   {"---\n---\n# empty\n", "lacks the required key(s) name, description"},
+		"missing model": {"---\nname: x\ndescription: d\n---\n", "lacks the required key \"model\""},
+		"invalid model": {"---\nname: x\ndescription: d\nmodel: sonnet\n---\n", "front matter model \"sonnet\" is invalid"},
+		"inherit model": {"---\nname: x\ndescription: d\nmodel: inherit\n---\n", "front matter model \"inherit\" is invalid"},
 	}
 	for name, tc := range cases {
 		root := t.TempDir()
