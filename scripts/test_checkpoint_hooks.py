@@ -57,8 +57,18 @@ BUDGETS = {
 # Seconds per unit of each client's `timeout` field: Claude Code and Codex write seconds, Gemini
 # CLI milliseconds (see docs/guides/agent-hooks.md).
 TIMEOUT_UNITS = {".claude/settings.json": 1, ".codex/hooks.json": 1, ".gemini/settings.json": 1000}
-CODEX_WINDOWS_GAP = ("Codex runs hooks through cmd.exe on Windows, which has no $( ) for the "
-                     "registration's Git-root lookup; see docs/guides/agent-hooks.md")
+def codex_command(action):
+    """The process Codex's hook runner starts for one registered action on this host.
+
+    Linux and macOS: the login shell with -lc and the `command` string. Windows: %COMSPEC% /C
+    with the `commandWindows` override, else `command`, passed raw inside one pair of quotes
+    (build_command in codex-rs/hooks/src/engine/command_runner.rs). On Windows the result is a
+    command line, not an argv, because Codex passes it raw and argv quoting would change it.
+    """
+    if os.name != "nt":
+        return ["/bin/sh", "-c", action["command"]]
+    line = action.get("commandWindows", action["command"])
+    return '"' + os.environ.get("COMSPEC", "cmd.exe") + '" /C "' + line + '"'
 
 
 def gemini_argv(command):
@@ -318,9 +328,7 @@ class NativeLefthook(unittest.TestCase):
                     cwd, {"CLAUDE_PROJECT_DIR": root})
         if settings == ".gemini/settings.json":
             return gemini_argv(action["command"]), self.root, {"GEMINI_PROJECT_DIR": root}
-        if os.name == "nt":
-            self.skipTest(CODEX_WINDOWS_GAP)
-        return ["/bin/sh", "-c", action["command"]], cwd, {}
+        return codex_command(action), cwd, {}
 
     def run_registered(self, settings, key, payload, entry=0, cwd=None, project=None, env=None):
         spec = json.loads((ROOT / settings).read_text())

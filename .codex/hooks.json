@@ -7,6 +7,7 @@
           {
             "type": "command",
             "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/codex_pre_tool.py\"",
+            "commandWindows": "(for /f \"delims=\" %r in ('git rev-parse --show-toplevel') do @python3 -B \"%r/.config/agent/hooks/codex_pre_tool.py\") || exit 2",
             "timeout": 15
           }
         ]
@@ -17,6 +18,7 @@
           {
             "type": "command",
             "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py\" codex pre-dispatch",
+            "commandWindows": "(for /f \"delims=\" %r in ('git rev-parse --show-toplevel') do @python3 -B \"%r/.config/agent/hooks/praetor_hook.py\" codex pre-dispatch) || exit 2",
             "timeout": 15
           }
         ]
@@ -29,6 +31,7 @@
           {
             "type": "command",
             "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/checkpoint.py\"",
+            "commandWindows": "(for /f \"delims=\" %r in ('git rev-parse --show-toplevel') do @python3 -B \"%r/.config/agent/hooks/checkpoint.py\") || exit 2",
             "timeout": 60
           }
         ]
@@ -40,6 +43,7 @@
           {
             "type": "command",
             "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py\" codex post-return",
+            "commandWindows": "(for /f \"delims=\" %r in ('git rev-parse --show-toplevel') do @python3 -B \"%r/.config/agent/hooks/praetor_hook.py\" codex post-return) || exit 2",
             "timeout": 60
           }
         ]
@@ -51,6 +55,7 @@
           {
             "type": "command",
             "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/checkpoint.py\"",
+            "commandWindows": "(for /f \"delims=\" %r in ('git rev-parse --show-toplevel') do @python3 -B \"%r/.config/agent/hooks/checkpoint.py\") || exit 2",
             "timeout": 60
           }
         ]
