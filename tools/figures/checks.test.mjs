@@ -381,7 +381,7 @@ test('site: absolute image URLs, a missing loader and a loader without its playe
   assert.equal(fixture.check().errors.length, 2);
   write(fixture.page, fillSlots(META, '../assets/figures'));
   assert.deepEqual(fixture.check().errors, [`${join(fixture.docs, 'guide.md')}: holds figures but loads no assets/javascripts/figures/loader.js ` +
-    '(the figures hook publishes it from tools/figures/dist/)']);
+    '(the figures hook publishes it from tools/figures/player/)']);
   write(fixture.page, fillSlots(META, '../assets/figures') + LOADER_TAG);
   unlinkSync(join(fixture.site, 'assets/javascripts/figures/player.js'));
   assert.deepEqual(fixture.check().errors, [`${join(fixture.docs, 'guide.md')}: loads ../assets/javascripts/figures/loader.js, ` +

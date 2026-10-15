@@ -19,7 +19,7 @@ import (
 const AcknowledgementsFile = "docs/credits.md"
 
 // creditsPlayerAnchor marks that row: the player it names as the packages' use.
-var creditsPlayerAnchor = "`" + figureassets.Directory + "/dist/player.js`"
+var creditsPlayerAnchor = "`" + figureassets.PlayerDirectory + "/player.js`"
 
 // CheckCredits fails when the credits row of the figure player does not name every npm package
 // the committed player bundles as "<name> <version>", at the version the figure lock installs

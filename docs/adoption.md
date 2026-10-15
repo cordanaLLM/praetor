@@ -1144,7 +1144,8 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   not track is still written, so the local checkout works, but no commit carries it, so a
   clean checkout lacks it. Each one is reported on the step that wrote it, naming the rule
   and the negation that re-includes it, such as
-  `tools/figures/dist/loader.js: ignored by .gitignore:1 (dist/) ... Add !/tools/figures/dist/ after that rule`.
+  `tools/figures/player/loader.js` remains committable under a conventional `dist/` rule; adoption does not add
+  re-include rules to an adopter's ignore file.
   The negation names the shallowest ignored parent directory, because git never looks inside an
   ignored directory. The finding is an error, except for editor files, which audit never reads:
   those are a warning, and the IDE Ecosystem pillar shows it. The private ledger paths the

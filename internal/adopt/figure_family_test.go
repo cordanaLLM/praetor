@@ -5,7 +5,11 @@
 package adopt
 
 import (
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -13,6 +17,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 )
 
 // The figure engine joined docs:seo-portal as the second managed asset family
@@ -25,11 +30,32 @@ import (
 // attribute file.
 var figureFamilyGoldenPaths = []string{
 	"tools/figures/build.mjs",
-	"tools/figures/dist/player.js",
+	"tools/figures/player/player.js",
 	"tools/figures/third_party/interfig/upstream/LICENSE",
 	"tools/figures/README.md",
 	".gitattributes",
 }
+
+const originMainFigurePlayerPlan = `
+tools/figures/core.mjs
+tools/figures/checks.mjs
+tools/figures/build.mjs
+tools/figures/types.ts
+tools/figures/third_party/interfig/vendor.json
+tools/figures/third_party/interfig/VENDOR.md
+tools/figures/third_party/interfig/upstream/LICENSE
+tools/figures/third_party/interfig/upstream/src/svg.ts
+tools/figures/third_party/interfig/upstream/src/geometry.ts
+tools/figures/third_party/interfig/upstream/src/model.ts
+tools/figures/dist/loader.js
+tools/figures/dist/player.js
+tools/figures/dist/THIRD-PARTY-LICENSES.txt
+tools/figures/figures.css
+tools/figures/mkdocs_hook.py
+tools/figures/astro.mjs
+tools/figures/serve.mjs
+tools/figures/README.md
+`
 
 // figureAttributeBlock is the block adoption writes for the figure engine, spelled out.
 const figureAttributeBlock = "# BEGIN praetor managed attributes (praetorctl adopt)\n" +
@@ -86,6 +112,162 @@ func TestFigureFamilyForeignFilesGolden(t *testing.T) {
 	opts.Force = true
 	golden.adopt("disable over a drifted figure asset", root, opts)
 	testsupport.AssertGolden(t, filepath.Join("testdata", "managed-family", "figure-foreign.golden"), golden.sb.String())
+}
+
+// Positive, negative and boundary: every released loader moves, a dist/ ignore rule does not
+// hide the new player, and an edited retired player stays.
+func TestFigurePlayerDirectoryMigration(t *testing.T) {
+	newerLoader, err := figureassets.Read("player/loader.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerRoot, newerReport := migrateFigurePlayer(t, "newer-loader", newerLoader, true)
+	assertMovedFigurePlayer(t, newerRoot, newerReport)
+	olderLoader := []byte(mustRead(t, filepath.Join("testdata", "managed-family", "loader.c9bf497702.js")))
+	if got := fmt.Sprintf("%x", sha256.Sum256(olderLoader)); got != "9c741950900a175696e47248c2acd258cb1bb8703f84221d18a0a21146d340fb" {
+		t.Fatalf("older loader digest = %s", got)
+	}
+	olderRoot, olderReport := migrateFigurePlayer(t, "older-loader", olderLoader, false)
+	assertMovedFigurePlayer(t, olderRoot, olderReport)
+	if got := movedFigurePlayerPaths(olderReport); !slices.Equal(got, movedFigurePlayerPaths(newerReport)) {
+		t.Fatalf("older loader migration paths = %v, want newer paths %v", got, movedFigurePlayerPaths(newerReport))
+	}
+	edited := newTestRepo(t, "figure-player-edited-migration")
+	if _, err := Adopt(t.Context(), goldenAdoptOptions(t, edited)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := figureassets.Read("player/player.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(edited, filepath.FromSlash(figureassets.PlayerDirectory+"/player.js"))); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(edited, "tools", "figures", "dist", "player.js"), string(data)+"// edited\n")
+	report, err := Adopt(t.Context(), goldenAdoptOptions(t, edited))
+	if err != nil || !strings.Contains(strings.Join(report.Warnings, "\n"), "Kept edited retired figure engine asset") {
+		t.Fatalf("edited retired player = %v, %v", report, err)
+	}
+	if _, err := os.Stat(filepath.Join(edited, "tools", "figures", "dist", "player.js")); err != nil {
+		t.Fatalf("edited retired player was deleted: %v", err)
+	}
+}
+
+func migrateFigurePlayer(t *testing.T, name string, loader []byte, ignored bool) (string, *AdoptReport) {
+	t.Helper()
+	root := newTestRepo(t, "figure-player-migration-"+name)
+	opts := goldenAdoptOptions(t, root)
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, asset := range []string{"loader.js", "player.js", "THIRD-PARTY-LICENSES.txt"} {
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(figureassets.PlayerDirectory+"/"+asset))); err != nil {
+			t.Fatal(err)
+		}
+		data := loader
+		if asset != "loader.js" {
+			var err error
+			data, err = figureassets.Read("player/" + asset)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		mustWrite(t, filepath.Join(root, "tools", "figures", "dist", asset), string(data))
+	}
+	if ignored {
+		mustWrite(t, filepath.Join(root, ".gitignore"), "dist/\n")
+	}
+	report, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root, report
+}
+
+func assertMovedFigurePlayer(t *testing.T, root string, report *AdoptReport) {
+	t.Helper()
+	for _, name := range []string{"loader.js", "player.js", "THIRD-PARTY-LICENSES.txt"} {
+		if _, err := os.Stat(filepath.Join(root, "tools", "figures", "dist", name)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("retired %s remains: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(figureassets.PlayerDirectory+"/"+name))); err != nil {
+			t.Fatalf("current %s missing: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "tools", "figures", "dist")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("empty retired directory remains: %v", err)
+	}
+	if len(report.Errors) != 0 {
+		t.Fatalf("dist/ ignored the new player: %v", report.Errors)
+	}
+}
+
+// TestFigurePlayerFreshPlanChangesOnlyDirectory holds the no-ignore fresh plan against the
+// origin/main plan: every figure path remains, except dist/ maps to player/.
+func TestFigurePlayerFreshPlanChangesOnlyDirectory(t *testing.T) {
+	root := newTestRepo(t, "figure-player-fresh-plan")
+	if _, err := os.Stat(filepath.Join(root, ".gitignore")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("fresh fixture unexpectedly has .gitignore: %v", err)
+	}
+	opts := goldenAdoptOptions(t, root)
+	opts.DryRun = true
+	report, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := figurePaths(report.CreatedFiles)
+	want := strings.Fields(strings.NewReplacer("/dist/", "/player/").Replace(originMainFigurePlayerPlan))
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("fresh figure plan = %v, want origin/main paths with only dist -> player mapped: %v", got, want)
+	}
+}
+
+// TestFigurePlayerDisabledFacetLeavesNoPath verifies the facet that omits figures. Its complete
+// adoption may write other governance files, but it neither plans nor creates a figures path.
+func TestFigurePlayerDisabledFacetLeavesNoPath(t *testing.T) {
+	root := newTestRepo(t, "figure-player-disabled-facet")
+	mustWrite(t, filepath.Join(root, manifestFile), declaredFacetsManifest("figure-player-disabled-facet", "facets:\n  - custom:facet\n"))
+	report, err := Adopt(t.Context(), goldenAdoptOptions(t, root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := figureActionPaths(report.ActionDetails); len(got) != 0 {
+		t.Fatalf("adoption without docs:seo-portal touched figures: %v", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "tools", "figures")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("adoption without docs:seo-portal created figures: %v", err)
+	}
+}
+
+func movedFigurePlayerPaths(report *AdoptReport) []string {
+	paths := make([]string, 0, 3)
+	for _, detail := range report.ActionDetails {
+		if detail.Action == actionRemove && strings.HasPrefix(detail.Path, "tools/figures/dist/") {
+			paths = append(paths, detail.Path)
+		}
+	}
+	slices.Sort(paths)
+	return paths
+}
+
+func figurePaths(paths []string) []string {
+	result := make([]string, 0, len(paths))
+	for _, rel := range paths {
+		if strings.HasPrefix(rel, "tools/figures/") {
+			result = append(result, rel)
+		}
+	}
+	return result
+}
+
+func figureActionPaths(details []ActionDetail) []string {
+	paths := make([]string, 0, len(details))
+	for _, detail := range details {
+		paths = append(paths, detail.Path)
+	}
+	return figurePaths(paths)
 }
 
 // Positive: the attribute block goes to the tail of a new or existing file, CRLF preserved, and

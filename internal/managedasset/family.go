@@ -120,6 +120,10 @@ type Family struct {
 	// keeps the --force contract. The current workflow rendered for another default branch
 	// counts as such a text too (PriorRendering), so a renamed default branch refreshes it.
 	Prior map[string]string
+	// Moved maps a retired repository-relative asset path to the canonical text digests that
+	// Praetor wrote there. Adoption removes a matching retired file while reconciling this
+	// family, but preserves and reports an edited one. Retired paths are never audit assets.
+	Moved map[string]map[string]string
 	// Customize, when set, returns the function that renders the family's plain workflow for the
 	// settings a repository's manifest declares, or nil when it declares none (ForManifest). The
 	// API compatibility family renders api.system_packages and its module exceptions this way.
@@ -244,6 +248,25 @@ func figureEngine() Family {
 		VendoredTree:    figureassets.VendoredTree,
 		VendoredLicense: figureassets.VendoredLicense,
 		Prior:           figureassets.PriorDigests(),
+		Moved:           releasedFigurePlayerDigests(),
+	}
+}
+
+// releasedFigurePlayerDigests records the exact contents git log --format=%H origin/main --
+// tools/figures/dist/<file> reports before #1356: c9bf497702 released all three files, and
+// 732589684 released the second loader. The migration recognises only these release bytes.
+func releasedFigurePlayerDigests() map[string]map[string]string {
+	return map[string]map[string]string{
+		"tools/figures/dist/loader.js": {
+			"9c741950900a175696e47248c2acd258cb1bb8703f84221d18a0a21146d340fb": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"abd878ebc16730be4fe5aef0316230f079825a5723b461bcde48c87e770d8b53": "732589684b245fec347ae31c62bb59f4c40a2c9d",
+		},
+		"tools/figures/dist/player.js": {
+			"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+		},
+		"tools/figures/dist/THIRD-PARTY-LICENSES.txt": {
+			"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+		},
 	}
 }
 
@@ -691,6 +714,12 @@ func (f Family) Validate() error {
 	return f.validatePrior()
 }
 
+// MovedRendering reports whether actual is a release-owned rendering at a retired path.
+func (f Family) MovedRendering(rel string, actual []byte) bool {
+	_, known, _ := util.LookupCanonicalText(actual, f.Moved[rel])
+	return known
+}
+
 // validateAttributes requires at most MaxAttributes rules, each one non-blank line that is not a
 // comment, and a VendoredTree declared together with its license as a clean relative glob.
 func (f Family) validateAttributes() error {
@@ -814,6 +843,22 @@ func (f Family) validatePrior() error {
 		}
 		if f.PriorText(rel, current) {
 			return fmt.Errorf("managed asset family %q lists the current text of %s as a prior text", f.Name, rel)
+		}
+	}
+	return f.validateMoved(managed)
+}
+
+// validateMoved requires retired paths to stay outside the current inventory and their release
+// text fingerprints to be canonical SHA-256 values.
+func (f Family) validateMoved(managed []string) error {
+	for rel, digests := range f.Moved {
+		if !cleanRelative(rel) || slices.Contains(managed, rel) || len(digests) == 0 {
+			return fmt.Errorf("managed asset family %q declares malformed retired asset %q", f.Name, rel)
+		}
+		for digest := range digests {
+			if !isTextDigest(digest) {
+				return fmt.Errorf("managed asset family %q retired asset %q has invalid digest %q", f.Name, rel, digest)
+			}
 		}
 	}
 	return nil

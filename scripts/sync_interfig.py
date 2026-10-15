@@ -12,7 +12,7 @@ the operator procedure is tools/figures/third_party/interfig/VENDOR.md.
 - `update --commit <sha>` fetches the include list at <sha>, fails closed on a LICENSE change,
   an unlisted upstream file or an incompatible React peer range, swaps upstream/ and
   vendor.json in with a rollback on error, then runs the upstream tests, rebuilds the figures and
-  rebuilds the committed player in tools/figures/dist/ from the locked install.
+  rebuilds the committed player in tools/figures/player/ from the locked install.
 
 Standard library only. Every request has a timeout and a size cap, every loop a bound.
 """
@@ -45,6 +45,7 @@ EXIT_DRIFT = 3
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_FIGURES = REPO_ROOT / "tools" / "figures"
+PLAYER_DIR = TOOLS_FIGURES / "player"
 VENDOR_DIR = TOOLS_FIGURES / "third_party" / "interfig"
 UPSTREAM_DIR = VENDOR_DIR / "upstream"
 VENDOR_JSON = VENDOR_DIR / "vendor.json"
@@ -61,7 +62,7 @@ LISTED_DIRS = ("src", "scripts")
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 REVERT_HINT = (
     "upstream/ and vendor.json are updated; revert with: "
-    "git checkout -- tools/figures/third_party/interfig docs/assets/figures tools/figures/dist && "
+    f"git checkout -- tools/figures/third_party/interfig docs/assets/figures {PLAYER_DIR.relative_to(REPO_ROOT)} && "
     f"git clean -fd -- {UPSTREAM_REL} docs/assets/figures"
 )
 
@@ -546,7 +547,7 @@ def run_upstream_checks() -> None:
         run_tool(["node", "--test", *tests])
         run_tool(["npm", "--prefix", str(TOOLS_FIGURES), "run", "build"])
         # The committed player bundles interfig, so it is rebuilt from the locked install too:
-        # `node tools/figures/bundle.mjs --check` fails until tools/figures/dist/ matches the pin.
+        # `node tools/figures/bundle.mjs --check` fails until tools/figures/player/ matches the pin.
         run_tool(["npm", "ci", "--prefix", str(TOOLS_FIGURES), "--ignore-scripts", "--no-audit", "--no-fund"])
         run_tool(["npm", "--prefix", str(TOOLS_FIGURES), "run", "bundle"])
     except SyncError as e:

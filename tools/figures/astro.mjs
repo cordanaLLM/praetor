@@ -27,7 +27,7 @@
 //   a digest of the figure JSON (`figuresDigest`): a rebuilt figure changes the configuration, so a
 //   warm `astro build` renders every page again. The development server restarts when a figure JSON
 //   changes, is added or is removed (`watchFigures`), which runs the setup, and so the digest, again.
-// * A head script on every page imports the loader, tools/figures/dist/loader.js, which mounts the
+// * A head script on every page imports the loader, tools/figures/player/loader.js, which mounts the
 //   player from the props each SVG embeds; the loader imports player.js beside it.
 // * The development server answers the figure files and the player files from the repository, and
 //   `astro build` copies them into the built site, both through serve.mjs at FIGURES_URI and

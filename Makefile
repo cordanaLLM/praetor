@@ -243,7 +243,7 @@ docs-diagrams-test:
 # Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md): the steps
 # only this repository runs, because they need the npm lock adopters never receive: the engine's
 # unit tests (render core and checks) and type check, and the committed player in
-# tools/figures/dist/ rebuilt from the lock and compared byte for byte, within its size budget
+# tools/figures/player/ rebuilt from the lock and compared byte for byte, within its size budget
 # (`bundle.mjs --check`; docs/adr/0016-figures-for-adopters.md, section 3). A hand-edited or stale
 # player file fails it. The render check (`build.mjs check`: a fresh render compared byte for byte
 # with the committed SVG and JSON) and the source check (`build.mjs sources`: hashes, sizes, markup,

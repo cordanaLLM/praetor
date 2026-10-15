@@ -69,11 +69,11 @@ func figureAuditGoldenCases() []auditGoldenCase {
 			writeFixtureFile(t, root, ".gitattributes", strings.ReplaceAll("* text=auto\n\n"+block, "\n", "\r\n"))
 		}},
 		{name: "disabled retains figure asset", mutate: func(t *testing.T, root string) {
-			data, err := figureassets.Read("dist/player.js")
+			data, err := figureassets.Read("player/player.js")
 			if err != nil {
 				t.Fatal(err)
 			}
-			writeFixtureFile(t, root, "tools/figures/dist/player.js", string(data))
+			writeFixtureFile(t, root, figureassets.PlayerDirectory+"/player.js", string(data))
 		}},
 		{name: "disabled retains attribute block", mutate: func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+block)

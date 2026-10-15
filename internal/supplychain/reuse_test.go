@@ -414,7 +414,7 @@ func TestRepositoryReuseLabels(t *testing.T) {
 			t.Errorf("%s is labelled MIT or not EUPL-1.2", rel)
 		}
 	}
-	for _, subject := range []string{"tools/figures/third_party/interfig/upstream/**", "tools/figures/dist/player.js"} {
+	for _, subject := range []string{"tools/figures/third_party/interfig/upstream/**", "tools/figures/player/player.js"} {
 		if !labelled(t, tables, subject, "MIT") {
 			t.Errorf("%s is not labelled MIT", subject)
 		}

@@ -29,6 +29,10 @@ const (
 	Directory = "tools/figures"
 	// SourceFile is the Go file carrying the go:embed directive over the assets.
 	SourceFile = Directory + "/assets.go"
+	// PlayerDirectory is the committed bundle's home. Go consumers derive its path from here;
+	// bundle.mjs and sync_interfig.py each declare the same repository-relative name for their
+	// own runtimes.
+	PlayerDirectory = Directory + "/player"
 	// MaxAssets bounds all asset iteration: the inventory's exact size.
 	MaxAssets = 18
 	// SpecDirectory and OutputDirectory hold a repository's figure specs and their committed
@@ -68,14 +72,30 @@ var assetNames = [...]string{
 	"third_party/interfig/upstream/src/svg.ts",
 	"third_party/interfig/upstream/src/geometry.ts",
 	"third_party/interfig/upstream/src/model.ts",
-	"dist/loader.js",
-	"dist/player.js",
-	"dist/THIRD-PARTY-LICENSES.txt",
+	"player/loader.js",
+	"player/player.js",
+	"player/THIRD-PARTY-LICENSES.txt",
 	"figures.css",
 	"mkdocs_hook.py",
 	"astro.mjs",
 	"serve.mjs",
 	"README.md",
+}
+
+// priorPlayerDigests records the three bundle texts releases wrote under dist before #1356.
+// Adoption removes only these unedited files after it has installed PlayerDirectory; any other
+// dist file belongs to the adopter and is kept. Keys are legacy paths, values are canonical
+// text digests, so CRLF checkouts remain recognisable through util.LookupCanonicalText.
+var priorPlayerDigests = map[string]map[string]string{
+	Directory + "/dist/loader.js": {
+		"abd878ebc16730be4fe5aef0316230f079825a5723b461bcde48c87e770d8b53": "figure player before #1356",
+	},
+	Directory + "/dist/player.js": {
+		"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": "figure player before #1356",
+	},
+	Directory + "/dist/THIRD-PARTY-LICENSES.txt": {
+		"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": "figure player before #1356",
+	},
 }
 
 // priorDigests maps the SHA-256, taken with LF line endings, of every text an earlier Praetor
@@ -122,9 +142,15 @@ var priorDigests = map[string]string{
 	// checks.mjs whose bracket() escaped class syntax without the backslash in the same pass (CodeQL
 	// incomplete sanitization at that site), shipped by #1252.
 	"2e10d401929e7880d606f4e7721727c546ad3c3d0790826910eda5ef7a9c9bce": Directory + "/checks.mjs",
+	// astro.mjs, checks.mjs, serve.mjs and VENDOR.md while they named the player directory
+	// tools/figures/dist/, which a common dist/ ignore rule hid from commits (#1356).
+	"6fb3d70f670f1b7bf76dc985621053c926879fc574575b264b4960e59ba6841e": Directory + "/astro.mjs",
+	"8ead48a0270ab3c18d06a1be1fa545af576b1a92d31f023c35111bc363eef4df": Directory + "/checks.mjs",
+	"0eeb8c757e73dcb06007af467d979c275fa4a5c164ff73339985032edd90d115": Directory + "/serve.mjs",
+	"f25ec96946a63eca0aba9621d0c16553d906175e8c4243b5ca57761eaf0b5178": Directory + "/third_party/interfig/VENDOR.md",
 }
 
-//go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md
+//go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts player/loader.js player/player.js player/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md
 var assets embed.FS
 
 // FS returns the embedded asset tree. It is read-only; Read is the bounded accessor.
@@ -140,6 +166,15 @@ func Names() []string {
 // PriorDigests returns a copy of the digests of every earlier text of a managed path.
 func PriorDigests() map[string]string {
 	return maps.Clone(priorDigests)
+}
+
+// PriorPlayerDigests returns private copies of the legacy dist bundle digests for migration.
+func PriorPlayerDigests() map[string]map[string]string {
+	result := make(map[string]map[string]string, len(priorPlayerDigests))
+	for rel, digests := range priorPlayerDigests {
+		result[rel] = maps.Clone(digests)
+	}
+	return result
 }
 
 // Read returns one canonical asset without exposing mutable embedded storage.
