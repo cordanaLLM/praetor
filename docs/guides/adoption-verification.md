@@ -1141,7 +1141,9 @@ Where the root holds neither a `go.mod` nor a `Cargo.lock` and the target is dec
 runs `make verify-all`:
 
 - **Where:** in an isolated worktree of `HEAD`, as the test suites run, so it checks what is pushed
-  and writes nothing into the working tree.
+  and writes nothing into the working tree. Because the private ledger (`.workingdir/`) is git-ignored,
+  the stage worktree never holds it: `praetorctl state audit` recognizes `PRAETOR_GATE_DECLARED_VERIFY`,
+  reports not applicable, and passes, while an existing but invalid ledger still fails.
 - **Bound:** the race stage's bound (`PRAETOR_TEST_STAGE_TIMEOUT`). Output capture is bounded by
   `util.RunCommand`.
 - **Non-zero exit:** fails the stage and refuses the push. The reason names the command, its exit

@@ -163,7 +163,7 @@ func TestRunDeclaredVerifyStage_RunsNothingWhereItDoesNotApply(t *testing.T) {
 			return cfg
 		}, StageSkipped, "make is not on PATH"},
 		{"inside a declared verification", func(t *testing.T) *stageConfig {
-			t.Setenv(declaredVerifyGuardEnv, "1")
+			t.Setenv(DeclaredVerifyGuardEnv, "1")
 			return declaredStageConfig(t, verifyAllMakefile, "pyproject.toml")
 		}, StageNotApplicable, "not run again"},
 	}
