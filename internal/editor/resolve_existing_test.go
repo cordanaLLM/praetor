@@ -39,7 +39,7 @@ func TestResolveExisting_Positive_JSONMergeNamesAddedMembers(t *testing.T) {
 // operator must reconcile.
 func TestResolveExisting_Negative_UnmergeableJSONIsRefused(t *testing.T) {
 	file := GeneratedFile{Path: ".vscode/settings.json", Editor: EditorVSCode, Content: `{"managed":1}` + "\n"}
-	zed := GeneratedFile{Path: ".zed/settings.json", Editor: EditorZed, Content: file.Content}
+	zed := GeneratedFile{Path: ".zed/tasks.json", Editor: EditorZed, Content: file.Content}
 	for _, tc := range []struct {
 		name     string
 		file     GeneratedFile

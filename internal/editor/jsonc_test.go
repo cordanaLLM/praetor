@@ -128,7 +128,7 @@ func TestResolveExisting_Boundary_JSONCRefusalIsOnlyAboutComments(t *testing.T) 
 	commented := "{\n  // adopter note\n  \"managed\": 1,\n  \"added\": true\n}\n"
 	for path, dialect := range map[string]strictjson.Dialect{
 		".vscode/tasks.json":      strictjson.JSONC,
-		".zed/settings.json":      strictjson.StrictJSON,
+		".zed/settings.json":      strictjson.JSONC,
 		".zed/tasks.json":         strictjson.StrictJSON,
 		".fleet/settings.json":    strictjson.StrictJSON,
 		"project.sublime-project": strictjson.StrictJSON,
@@ -154,9 +154,9 @@ func TestResolveExisting_Boundary_JSONCRefusalIsOnlyAboutComments(t *testing.T) 
 	}
 }
 
-// Boundary: every JSON file the VS Code family generates is at a path read as JSONC, and every
-// other generated JSON file at a path read as strict JSON, so the dialect follows the editor
-// and not the file extension.
+// Boundary: every JSON file the VS Code family generates, and Zed's settings.json (#1084), is at a
+// path read as JSONC, and every other generated JSON file at a path read as strict JSON, so the
+// dialect follows what the editor documents and not the file extension.
 func TestGeneratedJSONFiles_Boundary_OnlyVSCodePathsAreJSONC(t *testing.T) {
 	set := mustSynthesize(t, DefaultOptions())
 	jsonc, strict := 0, 0
@@ -164,7 +164,7 @@ func TestGeneratedJSONFiles_Boundary_OnlyVSCodePathsAreJSONC(t *testing.T) {
 		if !isJSONEditorFile(file.Path) {
 			continue
 		}
-		inVSCode := strings.HasPrefix(file.Path, ".vscode/")
+		inVSCode := strings.HasPrefix(file.Path, ".vscode/") || file.Path == ".zed/settings.json"
 		if got := strictjson.DialectOf(file.Path) == strictjson.JSONC; got != inVSCode {
 			t.Errorf("%s: read as JSONC = %v, want %v", file.Path, got, inVSCode)
 		}
@@ -174,7 +174,24 @@ func TestGeneratedJSONFiles_Boundary_OnlyVSCodePathsAreJSONC(t *testing.T) {
 			strict++
 		}
 	}
-	if jsonc != 3 || strict == 0 {
-		t.Errorf("generated %d .vscode JSON files and %d others, want 3 and at least one", jsonc, strict)
+	if jsonc != 4 || strict == 0 {
+		t.Errorf("generated %d JSONC files and %d others, want 4 (three .vscode, one .zed/settings.json) and at least one", jsonc, strict)
+	}
+}
+
+// #1084: Zed documents .zed/settings.json as "JSON with support for // comments"
+// (zed-industries/zed docs/src/configuring-zed.md). Positive: a commented Zed file holding every
+// managed value is in sync. Negative: one lacking a value is refused, never rewritten without
+// its comments.
+func TestResolveExisting_CommentedZedSettings(t *testing.T) {
+	file := GeneratedFile{Path: ".zed/settings.json", Editor: EditorZed, Content: `{"managed":1}` + "\n"}
+	got, err := ResolveExisting(file, []byte(commentedSettings), false)
+	if err != nil || got.Outcome != WritePresent || got.Content != "" {
+		t.Fatalf("commented zed settings in sync: %+v %v", got, err)
+	}
+	lacking := GeneratedFile{Path: ".zed/settings.json", Editor: EditorZed, Content: `{"managed":1,"added":true}` + "\n"}
+	got, err = ResolveExisting(lacking, []byte("{\n  // team note\n  \"managed\": 1\n}\n"), false)
+	if err == nil || got.Content != "" {
+		t.Fatalf("commented zed settings lacking a value: %+v %v; want a refusal and nothing to write", got, err)
 	}
 }

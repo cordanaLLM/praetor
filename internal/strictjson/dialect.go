@@ -40,10 +40,15 @@ var vscodeJSONC = map[string]bool{
 	".vscode/extensions.json": true,
 	".vscode/launch.json":     true,
 	".vscode/tasks.json":      true,
+	// Zed: "The syntax is JSON with support for // comments" for settings.json
+	// (zed-industries/zed docs/src/configuring-zed.md, #1084). Its docs state no format for
+	// .zed/tasks.json, so that file stays strict JSON.
+	".zed/settings.json": true,
 }
 
 // DialectOf returns the dialect the consumer of file documents for it, from its path alone:
-// JSONC for the VS Code files of a .vscode directory (vscodeJSONC), in the repository root or
+// JSONC for the VS Code files of a .vscode directory and Zed's .zed/settings.json (vscodeJSONC),
+// in the repository root or
 // in a workspace folder below it, and strict JSON for every other path. It is the one place
 // that decision is made, so the flavor audit, `editors generate`, `editors verify` and
 // adoption read a path the same way. file is a relative path in either the slash form or the
