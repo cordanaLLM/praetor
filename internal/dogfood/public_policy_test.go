@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
@@ -76,7 +78,7 @@ func TestPublicPolicyRejectsDriftAndMissingSources(t *testing.T) {
 	dir := report.Results[0].Checkout
 	path := filepath.Join(dir, ".standards.yaml")
 	before := publicRead(t, path)
-	publicWrite(t, path, before+"\n# changed after planning\n", 0o600)
+	publicWrite(t, path, strings.Replace(before, "max_func_loc: 35", "max_func_loc: 34", 1), 0o600)
 	check, err := verifyPublicCheckout(t.Context(), dir, anchor, nil)
 	if err == nil || !strings.Contains(err.Error(), "policy changed") || check.BaselineVerified {
 		t.Fatalf("changed policy identity accepted: %v (%+v)", err, check)
@@ -87,6 +89,75 @@ func TestPublicPolicyRejectsDriftAndMissingSources(t *testing.T) {
 	}
 	if check, err := verifyPublicCheckout(t.Context(), dir, anchor, nil); err == nil || check.LockVerified {
 		t.Fatalf("missing pinned catalog accepted: %v (%+v)", err, check)
+	}
+}
+
+func TestMatchPublicPolicyComparesResolvedValues(t *testing.T) {
+	limit50, limit49 := 50, 49
+	profileSHA, plannedManifestSHA := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	appliedManifestSHA := strings.Repeat("c", 64)
+	plannedLayers := []config.PolicyLayer{
+		{Source: config.PolicySource{ID: "profile:/input/.config/archetypes/framework.yaml", SHA256: profileSHA}, Complexity: config.ComplexityOverride{MaxFuncLOC: &limit50}},
+		{Source: config.PolicySource{ID: "manifest:.standards.yaml", SHA256: plannedManifestSHA}},
+	}
+	tests := []struct {
+		name             string
+		planned, applied []config.PolicyLayer
+		want             string
+	}{
+		{"source relocation", plannedLayers, []config.PolicyLayer{
+			{Source: config.PolicySource{ID: "profile:/checkout/.config/archetypes/framework.yaml", SHA256: profileSHA}, Complexity: config.ComplexityOverride{MaxFuncLOC: &limit50}},
+			{Source: config.PolicySource{ID: "manifest:.standards.yaml", SHA256: appliedManifestSHA}},
+		}, ""},
+		{"complexity", plannedLayers, []config.PolicyLayer{
+			{Source: config.PolicySource{ID: "profile:/input/.config/archetypes/framework.yaml", SHA256: profileSHA}, Complexity: config.ComplexityOverride{MaxFuncLOC: &limit49}},
+			{Source: config.PolicySource{ID: "manifest:.standards.yaml", SHA256: plannedManifestSHA}},
+		}, "Complexity"},
+		{"branch protection", plannedLayers, []config.PolicyLayer{
+			{Source: config.PolicySource{ID: "profile:/input/.config/archetypes/framework.yaml", SHA256: profileSHA}, Complexity: config.ComplexityOverride{MaxFuncLOC: &limit50}, Controls: config.ArchetypeControls{BranchProtection: config.BranchProtectionPolicy{RequireSignedCommits: true}}},
+			{Source: config.PolicySource{ID: "manifest:.standards.yaml", SHA256: plannedManifestSHA}},
+		}, "BranchProtection"},
+		{"identical snapshots", plannedLayers, plannedLayers, ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			planned, err := config.ResolvePolicy(t.Context(), test.planned)
+			if err != nil {
+				t.Fatal(err)
+			}
+			applied, err := config.ResolvePolicy(t.Context(), test.applied)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = matchPublicPolicy(planned, applied)
+			if test.want == "" && err != nil {
+				t.Fatalf("matching policy rejected: %v", err)
+			}
+			if test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("policy mismatch error = %v, want section %s", err, test.want)
+			}
+			if test.name == "source relocation" {
+				assertPublicPolicySourceDrift(t, planned, applied)
+			}
+		})
+	}
+	broken, err := config.ResolvePolicy(t.Context(), plannedLayers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken.SHA256 = strings.Repeat("d", 64)
+	if err := matchPublicPolicy(broken, broken); err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("broken policy seal accepted: %v", err)
+	}
+}
+
+func assertPublicPolicySourceDrift(t *testing.T, planned, applied *config.EffectivePolicy) {
+	t.Helper()
+	profile, manifest := 1, 2
+	if planned.SHA256 == applied.SHA256 || planned.Sources[profile].ID == applied.Sources[profile].ID ||
+		planned.Sources[profile].SHA256 != applied.Sources[profile].SHA256 ||
+		planned.Sources[manifest].SHA256 == applied.Sources[manifest].SHA256 {
+		t.Fatalf("source-only drift fixture is incomplete: planned=%+v applied=%+v", planned.Sources, applied.Sources)
 	}
 }
 
@@ -177,4 +248,59 @@ func TestPublicPolicyComplexityIsMeasuredNotEnforced(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestFirstPublicPolicyDifferenceNamesEveryResolvedPolicyField changes each exported section of
+// config.ResolvedPolicy on its own and expects firstPublicPolicyDifference to name that section.
+func TestFirstPublicPolicyDifferenceNamesEveryResolvedPolicyField(t *testing.T) {
+	typ := reflect.TypeFor[config.ResolvedPolicy]()
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if !field.IsExported() {
+			t.Fatalf("config.ResolvedPolicy field %s is unexported and would be skipped by the comparison", field.Name)
+		}
+		var planned config.ResolvedPolicy
+		applied := planned
+		value := reflect.ValueOf(&applied).Elem().Field(i)
+		if !setNonZero(value) {
+			t.Fatalf("no non-zero test value for config.ResolvedPolicy.%s (%s): extend setNonZero", field.Name, field.Type)
+		}
+		section, err := firstPublicPolicyDifference(planned, applied)
+		if err != nil || section != field.Name {
+			t.Fatalf("change to %s: firstPublicPolicyDifference = (%q, %v)", field.Name, section, err)
+		}
+	}
+}
+
+// setNonZero gives v a value different from its zero value, descending into the first field of a
+// struct; it reports false when it cannot.
+func setNonZero(v reflect.Value) bool {
+	for depth := 0; depth < 8; depth++ {
+		switch v.Kind() {
+		case reflect.Struct:
+			if v.NumField() == 0 {
+				return false
+			}
+			v = v.Field(0)
+			continue
+		case reflect.Slice:
+			v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+			return true
+		case reflect.String:
+			v.SetString("changed")
+		case reflect.Bool:
+			v.SetBool(true)
+		case reflect.Int, reflect.Int64, reflect.Int32:
+			v.SetInt(7)
+		case reflect.Uint, reflect.Uint64, reflect.Uint32:
+			v.SetUint(7)
+		case reflect.Map:
+			v.Set(reflect.MakeMapWithSize(v.Type(), 0))
+			return false
+		default:
+			return false
+		}
+		return true
+	}
+	return false
 }
