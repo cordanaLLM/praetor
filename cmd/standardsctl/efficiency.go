@@ -125,11 +125,29 @@ func resolveLiveForge(ctx context.Context, manifest *config.Manifest) (driver fo
 	return driver, "", nil
 }
 
+func resolveEfficiencyForge(ctx context.Context, fl *efficiencyFlags, policy *config.EfficiencyPolicy, manifest *config.Manifest) (forge.Forge, []string, error) {
+	if fl.forgeFile != "" || (policy != nil && policy.Sources.Forge.Path != "") {
+		return nil, nil, nil
+	}
+	driver, note, liveErr := resolveLiveForge(ctx, manifest)
+	if liveErr != nil {
+		return nil, nil, liveErr
+	}
+	var notes []string
+	if note != "" {
+		notes = append(notes, note)
+	}
+	return driver, notes, nil
+}
+
 func runEfficiency(args []string) error {
 	return runEfficiencyTo(args, os.Stdout)
 }
 
 func runEfficiencyTo(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "costs" {
+		return runEfficiencyCostsTo(args[1:], out)
+	}
 	fl, err := parseEfficiencyFlags(args)
 	if err != nil {
 		return err
@@ -141,17 +159,9 @@ func runEfficiencyTo(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var forgeDriver forge.Forge
-	var notes []string
-	if fl.forgeFile == "" && (policy == nil || policy.Sources.Forge.Path == "") {
-		driver, note, liveErr := resolveLiveForge(ctx, manifest)
-		if liveErr != nil {
-			return liveErr
-		}
-		forgeDriver = driver
-		if note != "" {
-			notes = append(notes, note)
-		}
+	forgeDriver, notes, err := resolveEfficiencyForge(ctx, fl, policy, manifest)
+	if err != nil {
+		return err
 	}
 
 	collector := efficiency.NewCollector(efficiency.CollectorOptions{

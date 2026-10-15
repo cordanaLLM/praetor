@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "allocation": {
+    "rule": "by_tokens",
+    "sensitivity_rule": "by_sessions"
+  },
+  "entries": [
+    {"id": "e1", "session": "s1", "category": "task", "tokens": 1000, "spend": 0.05, "provenance": "measured"},
+    {"id": "e2", "session": "s2", "category": "review", "tokens": 2000, "spend": 0.10, "provenance": "measured"},
+    {"id": "e3", "session": "s3", "category": "retry", "tokens": 3000, "spend": 0.15, "provenance": "modeled"},
+    {"id": "sh1", "session": "", "category": "rule_context", "tokens": 6000, "spend": 0.30, "provenance": "measured", "shared": true},
+    {"id": "sh2", "session": "", "category": "rule_context", "tokens": 3000, "spend": 0.15, "provenance": "measured", "shared": true}
+  ],
+  "mechanisms": [
+    {
+      "id": "hook:commit-msg",
+      "kind": "hook",
+      "fixed_cost_tokens": 400,
+      "saving_per_use_tokens": 120,
+      "uses": 10,
+      "calls_delta": -3,
+      "cost_delta": 0.0,
+      "latency_delta_s": 2.0
+    },
+    {
+      "id": "gate:build",
+      "kind": "gate",
+      "fixed_cost_tokens": 500,
+      "saving_per_use_tokens": 0,
+      "uses": 5,
+      "calls_delta": 0,
+      "cost_delta": 0.0,
+      "latency_delta_s": 0.0
+    },
+    {
+      "id": "rule:complexity",
+      "kind": "rule",
+      "fixed_cost_tokens": 300,
+      "saving_per_use_tokens": 100,
+      "uses": 3,
+      "calls_delta": 1,
+      "cost_delta": 0.01,
+      "latency_delta_s": -0.5
+    }
+  ]
+}
