@@ -203,7 +203,9 @@ jobs:
         shell: bash
         run: |
           adopt=$(go list ./internal/adopt)
-          mapfile -t packages < <(go list ./... | grep -vxF "$adopt")
+          # A read loop, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
+          packages=()
+          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF "$adopt")
           {
             status=0
             go test -json -timeout 30m "${packages[@]}" || status=$?
