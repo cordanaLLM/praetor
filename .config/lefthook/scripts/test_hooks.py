@@ -2398,9 +2398,10 @@ class ScopeAndGuard(unittest.TestCase):
 class InstallRefresh(unittest.TestCase):
     """post-merge refreshes a lagging engine install through the engine's own decision (BUG-1004)."""
 
-    def refresh(self, answer):
+    def refresh(self, answer, head=b"8d2d46183\n"):
         out = io.StringIO()
         with mock.patch("hooks.run", side_effect=[b"", answer]) as process, \
+                mock.patch("hooks.git", return_value=head), \
                 contextlib.redirect_stdout(out):
             hooks.refresh_install()
         return process, out.getvalue()
@@ -2420,8 +2421,24 @@ class InstallRefresh(unittest.TestCase):
             self.refresh(b"not json")
 
     def test_skip_prints_nothing(self):
-        _, out = self.refresh(b'{"refreshed":false,"reason":"no install manifest at /x; nothing installed to refresh"}')
-        self.assertEqual(out, "")
+        for answer in (
+            b'{"refreshed":false,"reason":"no install manifest at /x; nothing installed to refresh"}',
+            b'{"refreshed":false,"reason":"installed commit is not behind the checkout HEAD","commits_behind":0}',
+        ):
+            with self.subTest(answer=answer):
+                _, out = self.refresh(answer)
+                self.assertEqual(out, "")
+
+    def test_refused_while_behind_prints_warning(self):
+        _, out = self.refresh(
+            b'{"refreshed":false,"reason":"checkout has modified tracked files","commits_behind":7}',
+            head=b"8d2d46183\n",
+        )
+        self.assertEqual(
+            out,
+            "engine install: NOT refreshed, 7 commits behind 8d2d46183: checkout has modified tracked files; "
+            "fix it, then run make dev-install\n",
+        )
 
     def test_post_merge_refreshes_context_then_install(self):
         order = []

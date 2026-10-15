@@ -1,0 +1,2 @@
+type: fixed
+title: Warn in post-merge hook when engine refresh is refused while install lags checkout
