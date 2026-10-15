@@ -80,9 +80,6 @@ func (f *engineFixture) run(extra ...string) (string, int) {
 // runLine is run with another command line.
 func (f *engineFixture) runLine(line string, extra ...string) (string, int) {
 	f.t.Helper()
-	if os.PathSeparator == '\\' {
-		f.t.Skip("POSIX shell stubs required: the toolbox links MSYS tools, which do not start from a link, and the stubs are shell scripts")
-	}
 	shellPath, err := lookShell()
 	if err != nil {
 		f.t.Skip(err.Error())
@@ -198,7 +195,9 @@ func TestEngineLauncher_Negative_UninstallablePinFailsClosed(t *testing.T) {
 	f.goStub("exit 3\n")
 	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n")
 	out, code := f.run()
-	directory := filepath.Join(f.cache, "praetor", "engine", enginePin)
+	// The launcher appends the pin directory to XDG_CACHE_HOME with slashes, so this is its
+	// spelling on every platform (filepath.Join's on POSIX).
+	directory := f.cache + "/praetor/engine/" + enginePin
 	for _, want := range []string{"PRAETOR_REF=" + enginePin, directory, "GOBIN=" + directory + " go install github.com/cordanaLLM/praetor/cmd/standardsctl@" + enginePin} {
 		if code != 1 || !strings.Contains(out, want) {
 			t.Fatalf("exit %d, output %q, want it to name %q", code, out, want)
@@ -354,7 +353,7 @@ func TestEngineLauncher_Boundary_NonPinUsesRefRunsOnPath(t *testing.T) {
 // Negative: an unreadable workflow file fails closed and names the file.
 func TestEngineLauncher_Negative_UnreadableWorkflowFailsClosed(t *testing.T) {
 	if os.PathSeparator == '\\' {
-		t.Skip("POSIX shell stubs required: the toolbox links MSYS tools, which do not start from a link, and the stubs are shell scripts")
+		t.Skip("chmod 000 does not deny reads on Windows, whose file protection is an ACL")
 	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores read permissions")
@@ -384,7 +383,7 @@ func TestEngineLauncher_Positive_PrintPath(t *testing.T) {
 	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n")
 	wantPinned := filepath.Join(f.cache, "praetor", "engine", enginePin, "standardsctl")
 	out, code := f.runLine("sh " + engineLauncherFile + " --print-path")
-	if code != 0 || strings.TrimSpace(out) != wantPinned {
+	if code != 0 || !samePath(strings.TrimSpace(out), wantPinned) {
 		t.Fatalf("pinned: exit %d, output %q, want %q", code, out, wantPinned)
 	}
 
@@ -392,7 +391,7 @@ func TestEngineLauncher_Positive_PrintPath(t *testing.T) {
 	fUnpinned.pathEngine()
 	wantPath := filepath.Join(fUnpinned.stubs, util.PraetorCLI)
 	out, code = fUnpinned.runLine("sh " + engineLauncherFile + " --print-path")
-	if code != 0 || strings.TrimSpace(out) != wantPath {
+	if code != 0 || !samePath(strings.TrimSpace(out), wantPath) {
 		t.Fatalf("unpinned: exit %d, output %q, want %q", code, out, wantPath)
 	}
 }
@@ -423,7 +422,7 @@ func TestEngineLauncher_Boundary_InstallTimeoutZeroFailsClosed(t *testing.T) {
 // Boundary: a successful cold install leaves no orphaned sleep watchdog process behind (#906).
 func TestEngineLauncher_Boundary_NoSleepSurvivesInstall(t *testing.T) {
 	if os.PathSeparator == '\\' {
-		t.Skip("POSIX shell stubs required: the toolbox links MSYS tools, which do not start from a link, and the stubs are shell scripts")
+		t.Skip("the survivor is looked up with pgrep in this process group, which Windows has neither of")
 	}
 	f := newEngineFixture(t)
 	f.goStub(installingGo)
