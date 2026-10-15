@@ -271,6 +271,43 @@ func TestLockDirectory_Boundary_ZeroBudgetMakesOneAttempt(t *testing.T) {
 	}
 }
 
+// Boundary: a zero budget makes its one attempt and never pauses for a second one, against a
+// writer of another process or of this one (#827).
+func TestLockDirectory_Boundary_ZeroBudgetNeverPauses(t *testing.T) {
+	root, _ := pinnedDirectory(t)
+	holdPlatformLock(t, root)
+	pauses := 0
+	pause := lockPause(func(context.Context, time.Duration) bool {
+		pauses++
+		return false
+	})
+	ctx := context.WithValue(budgetContext(t, 0), lockPauseKey{}, pause)
+	if _, err := LockDirectory(ctx, root); err == nil {
+		t.Fatal("zero budget took a held lock")
+	}
+	if pauses != 0 {
+		t.Fatalf("zero budget paused %d times for another attempt, want 0", pauses)
+	}
+}
+
+// Negative: when the caller's own deadline ends the turn wait before an explicit budget
+// does, the error names the caller's deadline, not the budget (#827).
+func TestLockDirectory_Negative_CallerDeadlineIsNotTheBudget(t *testing.T) {
+	root, _ := pinnedDirectory(t)
+	held := mustLock(t, t.Context(), root)
+	defer func() {
+		if err := held(); err != nil {
+			t.Error(err)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(budgetContext(t, 5*time.Second), 100*time.Millisecond)
+	defer cancel()
+	_, err := LockDirectory(ctx, root)
+	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "wait budget") {
+		t.Fatalf("caller deadline reported as the budget: %v", err)
+	}
+}
+
 // Boundary: a lock released just as the budget ends is still taken, by the last attempt the
 // budget's end makes; held through that attempt, the writer fails.
 func TestLockDirectory_Boundary_LastAttemptAtBudgetEnd(t *testing.T) {

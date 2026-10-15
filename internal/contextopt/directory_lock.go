@@ -153,17 +153,19 @@ func LockDirectory(ctx context.Context, root *os.Root) (func() error, error) {
 // takeProcessTurn waits for this process's turn on the directory info identifies, until ctx
 // ends or an explicit budget passes, and returns the function that ends the turn.
 func takeProcessTurn(ctx context.Context, root *os.Root, info os.FileInfo, wait lockWait) (func(), error) {
+	turnCtx := ctx
 	if wait.explicit {
 		var cancel context.CancelFunc
-		ctx, cancel = wait.bound(ctx)
+		turnCtx, cancel = wait.bound(ctx)
 		defer cancel()
 	}
-	leave, err := processDirectoryTurns.take(ctx, info)
+	leave, err := processDirectoryTurns.take(turnCtx, info)
 	if err == nil {
 		return leave, nil
 	}
 	holder := fmt.Sprintf("another writer in this process (pid %d)", os.Getpid())
-	if wait.explicit && errors.Is(err, context.DeadlineExceeded) {
+	// The budget ended the wait only while the caller's own context is still live.
+	if wait.explicit && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 		return nil, fmt.Errorf("snapshot directory busy: %s held the lock on %s past the %s wait budget", holder, root.Name(), wait.budget)
 	}
 	return nil, fmt.Errorf("snapshot directory busy: %s holds the lock on %s: %w", holder, root.Name(), err)
@@ -181,6 +183,10 @@ func waitForDirectoryLock(ctx context.Context, root *os.Root, wait lockWait) (fu
 		release, busy, err := tryLockSnapshotDirectory(root)
 		if err != nil || !busy {
 			return release, err
+		}
+		if wait.explicit && wait.budget == 0 {
+			return nil, fmt.Errorf("snapshot directory busy: %s held the lock on %s past the %s wait budget",
+				directoryLockHolder(root), root.Name(), wait.budget)
 		}
 		if !pause(waitCtx, delay) {
 			break
