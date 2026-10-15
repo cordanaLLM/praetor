@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
@@ -512,6 +513,21 @@ func requireSurfaceVerdict(policy config.RegisterPolicy, surface config.Register
 
 // formatCavemanReport appends the summary line and the bounded findings; it returns whether
 // the input passed. masked is the number of register block lines left out of the lint.
+// maxDensityDecimals bounds the decimals densityAgainstLimit adds (HISS-02).
+const maxDensityDecimals = 6
+
+// densityAgainstLimit formats density and limit with two decimals, or with the fewest more that
+// keep a density that differs from the limit from printing equal to it (#1087): 2.04 against 2.0
+// printed as 2.0 and 2.0 next to a FAIL.
+func densityAgainstLimit(density, limit float64) (string, string) {
+	decimals := 2
+	for decimals < maxDensityDecimals && density != limit &&
+		strconv.FormatFloat(density, 'f', decimals, 64) == strconv.FormatFloat(limit, 'f', decimals, 64) {
+		decimals++
+	}
+	return strconv.FormatFloat(density, 'f', decimals, 64), strconv.FormatFloat(limit, 'f', decimals, 64)
+}
+
 func formatCavemanReport(out *strings.Builder, input cavemanInput, report caveman.Report, masked int) bool {
 	verdict := "PASS"
 	if !report.Passed() {
@@ -521,8 +537,9 @@ func formatCavemanReport(out *strings.Builder, input cavemanInput, report cavema
 	if input.provenance != "" {
 		provenance = " " + input.provenance
 	}
-	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d front_matter_lines=%d tokens_est=%d findings=%d contract=%s mechanical_rules=%s advisory_rules=%s%s\n",
-		input.name, verdict, report.ProseWords, report.Articles, report.Density(), caveman.DefaultMaxArticleDensity,
+	density, limit := densityAgainstLimit(report.Density(), caveman.DefaultMaxArticleDensity)
+	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%s/100 limit=%s off_regions=%d register_block_lines=%d front_matter_lines=%d tokens_est=%d findings=%d contract=%s mechanical_rules=%s advisory_rules=%s%s\n",
+		input.name, verdict, report.ProseWords, report.Articles, density, limit,
 		report.OffRegions, masked, report.FrontMatterLines, report.EstimatedTokens, len(report.Findings), report.Kind,
 		coverageRules(report, caveman.EnforcementMechanical), coverageRules(report, caveman.EnforcementAdvisory), provenance)
 	appendCavemanFindingsAt(out, input.name, report.Findings, input.lineOffset)
