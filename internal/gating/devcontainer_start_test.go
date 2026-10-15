@@ -71,7 +71,11 @@ func TestDevcontainerProbeFailureWithinTheBoundKeepsItsMessage(t *testing.T) {
 // and the probe of a run without a test override starts under it.
 func TestDevcontainerStartBoundFollowsTheGateBudget(t *testing.T) {
 	repo, resolved := devcontainerRepo(t)
-	goOnly := devcontainerStartBound(stageBudget(resolved))
+	goBudget, err := stageBudget(t.Context(), resolved)
+	if err != nil {
+		t.Fatalf("resolve Go budget: %v", err)
+	}
+	goOnly := devcontainerStartBound(goBudget)
 	if goOnly != OtherStagesAllowance || goOnly <= GitQueryTimeout {
 		t.Fatalf("a Go repository's start bound is %s, want the %s allowance above the %s git query limit",
 			goOnly, OtherStagesAllowance, GitQueryTimeout)
@@ -79,7 +83,11 @@ func TestDevcontainerStartBoundFollowsTheGateBudget(t *testing.T) {
 	mixed := t.TempDir()
 	writeFile(t, filepath.Join(mixed, "go.mod"), "module example.com/mixed\n")
 	writeFile(t, filepath.Join(mixed, CargoLockFile), "version = 3\n")
-	if got, want := devcontainerStartBound(stageBudget(mixed)), OtherStagesAllowance+CargoStagesAllowance; got != want {
+	mixedBudget, err := stageBudget(t.Context(), mixed)
+	if err != nil {
+		t.Fatalf("resolve mixed budget: %v", err)
+	}
+	if got, want := devcontainerStartBound(mixedBudget), OtherStagesAllowance+CargoStagesAllowance; got != want {
 		t.Fatalf("with a Cargo.lock the start bound is %s, want %s", got, want)
 	}
 

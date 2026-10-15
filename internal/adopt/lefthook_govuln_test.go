@@ -48,7 +48,7 @@ func TestLefthookSecurityJob_Positive_RunsTheVulnerabilityGate(t *testing.T) {
 					t.Errorf("languages=%v checkpoint=%v: security job runs %q", languages, checkpoint, run)
 				}
 				if toolGovuln {
-					if !strings.Contains(run, "sh "+engineLauncherFile+" "+govulnGateArgs+" -- "+govulnToolScanner+";") {
+					if !strings.Contains(run, "sh "+engineLauncherFile+" "+govulnGateArgs+" -- "+govulnToolScanner) {
 						t.Errorf("toolGovuln=true: security job runs %q, want tool module scanner", run)
 					}
 					if strings.Contains(run, "command -v govulncheck") {
@@ -98,7 +98,7 @@ func TestAdopt_Boundary_PlainGovulncheckMigratesWithoutForce(t *testing.T) {
 	for _, rendering := range plainGovulncheckRenderings {
 		name := rendering.fixture + ".lefthook.yml"
 		repoPath, rep := adoptMarkedRepo(t, rendering.fixture, rendering.markers, string(fixtures[name]))
-		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: rendering.languages}, false) {
+		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: adoptedLefthookLanguages(rendering.languages)}, false) {
 			t.Errorf("%s: not migrated to the current rendering:\n%s", name, got)
 		}
 		if !hasAction(rep, lefthookFile, actionReconcile) || hasAction(rep, lefthookFile, actionReplace) {

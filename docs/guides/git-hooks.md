@@ -463,19 +463,19 @@ the Lefthook job test named above puts stand-ins for all three names first on `P
 `compile-context --verify` and `audit --offline` before a commit, `state sync` and the dedupe
 cadence after one, and `flavor audit`, `audit` and `gate run` before a push (see
 [Offline before a commit, online before a push](#offline-before-a-commit-online-before-a-push)).
-The language jobs follow the languages the adoption verification plan detects from root markers,
-the set the harness rows are rendered for (`lefthookLanguages`, `planLanguages` in
-`internal/adopt/harness_hiss.go`):
+The Rust jobs follow the languages the adoption verification plan detects from root markers. Go
+jobs are always scaffolded, and discover tracked modules when the hook runs, so adding a nested
+module does not require re-adoption:
 
 | Detected | Pre-commit jobs | Pre-push jobs | Each runs only where |
 | --- | --- | --- | --- |
-| Go (`go.mod`) | `gofmt` (`gofmt -w` on staged files), `govet` (`go vet ./...`) | `security` (`praetorctl security govuln`, the [Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document); skipped when `govulncheck` is not installed) | Go files are staged, and the root holds `go.mod` for `go vet` and the gate |
+| Tracked Go modules (`go.mod` at any discoverable depth) | `gofmt` (`gofmt -w` on staged files), `govet` (`sh .config/lefthook/engine.sh go vet`, one `go vet ./...` per tracked module) | `security` (`sh .config/lefthook/engine.sh security govuln`, one symbol-level scan per tracked module; skipped when `govulncheck` is not installed) | Go files are staged for `gofmt`/`govet`; the engine discovers modules at hook time |
 | Rust (`Cargo.toml`) | `rustfmt` (`cargo fmt --all --check`), `clippy` (the gate's own `cargo clippy --workspace --all-targets -- -D warnings`, `gating.CargoClippyArgs`) | none: `gate run` runs `cargo audit` for a `Cargo.lock` | Rust files are staged and the root holds `Cargo.toml` |
-| none detected | every language's jobs above, as the harness then keeps every HISS clause | as above | as above |
+| no Rust marker | the Go jobs plus governance jobs | the Go security job plus governance jobs | Go jobs statefully skip when Git tracks no discoverable module |
 
-Any other detected language, such as Python, gets the governance jobs alone. A Go module kept
-only in a subdirectory is not detected, so a Cargo workspace with a Go tool under `tooling/`
-gets the Rust jobs. The header comment names the languages the file carries jobs for. Tests:
+Any other detected language, such as Python, gets the Go and governance jobs; Go discovery happens
+when the hook runs rather than when adoption runs. The header comment names the language jobs the
+file carries. Tests:
 `TestAdopt_Positive_LefthookJobsFollowDetectedLanguages` and
 `TestAdopt_Boundary_LefthookJobsForUnknownAndJoblessLanguages` in
 `internal/adopt/lefthook_languages_test.go`, and the `TestCargoJobs_*` and `TestGoModuleJobs_*`

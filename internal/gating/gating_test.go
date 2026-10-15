@@ -46,6 +46,13 @@ func fakeRunner(recorded *[]recordedCommand, out string, err error) commandRunne
 				return "gcc\n", nil
 			}
 		}
+		// Package-aware stages list before running their tool. Unless the case fails every
+		// command, answer the package probe with one package so these tests exercise the
+		// stage command rather than the empty-module skip; empty-list behavior is tested below.
+		if name == "go" && len(args) == 5 && args[0] == "list" && args[1] == "-find" &&
+			args[2] == "-f" && args[3] == "{{.ImportPath}}" && args[4] == "./..." && err == nil {
+			return "example.test/pkg\n", nil
+		}
 		// The security stage parses govulncheck's JSON stream (internal/govuln), and output
 		// without its configuration is no verdict. Unless the case fails every command,
 		// govulncheck answers as a clean symbol scan does; the gate's own verdicts are
@@ -88,6 +95,14 @@ func newTestConfig(t *testing.T, repoDir string, dryRun bool) (*stageConfig, *[]
 		rep:         rep,
 		boundStage:  withStageBound,
 		inspectTree: cleanTree(rep),
+		// Stage fixtures do not all need a Git checkout. Tests that exercise discovery
+		// explicitly replace this seam with apiassets.TrackedModuleFiles.
+		moduleDiscovery: func(context.Context, string) ([]string, error) {
+			if util.FileExists(filepath.Join(repoDir, "go.mod")) {
+				return []string{"go.mod"}, nil
+			}
+			return nil, nil
+		},
 	}, recorded
 }
 
@@ -229,10 +244,11 @@ func TestPrefetchDependencies_Boundary_RunsNothing(t *testing.T) {
 		t.Errorf("nil context: got report %+v and error %v", rep, err)
 	}
 
-	// Boundary: without a go.mod there is nothing to prefetch, and the report says skipped.
-	rep, err = prefetchDependencies(context.Background(), t.TempDir(), run)
+	// Boundary: the exported entry point discovers module presence instead of inspecting an
+	// untracked root go.mod itself.
+	rep, err = PrefetchDependencies(context.Background(), t.TempDir())
 	if err != nil || rep == nil || !rep.Skipped || rep.VerifiedDependencies {
-		t.Errorf("no go.mod: got report %+v and error %v, want a skipped report", rep, err)
+		t.Errorf("untracked directory: got report %+v and error %v, want a skipped report", rep, err)
 	}
 
 	if len(recorded) != 0 {
@@ -259,7 +275,8 @@ func TestPrefetchDependencies_RealToolchain(t *testing.T) {
 	}
 
 	// Positive: go mod verify and go mod download succeed, and leave the manifest alone.
-	goDir := newGoModuleDir(t)
+	goDir := newHermeticGitRepo(t)
+	commitFile(t, goDir, "go.mod", "module example.test\n")
 	rep, err := PrefetchDependencies(ctx, goDir)
 	if err != nil {
 		t.Fatalf("prefetch of a dependency-free module failed: %v", err)
@@ -273,8 +290,8 @@ func TestPrefetchDependencies_RealToolchain(t *testing.T) {
 
 	// Negative: the go command's refusal reaches the caller as a verification failure that
 	// carries the command's own reason.
-	newer := t.TempDir()
-	writeFile(t, filepath.Join(newer, "go.mod"), "module example.test\n\ngo 1.999\n")
+	newer := newHermeticGitRepo(t)
+	commitFile(t, newer, "go.mod", "module example.test\n\ngo 1.999\n")
 	rep, err = PrefetchDependencies(ctx, newer)
 	if rep != nil || err == nil || !strings.Contains(err.Error(), "dependency verification failed") ||
 		!strings.Contains(err.Error(), "GOTOOLCHAIN=local") {
@@ -657,7 +674,7 @@ func TestRunTestStage_3D(t *testing.T) {
 	// Boundary: a dry run executes nothing and says so.
 	dry, dryRecorded := newTestConfig(t, t.TempDir(), true)
 	_, err := dry.runTestStageForTest(ctx)
-	if reason := wantSkip(t, err, StageSkipped); !strings.Contains(reason, "dry run") || len(*dryRecorded) != 0 {
+	if reason := wantSkip(t, err, StageNotApplicable); !strings.Contains(reason, "no go.mod") || len(*dryRecorded) != 0 {
 		t.Errorf("dry run executed work: %q / %+v", reason, *dryRecorded)
 	}
 
@@ -940,7 +957,8 @@ func TestRunTestStage_Boundary_NonGoRepository(t *testing.T) {
 
 	ran := false
 	cfg := &stageConfig{
-		repoDir: dir,
+		repoDir:         dir,
+		moduleDiscovery: func(context.Context, string) ([]string, error) { return nil, nil },
 		run: func(context.Context, string, string, ...string) (string, error) {
 			ran = true
 			return "", nil

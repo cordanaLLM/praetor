@@ -788,7 +788,7 @@ refuse it.
 A skipped or not-applicable stage names its reason and does not fail the repository:
 
 - The prefetch, security and race-detector stages -- the toolchain stages -- are **not
-  applicable** where the repository root holds neither a `go.mod` nor a `Cargo.lock`
+  applicable** where Git tracks neither a discoverable `go.mod` nor a `Cargo.lock`
   ([Cargo repositories](#cargo-repositories)). Without this a TypeScript or Python repository failed
   its own pre-push gate at `FAIL ./... [setup failed]`, which reads as a broken repository rather
   than an inapplicable stage. Such a repository still gets no receipt
@@ -825,9 +825,31 @@ how a gate comes to certify what it never examined. The verdicts are pinned by
 `TestExecuteStage_SkipVerdicts` and `TestStageOutput_3D` in
 [`internal/gating/gating_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gating_test.go).
 
+### Tracked Go modules
+
+The Go parts of Prefetch & Lockfiles, Security & SCA Scan and Race-Detector Tests share one
+discovery result: tracked `go.mod` files returned by
+[`tools/apicompat.TrackedModuleFiles`](https://github.com/cordanaLLM/praetor/blob/main/tools/apicompat/modules.go).
+The rule ignores `testdata/`, `vendor/`, dot-prefixed and underscore-prefixed directories and keeps
+the result bounded at 64 modules. A larger repository fails closed with `too many tracked Go
+modules`; it is never silently truncated.
+
+Each stage visits modules in discovery order. Prefetch runs `go mod verify` and `go mod download`,
+security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
+and the race stage runs `go test -race ./...` in an isolated worktree for each module. The signed
+stage reason contains one result and elapsed time per module, and a failure names the module
+directory. A root-only repository keeps the existing stage behavior with the root module name
+(`go.mod`) added to the result.
+
+The same discovery rule is used by the CLI entry points. `praetorctl go vet` runs `go vet ./...`
+once in every tracked module; `praetorctl security govuln` does the corresponding vulnerability
+scan. No tracked module is an explicit successful no-op: a repository with no discoverable module
+prints a stated skip and exits successfully.
+
 ### Cargo repositories
 
-Where the repository root holds a `Cargo.lock`, the toolchain stages run Cargo besides Go, or
+Where the repository root holds a `Cargo.lock`, the toolchain stages run Cargo besides the tracked
+Go modules, or
 instead of it ([`internal/gating/cargo.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo.go)):
 
 | Stage | Cargo command | Runs in | Bound |
@@ -1595,13 +1617,13 @@ agent helper runs the same pipeline and takes the same derived deadline.
 
 The deadline is sized to the repository `--path` names (`ResolveRepoRunBudget` in `deadline.go`):
 
-| Repository root holds | Test suites, one bound each | Allowance for the other stages |
+| Tracked toolchain state | Test suites, one bound each | Allowance for the other stages |
 | :--- | :--- | :--- |
-| `go.mod`, no `Cargo.lock` | 1 | 5 min |
-| `Cargo.lock`, no `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
-| `go.mod` and `Cargo.lock` | 2 | 9 min |
+| N discoverable `go.mod` files, no `Cargo.lock` | N (at least 1 for the deadline calculation) | 5 min |
+| `Cargo.lock`, no discoverable `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
+| N discoverable `go.mod` files and `Cargo.lock` | N + 1 | 9 min |
 
-A mixed repository therefore gets 2 × 3 + 9 = 15 minutes by default. Sized for one suite, the run
+A mixed repository with one Go module therefore gets 2 × 3 + 9 = 15 minutes by default. Sized for one suite, the run
 deadline let the Go suite and the Cargo commands spend the time the Cargo suite needed, and no value
 of the variable could fix it. `gate deadline` takes the same `--path` (default `.`) and reports the
 suite count as `test_suites` in its JSON:
@@ -1993,15 +2015,12 @@ Malformed or oversized command metadata now fails before any adoption writes.
 The generated hooks resolve `praetorctl` or, failing that, `standardsctl` through the
 same expression as the generated Makefile's `PRAETORCTL` variable
 (`util.ShellCLIResolution` in `internal/util/clinames.go`). A missing binary blocks the
-commit or push; a `./cmd/standardsctl` source tree no longer stands in for one. The language
-jobs follow the languages the plan detects: `gofmt`, `govet` and `security` for a root
-`go.mod`, `rustfmt` and `clippy` for a root `Cargo.toml`, all of them when no language is
-detected ([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adoption-writes)).
-Each runs only where the root holds its marker and otherwise prints
-`no <marker> at the repository root, skipping <tool>`, matching the gate stages above. A module
-kept in a subdirectory is not scanned by these jobs. For every tracked nested `go.mod`, adoption's
-`git-hooks` step warns with its directory and says that the module's declared verification command
-is what checks it; it does not alter `lefthook.yml` or the gate. The `gate` job runs
+commit or push; a `./cmd/standardsctl` source tree no longer stands in for one. Go's `gofmt`,
+engine-governed `go vet`, and engine-governed `security govuln` jobs are always present so a
+module added after adoption is covered. The Go engine and the gate share the tracked-module
+discovery rule; a repository with no discoverable module prints a stated skip. Rust jobs follow
+the plan's root `Cargo.toml` marker
+([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adoption-writes)). The `gate` job runs
 `praetorctl gate run --path=. --admit-unsupported`: a root with neither a `go.mod` nor a
 `Cargo.lock` is admitted without a receipt and its languages are named, and a root with either
 fails where its toolchain stages did not run

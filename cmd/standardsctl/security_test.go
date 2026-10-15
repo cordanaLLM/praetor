@@ -10,14 +10,17 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/govuln"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // govulnStream reads one of govulncheck v1.8.0's recorded streams (internal/govuln/testdata/scan).
@@ -34,14 +37,49 @@ func govulnStream(t *testing.T, name string) string {
 // output streams, the command lines the runner saw and its error.
 func govulnCLI(t *testing.T, out string, runErr error, args ...string) (string, string, []string, error) {
 	t.Helper()
+	seedTrackedGovulnModule(t, securityTestPath(args...))
 	var commands []string
 	run := func(_ context.Context, _, name string, args ...string) (string, error) {
 		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		if name == "go" && len(args) == 5 && args[0] == "list" && args[1] == "-find" &&
+			args[2] == "-f" && args[3] == "{{.ImportPath}}" && args[4] == "./..." {
+			return "example.test/security\n", nil
+		}
 		return out, runErr
 	}
 	var stdout, stderr bytes.Buffer
 	err := runSecurityGovuln(args, run, &stdout, &stderr)
 	return stdout.String(), stderr.String(), commands, err
+}
+
+func securityTestPath(args ...string) string {
+	for index := 0; index < len(args); index++ {
+		if strings.HasPrefix(args[index], "--path=") {
+			return strings.TrimPrefix(args[index], "--path=")
+		}
+		if args[index] == "--path" && index+1 < len(args) {
+			return args[index+1]
+		}
+	}
+	return "."
+}
+
+func seedTrackedGovulnModule(t *testing.T, dir string) {
+	t.Helper()
+	if dir == "." {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test/security\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "--", "go.mod"}} {
+		cmd := exec.CommandContext(t.Context(), "git", args...)
+		cmd.Dir = dir
+		cmd.Env = testsupport.HermeticGitEnv(t)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
 }
 
 // exitCode is the status main would exit with for err: 0 for nil, else what commandExitCode
@@ -63,7 +101,7 @@ func TestSecurityGovuln_Negative_CalledSymbolExitsOne(t *testing.T) {
 		t.Fatalf("exit %d, stdout %q, stderr %q", exitCode(err), stdout, stderr)
 	}
 	want := "go tool -modfile=tools/go/go.mod govulncheck " + strings.Join(govuln.ScanArgs(), " ")
-	if !slices.Equal(commands, []string{want}) {
+	if !slices.Equal(commands, []string{"go list -find -f {{.ImportPath}} ./...", want}) {
 		t.Fatalf("commands = %q, want %q", commands, want)
 	}
 }
@@ -90,7 +128,31 @@ func TestSecurityGovuln_Positive_CoveredAdvisoryPasses(t *testing.T) {
 		!strings.Contains(stdout, "govuln: PASS:") || stderr != "" {
 		t.Fatalf("err %v, stdout %q, stderr %q", err, stdout, stderr)
 	}
-	if len(commands) != 1 || !strings.HasPrefix(commands[0], govuln.DefaultScanner+" -scan symbol") {
+	if len(commands) != 2 || commands[0] != "go list -find -f {{.ImportPath}} ./..." ||
+		!strings.HasPrefix(commands[1], govuln.DefaultScanner+" -scan symbol") {
+		t.Fatalf("commands = %q", commands)
+	}
+}
+
+// Positive: a tracked go.mod with no Go packages prints the stated skip and exits successfully;
+// no scanner command is allowed to turn the empty package set into a false failure.
+func TestSecurityGovuln_Positive_EmptyModuleSkips(t *testing.T) {
+	dir := t.TempDir()
+	seedTrackedGovulnModule(t, dir)
+	var commands []string
+	run := func(_ context.Context, _, name string, args ...string) (string, error) {
+		commands = append(commands, strings.Join(append([]string{name}, args...), " "))
+		if name == "go" && len(args) == 5 && args[0] == "list" && args[1] == "-find" {
+			return "", nil
+		}
+		return "", nil
+	}
+	var stdout, stderr bytes.Buffer
+	err := runSecurityGovuln([]string{"--path=" + dir}, run, &stdout, &stderr)
+	if err != nil || !strings.Contains(stdout.String(), "govuln: SKIP: "+gating.NoPackagesNote) || stderr.Len() != 0 {
+		t.Fatalf("err %v, stdout %q, stderr %q", err, stdout.String(), stderr.String())
+	}
+	if !slices.Equal(commands, []string{"go list -find -f {{.ImportPath}} ./..."}) {
 		t.Fatalf("commands = %q", commands)
 	}
 }
@@ -98,7 +160,7 @@ func TestSecurityGovuln_Positive_CoveredAdvisoryPasses(t *testing.T) {
 // Boundary: a scan that failed exits 2, not 1 and never 0.
 func TestSecurityGovuln_Boundary_NoVerdictExitsTwo(t *testing.T) {
 	_, stderr, _, err := govulnCLI(t, govulnStream(t, "incomplete"), errors.New("exit status 1"), "--path", t.TempDir())
-	if exitCode(err) != govulnIncompleteExit || !strings.Contains(stderr, "govuln: no verdict: the govulncheck scan did not complete") {
+	if exitCode(err) != govulnIncompleteExit || !strings.Contains(stderr, "govuln: go.mod: no verdict: the govulncheck scan did not complete") {
 		t.Fatalf("exit %d, stderr %q", exitCode(err), stderr)
 	}
 }

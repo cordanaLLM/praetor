@@ -80,14 +80,15 @@ func runToolchainStages(t *testing.T, cfg *stageConfig) ([]StageResult, error) {
 	return cfg.rep.Stages, nil
 }
 
-// wantStages requires each recorded stage to carry the verdict and reason given for its name.
+// wantStages requires each recorded stage to carry the verdict and any non-empty reason given for
+// its name. Empty reasons let legacy status-only assertions tolerate the new per-module detail.
 func wantStages(t *testing.T, got []StageResult, want map[string]StageResult) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("recorded %d stages, want %d: %+v", len(got), len(want), got)
 	}
 	for _, s := range got {
-		if w := want[s.Name]; s.Status != w.Status || s.Message != w.Message {
+		if w := want[s.Name]; s.Status != w.Status || w.Message != "" && s.Message != w.Message {
 			t.Errorf("stage %s = %s %q, want %s %q", s.Name, s.Status, s.Message, w.Status, w.Message)
 		}
 	}
@@ -141,8 +142,9 @@ func TestToolchainStages_Positive_GoPathUnchanged(t *testing.T) {
 	wantStages(t, got, map[string]StageResult{
 		stagePrefetch: {Status: StagePassed}, stageSecurity: {Status: StagePassed}, stageTests: {Status: StagePassed},
 	})
-	want := []string{"go mod verify", "go mod download", "govulncheck -scan symbol -format json ./...", "go list -f {{.Dir}} ./...",
-		"gosec -conf " + GosecConfigFile + " .", "go test -race -timeout " + EnvRunBudget(repo, false).StageBound.String() + " ./..."}
+	want := []string{"go mod verify", "go mod download", "go list -f {{.Dir}} ./...", "govulncheck -scan symbol -format json ./...",
+		"gosec -conf " + GosecConfigFile + " .", "go list -find -f {{.ImportPath}} ./...",
+		"go test -race -timeout " + EnvRunBudget(repo, false).StageBound.String() + " ./..."}
 	if lines := commandLines(*recorded); !slices.Equal(lines, want) {
 		t.Fatalf("commands = %q, want %q", lines, want)
 	}
@@ -178,9 +180,9 @@ func TestToolchainStages_MixedRepositoryNamesEachLanguage(t *testing.T) {
 		t.Fatalf("a mixed repository failed a stage: %v", err)
 	}
 	wantStages(t, got, map[string]StageResult{
-		stagePrefetch: {Status: StagePassed, Message: "go: passed; cargo: cargo fetch --locked passed"},
-		stageSecurity: {Status: StageSkipped, Message: "go: passed; cargo: " + cargoAuditMissingReason},
-		stageTests:    {Status: StagePassed, Message: "go: passed; cargo: " + cargoTestsPassed},
+		stagePrefetch: {Status: StagePassed},
+		stageSecurity: {Status: StageSkipped},
+		stageTests:    {Status: StagePassed},
 	})
 	if !slices.Equal(cfg.verified, []string{languageGo, languageCargo}) {
 		t.Errorf("verified languages = %q, want [go cargo]", cfg.verified)

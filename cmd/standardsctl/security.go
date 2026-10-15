@@ -5,16 +5,20 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/util"
+	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
 const (
@@ -70,26 +74,77 @@ func runSecurityGovuln(args []string, run govuln.Runner, stdout, stderr io.Write
 	// The scan bounds itself by govuln.ScanTimeout; the margin covers reading the document.
 	ctx, cancel := commandContext(govuln.ScanTimeout + time.Minute)
 	defer cancel()
-	report, err := govuln.Check(ctx, govuln.Options{Dir: *repoPath, Scanner: scanner, Run: run})
-	return reportGovuln(report, err, stdout, stderr)
-}
-
-// reportGovuln prints one Check outcome and returns the exit status it calls for: covered
-// advisories, unused statements and a pass on stdout, failing advisories and the reason for no
-// verdict on stderr.
-func reportGovuln(report *govuln.Report, err error, stdout, stderr io.Writer) error {
+	modules, err := securityModules(ctx, *repoPath)
 	if err != nil {
 		return writeWithStatus(stderr, "govuln: no verdict: "+err.Error()+"\n", govulnIncompleteExit)
 	}
+	if len(modules) == 0 {
+		return writeWithStatus(stdout, "govuln: no tracked Go modules, skipping\n", 0)
+	}
+	return reportGovulnModules(ctx, *repoPath, modules, scanner, run, stdout, stderr)
+}
+
+func securityModules(ctx context.Context, repoPath string) ([]string, error) {
+	modules, err := apiassets.TrackedModuleFiles(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(modules) > apiassets.MaxTrackedModules {
+		return nil, fmt.Errorf("%w: found %d, maximum %d", apiassets.ErrTooManyModules,
+			len(modules), apiassets.MaxTrackedModules)
+	}
+	return modules, nil
+}
+
+func reportGovulnModules(ctx context.Context, root string, modules []string, scanner []string,
+	run govuln.Runner, stdout, stderr io.Writer) error {
+	status := 0
+	for index := 0; index < len(modules) && index < apiassets.MaxTrackedModules; index++ {
+		code, err := reportGovulnModule(ctx, root, modules[index], scanner, run, stdout, stderr)
+		if err != nil {
+			return err
+		}
+		status = max(status, code)
+	}
+	return statusError(status)
+}
+
+func reportGovulnModule(ctx context.Context, root, module string, scanner []string,
+	run govuln.Runner, stdout, stderr io.Writer) (int, error) {
+	start := time.Now()
+	dir := filepath.Join(root, filepath.Dir(filepath.FromSlash(module)))
+	count, err := gating.ModulePackageCount(ctx, run, dir)
+	if err != nil {
+		writeErr := writeWithStatus(stderr, fmt.Sprintf("govuln: %s: no verdict: %s\n", module, err), 0)
+		return govulnIncompleteExit, writeErr
+	}
+	if count == 0 {
+		return 0, writeWithStatus(stdout, fmt.Sprintf("govuln: SKIP: %s (module: %s)\n", gating.NoPackagesNote, module), 0)
+	}
+	report, err := govuln.Check(ctx, govuln.Options{Dir: dir, VEXRoot: root, Scanner: scanner, Run: run})
+	elapsed := time.Since(start).Round(time.Millisecond)
+	if err != nil {
+		writeErr := writeWithStatus(stderr, fmt.Sprintf("govuln: %s: no verdict: %s (%v)\n", module, err, elapsed), 0)
+		return govulnIncompleteExit, writeErr
+	}
+	if report.Failed() {
+		if writeErr := writeWithStatus(stdout, prefixedLines("govuln: ", report.Lines(true)), 0); writeErr != nil {
+			return govulnFindingExit, writeErr
+		}
+		text := prefixedLines("govuln: ", report.Lines(false)) +
+			fmt.Sprintf("govuln: FAIL: %s (module: %s, elapsed: %v)\n", report.Summary(), module, elapsed)
+		return govulnFindingExit, writeWithStatus(stderr, text, 0)
+	}
 	notes := prefixedLines("govuln: ", report.Lines(true)) + prefixedLines("govuln: note: ", report.UnusedLines())
-	if !report.Failed() {
-		return writeWithStatus(stdout, notes+"govuln: PASS: "+report.Summary()+"\n", 0)
+	text := notes + fmt.Sprintf("govuln: PASS: %s (module: %s, elapsed: %v)\n", report.Summary(), module, elapsed)
+	return 0, writeWithStatus(stdout, text, 0)
+}
+
+func statusError(code int) error {
+	if code == 0 {
+		return nil
 	}
-	if err := writeWithStatus(stdout, notes, 0); err != nil {
-		return err
-	}
-	failures := prefixedLines("govuln: ", report.Lines(false))
-	return writeWithStatus(stderr, failures+"govuln: FAIL: "+report.Summary()+"\n", govulnFindingExit)
+	return exitStatusError{code: code}
 }
 
 // writeWithStatus writes text to out and returns the exit status code as an exitStatusError, nil

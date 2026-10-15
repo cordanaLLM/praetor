@@ -412,11 +412,16 @@ func TestResolveRepoRunBudget_3D(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := t.TempDir()
+			repo := deadlineMarkerFixture(t, tc.markers)
 			for _, marker := range tc.markers {
-				writeFile(t, filepath.Join(repo, marker), "\n")
+				if marker != "go.mod" {
+					writeFile(t, filepath.Join(repo, marker), "\n")
+				}
 			}
-			budget := ResolveRepoRunBudget("12m", repo)
+			budget, err := ResolveRepoRunBudget("12m", repo)
+			if err != nil {
+				t.Fatalf("resolve budget: %v", err)
+			}
 			if budget.TestSuites() != tc.suites || budget.Allowance != tc.allowance || budget.StageBound != bound {
 				t.Fatalf("budget = %+v, want %d suites at %s + %s", budget, tc.suites, bound, tc.allowance)
 			}
@@ -429,18 +434,138 @@ func TestResolveRepoRunBudget_3D(t *testing.T) {
 		})
 	}
 	// Boundary: the ceiling applies per suite, so a mixed repository at 30m gets 2 x 30m + 9m.
-	if got, want := ResolveRepoRunBudget("31m", mixedMarkers(t)).Timeout(), 2*MaxTestStageTimeout+cargoAllowance; got != want {
+	budget, err := ResolveRepoRunBudget("31m", mixedMarkers(t))
+	if err != nil {
+		t.Fatalf("resolve mixed budget: %v", err)
+	}
+	if got, want := budget.Timeout(), 2*MaxTestStageTimeout+cargoAllowance; got != want {
 		t.Errorf("mixed repository at the ceiling = %s, want %s", got, want)
+	}
+}
+
+// Positive: a tracked nested go.mod with no packages does not reserve a test suite.
+func TestResolveRepoRunBudget_SkipsPackageLessNestedModule(t *testing.T) {
+	rootOnly := packageAwareModuleFixture(t, "")
+	withEmptyNested := packageAwareModuleFixture(t, "empty")
+
+	rootBudget, err := ResolveRepoRunBudget("12m", rootOnly)
+	if err != nil {
+		t.Fatalf("resolve root-only budget: %v", err)
+	}
+	nestedBudget, err := ResolveRepoRunBudget("12m", withEmptyNested)
+	if err != nil {
+		t.Fatalf("resolve package-less nested budget: %v", err)
+	}
+	if nestedBudget.Suites != rootBudget.Suites || nestedBudget.Timeout() != rootBudget.Timeout() {
+		t.Fatalf("package-less nested budget = %+v, root-only budget = %+v", nestedBudget, rootBudget)
+	}
+}
+
+// Negative: a failed package listing is conservatively counted as a suite; the stage reports the
+// listing failure when it runs rather than allowing deadline sizing to under-reserve time.
+func TestResolveRepoRunBudget_CountsNestedListingFailure(t *testing.T) {
+	repo := packageAwareModuleFixture(t, "broken")
+
+	budget, err := ResolveRepoRunBudget("12m", repo)
+	if err != nil {
+		t.Fatalf("resolve listing-failure budget: %v", err)
+	}
+	if budget.Suites != 2 {
+		t.Fatalf("listing-failure budget = %+v, want two suites", budget)
+	}
+}
+
+// Boundary: a tracked nested module with one package reserves exactly one additional suite.
+func TestResolveRepoRunBudget_CountsNestedPackageModule(t *testing.T) {
+	rootOnly := packageAwareModuleFixture(t, "")
+	withPackagedNested := packageAwareModuleFixture(t, "packaged")
+
+	rootBudget, err := ResolveRepoRunBudget("12m", rootOnly)
+	if err != nil {
+		t.Fatalf("resolve root-only budget: %v", err)
+	}
+	nestedBudget, err := ResolveRepoRunBudget("12m", withPackagedNested)
+	if err != nil {
+		t.Fatalf("resolve packaged nested budget: %v", err)
+	}
+	if got, want := nestedBudget.Suites-rootBudget.Suites, 1; got != want {
+		t.Fatalf("packaged nested suite increment = %d, want %d", got, want)
+	}
+}
+
+// A Git inspection failure is a budget error, not an empty module set. PlanRun carries the same
+// named failure into the execution report instead of reserving a smaller run.
+func TestResolveRepoRunBudget_ReportsDiscoveryFailure(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, ".git"), "malformed gitfile\n")
+	writeFile(t, filepath.Join(repo, "go.mod"), "module example.test\n")
+
+	budget, err := ResolveRepoRunBudget("12m", repo)
+	if err == nil || !strings.Contains(err.Error(), "discover tracked Go modules") {
+		t.Fatalf("budget discovery error = %v, want a named discovery error", err)
+	}
+	if budget.Suites != 1 {
+		t.Fatalf("failed discovery budget = %+v, want the unresized base budget", budget)
+	}
+
+	plan := PlanRun(repo, false)
+	if plan.Budget.Devcontainer != 0 || !strings.Contains(plan.execution.reason, "Go module discovery failed") {
+		t.Fatalf("plan = %+v, want no image reservation and a named discovery reason", plan)
+	}
+	cfg, _ := newTestConfig(t, repo, false)
+	ctx, cancel := plan.WithDeadline(t.Context())
+	defer cancel()
+	if err := resolveExecution(ctx, cfg); err != nil {
+		t.Fatalf("resolve failed-discovery plan: %v", err)
+	}
+	if cfg.rep.Execution == nil || !strings.Contains(cfg.rep.Execution.Reason, "Go module discovery failed") {
+		t.Fatalf("execution report = %+v, want the discovery failure", cfg.rep.Execution)
 	}
 }
 
 // mixedMarkers returns a directory holding both a go.mod and a Cargo.lock.
 func mixedMarkers(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "go.mod"), "module gating.test\n")
+	dir := newHermeticGitRepo(t)
+	commitFile(t, dir, "go.mod", "module gating.test\n")
+	commitFile(t, dir, "root.go", "package gating\n")
 	writeFile(t, filepath.Join(dir, CargoLockFile), "version = 4\n")
 	return dir
+}
+
+// packageAwareModuleFixture creates a tracked root module with one package and, when nested is
+// non-empty, a tracked nested module. The nested module's name selects its package-listing case.
+func packageAwareModuleFixture(t *testing.T, nested string) string {
+	t.Helper()
+	repo := newHermeticGitRepo(t)
+	commitFile(t, repo, "go.mod", "module gating.test\n\ngo 1.27\n")
+	commitFile(t, repo, "root.go", "package gating\n")
+	if nested == "" {
+		return repo
+	}
+
+	nestedModule := "module gating.test/" + nested + "\n\ngo 1.27\n"
+	if nested == "broken" {
+		nestedModule = "module\n"
+	}
+	commitFile(t, repo, filepath.Join(nested, "go.mod"), nestedModule)
+	if nested == "packaged" {
+		commitFile(t, repo, filepath.Join(nested, "nested.go"), "package nested\n")
+	}
+	return repo
+}
+
+func deadlineMarkerFixture(t *testing.T, markers []string) string {
+	t.Helper()
+	for _, marker := range markers {
+		if marker == "go.mod" {
+			dir := newHermeticGitRepo(t)
+			commitFile(t, dir, marker, "module gating.test\n")
+			commitFile(t, dir, "root.go", "package gating\n")
+			return dir
+		}
+	}
+	return t.TempDir()
 }
 
 // A zero-valued Suites counts as one suite, so a budget literal keeps its pre-Cargo meaning.
@@ -457,7 +582,8 @@ func TestRunBudgetTestSuitesCountsAtLeastOne(t *testing.T) {
 // deadline the run deadline lay a single allowance past the Go suite's bound.
 func TestRunTestStage_MixedRepositoryReservesABoundPerSuite(t *testing.T) {
 	repoDir := newHermeticGitRepo(t)
-	seedGoModule(t, repoDir)
+	commitFile(t, repoDir, "go.mod", "module gating.test\n")
+	commitFile(t, repoDir, "root.go", "package gating\n")
 	writeFile(t, filepath.Join(repoDir, CargoLockFile), "version = 4\n")
 	cfg, _ := newTestConfig(t, repoDir, false)
 	seen := map[string]time.Time{}
