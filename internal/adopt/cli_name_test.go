@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -90,9 +91,6 @@ func TestLegacyMakefileDetection_Boundary_RejectsUnrelatedMakefiles(t *testing.T
 // shell scripts that Windows cannot execute directly.
 func runHookLine(t *testing.T, shell, line, stubDir, workDir string) (string, int) {
 	t.Helper()
-	if os.PathSeparator == '\\' {
-		t.Skip("POSIX shell stubs required: the hook line's stubs are shell scripts, which Windows does not start by their shebang")
-	}
 	shellPath, err := exec.LookPath(shell)
 	if err != nil {
 		t.Skipf("%s required", shell)
@@ -105,9 +103,13 @@ func runHookLine(t *testing.T, shell, line, stubDir, workDir string) (string, in
 // can never answer for an absent one.
 var hookToolNames = []string{"sh", "bash", "sed", "tr", "cut", "sort", "wc", "head", "env", "mkdir", "rm", "mv", "sleep", "cat", "chmod"}
 
-// linkTools links named tools into a fresh directory and returns it.
+// linkTools links named tools into a fresh directory and returns it. On Windows it returns a
+// shared copy instead (copiedToolbox).
 func linkTools(t *testing.T, names ...string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		return copiedToolbox(t, names...)
+	}
 	dir := t.TempDir()
 	for _, name := range names {
 		path, err := exec.LookPath(name)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -56,9 +57,6 @@ var makeToolNames = append([]string{"make", "echo"}, hookToolNames...)
 // up before the narrowing failed on "make: echo: No such file or directory".
 func newMakeTestRepo(t *testing.T, name string) (string, string) {
 	t.Helper()
-	if os.PathSeparator == '\\' {
-		t.Skip("POSIX shell stubs required: the toolbox links make, sh and echo, MSYS tools that do not start from a link, and the engine stubs are shell scripts")
-	}
 	toolbox := linkTools(t, makeToolNames...)
 	root := newTestRepo(t, name)
 	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+toolbox)
@@ -97,13 +95,31 @@ func writeMainEraAppendedMakefile(t *testing.T, root string, plan *VerificationP
 	mustWrite(t, filepath.Join(root, "Makefile"), withDocs)
 }
 
+// samePath reports whether got and want name the same path once cleaned. On Windows two other
+// spellings of one file reach these tests through Git's sh: the engine launcher appends
+// "/praetor/engine/<pin>/standardsctl" to XDG_CACHE_HOME, a native prefix with slashes after
+// it, and `command -v` answers in MSYS form through Git's mount table (gitForWindowsFstab):
+// /c/Users/... for C:\Users\..., and /tmp/... for the user's temporary directory. Each resolves
+// to the backslash spelling.
+func samePath(got, want string) bool {
+	if runtime.GOOS == "windows" {
+		switch {
+		case strings.HasPrefix(got, "/tmp/"):
+			got = filepath.Join(os.TempDir(), got[len("/tmp/"):])
+		case len(got) > 2 && got[0] == '/' && got[2] == '/':
+			got = strings.ToUpper(got[1:2]) + ":" + got[2:]
+		}
+	}
+	return filepath.Clean(got) == filepath.Clean(want)
+}
+
 func verifyMakePraetorEnginePath(t *testing.T, makePath, root, wantPath string) {
 	t.Helper()
 	out, err := util.RunCommand(t.Context(), root, makePath, "--no-print-directory", "praetor-engine-path")
 	if err != nil {
 		t.Fatalf("make praetor-engine-path failed: %v, output: %q", err, out)
 	}
-	if strings.TrimSpace(out) != wantPath {
+	if !samePath(strings.TrimSpace(out), wantPath) {
 		t.Fatalf("praetor-engine-path = %q, want %q", strings.TrimSpace(out), wantPath)
 	}
 }
@@ -472,7 +488,7 @@ func TestEngineMakefile_Boundary_LauncherRemovedFallsBackToPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("make praetor-engine-path failed after launcher removal: %v, output: %q", err, out)
 	}
-	if strings.TrimSpace(out) != filepath.Join(stubDir, "praetorctl") {
+	if !samePath(strings.TrimSpace(out), filepath.Join(stubDir, "praetorctl")) {
 		t.Fatalf("praetor-engine-path = %q, want %q", strings.TrimSpace(out), filepath.Join(stubDir, "praetorctl"))
 	}
 }
@@ -536,7 +552,7 @@ func TestEngineMakefile_Positive_ExplicitPraetorEnginePathPrintsLauncherPath(t *
 	if err != nil {
 		t.Fatalf("make praetor-engine-path failed: %v, output: %q", err, out)
 	}
-	if strings.TrimSpace(out) != wantPath {
+	if !samePath(strings.TrimSpace(out), wantPath) {
 		t.Fatalf("praetor-engine-path = %q, want %q", strings.TrimSpace(out), wantPath)
 	}
 }
@@ -595,7 +611,7 @@ func TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk(t
 	if err != nil {
 		t.Fatalf("launcher --print-path failed: %v, output: %q", err, out)
 	}
-	if strings.TrimSpace(out) != wantPath {
+	if !samePath(strings.TrimSpace(out), wantPath) {
 		t.Fatalf("launcher --print-path = %q, want %q", strings.TrimSpace(out), wantPath)
 	}
 
