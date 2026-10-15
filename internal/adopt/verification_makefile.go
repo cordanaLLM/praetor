@@ -426,8 +426,11 @@ func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 		plan.unavailable("The Makefile still holds the failing placeholder recipe adoption writes; replace it with the project's build and test commands.")
 		return
 	}
+	// The repository's own verify-all is its verification contract, so the planner's reasons for
+	// the commands it could not derive (no build step, no marker) no longer apply: a warning that
+	// called the contract absent beside the one that preserved it could not be acted on (#1239).
 	plan.Status = verificationPreserved
-	plan.Reasons = append(plan.Reasons, "Existing custom verify-all is preserved; execute and review it before claiming project verification.")
+	plan.Reasons = []string{"Existing custom verify-all is preserved; execute and review it before claiming project verification."}
 	plan.Declared = append(append([][]string(nil), plan.Build...), plan.Test...)
 	plan.Build = [][]string{}
 	plan.Test = [][]string{{"make", verificationTarget}}
