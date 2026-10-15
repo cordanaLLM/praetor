@@ -301,11 +301,11 @@ entries:
     license: "MIT"
     notice: "© Meta Platforms, Inc. and affiliates"
     use: >-
-      Bundled with interfig into the figure player (`tools/figures/dist/player.js`) that the binaries embed and this
+      Bundled with interfig into the figure player (`tools/figures/player/player.js`) that the binaries embed and this
       site loads
     paths:
       - "tools/figures/package.json"
-      - "tools/figures/dist/THIRD-PARTY-LICENSES.txt"
+      - "tools/figures/player/THIRD-PARTY-LICENSES.txt"
       - "tools/figures/third_party/interfig/upstream/package.json"
     packages:
       - "npm:react"

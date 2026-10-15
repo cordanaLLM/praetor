@@ -14,7 +14,7 @@ import { extname, join, resolve, sep } from 'node:path';
 
 /** Where a site serves the committed figure outputs (docs/assets/figures/), relative to its base path. */
 export const FIGURES_URI = 'assets/figures';
-/** Where a site serves the committed player files (tools/figures/dist/), relative to its base path. */
+/** Where a site serves the committed player files (tools/figures/player/), relative to its base path. */
 export const PLAYER_URI = 'assets/javascripts/figures';
 /** The files one mount publishes: dist/ holds three, a figure three per spec (LIMITS.specs in core.mjs is 256). */
 export const MAX_MOUNT_FILES = 1024;

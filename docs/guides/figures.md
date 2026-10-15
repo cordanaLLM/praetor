@@ -206,7 +206,7 @@ The engine hash covers the three vendored render files and `tools/figures/core.m
 ## The committed player
 
 The player is the same for every site, because it reads each figure's props from the SVG the
-figure shows. `tools/figures/bundle.mjs` builds it once into `tools/figures/dist/`, which is
+figure shows. `tools/figures/bundle.mjs` builds it once into `tools/figures/player/`, which is
 committed ([ADR-0016](../adr/0016-figures-for-adopters.md), section 3):
 
 - `loader.js` loads on every page;
@@ -374,7 +374,7 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 | `npm --prefix tools/figures test` | a validation rule, the text derivation, the figure markup, the stale check, a figure check, the loader's spec reader, the committed player, the keyboard shim, the Astro integration or the file server regresses |
 | `npm --prefix tools/figures run typecheck` | a spec or the player code does not type-check against `tools/figures/types.ts` and interfig |
 | `node tools/figures/build.mjs check` | a spec breaks a rule, or a committed output differs from a fresh build; needs no npm package |
-| `node tools/figures/bundle.mjs --check` | a file in `tools/figures/dist/` differs from a rebuild from the lock, is missing or is not a bundle output; `player.js` exceeds 250 kB minified; the install differs from the lock; needs the locked npm install |
+| `node tools/figures/bundle.mjs --check` | a file in `tools/figures/player/` differs from a rebuild from the lock, is missing or is not a bundle output; `player.js` exceeds 250 kB minified; the install differs from the lock; needs the locked npm install |
 | `node tools/figures/build.mjs sources` | a JSON hash no longer matches its spec, the engine or its SVGs; a JSON lacks a positive whole-number size for either SVG; its `html` is not the markup `core.mjs` renders from it; a spec or JSON is missing its pair; a fence on a page of the site configuration at the root (MkDocs or Starlight) names an unknown or unrendered figure; a root-site page holds a Mermaid fence; the README block differs; an evidence anchor is gone; needs no npm package |
 | `node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site` | after `mkdocs build` (or `astro build`, with `--config astro.config.mjs` and `--base`): a figure did not render, an image does not resolve or embeds no usable `<metadata id="figure-spec">`, the page does not load the loader or no `player.js` sits beside it, or a page holds a Mermaid fence; needs no npm package |
 | `python3 -B tools/figures/test_mkdocs_hook.py` | the hook's fence scanner stops matching the fence fixtures, its slot filling stops matching the markup fixtures, or a site build no longer renders a figure or publishes `figures.css` |
@@ -407,7 +407,7 @@ The command refuses a LICENSE change, an unlisted upstream file or an incompatib
 range before it touches the tree, then swaps in the new files, runs the upstream tests,
 rebuilds every figure, because the engine hash changed, and rebuilds the committed player from the
 locked install, because it bundles interfig. Commit `tools/figures/third_party/interfig/`,
-`docs/assets/figures/` and `tools/figures/dist/` together. The full procedure is in
+`docs/assets/figures/` and `tools/figures/player/` together. The full procedure is in
 [VENDOR.md](https://github.com/cordanaLLM/praetor/blob/main/tools/figures/third_party/interfig/VENDOR.md#updating-the-pin).
 
 ## Credit
@@ -416,7 +416,7 @@ The engine is interfig by Vectorize AI, Inc., MIT-licensed, vendored unmodified 
 commit under `tools/figures/third_party/interfig/`
 ([VENDOR.md](https://github.com/cordanaLLM/praetor/blob/main/tools/figures/third_party/interfig/VENDOR.md)).
 The credit does not imply endorsement. The site footer, every exported SVG and both player scripts
-carry the notice, and `tools/figures/dist/THIRD-PARTY-LICENSES.txt` carries the full license texts
+carry the notice, and `tools/figures/player/THIRD-PARTY-LICENSES.txt` carries the full license texts
 of interfig, React, react-dom and scheduler. `REUSE.toml` labels `dist/` EUPL-1.2 AND MIT. In an
 adopting repository that declares its licensing in `REUSE.toml`, `praetorctl audit` warns until
 an annotation labels the vendored interfig files MIT.

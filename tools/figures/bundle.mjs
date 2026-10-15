@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Bundles the figure player into tools/figures/dist/, which is committed
+// Bundles the figure player into tools/figures/player/, which is committed
 // (docs/adr/0016-figures-for-adopters.md, section 3). Unlike build.mjs it needs the locked npm
 // install in tools/figures (esbuild, React), so it is maintenance tooling for this repository, not
 // part of the render engine.
 //
 //   node tools/figures/bundle.mjs           write loader.js, player.js and THIRD-PARTY-LICENSES.txt
-//                                           to tools/figures/dist/
+//                                           to tools/figures/player/
 //   node tools/figures/bundle.mjs --check   bundle in memory and compare with the committed files
 //                                           byte for byte
 //
@@ -24,8 +24,8 @@ import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { ROOT, VENDOR_JSON, withTimeout } from './build.mjs';
 
-export const DIST_DIR = 'tools/figures/dist';
-/** Every file bundle.mjs writes to DIST_DIR, sorted; anything else there fails --check. */
+export const PLAYER_DIR = 'tools/figures/player';
+/** Every file bundle.mjs writes to PLAYER_DIR, sorted; anything else there fails --check. */
 export const DIST_FILES = Object.freeze(['THIRD-PARTY-LICENSES.txt', 'loader.js', 'player.js']);
 /** player.js (React plus interfig), minified, in bytes. */
 export const PLAYER_BUDGET = 250_000;
@@ -121,7 +121,7 @@ async function esbuildRun(root, vendor) {
   return withTimeout(esbuild.build({
     absWorkingDir: root,
     entryPoints: [{ in: 'tools/figures/loader.ts', out: 'loader' }, { in: 'tools/figures/player.tsx', out: 'player' }],
-    outdir: join(root, DIST_DIR), write: false, bundle: true, splitting: false, format: 'esm', minify: true,
+    outdir: join(root, PLAYER_DIR), write: false, bundle: true, splitting: false, format: 'esm', minify: true,
     target: ['es2022'], jsx: 'automatic', charset: 'utf8', legalComments: 'eof', external: ['./player.js'],
     nodePaths: [join(root, NODE_MODULES)], define: { 'process.env.NODE_ENV': '"production"' },
     banner: { js: `/*! ${credit(vendor)} */` }, metafile: true, logLevel: 'silent',
@@ -158,11 +158,11 @@ export function compareDist(files, dir) {
   const problems = [];
   for (const [name, bytes] of files) {
     const path = join(dir, name);
-    if (!existsSync(path)) problems.push(`${DIST_DIR}/${name} is missing`);
-    else if (!readFileSync(path).equals(bytes)) problems.push(`${DIST_DIR}/${name} differs from a rebuild from the lock`);
+    if (!existsSync(path)) problems.push(`${PLAYER_DIR}/${name} is missing`);
+    else if (!readFileSync(path).equals(bytes)) problems.push(`${PLAYER_DIR}/${name} differs from a rebuild from the lock`);
   }
   const present = existsSync(dir) ? readdirSync(dir).sort() : [];
-  for (const name of present) if (!files.has(name)) problems.push(`${DIST_DIR}/${name} is not a bundle output`);
+  for (const name of present) if (!files.has(name)) problems.push(`${PLAYER_DIR}/${name} is not a bundle output`);
   return problems.length ? [...problems, `rebuild with: ${REBUILD}`] : [];
 }
 
@@ -173,7 +173,7 @@ export function writeDist(files, dir) {
   for (const [name, bytes] of files) writeFileSync(join(dir, name), bytes);
 }
 
-/** `bundle.mjs` writes DIST_DIR, `bundle.mjs --check` compares a rebuild with it. */
+/** `bundle.mjs` writes PLAYER_DIR, `bundle.mjs --check` compares a rebuild with it. */
 export async function main(argv, root = ROOT) {
   if (argv.length > 1 || (argv.length === 1 && argv[0] !== '--check')) {
     console.error('usage: node bundle.mjs [--check]');
@@ -182,10 +182,10 @@ export async function main(argv, root = ROOT) {
   const { files, sizes } = await bundle(root);
   const { line, problems } = budget(sizes);
   console.log(line);
-  if (argv.length) problems.push(...compareDist(files, join(root, DIST_DIR)));
-  else writeDist(files, join(root, DIST_DIR));
+  if (argv.length) problems.push(...compareDist(files, join(root, PLAYER_DIR)));
+  else writeDist(files, join(root, PLAYER_DIR));
   for (const problem of problems) console.error(`figures: ${problem}`);
-  if (argv.length && problems.length === 0) console.log(`figures: ${DIST_DIR} matches a rebuild from the lock byte for byte`);
+  if (argv.length && problems.length === 0) console.log(`figures: ${PLAYER_DIR} matches a rebuild from the lock byte for byte`);
   return problems.length ? 1 : 0;
 }
 
