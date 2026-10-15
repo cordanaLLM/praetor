@@ -32,7 +32,7 @@ repository-root `LICENSE` at the pinned commit, copied verbatim.
   file, `vendor.json` and everything outside `upstream/` stay EUPL-1.2.
 - The committed player in `tools/figures/player/` carries an
   `interfig (c) 2025 Vectorize AI, Inc. MIT` banner, because the upstream
-  source has no header of its own, and `dist/THIRD-PARTY-LICENSES.txt` carries
+  source has no header of its own, and `player/THIRD-PARTY-LICENSES.txt` carries
   the full license text (`tools/figures/bundle.mjs`).
 - Every exported SVG carries a credit comment, and the site footer credits
   Vectorize (`copyright` in `mkdocs.yml`).

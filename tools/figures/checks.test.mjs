@@ -539,7 +539,7 @@ test('site: a Starlight build passes under the base path it was built for; the w
   assert.equal(errors.length, 3, errors.join('\n'));
   assert.match(errors[0], /figure demo: \/docs\/assets\/figures\/demo\.static\.svg does not resolve to a file under/);
   assert.match(errors[1], /figure demo: \/docs\/assets\/figures\/demo\.svg does not resolve/);
-  assert.match(errors[2], /loads no assets\/javascripts\/figures\/loader\.js \(tools\/figures\/astro\.mjs publishes it from tools\/figures\/dist\/\)$/);
+  assert.match(errors[2], /loads no assets\/javascripts\/figures\/loader\.js \(tools\/figures\/astro\.mjs publishes it from tools\/figures\/player\/\)$/);
   // A root-absolute URL outside the base path never resolves, even to a file that exists.
   write(join(fixture.site, 'elsewhere', 'demo.svg'), SPEC_SVG);
   write(fixture.page, inlineLoader('/docs/') + fillSlots(META, '/elsewhere'));

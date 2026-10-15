@@ -20,10 +20,10 @@ Everything the figures need sits in one tree, `tools/figures/`:
 | `build.mjs` | The command line: `build`, `check`, `sources`, `site` and `portable`. Node 22.18 or later, no npm package. |
 | `checks.mjs` | The `sources`, `site` and `portable` checks, and the slot filling of the figure markup. Node builtins only. |
 | `loader.ts`, `player.tsx`, `keyboard.ts` | The player source: the loader reads each figure's props from its SVG and mounts the React player. |
-| `bundle.mjs` | Builds the committed player in `dist/` with esbuild, checks it byte for byte against a rebuild from the lock, and holds its size budget. Needs the locked npm install. |
-| `dist/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`. The same files serve every site. |
+| `bundle.mjs` | Builds the committed player in `player/` with esbuild, checks it byte for byte against a rebuild from the lock, and holds its size budget. Needs the locked npm install. |
+| `player/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`. The same files serve every site. |
 | `types.ts` | The spec type a `docs/figures/<slug>.ts` file checks against. |
-| `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css` and `dist/`. Python standard library and MkDocs only. |
+| `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css` and `player/`. Python standard library and MkDocs only. |
 | `astro.mjs` | The Astro integration for a Starlight site: renders each `figure` code block, loads the loader, and serves and publishes the figure and player files. Node builtins only. |
 | `serve.mjs` | Serves and copies the figure and player files for `astro.mjs`, and serves a built site for the smoke test. Node builtins only. |
 | `figures.css` | The figure stylesheet, reading Material's theme variables with Starlight's as the fallback. |
@@ -83,8 +83,8 @@ text the family ever shipped; after such a change, append the new digests with
 `PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`
 and add each outgoing digest to `priorDigests` in `assets.go`, so plain adoption refreshes an
 unedited copy. The family holds at most 64 earlier texts; a React bump costs two, one for
-`dist/player.js` and one for `dist/THIRD-PARTY-LICENSES.txt`, and an esbuild bump two, one for
-each bundle under `dist/`.
+`player/player.js` and one for `player/THIRD-PARTY-LICENSES.txt`, and an esbuild bump two, one for
+each bundle under `player/`.
 
 ### Locked assets and linters
 
@@ -217,7 +217,7 @@ committed ([ADR-0016](../adr/0016-figures-for-adopters.md), section 3):
 
 esbuild builds the two scripts without code splitting, so no file name carries a hash and a
 dependency bump changes bytes, never the file list. No docs build bundles. After a change to the
-player source, the lock or the interfig pin, rebuild and commit `dist/`:
+player source, the lock or the interfig pin, rebuild and commit `player/`:
 
 ```bash
 npm ci --prefix tools/figures --ignore-scripts
@@ -270,7 +270,7 @@ Astro's `astro:page-load` event.
 
 `tools/figures/figures.css` maps the player's `--fig-*` colours to Material's variables, falling
 back to Starlight's (`var(--md-…, var(--sl-color-…))`), so the palette toggle carries through on
-either site. It and `dist/` sit outside `docs_dir`, so the hook publishes them,
+either site. It and `player/` sit outside `docs_dir`, so the hook publishes them,
 the CSS at `assets/stylesheets/figures.css` and the player files under
 `assets/javascripts/figures/`, and links the stylesheet and the loader (as a module script) from
 every page; `mkdocs.yml` lists only the hook
@@ -316,7 +316,7 @@ export default defineConfig({
   `astro build` renders every page again, and `astro dev` restarts when a figure JSON changes, is
   added or is removed (`watchFigures`).
 - A head script on every page imports `assets/javascripts/figures/loader.js` under the same base.
-- `astro dev` answers the figure files and `dist/` from the repository, and `astro build` copies
+- `astro dev` answers the figure files and `player/` from the repository, and `astro build` copies
   them into the built site at `assets/figures/` and `assets/javascripts/figures/`, the paths the
   MkDocs hook uses. A file the built site already holds at one of those paths is kept and reported.
 - `figures({ root })` names the repository root that holds `docs/assets/figures/` when it is not the
@@ -417,7 +417,7 @@ commit under `tools/figures/third_party/interfig/`
 ([VENDOR.md](https://github.com/cordanaLLM/praetor/blob/main/tools/figures/third_party/interfig/VENDOR.md)).
 The credit does not imply endorsement. The site footer, every exported SVG and both player scripts
 carry the notice, and `tools/figures/player/THIRD-PARTY-LICENSES.txt` carries the full license texts
-of interfig, React, react-dom and scheduler. `REUSE.toml` labels `dist/` EUPL-1.2 AND MIT. In an
+of interfig, React, react-dom and scheduler. `REUSE.toml` labels `player/` EUPL-1.2 AND MIT. In an
 adopting repository that declares its licensing in `REUSE.toml`, `praetorctl audit` warns until
 an annotation labels the vendored interfig files MIT.
 [Credits](../credits.md) names the React, react-dom and scheduler versions the player bundles;
