@@ -539,6 +539,54 @@ cannot tell, because the manifest, an external document or a selected catalog pr
 read (`config.DeclaresBacklogContext`). With no `backlog` section in any layer it prints nothing,
 as for a repository without caps (`TestStateStatus_Boundary_AbsentLedgerAndUnresolvedWithoutCaps`).
 
+### Bounded backlog facet
+
+The engine facet `backlog:bounded` (`.config/archetypes/facets/backlog-bounded.yaml`) provides
+canonical backlog caps for repositories adopting bounded backlogs:
+
+- `defects`: max 20, action `gate`
+- `tasks`: max 50, action `batch`
+- `questions`: max 10, action `batch`
+
+Enable it by listing `backlog:bounded` under `facets:` in `.standards.yaml`:
+
+```yaml
+facets:
+  - "backlog:bounded"
+```
+
+A repository listing this facet fails `praetorctl audit` when open defects exceed 20, reporting the
+category, count, and cap. Open tasks (above 50) and open questions (above 10) trigger batching
+actions but do not fail the audit gate.
+
+### Exceptions for backlog caps
+
+When a repository temporarily exceeds a backlog cap, an unexpired exception under the top-level
+`exceptions` list in `.standards.yaml` suspends the gate for that category until the declared
+expiry date. The entry names the category rule (`backlog.caps.<category>`) and targets `tool: backlog`:
+
+```yaml
+exceptions:
+  - rule: backlog.caps.defects
+    tool: backlog
+    expires: 2026-11-15
+    reason: "Triaging defect backlog from Q3 migration"
+```
+
+Supported rule identifiers are `backlog.caps.defects`, `backlog.caps.tasks`,
+`backlog.caps.questions`, and `backlog.caps.forge_alerts`. Target validation enforces `tool: backlog`
+and rejects `path` or `glob` entries, as `.workingdir` ledgers are private and Git-ignored.
+
+While the exception is active (before its expiry date), `praetorctl audit` passes, reporting that
+the category is over the cap and excepted until the date, along with the reason:
+
+```text
+[INFO] Backlog cap defects: 21 of 20, OVER the cap, excepted until 2026-11-15 by the exceptions entry (rule backlog.caps.defects, backlog): Triaging defect backlog from Q3 migration (action gate set by facet:backlog:bounded, max 20 set by facet:backlog:bounded)
+```
+
+After the expiry date, the exception no longer suspends the gate: the audit gate fails, and the
+expired exception itself fails standard exception expiry verification (`config.ValidateExceptions`).
+
 ## Selecting a shared or private configuration
 
 ```sh
