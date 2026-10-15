@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 )
 
@@ -27,8 +28,27 @@ type MigratedHolder struct {
 	None       bool
 }
 
+// MigrateCounts records the counts of migrated and skipped claims for an issue.
+type MigrateCounts struct {
+	Migrated         int
+	SkippedOtherHost int
+}
+
+// ValidClaimSession reports whether session is 1..128 characters of letters, digits and . _ / : + @ -
+func ValidClaimSession(session string) bool {
+	return claimValuePattern.MatchString(session)
+}
+
+// ValidateClaimSession checks whether session matches the allowed claim session format.
+func ValidateClaimSession(session string) error {
+	if !claimValuePattern.MatchString(session) {
+		return fmt.Errorf("claim session %q is not 1..128 characters of letters, digits and . _ / : + @ -", session)
+	}
+	return nil
+}
+
 // ReadbackVerifier verifies the post-migration forge state.
-type ReadbackVerifier func(ctx context.Context, f ClaimForge, issueNumber int, newIDs []int64, beforeHolder MigratedHolder, key []byte) error
+type ReadbackVerifier func(ctx context.Context, f ClaimForge, issueNumber int, oldIDs []int64, newIDs []int64, beforeHolder MigratedHolder, key []byte) error
 
 func extractClaimNote(body string) string {
 	for _, line := range strings.Split(body, "\n") {
@@ -169,13 +189,15 @@ func computeIssueHolder(comments []IssueComment, key []byte) MigratedHolder {
 	return best
 }
 
-func checkNoLegacyMarkers(issueNumber int, comments []IssueComment) error {
+func checkMigratedLegacyRemoved(issueNumber int, comments []IssueComment, oldIDs []int64) error {
+	migrated := make(map[int64]bool, len(oldIDs))
+	for i := 0; i < len(oldIDs) && i < MaxIssueCommentsLimit; i++ {
+		migrated[oldIDs[i]] = true
+	}
 	for i := 0; i < len(comments) && i < MaxIssueCommentsLimit; i++ {
-		if c, ok := ParseClaimMarker(comments[i].Body); ok {
-			if !IsClaimTag(c.Session) || !IsClaimTag(c.Lane) {
-				return fmt.Errorf("issue #%d: legacy claim marker %d still present after migration",
-					issueNumber, comments[i].ID)
-			}
+		if migrated[comments[i].ID] {
+			return fmt.Errorf("issue #%d: legacy claim marker %d still present after migration",
+				issueNumber, comments[i].ID)
 		}
 	}
 	return nil
@@ -186,20 +208,20 @@ func checkNewCommentsPresent(issueNumber int, comments []IssueComment, newIDs []
 	for i := 0; i < len(comments) && i < MaxIssueCommentsLimit; i++ {
 		present[comments[i].ID] = true
 	}
-	for _, id := range newIDs {
-		if !present[id] {
-			return fmt.Errorf("issue #%d: new claim comment %d missing on read-back", issueNumber, id)
+	for i := 0; i < len(newIDs) && i < MaxIssueCommentsLimit; i++ {
+		if !present[newIDs[i]] {
+			return fmt.Errorf("issue #%d: new claim comment %d missing on read-back", issueNumber, newIDs[i])
 		}
 	}
 	return nil
 }
 
-func verifyMigratedReadback(ctx context.Context, f ClaimForge, issueNumber int, newIDs []int64, beforeHolder MigratedHolder, key []byte) error {
+func verifyMigratedReadback(ctx context.Context, f ClaimForge, issueNumber int, oldIDs []int64, newIDs []int64, beforeHolder MigratedHolder, key []byte) error {
 	comments, err := f.ListIssueComments(ctx, issueNumber)
 	if err != nil {
 		return fmt.Errorf("read-back issue #%d comments: %w", issueNumber, err)
 	}
-	if err := checkNoLegacyMarkers(issueNumber, comments); err != nil {
+	if err := checkMigratedLegacyRemoved(issueNumber, comments, oldIDs); err != nil {
 		return err
 	}
 	if err := checkNewCommentsPresent(issueNumber, comments, newIDs); err != nil {
@@ -213,7 +235,7 @@ func verifyMigratedReadback(ctx context.Context, f ClaimForge, issueNumber int, 
 	return nil
 }
 
-func checkLegacyReordering(issueNumber int, comments []IssueComment) error {
+func checkLegacyReordering(issueNumber int, comments []IssueComment, migratingIDs map[int64]bool) error {
 	var (
 		legacyUnreleasedSeen bool
 		legacyUnreleasedID   int64
@@ -224,12 +246,69 @@ func checkLegacyReordering(issueNumber int, comments []IssueComment) error {
 			continue
 		}
 		isLegacy := !IsClaimTag(c.Session) || !IsClaimTag(c.Lane)
-		if isLegacy {
+		if isLegacy && migratingIDs[comments[i].ID] {
 			legacyUnreleasedSeen = true
 			legacyUnreleasedID = comments[i].ID
-		} else if legacyUnreleasedSeen {
-			return fmt.Errorf("issue #%d: tagged unreleased claim comment %d sits after legacy unreleased claim comment %d",
-				issueNumber, comments[i].ID, legacyUnreleasedID)
+		} else if legacyUnreleasedSeen && !migratingIDs[comments[i].ID] {
+			kind := "skipped"
+			if !isLegacy {
+				kind = "tagged"
+			}
+			return fmt.Errorf("issue #%d: %s unreleased claim comment %d sits after legacy unreleased claim comment %d",
+				issueNumber, kind, comments[i].ID, legacyUnreleasedID)
+		}
+	}
+	return nil
+}
+
+func shouldMigrateClaim(claim Claim, isClosed bool, ownSessions []string) bool {
+	if claim.Released() || claim.Stage == ClaimStageReleased {
+		return true
+	}
+	if isClosed {
+		return true
+	}
+	return slices.Contains(ownSessions, claim.Session)
+}
+
+func reportSkippedForeignClaim(out io.Writer, issueNumber int, commentID int64, stage string) error {
+	if out == nil {
+		return nil
+	}
+	_, err := fmt.Fprintf(out, "issue #%d comment %d: held by a session of another host (stage %s); migrate it from that host\n",
+		issueNumber, commentID, stage)
+	return err
+}
+
+func partitionLegacyClaims(legacy []LegacyClaimComment, isClosed bool, ownSessions []string) ([]LegacyClaimComment, []LegacyClaimComment, map[int64]bool) {
+	var toMigrate []LegacyClaimComment
+	var toSkip []LegacyClaimComment
+	migratingIDs := make(map[int64]bool, len(legacy))
+	for i := 0; i < len(legacy) && i < MaxIssueCommentsLimit; i++ {
+		l := legacy[i]
+		if shouldMigrateClaim(l.Claim, isClosed, ownSessions) {
+			toMigrate = append(toMigrate, l)
+			migratingIDs[l.CommentID] = true
+		} else {
+			toSkip = append(toSkip, l)
+		}
+	}
+	return toMigrate, toSkip, migratingIDs
+}
+
+func reportIssueClaims(ctx context.Context, out io.Writer, key []byte, legacy []LegacyClaimComment, migratingIDs map[int64]bool, apply bool) error {
+	for i := 0; i < len(legacy) && i < MaxIssueCommentsLimit; i++ {
+		l := legacy[i]
+		if migratingIDs[l.CommentID] {
+			if !apply {
+				if err := printLegacyClaimDryRun(ctx, out, key, l); err != nil {
+					return err
+				}
+			}
+		} else {
+			if err := reportSkippedForeignClaim(out, l.IssueNumber, l.CommentID, l.Claim.Stage); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -237,15 +316,18 @@ func checkLegacyReordering(issueNumber int, comments []IssueComment) error {
 
 func applyLegacyMigration(ctx context.Context, f ClaimForge, issueNumber int, key []byte, out io.Writer, legacy []LegacyClaimComment, beforeHolder MigratedHolder, verifier ReadbackVerifier) error {
 	newIDs := make([]int64, 0, len(legacy))
-	for _, l := range legacy {
+	oldIDs := make([]int64, 0, len(legacy))
+	for i := 0; i < len(legacy) && i < MaxIssueCommentsLimit; i++ {
+		l := legacy[i]
 		newID, err := migrateOneLegacyComment(ctx, f, key, l, out)
 		if err != nil {
 			return err
 		}
 		newIDs = append(newIDs, newID)
+		oldIDs = append(oldIDs, l.CommentID)
 	}
 	if verifier != nil {
-		return verifier(ctx, f, issueNumber, newIDs, beforeHolder, key)
+		return verifier(ctx, f, issueNumber, oldIDs, newIDs, beforeHolder, key)
 	}
 	return nil
 }
@@ -261,50 +343,61 @@ func resolveKey(key []byte) ([]byte, error) {
 	return key, nil
 }
 
-func dryRunLegacyMigration(ctx context.Context, out io.Writer, key []byte, legacy []LegacyClaimComment) error {
-	for _, l := range legacy {
-		if err := printLegacyClaimDryRun(ctx, out, key, l); err != nil {
-			return err
+func handleReorderingRefusal(out io.Writer, apply bool, reorderErr error) error {
+	if apply {
+		return fmt.Errorf("%w: migration refused", reorderErr)
+	}
+	if out != nil {
+		if _, writeErr := fmt.Fprintln(out, reorderErr.Error()+": migration refused"); writeErr != nil {
+			return writeErr
 		}
 	}
 	return nil
 }
 
+func executeLegacyMigration(ctx context.Context, f ClaimForge, issueNumber int, key []byte, out io.Writer, toMigrate []LegacyClaimComment, comments []IssueComment, verifier ReadbackVerifier) error {
+	beforeHolder := computeIssueHolder(comments, key)
+	return applyLegacyMigration(ctx, f, issueNumber, key, out, toMigrate, beforeHolder, verifier)
+}
+
 // MigrateIssueClaims migrates legacy claims on an issue to keyed HMAC-SHA256 identity tags.
 // Dry run (apply=false) lists legacy claims and computed tags without changing the forge.
 // Apply (apply=true) posts a tagged comment, deletes the old comment, and verifies readback.
-func MigrateIssueClaims(ctx context.Context, f ClaimForge, issueNumber int, apply bool, key []byte, out io.Writer) error {
-	return MigrateIssueClaimsWithVerifier(ctx, f, issueNumber, apply, key, out, verifyMigratedReadback)
+func MigrateIssueClaims(ctx context.Context, f ClaimForge, issueNumber int, apply bool, key []byte, ownSessions []string, out io.Writer) (MigrateCounts, error) {
+	return MigrateIssueClaimsWithVerifier(ctx, f, issueNumber, apply, key, ownSessions, out, verifyMigratedReadback)
 }
 
 // MigrateIssueClaimsWithVerifier allows injecting a custom readback verifier for testing mutants.
-func MigrateIssueClaimsWithVerifier(ctx context.Context, f ClaimForge, issueNumber int, apply bool, key []byte, out io.Writer, verifier ReadbackVerifier) error {
+func MigrateIssueClaimsWithVerifier(ctx context.Context, f ClaimForge, issueNumber int, apply bool, key []byte, ownSessions []string, out io.Writer, verifier ReadbackVerifier) (MigrateCounts, error) {
 	resolvedKey, err := resolveKey(key)
 	if err != nil {
-		return err
+		return MigrateCounts{}, err
 	}
 	comments, err := f.ListIssueComments(ctx, issueNumber)
 	if err != nil {
-		return fmt.Errorf("list issue #%d comments: %w", issueNumber, err)
-	}
-	if reorderErr := checkLegacyReordering(issueNumber, comments); reorderErr != nil {
-		if !apply {
-			if out != nil {
-				if _, writeErr := fmt.Fprintln(out, reorderErr.Error()+": migration refused"); writeErr != nil {
-					return writeErr
-				}
-			}
-			return nil
-		}
-		return fmt.Errorf("%w: migration refused", reorderErr)
+		return MigrateCounts{}, fmt.Errorf("list issue #%d comments: %w", issueNumber, err)
 	}
 	legacy := FindLegacyClaims(issueNumber, comments)
-	if !apply {
-		return dryRunLegacyMigration(ctx, out, resolvedKey, legacy)
-	}
 	if len(legacy) == 0 {
-		return nil
+		return MigrateCounts{}, nil
 	}
-	beforeHolder := computeIssueHolder(comments, resolvedKey)
-	return applyLegacyMigration(ctx, f, issueNumber, resolvedKey, out, legacy, beforeHolder, verifier)
+	issue, err := f.GetIssue(ctx, issueNumber)
+	if err != nil {
+		return MigrateCounts{}, fmt.Errorf("get issue #%d: %w", issueNumber, err)
+	}
+	toMigrate, toSkip, migratingIDs := partitionLegacyClaims(legacy, issue.State == "closed", ownSessions)
+	if reorderErr := checkLegacyReordering(issueNumber, comments, migratingIDs); reorderErr != nil {
+		return MigrateCounts{}, handleReorderingRefusal(out, apply, reorderErr)
+	}
+	if err := reportIssueClaims(ctx, out, resolvedKey, legacy, migratingIDs, apply); err != nil {
+		return MigrateCounts{}, err
+	}
+	counts := MigrateCounts{Migrated: len(toMigrate), SkippedOtherHost: len(toSkip)}
+	if !apply || len(toMigrate) == 0 {
+		return counts, nil
+	}
+	if err := executeLegacyMigration(ctx, f, issueNumber, resolvedKey, out, toMigrate, comments, verifier); err != nil {
+		return MigrateCounts{}, err
+	}
+	return counts, nil
 }

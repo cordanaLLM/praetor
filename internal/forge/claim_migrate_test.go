@@ -59,7 +59,7 @@ func TestClaimsMigrate_Positive_LegacyCommentMigrates(t *testing.T) {
 	oldID := seedLegacyComment(t, fake, 7, "plain-session-alpha", "plain-lane-one", "feat/migrate", "implementing", "progress note")
 
 	var out bytes.Buffer
-	if err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, &out); err != nil {
+	if _, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"plain-session-alpha"}, &out); err != nil {
 		t.Fatalf("migrate legacy claim: %v", err)
 	}
 
@@ -128,7 +128,7 @@ func TestClaimsMigrate_Positive_DryRunChangesNothing(t *testing.T) {
 	origComments := append([]forge.IssueComment(nil), fake.Comments...)
 
 	var out bytes.Buffer
-	if err := forge.MigrateIssueClaims(ctx, fake, 7, false, key, &out); err != nil {
+	if _, err := forge.MigrateIssueClaims(ctx, fake, 7, false, key, []string{"secret-session-99"}, &out); err != nil {
 		t.Fatalf("dry run failed: %v", err)
 	}
 
@@ -160,7 +160,7 @@ func TestClaimsMigrate_Positive_NonClaimCommentStays(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, &out); err != nil {
+	if _, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, nil, &out); err != nil {
 		t.Fatalf("migrate on non-claims failed: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestClaimsMigrate_Negative_DeleteFailureReportedAndStops(t *testing.T) {
 	oldID := seedLegacyComment(t, fake, 7, "s1", "l1", "feat/x", "claimed", "")
 
 	var out bytes.Buffer
-	err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, &out)
+	_, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"s1"}, &out)
 	if err == nil {
 		t.Fatal("expected error on DeleteIssueComment failure")
 	}
@@ -226,7 +226,7 @@ func TestClaimsMigrate_Negative_MutantSkipsReadback(t *testing.T) {
 	fake1 := &nonDeletingFake{ClaimFake: rawFake1}
 
 	var out1 bytes.Buffer
-	err1 := forge.MigrateIssueClaims(ctx, fake1, 7, true, key, &out1)
+	_, err1 := forge.MigrateIssueClaims(ctx, fake1, 7, true, key, []string{"plain-session"}, &out1)
 	if err1 == nil {
 		t.Fatal("expected error with read-back when legacy comment remains")
 	}
@@ -240,7 +240,7 @@ func TestClaimsMigrate_Negative_MutantSkipsReadback(t *testing.T) {
 	fake2 := &nonDeletingFake{ClaimFake: rawFake2}
 
 	var out2 bytes.Buffer
-	err2 := forge.MigrateIssueClaimsWithVerifier(ctx, fake2, 7, true, key, &out2, nil)
+	_, err2 := forge.MigrateIssueClaimsWithVerifier(ctx, fake2, 7, true, key, []string{"plain-session"}, &out2, nil)
 	if err2 != nil {
 		t.Fatalf("mutant skipping read-back was expected to pass without error, got: %v", err2)
 	}
@@ -260,7 +260,7 @@ func TestClaimsMigrate_Positive_ProtectedNoteDropped_DryRunAndApply(t *testing.T
 	seedLegacyComment(t, fakeDry, 7, "s1", "l1", "feat/dry", "implementing", "work on classified-codename")
 
 	var dryOut bytes.Buffer
-	if err := forge.MigrateIssueClaims(ctx, fakeDry, 7, false, key, &dryOut); err != nil {
+	if _, err := forge.MigrateIssueClaims(ctx, fakeDry, 7, false, key, []string{"s1"}, &dryOut); err != nil {
 		t.Fatalf("dry run failed: %v", err)
 	}
 	dryStr := dryOut.String()
@@ -276,7 +276,7 @@ func TestClaimsMigrate_Positive_ProtectedNoteDropped_DryRunAndApply(t *testing.T
 	seedLegacyComment(t, fakeApply, 7, "s1", "l1", "feat/apply", "implementing", "work on classified-codename")
 
 	var applyOut bytes.Buffer
-	if err := forge.MigrateIssueClaims(ctx, fakeApply, 7, true, key, &applyOut); err != nil {
+	if _, err := forge.MigrateIssueClaims(ctx, fakeApply, 7, true, key, []string{"s1"}, &applyOut); err != nil {
 		t.Fatalf("apply failed: %v", err)
 	}
 	applyStr := applyOut.String()
@@ -327,7 +327,7 @@ func TestClaimsMigrate_Negative_Planted_TaggedUnreleasedAfterLegacyRefusedUpfron
 
 	// 1. Dry run names the refusal and comment IDs
 	var dryOut bytes.Buffer
-	err = forge.MigrateIssueClaims(ctx, fake, 7, false, key, &dryOut)
+	_, err = forge.MigrateIssueClaims(ctx, fake, 7, false, key, []string{"plain-s1"}, &dryOut)
 	if err != nil {
 		t.Fatalf("dry run should not return error: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestClaimsMigrate_Negative_Planted_TaggedUnreleasedAfterLegacyRefusedUpfron
 
 	// 2. Apply refuses the issue up front with an error
 	var applyOut bytes.Buffer
-	err = forge.MigrateIssueClaims(ctx, fake, 7, true, key, &applyOut)
+	_, err = forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"plain-s1"}, &applyOut)
 	if err == nil {
 		t.Fatal("expected apply to refuse migration up front, got nil")
 	}
@@ -372,11 +372,335 @@ func TestClaimsMigrate_Negative_Planted_ReadbackFailsWhenHolderChanges(t *testin
 	fake := &holderMutatingFake{ClaimFake: rawFake}
 
 	var out bytes.Buffer
-	err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, &out)
+	_, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"plain-session"}, &out)
 	if err == nil {
 		t.Fatal("expected read-back to fail when holder changed during migration")
 	}
 	if !strings.Contains(err.Error(), "claim holder changed during migration") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
+}
+
+// Positive: released claim of a foreign session migrates.
+func TestClaimsMigrate_Positive_ForeignReleasedMigrates(t *testing.T) {
+	fake := forgetest.NewClaimFake()
+	key := testClaimKey()
+	ctx := context.Background()
+
+	oldID := seedLegacyComment(t, fake, 7, "foreign-session-xyz", "plain-lane", "feat/rel", "released", "done")
+	var out bytes.Buffer
+
+	counts, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, nil, &out)
+	if err != nil {
+		t.Fatalf("migrate released foreign claim failed: %v", err)
+	}
+	if counts.Migrated != 1 || counts.SkippedOtherHost != 0 {
+		t.Fatalf("counts = %+v, want Migrated=1, Skipped=0", counts)
+	}
+
+	for _, c := range fake.Comments {
+		if c.ID == oldID {
+			t.Fatalf("old comment %d not deleted", oldID)
+		}
+	}
+	if len(fake.Comments) != 1 {
+		t.Fatalf("expected 1 migrated comment, got %d", len(fake.Comments))
+	}
+	claim, ok := forge.ParseClaimMarker(fake.Comments[0].Body)
+	if !ok || !forge.IsClaimTag(claim.Session) || !forge.IsClaimTag(claim.Lane) {
+		t.Fatalf("migrated comment is not tagged: %s", fake.Comments[0].Body)
+	}
+}
+
+// Positive: live claim (stage review) of a foreign session on an open issue is skipped and no forge write happens.
+func TestClaimsMigrate_Positive_LiveForeignOpenIssueSkippedNoWrite(t *testing.T) {
+	fake := forgetest.NewClaimFake()
+	key := testClaimKey()
+	ctx := context.Background()
+
+	oldID := seedLegacyComment(t, fake, 7, "foreign-sess-99", "foreign-lane-42", "feat/rev", "review", "")
+	origComments := append([]forge.IssueComment(nil), fake.Comments...)
+	var out bytes.Buffer
+
+	counts, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, nil, &out)
+	if err != nil {
+		t.Fatalf("expected success on skipped foreign claim, got err: %v", err)
+	}
+	if counts.Migrated != 0 || counts.SkippedOtherHost != 1 {
+		t.Fatalf("counts = %+v, want Migrated=0, Skipped=1", counts)
+	}
+
+	// Verify no forge writes happened
+	for _, call := range fake.Calls {
+		if call == "CreateIssueComment" || call == "DeleteIssueComment" || call == "EditIssueComment" {
+			t.Fatalf("forge write %q was recorded during skipped claim migration", call)
+		}
+	}
+	if len(fake.Comments) != len(origComments) || fake.Comments[0].ID != oldID {
+		t.Fatalf("fake comments modified during skipped claim migration: %+v", fake.Comments)
+	}
+
+	outStr := out.String()
+	wantSkipLine := fmt.Sprintf("issue #7 comment %d: held by a session of another host (stage review); migrate it from that host", oldID)
+	if !strings.Contains(outStr, wantSkipLine) {
+		t.Fatalf("output missing skip line %q, got: %q", wantSkipLine, outStr)
+	}
+	// Verify skip line holds no session or lane name
+	if strings.Contains(outStr, "foreign-sess-99") || strings.Contains(outStr, "foreign-lane-42") {
+		t.Fatalf("skip line leaked session or lane name: %s", outStr)
+	}
+}
+
+// Positive: a live foreign claim on a closed issue migrates.
+func TestClaimsMigrate_Positive_LiveForeignClosedIssueMigrates(t *testing.T) {
+	fake := forgetest.NewClaimFake()
+	fake.State = "closed"
+	key := testClaimKey()
+	ctx := context.Background()
+
+	oldID := seedLegacyComment(t, fake, 7, "foreign-sess-closed", "lane-closed", "feat/closed", "review", "")
+	var out bytes.Buffer
+
+	counts, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, nil, &out)
+	if err != nil {
+		t.Fatalf("migrate on closed issue failed: %v", err)
+	}
+	if counts.Migrated != 1 || counts.SkippedOtherHost != 0 {
+		t.Fatalf("counts = %+v, want Migrated=1, Skipped=0", counts)
+	}
+
+	for _, c := range fake.Comments {
+		if c.ID == oldID {
+			t.Fatalf("old comment %d not deleted", oldID)
+		}
+	}
+	if len(fake.Comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(fake.Comments))
+	}
+	claim, ok := forge.ParseClaimMarker(fake.Comments[0].Body)
+	if !ok || !forge.IsClaimTag(claim.Session) || !forge.IsClaimTag(claim.Lane) {
+		t.Fatalf("migrated comment is not tagged: %s", fake.Comments[0].Body)
+	}
+}
+
+// Positive: live claim of foreign session with --own-session naming its session migrates.
+func TestClaimsMigrate_Positive_LiveForeignWithOwnSessionMigrates(t *testing.T) {
+	fake := forgetest.NewClaimFake()
+	key := testClaimKey()
+	ctx := context.Background()
+
+	oldID := seedLegacyComment(t, fake, 7, "my-session-1", "plain-lane", "feat/mine", "review", "")
+	var out bytes.Buffer
+
+	counts, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"my-session-1"}, &out)
+	if err != nil {
+		t.Fatalf("migrate with own-session failed: %v", err)
+	}
+	if counts.Migrated != 1 || counts.SkippedOtherHost != 0 {
+		t.Fatalf("counts = %+v, want Migrated=1, Skipped=0", counts)
+	}
+
+	for _, c := range fake.Comments {
+		if c.ID == oldID {
+			t.Fatalf("old comment %d not deleted", oldID)
+		}
+	}
+	if len(fake.Comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(fake.Comments))
+	}
+	claim, ok := forge.ParseClaimMarker(fake.Comments[0].Body)
+	if !ok || !forge.IsClaimTag(claim.Session) || !forge.IsClaimTag(claim.Lane) {
+		t.Fatalf("migrated comment is not tagged: %s", fake.Comments[0].Body)
+	}
+}
+
+// Positive/Negative/Boundary: ValidateClaimSession accepts valid names, boundaries, and refuses invalid.
+func TestValidateClaimSession_Positive_Negative_Boundary(t *testing.T) {
+	validCases := []string{
+		"a",
+		"1",
+		"sess-123",
+		"sess_123",
+		"sess.123",
+		"sess:123",
+		"sess/123",
+		"sess+123",
+		"sess@123",
+		strings.Repeat("a", 128),
+	}
+	for _, tc := range validCases {
+		if err := forge.ValidateClaimSession(tc); err != nil {
+			t.Errorf("expected %q to be valid, got: %v", tc, err)
+		}
+		if !forge.ValidClaimSession(tc) {
+			t.Errorf("expected ValidClaimSession(%q) to be true", tc)
+		}
+	}
+
+	invalidCases := []string{
+		"",
+		"?bad",
+		"-bad",
+		".bad",
+		"_bad",
+		"has space",
+		"comma,separated",
+		"semi;colon",
+		strings.Repeat("a", 129),
+	}
+	for _, tc := range invalidCases {
+		if err := forge.ValidateClaimSession(tc); err == nil {
+			t.Errorf("expected %q to be invalid, got nil", tc)
+		}
+		if forge.ValidClaimSession(tc) {
+			t.Errorf("expected ValidClaimSession(%q) to be false", tc)
+		}
+	}
+}
+
+func assertNoForgeWrites(t *testing.T, fake *forgetest.ClaimFake) {
+	t.Helper()
+	for _, call := range fake.Calls {
+		if call == "CreateIssueComment" || call == "DeleteIssueComment" || call == "EditIssueComment" {
+			t.Fatalf("forge write %q was recorded on fake", call)
+		}
+	}
+}
+
+// Negative: own-session unreleased legacy claim followed by a skipped foreign unreleased legacy claim
+// is refused upfront before any forge write.
+func TestClaimsMigrate_Negative_SkippedForeignAfterLegacyRefusedUpfront(t *testing.T) {
+	fake := forgetest.NewClaimFake()
+	key := testClaimKey()
+	ctx := context.Background()
+
+	legacyID := seedLegacyComment(t, fake, 7, "own-s1", "l1", "feat/own", "implementing", "")
+	foreignID := seedLegacyComment(t, fake, 7, "foreign-s2", "l2", "feat/foreign", "review", "")
+
+	// 1. Dry run names refusal and both comment IDs without forge writes
+	var dryOut bytes.Buffer
+	counts, err := forge.MigrateIssueClaims(ctx, fake, 7, false, key, []string{"own-s1"}, &dryOut)
+	if err != nil {
+		t.Fatalf("dry run returned error: %v", err)
+	}
+	if counts.Migrated != 0 || counts.SkippedOtherHost != 0 {
+		t.Fatalf("dry run counts = %+v, want 0/0", counts)
+	}
+	dryStr := dryOut.String()
+	if !strings.Contains(dryStr, "migration refused") {
+		t.Fatalf("dry run missing 'migration refused': %s", dryStr)
+	}
+	wantRefusal := fmt.Sprintf("skipped unreleased claim comment %d sits after legacy unreleased claim comment %d", foreignID, legacyID)
+	if !strings.Contains(dryStr, wantRefusal) {
+		t.Fatalf("dry run missing refusal %q, got: %s", wantRefusal, dryStr)
+	}
+	assertNoForgeWrites(t, fake)
+
+	// 2. Apply refuses upfront with an error and records zero forge writes
+	fake.Calls = nil
+	var applyOut bytes.Buffer
+	counts, err = forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"own-s1"}, &applyOut)
+	if err == nil {
+		t.Fatal("expected apply to refuse migration upfront, got nil")
+	}
+	if counts.Migrated != 0 || counts.SkippedOtherHost != 0 {
+		t.Fatalf("apply counts = %+v, want 0/0", counts)
+	}
+	if !strings.Contains(err.Error(), "migration refused") || !strings.Contains(err.Error(), wantRefusal) {
+		t.Fatalf("apply error mismatch: %v", err)
+	}
+	assertNoForgeWrites(t, fake)
+}
+
+// Negative: closed issue where an unreleased claim sits after a legacy unreleased claim
+// is refused upfront before any forge write.
+func TestClaimsMigrate_Negative_ClosedIssue_TaggedUnreleasedAfterLegacyRefusedUpfront(t *testing.T) {
+	fake := forgetest.NewClaimFake()
+	fake.State = "closed"
+	key := testClaimKey()
+	ctx := context.Background()
+
+	legacyID := seedLegacyComment(t, fake, 7, "plain-s1", "l1", "feat/legacy", "implementing", "")
+	fake.NextID++
+	taggedID := fake.NextID
+	taggedMarker, err := forge.RenderClaimMarkerWithKey(forge.Claim{
+		Session: "session-2",
+		Lane:    "lane-2",
+		Branch:  "feat/tagged",
+		Stage:   "implementing",
+		Started: time.Now().Add(-time.Hour),
+		Updated: time.Now(),
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.Comments = append(fake.Comments, forge.IssueComment{
+		ID:          taggedID,
+		Author:      "operator",
+		Association: "OWNER",
+		Body:        taggedMarker + "\n**Praetor claim**\n",
+	})
+
+	var applyOut bytes.Buffer
+	_, err = forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"plain-s1"}, &applyOut)
+	if err == nil {
+		t.Fatal("expected apply to refuse migration upfront on closed issue, got nil")
+	}
+	if !strings.Contains(err.Error(), "migration refused") {
+		t.Fatalf("apply error missing 'migration refused': %v", err)
+	}
+	wantRefusal := fmt.Sprintf("tagged unreleased claim comment %d sits after legacy unreleased claim comment %d", taggedID, legacyID)
+	if !strings.Contains(err.Error(), wantRefusal) {
+		t.Fatalf("apply error missing %q: %v", wantRefusal, err)
+	}
+	assertNoForgeWrites(t, fake)
+}
+
+// Positive: released claims around an unreleased legacy claim do not trigger refusal.
+func TestClaimsMigrate_Positive_ReleasedClaimsAroundUnreleasedDoNotTriggerRefusal(t *testing.T) {
+	fake := forgetest.NewClaimFake()
+	key := testClaimKey()
+	ctx := context.Background()
+
+	seedLegacyComment(t, fake, 7, "rel-sess-1", "l1", "feat/rel1", "released", "done")
+	ownID := seedLegacyComment(t, fake, 7, "own-session-1", "l2", "feat/own", "implementing", "")
+	seedLegacyComment(t, fake, 7, "rel-sess-2", "l3", "feat/rel2", "released", "done")
+
+	var out bytes.Buffer
+	counts, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"own-session-1"}, &out)
+	if err != nil {
+		t.Fatalf("expected success with released claims around, got err: %v", err)
+	}
+	if counts.Migrated != 3 || counts.SkippedOtherHost != 0 {
+		t.Fatalf("counts = %+v, want Migrated=3, Skipped=0", counts)
+	}
+	for _, c := range fake.Comments {
+		if c.ID == ownID {
+			t.Fatalf("old comment %d not deleted", ownID)
+		}
+	}
+}
+
+// Negative: released claims around unreleased claims do not prevent refusal when a skipped foreign claim follows.
+func TestClaimsMigrate_Negative_SkippedForeignWithReleasedAroundRefusedUpfront(t *testing.T) {
+	fake := forgetest.NewClaimFake()
+	key := testClaimKey()
+	ctx := context.Background()
+
+	seedLegacyComment(t, fake, 7, "rel-1", "l1", "feat/rel1", "released", "")
+	legacyID := seedLegacyComment(t, fake, 7, "own-s1", "l2", "feat/own", "implementing", "")
+	seedLegacyComment(t, fake, 7, "rel-2", "l3", "feat/rel2", "released", "")
+	foreignID := seedLegacyComment(t, fake, 7, "foreign-s2", "l4", "feat/foreign", "review", "")
+	seedLegacyComment(t, fake, 7, "rel-3", "l5", "feat/rel3", "released", "")
+
+	var applyOut bytes.Buffer
+	_, err := forge.MigrateIssueClaims(ctx, fake, 7, true, key, []string{"own-s1"}, &applyOut)
+	if err == nil {
+		t.Fatal("expected apply to refuse migration upfront, got nil")
+	}
+	wantRefusal := fmt.Sprintf("skipped unreleased claim comment %d sits after legacy unreleased claim comment %d", foreignID, legacyID)
+	if !strings.Contains(err.Error(), wantRefusal) {
+		t.Fatalf("apply error missing %q: %v", wantRefusal, err)
+	}
+	assertNoForgeWrites(t, fake)
 }
