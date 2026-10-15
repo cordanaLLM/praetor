@@ -198,6 +198,9 @@ var priorDigests = map[string]string{
 	"3a106cfded4ad0e3072715dc5c9b454d637bf34d37eeb48d5e68a88662d6a9d0": Directory + "/no-private-scratch-links.mjs",
 	// verify.mjs with an unused catch binding in readLintSource (ESLint no-unused-vars), shipped by #1252.
 	"91bc63a7141e3962f9134e645fe6d09ef7262c21fb0dac18c98843f7061d82a2": Directory + "/verify.mjs",
+	// The scratch-link rule whose self-test parsed the ceiling file under the 60 s production
+	// deadline, which a loaded Windows runner overran (#724).
+	"fb31a8195e6d0527fb908ec3a259e0171dba40fd237bf59197f739c6079763fb": Directory + "/no-private-scratch-links.mjs",
 }
 
 var assetNames = [...]string{

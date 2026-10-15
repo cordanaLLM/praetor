@@ -115,6 +115,12 @@ const SCAN_YOUNG_GENERATION_MB = 16;
 // four times as long), so each file's scan also has a deadline.
 const SCAN_DEADLINE_MS = 60_000;
 const SCAN_BOUNDS = Object.freeze({ heapBudgetMb: PARSE_HEAP_BUDGET_MB, deadlineMs: SCAN_DEADLINE_MS });
+// The self-test proves the memory budget and the deadline separately (#724). Its memory cases
+// run under this deadline, sized for the slowest supported runner rather than the production
+// one: a loaded Windows runner parsed the ceiling file past 60 s, and the case that proves the
+// file fits the memory budget failed on wall-clock time. The deadline itself is proven by the
+// 50 ms case, and the production value stays SCAN_DEADLINE_MS.
+const SELF_TEST_MEMORY_DEADLINE_MS = 600_000;
 const SCAN_WORKER_ROLE = "praetor-private-scratch-link-scan";
 const MAX_FINDINGS = 64;
 const MAX_DIAGNOSTIC_FIELD_CHARS = 256;
@@ -1692,7 +1698,7 @@ function writeScanFixture(root, source, markdown) {
 }
 
 // Positive: a file exactly at the per-file ceiling, of linked and code-spanned bullets, scans
-// inside the production budget and deadline, and the private link on its last line comes back
+// inside the production memory budget, and the private link on its last line comes back
 // as a finding. Negative: a list of one-word items exhausts a small budget and a run of `*a*`
 // misses a short deadline, and each failure names the file and the bound while this process
 // keeps running; a worker that ran out of heap or time takes no further file, and a second
@@ -1706,7 +1712,8 @@ async function scanWorkerSelfTest(root) {
   writeScanFixture(root, "docs/small.md", "# Small\n\n[public](../README.md)\n");
   writeScanFixture(root, "docs/list.md", "- a\n".repeat(65_536));
   writeScanFixture(root, "docs/slow.md", "*a* ".repeat(16_384));
-  await withScanWorker(root, SCAN_BOUNDS, async (scanner) => {
+  const memoryBounds = { heapBudgetMb: PARSE_HEAP_BUDGET_MB, deadlineMs: SELF_TEST_MEMORY_DEADLINE_MS };
+  await withScanWorker(root, memoryBounds, async (scanner) => {
     const found = await scanner.scan("docs/ceiling.md", MAX_FINDINGS + 1);
     assert.deepEqual(found.map((finding) => [finding.line, finding.resolved]), [[ceiling.line, ".workingdir/OPEN.md"]]);
     await assert.rejects(scanner.scan("docs/over.md", 1), (error) =>
@@ -1716,7 +1723,7 @@ async function scanWorkerSelfTest(root) {
       /docs\/ceiling\.md: scan requested while docs\/small\.md is in flight/u);
     assert.deepEqual(await inFlight, []);
   });
-  await withScanWorker(root, { heapBudgetMb: 64, deadlineMs: SCAN_DEADLINE_MS }, async (scanner) => {
+  await withScanWorker(root, { heapBudgetMb: 64, deadlineMs: SELF_TEST_MEMORY_DEADLINE_MS }, async (scanner) => {
     assert.deepEqual(await scanner.scan("docs/small.md", 1), []);
     await assert.rejects(scanner.scan("docs/list.md", 1), (error) =>
       error.message === "docs/list.md: Markdown parse exceeds the 64 MiB parse memory budget");
@@ -1724,7 +1731,7 @@ async function scanWorkerSelfTest(root) {
   });
   const inventory = path.join(root, "inventory.json");
   fs.writeFileSync(inventory, JSON.stringify(["docs/small.md", "docs/list.md"]));
-  await assert.rejects(runFileList(root, inventory, { heapBudgetMb: 64, deadlineMs: SCAN_DEADLINE_MS }),
+  await assert.rejects(runFileList(root, inventory, { heapBudgetMb: 64, deadlineMs: SELF_TEST_MEMORY_DEADLINE_MS }),
     /^Error: docs\/list\.md: Markdown parse exceeds the 64 MiB parse memory budget$/u);
   fs.writeFileSync(inventory, JSON.stringify(["docs/small.md"]));
   assert.equal(await runFileList(root, inventory), 0);
