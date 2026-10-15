@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -59,11 +60,20 @@ func renderedHooks(t *testing.T, client string, existing []byte) []byte {
 	return plan.Content
 }
 
+// fixtureExecutable is an absolute executable path on this host. BuildPlan accepts only a
+// clean absolute path, and /usr/local/bin/<name> is not absolute on Windows (#1171).
+func fixtureExecutable(name string) string {
+	if runtime.GOOS == "windows" {
+		return `C:\Program Files\praetor\` + name + ".exe"
+	}
+	return "/usr/local/bin/" + name
+}
+
 func renderedMCP(t *testing.T, client clientsetup.Client, existing []byte) []byte {
 	t.Helper()
 	registry := clientsetup.Registry{Version: 1, Servers: []clientsetup.Server{
-		{Name: "praetor", Command: "/usr/local/bin/praetor-mcp", Args: []string{"--root", "/work/repo"}},
-		{Name: "second", Command: "/usr/local/bin/other", Args: []string{}},
+		{Name: "praetor", Command: fixtureExecutable("praetor-mcp"), Args: []string{"--root", "/work/repo"}},
+		{Name: "second", Command: fixtureExecutable("other"), Args: []string{}},
 	}}
 	plan, err := clientsetup.BuildPlan(context.Background(), registry, client, existing)
 	if err != nil {
