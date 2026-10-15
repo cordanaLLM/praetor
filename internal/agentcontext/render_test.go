@@ -1,11 +1,12 @@
 package agentcontext
 
 import (
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 const (
@@ -221,12 +222,9 @@ func TestRepositoryAgentsNamesEveryVendorTarget(t *testing.T) {
 		!namesTarget("edit `.cursor/rules/*.mdc`", ".cursor/rules/hiss-invariants.mdc") {
 		t.Fatal("namesTarget matches the wrong spans")
 	}
-	data, err := os.ReadFile(filepath.Join("..", "..", "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	text := testsupport.ReadRepoText(t, filepath.Join("..", "..", "AGENTS.md"))
 	var rule string
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		if strings.Contains(line, "**Context transpiler first.**") {
 			rule = line
 		}

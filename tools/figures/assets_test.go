@@ -297,11 +297,8 @@ func TestAssetInventoryBoundary(t *testing.T) {
 			t.Fatalf("Read(%s) exposed embedded storage for mutation: %v", name, err)
 		}
 	}
-	attributes, err := os.ReadFile(filepath.Join("..", "..", ".gitattributes"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(strings.Split(string(attributes), "\n"), Directory+"/** text eol=lf") {
+	attributes := testsupport.ReadRepoText(t, filepath.Join("..", "..", ".gitattributes"))
+	if !slices.Contains(strings.Split(attributes, "\n"), Directory+"/** text eol=lf") {
 		t.Fatalf(".gitattributes does not pin %s/** to LF", Directory)
 	}
 }

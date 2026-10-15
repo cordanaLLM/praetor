@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/strictjson"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -123,11 +124,8 @@ func TestRenovateUpdatesTemplatePinsWithWorkflowCopy(t *testing.T) {
 			t.Fatalf("renovate.json github-actions rules: pinDigests=%v, one group over %s and %s=%v",
 				pinned, family.WorkflowFile, family.Source, grouped)
 		}
-		source, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(family.Source)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		lines := strings.Split(string(source), "\n")
+		source := testsupport.ReadRepoText(t, filepath.Join("..", "..", filepath.FromSlash(family.Source)))
+		lines := strings.Split(source, "\n")
 		for _, line := range strings.Split(family.Workflow, "\n") {
 			if strings.Contains(line, "uses:") && !slices.Contains(lines, line) {
 				t.Fatalf("uses line %q is not a line of its own in %s", line, family.Source)

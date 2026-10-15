@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"testing/fstest"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // fixtureFamily is a second family shaped like the figure engine: nested asset paths, its own
@@ -60,11 +60,8 @@ func TestFamiliesRegistryIsValid(t *testing.T) {
 			}
 			seen[key] = true
 		}
-		source, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(family.Source)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Contains(strings.Split(string(source), "\n"), family.EmbedDirective()) {
+		source := testsupport.ReadRepoText(t, filepath.Join("..", "..", filepath.FromSlash(family.Source)))
+		if !slices.Contains(strings.Split(source, "\n"), family.EmbedDirective()) {
 			t.Fatalf("%s does not carry the directive %q", family.Source, family.EmbedDirective())
 		}
 		for _, name := range family.Names() {

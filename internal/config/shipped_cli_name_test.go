@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // invocationPattern matches a bare `standardsctl <subcommand>` command a reader would type.
@@ -28,11 +30,8 @@ var docsTaughtToAdopters = []string{
 
 func TestShippedDocsTeachTheCommandTheHarnessInvokes(t *testing.T) {
 	for _, rel := range docsTaughtToAdopters {
-		data, err := os.ReadFile(filepath.Join("..", "..", rel))
-		if err != nil {
-			t.Fatalf("read %s: %v", rel, err)
-		}
-		for number, line := range strings.Split(string(data), "\n") {
+		text := testsupport.ReadRepoText(t, filepath.Join("..", "..", rel))
+		for number, line := range strings.Split(text, "\n") {
 			if invocationPattern.MatchString(line) {
 				t.Errorf("%s:%d teaches a standardsctl invocation; the harness invokes praetorctl:\n  %s",
 					rel, number+1, strings.TrimSpace(line))
