@@ -195,6 +195,8 @@ jobs:
       # minutes after its last package passed until the job bound cancelled it (run 38798931720).
       # The file goes to the runner's temporary folder, never the checkout: a test that copies the
       # tracked tree with its untracked files (internal/identity) refused the 12 MB file there.
+      # The printer writes UTF-8 whatever the console code page: cp1252 cannot encode every character a
+      # test prints (run 38818801669 stopped at U+25CB), and a stderr line that is no JSON prints as is.
       # internal/adopt runs on its own after the other packages: on Windows its suite takes about 31
       # minutes since #166 runs its hermetic fixtures there, so it gets a longer bound under a dated
       # test-timeout exception in .standards.yaml that fails the audit once it expires or excuses
@@ -212,8 +214,12 @@ jobs:
           : > "$json"
           show() {
             "$PYTHON" -B -c 'import json, sys
+          sys.stdout.reconfigure(encoding="utf-8", errors="replace")
           for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
-              event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
+              try:
+                  event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
+              except ValueError:
+                  event = {"Action": "output", "Output": line}
               if event.get("Action") in ("output", "build-output"):
                   sys.stdout.write(event.get("Output", ""))' "$1"
             cat "$1" >> "$json"
