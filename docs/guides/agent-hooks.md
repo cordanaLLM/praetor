@@ -435,6 +435,25 @@ because no policy was evaluated. Reasons are bounded to 4096 bytes and never ech
 command, which may carry a secret. A deny keeps its exit code even when the client has
 already closed a stream.
 
+## The engine an agent hook runs
+
+A client starts `praetorctl hook <client> <event>` from `PATH`. That engine resolves the pin of
+the workspace the payload names before it judges anything, with the rule the Git hooks'
+launcher applies ([The engine the hooks run](git-hooks.md#the-engine-the-hooks-run)), so one
+repository runs one engine on every surface (#1173):
+
+| The repository | Who judges the call |
+| :--- | :--- |
+| Pins an engine (`PRAETOR_REF`, or a pinned `praetor-adopt` or reusable-workflow ref) that is installed under `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>` | That engine, handed the same payload. It is marked with `PRAETOR_HOOK_PINNED_ENGINE`, so it never hands the call on again. A pinned engine that serves no such row skips with the reason, as an engine older than a row always does. |
+| Pins an engine that is not installed | The `PATH` engine, never a skip. Standard error names the pin, the file declaring it, the engine that judged instead and the `go install` command that installs the pin. Nothing is installed on a tool call; the next Git hook or that command installs it. |
+| Declares a pin that cannot be used (a branch name, several values) | Nobody: the call is refused with the launcher's message, as the Git hooks refuse it. |
+| Pins nothing | The `PATH` engine, named on standard error. |
+
+The rule has two texts, because the launcher must resolve the pin before any engine exists:
+`.config/lefthook/engine.sh` and `internal/enginepin`.
+`TestEnginePin_Differential_ResolverAgreesWithTheLauncher` runs both over the same workflow
+fixtures and fails where they disagree.
+
 ## Rollout: engine skew never blocks a client
 
 An engine installed before a row existed answers that row with its usage and exit 2. Claude

@@ -34,6 +34,9 @@ type Invocation struct {
 	// IssueClaims reads the live claim on an issue a brief names (#937). Nil means no lookup
 	// is wired, which refuses every brief that names an issue.
 	IssueClaims IssueClaimLookup
+	// Handoff, when set, may give the call to the engine the repository pins (#1173). Nil
+	// judges every call with this engine, as before.
+	Handoff EngineHandoff
 }
 
 // Run serves one hook call: parse, read, decode, resolve, judge, encode. It never
@@ -52,8 +55,20 @@ func Run(ctx context.Context, in Invocation) Response {
 	if dir := recordDirOf(in.Getenv); dir != "" {
 		return recordAndAllow(ctx, dir, row, dialect, in)
 	}
+	note := ""
+	if in.Handoff != nil && row.Event != EventEnvironment {
+		response, said, answered := handOff(ctx, dialect, row, &in)
+		if answered {
+			return response
+		}
+		note = said
+	}
 	canonical, verdict := evaluate(ctx, dialect, row, in)
-	return dialect.Encode(canonical, verdict)
+	response := dialect.Encode(canonical, verdict)
+	if note != "" {
+		response.Stderr = append([]byte(note+"\n"), response.Stderr...)
+	}
+	return response
 }
 
 // recordDirOf reads RecordDirEnv without panicking on a nil Getenv (Invocation.Getenv

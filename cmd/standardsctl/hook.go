@@ -72,6 +72,7 @@ func runHook(args []string) error {
 	response := agenthook.Run(ctx, agenthook.Invocation{
 		Client: client, Event: event, Stdin: os.Stdin, Getenv: os.Getenv, WorkDir: workDir,
 		Policy: policy, Settings: settings.Hooks, IssueClaims: hookIssueClaims(settings.Forge),
+		Handoff: defaultPinnedEngine().handoff,
 	})
 	return writeHookResponse(os.Stdout, os.Stderr, response)
 }
