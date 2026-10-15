@@ -1671,7 +1671,7 @@ func TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions(t *testing.T) {
 		t.Errorf("the edited HISS-02 row must be regenerated:\n%s", content)
 	}
 	detail := findActionDetail(rep.ActionDetails, agentsFile)
-	for _, want := range []string{`"| **HISS-02** loops, I/O | loops may run forever | none | ignored |"`, "preamble (3 lines)", "2 repository invariant rows (ACME-01, ACME-02)", "repository-specific instructions"} {
+	for _, want := range []string{`"| **HISS-02** loops, I/O | loops may run forever | none | ignored |"`, "preamble (3 lines)", "2 repository invariant rows (ACME-01, ACME-02)", "the instructions below the block", "dropped 1 edited invariant row (HISS-02)"} {
 		if !hasAction(rep, agentsFile, actionReplace) || !strings.Contains(detail, want) {
 			t.Errorf("replace entry must carry %q, got %q", want, detail)
 		}

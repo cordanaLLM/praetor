@@ -1977,7 +1977,13 @@ Makefile without replacing its recipes. Existing AGENTS.md is preserved by defau
 with a command-synchronization warning. Review the declared plan; `--force`
 regenerates a recognized harness and keeps its preamble, the repository's own invariant
 rows and the instructions below it
-([adoption](../adoption.md#what-adoption-reads-before-it-writes)).
+([adoption](../adoption.md#what-adoption-reads-before-it-writes)). Edits inside the block are
+not kept: a generated row (a `HISS-` ID) that matches no rendering of its rule by this engine,
+and a prose line the new rendering does not carry, are replaced. The report entry and a warning,
+on a dry run too, name the dropped rows and count the dropped lines, for example
+`1 edited invariant row (HISS-02) and 1 block line the new rendering does not carry`; the
+backup holds them. Repository facts, such as which check decides a rule here, belong below the
+block (#1243).
 Malformed or oversized command metadata now fails before any adoption writes.
 
 `lefthook.yml` follows the same rule (`internal/adopt/lefthook_identity.go`):

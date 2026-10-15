@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 func TestMergeAgentsPreflightsProjectionBeforeWrite(t *testing.T) {
@@ -72,7 +73,7 @@ func TestMergeAgentsProjectionAcceptsShortTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	merged, err := mergeExistingAgentsContent(context.Background(), s, path, initial, harness)
+	merged, err := mergeExistingAgentsContent(context.Background(), s, path, initial, harness, hisscatalog.Facts{})
 	if err != nil || !strings.Contains(merged, "Keep project instructions.") || mustRead(t, path) != merged {
 		t.Fatalf("short context merge failed: %v", err)
 	}

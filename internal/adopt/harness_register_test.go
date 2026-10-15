@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/changelog"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 func registerTestPlan() *VerificationPlan {
@@ -97,7 +98,7 @@ func TestHarnessRefreshKeepsOneRegisterSection(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := &adoptSession{repoPath: repo, repoName: "fixture", arch: "framework", report: &AdoptReport{}, verification: registerTestPlan(), opts: AdoptOptions{Force: tc.force}}
-			merged, err := mergeExistingAgentsContent(context.Background(), s, path, tc.initial, harness)
+			merged, err := mergeExistingAgentsContent(context.Background(), s, path, tc.initial, harness, hisscatalog.Facts{})
 			if err != nil {
 				t.Fatal(err)
 			}

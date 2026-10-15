@@ -228,8 +228,7 @@ func buildAgentHarnessDirectives(facts harnessFacts) string {
 	b.WriteString(adoptedCheckLegend(facts.pipelines))
 	b.WriteString("| Invariant | Rule | Adopted check | On fail |\n| :--- | :--- | :--- | :--- |\n")
 	for _, rule := range hisscatalog.Rules() {
-		check, failure := rule.AdoptedFor(facts.pipelines, facts.hiss)
-		fmt.Fprintf(&b, "| **%s** %s | %s | %s | %s |\n", rule.ID, rule.Scope, rule.AdoptedDirective(facts.hiss), check, failure)
+		b.WriteString(invariantRowLine(rule, facts.pipelines, facts.hiss) + "\n")
 	}
 	b.WriteString("\n" + harnessOperationalRules)
 	b.WriteString(transpilerRuleHead(facts.targets))
@@ -237,6 +236,30 @@ func buildAgentHarnessDirectives(facts harnessFacts) string {
 	b.WriteString(harnessEvasionRule + hooksClaim(facts.hooks) + ciClaim(facts.workflows))
 	b.WriteString(harnessAntiLoopRule)
 	return b.String()
+}
+
+// invariantRowLine renders the invariant table row of rule for a repository whose adoption
+// generated pipelines, the one row format the harness writes and a forced refresh compares
+// against (invariantRowRenderings).
+func invariantRowLine(rule hisscatalog.Rule, pipelines hisscatalog.Pipeline, facts hisscatalog.Facts) string {
+	check, failure := rule.AdoptedFor(pipelines, facts)
+	return fmt.Sprintf("| **%s** %s | %s | %s | %s |", rule.ID, rule.Scope, rule.AdoptedDirective(facts), check, failure)
+}
+
+// invariantRowRenderings returns, by rule ID, every row this engine renders for the rule with
+// the repository's facts under any set of generated pipelines: a row matching one of them is
+// the engine's text, whatever the pipelines were when it was written.
+func invariantRowRenderings(facts hisscatalog.Facts) map[string]map[string]bool {
+	pipelineSets := []hisscatalog.Pipeline{0, hisscatalog.PipelineVerifyAll, hisscatalog.PipelineLefthook, hisscatalog.AllPipelines}
+	renderings := make(map[string]map[string]bool)
+	for _, rule := range hisscatalog.Rules() {
+		lines := make(map[string]bool, len(pipelineSets))
+		for _, pipelines := range pipelineSets {
+			lines[invariantRowLine(rule, pipelines, facts)] = true
+		}
+		renderings[rule.ID] = lines
+	}
+	return renderings
 }
 
 // adoptedCheckLegend names the pipelines the Adopted check column reads from, or says there
@@ -499,7 +522,7 @@ func resolveAgentsContent(ctx context.Context, s *adoptSession, facts harnessFac
 	if err != nil {
 		return "", err
 	}
-	return mergeExistingAgentsContent(ctx, s, full, string(existingBytes), harness)
+	return mergeExistingAgentsContent(ctx, s, full, string(existingBytes), harness, facts.hiss)
 }
 
 func validateHarnessProjection(content string) error {
@@ -511,8 +534,9 @@ func validateHarnessProjection(content string) error {
 
 // mergeExistingAgentsContent prepends the harness to a foreign AGENTS.md, leaves an
 // existing harness alone without Force, and with Force regenerates the harness while keeping
-// what the repository added around it (refreshAgentHarness).
-func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, existing, harness string) (string, error) {
+// what the repository added around it (refreshAgentHarness). rowFacts are the facts harness
+// rendered its invariant rows with.
+func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, existing, harness string, rowFacts hisscatalog.Facts) (string, error) {
 	if !hasHarness(existing) {
 		merged := harness + harnessSeparator + "\n" + foreignInstructions(existing)
 		if err := validateHarnessProjection(merged); err != nil {
@@ -527,7 +551,7 @@ func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, exis
 	if !s.opts.Force {
 		return keepAgentHarness(ctx, s, existing, harness)
 	}
-	return refreshAgentHarness(ctx, s, existing, harness)
+	return refreshAgentHarness(ctx, s, existing, harness, rowFacts)
 }
 
 // keepAgentHarness keeps an existing harness on a run without --force, with its text register
@@ -618,10 +642,12 @@ func preflightKeptHarness(ctx context.Context, s *adoptSession, block string) er
 // text and the result keeps the file's CRLF convention (util.NormalizeLineEndings), as
 // compile-context splices the register block. When the boundary of the harness cannot be
 // identified the file is left untouched and an error is recorded rather than silently
-// discarding repository instructions.
-func refreshAgentHarness(ctx context.Context, s *adoptSession, existing, harness string) (string, error) {
+// discarding repository instructions. Adopter text inside the block that the refresh drops (an
+// edited generated row, a prose line) is named in the entry and in a warning, a dry run's too
+// (#1243).
+func refreshAgentHarness(ctx context.Context, s *adoptSession, existing, harness string, rowFacts hisscatalog.Facts) (string, error) {
 	lf, crlf := util.NormalizeLineEndings(existing)
-	kept, ok, err := splitHarnessAdditions(lf, harness)
+	kept, ok, err := splitHarnessAdditions(lf, harness, rowFacts)
 	if err != nil {
 		return "", err
 	}
@@ -641,6 +667,10 @@ func refreshAgentHarness(ctx context.Context, s *adoptSession, existing, harness
 	if merged == existing {
 		s.report.recordReconciled(agentsFile, "Praetor Agent Operating Harness already current"+kept.describe())
 		return existing, nil
+	}
+	if dropped := kept.dropped.describe(); dropped != "" {
+		s.report.addWarning("%s: --force replaces adopter text inside the harness block: %s; the backup keeps it, "+
+			"and repository facts belong below the block, where a refresh keeps them", agentsFile, dropped)
 	}
 	err = s.replaceExisting(ctx, replacement{
 		rel: agentsFile, before: []byte(existing), after: []byte(merged),
@@ -665,12 +695,87 @@ type harnessAdditions struct {
 	rows []hisscatalog.InvariantRow
 	// tail is the instructions after the harness boundary, a text register section dropped.
 	tail string
+	// dropped is the adopter text inside the block the refresh does not carry over.
+	dropped droppedHarnessText
+}
+
+// droppedHarnessText is the adopter text inside an existing harness block that a forced refresh
+// replaces (#1243): generated-ID invariant rows that match no rendering of their rule by this
+// engine (invariantRowRenderings), or that carry an ID of the catalog's namespace it no longer
+// defines, and the block's other non-blank lines the new rendering does not carry.
+type droppedHarnessText struct {
+	rows  []string
+	lines int
+}
+
+// droppedFromHarness returns the adopter text head, the existing harness block, holds and
+// harness, its replacement rendered with rowFacts, drops.
+func droppedFromHarness(head, harness string, rowFacts hisscatalog.Facts) (droppedHarnessText, error) {
+	existing, err := hisscatalog.InvariantTableRows(head)
+	if err != nil {
+		return droppedHarnessText{}, fmt.Errorf("read the invariant table of %s: %w", agentsFile, err)
+	}
+	renderings := invariantRowRenderings(rowFacts)
+	var dropped droppedHarnessText
+	rowLines := make(map[string]bool, len(existing))
+	for _, row := range existing {
+		rowLines[row.Line] = true
+		known, generated := renderings[row.ID]
+		if (generated && !known[row.Line]) || (!generated && hisscatalog.InCatalogNamespace(row.ID)) {
+			dropped.rows = append(dropped.rows, row.ID)
+		}
+	}
+	carried := make(map[string]bool)
+	for _, line := range strings.Split(harness, "\n") {
+		carried[strings.TrimSpace(line)] = true
+	}
+	for _, line := range strings.Split(head, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !rowLines[trimmed] && !carried[trimmed] {
+			dropped.lines++
+		}
+	}
+	return dropped, nil
+}
+
+// describe names the dropped text, or "" when there is none: "1 edited invariant row (HISS-02)
+// and 9 block lines the new rendering does not carry".
+func (d droppedHarnessText) describe() string {
+	var parts []string
+	if len(d.rows) > 0 {
+		parts = append(parts, fmt.Sprintf("%s (%s)", plural(len(d.rows), "edited invariant row"), quotedIDs(d.rows)))
+	}
+	if d.lines == 1 {
+		parts = append(parts, "1 block line the new rendering does not carry")
+	} else if d.lines > 1 {
+		parts = append(parts, fmt.Sprintf("%d block lines the new rendering does not carry", d.lines))
+	}
+	return strings.Join(parts, " and ")
+}
+
+// plural renders count and noun, with an s for any count but one.
+func plural(count int, noun string) string {
+	if count == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", count, noun)
+}
+
+// quotedIDs lists ids, at most maxDeltaQuotedLines of them, then how many more.
+func quotedIDs(ids []string) string {
+	shown := make([]string, 0, maxDeltaQuotedLines+1)
+	for i := 0; i < len(ids) && i < maxDeltaQuotedLines; i++ {
+		shown = append(shown, ids[i])
+	}
+	if more := len(ids) - len(shown); more > 0 {
+		shown = append(shown, fmt.Sprintf("%d more", more))
+	}
+	return strings.Join(shown, ", ")
 }
 
 // splitHarnessAdditions splits lf, an existing AGENTS.md as LF text, around its harness, with
-// harness the one that replaces it. ok is false when lf carries no harness or no boundary
-// after its start can be identified.
-func splitHarnessAdditions(lf, harness string) (harnessAdditions, bool, error) {
+// harness the one that replaces it, its invariant rows rendered with rowFacts. ok is false when
+// lf carries no harness or no boundary after its start can be identified.
+func splitHarnessAdditions(lf, harness string, rowFacts hisscatalog.Facts) (harnessAdditions, bool, error) {
 	start := harnessStart(lf)
 	if start < 0 {
 		return harnessAdditions{}, false, nil
@@ -683,7 +788,11 @@ func splitHarnessAdditions(lf, harness string) (harnessAdditions, bool, error) {
 	if err != nil {
 		return harnessAdditions{}, false, err
 	}
-	return harnessAdditions{preamble: lf[:start], rows: rows, tail: dropRegisterSection(tail)}, true, nil
+	dropped, err := droppedFromHarness(head, harness, rowFacts)
+	if err != nil {
+		return harnessAdditions{}, false, err
+	}
+	return harnessAdditions{preamble: lf[:start], rows: rows, tail: dropRegisterSection(tail), dropped: dropped}, true, nil
 }
 
 // repositoryInvariantRows returns the rows of head's invariant table the repository added:
@@ -753,7 +862,8 @@ func insertInvariantRows(harness string, rows []hisscatalog.InvariantRow) (strin
 	return harness[:at] + strings.Join(lines, "") + harness[at:], nil
 }
 
-// describe names what the refresh kept, for the report entry.
+// describe names what the refresh kept, and the adopter text inside the block it dropped, for the
+// report entry.
 func (a harnessAdditions) describe() string {
 	var kept []string
 	if a.preamble != "" {
@@ -770,12 +880,16 @@ func (a harnessAdditions) describe() string {
 		kept = append(kept, fmt.Sprintf("%d repository invariant rows (%s)", len(a.rows), strings.Join(ids, ", ")))
 	}
 	if a.tail != "" {
-		kept = append(kept, "repository-specific instructions")
+		kept = append(kept, "the instructions below the block")
 	}
-	if len(kept) == 0 {
-		return ""
+	described := ""
+	if len(kept) > 0 {
+		described = "; kept " + strings.Join(kept, ", ")
 	}
-	return "; kept " + strings.Join(kept, ", ")
+	if dropped := a.dropped.describe(); dropped != "" {
+		described += "; dropped " + dropped
+	}
+	return described
 }
 
 // projectVendorContext compiles AGENTS.md into the vendor context files of the selected
