@@ -113,6 +113,10 @@ func (d Dialect) decodeNativeTool(event Event, object map[string]json.RawMessage
 	if err = fillWorkspace(&canonical, object); err != nil {
 		return Canonical{}, err
 	}
+	// The session a call belongs to; a Codex pre-tool call is judged against its record.
+	if canonical.ConversationID, err = optionalString(object, "session_id"); err != nil {
+		return Canonical{}, err
+	}
 	if event == EventPreTool && d.isCommandTool(canonical.Tool) {
 		if canonical.Command, err = commandOf(object); err != nil {
 			return Canonical{}, err

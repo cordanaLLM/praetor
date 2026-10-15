@@ -41,7 +41,7 @@ func handOff(ctx context.Context, dialect Dialect, row Registration, in *Invocat
 		return Response{}, "", false
 	}
 	// Only an adopted repository declares a pin; any other workspace is judged as before.
-	root, err := ResolveRoot(ctx, canonical.Workspaces, in.WorkDir)
+	root, _, err := callRoot(ctx, row, canonical, *in)
 	if err != nil || root == "" || !Governed(root) {
 		return Response{}, "", false
 	}

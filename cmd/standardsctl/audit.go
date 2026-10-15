@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -196,6 +197,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, manifest, rootDir) },
+		func() error { return auditCodexSessionRow(ctx, rootDir) },
 		func() error { return auditBacklogCaps(ctx, rootDir, opts.effective) },
 		func() error { return auditModelCatalog(ctx, rootDir, time.Now()) },
 		func() error { return auditLiveForge(ctx, manifest, rootDir, &opts.effective.Policy, opts.offline) },
@@ -764,6 +766,22 @@ func auditGitHooks(ctx context.Context, manifest *config.Manifest, rootDir strin
 		return err
 	}
 	fmt.Println(line)
+	return nil
+}
+
+// auditCodexSessionRow warns when .codex/hooks.json registers the Codex pre-tool or
+// pre-dispatch row without the SessionStart row a rendering since #1347 carries. Without it a
+// Codex call is judged against its working directory's repository and refused elsewhere; the
+// warning names the command that renders the row.
+func auditCodexSessionRow(ctx context.Context, rootDir string) error {
+	missing, err := agenthook.CodexSessionStartMissing(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Codex hook registration check failed: %w", err)
+	}
+	if missing {
+		fmt.Println("[WARN] .codex/hooks.json registers praetorctl hook codex pre-tool or pre-dispatch without the " +
+			"SessionStart row that records the session's repository; run praetorctl adopt to render it")
+	}
 	return nil
 }
 

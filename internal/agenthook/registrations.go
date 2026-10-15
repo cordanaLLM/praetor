@@ -159,6 +159,9 @@ var registrationTable = []Registration{
 	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^spawn_agent$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostReturn, NativeEvent: "SubagentStop", Timeout: 60 * time.Second},
+	// SessionStart runs in the project and records its root for the session's later tool
+	// hooks, which Codex runs in the tool call's directory (#1347).
+	{Client: "codex", Event: EventSessionStart, NativeEvent: "SessionStart", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "^run_shell_command$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPreEdit, NativeEvent: "BeforeTool", Matcher: "^(replace|write_file)$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPostTool, NativeEvent: "AfterTool", Timeout: 60 * time.Second},

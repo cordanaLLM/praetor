@@ -21,7 +21,7 @@ func TestRegistrationsPerClient(t *testing.T) {
 		"claude": {EventPreTool, EventPreEdit, EventPostTool, EventStop, EventPreDispatch, EventDispatchReceipt,
 			EventDispatchAbort, EventDispatchAbort, EventPreHandback, EventHandbackReceipt, EventHandbackAbort,
 			EventHandbackAbort, EventPostReturn, EventSubagentStart},
-		"codex":    {EventPreTool, EventPostTool, EventStop, EventPreDispatch, EventPostReturn}, // no pre-edit row: measured fact, section 1
+		"codex":    {EventPreTool, EventPostTool, EventStop, EventPreDispatch, EventPostReturn, EventSessionStart}, // no pre-edit row: measured fact, section 1
 		"gemini":   {EventPreTool, EventPreEdit, EventPostTool, EventStop, EventPreDispatch},
 		"lefthook": {EventPreTool, EventEnvironment}, // checkpoint rows land in H4
 		"agy":      {EventPreTool, EventPreDispatch, EventStop},

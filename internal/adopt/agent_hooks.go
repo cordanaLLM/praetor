@@ -206,9 +206,13 @@ func unmergeableReason(client string, hooks []clientjson.Hook) string {
 }
 
 // preToolHooks turns the client's pre-tool registration rows into the handlers PlanHooks
-// merges, with the timeout in the unit of the client's hook file (agenthook.NativeHooks).
+// merges, with the timeout in the unit of the client's hook file (agenthook.NativeHooks), and
+// the session-start row the pre-tool row depends on where the client has one: Codex runs a
+// tool hook in the tool call's directory, so its SessionStart row records the repository the
+// pre-tool row judges against (#1347).
 func preToolHooks(client string, file agenthook.HookFile) []clientjson.Hook {
-	return agenthook.NativeHooks(client, file, agenthook.EventPreTool)
+	hooks := agenthook.NativeHooks(client, file, agenthook.EventPreTool)
+	return append(hooks, agenthook.NativeHooks(client, file, agenthook.EventSessionStart)...)
 }
 
 // publishHookFile keeps a backup of an existing hook file under the run's backup directory when

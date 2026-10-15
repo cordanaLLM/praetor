@@ -61,14 +61,25 @@ func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocat
 
 // judge resolves the governed root, checks the environment and dispatches the event.
 func judge(ctx context.Context, row Registration, canonical Canonical, in Invocation) Verdict {
-	root, verdict, ok := resolveGovernedRoot(ctx, canonical, in)
+	if row.Event == EventSessionStart {
+		return recordCodexSession(ctx, canonical, in)
+	}
+	root, notice, verdict, ok := resolveGovernedRoot(ctx, row, canonical, in)
 	if !ok {
 		return verdict
 	}
 	if verdict := Environment(in.Getenv); verdict.Outcome != Allow {
 		return verdict
 	}
-	return dispatch(ctx, row, canonical, root, in)
+	verdict = dispatch(ctx, row, canonical, root, in)
+	switch {
+	case notice == "":
+	case verdict.Notice == "":
+		verdict.Notice = notice
+	default:
+		verdict.Notice = notice + "; " + verdict.Notice
+	}
+	return verdict
 }
 
 // returnBoundary bounds a deny at SubagentStop. There a deny blocks nothing: Claude Code and
@@ -105,17 +116,17 @@ func decodeCanonical(ctx context.Context, dialect Dialect, event Event, in Invoc
 // resolveGovernedRoot answers the workspace root and whether evaluation continues. The second
 // return is the verdict to use when it does not: no repository or an ungoverned workspace
 // under the governed-only scope are a neutral skip, never a failure.
-func resolveGovernedRoot(ctx context.Context, canonical Canonical, in Invocation) (string, Verdict, bool) {
-	root, err := ResolveRoot(ctx, canonical.Workspaces, in.WorkDir)
+func resolveGovernedRoot(ctx context.Context, row Registration, canonical Canonical, in Invocation) (string, string, Verdict, bool) {
+	root, notice, err := callRoot(ctx, row, canonical, in)
 	switch {
 	case err != nil:
-		return "", Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] " + err.Error()}, false
+		return "", "", Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] " + err.Error()}, false
 	case root == "":
-		return "", Verdict{Outcome: Skip, Reason: "no repository"}, false
+		return "", "", Verdict{Outcome: Skip, Reason: "no repository"}, false
 	case !Governed(root) && !AppliesEverywhere(in.Settings):
-		return "", Verdict{Outcome: Skip, Reason: "workspace not governed"}, false
+		return "", "", Verdict{Outcome: Skip, Reason: "workspace not governed"}, false
 	}
-	return root, Verdict{}, true
+	return root, notice, Verdict{}, true
 }
 
 // checkpointWired names the clients whose pre-edit, post-tool and stop rows this change

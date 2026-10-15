@@ -29,7 +29,11 @@ func TestRunGoldensPerDialect(t *testing.T) {
 		if client == "lefthook" {
 			wantStdout = CommandPolicyMarker + "\n"
 		}
-		if allow.ExitCode != 0 || string(allow.Stdout) != wantStdout || len(allow.Stderr) != 0 {
+		// A codex call without a session record is judged against its working directory's
+		// governed repository and says so (#1347, codex_session.go).
+		wantNotice := client == "codex"
+		if allow.ExitCode != 0 || string(allow.Stdout) != wantStdout || (len(allow.Stderr) != 0) != wantNotice ||
+			(wantNotice && !strings.HasPrefix(string(allow.Stderr), "praetor hook: judged against the working directory's repository ")) {
 			t.Errorf("%s allow golden: %+v", client, allow)
 		}
 		deny := serve(t, client, "pre-tool", root, denied)
@@ -142,6 +146,17 @@ func TestRunSkipsUngovernedWorkspacesWithAReason(t *testing.T) {
 	}
 	denied := []byte(`{"tool_input":{"command":"rm -rf .git/hooks"}}`)
 	for _, client := range preToolClients {
+		if client == "codex" {
+			// A codex call is judged against its session's repository; without a session record
+			// and outside a governed repository it is refused, never skipped (#1347).
+			for name, dir := range map[string]string{"ungoverned": plain, "no repository": outside} {
+				response := serve(t, client, "pre-tool", dir, denied)
+				if response.ExitCode != 2 || !strings.HasPrefix(string(response.Stderr), "[BLOCKED BY HISS] no codex session record") {
+					t.Errorf("codex %s: %+v", name, response)
+				}
+			}
+			continue
+		}
 		response := serve(t, client, "pre-tool", plain, denied)
 		if response.ExitCode != 0 || len(response.Stdout) != 0 ||
 			string(response.Stderr) != "praetor hook: workspace not governed, skipped\n" {

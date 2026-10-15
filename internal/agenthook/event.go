@@ -44,6 +44,9 @@ const (
 	// EventSubagentStart adds the read-only context to a subagent of a read-only role as it
 	// starts. It cannot block the start.
 	EventSubagentStart Event = "subagent-start"
+	// EventSessionStart records the repository a Codex session starts in, which Codex does not
+	// tell a later tool hook (#1347, codex_session.go). It never blocks the start.
+	EventSessionStart Event = "session-start"
 )
 
 // Input and output bounds (HISS-02). MaxInputBytes is the bound of the Python adapters.

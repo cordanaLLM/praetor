@@ -192,7 +192,7 @@ func TestReconcileAgentHooks_LiteralMatcherPerClient(t *testing.T) {
 // call under the anchored form of the row's matcher, the shape an adopter writes by hand.
 var anchoredEngineFiles = map[string]string{
 	claudeHookFile:          `{"hooks": {"PreToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "praetorctl hook claude pre-tool", "timeout": 15}]}]}}`,
-	".codex/hooks.json":     `{"hooks": {"PreToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "praetorctl hook codex pre-tool", "timeout": 15}]}]}}`,
+	".codex/hooks.json":     `{"hooks": {"PreToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "praetorctl hook codex pre-tool", "timeout": 15}]}], "SessionStart": [{"hooks": [{"type": "command", "command": "praetorctl hook codex session-start", "timeout": 15}]}]}}`,
 	".gemini/settings.json": `{"hooks": {"BeforeTool": [{"matcher": "^run_shell_command$", "hooks": [{"type": "command", "command": "praetorctl hook gemini pre-tool", "timeout": 15000}]}]}}`,
 }
 

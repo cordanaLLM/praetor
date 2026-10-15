@@ -131,6 +131,7 @@ described under [Rollout](#rollout-engine-skew-never-blocks-a-client).
 | `codex` | `stop` | `Stop` | none | 60 s | `praetorctl hook codex stop` |
 | `codex` | `pre-dispatch` | `PreToolUse` | `^spawn_agent$` | 15 s | `praetorctl hook codex pre-dispatch` |
 | `codex` | `post-return` | `SubagentStop` | none | 60 s | `praetorctl hook codex post-return` |
+| `codex` | `session-start` | `SessionStart` | none | 15 s | `praetorctl hook codex session-start` |
 | `gemini` | `pre-tool` | `BeforeTool` | `^run_shell_command$` | 15 s (written as ms) | `praetorctl hook gemini pre-tool` |
 | `gemini` | `pre-edit` | `BeforeTool` | `^(replace\|write_file)$` | 15 s (written as ms) | `praetorctl hook gemini pre-edit` |
 | `gemini` | `post-tool` | `AfterTool` | none | 60 s (written as ms) | `praetorctl hook gemini post-tool` |
@@ -434,6 +435,25 @@ A skip is a neutral allow that always states its reason; it never prints the mar
 because no policy was evaluated. Reasons are bounded to 4096 bytes and never echo the
 command, which may carry a secret. A deny keeps its exit code even when the client has
 already closed a stream.
+
+## The repository a Codex hook judges
+
+Codex runs a project hook in the working directory of the tool call, not of the project whose
+`.codex/hooks.json` registered it, and tells the hook no project root (openai/codex
+`codex-rs/core/src/hook_runtime.rs`, `tool_hook_cwd`). A command Codex ran in another
+repository, its own memory folder for one, was therefore judged against that repository or
+refused for a missing script (#1347). The `session-start` row closes the gap:
+
+- `SessionStart` runs in the project. The row records the governed root under
+  `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/sessions/codex/<session_id>` and never blocks the
+  start; a session outside an adopted repository records nothing.
+- The `pre-tool` and `pre-dispatch` rows read the record of the payload's `session_id` and judge
+  against that root, wherever the tool call runs.
+- A session without a record, such as one under a rendering made before this row existed, is
+  judged against its working directory's governed repository, and the notice names the missing
+  record and `praetorctl adopt`. Where that directory is no governed repository the call is
+  refused. `praetorctl audit` warns about a `.codex/hooks.json` that registers the Codex
+  `pre-tool` or `pre-dispatch` row without `session-start`.
 
 ## The engine an agent hook runs
 
