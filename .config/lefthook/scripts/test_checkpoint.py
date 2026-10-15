@@ -58,6 +58,15 @@ DETACHED_ENV_KEYS = {
 }
 
 
+
+def setUpModule():
+    """Run every test without the detached-job environment of the process running them: a cheap-lane
+    job sets PRAETOR_DETACHED_JOB and disables push transport, and the checkpoint then defers, which
+    every test that expects a due checkpoint must not see. The detached-job tests set their own."""
+    for key in DETACHED_ENV_KEYS:
+        os.environ.pop(key, None)
+
+
 class CheckpointAdapterTests(unittest.TestCase):
     def test_deferred_report_is_feedback_without_a_block(self):
         report = {
