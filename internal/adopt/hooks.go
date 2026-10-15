@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
+	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 	"gopkg.in/yaml.v3"
 )
 
@@ -62,6 +65,8 @@ const (
 	govulnToolPackage = "golang.org/x/vuln/cmd/govulncheck"
 	// maxGoModScanLines bounds the line walk of a tool module (HISS-02).
 	maxGoModScanLines = 4096
+	// maxNestedGoModuleWarnings bounds the per-module warnings an adoption report emits.
+	maxNestedGoModuleWarnings = 32
 )
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
@@ -643,6 +648,7 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	warnNestedGoModules(ctx, s)
 	if err := reconcilePlannedEngineLauncher(ctx, s); err != nil {
 		return err
 	}
@@ -669,6 +675,25 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
+}
+
+// warnNestedGoModules reports tracked modules whose paths the root-guarded Go hook jobs and gate
+// stages do not reach. TrackedModuleFiles is the gate's discovery, so the report never grows a
+// second definition of a module it can name.
+func warnNestedGoModules(ctx context.Context, s *adoptSession) {
+	modules, err := apiassets.TrackedModuleFiles(ctx, s.repoPath)
+	if err != nil {
+		s.report.addWarning("discover tracked Go modules: %v", err)
+		return
+	}
+	nested := slices.DeleteFunc(modules, func(module string) bool { return module == "go.mod" })
+	listed := min(len(nested), maxNestedGoModuleWarnings)
+	for index := 0; index < listed; index++ {
+		s.report.addWarning("go.mod found in %s, not at the root: the Go hooks (go vet, govulncheck) and the gate's toolchain stages skip it; its declared verification command is what checks it (#1353)", path.Dir(nested[index]))
+	}
+	if more := len(nested) - listed; more > 0 {
+		s.report.addWarning("%d more modules outside the root", more)
+	}
 }
 
 // reconcilePlannedEngineLauncher reconciles the hook engine launcher when it is planned or
