@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func openRoutingInput(path string) (file *os.File, err error) {
@@ -39,6 +41,12 @@ func openOutcomeAppend(path string) (file *os.File, err error) {
 		return nil, err
 	}
 	file, err = root.OpenFile(filepath.Base(path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err == nil {
+		if restrictErr := util.RestrictFileAccess(file, 0o600); restrictErr != nil {
+			err = errors.Join(restrictErr, file.Close())
+			file = nil
+		}
+	}
 	if closeErr := root.Close(); closeErr != nil {
 		if file != nil {
 			err = errors.Join(err, file.Close())

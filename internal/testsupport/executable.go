@@ -54,6 +54,9 @@ func BuildExecutable(t testing.TB, dir, name, source string) string {
 	if err := os.WriteFile(mainFile, []byte(source), 0o600); err != nil {
 		t.Fatalf("testsupport: write %s source: %v", name, err)
 	}
+	if err := util.RestrictPath(mainFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	output := filepath.Join(dir, ExecutableName(name))
 	ctx, cancel := context.WithTimeout(t.Context(), buildTimeout)
 	defer cancel()

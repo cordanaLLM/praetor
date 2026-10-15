@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"runtime"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // The ceiling store keeps each window's calibrated ceiling between fetches,
@@ -161,6 +163,9 @@ func saveStore(path string, store *ceilingStore) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create ceiling store folder: %w", err)
 	}
+	if err := util.RestrictPath(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("restrict ceiling store folder: %w", err)
+	}
 	return replaceFile(path, append(data, '\n'), writeAndSync)
 }
 
@@ -179,6 +184,9 @@ func replaceFile(path string, data []byte, write func(*os.File, []byte) error) (
 	f, err := os.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("stage ceiling store: %w", err)
+	}
+	if err := util.RestrictFileAccess(f, 0o600); err != nil {
+		return errors.Join(fmt.Errorf("restrict staged ceiling store: %w", err), f.Close())
 	}
 	defer func() {
 		if err != nil {

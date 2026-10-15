@@ -83,5 +83,8 @@ func WindowsNewlinePython(t testing.TB, script string) string {
 	if err := os.WriteFile(launcher, source, 0o600); err != nil {
 		t.Fatalf("write launcher: %v", err)
 	}
+	if err := util.RestrictPath(launcher, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return launcher
 }

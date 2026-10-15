@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/buildid"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // MaxScheduleDuration leaves one minute for bookkeeping around the finite suite.
@@ -285,6 +286,9 @@ func (s *scheduleSession) run(ctx context.Context) error {
 	number := s.state.Attempts + 1
 	name := scheduleRunName(number)
 	if err := s.root.Mkdir(name, 0o700); err != nil {
+		return err
+	}
+	if err := util.RestrictIn(s.root, name, 0o700); err != nil {
 		return err
 	}
 	if s.state.LastAttempt == nil || s.state.LastAttempt.Fingerprint != s.snapshot.fingerprint {

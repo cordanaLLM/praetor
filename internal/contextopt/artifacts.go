@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // OpenDirectory pins a directory without following symlinks in any component.
@@ -151,6 +153,9 @@ func WriteArtifacts(ctx context.Context, directory string, files map[string][]by
 		return err
 	}
 	if err := parent.Mkdir(name, 0o700); err != nil {
+		return err
+	}
+	if err := util.RestrictIn(parent, name, 0o700); err != nil {
 		return err
 	}
 	root, err := childDirectory(ctx, parent, name)

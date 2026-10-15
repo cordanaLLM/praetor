@@ -706,19 +706,32 @@ func MkdirSecure(path string, perm os.FileMode) error {
 	return restrictOpened(func() (*os.File, error) { return os.Open(path) }, perm)
 }
 
-// restrictOpened opens a directory a private writer created and applies RestrictFileAccess
-// to it, then closes it.
+// restrictOpened opens a file or directory a private writer created and applies
+// RestrictFileAccess to it, then closes it.
 func restrictOpened(open func() (*os.File, error), perm os.FileMode) (err error) {
-	dir, err := open()
+	created, err := open()
 	if err != nil {
-		return fmt.Errorf("util: open directory to restrict it: %w", err)
+		return fmt.Errorf("util: open to restrict access: %w", err)
 	}
 	defer func() {
-		if cerr := dir.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("util: close %q: %w", dir.Name(), cerr)
+		if cerr := created.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("util: close %q: %w", created.Name(), cerr)
 		}
 	}()
-	return RestrictFileAccess(dir, perm)
+	return RestrictFileAccess(created, perm)
+}
+
+// RestrictPath applies RestrictFileAccess to the file or directory at path, for a writer that
+// created a private artefact with the os package directly (a directory made with os.Mkdir as a
+// lock, a file os.WriteFile wrote). perm is the mode it was created with.
+func RestrictPath(path string, perm os.FileMode) error {
+	// #nosec G304 -- path is the artefact the caller just created.
+	return restrictOpened(func() (*os.File, error) { return os.Open(path) }, perm)
+}
+
+// RestrictIn is RestrictPath for name below a pinned root, which the open does not leave.
+func RestrictIn(root *os.Root, name string, perm os.FileMode) error {
+	return restrictOpened(func() (*os.File, error) { return root.Open(name) }, perm)
 }
 
 // MkdirConfined is MkdirSecure for rel below root, confined through the whole operation

@@ -409,6 +409,9 @@ func devcontainerHome(ctx context.Context) (string, error) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return "", fmt.Errorf("create the devcontainer home %s: %w", home, err)
 	}
+	if err := util.RestrictPath(home, 0o700); err != nil {
+		return "", fmt.Errorf("restrict the devcontainer home %s: %w", home, err)
+	}
 	if home, err = util.ResolveExistingPath(ctx, home); err != nil {
 		return "", fmt.Errorf("resolve the devcontainer home to mount: %w", err)
 	}

@@ -130,6 +130,9 @@ func writeNew(root *os.Root, name string, data []byte) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
+	if err := util.RestrictFileAccess(file, 0o600); err != nil {
+		return err
+	}
 	if _, err := file.Write(data); err != nil {
 		return err
 	}

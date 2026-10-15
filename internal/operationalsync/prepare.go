@@ -53,6 +53,9 @@ func (op *operation) cloneCandidate(ctx context.Context) error {
 	if err := os.Mkdir(o.Destination, 0o700); err != nil {
 		return err
 	}
+	if err := util.RestrictPath(o.Destination, 0o700); err != nil {
+		return err
+	}
 	if _, err := op.git.run(ctx, "", "clone", "--template=", "--no-hardlinks", "--no-checkout", "--", o.OwnerPath, o.Destination); err != nil {
 		return err
 	}

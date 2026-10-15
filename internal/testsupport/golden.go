@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // GoldenUpdateEnv names the environment variable that makes AssertGolden rewrite a golden
@@ -74,6 +76,9 @@ func writeGolden(t testing.TB, root *os.Root, path, got string) {
 	}
 	if err := root.WriteFile(path, []byte(got), 0o600); err != nil {
 		t.Fatalf("testsupport: write golden %s: %v", path, err)
+	}
+	if err := util.RestrictIn(root, path, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

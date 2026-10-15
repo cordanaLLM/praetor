@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -31,6 +33,9 @@ func tryLockSnapshotDirectory(root *os.Root) (release func() error, busy bool, e
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("claim snapshot directory: %w", err)
+	}
+	if err := util.RestrictFileAccess(file, 0o600); err != nil {
+		return nil, false, errors.Join(fmt.Errorf("restrict snapshot directory claim: %w", err), file.Close(), root.Remove(directoryClaimName))
 	}
 	if _, err := fmt.Fprintf(file, "%d\n", os.Getpid()); err != nil {
 		return nil, false, errors.Join(fmt.Errorf("record snapshot directory claim: %w", err), file.Close(), root.Remove(directoryClaimName))

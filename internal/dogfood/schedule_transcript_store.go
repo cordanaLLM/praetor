@@ -52,6 +52,11 @@ func openPrivateScheduleDirectory(parent *os.Root, name, label string) (*os.Root
 	if err != nil && !errors.Is(err, os.ErrExist) {
 		return nil, fmt.Errorf("create %s: %w", label, err)
 	}
+	if err == nil {
+		if err := util.RestrictIn(parent, name, 0o700); err != nil {
+			return nil, fmt.Errorf("restrict %s: %w", label, err)
+		}
+	}
 	info, err := parent.Lstat(name)
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", label, err)
@@ -162,6 +167,9 @@ func writeScheduleTranscript(ctx context.Context, dir *os.Root, name string, dat
 	file, err := dir.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("create transcript temp file: %w", err)
+	}
+	if err := util.RestrictFileAccess(file, 0o600); err != nil {
+		return errors.Join(fmt.Errorf("restrict transcript temp file: %w", err), file.Close(), dir.Remove(pending))
 	}
 	if err := file.Chmod(0o600); err != nil {
 		return errors.Join(fmt.Errorf("set transcript temp mode: %w", err), file.Close())

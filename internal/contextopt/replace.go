@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // ReplaceOptions binds a write to observed contents or explicit absence. Mode is
@@ -184,6 +186,9 @@ func stageSnapshot(ctx context.Context, root *os.Root, name string, data []byte)
 	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, err
+	}
+	if err := util.RestrictFileAccess(file, 0o600); err != nil {
+		return nil, errors.Join(err, file.Close(), root.Remove(name))
 	}
 	_, writeErr := file.Write(data)
 	if err := errors.Join(writeErr, file.Sync()); err != nil {

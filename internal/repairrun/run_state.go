@@ -41,6 +41,11 @@ func openState(path string, create bool) (*os.Root, error) {
 		if err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, errors.Join(err, parent.Close())
 		}
+		if err == nil {
+			if err := util.RestrictIn(parent, filepath.Base(path), 0o700); err != nil {
+				return nil, errors.Join(err, parent.Close())
+			}
+		}
 	}
 	root, openErr := openChild(parent, filepath.Base(path))
 	if err := errors.Join(openErr, parent.Close()); err != nil {

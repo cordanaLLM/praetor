@@ -25,6 +25,9 @@ func SkipIfFileModeUnenforced(t testing.TB) {
 	if err := os.WriteFile(probe, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := util.RestrictPath(probe, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	restore := denyAll(t, probe, 0o600)
 	defer restore()
 	// #nosec G304 -- probe is a file this helper just created in its own temporary directory.
@@ -40,6 +43,9 @@ func SkipIfDirectoryModeUnenforced(t testing.TB) {
 	t.Helper()
 	probe := filepath.Join(t.TempDir(), "unlistable")
 	if err := os.Mkdir(probe, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := util.RestrictPath(probe, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	restore := denyAll(t, probe, 0o700)

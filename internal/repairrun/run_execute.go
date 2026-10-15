@@ -11,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 type execution struct {
@@ -24,6 +25,9 @@ type execution struct {
 
 func (a *admission) execute(ctx context.Context, state *os.Root, generate generator, verify verifier) (err error) {
 	if err := state.Mkdir(a.report.ExecutionKey, 0o700); err != nil {
+		return err
+	}
+	if err := util.RestrictIn(state, a.report.ExecutionKey, 0o700); err != nil {
 		return err
 	}
 	root, err := openChild(state, a.report.ExecutionKey)

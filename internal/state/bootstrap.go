@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // BootstrapOutcome names what a bootstrap call did to .workingdir. Three of the
@@ -168,6 +169,9 @@ func workingDirLedgerless(working *os.Root) (bool, error) {
 func claimWorkingDirectory(project *os.Root) (created, seedable bool, err error) {
 	mkdirErr := project.Mkdir(WorkingDirName, 0700)
 	if mkdirErr == nil {
+		if err := util.RestrictIn(project, WorkingDirName, 0700); err != nil {
+			return false, false, fmt.Errorf("restrict working directory: %w", err)
+		}
 		return true, true, nil
 	}
 	if !errors.Is(mkdirErr, os.ErrExist) {

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // lockDirName is the exclusive installation lock: a directory, so mkdir is atomic and a
@@ -22,7 +24,13 @@ func lockPath(binDir string) string { return filepath.Join(binDir, lockDirName) 
 // callers must defer it under every outcome, including a later failure in the same run.
 func acquireLock(binDir string) (release func() error, err error) {
 	path := lockPath(binDir)
-	if mkErr := os.Mkdir(path, 0o700); mkErr != nil {
+	mkErr := os.Mkdir(path, 0o700)
+	if mkErr == nil {
+		if err := util.RestrictPath(path, 0o700); err != nil {
+			return nil, errors.Join(fmt.Errorf("workstation: restrict installation lock %s: %w", path, err), os.Remove(path))
+		}
+	}
+	if mkErr != nil {
 		if errors.Is(mkErr, os.ErrExist) {
 			return nil, fmt.Errorf("%w: %s", ErrLockHeld, path)
 		}

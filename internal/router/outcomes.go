@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // DefaultOutcomeLogPath is the repository-relative, private and git-ignored outcome log that
@@ -177,6 +179,9 @@ func PrepareOutcome(o *Outcome) {
 func writeOutcomeRecord(path string, line []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create outcome log directory: %w", err)
+	}
+	if err := util.RestrictPath(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("restrict outcome log directory: %w", err)
 	}
 	file, err := openOutcomeAppend(path)
 	if err != nil {

@@ -104,6 +104,9 @@ func saveScheduleJSON(ctx context.Context, root *os.Root, name string, value any
 	if err != nil {
 		return err
 	}
+	if err := util.RestrictFileAccess(file, 0o600); err != nil {
+		return errors.Join(err, file.Close(), root.Remove(name+".pending"))
+	}
 	_, writeErr := file.Write(data)
 	err = errors.Join(writeErr, file.Sync(), file.Close())
 	if err != nil {

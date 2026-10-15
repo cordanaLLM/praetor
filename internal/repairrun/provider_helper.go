@@ -62,6 +62,9 @@ func providerWriteHelper(dir string, data []byte) (err error) {
 	if err != nil {
 		return errors.New("repair credential snapshot file creation failed")
 	}
+	if err := util.RestrictFileAccess(file, 0o700); err != nil {
+		return errors.Join(errors.New("repair credential snapshot file could not be made private"), err, file.Close(), root.Remove("helper"))
+	}
 	_, writeErr := file.Write(data)
 	if closeErr := file.Close(); writeErr != nil || closeErr != nil {
 		return errors.New("repair credential snapshot write failed")

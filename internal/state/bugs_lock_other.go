@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Portable exclusive claim. Unlike Unix process locks, an interrupted writer
@@ -14,6 +16,9 @@ func lockBugLedger(root *os.Root) (func() error, error) {
 	file, err := root.OpenFile(bugLockName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("bug ledger busy or interrupted writer claim retained: %w", err)
+	}
+	if err := util.RestrictFileAccess(file, 0o600); err != nil {
+		return nil, errors.Join(fmt.Errorf("restrict bug ledger claim: %w", err), file.Close(), root.Remove(bugLockName))
 	}
 	return func() error { return errors.Join(file.Close(), root.Remove(bugLockName)) }, nil
 }

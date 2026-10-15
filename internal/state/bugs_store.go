@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const bugLedgerName = "BUGS.md"
@@ -182,6 +183,9 @@ func replaceBugFile(ctx context.Context, root *os.Root, file bugStoreFile, befor
 	staged, err := root.OpenFile(file.pending, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("stage %s (inspect any retained %s): %w", file.name, file.pending, err)
+	}
+	if err := util.RestrictFileAccess(staged, 0o600); err != nil {
+		return errors.Join(fmt.Errorf("restrict staged %s: %w", file.name, err), staged.Close(), root.Remove(file.pending))
 	}
 	_, writeErr := staged.Write(updated)
 	if err := errors.Join(writeErr, staged.Chmod(perm), staged.Sync(), staged.Close()); err != nil {

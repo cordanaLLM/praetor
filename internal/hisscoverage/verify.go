@@ -10,10 +10,11 @@ import (
 	"path/filepath"
 	"sort"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -358,7 +359,10 @@ func (stage fixtureStage) stage(root, name string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
 		return err
 	}
-	return os.WriteFile(target, data, 0o600)
+	if err := os.WriteFile(target, data, 0o600); err != nil {
+		return err
+	}
+	return util.RestrictPath(target, 0o600)
 }
 
 // measuresRule reports whether any measurement belongs to ruleID.

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // LoadRepairReport reads exactly one bounded, stable, symlink-free report file.
@@ -141,6 +143,9 @@ func writeRepairPlan(ctx context.Context, directory string, data []byte) (err er
 	if err := parent.Mkdir(name, 0o700); err != nil {
 		return err
 	}
+	if err := util.RestrictIn(parent, name, 0o700); err != nil {
+		return err
+	}
 	root, err := openSuiteChild(ctx, parent, name)
 	if err != nil {
 		return err
@@ -155,6 +160,9 @@ func writeRepairPlanFile(ctx context.Context, root *os.Root, data []byte) (err e
 		return err
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
+	if err := util.RestrictFileAccess(file, 0o600); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

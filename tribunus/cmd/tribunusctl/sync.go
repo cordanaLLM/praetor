@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/tribunus/catalog"
 	"github.com/cordanaLLM/praetor/tribunus/internal/sources/claudelocal"
 	"github.com/cordanaLLM/praetor/tribunus/internal/sources/codexlocal"
@@ -240,6 +241,9 @@ func writeSnapshotFile(path string, data []byte) error {
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write snapshot %s: %w", path, err)
+	}
+	if err := util.RestrictPath(path, 0o600); err != nil {
+		return fmt.Errorf("restrict snapshot %s: %w", path, err)
 	}
 	return nil
 }

@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // WritePinnedLock writes repo/.standards.lock as a consumer repository holds it without its
@@ -32,5 +34,8 @@ func WritePinnedLock(t testing.TB, repo, profileID, profileSource string) {
 	}
 	if err := os.WriteFile(filepath.Join(repo, ".standards.lock"), data, 0o600); err != nil {
 		t.Fatalf("write fixture lock: %v", err)
+	}
+	if err := util.RestrictPath(filepath.Join(repo, ".standards.lock"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

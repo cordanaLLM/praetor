@@ -137,6 +137,9 @@ func (s *scheduleSnapshot) materialize(ctx context.Context, root, stateRoot *os.
 	if err := root.Mkdir(name, 0o700); err != nil {
 		return err
 	}
+	if err := util.RestrictIn(root, name, 0o700); err != nil {
+		return err
+	}
 	inputs, err := root.OpenRoot(name)
 	if err != nil {
 		return err
@@ -158,7 +161,15 @@ func (s *scheduleSnapshot) writeInputs(ctx context.Context, root *os.Root, suite
 		if err := root.MkdirAll(filepath.Dir(names[i]), 0o700); err != nil {
 			return err
 		}
+		if err := util.RestrictIn(root, filepath.Dir(names[i]), 0o700); err != nil {
+			return err
+		}
 		file, err := root.OpenFile(names[i], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			if restrictErr := util.RestrictFileAccess(file, 0o600); restrictErr != nil {
+				return errors.Join(restrictErr, file.Close())
+			}
+		}
 		if err != nil {
 			return err
 		}

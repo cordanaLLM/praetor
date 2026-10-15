@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func validateSuitePath(path string) error {
@@ -153,6 +154,9 @@ func createSuiteRun(ctx context.Context, path string) (absolute string, err erro
 	}
 	if err := parent.Mkdir(filepath.Base(abs), 0o700); err != nil {
 		return "", fmt.Errorf("suite requires a new evidence directory: %w", err)
+	}
+	if err := util.RestrictIn(parent, filepath.Base(abs), 0o700); err != nil {
+		return "", fmt.Errorf("restrict the suite evidence directory: %w", err)
 	}
 	return abs, nil
 }

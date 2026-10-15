@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // InitWorkingDir creates missing ledgers through pinned directories. Existing
@@ -45,7 +46,11 @@ func initWorkingDir(ctx context.Context, rootPath string) (err error) {
 }
 
 func initializeWorkingFiles(ctx context.Context, working *os.Root) error {
-	if err := working.Mkdir("evidence", 0700); err != nil && !errors.Is(err, os.ErrExist) {
+	if err := working.Mkdir("evidence", 0700); err == nil {
+		if err := util.RestrictIn(working, "evidence", 0700); err != nil {
+			return fmt.Errorf("restrict evidence directory: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrExist) {
 		return fmt.Errorf("create evidence directory: %w", err)
 	}
 	info, err := working.Lstat("evidence")
@@ -87,7 +92,11 @@ func ledgerFileNames() [5]string {
 }
 
 func openWorkingDirectory(project *os.Root) (*os.Root, error) {
-	if err := project.Mkdir(WorkingDirName, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+	if err := project.Mkdir(WorkingDirName, 0700); err == nil {
+		if err := util.RestrictIn(project, WorkingDirName, 0700); err != nil {
+			return nil, fmt.Errorf("restrict working directory: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrExist) {
 		return nil, fmt.Errorf("create working directory: %w", err)
 	}
 	before, err := project.Lstat(WorkingDirName)

@@ -7,6 +7,8 @@ import (
 	"os"
 	slashpath "path"
 	"path/filepath"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // A rule that reads more than one file, such as the Go HISS-02 pass that checks a call against
@@ -107,6 +109,9 @@ func stageArchive(root string, data []byte) error {
 		}
 		if err := os.WriteFile(target, files[i].data, 0o600); err != nil {
 			return fmt.Errorf("stage %s: %w", files[i].name, err)
+		}
+		if err := util.RestrictPath(target, 0o600); err != nil {
+			return fmt.Errorf("restrict %s: %w", files[i].name, err)
 		}
 	}
 	return nil

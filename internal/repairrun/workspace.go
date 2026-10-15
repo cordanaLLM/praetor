@@ -43,6 +43,9 @@ func materialize(ctx context.Context, cfg Config, attempt *os.Root, directory st
 	if err := attempt.Mkdir("candidate", 0o700); err != nil {
 		return nil, err
 	}
+	if err := util.RestrictIn(attempt, "candidate", 0o700); err != nil {
+		return nil, err
+	}
 	root, err := openDirectory(filepath.Join(directory, "candidate"))
 	if err != nil {
 		return nil, err
@@ -80,6 +83,9 @@ func extractBlob(ctx context.Context, cfg Config, root *os.Root, manifest source
 		return 0, errors.New("pinned source blob extraction failed")
 	}
 	if err := root.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return 0, err
+	}
+	if err := util.RestrictIn(root, filepath.Dir(path), 0o700); err != nil {
 		return 0, err
 	}
 	if err := writeNew(root, path, data); err != nil {

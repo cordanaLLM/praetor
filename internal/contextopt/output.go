@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // WriteCandidate revalidates the selected snapshot, then creates context.md and
@@ -48,6 +50,9 @@ func (p *Plan) WriteCandidate(ctx context.Context, outputDir string) (err error)
 		return err
 	}
 	if err := parent.Mkdir(name, 0o700); err != nil {
+		return err
+	}
+	if err := util.RestrictIn(parent, name, 0o700); err != nil {
 		return err
 	}
 	return p.writeFiles(ctx, parent, name, append(manifest, '\n'))
@@ -128,6 +133,9 @@ func writePrivate(ctx context.Context, root *os.Root, name string, data []byte) 
 		return err
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
+	if err := util.RestrictFileAccess(file, 0o600); err != nil {
+		return err
+	}
 	const chunkSize = 32 * 1024
 	for offset := 0; offset < len(data); offset += chunkSize {
 		if err := ctx.Err(); err != nil {
