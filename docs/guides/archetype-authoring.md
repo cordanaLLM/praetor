@@ -16,7 +16,7 @@ Fourteen profiles ship in `.config/archetypes/`:
 `library-client` · `native-gpu-systems` · `org-health` · `os-image` · `pages-site` ·
 `planning-artifacts` · `template-seed` · `upstream-fork` · `web-package`
 
-Six facets ship in `.config/archetypes/facets/`.
+Seven facets ship in `.config/archetypes/facets/`.
 
 **Every catalog file passes yamllint's default rules.** Adoption copies the pinned files byte for
 byte into an adopter's `.config/archetypes`, where the adopter's own lint may run, so each file
@@ -609,6 +609,11 @@ authors:
   category, `praetorctl state batch` writes a batch for one over its cap, and the audit fails a
   gated one ([Backlog caps](effective-policy.md#backlog-caps)). `forge_alerts` is declared but
   not counted: praetor has no forge alert reader yet.
+- The shipped `backlog:bounded` facet (`backlog-bounded.yaml`) declares only these keys: defects
+  max 20 with action `gate`, tasks max 50 and questions max 10 with action `batch`. A repository
+  that lists it fails `praetorctl audit` once its open defects exceed 20, unless a dated
+  `backlog.caps.defects` exceptions entry suspends that category
+  ([Bounded backlog facet](effective-policy.md#bounded-backlog-facet)).
 - `supply_chain.slsa_level`, `enforce_cosign` and `require_sbom` are gated: `praetorctl audit`
   fails when the release workflows measure less than the profile declares
   ([How the audit measures the SLSA level](releasing.md#how-the-audit-measures-the-slsa-level)).

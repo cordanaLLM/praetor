@@ -577,15 +577,28 @@ Supported rule identifiers are `backlog.caps.defects`, `backlog.caps.tasks`,
 `backlog.caps.questions`, and `backlog.caps.forge_alerts`. Target validation enforces `tool: backlog`
 and rejects `path` or `glob` entries, as `.workingdir` ledgers are private and Git-ignored.
 
-While the exception is active (before its expiry date), `praetorctl audit` passes, reporting that
-the category is over the cap and excepted until the date, along with the reason:
+While the entry holds (through its `expires` day), `praetorctl audit` passes, prints the
+category as over its cap and excepted until that date with the entry's reason, and names it in
+the summary (`TestAuditBacklogCaps_BoundedFacet_DefectsException`):
 
 ```text
-[INFO] Backlog cap defects: 21 of 20, OVER the cap, excepted until 2026-11-15 by the exceptions entry (rule backlog.caps.defects, backlog): Triaging defect backlog from Q3 migration (action gate set by facet:backlog:bounded, max 20 set by facet:backlog:bounded)
+[INFO] Backlog cap defects: 21 of 20, OVER the cap, excepted until 2026-11-04 by the exceptions entry (rule backlog.caps.defects, backlog): triage after the migration (max 20 set by facet:backlog:bounded, action gate set by facet:backlog:bounded)
+[INFO] Backlog cap tasks: 60 of 50, OVER the cap (max 50 set by facet:backlog:bounded, action batch set by facet:backlog:bounded)
+[INFO] Backlog cap questions: 0 of 10, under the cap (max 10 set by facet:backlog:bounded, action batch set by facet:backlog:bounded)
+[PASS] Backlog caps: every category with action gate was counted; over its cap and excepted: defects.
 ```
 
-After the expiry date, the exception no longer suspends the gate: the audit gate fails, and the
-expired exception itself fails standard exception expiry verification (`config.ValidateExceptions`).
+After its expiry the entry excuses nothing. The backlog gate (`Report.Gate` in
+`internal/backlogcap/backlogcap.go`) fails a gated category over its cap as it would without
+the entry, and names the expired entry:
+
+```text
+[FAIL] backlog cap defects: 21 items, over the cap of 20 (action gate, max set by facet:backlog:bounded); the exceptions entry (rule backlog.caps.defects, backlog) expired on 2026-10-01
+```
+
+A gated category back within its cap still fails on an expired entry, naming it, until the entry
+is removed. An entry for a category with action `batch` or `report` excuses nothing, because
+those actions never fail the audit.
 
 ## Selecting a shared or private configuration
 
