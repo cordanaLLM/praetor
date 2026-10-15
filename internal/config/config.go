@@ -339,6 +339,9 @@ type Manifest struct {
 	// Efficiency configures the efficiency ledger sources and model classifications (#870).
 	// It is repository-only, like Documentation and Radar.
 	Efficiency *EfficiencyPolicy `yaml:"efficiency,omitempty"`
+	// Skills declares pinned upstream skill libraries (skills.upstream). It is repository-only,
+	// like Documentation.
+	Skills *SkillsPolicy `yaml:"skills,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -422,6 +425,7 @@ var manifestValidators = [...]func(*Manifest) error{
 	validateManifestRadar,
 	validateManifestAPI,
 	validateManifestEfficiency,
+	validateManifestSkills,
 }
 
 // DecodeManifest parses the manifest with no unknown fields, so a misspelled key is an
