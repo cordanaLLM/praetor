@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -45,17 +46,29 @@ func runTool(t *testing.T, name, dir string, env []string, args ...string) (stri
 // enclosing git hook can: command-line configuration that demands signing through a
 // program that does not exist, and a GIT_DIR/GIT_INDEX_FILE naming another repository.
 // It returns that other repository.
+//
+// The missing program is planted for every signing format (gpg.program, gpg.ssh.program,
+// gpg.x509.program), because git reads only the one gpg.format selects, and that comes
+// from the host's own configuration. With only gpg.program planted, a host that signs with
+// SSH committed the inherited case, signed with the developer's key (#1305).
 func hostileGitEnvironment(t *testing.T) string {
 	t.Helper()
 	outer := t.TempDir()
 	if out, err := runGit(t, outer, HermeticGitEnv(t), "init", "-q"); err != nil {
 		t.Fatalf("init outer repository: %v: %s", err, out)
 	}
-	t.Setenv("GIT_CONFIG_COUNT", "2")
-	t.Setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
-	t.Setenv("GIT_CONFIG_VALUE_0", "true")
-	t.Setenv("GIT_CONFIG_KEY_1", "gpg.program")
-	t.Setenv("GIT_CONFIG_VALUE_1", filepath.Join(outer, "no-such-signing-program"))
+	missing := filepath.Join(outer, "no-such-signing-program")
+	planted := [][2]string{
+		{"commit.gpgsign", "true"},
+		{"gpg.program", missing},
+		{"gpg.ssh.program", missing},
+		{"gpg.x509.program", missing},
+	}
+	t.Setenv("GIT_CONFIG_COUNT", strconv.Itoa(len(planted)))
+	for i, entry := range planted {
+		t.Setenv("GIT_CONFIG_KEY_"+strconv.Itoa(i), entry[0])
+		t.Setenv("GIT_CONFIG_VALUE_"+strconv.Itoa(i), entry[1])
+	}
 	t.Setenv("GIT_CONFIG_PARAMETERS", "'user.name'='Inherited'")
 	t.Setenv("GIT_DIR", filepath.Join(outer, ".git"))
 	t.Setenv("GIT_INDEX_FILE", filepath.Join(outer, ".git", "index"))
