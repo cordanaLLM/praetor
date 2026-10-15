@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/bits"
-	"os"
 	"slices"
 	"sort"
 
 	"github.com/cordanaLLM/praetor/internal/efficiency"
 	"github.com/cordanaLLM/praetor/internal/strictjson"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const maxLedgerJSONBytes = 32 * 1024 * 1024 // 32MB bounds JSON input (HISS-02)
@@ -41,9 +42,10 @@ type entryInput struct {
 	Shared     bool                  `json:"shared,omitempty"`
 }
 
-// Load reads and parses a cost ledger file from the filesystem.
+// Load reads and parses a cost ledger file from the filesystem. The path is the operator's own
+// --input argument; util.ReadFileLimited bounds the read and refuses anything but a regular file.
 func Load(path string) (*Ledger, error) {
-	data, err := os.ReadFile(path)
+	data, err := util.ReadFileLimited(path, maxLedgerJSONBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read cost ledger %s: %w", path, err)
 	}
@@ -304,8 +306,14 @@ func allocateShares(
 	if err != nil {
 		return nil, nil, err
 	}
-	tokenShares := hamiltonShares(names, weights, totalWeight, sharedTokens)
-	spendShares := hamiltonShares(names, weights, totalWeight, sharedSpend)
+	tokenShares, err := hamiltonShares(names, weights, totalWeight, sharedTokens)
+	if err != nil {
+		return nil, nil, fmt.Errorf("allocate shared tokens by %s: %w", rule, err)
+	}
+	spendShares, err := hamiltonShares(names, weights, totalWeight, sharedSpend)
+	if err != nil {
+		return nil, nil, fmt.Errorf("allocate shared spend by %s: %w", rule, err)
+	}
 	return tokenShares, spendShares, nil
 }
 
@@ -353,15 +361,32 @@ type allocationRemainder struct {
 	remainder uint64
 }
 
-func hamiltonShares(names []string, weights []int64, totalWeight, shared int64) []int64 {
+// floorShare returns floor(shared * weight / totalWeight) and its remainder without overflow:
+// the product is formed in 128 bits. Every input is range-checked before the unsigned
+// conversion; with 0 <= weight <= totalWeight the quotient is at most shared, so Div64 cannot
+// panic and the quotient fits back into int64.
+func floorShare(shared, weight, totalWeight int64) (int64, uint64, error) {
+	if shared < 0 || weight < 0 || totalWeight <= 0 || weight > totalWeight {
+		return 0, 0, fmt.Errorf("allocation inputs out of range: shared %d, weight %d, total weight %d", shared, weight, totalWeight)
+	}
+	hi, lo := bits.Mul64(uint64(shared), uint64(weight))
+	quotient, remainder := bits.Div64(hi, lo, uint64(totalWeight))
+	if quotient > math.MaxInt64 {
+		return 0, 0, fmt.Errorf("allocation share %d exceeds int64", quotient)
+	}
+	return int64(quotient), remainder, nil
+}
+
+func hamiltonShares(names []string, weights []int64, totalWeight, shared int64) ([]int64, error) {
 	shares := make([]int64, len(names))
 	remainders := make([]allocationRemainder, 0, len(names))
 	var floorSum int64
 	for i, weight := range weights {
-		hi, lo := bits.Mul64(uint64(shared), uint64(weight))
-		// The quotient is at most shared because weight <= totalWeight, so Div64 cannot panic.
-		quotient, remainder := bits.Div64(hi, lo, uint64(totalWeight))
-		shares[i] = int64(quotient)
+		quotient, remainder, err := floorShare(shared, weight, totalWeight)
+		if err != nil {
+			return nil, fmt.Errorf("session %q: %w", names[i], err)
+		}
+		shares[i] = quotient
 		floorSum += shares[i]
 		remainders = append(remainders, allocationRemainder{
 			index: i, name: names[i], remainder: remainder,
@@ -377,7 +402,7 @@ func hamiltonShares(names []string, weights []int64, totalWeight, shared int64) 
 	for i := 0; i < int(leftover) && i < len(remainders); i++ {
 		shares[remainders[i].index]++
 	}
-	return shares
+	return shares, nil
 }
 
 func makeSingleSessionReport(
