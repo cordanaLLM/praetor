@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 )
 
@@ -28,7 +27,10 @@ func verifyWorkspace(ctx context.Context, cfg Config, candidate string) (*TestRe
 		return nil, nil, err
 	}
 	limited := append([]string{"--user", "--scope", "--quiet", "--collect", "--expand-environment=no", "--property=MemoryMax=4G", "--property=MemorySwapMax=0", "--property=TasksMax=128", "--property=CPUQuota=200%", "/usr/bin/prlimit", "--as=4294967296", "--cpu=120", "--fsize=268435456", "--nofile=256", "--", "/usr/bin/bwrap"}, args...)
-	env := []string{"PATH=/usr/bin:/bin", "XDG_RUNTIME_DIR=/run/user/" + strconv.Itoa(os.Getuid())}
+	env, err := verificationEnvironment()
+	if err != nil {
+		return nil, nil, err
+	}
 	data, runErr := command(ctx, "", env, maxLogBytes, "/usr/bin/systemd-run", limited...)
 	result := &TestResult{Passed: runErr == nil, ExitCode: 0, LogSHA256: bytesSHA(data), LogBytes: len(data), Packages: cfg.TestPackages}
 	result.Tests, err = testOutcomes(data)
