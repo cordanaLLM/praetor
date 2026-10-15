@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"syscall"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -127,7 +126,7 @@ func applyMovedFamilyAssets(ctx context.Context, s *adoptSession, family managed
 			return err
 		}
 		if !s.opts.DryRun {
-			if err := os.Remove(full); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) {
+			if err := os.Remove(full); err != nil && !errors.Is(err, fs.ErrNotExist) && !util.DirectoryNotEmpty(err) {
 				return fmt.Errorf("remove empty retired %s directory %s: %w", family.Kind, dir, err)
 			}
 		}
