@@ -10,10 +10,10 @@ import (
 
 // engineLauncherFile is the launcher every governance job of the generated lefthook.yml and the
 // fallback pre-commit hook run (lefthookGovernedCommand). It chooses the engine that judges the
-// repository: the one the repository pins with PRAETOR_REF in a workflow under .github/workflows,
-// installed once per pin into a cache keyed by the pin, and only where the repository pins none the
-// binary on PATH (#906). Without it a hook judged a repository pinned to an older engine by
-// whatever newer binary came first on PATH.
+// repository: the one the repository pins with PRAETOR_REF or a full PRAETOR_COMMIT in a workflow
+// under .github/workflows, installed once per pin into a cache keyed by the pin, and only where the
+// repository pins none the binary on PATH (#906). Without it a hook judged a repository pinned to
+// an older engine by whatever newer binary came first on PATH.
 const engineLauncherFile = ".config/lefthook/engine.sh"
 
 // priorEngineLauncherDigests are the digests (priorRendering) of every text a Praetor release wrote
@@ -27,6 +27,7 @@ var priorEngineLauncherDigests = map[string]string{
 	"93387a66f5c910bd4df4dbe11bd016d489af208620f7c0deea69777cdad00387": "engine launcher with --print-path, uses-pin, full semver (#906)",
 	"888b3442bf8381166b8623c195c887260a68672ce5795bf327ae5ce8b77fcc7b": "engine launcher with explicit PRAETOR_REF priority (#906)",
 	"26a458c46116cce38b23e591902ce0ed1541b6f3cedf77807743edd2298fcff5": "engine launcher with install_pinned split under the strict function length (#906)",
+	"3379119644fa1cf96c730cd7f43fd35846a79b28acb57586ff76b4fd5a243a2e": "engine launcher with PRAETOR_COMMIT pins (#1366)",
 }
 
 // reconcileEngineLauncher scaffolds the launcher beside the lefthook.yml jobs that run it. An
@@ -37,7 +38,7 @@ func reconcileEngineLauncher(ctx context.Context, s *adoptSession) error {
 		rel:       engineLauncherFile,
 		perm:      filePerm,
 		content:   []byte(engineLauncherScript),
-		created:   "Installed the hook engine launcher: hooks run the engine PRAETOR_REF pins, cached per pin, and the binary on PATH only where no pin is declared",
+		created:   "Installed the hook engine launcher: hooks run the engine PRAETOR_REF or full PRAETOR_COMMIT pins, cached per pin, and the binary on PATH only where no pin is declared",
 		verified:  "Existing hook engine launcher verified present",
 		refreshed: "Refreshed an unedited earlier Praetor hook engine launcher to the current text",
 		prior:     priorEngineLauncherDigests,
