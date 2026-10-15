@@ -77,6 +77,20 @@ const (
 	stageReceipt        = "Ed25519 Exit-0 Receipt"
 )
 
+// StageNames returns the gate stages in the order the pipeline executes them. Callers receive
+// a new slice, so registry readers cannot alter the pipeline's declarations.
+func StageNames() []string {
+	return []string{
+		stagePrefetch,
+		stageHISS,
+		stageSecurity,
+		stageFlavor,
+		stageTests,
+		stageDeclaredVerify,
+		stageReceipt,
+	}
+}
+
 // ErrMissingScanner reports that a required security scanner is absent, which must fail
 // the security stage instead of silently passing it.
 var ErrMissingScanner = errors.New("required security scanner is not installed")
