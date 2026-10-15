@@ -46,14 +46,34 @@ func AuditTestTimeouts(ctx context.Context, opts TestTimeoutOptions) (string, er
 	if err != nil {
 		return "", err
 	}
-	var findings []string
+	entries := config.ExceptionsFor(opts.Exceptions, config.ExceptionRuleTestTimeout)
+	used := make([]bool, len(entries))
+	var findings, excepted []string
 	for _, file := range files {
-		findings = append(findings, longTimeouts(ghworkflow.Dir+"/"+file.Name, string(file.Data))...)
+		rel := ghworkflow.Dir + "/" + file.Name
+		long := longTimeouts(rel, string(file.Data))
+		if len(long) == 0 {
+			continue
+		}
+		live, expired := config.ExceptionFor(entries, rel, opts.Today, used)
+		if live != nil {
+			excepted = append(excepted, fmt.Sprintf("[PASS] %s: %s excepted until %s: %s", testTimeoutGate, rel, live.Expires, live.Reason))
+			continue
+		}
+		if expired != nil {
+			findings = append(findings, fmt.Sprintf("[FAIL] %s: the exceptions entry for %s expired %s; bring the timeout back to the bound or renew the entry with a reason", testTimeoutGate, rel, expired.Expires))
+		}
+		findings = append(findings, long...)
+	}
+	for i, entry := range entries {
+		if !used[i] {
+			findings = append(findings, fmt.Sprintf("[FAIL] %s: the exceptions entry for %s excuses nothing, because the workflow keeps the bound; remove it", testTimeoutGate, entry.Target()))
+		}
 	}
 	if len(findings) > 0 {
 		return "", errors.New(strings.Join(findings, "\n"))
 	}
-	return "[PASS] test-timeout", nil
+	return strings.Join(append(excepted, "[PASS] test-timeout"), "\n"), nil
 }
 
 // longTimeouts returns one line per minutes value above the bound on a line that sets a timeout.
