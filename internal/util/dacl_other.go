@@ -11,9 +11,9 @@ import (
 	"os"
 )
 
-// restrictFileAccess is a no-op here: the mode the caller already applied is the file's
+// RestrictFileAccess is a no-op here: the mode the caller already applied is the file's
 // protection. dacl_windows.go sets the DACL the mode stands for there (#101).
-func restrictFileAccess(*os.File, os.FileMode) error { return nil }
+func RestrictFileAccess(*os.File, os.FileMode) error { return nil }
 
 // OwnerOnlyAccess reports whether the mode of path grants no group or other access; otherwise
 // it names the mode.

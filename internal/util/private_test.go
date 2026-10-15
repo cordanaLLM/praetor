@@ -8,13 +8,16 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
-func statFile(t *testing.T, mode os.FileMode) os.FileInfo {
+// statFile writes an artefact through WriteFileSecure, which makes it private on every
+// platform (on Windows by its DACL, #101), then sets mode and returns its path and metadata.
+func statFile(t *testing.T, mode os.FileMode) (string, os.FileInfo) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "artefact")
-	if err := os.WriteFile(path, []byte("x"), mode); err != nil {
+	if err := WriteFileSecure(path, []byte("x"), SecureFilePerm); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(path, mode); err != nil {
@@ -24,12 +27,11 @@ func statFile(t *testing.T, mode os.FileMode) os.FileInfo {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return info
+	return path, info
 }
 
-// Positive: an owner-only artefact is reported private on every platform. On POSIX
-// that is measured from the mode; on Windows it is the asserted default, which is
-// why the reason below must accompany it.
+// Positive: an owner-only artefact is reported private on every platform: on POSIX from the
+// mode, on Windows from the DACL WriteFileSecure gave it.
 func TestArtefactPrivacyAcceptsAnOwnerOnlyArtefact(t *testing.T) {
 	private, _ := ArtefactPrivacy(statFile(t, 0o600))
 	if !private {
@@ -40,7 +42,7 @@ func TestArtefactPrivacyAcceptsAnOwnerOnlyArtefact(t *testing.T) {
 // Negative: nil is not an artefact and is never private. A helper that answered
 // "private" for a missing file would let a caller skip the check by failing to stat.
 func TestArtefactPrivacyRefusesANilInfo(t *testing.T) {
-	private, unverifiable := ArtefactPrivacy(nil)
+	private, unverifiable := ArtefactPrivacy("", nil)
 	if private {
 		t.Fatal("a nil FileInfo was reported private")
 	}
@@ -49,23 +51,24 @@ func TestArtefactPrivacyRefusesANilInfo(t *testing.T) {
 	}
 }
 
-// Boundary: the two-state contract. Either the platform decides from the mode and
-// returns no reason, or it cannot and says so. A "private" answer with no reason on
-// a platform that cannot measure it is the silent pass HISS-21 forbids.
+// Boundary: both platforms measure the answer and return no reason. On POSIX a 0666 file is
+// readable by others; on Windows the mode says nothing and the owner-only DACL decides (#101).
 func TestArtefactPrivacyAnswersOrStatesWhyItCannot(t *testing.T) {
 	private, unverifiable := ArtefactPrivacy(statFile(t, 0o666))
-	if runtime.GOOS == "windows" {
-		if !private || unverifiable == "" {
-			t.Fatalf("windows must assert privacy with a stated reason, got private=%v reason=%q",
-				private, unverifiable)
-		}
-		return
-	}
-	if private {
-		t.Fatal("a world-readable artefact was reported private on a platform that can tell")
-	}
 	if unverifiable != "" {
-		t.Fatalf("a platform that measured the answer also returned a reason: %q", unverifiable)
+		t.Fatalf("a readable artefact produced a reason instead of an answer: %q", unverifiable)
+	}
+	if want := runtime.GOOS == "windows"; private != want {
+		t.Fatalf("0666 artefact with an owner-only DACL: private=%v, want %v", private, want)
+	}
+}
+
+// Positive: the refusal names the path and the command that makes the artefact private.
+func TestPrivacyRefusal_Positive_NamesPathAndCommand(t *testing.T) {
+	path, info := statFile(t, 0o600)
+	err := PrivacyRefusal(path, info)
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), TightenCommand(path, false)) {
+		t.Fatalf("refusal = %v, want it to name %s and %s", err, path, TightenCommand(path, false))
 	}
 }
 

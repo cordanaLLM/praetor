@@ -30,3 +30,10 @@ func NotePrivacyLimitation(reason string) {
 		fmt.Fprintf(os.Stderr, "NOTE: artefact privacy not verified: %s\n", reason)
 	})
 }
+
+// PrivacyRefusal is the error for an artefact at path that other accounts can read: it names
+// the path and the command that makes it private (TightenCommand).
+func PrivacyRefusal(path string, info os.FileInfo) error {
+	return fmt.Errorf("%s is readable by other accounts; make it private with: %s",
+		path, TightenCommand(path, info != nil && info.IsDir()))
+}

@@ -3,6 +3,7 @@ package repairrun
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -46,10 +47,13 @@ func openState(path string, create bool) (*os.Root, error) {
 		return nil, err
 	}
 	info, err := root.Stat(".")
-	statePrivate, stateUnverifiable := util.ArtefactPrivacy(info)
-	util.NotePrivacyLimitation(stateUnverifiable)
-	if err != nil || !statePrivate {
+	if err != nil {
 		return nil, errors.Join(errors.New("repair state must be a private directory"), err, root.Close())
+	}
+	statePrivate, stateUnverifiable := util.ArtefactPrivacy(path, info)
+	util.NotePrivacyLimitation(stateUnverifiable)
+	if !statePrivate {
+		return nil, errors.Join(fmt.Errorf("repair state must be a private directory: %w", util.PrivacyRefusal(path, info)), root.Close())
 	}
 	return root, nil
 }

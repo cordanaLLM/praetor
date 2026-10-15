@@ -397,7 +397,7 @@ func tightenFilePermissions(file *os.File, perm os.FileMode) error {
 	if err := tightenMode(file.Name(), info, perm, file.Chmod); err != nil {
 		return err
 	}
-	return restrictFileAccess(file, perm)
+	return RestrictFileAccess(file, perm)
 }
 
 // tightenMode is the one permission-ceiling decision behind WriteFileSecure, MkdirSecure
@@ -572,7 +572,7 @@ func (p filePermission) apply(file *os.File) error {
 	if err := file.Chmod(p.mode); err != nil {
 		return fmt.Errorf("util: chmod temp file %q to %#o: %w", file.Name(), p.mode, err)
 	}
-	return restrictFileAccess(file, p.mode)
+	return RestrictFileAccess(file, p.mode)
 }
 
 // inParentDirectory opens path's directory as a pinned os.Root, runs fn with that handle
@@ -706,7 +706,7 @@ func MkdirSecure(path string, perm os.FileMode) error {
 	return restrictOpened(func() (*os.File, error) { return os.Open(path) }, perm)
 }
 
-// restrictOpened opens a directory a private writer created and applies restrictFileAccess
+// restrictOpened opens a directory a private writer created and applies RestrictFileAccess
 // to it, then closes it.
 func restrictOpened(open func() (*os.File, error), perm os.FileMode) (err error) {
 	dir, err := open()
@@ -718,7 +718,7 @@ func restrictOpened(open func() (*os.File, error), perm os.FileMode) (err error)
 			err = fmt.Errorf("util: close %q: %w", dir.Name(), cerr)
 		}
 	}()
-	return restrictFileAccess(dir, perm)
+	return RestrictFileAccess(dir, perm)
 }
 
 // MkdirConfined is MkdirSecure for rel below root, confined through the whole operation

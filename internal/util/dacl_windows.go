@@ -172,10 +172,11 @@ func writeDACHandle(file *os.File, dir bool) (syscall.Handle, error) {
 	return handle, nil
 }
 
-// restrictFileAccess applies the owner-only DACL to the open file or directory when perm
+// RestrictFileAccess applies the owner-only DACL to the open file or directory when perm
 // grants no group or other access, the Windows form of what the mode means on POSIX. A wider
-// perm leaves the inherited DACL.
-func restrictFileAccess(file *os.File, perm os.FileMode) error {
+// perm leaves the inherited DACL. The private writers of this package call it; a writer that
+// creates a private file itself calls it on the file it opened.
+func RestrictFileAccess(file *os.File, perm os.FileMode) error {
 	if perm.Perm()&0o077 != 0 {
 		return nil
 	}

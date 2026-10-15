@@ -56,9 +56,13 @@ func openPrivateScheduleDirectory(parent *os.Root, name, label string) (*os.Root
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", label, err)
 	}
-	private, unverifiable := util.ArtefactPrivacy(info)
+	path := filepath.Join(parent.Name(), name)
+	private, unverifiable := util.ArtefactPrivacy(path, info)
 	util.NotePrivacyLimitation(unverifiable)
-	if !info.IsDir() || !private || info.Mode().Perm() != 0o700 {
+	if info.IsDir() && !private {
+		return nil, fmt.Errorf("%s must be a private owner-accessible directory (0700): %w", label, util.PrivacyRefusal(path, info))
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return nil, fmt.Errorf("%s must be a private owner-accessible directory (0700)", label)
 	}
 	dir, err := parent.OpenRoot(name)
@@ -123,9 +127,12 @@ func readStoredScheduleTranscript(ctx context.Context, dir *os.Root, name string
 	if err != nil {
 		return nil, false, fmt.Errorf("inspect stored transcript %q at %q: %w", source.ID, path, err)
 	}
-	private, unverifiable := util.ArtefactPrivacy(info)
+	private, unverifiable := util.ArtefactPrivacy(path, info)
 	util.NotePrivacyLimitation(unverifiable)
-	if !info.Mode().IsRegular() || !private || info.Mode().Perm() != 0o600 {
+	if info.Mode().IsRegular() && !private {
+		return nil, false, fmt.Errorf("stored transcript %q must be a private regular file (0600): %w", source.ID, util.PrivacyRefusal(path, info))
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
 		return nil, false, fmt.Errorf("stored transcript %q at %q must be a private regular file (0600)", source.ID, path)
 	}
 	data, err := util.ReadLimitedIn(dir, name, harvester.MaxTranscriptSourceBytes)

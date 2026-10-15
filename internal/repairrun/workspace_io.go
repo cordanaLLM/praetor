@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -73,8 +74,16 @@ func readFile(ctx context.Context, root *os.Root, name string, limit int64, priv
 	if err != nil {
 		return nil, err
 	}
-	if !readableFile(before, limit, private) {
-		return nil, errors.New("input must be a bounded regular file with required privacy")
+	path := filepath.Join(root.Name(), name)
+	if !readableFile(before, limit) {
+		return nil, errors.New("input must be a bounded regular file")
+	}
+	if private {
+		isPrivate, unverifiable := util.ArtefactPrivacy(path, before)
+		util.NotePrivacyLimitation(unverifiable)
+		if !isPrivate {
+			return nil, fmt.Errorf("input must be private: %w", util.PrivacyRefusal(path, before))
+		}
 	}
 	file, err := openRegular(root, name)
 	if err != nil {
@@ -96,10 +105,8 @@ func readFile(ctx context.Context, root *os.Root, name string, limit int64, priv
 	return data, ctx.Err()
 }
 
-func readableFile(info os.FileInfo, limit int64, private bool) bool {
-	isPrivate, unverifiable := util.ArtefactPrivacy(info)
-	util.NotePrivacyLimitation(unverifiable)
-	return info.Mode().IsRegular() && info.Size() <= limit && (!private || isPrivate)
+func readableFile(info os.FileInfo, limit int64) bool {
+	return info.Mode().IsRegular() && info.Size() <= limit
 }
 
 func stableFile(before, after os.FileInfo, size, limit int64) bool {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 )
 
 func hashScheduleConfiguredFile(ctx context.Context, root *os.Root, name string) (sum string, err error) {
@@ -13,7 +14,7 @@ func hashScheduleConfiguredFile(ctx context.Context, root *os.Root, name string)
 	if err != nil {
 		return "", err
 	}
-	if err := validateScheduleFileInfo(before, 128<<20, false); err != nil {
+	if err := validateScheduleFileInfo(filepath.Join(root.Name(), name), before, 128<<20, false); err != nil {
 		return "", err
 	}
 	if before.Mode().Perm()&0o111 == 0 {

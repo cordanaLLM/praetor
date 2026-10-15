@@ -39,7 +39,8 @@ func writeScheduleFixture(t *testing.T, path string, value any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// The private writer, so the fixture is private on Windows too, where the DACL decides.
+	if err := util.WriteFileSecure(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -314,17 +315,13 @@ func TestScheduleConfigStrictAndBoundary(t *testing.T) {
 	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Only this assertion is platform-bound. Where the mode cannot express "readable by
-	// others", a 0644 file is indistinguishable from a private one and the config is
-	// correctly treated as private, so the refusal cannot be provoked. The nine strict-
-	// config cases and the defaults above still run everywhere; skipping the whole test
-	// on that account would have discarded them to avoid one assertion.
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, unverifiable := util.ArtefactPrivacy(info); unverifiable != "" {
-		t.Logf("public-schedule refusal not provable here: %s", unverifiable)
+	// Only this assertion is platform-bound. Where the mode is not the file's protection
+	// (Windows, whose DACL decides, #101), a 0644 mode does not make the config readable by
+	// others, so the refusal cannot be provoked by mode. The nine strict-config cases and the
+	// defaults above still run everywhere; skipping the whole test on that account would have
+	// discarded them to avoid one assertion.
+	if !util.ModeIsProtection() {
+		t.Log("public-schedule refusal is provoked by mode, which does not protect files here")
 		return
 	}
 	if _, err := LoadScheduleConfig(context.Background(), path); err == nil {

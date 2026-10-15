@@ -8,7 +8,10 @@ package util
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -100,5 +103,34 @@ func TestOwnerOnlyEntries_3D(t *testing.T) {
 	}
 	if _, _, err := ownerOnlyEntries("O:BA", sid); err == nil {
 		t.Error("a descriptor without a DACL was judged")
+	}
+}
+
+// Negative (#101): an artefact that inherits access for Everyone is not private, the refusal
+// names it and an icacls command, and running that command makes it private.
+func TestArtefactPrivacy_Negative_InheritedEveryoneRefusedWithItsRemedy(t *testing.T) {
+	path := filepath.Join(sharedDirectory(t), "artefact")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if private, reason := ArtefactPrivacy(path, info); private || reason != "" {
+		t.Fatalf("artefact readable by Everyone: private=%v reason=%q", private, reason)
+	}
+	refusal := PrivacyRefusal(path, info).Error()
+	command := TightenCommand(path, false)
+	if !strings.Contains(refusal, path) || !strings.Contains(refusal, command) || !strings.HasPrefix(command, "icacls ") {
+		t.Fatalf("refusal %q does not name %s and an icacls command", refusal, path)
+	}
+	run := exec.Command(os.Getenv("COMSPEC"))
+	run.SysProcAttr = &syscall.SysProcAttr{CmdLine: `/C "` + command + `"`}
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("%s: %v: %s", command, err, out)
+	}
+	if private, reason := ArtefactPrivacy(path, info); !private {
+		t.Fatalf("the remedy left the artefact readable by others (reason %q)", reason)
 	}
 }

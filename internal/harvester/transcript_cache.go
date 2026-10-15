@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -48,9 +49,13 @@ func matchTranscriptCache(root *os.Root, name string, expected []byte) (bool, er
 	if err != nil {
 		return false, err
 	}
-	cachePrivate, cacheUnverifiable := util.ArtefactPrivacy(before)
+	path := filepath.Join(root.Name(), name)
+	cachePrivate, cacheUnverifiable := util.ArtefactPrivacy(path, before)
 	util.NotePrivacyLimitation(cacheUnverifiable)
-	if !before.Mode().IsRegular() || !cachePrivate || before.Size() != int64(len(expected)) {
+	if before.Mode().IsRegular() && !cachePrivate {
+		return false, fmt.Errorf("existing cache record is not private: %w", util.PrivacyRefusal(path, before))
+	}
+	if !before.Mode().IsRegular() || before.Size() != int64(len(expected)) {
 		return false, fmt.Errorf("existing cache record has unsafe type, mode, or conflicting size")
 	}
 	file, err := openStableTranscriptFile(root, name, before)
@@ -78,6 +83,9 @@ func publishTranscriptCache(root *os.Root, name string, data []byte) (stored boo
 		return false, err
 	}
 	defer func() { err = errors.Join(err, root.Remove(temporary)) }()
+	if err = util.RestrictFileAccess(file, 0o600); err != nil {
+		return false, errors.Join(err, file.Close())
+	}
 	_, writeErr := file.Write(data)
 	if err = errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
 		return false, err

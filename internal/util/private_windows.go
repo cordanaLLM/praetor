@@ -6,35 +6,42 @@
 
 package util
 
-import "os"
+import (
+	"fmt"
+	"os"
+)
 
-// UnverifiablePrivacy is the reason ArtefactPrivacy returns on a platform whose file
-// protection os.FileInfo.Mode() does not represent. Callers print it rather than
-// discarding it: an unexamined artefact reported as private is the state HISS-21
-// forbids, and saying so is what separates a skip from a silent pass.
+// UnverifiablePrivacy is the reason ModeIsProtection prints on this platform: a test that
+// asserts a mode asserts something os.FileInfo.Mode() does not represent here.
 const UnverifiablePrivacy = "file protection on this platform is an ACL that os.FileInfo.Mode() does not expose; " +
-	"privacy is inherited from the containing directory and is not verified here"
+	"a mode assertion is not a privacy assertion here"
 
-// ArtefactPrivacy reports whether an artefact is readable only by its owner, and
-// names what prevents the answer being verified where it cannot be.
+// ArtefactPrivacy reports whether the artefact at path, whose metadata is info, is readable
+// only by its owner, and names what prevented the answer when the DACL could not be read.
 //
-// Windows synthesises the mode from the read-only attribute alone, so an ordinary
-// file always reports 0666 and a read-only one 0444. Neither can satisfy
-// Perm()&0o077 == 0. Applying the POSIX comparison here therefore refused every
-// artefact while proving nothing about any of them, and the refusal named a mode
-// that cannot be changed to satisfy it.
-//
-// The honest answer is that this platform cannot decide with the information the
-// standard library exposes. Reading the real answer needs the ACL via
-// golang.org/x/sys/windows, which this module deliberately does not depend on --
-// go.mod carries exactly one requirement. Until that trade is made, the artefact is
-// treated as private and the caller is handed the reason to print, so the gap is
-// visible in output rather than hidden in a pass.
-func ArtefactPrivacy(info os.FileInfo) (private bool, unverifiable string) {
+// Windows synthesises the mode from the read-only attribute alone, so an ordinary file
+// always reports 0666; the file's protection is its DACL. This reads it (OwnerOnlyAccess):
+// an artefact is private when no one but this account, SYSTEM and Administrators may open
+// it. Before #101 the answer was asserted, never verified.
+func ArtefactPrivacy(path string, info os.FileInfo) (private bool, unverifiable string) {
 	if info == nil {
 		return false, ""
 	}
-	return true, UnverifiablePrivacy
+	private, _, err := OwnerOnlyAccess(path)
+	if err != nil {
+		return false, fmt.Sprintf("the DACL of %s could not be read: %v", path, err)
+	}
+	return private, ""
+}
+
+// TightenCommand is the command that makes the artefact at path private: an icacls call
+// that cuts inheritance and grants this account, SYSTEM and Administrators full access.
+func TightenCommand(path string, _ bool) string {
+	sid, err := currentUserSID()
+	if err != nil {
+		sid = "<your account SID>"
+	}
+	return fmt.Sprintf(`icacls "%s" /inheritance:r /grant:r *%s:F *S-1-5-18:F *S-1-5-32-544:F`, path, sid)
 }
 
 // ModeIsProtection reports whether a file's mode is what protects it on this platform.

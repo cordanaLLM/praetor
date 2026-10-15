@@ -35,7 +35,7 @@ func readScheduleFile(ctx context.Context, root *os.Root, name string, limit int
 	if err != nil {
 		return nil, err
 	}
-	if err := validateScheduleFileInfo(before, limit, private); err != nil {
+	if err := validateScheduleFileInfo(filepath.Join(root.Name(), name), before, limit, private); err != nil {
 		return nil, err
 	}
 	file, err := openSuiteConfigFile(root, name)
@@ -76,10 +76,9 @@ func openScheduleState(ctx context.Context, path string, create bool) (*os.Root,
 	}
 	info, err := root.Stat(".")
 	if err == nil {
-		if private, unverifiable := util.ArtefactPrivacy(info); !private {
-			err = errors.New("schedule state directory must be private (0700 or stricter)")
-		} else {
+		if private, unverifiable := util.ArtefactPrivacy(path, info); !private {
 			util.NotePrivacyLimitation(unverifiable)
+			err = fmt.Errorf("schedule state directory must be private (0700 or stricter): %w", util.PrivacyRefusal(path, info))
 		}
 	}
 	if err != nil {
@@ -251,7 +250,8 @@ func checkScheduleWriteTarget(root *os.Root, name string) error {
 	if err != nil {
 		return err
 	}
-	existingPrivate, existingUnverifiable := util.ArtefactPrivacy(info)
+	path := filepath.Join(root.Name(), name)
+	existingPrivate, existingUnverifiable := util.ArtefactPrivacy(path, info)
 	util.NotePrivacyLimitation(existingUnverifiable)
 	// This target carries two requirements, and only one of them is a privacy question.
 	// ArtefactPrivacy answers "no other account can read it". That the owner can still write
@@ -259,21 +259,24 @@ func checkScheduleWriteTarget(root *os.Root, name string) error {
 	// does express on every platform: Windows synthesises 0444 for a read-only file and 0666
 	// for a writable one. Dropping it would let the tick rewrite state an operator had
 	// deliberately made read-only.
-	if !info.Mode().IsRegular() || !existingPrivate || info.Mode().Perm()&0o200 == 0 {
+	if info.Mode().IsRegular() && !existingPrivate {
+		return fmt.Errorf("existing schedule state must permit owner read/write only (0600): %w", util.PrivacyRefusal(path, info))
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o200 == 0 {
 		return errors.New("existing schedule state must permit owner read/write only (0600)")
 	}
 	return nil
 }
 
-func validateScheduleFileInfo(info os.FileInfo, limit int64, private bool) error {
+func validateScheduleFileInfo(path string, info os.FileInfo, limit int64, private bool) error {
 	if !info.Mode().IsRegular() || info.Size() > limit {
 		return errors.New("schedule input must be a bounded regular file")
 	}
 	if private {
-		isPrivate, unverifiable := util.ArtefactPrivacy(info)
+		isPrivate, unverifiable := util.ArtefactPrivacy(path, info)
 		util.NotePrivacyLimitation(unverifiable)
 		if !isPrivate {
-			return errors.New("schedule metadata must be private (0600 or stricter)")
+			return fmt.Errorf("schedule metadata must be private (0600 or stricter): %w", util.PrivacyRefusal(path, info))
 		}
 	}
 	return nil
