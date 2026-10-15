@@ -194,17 +194,29 @@ jobs:
       # status fails the step; the file is written even when the job is cancelled midway. The file
       # goes to the runner's temporary folder, never the checkout: a test that copies the tracked
       # tree with its untracked files (internal/identity) refused the 12 MB file in the checkout.
+      # internal/adopt runs on its own after the other packages: on Windows it reached the bound,
+      # so there it gets a longer one under a dated test-timeout exception in .standards.yaml
+      # that fails the audit once it expires or excuses nothing (#1381). Both runs always go; the
+      # step fails when either does.
       - name: Test Every Package
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: |
-          go test -json -timeout 30m ./... | tee "$RUNNER_TEMP/go-test-$RUNNER_OS.json" | "$PYTHON" -B -u -c 'import json, sys
+          adopt=$(go list ./internal/adopt)
+          mapfile -t packages < <(go list ./... | grep -vxF "$adopt")
+          {
+            status=0
+            go test -json -timeout 30m "${packages[@]}" || status=$?
+            go test -json -timeout "$ADOPT_TEST_TIMEOUT" "$adopt" || status=$?
+            exit "$status"
+          } | tee "$RUNNER_TEMP/go-test-$RUNNER_OS.json" | "$PYTHON" -B -u -c 'import json, sys
           for line in sys.stdin:
               event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
               if event.get("Action") in ("output", "build-output"):
                   sys.stdout.write(event.get("Output", ""))'
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
+          ADOPT_TEST_TIMEOUT: ${{ matrix.name == 'Windows' && '60m' || '30m' }}
 
       - name: Upload Per-Test Timing
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
