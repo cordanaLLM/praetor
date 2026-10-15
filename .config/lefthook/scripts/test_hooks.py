@@ -160,10 +160,22 @@ class _WithoutProcessGroup:
 PRAETORCTL = "bin/praetorctl" + (".exe" if os.name == "nt" else "")
 # Codex runs a command hook through the login shell on Linux and macOS and through %COMSPEC% /C
 # on Windows (codex-rs/hooks/src/engine/command_runner.rs; see docs/guides/agent-hooks.md). The
-# tracked registration resolves the Git root with $( ), which cmd.exe does not have, so on Windows
-# the registration itself cannot run: a stated gap, never a Git Bash sh standing in for cmd.exe.
-CODEX_WINDOWS_GAP = ("Codex runs hooks through cmd.exe on Windows, which has no $( ) for the "
-                     "registration's Git-root lookup; see docs/guides/agent-hooks.md")
+# registration's $( ) Git-root lookup is shell syntax cmd.exe lacks, so the Windows form is the
+# `commandWindows` override, and the test runs it through cmd.exe as Codex does (#209).
+
+
+def codex_command(action):
+    """The process Codex's hook runner starts for one registered action on this host.
+
+    Linux and macOS: the login shell with -lc and the `command` string. Windows: %COMSPEC% /C
+    with the `commandWindows` override, else `command`, passed raw inside one pair of quotes
+    (build_command in codex-rs/hooks/src/engine/command_runner.rs). On Windows the result is a
+    command line, not an argv, because Codex passes it raw and argv quoting would change it.
+    """
+    if os.name != "nt":
+        return ["/bin/sh", "-c", action["command"]]
+    line = action.get("commandWindows", action["command"])
+    return '"' + os.environ.get("COMSPEC", "cmd.exe") + '" /C "' + line + '"'
 # The policy prints job output and failures only, so a passing job is evidenced by what it
 # printed, never by Lefthook's success line naming it. commit-msg and pre-push print this after
 # verifying the live ledger.
@@ -898,15 +910,14 @@ print("fixture hook self-tests passed")
         self.assertNotRegex("Write", registration["matcher"])
         action = registration["hooks"][0]
         self.assertEqual(action["type"], "command")
-        if os.name == "nt":
-            self.skipTest(CODEX_WINDOWS_GAP)
         nested = self.repo / "nested directory"
         nested.mkdir()
         for command_text, expected in (("git status", 0), ("git commit --no-verify", 2)):
             payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
                                   "tool_input": {"command": command_text}}).encode()
-            result = command(nested, "/bin/sh", "-c", action["command"],
-                             data=payload, ok=False)
+            process = codex_command(action)
+            result = (run_command(nested, process, payload, False) if isinstance(process, str)
+                      else command(nested, *process, data=payload, ok=False))
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
     def test_good_index_ignores_unstaged_python_syntax_error(self):
