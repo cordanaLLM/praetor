@@ -189,40 +189,44 @@ jobs:
       # was one slow runner away from a panic that names no failing test.
       # go test -json keeps each test's elapsed time, which the plain output drops, so a package that
       # runs close to the 30-minute bound on one platform can be profiled from the uploaded file
-      # (internal/adopt and operationalsync on Windows). The log stays the usual text: the stream's
-      # output events, streamed as they arrive. GitHub runs bash with pipefail, so go's exit
-      # status fails the step; the file is written even when the job is cancelled midway. The file
-      # goes to the runner's temporary folder, never the checkout: a test that copies the tracked
-      # tree with its untracked files (internal/identity) refused the 12 MB file in the checkout.
-      # internal/adopt and internal/operationalsync run on their own after the other packages:
-      # on Windows the adopt suite takes about 31 minutes since #166 runs its hermetic fixtures
-      # there, and operationalsync's identity suite runs that whole suite again nested over an
-      # overlaid copy. There they get a longer bound under a dated test-timeout exception in
-      # .standards.yaml that fails the audit once it expires or excuses nothing (#1381). Both
-      # runs always go; the step fails when either does.
+      # (internal/adopt on Windows). Each go test run writes its stream to a file and the step prints
+      # that stream's output events when the run ends: a pipe into the printer would keep the step
+      # open as long as any process still held its write end, and on Windows train 4's step sat 28
+      # minutes after its last package passed until the job bound cancelled it (run 38798931720).
+      # The file goes to the runner's temporary folder, never the checkout: a test that copies the
+      # tracked tree with its untracked files (internal/identity) refused the 12 MB file there.
+      # internal/adopt runs on its own after the other packages: on Windows its suite takes about 31
+      # minutes since #166 runs its hermetic fixtures there, so it gets a longer bound under a dated
+      # test-timeout exception in .standards.yaml that fails the audit once it expires or excuses
+      # nothing (#1381). operationalsync's identity suite replays only the Windows-specific adopt
+      # tests on Windows, so it stays in the first run. Both runs always go; the step fails when either does.
       - name: Test Every Package
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
         run: |
-          long=$(go list ./internal/adopt ./internal/operationalsync)
-          # Read loops, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
+          adopt=$(go list ./internal/adopt)
+          # A read loop, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
           packages=()
-          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF "$long")
-          longs=()
-          while IFS= read -r package; do longs+=("$package"); done <<< "$long"
-          {
-            status=0
-            go test -json -timeout 30m "${packages[@]}" || status=$?
-            go test -json -timeout "$LONG_TEST_TIMEOUT" "${longs[@]}" || status=$?
-            exit "$status"
-          } | tee "$RUNNER_TEMP/go-test-$RUNNER_OS.json" | "$PYTHON" -B -u -c 'import json, sys
-          for line in sys.stdin:
+          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF "$adopt")
+          json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
+          : > "$json"
+          show() {
+            "$PYTHON" -B -c 'import json, sys
+          for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
               event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
               if event.get("Action") in ("output", "build-output"):
-                  sys.stdout.write(event.get("Output", ""))'
+                  sys.stdout.write(event.get("Output", ""))' "$1"
+            cat "$1" >> "$json"
+          }
+          status=0
+          go test -json -timeout 30m "${packages[@]}" > "$RUNNER_TEMP/run-1.json" 2>&1 || status=$?
+          show "$RUNNER_TEMP/run-1.json"
+          go test -json -timeout "$ADOPT_TEST_TIMEOUT" "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
+          show "$RUNNER_TEMP/run-2.json"
+          exit "$status"
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
-          LONG_TEST_TIMEOUT: ${{ matrix.name == 'Windows' && '60m' || '30m' }}
+          ADOPT_TEST_TIMEOUT: ${{ matrix.name == 'Windows' && '60m' || '30m' }}
 
       - name: Upload Per-Test Timing
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
