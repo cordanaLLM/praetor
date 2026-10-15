@@ -497,6 +497,15 @@ Adoption refuses unbalanced or duplicate live markers before writing
 custom badges outside the block remain untouched, and a custom HISS badge
 prevents the renderer from adding a second badge.
 
+### The scaffolded pull request template is forge text
+
+The pull request template adoption writes (`buildPullRequestTemplate` in
+`internal/adopt/governance.go`) keeps each paragraph and list item on one line: the forge renders
+every newline as a line break, so a wrapped paragraph would show as broken short lines. It is
+therefore checked as forge text (`forge.ValidateForgeParagraphs`), not against the 80-column
+rule the other governance documents follow, and an unedited template from before the change is
+recorded as a prior rendering, so the next adoption replaces it (#1379).
+
 ### Branch protection rulesets and adoption decline
 
 Repositories adopting Praetor that manage branch protection externally or decline
