@@ -290,6 +290,17 @@ verify-all: devcontainer-refresh-test
 devcontainer-refresh-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_devcontainer_refresh_publish.py'
 
+# #1026: vet every Go module for Windows and macOS from any host, so a platform-only compile
+# break (a test calling syscall.Mkfifo without a build constraint) fails here in seconds rather
+# than on the hosted Platform Neutrality legs an hour later. cross-vet-test proves the step
+# fails on a planted Unix-only fixture module under scripts/testdata/cross_vet.
+.PHONY: cross-vet cross-vet-test
+verify-all: cross-vet cross-vet-test
+cross-vet:
+	python3 scripts/cross_vet.py
+cross-vet-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_cross_vet.py'
+
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py
 	python3 -B scripts/test_planning_import.py
