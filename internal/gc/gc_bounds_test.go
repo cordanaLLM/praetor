@@ -16,7 +16,9 @@ func TestCollect_OverLimitReleasedArtifactFailsClosed(t *testing.T) {
 	if err := os.MkdirAll(eph, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i <= MaxFileScanLimit; i++ {
+	defer func(limit int) { fileScanLimit = limit }(fileScanLimit)
+	fileScanLimit = 64
+	for i := 0; i <= fileScanLimit; i++ {
 		path := filepath.Join(eph, "f-"+strconv.Itoa(i))
 		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
 			t.Fatalf("write overflow fixture: %v", err)

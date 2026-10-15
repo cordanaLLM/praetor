@@ -94,7 +94,7 @@ func walkTree(ctx context.Context, root *os.Root, path string, rules walkRules) 
 	var snapshot []treeEntry
 	queue := []string{path}
 	dirs := 0
-	for i := 0; i < len(queue) && i < MaxFileScanLimit; i++ {
+	for i := 0; i < len(queue) && i < fileScanLimit; i++ {
 		current := queue[i]
 		info, err := scanEntry(ctx, root, current, &stats, rules.collect)
 		if err != nil {
@@ -113,7 +113,7 @@ func walkTree(ctx context.Context, root *os.Root, path string, rules walkRules) 
 		if dirs > MaxDirectoryTraversal {
 			return stats, nil, errors.New("directory traversal limit exceeded")
 		}
-		children, err := scanChildren(ctx, root, current, MaxFileScanLimit-len(queue), rules, current == path)
+		children, err := scanChildren(ctx, root, current, fileScanLimit-len(queue), rules, current == path)
 		if err != nil {
 			return stats, nil, err
 		}
@@ -180,7 +180,7 @@ func validatePlanSize(plan []candidate) error {
 	entries := 0
 	for _, item := range plan {
 		entries += len(item.entries)
-		if entries > MaxFileScanLimit {
+		if entries > fileScanLimit {
 			return errors.New("combined collection plan exceeds entry limit")
 		}
 	}

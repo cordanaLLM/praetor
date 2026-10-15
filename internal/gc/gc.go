@@ -23,6 +23,11 @@ const (
 	MaxEntriesLimit       = 2000
 )
 
+// fileScanLimit is the entries one tree walk and one collection plan may hold, MaxFileScanLimit.
+// The over-limit test lowers it: 50,001 fixture files took over a minute to write and remove on
+// Windows (office-w19a-c1).
+var fileScanLimit = MaxFileScanLimit
+
 // Options specifies a confined collection scope. ReleasedPaths are exact direct
 // children of the configured pools, relative to RootDir (or absolute within it).
 // Listing a path asserts that its owner released it and will not write to it.
