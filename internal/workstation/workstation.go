@@ -55,6 +55,16 @@ var (
 	ErrForeignTarget = errors.New("workstation: refusing an unexpected installation target")
 )
 
+// targetFileName is the file name of the installation target name on goos: name itself, or
+// name.exe on Windows, which executes a PE only under that suffix (#208). Every other table in
+// this package, and the install manifest, keys on the bare name.
+func targetFileName(goos, name string) string {
+	if goos == goosWindows {
+		return name + ".exe"
+	}
+	return name
+}
+
 // targetsOf returns the installation targets one binary owns: its own name, then its legacy
 // alias when it has one.
 func targetsOf(name string) []string {
