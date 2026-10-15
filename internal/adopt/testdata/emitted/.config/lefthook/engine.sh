@@ -152,13 +152,15 @@ install_pinned() { #
 #
 # place_pinned DIRECTORY WHERE FIX: move what install_pinned built into $scratch into DIRECTORY.
 # Jobs that run in parallel, and worktrees that share the cache, each install on a cold cache.
-# The target directory is never removed or replaced as a whole: each built file is renamed over
-# the target one, which is atomic and swaps in an identical file when another job was first. A
-# rename that fails because the engine is running (Windows) leaves that engine in place.
+# The target directory is never removed or replaced as a whole: each built file is renamed into
+# place only where no file of that name is yet (mv -n), and a job that comes second keeps the
+# identical engine the first placed. Replacing it was not safe on Windows: a file another job is
+# running is moved aside before the new one is renamed in, and a third job that looked in
+# between found no engine at all.
 place_pinned() { #
   mkdir -p "$1" || refuse "cannot create $1 for the engine pinned by $2; run: $3" #
   for built in "$scratch"/*; do #
-    if ! mv -f "$built" "$1/" 2>/dev/null && [ ! -e "$1/${built##*/}" ]; then #
+    if ! mv -n "$built" "$1/" 2>/dev/null && [ ! -e "$1/${built##*/}" ]; then #
       refuse "cannot move the installed engine into $1 for the pin in $2; run: $3" #
     fi #
   done #
