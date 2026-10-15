@@ -127,6 +127,21 @@ READ_ONLY_VETO = (
     r"?:[^-A-Za-z0-9_]|$))"
 )
 
+# The heredoc bodies a text reader consumes are no command: an operator line that is one simple
+# command whose program HEREDOC_READERS names loses the bodies that end and, for an unquoted
+# delimiter, hold no command substitution.
+HEREDOC_OPERATOR = (
+    r"(?:^|[^<])<<(-?)[ \t]*(?:\x27([A-Za-z0-9_.-]+)\x27|\x22([A-Za-z0-9_.-]+)\x22|(\\?"
+    r")([A-Za-z0-9_.-]+))"
+)
+HEREDOC_READERS = (
+    r"^[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*(?:git|gh|glab|cat|tee)(?:[ \t]|$"
+    r")"
+)
+HEREDOC_QUOTED = r"\x27[^\x27]*\x27|\x22[^\x22$\x60\\]*\x22"
+HEREDOC_VETO = r"[|;&(){}$\x60]"
+HEREDOC_SUBSTITUTION = r"\$\(|\x60"
+
 LEFTHOOK_DISABLED = [
     ("0", "[BLOCKED BY HISS] LEFTHOOK=0 detected in environment. Evasion prohibited."),
     (
@@ -192,6 +207,50 @@ def join_line_continuations(command):
     return re.sub(r"\\\r?\n", " ", command)
 
 
+def without_heredoc_bodies(command):
+    lines = command.split("\n")
+    kept = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        index += 1
+        operators = re.findall(HEREDOC_OPERATOR, line)
+        if (
+            not operators
+            or re.search(HEREDOC_VETO, re.sub(HEREDOC_QUOTED, "", line))
+            or not re.search(HEREDOC_READERS, line)
+        ):
+            continue
+        end = heredoc_bodies_end(lines, index, operators)
+        if end is not None:
+            index = end
+    return "\n".join(kept)
+
+
+def heredoc_bodies_end(lines, start, operators):
+    # The line after the bodies of operators, which start at lines[start], or None when a body
+    # does not end or an unquoted one holds a command substitution.
+    index = start
+    for dash, single, double, backslash, bare in operators:
+        body = []
+        while index < len(lines):
+            candidate = lines[index].removesuffix("\r")
+            if dash:
+                candidate = candidate.lstrip("\t")
+            if candidate == single + double + bare:
+                break
+            body.append(lines[index])
+            index += 1
+        if index == len(lines):
+            return None
+        quoted = single or double or backslash
+        if not quoted and re.search(HEREDOC_SUBSTITUTION, "\n".join(body)):
+            return None
+        index += 1
+    return index
+
+
 def check_command(command):
     command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
@@ -200,6 +259,7 @@ def check_command(command):
         raise Blocked(SCAN_BOUND_REFUSAL)
     if max(len(line) for line in command.split("\n")) > MAX_SCAN_LINE_CHARS:
         raise Blocked(SCAN_BOUND_REFUSAL)
+    command = without_heredoc_bodies(command)
     judged = without_read_only_words(command)
     for pattern, refusal in RULES:
         text = judged if pattern in READ_ONLY_EXEMPT else command

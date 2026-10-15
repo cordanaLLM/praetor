@@ -46,6 +46,15 @@ READ_ONLY_EXEMPT_PATTERNS = [
 READ_ONLY_WORDS = r"((?:;|&&|\|\|?)[ \t]*(?:git[ \t]+(?:--no-pager[ \t]+)?(?:log|show|status|diff|rev-parse)|head|tail|grep|wc))(?:[ \t]+[-A-Za-z0-9_./:=@,+~*?]+)*|((?:;|&&|\|\|?)[ \t]*sed)[ \t]+-n\b(?:[ \t]+[-A-Za-z0-9_./:=@,+~*?]+)*"
 READ_ONLY_VETO = r"[^\t\x20-\x7e]|[\\\x60$(){}<>^!]|--%|%[;&|]|(?i:(?:\A|[^-A-Za-z0-9_])(?:export|declare|typeset|set|setenv|alias|function|sal|nal|set-alias|new-alias|doskey|hash)(?:[^-A-Za-z0-9_]|$))"
 
+# agenthook.HeredocOperator, HeredocReaders, HeredocQuoted, HeredocVeto and HeredocSubstitution,
+# byte for byte (TestPythonGuardCarriesTheHeredocRule): the heredoc bodies a text reader
+# consumes are no command (without_heredoc_bodies, #1091).
+HEREDOC_OPERATOR = r"(?:^|[^<])<<(-?)[ \t]*(?:\x27([A-Za-z0-9_.-]+)\x27|\x22([A-Za-z0-9_.-]+)\x22|(\\?)([A-Za-z0-9_.-]+))"
+HEREDOC_READERS = r"^[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+)*(?:git|gh|glab|cat|tee)(?:[ \t]|$)"
+HEREDOC_QUOTED = r"\x27[^\x27]*\x27|\x22[^\x22$\x60\\]*\x22"
+HEREDOC_VETO = r"[|;&(){}$\x60]"
+HEREDOC_SUBSTITUTION = r"\$\(|\x60"
+
 # Lefthook skips every hook for exactly these LEFTHOOK values (lefthook v2.1.14,
 # internal/command/run.go); agenthook's lefthookDisableValues holds the same pair.
 LEFTHOOK_DISABLED = ("0", "false")
@@ -86,10 +95,57 @@ def join_line_continuations(command_str: str) -> str:
     return re.sub(r"\\\r?\n", " ", command_str)
 
 
+def without_heredoc_bodies(command_str: str) -> str:
+    """Drop the bodies and delimiter lines of the heredocs a text reader consumes.
+
+    agenthook's withoutHeredocBodies: only an operator line that is one simple command whose
+    program HEREDOC_READERS names loses its bodies, and only bodies that end and, for an unquoted
+    delimiter, hold no command substitution. Every other line is kept.
+    """
+    lines = command_str.split("\n")
+    kept = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        index += 1
+        operators = re.findall(HEREDOC_OPERATOR, line)
+        if (not operators or re.search(HEREDOC_VETO, re.sub(HEREDOC_QUOTED, "", line))
+                or not re.search(HEREDOC_READERS, line)):
+            continue
+        end = heredoc_bodies_end(lines, index, operators)
+        if end is not None:
+            index = end
+    return "\n".join(kept)
+
+
+def heredoc_bodies_end(lines, start, operators):
+    """Return the line after the bodies of operators starting at lines[start], or None."""
+    index = start
+    for dash, single, double, backslash, bare in operators:
+        body = []
+        while index < len(lines):
+            candidate = lines[index].removesuffix("\r")
+            if dash:
+                candidate = candidate.lstrip("\t")
+            if candidate == single + double + bare:
+                break
+            body.append(lines[index])
+            index += 1
+        if index == len(lines):
+            return None
+        quoted = single or double or backslash
+        if not quoted and re.search(HEREDOC_SUBSTITUTION, "\n".join(body)):
+            return None
+        index += 1
+    return index
+
+
 def audit_command(command_str: str) -> bool:
     command_str = join_line_continuations(command_str)
     if not scannable(command_str):
         return False
+    command_str = without_heredoc_bodies(command_str)
     judged = without_read_only_words(command_str)
     for pattern in BLOCKED_PATTERNS:
         text = judged if pattern in READ_ONLY_EXEMPT_PATTERNS else command_str

@@ -353,13 +353,14 @@ func joinLineContinuations(command string) string {
 	return lineContinuationReplacer.Replace(command)
 }
 
-// Command judges one proposed command line. The first matching rule denies; a
-// readOnlyExempt rule judges the command without the words of chained read-only commands.
+// Command judges one proposed command line, without the heredoc bodies a text reader consumes
+// (withoutHeredocBodies). The first matching rule denies; a readOnlyExempt rule judges the
+// command without the words of chained read-only commands.
 func (p *Policy) Command(command string) Verdict {
 	if p == nil {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no command policy is loaded"}
 	}
-	command = joinLineContinuations(command)
+	command = withoutHeredocBodies(joinLineContinuations(command))
 	judged := withoutReadOnlyWords(command)
 	for _, rule := range p.rules {
 		text := command

@@ -623,6 +623,29 @@ start of the command, after a separator, after a hyphen and inside a longer word
 changed anchor fails the replay in the Go policy, in praetor's own guard and in the emitted
 interceptor (`internal/agenthook/testdata/pre-tool/cases.json`).
 
+#### Heredoc text is no flag
+
+A commit message or an issue body passed as a heredoc is text: a skip flag it quotes is passed to
+nothing. The rules judged the whole command, so `git commit -s -F - <<'EOF'` whose message quoted
+the short or long skip flag, or a `gh issue create --body-file -` body describing it, was refused
+as evasion (#1091). The policy now judges the command without such a body and its delimiter line,
+but only where the body cannot run:
+
+- the line holding `<<` is one simple command: after removing quoted words that expand nothing
+  (single-quoted, or double-quoted without `$`, a backtick or a backslash), it holds none of
+  `| ; & ( ) { } $` and no backtick;
+- its program, after any `NAME=value` assignments, is `git`, `gh`, `glab`, `cat` or `tee`;
+- every body ends at its delimiter (`<<-` strips leading tabs, a CRLF line end is ignored), and an
+  unquoted delimiter's body holds no `$(` or backtick.
+
+Everything else is judged whole: a heredoc fed to `bash`, `python3` or a pipe, a computed program
+such as `$SHELL`, a body that runs a command substitution, and one that never ends. The operator
+line itself and every line after the delimiter are always judged, so `git commit -sn -F - <<'EOF'`
+and a `git push --no-verify` after the body are still refused. The sources are `HeredocOperator`,
+`HeredocReaders`, `HeredocQuoted`, `HeredocVeto` and `HeredocSubstitution` in
+`internal/agenthook/heredoc.go`; praetor's own guard and the emitted interceptor carry them byte for
+byte (`TestPythonGuardCarriesTheHeredocRule`, `TestEmittedInterceptorReplaysTheEngineCorpus`).
+
 ### Where the rules live
 
 The sources live in `internal/agenthook/policy.go` (`builtinEvasion`, `builtinDevRoot`).

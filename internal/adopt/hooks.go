@@ -430,6 +430,10 @@ RULES = [
 {{READ_ONLY_EXEMPT_PATTERNS}}READ_ONLY_EXEMPT = [
 {{READ_ONLY_EXEMPT}}]
 {{READ_ONLY_WORDS}}{{READ_ONLY_VETO}}
+# The heredoc bodies a text reader consumes are no command: an operator line that is one simple
+# command whose program HEREDOC_READERS names loses the bodies that end and, for an unquoted
+# delimiter, hold no command substitution.
+{{HEREDOC_OPERATOR}}{{HEREDOC_READERS}}{{HEREDOC_QUOTED}}{{HEREDOC_VETO}}{{HEREDOC_SUBSTITUTION}}
 LEFTHOOK_DISABLED = [
 {{LEFTHOOK_DISABLED}}]
 LEFTHOOK_NARROWING = {{LEFTHOOK_NARROWING}}
@@ -490,6 +494,50 @@ def join_line_continuations(command):
     return re.sub(r"\\\r?\n", " ", command)
 
 
+def without_heredoc_bodies(command):
+    lines = command.split("\n")
+    kept = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        index += 1
+        operators = re.findall(HEREDOC_OPERATOR, line)
+        if (
+            not operators
+            or re.search(HEREDOC_VETO, re.sub(HEREDOC_QUOTED, "", line))
+            or not re.search(HEREDOC_READERS, line)
+        ):
+            continue
+        end = heredoc_bodies_end(lines, index, operators)
+        if end is not None:
+            index = end
+    return "\n".join(kept)
+
+
+def heredoc_bodies_end(lines, start, operators):
+    # The line after the bodies of operators, which start at lines[start], or None when a body
+    # does not end or an unquoted one holds a command substitution.
+    index = start
+    for dash, single, double, backslash, bare in operators:
+        body = []
+        while index < len(lines):
+            candidate = lines[index].removesuffix("\r")
+            if dash:
+                candidate = candidate.lstrip("\t")
+            if candidate == single + double + bare:
+                break
+            body.append(lines[index])
+            index += 1
+        if index == len(lines):
+            return None
+        quoted = single or double or backslash
+        if not quoted and re.search(HEREDOC_SUBSTITUTION, "\n".join(body)):
+            return None
+        index += 1
+    return index
+
+
 def check_command(command):
     command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
@@ -498,6 +546,7 @@ def check_command(command):
         raise Blocked(SCAN_BOUND_REFUSAL)
     if max(len(line) for line in command.split("\n")) > MAX_SCAN_LINE_CHARS:
         raise Blocked(SCAN_BOUND_REFUSAL)
+    command = without_heredoc_bodies(command)
     judged = without_read_only_words(command)
     for pattern, refusal in RULES:
         text = judged if pattern in READ_ONLY_EXEMPT else command
@@ -596,6 +645,11 @@ func buildBlockEvasionPY() string {
 		"{{READ_ONLY_EXEMPT}}", exempt.String(),
 		"{{READ_ONLY_WORDS}}", pythonAssignment("READ_ONLY_WORDS", pyToken{agenthook.ReadOnlyWords, pyRaw}),
 		"{{READ_ONLY_VETO}}", pythonAssignment("READ_ONLY_VETO", pyToken{agenthook.ReadOnlyVeto, pyRaw}),
+		"{{HEREDOC_OPERATOR}}", pythonAssignment("HEREDOC_OPERATOR", pyToken{agenthook.HeredocOperator, pyRaw}),
+		"{{HEREDOC_READERS}}", pythonAssignment("HEREDOC_READERS", pyToken{agenthook.HeredocReaders, pyRaw}),
+		"{{HEREDOC_QUOTED}}", pythonAssignment("HEREDOC_QUOTED", pyToken{agenthook.HeredocQuoted, pyRaw}),
+		"{{HEREDOC_VETO}}", pythonAssignment("HEREDOC_VETO", pyToken{agenthook.HeredocVeto, pyRaw}),
+		"{{HEREDOC_SUBSTITUTION}}", pythonAssignment("HEREDOC_SUBSTITUTION", pyToken{agenthook.HeredocSubstitution, pyRaw}),
 		"{{LEFTHOOK_DISABLED}}", disabled.String(),
 		"{{LEFTHOOK_NARROWING}}", pythonStringTuple(agenthook.LefthookNarrowingVariables()),
 	).Replace(blockEvasionTemplate)
@@ -850,6 +904,7 @@ var priorEvasionHookDigests = map[string]string{
 	"9db442d72dc16b74ce88250c1dbf1a0b05830bdc6716ab4b705c5aa1c7531a02": "named exempt patterns and a start-of-text veto anchor, clean under CodeQL (#1219)",
 	"74a3c9cb08bd3afeaf4c0e0e3b05f0b9ad7518beee1173465477270ed71f569d": "raise from error in pending_command under adopter ruff B904",
 	"e69d49af323fcd3b1d23394bc6736afa115629ff7925ffec664404bd048ec169": "refuse admin and API merges that bypass rulesets (#1300)",
+	"0ae7c7d7fab1d7d73a8ed5dad9ac3e451b17282958aa5f669caabef423543c22": "heredoc bodies a text reader consumes are no command (#1091)",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

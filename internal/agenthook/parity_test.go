@@ -363,3 +363,16 @@ func TestParityWithThePythonGuardOnTheEnvironment(t *testing.T) {
 		}
 	}
 }
+
+// TestPythonGuardCarriesTheHeredocRule holds praetor's own Python guard to the engine's heredoc
+// rule byte for byte (#1091); the corpus replay checks the behaviour.
+func TestPythonGuardCarriesTheHeredocRule(t *testing.T) {
+	for name, want := range map[string]string{
+		"HEREDOC_OPERATOR": HeredocOperator, "HEREDOC_READERS": HeredocReaders, "HEREDOC_QUOTED": HeredocQuoted,
+		"HEREDOC_VETO": HeredocVeto, "HEREDOC_SUBSTITUTION": HeredocSubstitution,
+	} {
+		if got := pythonRawConstant(t, name); got != want {
+			t.Errorf("%s in %s differs from agenthook's:\npython %q\ngo     %q", name, pythonGuard, got, want)
+		}
+	}
+}
