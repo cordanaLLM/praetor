@@ -635,7 +635,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `adr` | `docs/adr/README.md` and `docs/adr/0000-template.md` |
 | `readme` | the governance block in an existing `README.md` |
 | `reuse-gate` | `.github/workflows/reuse.yml`, where the root carries `REUSE.toml` or `.reuse/dep5` |
-| `working-dir-and-flavor` | the private `.workingdir/` ledger and the detected flavor's templates ([flavors](guides/onboarding.md#flavors)) |
+| `working-dir-and-flavor` | the private `.workingdir/` ledger, the detected flavor's templates ([flavors](guides/onboarding.md#flavors)), and `.gosec.json` whenever git tracks a `go.mod` |
 | `branch-ruleset` | `.github/rulesets/main.json`, the branch ruleset with the required status checks |
 | `labels` | `.config/labels.yaml`, the label taxonomy |
 | `paperclip` | `.paperclip/harness.json` and `.paperclip/rules.md` |

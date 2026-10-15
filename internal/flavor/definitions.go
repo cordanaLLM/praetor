@@ -81,10 +81,20 @@ func (f *GoServiceFlavor) Detect(repoPath string) bool {
 	return hasMod && (hasCmd || hasDocker)
 }
 
+// GosecTemplate returns the pinned gosec configuration template item.
+func GosecTemplate() TemplateItem {
+	return TemplateItem{
+		Path:        ".gosec.json",
+		Description: "Go security analyzer configuration",
+		Source:      "go/.gosec.json.tmpl",
+		Validator:   validJSONObject,
+	}
+}
+
 func (f *GoServiceFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: ".golangci.yml", Description: "Unified Go linter configuration", Source: "go/.golangci.yml.tmpl", Validator: validYAMLMapping},
-		{Path: ".gosec.json", Description: "Go security analyzer configuration", Source: "go/.gosec.json.tmpl", Validator: validJSONObject},
+		GosecTemplate(),
 		{Path: ".github/workflows/ci.yml", Description: "Continuous integration matrix", Source: "go/ci-go.yml.tmpl", Validator: validWorkflow, Prior: priorGoCIDigests},
 		{
 			Path:        ".github/workflows/security.yml",

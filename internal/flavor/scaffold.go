@@ -139,6 +139,34 @@ func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, 
 	return report, nil
 }
 
+// ApplyTemplates scaffolds the missing templates of items through the same template
+// reconciliation ApplyFlavorWith uses. Under opts.DryRun it writes nothing and reports what the
+// apply would write.
+func ApplyTemplates(ctx context.Context, repoPath, label string, items []TemplateItem, opts ApplyOptions) (*ApplyReport, error) {
+	opts.TemplatesOnly = true
+	if err := checkApplyRequest(ctx, opts); err != nil {
+		return nil, err
+	}
+	owner, repoName, err := flavorIdentity(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	report := &ApplyReport{
+		Flavor: label,
+	}
+	run := templateRun{repoName: repoName, owner: owner, force: opts.Force, dryRun: opts.DryRun}
+	for i := 0; i < len(items) && i < maxPlannedTemplates; i++ {
+		if err := ctx.Err(); err != nil {
+			return report, err
+		}
+		applySingleTemplate(ctx, repoPath, items[i], run, report)
+	}
+	if len(report.Errors) > 0 {
+		return report, fmt.Errorf("%w: %d error(s): %s", ErrApplyIncomplete, len(report.Errors), strings.Join(report.Errors, "; "))
+	}
+	return report, nil
+}
+
 // checkApplyRequest refuses an apply before anything is read: a nil or cancelled context, and a
 // dry run that would render settings (ErrDryRunSettings).
 func checkApplyRequest(ctx context.Context, opts ApplyOptions) error {

@@ -1,0 +1,2 @@
+type: fixed
+title: adoption writes pinned gosec configuration into repositories tracking Go modules

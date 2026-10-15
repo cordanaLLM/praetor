@@ -554,7 +554,7 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	}
 	confPath := filepath.Join(cfg.repoDir, GosecConfigFile)
 	if !util.FileExists(confPath) {
-		return "", fmt.Errorf("%s is missing: the security gate refuses to run gosec without its pinned configuration", GosecConfigFile)
+		return "", fmt.Errorf("%s is missing: the security gate refuses to run gosec without its pinned configuration; run praetorctl adopt to write it", GosecConfigFile)
 	}
 	results, err := runGoModules(ctx, cfg, runGoSecurityModule)
 	if err != nil {
