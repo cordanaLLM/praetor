@@ -836,7 +836,9 @@ rules:
         runner: gitleaks
         mechanism: >-
           gitleaks default ruleset (the repository has no .gitleaks.toml) via make secrets -> gitleaks
-          detect --no-banner --redact, reached by make verify-all. It is NOT in the praetorctl gate
+          detect --no-banner --redact over the history with merge commits included (--log-opts
+          "--full-history --all -m", #1237; TestSecretsHistoryScan_Boundary_ReadsMergeCommits replays
+          a merge-only credential), reached by make verify-all. It is NOT in the praetorctl gate
           pipeline (internal/gating.runSecurityStage runs govulncheck and gosec only) and NOT in any
           lefthook hook. internal/hiss, golangci-lint and semgrep have no HISS-12 rule.
         rationale: >-
