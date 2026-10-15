@@ -36,7 +36,8 @@ __pycache__/
 
 # Dependency directories
 /vendor/
-/tools/figures/node_modules/
+# Every npm project, current and future, must keep node_modules uncommittable.
+node_modules/
 
 # IDE and OS files
 .DS_Store

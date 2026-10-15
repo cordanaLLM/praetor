@@ -314,7 +314,7 @@ func (s *scheduleSession) execute(ctx context.Context, name string) (*SuiteRepor
 	if err != nil {
 		return nil, err
 	}
-	writeErr := s.snapshot.materialize(ctx, attempt, "inputs")
+	writeErr := s.snapshot.materialize(ctx, attempt, s.root, "inputs")
 	if err := errors.Join(writeErr, attempt.Close()); err != nil {
 		return nil, err
 	}

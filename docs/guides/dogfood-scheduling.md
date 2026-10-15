@@ -60,8 +60,20 @@ snapshots. The complete bundle snapshot is bounded to 512 entries and 16 MiB.
 A run hashes its actual `/proc/self/exe` descriptor and requires it to match
 `runner_binary`; replacing the installed pathname cannot misidentify already
 running code. Status uses the configured runner, so an MCP server and CLI report
-the same fingerprint. Inputs are copied into each attempt before suite execution;
-transcript hashes and public commit pins remain explicit and are never updated.
+the same fingerprint. Inputs are copied into each attempt before suite execution.
+Each declared transcript is copied once, after its SHA-256 is verified, to
+`state_dir/transcripts/<id>-<sha256>/<source-base-name>`. Both store directories
+are `0700`, and the transcript file is `0600`. Keeping the source base name means
+Antigravity inputs remain `transcript.jsonl` or `transcript_full.jsonl`, while a
+Claude Code input retains its session UUID file name. Every attempt's
+`inputs/suite.json` points at that stored file, and replay reports the same path
+that the reader opened. Later runs therefore do not depend on a coding client's
+original transcript remaining available. A source base name must be one safe
+file-name component of at most 255 bytes. An existing stored file is verified
+before use and is never silently replaced.
+The transcript store holds pinned inputs, not run evidence, and `prune-oldest`
+never removes it. Transcript hashes and public commit pins remain explicit and
+are never updated.
 
 A successful unchanged input waits `interval_seconds` after completion. Failures
 wait `retry_seconds`; three failures for unchanged inputs open the circuit.
