@@ -18,6 +18,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // evasionCorpus is agenthook's replay corpus: the payloads praetor's own guard and the Go
@@ -638,7 +639,8 @@ func TestEmittedInterceptorSearchesLikeTheEngineGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guard := string(data)
+	// A core.autocrlf checkout writes the guard with CRLF; the rendering is LF (#1369).
+	guard, _ := util.NormalizeLineEndings(string(data))
 	start, end := strings.Index(guard, "# The git rule with an option run"), strings.Index(guard, "def audit_command")
 	if start < 0 || end <= start {
 		t.Fatalf("the engine guard has no option-run search before audit_command")
