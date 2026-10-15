@@ -67,7 +67,10 @@ def checkpoint(event, root=ROOT, budget=None):
             or not isinstance(report.get("actions"), list)
             or len(report["actions"]) > 16
             or not all(isinstance(item, str) and len(item) <= 1024
-                       for item in report["actions"])):
+                       for item in report["actions"])
+            or (report.get("deferred") is True
+                and (report["due"] or report["actions"]
+                     or not isinstance(report.get("deferral"), str) or not report["deferral"]))):
         raise ValueError("shared checkpoint job returned an invalid result")
     if report["due"] and not report["actions"]:
         raise ValueError("due checkpoint has no actionable disposition")
@@ -120,6 +123,8 @@ def respond(payload, budget=None):
             return blocked(reason, active)
     try:
         report = checkpoint("stop" if stopping else "tool", root, budget)
+        if report.get("deferred") is True:  # a detached job that cannot publish: printed, never a block
+            return {"systemMessage": "Praetor checkpoint deferred: " + report["deferral"]}
         if not report["enabled"] or not report["due"]:
             return {}
         reason = ("Praetor checkpoint due: " + "; ".join(report["actions"])
