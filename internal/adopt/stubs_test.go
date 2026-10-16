@@ -178,28 +178,27 @@ func builtStub(t *testing.T, source string) string {
 	if err := os.Setenv("PATH", stubCache.path); err != nil {
 		t.Fatalf("stub cache: %v", err)
 	}
-	defer func() {
-		if err := os.Setenv("PATH", narrowed); err != nil {
-			t.Errorf("stub cache: restore PATH: %v", err)
-		}
-	}()
+	defer func() { _ = os.Setenv("PATH", narrowed) }()
 	path := testsupport.BuildExecutable(t, dir, "stub", source)
 	stubCache.built[source] = path
 	return path
 }
 
-func copyExecutable(from, to string) (err error) {
+func copyExecutable(from, to string) error {
 	source, err := os.Open(from)
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, source.Close()) }()
+	defer func() { _ = source.Close() }()
 	target, err := os.OpenFile(to, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(target, source)
-	return errors.Join(err, target.Close())
+	if _, err := io.Copy(target, source); err != nil {
+		_ = target.Close()
+		return err
+	}
+	return target.Close()
 }
 
 // TestHermeticPathRunsTheBuiltStubs (#166): under hermeticPath, lefthook is the stand-in the
