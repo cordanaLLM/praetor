@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"time"
 
@@ -80,5 +81,15 @@ func runDecisionServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve repository path: %w", err)
 	}
-	return decisions.Serve(ctx, root, *outDir)
+	return serverExitStatus(decisions.Serve(ctx, root, *outDir))
+}
+
+// serverExitStatus returns decided-mcp's own exit status silently: the child already wrote its
+// diagnostic to the stderr it shares with this process. Every other error keeps its text.
+func serverExitStatus(err error) error {
+	var child *exec.ExitError
+	if errors.As(err, &child) && child.ExitCode() > 0 {
+		return exitStatusError{code: child.ExitCode()}
+	}
+	return err
 }

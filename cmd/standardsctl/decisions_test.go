@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adr"
@@ -63,16 +66,25 @@ func TestDecisionsPinCheckCommandCorrectBinaryExitZero(t *testing.T) {
 	}
 }
 
-func TestCommandExitCodePassesThroughChildStatus(t *testing.T) {
+// Positive: decisions serve exits with decided-mcp's own status and adds no text. Negative:
+// another command that wraps a failed child keeps exit 1 and its error text.
+func TestServerExitStatusPassesOnlyTheServerStatus(t *testing.T) {
 	var command *exec.Cmd
 	if runtime.GOOS == "windows" {
 		command = exec.Command("cmd", "/c", "exit 23")
 	} else {
 		command = exec.Command("/bin/sh", "-c", "exit 23")
 	}
-	err := command.Run()
-	if got := commandExitCode(io.Discard, err); got != 23 {
-		t.Fatalf("child exit code = %d, want 23", got)
+	err := fmt.Errorf("run decided-mcp: %w", command.Run())
+	var stderr bytes.Buffer
+	if got := commandExitCode(&stderr, serverExitStatus(err)); got != 23 || stderr.Len() != 0 {
+		t.Fatalf("server exit = %d, stderr %q; want 23 and no text", got, stderr.String())
+	}
+	if got := commandExitCode(&stderr, err); got != 1 || !strings.Contains(stderr.String(), "run decided-mcp") {
+		t.Fatalf("wrapped child elsewhere = %d, stderr %q; want 1 with the error text", got, stderr.String())
+	}
+	if serverExitStatus(nil) != nil {
+		t.Fatal("a clean server exit became an error")
 	}
 }
 

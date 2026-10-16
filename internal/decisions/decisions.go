@@ -236,39 +236,46 @@ func writeCorpusRecord(root *os.Root, record exportedRecord) error {
 
 // PinCheck requires the PATH binary to match the checked release digest.
 func PinCheck(ctx context.Context) error {
+	_, err := verifiedBinary(ctx)
+	return err
+}
+
+// verifiedBinary resolves decided-mcp on PATH and returns the resolved file whose digest
+// matched the pin, so Serve starts the bytes it checked rather than a second PATH lookup.
+func verifiedBinary(ctx context.Context) (string, error) {
 	if ctx == nil {
-		return errors.New("decision pin check requires a context")
+		return "", errors.New("decision pin check requires a context")
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return "", err
 	}
 	name, err := exec.LookPath("decided-mcp")
 	if err != nil {
-		return fmt.Errorf("decided-mcp %s missing; expected sha256 %s; release: %s", Version, DecidedMCPHash[:12], ReleaseURL)
+		return "", fmt.Errorf("decided-mcp %s missing; expected sha256 %s; release: %s", Version, DecidedMCPHash[:12], ReleaseURL)
 	}
 	resolved, err := filepath.EvalSymlinks(name)
 	if err != nil {
-		return fmt.Errorf("resolve decided-mcp %s at %s: %w", Version, name, err)
+		return "", fmt.Errorf("resolve decided-mcp %s at %s: %w", Version, name, err)
 	}
 	hash, _, err := contextopt.DigestBinarySnapshot(ctx, resolved, maxBinaryBytes)
 	if err != nil {
-		return fmt.Errorf("check decided-mcp %s at %s: %w", Version, resolved, err)
+		return "", fmt.Errorf("check decided-mcp %s at %s: %w", Version, resolved, err)
 	}
 	if hash != DecidedMCPHash {
-		return fmt.Errorf("decided-mcp %s at %s has sha256 %s; expected %s; release: %s", Version, resolved, hash[:12], DecidedMCPHash[:12], ReleaseURL)
+		return "", fmt.Errorf("decided-mcp %s at %s has sha256 %s; expected %s; release: %s", Version, resolved, hash[:12], DecidedMCPHash[:12], ReleaseURL)
 	}
-	return nil
+	return resolved, nil
 }
 
 // Serve exports the current repository corpus, verifies decided-mcp, then runs
 // it with the MCP stdio streams connected directly to the terminal client.
 func Serve(ctx context.Context, repoRoot, outDir string) error {
-	return serve(ctx, repoRoot, outDir, PinCheck, runChild)
+	return serve(ctx, repoRoot, outDir, verifiedBinary, runChild)
 }
 
 type serverRunner func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error
 
-func serve(ctx context.Context, repoRoot, outDir string, check func(context.Context) error, runner serverRunner) error {
+func serve(ctx context.Context, repoRoot, outDir string, check func(context.Context) (string, error), runner serverRunner) error {
 	if ctx == nil || check == nil || runner == nil {
 		return errors.New("decision serve requires a context, pin check and server runner")
 	}
@@ -282,12 +289,9 @@ func serve(ctx context.Context, repoRoot, outDir string, check func(context.Cont
 	if _, err := Export(ctx, repo, outDir); err != nil {
 		return err
 	}
-	if err := check(ctx); err != nil {
-		return err
-	}
-	binary, err := exec.LookPath("decided-mcp")
+	binary, err := check(ctx)
 	if err != nil {
-		return fmt.Errorf("find decided-mcp after pin check: %w", err)
+		return err
 	}
 	return runner(ctx, binary, []string{"--root", corpusRoot(repo, outDir)}, os.Stdin, os.Stdout, os.Stderr)
 }

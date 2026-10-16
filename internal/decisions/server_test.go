@@ -101,24 +101,18 @@ func TestPinCheckCancelled(t *testing.T) {
 func TestServeExportsChecksPinThenRunsWithCorpusRoot(t *testing.T) {
 	repo := t.TempDir()
 	mustWriteDecision(t, filepath.Join(repo, filepath.FromSlash(adr.RecordDirectory), "0001-choice.md"), "# Choice\n")
-	binDir := t.TempDir()
-	name := "decided-mcp"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	if err := os.WriteFile(filepath.Join(binDir, name), []byte("pinned by test callback"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir)
+	// The runner must start exactly the file the pin check verified, never a second PATH lookup.
+	verified := filepath.Join(t.TempDir(), "verified-decided-mcp")
+	t.Setenv("PATH", t.TempDir())
 	checked := false
 	runnerCalled := false
 	wantErr := errors.New("child failed")
-	err := serve(t.Context(), repo, "", func(context.Context) error {
+	err := serve(t.Context(), repo, "", func(context.Context) (string, error) {
 		checked = true
-		return nil
+		return verified, nil
 	}, func(_ context.Context, binary string, args []string, _ io.Reader, _ io.Writer, _ io.Writer) error {
 		runnerCalled = true
-		if !checked || filepath.Base(binary) != name || len(args) != 2 || args[0] != "--root" {
+		if !checked || binary != verified || len(args) != 2 || args[0] != "--root" {
 			t.Fatalf("runner called before pin or with wrong argv: %q %v", binary, args)
 		}
 		if _, err := os.Stat(filepath.Join(args[1], "decisions", "adr", "adr-0001-choice.md")); err != nil {
@@ -135,7 +129,7 @@ func TestServeStopsWhenPinCheckFails(t *testing.T) {
 	repo := t.TempDir()
 	want := errors.New("pin mismatch")
 	runnerCalled := false
-	err := serve(t.Context(), repo, "", func(context.Context) error { return want },
+	err := serve(t.Context(), repo, "", func(context.Context) (string, error) { return "", want },
 		func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error {
 			runnerCalled = true
 			return nil
