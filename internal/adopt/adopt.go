@@ -240,6 +240,14 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	if err := validateBaselineOptions(opts); err != nil {
 		return nil, err
 	}
+	// One run resolves the repository root and the lock source root once for every path it
+	// confines below them (util.ScopeConfiner, #1382), until Adopt returns. A root that cannot be
+	// resolved or scoped here is confined call by call, as before.
+	for _, root := range adoptionRoots(opts) {
+		if release, scopeErr := util.ScopeConfiner(root); scopeErr == nil {
+			defer release()
+		}
+	}
 
 	normPath, err := resolveTargetPath(opts)
 	if err != nil {
@@ -277,6 +285,19 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	}
 	report.EffectivePolicy = s.policy
 	return report, nil
+}
+
+// adoptionRoots are the roots one adoption confines paths below: the target repository, as
+// resolveTargetPath resolves it, and the lock source.
+func adoptionRoots(opts AdoptOptions) []string {
+	var roots []string
+	if target, err := resolveTargetPath(opts); err == nil {
+		roots = append(roots, target)
+	}
+	if opts.LockSourceRoot != "" {
+		roots = append(roots, opts.LockSourceRoot)
+	}
+	return roots
 }
 
 // newAdoptSession carries report's resolved archetype, facets and verification plan, and the

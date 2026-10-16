@@ -254,6 +254,16 @@ func confine(root, rel string) (absRoot, candidate string, err error) {
 	if err != nil {
 		return "", "", err
 	}
+	if confiner := scopedConfinerFor(absRoot); confiner != nil {
+		candidate, err = confiner.Path(rel)
+		return absRoot, candidate, err
+	}
+	return confineResolved(absRoot, candidate)
+}
+
+// confineResolved is confine's resolved check of candidate, the lexical join below absRoot: the
+// root, the candidate's parent and the candidate resolved through every link.
+func confineResolved(absRoot, candidate string) (string, string, error) {
 	resolvedRoot, err := resolveExistingAncestor(absRoot)
 	if err != nil {
 		return "", "", err
