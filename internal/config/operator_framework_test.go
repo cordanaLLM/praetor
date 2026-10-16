@@ -18,7 +18,7 @@ import (
 // resealed once when the built-in SLSA level default fell from 1 to 0 (#330): the fixture
 // profile declares no supply_chain, so its resolved policy changed with the default.
 const (
-	goldenOperatorDigest = "c66d71446b2ecbc1a01f56591e610a9876991bf4c0831f4173a36144d3219fb7"
+	goldenOperatorDigest = "87b51685dcfa7cae21b5377fc7fffaed038295721e08750e4787e7b4c3baf6b2"
 	goldenBareDigest     = "1482ca8653033bc7f6631a63d5a4adec6387aaa6129ebb7e5968dae1787bf430"
 )
 

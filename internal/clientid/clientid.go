@@ -19,17 +19,18 @@ type ID string
 // The known clients. Adding one here without an adapter row and a global-root row fails
 // clientsetup's tests.
 const (
-	AGY        ID = "agy"
-	Claude     ID = "claude"
-	Cline      ID = "cline"
-	Codex      ID = "codex"
-	Continue   ID = "continue"
-	Gemini     ID = "gemini"
-	Kilo       ID = "kilo"
-	OpenCodeV1 ID = "opencode-v1"
+	AGY         ID = "agy"
+	Claude      ID = "claude"
+	ClaudeLocal ID = "claude-local"
+	Cline       ID = "cline"
+	Codex       ID = "codex"
+	Continue    ID = "continue"
+	Gemini      ID = "gemini"
+	Kilo        ID = "kilo"
+	OpenCodeV1  ID = "opencode-v1"
 )
 
-var known = []ID{AGY, Claude, Cline, Codex, Continue, Gemini, Kilo, OpenCodeV1}
+var known = []ID{AGY, Claude, ClaudeLocal, Cline, Codex, Continue, Gemini, Kilo, OpenCodeV1}
 
 // Known returns every known client in sorted order. The slice is a copy.
 func Known() []ID { return slices.Clone(known) }

@@ -31,14 +31,15 @@ func TestGlobalRootsCoverSharedClientList(t *testing.T) {
 func TestResolveEveryKnownClientPerOS(t *testing.T) {
 	t.Parallel()
 	want := map[Client][3]string{ // linux, darwin, windows
-		AGY:        {"/home/u/.gemini/config", "/Users/u/.gemini/config", `C:\Users\u\.gemini\config`},
-		Claude:     {"/home/u/.claude", "/Users/u/.claude", `C:\Users\u\.claude`},
-		Cline:      {"/home/u/.cline", "/Users/u/.cline", `C:\Users\u\.cline`},
-		Codex:      {"/home/u/.codex", "/Users/u/.codex", `C:\Users\u\.codex`},
-		Continue:   {"/home/u/.continue", "/Users/u/.continue", `C:\Users\u\.continue`},
-		Gemini:     {"/home/u/.gemini", "/Users/u/.gemini", `C:\Users\u\.gemini`},
-		Kilo:       {"/home/u/.config/kilo", "/Users/u/.config/kilo", `C:\Users\u\.config\kilo`},
-		OpenCodeV1: {"/home/u/.config/opencode", "/Users/u/.config/opencode", `C:\Users\u\.config\opencode`},
+		AGY:         {"/home/u/.gemini/config", "/Users/u/.gemini/config", `C:\Users\u\.gemini\config`},
+		Claude:      {"/home/u/.claude", "/Users/u/.claude", `C:\Users\u\.claude`},
+		ClaudeLocal: {"/home/u/.claude", "/Users/u/.claude", `C:\Users\u\.claude`},
+		Cline:       {"/home/u/.cline", "/Users/u/.cline", `C:\Users\u\.cline`},
+		Codex:       {"/home/u/.codex", "/Users/u/.codex", `C:\Users\u\.codex`},
+		Continue:    {"/home/u/.continue", "/Users/u/.continue", `C:\Users\u\.continue`},
+		Gemini:      {"/home/u/.gemini", "/Users/u/.gemini", `C:\Users\u\.gemini`},
+		Kilo:        {"/home/u/.config/kilo", "/Users/u/.config/kilo", `C:\Users\u\.config\kilo`},
+		OpenCodeV1:  {"/home/u/.config/opencode", "/Users/u/.config/opencode", `C:\Users\u\.config\opencode`},
 	}
 	if len(want) != len(clientid.Known()) {
 		t.Fatalf("expectation rows %d, known clients %d", len(want), len(clientid.Known()))

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/clientid"
 )
@@ -14,14 +15,15 @@ import (
 type Client = clientid.ID
 
 const (
-	Codex      = clientid.Codex
-	Claude     = clientid.Claude
-	Gemini     = clientid.Gemini
-	OpenCodeV1 = clientid.OpenCodeV1
-	Continue   = clientid.Continue
-	Cline      = clientid.Cline
-	Kilo       = clientid.Kilo
-	AGY        = clientid.AGY
+	Codex       = clientid.Codex
+	Claude      = clientid.Claude
+	ClaudeLocal = clientid.ClaudeLocal
+	Gemini      = clientid.Gemini
+	OpenCodeV1  = clientid.OpenCodeV1
+	Continue    = clientid.Continue
+	Cline       = clientid.Cline
+	Kilo        = clientid.Kilo
+	AGY         = clientid.AGY
 )
 
 var ErrConflict = errors.New("existing server conflicts with registry")
@@ -36,6 +38,7 @@ type Plan struct {
 	Mode            string     `json:"mode"`
 	RelativePath    string     `json:"relative_path,omitempty"`
 	Target          string     `json:"target,omitempty"`
+	Project         string     `json:"project,omitempty"`
 	ExportName      string     `json:"export_name,omitempty"`
 	SourceSHA256    string     `json:"source_sha256"`
 	RegistrySHA256  string     `json:"registry_sha256,omitempty"`
@@ -53,14 +56,15 @@ type Plan struct {
 type adapter struct{ mode, path, export, documentation string }
 
 var adapters = map[Client]adapter{
-	Codex:      {"native", "", "codex-mcp.toml", "https://developers.openai.com/codex/mcp/"},
-	Claude:     {"merge", ".mcp.json", "claude-mcp.json", "https://code.claude.com/docs/en/mcp"},
-	Gemini:     {"merge", ".gemini/settings.json", "gemini-settings.json", "https://geminicli.com/docs/tools/mcp-server/"},
-	OpenCodeV1: {"merge", "opencode.json", "opencode-v1.json", "https://opencode.ai/docs/mcp-servers/"},
-	Continue:   {"merge", ".continue/mcpServers/praetor.yaml", "continue-mcp.yaml", "https://docs.continue.dev/customize/deep-dives/mcp"},
-	Cline:      {"export", "", "cline-mcp.json", "https://docs.cline.bot/mcp/mcp-overview"},
-	Kilo:       {"export", "", "kilo-mcp.json", "https://kilo.ai/docs/automate/mcp/using-in-kilo-code"},
-	AGY:        {"merge", ".agents/mcp_config.json", "agy-mcp_config.json", "https://antigravity.google/docs/plugins"},
+	Codex:       {"native", "", "codex-mcp.toml", "https://developers.openai.com/codex/mcp/"},
+	Claude:      {"merge", ".mcp.json", "claude-mcp.json", "https://code.claude.com/docs/en/mcp"},
+	ClaudeLocal: {"merge", "", "claude-local.json", "https://code.claude.com/docs/en/mcp"},
+	Gemini:      {"merge", ".gemini/settings.json", "gemini-settings.json", "https://geminicli.com/docs/tools/mcp-server/"},
+	OpenCodeV1:  {"merge", "opencode.json", "opencode-v1.json", "https://opencode.ai/docs/mcp-servers/"},
+	Continue:    {"merge", ".continue/mcpServers/praetor.yaml", "continue-mcp.yaml", "https://docs.continue.dev/customize/deep-dives/mcp"},
+	Cline:       {"export", "", "cline-mcp.json", "https://docs.cline.bot/mcp/mcp-overview"},
+	Kilo:        {"export", "", "kilo-mcp.json", "https://kilo.ai/docs/automate/mcp/using-in-kilo-code"},
+	AGY:         {"merge", ".agents/mcp_config.json", "agy-mcp_config.json", "https://antigravity.google/docs/plugins"},
 }
 
 // BuildPlan merges explicit existing bytes in memory only. JSON inputs must be
@@ -68,11 +72,47 @@ var adapters = map[Client]adapter{
 // unrelated settings and server options are retained; conflicting command/args
 // are errors. Codex delegates arbitrary native config updates to its CLI.
 func BuildPlan(ctx context.Context, registry Registry, client Client, existing []byte) (*Plan, error) {
+	if client == ClaudeLocal {
+		return nil, errors.New("claude-local requires an absolute project path")
+	}
 	registry, err := validatedRegistry(ctx, registry)
 	if err != nil {
 		return nil, err
 	}
 	return buildPlanValidated(ctx, registry, client, existing)
+}
+
+// BuildClaudeLocalPlan merges a host registry into one project's local Claude scope.
+func BuildClaudeLocalPlan(ctx context.Context, registry Registry, project string, existing []byte) (*Plan, error) {
+	if project == "" || !filepath.IsAbs(project) || filepath.Clean(project) != project {
+		return nil, errors.New("claude-local requires a clean absolute project path")
+	}
+	registry, err := validatedRegistry(ctx, registry)
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) > MaxConfigBytes {
+		return nil, errors.New("existing client config exceeds 1 MiB")
+	}
+	spec := adapters[ClaudeLocal]
+	registryBytes, err := marshalJSON(registry)
+	if err != nil {
+		return nil, err
+	}
+	p := &Plan{Client: ClaudeLocal, Mode: spec.mode, ExportName: spec.export, Project: project,
+		Documentation: spec.documentation, SourceSHA256: digest(existing), RegistrySHA256: digest(registryBytes)}
+	p.Content, err = mergeClaudeLocal(ctx, registry, project, existing)
+	if err != nil {
+		return nil, err
+	}
+	p.Changed = !bytes.Equal(existing, p.Content)
+	if len(p.Content) > MaxOutputBytes {
+		return nil, errors.New("client candidate exceeds 2 MiB")
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // BuildProjectPlan uses a separate validation path for portable project files.

@@ -103,6 +103,11 @@ perform the initialization, discovery, and harmless readback checks. Existing
 projection tests establish serialization and conflict handling; they are not
 live session evidence.
 
+The adoption MCP tool also reconciles accepted AsDecided ADR records into the
+project-scoped MCP registry when applying the `mcp` facet. The generated entries
+use the same registry schema documented in the [decision recall guide](decision-recall.md);
+declined decisions are not registered.
+
 Gemini's checked-in `.gemini/settings.json` also contains the native
 `BeforeTool`/`AfterTool`/`AfterAgent` lifecycle hooks. Claude's
 `.claude/settings.json` contains the corresponding `PreToolUse`/`PostToolUse`/

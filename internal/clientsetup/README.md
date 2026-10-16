@@ -42,6 +42,7 @@ Adapter schemas were verified on 2026-09-12:
 | --- | --- | --- |
 | `codex` | TOML export plus `codex mcp add` argv; native CLI owns arbitrary TOML updates | [Codex MCP](https://developers.openai.com/codex/mcp/) and installed Codex 0.145.0 help |
 | `claude` | `.mcp.json`, `mcpServers`, explicit stdio type | [Claude Code MCP](https://code.claude.com/docs/en/mcp) |
+| `claude-local` | `~/.claude.json`, `projects[absolute project path].mcpServers`; host-local registry requires absolute executable paths | [Claude Code local scope](https://code.claude.com/docs/en/mcp) |
 | `gemini` | `.gemini/settings.json`, `mcpServers` | [Gemini CLI MCP](https://geminicli.com/docs/tools/mcp-server/) |
 | `opencode-v1` | `opencode.json`, direct `mcp` server map, local command array | [OpenCode MCP](https://opencode.ai/docs/mcp-servers/) and [schema](https://opencode.ai/config.json) |
 | `continue` | `.continue/mcpServers/praetor.yaml`, schema v1 block metadata and server sequence | [Continue MCP](https://docs.continue.dev/customize/deep-dives/mcp) |

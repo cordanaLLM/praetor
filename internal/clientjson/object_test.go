@@ -112,3 +112,30 @@ func TestReplaceMember_Boundary_FirstLastAndOtherTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestAppendMember_PreservesExistingBytesAndOrder(t *testing.T) {
+	raw := []byte("{\"note\":\"\\u003c\",\r\n \"n\":9007199254740993 }\r\n")
+	got, err := AppendMember(raw, "added", jsontext.Value(`{"ok":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "{\"note\":\"\\u003c\",\r\n \"n\":9007199254740993 ,\"added\":{\"ok\":true}}\r\n"
+	if string(got) != want {
+		t.Fatalf("AppendMember = %q, want %q", got, want)
+	}
+	empty, err := AppendMember([]byte("{ }"), "first", jsontext.Value(`1`))
+	if err != nil || string(empty) != "{ \"first\":1}" {
+		t.Fatalf("empty append = %q, %v", empty, err)
+	}
+}
+
+func TestAppendMember_RejectsDuplicateAndInvalidInputs(t *testing.T) {
+	for _, raw := range []string{`{"a":1}`, `{"a":1,"a":2}`, `[]`, `{} {}`} {
+		if got, err := AppendMember([]byte(raw), "a", jsontext.Value(`2`)); err == nil || got != nil {
+			t.Errorf("AppendMember(%q) = %q, %v", raw, got, err)
+		}
+	}
+	if got, err := AppendMember([]byte(`{}`), "a", jsontext.Value(`bad`)); err == nil || got != nil {
+		t.Errorf("invalid value accepted: %q, %v", got, err)
+	}
+}

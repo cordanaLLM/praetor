@@ -130,7 +130,7 @@ A same-name server with a different executable, arguments or transport is an
 explicit conflict. Strict JSON and YAML are supported; JSONC, ambiguous keys and
 YAML aliases are rejected.
 
-Supported adapter identifiers are `codex`, `claude`, `gemini`, `agy`,
+Supported adapter identifiers are `codex`, `claude`, `claude-local`, `gemini`, `agy`,
 `opencode-v1`, `continue`, `cline` and `kilo`. Exact schemas and source versions
 are in the [adapter reference](https://github.com/CordanaLLM/praetor/blob/main/internal/clientsetup/README.md).
 
@@ -155,6 +155,27 @@ Codex requires its native command workflow and cannot use `clients apply`. Its
 prepared plan contains argument arrays for inspection and native configuration.
 Cline and Kilo require an explicitly selected profile destination;
 the command does not guess a client profile path.
+
+### Claude Code local scope (`claude-local`)
+
+Claude Code stores a private server for one project in the `projects` map of
+`~/.claude.json`. Pass the absolute project path explicitly; `--project` is
+required only for this adapter. The registry uses absolute host executable paths.
+The merge preserves other projects and every other setting in the file.
+
+```bash
+praetorctl clients prepare --registry /private/registry.json --client claude-local \
+  --project /absolute/path/to/project --existing "$HOME/.claude.json" \
+  --out /private/claude-local-review
+
+praetorctl clients apply --registry /private/registry.json --client claude-local \
+  --project /absolute/path/to/project --target "$HOME/.claude.json" \
+  --out /private/claude-local-backup
+```
+
+Apply compares the observed `~/.claude.json` snapshot immediately before
+replacement and refuses a concurrent change. Claude Code can rewrite this file
+while sessions run, so retry from a fresh snapshot after reviewing the diff.
 
 ### Antigravity (`agy`)
 
