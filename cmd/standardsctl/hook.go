@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
@@ -26,6 +27,10 @@ func commandExitCode(stderr io.Writer, err error) int {
 	var status exitStatusError
 	if errors.As(err, &status) && status.code != 0 {
 		return status.code
+	}
+	var child *exec.ExitError
+	if errors.As(err, &child) && child.ExitCode() > 0 {
+		return child.ExitCode()
 	}
 	code := 1
 	var interrupted *util.SignalError

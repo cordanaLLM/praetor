@@ -59,6 +59,7 @@ func WithCommandStdin(ctx context.Context, input []byte) (context.Context, error
 type commandStreams struct {
 	stdin  io.Reader
 	stdout io.Writer
+	stderr io.Writer
 }
 
 // RunCommandBytes executes fixed argv with a deadline and a 1..16 MiB cap per stream.
@@ -85,6 +86,20 @@ func RunCommandStream(ctx context.Context, dir, name string, stdin io.Reader, st
 	return result.Stderr, err
 }
 
+// RunCommandPassthrough runs fixed argv with all three process streams attached to callers.
+// It shares RunCommandBytes' deadline, environment and process-group cleanup boundary.
+func RunCommandPassthrough(ctx context.Context, dir, name string, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	_, err := runBoundedCommand(ctx, dir, name, MaxCommandOutputBytes,
+		commandStreams{stdin: stdin, stdout: stdout, stderr: stderr}, args)
+	return err
+}
+
 func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, streams commandStreams, args []string) (result CommandBytes, resultErr error) {
 	if ctx == nil {
 		return CommandBytes{}, errors.New("command bytes requires a context")
@@ -107,6 +122,9 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	cmd.Stdout, cmd.Stderr = &out, &diagnostic
 	if streams.stdout != nil {
 		cmd.Stdout = streams.stdout
+	}
+	if streams.stderr != nil {
+		cmd.Stderr = streams.stderr
 	}
 	err = start()
 	if err == nil {

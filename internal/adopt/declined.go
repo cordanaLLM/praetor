@@ -32,6 +32,7 @@ var mandatoryArtifacts = map[string]string{
 	"baseline":               "every later audit compares against the baseline",
 	"documentation-gate":     "remove the docs:seo-portal facet instead; it converges every documentation surface",
 	"api-compatibility-gate": "remove the api:public-contract facet instead; it removes the gate and its workflow",
+	"asdecided":              "repository ADRs receive the decision-recall MCP server automatically; without ADR records the step writes no server entry",
 }
 
 // DeclineAudit is what audit does with the artefact of a declined adoption step.

@@ -111,6 +111,7 @@ func printCoreCommands() {
 	fmt.Println("  sync               Reconcile repository settings, labels, and branch rulesets")
 	fmt.Println("  operational        Plan or prepare an operational fork from reviewed local commits")
 	fmt.Println("  adr verify         Replay the machine-checkable clauses of decision records")
+	fmt.Println("  decisions          Export ADR decisions or run the pinned AsDecided MCP server")
 	fmt.Println("  security govuln    Run govulncheck at symbol level and judge its findings against the OpenVEX document")
 	fmt.Println("  go vet            Run go vet ./... in every tracked Go module")
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
@@ -185,7 +186,7 @@ func main() {
 // which a handler that terminates child commands and locks the command registry would block,
 // so they install util.CancelCommandsOnSignal instead (dispatchCommandFrom).
 func ownsTerminationSignals(command string, args []string) bool {
-	return command == "serve" || needsSignalRootContext(command, args)
+	return command == "serve" || command == "decisions" && len(args) > 0 && args[0] == "serve" || needsSignalRootContext(command, args)
 }
 
 // needsSignalRootContext reports whether command derives its work from the signal-cancelled
@@ -193,6 +194,8 @@ func ownsTerminationSignals(command string, args []string) bool {
 // pure-Go command still ends at once on a Windows Ctrl-C.
 func needsSignalRootContext(command string, args []string) bool {
 	switch command {
+	case "decisions":
+		return len(args) > 0 && args[0] == "serve"
 	case "gate":
 		return len(args) > 0 && args[0] == "run"
 	case "agent":
@@ -238,6 +241,7 @@ func coreCommandTable() map[string]commandFunc {
 		"prompt-optimize":          runPromptOptimize,
 		"audit":                    runAudit,
 		"adr":                      runADR,
+		"decisions":                runDecisions,
 		"bugs":                     runBugs,
 		"baseline":                 runBaseline,
 		"devcontainer":             runDevContainer,

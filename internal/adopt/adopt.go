@@ -90,6 +90,8 @@ type AdoptOptions struct {
 	// overrides the bound the manifest's verification section declares, or the default
 	// (ResolveVerificationLimits).
 	VerificationLimits *VerificationLimits `json:"verification_limits,omitempty"`
+	// DecisionMCPReconcile supplies the shared project MCP merger for CLI and MCP adoption.
+	DecisionMCPReconcile func(context.Context, string, bool) ([]ActionDetail, error) `json:"-"`
 }
 
 // ActionDetail describes a specific planned or executed action on a target file.
@@ -482,6 +484,7 @@ func adoptSteps() []namedStep {
 		{"pull-request-template", reconcilePullRequestTemplate},
 		{"security-policy", reconcileSecurityPolicy},
 		{"adr", reconcileADR},
+		{"asdecided", reconcileAsDecided},
 		{"readme", reconcileReadme},
 		// Ahead of branch-ruleset, like the flavor step: the ruleset's required status checks
 		// are derived from the workflows present, the hosted REUSE gate among them.

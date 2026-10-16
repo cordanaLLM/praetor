@@ -1,5 +1,13 @@
 {
   "mcpServers": {
+    "asdecided": {
+      "args": [
+        "decisions",
+        "serve"
+      ],
+      "command": "praetorctl",
+      "type": "stdio"
+    },
     "praetor-dev": {
       "type": "stdio",
       "command": "sh",

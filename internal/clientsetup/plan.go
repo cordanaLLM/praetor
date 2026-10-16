@@ -72,6 +72,24 @@ func BuildPlan(ctx context.Context, registry Registry, client Client, existing [
 	if err != nil {
 		return nil, err
 	}
+	return buildPlanValidated(ctx, registry, client, existing)
+}
+
+// BuildProjectPlan uses a separate validation path for portable project files.
+// The only accepted PATH command is praetorctl; host registries keep absolute paths.
+func BuildProjectPlan(ctx context.Context, registry Registry, client Client, existing []byte) (*Plan, error) {
+	registry, err := validatedProjectRegistry(ctx, registry)
+	if err != nil {
+		return nil, err
+	}
+	return buildPlanValidated(ctx, registry, client, existing)
+}
+
+func validatedProjectRegistry(ctx context.Context, registry Registry) (Registry, error) {
+	return validatedRegistryMode(ctx, registry, true)
+}
+
+func buildPlanValidated(ctx context.Context, registry Registry, client Client, existing []byte) (*Plan, error) {
 	spec, ok := adapters[client]
 	if !ok {
 		return nil, errors.New("unsupported client adapter")

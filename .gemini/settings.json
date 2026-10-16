@@ -57,6 +57,13 @@
     ]
   },
   "mcpServers": {
+    "asdecided": {
+      "args": [
+        "decisions",
+        "serve"
+      ],
+      "command": "praetorctl"
+    },
     "praetor-dev": {
       "command": "python3",
       "args": [
