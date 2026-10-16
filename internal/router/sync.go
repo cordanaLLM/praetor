@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // RawModelInfo represents metadata from upstream LiteLLM/OpenRouter catalogs.

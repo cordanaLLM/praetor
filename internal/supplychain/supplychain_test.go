@@ -38,7 +38,7 @@ func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 	}
 	found, foundTOML := false, false
 	for _, c := range bom.Components {
-		if c.Name == "gopkg.in/yaml.v3" {
+		if c.Name == "go.yaml.in/yaml/v3" {
 			found = true
 		}
 		if c.Name == "github.com/pelletier/go-toml/v2" {
@@ -46,7 +46,7 @@ func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("expected gopkg.in/yaml.v3 among parsed components, got %+v", bom.Components)
+		t.Errorf("expected go.yaml.in/yaml/v3 among parsed components, got %+v", bom.Components)
 	}
 	if !foundTOML {
 		t.Errorf("expected github.com/pelletier/go-toml/v2 among parsed components, got %+v", bom.Components)

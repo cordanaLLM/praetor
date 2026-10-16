@@ -90,7 +90,7 @@ The binaries link every module `go.mod` requires.
 | Module | Version | License | Copyright |
 | :-- | :-- | :-- | :-- |
 | `github.com/pelletier/go-toml/v2` | v2.4.3 | MIT | `Copyright (c) 2021 - 2023 Thomas Pelletier` |
-| `gopkg.in/yaml.v3` | v3.0.1 | MIT AND Apache-2.0 | `Copyright (c) 2006-2010 Kirill Simonov`, `Copyright (c) 2006-2011 Kirill Simonov`, `Copyright (c) 2011-2019 Canonical Ltd` |
+| `go.yaml.in/yaml/v3` | v3.0.5 | MIT AND Apache-2.0 | `Copyright (c) 2006-2010 Kirill Simonov`, `Copyright (c) 2006-2011 Kirill Simonov`, `Copyright (c) 2011-2019 Canonical Ltd` |
 
 <!-- REUSE-IgnoreEnd -->
 
@@ -129,7 +129,7 @@ SOFTWARE.
 
 <!-- SPDX-SnippetEnd -->
 
-### gopkg.in/yaml.v3 license
+### go.yaml.in/yaml/v3 license
 
 Verbatim from `LICENSE` in the module. The MIT text is also in
 [`LICENSES/MIT.txt`](LICENSES/MIT.txt) and the Apache License 2.0 in
@@ -195,7 +195,7 @@ limitations under the License.
 
 <!-- SPDX-SnippetEnd -->
 
-### gopkg.in/yaml.v3 NOTICE
+### go.yaml.in/yaml/v3 NOTICE
 
 Verbatim from `NOTICE` in the module, as section 4(d) of the Apache License 2.0 requires:
 

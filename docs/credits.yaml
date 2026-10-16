@@ -155,8 +155,8 @@ entries:
     packages:
       - "go:github.com/pelletier/go-toml/v2"
   - name: "go-yaml v3"
-    url: "https://github.com/go-yaml/yaml"
-    detail: "(`gopkg.in/yaml.v3` v3.0.1)"
+    url: "https://github.com/yaml/go-yaml"
+    detail: "(`go.yaml.in/yaml/v3` v3.0.5)"
     section: "shipped"
     kind: "dependency"
     relation: "shipped"
@@ -168,7 +168,7 @@ entries:
     paths:
       - "go.mod"
     packages:
-      - "go:gopkg.in/yaml.v3"
+      - "go:go.yaml.in/yaml/v3"
   - name: "markdownlint"
     url: "https://github.com/DavidAnson/markdownlint"
     detail: "0.41.1"

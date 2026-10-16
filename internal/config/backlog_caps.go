@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Backlog caps bound how large each backlog category may grow (#792). They are policy keys

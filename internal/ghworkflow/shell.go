@@ -8,7 +8,7 @@ import (
 	slashpath "path"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // The shell a run: step runs under, as GitHub documents it (workflow syntax,

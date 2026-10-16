@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // UsageSnapshot is explicitly supplied observation data, not live provider polling.

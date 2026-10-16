@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // The hosted gate shape is the trigger and draft handling of every hosted gate Praetor emits
