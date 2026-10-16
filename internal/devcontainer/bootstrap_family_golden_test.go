@@ -38,9 +38,9 @@ func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 		"tools/figures/package-lock.json", "templates/go/ci-go.yml.tmpl", "internal/devcontainer/cli/node.json",
 		"internal/devcontainer/cli/other.json",
 	} {
-		asset, assetErr := isBootstrapAsset(name)
-		fmt.Fprintf(&sb, "asset %s %t %v\n", name, asset, assetErr)
-		fmt.Fprintf(&sb, "name %s %v\n", name, validateBootstrapSourceName(name))
+		asset := isBootstrapAsset(name, families)
+		fmt.Fprintf(&sb, "asset %s %t <nil>\n", name, asset)
+		fmt.Fprintf(&sb, "name %s %v\n", name, validateBootstrapSourceName(name, captureRules))
 	}
 	markdownDirective := "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs"
 	for _, probe := range []struct{ source, text string }{
@@ -51,7 +51,7 @@ func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 		{cliSourceFile, "//go:embed " + cliEmbedPatterns},
 		{cliSourceFile, "//go:embed cli/node.json"},
 	} {
-		fmt.Fprintf(&sb, "directive %s %q %v\n", probe.source, probe.text, validateEmbedDirective(probe.source, probe.text))
+		fmt.Fprintf(&sb, "directive %s %q %v\n", probe.source, probe.text, validateEmbedDirective(probe.source, probe.text, captureRules))
 	}
 	testsupport.AssertGolden(t, filepath.Join("testdata", "managed-family", "bootstrap-families.golden"), sb.String())
 }

@@ -47,13 +47,13 @@ type closureCapture struct {
 // gate's program is an asset whose build constraint keeps it out of every package, and the
 // closure captures it, as any asset, when its family's embedding source is reached.
 func captureBootstrapClosure(ctx context.Context, root string, inventory []string) ([]bootstrapSourceFile, error) {
+	families, err := captureRules.families()
+	if err != nil {
+		return nil, err
+	}
 	capture := &closureCapture{ctx: ctx, root: root, packages: map[string][]string{}, queued: map[string]bool{}}
 	for _, name := range inventory {
-		asset, err := isBootstrapAsset(name)
-		if err != nil {
-			return nil, err
-		}
-		if util.IsGoNonTestSource(name) && !asset {
+		if util.IsGoNonTestSource(name) && !isBootstrapAsset(name, families) {
 			dir := path.Dir(name)
 			capture.packages[dir] = append(capture.packages[dir], name)
 			continue
@@ -103,7 +103,7 @@ func (c *closureCapture) capturePackage(dir string) error {
 		if err != nil {
 			return err
 		}
-		parsed, err := parseBootstrapSourceFile(name, data)
+		parsed, err := parseBootstrapSourceFile(name, data, captureRules)
 		if err != nil {
 			return err
 		}
@@ -153,7 +153,7 @@ func (c *closureCapture) addCompanions() error {
 		if err != nil {
 			return err
 		}
-		if err := validateBootstrapSourceFile(name, data); err != nil {
+		if err := validateBootstrapSourceFile(name, data, captureRules); err != nil {
 			return err
 		}
 		c.files = append(c.files, bootstrapSourceFile{Name: name, Data: data})

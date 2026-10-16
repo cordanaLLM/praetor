@@ -78,12 +78,12 @@ func TestBootstrapTemplateAllowanceIsExact(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, asset := range assets {
-		if err := validateBootstrapSourceName(asset); err != nil {
+		if err := validateBootstrapSourceName(asset, captureRules); err != nil {
 			t.Errorf("declared template %s refused: %v", asset, err)
 		}
 	}
 	for _, stray := range []string{templates.Directory + "/go/README.md", templates.Directory + "/go/extra.tmpl", templates.Directory + "/testdata/x.tmpl"} {
-		if err := validateBootstrapSourceName(stray); err == nil {
+		if err := validateBootstrapSourceName(stray, captureRules); err == nil {
 			t.Errorf("validateBootstrapSourceName(%q) admitted a file no directive embeds", stray)
 		}
 	}
