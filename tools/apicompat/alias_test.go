@@ -169,6 +169,7 @@ func TestGate_Negative_AliasTargetGainsMethodRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("git", "-C", repo, "commit", "-a", "-m", "target gains method")
+	cmd.Env = h.env // hermetic: the push gate has no global git identity
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, string(out))
 	}
@@ -194,6 +195,7 @@ func TestGate_Negative_AliasTargetLosesMethodRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("git", "-C", repo, "commit", "-a", "-m", "target loses method")
+	cmd.Env = h.env // hermetic: the push gate has no global git identity
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, string(out))
 	}
@@ -216,10 +218,12 @@ func TestGate_Negative_FunctionParameterReallyChangedRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("git", "-C", repo, "add", "apidiff-stub")
+	cmd.Env = h.env // hermetic: the push gate has no global git identity
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git add: %v\n%s", err, string(out))
 	}
 	cmd = exec.Command("git", "-C", repo, "commit", "-m", "apidiff-stub")
+	cmd.Env = h.env // hermetic: the push gate has no global git identity
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, string(out))
 	}
@@ -245,10 +249,12 @@ func TestGate_Negative_RemovedExportedNameRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("git", "-C", repo, "add", "apidiff-stub")
+	cmd.Env = h.env // hermetic: the push gate has no global git identity
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git add: %v\n%s", err, string(out))
 	}
 	cmd = exec.Command("git", "-C", repo, "commit", "-m", "apidiff-stub")
+	cmd.Env = h.env // hermetic: the push gate has no global git identity
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("commit: %v\n%s", err, string(out))
 	}
