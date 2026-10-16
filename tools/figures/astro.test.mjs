@@ -7,7 +7,7 @@
 // and Windows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { evaluate, markdownToHtml, mdxToJs } from 'satteri';
@@ -15,6 +15,7 @@ import figures, {
   MAX_NODES, NAME, RESTART_DELAY_MS, addFigurePlugin, figureBase, figureMounts, figuresDigest, loaderScript, publishFigures,
   remarkFigures, replaceFigures, rootPath, satteriFigures, watchFigures,
 } from './astro.mjs';
+import { PLAYER_DIR } from './bundle.mjs';
 import { ROOT, fillSlots } from './checks.mjs';
 import { sha256 } from './core.mjs';
 import { FIGURES_URI, MAX_MOUNT_FILES, PLAYER_URI, basePath, locate, mountFiles, publish, serve, staticHandler, statOrNull } from './serve.mjs';
@@ -23,7 +24,7 @@ import { withTempDir, write } from './testkit.mjs';
 /** The markup fixture: each case records the block its base and link fill in. */
 const MARKUP = JSON.parse(readFileSync(join(ROOT, 'tools/figures/markup-fixtures.json'), 'utf8'));
 const META = { ...MARKUP.meta, html: MARKUP.html };
-const DIST = join(ROOT, 'tools', 'figures', 'dist');
+const PLAYER = join(ROOT, PLAYER_DIR);
 
 /** A figures directory holding the fixture figure `demo`. */
 function demoFigures(dir) {
@@ -313,7 +314,7 @@ test('the head script imports the loader under the base path and logs a failed i
 });
 
 test('the mounts serve docs/assets/figures from the root and the player from beside the integration', () => withTempDir((dir) => {
-  assert.deepEqual(figureMounts(), [{ uri: FIGURES_URI, dir: join(ROOT, 'docs', 'assets', 'figures') }, { uri: PLAYER_URI, dir: DIST }]);
+  assert.deepEqual(figureMounts(), [{ uri: FIGURES_URI, dir: join(ROOT, 'docs', 'assets', 'figures') }, { uri: PLAYER_URI, dir: PLAYER }]);
   assert.equal(figureMounts(dir)[0].dir, join(dir, 'docs', 'assets', 'figures'));
   assert.equal(figureMounts(pathToFileURL(dir))[0].dir, join(dir, 'docs', 'assets', 'figures'));
   assert.equal(figureMounts(pathToFileURL(dir).href)[0].dir, join(dir, 'docs', 'assets', 'figures'));
@@ -321,6 +322,12 @@ test('the mounts serve docs/assets/figures from the root and the player from bes
   assert.equal(FIGURES_URI, 'assets/figures');
   assert.equal(PLAYER_URI, 'assets/javascripts/figures');
 }));
+
+test('the Astro player mount holds exactly the committed player files', () => {
+  const player = figureMounts().find((mount) => mount.uri === PLAYER_URI);
+  assert.equal(player?.dir, PLAYER);
+  assert.deepEqual(readdirSync(player.dir).sort(), ['THIRD-PARTY-LICENSES.txt', 'loader.js', 'player.js']);
+});
 
 // ---------------------------------------------------------------------------------------------
 // The integration's hooks
@@ -458,7 +465,7 @@ test('the development middleware answers the player and figure files and passes 
   const loader = request('/assets/javascripts/figures/loader.js');
   assert.equal(loader.status, 200);
   assert.equal(loader.headers['content-type'], 'text/javascript; charset=utf-8');
-  assert.ok(loader.body.equals(readFileSync(join(DIST, 'loader.js'))));
+  assert.ok(loader.body.equals(readFileSync(join(PLAYER, 'loader.js'))));
   assert.equal(request('/assets/figures/demo.json?v=1').status, 200);
   assert.equal(request('/assets/figures/absent.svg').status, 404);
   assert.equal(request('/assets/figures/..%2f..%2f..%2fpackage.json').status, 403);
@@ -478,7 +485,7 @@ test('the build copies the figure and player files into the site and keeps a fil
   assert.equal(readFileSync(join(site, 'assets', 'figures', 'demo.svg'), 'utf8'), '<svg id="public"/>');
   assert.equal(readFileSync(join(site, 'assets', 'figures', 'demo.json'), 'utf8'), JSON.stringify(META));
   for (const name of ['loader.js', 'player.js', 'THIRD-PARTY-LICENSES.txt']) {
-    assert.ok(readFileSync(join(site, 'assets', 'javascripts', 'figures', name)).equals(readFileSync(join(DIST, name))), name);
+    assert.ok(readFileSync(join(site, 'assets', 'javascripts', 'figures', name)).equals(readFileSync(join(PLAYER, name))), name);
   }
   assert.deepEqual(warnings, ['assets/figures/demo.svg: the built site already holds this path, so the figures integration does not publish over it']);
 }));

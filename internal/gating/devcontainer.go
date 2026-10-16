@@ -205,7 +205,14 @@ func executionPlan(ctx context.Context, cfg *stageConfig) (*devcontainer.ImagePl
 	}
 	host := devcontainer.Host{GOOS: cfg.goos, GOARCH: cfg.goarch, LookPath: cfg.lookPath, Run: devcontainer.CommandRunner(cfg.run),
 		Tools: devcontainer.ToolCache{Fetch: cfg.fetch}}
-	return planDevcontainer(ctx, cfg.repoDir, cfg.dryRun, host)
+	plan, reason := planDevcontainer(ctx, cfg.repoDir, cfg.dryRun, host)
+	if plan == nil {
+		return nil, reason
+	}
+	if _, err := cfg.goModules(ctx); err != nil {
+		return nil, "Go module discovery failed: " + err.Error()
+	}
+	return plan, reason
 }
 
 // enterDevcontainer builds the planned image and prepares how commands run in it. It returns nil
@@ -261,7 +268,11 @@ var errContainerStartBound = errors.New("devcontainer start bound fired")
 func probeGo(ctx context.Context, cfg *stageConfig, dc *devcontainerExec, dir, image string) error {
 	bound := cfg.containerStart
 	if bound <= 0 {
-		bound = devcontainerStartBound(stageBudget(cfg.repoDir))
+		budget, err := stageBudget(ctx, cfg.repoDir)
+		if err != nil {
+			return fmt.Errorf("resolve devcontainer start budget: %w", err)
+		}
+		bound = devcontainerStartBound(budget)
 	}
 	probeCtx, cancel := context.WithTimeoutCause(ctx, bound, errContainerStartBound)
 	defer cancel()

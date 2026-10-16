@@ -127,7 +127,7 @@ func TestAdoptionDocumentationGateRefreshesPriorTexts(t *testing.T) {
 	if _, err := Adopt(t.Context(), opts); err != nil {
 		t.Fatal(err)
 	}
-	for _, entry := range entries {
+	for index, entry := range entries {
 		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			t.Fatal(err)
@@ -142,7 +142,10 @@ func TestAdoptionDocumentationGateRefreshesPriorTexts(t *testing.T) {
 			t.Fatalf("%s is no listed earlier text", entry.Name())
 		}
 		mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), prior)
-		report, err := Adopt(t.Context(), opts)
+		// The first text is refreshed by a whole adoption; every other one by the documentation
+		// step alone on the session adoption prepares, the same code without the other steps,
+		// which cost seconds each on Windows (office-w19a-c1-adopt).
+		report, err := adoptOrStep(t, opts, index == 0, reconcileDocumentationGate)
 		if err != nil {
 			t.Fatalf("%s: %v", entry.Name(), err)
 		}

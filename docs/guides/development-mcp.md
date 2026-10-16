@@ -455,6 +455,13 @@ only a workflow it cannot read or a malformed `HISS-18` exceptions entry fails i
 ([Workflow trigger audit](workflow-triggers.md),
 `TestServerAuditRunsTheWorkflowTriggerCheck` in `cmd/standards-mcp/audit_policy_test.go`).
 
+The test-timeout gate runs right after it (`forge.AuditTestTimeouts`, #1381): a workflow line
+that sets a timeout above the 30-minute per-package bound fails the audit unless a live
+`test-timeout` exceptions entry names the workflow; an expired entry or one that excuses nothing
+fails too (`TestServerAuditTestTimeoutsLikeTheCLI` in
+`cmd/standards-mcp/audit_test_timeouts_test.go`). The audit summary counts it, so a clean
+fixture reads `passed: 12/12`.
+
 The context gate inside `standards_audit` also runs the cache-stability check
 (`compiler.VerifyStableContext`, called from `auditContextSync` in
 `cmd/standards-mcp/audit_tools.go`), the same one `praetorctl audit` and

@@ -16,6 +16,9 @@ import (
 )
 
 const (
+	// MaxTrackedModules bounds consumers that run a complete Go toolchain once per module.
+	// The API compatibility gate has its own larger revision-comparison bound.
+	MaxTrackedModules = 64
 	// maxModuleListingBytes bounds the go.mod listing TrackedModuleFiles reads (HISS-02): room
 	// for tens of thousands of module paths, far past the gate's own bound on compared modules.
 	maxModuleListingBytes = 1 << 22
@@ -24,6 +27,9 @@ const (
 	// moduleListingPathspec selects every go.mod below the listed directory, its own included.
 	moduleListingPathspec = ":(glob)**/go.mod"
 )
+
+// ErrTooManyModules reports a consumer exceeding the bound for complete module iteration.
+var ErrTooManyModules = errors.New("too many tracked Go modules")
 
 // IsModuleFile reports whether name, a slash-separated path relative to the repository root, is a
 // go.mod the gate discovers: one in no directory a ./... pattern skips (testdata, vendor, and

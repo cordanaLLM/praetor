@@ -266,8 +266,8 @@ func TestAdopt_Positive_ForceKeepsAdopterExtendsLefthook(t *testing.T) {
 			t.Errorf("the reason does not name the missing %s: %q", job, note)
 		}
 	}
-	if strings.Contains(note, "gofmt") || strings.Contains(note, "govet") || !strings.Contains(note, "and adds none.") {
-		t.Errorf("the reason names Go jobs a Cargo repository is not generated, or invents extras: %q", note)
+	if !strings.Contains(note, "gofmt") || !strings.Contains(note, "govet") || !strings.Contains(note, "and adds none.") {
+		t.Errorf("the reason does not name the generated Go jobs: %q", note)
 	}
 }
 

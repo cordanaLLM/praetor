@@ -186,8 +186,19 @@ func TestValidateExceptionsBoundary(t *testing.T) {
 // refused with the rule named. Boundary: the target check binds only those rules, so a
 // clang-tidy-coverage entry for a C file stays valid beside them.
 func TestValidateExceptionsWorkflowTarget(t *testing.T) {
-	for _, rule := range []string{ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers} {
+	for _, rule := range []string{ExceptionRuleSupplyChain, ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleTestTimeout} {
 		t.Run(rule, func(t *testing.T) { validateWorkflowTarget(t, rule) })
+	}
+}
+
+// A test-timeout entry must name one workflow file: an entry naming a script is refused with the
+// workflow-target message, which names portability.yml as the example (#1381).
+func TestValidateExceptionsTestTimeoutNamesAWorkflow(t *testing.T) {
+	entry := Exception{Rule: ExceptionRuleTestTimeout, Path: "scripts/test.sh", Reason: "longer timeout", Expires: "2026-12-31"}
+	err := ValidateExceptions([]Exception{entry}, exceptionsToday)
+	want := "rule test-timeout must name one workflow file directly in .github/workflows by path, such as .github/workflows/portability.yml"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("ValidateExceptions = %v; want %q", err, want)
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -56,23 +55,6 @@ func forgeWorkstation(t *testing.T, forgeYAML string) string {
 	t.Helper()
 	dir := t.TempDir()
 	return "--workstation-config=" + writeFixtureFile(t, dir, "workstation.yaml", "forge:\n"+forgeYAML)
-}
-
-// gitOnlyPath leaves git as the only executable on PATH, so no test reaches a gh session and
-// its token: project commands without credentials then stay on the local cache.
-func gitOnlyPath(t *testing.T) {
-	t.Helper()
-	git, err := exec.LookPath("git")
-	if err != nil {
-		t.Skipf("git is not installed: %v", err)
-	}
-	bin := t.TempDir()
-	if err := os.Symlink(git, filepath.Join(bin, filepath.Base(git))); err != nil {
-		t.Skipf("symlinks unavailable, cannot isolate PATH: %v", err)
-	}
-	t.Setenv("PATH", bin)
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GH_TOKEN", "")
 }
 
 func TestResolveForgeOwner_Positive(t *testing.T) {

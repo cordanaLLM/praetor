@@ -749,12 +749,30 @@ With `adoption.decline: [labels]` adoption writes none, and both audits pass wit
 every AGENTS.md operational rule an enforcement class (`ci-gate`, `hook`, `review-gate`,
 `guidance` or `staged`) and evidence pointers, and checks that each pointer resolves: `test:` to a
 Go test function, `hook:` to a lefthook hook command, `make:` to a Makefile target, `workflow:` to
-a workflow job, and `gate:` to a stage of `praetorctl gate run`. The stage names come from
+a workflow job, `gate:` to a stage of `praetorctl gate run`, and `forge:` to a closed branch
+protection setting: `required_signatures`, `linear_history`, `required_reviews` or
+`required_checks`. An unknown setting fails like an unknown pointer kind. The stage names come from
 `gating.StageNames()`, which reads the same list the pipeline executes (`pipelineStages` in
 [`internal/gating/pipeline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/pipeline.go)),
 so a stage the pipeline drops stops resolving and fails the audit
 (`TestStageNames_PipelineOrder` in `internal/gating/stages_test.go`). Rules with class `guidance`,
 or without an entry, are reported as prose-only; this slice reports them and does not fail.
+
+A committed branch-protection policy is an assertion, not evidence that the forge applies it.
+Without `--remote`, a `forge:` pointer therefore appears under `asserted, not read back` and does
+not count as an enforced path. Another resolved pointer on the same rule still enforces that rule.
+With `standardsctl rules audit --remote`, the command resolves the same effective policy and status
+contexts as `plan --remote`, reads the live branch protection once through the shared forge reader,
+and uses `forge.EvaluateBranchProtection` for the comparison. Text and JSON report the setting's
+asserted value, observed value and match result for each rule. Drift fails with the rule ID and all
+three values; a failed live read fails by name instead of falling back to the offline result. The
+remote flags use the same token, endpoint, origin-identity check and bounded command context as
+`plan --remote`.
+
+The report also lists guidance or unregistered rules containing the allow-listed instruction-only
+phrases `is told not to`, `must not` or `never` under `instruction-only prohibitions`. This is a
+non-failing conversion list; a rule with executable enforcement is not listed. Computing forge-app
+permissions as the intersection of task needs and policy remains outside this slice.
 
 ### Stages that do not apply are skipped, not failed
 
@@ -788,7 +806,7 @@ refuse it.
 A skipped or not-applicable stage names its reason and does not fail the repository:
 
 - The prefetch, security and race-detector stages -- the toolchain stages -- are **not
-  applicable** where the repository root holds neither a `go.mod` nor a `Cargo.lock`
+  applicable** where Git tracks neither a discoverable `go.mod` nor a `Cargo.lock`
   ([Cargo repositories](#cargo-repositories)). Without this a TypeScript or Python repository failed
   its own pre-push gate at `FAIL ./... [setup failed]`, which reads as a broken repository rather
   than an inapplicable stage. Such a repository still gets no receipt
@@ -825,9 +843,31 @@ how a gate comes to certify what it never examined. The verdicts are pinned by
 `TestExecuteStage_SkipVerdicts` and `TestStageOutput_3D` in
 [`internal/gating/gating_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gating_test.go).
 
+### Tracked Go modules
+
+The Go parts of Prefetch & Lockfiles, Security & SCA Scan and Race-Detector Tests share one
+discovery result: tracked `go.mod` files returned by
+[`tools/apicompat.TrackedModuleFiles`](https://github.com/cordanaLLM/praetor/blob/main/tools/apicompat/modules.go).
+The rule ignores `testdata/`, `vendor/`, dot-prefixed and underscore-prefixed directories and keeps
+the result bounded at 64 modules. A larger repository fails closed with `too many tracked Go
+modules`; it is never silently truncated.
+
+Each stage visits modules in discovery order. Prefetch runs `go mod verify` and `go mod download`,
+security runs symbol-level `govulncheck` against the repository-root OpenVEX document and `gosec`,
+and the race stage runs `go test -race ./...` in an isolated worktree for each module. The signed
+stage reason contains one result and elapsed time per module, and a failure names the module
+directory. A root-only repository keeps the existing stage behavior with the root module name
+(`go.mod`) added to the result.
+
+The same discovery rule is used by the CLI entry points. `praetorctl go vet` runs `go vet ./...`
+once in every tracked module; `praetorctl security govuln` does the corresponding vulnerability
+scan. No tracked module is an explicit successful no-op: a repository with no discoverable module
+prints a stated skip and exits successfully.
+
 ### Cargo repositories
 
-Where the repository root holds a `Cargo.lock`, the toolchain stages run Cargo besides Go, or
+Where the repository root holds a `Cargo.lock`, the toolchain stages run Cargo besides the tracked
+Go modules, or
 instead of it ([`internal/gating/cargo.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo.go)):
 
 | Stage | Cargo command | Runs in | Bound |
@@ -999,10 +1039,45 @@ fails this way until the toolchain that scans is upgraded:
 - Until you can upgrade, a `not_affected` statement for the advisory is the stopgap:
   `vulnerable_code_not_present`, with an impact statement naming the affected packages the build
   does not import. After the upgrade the gate prints the statement as unused; remove it then.
-- The security workflow the `go-service` flavor writes
-  ([`templates/go/security-go.yml.tmpl`](https://github.com/cordanaLLM/praetor/blob/main/templates/go/security-go.yml.tmpl))
-  does not run the gate yet: it still runs `govulncheck ./...`, which fails on a called symbol
-  only. In an adopter repository these findings surface through `gate run` and the pre-push job.
+- The security workflow the `go-service` flavor writes runs `govulncheck ./...`, which fails on a
+  called symbol only. The fuller package/module/VEX judgement remains in `gate run` and the
+  pre-push job.
+
+#### Adopted Go Security Scan
+
+The `go-service` flavor writes `.github/workflows/security.yml` from
+[`templates/go/security-go.yml.tmpl`](https://github.com/cordanaLLM/praetor/blob/main/templates/go/security-go.yml.tmpl).
+The workflow runs before merge on pull request `opened`, `synchronize`, `reopened` and
+`ready_for_review`; on a push to `main`; for a merge group; and daily at 04:00 UTC. A draft fails
+in the hosted gate's first step and marking it ready starts a replacement run. The trigger and
+draft steps render from `internal/ghworkflow/hostedgate.go`, the same source as the other hosted
+gates, rather than carrying a second trigger definition.
+
+The workflow never resolves a scanner through `@latest`. A repository whose
+`tools/go/go.mod` declares both scanners uses its own pinned module:
+
+```bash
+go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
+```
+
+Otherwise the job creates a throwaway module below `$RUNNER_TEMP`, adds the exact
+`golang.org/x/vuln`, `github.com/securego/gosec/v2` and `golang.org/x/tools` versions required by
+Praetor's `tools/go/go.mod`, downloads the selected graph so Go 1.27 has every package checksum,
+and installs both commands from that module. Module selection raises the scanners' shared
+`golang.org/x/tools` to the Go 1.27.2-compatible pin. The version constants live beside the
+template context in `templates/embed.go`; `TestGoSecurityVersionsMatchToolsModule` fails with an
+update instruction when Renovate moves the tools module without them.
+
+Praetor does not create or alter an adopter's tools module. A missing or partial tools module is
+the normal fallback case, so flavor apply still writes the workflow and flavor audit accepts it
+as the managed template.
+
+The adopted workflow runs `govulncheck ./...` and `gosec -conf .gosec.json ./...`. It scans the
+whole module with gosec: the narrower `.config/lefthook/scripts/security_scope.py` wrapper is an
+engine file that adoption does not ship. An unedited workflow written before this trigger and
+pinned-install change is a recorded prior rendering and refreshes to the correct variant on the
+next adoption. A workflow the adopter edited is kept and reported; use the flavor apply force
+path only when replacement is intended.
 
 A toolchain whose version carries a suffix, such as `go1.27.1-X:nodwarf5` from a `GOEXPERIMENT`
 build, gives govulncheck no version it can read (`GoTagToSemver` in
@@ -1595,13 +1670,13 @@ agent helper runs the same pipeline and takes the same derived deadline.
 
 The deadline is sized to the repository `--path` names (`ResolveRepoRunBudget` in `deadline.go`):
 
-| Repository root holds | Test suites, one bound each | Allowance for the other stages |
+| Tracked toolchain state | Test suites, one bound each | Allowance for the other stages |
 | :--- | :--- | :--- |
-| `go.mod`, no `Cargo.lock` | 1 | 5 min |
-| `Cargo.lock`, no `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
-| `go.mod` and `Cargo.lock` | 2 | 9 min |
+| N discoverable `go.mod` files, no `Cargo.lock` | N (at least 1 for the deadline calculation) | 5 min |
+| `Cargo.lock`, no discoverable `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
+| N discoverable `go.mod` files and `Cargo.lock` | N + 1 | 9 min |
 
-A mixed repository therefore gets 2 × 3 + 9 = 15 minutes by default. Sized for one suite, the run
+A mixed repository with one Go module therefore gets 2 × 3 + 9 = 15 minutes by default. Sized for one suite, the run
 deadline let the Go suite and the Cargo commands spend the time the Cargo suite needed, and no value
 of the variable could fix it. `gate deadline` takes the same `--path` (default `.`) and reports the
 suite count as `test_suites` in its JSON:
@@ -1993,15 +2068,12 @@ Malformed or oversized command metadata now fails before any adoption writes.
 The generated hooks resolve `praetorctl` or, failing that, `standardsctl` through the
 same expression as the generated Makefile's `PRAETORCTL` variable
 (`util.ShellCLIResolution` in `internal/util/clinames.go`). A missing binary blocks the
-commit or push; a `./cmd/standardsctl` source tree no longer stands in for one. The language
-jobs follow the languages the plan detects: `gofmt`, `govet` and `security` for a root
-`go.mod`, `rustfmt` and `clippy` for a root `Cargo.toml`, all of them when no language is
-detected ([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adoption-writes)).
-Each runs only where the root holds its marker and otherwise prints
-`no <marker> at the repository root, skipping <tool>`, matching the gate stages above. A module
-kept in a subdirectory is not scanned by these jobs. For every tracked nested `go.mod`, adoption's
-`git-hooks` step warns with its directory and says that the module's declared verification command
-is what checks it; it does not alter `lefthook.yml` or the gate. The `gate` job runs
+commit or push; a `./cmd/standardsctl` source tree no longer stands in for one. Go's `gofmt`,
+engine-governed `go vet`, and engine-governed `security govuln` jobs are always present so a
+module added after adoption is covered. The Go engine and the gate share the tracked-module
+discovery rule; a repository with no discoverable module prints a stated skip. Rust jobs follow
+the plan's root `Cargo.toml` marker
+([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adoption-writes)). The `gate` job runs
 `praetorctl gate run --path=. --admit-unsupported`: a root with neither a `go.mod` nor a
 `Cargo.lock` is admitted without a receipt and its languages are named, and a root with either
 fails where its toolchain stages did not run

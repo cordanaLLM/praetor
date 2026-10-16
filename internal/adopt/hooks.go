@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -22,7 +20,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
-	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 	"gopkg.in/yaml.v3"
 )
 
@@ -53,7 +50,7 @@ const (
 	// ran `govulncheck ./...` before, which failed on a called symbol only (#778).
 	govulnGateArgs = "security govuln"
 	// toolGoModFile is the repository-relative path to the Go tool module that pins CLI tools.
-	toolGoModFile = "tools/go/go.mod"
+	toolGoModFile = gomanifest.ToolModuleFile
 	// govulnToolScanner is the scanner command that runs govulncheck through the repository's
 	// tool module.
 	govulnToolScanner = "go tool -modfile=" + toolGoModFile + " govulncheck"
@@ -63,10 +60,6 @@ const (
 	govulnModule = "golang.org/x/vuln"
 	// govulnToolPackage is the package path run with go tool.
 	govulnToolPackage = "golang.org/x/vuln/cmd/govulncheck"
-	// maxGoModScanLines bounds the line walk of a tool module (HISS-02).
-	maxGoModScanLines = 4096
-	// maxNestedGoModuleWarnings bounds the per-module warnings an adoption report emits.
-	maxNestedGoModuleWarnings = 32
 )
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
@@ -160,23 +153,7 @@ func repoRequiresToolGovuln(ctx context.Context, repoPath string) (bool, error) 
 // toolModuleRequiresGovuln reports whether tool module data declares golang.org/x/vuln
 // as a requirement or as a tool directive.
 func toolModuleRequiresGovuln(data []byte) bool {
-	manifest := gomanifest.ParseManifest(data)
-	for i := 0; i < len(manifest.Requires) && i < maxGoModScanLines; i++ {
-		if manifest.Requires[i].Path == govulnModule {
-			return true
-		}
-	}
-	lines := strings.Split(string(gomanifest.TrimBOM(data)), "\n")
-	inTool := false
-	for i := 0; i < len(lines) && i < maxGoModScanLines; i++ {
-		if line, isTool := gomanifest.ToolLine(lines[i], &inTool); isTool {
-			fields := strings.Fields(line)
-			if len(fields) > 0 && (fields[0] == govulnToolPackage || fields[0] == govulnModule) {
-				return true
-			}
-		}
-	}
-	return false
+	return gomanifest.DeclaresTool(data, govulnModule, govulnToolPackage)
 }
 
 // rootMarkerCommand renders a lefthook run line for a language tool. It runs command only where
@@ -213,16 +190,15 @@ func cargoCommand(skipped, command string) string {
 const lefthookJobLanguages = hisscatalog.LanguageGo | hisscatalog.LanguageRust
 
 // lefthookLanguages returns the languages whose jobs lefthook.yml carries for a repository whose
-// verification plan is plan: the languages that plan detected (planLanguages), the set the
-// harness rows are rendered for too, so no second detector decides the hooks (#568). An unknown
-// set, nothing detected, keeps every language's jobs, as it keeps every HISS clause and check
-// (hisscatalog.Rule.AdoptedFor): each job runs only on its own staged files and root marker.
+// verification plan is plan: Go is always present so a later tracked module needs no re-adoption;
+// Rust follows the detected language set. An unknown set, nothing detected, keeps every language's
+// jobs, as it keeps every HISS clause and check (hisscatalog.Rule.AdoptedFor).
 func lefthookLanguages(plan *VerificationPlan) hisscatalog.Language {
 	languages := planLanguages(plan)
 	if languages == 0 {
 		return lefthookJobLanguages
 	}
-	return languages & lefthookJobLanguages
+	return (languages & lefthookJobLanguages) | hisscatalog.LanguageGo
 }
 
 // lefthookLanguageNames names languages for the rendering's header, in a fixed order.
@@ -243,7 +219,7 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 	jobs := ""
 	if languages&hisscatalog.LanguageGo != 0 {
 		jobs += "    gofmt:\n      glob: \"*.go\"\n" + lefthookRun("gofmt -w {staged_files}") + "      stage_fixed: true\n" +
-			"    govet:\n      glob: \"*.go\"\n" + lefthookRun(goModuleCommand("go vet", "go vet ./..."))
+			"    govet:\n      glob: \"*.go\"\n" + lefthookRun(lefthookGovernedCommand("go vet"))
 	}
 	if languages&hisscatalog.LanguageRust != 0 {
 		clippy := "cargo " + strings.Join(gating.CargoClippyArgs(), " ")
@@ -267,7 +243,7 @@ func lefthookPrePushJobs(shape lefthookShape) string {
 	} else {
 		command = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
 	}
-	return "    security:\n" + lefthookRun(goModuleCommand(govuln.DefaultScanner, command))
+	return "    security:\n" + lefthookRun(command)
 }
 
 // reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line
@@ -314,7 +290,8 @@ func lefthookHeader(shape lefthookShape) string {
 		scope = names + " & " + scope
 	}
 	return "# Lefthook Configuration (" + scope + ")\n" +
-		"# Go and Rust jobs follow the detected languages; both when none was detected.\n" +
+		"# Go jobs are always present so later tracked modules need no re-adoption;\n" +
+		"# Rust follows the detected languages.\n" +
 		"# Governance commands fail closed: a failing or missing praetorctl blocks the\n" +
 		"# commit or push. The pre-commit audit runs --offline; the pre-push audit\n" +
 		"# reads the forge's live Actions state when a token and a github.com origin\n" +
@@ -495,6 +472,41 @@ def join_line_continuations(command):
     return re.sub(r"\\\r?\n", " ", command)
 
 
+# The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
+# re retries a rule at every git it finds, and a git inside an option token (-git, --x=git,
+# -C dir/git) starts at a boundary of the run an earlier git already walked: each retry walked
+# the rest of that run again, quadratic in the line. A start at a walked boundary reaches the
+# same end, and only a run's end can be followed by the rest of the rule (every option starts
+# with a blank and a dash), so skipping it keeps re.search's answer. The adopter interceptor
+# carries this code byte for byte (TestEmittedInterceptorSearchesLikeTheEngineGuard).
+GIT_OPTION_RUN_HEAD = r"\bgit("
+GIT_OPTION_RUN_JOIN = r")*\s+("
+
+
+def search(pattern, text):
+    """re.search(pattern, text) is not None, with the git option-run rule in linear time."""
+    head, join, tail = pattern.partition(GIT_OPTION_RUN_JOIN)
+    if not join or not head.startswith(GIT_OPTION_RUN_HEAD):
+        return re.search(pattern, text) is not None
+    first = len(GIT_OPTION_RUN_HEAD)
+    option = re.compile(head[first:])
+    rest = re.compile(r"\s+(" + tail)
+    walked = set()
+    for found in re.finditer(r"\bgit", text):
+        position = found.end()
+        if position in walked:
+            continue
+        while position not in walked:
+            walked.add(position)
+            step = option.match(text, position)
+            if step is None or step.end() == position:
+                break
+            position = step.end()
+        if rest.match(text, position):
+            return True
+    return False
+
+
 def check_command(command):
     command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
@@ -506,7 +518,7 @@ def check_command(command):
     judged = without_read_only_words(command)
     for pattern, refusal in RULES:
         text = judged if pattern in READ_ONLY_EXEMPT else command
-        if re.search(pattern, text):
+        if search(pattern, text):
             raise Blocked(refusal + pattern)
 
 
@@ -648,7 +660,6 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	warnNestedGoModules(ctx, s)
 	if err := reconcilePlannedEngineLauncher(ctx, s); err != nil {
 		return err
 	}
@@ -675,25 +686,6 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
-}
-
-// warnNestedGoModules reports tracked modules whose paths the root-guarded Go hook jobs and gate
-// stages do not reach. TrackedModuleFiles is the gate's discovery, so the report never grows a
-// second definition of a module it can name.
-func warnNestedGoModules(ctx context.Context, s *adoptSession) {
-	modules, err := apiassets.TrackedModuleFiles(ctx, s.repoPath)
-	if err != nil {
-		s.report.addWarning("discover tracked Go modules: %v", err)
-		return
-	}
-	nested := slices.DeleteFunc(modules, func(module string) bool { return module == "go.mod" })
-	listed := min(len(nested), maxNestedGoModuleWarnings)
-	for index := 0; index < listed; index++ {
-		s.report.addWarning("go.mod found in %s, not at the root: the Go hooks (go vet, govulncheck) and the gate's toolchain stages skip it; its declared verification command is what checks it (#1353)", path.Dir(nested[index]))
-	}
-	if more := len(nested) - listed; more > 0 {
-		s.report.addWarning("%d more modules outside the root", more)
-	}
 }
 
 // reconcilePlannedEngineLauncher reconciles the hook engine launcher when it is planned or
@@ -875,6 +867,8 @@ var priorEvasionHookDigests = map[string]string{
 	"9db442d72dc16b74ce88250c1dbf1a0b05830bdc6716ab4b705c5aa1c7531a02": "named exempt patterns and a start-of-text veto anchor, clean under CodeQL (#1219)",
 	"74a3c9cb08bd3afeaf4c0e0e3b05f0b9ad7518beee1173465477270ed71f569d": "raise from error in pending_command under adopter ruff B904",
 	"e69d49af323fcd3b1d23394bc6736afa115629ff7925ffec664404bd048ec169": "refuse admin and API merges that bypass rulesets (#1300)",
+	"6b9ba7a53a4c2c3a28da48031983ff879aed3f925974fd84bba58be1da19bf0c": "git option run searched once per run, linear in the line (#1283)",
+	"526ccd7bd6ec2070ed8dc8dfb97a9f9857de99e9c49ae6359c15b5a88fc47273": "dev root ends in either path separator (#200)",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

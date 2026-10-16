@@ -61,7 +61,7 @@ func TestAdopt_Boundary_PathResolvedRenderingMigratesWithoutForce(t *testing.T) 
 		}
 		name := rendering.fixture + ".lefthook.yml"
 		repoPath, rep := adoptMarkedRepo(t, rendering.fixture, rendering.markers, string(fixtures[name]))
-		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: rendering.languages}, false) {
+		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: adoptedLefthookLanguages(rendering.languages)}, false) {
 			t.Errorf("%s: not migrated to the current rendering:\n%s", name, got)
 		}
 		if !hasAction(rep, lefthookFile, actionReconcile) || hasAction(rep, lefthookFile, actionReplace) {

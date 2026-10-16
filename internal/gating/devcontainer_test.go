@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +24,32 @@ import (
 )
 
 var fakeImageID = "sha256:" + strings.Repeat("7", 64)
+
+type goToolchainPaths struct {
+	cache, moduleCache, path string
+}
+
+var cachedGoToolchainPaths = sync.OnceValues(func() (goToolchainPaths, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := util.RunCommand(ctx, "", "go", "env", "GOCACHE", "GOMODCACHE", "GOPATH")
+	if err != nil {
+		return goToolchainPaths{}, fmt.Errorf("read Go cache paths: %w", err)
+	}
+	values := strings.Split(strings.TrimSpace(out), "\n")
+	if len(values) != 3 || values[0] == "" || values[1] == "" || values[2] == "" {
+		return goToolchainPaths{}, fmt.Errorf("read Go cache paths: expected three non-empty values, got %q", out)
+	}
+	return goToolchainPaths{cache: values[0], moduleCache: values[1], path: values[2]}, nil
+})
+
+func TestMain(m *testing.M) {
+	if _, err := cachedGoToolchainPaths(); err != nil {
+		fmt.Fprintf(os.Stderr, "gating test setup: %v\n", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
 
 // containerCall is one command a fake runtime ran inside a container.
 type containerCall struct {
@@ -139,6 +166,9 @@ func (f *fakeRuntime) inContainer(args []string) (string, error) {
 		return "", nil
 	case call.name == "go" && len(call.args) == 2 && call.args[0] == "env":
 		return map[string]string{"CGO_ENABLED": "1\n", "CC": "gcc\n"}[call.args[1]], f.failEnv
+	case call.name == "go" && len(call.args) == 5 && call.args[0] == "list" && call.args[1] == "-find" &&
+		call.args[2] == "-f" && call.args[3] == "{{.ImportPath}}" && call.args[4] == "./...":
+		return "example.test/pkg\n", nil
 	case call.name == "go" && call.args[0] == "test":
 		return "FAIL example.test", f.failTest
 	}
@@ -161,7 +191,7 @@ func (f *fakeRuntime) inside(name string) []containerCall {
 func devcontainerRepo(t *testing.T) (string, string) {
 	t.Helper()
 	repo := newHermeticGitRepo(t)
-	seedGoModule(t, repo)
+	commitFile(t, repo, "go.mod", "module gating.test\n\ngo 1.27\n")
 	writeLockfiles(t, repo)
 	if err := os.MkdirAll(filepath.Join(repo, ".devcontainer"), 0o755); err != nil {
 		t.Fatal(err)
@@ -184,10 +214,12 @@ func isolateUserCache(t *testing.T) string {
 	switch hostMachine().GOOS {
 	case "windows":
 		t.Setenv("LocalAppData", dir)
+		preserveGoToolchainPaths(t)
 	case "darwin", "ios":
-		t.Setenv("HOME", dir)
+		isolateGoHome(t, dir)
 	default:
 		t.Setenv("XDG_CACHE_HOME", dir)
+		preserveGoToolchainPaths(t)
 	}
 	cache, err := os.UserCacheDir()
 	if err != nil {
@@ -202,6 +234,27 @@ func isolateUserCache(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return resolved
+}
+
+func isolateGoHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
+	preserveGoToolchainPaths(t)
+	if _, err := util.RunCommand(t.Context(), "", "go", "telemetry", "off"); err != nil {
+		t.Fatalf("disable Go telemetry in %s: %v", home, err)
+	}
+}
+
+func preserveGoToolchainPaths(t *testing.T) {
+	t.Helper()
+	paths, err := cachedGoToolchainPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOCACHE", paths.cache)
+	t.Setenv("GOMODCACHE", paths.moduleCache)
+	t.Setenv("GOPATH", paths.path)
 }
 
 // devcontainerConfig is a stage configuration for repo on a Linux host with docker on PATH,
@@ -437,7 +490,7 @@ func TestEnvRunBudgetReservesTheImageBuild(t *testing.T) {
 	repo, _ := devcontainerRepo(t)
 	bin := t.TempDir()
 	testsupport.BuildExecutable(t, bin, "docker", "package main\n\nfunc main() {}\n")
-	t.Setenv("PATH", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(DevcontainerEnv, "")
 	want := devcontainer.ImageBuildTimeout
 	if hostMachine().GOOS == "windows" {
@@ -451,7 +504,11 @@ func TestEnvRunBudgetReservesTheImageBuild(t *testing.T) {
 		t.Errorf("the deadline must say it includes the image build: %s", budget)
 	}
 	t.Setenv(DevcontainerEnv, "off")
-	if off := EnvRunBudget(repo, false); off.Devcontainer != 0 || off != stageBudget(repo) {
+	off, err := stageBudget(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("resolve opted-out budget: %v", err)
+	}
+	if got := EnvRunBudget(repo, false); got.Devcontainer != 0 || got != off {
 		t.Errorf("an opted-out run must reserve nothing: %+v", off)
 	}
 }
@@ -591,7 +648,8 @@ func TestUnansweringRuntimeRunsOnTheHost(t *testing.T) {
 
 	bin := t.TempDir()
 	testsupport.BuildExecutable(t, bin, "docker", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(1) }\n")
-	t.Setenv("PATH", bin)
+	testsupport.BuildExecutable(t, bin, "podman", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(1) }\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if budget := EnvRunBudget(repo, false); budget.Devcontainer != 0 {
 		t.Errorf("a runtime that does not answer builds nothing, so reserves nothing: %+v", budget)
 	}
@@ -790,7 +848,7 @@ func TestPlanRunDryRunAsksNoRuntime(t *testing.T) {
 	isolateUserCache(t)
 	bin, record := t.TempDir(), t.TempDir()
 	testsupport.BuildExecutable(t, bin, "docker", dockerStandIn)
-	t.Setenv("PATH", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DOCKER_STAND_IN_RECORD", record)
 	t.Setenv(DevcontainerEnv, "")
 	asked := filepath.Join(record, "asked")
@@ -815,7 +873,7 @@ func TestPipelineReusesTheRunPlan(t *testing.T) {
 	cfg := devcontainerConfig(t, repo, fake)
 	bin := t.TempDir()
 	testsupport.BuildExecutable(t, bin, "docker", dockerStandIn)
-	t.Setenv("PATH", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	plan := PlanRun(repo, false)
 	if plan.Budget.Devcontainer == 0 {
 		t.Fatalf("the fixture must plan a build: %+v", plan.Budget)
@@ -839,5 +897,47 @@ func TestPipelineReusesTheRunPlan(t *testing.T) {
 	}
 	if exec := other.rep.Execution; exec.Environment != executionHost || !strings.Contains(exec.Reason, "neither docker nor podman") {
 		t.Errorf("a dry run's plan must not be reused for a real run: %+v", exec)
+	}
+}
+
+func TestPlanRunDoesNotWriteGoStateToMovedHome(t *testing.T) {
+	if hostMachine().GOOS != "linux" {
+		t.Skip("the regression fixture exercises Linux HOME and XDG_CONFIG_HOME defaults")
+	}
+	home := t.TempDir()
+	isolateGoHome(t, home)
+	repo := newHermeticGitRepo(t)
+	commitFile(t, repo, "go.mod", "module gating.test\n\ngo 1.27\n")
+	commitFile(t, repo, "root.go", "package gating\n")
+
+	plan := PlanRun(repo, true)
+	if plan.Budget.Suites != 1 {
+		t.Fatalf("fixture must exercise one Go package suite: %+v", plan.Budget)
+	}
+
+	var leaked []string
+	err := filepath.WalkDir(home, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			rel, err := filepath.Rel(home, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if strings.HasPrefix(rel, "go/telemetry/local") || strings.HasPrefix(rel, "go/telemetry/upload") ||
+				rel == "go/pkg/mod" || rel == ".cache/go-build" ||
+				strings.HasSuffix(rel, "/go-build") || strings.HasSuffix(rel, "/pkg/mod") {
+				leaked = append(leaked, rel)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk isolated HOME: %v", err)
+	}
+	if len(leaked) != 0 {
+		t.Fatalf("PlanRun left Go state in isolated HOME %q: %v", home, leaked)
 	}
 }

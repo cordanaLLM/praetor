@@ -113,6 +113,11 @@ gate itself uses (`TrackedModuleFiles` in `tools/apicompat/modules.go`, kept equ
 `TestGate_Boundary_AdoptionDiscoversTheGatesModules`). The index decides, so a `go.mod` counts once
 it is staged or committed, and an untracked one does not.
 
+The same discovery decides where the gate's prefetch, security and race-test stages and the Go
+hooks run (#1353). Those consumers run a complete toolchain once per module, so they refuse more
+than `MaxTrackedModules` (64) modules by name (`ErrTooManyModules`); this gate keeps its own larger
+bound for comparing revisions.
+
 A repository that declares the facet without such a `go.mod`, a Python or Rust project for
 example, gets nothing: no gate program, no workflow, and no **Go API Compatibility** context in
 the ruleset adoption renders. The adoption report says no API compatibility checker runs for the

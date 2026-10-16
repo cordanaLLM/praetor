@@ -45,7 +45,11 @@ var declaredVerifyCommand = "make " + declaredVerifyTarget
 // working tree as it was. A non-zero exit fails the stage, which refuses the push and names the
 // command and its exit code; exit 0 passes it. It does not count toward a receipt.
 func runDeclaredVerifyStage(ctx context.Context, cfg *stageConfig) (string, error) {
-	if reason := declaredVerifyNotApplicable(cfg); reason != "" {
+	reason, err := declaredVerifyNotApplicable(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+	if reason != "" {
 		return "", notApplicable(reason)
 	}
 	if cfg.dryRun {
@@ -54,8 +58,12 @@ func runDeclaredVerifyStage(ctx context.Context, cfg *stageConfig) (string, erro
 	if _, err := cfg.lookPath("make"); err != nil {
 		return "", skipped(declaredVerifyCommand + " is declared but make is not on PATH, so it did not run")
 	}
-	bound := stageBudget(cfg.repoDir).StageBound
-	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
+	budget, err := stageBudget(ctx, cfg.repoDir)
+	if err != nil {
+		return "", err
+	}
+	bound := budget.StageBound
+	stageErr := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
 		runCtx, envErr := util.WithCommandEnvironment(tCtx, util.InheritedEnvironment([]string{declaredVerifyGuardEnv + "=1"}))
 		if envErr != nil {
 			return fmt.Errorf("%s: %w", declaredVerifyCommand, envErr)
@@ -65,24 +73,29 @@ func runDeclaredVerifyStage(ctx context.Context, cfg *stageConfig) (string, erro
 		}
 		return nil
 	})
-	if err != nil {
-		return "", err
+	if stageErr != nil {
+		return "", stageErr
 	}
 	cfg.declaredVerified = true
 	return declaredVerifyCommand + " exited 0", nil
 }
 
 // declaredVerifyNotApplicable says why the stage runs nothing, or returns "" when it applies.
-func declaredVerifyNotApplicable(cfg *stageConfig) string {
-	switch {
-	case os.Getenv(declaredVerifyGuardEnv) != "":
-		return "running inside " + declaredVerifyCommand + " (" + declaredVerifyGuardEnv + "); not run again"
-	case holdsToolchainMarker(cfg.repoDir):
-		return "go.mod or Cargo.lock at the root: the toolchain stages verify this repository"
-	case !declaresVerifyTarget(cfg.repoDir):
-		return "no verification command declared: the makefile has no " + declaredVerifyTarget + " target"
+func declaredVerifyNotApplicable(ctx context.Context, cfg *stageConfig) (string, error) {
+	if os.Getenv(declaredVerifyGuardEnv) != "" {
+		return "running inside " + declaredVerifyCommand + " (" + declaredVerifyGuardEnv + "); not run again", nil
 	}
-	return ""
+	holdsMarker, err := holdsToolchainMarker(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+	if holdsMarker {
+		return "a tracked go.mod or Cargo.lock is present: the toolchain stages verify this repository", nil
+	}
+	if !declaresVerifyTarget(cfg.repoDir) {
+		return "no verification command declared: the makefile has no " + declaredVerifyTarget + " target", nil
+	}
+	return "", nil
 }
 
 // declaresVerifyTarget reports whether the makefile GNU Make would read at repoDir declares

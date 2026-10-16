@@ -78,12 +78,16 @@ const ExceptionRuleDeclaredLinters = "declared-linters"
 // The check runs in the fleet's shared CI and reads this list from the manifest.
 const ExceptionRuleRunnerLabel = "runner-label"
 
+// ExceptionRuleTestTimeout names the test-timeout rule.
+const ExceptionRuleTestTimeout = "test-timeout"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
 var exceptionRules = []string{
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
 	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
 	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters, ExceptionRuleRunnerLabel,
+	ExceptionRuleTestTimeout,
 }
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -93,6 +97,7 @@ var workflowRuleExamples = map[string]string{
 	ExceptionRuleBuildWarnings:    "ci.yml",
 	ExceptionRuleWorkflowTriggers: "release.yml",
 	ExceptionRuleRunnerLabel:      "ci.yml",
+	ExceptionRuleTestTimeout:      "portability.yml",
 }
 
 // Bounds of the exceptions list (HISS-02).

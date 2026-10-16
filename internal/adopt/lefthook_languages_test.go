@@ -21,6 +21,13 @@ var (
 	rustLanguageJobs = []string{"pre-commit/commands/clippy", "pre-commit/commands/rustfmt"}
 )
 
+func adoptedLefthookLanguages(languages hisscatalog.Language) hisscatalog.Language {
+	if languages&hisscatalog.LanguageRust != 0 {
+		return lefthookJobLanguages
+	}
+	return hisscatalog.LanguageGo
+}
+
 // adoptMarkedRepo adopts a fresh repository holding markers, with lefthook (when not empty)
 // written before adoption, and returns the repository and the report.
 func adoptMarkedRepo(t *testing.T, name string, markers map[string]string, lefthook string) (string, *AdoptReport) {
@@ -65,10 +72,9 @@ func assertJobs(t *testing.T, label string, jobs map[string]bool, present, absen
 	}
 }
 
-// Positive (#568): the generated jobs follow the languages the verification plan detects. A
-// Cargo-only repository gets cargo fmt and cargo clippy and no Go job, a Go-only one the Go jobs
-// and no Cargo job, a mixed one both; a Cargo workspace whose Go module sits in a subdirectory
-// is a Cargo repository, as its harness rows say. Each rendering is praetor's and is activated.
+// Positive: Cargo jobs follow the verification plan, while Go jobs are always scaffolded so a
+// module added after adoption is covered without another adoption run. Each rendering is
+// Praetor's and is activated.
 func TestAdopt_Positive_LefthookJobsFollowDetectedLanguages(t *testing.T) {
 	cases := []struct {
 		name            string
@@ -76,12 +82,12 @@ func TestAdopt_Positive_LefthookJobsFollowDetectedLanguages(t *testing.T) {
 		header          string
 		present, absent []string
 	}{
-		{"cargo-only", map[string]string{"Cargo.toml": cargoTOMLBody}, "(Rust & HISS Governance)", rustLanguageJobs, goLanguageJobs},
+		{"cargo-only", map[string]string{"Cargo.toml": cargoTOMLBody}, "(Go, Rust & HISS Governance)", append(append([]string{}, goLanguageJobs...), rustLanguageJobs...), nil},
 		{"go-only", map[string]string{"go.mod": goModMarker}, "(Go & HISS Governance)", goLanguageJobs, rustLanguageJobs},
 		{"mixed", map[string]string{"go.mod": goModMarker, "Cargo.toml": cargoTOMLBody}, "(Go, Rust & HISS Governance)",
 			append(append([]string{}, goLanguageJobs...), rustLanguageJobs...), nil},
-		{"cargo-nested-go", map[string]string{"Cargo.toml": cargoTOMLBody, "tooling/go.mod": goModMarker}, "(Rust & HISS Governance)",
-			rustLanguageJobs, goLanguageJobs},
+		{"cargo-nested-go", map[string]string{"Cargo.toml": cargoTOMLBody, "tooling/go.mod": goModMarker}, "(Go, Rust & HISS Governance)",
+			append(append([]string{}, goLanguageJobs...), rustLanguageJobs...), nil},
 	}
 	for _, tc := range cases {
 		repoPath, rep := adoptMarkedRepo(t, tc.name, tc.markers, "")
@@ -126,7 +132,7 @@ func TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs(t *testing
 			t.Fatalf("%s: the Go-only rendering already satisfies rust-systems", name)
 		}
 		repoPath, rep := adoptMarkedRepo(t, "go-every-repository", map[string]string{"Cargo.toml": cargoTOMLBody}, string(fixtures[name]))
-		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: hisscatalog.LanguageRust}, false) {
+		if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages}, false) {
 			t.Fatalf("%s: not migrated to the Cargo rendering:\n%s", name, got)
 		}
 		if !hasAction(rep, lefthookFile, actionReconcile) || hasAction(rep, lefthookFile, actionReplace) {
@@ -138,16 +144,15 @@ func TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs(t *testing
 	}
 }
 
-// Boundary: a repository with no detected language keeps every language's jobs, each guarded by
-// its root marker, as it keeps every HISS clause; one whose only detected language has no jobs
-// (Python) gets the governance jobs alone and a header naming no language.
+// Boundary: a repository with no detected language keeps every language's jobs, and a repository
+// whose only detected language has no Go/Rust jobs still receives Go jobs for later modules.
 func TestAdopt_Boundary_LefthookJobsForUnknownAndJoblessLanguages(t *testing.T) {
 	every := append(append([]string{}, goLanguageJobs...), rustLanguageJobs...)
 	repoPath, _ := adoptMarkedRepo(t, "no-marker", nil, "")
 	assertJobs(t, "no marker", writtenLefthookJobs(t, repoPath), every, nil)
 	repoPath, rep := adoptMarkedRepo(t, "python-only", map[string]string{"pytest.ini": "[pytest]\n"}, "")
-	assertJobs(t, "python only", writtenLefthookJobs(t, repoPath), []string{"pre-commit/commands/context-check", "pre-push/commands/audit"}, every)
-	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); !strings.HasPrefix(got, "# Lefthook Configuration (HISS Governance)\n") {
+	assertJobs(t, "python only", writtenLefthookJobs(t, repoPath), append([]string{"pre-commit/commands/context-check", "pre-push/commands/audit"}, goLanguageJobs...), rustLanguageJobs)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); !strings.HasPrefix(got, "# Lefthook Configuration (Go & HISS Governance)\n") {
 		t.Errorf("python only: the header names a language: %q", strings.SplitN(got, "\n", 2)[0])
 	}
 	if !hasAction(rep, lefthookFile, actionCreate) {

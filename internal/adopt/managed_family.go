@@ -6,7 +6,11 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"path"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -38,6 +42,10 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 			return err
 		}
 	}
+	moved, err := planMovedFamilyAssets(ctx, s, family)
+	if err != nil {
+		return err
+	}
 	names := family.Names()
 	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
 		data, err := family.Read(names[index])
@@ -53,6 +61,9 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 			return fmt.Errorf("reconcile %s: %w", rel, err)
 		}
 	}
+	if err := applyMovedFamilyAssets(ctx, s, family, moved); err != nil {
+		return err
+	}
 	if family.WorkflowFile == "" {
 		return nil
 	}
@@ -62,6 +73,66 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 		verified: "Existing " + family.WorkflowNoun + " preserved; audit verifies canonical text",
 	})
 	return err
+}
+
+// movedFamilyAsset is a release-owned path retired by an asset-family migration. Its snapshot
+// keeps a concurrent edit from being deleted after the replacement player was written.
+type movedFamilyAsset struct {
+	rel, full string
+	expected  []byte
+}
+
+// planMovedFamilyAssets identifies old files adoption wrote. Unknown or edited content is kept
+// and reported, never made a removal error: this migration changes location, not ownership.
+func planMovedFamilyAssets(ctx context.Context, s *adoptSession, family managedasset.Family) ([]movedFamilyAsset, error) {
+	planned := make([]movedFamilyAsset, 0, len(family.Moved))
+	for rel := range family.Moved {
+		full, err := repoFile(s.repoPath, rel)
+		if err != nil {
+			return nil, err
+		}
+		actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
+		if err != nil {
+			return nil, fmt.Errorf("inspect retired %s asset %s: %w", family.Kind, rel, err)
+		}
+		if !exists {
+			continue
+		}
+		if !family.MovedRendering(rel, actual) {
+			s.report.recordSkipped(rel, "Kept edited retired "+family.AssetNoun+"; migration moves only Praetor-rendered bytes")
+			continue
+		}
+		planned = append(planned, movedFamilyAsset{rel: rel, full: full, expected: actual})
+	}
+	return planned, nil
+}
+
+// applyMovedFamilyAssets removes planned release-owned old files and then removes their parent
+// only when it is empty. An edited file keeps the directory, which is intentional.
+func applyMovedFamilyAssets(ctx context.Context, s *adoptSession, family managedasset.Family, moved []movedFamilyAsset) error {
+	for _, asset := range moved {
+		if !s.opts.DryRun {
+			if err := contextopt.RemoveSnapshot(ctx, asset.full, asset.expected); err != nil {
+				return fmt.Errorf("remove retired %s asset %s: %w", family.Kind, asset.rel, err)
+			}
+		}
+		s.planDryRunRemoval(asset.rel)
+		s.report.recordReconciledAs(asset.rel, actionRemove, "Moved release-owned "+family.AssetNoun+" to the current player directory")
+	}
+	for rel := range family.Moved {
+		dir := path.Dir(rel)
+		full, err := repoFile(s.repoPath, dir)
+		if err != nil {
+			return err
+		}
+		if !s.opts.DryRun {
+			if err := os.Remove(full); err != nil && !errors.Is(err, fs.ErrNotExist) && !util.DirectoryNotEmpty(err) {
+				return fmt.Errorf("remove empty retired %s directory %s: %w", family.Kind, dir, err)
+			}
+		}
+		break
+	}
+	return nil
 }
 
 // FamilyForRepository returns family with its hosted workflow rendered for the repository at

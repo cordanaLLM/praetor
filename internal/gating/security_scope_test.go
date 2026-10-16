@@ -41,7 +41,25 @@ func TestSecurityPackageScope(t *testing.T) {
 }
 
 func TestSecurityPackageListingFailurePreventsScanner(t *testing.T) {
-	for _, failure := range []error{nil, context.Canceled} {
+	// Positive: an empty listing is a real, successful package check and records the stated
+	// module skip without invoking either scanner.
+	root := newGoModuleDir(t)
+	writeFile(t, filepath.Join(root, GosecConfigFile), "{}\n")
+	cfg, _ := newTestConfig(t, root, false)
+	scanned := false
+	cfg.run = func(_ context.Context, _, name string, _ ...string) (string, error) {
+		if name == govuln.DefaultScanner || name == "gosec" {
+			scanned = true
+		}
+		return "", nil
+	}
+	msg, err := runSecurityStage(context.Background(), cfg)
+	if err != nil || !strings.Contains(msg, NoPackagesNote) || scanned {
+		t.Fatalf("empty listing = %q, %v, scanned=%v", msg, err, scanned)
+	}
+
+	// Negative: a failed listing is not an empty module and names the module directory.
+	for _, failure := range []error{context.Canceled} {
 		root := newGoModuleDir(t)
 		writeFile(t, filepath.Join(root, GosecConfigFile), "{}\n")
 		cfg, _ := newTestConfig(t, root, false)
@@ -59,8 +77,8 @@ func TestSecurityPackageListingFailurePreventsScanner(t *testing.T) {
 			return "", nil
 		}
 		_, err := runSecurityStage(context.Background(), cfg)
-		if err == nil || scanned {
-			t.Fatalf("empty/failed listing passed: %v scanned=%v", err, scanned)
+		if err == nil || scanned || !strings.Contains(err.Error(), root) {
+			t.Fatalf("failed listing passed or omitted its directory: %v scanned=%v", err, scanned)
 		}
 		if failure != nil && !errors.Is(err, failure) {
 			t.Fatalf("listing error identity lost: %v", err)
