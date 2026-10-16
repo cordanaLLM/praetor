@@ -42,6 +42,7 @@ func matchingRuleset(t *testing.T) *LiveBranchProtection {
 			liveRule(t, "required_linear_history", 7, nil), liveRule(t, "required_signatures", 7, nil),
 			liveRule(t, "pull_request", 7, map[string]any{
 				"required_approving_review_count": 2, "dismiss_stale_reviews_on_push": true, "require_code_owner_review": true,
+				"require_last_push_approval": false, "required_review_thread_resolution": true,
 			}),
 			liveRule(t, "required_status_checks", 7, map[string]any{"required_status_checks": []any{map[string]any{"context": "CI"}}}),
 		},
@@ -273,5 +274,97 @@ func TestEvaluateBranchProtection_Boundary_ManagedRulesetAbsentOrUnreported(t *t
 		RulesetEnforcement: map[int]string{9: "active", 4: "evaluate"}}
 	if id, enforcement, found := twice.managedRuleset(); !found || id != 4 || enforcement != "evaluate" {
 		t.Fatalf("managed ruleset = %d %q %t, want the lowest id 4", id, enforcement, found)
+	}
+}
+
+// Positive: declared allowed_merge_methods [squash] renders and matches a live [squash].
+func TestEvaluateBranchProtection_Positive_DeclaredAllowedMergeMethodsMatchesLive(t *testing.T) {
+	policy := declaredHighSecurity()
+	policy.AllowedMergeMethods = []string{"squash"}
+	live := matchingRuleset(t)
+	live.Rules[4] = liveRule(t, "pull_request", 7, map[string]any{
+		"required_approving_review_count": 2, "dismiss_stale_reviews_on_push": true, "require_code_owner_review": true,
+		"require_last_push_approval": false, "required_review_thread_resolution": true,
+		"allowed_merge_methods": []string{"squash"},
+	})
+	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drifted := ProtectionDrifts(findings); len(drifted) != 0 {
+		t.Fatalf("expected no drift, got: %v", drifted)
+	}
+	finding := findingOf(t, findings, "allowed_merge_methods")
+	if finding.Verdict != ProtectionEnforced || finding.Declared != "[squash]" || finding.Live != "[squash]" {
+		t.Fatalf("unexpected finding: %+v", finding)
+	}
+}
+
+// Negative: planted live-only require_extra_approval_for_unattributed_changes true with
+// nothing declared fails with a finding naming it.
+func TestEvaluateBranchProtection_Negative_LiveOnlyExtraApprovalFails(t *testing.T) {
+	policy := declaredHighSecurity()
+	live := matchingRuleset(t)
+	live.Rules[4] = liveRule(t, "pull_request", 7, map[string]any{
+		"required_approving_review_count": 2, "dismiss_stale_reviews_on_push": true, "require_code_owner_review": true,
+		"require_last_push_approval": false, "required_review_thread_resolution": true,
+		"require_extra_approval_for_unattributed_changes": true,
+	})
+	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drifted := ProtectionDrifts(findings)
+	if !slices.Contains(drifted, "require_extra_approval_for_unattributed_changes") {
+		t.Fatalf("expected drift on require_extra_approval_for_unattributed_changes, got: %v", drifted)
+	}
+	finding := findingOf(t, findings, "require_extra_approval_for_unattributed_changes")
+	if finding.Verdict != ProtectionDrift || finding.Live != "true" || finding.Declared != "false" {
+		t.Fatalf("unexpected finding: %+v", finding)
+	}
+}
+
+// Negative: declared [squash] vs live [merge,squash,rebase] fails.
+func TestEvaluateBranchProtection_Negative_DeclaredMergeMethodsMismatch(t *testing.T) {
+	policy := declaredHighSecurity()
+	policy.AllowedMergeMethods = []string{"squash"}
+	live := matchingRuleset(t)
+	live.Rules[4] = liveRule(t, "pull_request", 7, map[string]any{
+		"required_approving_review_count": 2, "dismiss_stale_reviews_on_push": true, "require_code_owner_review": true,
+		"require_last_push_approval": false, "required_review_thread_resolution": true,
+		"allowed_merge_methods": []string{"merge", "squash", "rebase"},
+	})
+	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drifted := ProtectionDrifts(findings)
+	if !slices.Contains(drifted, "allowed_merge_methods") {
+		t.Fatalf("expected drift on allowed_merge_methods, got: %v", drifted)
+	}
+	finding := findingOf(t, findings, "allowed_merge_methods")
+	if finding.Verdict != ProtectionDrift || finding.Declared != "[squash]" || finding.Live != "[merge, squash, rebase]" {
+		t.Fatalf("unexpected finding: %+v", finding)
+	}
+}
+
+// Boundary: live default values with nothing declared pass without drift findings.
+func TestEvaluateBranchProtection_Boundary_LiveDefaultsWithNothingDeclaredPass(t *testing.T) {
+	policy := declaredHighSecurity()
+	live := matchingRuleset(t)
+	live.Rules[4] = liveRule(t, "pull_request", 7, map[string]any{
+		"required_approving_review_count": 2, "dismiss_stale_reviews_on_push": true, "require_code_owner_review": true,
+		"require_last_push_approval": false, "required_review_thread_resolution": true,
+		"allowed_merge_methods":                           []string{"merge", "squash", "rebase"},
+		"require_extra_approval_for_unattributed_changes": false,
+		"required_reviewers":                              []any{},
+		"dismissal_restriction":                           map[string]any{"enabled": false, "allowed_actors": []any{}},
+	})
+	findings, err := EvaluateBranchProtection(policy, []string{"CI"}, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if drifted := ProtectionDrifts(findings); len(drifted) != 0 {
+		t.Fatalf("expected no drift on defaults, got: %v", drifted)
 	}
 }

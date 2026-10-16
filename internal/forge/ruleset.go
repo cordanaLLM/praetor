@@ -405,13 +405,22 @@ func protectionRules(policy config.BranchProtectionPolicy, reviewCount int, requ
 	if policy.RequireSignedCommits {
 		rules = append(rules, map[string]any{"type": "required_signatures"})
 	}
-	rules = append(rules, map[string]any{"type": "pull_request", "parameters": map[string]any{
+	prParams := map[string]any{
 		"required_approving_review_count":   reviewCount,
 		"dismiss_stale_reviews_on_push":     policy.DismissStaleReviews,
 		"require_code_owner_review":         requireCodeOwner,
 		"require_last_push_approval":        false,
 		"required_review_thread_resolution": true,
-	}})
+	}
+	if len(policy.AllowedMergeMethods) > 0 {
+		prParams["allowed_merge_methods"] = policy.AllowedMergeMethods
+	}
+	// require_extra_approval_for_unattributed_changes is observed live (golusoris/golusoris ruleset 24664947, read 2026-10-16),
+	// absent from the pinned schema (github/rest-api-description 51a4657888cc).
+	if policy.RequireExtraApprovalForUnattributedChanges != nil {
+		prParams["require_extra_approval_for_unattributed_changes"] = *policy.RequireExtraApprovalForUnattributedChanges
+	}
+	rules = append(rules, map[string]any{"type": "pull_request", "parameters": prParams})
 	if policy.MergeQueue && policy.CodeQLDefaultSetup {
 		rules = append(rules, codeScanningRuleOf())
 	}
