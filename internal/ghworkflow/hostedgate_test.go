@@ -62,6 +62,20 @@ func TestHostedGateFault_Positive(t *testing.T) {
 	}
 }
 
+func TestHostedGateScheduledOn_Boundary_ExtendsOneHostedShape(t *testing.T) {
+	if !strings.HasPrefix(HostedGateScheduledOn, HostedGateOn) {
+		t.Fatal("scheduled gate restates instead of extending HostedGateOn")
+	}
+	want := "  schedule:\n    - cron: '" + HostedGateScheduleCron + "'\n"
+	if strings.Count(HostedGateScheduledOn, want) != 1 {
+		t.Fatalf("scheduled gate has %d copies of %q", strings.Count(HostedGateScheduledOn, want), want)
+	}
+	spec, err := Parse([]byte(HostedGateScheduledOn + gateJob + HostedGateDraftStep + gateStep))
+	if err != nil || util.YAMLMappingValue(&spec.On, "pull_request") == nil || util.YAMLMappingValue(&spec.On, "schedule") == nil {
+		t.Fatalf("scheduled gate lacks a pull request or schedule trigger: %v", err)
+	}
+}
+
 // Negative: every departure from the shape is refused, a job-level draft skip first among them,
 // since GitHub reports the skipped job as successful and a required check accepts it.
 func TestHostedGateFault_Negative(t *testing.T) {

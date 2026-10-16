@@ -188,6 +188,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
 		func() error { return auditWorkflowTriggers(ctx, manifest, rootDir) },
+		func() error { return auditTestTimeouts(ctx, manifest, rootDir) },
 		func() error { return auditBuildWarnings(ctx, manifest, rootDir) },
 		func() error { return auditDeclaredLinters(ctx, manifest, rootDir, opts.effective) },
 		func() error { return auditPaperclipHarness(ctx, manifest, opts) },
@@ -532,6 +533,19 @@ func auditWorkflowTriggers(ctx context.Context, manifest *config.Manifest, rootD
 		return err
 	}
 	fmt.Println(triggers)
+	return nil
+}
+
+// auditTestTimeouts runs the test-timeout gate (forge.AuditTestTimeouts, #1381) with the manifest's
+// test-timeout exceptions: a workflow timeout above the bound fails the audit.
+func auditTestTimeouts(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	out, err := forge.AuditTestTimeouts(ctx, forge.TestTimeoutOptions{
+		Root: rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
 	return nil
 }
 

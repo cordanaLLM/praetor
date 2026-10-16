@@ -90,7 +90,7 @@ jobs:
 
       # Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md,
       # docs/adr/0016-figures-for-adopters.md). The site serves the committed player from
-      # tools/figures/dist/ through the MkDocs hook, so nothing is bundled for the deploy. `check`
+      # tools/figures/player/ through the MkDocs hook, so nothing is bundled for the deploy. `check`
       # proves the committed SVG and JSON still match a fresh render, and `bundle.mjs --check`
       # proves the committed player is a byte-for-byte rebuild from the lock within its budget. The
       # locked install also brings the Playwright the smoke test below drives.

@@ -4,6 +4,9 @@
 
 Accepted — 2026-09-28 (proposed 2026-09-27).
 
+Superseding note (#1356): the committed player now lives at `tools/figures/player/`; historical
+references below describe the former `dist/` location.
+
 Amended by [ADR-0016](0016-figures-for-adopters.md) while still Proposed, on 2026-09-27 and
 2026-09-28 (`docs/adr/README.md`, rule 4). Each changed passage below says "Amended by ADR-0016"
 ("added by" for a new command) and names the ADR-0016 section or operator decision; the ADR-0016

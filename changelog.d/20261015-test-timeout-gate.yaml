@@ -1,0 +1,3 @@
+type: added
+title: Fail the audit on a workflow test timeout above 30 minutes unless a dated test-timeout exception excuses it
+breaking: false
