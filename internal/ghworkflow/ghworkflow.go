@@ -40,6 +40,7 @@ const (
 // is not the same as an empty mapping. Env is raw for the reason Step.Env is.
 type Spec struct {
 	On          yaml.Node      `yaml:"on"`
+	Concurrency yaml.Node      `yaml:"concurrency"`
 	Permissions yaml.Node      `yaml:"permissions"`
 	Env         yaml.Node      `yaml:"env"`
 	Defaults    Defaults       `yaml:"defaults"`

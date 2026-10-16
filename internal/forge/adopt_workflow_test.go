@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,8 +32,8 @@ const (
 	adoptNotDryRun        = "inputs.dry_run != true"
 	adoptTestRepository   = "cordanaLLM/praetor"
 	adoptTestHead         = "0123456789abcdef0123456789abcdef01234567"
-	checkoutActionPrefix  = "actions/checkout@"
-	persistCredentialsKey = "persist-credentials"
+	checkoutActionPrefix  = ghworkflow.CheckoutActionPrefix
+	persistCredentialsKey = ghworkflow.CheckoutPersistInput
 )
 
 // parseAdoptWorkflow parses this repository's adopt.yml afresh, so a test may mutate what it

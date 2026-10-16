@@ -80,7 +80,7 @@ const (
 const Workflow = `---
 name: Praetor API Compatibility
 
-` + ghworkflow.HostedGateOn + `
+` + ghworkflow.HostedGateOn + ghworkflow.HostedGateConcurrency + `
 permissions:
   contents: read
 
@@ -95,6 +95,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Setup Go` + ghworkflow.HostedGateStepIf + `
         # yamllint disable-line rule:line-length
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
@@ -133,6 +134,8 @@ jobs:
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	"f68c08bc7e6001290ade191d6838d17c6458669a3511492692e971b67333ad83": WorkflowFile, // the workflow before its concurrency group
+	"12d6d77464b18617aa0e1001a05c7850b76641c5205447e70f1b0e72ff630ebb": WorkflowFile, // the draft skip workflow before its concurrency group
 	// The gate before it accepted identical type aliases across packages (engine-apicompat-alias-identical).
 	"45566ecd8cbec806eea0ab14d60f01cf95d134b170ea09a6a52b8aa73d7e14ca": Directory + "/" + GateFile,
 	// The gate that passed every pre-v1 incompatible change under policy auto as a warning, marked or

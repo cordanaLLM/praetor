@@ -37,6 +37,8 @@ runner `praetor-api.yml` runs on is declared exactly while adoption emits the ga
 
 ## When the workflow runs
 
+A newer push to a pull request cancels its older **Go API Compatibility** run, and the checkout drops the job token after cloning ([concurrency and checkout credentials](workflow-triggers.md#workflows-praetor-writes-and-runs)).
+
 The locked workflow also triggers on `merge_group`, so the **Go API Compatibility** check reports for a merge group when the repository declares a merge queue ([Merge queue](../adoption.md#merge-queue)); an unedited copy without the trigger refreshes without `--force`.
 
 Adoption renders the workflow for the repository's default branch, resolved as for the branch

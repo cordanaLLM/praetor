@@ -14,12 +14,14 @@ package flavor
 var (
 	// priorGoCIDigests are the earlier texts of go/ci-go.yml.tmpl.
 	priorGoCIDigests = map[string]string{
+		"1ae53e06f9b9495bea73929ef4801ca92b216219c01d1cb6f3ca90d1375f6b8c": "the Go CI job before its concurrency group",
 		"36d5e19301f02efef3788fe3a1a7246fec40ea3a83c0358143d437652aba8cbc": "the Go CI job before its go.mod manifest guard",
 		"cfe4c9e934d122e5588bde13252a1c17cb92c4231bf3528778134c0ec3dbad98": "the first embedded Go CI job, an unquoted 'on' key (#463)",
 		"68921b5bd34b95510d973496d267ddf900709afe0c56ecd9938d785e823f6072": "the Go CI job on every push to main and every draft pull request (#520 to #817)",
 	}
 	// priorRustCIDigests are the earlier texts of rust/ci-rust.yml.tmpl.
 	priorRustCIDigests = map[string]string{
+		"bfb0f936c69a1f111d346859ffeb77abfbdc0d1d5762e3042ba437bc9ab80681": "the Rust CI job before its concurrency group",
 		"06f6c49b38af50835f7c93678828d94e1a84a7d1a99a3523d576157912c57410": "the Rust CI job before its Cargo.toml manifest guard",
 		"f66a2652591c6a3a1236a581b1d23dc92110d7d8b2f9164e4b8d0846c10357a4": "the first embedded Rust CI job, an unquoted 'on' key (#463)",
 		"b850058606140c1e50ef0b27ba7f94c73d77ef3fb53b0c39b7f716fc6f5f517a": "the Rust CI job on every push to main and every draft pull request (#520 to #817)",
@@ -27,12 +29,14 @@ var (
 	}
 	// priorFlutterCIDigests are the earlier texts of flutter/ci-flutter.yml.tmpl.
 	priorFlutterCIDigests = map[string]string{
+		"87e594b6db9e298b56ca7558ff81828352d40ed550e0134d6baa6b8371785e7e": "the Flutter CI job before its concurrency group",
 		"13ff5b2a881217b981aef5b8c2a4a732849611253f546afb1abf3c3fb9c661c8": "the Flutter CI job before its pubspec.yaml manifest guard",
 		"047cebc48db2d96f0a7ce8feea7cedbe6b03c36a2fdb11962e22bd6fc3a351c6": "the first embedded Flutter CI job, an unquoted 'on' key (#463)",
 		"d8992aca758301dc1f48783dfa1167bd462e8ce164367682b793df028d262e23": "the Flutter CI job on every push to main and every draft pull request (#520 to #817)",
 	}
 	// priorJVMCIDigests are the earlier texts of jvm/ci-jvm.yml.tmpl.
 	priorJVMCIDigests = map[string]string{
+		"f2923e03c20fd2f2736d79d3f8426cd6fe1cc97b0f4dcc3f1a18b0b0cd255525": "the JVM CI job before its concurrency group",
 		"64b84c2ecf75ac611c8802a615ba6026f622ac4f9341c2c8efa764f4d98d1bbd": "the JVM CI job before its Maven or Gradle manifest guard",
 		"93b9e4332cb8a9f9b7cc83e0ac1d52ef62ef5d261a4ad0c022d54b8fc1b602bc": "the first embedded JVM CI job, an unquoted 'on' key (#463)",
 		"391e27708b76d0883b9c96750bbc3d0441b6ca994c85fc5263faab2fabbc4e51": "the JVM CI job that ran a wrapper only with its executable bit set (#520)",
@@ -41,6 +45,17 @@ var (
 	// priorNodeCIDigests are the earlier texts of node/ci-node.yml.tmpl: the npm job before the
 	// body branched on the package manager, then one text per manager and Yarn facts.
 	priorNodeCIDigests = map[string]string{
+		"764e890bbfdf3268768101366d33a46c27309ede0a2defa3af68db40491b0ffb": "the Bun CI job before its concurrency group",
+		"0d7d2a21edaf07fa9d0d1ef7123d1d1110a9d4216bb88f33fea45cdfd8d36978": "the npm CI job before its concurrency group",
+		"dbd29da5da17be3ea5bde1cb73b4b7c3a53a9360e43304201923e9800a18df1e": "the pnpm CI job before its concurrency group",
+		"3c6fec95431c5f5e1a40b240eb387fa80a131d8a01609190bd3007f1665c46e6": "the Yarn CI job before its concurrency group, Berry with build",
+		"df5be0b723fb9d81068ea149992d7ba2cb755c6f41cb7ae5dedd4d22664d3a0a": "the Yarn CI job before its concurrency group, Berry with lint and build",
+		"5e234ff5dbb1a5901fb240c9318cd2a3f6705d53b9c00bf3b915fd5943ceb3d5": "the Yarn CI job before its concurrency group, Berry with lint",
+		"2b5f84804dbc435f6d8cf19b365c8278f229b3d319e768778bba796e9a08e0e3": "the Yarn CI job before its concurrency group, Berry",
+		"77c0c341444e90e390b2956406154a1ff816261a5878ae504dfd7d89808edc09": "the Yarn CI job before its concurrency group, classic with build",
+		"0c40b00f9e0d9a4c8133457b709515536f9e71312bc4702d67e3f0bb61b6dee6": "the Yarn CI job before its concurrency group, classic with lint and build",
+		"1a2c615c00f8c6f84030728dc4ec363415598e7babe066a3c3930c2b5158c8fc": "the Yarn CI job before its concurrency group, classic with lint",
+		"e6f58d985740c812caa47b4a9d1228b6f21bb2f43a51d1f98d142180de87a46c": "the Yarn CI job before its concurrency group, classic",
 		"41c5dbc778b5ad99a3125119b6ba2996d2d753860933a40754e2ac6cb7fbc037": "the npm CI job before its package.json manifest guard",
 		"7c2b68d9bb04d729f546cf1ed3125661e8c2cf0118f5bcf293f2e4784e37ddb4": "the pnpm CI job before its package.json manifest guard",
 		"8dffa892746924bdac73bdd8c20927ee74741d507c11e6bd2fef498cfda35197": "the Bun CI job before its package.json manifest guard",

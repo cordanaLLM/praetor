@@ -97,6 +97,9 @@ func TestSecurityWorkflow_Positive_HostedGateAndPinnedInstalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(body, ghworkflow.HostedGateConcurrency) {
+		t.Fatal("Security Scan lacks the shared concurrency group")
+	}
 	pull := util.YAMLMappingValue(&spec.On, "pull_request")
 	types := ghworkflow.StringList(util.YAMLMappingValue(pull, "types"))
 	wantTypes := []string{"opened", "synchronize", "reopened", ghworkflow.HostedGateReadyType}

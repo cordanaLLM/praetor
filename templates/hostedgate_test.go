@@ -111,6 +111,7 @@ func TestCIWorkflowTemplatesRenderTheHostedGateShape_Negative(t *testing.T) {
 			"- name: Test", 1),
 		"no ready_for_review":   strings.Replace(body, ", "+ghworkflow.HostedGateReadyType, "", 1),
 		"every branch push run": strings.Replace(body, ghworkflow.HostedGatePushBranchesPrefix+"main']", "\n    branches: ['**']", 1),
+		"no concurrency group":  strings.Replace(body, ghworkflow.HostedGateConcurrency, "", 1),
 	} {
 		if mutated == body {
 			t.Fatalf("%s: the mutation changed nothing", label)
@@ -128,11 +129,11 @@ func TestCIWorkflowTemplatesRenderTheHostedGateShape_Negative(t *testing.T) {
 // Boundary: the functions render the hosted gate constants byte for byte through either renderer,
 // the inline one (Render, default delimiters) included.
 func TestHostedGateFunctionsRenderTheConstants(t *testing.T) {
-	got, err := templates.Render("hosted-gate", "{{ hostedGateOn }}|{{ hostedGateScheduledOn }}|{{ hostedGateDraftStep }}|{{ hostedGateStepIf }}|{{ hostedGateManifestStepIf }}", sampleContext)
+	got, err := templates.Render("hosted-gate", "{{ hostedGateOn }}|{{ hostedGateScheduledOn }}|{{ hostedGateConcurrency }}|{{ hostedGateDraftStep }}|{{ hostedGateStepIf }}|{{ hostedGateManifestStepIf }}", sampleContext)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ghworkflow.HostedGateOn + "|" + ghworkflow.HostedGateScheduledOn + "|" + ghworkflow.HostedGateDraftStep + "|" + ghworkflow.HostedGateStepIf + "|" + ghworkflow.HostedGateManifestStepIf
+	want := ghworkflow.HostedGateOn + "|" + ghworkflow.HostedGateScheduledOn + "|" + ghworkflow.HostedGateConcurrency + "|" + ghworkflow.HostedGateDraftStep + "|" + ghworkflow.HostedGateStepIf + "|" + ghworkflow.HostedGateManifestStepIf
 	if got != want {
 		t.Errorf("Render = %q, want %q", got, want)
 	}

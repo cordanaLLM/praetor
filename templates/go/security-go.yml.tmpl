@@ -8,6 +8,7 @@ tools; all other repositories get the pinned throwaway module.
 name: Security Scan
 
 <% hostedGateScheduledOn %>
+<% hostedGateConcurrency %>
 jobs:
   vulncheck:
     runs-on: ubuntu-26.04
@@ -15,6 +16,8 @@ jobs:
 <% hostedGateDraftStep %>
       - name: Checkout source<% hostedGateStepIf %>
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Setup Go<% hostedGateStepIf %>
         uses: actions/setup-go@v7
         with:

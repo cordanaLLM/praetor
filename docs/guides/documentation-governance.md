@@ -527,6 +527,8 @@ copy an entire scratch directory to make the diagnostic disappear.
 
 ## Adoption, audit, and CI
 
+A newer push to a pull request cancels its older **Documentation Governance** run, and the checkout drops the job token after cloning ([concurrency and checkout credentials](workflow-triggers.md#workflows-praetor-writes-and-runs)).
+
 `praetor-docs.yml` also triggers on `merge_group`, so **Documentation Governance** reports for a merge group when the repository declares a merge queue ([Merge queue](../adoption.md#merge-queue)); an unedited copy without the trigger refreshes without `--force`.
 
 Repositories declaring the `docs:seo-portal` facet receive the five canonical
