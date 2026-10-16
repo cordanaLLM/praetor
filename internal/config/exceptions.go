@@ -75,11 +75,14 @@ const ExceptionRuleDeclaredLinters = "declared-linters"
 // ExceptionRuleTestTimeout names the test-timeout rule.
 const ExceptionRuleTestTimeout = "test-timeout"
 
+// ExceptionRuleMutants is the rule for tracked mutation-tool configuration exclusions.
+const ExceptionRuleMutants = "mutants"
+
 // exceptionRules lists rules an exceptions entry may name. HISS IDs come from the single HISS
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
-	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout,
+	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout, ExceptionRuleMutants,
 )
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -127,6 +130,8 @@ type Exception struct {
 	Tool     string `yaml:"tool,omitempty"`
 	Reason   string `yaml:"reason"`
 	Expires  string `yaml:"expires"`
+	Category string `yaml:"category,omitempty"`
+	Entered  string `yaml:"entered,omitempty"`
 }
 
 // Target returns the path, glob or tool the entry names.
@@ -291,7 +296,64 @@ func (e Exception) problem(today time.Time) string {
 	if problem := exceptionReasonProblem(e.Reason); problem != "" {
 		return "reason " + problem
 	}
-	return exceptionExpiryProblem(e.Expires, today)
+	return exceptionCategoryExpiryProblem(e, today)
+}
+
+func exceptionCategoryExpiryProblem(e Exception, today time.Time) string {
+	if e.Category == "" {
+		return uncategorizedExceptionExpiryProblem(e, today)
+	}
+	return categorizedExceptionExpiryProblem(e, today)
+}
+
+func uncategorizedExceptionExpiryProblem(e Exception, today time.Time) string {
+	if e.Entered != "" {
+		return "entered requires a category"
+	}
+	if e.Rule != ExceptionRuleMutants {
+		return exceptionExpiryProblem(e.Expires, today)
+	}
+	if _, err := time.Parse(ExceptionDateLayout, e.Expires); err == nil {
+		return ""
+	}
+	return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", e.Expires)
+}
+
+func categorizedExceptionExpiryProblem(e Exception, today time.Time) string {
+	days, valid := exceptionCategoryDays(e.Category)
+	if !valid {
+		return fmt.Sprintf("category %q must be A, B, C or D", e.Category)
+	}
+	entered, err := time.Parse(ExceptionDateLayout, e.Entered)
+	if err != nil {
+		return fmt.Sprintf("entered %q must be a YYYY-MM-DD date when category is set", e.Entered)
+	}
+	want := entered.AddDate(0, 0, days).Format(ExceptionDateLayout)
+	if e.Category != "A" && e.Expires != want {
+		return fmt.Sprintf("category %s requires expires %s (entered %s + %d days)", e.Category, want, e.Entered, days)
+	}
+	if e.Category == "A" {
+		return exceptionExpiryProblem(e.Expires, today)
+	}
+	if _, err := time.Parse(ExceptionDateLayout, e.Expires); err != nil {
+		return fmt.Sprintf("expires %q must be a YYYY-MM-DD date", e.Expires)
+	}
+	return ""
+}
+
+func exceptionCategoryDays(category string) (int, bool) {
+	switch category {
+	case "A":
+		return MaxExceptionDays, true
+	case "B":
+		return 3, true
+	case "C":
+		return 10, true
+	case "D":
+		return 120, true
+	default:
+		return 0, false
+	}
 }
 
 func (e Exception) functionProblem() string {
@@ -311,6 +373,12 @@ func (e Exception) functionProblem() string {
 }
 
 func (e Exception) targetProblem() string {
+	if e.Rule == ExceptionRuleMutants {
+		if e.Tool != "" || e.Glob != "" || e.Path == "" {
+			return "rule mutants must name one mutation-tool configuration file by path"
+		}
+		return e.pathOrGlobTargetProblem()
+	}
 	if e.Rule == ExceptionRuleDeclaredLinters {
 		return e.declaredLintersTargetProblem()
 	}

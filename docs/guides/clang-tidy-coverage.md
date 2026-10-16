@@ -113,12 +113,39 @@ its file and function is stale and fails the audit (`applyHISSExceptions` in
 
 | Key | Rule |
 | :--- | :--- |
-| `rule` | A rule some gate reads from the list: the HISS registry IDs `HISS-01` through `HISS-21` (`hisscatalog.RuleIDs()`), `clang-tidy-coverage`, `credits` (`config.ExceptionRuleCredits`), `test-timeout` for a workflow that sets a test timeout above the 30-minute per-package bound (`forge.AuditTestTimeouts`, #1381), `root-license-notice` for the [root licence check](licensing-gates.md#one-root-licence), `reuse-annotation-order` for a `REUSE.toml` too large for the [annotation order check](licensing-gates.md#annotation-order), `api-compatibility` (`config.ExceptionRuleAPICompatibility`) for a Go module the API compatibility gate cannot build ([A module that cannot be built even so](api-compatibility.md#a-module-that-cannot-be-built-even-so)), or `declared-linters` (`config.ExceptionRuleDeclaredLinters`) for a declared linter no workflow runs yet ([Declared linters](effective-policy.md#declared-linters)). HISS-11 names a release workflow with a supply-chain gap ([Declaring a gap](releasing.md#declaring-a-gap)); HISS-10 names a workflow with build lanes that cannot use warnings as errors ([Build-warnings gate](build-warnings.md#exceptions)); HISS-18 names a workflow that must run on every branch push or draft pull request ([Workflow trigger audit](workflow-triggers.md#declaring-a-workflow-that-must-run-everywhere)); HISS-19 names one repository file with duplicate function blocks ([HISS-19: Reuse Before Writing](../standards/hiss-spec.md#hiss-19-reuse-before-writing)). |
+| `rule` | A rule some gate reads from the list: the HISS registry IDs `HISS-01` through `HISS-21` (`hisscatalog.RuleIDs()`), `clang-tidy-coverage`, `credits` (`config.ExceptionRuleCredits`), `test-timeout` for a workflow that sets a test timeout above the 30-minute per-package bound (`forge.AuditTestTimeouts`, #1381), `root-license-notice` for the [root licence check](licensing-gates.md#one-root-licence), `reuse-annotation-order` for a `REUSE.toml` too large for the [annotation order check](licensing-gates.md#annotation-order), `api-compatibility` (`config.ExceptionRuleAPICompatibility`) for a Go module the API compatibility gate cannot build ([A module that cannot be built even so](api-compatibility.md#a-module-that-cannot-be-built-even-so)), `declared-linters` (`config.ExceptionRuleDeclaredLinters`) for a declared linter no workflow runs yet ([Declared linters](effective-policy.md#declared-linters)), or `mutants` for a tracked mutation-tool config that excludes mutants. HISS-11 names a release workflow with a supply-chain gap ([Declaring a gap](releasing.md#declaring-a-gap)); HISS-10 names a workflow with build lanes that cannot use warnings as errors ([Build-warnings gate](build-warnings.md#exceptions)); HISS-18 names a workflow that must run on every branch push or draft pull request ([Workflow trigger audit](workflow-triggers.md#declaring-a-workflow-that-must-run-everywhere)); HISS-19 names one repository file with duplicate function blocks ([HISS-19: Reuse Before Writing](../standards/hiss-spec.md#hiss-19-reuse-before-writing)). |
 | `path` or `glob` | Exactly one, except for `declared-linters`. HISS scanner exceptions use one `path`; no glob. `path` names one clean repository-relative file without glob characters. Other glob entries follow the `docs_surfaces` glob rules: `*` stays inside one segment and a `**` segment spans any number. |
 | `function` | Optional for a HISS scanner rule. Matches the scanner finding's function symbol and narrows that file's exception; omitted means the entry covers matching findings anywhere in that file. |
 | `tool` | Only and always for `declared-linters`: the linter the entry excuses, as the profile or facet names it (for example `trivy`). A `declared-linters` entry sets neither `path` nor `glob`, and no other rule takes `tool` (`config.ValidateExceptions`). |
 | `reason` | One line, at most 1024 bytes. |
 | `expires` | A `YYYY-MM-DD` date at most 90 days after today, the bound `scripts/npm_audit_gate.py` applies to its own list. The entry holds through that day. |
+| `category` | Optional for existing rules. `A`, `B`, `C` and `D` use their declared interval: A keeps its own expiry and the 90-day cap; B, C and D require expiry exactly 3, 10 and 120 days after `entered`. The `mutants` rule requires a category. |
+| `entered` | Required with `category`; a `YYYY-MM-DD` date from which B, C and D intervals are counted. |
+
+The `mutants` rule names one tracked mutation-tool configuration by `path`, such as
+`.cargo/mutants.toml`. Its category covers all exclusions in that file. The audit reads cargo-mutants
+`exclude_re` and `exclude_globs`; mutmut's `only_mutate`, `do_not_mutate` and
+`do_not_mutate_patterns` in
+`pyproject.toml` or `setup.cfg`; Stryker JSON config (`mutate` negations, `ignorePatterns` and
+`mutator.excludedMutations`); PIT Maven `pom.xml` (`excludedClasses`, `excludedMethods` and
+`avoidCallsTo`); Gremlins `.gremlins.yaml` (`unleash.exclude-files`); and go-mutesting configs
+named `go-mutesting.yaml`, `.mutesting.yaml` or `mutesting.yaml` (`exclude_dirs`,
+`disable_mutators`, `enable_mutators` and `ignore_source_lines`). Nonempty exclusion settings need a live categorized
+entry; empty settings need none. Stryker JavaScript/TypeScript config files and PIT Gradle build
+scripts are not read because they execute code or use a dynamic DSL; go-mutesting configurations
+at arbitrary paths are not discoverable because the tool loads them only when passed by flag.
+Source attributes, comments and command-line-only exclusions are outside this file audit. For
+example, an exception entered 2026-10-16 in category D expires 2027-02-13:
+
+```yaml
+exceptions:
+  - rule: mutants
+    path: .cargo/mutants.toml
+    category: D
+    entered: 2026-10-16
+    reason: generated code is not yet mutation-tested
+    expires: 2027-02-13
+```
 
 `LoadManifest` refuses a malformed entry, and the gate applies the same validator,
 `config.ValidateExceptions` in `internal/config/exceptions.go`
