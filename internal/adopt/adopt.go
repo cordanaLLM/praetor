@@ -237,6 +237,10 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("adopt cancelled: %w", err)
 	}
+	// The effective policy, lock verification and the lock catalog hash each index the catalog's
+	// archetypes; one index per catalog serves them all while its files are unchanged
+	// (config.WithArchetypeIndexCache, #1382).
+	ctx = config.WithArchetypeIndexCache(ctx)
 	if err := validateBaselineOptions(opts); err != nil {
 		return nil, err
 	}

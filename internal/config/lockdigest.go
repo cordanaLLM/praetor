@@ -238,6 +238,13 @@ func entryDigestMismatch(kind, id, pinned, path, actual, strict string) error {
 // pinned content cannot be recomputed. A present catalog without a facets directory
 // yields an empty facet index, so a declared facet is missing rather than unverifiable.
 func archetypeSources(ctx context.Context, rootDir string) (profiles, facets map[string]string, err error) {
+	return cachedArchetypeSources(ctx, rootDir, func() (map[string]string, map[string]string, error) {
+		return indexArchetypeSources(ctx, rootDir)
+	})
+}
+
+// indexArchetypeSources is archetypeSources without the context's cache (WithArchetypeIndexCache).
+func indexArchetypeSources(ctx context.Context, rootDir string) (profiles, facets map[string]string, err error) {
 	profiles, err = optionalArchetypeIndex(ctx, rootDir, archetypeDirName)
 	if err != nil || profiles == nil {
 		return nil, nil, err
