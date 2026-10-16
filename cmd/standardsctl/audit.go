@@ -253,7 +253,10 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded before truncation)", hiss.ErrScanTruncated, scanRep.TotalInfractions)
 	}
 	printLines(scanRep.Complexity.Lines())
-	current := hiss.ConvertToBaseline(scanRep.Violations)
+	current, err := auditedInfractions(scanRep, opts)
+	if err != nil {
+		return err
+	}
 
 	touched, err := resolveTouchedFiles(ctx, opts)
 	if err != nil {
@@ -279,6 +282,18 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
 
 	return auditRatchetPassed(ctx, opts, base, ratchet)
+}
+
+func auditedInfractions(scanRep *hiss.ScanReport, opts *auditOptions) ([]baseline.Infraction, error) {
+	var exceptions []config.Exception
+	if opts.effective != nil && opts.effective.Manifest != nil {
+		exceptions = opts.effective.Manifest.Exceptions
+	}
+	violations, err := applyHISSExceptions(scanRep.Violations, exceptions, config.ExceptionDay(time.Now()))
+	if err != nil {
+		return nil, err
+	}
+	return hiss.ConvertToBaseline(violations), nil
 }
 
 // printInvariantVerdict prints the HISS scan verdict for the languages the scan examined and

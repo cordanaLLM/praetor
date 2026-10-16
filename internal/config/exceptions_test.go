@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 // exceptionsToday is the fixed day the validator tests judge expiry against.
@@ -175,6 +177,35 @@ func TestValidateExceptionsBoundary(t *testing.T) {
 	}
 	if err := ValidateExceptions(entries, exceptionsToday); err == nil || !strings.Contains(err.Error(), "maximum is 1024") {
 		t.Fatalf("%d entries accepted: %v", len(entries), err)
+	}
+}
+
+func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
+	for _, rule := range hisscatalog.RuleIDs() {
+		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: "2026-12-31"}
+		switch rule {
+		case ExceptionRuleBuildWarnings:
+			entry.Path = ".github/workflows/ci.yml"
+		case ExceptionRuleSupplyChain, ExceptionRuleWorkflowTriggers:
+			entry.Path = ".github/workflows/release.yml"
+		case ExceptionRuleDedupe:
+			entry.Path = "src/a.go"
+		}
+		if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
+			t.Errorf("registered HISS rule %s refused: %v", rule, err)
+		}
+	}
+	entry := Exception{Rule: "HISS-02", Path: "src/a.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-12-31"}
+	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err != nil {
+		t.Fatalf("function scoped HISS entry refused: %v", err)
+	}
+	entry.Rule = ExceptionRuleCredits
+	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "function is only valid for a HISS scanner rule") {
+		t.Fatalf("non-HISS function scope error = %v", err)
+	}
+	entry = Exception{Rule: "HISS-02", Glob: "src/*.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-12-31"}
+	if err := ValidateExceptions([]Exception{entry}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "one file by path") {
+		t.Fatalf("globbed HISS exception error = %v", err)
 	}
 }
 

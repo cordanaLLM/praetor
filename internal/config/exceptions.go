@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -74,13 +75,12 @@ const ExceptionRuleDeclaredLinters = "declared-linters"
 // ExceptionRuleTestTimeout names the test-timeout rule.
 const ExceptionRuleTestTimeout = "test-timeout"
 
-// exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
-// the list, so an entry naming any other rule would excuse nothing and is refused instead.
-var exceptionRules = []string{
-	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
-	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
-	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout,
-}
+// exceptionRules lists rules an exceptions entry may name. HISS IDs come from the single HISS
+// registry; the other entries are the non-HISS gates that read this list.
+var exceptionRules = append(hisscatalog.RuleIDs(),
+	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
+	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout,
+)
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
 // workflow a refusal names as an example.
@@ -120,12 +120,13 @@ const globCharacters = "*?[]\\"
 // entry; an expired entry excuses nothing, so the gate fails on its files as if the entry were
 // missing (AGENTS.md rule 14).
 type Exception struct {
-	Rule    string `yaml:"rule"`
-	Path    string `yaml:"path,omitempty"`
-	Glob    string `yaml:"glob,omitempty"`
-	Tool    string `yaml:"tool,omitempty"`
-	Reason  string `yaml:"reason"`
-	Expires string `yaml:"expires"`
+	Rule     string `yaml:"rule"`
+	Path     string `yaml:"path,omitempty"`
+	Glob     string `yaml:"glob,omitempty"`
+	Function string `yaml:"function,omitempty"`
+	Tool     string `yaml:"tool,omitempty"`
+	Reason   string `yaml:"reason"`
+	Expires  string `yaml:"expires"`
 }
 
 // Target returns the path, glob or tool the entry names.
@@ -249,13 +250,13 @@ func ValidateExceptions(entries []Exception, today time.Time) error {
 	if len(entries) > MaxExceptions {
 		return fmt.Errorf("exceptions has %d entries; maximum is %d", len(entries), MaxExceptions)
 	}
-	seen := make(map[[4]string]int, len(entries))
+	seen := make(map[[5]string]int, len(entries))
 	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
 		entry := entries[index]
 		if problem := entry.problem(today); problem != "" {
 			return fmt.Errorf("exceptions[%d] %s", index, problem)
 		}
-		key := [4]string{entry.Rule, entry.Path, entry.Glob, entry.Tool}
+		key := [5]string{entry.Rule, entry.Path, entry.Glob, entry.Function, entry.Tool}
 		if first, repeated := seen[key]; repeated {
 			return fmt.Errorf("exceptions[%d] repeats exceptions[%d] (rule %s, %s)", index, first, entry.Rule, entry.Target())
 		}
@@ -284,10 +285,29 @@ func (e Exception) problem(today time.Time) string {
 	if problem := e.dedupeTargetProblem(); problem != "" {
 		return problem
 	}
+	if problem := e.functionProblem(); problem != "" {
+		return problem
+	}
 	if problem := exceptionReasonProblem(e.Reason); problem != "" {
 		return "reason " + problem
 	}
 	return exceptionExpiryProblem(e.Expires, today)
+}
+
+func (e Exception) functionProblem() string {
+	if e.Function == "" {
+		return ""
+	}
+	if !slices.Contains(hisscatalog.ScannerRuleIDs(), e.Rule) {
+		return fmt.Sprintf("function is only valid for a HISS scanner rule, got %s", e.Rule)
+	}
+	if e.Path == "" || e.Glob != "" {
+		return "function requires one file path and no glob"
+	}
+	if len(e.Function) > 256 || strings.TrimSpace(e.Function) != e.Function || strings.ContainsAny(e.Function, "\r\n\t") {
+		return "function must be a single name of at most 256 bytes"
+	}
+	return ""
 }
 
 func (e Exception) targetProblem() string {
@@ -311,6 +331,9 @@ func (e Exception) declaredLintersTargetProblem() string {
 }
 
 func (e Exception) pathOrGlobTargetProblem() string {
+	if slices.Contains(hisscatalog.ScannerRuleIDs(), e.Rule) && (e.Path == "" || e.Glob != "") {
+		return fmt.Sprintf("rule %s must name one file by path, not a glob", e.Rule)
+	}
 	if (e.Path == "") == (e.Glob == "") {
 		return "must name exactly one of path and glob"
 	}

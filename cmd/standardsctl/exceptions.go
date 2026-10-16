@@ -92,6 +92,11 @@ func printExceptionEntry(entry config.Exception, today time.Time) {
 	if err == nil {
 		daysStr = config.FormatDaysLeft(daysLeft)
 	}
+	if entry.Function != "" {
+		fmt.Printf("  - rule: %s, path: %s, function: %s, reason: %s (%s)\n",
+			entry.Rule, entry.Target(), entry.Function, entry.Reason, daysStr)
+		return
+	}
 	fmt.Printf("  - rule: %s, path: %s, reason: %s (%s)\n",
 		entry.Rule, entry.Target(), entry.Reason, daysStr)
 }

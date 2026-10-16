@@ -16,10 +16,82 @@ import (
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/generated"
+	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 // exceptionsGate names the step on every line it prints.
 const exceptionsGate = "Exceptions"
+
+// applyHISSExceptions removes only live, matching scanner findings and reports declarations
+// that match no finding as stale. Other HISS gates keep judging their own declarations.
+func applyHISSExceptions(violations []hiss.InvariantViolation, entries []config.Exception, today time.Time) ([]hiss.InvariantViolation, error) {
+	scannerRules := make(map[string]struct{})
+	for _, rule := range hisscatalog.ScannerRuleIDs() {
+		scannerRules[rule] = struct{}{}
+	}
+	used := make([]bool, len(entries))
+	remaining := make([]hiss.InvariantViolation, 0, len(violations))
+	for i := 0; i < len(violations); i++ {
+		entry, live := matchingHISSException(violations[i], entries, scannerRules, today, used)
+		if live {
+			printExcusedHISSFinding(violations[i], *entry)
+			continue
+		}
+		remaining = append(remaining, violations[i])
+	}
+	if err := unusedHISSException(entries, scannerRules, used); err != nil {
+		return nil, err
+	}
+	return remaining, nil
+}
+
+func matchingHISSException(violation hiss.InvariantViolation, entries []config.Exception, rules map[string]struct{}, today time.Time, used []bool) (*config.Exception, bool) {
+	var selected *config.Exception
+	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
+		entry := &entries[i]
+		if !hissExceptionMatches(violation, entry, rules) {
+			continue
+		}
+		used[i] = true
+		selected = preferLiveHISSException(selected, entry, today)
+	}
+	return selected, selected != nil
+}
+
+func hissExceptionMatches(violation hiss.InvariantViolation, entry *config.Exception, rules map[string]struct{}) bool {
+	_, scannerRule := rules[entry.Rule]
+	return scannerRule && entry.Rule == violation.RuleID && entry.Path == violation.FilePath &&
+		(entry.Function == "" || entry.Function == violation.Symbol)
+}
+
+func preferLiveHISSException(selected, candidate *config.Exception, today time.Time) *config.Exception {
+	if candidate.Expired(today) {
+		return selected
+	}
+	if selected == nil || (selected.Function == "" && candidate.Function != "") {
+		return candidate
+	}
+	return selected
+}
+
+func printExcusedHISSFinding(violation hiss.InvariantViolation, entry config.Exception) {
+	finding := fmt.Sprintf("[EXCUSED] %s %s:%d", violation.RuleID, violation.FilePath, violation.LineNumber)
+	if violation.Symbol != "" {
+		finding += " function " + violation.Symbol
+	}
+	fmt.Printf("%s: %s; exception until %s.\n", finding, entry.Reason, entry.Expires)
+}
+
+func unusedHISSException(entries []config.Exception, rules map[string]struct{}, used []bool) error {
+	for i := 0; i < len(entries) && i < config.MaxExceptions; i++ {
+		if _, scannerRule := rules[entries[i].Rule]; scannerRule && !used[i] {
+			return fmt.Errorf("[FAIL] %s: HISS exception (rule %s, %s) is unused; no matching finding in its file/function, so remove the stale entry",
+				exceptionsGate, entries[i].Rule, entries[i].Target())
+		}
+	}
+	return nil
+}
 
 // auditExceptionsExpiry warns when any declared exception in the manifest expires within
 // config.ExceptionExpiryWarningDays (14 days) of today (Issue #798), and fails every entry whose
