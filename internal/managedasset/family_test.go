@@ -383,7 +383,7 @@ const (
 // whitespace separates the comment from the SHA (#610).
 func TestWorkflowPinsEveryActionPositive(t *testing.T) {
 	markdown := ForFacet(DocumentationFacet)[0]
-	unpinned, err := unpinnedActions(markdown.Workflow)
+	unpinned, err := UnpinnedActions(markdown.Workflow)
 	if err != nil || len(unpinned) != 0 {
 		t.Fatalf("the Markdown workflow leaves %q unpinned: %v", unpinned, err)
 	}
@@ -430,15 +430,15 @@ func TestWorkflowPinsEveryActionBoundary(t *testing.T) {
 		workflowHead + "      - uses: ./.github/actions/local\n",
 		workflowHead + "      # uses: actions/checkout@v7\n" + pinnedStep,
 	} {
-		if unpinned, err := unpinnedActions(workflow); err != nil || len(unpinned) != 0 {
+		if unpinned, err := UnpinnedActions(workflow); err != nil || len(unpinned) != 0 {
 			t.Fatalf("%q: unpinned=%q err=%v", workflow, unpinned, err)
 		}
 	}
 	atBound := strings.Repeat("\n", MaxWorkflowLines-1)
-	if _, err := unpinnedActions(atBound); err != nil {
+	if _, err := UnpinnedActions(atBound); err != nil {
 		t.Fatalf("a workflow at the line bound was refused: %v", err)
 	}
-	if _, err := unpinnedActions(atBound + "\n"); err == nil {
+	if _, err := UnpinnedActions(atBound + "\n"); err == nil {
 		t.Fatal("a workflow above the line bound was scanned")
 	}
 	family := fixtureFamily()

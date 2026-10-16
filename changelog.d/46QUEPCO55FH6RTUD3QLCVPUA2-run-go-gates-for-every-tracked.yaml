@@ -1,0 +1,3 @@
+type: added
+title: Run Go gates for every tracked module
+issue: '#1353'

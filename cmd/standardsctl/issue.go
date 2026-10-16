@@ -42,6 +42,8 @@ func runIssue(args []string) error {
 		return nil
 	case "reconcile":
 		return runIssueReconcile(ctx, subArgs)
+	case "claim", "status", "release":
+		return runIssueClaim(ctx, sub, subArgs)
 	default:
 		return fmt.Errorf("unknown issue subcommand: %s", sub)
 	}
@@ -53,6 +55,7 @@ func printIssueUsage() {
 	fmt.Println("  reconcile [--repos=<owner>/<name>,...] [--owner=<owner>] [--dry-run|--apply] [--max-planning-writes=N]")
 	fmt.Println("            Reconcile cross-repo issue dependencies and planning state (parent task lists, epics, milestones);")
 	fmt.Println("            a dry run listing every intended write is the default")
+	printIssueClaimUsage()
 }
 
 // reconcileRequest is what the flags of one `issue reconcile` asked for. reposSet tells an

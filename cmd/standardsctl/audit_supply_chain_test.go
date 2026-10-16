@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,9 +83,20 @@ func adoptedRepository(t *testing.T, files map[string]string, flags ...string) (
 		t.Fatalf("adopt: exit %d\n%s", code, out)
 	}
 	if staged, err := runFixtureGit(t, root, env, "add", "-A"); err != nil {
-		t.Fatalf("git add: %v\n%s", err, staged)
+		t.Fatalf("git add -A after adopt: %v\n%s\n%s", err, staged, fixtureStatus(t, root, env))
 	}
 	return root, out
+}
+
+// fixtureStatus names the paths of a fixture whose git add failed (#1275): the porcelain status,
+// or why it could not be read. git add itself may have printed nothing.
+func fixtureStatus(t *testing.T, root string, env []string) string {
+	t.Helper()
+	status, err := runFixtureGit(t, root, env, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return fmt.Sprintf("git status --porcelain failed too: %v\n%s", err, status)
+	}
+	return "git status --porcelain:\n" + status
 }
 
 // End to end (#330): the default facet security:high declares SLSA Build Level 3, cosign signing
@@ -131,7 +143,7 @@ func TestAdoptThenAuditDeclaresTheSupplyChainGap(t *testing.T) {
 	mustErrContain(t, err, "rule HISS-11, path .github/workflows/release.yml")
 
 	root, adopted = adoptedGoRepository(t, "--profile", "org-health", "--facets", "docs:seo-portal")
-	if strings.Contains(adopted, "exceptions: recorded") || strings.Contains(readFixtureFile(t, root, ".standards.yaml"), "exceptions:") {
+	if strings.Contains(adopted, "exceptions: recorded rule HISS-11") || strings.Contains(readFixtureFile(t, root, ".standards.yaml"), `rule: "HISS-11"`) {
 		t.Fatalf("adoption recorded an exception for a policy declaring no supply-chain control:\n%s", adopted)
 	}
 	manifestPath = filepath.Join(root, ".standards.yaml")

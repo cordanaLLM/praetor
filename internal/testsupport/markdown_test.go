@@ -102,3 +102,73 @@ func TestMarkdownFindingsNestedFences(t *testing.T) {
 		t.Errorf("a tilde run closed or broke a backtick fence: %v", findings)
 	}
 }
+
+// Positive: a table and the blocks of a block quote pass with blank lines around them, a line
+// of quote markers counting as one, and a table may sit inside a list item. Negative: a table
+// glued to the line above or below it is reported (MD058), on its last row for the line below,
+// and a heading, list or fence glued to its neighbour inside a quote is reported as it is
+// outside one. Boundary: a quoted heading directly after an unquoted line is reported, since
+// the quote marker is no blank line; a scoped MD058 disable is honoured; a pipe inside a fence
+// is content; and quote markers past maxQuoteDepth are content too.
+func TestMarkdownFindingsQuotesAndTables(t *testing.T) {
+	clean := "# T\n\n1. item\n\n   | a | b |\n   | :--- | :--- |\n   | 1 | 2 |\n\n2. next\n\n" +
+		"> ### Quoted\n>\n> text:\n>\n> - one\n> - two\n>\n> ```bash\n> a | b\n> ```\n>\n> | a |\n> | :--- |\n\ntext\n"
+	if findings := MarkdownFindings(clean); len(findings) != 0 {
+		t.Errorf("clean quotes and tables reported %v", findings)
+	}
+	cases := map[string]struct{ doc, want string }{
+		"table glued above":        {"# T\n\ntext\n| a |\n| :--- |\n", "line 4: MD058"},
+		"table glued below":        {"# T\n\n| a |\n| :--- |\ntext\n", "line 4: MD058"},
+		"table glued to next item": {"# T\n\n1. item\n\n   | a |\n   | :--- |\n2. next\n", "line 6: MD058"},
+		"quoted heading glued":     {"# T\n\n> ### H\n> text\n", "line 3: MD022"},
+		"quoted list glued":        {"# T\n\n> text:\n> - one\n", "line 4: MD032"},
+		"quoted fence glued":       {"# T\n\n> text\n> ```bash\n> x\n> ```\n", "line 4: MD031"},
+		"quote after a heading":    {"# T\n\n### H\n> text\n", "line 3: MD022"},
+		"quoted heading after one": {"# T\n\n### H\n\ntext\n> ### Q\n>\n> text\n", "line 6: MD022"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if findings := strings.Join(MarkdownFindings(tc.doc), "\n"); !strings.Contains(findings, tc.want) {
+				t.Fatalf("findings %q do not report %s", findings, tc.want)
+			}
+		})
+	}
+	disabled := "# T\n\n<!-- markdownlint-disable MD058 -->\ntext\n| a |\n| :--- |\ntext\n"
+	if findings := MarkdownFindings(disabled); len(findings) != 0 {
+		t.Errorf("scoped MD058 disable not honoured: %v", findings)
+	}
+	fenced := "# T\n\n```text\nx\n| a |\ny\n```\n"
+	if findings := MarkdownFindings(fenced); len(findings) != 0 {
+		t.Errorf("a pipe inside a fence reported %v", findings)
+	}
+	deep := "# T\n\ntext\n" + strings.Repeat("> ", maxQuoteDepth) + "- one\n"
+	if findings := strings.Join(MarkdownFindings(deep), "\n"); !strings.Contains(findings, "MD032") {
+		t.Errorf("a list at quote depth %d is not read by its content: %q", maxQuoteDepth, findings)
+	}
+	deeper := "# T\n\ntext\n" + strings.Repeat("> ", maxQuoteDepth+1) + "- one\n"
+	if findings := MarkdownFindings(deeper); len(findings) != 0 {
+		t.Errorf("a line past quote depth %d reported %v", maxQuoteDepth, findings)
+	}
+}
+
+// Positive, Negative, Boundary (HISS-15, HISS-21): MarkdownTableRowsUnderHeading parses
+// backtick-started rows under a heading, ignores other lines and sections, handles CRLF,
+// and returns nil when the heading is missing.
+func TestMarkdownTableRowsUnderHeading_3D(t *testing.T) {
+	md := "## Target\n\n| Col 1 | Col 2 |\n| :--- | :--- |\n| `step1` | desc 1 |\n| plain | ignored |\n| `step2` | desc 2 |\n\n## Next\n| `step3` | after |\n"
+	got := MarkdownTableRowsUnderHeading(md, "## Target")
+	if len(got) != 2 || got[0][0] != "`step1`" || got[0][1] != "desc 1" || got[1][0] != "`step2`" || got[1][1] != "desc 2" {
+		t.Fatalf("positive parse unexpected rows: %+v", got)
+	}
+
+	// Negative: missing heading returns nil.
+	if got := MarkdownTableRowsUnderHeading(md, "## Missing"); got != nil {
+		t.Fatalf("missing heading returned %v, want nil", got)
+	}
+
+	// Boundary: CRLF behaves identically to LF.
+	crlf := strings.ReplaceAll(md, "\n", "\r\n")
+	if crlfGot := MarkdownTableRowsUnderHeading(crlf, "## Target"); len(crlfGot) != len(got) {
+		t.Fatalf("CRLF rows length %d differs from LF length %d", len(crlfGot), len(got))
+	}
+}

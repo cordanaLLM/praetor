@@ -1,0 +1,4 @@
+type: fixed
+title: Skip the live branch protection comparison, with its reason, while the default branch carries no .standards.yaml, so the first push of an adoption is no longer refused; the comparison starts with the first push after the manifest reaches the default branch
+issue: "#1040"
+breaking: false

@@ -7,8 +7,6 @@ package adopt
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -51,32 +49,10 @@ func reconcileEngineMakefile(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
-func launcherInstalledOrPlanned(ctx context.Context, s *adoptSession) (bool, error) {
-	declined, err := ArtifactDeclined(s.declined, "git-hooks")
-	if err != nil {
-		return false, err
-	}
-	if declined {
-		return false, nil
-	}
-	if _, err := os.Stat(filepath.Join(s.repoPath, filepath.FromSlash(engineLauncherFile))); err == nil {
-		return true, nil
-	}
-	existing, exists, err := s.readExistingLefthook()
-	if err != nil {
-		return false, err
-	}
-	if exists {
-		shape, err := s.lefthookShape(ctx)
-		if err != nil {
-			return false, err
-		}
-		identity := classifyLefthookConfig(existing, shape)
-		if identity.reason != "" {
-			return false, nil
-		}
-	}
-	return true, nil
+// launcherInstalledOrPlanned reports whether the engine launcher is planned or installed.
+// When git-hooks is declined, the launcher is neither installed nor planned (#1172).
+func launcherInstalledOrPlanned(s *adoptSession) bool {
+	return !s.declines("git-hooks")
 }
 
 func hasEngineMakefileInclude(normalized string) bool {
@@ -171,7 +147,7 @@ func matchCLIVariableOverride(line string) (bool, string) {
 	if trimmed == "" {
 		return false, ""
 	}
-	stripped := stripMakePrefixes(trimmed)
+	stripped := util.StripMakeDirectivePrefixes(trimmed)
 	if ok, op := matchDefineCLIVariable(stripped); ok {
 		return true, op
 	}
@@ -203,20 +179,4 @@ func matchAssignCLIVariable(stripped string) (bool, string) {
 		}
 	}
 	return false, ""
-}
-
-func stripMakePrefixes(s string) string {
-	for i := 0; i < 4; i++ {
-		stripped := false
-		for _, prefix := range []string{"override", "export", "private"} {
-			if strings.HasPrefix(s, prefix) && (len(s) == len(prefix) || s[len(prefix)] == ' ' || s[len(prefix)] == '\t') {
-				s = strings.TrimSpace(s[len(prefix):])
-				stripped = true
-			}
-		}
-		if !stripped {
-			break
-		}
-	}
-	return s
 }

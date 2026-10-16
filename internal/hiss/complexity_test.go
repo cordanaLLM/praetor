@@ -302,7 +302,7 @@ func TestComplexityReport_Lines(t *testing.T) {
 	if len(lines) != MaxListedMeasurements+2 {
 		t.Fatalf("lines = %d, want summary + %d + remainder", len(lines), MaxListedMeasurements)
 	}
-	if want := "[REPORT] HISS-04 complexity measured, not enforced: 201 measurements over limit in 101 functions (cyclomatic 101, cognitive 100, statements 0)"; lines[0] != want {
+	if want := "[REPORT] HISS-04 complexity measured, not enforced: 201 measurements over limit in 101 functions (cyclomatic 101, cognitive 100, length 0, statements 0)"; lines[0] != want {
 		t.Errorf("summary = %q\nwant      %q", lines[0], want)
 	}
 	if want := "[REPORT] HISS-04 a.go:1 Function 'F0' cyclomatic complexity 11 exceeds 10 (report: measured, not enforced)"; lines[1] != want {
@@ -347,9 +347,10 @@ func cyclomaticMeasurements(rep *ScanReport) map[string]int {
 	return got
 }
 
-// Positive and negative: the scanner measures production functions, including a literal bound
+// Positive and negative: the scanner measures production and test functions, including a literal bound
 // to a package variable, and reports them without a single violation, infraction or breakdown
-// entry, so no baseline, ratchet or gate can move because of them.
+// entry, so no baseline, ratchet or gate can move because of them. Test findings are named
+// as test functions so an adopter can burn them down (#1316).
 func TestScan_ComplexityIsReportedNeverEnforced(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, "p.go", "package p\n\n"+flatBranches("Eleven", 11)+
@@ -360,13 +361,94 @@ func TestScan_ComplexityIsReportedNeverEnforced(t *testing.T) {
 		t.Fatalf("complexity entered the infraction report: %+v", rep.Violations)
 	}
 	got := cyclomaticMeasurements(rep)
-	if len(got) != 2 || got["Eleven"] != 11 || got["Literal"] != 12 {
-		t.Fatalf("cyclomatic measurements = %v, want Eleven 11 and Literal 12 (test file exempt)", got)
+	if len(got) != 3 || got["Eleven"] != 11 || got["Literal"] != 12 || got["TestHelper"] != 20 {
+		t.Fatalf("cyclomatic measurements = %v, want Eleven 11, Literal 12, TestHelper 20", got)
 	}
 	for _, m := range rep.Complexity.Measurements {
-		if m.Severity != SeverityReport || m.FilePath != "p.go" {
-			t.Errorf("measurement %+v: want a report-only entry in p.go", m)
+		if m.Severity != SeverityReport {
+			t.Errorf("measurement %+v: want SeverityReport", m)
 		}
+		if m.FilePath == "p_test.go" {
+			if !m.IsTest || !strings.HasPrefix(m.Detail(), "Test function '") {
+				t.Errorf("test measurement %+v: want IsTest and Test function prefix", m)
+			}
+		} else {
+			if m.IsTest || !strings.HasPrefix(m.Detail(), "Function '") {
+				t.Errorf("production measurement %+v: want !IsTest and Function prefix", m)
+			}
+		}
+	}
+}
+
+// Positive, negative and boundary: a long test function is reported for function length;
+// a short one is not; test complexity is reported and named as a test function;
+// a production function report is unchanged; zero infractions or violations are recorded (#1316).
+func TestScan_TestFilesMeasuredNotEnforced(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "prod.go", "package p\n\n"+flatBranches("ProdEleven", 11))
+	writeFixture(t, root, "prod_test.go", "package p\n\n"+
+		goFuncOfLOC("TestLong", 80)+"\n"+
+		goFuncOfLOC("TestShort", 10)+"\n"+
+		flatBranches("TestComplex", 15))
+
+	rep := scanFixture(t, root, ScanOptions{})
+	if rep.TotalInfractions != 0 || len(rep.Violations) != 0 {
+		t.Fatalf("test measurements entered infraction report: %+v", rep.Violations)
+	}
+
+	bySymbol := make(map[string][]Measurement)
+	for _, m := range rep.Complexity.Measurements {
+		bySymbol[m.Symbol] = append(bySymbol[m.Symbol], m)
+	}
+
+	// 1. Long test function is reported (length 80 > 60).
+	longMs, ok := bySymbol["TestLong"]
+	if !ok || len(longMs) == 0 {
+		t.Fatalf("TestLong measurements empty")
+	}
+	var lengthM *Measurement
+	for i := range longMs {
+		if longMs[i].Kind == KindLength {
+			lengthM = &longMs[i]
+			break
+		}
+	}
+	if lengthM == nil {
+		t.Fatalf("TestLong missing length measurement: %+v", longMs)
+	}
+	if lengthM.Value != 80 || lengthM.Limit != 60 || !lengthM.IsTest {
+		t.Errorf("TestLong measurement = %+v", lengthM)
+	}
+	if want := "Test function 'TestLong' function length 80 exceeds 60 (report: measured, not enforced)"; lengthM.Detail() != want {
+		t.Errorf("TestLong detail = %q, want %q", lengthM.Detail(), want)
+	}
+
+	// 2. Short test function is NOT reported.
+	if shortMs, found := bySymbol["TestShort"]; found {
+		t.Errorf("TestShort was reported: %+v", shortMs)
+	}
+
+	// 3. Complex test function is reported with test function naming.
+	complexMs, ok := bySymbol["TestComplex"]
+	if !ok || len(complexMs) == 0 {
+		t.Fatalf("TestComplex measurements empty")
+	}
+	for _, m := range complexMs {
+		if !m.IsTest || !strings.HasPrefix(m.Detail(), "Test function 'TestComplex'") {
+			t.Errorf("TestComplex detail = %q, want prefix Test function 'TestComplex'", m.Detail())
+		}
+	}
+
+	// 4. Production function report is unchanged (starts with Function '...', not Test function '...').
+	prodMs, ok := bySymbol["ProdEleven"]
+	if !ok || len(prodMs) != 1 {
+		t.Fatalf("ProdEleven measurements = %+v, want 1", prodMs)
+	}
+	if prodMs[0].IsTest {
+		t.Errorf("ProdEleven marked as IsTest")
+	}
+	if want := "Function 'ProdEleven' cyclomatic complexity 11 exceeds 10 (report: measured, not enforced)"; prodMs[0].Detail() != want {
+		t.Errorf("ProdEleven detail = %q, want %q", prodMs[0].Detail(), want)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dedupe"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -42,13 +43,23 @@ func dedupeFixtureDir(t *testing.T, name, source string) string {
 	return dir
 }
 
+// dedupeEngineFixtureDir is dedupeFixtureDir inside a go.mod that declares the engine module.
+// The sprawl rule names internal/util only in the engine; in an adopted repository one git
+// helper is the allowed shape (#1228), so a single git call reports nothing there.
+func dedupeEngineFixtureDir(t *testing.T, name, source string) string {
+	t.Helper()
+	dir := dedupeFixtureDir(t, name, source)
+	writeFixtureFile(t, dir, "go.mod", "module "+gomanifest.EngineModulePath+"\n")
+	return dir
+}
+
 // TestRunDedupeScan_Negative_FailureNamesTheFindings pins what the scan says when it fails.
 //
 // The message used to be "dedupe audit failed with score 95.0%", which reads like a
 // threshold the repository missed; the verdict is the finding lists, so a single sprawl item
 // fails the scan at a score of 95 and the reader needs the count, not the percentage.
 func TestRunDedupeScan_Negative_FailureNamesTheFindings(t *testing.T) {
-	dir := dedupeFixtureDir(t, "sprawl.go", dedupeSprawlSource)
+	dir := dedupeEngineFixtureDir(t, "sprawl.go", dedupeSprawlSource)
 
 	err := runDedupeScan([]string{dir})
 	if err == nil {
@@ -249,7 +260,7 @@ func TestRunDedupeScan_Negative_UnknownFlagAndSecondDirectoryAreRejected(t *test
 
 // The JSON form keeps the text form's exit, and "--" still passes a dash-led directory.
 func TestRunDedupeScan_Boundary_JSONKeepsTheVerdict(t *testing.T) {
-	dir := dedupeFixtureDir(t, "sprawl.go", dedupeSprawlSource)
+	dir := dedupeEngineFixtureDir(t, "sprawl.go", dedupeSprawlSource)
 	out, err := captureStdout(t, func() error { return runDedupeScan([]string{"--json", dir}) })
 	mustErrContain(t, err, "1 utility sprawl finding")
 	if !strings.Contains(out, `"sprawl_items"`) {

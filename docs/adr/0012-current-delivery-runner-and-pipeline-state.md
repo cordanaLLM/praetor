@@ -78,7 +78,10 @@ replays it from ADR-0003, whose body is unchanged.
    profile has no flavor.
 5. **Race-Detector Tests**: `go test -race` in an isolated worktree; skipped with a reason on a dry
    run, without `go.mod`, or without a working cgo toolchain.
-6. **Ed25519 Exit-0 Receipt**: signs the concatenated stage output, skip reasons included, with the
+6. **Declared Verification**: `make verify-all` in an isolated worktree, where the root holds no
+   `go.mod` or `Cargo.lock` and the makefile declares the target; a non-zero exit fails the stage.
+   Not applicable otherwise; it signs no receipt (#1218).
+7. **Ed25519 Exit-0 Receipt**: signs the concatenated stage output, skip reasons included, with the
    key `lockdown.LoadSigningKey` resolves; a missing key fails the stage and a dry run mints none.
 
 The `main` ruleset requires a pull request and the CI status checks

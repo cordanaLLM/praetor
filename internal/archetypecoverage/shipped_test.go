@@ -38,10 +38,9 @@ func TestShippedManifestMatchesTheSource(t *testing.T) {
 	}
 }
 
-// linters is the key #353 named as read by nothing. Its one consumer is the audit's clang-tidy
-// translation-unit coverage gate (#778), which runs when the list names clang-tidy; the
-// manifest must record exactly that consumer acting on it, so a second reader, or the gate
-// dropping its read, fails the test above until the entry changes with it.
+// linters is the key #353 named as read by nothing. Its consumers are the audit's clang-tidy
+// translation-unit coverage gate (#778) and the declared-linters gate (#1289); the
+// manifest must record exactly those consumers acting on it.
 func TestShippedManifestRecordsLintersConsumedByTheTidyCoverageGate(t *testing.T) {
 	manifest, err := archetypecoverage.Load(t.Context(), repositoryRoot)
 	if err != nil {
@@ -49,9 +48,10 @@ func TestShippedManifestRecordsLintersConsumedByTheTidyCoverageGate(t *testing.T
 	}
 	for _, field := range manifest.Fields {
 		if field.Key == "linters" {
-			if field.State != archetypecoverage.StateConsumed || len(field.Consumers) != 1 ||
-				field.Consumers[0].Func != "cmd/standardsctl.auditTidyCoverage" {
-				t.Fatalf("linters entry = %+v, want consumed by cmd/standardsctl.auditTidyCoverage alone", field)
+			if field.State != archetypecoverage.StateConsumed || len(field.Consumers) != 2 ||
+				field.Consumers[0].Func != "cmd/standardsctl.auditTidyCoverage" ||
+				field.Consumers[1].Func != "internal/config.EffectivePolicy.DeclaredLinters" {
+				t.Fatalf("linters entry = %+v, want consumed by cmd/standardsctl.auditTidyCoverage and internal/config.EffectivePolicy.DeclaredLinters", field)
 			}
 			return
 		}

@@ -6,6 +6,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -15,16 +16,19 @@ import (
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
 // The REUSE gate adoption emits into a repository that declares its licensing the REUSE way
-// (supplychain.ReuseDeclared: REUSE.toml or LICENSES/ at the root): the reuse-lint pre-commit job
+// (supplychain.ReuseDeclared: REUSE.toml or .reuse/dep5 at the root): the reuse-lint pre-commit job
 // of lefthook.yml (reuseLintCommand) and the hosted workflow below, both at the one REUSE pin,
 // supplychain.ReuseActionVersion. A repository with neither gets neither: reuse lint fails every
 // tree that declares no licensing its way, so the gate would only block; a root that stops
-// declaring REUSE loses both (migrateReuseSwitch, removeReuseGate).
+// declaring REUSE loses both (migrateReuseSwitch, removeReuseGate), and so does one whose manifest
+// declines reuse-gate (reuseGateApplies, #1244).
 
 const (
 	// reuseWorkflowFile is the hosted REUSE gate adoption writes.
@@ -43,16 +47,43 @@ var priorReuseWorkflowDigests = map[string]string{
 	"c8b2b85f7d8f3be75dc21737409a7583e159adca329ba91c9578f180ccf17b25": "reuse-action v6, checkout v7, hosted gate shape, default branch main, 10-minute timeout",
 	"8edae714aaca03bb34c9069cf294950a566f65d92b5c076be3dee6c98537d210": "reuse-action v6, checkout v7, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
 	"c20f118f20de38aa547894de8b1ff070ea76619051f9cfabcb9a778905cb4840": "reuse-action v6, checkout v7, hosted gate shape with merge_group, default branch main, 10-minute timeout",
+	"b2af66a81dfc0edcab9f50f201b037b44307f8df15fefc838e69e002ad5a5a49": "reuse-action v6 and checkout pinned by Renovate from tag pins, hosted gate shape, default branch main, 10-minute timeout",
+	"b5460afc9787f9149405b991d77d11664518d38baae5657e4cdb3b643630285e": "reuse-action v6 and checkout pinned by Renovate from tag pins, hosted gate shape with the draft step on bash, default branch main, 10-minute timeout",
+	"b094b6973f76e0b817ce24b2b9dd8e92f5e2fa03617309287a6ae840853b3f7b": "reuse-action v6 and checkout pinned by commit digest, hosted gate shape with merge_group, default branch main, 10-minute timeout",
 }
 
-// reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
-// the ruleset requiring its job protects: one job, on the runner the flavor workflows use, with a
-// timeout, in the hosted gate shape every hosted gate shares (ghworkflow.HostedGateOn: pull
-// request activity and a push to the default branch only; ghworkflow.HostedGateDraftStep first,
-// so a draft run fails by design; ghworkflow.HostedGateStepIf on every later step). It checks the
-// commit out without keeping the token and runs supplychain.ReuseActionRef, which runs reuse lint
-// over the checkout.
-func reuseWorkflow(branch string) string {
+// scanCheckoutPinnedRef extracts the pinned actions/checkout reference from workflow.
+func scanCheckoutPinnedRef(workflow string) (string, error) {
+	_, uses, err := util.ScanActionUses(workflow, managedasset.MaxWorkflowLines)
+	if err != nil {
+		return "", fmt.Errorf("scan workflow actions: %w", err)
+	}
+	for _, use := range uses {
+		if use.Pin.Action == "actions/checkout" && use.Pinned {
+			return use.Ref, nil
+		}
+	}
+	return "", errors.New("workflow carries no pinned actions/checkout")
+}
+
+// reuseCheckoutRef returns the actions/checkout reference pinned by digest with its version comment,
+// taking the SHA and version from markdownassets.Workflow, the same source praetor-docs.yml uses (HISS-19).
+func reuseCheckoutRef() (string, error) {
+	return scanCheckoutPinnedRef(markdownassets.Workflow)
+}
+
+// renderReuseWorkflow renders the hosted REUSE gate for the given default branch using
+// the actions/checkout pinned reference scanned from workflow.
+func renderReuseWorkflow(workflow, branch string) (string, error) {
+	ref, err := scanCheckoutPinnedRef(workflow)
+	if err != nil {
+		return "", fmt.Errorf("render the hosted REUSE gate: %w", err)
+	}
+	return renderReuseWorkflowWithRef(ref, branch), nil
+}
+
+// renderReuseWorkflowWithRef renders the hosted REUSE gate using ref for actions/checkout.
+func renderReuseWorkflowWithRef(ref, branch string) string {
 	on := strings.Replace(ghworkflow.HostedGateOn,
 		ghworkflow.HostedGatePushBranchesPrefix+ghworkflow.HostedGateDefaultBranch+"']",
 		ghworkflow.HostedGatePushBranchesPrefix+branch+"']", 1)
@@ -75,32 +106,58 @@ func reuseWorkflow(branch string) string {
 		"    steps:\n" +
 		ghworkflow.HostedGateDraftStep +
 		"      - name: Check out the source" + ghworkflow.HostedGateStepIf + "\n" +
-		"        uses: actions/checkout@v7\n" +
+		"        # yamllint disable-line rule:line-length\n" +
+		"        uses: " + ref + "\n" +
 		"        with:\n" +
 		"          persist-credentials: false\n" +
 		"      - name: reuse lint" + ghworkflow.HostedGateStepIf + "\n" +
-		"        uses: " + supplychain.ReuseActionRef() + "\n"
+		"        # yamllint disable-line rule:line-length\n" +
+		"        uses: " + supplychain.ReuseActionPinnedRef() + "\n"
+}
+
+// reuseWorkflow renders the hosted REUSE gate for the repository's default branch, the branch
+// the ruleset requiring its job protects: one job, on the runner the flavor workflows use, with a
+// timeout, in the hosted gate shape every hosted gate shares (ghworkflow.HostedGateOn: pull
+// request activity and a push to the default branch only; ghworkflow.HostedGateDraftStep first,
+// so a draft run fails by design; ghworkflow.HostedGateStepIf on every later step). It checks the
+// commit out without keeping the token and runs supplychain.ReuseActionPinnedRef, both pinned by
+// full commit SHA with their version comment (HISS-11).
+func reuseWorkflow(branch string) (string, error) {
+	ref, err := reuseCheckoutRef()
+	if err != nil {
+		return "", fmt.Errorf("render the hosted REUSE gate: %w", err)
+	}
+	return renderReuseWorkflowWithRef(ref, branch), nil
 }
 
 // reuseRenderingBranch returns the default branch data is the hosted REUSE gate rendered for
 // (reuseWorkflow), in one consistent line-ending style, and whether data is such a rendering:
 // Praetor's unedited output, for the current default branch or another one, such as before the
 // branch was renamed.
-func reuseRenderingBranch(data []byte) (string, bool) {
+func reuseRenderingBranch(data []byte) (string, bool, error) {
 	_, rest, found := strings.Cut(string(data), ghworkflow.HostedGatePushBranchesPrefix)
 	branch, _, closed := strings.Cut(rest, "']")
 	if !found || !closed || !config.ValidBranchName(branch) {
-		return "", false
+		return "", false, nil
 	}
-	equal, err := util.CanonicalTextEquivalent(data, []byte(reuseWorkflow(branch)))
-	return branch, err == nil && equal
+	expected, err := reuseWorkflow(branch)
+	if err != nil {
+		return "", false, err
+	}
+	if equal, err := util.CanonicalTextEquivalent(data, []byte(expected)); err == nil && equal {
+		return branch, true, nil
+	}
+	return "", false, nil
 }
 
 // isReuseRendering reports whether data is a hosted REUSE gate adoption wrote and nobody edited:
 // an earlier rendering (priorReuseWorkflowDigests) or the current one for any default branch.
-func isReuseRendering(data []byte) bool {
-	_, current := reuseRenderingBranch(data)
-	return current || isPriorRendering(data, priorReuseWorkflowDigests)
+func isReuseRendering(data []byte) (bool, error) {
+	_, current, err := reuseRenderingBranch(data)
+	if err != nil {
+		return false, err
+	}
+	return current || isPriorRendering(data, priorReuseWorkflowDigests), nil
 }
 
 // reuseDefaultBranch is the default branch the hosted REUSE gate is rendered for: the one the
@@ -119,12 +176,19 @@ func reuseDefaultBranch(ctx context.Context, repoPath string) (string, error) {
 // another default branch, is refreshed; any other file there is the repository's and is kept,
 // --force included, with a warning.
 func reconcileReuseGate(ctx context.Context, s *adoptSession) error {
-	declared, err := supplychain.ReuseDeclared(ctx, s.repoPath)
+	applies, err := s.reuseGateApplies(ctx)
 	if err != nil {
-		return fmt.Errorf("decide the hosted REUSE gate: %w", err)
+		return err
 	}
-	if !declared {
-		return s.removeReuseGate(ctx)
+	if !applies {
+		notice, err := supplychain.ReuseHeadersOnlyNotice(ctx, s.repoPath)
+		if err != nil {
+			return fmt.Errorf("decide the hosted REUSE gate: %w", err)
+		}
+		if notice != "" {
+			s.report.addWarning("%s", notice)
+		}
+		return s.removeReuseGate(ctx, reuseNotDeclared)
 	}
 	branch, err := reuseDefaultBranch(ctx, s.repoPath)
 	if err != nil {
@@ -134,10 +198,14 @@ func reconcileReuseGate(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	workflow, err := reuseWorkflow(branch)
+	if err != nil {
+		return err
+	}
 	_, err = s.scaffoldFile(ctx, scaffold{
 		rel:       reuseWorkflowFile,
 		perm:      filePerm,
-		content:   []byte(reuseWorkflow(branch)),
+		content:   []byte(workflow),
 		created:   "Scaffolded the hosted REUSE gate: reuse lint at " + supplychain.ReuseActionRef() + " on " + branch,
 		verified:  "Existing hosted REUSE gate verified present",
 		prior:     prior,
@@ -155,23 +223,68 @@ func (s *adoptSession) reusePriorDigests(ctx context.Context) (map[string]string
 		return nil, fmt.Errorf("inspect %s: %w", reuseWorkflowFile, err)
 	}
 	prior := maps.Clone(priorReuseWorkflowDigests)
-	if branch, rendered := reuseRenderingBranch(existing); exists && rendered {
-		digest, _, err := util.CanonicalTextDigest(existing)
+	if exists {
+		branch, rendered, err := reuseRenderingBranch(existing)
 		if err != nil {
-			return nil, fmt.Errorf("digest %s: %w", reuseWorkflowFile, err)
+			return nil, err
 		}
-		prior[digest] = "the current rendering for default branch " + branch
+		if rendered {
+			digest, _, err := util.CanonicalTextDigest(existing)
+			if err != nil {
+				return nil, fmt.Errorf("digest %s: %w", reuseWorkflowFile, err)
+			}
+			prior[digest] = "the current rendering for default branch " + branch
+		}
 	}
 	return prior, nil
 }
 
-// removeReuseGate removes the hosted REUSE gate from a repository whose root no longer carries
-// REUSE.toml or LICENSES/, when the file is Praetor's unedited rendering (isReuseRendering):
-// reuse lint fails such a tree, so the gate, a required check of the ruleset derived from it,
-// would block every pull request. The removal is bound to the bytes read, so a file edited in
-// between is kept. An edited gate is the repository's: kept, with a warning naming the check it
-// fails. A dry run records the removal it would make.
-func (s *adoptSession) removeReuseGate(ctx context.Context) error {
+// reuseRemoval is why adoption removes the hosted REUSE gate: the root no longer declares REUSE,
+// or adoption.decline names reuseGateStep (#1244).
+type reuseRemoval int
+
+const (
+	// reuseNotDeclared: the root does not declare REUSE (supplychain.ReuseDeclared).
+	reuseNotDeclared reuseRemoval = iota
+	// reuseGateDeclined: adoption.decline names reuseGateStep.
+	reuseGateDeclined
+)
+
+// reuseGateApplies reports whether this run emits the REUSE gate, the hosted workflow and the
+// reuse-lint job of lefthook.yml alike: the root declares REUSE (supplychain.ReuseDeclared) and
+// adoption.decline does not name reuseGateStep. A declined step takes both with it (#1244), so a
+// repository whose LICENSES/ holds third-party texts can opt out of a gate that cannot pass there
+// without declining every hook.
+func (s *adoptSession) reuseGateApplies(ctx context.Context) (bool, error) {
+	declined, err := ArtifactDeclined(s.declined, reuseGateStep)
+	if err != nil {
+		return false, fmt.Errorf("resolve adoption.decline for the REUSE gate: %w", err)
+	}
+	if declined {
+		return false, nil
+	}
+	declared, err := supplychain.ReuseDeclared(ctx, s.repoPath)
+	if err != nil {
+		return false, fmt.Errorf("decide the REUSE gate: %w", err)
+	}
+	return declared, nil
+}
+
+// removeDeclinedReuseGate is what a declined reuse-gate step does (declinedRemovals): it removes
+// Praetor's unedited hosted REUSE gate an earlier adoption wrote, as removeReuseGate does for a
+// root that stopped declaring REUSE; the git-hooks step drops the reuse-lint job
+// (reuseGateApplies).
+func removeDeclinedReuseGate(ctx context.Context, s *adoptSession) error {
+	return s.removeReuseGate(ctx, reuseGateDeclined)
+}
+
+// removeReuseGate removes the hosted REUSE gate when the file is Praetor's unedited rendering
+// (isReuseRendering) and the root no longer declares REUSE, where reuse lint fails every tree so
+// the gate, a required check of the ruleset derived from it, would block every pull request, or the
+// manifest declines the step (reason). The removal is bound to the bytes read, so a file edited in
+// between is kept. An edited gate is the repository's: kept, with a warning naming why it would
+// have gone. A dry run records the removal it would make.
+func (s *adoptSession) removeReuseGate(ctx context.Context, reason reuseRemoval) error {
 	full, err := repoFile(s.repoPath, reuseWorkflowFile)
 	if err != nil {
 		return err
@@ -183,10 +296,19 @@ func (s *adoptSession) removeReuseGate(ctx context.Context) error {
 	if !exists {
 		return nil
 	}
-	if !isReuseRendering(actual) {
-		s.report.addWarning("%s kept: the root carries neither %s nor %s/, so its REUSE lint job fails every run and, while the "+
-			"branch ruleset requires it, every pull request; it is edited, so adoption does not remove it: remove it, or add %s or %s/ back",
-			reuseWorkflowFile, supplychain.ReuseFile, supplychain.LicensesDir, supplychain.ReuseFile, supplychain.LicensesDir)
+	rendering, err := isReuseRendering(actual)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", reuseWorkflowFile, err)
+	}
+	if !rendering && reason == reuseGateDeclined {
+		s.report.addWarning("%s kept: adoption.decline names %s, but the file is edited, so adoption does not remove it: "+
+			"remove it yourself, or drop %s from adoption.decline", reuseWorkflowFile, reuseGateStep, reuseGateStep)
+		return nil
+	}
+	if !rendering {
+		s.report.addWarning("%s kept: the root carries no %s, so its REUSE lint job fails every run and, while the "+
+			"branch ruleset requires it, every pull request; it is edited, so adoption does not remove it: remove it, or add %s",
+			reuseWorkflowFile, supplychain.ReuseDeclarationFiles(), supplychain.ReuseFile)
 		return nil
 	}
 	if !s.opts.DryRun {
@@ -195,9 +317,24 @@ func (s *adoptSession) removeReuseGate(ctx context.Context) error {
 		}
 	}
 	s.planDryRunRemoval(reuseWorkflowFile)
-	s.report.recordReconciledAs(reuseWorkflowFile, actionRemove, "Removed the hosted REUSE gate: the root carries neither "+
-		supplychain.ReuseFile+" nor "+supplychain.LicensesDir+"/, so reuse lint would fail every pull request")
+	detail := "Removed the hosted REUSE gate: the root carries no " + supplychain.ReuseDeclarationFiles() +
+		", so reuse lint would fail every pull request"
+	if reason == reuseGateDeclined {
+		detail = "Removed the hosted REUSE gate: adoption.decline names " + reuseGateStep
+	}
+	s.report.recordReconciledAs(reuseWorkflowFile, actionRemove, detail)
 	return nil
+}
+
+func reuseRenderingAllowed(ctx context.Context, repoPath string) (bool, error) {
+	existing, exists, err := contextopt.ObserveSnapshotIn(ctx, repoPath, reuseWorkflowFile)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return true, nil
+	}
+	return isReuseRendering(existing)
 }
 
 // plannedReuseWorkflow lists the hosted REUSE gate when this run leaves it as adoption's
@@ -205,48 +342,86 @@ func (s *adoptSession) removeReuseGate(ctx context.Context) error {
 // a Praetor rendering, current or earlier, for any default branch (isReuseRendering). A file it cannot read is not claimed: the harness
 // under-claims rather than credit a gate the repository may not get.
 func (s *adoptSession) plannedReuseWorkflow(ctx context.Context) ([]flavor.PlannedTemplate, error) {
-	declined, err := ArtifactDeclined(s.declined, reuseGateStep)
-	if err != nil {
-		return nil, fmt.Errorf("resolve adoption.decline for the hosted REUSE gate: %w", err)
-	}
-	if declined {
-		return nil, nil
-	}
-	declared, err := supplychain.ReuseDeclared(ctx, s.repoPath)
-	if err != nil || !declared {
+	applies, err := s.reuseGateApplies(ctx)
+	if err != nil || !applies {
 		return nil, err
 	}
 	branch, err := reuseDefaultBranch(ctx, s.repoPath)
 	if err != nil {
 		return nil, err
 	}
-	existing, exists, err := contextopt.ObserveSnapshotIn(ctx, s.repoPath, reuseWorkflowFile)
-	if err != nil || (exists && !isReuseRendering(existing)) {
-		return nil, ctx.Err()
+	allowed, err := reuseRenderingAllowed(ctx, s.repoPath)
+	if err != nil {
+		return nil, err
 	}
-	return []flavor.PlannedTemplate{{Path: reuseWorkflowFile, Content: reuseWorkflow(branch)}}, nil
+	if !allowed {
+		return nil, nil
+	}
+	workflow, err := reuseWorkflow(branch)
+	if err != nil {
+		return nil, err
+	}
+	return []flavor.PlannedTemplate{{Path: reuseWorkflowFile, Content: workflow}}, nil
+}
+
+// reuseManagedPaths returns the hosted REUSE gate path when the repository declares REUSE,
+// the reuse-gate step is not declined, and the file is absent or a Praetor rendering, so
+// adoption includes it in the Renovate packageRules entry that disables updates on
+// Praetor-managed files. --force does not count: it regenerates only audit-locked scaffolds,
+// and the REUSE gate is not one, so an edited or adopter-owned copy is kept and stays
+// under the adopter's Renovate.
+func reuseManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
+	applies, err := s.reuseGateApplies(ctx)
+	if err != nil || !applies {
+		return nil, err
+	}
+	data, exists, err := observeAdoptionInput(ctx, s, reuseWorkflowFile)
+	if err != nil {
+		_, err = uninspectableReason(ctx, err)
+		return nil, err
+	}
+	if exists {
+		rendering, err := isReuseRendering(data)
+		if err != nil {
+			return nil, err
+		}
+		if !rendering {
+			return nil, nil
+		}
+	}
+	return []string{reuseWorkflowFile}, nil
 }
 
 // migrateReuseSwitch writes target's rendering over existing when existing is the current
 // rendering for the other REUSE switch (lefthookShape.otherReuse): adoption wrote it before the
-// root gained or lost REUSE.toml and LICENSES/. The checkpoint jobs it carries are kept, as
+// root gained or lost its REUSE declaration (supplychain.ReuseDeclared), or the manifest declined
+// or stopped declining reuse-gate. The checkpoint jobs it carries are kept, as
 // writeLefthookConfig keeps them on the current rendering. It reports whether it wrote.
 func (s *adoptSession) migrateReuseSwitch(target lefthookTarget, existing []byte) (bool, error) {
 	switched := matchCurrentLefthook(existing, target.shape.otherReuse())
 	if !switched.found {
 		return false, nil
 	}
+	declined, err := ArtifactDeclined(s.declined, reuseGateStep)
+	if err != nil {
+		return false, fmt.Errorf("resolve adoption.decline for the reuse-lint job: %w", err)
+	}
 	rendering := buildLefthookYAMLFor(target.shape, target.checkpoint || switched.checkpoint)
-	return true, s.migrateLefthookConfig(rendering, reuseJobMigration(target.shape))
+	return true, s.migrateLefthookConfig(rendering, reuseJobMigration(target.shape, declined))
 }
 
 // reuseJobMigration is the report detail of a lefthook.yml migrated to the rendering for the
-// other REUSE switch (lefthookShape.otherReuse).
-func reuseJobMigration(shape lefthookShape) string {
+// other REUSE switch (lefthookShape.otherReuse); declined says adoption.decline names
+// reuseGateStep, which is then why the job goes.
+func reuseJobMigration(shape lefthookShape, declined bool) string {
 	if shape.reuse {
 		return "Added the reuse-lint job to the Praetor-generated Lefthook configuration: the root carries " +
-			supplychain.ReuseFile + " or " + supplychain.LicensesDir + "/"
+			supplychain.ReuseDeclarationFiles()
 	}
-	return "Removed the reuse-lint job from the Praetor-generated Lefthook configuration: the root carries neither " +
-		supplychain.ReuseFile + " nor " + supplychain.LicensesDir + "/"
+	if declined {
+		return "Removed the reuse-lint job from the Praetor-generated Lefthook configuration: adoption.decline names " +
+			reuseGateStep
+	}
+	return "Removed the reuse-lint job from the Praetor-generated Lefthook configuration: the root carries no " +
+		supplychain.ReuseDeclarationFiles()
 }

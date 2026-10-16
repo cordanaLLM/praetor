@@ -1,0 +1,4 @@
+type: fixed
+title: "The register skills adoption installs (social-text, caveman, adhd-format) pass markdownlint's default rules: prose is wrapped at 80 columns, and a heading, a list and a table stand between blank lines, inside a block quote and a list item too. An adopter that lints its whole tree no longer gets 50 findings (MD013, MD022, MD032, MD058) from files it must not edit. Run praetorctl adopt --lock-source-root=<praetor checkout> to refresh unedited copies; an edited skill is kept and reported"
+issue: "#70"
+breaking: false

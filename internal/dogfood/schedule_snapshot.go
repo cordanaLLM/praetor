@@ -18,7 +18,9 @@ import (
 
 type scheduleSnapshot struct {
 	config            *ScheduleConfig
+	suite             *SuiteConfig
 	files             map[string][]byte
+	sourceTaskLabels  []string // target_tasks of the source repository's own router: the vocabulary its register rows may name
 	fingerprint       string
 	runnerSHA         string
 	registerAuthority config.RegisterAuthority
@@ -39,11 +41,11 @@ func loadScheduleSnapshotWithinRoot(ctx context.Context, path, inputRoot string)
 	if err := confineScheduleConfig(inputRoot, configuration); err != nil {
 		return nil, err
 	}
-	suiteData, err := snapshotScheduleSuite(ctx, configuration, inputRoot)
+	suiteData, suite, err := snapshotScheduleSuite(ctx, configuration, inputRoot)
 	if err != nil {
 		return nil, err
 	}
-	snapshot := &scheduleSnapshot{config: configuration, files: map[string][]byte{"schedule.json": data, "suite.json": suiteData}}
+	snapshot := &scheduleSnapshot{config: configuration, suite: suite, files: map[string][]byte{"schedule.json": data, "suite.json": suiteData}}
 	if err := snapshot.captureBundle(ctx); err != nil {
 		return nil, err
 	}
@@ -99,6 +101,9 @@ func (s *scheduleSnapshot) captureBundle(ctx context.Context) (err error) {
 		return errors.New("schedule source requires a manifest")
 	}
 	s.registerAuthority = authority
+	if s.sourceTaskLabels, err = captureSourceTaskLabels(ctx, root, filepath.Join(s.config.SourceRoot, router.DefaultConfigPath)); err != nil {
+		return err
+	}
 	if _, err := config.ValidateLockfile(ctx, s.config.SourceRoot, manifest); err != nil {
 		return err
 	}
@@ -124,7 +129,11 @@ func (s *scheduleSnapshot) captureArchetypes(ctx context.Context) (err error) {
 	return ctx.Err()
 }
 
-func (s *scheduleSnapshot) materialize(ctx context.Context, root *os.Root, name string) error {
+func (s *scheduleSnapshot) materialize(ctx context.Context, root, stateRoot *os.Root, name string) error {
+	suiteData, err := s.snapshotSuiteTranscripts(ctx, stateRoot)
+	if err != nil {
+		return err
+	}
 	if err := root.Mkdir(name, 0o700); err != nil {
 		return err
 	}
@@ -132,11 +141,11 @@ func (s *scheduleSnapshot) materialize(ctx context.Context, root *os.Root, name 
 	if err != nil {
 		return err
 	}
-	writeErr := s.writeInputs(ctx, inputs)
+	writeErr := s.writeInputs(ctx, inputs, suiteData)
 	return errors.Join(writeErr, inputs.Close())
 }
 
-func (s *scheduleSnapshot) writeInputs(ctx context.Context, root *os.Root) error {
+func (s *scheduleSnapshot) writeInputs(ctx context.Context, root *os.Root, suiteData []byte) error {
 	names := make([]string, 0, len(s.files))
 	for name := range s.files {
 		names = append(names, name)
@@ -153,7 +162,11 @@ func (s *scheduleSnapshot) writeInputs(ctx context.Context, root *os.Root) error
 		if err != nil {
 			return err
 		}
-		_, writeErr := file.Write(s.files[names[i]])
+		data := s.files[names[i]]
+		if names[i] == "suite.json" {
+			data = suiteData
+		}
+		_, writeErr := file.Write(data)
 		if err := errors.Join(writeErr, file.Sync(), file.Close()); err != nil {
 			return fmt.Errorf("persist schedule input: %w", err)
 		}
@@ -232,34 +245,35 @@ func (s *scheduleSnapshot) captureRepairFiles(ctx context.Context, p *RepairPoli
 }
 
 func (s *scheduleSnapshot) validateCapturedRepairTasks(p *RepairPolicy) error {
-	routing, err := router.ParseRoutingConfig(s.files["routing.json"], p.RoutingConfig)
-	if err != nil {
+	// Rows are checked against the source repository's own router; the repair router only has
+	// to parse, and a repair task it does not declare plans an unroutable job (#765).
+	if _, err := router.ParseRoutingConfig(s.files["routing.json"], p.RoutingConfig); err != nil {
 		return err
 	}
-	if err := s.registerAuthority.ValidateTaskLabels(router.DeclaredTaskLabels(routing)); err != nil {
-		return fmt.Errorf("repair register tasks: %w", err)
+	if err := s.registerAuthority.ValidateTaskLabels(s.sourceTaskLabels); err != nil {
+		return fmt.Errorf("source register tasks: %w", err)
 	}
 	return nil
 }
 
-func snapshotScheduleSuite(ctx context.Context, configuration *ScheduleConfig, inputRoot string) ([]byte, error) {
+func snapshotScheduleSuite(ctx context.Context, configuration *ScheduleConfig, inputRoot string) ([]byte, *SuiteConfig, error) {
 	suite, suiteSum, err := loadSuiteConfig(ctx, configuration.SuiteConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateSuitePolicy(suite, SuiteOptions{SourceRoot: configuration.SourceRoot, Stage: "verify", AllowRemote: configuration.AllowRemote, InputRoot: inputRoot}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	suiteData, err := readSchedulePrivate(ctx, configuration.SuiteConfig)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sum := sha256.Sum256(suiteData)
 	if hex.EncodeToString(sum[:]) != suiteSum {
-		return nil, errors.New("suite changed while snapshotting")
+		return nil, nil, errors.New("suite changed while snapshotting")
 	}
 
-	return suiteData, nil
+	return suiteData, suite, nil
 }
 
 func (s *scheduleSnapshot) captureArchetypeDirectory(ctx context.Context, root *os.Root, dirs []string, i, total int) ([]string, int, error) {
@@ -288,4 +302,22 @@ func (s *scheduleSnapshot) captureArchetypeDirectory(ctx context.Context, root *
 		}
 	}
 	return dirs, total, nil
+}
+
+// captureSourceTaskLabels reads the source repository's own routing config, the vocabulary its
+// register rows are checked against; without one the router's built-in labels govern, as in
+// config.LoadCheckedRegisterAuthority.
+func captureSourceTaskLabels(ctx context.Context, root *os.Root, source string) ([]string, error) {
+	data, err := readScheduleFile(ctx, root, filepath.FromSlash(router.DefaultConfigPath), 1<<20, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return router.DefaultTaskLabels(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := router.ParseRoutingConfig(data, source)
+	if err != nil {
+		return nil, err
+	}
+	return router.DeclaredTaskLabels(cfg), nil
 }

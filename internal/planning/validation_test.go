@@ -8,7 +8,7 @@ import (
 
 func TestCompileRejectsInvalidGraphs(t *testing.T) {
 	tests := map[string]func(*Draft){
-		"schema":                  func(d *Draft) { d.SchemaVersion = 2 },
+		"schema":                  func(d *Draft) { d.SchemaVersion = 3 },
 		"duplicate source":        func(d *Draft) { d.Sources[1].ID = d.Sources[0].ID },
 		"claimed verification":    func(d *Draft) { d.Sources[0].Verified = true },
 		"accepted requirement":    func(d *Draft) { d.Requirements[0].Disposition = "accepted" },

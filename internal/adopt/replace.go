@@ -129,7 +129,7 @@ func (s *adoptSession) backupExisting(ctx context.Context, rel string, before []
 // backupIgnored reports whether git ignores target, a path below this run's backup directory.
 // A dry run whose git-ignore step planned the managed block (privateIgnorePlanned) counts a
 // path git answered as not ignored as ignored: the real run writes that block before its first
-// replacing step, and the block's /.workingdir/ rule sits at the tail of .gitignore, where no
+// replacing step, and the block's .workingdir/ rule sits at the tail of .gitignore, where no
 // earlier negation reaches it, and git reads no ignore file below a directory it ignores.
 func (s *adoptSession) backupIgnored(ctx context.Context, target string) (bool, error) {
 	ignored, err := util.GitIgnoredPaths(ctx, s.repoPath, []string{target}, false)
@@ -151,7 +151,7 @@ func (s *adoptSession) refuseBackup(rel, target string, err error) string {
 		reason = note + ": " + err.Error()
 	} else if declined, declineErr := ArtifactDeclined(s.declined, "git-ignore"); declineErr == nil && declined {
 		reason += "; adoption.decline in " + manifestFile + " names git-ignore, so adoption does not write the managed " +
-			"/" + workingDirPath + "/ rule: add it to " + gitIgnoreFile + " to keep backups"
+			workingDirIgnore + " rule: add it to " + gitIgnoreFile + " to keep backups"
 	}
 	if !s.backupRefused {
 		s.backupRefused = true
@@ -163,7 +163,7 @@ func (s *adoptSession) refuseBackup(rel, target string, err error) string {
 
 // ensurePrivateWorkingDir creates the private session ledger directory with owner-only access
 // when it is still absent, so a backup written before the working-dir step (a fresh clone of an
-// adopted repository, where /.workingdir/ is already ignored) does not create it world-readable
+// adopted repository, where .workingdir/ is already ignored) does not create it world-readable
 // at the writer's 0755 default; the ledger initialisation keeps an existing directory's mode.
 // An existing entry is left as it is: the root-pinned backup writer refuses one that is a
 // symlink or not a directory.

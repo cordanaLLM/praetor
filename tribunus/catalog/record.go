@@ -49,6 +49,11 @@ type UsageWindow struct {
 	UsedPercent   *float64   `json:"used_percent,omitempty"`
 	WindowMinutes *int       `json:"window_minutes,omitempty"`
 	ResetsAt      *time.Time `json:"resets_at,omitempty"`
+	// BurnPercentPerHour is the recent burn of the window (a short sliding window, not the
+	// block average) across every session on the account.
+	BurnPercentPerHour *float64 `json:"burn_percent_per_hour,omitempty"`
+	// ActiveAgents counts the sessions and subagents drawing on the window when read.
+	ActiveAgents *int `json:"active_agents,omitempty"`
 }
 
 // Record is one catalog entry: a model or a subscription usage window,

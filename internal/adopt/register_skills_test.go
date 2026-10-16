@@ -353,17 +353,33 @@ func skillNeedsLicense(t *testing.T, text string) bool {
 	return required
 }
 
+// creditPattern is the credit a shipped register skill carries: upstream author, upstream URL and
+// licence terms, in this order.
+var creditPattern = regexp.MustCompile(`^Adapted from .*https://.*MIT (?:licence|terms at adaptation \(2026-09-18\))\.$`)
+
+// skillCredit returns the paragraph of text that opens with "Adapted from", joined to one line, or
+// "" when no paragraph opens so. The skills are wrapped at 80 columns, so the credit spans several
+// lines; one paragraph still holds all of it.
+func skillCredit(text string) string {
+	paragraphs := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n\n")
+	for _, paragraph := range paragraphs {
+		if strings.HasPrefix(paragraph, "Adapted from ") {
+			return strings.Join(strings.Fields(paragraph), " ")
+		}
+	}
+	return ""
+}
+
 // Positive: each shipped register skill names its credit (upstream author, upstream URL, licence
-// terms) in one line in its text, and has the upstream licence its declared upstream requires
+// terms) in one paragraph of its text, and has the upstream licence its declared upstream requires
 // next to it.
 func TestShippedSkills_CreditAndLicense(t *testing.T) {
-	creditPattern := regexp.MustCompile(`(?m)^Adapted from .*https://.*MIT (?:licence|terms at adaptation \(2026-09-18\))\.\r?$`)
 	bundle := config.RegisterSkillBundle()
 	for i := 0; i < len(bundle) && i < maxRegisterSkills; i++ {
 		name := bundle[i]
 		text := sourceSkillText(t, name)
-		if !creditPattern.MatchString(text) {
-			t.Errorf("skill %s does not name its credit (author, URL, licence) in one line:\n%s", name, text)
+		if !creditPattern.MatchString(skillCredit(text)) {
+			t.Errorf("skill %s does not name its credit (author, URL, licence) in one paragraph:\n%s", name, text)
 		}
 		if !skillNeedsLicense(t, text) {
 			t.Errorf("skill %s declares no upstream licence that travels with copies", name)
@@ -372,6 +388,39 @@ func TestShippedSkills_CreditAndLicense(t *testing.T) {
 		license := sourceSkillLicenseText(t, name)
 		if !strings.Contains(license, "Copyright (c) 2026 ") || !strings.Contains(license, "Permission is hereby granted") {
 			t.Errorf("%s does not hold the copyright line and the permission notice:\n%s", compiler.CanonicalSkillLicenseRel(name), license)
+		}
+	}
+}
+
+// The credit check reads one paragraph: a wrapped credit and a one-line credit both count, and a
+// credit whose author, URL or licence sits in another paragraph does not.
+func TestSkillCredit(t *testing.T) {
+	const wrapped = "# Title\n\nAdapted from [Up](https://example.org/up) by A. Author and\n[contributors](https://example.org/up/c);\nMIT licence.\n\nBody.\n"
+	accepted := map[string]string{
+		"wrapped":         wrapped,
+		"one line":        "# Title\n\nAdapted from [Up](https://example.org/up) by A. Author; MIT licence.\n\nBody.\n",
+		"CRLF checkout":   strings.ReplaceAll(wrapped, "\n", "\r\n"),
+		"terms by date":   "Adapted from [Up](https://example.org/up) by A. Author;\nMIT terms at adaptation (2026-09-18).\n",
+		"last paragraph":  "# Title\n\nAdapted from [Up](https://example.org/up); MIT licence.",
+		"credit is first": "Adapted from [Up](https://example.org/up); MIT licence.\n\nBody.\n",
+	}
+	for name, text := range accepted {
+		if credit := skillCredit(text); !creditPattern.MatchString(credit) {
+			t.Errorf("%s: credit %q is refused", name, credit)
+		}
+	}
+	refused := map[string]string{
+		"no credit":                    "# Title\n\nBody with https://example.org/up; MIT licence.\n",
+		"licence in a later paragraph": "Adapted from [Up](https://example.org/up) by A. Author.\n\nMIT licence.\n",
+		"URL in a later paragraph":     "Adapted from Up by A. Author; MIT licence.\n\nSee https://example.org/up.\n",
+		"credit inside a paragraph":    "Intro line.\nAdapted from [Up](https://example.org/up); MIT licence.\n",
+		"text after the licence":       "Adapted from [Up](https://example.org/up); MIT licence.\nMore of the same paragraph.\n",
+		"another licence":              "Adapted from [Up](https://example.org/up) by A. Author; Apache-2.0.\n",
+		"empty text":                   "",
+	}
+	for name, text := range refused {
+		if credit := skillCredit(text); creditPattern.MatchString(credit) {
+			t.Errorf("%s: credit %q is accepted", name, credit)
 		}
 	}
 }

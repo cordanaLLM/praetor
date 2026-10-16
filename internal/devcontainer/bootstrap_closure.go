@@ -8,13 +8,11 @@ import (
 	"sort"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
-	// praetorModulePath is the module a bootstrap source must declare (declaresPraetorModule);
-	// an import below it names a package of the captured tree.
-	praetorModulePath = "github.com/cordanaLLM/praetor"
 	// bootstrapBuildPackage is the package the recorded Dockerfile builds and the root of the
 	// captured import closure.
 	bootstrapBuildPackage = "cmd/standardsctl"
@@ -120,7 +118,7 @@ func (c *closureCapture) capturePackage(dir string) error {
 // follow queues the module packages among one file's imports.
 func (c *closureCapture) follow(name string, imports []string) error {
 	for _, importPath := range imports {
-		dependency, inModule := util.ModuleImportDir(importPath, praetorModulePath)
+		dependency, inModule := util.ModuleImportDir(importPath, gomanifest.EngineModulePath)
 		if !inModule || c.queued[dependency] {
 			continue
 		}

@@ -19,7 +19,7 @@ const customHelperCopy = ".claude/agents/custom-helper.md"
 
 // customHelperText is that subagent's text, terse enough for the caveman gate once it moves to
 // the canonical persona directory.
-const customHelperText = "---\nname: custom-helper\ndescription: fixture\n---\n# Custom helper\n\n- review diffs\n"
+const customHelperText = "---\nname: custom-helper\ndescription: fixture\nmodel: pro\n---\n# Custom helper\n\n- review diffs\n"
 
 // stepOutcome returns the outcome rep recorded for the step name.
 func stepOutcome(t *testing.T, rep *AdoptReport, name string) StepOutcome {
@@ -138,7 +138,8 @@ func TestAdopt_Negative_ClientPersonaDirFileWithoutCanonicalPersona(t *testing.T
 	if err != nil || rep.Outcome() != OutcomeApplied {
 		t.Fatalf("after the move: err = %v, outcome = %s, errors = %v; want applied", err, rep.Outcome(), rep.Errors)
 	}
-	if got := mustRead(t, custom); got != customHelperText {
+	wantProjected := strings.Replace(customHelperText, "model: pro", "model: sonnet", 1)
+	if got := mustRead(t, custom); got != wantProjected {
 		t.Errorf("the canonical subagent is not projected back into %s: %q", customHelperCopy, got)
 	}
 	assertContextVerifies(t, repoPath)

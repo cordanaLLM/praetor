@@ -75,8 +75,8 @@ func TestSync_Remote_ReadsBackBranchProtection_Positive(t *testing.T) {
 }
 
 // Negative: a forge that stores the ruleset but enforces none of its rules, such as a plan that
-// ignores rulesets, fails the sync after the readback instead of reporting success; a legacy
-// protection object the token may not read fails it before any write.
+// ignores rulesets, fails the sync after the readback instead of reporting success; branch
+// protection rules the token may not read fail it before any write.
 func TestSync_Remote_ReadsBackBranchProtection_Negative(t *testing.T) {
 	stub := &forgeStub{rulesUnenforced: true}
 	f, endpoint := remoteProtectionFixture(t, stub)
@@ -86,10 +86,10 @@ func TestSync_Remote_ReadsBackBranchProtection_Negative(t *testing.T) {
 		t.Fatalf("an unenforced ruleset was reported as synchronized:\n%s", out)
 	}
 
-	refused := &forgeStub{legacyStatus: http.StatusForbidden}
+	refused := &forgeStub{rulesStatus: http.StatusForbidden}
 	f2, endpoint2 := remoteProtectionFixture(t, refused)
 	_, err = runSyncCmd(t, "--config="+f2.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+endpoint2)
-	mustErrContain(t, err, "read the live branch protection of main: read the legacy branch protection of main: unexpected status 403")
+	mustErrContain(t, err, "read the live branch protection of main: read the active rules of main: unexpected status 403")
 	if writes := refused.recorded(); len(writes) != 0 {
 		t.Fatalf("an unreadable branch protection must stop the sync before any write, got %v", writes)
 	}

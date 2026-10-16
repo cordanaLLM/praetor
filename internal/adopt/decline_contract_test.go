@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // Boundary (#600): every step of the adoption chain is mandatory or carries an audit decline
@@ -53,16 +54,14 @@ func TestDeclineContractsTableMatchesTheGuide(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, section, found := strings.Cut(string(data), "### What audit does with a declined step")
-	if !found {
+	tableRows := testsupport.MarkdownTableRowsUnderHeading(string(data), "### What audit does with a declined step")
+	if len(tableRows) == 0 {
 		t.Fatalf("%s has no section on declined steps", declineGuide)
 	}
-	section, _, _ = strings.Cut(section, "\n### ")
 	var rows []string
-	for _, line := range strings.Split(section, "\n") {
-		line = strings.TrimSuffix(line, "\r")
-		if cells := strings.Split(line, " | "); strings.HasPrefix(line, "| `") && len(cells) >= 2 {
-			step := strings.Trim(cells[0], "| `")
+	for _, cells := range tableRows {
+		if len(cells) >= 2 {
+			step := strings.Trim(cells[0], "`")
 			class, _, _ := strings.Cut(cells[1], ":")
 			class, _, _ = strings.Cut(class, " ")
 			rows = append(rows, step+"="+strings.TrimSuffix(class, ","))

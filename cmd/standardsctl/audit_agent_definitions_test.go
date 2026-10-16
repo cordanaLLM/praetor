@@ -13,6 +13,11 @@ func declineManifest(names ...string) *config.Manifest {
 	return &config.Manifest{Adoption: &config.AdoptionPolicy{Decline: names}}
 }
 
+// validPersona is a persona whose front matter declares every required key.
+func validPersona(name string) string {
+	return "---\nname: " + name + "\ndescription: \"Fixture persona " + name + ".\"\nmodel: flash\n---\n\n# " + name + "\n"
+}
+
 // runAgentDefinitions runs the gate against root and returns what it printed and its error.
 func runAgentDefinitions(t *testing.T, manifest *config.Manifest, root string) (string, error) {
 	t.Helper()
@@ -23,8 +28,8 @@ func runAgentDefinitions(t *testing.T, manifest *config.Manifest, root string) (
 // without .agents/agents passes silently, as before.
 func TestAuditAgentDefinitionsCountsFlatPersonas(t *testing.T) {
 	root := t.TempDir()
-	writeFixtureFile(t, root, ".agents/agents/repo-auditor.md", "# auditor\n")
-	writeFixtureFile(t, root, ".agents/agents/repo-gatekeeper.md", "# gatekeeper\n")
+	writeFixtureFile(t, root, ".agents/agents/repo-auditor.md", validPersona("repo-auditor"))
+	writeFixtureFile(t, root, ".agents/agents/repo-gatekeeper.md", validPersona("repo-gatekeeper"))
 	out, err := runAgentDefinitions(t, nil, root)
 	if err != nil || !strings.Contains(out, "[PASS] Agent definitions verified (2 agents registered).") {
 		t.Fatalf("flat personas: out %q, err %v", out, err)
@@ -91,4 +96,52 @@ func TestAuditAgentDefinitionsDeclineAndBounds(t *testing.T) {
 	}
 	_, err = runAgentDefinitions(t, nil, crowded)
 	mustErrContain(t, err, "agent-09/ (holds AGENTS.md), and 2 more;")
+}
+
+// Negative (#1280): a persona whose front matter does not parse, one without front matter and
+// one lacking description each fail the audit, naming the file and what is wrong; a valid
+// persona beside them does not hide them.
+func TestAuditAgentDefinitionsDecodesFrontMatter(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, ".agents/agents/good.md", validPersona("good"))
+	writeFixtureFile(t, root, ".agents/agents/broken.md", "---\nname: broken\ndescription: [unclosed\n---\n\n# broken\n")
+	writeFixtureFile(t, root, ".agents/agents/bare.md", "# bare\n")
+	writeFixtureFile(t, root, ".agents/agents/nameonly.md", "---\nname: nameonly\n---\n\n# nameonly\n")
+	out, err := runAgentDefinitions(t, nil, root)
+	mustErrContain(t, err, ".agents/agents holds personas whose front matter does not decode (3)")
+	mustErrContain(t, err, ".agents/agents/broken.md (front matter is not valid YAML")
+	mustErrContain(t, err, ".agents/agents/bare.md (opens with no front matter")
+	mustErrContain(t, err, ".agents/agents/nameonly.md (front matter lacks the required key(s) description")
+	if strings.Contains(err.Error(), "good.md") || strings.Contains(out, "[PASS]") {
+		t.Fatalf("the valid persona was reported, or the gate passed: out %q, err %v", out, err)
+	}
+}
+
+// Boundary (#1280): a front matter that never closes fails; a key present but empty, or not a
+// string, counts as missing; both required keys missing are named together; a decline still
+// skips the decoding.
+func TestAuditAgentDefinitionsFrontMatterBoundaries(t *testing.T) {
+	cases := map[string]struct{ persona, want string }{
+		"unclosed":      {"---\nname: open\ndescription: never closed\n", "opens a front matter block that does not close"},
+		"empty value":   {"---\nname: x\ndescription: \"  \"\nmodel: flash\n---\n", "lacks the required key(s) description"},
+		"not a string":  {"---\nname: [a, b]\ndescription: d\nmodel: flash\n---\n", "lacks the required key(s) name"},
+		"both missing":  {"---\nmainAgent: true\n---\n", "lacks the required key(s) name, description"},
+		"empty block":   {"---\n---\n# empty\n", "lacks the required key(s) name, description"},
+		"missing model": {"---\nname: x\ndescription: d\n---\n", "lacks the required key \"model\""},
+		"invalid model": {"---\nname: x\ndescription: d\nmodel: sonnet\n---\n", "front matter model \"sonnet\" is invalid"},
+		"inherit model": {"---\nname: x\ndescription: d\nmodel: inherit\n---\n", "front matter model \"inherit\" is invalid"},
+	}
+	for name, tc := range cases {
+		root := t.TempDir()
+		writeFixtureFile(t, root, ".agents/agents/p.md", tc.persona)
+		_, err := runAgentDefinitions(t, nil, root)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err %v, want it to contain %q", name, err, tc.want)
+		}
+	}
+	root := t.TempDir()
+	writeFixtureFile(t, root, ".agents/agents/p.md", "# no front matter\n")
+	if _, err := runAgentDefinitions(t, declineManifest("agent-definitions"), root); err != nil {
+		t.Fatalf("a declined gate decoded the personas: %v", err)
+	}
 }

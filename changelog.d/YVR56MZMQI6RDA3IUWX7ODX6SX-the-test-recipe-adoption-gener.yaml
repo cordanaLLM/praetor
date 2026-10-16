@@ -1,0 +1,3 @@
+type: fixed
+title: 'The test recipe adoption generates for an npm project runs the suite once when the check or test script only runs the other one ("check": "npm test"); before, it ran the whole suite twice'
+issue: '#1264'

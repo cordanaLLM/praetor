@@ -108,8 +108,9 @@ credits gate of a Praetor checkout reads those whose `rule` is `credits`
 
 | Key | Rule |
 | :--- | :--- |
-| `rule` | A rule some gate reads from the list: `clang-tidy-coverage`, `credits` (`config.ExceptionRuleCredits`), `HISS-11` for a supply-chain gap the release workflows have not closed yet ([Declaring a gap](releasing.md#declaring-a-gap)), `HISS-10` for a workflow whose build lanes cannot build with warnings as errors yet ([Build-warnings gate](build-warnings.md#exceptions)), `HISS-18` for a workflow that must run on every branch push or on drafts ([Workflow trigger audit](workflow-triggers.md#declaring-a-workflow-that-must-run-everywhere)), `HISS-19` for duplicate function blocks excused across whole files ([HISS-19: Reuse Before Writing](../standards/hiss-spec.md#hiss-19-reuse-before-writing)), `root-license-notice` for the [root licence check](licensing-gates.md#one-root-licence), `reuse-annotation-order` for a `REUSE.toml` too large for the [annotation order check](licensing-gates.md#annotation-order), or `api-compatibility` (`config.ExceptionRuleAPICompatibility`) for a Go module the API compatibility gate cannot build ([A module that cannot be built even so](api-compatibility.md#a-module-that-cannot-be-built-even-so)). A `HISS-11`, `HISS-10` or `HISS-18` entry names one workflow file directly in `.github/workflows` by `path`; `root-license-notice` and `reuse-annotation-order` entries name one root file by `path` each; an `api-compatibility` entry names one module's `go.mod` by `path`; a `HISS-19` entry names one repository file by `path` (no glob). |
-| `path` or `glob` | Exactly one. `path` names one clean repository-relative file without glob characters. `glob` follows the `docs_surfaces` glob rules: `*` stays inside one segment and a `**` segment spans any number. |
+| `rule` | A rule some gate reads from the list: `clang-tidy-coverage`, `credits` (`config.ExceptionRuleCredits`), `HISS-11` for a supply-chain gap the release workflows have not closed yet ([Declaring a gap](releasing.md#declaring-a-gap)), `HISS-10` for a workflow whose build lanes cannot build with warnings as errors yet ([Build-warnings gate](build-warnings.md#exceptions)), `HISS-18` for a workflow that must run on every branch push or on drafts ([Workflow trigger audit](workflow-triggers.md#declaring-a-workflow-that-must-run-everywhere)), `HISS-19` for duplicate function blocks excused across whole files ([HISS-19: Reuse Before Writing](../standards/hiss-spec.md#hiss-19-reuse-before-writing)), `root-license-notice` for the [root licence check](licensing-gates.md#one-root-licence), `reuse-annotation-order` for a `REUSE.toml` too large for the [annotation order check](licensing-gates.md#annotation-order), `api-compatibility` (`config.ExceptionRuleAPICompatibility`) for a Go module the API compatibility gate cannot build ([A module that cannot be built even so](api-compatibility.md#a-module-that-cannot-be-built-even-so)), or `declared-linters` (`config.ExceptionRuleDeclaredLinters`) for a declared linter no workflow runs yet ([Declared linters](effective-policy.md#declared-linters)). A `HISS-11`, `HISS-10` or `HISS-18` entry names one workflow file directly in `.github/workflows` by `path`; `root-license-notice` and `reuse-annotation-order` entries name one root file by `path` each; an `api-compatibility` entry names one module's `go.mod` by `path`; a `HISS-19` entry names one repository file by `path` (no glob). |
+| `path` or `glob` | Exactly one, except for `declared-linters`. `path` names one clean repository-relative file without glob characters. `glob` follows the `docs_surfaces` glob rules: `*` stays inside one segment and a `**` segment spans any number. |
+| `tool` | Only and always for `declared-linters`: the linter the entry excuses, as the profile or facet names it (for example `trivy`). A `declared-linters` entry sets neither `path` nor `glob`, and no other rule takes `tool` (`config.ValidateExceptions`). |
 | `reason` | One line, at most 1024 bytes. |
 | `expires` | A `YYYY-MM-DD` date at most 90 days after today, the bound `scripts/npm_audit_gate.py` applies to its own list. The entry holds through that day. |
 
@@ -119,6 +120,36 @@ credits gate of a Praetor checkout reads those whose `rule` is `credits`
 a valid declaration: the gate treats it as missing and fails on its files. An entry that
 excuses no unit every lane leaves unread, because a lane now reads the file or the file is gone,
 is stale and fails until it is removed (`TestCheck_Negative_ExpiredAndStaleExceptions`).
+
+The audit also fails every entry whose `path` names a file that does not exist, or whose `glob`
+matches none, the same way it fails an expired entry, and the message names the rule, the entry
+and the missing path (#1259; `auditExceptionsExpiry` in `cmd/standardsctl/audit_exceptions.go`).
+One planned file is the exception: the `HISS-11` entry adoption writes for the adopter's release
+workflow `release.yml`, still to be added, passes while no workflow writes provenance. The audit asks the code that writes that entry, and once a provenance workflow
+exists the entry fails like any other stale one.
+
+Inspect declared exceptions and their remaining validity with `praetorctl exceptions list`
+(`cmd/standardsctl/exceptions.go`, `TestExceptionsList_Positive_ListsEntries`):
+
+```bash
+praetorctl exceptions list
+```
+
+Filter entries due to expire soon by passing `--expiring-within=<days>`
+(`TestExceptionsList_Positive_FiltersByExpiringWithin`, `TestExceptionsList_Boundary_ExactDaysAndZero`):
+
+```bash
+praetorctl exceptions list --expiring-within=14
+```
+
+The governance audit (`praetorctl audit`) warns 14 days before an exception expires
+(`config.ExceptionExpiryWarningDays`, `cmd/standardsctl/audit_exceptions.go`,
+`TestAuditExceptionsExpiry_3D`, `TestAudit_ExceptionsExpiryWarning_Integration`), prompting
+maintainers to address or renew the debt before the owning gate fails upon expiry:
+
+```text
+[WARN] Exceptions: the exceptions entry (rule HISS-11, .github/workflows/rel.yml) expires on 2026-10-24 (14 days left): Level 2 builder
+```
 
 ## Reading the output
 
@@ -146,3 +177,5 @@ Two older exception mechanisms keep their own formats: the npm audit gate reads
 `.config/security/npm-audit-exceptions.json` (`scripts/npm_audit_gate.py`), and the HISS-01
 cleanup-`goto` exception is declared under `hiss.exceptions` with its own document. Both could
 move onto the top-level `exceptions` list as further rules; neither is migrated yet.
+Like `.standards.yaml` exceptions, `scripts/npm_audit_gate.py` warns 14 days before an
+active npm audit exception expires (`EXCEPTION_EXPIRY_WARNING_DAYS`).

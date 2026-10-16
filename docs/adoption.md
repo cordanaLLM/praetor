@@ -4,16 +4,44 @@ Apply Praetor governance scaffolding to a legacy or greenfield repository and re
 
 ---
 
-## 🚀 1-Step CLI Adoption
+## Prerequisites
 
-Run `standardsctl adopt` (or `praetorctl adopt`):
+- **`praetorctl`**, installed with the workstation command
+  ([workstation install](guides/workstation-update.md)). `standardsctl` is the older name of the
+  same binary.
+- **A Praetor checkout** (a Git clone of the engine; adopt refuses a `git archive` export, see
+  the source-root rules below), here written
+  `/path/to/praetor`. `--lock-source-root` names it: the first adoption pins your profile and
+  facets to the content digests of its catalog, and copies the pinned catalog into your
+  repository. Without it a first adoption stops with `new lock pins require an explicit verified
+  lock source root` (`ErrLockSourceRequired` in `internal/adopt/lock.go`). A repository that
+  already holds a valid lock and its `.config/archetypes` catalog needs no source for a later
+  run.
+- **A Git repository with your files committed**, run from its root or with `--path`. Adoption
+  writes the Go API compatibility gate only where Git tracks a `go.mod`
+  ([Go API compatibility gate](guides/api-compatibility.md)), so adopt after the first commit and
+  stage what adoption writes before you audit.
+- **A known hosting forge.** An `origin` remote on `github.com`, or `repository.forge` declared in
+  `.standards.yaml` (`github`, `forgejo` or `gitlab`). Any other host with no declaration gets no
+  Paperclip harness, and `praetorctl audit` then fails on the missing
+  `.paperclip/harness.json` ([Hosting forge](#what-adoption-reads-before-it-writes)).
+
+## Adopt a repository
+
+Run `praetorctl adopt` (the older name `standardsctl adopt` is the same command):
 
 ```bash
 # Adopt current repository (auto-detects language and frameworks)
 praetorctl adopt --lock-source-root=/path/to/praetor
 
-# Dry-run simulation: inspect proposed changes without writing files
-standardsctl adopt --dry-run
+# Stage what adoption wrote, then verify the result
+git add -A
+praetorctl audit --offline
+
+# Dry-run simulation: inspect proposed changes without writing files.
+# --lock-source-root is required here too on a first adoption, because the plan resolves the
+# policy the lock would pin.
+praetorctl adopt --dry-run --lock-source-root=/path/to/praetor
 
 # Regenerate drifted audit-locked files; an existing debt baseline is kept, not re-recorded
 praetorctl adopt --force --lock-source-root=/path/to/praetor
@@ -27,6 +55,31 @@ praetorctl profile set os-image --lock-source-root=/path/to/praetor --dry-run
 
 `--force` refreshes rather than resets: what it rewrites, merges and keeps is in
 [What a forced re-adoption changes](#what-a-forced-re-adoption-changes).
+
+### Choose the profile
+
+Adoption detects the profile from the files it finds (the report's `Archetype:` line) and a dry
+run shows it before anything is written. When the detected profile is not the one you want, pass
+`--profile` on the first adoption, or move an adopted repository with
+`praetorctl profile set <profile> --lock-source-root=/path/to/praetor`. `profile set` rewrites
+the declaration, the lock and the catalog, then lists any audit-locked file that no longer
+matches the new declaration (such as the DevContainer) and the
+`praetorctl adopt --force --lock-source-root=... --dry-run` command that previews their refresh.
+Run `praetorctl audit --offline` afterwards. See
+[Changing the profile, facets or catalog](#changing-the-profile-facets-or-catalog).
+
+### `praetorctl init` instead of adoption
+
+`praetorctl init` writes `.standards.yaml`, a zero-debt `.standards-baseline.json` and an
+unpinned `.standards.lock` placeholder with no content digests, and compiles agent files from
+`AGENTS.md` only when that file already exists ([onboarding guide](guides/onboarding.md)). It
+takes no `--lock-source-root` flag; `audit` and `devcontainer generate` refuse the placeholder
+lock until you pin it with `praetorctl profile set --lock-source-root=/path/to/praetor`. Even
+pinned, an init-only repository does not pass `audit --offline`: init writes no branch ruleset,
+no documentation gate tooling (`tools/markdownlint` under `docs:seo-portal`), no API
+compatibility gate (`tools/apicompat/gate` under `api:public-contract`), no HISS-11 supply-chain
+exception, no Paperclip harness, agent definitions or git hooks, so use adoption for a repository
+that must audit clean.
 
 `--facets` names the facets adoption writes when it creates `.standards.yaml`. Omitted, adoption
 writes `security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`
@@ -549,6 +602,49 @@ Tests: `internal/adopt/large_repo_bounds_test.go`,
 
 ### What Adoption Scaffolds Automatically
 
+Adoption is a chain of steps, run in this order (`adoptSteps` in `internal/adopt/adopt.go`).
+Each row is one step, named as `adoption.decline` and the adoption report name it, with the
+files it writes in a repository that declares the default facets. Which of them are mandatory
+and which a repository may decline is in
+[adoption verification](guides/adoption-verification.md). A step writes only what its inputs call
+for: the API gate needs a tracked `go.mod`, the REUSE gate a `REUSE.toml` or `.reuse/dep5`, and a
+flavor only where one matches. `praetorctl adopt --dry-run --lock-source-root=/path/to/praetor`
+prints the exact list for your repository, about a hundred files for a Go module, before it
+writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
+`internal/adopt/scaffold_table_test.go` keeps this table equal to the chain).
+
+| Step | What it writes |
+| :-- | :-- |
+| `manifest` | `.standards.yaml`: profile, facets, repository identity, register sources |
+| `git-ignore` | `.gitignore`: the managed block for private working directories and gate worktrees |
+| `lockfile` | `.standards.lock`: profiles and facets pinned to content digests of the source bundle |
+| `policy-catalog` | `.config/archetypes/`: the pinned profile and facet texts audit reads |
+| `baseline` | `.standards-baseline.json`: the recorded legacy debt |
+| `agent-harness` | `AGENTS.md`; `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md`, `.codex/rules.md`; the register skills in `.agents/skills/` and their `.claude/skills/` copies |
+| `dev-container` | `.devcontainer/` bundle (`devcontainer.json`, `Dockerfile.praetor`, source companions); the `.gitattributes` managed block |
+| `documentation-gate` | `tools/markdownlint/`, `tools/figures/`, `.github/workflows/praetor-docs.yml` (facet `docs:seo-portal`) |
+| `api-compatibility-gate` | `tools/apicompat/gate/`, `.github/workflows/praetor-api.yml` (facet `api:public-contract`, tracked `go.mod`) |
+| `makefile` | `Makefile` with the `verify-all` target |
+| `editors` | `.editorconfig`, `.vscode/`, `.idea/`, `.zed/`, `.helix/`, `.fleet/`, `.nvim.lua`, `lua/`, `.dir-locals.el`, `standards.sublime-project`, `.clang-tidy` where the profile calls for it |
+| `formatter-ignore` | `.prettierignore` entries for managed artifacts, where a formatter is configured |
+| `renovate-ignore` | the managed-file ignore rule in an existing Renovate configuration; none is created |
+| `actionlint-labels` | `.github/actionlint.yaml` runner labels |
+| `contributing` | `CONTRIBUTING.md` |
+| `pull-request-template` | `.github/pull_request_template.md` |
+| `security-policy` | `SECURITY.md` |
+| `adr` | `docs/adr/README.md` and `docs/adr/0000-template.md` |
+| `readme` | the governance block in an existing `README.md` |
+| `reuse-gate` | `.github/workflows/reuse.yml`, where the root carries `REUSE.toml` or `.reuse/dep5` |
+| `working-dir-and-flavor` | the private `.workingdir/` ledger and the detected flavor's templates ([flavors](guides/onboarding.md#flavors)) |
+| `branch-ruleset` | `.github/rulesets/main.json`, the branch ruleset with the required status checks |
+| `labels` | `.config/labels.yaml`, the label taxonomy |
+| `paperclip` | `.paperclip/harness.json` and `.paperclip/rules.md` |
+| `agent-definitions` | `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, projected to `.claude/agents/`, `.github/agents/`, `.gemini/agents/` and `.codex/agents/` |
+| `git-hooks` | `lefthook.yml`, `.config/lefthook/`, `.config/agent/checkpoint.json`, `.config/agent/hooks/block_evasion.py`, the installed `.git/hooks/pre-commit` |
+| `agent-hooks` | the hook settings of `.claude/settings.json`, `.gemini/settings.json` and `.codex/hooks.json` for the clients `agent_clients` selects |
+
+The groups with behavior of their own:
+
 1. **`.standards.yaml`**: Declarative repository manifest containing profile, facets, tool versions, and policy locks.
 2. **`.standards.lock`**: Cryptographic SemVer lockfile binding your repo to exact governance standard releases.
 3. **`.standards-baseline.json`**: Technical debt ratcheting baseline. A first adoption records the existing infractions (e.g. legacy loop bounds, unwrapped errors) so legacy code compiles while new code is strictly gated. A re-adoption keeps the file; see [The baseline on a re-adoption](#the-baseline-on-a-re-adoption).
@@ -584,7 +680,9 @@ Tests: `internal/adopt/large_repo_bounds_test.go`,
     untouched, with a warning naming the labels
     ([actionlint runner labels](guides/documentation-governance.md#adoption-audit-and-ci),
     `internal/adopt/actionlint.go`). Decline `actionlint-labels` to opt out.
-11. **REUSE gate**: when the repository root carries `REUSE.toml` or a `LICENSES/` directory,
+11. **REUSE gate**: when the repository root carries `REUSE.toml` or `.reuse/dep5`, the two files
+    [REUSE Specification 3.3](https://reuse.software/spec-3.3/) reads for the whole tree (a
+    `LICENSES/` directory alone declares nothing: it may hold third-party notices, #1244),
     adoption writes `.github/workflows/reuse.yml`, whose **REUSE lint** job runs
     `fsfe/reuse-action@v6` within a 10-minute timeout in the shared hosted gate shape (`internal/ghworkflow/hostedgate.go`:
     pull request activity and a push to the default branch the branch ruleset protects, a first
@@ -593,13 +691,18 @@ Tests: `internal/adopt/large_repo_bounds_test.go`,
     `reuse lint` with reuse 6.x, skips where reuse is not installed, and fails on another major.
     The action tag is the one pin both read (`supplychain.ReuseActionVersion` in
     `internal/supplychain/reuse_lint.go`, also the tag `praetorctl bump` expects). A root with
-    neither marker gets neither. When the root loses both markers, adoption removes its unedited
+    neither file gets neither; one whose `LICENSES/` and file headers label it the REUSE way
+    without either file gets a warning, from adoption and from every audit, that names
+    `REUSE.toml` (`supplychain.ReuseHeadersOnlyNotice`). When the root loses its declaration,
+    adoption removes its unedited
     `reuse.yml`, so the ruleset stops requiring a check that cannot pass, and migrates
     `lefthook.yml` to the matching rendering; it does the same in reverse when the root gains
     them. An unedited `reuse.yml` rendered for another default branch is refreshed. An edited
     `reuse.yml` is kept, `--force` included, with a warning when the root no longer declares
-    REUSE (`internal/adopt/reuse_gate_test.go`). Decline `reuse-gate` to skip the workflow; the
-    hook job follows the `git-hooks` step.
+    REUSE (`internal/adopt/reuse_gate_test.go`). Decline `reuse-gate` to drop both: no workflow
+    and no `reuse-lint` job is rendered, a declined step removes an unedited `reuse.yml` an
+    earlier adoption wrote, and `lefthook.yml` migrates to the rendering without the job
+    (`internal/adopt/reuse_decline_test.go`).
 
 ### The baseline on a re-adoption
 
@@ -628,7 +731,7 @@ short of ready is ([adoption verification](guides/adoption-verification.md)): an
 without the success line and names the verdict and what resolves it.
 
 ```text
-Repository adopted into cordanaLLM/praetor governance; not ready yet: Debt Baseline. See the warnings above.
+Repository onboarded: <owner>/<name>; not ready yet: Debt Baseline. See the warnings above.
   Debt Baseline: Baseline kept, not re-recorded; HISS-13 ratchet rejects: 1 active infractions against 0 recorded, 1 not in the baseline
   Resolve: fix the findings, or accept them deliberately with 'praetorctl adopt --rerecord-baseline --allow-increase --reason=<why>' or 'praetorctl baseline --record --allow-increase --reason=<why>'; until then praetorctl audit rejects the repository
 ```
@@ -850,7 +953,7 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   and where the prior bytes went:
   `.workingdir/adopt-backups/<UTC stamp>/<path>`, written only when `git check-ignore`
   confirms that path is ignored. The `git-ignore` step, which writes the managed
-  `/.workingdir/` rule, runs right after the manifest step and before every step that can
+  `.workingdir/` rule, runs right after the manifest step and before every step that can
   replace a file, so a first adoption keeps a backup of every file it replaces, editor merges
   included, and a dry run plans the same backups without writing the rule or a copy
   (`adoptSteps` in `internal/adopt/adopt.go`, `backupIgnored` in `internal/adopt/replace.go`,
@@ -967,7 +1070,9 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   skill the repository carries in `.claude/skills/` when Claude Code is selected, and, when
   `.agents/plugins/praetor/plugin.json` exists, the plugin persona and skill copies. A
   hand-edited plugin copy is replaced with its line delta and backup like any persona copy, and
-  a symlinked plugin directory fails adoption before its first write. After the last step,
+  a symlinked plugin directory fails adoption before its first write. Every canonical persona
+  must declare a model tier (`model: flash` or `model: pro`), projected per-client or stripped
+  with a documented reason. After the last step,
   adoption runs the check `compile-context --verify` runs (`compiler.VerifyCompiledContext`,
   `verifyAgentContext` in `internal/adopt/context_verify.go`). The check reads the whole
   repository, not only the files adoption wrote. Each rejection is an error on the report,
@@ -987,7 +1092,7 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
     (`TestAdopt_Negative_ClientPersonaDirFileWithoutCanonicalPersona`). Adoption never rewrites
     or removes such a file.
   - A manifest that declines `git-ignore` while Git does not ignore `.workingdir/evidence/`.
-    Add `/.workingdir/` to the repository's own `.gitignore`
+    Add `.workingdir/` to the repository's own `.gitignore`
     (`TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule`).
   - Any other failure `compile-context --verify` names: fix what it names, or run
     `praetorctl compile-context`.
@@ -1144,8 +1249,12 @@ the refresh and a re-run that passes every gate.
 
 The other audit gates do not run. The invariant scan reads its limits from the effective policy
 (`EffectivePolicy.HISSScanOptions` in `internal/config/hiss_exceptions.go`), so a profile with a
-lower `max_func_loc` can report debt the baseline does not hold. Run `praetorctl audit` for the
-full verdict.
+lower `max_func_loc` can report debt the baseline does not hold. The Paperclip harness states the
+profile's HISS-04 limits and is not among the five gates either, so a profile change that moves
+those limits leaves `praetorctl audit` failing with `Paperclip harness out of date` while
+`profile set` names nothing to refresh. Run a plain `praetorctl adopt --lock-source-root=...`
+afterwards: it refreshes an unmodified earlier harness without `--force`. Run `praetorctl audit`
+for the full verdict.
 
 `--lock-source-root` is required. A profile or facet the source bundle does not define fails
 before anything is written. The error names the bundle and its catalog version, such as

@@ -266,3 +266,29 @@ func makefileOpensDefine(fields []string) bool {
 	kind, _ := makefileOperatorAt(fields[index+1], 0)
 	return kind != makefileAssignToken
 }
+
+// StripMakeDirectivePrefixes strips leading Make variable modifiers (override, export, private)
+// from s, up to 4 iterations (HISS-02).
+func StripMakeDirectivePrefixes(s string) string {
+	s = strings.TrimSpace(s)
+	for i := 0; i < 4; i++ {
+		stripped := false
+		for _, prefix := range []string{"override", "export", "private"} {
+			if rem, ok := matchMakeDirectivePrefix(s, prefix); ok {
+				s = rem
+				stripped = true
+			}
+		}
+		if !stripped {
+			break
+		}
+	}
+	return s
+}
+
+func matchMakeDirectivePrefix(s, prefix string) (string, bool) {
+	if strings.HasPrefix(s, prefix) && (len(s) == len(prefix) || s[len(prefix)] == ' ' || s[len(prefix)] == '\t') {
+		return strings.TrimSpace(s[len(prefix):]), true
+	}
+	return s, false
+}

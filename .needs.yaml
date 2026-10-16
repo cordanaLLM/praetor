@@ -92,7 +92,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: backrefs
-      version: 8.0 \
+      version: 8.1 \
       language: python
       ecosystem: pypi
       capability: python.external.backrefs
@@ -169,7 +169,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: markdown
-      version: "3.11"
+      version: 3.11.1
       language: python
       ecosystem: pypi
       capability: python.external.markdown
@@ -246,7 +246,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: platformdirs
-      version: 4.12.4 \
+      version: 4.13.0
       language: python
       ecosystem: pypi
       capability: python.external.platformdirs
@@ -260,7 +260,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: pymdown-extensions
-      version: 12.1 \
+      version: 12.2 \
       language: python
       ecosystem: pypi
       capability: python.external.pymdown_extensions
@@ -330,7 +330,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: astro
-      version: 7.3.8
+      version: 7.4.0
       language: typescript
       ecosystem: npm
       capability: ui.external.astro
@@ -428,7 +428,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: js-yaml
-      version: 5.4.2
+      version: 5.4.3
       language: typescript
       ecosystem: npm
       capability: ui.external.js_yaml
@@ -496,4 +496,4 @@ readiness:
     total_third_party_deps: 59
     covered_deps: 0
     gap_deps: 59
-updated_at: 2026-10-08T22:15:54.073501572Z
+updated_at: 2026-10-16T00:13:40.201836986Z

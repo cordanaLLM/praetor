@@ -1,0 +1,3 @@
+type: added
+title: Keep the Claude window ceilings in a per-account state file so a ceiling survives window resets and restarts until it ages out, and add tribunusctl claude-limits to count the limit names the session logs actually carry
+issue: '#1142'

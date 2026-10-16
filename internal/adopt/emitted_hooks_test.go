@@ -38,9 +38,13 @@ const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 // is the one adoption creates with the default facets.
 func emittedHookRenderings(t *testing.T) map[string]string {
 	t.Helper()
+	reuseWorkflowContent, err := reuseWorkflow(forge.FallbackDefaultBranch)
+	if err != nil {
+		t.Fatalf("render reuseWorkflow: %v", err)
+	}
 	return map[string]string{
-		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true}, true),
-		reuseWorkflowFile:    reuseWorkflow(forge.FallbackDefaultBranch),
+		lefthookFile:         buildLefthookYAMLFor(lefthookShape{languages: lefthookJobLanguages, reuse: true, toolGovuln: true}, true),
+		reuseWorkflowFile:    reuseWorkflowContent,
 		evasionHookFile:      buildBlockEvasionPY(),
 		engineLauncherFile:   engineLauncherScript,
 		manifestFile:         renderedPriorManifest(t),
@@ -71,7 +75,8 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 // commands in a Go repository and lefthook_identity.go sees the same jobs. The values that
 // changed since are the pre-commit audit, which now passes --offline (preCommitAuditArgs), the
 // pre-push gate, which now passes --admit-unsupported (prePushGateArgs), the pre-push security job,
-// which now runs the Go vulnerability gate (govulnGateArgs), and the two checkpoint jobs, which now
+// which now runs the Go vulnerability gate (govulnGateArgs) and fails closed when govulncheck is
+// missing, and the two checkpoint jobs, which now
 // start their interpreter through the launcher (lefthookPythonCommand); the unfolded renderings ran
 // the first two without, ran govulncheck ./... and named python3, and nothing else differs.
 //
@@ -98,11 +103,13 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			t.Fatalf("%s: the pre-push gate was not the strict one: %v", name, gate["run"])
 		}
 		gate["run"] = lefthookGovernedCommand(prePushGateArgs)
+		govet := decodedJob(t, prior, "pre-commit", "govet")
+		govet["run"] = lefthookGovernedCommand("go vet")
 		security := decodedJob(t, prior, "pre-push", "security")
 		if security["run"] != goModuleCommand("govulncheck", optionalToolCommand("govulncheck", "./...")) {
 			t.Fatalf("%s: the pre-push security job did not run govulncheck ./...: %v", name, security["run"])
 		}
-		security["run"] = goModuleCommand(govuln.DefaultScanner, optionalToolGuard(govuln.DefaultScanner, lefthookGovernedCommand(govulnGateArgs)))
+		security["run"] = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
 		for _, event := range checkpointEvents(checkpoint) {
 			job := decodedJob(t, prior, "agent-checkpoint-"+event, "checkpoint")
 			arguments := "-B " + checkpointScript + " --event " + event + " --json --marker"

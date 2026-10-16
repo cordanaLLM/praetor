@@ -93,7 +93,7 @@ func containsExactLFLine(text, want string) bool {
 
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	wantDirect := map[string]string{
-		"js-yaml":                   "5.4.2",
+		"js-yaml":                   "5.4.3",
 		"jsonc-parser":              "3.3.1",
 		"markdownlint":              "0.41.1",
 		"micromark":                 "4.0.3",
@@ -174,7 +174,7 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	// markdownlint-configure-file comments) from the locked install, so all four are direct
 	// dependencies installed at the top level.
 	for name, version := range map[string]string{
-		"js-yaml": "5.4.2", "markdownlint": "0.41.1", "jsonc-parser": "3.3.1", "smol-toml": "1.9.0",
+		"js-yaml": "5.4.3", "markdownlint": "0.41.1", "jsonc-parser": "3.3.1", "smol-toml": "1.9.0",
 	} {
 		if lock.Packages["node_modules/"+name].Version != version {
 			t.Fatalf("%s is not installed at the top level pinned to %s", name, version)

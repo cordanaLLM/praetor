@@ -1,6 +1,7 @@
 ---
 name: praetor-auditor
 description: "Autonomous agent for background HISS invariant sweeps, NASA JPL Rule 4 LOC enforcement, and SARIF diagnostic distillation."
+model: pro
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto

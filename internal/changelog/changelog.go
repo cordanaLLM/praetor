@@ -3,11 +3,13 @@ package changelog
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
 )
@@ -58,21 +60,35 @@ var sectionTitles = map[FragmentType]string{
 	TypeSecurity:   "Security",
 }
 
-// CreateFragment writes a new YAML fragment file into changelog.d/.
-func CreateFragment(repoPath string, f Fragment) (string, error) {
+func validateFragment(f *Fragment) error {
 	if strings.TrimSpace(f.Title) == "" {
-		return "", fmt.Errorf("changelog: title cannot be empty")
+		return fmt.Errorf("changelog: title cannot be empty")
+	}
+	if f.Issue != "" {
+		normIssue, err := normalizeIssue(f.Issue)
+		if err != nil {
+			return fmt.Errorf("changelog: %w", err)
+		}
+		f.Issue = normIssue
 	}
 	// A title that cannot be represented is refused at creation rather than at release.
 	// Accepting it writes a fragment that renders into the journaled section and fails the
 	// release for whoever runs it next, with an error pointing at a JSON offset rather than
 	// at the fragment that caused it.
 	if !RenderTextRepresentable(f.Title) || !RenderTextRepresentable(f.Issue) {
-		return "", fmt.Errorf("%w: fragment title and issue", ErrRenderTextUnrepresentable)
+		return fmt.Errorf("%w: fragment title and issue", ErrRenderTextUnrepresentable)
 	}
 	f.Type = FragmentType(strings.ToLower(string(f.Type)))
 	if _, ok := sectionTitles[f.Type]; !ok {
-		return "", fmt.Errorf("changelog: invalid fragment type %q", f.Type)
+		return fmt.Errorf("changelog: invalid fragment type %q", f.Type)
+	}
+	return nil
+}
+
+// CreateFragment writes a new YAML fragment file into changelog.d/.
+func CreateFragment(repoPath string, f Fragment) (string, error) {
+	if err := validateFragment(&f); err != nil {
+		return "", err
 	}
 
 	dir := filepath.Join(repoPath, FragmentDir)
@@ -138,19 +154,23 @@ func buildReleaseSection(fragments []Fragment, version, date string) string {
 		}
 		fmt.Fprintf(&sb, "### %s\n\n", sectionTitles[sec])
 		for _, it := range items {
-			line := fmt.Sprintf("- %s", it.Title)
-			if it.Breaking {
-				line = fmt.Sprintf("- **BREAKING**: %s", it.Title)
-			}
-			if it.Issue != "" {
-				line = fmt.Sprintf("%s (#%s)", line, it.Issue)
-			}
-			sb.WriteString(line + "\n")
+			sb.WriteString(renderFragmentLine(it) + "\n")
 		}
 		sb.WriteString("\n")
 	}
 
 	return strings.TrimRight(sb.String(), "\n") + "\n\n"
+}
+
+func renderFragmentLine(it Fragment) string {
+	line := fmt.Sprintf("- %s", it.Title)
+	if it.Breaking {
+		line = fmt.Sprintf("- **BREAKING**: %s", it.Title)
+	}
+	if it.Issue == "" {
+		return line
+	}
+	return fmt.Sprintf("%s (%s)", line, it.Issue)
 }
 
 func spliceChangelog(data []byte, exists bool, releaseSection string) []byte {
@@ -214,4 +234,83 @@ func slugify(s string) string {
 		res = "change"
 	}
 	return res
+}
+
+// maxIssueComponents bounds the number of issue references in a comma-separated list (HISS-02).
+const maxIssueComponents = 64
+
+// normalizeIssue normalizes an issue reference: strips one optional leading '#',
+// validates digits with no leading zero, an owner/repo#n cross reference, or a
+// comma-separated list of issue references. Each item is returned in its final form
+// ("#<n>" or "<owner>/<repo>#<n>").
+func normalizeIssue(issue string) (string, error) {
+	if issue == "" {
+		return "", errors.New("issue cannot be empty")
+	}
+	trimmed := strings.TrimSpace(issue)
+	if trimmed == "" {
+		return "", errors.New("issue cannot be whitespace only")
+	}
+	if strings.HasPrefix(trimmed, ",") || strings.HasSuffix(trimmed, ",") {
+		return "", fmt.Errorf("invalid issue %q: leading or trailing comma", issue)
+	}
+
+	rawItems := strings.Split(trimmed, ",")
+	if len(rawItems) > maxIssueComponents {
+		return "", fmt.Errorf("invalid issue %q: exceeds maximum of %d components", issue, maxIssueComponents)
+	}
+	parts := make([]string, len(rawItems))
+	for i, raw := range rawItems {
+		item := strings.TrimSpace(raw)
+		if item == "" {
+			return "", fmt.Errorf("invalid issue %q: empty component", issue)
+		}
+		norm, err := normalizeIssueComponent(item, issue)
+		if err != nil {
+			return "", err
+		}
+		parts[i] = norm
+	}
+	return strings.Join(parts, ", "), nil
+}
+
+func normalizeIssueComponent(item, original string) (string, error) {
+	if strings.Contains(item, "/") {
+		return normaliseCrossRepoIssue(item, original)
+	}
+	return normaliseLocalIssue(item, original)
+}
+
+func normaliseCrossRepoIssue(item, original string) (string, error) {
+	if strings.HasPrefix(item, "#") {
+		return "", fmt.Errorf("invalid issue %q: cross-repository reference cannot start with #: %s", item, original)
+	}
+	repo, num, ok := strings.Cut(item, "#")
+	if !ok || !config.ValidRepositoryIdentity(repo) || !isValidIssueNumber(num) {
+		return "", fmt.Errorf("invalid issue %q: must be digits or owner/repo#n: %s", item, original)
+	}
+	return item, nil
+}
+
+func normaliseLocalIssue(item, original string) (string, error) {
+	if strings.HasPrefix(item, "##") {
+		return "", fmt.Errorf("invalid issue %q: multiple leading # symbols: %s", item, original)
+	}
+	num := strings.TrimPrefix(item, "#")
+	if !isValidIssueNumber(num) {
+		return "", fmt.Errorf("invalid issue %q: must be digits with no leading zero: %s", item, original)
+	}
+	return "#" + num, nil
+}
+
+func isValidIssueNumber(s string) bool {
+	if s == "" || s[0] == '0' || len(s) > 32 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }

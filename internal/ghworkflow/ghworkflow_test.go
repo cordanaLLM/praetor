@@ -291,3 +291,15 @@ func TestEnvNames(t *testing.T) {
 		t.Errorf("step working-directory = %+v, %v; want sub", step.Jobs["b"].Steps, err)
 	}
 }
+
+// Job with decodes caller inputs passed to a reusable workflow.
+func TestJob_With(t *testing.T) {
+	doc := "on: pull_request\njobs:\n  call:\n    uses: ./.github/workflows/called.yml\n    with:\n      root: sub\n"
+	spec, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spec.Jobs["call"].With["root"]; got != "sub" {
+		t.Fatalf("job with = %v, want sub", got)
+	}
+}

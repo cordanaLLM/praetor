@@ -4,11 +4,11 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import re
-import sys
 import stat
+import sys
 import time
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from common import HookError, run_bounded
@@ -109,29 +109,35 @@ def _policy_bytes(root):
 
 
 def _policy_bytes_relative(root):
-    descriptors = []
+    """Read the policy through descriptor-relative opens, closing every descriptor here.
+
+    One directory is held at a time: a parent is closed once its child is open, and the
+    last one once the policy file is open or an open failed. The stream is opened with
+    closefd=False and the descriptor closed below, because a wrap that fails (the policy
+    path is a directory) leaves a descriptor it was meant to own open.
+    """
+    directories = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     try:
-        descriptors.append(os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
-        for part in POLICY_PARTS:
-            descriptors.append(
-                os.open(
-                    part,
-                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                    dir_fd=descriptors[-1],
-                )
+        directory = os.open(root, directories)
+        try:
+            for part in POLICY_PARTS:
+                parent = directory
+                directory = os.open(part, directories, dir_fd=parent)
+                os.close(parent)
+            descriptor = os.open(
+                POLICY_FILE,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                dir_fd=directory,
             )
-        descriptor = os.open(
-            POLICY_FILE,
-            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-            dir_fd=descriptors[-1],
-        )
-        with os.fdopen(descriptor, "rb") as stream:
-            return _read_policy(stream)
+        finally:
+            os.close(directory)
+        try:
+            with open(descriptor, "rb", closefd=False) as stream:
+                return _read_policy(stream)
+        finally:
+            os.close(descriptor)
     except FileNotFoundError:
         return None
-    finally:
-        for descriptor in reversed(descriptors):
-            os.close(descriptor)
 
 
 def _redirects(info):
@@ -169,7 +175,19 @@ def _policy_bytes_checked(root):
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
     except FileNotFoundError:
         return None
-    with os.fdopen(descriptor, "rb") as stream:
+    try:
+        return _read_inspected(descriptor, inspected)
+    finally:
+        os.close(descriptor)
+
+
+def _read_inspected(descriptor, inspected):
+    """Read the policy from descriptor, which must be the file that was inspected.
+
+    The caller keeps the descriptor and closes it: a wrap that fails (the policy path is a
+    directory) leaves a descriptor it was meant to own open.
+    """
+    with open(descriptor, "rb", closefd=False) as stream:
         if not os.path.samestat(inspected, os.fstat(stream.fileno())):
             raise CheckpointError(
                 "checkpoint configuration was replaced while it was read"
@@ -327,11 +345,10 @@ def _paths(raw):
 
 
 def _public(path):
-    return (
-        path != ".standards-receipt.json"
-        and path != ".workingdir"
-        and not path.startswith(".workingdir/")
-    )
+    return path not in (
+        ".standards-receipt.json",
+        ".workingdir",
+    ) and not path.startswith(".workingdir/")
 
 
 WORKTREE_DIFF = ("--no-ext-diff", "--no-textconv", "--ignore-submodules=all")
@@ -377,6 +394,57 @@ def _branch(root):
 
 def _remote_url(root, remote):
     return _git(root, "remote", "get-url", remote).decode().strip()
+
+
+def _ssh_transport_disabled(url):
+    if not (url.startswith("git@") or urlsplit(url).scheme == "ssh"):
+        return False
+    # A plain split, not shlex: the adopted bundle runs under the owner overlay's Python, which has
+    # no shlex module, and only the first word (a program named false) matters here.
+    words = os.environ.get("GIT_SSH_COMMAND", "").split()
+    return bool(words) and Path(words[0]).name == "false"
+
+
+def _push_transport_disabled(root, cfg):
+    try:
+        url = _remote_url(root, cfg["remote"])
+    except CheckpointError:
+        return False
+    if (
+        url.startswith("git@")
+        or url.startswith("ssh://")
+        or urlsplit(url).scheme == "ssh"
+    ):
+        return _ssh_transport_disabled(url)
+    if urlsplit(url).scheme != "https" or os.environ.get("GIT_TERMINAL_PROMPT") != "0":
+        return False
+    helper = (
+        _git(root, "config", "--get", "credential.helper", allowed=(0, 1))
+        .decode()
+        .strip()
+    )
+    return not helper
+
+
+def _forge_token_absent():
+    if os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"):
+        return False
+    config = os.environ.get("GH_CONFIG_DIR")
+    return not config or not (Path(config) / "hosts.yml").is_file()
+
+
+def _detached_job_deferral(root, cfg):
+    label = os.environ.get("PRAETOR_DETACHED_JOB")
+    if (
+        not label
+        or not _push_transport_disabled(root, cfg)
+        or not _forge_token_absent()
+    ):
+        return None
+    return (
+        f"detached job {label}: no push transport, no forge token; "
+        "the launching session commits"
+    )
 
 
 def _validate_remote(url, repository):
@@ -774,6 +842,7 @@ def _empty_result(include_paths):
     result = {
         "schema_version": 1,
         "enabled": False,
+        "deferred": False,
         "due": False,
         "actions": [],
         "branch": "",
@@ -789,7 +858,7 @@ def _empty_result(include_paths):
     return result
 
 
-def _observe_worktree(root, cfg, event, include_paths, result):
+def _observe_worktree(root, cfg, event, include_paths, result, require_branch=True):
     result["enabled"] = True
     result["review_status"] = (
         "not_observed" if cfg.get("require_checks", False) else "not_requested"
@@ -805,8 +874,9 @@ def _observe_worktree(root, cfg, event, include_paths, result):
     result["commit_due"] = _commit_due(root, cfg, event, head, public)
     result["due"] = result["commit_due"]
     result["publication_status"] = "not_due"
-    if result["due"]:
+    if result["due"] and require_branch:
         _require_checkpoint_branch(result["branch"], cfg)
+    if result["due"]:
         result["actions"] = list(PUBLIC_ACTIONS)
     return head, public
 
@@ -913,7 +983,22 @@ def inspect_checkpoint(root: Path, event: str, include_paths: bool = False) -> d
         cfg = _config(root)
         if not cfg.get("enabled", False):
             return result
-        head, public = _observe_worktree(root, cfg, event, include_paths, result)
+        # Decided before the branch requirement: a job never publishes, so its branch
+        # need not be a checkpoint branch.
+        deferral = _detached_job_deferral(root, cfg)
+        head, public = _observe_worktree(
+            root, cfg, event, include_paths, result, require_branch=deferral is None
+        )
+        if deferral is not None:
+            result.update(
+                deferred=True,
+                deferral=deferral,
+                due=False,
+                actions=[],
+                publication_status="deferred_detached_job",
+            )
+            _validate_stability(root, head, public, result)
+            return result
         _observe_publication(root, cfg, event, result)
         result["due"] = bool(result["actions"])
         _validate_stability(root, head, public, result)

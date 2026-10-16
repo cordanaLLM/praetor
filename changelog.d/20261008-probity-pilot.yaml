@@ -1,0 +1,3 @@
+type: added
+title: "Pilot optional Probity test-first edit guard configured in probity.config.ts for Go packages under internal/, cmd/, and tools/, with setup documentation in the contributor guide"
+breaking: false

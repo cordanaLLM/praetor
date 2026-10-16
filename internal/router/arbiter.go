@@ -14,6 +14,9 @@ const CooldownDuration = 30 * time.Second
 type ModelCapacityArbiter struct {
 	Config  *RoutingConfig
 	Tracker *LimitTracker
+	// Windows decides governed subscription lanes; nil means no readings were supplied, so
+	// every candidate on a lane that names an account is refused as unknown.
+	Windows *WindowGovernor
 }
 
 // NewModelCapacityArbiter creates an arbiter with active limit tracking.

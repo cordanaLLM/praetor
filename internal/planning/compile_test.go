@@ -206,8 +206,8 @@ func reverseSteps(values []Step) {
 func TestCompileStrictJSON(t *testing.T) {
 	raw := fixtureBytes(t)
 	cases := map[string][]byte{
-		"unknown":   bytes.Replace(raw, []byte(`"schema_version": 1`), []byte(`"unknown": true, "schema_version": 1`), 1),
-		"duplicate": bytes.Replace(raw, []byte(`"schema_version": 1`), []byte(`"schema_version": 1, "schema_version": 1`), 1),
+		"unknown":   bytes.Replace(raw, []byte(`"schema_version": 2`), []byte(`"unknown": true, "schema_version": 2`), 1),
+		"duplicate": bytes.Replace(raw, []byte(`"schema_version": 2`), []byte(`"schema_version": 2, "schema_version": 2`), 1),
 		"trailing":  append(append([]byte(nil), raw...), []byte(` {}`)...),
 		"invalid":   {0xff},
 	}
@@ -235,7 +235,7 @@ func TestCompileRefusesAmbiguousSpellingsAsStrictJSON(t *testing.T) {
 	cases := map[string]struct {
 		old, new, want string
 	}{
-		"case variant":       {`"schema_version": 1`, `"schema_version": 1, "Schema_Version": 1`, "invalid or duplicate planning JSON key"},
+		"case variant":       {`"schema_version": 2`, `"schema_version": 2, "Schema_Version": 1`, "invalid or duplicate planning JSON key"},
 		"unpaired surrogate": {`"Example Workshop"`, `"Example Workshop \ud800"`, "planning JSON holds an unpaired UTF-16 surrogate escape"},
 	}
 	for name, tc := range cases {

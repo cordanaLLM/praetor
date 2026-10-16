@@ -1415,11 +1415,12 @@ class ScopeAndGuard(unittest.TestCase):
         # it gains fails here instead of going unverified by the pre-commit hook.
         with tempfile.TemporaryDirectory(prefix="praetor-context-") as temp:
             root = Path(temp)
-            persona = "---\nname: demo\ndescription: demo\n---\n\nRun tests.\n"
+            skill = "---\nname: demo\ndescription: demo\n---\n\nRun tests.\n"
+            persona = "---\nname: demo\ndescription: demo\nmodel: flash\n---\n\nRun tests.\n"  # personas carry a tier
             for name, text in {"AGENTS.md": "# Demo\n\nRun tests before commit.\n",
                                ".agents/agents/demo.md": persona,
-                               ".agents/skills/demo/SKILL.md": persona,
-                               ".agents/skills/caveman/SKILL.md": persona,
+                               ".agents/skills/demo/SKILL.md": skill,
+                               ".agents/skills/caveman/SKILL.md": skill,
                                ".agents/plugins/praetor/plugin.json": '{"name": "praetor"}\n'}.items():
                 (root / name).parent.mkdir(parents=True, exist_ok=True)
                 (root / name).write_text(text, encoding="utf-8")
@@ -2187,6 +2188,36 @@ class ScopeAndGuard(unittest.TestCase):
             with self.assertRaises(ValueError):
                 relative(root / "file.go", root / "missing")
 
+    def test_unresolved_relative_to_walks_past_a_component_it_cannot_inspect(self):
+        """A component whose stat fails is not the root, and the walk goes on with the next.
+
+        Positive: with an ancestor above the root refusing inspection, the root below it is
+        still found. Boundary: a path not written yet is found the same way, its missing
+        components never inspected before the root matches. Negative: when the one component
+        that names the root is the one refusing, the path is not below it, and the refusal
+        is the function's ValueError, never the OSError of the stat (#1219).
+        """
+        with tempfile.TemporaryDirectory(prefix="praetor-unresolved-denied-") as temp:
+            root = Path(temp).resolve() / "repository"
+            (root / "sub").mkdir(parents=True)
+            alias = root.parent / "alias"
+            alias.symlink_to(root)
+            real_stat = os.stat
+
+            def refusing(refused):
+                def stat(path, *args, **kwargs):
+                    if Path(path) == refused:
+                        raise PermissionError(13, "planted refusal", os.fspath(path))
+                    return real_stat(path, *args, **kwargs)
+                return mock.patch.object(common.os, "stat", stat)
+
+            relative = common.unresolved_relative_to
+            with refusing(root.parent):
+                self.assertEqual(relative(root / "sub/file.go", alias), Path("sub/file.go"))
+                self.assertEqual(relative(root / "new/dir/file.go", alias), Path("new/dir/file.go"))
+            with refusing(root), self.assertRaisesRegex(ValueError, "is not below"):
+                relative(root / "sub/file.go", alias)
+
     def test_process_failure_and_timeout_are_not_swallowed(self):
         with self.assertRaises(HookError):
             run([sys.executable, "-c", "raise SystemExit(7)"])
@@ -2649,6 +2680,44 @@ class HookInterpreter(unittest.TestCase):
         launcher = (ROOT / LAUNCHER).read_text(encoding="utf-8")
         self.assertEqual(re.findall(r"\$\{?[A-Z_][A-Z0-9_]*", launcher), [])
         self.assertIsNotNone(re.search(r"\$\{?[A-Z_][A-Z0-9_]*", '"${PRAETOR_PYTHON:-python3}"'))
+
+    def test_git_repository_selection_is_dropped_by_default(self):
+        variables = {
+            "GIT_DIR": "/fake/git/dir",
+            "GIT_WORK_TREE": "/fake/work/tree",
+            "GIT_INDEX_FILE": "fake/index/file",
+            "GIT_COMMON_DIR": "/fake/common/dir",
+            "GIT_OBJECT_DIRECTORY": "/fake/objects",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/fake/alt/objects",
+        }
+        probe = (
+            "import os, json; "
+            "print(json.dumps([os.environ.get(k) for k in "
+            "('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', "
+            "'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES')]))"
+        )
+        result = self.launch("-c", probe, **variables)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [None, None, None, None, None, None])
+
+    def test_keep_index_preserves_git_index_file_only(self):
+        variables = {
+            "GIT_DIR": "/fake/git/dir",
+            "GIT_WORK_TREE": "/fake/work/tree",
+            "GIT_INDEX_FILE": "fake/index/file",
+            "GIT_COMMON_DIR": "/fake/common/dir",
+            "GIT_OBJECT_DIRECTORY": "/fake/objects",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/fake/alt/objects",
+        }
+        probe = (
+            "import os, json; "
+            "print(json.dumps([os.environ.get(k) for k in "
+            "('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', "
+            "'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES')]))"
+        )
+        result = self.launch("--keep-index", "-c", probe, **variables)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [None, None, "fake/index/file", None, None, None])
 
     def refused(self, result):
         self.assertEqual(result.returncode, 127, result.stdout + result.stderr)

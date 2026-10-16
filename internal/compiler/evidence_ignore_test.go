@@ -66,7 +66,7 @@ func TestEvidenceIgnored_Negative(t *testing.T) {
 	if !errors.Is(err, ErrEvidenceNotIgnored) {
 		t.Fatalf("want ErrEvidenceNotIgnored, got %v", err)
 	}
-	for _, want := range []string{config.EvidenceDir, "praetorctl compile-context", "adoption.decline", "/.workingdir/"} {
+	for _, want := range []string{config.EvidenceDir, "praetorctl compile-context", "adoption.decline", "add .workingdir/ to the operator-owned .gitignore"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("check error lacks %q: %v", want, err)
 		}

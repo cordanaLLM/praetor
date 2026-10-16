@@ -230,7 +230,7 @@ func packageJSONConfiguresRenovate(ctx context.Context, data []byte) bool {
 // renovateManagedPaths returns the managed paths of every family the active facets enable,
 // except a family whose Source is in the repository: that repository is the family's
 // origin, where the files are sources its own Renovate is meant to update. The generated
-// DevContainer bundle files follow them (generatedDevContainerPaths).
+// DevContainer bundle files and the hosted REUSE gate follow them.
 func renovateManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
 	families, err := enabledManagedFamiliesForSession(ctx, s)
 	if err != nil {
@@ -250,7 +250,11 @@ func renovateManagedPaths(ctx context.Context, s *adoptSession) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	return append(managedPathsOf(adopted), bundle...), nil
+	reuse, err := reuseManagedPaths(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	return append(append(managedPathsOf(adopted), bundle...), reuse...), nil
 }
 
 // generatedDevContainerPaths returns the DevContainer bundle files Renovate's managers read
@@ -388,21 +392,29 @@ func renovatePackageRules(root clientjson.Object) ([]jsontext.Value, error) {
 	return rules, nil
 }
 
-// withRenovateRule returns rules with the managed entry replaced in place, appended when
-// absent, or removed when paths is empty, and whether that differs from rules. Two managed
-// entries are ambiguous and refused, and so is an append past maxRenovateRules: the written
-// configuration stays within the bound renovatePackageRules reads back, so the rerun finds
-// the entry instead of refusing the file.
-func withRenovateRule(rules []jsontext.Value, paths []string) ([]jsontext.Value, bool, error) {
+func findManagedRenovateRule(rules []jsontext.Value) (int, error) {
 	found := -1
 	for index := 0; index < len(rules) && index < maxRenovateRules; index++ {
 		if !isManagedRenovateRule(rules[index]) {
 			continue
 		}
 		if found >= 0 {
-			return nil, false, renovateUnsafe("its packageRules holds two entries described %q", renovateRuleDescription)
+			return -1, renovateUnsafe("its packageRules holds two entries described %q", renovateRuleDescription)
 		}
 		found = index
+	}
+	return found, nil
+}
+
+// withRenovateRule returns rules with the managed entry replaced in place, appended when
+// absent, or removed when paths is empty, and whether that differs from rules. Two managed
+// entries are ambiguous and refused, and so is an append past maxRenovateRules: the written
+// configuration stays within the bound renovatePackageRules reads back, so the rerun finds
+// the entry instead of refusing the file.
+func withRenovateRule(rules []jsontext.Value, paths []string) ([]jsontext.Value, bool, error) {
+	found, err := findManagedRenovateRule(rules)
+	if err != nil {
+		return nil, false, err
 	}
 	if len(paths) == 0 {
 		if found < 0 {

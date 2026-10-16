@@ -1,6 +1,7 @@
 ---
 name: praetor-needs-miner
 description: "Autonomous subagent for mining downstream repository capabilities and updating .needs.yaml and FRAMEWORK_DEMAND.yaml."
+model: haiku
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto

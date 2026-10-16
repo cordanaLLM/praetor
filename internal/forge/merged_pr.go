@@ -9,8 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -78,19 +76,16 @@ type MergedPullRequestList struct {
 	Warnings     []string
 }
 
-// closingKeywordRegex matches closing keywords like "closes #123", "fixes #123", "resolves #123".
-var closingKeywordRegex = regexp.MustCompile(`(?i)\b(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s+(?:([a-zA-Z0-9_\-\.]+)/)?([a-zA-Z0-9_\-\.]+)?#(\d+)`)
-
-// localClosingNumbers returns the issue numbers one line closes in this repository.
+// localClosingNumbers returns the issue numbers one line closes in this repository, read through
+// the one closing-reference reader (closingKeywordRegex).
 func localClosingNumbers(line string) []int {
+	refs, _ := findClosingReferences(line, maxClosingReferences)
 	var nums []int
-	for _, m := range closingKeywordRegex.FindAllStringSubmatch(line, -1) {
-		// owner/repo#N points at another repository; its number means nothing here.
-		if m[1] != "" || m[2] != "" {
-			continue
-		}
-		if num, err := strconv.Atoi(m[3]); err == nil && num > 0 {
-			nums = append(nums, num)
+	for i := 0; i < len(refs); i++ {
+		// owner/repo#N and a URL point at a repository this number may not belong to, and
+		// GH-N was never read here.
+		if refs[i].local && refs[i].number > 0 {
+			nums = append(nums, refs[i].number)
 		}
 	}
 	return nums

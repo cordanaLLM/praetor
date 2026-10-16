@@ -34,6 +34,10 @@ go run ./cmd/standardsctl audit
 make verify-all
 ```
 
+### Optional: Probity Test-First Guard
+
+See [Optional: Probity Test-First Guard](docs/guides/contributing.md#optional-probity-test-first-guard) in the contributor guide for setup instructions and hook configuration.
+
 ---
 
 ## Pull Request Lifecycle

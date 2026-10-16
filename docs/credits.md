@@ -122,7 +122,7 @@ The `adhd-format` skill and `social-text`, which inherits from it, are adapted f
 | [markdownlint](https://github.com/DavidAnson/markdownlint) 0.41.1 | Markdown linting; the Markdown gate's manifest and lock are embedded and installed, and `verify.mjs` calls the library. Its configuration file keeps the name and the output format of [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2), which the gate ran before | dependency, integrated | MIT, © David Anson |
 | [jsonc-parser](https://github.com/microsoft/node-jsonc-parser) 3.3.1 | Parses inline `markdownlint-configure-file` comments written as JSONC, pinned in the same lock | dependency, integrated | MIT, © Microsoft |
 | [smol-toml](https://github.com/squirrelchat/smol-toml) 1.9.0 | Parses inline `markdownlint-configure-file` comments written as TOML, pinned in the same lock | dependency, integrated | BSD-3-Clause, © Squirrel Chat et al. |
-| [js-yaml](https://github.com/nodeca/js-yaml) 5.4.2 | Parses YAML for the Markdown gate, pinned in the same lock | dependency, integrated | MIT, © 2011–2015 Vitaly Puzrin |
+| [js-yaml](https://github.com/nodeca/js-yaml) 5.4.3 | Parses YAML for the Markdown gate, pinned in the same lock | dependency, integrated | MIT, © 2011–2015 Vitaly Puzrin |
 | [micromark](https://github.com/micromark/micromark) 4.0.3 | Markdown parsing, pinned in the same lock | dependency, integrated | MIT, © Titus Wormer |
 | [micromark-extension-mdxjs](https://github.com/micromark/micromark-extension-mdxjs) 3.0.0 | MDX syntax for the same parser, pinned in the same lock | dependency, integrated | MIT, © 2020 Titus Wormer |
 | [parse5](https://github.com/inikulin/parse5) 8.0.1 | HTML parsing, pinned in the same lock | dependency, integrated | MIT, © 2013–2019 Ivan Nikulin |
@@ -300,6 +300,7 @@ outside a manifest. None of them ships in the binaries.
 | [Renovate](https://github.com/renovatebot/renovate) | Dependency update proposals; `renovate.json` extends its built-in presets `config:recommended`, `:dependencyDashboard`, `:semanticCommits` and `:maintainLockFilesWeekly`, and CI installs it to validate the configuration | tool, used by CI | AGPL-3.0-only |
 | [REUSE](https://reuse.software) | License compliance check, run by the reuse-action | tool, used by CI | GPL-3.0-or-later |
 | [Chromium](https://www.chromium.org) | The browser Playwright downloads in CI to render and check the documentation figures | tool, used by CI | BSD-3-Clause, © 2015 The Chromium Authors |
+| [Probity](https://github.com/nizos/probity) | Optional test-first edit guard for AI coding assistants | tool, used by CI | MIT |
 
 ## Development dependencies
 

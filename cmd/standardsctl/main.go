@@ -99,9 +99,11 @@ func printCoreCommands() {
 	fmt.Println("  docs               Harvest, compress, and audit package documentation sheets")
 	fmt.Println("  hindsight          Manage local zero-token memory cache and sync with Hindsight server")
 	fmt.Println("  state              Manage .workingdir/ session state, bugs ledger, and questions")
+	fmt.Println("  exceptions         List or inspect declared exceptions")
 	fmt.Println("  dedupe             Scan for AST clones, utility sprawl, and cadence enforcement")
 	fmt.Println("  efficiency         Measure and report efficiency ledger across landed pull requests (alias: efficiency-ledger)")
 	fmt.Println("  hiss               Inspect and verify declared HISS enforcement evidence")
+	fmt.Println("  rules              Audit declared rule enforcement classes and evidence pointers")
 	fmt.Println("  hook               Serve one agent-hook event: praetorctl hook <client> <event>")
 	fmt.Println("  models             Sync or list active model tiers and benchmark limits")
 	fmt.Println("  plan               Dry-run comparison of repository settings against policy")
@@ -110,6 +112,7 @@ func printCoreCommands() {
 	fmt.Println("  operational        Plan or prepare an operational fork from reviewed local commits")
 	fmt.Println("  adr verify         Replay the machine-checkable clauses of decision records")
 	fmt.Println("  security govuln    Run govulncheck at symbol level and judge its findings against the OpenVEX document")
+	fmt.Println("  go vet            Run go vet ./... in every tracked Go module")
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
@@ -244,8 +247,10 @@ func coreCommandTable() map[string]commandFunc {
 		"docs":                     runDocs,
 		"hindsight":                runHindsight,
 		"state":                    runState,
+		"exceptions":               runExceptions,
 		"dedupe":                   runDedupe,
 		"hiss":                     runHiss,
+		"rules":                    runRules,
 		"hook":                     runHook,
 		"models":                   runModels,
 		"operational":              runOperational,
@@ -253,6 +258,7 @@ func coreCommandTable() map[string]commandFunc {
 		"radar":                    runRadar,
 		"sync":                     runSync,
 		"security":                 runSecurity,
+		"go":                       runGo,
 		"seo":                      runSEO,
 		"sentinel":                 runSentinel,
 		"efficiency":               runEfficiency,

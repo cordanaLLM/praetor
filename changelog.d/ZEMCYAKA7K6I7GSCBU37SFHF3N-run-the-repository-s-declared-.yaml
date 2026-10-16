@@ -1,0 +1,3 @@
+type: fixed
+title: Run the repository's declared make verify-all as a gate stage where no Go or Cargo stage applies, so a failing verify-all refuses the push and names the command and its exit code
+issue: '#1218'

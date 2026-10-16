@@ -64,14 +64,23 @@ func TestVerifyAgentProjections_Boundary_IgnoresNonPersonaFilesAndAbsentDirs(t *
 func projectionFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	persona := []byte("---\nname: praetor-auditor\n---\n\nBody.\n")
+	const canonicalPersona = "---\nname: praetor-auditor\ndescription: Auditor fixture.\nmodel: pro\n---\n\nBody.\n"
 	dirs := append([]string{".agents/agents", ".agents/plugins/praetor/agents"}, allPersonaDirs(t)...)
 	for _, dir := range dirs {
 		full := filepath.Join(root, filepath.FromSlash(dir))
 		if err := os.MkdirAll(full, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(full, "praetor-auditor.md"), persona, 0o600); err != nil {
+		var content string
+		switch dir {
+		case ".agents/agents", ".agents/plugins/praetor/agents":
+			content = canonicalPersona
+		case ".claude/agents":
+			content = strings.Replace(canonicalPersona, "model: pro", "model: sonnet", 1)
+		default:
+			content = strings.Replace(canonicalPersona, "model: pro\n", "", 1)
+		}
+		if err := os.WriteFile(filepath.Join(full, "praetor-auditor.md"), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

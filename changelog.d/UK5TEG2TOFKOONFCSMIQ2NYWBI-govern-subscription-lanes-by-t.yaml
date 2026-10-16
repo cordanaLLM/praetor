@@ -1,0 +1,3 @@
+type: added
+title: 'Govern subscription lanes by their account''s usage window: models route --windows reads a tribunus snapshot, refuses a lane above the stop line or with a stale or missing reading, and returns a pacing signal'
+issue: '#1142'

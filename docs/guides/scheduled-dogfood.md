@@ -26,6 +26,7 @@ transcripts. Public cases require `allow_remote: true` explicitly.
   "max_consecutive_failures": 3,
   "max_runs": 32,
   "max_bytes": 2147483648,
+  "retention": "block",
   "repair_policy": {
     "routing_config": "/home/example/dev/praetor/.config/models/routing.yaml",
     "task": "ci_debugging",
@@ -54,11 +55,15 @@ praetorctl dogfood schedule run --config /absolute/schedule.json
 
 Ticks use a process lock, persisted attempt state, retry cooldown, and a consecutive
 failure circuit. Changed build or configuration fingerprints become eligible for
-a new run. A failed or interrupted run remains visible. The retained run count and
-byte limit are **admission thresholds**, not disk quotas: an admitted suite can grow
-beyond the threshold, after which subsequent admission stops. Evidence is never
-automatically deleted. Review retained data and choose a new state directory when
-the budget is exhausted.
+a new run. A failed or interrupted run remains visible. The retained run count,
+byte limit, and 200,000 entry cap are **admission thresholds**, not disk quotas: an admitted suite can grow
+beyond the threshold, after which subsequent admission stops. Configured `retention: "block"` (default)
+blocks admission with `status: resource_blocked` without error when `max_runs`, `max_bytes`, or 200,000 entries
+is exceeded. When configured with `retention: "prune-oldest"`, the scheduler prunes the oldest completed attempt
+directory before admission when retained runs exceed `max_runs`, entries exceed 100,000 (half of the entry cap),
+or bytes reach `max_bytes`, persisting `pruned_through` with fsync before deletion and reporting `pruned_runs`.
+Retained attempt directories must exist gapless from `pruned_through + 1` through `attempts`.
+Status reads current admission and reports what would be pruned without deleting evidence.
 
 ## Install the user timer
 

@@ -1,0 +1,101 @@
+version: 1
+rules:
+  - id: HISS-01
+    class: ci-gate
+    evidence: [gate:HISS Invariant Scan]
+  - id: HISS-02
+    class: ci-gate
+    evidence: [gate:HISS Invariant Scan]
+  - id: HISS-03
+    class: guidance
+  - id: HISS-04
+    class: ci-gate
+    evidence: [gate:HISS Invariant Scan]
+  - id: HISS-05
+    class: guidance
+  - id: HISS-06
+    class: guidance
+  - id: HISS-07
+    class: ci-gate
+    evidence: [gate:HISS Invariant Scan]
+  - id: HISS-08
+    class: ci-gate
+    evidence: [gate:HISS Invariant Scan, make:semgrep-test]
+  - id: HISS-09
+    class: ci-gate
+    evidence: [gate:HISS Invariant Scan]
+  - id: HISS-10
+    class: ci-gate
+    evidence: [gate:HISS Invariant Scan]
+  - id: HISS-11
+    class: staged
+    evidence: [test:internal/adopt.TestAuditSupplyChainFailsDeclarationsAboveTheMeasurement]
+  - id: HISS-12
+    class: ci-gate
+    evidence: [make:secrets]
+  - id: HISS-13
+    class: ci-gate
+    evidence: [gate:HISS Invariant Scan]
+  - id: HISS-14
+    class: ci-gate
+    evidence: [workflow:praetor-api.yml#api-compatibility]
+  - id: HISS-15
+    class: ci-gate
+    evidence: [workflow:ci.yml#verify]
+  - id: HISS-16
+    class: hook
+    evidence: [hook:pre-commit.staged-checks]
+  - id: HISS-17
+    class: hook
+    evidence: [hook:agent-state-stop.state-verify]
+  - id: HISS-18
+    class: ci-gate
+    evidence: [workflow:ci.yml#verify]
+  - id: HISS-19
+    class: ci-gate
+    evidence: [make:dedupe]
+  - id: HISS-20
+    class: ci-gate
+    evidence: [make:hiss-coverage]
+  - id: HISS-21
+    class: ci-gate
+    evidence: [workflow:portability.yml#harness]
+  - id: AGENTS-OP-1
+    class: guidance
+  - id: AGENTS-OP-2
+    class: ci-gate
+    evidence: [make:dedupe]
+  - id: AGENTS-OP-3
+    class: guidance
+  - id: AGENTS-OP-4
+    class: guidance
+  - id: AGENTS-OP-5
+    class: guidance
+  - id: AGENTS-OP-6
+    class: ci-gate
+    evidence: [make:compile-context-verify]
+  - id: AGENTS-OP-7
+    class: guidance
+  - id: AGENTS-OP-8
+    class: hook
+    evidence: [hook:agent-pre-tool.command-policy]
+  - id: AGENTS-OP-9
+    class: guidance
+  - id: AGENTS-OP-10
+    class: hook
+    evidence: [hook:agent-state-stop.state-verify]
+  - id: AGENTS-OP-11
+    class: ci-gate
+    evidence: [workflow:ci.yml#verify]
+  - id: AGENTS-OP-12
+    class: hook
+    evidence: [hook:commit-msg.message-policy]
+  - id: AGENTS-OP-13
+    class: ci-gate
+    evidence: [make:hiss-coverage]
+  - id: AGENTS-OP-14
+    class: guidance
+  - id: AGENTS-OP-15
+    class: guidance
+  - id: AGENTS-OP-16
+    class: guidance

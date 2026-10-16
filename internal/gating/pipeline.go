@@ -21,6 +21,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
+	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 )
 
 // GatingStatus represents the disposition of a gated check.
@@ -65,15 +66,29 @@ const (
 
 // The stage names, in pipeline order. The prefetch, security and test stages are the toolchain
 // stages: they run a language's own commands, and the receipt stage signs nothing unless one of
-// them ran for some language (requireVerification).
+// them ran for some language (requireVerification). The declared-verification stage runs the
+// repository's own verify-all where no toolchain stage applies; it signs no receipt.
 const (
-	stagePrefetch = "Prefetch & Lockfiles"
-	stageHISS     = "HISS Invariant Scan"
-	stageSecurity = "Security & SCA Scan"
-	stageFlavor   = "Flavor Conformance"
-	stageTests    = "Race-Detector Tests"
-	stageReceipt  = "Ed25519 Exit-0 Receipt"
+	stagePrefetch       = "Prefetch & Lockfiles"
+	stageHISS           = "HISS Invariant Scan"
+	stageSecurity       = "Security & SCA Scan"
+	stageFlavor         = "Flavor Conformance"
+	stageTests          = "Race-Detector Tests"
+	stageDeclaredVerify = "Declared Verification"
+	stageReceipt        = "Ed25519 Exit-0 Receipt"
 )
+
+// StageNames returns the gate stages in the order the pipeline executes them, read from the
+// same list executeStages runs, so a stage the pipeline drops cannot stay resolvable for the rule
+// registry. Callers receive a new slice and cannot alter the pipeline's declarations.
+func StageNames() []string {
+	stages := pipelineStages()
+	names := make([]string, 0, len(stages))
+	for i := 0; i < len(stages) && i < maxStages; i++ {
+		names = append(names, stages[i].name)
+	}
+	return names
+}
 
 // ErrMissingScanner reports that a required security scanner is absent, which must fail
 // the security stage instead of silently passing it.
@@ -217,6 +232,9 @@ type stageConfig struct {
 	verified []string
 	// admitUnsupported is RunOptions.AdmitUnsupported (requireVerification).
 	admitUnsupported bool
+	// declaredVerified is set when the declared-verification stage ran the repository's own
+	// verification command and it passed (runDeclaredVerifyStage). It signs no receipt.
+	declaredVerified bool
 	// goos and goarch are the host platform the devcontainer plan is made for. Production uses
 	// runtime.GOOS and runtime.GOARCH; tests set others to reach the Windows refusal and the
 	// Node platforms on every host.
@@ -228,21 +246,29 @@ type stageConfig struct {
 	// host (resolveExecution, goToolchain). Its commands start through run, so a test's fake
 	// runner sees the container runtime's command lines.
 	container *devcontainerExec
+	// containerStart bounds the toolchain probe that starts an entered devcontainer. Production
+	// leaves it zero, so devcontainerStartBound derives it from the run's budget; tests shorten it
+	// to reach the bound without waiting for it.
+	containerStart    time.Duration
+	modules           []goModule
+	modulesDiscovered bool
+	moduleDiscovery   func(context.Context, string) ([]string, error)
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
 func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConfig {
 	return &stageConfig{
-		repoDir:     repoDir,
-		dryRun:      dryRun,
-		run:         util.RunCommand,
-		lookPath:    exec.LookPath,
-		rep:         rep,
-		boundStage:  withStageBound,
-		inspectTree: inspectTree,
-		goos:        runtime.GOOS,
-		goarch:      runtime.GOARCH,
-		fetch:       devcontainer.HTTPFetch,
+		repoDir:         repoDir,
+		dryRun:          dryRun,
+		run:             util.RunCommand,
+		lookPath:        exec.LookPath,
+		rep:             rep,
+		boundStage:      withStageBound,
+		inspectTree:     inspectTree,
+		goos:            runtime.GOOS,
+		goarch:          runtime.GOARCH,
+		fetch:           devcontainer.HTTPFetch,
+		moduleDiscovery: apiassets.TrackedModuleFiles,
 	}
 }
 
@@ -351,16 +377,22 @@ type stage struct {
 	fn   func(context.Context, *stageConfig) (string, error)
 }
 
-func executeStages(ctx context.Context, cfg *stageConfig) error {
-	stages := []stage{
+// pipelineStages is the one list of gate stages, in execution order: executeStages runs it and
+// StageNames reports it.
+func pipelineStages() []stage {
+	return []stage{
 		{stagePrefetch, runPrefetchStage},
 		{stageHISS, runHissStage},
 		{stageSecurity, runSecurityStage},
 		{stageFlavor, runFlavorStage},
 		{stageTests, runTestStage},
+		{stageDeclaredVerify, runDeclaredVerifyStage},
 		{stageReceipt, runReceiptStage},
 	}
+}
 
+func executeStages(ctx context.Context, cfg *stageConfig) error {
+	stages := pipelineStages()
 	for i := 0; i < len(stages) && i < maxStages; i++ {
 		if err := executeStage(ctx, stages[i], cfg); err != nil {
 			return err
@@ -403,19 +435,27 @@ func runPrefetchStage(ctx context.Context, cfg *stageConfig) (string, error) {
 
 // runGoPrefetch is the prefetch stage's Go part: go mod verify and go mod download.
 func runGoPrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
-	// Without a go.mod the prefetch below runs nothing and reports not applicable, which is
-	// the truer verdict for a dry run of a non-Go repository too.
-	if cfg.dryRun && util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
-		return "", skipped("dry run: lockfiles verified; go mod verify and go mod download not run")
-	}
-	rep, err := prefetchDependencies(ctx, cfg.repoDir, cfg.goToolchain().run)
+	modules, err := cfg.goModules(ctx)
 	if err != nil {
 		return "", err
 	}
-	if rep.Skipped {
+	if len(modules) == 0 {
 		return "", notApplicable("lockfiles verified; no go.mod: module prefetch skipped")
 	}
-	return "", nil
+	if cfg.dryRun {
+		return "", skipped("dry run: lockfiles verified; go mod verify and go mod download not run")
+	}
+	results, err := runGoModules(ctx, cfg, func(moduleCtx context.Context, moduleCfg *stageConfig, module goModule) (string, error) {
+		_, runErr := prefetchDependencies(moduleCtx, module.dir, moduleCfg.goToolchain().run)
+		return "", runErr
+	})
+	if err != nil {
+		return "", err
+	}
+	if runErr := moduleResultsError("module prefetch", results); runErr != nil {
+		return moduleResultsMessage(results), fmt.Errorf("%w; results: %s", runErr, moduleResultsMessage(results))
+	}
+	return moduleResultsMessage(results), nil
 }
 
 // runHissStage evaluates the HISS scan against the recorded debt baseline, exactly like
@@ -495,7 +535,11 @@ func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
 // runGoSecurity runs the Go vulnerability gate and gosec. A missing scanner fails the stage: a
 // security gate that certifies a run in which nothing executed is worse than no gate.
 func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
-	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
+	modules, err := cfg.goModules(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(modules) == 0 {
 		return "", notApplicable("no go.mod: Go security scanners skipped")
 	}
 	if cfg.dryRun {
@@ -505,11 +549,6 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := requireScanner(cfg, govuln.DefaultScanner, "go install golang.org/x/vuln/cmd/govulncheck@latest"); err != nil {
 		return "", err
 	}
-	msg, err := runGoVulnerabilityGate(ctx, cfg)
-	if err != nil {
-		return "", err
-	}
-
 	if err := requireScanner(cfg, "gosec", "go install github.com/securego/gosec/v2/cmd/gosec@latest"); err != nil {
 		return "", err
 	}
@@ -517,18 +556,14 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if !util.FileExists(confPath) {
 		return "", fmt.Errorf("%s is missing: the security gate refuses to run gosec without its pinned configuration", GosecConfigFile)
 	}
-	listing, err := cfg.run(ctx, cfg.repoDir, "go", "list", "-f", "{{.Dir}}", "./...")
-	if err != nil {
-		return "", fmt.Errorf("list Go packages for gosec: %w: %s", err, listing)
-	}
-	packages, err := resolveSecurityPackages(cfg.repoDir, listing)
+	results, err := runGoModules(ctx, cfg, runGoSecurityModule)
 	if err != nil {
 		return "", err
 	}
-	if out, err := cfg.run(ctx, cfg.repoDir, "gosec", append([]string{"-conf", GosecConfigFile}, packages...)...); err != nil {
-		return "", fmt.Errorf("gosec found security infractions: %w: %s", err, out)
+	if runErr := moduleResultsError("Go security", results); runErr != nil {
+		return moduleResultsMessage(results), fmt.Errorf("%w; results: %s", runErr, moduleResultsMessage(results))
 	}
-	return msg, nil
+	return moduleResultsMessage(results), nil
 }
 
 // runGoVulnerabilityGate runs the Go vulnerability gate (internal/govuln), the implementation
@@ -537,8 +572,35 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 // advisory and a scan or document that gave no verdict both fail the stage. A clean scan leaves
 // the stage message empty, as before the gate judged findings; advisories a statement covers are
 // named, so the signed stage output records each waiver.
-func runGoVulnerabilityGate(ctx context.Context, cfg *stageConfig) (string, error) {
-	report, err := govuln.Check(ctx, govuln.Options{Dir: cfg.repoDir, Run: govuln.Runner(cfg.run)})
+func runGoSecurityModule(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {
+	listing, err := cfg.run(ctx, module.dir, "go", "list", "-f", "{{.Dir}}", "./...")
+	if err != nil {
+		return "", fmt.Errorf("list Go packages in %s: %w: %s", module.dir, err, strings.TrimSpace(listing))
+	}
+	count := modulePackageCount(listing)
+	if count == 0 {
+		return NoPackagesNote + ": govulncheck and gosec not run", nil
+	}
+	packages, err := resolveSecurityPackages(module.dir, listing)
+	if err != nil {
+		return "", err
+	}
+	vulnerability, err := runGoVulnerabilityGate(ctx, cfg, module)
+	if err != nil {
+		return "", err
+	}
+	conf, err := gosecConfigPath(cfg.repoDir, module.dir)
+	if err != nil {
+		return "", err
+	}
+	if out, err := cfg.run(ctx, module.dir, "gosec", append([]string{"-conf", conf}, packages...)...); err != nil {
+		return "", fmt.Errorf("gosec found security infractions in %s: %w: %s", module.dir, err, out)
+	}
+	return vulnerability, nil
+}
+
+func runGoVulnerabilityGate(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {
+	report, err := govuln.Check(ctx, govuln.Options{Dir: module.dir, VEXRoot: cfg.repoDir, Run: govuln.Runner(cfg.run)})
 	if err != nil {
 		return "", fmt.Errorf("go vulnerability gate: %w", err)
 	}
@@ -550,6 +612,14 @@ func runGoVulnerabilityGate(ctx context.Context, cfg *stageConfig) (string, erro
 		return "", nil
 	}
 	return fmt.Sprintf("%s; %s", report.Summary(), strings.Join(covered, "; ")), nil
+}
+
+func gosecConfigPath(repoDir, moduleDir string) (string, error) {
+	path, err := filepath.Rel(moduleDir, filepath.Join(repoDir, GosecConfigFile))
+	if err != nil {
+		return "", fmt.Errorf("resolve gosec configuration for %s: %w", moduleDir, err)
+	}
+	return filepath.ToSlash(path), nil
 }
 
 // requireScanner fails closed when a mandatory scanner is not on PATH.
@@ -625,16 +695,18 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
 // cannot be created fails the stage rather than silently testing the dirty tree, and cleanup
 // failures are surfaced instead of dropped (inStageWorktree).
 func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", cutError(ctx, "creating the isolated test worktree", TestStageTimeout, cfg.repoDir, err.Error())
+	}
+	modules, err := cfg.goModules(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(modules) == 0 {
+		return "", notApplicable("no go.mod: Go race-detector tests skipped")
+	}
 	if cfg.dryRun {
 		return "", skipped("dry run: race-detector tests skipped")
-	}
-	// `go test -race ./...` cannot run where there is no module, exactly as the prefetch
-	// and security stages already recognise. Without this the stage failed every adopted
-	// non-Go repository with "directory prefix . does not contain main module", which
-	// reads as a broken repository rather than an inapplicable stage. Those repositories
-	// are gated on their own suites by the verification contract, not here.
-	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
-		return "", notApplicable("no go.mod: Go race-detector tests skipped")
 	}
 	// The race detector needs cgo and a host C toolchain. Without this check the stage
 	// does not report "no C compiler", it reports `# runtime/cgo` followed by every
@@ -653,33 +725,48 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 				"CI runs this leg on Linux with cgo", absent))
 	}
 
-	budget := stageBudget(cfg.repoDir)
+	results, err := runGoModules(ctx, cfg, runGoTestModule)
+	if err != nil {
+		return "", err
+	}
+	if runErr := moduleResultsError("race-detector tests", results); runErr != nil {
+		return moduleResultsMessage(results), fmt.Errorf("%w; results: %s", runErr, moduleResultsMessage(results))
+	}
+	return moduleResultsMessage(results), nil
+}
+
+func runGoTestModule(ctx context.Context, cfg *stageConfig, module goModule) (string, error) {
+	budget, err := stageBudget(ctx, cfg.repoDir)
+	if err != nil {
+		return "", err
+	}
 	bound := budget.StageBound
 	run := cfg.goToolchain().run
+	note := budget.Note
 	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
-		// -timeout gives every package binary the stage's own bound. go test's default is ten
-		// minutes per package, and a package that grows past it (internal/dogfood reached 600 s
-		// on the CI runner) panics mid-suite while the stage still has budget left.
-		out, testErr := run(tCtx, dir, "go", "test", "-race", "-timeout", bound.String(), "./...")
+		moduleDir := filepath.Join(dir, filepath.Dir(filepath.FromSlash(module.file)))
+		count, listErr := ModulePackageCount(tCtx, run, moduleDir)
+		if listErr != nil {
+			return listErr
+		}
+		if count == 0 {
+			note = NoPackagesNote + ": race tests not run"
+			return nil
+		}
+		out, testErr := run(tCtx, moduleDir, "go", "test", "-race", "-timeout", bound.String(), "./...")
 		if testErr == nil {
 			return nil
 		}
-		// A stage killed by a deadline is not a failing suite, and printing it as one sends
-		// every reader to diagnose a change that was never the cause. The context is the
-		// authoritative witness: the child dies of a signal and reports nothing useful. Its
-		// cause also says which deadline fired, the stage's own bound or the whole run's.
-		// util.RunCommand returns standard output only; build errors and anything else the
-		// go command printed on standard error travel in testErr.
-		if cutErr := cutError(tCtx, "race-detector tests", bound, dir,
+		if cutErr := cutError(tCtx, "race-detector tests", bound, moduleDir,
 			fmt.Sprintf("%s [%v]", out, testErr)); cutErr != nil {
 			return cutErr
 		}
-		return fmt.Errorf("tests failed in %s: %s (%w)", dir, out, testErr)
+		return fmt.Errorf("tests failed in %s: %s (%w)", moduleDir, out, testErr)
 	})
 	if err != nil {
 		return "", err
 	}
-	return budget.Note, nil
+	return note, nil
 }
 
 // inStageWorktree runs suite in an isolated worktree of HEAD, under the stage bound, and removes
@@ -841,7 +928,7 @@ func runReceiptStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := confirmTreeUnchanged(ctx, cfg); err != nil {
 		return "", err
 	}
-	if err := requireVerification(cfg); err != nil {
+	if err := requireVerification(ctx, cfg); err != nil {
 		return "", err
 	}
 

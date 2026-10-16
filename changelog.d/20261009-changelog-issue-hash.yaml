@@ -1,0 +1,4 @@
+type: fixed
+title: Strict changelog fragment issue validation fails on non-numeric, ##n, and empty values while normalising issue references
+issue: "1048"
+breaking: true

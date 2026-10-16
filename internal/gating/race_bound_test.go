@@ -136,7 +136,12 @@ func TestTestStageStillReportsAGenuineFailure(t *testing.T) {
 	repoDir := newHermeticGitRepo(t)
 	seedGoModule(t, repoDir)
 	failing, _ := newTestConfig(t, repoDir, false)
-	failing.run = fakeRunner(&[]recordedCommand{}, "FAIL example.test", errors.New("exit status 1"))
+	failing.run = func(ctx context.Context, dir, name string, args ...string) (string, error) {
+		if name == "go" && len(args) == 5 && args[0] == "list" && args[1] == "-find" {
+			return "example.test/pkg\n", nil
+		}
+		return fakeRunner(&[]recordedCommand{}, "FAIL example.test", errors.New("exit status 1"))(ctx, dir, name, args...)
+	}
 
 	_, err := runTestStage(context.Background(), failing)
 	if err == nil {

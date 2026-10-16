@@ -273,6 +273,9 @@ func TestServer_Positive_RegistrationAndAnnotations(t *testing.T) {
 		"standards_planning_validate":       ro,
 		"standards_planning_prepare":        {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: false},
 		"standards_hindsight_optimize":      {ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: true, OpenWorldHint: false},
+		"standards_issue_claim":             {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		"standards_issue_status":            {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
+		"standards_issue_release":           {ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true},
 	}
 	if len(srv.tools) != len(expected) || len(srv.order) != len(expected) {
 		t.Fatalf("registered %d tools (order %d), want %d", len(srv.tools), len(srv.order), len(expected))

@@ -551,7 +551,8 @@ def probe(binary, root, metadata):
                     "standards_memory_recall", "standards_audit", "standards_transcript_ingest",
                     "standards_context_analyze", "standards_dogfood_suite", "standards_dogfood_schedule_status",
                     "standards_dogfood_repair_status", "standards_wishes_status",
-                    "standards_wishes_update", "standards_client_capabilities"}
+                    "standards_wishes_update", "standards_client_capabilities",
+                    "standards_issue_claim", "standards_issue_status", "standards_issue_release"}
         required.update({"standards_planning_validate", "standards_planning_prepare"})
         require(required <= set(names), "required tools are absent")
         inspected = tool_text(client.call("standards_inspect_symbols",

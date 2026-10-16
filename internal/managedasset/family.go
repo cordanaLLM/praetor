@@ -765,9 +765,9 @@ func (f Family) validateWorkflow() error {
 	return f.validateWorkflowPins()
 }
 
-// validateWorkflowPins refuses a hosted workflow with an action unpinnedActions reports.
+// validateWorkflowPins refuses a hosted workflow with an action UnpinnedActions reports.
 func (f Family) validateWorkflowPins() error {
-	unpinned, err := unpinnedActions(f.Workflow)
+	unpinned, err := UnpinnedActions(f.Workflow)
 	if err != nil {
 		return fmt.Errorf("managed asset family %q workflow: %w", f.Name, err)
 	}
@@ -777,11 +777,11 @@ func (f Family) validateWorkflowPins() error {
 	return nil
 }
 
-// unpinnedActions returns every uses: line of workflow whose reference is neither a local
+// UnpinnedActions returns every uses: line of workflow whose reference is neither a local
 // action (./...) nor pinned by full commit SHA with its release as a trailing comment
 // (util.ParsePinnedAction). An adopter cannot edit a locked workflow, so one tag-
 // or branch-pinned action makes the whole gate fail under a SHA-pinning policy.
-func unpinnedActions(workflow string) ([]string, error) {
+func UnpinnedActions(workflow string) ([]string, error) {
 	lines, uses, err := util.ScanActionUses(workflow, MaxWorkflowLines)
 	if err != nil {
 		return nil, err

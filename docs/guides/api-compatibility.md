@@ -3,8 +3,11 @@
 The `api:public-contract` facet, part of the default facet set, adds a hosted check to every
 repository whose `go.mod` git tracks. The check compares the exported API of every Go module in
 the repository with a base revision. A removed or
-changed exported identifier in any module, a nested one included, reaches review as a warning
-before the repository's first v1 release and as a failed required check from v1 on. The gate is
+changed exported identifier in any module, a nested one included, fails the required check from
+v1 on. Before the repository's first v1 release it passes only when a commit in the compared range
+marks the break: a Conventional Commits `!` subject or a `BREAKING CHANGE:` footer, with a
+non-empty `Migration:` footer (the same patterns `praetorctl forge check-commits` reads); an
+unmarked pre-v1 break fails the check. The gate is
 one Go program, [`tools/apicompat/gate/main.go`](https://github.com/cordanaLLM/praetor/blob/main/tools/apicompat/gate/main.go),
 run by the workflow `.github/workflows/praetor-api.yml` under the status context
 **Go API Compatibility**.
@@ -74,6 +77,9 @@ check by design. Marking it ready starts the `ready_for_review` run, which repor
 check on the same head commit and replaces the failure; until it reports, the failed check keeps
 the pull request from merging.
 
+The compare step sets `GOTOOLCHAIN: auto`: the gate downloads the toolchain a module's `go` or
+`toolchain` directive names.
+
 `hosted_gates.draft: skip` in `.standards.yaml` opts in to a job-level draft skip instead, which
 the audit accepts only behind a result job that reports `Go API Compatibility`, needs the gate
 job and fails when it is skipped. A draft then skips the gate job and fails the required check
@@ -106,6 +112,11 @@ root or nested, outside the directories a `./...` pattern skips. That is the mod
 gate itself uses (`TrackedModuleFiles` in `tools/apicompat/modules.go`, kept equal to the gate by
 `TestGate_Boundary_AdoptionDiscoversTheGatesModules`). The index decides, so a `go.mod` counts once
 it is staged or committed, and an untracked one does not.
+
+The same discovery decides where the gate's prefetch, security and race-test stages and the Go
+hooks run (#1353). Those consumers run a complete toolchain once per module, so they refuse more
+than `MaxTrackedModules` (64) modules by name (`ErrTooManyModules`); this gate keeps its own larger
+bound for comparing revisions.
 
 A repository that declares the facet without such a `go.mod`, a Python or Rust project for
 example, gets nothing: no gate program, no workflow, and no **Go API Compatibility** context in
@@ -213,7 +224,7 @@ binary you built.
 | Flag | Default | Meaning |
 | :--- | :--- | :--- |
 | `-base` | empty | Base revision. Empty selects the newest root release tag merged into `HEAD`. |
-| `-policy` | `auto` | `auto` warns before v1 and rejects from v1; `warn` and `reject` fix the policy. |
+| `-policy` | `auto` | `auto` rejects from v1 and, before v1, rejects a break no commit marks with `!` or `BREAKING CHANGE:` plus `Migration:`; `warn` and `reject` fix the policy. |
 | `-checker` | empty | A go-apidiff binary; empty builds the pinned one. |
 | `-repo` | `.` | Any directory inside the repository. |
 
@@ -260,7 +271,7 @@ there is no published API, and the gate passes saying so; a push builds on that.
 | Status | Meaning |
 | :--- | :--- |
 | `0` | Every compared module is compatible, nothing was there to compare, or incompatible changes were reported under the warn policy. |
-| `1` | Incompatible changes under the reject policy. |
+| `1` | Incompatible changes under the reject policy, or an unmarked pre-v1 break under `auto`. |
 | `2` | The comparison did not run: a git or discovery error, a malformed `go.mod`, a module that does not build at `HEAD`, a checker that cannot be built, misses the canary, exits with a status other than 0 or 1, or prints an error. |
 
 Compatibility policy never relaxes execution policy: status 2 holds under `-policy=warn` too.
@@ -357,3 +368,6 @@ an adopting repository, so the forbidigo rule and the utility-sprawl check of
   without touching the tree. Run it in a clone, as the hosted job does.
 - The hosted job runs on Linux. The gate itself runs on Linux, macOS and Windows, and its tests run
   on all three.
+- A nested module whose `go` language version is newer than the toolchain the checker was built
+  with is type-checked by the checker's `go/types` and may not be reported; go-apidiff ignores
+  package errors.

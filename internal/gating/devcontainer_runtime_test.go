@@ -44,6 +44,11 @@ func main() {
 			fmt.Println(map[string]string{"CGO_ENABLED": "1", "CC": "gcc"}[args[1]])
 			return
 		}
+		if len(args) == 5 && args[0] == "list" && args[1] == "-find" && args[2] == "-f" &&
+			args[3] == "{{.ImportPath}}" && args[4] == "./..." {
+			fmt.Println("example.test/pkg")
+			return
+		}
 		if err := test(args); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(3)
@@ -80,6 +85,7 @@ func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the stand-in toolchain is built for the host, and only a Linux host runs it inside a Linux container")
 	}
+	t.Setenv(TestStageTimeoutEnv, "") // the expected command line carries the default bound
 	rt, reason := realRuntime(t)
 	if rt.Path == "" {
 		t.Skip(reason)

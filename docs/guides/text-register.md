@@ -248,7 +248,7 @@ splice the block before their first compile for the same reason.
 Adoption ships the skills the block names. With `--lock-source-root`, the agent-harness step
 installs `social-text`, `caveman` and `adhd-format`, which `social-text` inherits from, into
 `.agents/skills/` from that checkout (`config.RegisterSkillBundle`). Each `SKILL.md` carries its
-REUSE header, its `metadata.derived_from` credit and an inline credit line naming the upstream
+REUSE header, its `metadata.derived_from` credit and an inline credit paragraph naming the upstream
 author, repository and licence terms; the credit points at no file of this repository. Beside it
 sits a `LICENSE` file with the upstream MIT text, byte for byte, as the upstream stated it when
 the skill was adapted (the commits are in [credits](../credits.md)). A skill needs that file when
@@ -282,6 +282,14 @@ required `LICENSE` installs none. An edited skill or licence is kept and reporte
 included; an unedited earlier Praetor text is refreshed (`priorSkillDigests` and
 `priorSkillLicenseDigests` in `internal/adopt/register_skills.go`,
 `TestAdopt_Negative_EditedSkillIsKeptAndReported`).
+
+The three skills pass markdownlint's default rules without a disable pragma: prose is wrapped at
+80 columns, and headings, lists and tables stand between blank lines, inside a block quote and a
+list item too. An adopter's own Markdown gate therefore reads the installed copies under
+`.agents/skills/` and `.claude/skills/` without an exclusion
+(`TestAdopt_Positive_InstalledSkillsPassDefaultMarkdownlint`; the texts earlier releases shipped
+are the refused case, `TestInstalledSkillLintRefusesThePriorTexts`). Praetor's own documentation
+gate excludes `.agents/skills/`, so that test is the gate for them.
 
 Codex, Gemini CLI, Cursor, Copilot and Windsurf read `.agents/skills/`; Claude Code reads
 `.claude/skills/` only (`agentcontext.SkillDirs`). When `agent_clients` selects Claude Code,

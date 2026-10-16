@@ -15,11 +15,17 @@ import (
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 )
 
-// hostedGatePriors maps each hosted gate adoption writes to the committed text the earlier
-// Praetor shipped there, the one that ran on every branch, tag and draft (#815).
-var hostedGatePriors = map[string]string{
-	APICompatibilityWorkflowFile: "../../tools/apicompat/testdata/prior/praetor-api.every-branch-and-draft.yml",
-	DocumentationWorkflowFile:    "../../tools/markdownlint/testdata/prior/praetor-docs.every-branch-and-draft.yml",
+// hostedGatePriors maps each hosted gate adoption writes to the committed texts the earlier
+// Praetor shipped there.
+var hostedGatePriors = map[string][]string{
+	APICompatibilityWorkflowFile: {
+		"../../tools/apicompat/testdata/prior/praetor-api.every-branch-and-draft.yml",
+		"../../tools/apicompat/testdata/prior/praetor-api.toolchain-local.yml",
+		"../../tools/apicompat/testdata/prior/praetor-api.toolchain-local-draft-skip.yml",
+	},
+	DocumentationWorkflowFile: {
+		"../../tools/markdownlint/testdata/prior/praetor-docs.every-branch-and-draft.yml",
+	},
 }
 
 // adoptHostedGates adopts the framework profile, which enables both hosted gates, into a fresh
@@ -108,24 +114,34 @@ func TestAdoptRefreshesPriorHostedGatesAndKeepsEditedOnes(t *testing.T) {
 		"LF":   func(text string) string { return text },
 		"CRLF": func(text string) string { return strings.ReplaceAll(text, "\n", "\r\n") },
 	} {
-		for rel, prior := range hostedGatePriors {
-			data, err := os.ReadFile(prior)
-			if err != nil {
-				t.Fatal(err)
-			}
-			mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), convert(string(data)))
-		}
-		report, err := Adopt(t.Context(), opts)
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		assertRefreshed(t, report, current)
-		for rel, text := range current {
-			if got := mustRead(t, filepath.Join(root, filepath.FromSlash(rel))); got != convert(text) {
-				t.Fatalf("%s: %s did not refresh in its line-ending style:\n%s", name, rel, got)
+		for rel, priors := range hostedGatePriors {
+			for _, prior := range priors {
+				assertPriorRefreshes(t, root, opts, name, rel, prior, convert(current[rel]), convert)
 			}
 		}
 	}
+	assertHandEditedGatesKept(t, root, opts, current)
+}
+
+func assertPriorRefreshes(t *testing.T, root string, opts AdoptOptions, name, rel, prior, want string, convert func(string) string) {
+	t.Helper()
+	data, err := os.ReadFile(prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), convert(string(data)))
+	report, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	assertRefreshed(t, report, map[string]string{rel: want})
+	if got := mustRead(t, filepath.Join(root, filepath.FromSlash(rel))); got != want {
+		t.Fatalf("%s: %s did not refresh in its line-ending style:\n%s", name, rel, got)
+	}
+}
+
+func assertHandEditedGatesKept(t *testing.T, root string, opts AdoptOptions, current map[string]string) {
+	t.Helper()
 	edited := map[string]string{}
 	for rel, text := range current {
 		edited[rel] = strings.Replace(text, "branches: ['main']", "branches: ['main', 'release/**']", 1)

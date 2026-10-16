@@ -18,8 +18,9 @@ const (
 )
 
 type jsonField struct {
-	name  string
-	shape *jsonShape
+	name     string
+	shape    *jsonShape
+	optional bool
 }
 
 type jsonShape struct {
@@ -75,6 +76,11 @@ var (
 		fieldJSONShape("todo_id", stringJSONShape), fieldJSONShape("roadmap_id", stringJSONShape),
 		fieldJSONShape("milestone_id", stringJSONShape),
 	)
+	experimentJSONShape = objectJSONShape(
+		fieldJSONShape("evidence_status", stringJSONShape), fieldJSONShape("null", stringJSONShape),
+		fieldJSONShape("kill_criterion", stringJSONShape), fieldJSONShape("margin", stringJSONShape),
+		fieldJSONShape("protected_outcomes", stringArrayShape), fieldJSONShape("disposition", stringJSONShape),
+	)
 	stepJSONShape = objectJSONShape(
 		fieldJSONShape("id", stringJSONShape), fieldJSONShape("title", stringJSONShape),
 		fieldJSONShape("detail", stringJSONShape), fieldJSONShape("kind", stringJSONShape),
@@ -83,6 +89,7 @@ var (
 		fieldJSONShape("actions", stringArrayShape),
 		fieldJSONShape("expected_outputs", arrayJSONShape(outputJSONShape)),
 		fieldJSONShape("acceptance", acceptanceJSONShape), fieldJSONShape("link", linkJSONShape),
+		optionalFieldJSONShape("experiment", experimentJSONShape),
 	)
 	draftJSONShape = objectJSONShape(
 		fieldJSONShape("schema_version", integerJSONShape), fieldJSONShape("id", stringJSONShape),
@@ -95,6 +102,10 @@ var (
 
 func fieldJSONShape(name string, shape *jsonShape) jsonField {
 	return jsonField{name: name, shape: shape}
+}
+
+func optionalFieldJSONShape(name string, shape *jsonShape) jsonField {
+	return jsonField{name: name, shape: shape, optional: true}
 }
 
 func objectJSONShape(fields ...jsonField) *jsonShape {
@@ -166,6 +177,9 @@ func inspectJSONObject(raw json.RawMessage, fields []jsonField, path string) ([]
 	for _, field := range fields {
 		value, exists := values[field.name]
 		if !exists {
+			if field.optional {
+				continue
+			}
 			return nil, fmt.Errorf("planning JSON %s.%s must be present", path, field.name)
 		}
 		children = append(children, jsonShapeWork{raw: value, shape: field.shape, path: path + "." + field.name})

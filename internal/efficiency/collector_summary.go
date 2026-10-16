@@ -32,6 +32,7 @@ func (c *Collector) buildMilestoneSummary(report *Report, spend *SpendReport) er
 	case summary.QualifiedUnits > 0:
 		summary.SpendPerQualifiedUnit = NotMeasured
 	}
+	summarizeEstimateError(report.Units, summary)
 	return nil
 }
 
@@ -388,4 +389,19 @@ func summarizeVectors(units []UnitReport, summary *MilestoneSummary) error {
 	summary.OperatorMinutes = totals[4].summary(n, q, minutesFormat, false)
 	summary.EscapedDefects = totals[5].summary(n, q, countFormat, true)
 	return nil
+}
+
+func summarizeEstimateError(units []UnitReport, summary *MilestoneSummary) {
+	var total float64
+	measured := 0
+	for _, u := range units {
+		if u.EstimateErrorAmount != nil {
+			total += *u.EstimateErrorAmount
+			measured++
+		}
+	}
+	if measured > 0 {
+		summary.EstimateError = formatEstimateErrorSpend(total)
+		summary.EstimateErrorAmount = &total
+	}
 }

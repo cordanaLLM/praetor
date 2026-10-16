@@ -32,6 +32,7 @@ type efficiencyFlags struct {
 	forgeFile      string
 	transcriptsDir string
 	spendLogFile   string
+	outcomesFile   string
 }
 
 func parseEfficiencyFlags(args []string) (*efficiencyFlags, error) {
@@ -45,6 +46,7 @@ func parseEfficiencyFlags(args []string) (*efficiencyFlags, error) {
 	forgeFile := fs.String("forge-records", "", "Path to merged pull requests JSON fixture")
 	transcriptsDir := fs.String("transcripts-dir", "", "Path to agent session transcripts directory")
 	spendLogFile := fs.String("spend-log", "", "Path to gateway spend-log export file")
+	outcomesFile := fs.String("outcomes", "", "Path to router outcomes JSON lines file")
 
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -76,6 +78,7 @@ func parseEfficiencyFlags(args []string) (*efficiencyFlags, error) {
 		forgeFile:      *forgeFile,
 		transcriptsDir: *transcriptsDir,
 		spendLogFile:   *spendLogFile,
+		outcomesFile:   *outcomesFile,
 	}, nil
 }
 
@@ -122,11 +125,29 @@ func resolveLiveForge(ctx context.Context, manifest *config.Manifest) (driver fo
 	return driver, "", nil
 }
 
+func resolveEfficiencyForge(ctx context.Context, fl *efficiencyFlags, policy *config.EfficiencyPolicy, manifest *config.Manifest) (forge.Forge, []string, error) {
+	if fl.forgeFile != "" || (policy != nil && policy.Sources.Forge.Path != "") {
+		return nil, nil, nil
+	}
+	driver, note, liveErr := resolveLiveForge(ctx, manifest)
+	if liveErr != nil {
+		return nil, nil, liveErr
+	}
+	var notes []string
+	if note != "" {
+		notes = append(notes, note)
+	}
+	return driver, notes, nil
+}
+
 func runEfficiency(args []string) error {
 	return runEfficiencyTo(args, os.Stdout)
 }
 
 func runEfficiencyTo(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "costs" {
+		return runEfficiencyCostsTo(args[1:], out)
+	}
 	fl, err := parseEfficiencyFlags(args)
 	if err != nil {
 		return err
@@ -138,17 +159,9 @@ func runEfficiencyTo(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var forgeDriver forge.Forge
-	var notes []string
-	if fl.forgeFile == "" && (policy == nil || policy.Sources.Forge.Path == "") {
-		driver, note, liveErr := resolveLiveForge(ctx, manifest)
-		if liveErr != nil {
-			return liveErr
-		}
-		forgeDriver = driver
-		if note != "" {
-			notes = append(notes, note)
-		}
+	forgeDriver, notes, err := resolveEfficiencyForge(ctx, fl, policy, manifest)
+	if err != nil {
+		return err
 	}
 
 	collector := efficiency.NewCollector(efficiency.CollectorOptions{
@@ -160,6 +173,7 @@ func runEfficiencyTo(args []string, out io.Writer) error {
 		ForgeJSONPath:  fl.forgeFile,
 		TranscriptsDir: fl.transcriptsDir,
 		SpendLogPath:   fl.spendLogFile,
+		OutcomeLogPath: fl.outcomesFile,
 		Notes:          notes,
 	})
 

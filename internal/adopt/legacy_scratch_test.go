@@ -94,7 +94,8 @@ func TestLegacyScratch_Negative_DefaultAndPresentRootAreIgnored(t *testing.T) {
 // managed block in use and with git-ignore declined.
 type legacyRuleCase struct{ managed, declined bool }
 
-// legacyRuleCases returns the rule spellings the boundary test checks: the exact rule keeps it,
+// legacyRuleCases returns the rule spellings the boundary test checks: the exact rule, root-anchored
+// as blocks up to v2 wrote it or unanchored as v3 does (#1263), keeps it,
 // in either line-ending style and at either end of the file, with or without the managed block.
 // Once a readable block lacks it, other spellings are operator patterns and keep nothing. A file
 // without a readable block gets the default, unless git-ignore is declined.
@@ -108,10 +109,13 @@ func legacyRuleCases() map[string]legacyRuleCase {
 		retired:                                {false, false},
 		util.RestoreLineEndings(retired, true): {false, false},
 		retired + "/.workingdir2/\n":           {true, true},
+		".workingdir2/":                        {true, true},
+		"bin/\r\n.workingdir2/\r\n":            {true, true},
+		retired + ".workingdir2/\n":            {true, true},
 		"a/\n" + gitIgnoreManagedBegin + "\nb/\n":              {true, false},
 		util.RestoreLineEndings(ManagedGitIgnoreBlock(), true): {true, true},
 	}
-	for _, spelling := range []string{" /.workingdir2/", ".workingdir2/", "/.workingdir2", "!/.workingdir2/", "# /.workingdir2/", "/.workingdir2/evidence/", "/.workingdir22/"} {
+	for _, spelling := range []string{" /.workingdir2/", " .workingdir2/", "/.workingdir2", ".workingdir2", "!/.workingdir2/", "!.workingdir2/", "# /.workingdir2/", "/.workingdir2/evidence/", "/.workingdir22/", ".workingdir22/"} {
 		cases[spelling+"\n"] = legacyRuleCase{true, false}
 		cases[spelling+"\n\n"+retired] = legacyRuleCase{false, false}
 	}

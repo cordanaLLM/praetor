@@ -146,6 +146,16 @@ func TestForgeCheckMessage_Positive_CleansTheHookMessage(t *testing.T) {
 	}
 }
 
+func TestForgeCheckMessage_Positive_BareClosingReferenceWarnsOffline(t *testing.T) {
+	path := writeFixtureFile(t, t.TempDir(), "COMMIT_EDITMSG", "fix(hooks): close the issue\n\nCloses #28\n")
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("forge", []string{"check-message", path})
+	})
+	if err != nil || !strings.Contains(out, "[WARN]") || !strings.Contains(out, "praetorctl forge check-commits") {
+		t.Fatalf("bare closing ref offline = %v\n%s", err, out)
+	}
+}
+
 // TestForgeCheckMessage_Negative_PolicyAndUsage (#61): a subject outside the policy and a
 // breaking change without its Migration: footer fail; a missing file, no file and two files are
 // refused.

@@ -1,0 +1,2 @@
+type: fixed
+title: The agent checkpoint defers, and says so, inside a detached job that carries the job marker and has neither a push transport nor a forge token; everywhere else it is unchanged, and the state check still blocks a broken ledger

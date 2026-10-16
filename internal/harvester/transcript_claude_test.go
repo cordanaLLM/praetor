@@ -169,3 +169,25 @@ func TestClaudeFilenameSelectionDoesNotPreferAntigravitySibling(t *testing.T) {
 		t.Fatalf("selection: %+v %v", report, err)
 	}
 }
+
+// Positive: a cost-state record (session totals, no message) is metadata. Negative: an unknown
+// record type is refused at its line without repeating the value. Boundary: a long private value
+// is not repeated either.
+func TestClaudeMetadataRecordTypesFailAtTheirLine(t *testing.T) {
+	costState := `{"type":"cost-state","sessionId":"session-id","totalCostUSD":0.5,"modelUsage":{}}` + "\n"
+	opts := claudeFixture(t, costState+claudeMessageFixture("user", `"prompt"`))
+	report, err := IngestTranscript(context.Background(), opts)
+	if err != nil || !report.Complete || report.MetadataRecords != 1 || report.Stored != 1 {
+		t.Fatalf("cost-state transcript: %+v %v", report, err)
+	}
+	for _, kind := range []string{"future-kind", strings.Repeat("private-category-", 40)} {
+		opts := claudeFixture(t, claudeMessageFixture("user", `"prompt"`)+`{"type":"`+kind+`","sessionId":"session-id"}`+"\n")
+		_, err := IngestTranscript(context.Background(), opts)
+		if err == nil || !strings.Contains(err.Error(), "line 2") || !strings.Contains(err.Error(), "unsupported claude record type") {
+			t.Fatalf("type %.20q: error %v, want the line and the refusal", kind, err)
+		}
+		if strings.Contains(err.Error(), kind[:10]) {
+			t.Fatalf("error repeats the private record type: %v", err)
+		}
+	}
+}

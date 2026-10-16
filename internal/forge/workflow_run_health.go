@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -42,6 +44,11 @@ const (
 	// WorkflowCalledOnly: the workflow's only trigger is workflow_call; it runs inside its
 	// callers' runs and never on its own, so the forge is not asked about it.
 	WorkflowCalledOnly WorkflowHealth = "called-only"
+	// WorkflowSelf: the workflow whose job runs this check (GITHUB_WORKFLOW_REF). Its latest run
+	// on the branch can be the run that failed on this check's own finding, so judging it from
+	// inside itself latches: one red run makes every later run red (Aegis-OS, 2026-10-14). It is
+	// judged by every check that runs outside it.
+	WorkflowSelf WorkflowHealth = "self"
 )
 
 // WorkflowRunFinding is the run check's verdict on one workflow.
@@ -63,12 +70,21 @@ type WorkflowRunFinding struct {
 	Latest *WorkflowRunRecord
 	// Expected is the manifest's workflow_runs.expected entry for the workflow, if any.
 	Expected *config.WorkflowRunExpectation
+	// Today is the date against which expectation expiry is judged; defaults to time.Now().
+	Today time.Time
 }
 
-// Covered reports whether the workflow's declaration names exactly the state found: failing
-// for a failing workflow, unexercised for one that never ran.
+func (f WorkflowRunFinding) today() time.Time {
+	if f.Today.IsZero() {
+		return time.Now()
+	}
+	return f.Today
+}
+
+// Covered reports whether the workflow's declaration names exactly the state found and
+// has not expired: failing for a failing workflow, unexercised for one that never ran.
 func (f WorkflowRunFinding) Covered() bool {
-	if f.Expected == nil {
+	if f.Expected == nil || f.Expected.Expired(f.today()) {
 		return false
 	}
 	switch f.Health {
@@ -115,7 +131,7 @@ func AuditWorkflowRunHealth(ctx context.Context, repoPath, branch string, reader
 	if err != nil {
 		return WorkflowRunReport{}, err
 	}
-	findings, err := readWorkflowFindings(ctx, files, branch, reader, policy)
+	findings, err := readWorkflowFindings(ctx, files, branch, reader, policy, runningWorkflowFile(os.Getenv("GITHUB_WORKFLOW_REF")))
 	if err != nil {
 		return WorkflowRunReport{}, err
 	}
@@ -125,15 +141,15 @@ func AuditWorkflowRunHealth(ctx context.Context, repoPath, branch string, reader
 // readWorkflowFindings checks every workflow file in order and stops at the first error. A
 // forge that answers every question it was asked with "unknown workflow" cannot see the
 // repository's Actions, which is ErrActionsNotReadable rather than a report of unknowns.
-func readWorkflowFindings(ctx context.Context, files []workflowFile, branch string, reader ActionsReader, policy *config.WorkflowRunsPolicy) ([]WorkflowRunFinding, error) {
+func readWorkflowFindings(ctx context.Context, files []workflowFile, branch string, reader ActionsReader, policy *config.WorkflowRunsPolicy, self string) ([]WorkflowRunFinding, error) {
 	findings := make([]WorkflowRunFinding, 0, len(files))
 	asked, unknown := 0, 0
 	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
-		finding, err := checkWorkflowRuns(ctx, files[i], branch, reader, policy)
+		finding, err := checkWorkflowRuns(ctx, files[i], branch, reader, policy, self)
 		if err != nil {
 			return nil, err
 		}
-		if finding.Health != WorkflowCalledOnly {
+		if finding.Health != WorkflowCalledOnly && finding.Health != WorkflowSelf {
 			asked++
 		}
 		if finding.Health == WorkflowUnknown {
@@ -148,14 +164,23 @@ func readWorkflowFindings(ctx context.Context, files []workflowFile, branch stri
 }
 
 // checkWorkflowRuns reads one workflow's triggers from the file and its runs from the forge.
-func checkWorkflowRuns(ctx context.Context, file workflowFile, branch string, reader ActionsReader, policy *config.WorkflowRunsPolicy) (WorkflowRunFinding, error) {
+func checkWorkflowRuns(ctx context.Context, file workflowFile, branch string, reader ActionsReader, policy *config.WorkflowRunsPolicy, self string) (WorkflowRunFinding, error) {
 	var spec workflowSpec
 	if err := yaml.Unmarshal(file.Data, &spec); err != nil {
 		return WorkflowRunFinding{}, fmt.Errorf("parse workflow %s: %w", file.Name, err)
 	}
-	finding := WorkflowRunFinding{Workflow: file.Name, Triggers: triggerNames(&spec.On), Expected: policy.Expectation(file.Name)}
+	finding := WorkflowRunFinding{
+		Workflow: file.Name,
+		Triggers: triggerNames(&spec.On),
+		Expected: policy.Expectation(file.Name),
+		Today:    time.Now(),
+	}
 	if len(finding.Triggers) == 1 && finding.Triggers[0] == "workflow_call" {
 		finding.Health = WorkflowCalledOnly
+		return finding, nil
+	}
+	if self != "" && file.Name == self {
+		finding.Health = WorkflowSelf
 		return finding, nil
 	}
 	history, err := reader.WorkflowRunHistory(ctx, file.Name, branch)
@@ -164,6 +189,17 @@ func checkWorkflowRuns(ctx context.Context, file workflowFile, branch string, re
 	}
 	classifyWorkflowRuns(&finding, history)
 	return finding, nil
+}
+
+// runningWorkflowFile is the file name of the workflow whose job runs this process, from
+// GITHUB_WORKFLOW_REF ("owner/repo/.github/workflows/ci.yml@refs/heads/main"), or "" outside a
+// workflow run.
+func runningWorkflowFile(ref string) string {
+	ref, _, _ = strings.Cut(ref, "@")
+	if !strings.Contains(ref, "/.github/workflows/") {
+		return ""
+	}
+	return path.Base(ref)
 }
 
 // triggerNames lists the events an `on:` node names, in file order (workflowTriggers).
@@ -290,13 +326,27 @@ func (f WorkflowRunFinding) line(branch string) string {
 	case f.Covered():
 		return fmt.Sprintf("[INFO] Workflow %s: %s as declared (%s): %s", f.Workflow, f.Expected.State, f.Expected.Reason, f.state(branch))
 	case f.Unhealthy():
-		return fmt.Sprintf("[WARN] Workflow %s: %s", f.Workflow, f.state(branch))
+		return fmt.Sprintf("[WARN] Workflow %s: %s%s", f.Workflow, f.state(branch), f.unhealthyHint())
 	case f.Expected != nil:
-		return fmt.Sprintf("[INFO] Workflow %s: declared %s, but %s; the declaration no longer applies", f.Workflow, f.Expected.State, f.state(branch))
+		return fmt.Sprintf("[WARN] Workflow %s: declared %s, but %s; the declaration no longer applies", f.Workflow, f.Expected.State, f.state(branch))
 	case f.Health == WorkflowHealthy:
 		return ""
 	default:
 		return fmt.Sprintf("[INFO] Workflow %s: %s", f.Workflow, f.state(branch))
+	}
+}
+
+// unhealthyHint ends an unhealthy finding's line: the date an expired declaration stopped
+// holding, else for a failing workflow the declaration route, so a local gate on a red main
+// says what to do while the fix lands.
+func (f WorkflowRunFinding) unhealthyHint() string {
+	switch {
+	case f.Expected != nil && f.Expected.Expires != "" && f.Expected.Expired(f.today()):
+		return "; the declaration expired on " + f.Expected.Expires
+	case f.Health == WorkflowFailing:
+		return "; declare it in workflow_runs.expected with state failing, a reason and an expiry while the fix lands"
+	default:
+		return ""
 	}
 }
 
@@ -315,6 +365,8 @@ func (f WorkflowRunFinding) state(branch string) string {
 		return fmt.Sprintf("no successful or failed run among the latest completed runs on %s%s", branch, runReference(f.Latest))
 	case WorkflowUnknown:
 		return "the forge has no workflow of this file name; it is not on the default branch yet"
+	case WorkflowSelf:
+		return "not judged from inside its own run (GITHUB_WORKFLOW_REF): its latest run on the branch may be this check's own red run; checks outside it judge it"
 	default:
 		return "runs only when another workflow calls it (workflow_call); not read on its own"
 	}

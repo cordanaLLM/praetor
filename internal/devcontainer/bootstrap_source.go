@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/clientschema"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
@@ -464,7 +465,7 @@ func declaresPraetorModule(data []byte) bool {
 		fields := strings.Fields(directive)
 		if len(fields) > 0 && fields[0] == "module" {
 			count++
-			valid = len(fields) == 2 && fields[1] == praetorModulePath
+			valid = len(fields) == 2 && fields[1] == gomanifest.EngineModulePath
 		}
 	}
 	return count == 1 && valid

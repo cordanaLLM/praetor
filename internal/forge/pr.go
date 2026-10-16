@@ -1,6 +1,7 @@
 package forge
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,7 @@ type PRChecklistResult struct {
 	HasReceipt      bool     `json:"has_receipt"`
 	ReceiptProof    string   `json:"receipt_proof,omitempty"`
 	Errors          []string `json:"errors,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
 }
 
 // ReceiptPolicy binds the Ed25519 Exit-0 receipt carried in a PR body to a trust anchor.
@@ -41,8 +43,9 @@ type PRChecklistResult struct {
 // only checked for internal consistency, which is strictly weaker and must not be used by
 // a merge gate. HeadSHA, when set, is the commit the receipt has to certify.
 type ReceiptPolicy struct {
-	PinnedKey ed25519.PublicKey
-	HeadSHA   string
+	PinnedKey         ed25519.PublicKey
+	HeadSHA           string
+	ClosingReferences ClosingReferencePolicy
 }
 
 // ReviewerAssignment contains mapped human owners and review automation bots.
@@ -59,6 +62,7 @@ type CommitAnalysis struct {
 	MigrationText        string   `json:"migration_text,omitempty"`
 	Valid                bool     `json:"valid"`
 	Errors               []string `json:"errors,omitempty"`
+	Warnings             []string `json:"warnings,omitempty"`
 }
 
 var (
@@ -83,6 +87,12 @@ func ValidatePRChecklist(prBody string) (*PRChecklistResult, error) {
 // ValidatePRChecklistWithPolicy verifies the checklist and cryptographically verifies the
 // Ed25519 Exit-0 receipt block against the supplied trust anchor.
 func ValidatePRChecklistWithPolicy(prBody string, policy ReceiptPolicy) (*PRChecklistResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), closingLookupTimeout)
+	defer cancel()
+	return ValidatePRChecklistWithPolicyContext(ctx, prBody, policy)
+}
+
+func ValidatePRChecklistWithPolicyContext(ctx context.Context, prBody string, policy ReceiptPolicy) (*PRChecklistResult, error) {
 	if strings.TrimSpace(prBody) == "" {
 		return &PRChecklistResult{
 			Valid:  false,
@@ -97,6 +107,9 @@ func ValidatePRChecklistWithPolicy(prBody string, policy ReceiptPolicy) (*PRChec
 
 	res := &PRChecklistResult{}
 	scanChecklistLines(lines, res)
+	closingErrors, closingWarnings := closingReferenceFindings(ctx, strings.Join(lines, "\n"), "pull request body", policy.ClosingReferences)
+	res.Errors = append(res.Errors, closingErrors...)
+	res.Warnings = append(res.Warnings, closingWarnings...)
 	receipt, err := extractReceiptBlock(lines)
 	if err != nil {
 		res.Errors = append(res.Errors, err.Error())
@@ -385,6 +398,12 @@ func matchFrom(patSegs, pathSegs []string, dirRule bool) bool {
 // merge or a revert (commitSubjectError), and a breaking change must carry the mandatory HISS-14
 // Migration: footer.
 func AnalyzeCommit(message string) (*CommitAnalysis, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), closingLookupTimeout)
+	defer cancel()
+	return AnalyzeCommitWithPolicy(ctx, message, ClosingReferencePolicy{})
+}
+
+func AnalyzeCommitWithPolicy(ctx context.Context, message string, closingPolicy ClosingReferencePolicy) (*CommitAnalysis, error) {
 	trimmed := strings.TrimSpace(message)
 	if trimmed == "" {
 		return nil, errors.New("empty commit message")
@@ -397,6 +416,9 @@ func AnalyzeCommit(message string) (*CommitAnalysis, error) {
 	if reason := commitSubjectError(header); reason != "" {
 		res.Errors = append(res.Errors, reason)
 	}
+	closingErrors, closingWarnings := closingReferenceFindings(ctx, trimmed, "commit message", closingPolicy)
+	res.Errors = append(res.Errors, closingErrors...)
+	res.Warnings = append(res.Warnings, closingWarnings...)
 	if breakingHeaderRegex.MatchString(header) {
 		res.IsBreaking = true
 		res.HasBreakingIndicator = true

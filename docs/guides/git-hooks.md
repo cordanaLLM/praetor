@@ -117,7 +117,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | --- | --- |
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
-| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, and the HISS-14 `Migration:` footer on a breaking change) and require a DCO sign-off. |
+| `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
 | `pre-push` | Audit and verify live state before inspecting each actual pushed commit. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
@@ -329,8 +329,9 @@ every text a release shipped is recorded with its digest (`priorCheckpointDigest
 `internal/adopt/checkpoint.go`, reproduced by `internal/adopt/testdata/checkpoint`). A change
 to the script records its new digest in the same change. The current script judges a re-run of
 a hosted check by its latest run on the head, and on a draft reads a hosted gate's failure that
-carries exactly the draft annotation as `draft_pending` rather than `failed`;
-[checkpoint cadence](checkpoint-cadence.md) states both rules.
+carries exactly the draft annotation as `draft_pending` rather than `failed`, and defers inside a
+detached job that has neither a push transport nor a forge token;
+[checkpoint cadence](checkpoint-cadence.md#detached-jobs-that-cannot-publish) states these rules.
 
 ## The engine the hooks run
 
@@ -381,13 +382,19 @@ in a comment sign for the reason given for the [Python launcher](#the-launcher-a
 Generated `Makefile`s and adopted `Makefile`s include `.config/praetor/engine.mk` when the hook launcher is installed or planned,
 a Praetor-managed file that resolves `$(PRAETORCTL)` through `.config/lefthook/engine.sh`
 and provides the `praetor-engine-path` target, aligning Make targets and hooks with the repository's pinned
-engine (#906, HISS-19). To avoid becoming Make's default goal when included before the first target,
+engine (#906, HISS-19). Adoption installs the launcher and `engine.mk` (and offers the include) independently
+of whether it writes `lefthook.yml`: when a repository keeps its own `lefthook.yml`, adoption leaves that
+configuration untouched and unactivated, installs the launcher and `engine.mk`, and reports that the kept
+hook file does not call the launcher yet, naming the command prefix `sh .config/lefthook/engine.sh <args>` to use (#1172).
+To avoid becoming Make's default goal when included before the first target,
 `engine.mk` guards `praetor-engine-path` by saving `$(.DEFAULT_GOAL)` before the rule and restoring it afterward.
 For an adopter-owned `Makefile`, adoption inserts
 `-include .config/praetor/engine.mk` near the top (after leading comments), leaving existing rules in place.
 Because the first `?=` assignment wins in Make, any later fallback assignment becomes a
-no-op without needing to recognize or edit existing verification blocks. An adopter's assignment
-using `:=`, `::=`, `=`, `!=`, `+=`, or `define` is respected and reported as a warning naming the line. An assignment using `?=` is shadowed by `.config/praetor/engine.mk` and is reported as a warning advising `:=` or `=` to override.
+no-op without needing to recognize or edit existing verification blocks. When `engine.mk` is installed or planned,
+an adopter's assignment using `:=`, `::=`, `=`, `!=`, `+=`, or `define` is respected and reported as a warning naming the line,
+and an assignment using `?=` is shadowed by `.config/praetor/engine.mk` and is reported as a warning advising `:=` or `=` to override.
+Where `engine.mk` is neither installed nor planned (such as when `git-hooks` is declined), neither warning is emitted.
 
 **One pin reader.** `.config/lefthook/engine.sh` is also a standalone entry point: an adopter
 `Makefile` target or script runs `sh .config/lefthook/engine.sh <arguments>` from the repository
@@ -399,7 +406,7 @@ only the path of the resolved binary, which `.config/praetor/engine.mk` uses:
 -include .config/praetor/engine.mk
 ```
 
-Tests (`internal/adopt/engine_launcher_test.go`): `TestEngineLauncher_Positive_PinnedEngineWinsOverPath`
+Tests (`internal/adopt/engine_launcher_test.go` and `internal/adopt/engine_makefile_test.go`): `TestEngineLauncher_Positive_PinnedEngineWinsOverPath`
 runs stub binaries that print their identity with a different `praetorctl` first on `PATH`;
 `TestEngineLauncher_Positive_InstallsOncePerPin`, `TestEngineLauncher_Negative_UninstallablePinFailsClosed`,
 `TestEngineLauncher_Negative_NoGoToolchainFailsClosed`, `TestEngineLauncher_Boundary_InstallTimeout`,
@@ -408,7 +415,13 @@ runs stub binaries that print their identity with a different `praetorctl` first
 `TestEngineLauncher_Negative_UnreadableWorkflowFailsClosed`, `TestEngineLauncher_Positive_PrintPath`,
 `TestEngineLauncher_Negative_PrintPathFailsClosedOnUnusablePin`, `TestEngineLauncher_Boundary_InstallTimeoutZeroFailsClosed`
 and `TestEngineLauncher_Boundary_NoSleepSurvivesInstall` cover the cache, the pin sources, `--print-path` and the refusals;
-`TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo` the unpinned case.
+`TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo` the unpinned case;
+`TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk`,
+`TestEngineMakefile_Positive_KeptCustomLefthookCallingLauncherOmitsPrefixHint`,
+`TestEngineMakefile_Negative_KeptCustomLefthookWithDeclinedGitHooksGetsNeitherFile`,
+`TestEngineMakefile_Boundary_KeptCustomLefthookKeepsEditedLauncherWithWarning`,
+`TestEngineMakefile_Boundary_KeptCustomLefthookCommentOnlyMentionGetsPrefixHint` and
+`TestEngineMakefile_Positive_OverrideWarningPresentWithEngineMkAbsentWithout` cover kept hook configurations and conditional override warnings (#1172).
 
 ## The make the hooks run
 
@@ -450,25 +463,26 @@ the Lefthook job test named above puts stand-ins for all three names first on `P
 `compile-context --verify` and `audit --offline` before a commit, `state sync` and the dedupe
 cadence after one, and `flavor audit`, `audit` and `gate run` before a push (see
 [Offline before a commit, online before a push](#offline-before-a-commit-online-before-a-push)).
-The language jobs follow the languages the adoption verification plan detects from root markers,
-the set the harness rows are rendered for (`lefthookLanguages`, `planLanguages` in
-`internal/adopt/harness_hiss.go`):
+The Rust jobs follow the languages the adoption verification plan detects from root markers. Go
+jobs are always scaffolded, and discover tracked modules when the hook runs, so adding a nested
+module does not require re-adoption:
 
 | Detected | Pre-commit jobs | Pre-push jobs | Each runs only where |
 | --- | --- | --- | --- |
-| Go (`go.mod`) | `gofmt` (`gofmt -w` on staged files), `govet` (`go vet ./...`) | `security` (`praetorctl security govuln`, the [Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document); skipped when `govulncheck` is not installed) | Go files are staged, and the root holds `go.mod` for `go vet` and the gate |
+| Tracked Go modules (`go.mod` at any discoverable depth) | `gofmt` (`gofmt -w` on staged files), `govet` (`sh .config/lefthook/engine.sh go vet`, one `go vet ./...` per tracked module) | `security` (`sh .config/lefthook/engine.sh security govuln`, one symbol-level scan per tracked module; skipped when `govulncheck` is not installed) | Go files are staged for `gofmt`/`govet`; the engine discovers modules at hook time |
 | Rust (`Cargo.toml`) | `rustfmt` (`cargo fmt --all --check`), `clippy` (the gate's own `cargo clippy --workspace --all-targets -- -D warnings`, `gating.CargoClippyArgs`) | none: `gate run` runs `cargo audit` for a `Cargo.lock` | Rust files are staged and the root holds `Cargo.toml` |
-| none detected | every language's jobs above, as the harness then keeps every HISS clause | as above | as above |
+| no Rust marker | the Go jobs plus governance jobs | the Go security job plus governance jobs | Go jobs statefully skip when Git tracks no discoverable module |
 
-Any other detected language, such as Python, gets the governance jobs alone. A Go module kept
-only in a subdirectory is not detected, so a Cargo workspace with a Go tool under `tooling/`
-gets the Rust jobs. The header comment names the languages the file carries jobs for. Tests:
+Any other detected language, such as Python, gets the Go and governance jobs; Go discovery happens
+when the hook runs rather than when adoption runs. The header comment names the language jobs the
+file carries. Tests:
 `TestAdopt_Positive_LefthookJobsFollowDetectedLanguages` and
 `TestAdopt_Boundary_LefthookJobsForUnknownAndJoblessLanguages` in
 `internal/adopt/lefthook_languages_test.go`, and the `TestCargoJobs_*` and `TestGoModuleJobs_*`
 cases in `internal/adopt/hooks_gomod_test.go`, which run the job lines against stub tools.
 
-A root that carries `REUSE.toml` or a `LICENSES/` directory also gets a `reuse-lint` pre-commit
+A root that carries `REUSE.toml` or `.reuse/dep5`, in a repository that does not decline
+`reuse-gate`, also gets a `reuse-lint` pre-commit
 job (`reuseLintCommand`): `reuse lint` with the reuse major that `fsfe/reuse-action@v6` runs in
 the hosted REUSE gate adoption writes beside it
 ([what adoption scaffolds](../adoption.md#what-adoption-scaffolds-automatically)). It skips,
@@ -482,8 +496,10 @@ against the installed one.
 The pre-push `gate` job runs `gate run --path=. --admit-unsupported` (`prePushGateArgs`). A root
 with neither `go.mod` nor `Cargo.lock`, such as a Meson, CMake, npm or Python repository, gets no
 receipt, because the gate runs no toolchain for it: the job runs every other stage, names the
-languages it could not verify and admits the push instead of refusing every one. A root with either
-marker still fails the job when its toolchain stages did not run
+languages it could not verify and admits the push instead of refusing every one. Where such a root's
+makefile declares `verify-all`, the job runs it first, and a failing `verify-all` refuses the push
+([A declared `verify-all` runs where no toolchain stage applies](adoption-verification.md#a-declared-verify-all-runs-where-no-toolchain-stage-applies)).
+A root with either marker still fails the job when its toolchain stages did not run
 ([The pre-push hook admits languages the gate has no runner for](adoption-verification.md#the-pre-push-hook-admits-languages-the-gate-has-no-runner-for)).
 `TestLefthookGate_Positive_PrePushGateAdmitsUnsupportedLanguages` in
 `internal/adopt/lefthook_gate_admit_test.go` runs the job line against a stub.
@@ -683,6 +699,7 @@ pull request (`.github/workflows/ci.yml`, the two steps after the documentation 
 | --- | --- | --- |
 | `commit-msg`: a conventional subject (`build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style` or `test`, an optional scope and `!`), or a subject Git wrote for a merge or a revert | `praetorctl forge check-commits --base=origin/<base> --head=HEAD` | `TestForgeCheckCommits_Negative_SubjectBreaksPolicy` |
 | `commit-msg`: the HISS-14 `Migration:` footer on a breaking change | the same command | `TestForgeCheckCommits_EnforcesBreakingMigrationFooter` |
+| `commit-msg`: closing keywords (`close`, `fix`, `resolve` and their forms, as GitHub lists them) are resolved in CI; issues pass, pull requests opened by the checked pull request author pass, and pull requests opened by anyone else fail unless a `Closes-own: <reference>` line marks the closure as intended. Offline, `#N` and `owner/repo#N` warn because only CI can resolve them; `/pull/` and `/pulls/` URLs fail immediately. | the same command; `praetorctl forge validate-pr` applies the same function to the pull request body | `TestClosingKeywords_OnlineResolution` |
 | `commit-msg`: the DCO sign-off | `scripts/dco_check.sh` in `.github/workflows/compliance.yml` | `scripts/test_dco_check.py` |
 | `pre-commit`: whitespace errors and conflict markers (`git diff --cached --check`) | `python3 -B .config/lefthook/scripts/hooks.py commits origin/<base>`, which runs `git log --check` over the range | `CommitRange` in `.config/lefthook/scripts/test_hooks.py` |
 | `pre-commit` and `pre-push`: private `.workingdir` content | the same stage, through `check_private_history` | `CommitRange` |
@@ -717,13 +734,16 @@ in its own line endings. An edited one is kept, `--force` included, with a warni
 | --- | --- | --- | --- |
 | `.config/agent/hooks/block_evasion.py` | refreshed to the current rendering (`priorEvasionHookDigests`, `testdata/evasion`) | kept | `TestAdopt_Positive_PriorEvasionHookRefreshedOnPlainRun`, `TestAdopt_Negative_EditedEvasionHookKeptUnderForce` |
 | `.config/lefthook/scripts/checkpoint.py` and `common.py`, and `.config/lefthook/python.sh` | refreshed to the `--lock-source-root` bundle (`priorCheckpointDigests`, `testdata/checkpoint`) | kept; the checkpoint lifecycle is unavailable and no other bundle file is written | `TestReconcileCheckpointBundle_Positive_PriorScriptRefreshedOnPlainRun`, `TestReconcileCheckpointBundle_Negative_NoHalfRefreshBesideAKeptFile`, `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable` |
-| `.config/lefthook/engine.sh` ([the engine the hooks run](#the-engine-the-hooks-run)) | refreshed to the current text (`priorEngineLauncherDigests`) | kept | `TestAdopt_EngineLauncher_InstalledAndRefreshed`, `TestAdopt_EngineLauncher_EditedCopyKept`, `TestPriorEngineLauncherDigests_Boundary_CurrentTextRecorded` |
+| `.config/lefthook/engine.sh` ([the engine the hooks run](#the-engine-the-hooks-run)) | refreshed to the current text (`priorEngineLauncherDigests`) | kept | `TestAdopt_EngineLauncher_InstalledAndRefreshed`, `TestAdopt_EngineLauncher_EditedCopyKept`, `TestPriorEngineLauncherDigests_Boundary_CurrentTextRecorded`, `TestEngineMakefile_Positive_KeptCustomLefthookInstallsLauncherAndEngineMk`, `TestEngineMakefile_Boundary_KeptCustomLefthookKeepsEditedLauncherWithWarning` |
 | the `pre-commit` hook in the directory git reports, written only when lefthook cannot install | not applicable | a hook praetor did not write is kept; the audit accepts it only when lefthook or the pre-commit framework wrote it ([the hook runner the audit accepts](#the-hook-runner-the-audit-accepts)) | `TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce` |
 
 Beside a `lefthook.yml` that extends the canonical policy, the interceptor and the checkpoint
 scripts belong to that vendored bundle and are never refreshed
 (`TestReconcileEvasionHook_Boundary_VendoredPriorKeptAndUnreadableUnverified`,
-`TestReconcileCheckpointBundle_Boundary_VendoredPriorScriptKept`). Earlier releases renamed a
+`TestReconcileCheckpointBundle_Boundary_VendoredPriorScriptKept`). Adoption reconciles
+`.config/lefthook/engine.sh` and `.config/praetor/engine.mk` independently of whether `lefthook.yml`
+is written (#1172): a repository whose own hook file is kept still receives the launcher and Makefile include
+to resolve its pinned engine, without overwriting or activating its hook file. Earlier releases renamed a
 foreign `pre-commit` hook to `pre-commit.bak` under `--force`. Adoption now reports such a
 file and leaves it in place (`TestAdopt_Hooks_LegacyPreCommitBackupReportedNotRemoved`).
 
@@ -1196,7 +1216,9 @@ CLI had already started:
   wherever the platform supports it. Elsewhere a checked reader inspects each component without
   following it, refuses links — junctions and other reparse points included — and non-directories
   with the same errors, and requires the file it opened to be the file it inspected. It *detects*
-  a component replaced between the two, rather than preventing it, and says so.
+  a component replaced between the two, rather than preventing it, and says so. Both readers
+  hold one directory descriptor at a time and close every descriptor they open, also when the
+  policy path turns out to be a directory (`.config/lefthook/scripts/test_checkpoint.py`).
 - **Bounded subprocess output.** `common.py` waited on pipes with `selectors`; `select()` on
   Windows accepts only sockets, so every bounded `git` call raised `OSError`. Windows drains each
   pipe on its own thread under the same shared byte limit and deadline.

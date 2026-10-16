@@ -239,6 +239,12 @@ none. `compile-context` and `praetorctl adopt` both ask it, so the block an adop
 repository receives verifies unchanged (`TestDispatchGateRegistered_Positive`,
 `TestDispatchGateRegistered_Negative`, `TestDispatchGateRegistered_Boundary`).
 
+A brief that names forge issues is also checked against their claims. `issue:` lines list the
+issues and a `session:` line names the session that must hold them; `pre-dispatch` refuses an
+issue another live session claims, an unclaimed one and one whose claim it cannot read
+([issue claims](issue-claims.md), `internal/agenthook/dispatch_claims.go`). A brief that names
+no issue skips the check.
+
 Claude's pre-tool hook stores only the resolved register row, never the prompt. Its
 post-tool receipt atomically binds that row to the native agent id. The private bounded
 store lives below Git's shared directory at
@@ -550,7 +556,20 @@ text. A command is denied when it
   `cmd /c` or `powershell -c` wrapper, or runs `lefthook uninstall` (listing, printing or
   searching the directory stays allowed);
 - runs `adopt`, `conform`, `bootstrap` or a `needs` scan, report, migration or epic
-  against the workstation dev root instead of a leaf repository (DEV-01).
+  against the workstation dev root instead of a leaf repository (DEV-01);
+- merges a pull request past the forge's own merge rules (#1300): `gh pr merge` with
+  `--admin` (or `--admin=true`) in any position, a `gh api` call whose path ends in
+  `pulls/<n>/merge`, a `gh api graphql` call whose query holds `mergePullRequest`, or
+  `curl`/`wget` against an `api.github.com/.../pulls/<n>/merge` URL. Agent sessions act with
+  the operator's forge login, which may carry a ruleset bypass; these forms would merge past
+  red required checks. A plain `gh pr merge` (`--squash`, `--auto`, `--delete-branch`), reading
+  a pull request through `gh api .../pulls/<n>`, `gh pr view` and `gh pr checks` stay allowed.
+
+Before any rule runs, a backslash at the end of a line joins it with the next one (`\` before
+LF or CRLF becomes one space), the way the shell reads it, so a command split over lines is
+judged as one line. A line break without a backslash still separates two commands. Like every
+rule here, the merge rules match from the first `gh`, `curl` or `wget` word of a line, so a
+commit message or `echo` that quotes such a command on one line is refused too.
 
 The rules see only the commands that reach the pre-tool hook. A `core.hooksPath` set by any
 other route fails `praetorctl audit`
@@ -599,7 +618,10 @@ The exemption sources are `ReadOnlyWords` and `ReadOnlyVeto` in
 `TestEmittedInterceptorScanBounds` holds the costliest shapes to a work budget counted in
 passes over the scan bound. The corpus
 holds the allow cases and the escaped, quoted, substituted, stop-parsing, line-continued and
-exported shapes the rules keep refusing.
+exported shapes the rules keep refusing. It also pins the veto's word edges (a listed word at the
+start of the command, after a separator, after a hyphen and inside a longer word), so a
+changed anchor fails the replay in the Go policy, in praetor's own guard and in the emitted
+interceptor (`internal/agenthook/testdata/pre-tool/cases.json`).
 
 ### Where the rules live
 
@@ -646,7 +668,7 @@ copied to `.workingdir/adopt-backups/<UTC stamp>/<file>`, then replaced only whi
 holds the bytes the plan was made from, and read back; each write goes through the root-pinned
 `contextopt` writers, which refuse a symlink below the repository. The copy is taken only when
 `git check-ignore` confirms the backup path is ignored, as the managed `.gitignore` rule
-`/.workingdir/` makes it; the `git-ignore` step writes that rule before any step that
+`.workingdir/` makes it; the `git-ignore` step writes that rule before any step that
 replaces a file, a first adoption included. Otherwise the merge goes ahead without a copy, the
 report entry says so, and one warning per run gives the reason (`backupExisting` in
 `internal/adopt/replace.go`,

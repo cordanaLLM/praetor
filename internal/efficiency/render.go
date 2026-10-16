@@ -114,6 +114,9 @@ func renderSummary(report *Report, out io.Writer) error {
 		summaryLine("Fact-Hit Ratio", ms.FactHitRatio),
 		summaryLine("Checks-Before-Reviews", ms.ChecksBeforeReviews),
 	)
+	if ms.EstimateError != "" && ms.EstimateError != NotMeasured {
+		lines = append(lines, summaryLine("Estimate Error", ms.EstimateError))
+	}
 	if len(report.Notes) > 0 {
 		lines = append(lines, "\n--- Notes ---")
 		for _, note := range report.Notes {

@@ -45,7 +45,7 @@ func shipPluginWithSkill(t *testing.T, root, skill string) {
 // Positive: PlanAgentSurfaces returns the copies CompileAgentSurfaces writes, the plugin persona
 // and skill copies included, with the same targets and content, and writes none of them.
 func TestPlanAgentSurfaces_Positive_ListsCopiesWithoutWriting(t *testing.T) {
-	const content = "---\nname: planner\n---\n# Planner\n"
+	const content = "---\nname: planner\ndescription: A planner.\nmodel: flash\n---\n# Planner\n"
 	const skill = "---\nname: lint\n---\n# Lint\n"
 	root := planPersonaRoot(t, content)
 	shipPluginWithSkill(t, root, skill)
@@ -56,10 +56,22 @@ func TestPlanAgentSurfaces_Positive_ListsCopiesWithoutWriting(t *testing.T) {
 	if len(planned) != 6 {
 		t.Fatalf("planned %d copies, want 4 persona copies, the plugin persona and the plugin skill: %+v", len(planned), planned)
 	}
-	want := map[string]string{PluginAgentsRel + "/planner.md": content, SkillEntryRel(PluginSkillsRel, "lint"): skill}
+	want := map[string]string{
+		PluginAgentsRel + "/planner.md":        content,
+		SkillEntryRel(PluginSkillsRel, "lint"): skill,
+		".claude/agents/planner.md":            "---\nname: planner\ndescription: A planner.\nmodel: haiku\n---\n# Planner\n",
+		".github/agents/planner.md":            "---\nname: planner\ndescription: A planner.\n---\n# Planner\n",
+		".gemini/agents/planner.md":            "---\nname: planner\ndescription: A planner.\n---\n# Planner\n",
+		".codex/agents/planner.md":             "---\nname: planner\ndescription: A planner.\n---\n# Planner\n",
+	}
 	for _, file := range planned {
-		if expected, ok := want[file.RelativePath]; ok && file.Content != expected || !ok && file.Content != content {
-			t.Errorf("%s content = %q", file.RelativePath, file.Content)
+		expected, ok := want[file.RelativePath]
+		if !ok {
+			t.Errorf("unexpected planned file %s", file.RelativePath)
+			continue
+		}
+		if file.Content != expected {
+			t.Errorf("%s content = %q, want %q", file.RelativePath, file.Content, expected)
 		}
 		delete(want, file.RelativePath)
 		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(file.RelativePath))); !os.IsNotExist(err) {
@@ -105,7 +117,7 @@ func TestPlanAgentSurfaces_Negative_RefusesLikeCompileAgentSurfaces(t *testing.T
 		t.Fatal("symlinked persona directory accepted")
 	}
 
-	plugin := planPersonaRoot(t, "# Planner\n")
+	plugin := planPersonaRoot(t, "---\nname: planner\ndescription: d\nmodel: flash\n---\n# Planner\n")
 	shipPluginWithSkill(t, plugin, "# Lint\n")
 	outside := t.TempDir()
 	symlinkOrSkip(t, outside, filepath.Join(plugin, filepath.FromSlash(PluginAgentsRel)))
@@ -146,8 +158,11 @@ func TestPlanAgentSurfaces_Boundary_NoPersonasPlansNothing(t *testing.T) {
 // and of a pending text over one that does, as CompileAgentSurfaces writes them once the caller
 // has written those personas; it writes nothing.
 func TestPlanAgentSurfacesOver_Positive_PlansPendingPersonas(t *testing.T) {
-	root := planPersonaRoot(t, "# Planner, on disk\n")
-	pending := map[string][]byte{"planner.md": []byte("# Planner, pending\n"), "reviewer.md": []byte("# Reviewer\n")}
+	root := planPersonaRoot(t, "---\nname: planner\ndescription: d\nmodel: flash\n---\n# Planner, on disk\n")
+	pending := map[string][]byte{
+		"planner.md":  []byte("---\nname: planner\ndescription: d\nmodel: flash\n---\n# Planner, pending\n"),
+		"reviewer.md": []byte("---\nname: reviewer\ndescription: d\nmodel: pro\n---\n# Reviewer\n"),
+	}
 	planned, err := PlanAgentSurfacesOver(t.Context(), root, PendingSources{Personas: pending})
 	if err != nil {
 		t.Fatalf("PlanAgentSurfacesOver: %v", err)
@@ -188,7 +203,7 @@ func TestPlanAgentSurfacesOver_Negative_RefusesNonPersonaNames(t *testing.T) {
 // Boundary: no pending persona plans what PlanAgentSurfaces plans, and a pending set above the
 // cap a persona directory holds is refused.
 func TestPlanAgentSurfacesOver_Boundary_EmptyAndAboveCap(t *testing.T) {
-	root := planPersonaRoot(t, "# Planner\n")
+	root := planPersonaRoot(t, "---\nname: planner\ndescription: d\nmodel: flash\n---\n# Planner\n")
 	plain, err := PlanAgentSurfaces(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +214,7 @@ func TestPlanAgentSurfacesOver_Boundary_EmptyAndAboveCap(t *testing.T) {
 	}
 	tooMany := make(map[string][]byte, maxAgentProjections+1)
 	for i := 0; i <= maxAgentProjections; i++ {
-		tooMany[fmt.Sprintf("persona-%03d.md", i)] = []byte("# x\n")
+		tooMany[fmt.Sprintf("persona-%03d.md", i)] = []byte("---\nname: p\ndescription: d\nmodel: flash\n---\n# x\n")
 	}
 	if _, err := PlanAgentSurfacesOver(t.Context(), root, PendingSources{Personas: tooMany}); err == nil {
 		t.Fatal("a pending set above the cap was accepted")

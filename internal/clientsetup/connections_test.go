@@ -131,3 +131,60 @@ func TestMemoryBindingRejectsConflictAndBoundaries(t *testing.T) {
 		t.Fatal("accepted workstation-wide root mapping")
 	}
 }
+
+func localOnlyProfile(count int) ConnectionProfile {
+	profile := ConnectionProfile{Version: 1}
+	for i := range count {
+		profile.Gateway.LocalServers = append(profile.Gateway.LocalServers,
+			Server{Name: "local" + strings.Repeat("x", i), Command: hostAbsolute("opt", "agent", "local-mcp")})
+	}
+	return profile
+}
+
+func TestConnectionProfileAcceptsLocalServersOnly(t *testing.T) {
+	raw := `{"version":1,"gateway":{"local_servers":[{"name":"local-tools","command":` + quoted(hostAbsolute("opt", "agent", "local-mcp")) + `,"args":["--stdio"]}]}}`
+	profile, err := DecodeConnectionProfile(t.Context(), []byte(raw))
+	if err != nil {
+		t.Fatalf("local-only profile refused: %v", err)
+	}
+	files, err := ConnectionArtifacts(t.Context(), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(files["registry.json"]), "local-tools") || strings.Contains(string(files["registry.json"]), "--endpoint") {
+		t.Fatalf("registry lost the local server or invented a gateway: %s", files["registry.json"])
+	}
+}
+
+func TestConnectionProfileRefusesEmptyProfileNamingBothFields(t *testing.T) {
+	for _, raw := range []string{`{"version":1,"gateway":{}}`, `{"version":1,"gateway":{"endpoints":[],"local_servers":[]}}`} {
+		_, err := DecodeConnectionProfile(t.Context(), []byte(raw))
+		if err == nil {
+			t.Fatalf("accepted empty profile %s", raw)
+		}
+		for _, field := range []string{"gateway.endpoints", "gateway.local_servers"} {
+			if !strings.Contains(err.Error(), field) {
+				t.Fatalf("error %q does not name %s", err, field)
+			}
+		}
+	}
+}
+
+func TestConnectionProfileLocalOnlyBoundsAndGatewayPaths(t *testing.T) {
+	if _, err := ConnectionRegistry(t.Context(), localOnlyProfile(MaxServers)); err != nil {
+		t.Fatalf("refused %d local servers: %v", MaxServers, err)
+	}
+	if _, err := ConnectionRegistry(t.Context(), localOnlyProfile(MaxServers+1)); err == nil {
+		t.Fatalf("accepted %d local servers", MaxServers+1)
+	}
+	profile := localOnlyProfile(1)
+	profile.Gateway.BridgeCommand = "relative-bridge"
+	if _, err := ConnectionRegistry(t.Context(), profile); err == nil {
+		t.Fatal("accepted a relative bridge path on a local-only profile")
+	}
+	profile = testConnectionProfile()
+	profile.Gateway.BridgeCommand, profile.Gateway.TokenFile = "", ""
+	if _, err := ConnectionRegistry(t.Context(), profile); err == nil {
+		t.Fatal("accepted gateway endpoints without bridge and token file")
+	}
+}

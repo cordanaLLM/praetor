@@ -28,7 +28,7 @@ func loadFragmentsContext(ctx context.Context, repoPath string) (fragments []Fra
 		return nil, nil, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	fragments, snapshots, err := loadFragmentSnapshots(ctx, root)
+	fragments, snapshots, err := loadFragmentSnapshots(ctx, repoPath, root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -108,7 +108,7 @@ func fragmentEntries(root *os.Root) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
-func loadFragmentSnapshots(ctx context.Context, root *os.Root) ([]Fragment, []fragmentSnapshot, error) {
+func loadFragmentSnapshots(ctx context.Context, repoPath string, root *os.Root) ([]Fragment, []fragmentSnapshot, error) {
 	entries, err := fragmentEntries(root)
 	if err != nil {
 		return nil, nil, err
@@ -130,7 +130,8 @@ func loadFragmentSnapshots(ctx context.Context, root *os.Root) ([]Fragment, []fr
 		}
 		fragment, err := decodeFragment(raw)
 		if err != nil {
-			return nil, nil, fmt.Errorf("parse changelog fragment %s: %w", entry.Name(), err)
+			fragPath := filepath.Join(repoPath, FragmentDir, entry.Name())
+			return nil, nil, fmt.Errorf("parse changelog fragment %s: %w", fragPath, err)
 		}
 		fragments = append(fragments, fragment)
 		snapshots = append(snapshots, fragmentSnapshot{Name: entry.Name(), SHA256: contentHash(raw)})
@@ -171,7 +172,48 @@ func decodeFragment(raw []byte) (Fragment, error) {
 	if _, ok := sectionTitles[fragment.Type]; !ok || strings.TrimSpace(fragment.Title) == "" {
 		return Fragment{}, errors.New("fragment requires a known type and nonempty title")
 	}
+	issue, present, err := fragmentIssueScalar(raw)
+	if err != nil {
+		return Fragment{}, err
+	}
+	if present {
+		normIssue, err := normalizeIssue(issue)
+		if err != nil {
+			return Fragment{}, err
+		}
+		fragment.Issue = normIssue
+	}
 	return fragment, nil
+}
+
+// fragmentIssueScalar returns the issue value as written and whether the key is present.
+// A quoted string and an unquoted integer both count, so issue: 502 decodes as it did
+// before; an empty value is refused with a hint, because an unquoted #502 is a YAML
+// comment and reaches the decoder as an empty key.
+func fragmentIssueScalar(raw []byte) (string, bool, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		return "", false, err
+	}
+	if len(document.Content) == 0 || document.Content[0].Kind != yaml.MappingNode {
+		return "", false, nil
+	}
+	fields := document.Content[0].Content
+	for index := 0; index+1 < len(fields); index += 2 {
+		if fields[index].Value != "issue" {
+			continue
+		}
+		value := fields[index+1]
+		switch {
+		case value.Kind == yaml.ScalarNode && (value.Tag == "!!str" || value.Tag == "!!int"):
+			return value.Value, true, nil
+		case value.Kind == yaml.ScalarNode && value.Tag == "!!null":
+			return "", false, errors.New(`issue cannot be empty; quote it, for example issue: "#502" (an unquoted #502 is a YAML comment)`)
+		default:
+			return "", false, fmt.Errorf("invalid issue %q: write digits, optionally prefixed by one #, or a comma-separated list of them", value.Value)
+		}
+	}
+	return "", false, nil
 }
 
 func fragmentFilename(name string) bool {

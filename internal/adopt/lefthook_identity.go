@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
-	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -46,6 +45,26 @@ const (
 // jobs ran whichever praetorctl came first on PATH instead of the engine the repository pins
 // (engineLauncherFile, #906).
 var priorLefthookDigests = map[string]string{
+	"301340a764d8d9deec3c92963e47c4ea67bd09d155cc9d077a10f3df01944935": "current Go jobs before module discovery",
+	"36cfefcca951eb59d0f04e67867b8fb472b7734ba593b82bf2c72d2407c34647": "current Go jobs before module discovery, checkpoint jobs",
+	"d5652e2dcf90ba12f389ec4732e48136551f4f83c51c90f33f68b76f0234613d": "current Rust jobs before module discovery",
+	"0616e0c3cecb1d19cd91d489d36f7f7f15edbdeea8b7cd3a10cdd9b93156fcb7": "current Rust jobs before module discovery, checkpoint jobs",
+	"452c1e313d5709b05603b997873ab93da57652ac4f6239307331aee2f0b8cff6": "current Go and Rust jobs before module discovery",
+	"112faff2eb6bf0de3f5ea0478b6a680c0b3db6079eb98f133ea019a7a9c262e0": "current Go and Rust jobs before module discovery, checkpoint jobs",
+	"32cb6ffaa8f95ad344bf6bef6a96213594367711217e2235372cb35c73f1daf9": "current Go jobs before module discovery, tool-module scanner",
+	"c1825328a46f3d25598c6a83ae281369d0f22779582c9fa9c27ed9348e7e2ffa": "current Go jobs before module discovery, tool-module scanner, checkpoint jobs",
+	"e6cd27754ecb125111c21456bfba9912889bdf86539a70c598b0e7d411b79f18": "current Go jobs before module discovery, REUSE job",
+	"da597b7a3a6f33538675aed5e7ea81f2db8c3646b99a6c82eec34988b341f69e": "current Go jobs before module discovery, REUSE job, checkpoint jobs",
+	"8e5b9d919865370cbc7e5b13c486862255a72e7be03972f88c05efe55614e621": "current Go jobs before module discovery, REUSE job, tool-module scanner",
+	"52e0ae23056cb6bfbe0c7ce34fd36042ec965c8e899a7df87abf1eb28ed63119": "current Go jobs before module discovery, REUSE job, tool-module scanner, checkpoint jobs",
+	"fdee4fd81e3e0d3e5316b47afd0fdc6044126673169a9d6a0af79a4964f8340d": "current Rust jobs before module discovery, REUSE job",
+	"ba4788600b3db3943b9269faae60db7472f6e9d9cdac80d705df89d006ae9095": "current Rust jobs before module discovery, REUSE job, checkpoint jobs",
+	"bab28966f003bfd8a99f17c3cfd497b61f863622d40ac1dc55bfc5d8fe7e8b63": "current Go and Rust jobs before module discovery, tool-module scanner",
+	"cf2d5b8a5725fbdb5ff91d653faa682ea8d2c946b040b4a3e0a93f3c6bd9d7f0": "current Go and Rust jobs before module discovery, tool-module scanner, checkpoint jobs",
+	"f1693798f18c2e33b9fc8f1c6332ae6cb5bb6020120f2f5b224120acaa398634": "current Go and Rust jobs before module discovery, REUSE job",
+	"ce7178e20a4ebee05d44b25c1468b0d958379c252b8147e40e0e02c93ef4a2c4": "current Go and Rust jobs before module discovery, REUSE job, checkpoint jobs",
+	"987010837097c744673f9aacc87c110605606c6bec2be9758f2f3f315885565a": "current Go and Rust jobs before module discovery, REUSE job, tool-module scanner",
+	"c1a093a9f908ac675b279dbe223020850951a23ba088438c681575fbbb4b2ee3": "current Go and Rust jobs before module discovery, REUSE job, tool-module scanner, checkpoint jobs",
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
 	"3fa5b142144df4f5aa06afaf110fc070375709958f1a30e4643f4d21a09347a4": "unguarded root Go jobs, go run fallback",
@@ -159,31 +178,45 @@ func (s *adoptSession) readExistingLefthook() ([]byte, bool, error) {
 }
 
 // lefthookShape returns what this run's lefthook.yml carries jobs for: the languages
-// (lefthookLanguages) and, when the root declares its licensing the REUSE way, the reuse-lint
-// job (supplychain.ReuseDeclared). A root it cannot inspect is an error, never a repository
-// without REUSE.
+// (lefthookLanguages), the reuse-lint job when this run emits the REUSE gate (reuseGateApplies:
+// the root declares its licensing the REUSE way and adoption.decline does not name reuse-gate),
+// and the tool module govulncheck job when the repository declares govulncheck in its tool
+// module (tools/go/go.mod). A root it cannot inspect is an error.
 func (s *adoptSession) lefthookShape(ctx context.Context) (lefthookShape, error) {
-	reuse, err := supplychain.ReuseDeclared(ctx, s.repoPath)
+	reuse, err := s.reuseGateApplies(ctx)
 	if err != nil {
 		return lefthookShape{}, fmt.Errorf("decide the reuse-lint job of %s: %w", lefthookFile, err)
 	}
-	return lefthookShape{languages: lefthookLanguages(s.verification), reuse: reuse}, nil
+	toolGovuln, err := repoRequiresToolGovuln(ctx, s.repoPath)
+	if err != nil {
+		return lefthookShape{}, fmt.Errorf("inspect tool module of %s: %w", lefthookFile, err)
+	}
+	return lefthookShape{
+		languages:  lefthookLanguages(s.verification),
+		reuse:      reuse,
+		toolGovuln: toolGovuln,
+	}, nil
 }
 
 // classifyLefthookConfig decides how adoption treats an existing lefthook.yml. Praetor's own
 // renderings come first: a current one for shape, line endings aside, is verified, and an
-// earlier one (priorLefthookDigests) or the current one for the other REUSE switch
-// (lefthookShape.otherReuse) is migrated, neither needing --force. Every other configuration is
-// the repository's and is kept, --force included, and not activated, because the audit checks
-// only that the file exists and replacing it would drop whatever the repository composed in
-// (#502). The reason says why: a configuration that extends the canonical policy names that
-// policy; one that does not parse as a YAML mapping says so; any other names the generated jobs
-// it lacks and the jobs it adds, so an operator can merge them by hand.
+// earlier one (priorLefthookDigests), the current one for the other REUSE switch
+// (lefthookShape.otherReuse) or the other tool module govulncheck switch
+// (lefthookShape.otherToolGovuln) is migrated, neither needing --force. Every other
+// configuration is the repository's and is kept, --force included, and not activated, because
+// the audit checks only that the file exists and replacing it would drop whatever the
+// repository composed in (#502). The reason says why: a configuration that extends the
+// canonical policy names that policy; one that does not parse as a YAML mapping says so; any
+// other names the generated jobs it lacks and the jobs it adds, so an operator can merge them
+// by hand.
 func classifyLefthookConfig(existing []byte, shape lefthookShape) lefthookIdentity {
 	if matchCurrentLefthook(existing, shape).found {
 		return lefthookIdentity{}
 	}
-	if isPriorLefthookConfig(existing) || matchCurrentLefthook(existing, shape.otherReuse()).found {
+	if isPriorLefthookConfig(existing) ||
+		matchCurrentLefthook(existing, shape.otherReuse()).found ||
+		matchCurrentLefthook(existing, shape.otherToolGovuln()).found ||
+		matchCurrentLefthook(existing, shape.otherReuse().otherToolGovuln()).found {
 		return lefthookIdentity{prior: true}
 	}
 	var parsed map[string]any

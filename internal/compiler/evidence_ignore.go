@@ -55,6 +55,6 @@ func CheckEvidenceIgnored(ctx context.Context, dir string) error {
 		return nil
 	}
 	return fmt.Errorf("%w in %s, where the text register block sends agent evidence: run 'praetorctl compile-context' to add the "+
-		"Praetor private-artifact block to .gitignore, or, where adoption.decline declines git-ignore, add /.workingdir/ to the "+
+		"Praetor private-artifact block to .gitignore, or, where adoption.decline declines git-ignore, add .workingdir/ to the "+
 		"operator-owned .gitignore", ErrEvidenceNotIgnored, dir)
 }

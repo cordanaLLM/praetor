@@ -13,7 +13,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
@@ -78,14 +80,15 @@ func runToolchainStages(t *testing.T, cfg *stageConfig) ([]StageResult, error) {
 	return cfg.rep.Stages, nil
 }
 
-// wantStages requires each recorded stage to carry the verdict and reason given for its name.
+// wantStages requires each recorded stage to carry the verdict and any non-empty reason given for
+// its name. Empty reasons let legacy status-only assertions tolerate the new per-module detail.
 func wantStages(t *testing.T, got []StageResult, want map[string]StageResult) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("recorded %d stages, want %d: %+v", len(got), len(want), got)
 	}
 	for _, s := range got {
-		if w := want[s.Name]; s.Status != w.Status || s.Message != w.Message {
+		if w := want[s.Name]; s.Status != w.Status || w.Message != "" && s.Message != w.Message {
 			t.Errorf("stage %s = %s %q, want %s %q", s.Name, s.Status, s.Message, w.Status, w.Message)
 		}
 	}
@@ -139,8 +142,9 @@ func TestToolchainStages_Positive_GoPathUnchanged(t *testing.T) {
 	wantStages(t, got, map[string]StageResult{
 		stagePrefetch: {Status: StagePassed}, stageSecurity: {Status: StagePassed}, stageTests: {Status: StagePassed},
 	})
-	want := []string{"go mod verify", "go mod download", "govulncheck -scan symbol -format json ./...", "go list -f {{.Dir}} ./...",
-		"gosec -conf " + GosecConfigFile + " .", "go test -race -timeout " + EnvRunBudget(repo, false).StageBound.String() + " ./..."}
+	want := []string{"go mod verify", "go mod download", "go list -f {{.Dir}} ./...", "govulncheck -scan symbol -format json ./...",
+		"gosec -conf " + GosecConfigFile + " .", "go list -find -f {{.ImportPath}} ./...",
+		"go test -race -timeout " + EnvRunBudget(repo, false).StageBound.String() + " ./..."}
 	if lines := commandLines(*recorded); !slices.Equal(lines, want) {
 		t.Fatalf("commands = %q, want %q", lines, want)
 	}
@@ -176,9 +180,9 @@ func TestToolchainStages_MixedRepositoryNamesEachLanguage(t *testing.T) {
 		t.Fatalf("a mixed repository failed a stage: %v", err)
 	}
 	wantStages(t, got, map[string]StageResult{
-		stagePrefetch: {Status: StagePassed, Message: "go: passed; cargo: cargo fetch --locked passed"},
-		stageSecurity: {Status: StageSkipped, Message: "go: passed; cargo: " + cargoAuditMissingReason},
-		stageTests:    {Status: StagePassed, Message: "go: passed; cargo: " + cargoTestsPassed},
+		stagePrefetch: {Status: StagePassed},
+		stageSecurity: {Status: StageSkipped},
+		stageTests:    {Status: StagePassed},
 	})
 	if !slices.Equal(cfg.verified, []string{languageGo, languageCargo}) {
 		t.Errorf("verified languages = %q, want [go cargo]", cfg.verified)
@@ -265,13 +269,15 @@ func TestCargoTargetDir_Positive_SharedByEveryWorktreeOfTheClone(t *testing.T) {
 	}
 }
 
-// Boundary: an absolute CARGO_TARGET_DIR is the operator's persistent directory and cargo uses it
-// unflagged; a relative one would resolve inside the removed worktree, so the gate's own is used.
+// Boundary: an absolute CARGO_TARGET_DIR builds into praetor-gate below that value, passed as
+// --target-dir; a relative one would resolve inside the removed worktree, so the gate's own is used.
 func TestCargoTargetDir_Boundary_OperatorTargetDir(t *testing.T) {
 	repo := newHermeticGitRepo(t)
-	t.Setenv(cargoTargetDirEnv, t.TempDir())
-	if args, note := cargoTargetDir(t.Context(), repo); args != nil || note != "" {
-		t.Errorf("an absolute %s must be left to cargo, got %q %q", cargoTargetDirEnv, args, note)
+	target := t.TempDir()
+	t.Setenv(cargoTargetDirEnv, target)
+	want := []string{"--target-dir", filepath.Join(target, "praetor-gate")}
+	if args, note := cargoTargetDir(t.Context(), repo); !slices.Equal(args, want) || note != "" {
+		t.Errorf("cargoTargetDir with absolute %s = %q %q, want %q and empty note", cargoTargetDirEnv, args, note, want)
 	}
 	t.Setenv(cargoTargetDirEnv, "target")
 	persistentTargetDir(t, repo)
@@ -443,5 +449,71 @@ func TestCargoClippyArgs_3D(t *testing.T) {
 	separator := slices.Index(CargoClippyArgs(), "--")
 	if separator < 0 || !slices.Equal(CargoClippyArgs()[separator+1:], []string{"-D", "warnings"}) {
 		t.Fatalf("-D warnings must follow the -- separator: %v", CargoClippyArgs())
+	}
+}
+
+// skipWithoutCargo skips t when cargo is absent or cargo clippy exits non-zero.
+func skipWithoutCargo(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("cargo"); err != nil {
+		t.Skipf("cargo not available: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "cargo", "clippy", "--version")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("cargo clippy not available: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+}
+
+// seedManifestFixtureRepo commits a minimal workspace with a test asserting its own manifest.
+func seedManifestFixtureRepo(t *testing.T) string {
+	t.Helper()
+	repo := newHermeticGitRepo(t)
+	writeFile(t, filepath.Join(repo, "Cargo.toml"), "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n")
+	writeFile(t, filepath.Join(repo, CargoLockFile), "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n[[package]]\nname = \"fx\"\nversion = \"0.1.0\"\n")
+	writeFile(t, filepath.Join(repo, "src", "lib.rs"), "pub fn one() -> u8 { 1 }\n")
+	writeFile(t, filepath.Join(repo, "tests", "manifest.rs"), "#[test]\nfn reads_own_manifest() {\n    let p = concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/Cargo.toml\");\n    assert!(std::path::Path::new(p).exists(), \"missing {p}\");\n}\n")
+	writeFile(t, filepath.Join(repo, ".gitignore"), "/target\n")
+	treeGit(t, repo, "add", "-A")
+	treeGit(t, repo, "commit", "-q", "-m", "fixture")
+	return repo
+}
+
+// runOutsideCargoTest runs cargo test --locked --offline in repo with CARGO_TARGET_DIR set.
+func runOutsideCargoTest(t *testing.T, repo, target string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "cargo", "test", "--locked", "--offline")
+	cmd.Dir = repo
+	cmd.Env = append(os.Environ(), cargoTargetDirEnv+"="+target)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// Negative: an absolute CARGO_TARGET_DIR builds into a gate-owned directory below it,
+// proving that a checkout that builds into that directory keeps its own test binaries after
+// the gate removes its isolated worktree.
+func TestRunCargoTests_Negative_OperatorTargetDirKeepsCheckoutBinaries(t *testing.T) {
+	skipWithoutCargo(t)
+	repo := seedManifestFixtureRepo(t)
+	target := filepath.Join(repo, "target")
+	if out, err := runOutsideCargoTest(t, repo, target); err != nil {
+		t.Fatalf("outside cargo test failed: %v\n%s", err, out)
+	}
+	t.Setenv(cargoTargetDirEnv, target)
+	cfg, _ := newTestConfig(t, repo, false)
+	cfg.run = util.RunCommand
+	cfg.lookPath = exec.LookPath
+	if _, err := runCargoTests(t.Context(), cfg); err != nil {
+		t.Fatalf("runCargoTests failed: %v", err)
+	}
+	if out, err := runOutsideCargoTest(t, repo, target); err != nil {
+		t.Fatalf("gate left stale test binary in operator folder: %v\n%s", err, out)
+	}
+	gateDebug := filepath.Join(target, "praetor-gate", "debug")
+	if info, err := os.Stat(gateDebug); err != nil || !info.IsDir() {
+		t.Fatalf("folder %s missing or not a directory: %v", gateDebug, err)
 	}
 }

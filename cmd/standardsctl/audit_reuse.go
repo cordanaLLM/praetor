@@ -20,9 +20,26 @@ import (
 
 // auditLicensing runs the licensing gates (docs/guides/licensing-gates.md): the REUSE.toml
 // annotation order (auditReuseRecords) and the one root licence (auditRootLicense). Both run,
-// and both verdicts are printed, before the first failure is returned.
+// and both verdicts are printed, before the first failure is returned. A repository labelling its
+// files the REUSE way by headers alone is named (auditReuseHeadersOnly).
 func auditLicensing(ctx context.Context, manifest *config.Manifest, rootDir string, today time.Time) error {
-	return errors.Join(auditReuseRecords(ctx, manifest, rootDir, today), auditRootLicense(ctx, manifest, rootDir, today))
+	return errors.Join(auditReuseRecords(ctx, manifest, rootDir, today), auditRootLicense(ctx, manifest, rootDir, today),
+		auditReuseHeadersOnly(ctx, rootDir))
+}
+
+// auditReuseHeadersOnly warns, with supplychain.ReuseHeadersOnlyNotice, about a repository that
+// labels its files the REUSE way by headers alone: since #1244 it gets no REUSE gate, and the
+// warning keeps that visible to every audit, not only to the adoption that dropped the gate. It
+// fails only when the tree cannot be read.
+func auditReuseHeadersOnly(ctx context.Context, rootDir string) error {
+	notice, err := supplychain.ReuseHeadersOnlyNotice(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] REUSE header labelling not checked: %w", err)
+	}
+	if notice != "" {
+		fmt.Printf("[WARN] %s.\n", notice)
+	}
+	return nil
 }
 
 // auditRootLicense runs supplychain.CheckRootLicense over rootDir with the manifest's exceptions

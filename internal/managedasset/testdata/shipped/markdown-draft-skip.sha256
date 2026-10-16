@@ -4,3 +4,4 @@
 # shape changes. TestShippedTextLedger enforces both; PRAETOR_UPDATE_SHIPPED_TEXTS=1 appends.
 51b53cde08a626fc77eae5c4f1134cff81fc7038baeb7b4e673129d6629da0fe  .github/workflows/praetor-docs.yml
 3ac7dc11439891197d4d6b1ce608328ef4d756fa909a2c83e767ecdd64cb7db9  .github/workflows/praetor-docs.yml
+cfb5618d1eab4e02b7a61ed884f629030266546aa6d583845ef3354eb6f12c3c  .github/workflows/praetor-docs.yml

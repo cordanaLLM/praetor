@@ -93,6 +93,7 @@ func requiredStatusContexts(ctx context.Context, repoPath string, planned map[st
 	if err != nil {
 		return nil, err
 	}
+	called := newCalledWorkflows(files)
 	if selected != nil {
 		files = slices.DeleteFunc(files, func(file workflowFile) bool { return !selected[file.Name] })
 	}
@@ -100,7 +101,7 @@ func requiredStatusContexts(ctx context.Context, repoPath string, planned map[st
 	if err != nil {
 		return nil, err
 	}
-	return selectContexts(files, identity, opts)
+	return selectContexts(files, called, identity, opts)
 }
 
 // RequiredStatusContextsIn is RequiredStatusContexts for the checks that report inside the forge
@@ -146,15 +147,16 @@ func requiredStatusContextsIn(ctx context.Context, repository string, opts conte
 	if err != nil {
 		return nil, err
 	}
-	return selectContexts(files, repository, opts)
+	return selectContexts(files, newCalledWorkflows(files), repository, opts)
 }
 
 // filesContextsIn collects, in file order, the required check contexts of every workflow in files
-// inside the repository named identity (workflowContextsIn).
-func filesContextsIn(files []workflowFile, identity string) ([]string, error) {
+// inside the repository named identity (workflowCallContextsIn), reading the workflows a job
+// calls from called.
+func filesContextsIn(files []workflowFile, called calledWorkflows, identity string) ([]string, error) {
 	var contexts []string
 	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
-		jobs, err := workflowContextsIn(files[i].Data, identity)
+		jobs, err := workflowCallContextsIn(files[i].Data, identity, called)
 		if err != nil {
 			return nil, fmt.Errorf("workflow %s: %w", files[i].Name, err)
 		}
@@ -311,9 +313,17 @@ func workflowPullRequestContexts(data []byte) ([]string, error) {
 }
 
 // workflowContextsIn is workflowPullRequestContexts inside the repository named identity
-// ("<owner>/<name>", or "" when unknown). Only a job that reports on every pull request there
-// (requiredJob) and that no proven aggregate covers (aggregateCoveredJobs) is a required check.
+// ("<owner>/<name>", or "" when unknown), with no other workflow to read: a job that calls a
+// reusable workflow is refused (workflowCallContextsIn).
 func workflowContextsIn(data []byte, identity string) ([]string, error) {
+	return workflowCallContextsIn(data, identity, newCalledWorkflows(nil))
+}
+
+// workflowCallContextsIn is workflowContextsIn reading the workflows a job calls from called.
+// Only a job that reports on every pull request there (requiredJob) and that no proven aggregate
+// covers (aggregateCoveredJobs) is a required check. A job that calls a reusable workflow
+// reports under the called workflow's jobs, not its own name (reusableCallContexts, #1212).
+func workflowCallContextsIn(data []byte, identity string, called calledWorkflows) ([]string, error) {
 	var spec workflowSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
@@ -332,13 +342,22 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 		if covered[ids[i]] || !requiredJob(&job, identity) {
 			continue
 		}
-		names, err := jobCheckContexts(ids[i], job)
+		names, err := requiredJobContexts(ids[i], job, called, identity)
 		if err != nil {
 			return nil, err
 		}
 		contexts = append(contexts, names...)
 	}
 	return contexts, nil
+}
+
+// requiredJobContexts returns the contexts of one required job: those of the reusable workflow
+// it calls (reusableCallContexts), or its own (jobCheckContexts).
+func requiredJobContexts(id string, job workflowJob, called calledWorkflows, identity string) ([]string, error) {
+	if strings.TrimSpace(job.Uses) != "" {
+		return reusableCallContexts(id, job, called, identity)
+	}
+	return jobCheckContexts(id, job)
 }
 
 // requiredJob reports whether job's check is required on its own merits: it reports on every pull
@@ -425,7 +444,7 @@ func jobCheckContexts(id string, job workflowJob) ([]string, error) {
 		return matrixJobContexts(id, name, matrix)
 	}
 	if strings.Contains(name, expressionOpen) {
-		return nil, fmt.Errorf("job %q: name %q holds an expression but the job declares no strategy.matrix to evaluate it from; a required check context that no run reports blocks the branch permanently", id, name)
+		return nil, fmt.Errorf("job %q: name %q holds an expression but the job declares no strategy.matrix to evaluate it from; a required check context that no run reports blocks the branch permanently; report the result through an aggregate job with a literal name", id, name)
 	}
 	return []string{name}, nil
 }

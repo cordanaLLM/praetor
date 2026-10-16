@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Focused real-Git tests for the read-only checkpoint planner."""
 
+import errno
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -32,6 +34,78 @@ def git(root, *args, check=True):
     if check and result.returncode:
         raise AssertionError(result.stderr.decode())
     return result
+
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+ADAPTER_SPEC = importlib.util.spec_from_file_location(
+    "checkpoint_adapter", ROOT / ".config/agent/hooks/checkpoint.py"
+)
+
+
+ADAPTER = importlib.util.module_from_spec(ADAPTER_SPEC)
+ADAPTER_SPEC.loader.exec_module(ADAPTER)
+
+
+DETACHED_ENV_KEYS = {
+    "GH_CONFIG_DIR",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GIT_SSH_COMMAND",
+    "GIT_TERMINAL_PROMPT",
+    "PRAETOR_DETACHED_JOB",
+}
+
+
+
+def setUpModule():
+    """Run every test without the detached-job environment of the process running them: a cheap-lane
+    job sets PRAETOR_DETACHED_JOB and disables push transport, and the checkpoint then defers, which
+    every test that expects a due checkpoint must not see. The detached-job tests set their own."""
+    for key in DETACHED_ENV_KEYS:
+        os.environ.pop(key, None)
+
+
+class CheckpointAdapterTests(unittest.TestCase):
+    def test_deferred_report_is_feedback_without_a_block(self):
+        report = {
+            "enabled": True,
+            "due": False,
+            "actions": [],
+            "deferred": True,
+            "deferral": "detached job lane-1: no push transport, no forge token; "
+            "the launching session commits",
+        }
+        for payload in (
+            {"hook_event_name": "Stop"},
+            {"hook_event_name": "AfterAgent", "stop_hook_active": True},
+        ):
+            with self.subTest(payload=payload), mock.patch.object(
+                ADAPTER, "verify_state"
+            ), mock.patch.object(ADAPTER, "checkpoint", return_value=report):
+                result = ADAPTER.respond(payload)
+                self.assertEqual(
+                    result,
+                    {"systemMessage": "Praetor checkpoint deferred: " + report["deferral"]},
+                )
+                self.assertNotIn("decision", result)
+                self.assertNotIn("continue", result)
+
+    def test_due_report_still_blocks(self):
+        report = {"enabled": True, "due": True, "actions": ["commit"]}
+        for payload in (
+            {"hook_event_name": "Stop"},
+            {"hook_event_name": "AfterAgent", "stop_hook_active": True},
+        ):
+            with self.subTest(payload=payload), mock.patch.object(
+                ADAPTER, "verify_state"
+            ), mock.patch.object(ADAPTER, "checkpoint", return_value=report):
+                result = ADAPTER.respond(payload)
+                if payload.get("stop_hook_active"):
+                    self.assertIs(result["continue"], False)
+                else:
+                    self.assertEqual(result["decision"], "block")
 
 
 class CheckpointTests(unittest.TestCase):
@@ -633,13 +707,114 @@ class CheckpointTests(unittest.TestCase):
                 self.assertEqual(result["due"], status != "base_current")
                 self.assertNotIn(checkpoint.PUSH_ACTION, result["actions"])
 
+    def inspect_with_env(self, **updates):
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in DETACHED_ENV_KEYS and not key.startswith("GIT_CONFIG_")
+        }
+        env.update(updates)
+        with mock.patch.dict(os.environ, env, clear=True):
+            return checkpoint.inspect_checkpoint(self.root, "stop")
 
-class CheckedPolicyRead(unittest.TestCase):
-    """The reader used where descriptor-relative opens are unavailable, exercised on every host.
+    def prepare_detached_job(self, remote):
+        git(self.root, "remote", "add", "origin", remote)
+        (self.root / "public.txt").write_text("change\n")
 
-    Windows selects it automatically; calling it directly keeps its refusals covered on the
-    POSIX legs as well, where the descriptor-relative reader is the one in use.
-    """
+    def test_detached_job_without_ssh_transport_or_forge_token_defers(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        result = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-7", GIT_SSH_COMMAND="/bin/false"
+        )
+        self.assertTrue(result["deferred"])
+        self.assertFalse(result["due"])
+        self.assertEqual(result["actions"], [])
+        self.assertEqual(result["publication_status"], "deferred_detached_job")
+        self.assertIn("detached job cheap-lane-7", result["deferral"])
+
+    def test_detached_job_defers_on_a_branch_outside_the_checkpoint_prefixes(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        git(self.root, "switch", "-q", "-c", "job-lane-probe")
+        result = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-7", GIT_SSH_COMMAND="/bin/false"
+        )
+        self.assertNotIn("error", result)
+        self.assertTrue(result["deferred"])
+        self.assertFalse(result["due"])
+
+    def test_same_branch_without_marker_still_refuses(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        git(self.root, "switch", "-q", "-c", "job-lane-probe")
+        result = self.inspect_with_env(GIT_SSH_COMMAND="/bin/false")
+        self.assertFalse(result["deferred"])
+        self.assertIn("nonallowed branch", result.get("error", ""))
+
+    def test_detached_job_with_ssh_transport_keeps_commit_due(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        result = self.inspect_with_env(PRAETOR_DETACHED_JOB="cheap-lane-7")
+        self.assertFalse(result["deferred"])
+        self.assertTrue(result["due"])
+        self.assertNotIn("deferral", result)
+
+    def test_detached_job_with_forge_token_keeps_commit_due(self):
+        self.prepare_detached_job("ssh://git@github.com/acme/demo.git")
+        gh_dir = self.root / ".gh"
+        gh_dir.mkdir()
+        (gh_dir / "hosts.yml").write_text("github.com:\n  oauth_token: secret\n")
+        cases = (
+            {"GH_TOKEN": "token-present"},
+            {"GITHUB_TOKEN": "token-present"},
+            {"GH_CONFIG_DIR": str(gh_dir)},
+        )
+        for env in cases:
+            with self.subTest(env=env):
+                result = self.inspect_with_env(
+                    PRAETOR_DETACHED_JOB="cheap-lane-7",
+                    GIT_SSH_COMMAND="/usr/bin/false -v",
+                    **env,
+                )
+                self.assertFalse(result["deferred"])
+                self.assertTrue(result["due"])
+                self.assertNotIn("deferral", result)
+        empty_dir = self.root / ".empty-gh"
+        empty_dir.mkdir()
+        deferred = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-7",
+            GIT_SSH_COMMAND="/usr/bin/false -v",
+            GH_CONFIG_DIR=str(empty_dir),
+        )
+        self.assertTrue(deferred["deferred"])
+        self.assertFalse(deferred["due"])
+
+    def test_no_job_marker_keeps_commit_due_without_publish_access(self):
+        self.prepare_detached_job("git@github.com:acme/demo.git")
+        result = self.inspect_with_env(GIT_SSH_COMMAND="/bin/false")
+        self.assertFalse(result["deferred"])
+        self.assertTrue(result["due"])
+
+    def test_detached_job_https_transport_depends_on_credential_helper(self):
+        self.prepare_detached_job("https://github.com/acme/demo.git")
+        git(self.root, "config", "credential.helper", "")
+        deferred = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-https", GIT_TERMINAL_PROMPT="0"
+        )
+        self.assertTrue(deferred["deferred"])
+        git(self.root, "config", "--replace-all", "credential.helper", "store")
+        self.assertEqual(
+            git(self.root, "config", "--get", "credential.helper")
+            .stdout.decode()
+            .strip(),
+            "store",
+        )
+        due = self.inspect_with_env(
+            PRAETOR_DETACHED_JOB="cheap-lane-https", GIT_TERMINAL_PROMPT="0"
+        )
+        self.assertFalse(due["deferred"])
+        self.assertTrue(due["due"])
+
+
+class PolicyRoot(unittest.TestCase):
+    """A repository root holding one checkpoint policy, for the tests of its two readers."""
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="praetor-policy-")
@@ -651,6 +826,90 @@ class CheckedPolicyRead(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+
+class PolicyDescriptors(PolicyRoot):
+    """Both readers close every descriptor they open, on every path (#1219).
+
+    The descriptors are asked of the operating system once the reader is done, so the check
+    holds however the reader closes them. Nothing else opens a file in between, so a number
+    that still answers is a descriptor the reader left open.
+    """
+
+    def read(self, reader, fail_at=None):
+        """Run reader over the root; return what it returned or raised, and what it opened.
+
+        With fail_at set, the open with that index (0 is the first) fails instead.
+        """
+        opened, real_open = [], os.open
+
+        def counted_open(path, flags, *args, **kwargs):
+            if len(opened) == fail_at:
+                raise PermissionError(errno.EACCES, "planted failure", os.fspath(path))
+            opened.append(real_open(path, flags, *args, **kwargs))
+            return opened[-1]
+
+        with mock.patch.object(checkpoint.os, "open", counted_open):
+            try:
+                result = reader(self.root)
+            except (OSError, checkpoint.CheckpointError) as error:
+                result = error
+        left_open = [number for number in sorted(set(opened)) if self.answers(number)]
+        self.assertEqual(left_open, [], f"descriptors left open after {opened}")
+        return result, opened
+
+    @staticmethod
+    def answers(descriptor):
+        """Whether descriptor is open; one that is gets closed, so the test leaks nothing."""
+        try:
+            os.fstat(descriptor)
+        except OSError:
+            return False
+        os.close(descriptor)
+        return True
+
+    @unittest.skipUnless(
+        checkpoint.DESCRIPTOR_RELATIVE,
+        "this platform has no descriptor-relative opens; its reader is the checked one",
+    )
+    def test_positive_relative_reader_closes_each_component_and_the_policy(self):
+        result, opened = self.read(checkpoint._policy_bytes_relative)
+        self.assertEqual(result, json.dumps(CONFIG).encode())
+        self.assertEqual(len(opened), len(checkpoint.POLICY_PARTS) + 2)
+
+    @unittest.skipUnless(
+        checkpoint.DESCRIPTOR_RELATIVE,
+        "this platform has no descriptor-relative opens; its reader is the checked one",
+    )
+    def test_negative_a_failing_later_open_closes_every_earlier_descriptor(self):
+        for fail_at in range(1, len(checkpoint.POLICY_PARTS) + 2):
+            with self.subTest(fail_at=fail_at):
+                result, opened = self.read(checkpoint._policy_bytes_relative, fail_at=fail_at)
+                self.assertIsInstance(result, PermissionError)
+                self.assertEqual(len(opened), fail_at)
+
+    def test_boundary_a_policy_that_cannot_be_wrapped_or_found_leaves_nothing_open(self):
+        readers = [checkpoint._policy_bytes_checked]
+        if checkpoint.DESCRIPTOR_RELATIVE:
+            readers.append(checkpoint._policy_bytes_relative)
+        self.policy.unlink()
+        for reader in readers:
+            with self.subTest(reader=reader.__name__, policy="absent"):
+                self.assertIsNone(self.read(reader)[0])
+        # A directory opens read-only on POSIX and cannot be wrapped in a stream; Windows
+        # refuses to open it. Either way the reader raises and holds no descriptor.
+        self.policy.mkdir()
+        for reader in readers:
+            with self.subTest(reader=reader.__name__, policy="directory"):
+                self.assertIsInstance(self.read(reader)[0], OSError)
+
+
+class CheckedPolicyRead(PolicyRoot):
+    """The reader used where descriptor-relative opens are unavailable, exercised on every host.
+
+    Windows selects it automatically; calling it directly keeps its refusals covered on the
+    POSIX legs as well, where the descriptor-relative reader is the one in use.
+    """
 
     def test_positive_reads_the_policy_bytes(self):
         self.assertEqual(checkpoint._policy_bytes_checked(self.root), json.dumps(CONFIG).encode())

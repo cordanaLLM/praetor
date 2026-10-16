@@ -1,0 +1,4 @@
+type: fixed
+title: "praetorctl gate run with an absolute CARGO_TARGET_DIR builds into praetor-gate below that folder instead of the folder itself, so a checkout that builds into the same folder keeps its own test binaries; before, its next cargo test reused the gate's binaries and read the removed gate worktree"
+issue: "#1267"
+breaking: false

@@ -119,6 +119,14 @@ func auditLiveBranchProtection(ctx context.Context, manifest *config.Manifest, r
 		fmt.Println(notCompared)
 		return nil
 	}
+	skip, info := unadoptedDefaultBranchNote(ctx, rootDir, manifest)
+	if info != "" {
+		fmt.Println(info)
+	}
+	if skip != "" {
+		fmt.Println(skip)
+		return nil
+	}
 	target, notes, err := auditProtectionTarget(ctx, rootDir, manifest, policy.BranchProtection)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Live branch protection audit failed: %w", err)
@@ -203,6 +211,51 @@ func liveProtectionNotCompared(manifest *config.Manifest, policy *config.Resolve
 		return "[SKIP] Live branch protection not compared with the forge: " + live.notMade, nil
 	}
 	return "", nil
+}
+
+// maxManifestListBytes bounds git's answer to the listing of the manifest path in one commit: at
+// most its name and a newline.
+const maxManifestListBytes = 1024
+
+// unadoptedDefaultBranchNote returns the [SKIP] line of a live branch protection comparison that
+// is not made because origin's default branch carries no manifest yet, as on the first push of an
+// adoption, or "" when the comparison runs. The second value is an [INFO] line naming a presence
+// that could not be read: that is not a skip, so the comparison runs and fails as it does today.
+func unadoptedDefaultBranchNote(ctx context.Context, rootDir string, manifest *config.Manifest) (string, string) {
+	branch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
+	if err != nil {
+		return "", fmt.Sprintf("[INFO] Live branch protection not compared yet: could not read the default branch (%v); the comparison runs.", err)
+	}
+	present, err := defaultBranchHasManifest(ctx, rootDir, branch)
+	if err != nil {
+		return "", fmt.Sprintf("[INFO] Live branch protection of %s: could not read whether origin/%s carries %s (%v); the comparison runs.",
+			branch, branch, config.ManifestFileName, err)
+	}
+	if present {
+		return "", ""
+	}
+	return fmt.Sprintf("[SKIP] Live branch protection of %[1]s not compared with the forge: %[1]s carries no %[2]s yet, "+
+		"so the adoption that adds it has not reached it. The comparison starts with the first push after the manifest reaches %[1]s.",
+		branch, config.ManifestFileName), ""
+}
+
+// defaultBranchHasManifest reports whether the commit origin/<branch> points at in this checkout
+// holds the manifest. It reads the fetched ref, as the status checks of the same branch are read,
+// so no second forge read is made. An origin ref this checkout does not hold is an error, not an
+// absent manifest.
+func defaultBranchHasManifest(ctx context.Context, rootDir, branch string) (bool, error) {
+	commit, err := util.ResolveGitCommit(ctx, rootDir, "refs/remotes/origin/"+branch)
+	if err != nil {
+		return false, err
+	}
+	if commit == "" {
+		return false, fmt.Errorf("origin/%s is not in this checkout", branch)
+	}
+	out, err := util.RunGitProbe(ctx, rootDir, maxManifestListBytes, "ls-tree", "--name-only", commit, "--", config.ManifestFileName)
+	if err != nil {
+		return false, fmt.Errorf("list %s at %s: %w", config.ManifestFileName, shortHead(commit), err)
+	}
+	return strings.TrimSpace(string(out.Stdout)) == config.ManifestFileName, nil
 }
 
 // liveProtectionReconcileHint is the remedy a drift failure names. plan --remote and sync --remote

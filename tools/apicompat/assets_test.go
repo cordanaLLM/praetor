@@ -207,3 +207,64 @@ func TestPlaceholderStandsInOnlyWithoutTheGateTag(t *testing.T) {
 		t.Fatal("the placeholder is the gate")
 	}
 }
+
+func assertSetupGoStep(t *testing.T, step *ghworkflow.Step) {
+	t.Helper()
+	if step == nil {
+		t.Fatal("workflow lacks actions/setup-go step")
+	}
+	if got := step.With["go-version"]; got != "stable" {
+		t.Errorf("setup-go step go-version = %v, want %q", got, "stable")
+	}
+	if val, exists := step.With["go-version-file"]; exists {
+		t.Errorf("setup-go step carries go-version-file: %v, want none", val)
+	}
+	if got := step.With["cache"]; got != false {
+		t.Errorf("setup-go step cache = %v, want false", got)
+	}
+}
+
+func assertCompareStep(t *testing.T, step *ghworkflow.Step) {
+	t.Helper()
+	if step == nil {
+		t.Fatal("workflow lacks compare step")
+	}
+	var env map[string]string
+	if err := step.Env.Decode(&env); err != nil {
+		t.Fatalf("decode compare step env: %v", err)
+	}
+	if got := env["GOTOOLCHAIN"]; got != "auto" {
+		t.Errorf("compare step GOTOOLCHAIN = %v, want %q", got, "auto")
+	}
+	if got := env["BASE"]; got != "${{ github.event.pull_request.base.sha }}" {
+		t.Errorf("compare step BASE = %v, want ${{ github.event.pull_request.base.sha }}", got)
+	}
+}
+
+// Positive: setup-go exports GOTOOLCHAIN=local unconditionally, so the rendered workflow
+// pins go-version: stable in setup-go and sets GOTOOLCHAIN: auto in the compare step env
+// so a module go or toolchain directive selects the toolchain (#1037). Negative: the
+// compare step does not leave GOTOOLCHAIN unset or local. Boundary: setup-go keeps
+// cache: false, and the compare step env passes both BASE and GOTOOLCHAIN: auto.
+func TestWorkflowToolchainConfiguration(t *testing.T) {
+	spec, err := ghworkflow.Parse([]byte(Workflow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, ok := spec.Jobs["api-compatibility"]
+	if !ok {
+		t.Fatal("workflow lacks api-compatibility job")
+	}
+	var setupGoStep *ghworkflow.Step
+	var compareStep *ghworkflow.Step
+	for i := range job.Steps {
+		if strings.HasPrefix(job.Steps[i].Uses, "actions/setup-go@") {
+			setupGoStep = &job.Steps[i]
+		}
+		if job.Steps[i].Name == "Compare the API of every Go module" {
+			compareStep = &job.Steps[i]
+		}
+	}
+	assertSetupGoStep(t, setupGoStep)
+	assertCompareStep(t, compareStep)
+}

@@ -1,18 +1,22 @@
 # Licensing gates
 
-A repository that declares its licensing the [REUSE](https://reuse.software/spec-3.3/) way, with
-`REUSE.toml` or a `LICENSES/` directory at its root, gets three checks from Praetor:
+A repository that declares its licensing the [REUSE](https://reuse.software/spec-3.3/) way gets
+three checks from Praetor:
 
 1. [`reuse lint`](#reuse-lint-in-hooks-and-ci) before every commit and in CI, written by
-   `praetorctl adopt`;
+   `praetorctl adopt` where the root carries `REUSE.toml` or `.reuse/dep5` and the manifest
+   does not decline `reuse-gate` (a `LICENSES/` directory alone declares nothing, #1244);
 2. the [annotation order check](#annotation-order) of `praetorctl audit`, which fails an
    override in `REUSE.toml` that never takes effect;
 3. the [root licence check](#one-root-licence) of `praetorctl audit`, which holds the root to one
    `LICENSE` with the declared licence's text.
 
-A repository with neither marker gets none of them, and the audit says that it skipped each. No
-profile writes a `LICENSE` or `LICENSES/` for the repository, so the checks follow the markers,
-whatever the profile.
+The annotation order check reads `REUSE.toml`, and the root licence check runs where `LICENSES/`
+is a directory. A repository with none of these gets none of the checks, and the audit says that
+it skipped each. One whose `LICENSES/` and file headers label it the REUSE way without
+`REUSE.toml` or `.reuse/dep5` gets an audit warning that names `REUSE.toml`, since adoption
+renders no REUSE gate there. No profile writes a `LICENSE` or `LICENSES/` for the repository,
+so the checks follow the files, whatever the profile.
 
 ## `reuse lint` in hooks and CI
 
@@ -21,9 +25,12 @@ The `reuse.yml` workflow also triggers on `merge_group`, so its check reports fo
 Adoption writes two jobs, both at the one REUSE pin, `supplychain.ReuseActionVersion` in
 [`internal/supplychain/reuse_lint.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/supplychain/reuse_lint.go):
 
-- `.github/workflows/reuse.yml`, whose **REUSE lint** job runs `fsfe/reuse-action@v6` within
+- `.github/workflows/reuse.yml`, whose **REUSE lint** job runs `fsfe/reuse-action` within
   `timeout-minutes: 10` and becomes a required status check of the branch ruleset adoption
-  renders. It has the hosted gate shape every emitted gate shares
+  renders. Both `actions/checkout` and `fsfe/reuse-action` are pinned by full commit SHA with a
+  version comment (`supplychain.ReuseActionPinnedRef` and the checkout pin from
+  `tools/markdownlint/assets.go`, HISS-11), satisfying strict SHA-pinning organization policies.
+  It has the hosted gate shape every emitted gate shares
   (`internal/ghworkflow/hostedgate.go`): it runs on pull request activity and on a push to the
   default branch that ruleset protects, its first step fails a draft run by design (on `bash`,
   so it behaves the same on every runner), and every later step runs only when the pull request

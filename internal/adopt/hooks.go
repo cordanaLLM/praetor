@@ -12,11 +12,15 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/govuln"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -45,6 +49,17 @@ const (
 	// OpenVEX document (internal/govuln), the check the gate run's security stage makes. The job
 	// ran `govulncheck ./...` before, which failed on a called symbol only (#778).
 	govulnGateArgs = "security govuln"
+	// toolGoModFile is the repository-relative path to the Go tool module that pins CLI tools.
+	toolGoModFile = gomanifest.ToolModuleFile
+	// govulnToolScanner is the scanner command that runs govulncheck through the repository's
+	// tool module.
+	govulnToolScanner = "go tool -modfile=" + toolGoModFile + " govulncheck"
+	// govulnInstallHint is the instruction printed when a declared tool is missing on PATH.
+	govulnInstallHint = "go install golang.org/x/vuln/cmd/govulncheck@latest"
+	// govulnModule is the module path of the Go vulnerability scanner.
+	govulnModule = "golang.org/x/vuln"
+	// govulnToolPackage is the package path run with go tool.
+	govulnToolPackage = "golang.org/x/vuln/cmd/govulncheck"
 )
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
@@ -115,6 +130,32 @@ func optionalToolGuard(tool, command string) string {
 		"; else echo " + tool + " is not installed, skipping >&2; fi"
 }
 
+// requiredToolGuard renders a lefthook run line that runs command only where the tool it needs
+// is installed, and otherwise fails closed naming how to install it.
+func requiredToolGuard(tool, installHint, command string) string {
+	return "if command -v " + tool + " >/dev/null 2>&1; then " + command +
+		"; else echo " + tool + " is not installed, install it with " + installHint + " >&2; exit 1; fi"
+}
+
+// repoRequiresToolGovuln reports whether the repository at repoPath pins govulncheck in its
+// tool module (tools/go/go.mod).
+func repoRequiresToolGovuln(ctx context.Context, repoPath string) (bool, error) {
+	data, exists, err := contextopt.ObserveSnapshotIn(ctx, repoPath, filepath.FromSlash(toolGoModFile))
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", toolGoModFile, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	return toolModuleRequiresGovuln(data), nil
+}
+
+// toolModuleRequiresGovuln reports whether tool module data declares golang.org/x/vuln
+// as a requirement or as a tool directive.
+func toolModuleRequiresGovuln(data []byte) bool {
+	return gomanifest.DeclaresTool(data, govulnModule, govulnToolPackage)
+}
+
 // rootMarkerCommand renders a lefthook run line for a language tool. It runs command only where
 // the repository root holds marker (go.mod, Cargo.toml) and otherwise skips with the reason, as
 // the gate's own security and test stages already do (internal/gating/pipeline.go). Without the
@@ -149,16 +190,15 @@ func cargoCommand(skipped, command string) string {
 const lefthookJobLanguages = hisscatalog.LanguageGo | hisscatalog.LanguageRust
 
 // lefthookLanguages returns the languages whose jobs lefthook.yml carries for a repository whose
-// verification plan is plan: the languages that plan detected (planLanguages), the set the
-// harness rows are rendered for too, so no second detector decides the hooks (#568). An unknown
-// set, nothing detected, keeps every language's jobs, as it keeps every HISS clause and check
-// (hisscatalog.Rule.AdoptedFor): each job runs only on its own staged files and root marker.
+// verification plan is plan: Go is always present so a later tracked module needs no re-adoption;
+// Rust follows the detected language set. An unknown set, nothing detected, keeps every language's
+// jobs, as it keeps every HISS clause and check (hisscatalog.Rule.AdoptedFor).
 func lefthookLanguages(plan *VerificationPlan) hisscatalog.Language {
 	languages := planLanguages(plan)
 	if languages == 0 {
 		return lefthookJobLanguages
 	}
-	return languages & lefthookJobLanguages
+	return (languages & lefthookJobLanguages) | hisscatalog.LanguageGo
 }
 
 // lefthookLanguageNames names languages for the rendering's header, in a fixed order.
@@ -179,7 +219,7 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 	jobs := ""
 	if languages&hisscatalog.LanguageGo != 0 {
 		jobs += "    gofmt:\n      glob: \"*.go\"\n" + lefthookRun("gofmt -w {staged_files}") + "      stage_fixed: true\n" +
-			"    govet:\n      glob: \"*.go\"\n" + lefthookRun(goModuleCommand("go vet", "go vet ./..."))
+			"    govet:\n      glob: \"*.go\"\n" + lefthookRun(lefthookGovernedCommand("go vet"))
 	}
 	if languages&hisscatalog.LanguageRust != 0 {
 		clippy := "cargo " + strings.Join(gating.CargoClippyArgs(), " ")
@@ -190,13 +230,20 @@ func lefthookPreCommitJobs(languages hisscatalog.Language) string {
 }
 
 // lefthookPrePushJobs renders the pre-push jobs of languages: the Go vulnerability gate for Go
-// (govulnGateArgs). The gate job runs cargo audit for a Cargo.lock itself.
-func lefthookPrePushJobs(languages hisscatalog.Language) string {
-	if languages&hisscatalog.LanguageGo == 0 {
+// (govulnGateArgs). When shape carries toolGovuln, the job runs govulncheck through the
+// repository's tool module; otherwise it looks up govulncheck on PATH and fails when missing.
+// The gate job runs cargo audit for a Cargo.lock itself.
+func lefthookPrePushJobs(shape lefthookShape) string {
+	if shape.languages&hisscatalog.LanguageGo == 0 {
 		return ""
 	}
-	return "    security:\n" + lefthookRun(goModuleCommand(govuln.DefaultScanner,
-		optionalToolGuard(govuln.DefaultScanner, lefthookGovernedCommand(govulnGateArgs))))
+	var command string
+	if shape.toolGovuln {
+		command = lefthookGovernedCommand(govulnGateArgs + " -- " + govulnToolScanner)
+	} else {
+		command = requiredToolGuard(govuln.DefaultScanner, govulnInstallHint, lefthookGovernedCommand(govulnGateArgs))
+	}
+	return "    security:\n" + lefthookRun(command)
 }
 
 // reuseLintCommand renders the run line of the reuse-lint job: reuse lint at the release line
@@ -243,7 +290,8 @@ func lefthookHeader(shape lefthookShape) string {
 		scope = names + " & " + scope
 	}
 	return "# Lefthook Configuration (" + scope + ")\n" +
-		"# Go and Rust jobs follow the detected languages; both when none was detected.\n" +
+		"# Go jobs are always present so later tracked modules need no re-adoption;\n" +
+		"# Rust follows the detected languages.\n" +
 		"# Governance commands fail closed: a failing or missing praetorctl blocks the\n" +
 		"# commit or push. The pre-commit audit runs --offline; the pre-push audit\n" +
 		"# reads the forge's live Actions state when a token and a github.com origin\n" +
@@ -255,19 +303,26 @@ func lefthookHeader(shape lefthookShape) string {
 }
 
 // lefthookShape is what one lefthook.yml rendering carries jobs for: the languages
-// (lefthookLanguages) and, with reuse set, the reuse-lint pre-commit job of a repository that
-// declares its licensing the REUSE way (supplychain.ReuseDeclared). A rendering without the job
-// is byte for byte the one adoption wrote before the job existed.
+// (lefthookLanguages), with reuse set, the reuse-lint pre-commit job of a repository that
+// declares its licensing the REUSE way (supplychain.ReuseDeclared), and with toolGovuln set,
+// the go tool pre-push security job for a repository that pins govulncheck in its tool module.
 type lefthookShape struct {
-	languages hisscatalog.Language
-	reuse     bool
+	languages  hisscatalog.Language
+	reuse      bool
+	toolGovuln bool
 }
 
 // otherReuse is shape with the reuse-lint job switched: the rendering adoption wrote while the
 // repository did, or did not, declare REUSE. It is Praetor's own text, which adoption migrates
 // like an earlier rendering (classifyLefthookConfig).
 func (shape lefthookShape) otherReuse() lefthookShape {
-	return lefthookShape{languages: shape.languages, reuse: !shape.reuse}
+	return lefthookShape{languages: shape.languages, reuse: !shape.reuse, toolGovuln: shape.toolGovuln}
+}
+
+// otherToolGovuln is shape with the tool module govulncheck switch inverted: the rendering adoption
+// wrote while the repository did, or did not, declare govulncheck in tools/go/go.mod.
+func (shape lefthookShape) otherToolGovuln() lefthookShape {
+	return lefthookShape{languages: shape.languages, reuse: shape.reuse, toolGovuln: !shape.toolGovuln}
 }
 
 // buildLefthookYAMLFor renders lefthook.yml with the jobs of shape (the languages, and the
@@ -301,7 +356,7 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 		"pre-push:\n" +
 		"  parallel: false\n" +
 		"  commands:\n" +
-		lefthookPrePushJobs(shape.languages) +
+		lefthookPrePushJobs(shape) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
 		"    audit:\n" + lefthookRun(governed(prePushAuditArgs)) +
 		"    gate:\n" + lefthookRun(governed(prePushGateArgs))
@@ -351,8 +406,10 @@ BLOCK_EXIT = 2
 RULES = [
 {{RULES}}]
 
-# The RULES judged without the words of read-only commands chained after a commit.
-READ_ONLY_EXEMPT = [
+# The RULES judged without the words of read-only commands chained after a commit. Each
+# pattern has a name of its own: wrapped inside the list, it would read as two items with
+# the comma between them forgotten.
+{{READ_ONLY_EXEMPT_PATTERNS}}READ_ONLY_EXEMPT = [
 {{READ_ONLY_EXEMPT}}]
 {{READ_ONLY_WORDS}}{{READ_ONLY_VETO}}
 LEFTHOOK_DISABLED = [
@@ -388,7 +445,7 @@ def pending_command():
     try:
         return read_payload_command(sys.stdin.buffer)
     except (ValueError, OSError, RecursionError) as error:
-        raise Blocked(INVALID_INPUT_REFUSAL + str(error))
+        raise Blocked(INVALID_INPUT_REFUSAL + str(error)) from error
 
 
 def check_environment(environ):
@@ -410,7 +467,13 @@ def without_read_only_words(command):
     return re.sub(READ_ONLY_WORDS, r"\1\2", command)
 
 
+def join_line_continuations(command):
+    # A backslash followed by a newline (LF or CRLF) joins lines without regex backtracking.
+    return re.sub(r"\\\r?\n", " ", command)
+
+
 def check_command(command):
+    command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
     # hook timeout. Such a command is refused, never truncated.
     if len(command) > MAX_SCAN_CHARS:
@@ -480,15 +543,25 @@ func ruleRefusalName(invariant string) string {
 // the scan bounds of the Python adapters (agenthook.MaxScanChars, MaxScanLineChars) and the
 // refusal texts. It never includes operator rules; those are repository configuration
 // (ADR-0011).
+//
+// Each exempt rule's pattern is assigned to a name of its own (READ_ONLY_EXEMPT_1, ...) and
+// READ_ONLY_EXEMPT lists the names. A pattern too long for one line is laid out as adjacent
+// literals, and directly inside the list those read as two items with the comma between them
+// forgotten: CodeQL reported it in every adopter (py/implicit-string-concatenation-in-list,
+// #1219).
 func buildBlockEvasionPY() string {
-	var refusals, rules, exempt, disabled strings.Builder
+	var refusals, rules, exemptPatterns, exempt, disabled strings.Builder
 	for _, refusal := range interceptorRefusals() {
 		refusals.WriteString(pythonAssignment(refusal.name, pyToken{refusal.text, pyString}))
 	}
+	exemptCount := 0
 	for _, rule := range agenthook.BuiltinRules() {
 		rules.WriteString(pythonPairEntry(pyToken{rule.Source, pyRaw}, pyToken{ruleRefusalName(rule.Invariant), pyName}))
 		if rule.ReadOnlyExempt {
-			exempt.WriteString(pythonItemLines("    ", pyToken{rule.Source, pyRaw}, ","))
+			exemptCount++
+			name := "READ_ONLY_EXEMPT_" + strconv.Itoa(exemptCount)
+			exemptPatterns.WriteString(pythonAssignment(name, pyToken{rule.Source, pyRaw}))
+			exempt.WriteString(pythonItemLines("    ", pyToken{name, pyName}, ","))
 		}
 	}
 	for _, value := range agenthook.LefthookDisableValues() {
@@ -501,6 +574,7 @@ func buildBlockEvasionPY() string {
 		"{{MAX_SCAN_LINE_CHARS}}", strconv.Itoa(agenthook.MaxScanLineChars),
 		"{{REFUSALS}}", refusals.String(),
 		"{{RULES}}", rules.String(),
+		"{{READ_ONLY_EXEMPT_PATTERNS}}", exemptPatterns.String(),
 		"{{READ_ONLY_EXEMPT}}", exempt.String(),
 		"{{READ_ONLY_WORDS}}", pythonAssignment("READ_ONLY_WORDS", pyToken{agenthook.ReadOnlyWords, pyRaw}),
 		"{{READ_ONLY_VETO}}", pythonAssignment("READ_ONLY_VETO", pyToken{agenthook.ReadOnlyVeto, pyRaw}),
@@ -540,7 +614,8 @@ func buildFallbackPreCommitScript() string {
 // (classifyLefthookConfig). A configuration that is neither a current nor an earlier Praetor
 // rendering is kept, --force included, and not activated (keepLefthookConfig). Otherwise the
 // checkpoint bundle is installed, lefthook.yml is written, migrated or verified, and local git
-// hooks are activated for the rendering praetor wrote.
+// hooks are activated for the rendering praetor wrote. The engine launcher is reconciled
+// independently of whether lefthook.yml is written (#1172).
 func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	existing, exists, err := s.readExistingLefthook()
 	if err != nil {
@@ -550,18 +625,18 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	if err := reconcilePlannedEngineLauncher(ctx, s); err != nil {
+		return err
+	}
 	var identity lefthookIdentity
 	if exists {
 		identity = classifyLefthookConfig(existing, shape)
 	}
 	if identity.reason != "" {
-		return keepLefthookConfig(ctx, s, identity)
+		return keepLefthookConfig(ctx, s, identity, existing)
 	}
 	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s, false)
 	if err != nil {
-		return err
-	}
-	if err := reconcileEngineLauncher(ctx, s); err != nil {
 		return err
 	}
 	lefthookWritten, err := s.renderLefthook(ctx, lefthookTarget{shape: shape, checkpoint: checkpointReady}, existing, identity.prior)
@@ -576,6 +651,15 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
+}
+
+// reconcilePlannedEngineLauncher reconciles the hook engine launcher when it is planned or
+// installed (#1172).
+func reconcilePlannedEngineLauncher(ctx context.Context, s *adoptSession) error {
+	if !launcherInstalledOrPlanned(s) {
+		return nil
+	}
+	return reconcileEngineLauncher(ctx, s)
 }
 
 // renderLefthook writes lefthook.yml for target and reports whether it did: the configuration an
@@ -593,13 +677,36 @@ func (s *adoptSession) renderLefthook(ctx context.Context, target lefthookTarget
 // is absent: the checkpoint files, each on its own, never refreshing one that exists, since the
 // kept configuration may run its own copies; and the interceptor, refreshed from an unedited
 // earlier rendering only when the configuration does not extend the canonical policy, whose
-// vendored bundle owns it (BUG-858).
-func keepLefthookConfig(ctx context.Context, s *adoptSession, identity lefthookIdentity) error {
+// vendored bundle owns it (BUG-858). When the kept configuration does not call the launcher yet,
+// adoption reports the prefix to use (#1172).
+func keepLefthookConfig(ctx context.Context, s *adoptSession, identity lefthookIdentity, existing []byte) error {
 	if _, err := reconcileCheckpointLifecycle(ctx, s, true); err != nil {
 		return err
 	}
-	s.report.recordSkipped(lefthookFile, identity.reason)
+	detail := identity.reason
+	if !lefthookCallsEngineLauncher(existing) {
+		detail += "; " + keptLefthookLauncherNote()
+	}
+	s.report.recordSkipped(lefthookFile, detail)
 	return reconcileEvasionHook(ctx, s, identity.canonical)
+}
+
+func keptLefthookLauncherNote() string {
+	return "existing lefthook.yml does not call the engine launcher yet; run hooks through sh " + engineLauncherFile + " <args>"
+}
+
+func lefthookCallsEngineLauncher(existing []byte) bool {
+	var parsed map[string]any
+	if err := yaml.Unmarshal(existing, &parsed); err != nil {
+		return false
+	}
+	jobs := lefthookconfig.Jobs(parsed)
+	for i := 0; i < len(jobs) && i < maxLefthookJobs; i++ {
+		if strings.Contains(jobs[i].Run, engineLauncherFile) {
+			return true
+		}
+	}
+	return false
 }
 
 // lefthookTarget is the rendering this run writes: the jobs of shape, and the checkpoint
@@ -722,6 +829,9 @@ var priorEvasionHookDigests = map[string]string{
 	"fed57187eef4b43b8d4810bcad13c1da8339d333ea74b675c0371cf6c93b309b": "abbreviated skip options, Windows hook removal",
 	"93c213517c41de42c3a44b9f950b205a94d43d9c1ea7a202266912c793ae68cb": "read-only chained command exemption",
 	"332845d1088325c24cd747bfc4e8c5e415132a46f06204fffcc267bc8af5d8f7": "find and in-place edit rules start at the first command word",
+	"9db442d72dc16b74ce88250c1dbf1a0b05830bdc6716ab4b705c5aa1c7531a02": "named exempt patterns and a start-of-text veto anchor, clean under CodeQL (#1219)",
+	"74a3c9cb08bd3afeaf4c0e0e3b05f0b9ad7518beee1173465477270ed71f569d": "raise from error in pending_command under adopter ruff B904",
+	"e69d49af323fcd3b1d23394bc6736afa115629ff7925ffec664404bd048ec169": "refuse admin and API merges that bypass rulesets (#1300)",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

@@ -1,6 +1,7 @@
 ---
 name: praetor-fuzzer
 description: "Autonomous subagent for running background continuous fuzz batteries, memory stability checks, and race detection."
+model: haiku
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto

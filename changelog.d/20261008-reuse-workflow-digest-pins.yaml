@@ -1,0 +1,4 @@
+type: fixed
+title: "The hosted REUSE workflow pins actions by commit digest with version comments (HISS-11)"
+issue: "#899"
+breaking: false

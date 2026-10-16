@@ -1,0 +1,3 @@
+type: fixed
+title: Prune the oldest retained dogfood runs on request and block on the entry cap instead of failing
+breaking: false

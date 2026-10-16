@@ -13,7 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-const fixturePersona = "# Gatekeeper\n\nBlock merges without receipts.\n"
+const fixturePersona = "---\nname: praetor-gatekeeper\ndescription: Gatekeeper fixture.\nmodel: flash\n---\n\n# Gatekeeper\n\nBlock merges without receipts.\n"
 
 // newContextFixture builds a directory with AGENTS.md, one canonical persona and,
 // optionally, the praetor plugin manifest.
@@ -49,8 +49,17 @@ func TestCompileContext_Positive(t *testing.T) {
 		t.Fatal("expected the transpiled CLAUDE.md to be written")
 	}
 	for _, rel := range append(allPersonaDirs(t), compiler.PluginAgentsRel) {
-		if got := readFixtureFile(t, dir, rel+"/praetor-gatekeeper.md"); got != fixturePersona {
-			t.Fatalf("projection %s differs from the canonical persona:\n%s", rel, got)
+		var want string
+		switch rel {
+		case compiler.PluginAgentsRel:
+			want = fixturePersona
+		case ".claude/agents":
+			want = strings.Replace(fixturePersona, "model: flash", "model: haiku", 1)
+		default:
+			want = strings.Replace(fixturePersona, "model: flash\n", "", 1)
+		}
+		if got := readFixtureFile(t, dir, rel+"/praetor-gatekeeper.md"); got != want {
+			t.Fatalf("projection %s differs from expected:\ngot:\n%s\nwant:\n%s", rel, got, want)
 		}
 	}
 

@@ -220,11 +220,18 @@ func committablePath(rel string) (string, bool) {
 }
 
 // privateByDesign reports whether rel is a path the managed block ignores on purpose: the
-// session ledgers, the gate worktrees, the per-host AGY configuration.
+// session ledgers, the gate worktrees, the per-host AGY configuration. A rule with a leading
+// slash names a path from the root; one without (the session ledgers, #1263) names a directory
+// of that name in any directory.
 func privateByDesign(rel string) bool {
 	for i := 0; i < len(managedIgnoreRules); i++ {
-		rule := strings.TrimPrefix(managedIgnoreRules[i], "/")
+		rule := managedIgnoreRules[i]
+		anchored := strings.HasPrefix(rule, "/")
+		rule = strings.TrimPrefix(rule, "/")
 		if rel == strings.TrimSuffix(rule, "/") || (strings.HasSuffix(rule, "/") && strings.HasPrefix(rel, rule)) {
+			return true
+		}
+		if !anchored && (strings.HasSuffix(rel, "/"+strings.TrimSuffix(rule, "/")) || strings.Contains(rel, "/"+rule)) {
 			return true
 		}
 	}

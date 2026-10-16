@@ -83,11 +83,11 @@ func TestCIWorkflowTemplatesRenderTheHostedGateShape_Negative(t *testing.T) {
 // Boundary: the functions render the hosted gate constants byte for byte through either renderer,
 // the inline one (Render, default delimiters) included.
 func TestHostedGateFunctionsRenderTheConstants(t *testing.T) {
-	got, err := templates.Render("hosted-gate", "{{ hostedGateOn }}|{{ hostedGateDraftStep }}|{{ hostedGateStepIf }}", sampleContext)
+	got, err := templates.Render("hosted-gate", "{{ hostedGateOn }}|{{ hostedGateScheduledOn }}|{{ hostedGateDraftStep }}|{{ hostedGateStepIf }}", sampleContext)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ghworkflow.HostedGateOn + "|" + ghworkflow.HostedGateDraftStep + "|" + ghworkflow.HostedGateStepIf
+	want := ghworkflow.HostedGateOn + "|" + ghworkflow.HostedGateScheduledOn + "|" + ghworkflow.HostedGateDraftStep + "|" + ghworkflow.HostedGateStepIf
 	if got != want {
 		t.Errorf("Render = %q, want %q", got, want)
 	}

@@ -212,6 +212,52 @@ func (f *fixture) commit(message string, files map[string]string) string {
 	return f.git("rev-parse", "HEAD")
 }
 
+// fixtureCommit is one commit importCommits builds.
+type fixtureCommit struct {
+	message string
+	files   map[string]string
+}
+
+// importCommits builds commits on the current branch with one git fast-import and returns their
+// object IDs in order. Nothing is written to the work tree or hashed through the index, so a
+// fixture of hundreds of modules stays cheap where file creation is slow: on Windows CI, writing
+// and adding 513 go.mod files took 44.5 s and ran past the 30 s default command deadline
+// (Platform Neutrality run 38577896951), against 0.015 s for the add on Linux. Use it only where
+// the gate reads the revisions from git, not the work tree.
+func (f *fixture) importCommits(commits ...fixtureCommit) []string {
+	f.t.Helper()
+	branch := f.git("symbolic-ref", "--short", "HEAD")
+	var stream strings.Builder
+	for index, c := range commits {
+		fmt.Fprintf(&stream, "commit refs/heads/%s\nmark :%d\ncommitter Fixture <fixture@example.invalid> %d +0000\n",
+			branch, index+1, 1700000000+index)
+		fmt.Fprintf(&stream, "data %d\n%s\n", len(c.message), c.message)
+		names := make([]string, 0, len(c.files))
+		for name := range c.files {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		for _, name := range names {
+			fmt.Fprintf(&stream, "M 100644 inline %s\ndata %d\n%s\n", name, len(c.files[name]), c.files[name])
+		}
+	}
+	ctx, err := util.WithCommandEnvironment(f.t.Context(), f.env)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if ctx, err = util.WithCommandStdin(ctx, []byte(stream.String())); err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err := util.RunGit(ctx, f.dir, "fast-import", "--quiet"); err != nil {
+		f.t.Fatalf("git fast-import: %v", err)
+	}
+	ids := make([]string, len(commits))
+	for index := range commits {
+		ids[index] = f.git("rev-parse", fmt.Sprintf("HEAD~%d", len(commits)-1-index))
+	}
+	return ids
+}
+
 // goModule returns the go.mod and one source file of a module that builds.
 func goModule(dir, modulePath, pkg string) map[string]string {
 	prefix := ""
@@ -266,24 +312,78 @@ func TestGate_Positive_RejectsAnIncompatibleNestedModuleFromV1(t *testing.T) {
 	}
 }
 
-// Positive: before v1 the same change is reported as a warning and does not fail the gate.
+// Positive: before v1 the same change is reported as a warning and does not fail the gate when
+// the commit range carries a breaking marker and a Migration: footer (#1317).
 func TestGate_Positive_WarnsBeforeV1(t *testing.T) {
 	t.Parallel()
 	h := newGateHarness(t)
 	f := newFixture(t, h)
 	f.widget()
 	f.git("tag", "v0.4.0")
-	f.commit("break lib", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	head := f.commit("feat(lib)!: break lib\n\nMigration: update callers\n", map[string]string{"lib/stub-verdict": "incompatible\n"})
 	run := h.run(t, f.dir, nil)
 	if run.status != 0 {
 		t.Fatalf("status %d, want 0:\n%s\n%s", run.status, run.stdout, run.stderr)
 	}
 	requireContains(t, run.stdout, "warning: 1 incompatible module change(s) from v0.4.0",
-		"reported, not rejected (auto: newest root release tag v0.4.0 is pre-v1)")
+		"reported, not rejected (auto: newest root release tag v0.4.0 is pre-v1)", head[:12])
 	reject := h.run(t, f.dir, nil, "-policy=reject")
 	if reject.status != 1 {
 		t.Fatalf("-policy=reject status %d, want 1:\n%s", reject.status, reject.stderr)
 	}
+}
+
+// Negative: before v1 an incompatible change without a breaking marker fails under policy auto,
+// and passes under -policy=warn (#1317).
+func TestGate_Negative_PreV1BreakWithoutMarkerFails(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	f.widget()
+	f.git("tag", "v0.4.0")
+	f.commit("feat(lib): break lib\n\nMigration: update callers\n", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	run := h.run(t, f.dir, nil)
+	if run.status != 1 {
+		t.Fatalf("status %d, want 1:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	requireContains(t, run.stderr, "rejected (auto: newest root release tag v0.4.0 is pre-v1: missing breaking marker (! in subject) with Migration: footer)")
+	warn := h.run(t, f.dir, nil, "-policy=warn")
+	if warn.status != 0 {
+		t.Fatalf("-policy=warn status %d, want 0:\n%s", warn.status, warn.stderr)
+	}
+}
+
+// Negative: before v1 a breaking marker without a Migration: footer fails under policy auto (#1317).
+func TestGate_Negative_PreV1BreakWithMarkerWithoutMigrationFails(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	f.widget()
+	f.git("tag", "v0.4.0")
+	f.commit("feat(lib)!: break lib\n", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	run := h.run(t, f.dir, nil)
+	if run.status != 1 {
+		t.Fatalf("status %d, want 1:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	requireContains(t, run.stderr, "rejected (auto: newest root release tag v0.4.0 is pre-v1: missing breaking marker (! in subject) with Migration: footer)")
+}
+
+// Boundary: before v1 an incompatible change passes if any commit in base..HEAD carries the
+// breaking marker and Migration: footer, naming that breaking commit (#1317).
+func TestGate_Boundary_PreV1BreakMultipleCommitsRange(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	f.widget()
+	f.git("tag", "v0.4.0")
+	breaking := f.commit("feat(lib)!: break lib\n\nMigration: update callers\n", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	f.commit("docs: update documentation\n", map[string]string{"README.md": "new readme\n"})
+	run := h.run(t, f.dir, nil)
+	if run.status != 0 {
+		t.Fatalf("status %d, want 0:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	requireContains(t, run.stdout, "warning: 1 incompatible module change(s) from v0.4.0",
+		"reported, not rejected (auto: newest root release tag v0.4.0 is pre-v1)", breaking[:12])
 }
 
 // Positive: on GitHub Actions the verdict is a workflow command, which renders an annotation.
@@ -455,9 +555,8 @@ func TestGate_Boundary_RefusesMoreModulesThanItsBound(t *testing.T) {
 	for index := 0; index <= 512; index++ {
 		files[fmt.Sprintf("m%03d/go.mod", index)] = fmt.Sprintf("module example.com/m%03d\n", index)
 	}
-	base := f.commit("modules", files)
-	f.commit("document", map[string]string{"README.md": "widget\n"})
-	run := h.run(t, f.dir, nil, "-base="+base)
+	ids := f.importCommits(fixtureCommit{"modules", files}, fixtureCommit{"document", map[string]string{"README.md": "widget\n"}})
+	run := h.run(t, f.dir, nil, "-base="+ids[0])
 	if run.status != 2 || !strings.Contains(run.stderr, "513 Go modules, more than the 512 one run compares") {
 		t.Fatalf("status %d, want 2:\n%s", run.status, run.stderr)
 	}

@@ -36,7 +36,8 @@ __pycache__/
 
 # Dependency directories
 /vendor/
-/tools/figures/node_modules/
+# Every npm project, current and future, must keep node_modules uncommittable.
+node_modules/
 
 # IDE and OS files
 .DS_Store
@@ -58,6 +59,7 @@ plan_clean.md
 all_github_repos.json
 # Workflow agent worktrees
 /.claude/worktrees/
+/.claude/settings.local.json
 
 # Operational configuration belongs to the operational fork, never to the public engine:
 # organisation and repository names, runner routing and cluster manifests are operator
@@ -75,8 +77,8 @@ all_github_repos.json
 /deploy/k8s/
 
 # BEGIN praetor private artifacts (praetorctl adopt)
-/.workingdir/
-/.workingdir2/
+.workingdir/
+.workingdir2/
 /.standards/worktrees/
 /.agents/mcp_config.json
 /.standards/cache/

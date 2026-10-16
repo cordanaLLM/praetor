@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -66,7 +67,7 @@ func TestGateDeadline_ReportsTheDevcontainerBuild(t *testing.T) {
 	writeFixtureFile(t, dir, ".devcontainer/devcontainer.json", `{"name": "x", "build": {"dockerfile": "Dockerfile"}}`)
 	bin := t.TempDir()
 	testsupport.BuildExecutable(t, bin, "docker", "package main\n\nfunc main() {}\n")
-	t.Setenv("PATH", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(gating.TestStageTimeoutEnv, "")
 	for _, tc := range []struct{ mode, want string }{{"", devcontainer.ImageBuildTimeout.String()}, {"off", ""}} {
 		t.Setenv(gating.DevcontainerEnv, tc.mode)
@@ -95,7 +96,7 @@ func TestGateRun_DryRunReservesNoImageBuild(t *testing.T) {
 	writeFixtureFile(t, dir, ".devcontainer/devcontainer.json", `{"name": "x", "build": {"dockerfile": "Dockerfile"}}`)
 	bin := t.TempDir()
 	testsupport.BuildExecutable(t, bin, "docker", "package main\n\nfunc main() {}\n")
-	t.Setenv("PATH", bin)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv(gating.TestStageTimeoutEnv, "")
 	t.Setenv(gating.DevcontainerEnv, "")
 	for _, tc := range []struct {

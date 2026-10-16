@@ -113,3 +113,39 @@ jobs:
       # scripts/test_npm_audit_gate.py pins this step).
       - name: Audit npm Locks (npm audit, high and critical)
         run: python3 -B scripts/npm_audit_gate.py tools/markdownlint tools/figures editors/vscode docs/presets/starlight
+
+      # Trivy security scanner (newest release v0.75.0, 2026-10-01).
+      # Pinned binary archive with sha256 checksum verification before use.
+      - name: Install Trivy
+        run: |
+          TRIVY_VERSION="0.75.0"
+          TRIVY_SHA256="c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f"
+          curl -sSfL --max-time 60 "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" -o /tmp/trivy.tar.gz
+          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
+          rm -f /tmp/trivy.tar.gz
+
+      # Planted-case verification (HISS-20 negative case, Rule 13 "Proven checks"):
+      # scan a go.mod that pins golang.org/x/net v0.16.0, which carries the published HIGH advisory
+      # GHSA-4v7x-pqxf-cx7x / CVE-2023-39325 (HTTP/2 Rapid Reset), and require trivy to report it; a
+      # clean report or a scanner that fails to run fails the step. The fixture is written at run time
+      # into the runner's temporary folder, never committed: a vulnerable go.mod in the tree would
+      # raise dependency alerts and Renovate updates against it, and an update would defuse the plant.
+      - name: Verify Trivy Vulnerability Detection (planted case)
+        run: |
+          plant="$RUNNER_TEMP/trivy-planted"
+          mkdir -p "$plant"
+          printf 'module example.com/trivy-planted\n\ngo 1.21\n\nrequire golang.org/x/net v0.16.0\n' > "$plant/go.mod"
+          output=$(trivy fs --scanners vuln --severity HIGH,CRITICAL "$plant")
+          echo "$output"
+          if ! echo "$output" | grep -q "CVE-2023-39325"; then
+            echo "::error::Planted vulnerability test failed: trivy reported no findings for CVE-2023-39325" >&2
+            exit 1
+          fi
+
+      # Trivy filesystem scan of repository for vulnerabilities and secrets (security:high facet).
+      # Fail closed: exit code 1 on HIGH or CRITICAL findings.
+      # Skips only a fixture holding deliberate bad values:
+      # - .config/hiss/testdata/HISS-12: deliberately fake secrets for HISS-12 gitleaks verification
+      - name: Run Filesystem Vulnerability & Secret Scan (trivy)
+        run: trivy fs --scanners vuln,secret --severity HIGH,CRITICAL --exit-code 1 --skip-dirs .config/hiss/testdata/HISS-12 .

@@ -43,6 +43,7 @@ type branchingVariant struct {
 func branchingYAMLTemplates() map[string][]branchingVariant {
 	return map[string][]branchingVariant{
 		"flutter/analysis_options.yaml.tmpl": dartLintVariants(),
+		"go/security-go.yml.tmpl":            goSecurityVariants(),
 		"node/ci-node.yml.tmpl":              nodeVariants(),
 	}
 }
@@ -70,6 +71,13 @@ func dartLintVariants() []branchingVariant {
 		variants = append(variants, branchingVariant{name: name, ctx: ctx})
 	}
 	return variants
+}
+
+func goSecurityVariants() []branchingVariant {
+	fallback := sampleContext
+	declared := sampleContext
+	declared.GoSecurity.DeclaredScanners = true
+	return []branchingVariant{{name: "fallback", ctx: fallback}, {name: "tools-module", ctx: declared}}
 }
 
 // nodeVariants is every manager with every combination of the Yarn facts, so a fact that
@@ -154,14 +162,18 @@ func TestBranchingYAMLTemplateRenderingsAreCommitted(t *testing.T) {
 	}
 }
 
-// Boundary: the variants reach every branch, and only the facts a manager reads split its
-// body: three Dart configs; npm, pnpm and Bun one job each whatever the Yarn facts say; Yarn
-// one job per combination of its three facts.
+// Boundary: the variants reach every branch, and only the facts a manager reads split its body:
+// three Dart configs; two Go security installs; npm, pnpm and Bun one job each whatever the Yarn
+// facts say; Yarn one job per combination of its three facts.
 func TestBranchingYAMLTemplateVariantsReachEveryBranch(t *testing.T) {
 	templatesByName := branchingYAMLTemplates()
 	dart := distinctRenderings(t, "flutter/analysis_options.yaml.tmpl", templatesByName["flutter/analysis_options.yaml.tmpl"])
 	if got := slices.Sorted(maps.Keys(dart)); !slices.Equal(got, []string{"flutter_lints.yaml", "lints.yaml", "none.yaml"}) {
 		t.Errorf("Dart renderings = %v", got)
+	}
+	security := distinctRenderings(t, "go/security-go.yml.tmpl", templatesByName["go/security-go.yml.tmpl"])
+	if got := slices.Sorted(maps.Keys(security)); !slices.Equal(got, []string{"fallback.yml", "tools-module.yml"}) {
+		t.Errorf("Go security renderings = %v", got)
 	}
 	node := distinctRenderings(t, "node/ci-node.yml.tmpl", templatesByName["node/ci-node.yml.tmpl"])
 	want := []string{"bun.yml", "npm.yml", "pnpm.yml", "yarn-berry-build.yml", "yarn-berry-lint-build.yml", "yarn-berry-lint.yml",

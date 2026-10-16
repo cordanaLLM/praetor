@@ -47,7 +47,7 @@ func runModels(args []string) error {
 	case "route":
 		return handleModelsRoute(ctx, *configPath, route)
 	case "outcome":
-		return handleModelsOutcome(ctx, *route.task, outcome)
+		return handleModelsOutcome(ctx, *configPath, *route.task, outcome)
 	default:
 		return fmt.Errorf("unknown action: %s (supported: sync, list, route, outcome)", action)
 	}

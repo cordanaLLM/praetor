@@ -215,6 +215,9 @@ func (s *Server) registerStandardTools() error {
 		s.createToolsIndexTool,
 		s.createToolDescribeTool,
 		s.createOutputReadTool,
+		s.createIssueClaimTool,
+		s.createIssueStatusTool,
+		s.createIssueReleaseTool,
 	}
 
 	limit := len(tools)

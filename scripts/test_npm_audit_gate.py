@@ -111,6 +111,40 @@ class FindingTests(GateCase):
         self.assertEqual(status, 0, lines)
 
 
+class ExpiryWarningTests(GateCase):
+    def test_positive_expiring_within_warning_window_warns(self) -> None:
+        expires = (TODAY + datetime.timedelta(days=10)).isoformat()
+        reports, exceptions = {"tools/markdownlint": report(advisory("braces"))}, self.write_exceptions(exception(expires=expires))
+        status, lines = self.run_gate(reports, exceptions, TODAY)
+        self.assertEqual(status, 0, lines)
+        self.assertTrue(any("warn: tools/markdownlint: braces GHSA-vfj7-8cjw-p6xm exception expires on " in line for line in lines), lines)
+        self.assertTrue(any("(10 days left)" in line for line in lines), lines)
+
+    def test_negative_expiring_outside_warning_window_does_not_warn(self) -> None:
+        expires = (TODAY + datetime.timedelta(days=15)).isoformat()
+        reports, exceptions = {"tools/markdownlint": report(advisory("braces"))}, self.write_exceptions(exception(expires=expires))
+        status, lines = self.run_gate(reports, exceptions, TODAY)
+        self.assertEqual(status, 0, lines)
+        self.assertFalse(any(line.startswith("warn:") for line in lines), lines)
+
+    def test_boundary_expiring_exactly_at_threshold_and_zero_days(self) -> None:
+        expires_14 = (TODAY + datetime.timedelta(days=14)).isoformat()
+        reports, exceptions = {"tools/markdownlint": report(advisory("braces"))}, self.write_exceptions(exception(expires=expires_14))
+        status, lines = self.run_gate(reports, exceptions, TODAY)
+        self.assertEqual(status, 0, lines)
+        self.assertTrue(any("(14 days left)" in line for line in lines), lines)
+
+        expires_1 = (TODAY + datetime.timedelta(days=1)).isoformat()
+        status, lines = self.run_gate(reports, self.write_exceptions(exception(expires=expires_1)), TODAY)
+        self.assertEqual(status, 0, lines)
+        self.assertTrue(any("(1 day left)" in line for line in lines), lines)
+
+        expires_0 = TODAY.isoformat()
+        status, lines = self.run_gate(reports, self.write_exceptions(exception(expires=expires_0)), TODAY)
+        self.assertEqual(status, 0, lines)
+        self.assertTrue(any("(0 days left)" in line for line in lines), lines)
+
+
 class ReadErrorTests(GateCase):
     def test_negative_report_without_json_is_a_read_error(self) -> None:
         status, lines = self.run_gate({"tools/markdownlint": "npm ERR! network"}, self.write_exceptions())

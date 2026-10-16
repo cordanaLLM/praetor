@@ -395,6 +395,7 @@ var priorPersonaDigests = map[string]map[string]string{
 		"13559cb2cf69de10840e16e36bb448c156beb29eec92b3bd8f6dde26f9441c50": "praetorctl command, prose body",
 		"fac622020b262d4de75239f0d806ad4ea8321e4f4283bc825db88719ab3f7aeb": "caveman body on one line",
 		"759798422574a1a7f203b7015a168b1222032cf2cd42457ae853c76336de88f4": "caveman body wrapped, fence set off",
+		"639a63299c34622586674bc34248ec940eaa247c28de1f1f6345ab4e4b2f801c": "model tier pro, caveman body wrapped, fence set off",
 	},
 	gatekeeperFile: {
 		"ee9540a57db9eabaf87a85c89a6f3446a89380d764d247c54aba7ff578fa0342": "standardsctl dry-run command, prose body",
@@ -402,6 +403,7 @@ var priorPersonaDigests = map[string]map[string]string{
 		"aff586a20c8a635f7caa3558631b16500c1f1301f7c066154d99e69512c76926": "praetorctl dry-run command, caveman body",
 		"848fcfc4156a8f6b0a41aa777d2ec6296705a9ef810d5cec50a950280abcff2d": "full gate command, stages on one line",
 		"bb05de9e87afa9c39af2f9fcbac3f51af2e6431ccc54f45b27072ae58b91fb71": "full gate command, body wrapped, fence set off",
+		"8dd42cda638bbf1e36140f7f568ae6dbddbd037df42b366677ed95d1c7c9e415": "model tier flash, full gate command, body wrapped, fence set off",
 	},
 }
 
@@ -442,6 +444,7 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 const defaultAuditorAgentMD = `---
 name: repo-auditor
 description: "Autonomous agent for repository HISS invariant sweeps and praetorctl compliance."
+model: pro
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto
@@ -462,6 +465,7 @@ standards.
 const defaultGatekeeperAgentMD = `---
 name: repo-gatekeeper
 description: "Autonomous subagent for dependency verification, SCA security scans, isolated-worktree race tests, and Ed25519 Exit-0 receipt signing."
+model: flash
 mainAgent: true
 subagent: true
 commandExecutionPolicy: auto

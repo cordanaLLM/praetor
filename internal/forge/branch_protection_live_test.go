@@ -11,10 +11,17 @@ import (
 // enforcement, and the legacy protection object, answered with legacyStatus and legacy.
 func protectionForge(t *testing.T, rules []map[string]any, legacyStatus int, legacy any) (*GitHubDriver, *fakeForgeServer) {
 	t.Helper()
+	return protectionForgeWithStatus(t, http.StatusOK, rules, legacyStatus, legacy)
+}
+
+// protectionForgeWithStatus serves the reads of ReadBranchProtection with rulesStatus and
+// legacyStatus.
+func protectionForgeWithStatus(t *testing.T, rulesStatus int, rules any, legacyStatus int, legacy any) (*GitHubDriver, *fakeForgeServer) {
+	t.Helper()
 	return newFakeForge(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/repos/acme/widgets/rules/branches/"):
-			writeJSON(t, w, http.StatusOK, rules)
+			writeJSON(t, w, rulesStatus, rules)
 		case r.URL.Path == "/repos/acme/widgets/rulesets":
 			writeJSON(t, w, http.StatusOK, []map[string]any{{"id": 7, "name": RepositoryRulesetName, "enforcement": "evaluate"}})
 		case strings.HasSuffix(r.URL.Path, "/protection"):
@@ -95,22 +102,42 @@ func TestGitHubDriver_ReadBranchProtection_Boundary_NoProtectionObject(t *testin
 	if !live.Missing || live.Legacy != nil || len(live.Rules) != 1 {
 		t.Fatalf("a missing branch read as %+v", live)
 	}
+
+	// A 403 on the legacy protection read leaves the legacy object unread and continues with
+	// the active rulesets.
+	gh, _ = protectionForge(t, rules, http.StatusForbidden, map[string]any{"message": "Resource not accessible by integration"})
+	live, err = gh.ReadBranchProtection(t.Context(), "main")
+	if err != nil {
+		t.Fatalf("ReadBranchProtection with forbidden legacy: %v", err)
+	}
+	if !live.LegacyUnread || live.Legacy != nil || len(live.Rules) != 1 {
+		t.Fatalf("a branch with forbidden legacy read as %+v", live)
+	}
 }
 
-// Negative: any other 404 (such as a token that may not see the repository), a refusal, a
-// malformed body, an empty branch and a missing token are errors, never an unprotected branch.
+// Negative: any other 404 (such as a token that may not see the repository), a refusal on the
+// active rulesets read, a malformed body, an empty branch and a missing token are errors,
+// never an unprotected branch.
 func TestGitHubDriver_ReadBranchProtection_Negative_UnreadableProtection(t *testing.T) {
 	for name, tc := range map[string]struct {
-		status int
-		body   any
-		want   string
+		rulesStatus  int
+		legacyStatus int
+		body         any
+		want         string
 	}{
-		"not found":  {http.StatusNotFound, map[string]any{"message": "Not Found"}, "unexpected status 404"},
-		"forbidden":  {http.StatusForbidden, map[string]any{"message": "Resource not accessible by integration"}, "unexpected status 403"},
-		"malformed":  {http.StatusOK, []string{"not", "an", "object"}, "failed parsing branch protection"},
-		"no message": {http.StatusNotFound, []string{"Branch not found"}, "legacy branch protection of main"},
+		"not found":  {legacyStatus: http.StatusNotFound, body: map[string]any{"message": "Not Found"}, want: "unexpected status 404"},
+		"forbidden":  {rulesStatus: http.StatusForbidden, legacyStatus: http.StatusOK, body: map[string]any{"message": "Resource not accessible by integration"}, want: "unexpected status 403"},
+		"malformed":  {legacyStatus: http.StatusOK, body: []string{"not", "an", "object"}, want: "failed parsing branch protection"},
+		"no message": {legacyStatus: http.StatusNotFound, body: []string{"Branch not found"}, want: "legacy branch protection of main"},
 	} {
-		gh, _ := protectionForge(t, nil, tc.status, tc.body)
+		rulesStatus := tc.rulesStatus
+		rulesBody := any([]map[string]any{})
+		if rulesStatus == 0 {
+			rulesStatus = http.StatusOK
+		} else {
+			rulesBody = tc.body
+		}
+		gh, _ := protectionForgeWithStatus(t, rulesStatus, rulesBody, tc.legacyStatus, tc.body)
 		if _, err := gh.ReadBranchProtection(t.Context(), "main"); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: want error containing %q, got %v", name, tc.want, err)
 		}

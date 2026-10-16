@@ -18,7 +18,7 @@ func writePersonaFixture(t *testing.T, manifest string) string {
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(src, "helper.md"), []byte("---\nname: helper\n---\n# Helper\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "helper.md"), []byte("---\nname: helper\ndescription: d\nmodel: flash\n---\n# Helper\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if manifest != "" {

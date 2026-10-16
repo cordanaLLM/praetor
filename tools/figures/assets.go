@@ -116,6 +116,12 @@ var priorDigests = map[string]string{
 	"8cb476e7baceb9e1f9205248c125284d43c4eaf69886c84d00db999738f21fb0": Directory + "/mkdocs_hook.py",
 	"93c89f5ba72ef0111c735aebda14a5bf2bc3012948f092b64ff312f93510910c": Directory + "/third_party/interfig/VENDOR.md",
 	"06a88460af38141f8a1ae087a4d54b97514749cb0ad5459a8acec171e0a42580": Directory + "/README.md",
+	// checks.mjs before readBytes read through one open descriptor (CodeQL file-system race) and
+	// the slot and bracket escapes became complete.
+	"26f8704a73120d008c3dd1428ef5d1e80921f75c8d2db85b3a43db6a99b46e5b": Directory + "/checks.mjs",
+	// checks.mjs whose bracket() escaped class syntax without the backslash in the same pass (CodeQL
+	// incomplete sanitization at that site), shipped by #1252.
+	"2e10d401929e7880d606f4e7721727c546ad3c3d0790826910eda5ef7a9c9bce": Directory + "/checks.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md

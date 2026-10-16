@@ -1,0 +1,3 @@
+type: added
+title: "`standardsctl rules audit` gives every HISS rule and AGENTS.md operational rule an enforcement class, resolves each evidence pointer (test, hook, make target, workflow job, gate stage) and reports prose-only rules"
+issue: '#1134'

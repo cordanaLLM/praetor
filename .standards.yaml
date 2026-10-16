@@ -106,9 +106,9 @@ register:
   # complete prompt, hook-diagnostic, and MCP runtime inventory selected below;
   # deleting one value or selector fails the gate.
   sources:
-    expected: 258
-    not_applicable: 138
-    sha256: "sha256:fd0f4bc9e6bb94148c0f22752021d5a8157a507202652eb45ffc417d35a9e1dc"
+    expected: 273
+    not_applicable: 140
+    sha256: "sha256:e2a08d8aabb36211fd4717c7335e9f6fde5c117a8104acc7d44647876573be45"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -291,6 +291,8 @@ docs_surfaces:
       - "internal/config/exceptions.go"
       - "internal/config/clang_tidy.go"
       - "cmd/standardsctl/tidy_coverage.go"
+      - "cmd/standardsctl/exceptions.go"
+      - "cmd/standardsctl/audit_exceptions.go"
     exclude:
       - "internal/tidycoverage/*_test.go"
     docs:
@@ -345,10 +347,13 @@ docs_surfaces:
   - name: "efficiency ledger"
     paths:
       - "internal/efficiency/*.go"
+      - "internal/efficiency/costledger/*.go"
       - "internal/config/efficiency_policy.go"
       - "cmd/standardsctl/efficiency.go"
+      - "cmd/standardsctl/efficiency_costs.go"
     exclude:
       - "internal/efficiency/*_test.go"
+      - "internal/efficiency/costledger/*_test.go"
     docs:
       - "docs/guides/efficiency-ledger.md"
 

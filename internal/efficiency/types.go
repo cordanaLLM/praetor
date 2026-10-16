@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/router"
 )
 
 const (
@@ -172,6 +174,11 @@ type UnitReport struct {
 	Retries                    *VectorField[int]              `json:"retries"`
 	OperatorMinutes            *VectorField[float64]          `json:"operator_minutes"`
 	EscapedDefects             *VectorField[int]              `json:"escaped_defects"`
+	ResolvedModel              string                         `json:"resolved_model,omitempty"`
+	Identity                   *router.RunIdentity            `json:"identity,omitempty"`
+	IdentityKey                string                         `json:"identity_key,omitempty"`
+	EstimateError              string                         `json:"estimate_error,omitempty"`
+	EstimateErrorAmount        *float64                       `json:"estimate_error_amount,omitempty"`
 }
 
 // ProvenanceMix counts the units behind one summary figure per provenance label, so a figure
@@ -184,6 +191,11 @@ type ProvenanceMix struct {
 }
 
 func (m *ProvenanceMix) add(p Provenance) {
+	m.Add(p)
+}
+
+// Add records one provenance occurrence.
+func (m *ProvenanceMix) Add(p Provenance) {
 	switch p {
 	case ProvenanceMeasured:
 		m.Measured++
@@ -194,6 +206,42 @@ func (m *ProvenanceMix) add(p Provenance) {
 	case ProvenanceInterval:
 		m.Interval++
 	}
+}
+
+// Total returns the total occurrences recorded across all provenance labels.
+func (m ProvenanceMix) Total() int {
+	return m.Measured + m.Modeled + m.Cited + m.Interval
+}
+
+// Distinct returns the number of distinct provenance labels with non-zero counts.
+func (m ProvenanceMix) Distinct() int {
+	var count int
+	for _, n := range []int{m.Measured, m.Modeled, m.Cited, m.Interval} {
+		if n > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+// Single returns the unique provenance label if Distinct() == 1, or empty string.
+func (m ProvenanceMix) Single() Provenance {
+	if m.Distinct() != 1 {
+		return ""
+	}
+	if m.Measured > 0 {
+		return ProvenanceMeasured
+	}
+	if m.Modeled > 0 {
+		return ProvenanceModeled
+	}
+	if m.Cited > 0 {
+		return ProvenanceCited
+	}
+	if m.Interval > 0 {
+		return ProvenanceInterval
+	}
+	return ""
 }
 
 // String lists the labels that occur, for example "measured 2, modeled 1".
@@ -284,6 +332,8 @@ type MilestoneSummary struct {
 	Retries                        VectorSummary         `json:"retries"`
 	OperatorMinutes                VectorSummary         `json:"operator_minutes"`
 	EscapedDefects                 VectorSummary         `json:"escaped_defects"`
+	EstimateError                  string                `json:"estimate_error,omitempty"`
+	EstimateErrorAmount            *float64              `json:"estimate_error_amount,omitempty"`
 }
 
 // SourcesMeasured records which of the optional sources were present and read.

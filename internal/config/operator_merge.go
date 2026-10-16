@@ -273,6 +273,7 @@ func (f *FrameworkSettings) targets() map[string]any {
 func (f *ForgeSettings) targets() map[string]any {
 	return map[string]any{
 		"forge.default_owner": &f.DefaultOwner, "forge.reconcile_repos": &f.ReconcileRepos, "forge.review_bot": &f.ReviewBot,
+		"forge.claim_stale": &f.ClaimStale,
 	}
 }
 

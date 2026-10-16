@@ -20,6 +20,8 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -148,6 +150,10 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 	if err != nil {
 		return nil, err
 	}
+	engineMode, err := isEngineRepo(repoPath)
+	if err != nil {
+		return nil, err
+	}
 	report := &DedupeReport{
 		Duplicates:      make([]DuplicateGroup, 0),
 		Excepted:        make([]DuplicateGroup, 0),
@@ -159,15 +165,20 @@ func ScanRepoWithOptions(ctx context.Context, opts ScanOptions) (*DedupeReport, 
 	fset := token.NewFileSet()
 	funcHashMap := make(map[string][]FileLocation)
 	funcLocMap := make(map[string]int)
+	var adopterStarts []adopterGitStart
 
 	for _, relPath := range scope.goFiles {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		report.TotalFilesScanned++
-		if err := scanGoFile(ctx, fset, filepath.Join(repoPath, relPath), relPath, funcHashMap, funcLocMap, report); err != nil {
+		if err := scanGoFile(ctx, fset, filepath.Join(repoPath, relPath), relPath, funcHashMap, funcLocMap, engineMode, &adopterStarts, report); err != nil {
 			return nil, err
 		}
+	}
+
+	if !engineMode {
+		resolveAdopterGitSprawl(adopterStarts, report)
 	}
 
 	collectDuplicates(funcHashMap, funcLocMap, exceptions, today, report)
@@ -230,7 +241,7 @@ func shouldSkipDir(name string) bool {
 		name == "testdata" || util.IsScratchDir(name) || util.IsToolchainTreeDir(name)
 }
 
-func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, report *DedupeReport) error {
+func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, engineMode bool, adopterStarts *[]adopterGitStart, report *DedupeReport) error {
 	content, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
 		return fmt.Errorf("read dedupe source %s: %w", relPath, err)
@@ -240,7 +251,11 @@ func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, 
 		return fmt.Errorf("parse dedupe source %s: %w", relPath, err)
 	}
 
-	checkUtilitySprawl(fset, node, relPath, report)
+	if engineMode {
+		checkUtilitySprawl(fset, node, relPath, report)
+	} else {
+		collectAdopterGitStarts(fset, node, relPath, adopterStarts)
+	}
 
 	for _, decl := range node.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
@@ -466,6 +481,27 @@ var gitCallForms = map[string]gitCallForm{
 	"util.RunCommandBytes": {nameIndex: 2, pattern: `util.RunCommandBytes(ctx, dir, "git", maxBytes, ...)`},
 }
 
+// matchGitCall checks whether call matches one of gitCallForms and runs git.
+func matchGitCall(call *ast.CallExpr) (gitCallForm, bool) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return gitCallForm{}, false
+	}
+	ident, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return gitCallForm{}, false
+	}
+	form, ok := gitCallForms[ident.Name+"."+sel.Sel.Name]
+	if !ok || len(call.Args) <= form.nameIndex {
+		return gitCallForm{}, false
+	}
+	lit, ok := call.Args[form.nameIndex].(*ast.BasicLit)
+	if !ok || lit.Value != `"git"` {
+		return gitCallForm{}, false
+	}
+	return form, true
+}
+
 // checkAdHocGit reports a git execution that bypasses the audited git helpers and names the
 // helper to use instead.
 //
@@ -474,20 +510,8 @@ var gitCallForms = map[string]gitCallForm{
 // context expression, never a BasicLit -- so exec.CommandContext(ctx, "git", ...) passed the
 // name check and was dropped one line later (BUG-755, and one clause of BUG-818).
 func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeReport) {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
+	form, ok := matchGitCall(call)
 	if !ok {
-		return
-	}
-	ident, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return
-	}
-	form, ok := gitCallForms[ident.Name+"."+sel.Sel.Name]
-	if !ok || len(call.Args) <= form.nameIndex {
-		return
-	}
-	lit, ok := call.Args[form.nameIndex].(*ast.BasicLit)
-	if !ok || lit.Value != `"git"` {
 		return
 	}
 	report.SprawlItems = append(report.SprawlItems, SprawlItem{
@@ -495,6 +519,184 @@ func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeR
 		Line:        line,
 		Pattern:     form.pattern,
 		Replacement: gitSprawlReplacement,
+	})
+}
+
+// isEngineRepo reports whether the repository at repoPath declares the engine module path.
+// When go.mod is missing or declares no module path, it reports false. Any other error
+// reading go.mod is wrapped and returned.
+func isEngineRepo(repoPath string) (bool, error) {
+	modPath, err := gomanifest.ReadModulePath(repoPath)
+	if err == nil {
+		return modPath == gomanifest.EngineModulePath, nil
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, gomanifest.ErrNoModulePath) {
+		return false, nil
+	}
+	return false, fmt.Errorf("read module path: %w", err)
+}
+
+// maxAdopterGitStarts bounds recorded direct git invocations in an adopted repository (HISS-02).
+const maxAdopterGitStarts = 10000
+
+// maxDeclsPerFile bounds declarations inspected per file (HISS-02).
+const maxDeclsPerFile = 4096
+
+// adopterGitStart records one direct git invocation outside audited engine helpers.
+type adopterGitStart struct {
+	file     string
+	line     int
+	pattern  string
+	funcName string
+	funcLine int
+}
+
+// adopterGitFunction tracks a function or package site that invokes git directly.
+type adopterGitFunction struct {
+	file      string
+	funcName  string
+	firstLine int
+	count     int
+}
+
+func collectAdopterGitStarts(fset *token.FileSet, node *ast.File, relPath string, starts *[]adopterGitStart) {
+	if managedAsset(relPath) {
+		return
+	}
+	for i := 0; i < len(node.Decls) && i < maxDeclsPerFile && len(*starts) < maxAdopterGitStarts; i++ {
+		collectDeclGitStarts(fset, node.Decls[i], relPath, starts)
+	}
+}
+
+func collectDeclGitStarts(fset *token.FileSet, decl ast.Decl, relPath string, starts *[]adopterGitStart) {
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		name := enclosingFuncDeclName(d)
+		fLine := fset.Position(d.Pos()).Line
+		ast.Inspect(d, func(n ast.Node) bool {
+			recordCallGitStart(fset, n, relPath, name, fLine, starts)
+			return true
+		})
+	case *ast.GenDecl:
+		name := filepath.Base(relPath)
+		ast.Inspect(d, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				pos := fset.Position(call.Pos())
+				recordCallGitStart(fset, call, relPath, name, pos.Line, starts)
+			}
+			return true
+		})
+	}
+}
+
+func recordCallGitStart(fset *token.FileSet, n ast.Node, relPath, funcName string, funcLine int, starts *[]adopterGitStart) {
+	call, ok := n.(*ast.CallExpr)
+	if !ok {
+		return
+	}
+	form, ok := matchGitCall(call)
+	if !ok || len(*starts) >= maxAdopterGitStarts {
+		return
+	}
+	pos := fset.Position(call.Pos())
+	*starts = append(*starts, adopterGitStart{
+		file:     relPath,
+		line:     pos.Line,
+		pattern:  form.pattern,
+		funcName: funcName,
+		funcLine: funcLine,
+	})
+}
+
+func enclosingFuncDeclName(fn *ast.FuncDecl) string {
+	if fn == nil || fn.Name == nil {
+		return ""
+	}
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		if recvType, ok := hiss.ReceiverTypeName(fn.Recv.List[0].Type); ok && recvType != "" {
+			return recvType + "." + fn.Name.Name
+		}
+	}
+	return fn.Name.Name
+}
+
+func resolveAdopterGitSprawl(starts []adopterGitStart, report *DedupeReport) {
+	if len(starts) == 0 {
+		return
+	}
+	candidates := groupGitCandidates(starts)
+	if len(candidates) <= 1 {
+		return
+	}
+	sortGitCandidates(candidates)
+	helper := candidates[0]
+	reportAdopterSprawl(starts, helper, report)
+}
+
+func groupGitCandidates(starts []adopterGitStart) []adopterGitFunction {
+	type candidateKey struct {
+		file     string
+		funcName string
+	}
+	groups := make(map[candidateKey]*adopterGitFunction)
+	var ordered []*adopterGitFunction
+
+	for i := 0; i < len(starts) && i < maxAdopterGitStarts; i++ {
+		s := starts[i]
+		key := candidateKey{file: s.file, funcName: s.funcName}
+		existing, found := groups[key]
+		if !found {
+			entry := &adopterGitFunction{
+				file:      s.file,
+				funcName:  s.funcName,
+				firstLine: s.funcLine,
+				count:     1,
+			}
+			groups[key] = entry
+			ordered = append(ordered, entry)
+		} else {
+			existing.count++
+		}
+	}
+
+	result := make([]adopterGitFunction, len(ordered))
+	for i := 0; i < len(ordered) && i < maxAdopterGitStarts; i++ {
+		result[i] = *ordered[i]
+	}
+	return result
+}
+
+func sortGitCandidates(candidates []adopterGitFunction) {
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].count != candidates[j].count {
+			return candidates[i].count > candidates[j].count
+		}
+		if candidates[i].file != candidates[j].file {
+			return candidates[i].file < candidates[j].file
+		}
+		return candidates[i].firstLine < candidates[j].firstLine
+	})
+}
+
+func reportAdopterSprawl(starts []adopterGitStart, helper adopterGitFunction, report *DedupeReport) {
+	replacement := fmt.Sprintf("route through the repository's one git helper, %s:%s (HISS-19: one behaviour, one implementation)", helper.file, helper.funcName)
+	for i := 0; i < len(starts) && i < maxAdopterGitStarts; i++ {
+		s := starts[i]
+		if s.file == helper.file && s.funcName == helper.funcName {
+			continue
+		}
+		report.SprawlItems = append(report.SprawlItems, SprawlItem{
+			File:        s.file,
+			Line:        s.line,
+			Pattern:     s.pattern,
+			Replacement: replacement,
+		})
+	}
+	sort.Slice(report.SprawlItems, func(i, j int) bool {
+		if report.SprawlItems[i].File != report.SprawlItems[j].File {
+			return report.SprawlItems[i].File < report.SprawlItems[j].File
+		}
+		return report.SprawlItems[i].Line < report.SprawlItems[j].Line
 	})
 }
 
