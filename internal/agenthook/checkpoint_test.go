@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -293,5 +295,75 @@ func TestEvaluateStopHonoursStopActiveOnASecondPass(t *testing.T) {
 	}
 	if !strings.Contains(first.Reason, "Praetor checkpoint due") || !strings.Contains(second.Reason, "Praetor checkpoint due") {
 		t.Errorf("stop_hook_active must not change what is due: first=%q second=%q", first.Reason, second.Reason)
+	}
+}
+
+// slowRootLookup replaces the workspace root lookup with one that outlasts every deadline, as a
+// loaded Windows runner's git rev-parse did (#1386), for the rest of the test.
+func slowRootLookup(t *testing.T) {
+	t.Helper()
+	previous := resolveWorkspaceRoot
+	t.Cleanup(func() { resolveWorkspaceRoot = previous })
+	resolveWorkspaceRoot = func(ctx context.Context, _ []string, _ string) (string, error) {
+		<-ctx.Done()
+		return "", fmt.Errorf("resolve workspace root: exit status 1\n%w", ctx.Err())
+	}
+}
+
+// A deadline that ends while the post-tool hook resolves the workspace root is the evaluator's
+// timeout too: post-tool degrades to a stated skip, as it does when the evaluator itself times
+// out (#1386). The pre-tool hook judges a command and stays fail-closed: the same lookup blocks it.
+func TestRunPostToolRootLookupPastTheDeadline(t *testing.T) {
+	root := repository(t, true)
+	_, getenv := buildStub(t, "python3")
+	slowRootLookup(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	post := Run(ctx, checkpointInvocation(t, "post-tool", root, getenv, []byte(`{}`)))
+	if post.ExitCode != 0 || standardClockOutput(decodeStdout(t, post)) == "" || !strings.Contains(string(post.Stderr), "unavailable") {
+		t.Errorf("a root lookup past the deadline must degrade post-tool to a skip: %+v", post)
+	}
+	preCtx, preCancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer preCancel()
+	pre := Run(preCtx, checkpointInvocation(t, "pre-tool", root, getenv, []byte(`{"tool_name":"Bash","tool_input":{"command":"git status"}}`)))
+	if pre.ExitCode != 2 || !strings.Contains(string(pre.Stderr), "resolve workspace root") {
+		t.Errorf("pre-tool must stay fail-closed on the same lookup: %+v", pre)
+	}
+}
+
+// A root lookup that fails before the deadline is no timeout: post-tool keeps the block, and the
+// clock note it carries must not turn the deny into a delivery. Before #1386 the encoder rendered
+// every verdict with the note as context, so the deny passed as exit 0 with an empty stderr.
+func TestRunPostToolRootLookupFailureStaysVisible(t *testing.T) {
+	root := repository(t, true)
+	_, getenv := buildStub(t, "python3")
+	previous := resolveWorkspaceRoot
+	t.Cleanup(func() { resolveWorkspaceRoot = previous })
+	resolveWorkspaceRoot = func(context.Context, []string, string) (string, error) {
+		return "", errors.New("resolve workspace root: planted failure")
+	}
+	post := Run(context.Background(), checkpointInvocation(t, "post-tool", root, getenv, []byte(`{}`)))
+	if post.ExitCode != 2 || !strings.Contains(string(post.Stderr), "planted failure") {
+		t.Errorf("a failed root lookup must stay a visible deny at post-tool: %+v", post)
+	}
+}
+
+// Boundary: a skip and an allow keep the clock delivery; only a deny gives it up.
+func TestEncodeClockDeliveryPerOutcome(t *testing.T) {
+	dialect, _ := DialectFor("claude")
+	canonical := Canonical{Event: EventPostTool}
+	for _, tc := range []struct {
+		verdict  Verdict
+		exit     int
+		delivery bool
+	}{
+		{Verdict{Outcome: Allow, AddedContext: "clock: x"}, 0, true},
+		{Verdict{Outcome: Skip, Reason: "r", AddedContext: "clock: x"}, 0, true},
+		{Verdict{Outcome: Deny, Reason: "r", AddedContext: "clock: x"}, 2, false},
+	} {
+		got := dialect.Encode(canonical, tc.verdict)
+		if got.ExitCode != tc.exit || strings.Contains(string(got.Stdout), "clock: x") != tc.delivery {
+			t.Errorf("outcome %v: exit %d stdout %q", tc.verdict.Outcome, got.ExitCode, got.Stdout)
+		}
 	}
 }

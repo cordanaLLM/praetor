@@ -149,7 +149,10 @@ func (d Dialect) Encode(canonical Canonical, verdict Verdict) Response {
 	if d.encode != nil {
 		return d.encode(d, canonical, verdict)
 	}
-	if verdict.AddedContext != "" {
+	// A deny is never a delivery: the post-tool clock note rides on every post-tool verdict, and
+	// encoding a deny that carries it as context dropped the reason and the exit code, so a
+	// failed root lookup passed as a silent allow (#1386).
+	if verdict.AddedContext != "" && verdict.Outcome != Deny {
 		response := d.encodeDelivery(canonical, verdict)
 		if verdict.Outcome == Skip && verdict.Reason != "" {
 			response.Stderr = []byte("praetor hook: " + boundReason(verdict.Reason) + ", skipped\n")

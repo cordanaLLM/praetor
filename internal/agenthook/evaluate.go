@@ -76,7 +76,7 @@ func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocat
 
 // judge resolves the governed root, checks the environment and dispatches the event.
 func judge(ctx context.Context, row Registration, canonical Canonical, in Invocation) Verdict {
-	root, verdict, ok := resolveGovernedRoot(ctx, canonical, in)
+	root, verdict, ok := resolveGovernedRoot(ctx, row, canonical, in)
 	if !ok {
 		return verdict
 	}
@@ -119,13 +119,19 @@ func decodeCanonical(ctx context.Context, dialect Dialect, event Event, in Invoc
 
 // resolveGovernedRoot answers the workspace root and whether evaluation continues. The second
 // return is the verdict to use when it does not: no repository or an ungoverned workspace
-// under the governed-only scope are a neutral skip unless a command target is governed.
-func resolveGovernedRoot(ctx context.Context, canonical Canonical, in Invocation) (string, Verdict, bool) {
-	root, err := ResolveRoot(ctx, canonical.Workspaces, in.WorkDir)
+// under the governed-only scope are a neutral skip unless a command target is governed. A root
+// that cannot be resolved blocks the call, except at post-tool when the deadline ended during
+// the lookup: post-tool only reports whether a checkpoint is due, and a timed-out evaluator
+// already degrades it to a stated skip, so a lookup that runs out of the same budget does too
+// (#1386). Every other event stays fail-closed.
+func resolveGovernedRoot(ctx context.Context, row Registration, canonical Canonical, in Invocation) (string, Verdict, bool) {
+	root, err := resolveWorkspaceRoot(ctx, canonical.Workspaces, in.WorkDir)
 	if err == nil {
 		root, err = resolveCommandRoot(ctx, root, canonical, in)
 	}
 	switch {
+	case err != nil && row.Event == EventPostTool && ctx.Err() != nil:
+		return "", Verdict{Outcome: Skip, Reason: "checkpoint due-status unavailable: the workspace root was not resolved before the deadline: " + err.Error()}, false
 	case err != nil:
 		return "", Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] " + err.Error()}, false
 	case root == "" && !judgedEverywhere(canonical, in):
