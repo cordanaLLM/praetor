@@ -57,11 +57,12 @@ DRAIN_CHUNK = 64 * 1024
 DRAIN_TIMEOUT = 2
 # What a client needs on stdout to go on when no engine gives a verdict. The native clients
 # go on after exit 0 with nothing on stdout. AGY's contract always wants a JSON object: the
-# one the engine prints for a skip (agyEncodePreTool, agyEncodeStop in
+# one the engine prints for a skip (agyEncodePreTool, agyEncodeStop and the prompt row in
 # internal/agenthook/dialect_agy.go). An agy event missing here has no known answer shape.
 PROCEED = {
     ("agy", "pre-tool"): '{"decision":"allow"}\n',
     ("agy", "pre-dispatch"): '{"decision":"allow"}\n',
+    ("agy", "prompt"): "{}\n",
     ("agy", "stop"): "{}\n",
 }
 
