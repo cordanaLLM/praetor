@@ -85,7 +85,7 @@ func (f *GoServiceFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: ".golangci.yml", Description: "Unified Go linter configuration", Source: "go/.golangci.yml.tmpl", Validator: validYAMLMapping},
 		{Path: ".gosec.json", Description: "Go security analyzer configuration", Source: "go/.gosec.json.tmpl", Validator: validJSONObject},
-		{Path: ".github/workflows/ci.yml", Description: "Continuous integration matrix", Source: "go/ci-go.yml.tmpl", Validator: validManifestGuardedWorkflow, Prior: priorGoCIDigests},
+		{Path: ".github/workflows/ci.yml", Description: "Continuous integration matrix", Source: "go/ci-go.yml.tmpl", Validator: validWorkflow, Prior: priorGoCIDigests},
 		{
 			Path:        ".github/workflows/security.yml",
 			Description: "Automated vulnerability scan",
@@ -137,7 +137,7 @@ func (f *GoLibraryFlavor) RequiredTemplates() []TemplateItem {
 		{Path: ".standards.yaml", Description: "Praetor standards declaration", Producer: producerAdopt, Validator: validYAMLMapping},
 		{Path: ".standards.lock", Description: "SemVer lockfile", Producer: producerAdopt, Validator: validYAMLMapping},
 		{Path: ".golangci.yml", Description: "Unified Go linter configuration", Source: "go/.golangci.yml.tmpl", Validator: validYAMLMapping},
-		{Path: ".github/workflows/ci.yml", Description: "CI cross-platform build matrix", Source: "go/ci-go.yml.tmpl", Validator: validManifestGuardedWorkflow, Prior: priorGoCIDigests},
+		{Path: ".github/workflows/ci.yml", Description: "CI cross-platform build matrix", Source: "go/ci-go.yml.tmpl", Validator: validWorkflow, Prior: priorGoCIDigests},
 	}
 }
 
@@ -488,7 +488,7 @@ func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
 			Prior:   priorRustfmtDigests,
 		},
 		{Path: "clippy.toml", Description: "Rust AST and idiomatic static linting configuration", Source: "rust/clippy.toml.tmpl", Validator: assignsTOMLKey},
-		{Path: ".github/workflows/ci.yml", Description: "Continuous integration cargo build, test, and clippy", Source: "rust/ci-rust.yml.tmpl", Validator: validManifestGuardedWorkflow, Prior: priorRustCIDigests},
+		{Path: ".github/workflows/ci.yml", Description: "Continuous integration cargo build, test, and clippy", Source: "rust/ci-rust.yml.tmpl", Validator: validWorkflow, Prior: priorRustCIDigests},
 	}
 }
 
@@ -546,7 +546,7 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 			// or the lockfile implies, and runs the test script; without both that job fails on
 			// every run.
 			Resolve:   nodeCIRequirement,
-			Validator: validManifestGuardedWorkflow,
+			Validator: validWorkflow,
 			Prior:     priorNodeCIDigests,
 		},
 	}
@@ -596,7 +596,7 @@ func (f *JVMServiceFlavor) Detect(repoPath string) bool {
 func (f *JVMServiceFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: "checkstyle.xml", Description: "JVM code style and static analysis rules", Source: "jvm/checkstyle.xml.tmpl", Validator: validXMLDocument},
-		{Path: ".github/workflows/ci.yml", Description: "Java / Kotlin build, test, and verification matrix", Source: "jvm/ci-jvm.yml.tmpl", Validator: validManifestGuardedWorkflow, Prior: priorJVMCIDigests},
+		{Path: ".github/workflows/ci.yml", Description: "Java / Kotlin build, test, and verification matrix", Source: "jvm/ci-jvm.yml.tmpl", Validator: validWorkflow, Prior: priorJVMCIDigests},
 	}
 }
 
@@ -639,7 +639,7 @@ func (f *MobileFlutterFlavor) RequiredTemplates() []TemplateItem {
 			Resolve:   dartAnalysisFacts,
 			Validator: validYAMLMapping,
 		},
-		{Path: ".github/workflows/ci.yml", Description: "Flutter test and build validation matrix", Source: "flutter/ci-flutter.yml.tmpl", Validator: validManifestGuardedWorkflow, Prior: priorFlutterCIDigests},
+		{Path: ".github/workflows/ci.yml", Description: "Flutter test and build validation matrix", Source: "flutter/ci-flutter.yml.tmpl", Validator: validWorkflow, Prior: priorFlutterCIDigests},
 	}
 }
 

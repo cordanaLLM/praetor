@@ -57,8 +57,9 @@ func TestEveryRequiredTemplateStatesItsContent(t *testing.T) {
 	}
 }
 
-// Every CI template validator accepts its guarded rendering and rejects one later step after
-// its manifest condition is removed. This is the negative fixture for the manifest guard.
+// Every flavor's CI template renders with the manifest guard, and the check refuses the rendering
+// once one later step loses its manifest condition. Adopters keep validWorkflow for their own
+// ci.yml; the update path moves a rendered copy to the guarded template through its Prior digest.
 func TestManifestGuardedWorkflowValidator_RejectsAnUnguardedStep(t *testing.T) {
 	for _, flv := range builtinFlavorList() {
 		for _, tmpl := range flv.RequiredTemplates() {
@@ -71,13 +72,13 @@ func TestManifestGuardedWorkflowValidator_RejectsAnUnguardedStep(t *testing.T) {
 			if err != nil {
 				t.Fatalf("render %s %s: %v", flv.Name(), tmpl.Source, err)
 			}
-			if !tmpl.Validator([]byte(body)) {
-				t.Errorf("%s accepts no manifest guard", flv.Name())
+			if !validManifestGuardedWorkflow([]byte(body)) {
+				t.Errorf("%s renders no manifest guard", flv.Name())
 				continue
 			}
 			mutated := strings.Replace(body, "if: "+ghworkflow.HostedGateManifestStepCondition,
 				"if: "+ghworkflow.HostedGateNotDraft, 1)
-			if mutated == body || tmpl.Validator([]byte(mutated)) {
+			if mutated == body || validManifestGuardedWorkflow([]byte(mutated)) {
 				t.Errorf("%s accepts a later step without the manifest condition", flv.Name())
 			}
 		}
@@ -224,4 +225,44 @@ func TestCarriesCode_3D(t *testing.T) {
 		{"boundary: code after a closing block comment", "/* header */ export default [];\n", true},
 		{"boundary: code after a multi-line block comment", "/*\n header\n*/ export default [];\n", true},
 	})
+}
+
+// validManifestGuardedWorkflow reports whether the CI test job probes a root manifest and gates
+// every later step on both the hosted gate and that probe. Setup actions also need the manifest:
+// without it they can fail before the test command gets a chance to skip.
+func validManifestGuardedWorkflow(content []byte) bool {
+	spec, err := ghworkflow.Parse(content)
+	if err != nil {
+		return false
+	}
+	job, found := spec.Jobs["test"]
+	if !found || len(job.Steps) < 4 {
+		return false
+	}
+	manifest := manifestStepIndex(job.Steps)
+	return manifest == 2 && validManifestStep(job.Steps[manifest-1], job.Steps[manifest]) &&
+		allLaterStepsRequireManifest(job.Steps, manifest)
+}
+
+func manifestStepIndex(steps []ghworkflow.Step) int {
+	for i, step := range steps {
+		if step.ID == "manifest" {
+			return i
+		}
+	}
+	return -1
+}
+
+func validManifestStep(checkout, manifest ghworkflow.Step) bool {
+	return strings.HasPrefix(checkout.Uses, "actions/checkout@") &&
+		manifest.If == ghworkflow.HostedGateNotDraft && manifest.Run != ""
+}
+
+func allLaterStepsRequireManifest(steps []ghworkflow.Step, manifest int) bool {
+	for i := manifest + 1; i < len(steps); i++ {
+		if steps[i].If != ghworkflow.HostedGateManifestStepCondition {
+			return false
+		}
+	}
+	return true
 }
