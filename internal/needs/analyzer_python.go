@@ -161,70 +161,115 @@ func parsePythonReqLine(line string, deps map[string]string) {
 	}
 }
 
-// pyprojectState tracks which pyproject.toml construct the scanner is inside.
-type pyprojectState struct {
-	inListTable  bool // inside a multi-line dependency list
-	inPoetryDeps bool // inside a [tool.poetry.*dependencies] table
-	anyKeyIsList bool // inside a table whose every key holds a requirement list
+type pyprojectDocument struct {
+	Project struct {
+		Dependencies         []string            `toml:"dependencies"`
+		OptionalDependencies map[string][]string `toml:"optional-dependencies"`
+	} `toml:"project"`
+	DependencyGroups map[string][]string `toml:"dependency-groups"`
+	Tool             struct {
+		Poetry struct {
+			Dependencies    map[string]any `toml:"dependencies"`
+			DevDependencies map[string]any `toml:"dev-dependencies"`
+			Group           map[string]struct {
+				Dependencies map[string]any `toml:"dependencies"`
+			} `toml:"group"`
+		} `toml:"poetry"`
+	} `toml:"tool"`
 }
 
-// parsePyprojectFile reads PEP 621 `dependencies`/`optional-dependencies` lists in both
-// their single-line and multi-line spellings, plus Poetry dependency tables.
+// parsePyprojectFile reads standard dependency arrays and Poetry dependency tables.
 func parsePyprojectFile(path string, deps map[string]string) error {
-	st := pyprojectState{}
-	return scanManifestLines(path, func(line string) {
-		st.consume(line, deps)
-	})
-}
-
-// consume classifies a single trimmed pyproject.toml line.
-func (s *pyprojectState) consume(line string, deps map[string]string) {
-	if strings.HasPrefix(line, "[") {
-		s.inListTable = false
-		s.inPoetryDeps = strings.HasPrefix(line, "[tool.poetry") && strings.Contains(line, "dependencies")
-		s.anyKeyIsList = strings.Contains(line, "optional-dependencies") ||
-			strings.Contains(line, "dependency-groups")
-		return
+	data, err := readManifest(path)
+	if err != nil {
+		return err
 	}
-	if s.inListTable {
-		if strings.HasPrefix(line, "]") {
-			s.inListTable = false
-			return
+	var document pyprojectDocument
+	if err := util.DecodeTOML(path, data, &document); err != nil {
+		return err
+	}
+	if err := parsePythonLists(document.Project.Dependencies, deps); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if err := parsePythonListGroups(document.Project.OptionalDependencies, deps); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if err := parsePythonListGroups(document.DependencyGroups, deps); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if err := parsePoetryDependencies(document.Tool.Poetry.Dependencies, deps); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	if err := parsePoetryDependencies(document.Tool.Poetry.DevDependencies, deps); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	groups := slices.Sorted(maps.Keys(document.Tool.Poetry.Group))
+	if len(groups) > MaxScannedLines {
+		return fmt.Errorf("%s Poetry groups exceed %d", path, MaxScannedLines)
+	}
+	for _, group := range groups {
+		if err := parsePoetryDependencies(document.Tool.Poetry.Group[group].Dependencies, deps); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
 		}
-		parsePythonReqLine(line, deps)
-		return
 	}
-	if s.inPoetryDeps {
-		parsePoetryDepLine(line, deps)
-		return
-	}
-	s.inListTable = parseDependencyListAssignment(line, deps, s.anyKeyIsList)
+	return nil
 }
 
-// parseDependencyListAssignment handles `<name> = [ ... ]` assignments. It records every
-// entry present on the same line and reports whether the list continues on later lines.
-func parseDependencyListAssignment(line string, deps map[string]string, anyKey bool) bool {
-	open := strings.Index(line, "= [")
-	if open == -1 {
-		return false
+// parsePythonListGroups reads bounded named requirement lists.
+func parsePythonListGroups(groups map[string][]string, deps map[string]string) error {
+	keys := slices.Sorted(maps.Keys(groups))
+	if len(keys) > MaxScannedLines {
+		return fmt.Errorf("dependency groups exceed %d", MaxScannedLines)
 	}
-	if !anyKey && !isDependencyListKey(strings.TrimSpace(line[:open])) {
-		return false
+	for _, key := range keys {
+		if err := parsePythonLists(groups[key], deps); err != nil {
+			return err
+		}
 	}
-	rest := line[open+len("= ["):]
-	if closing := strings.Index(rest, "]"); closing >= 0 {
-		parseInlineRequirementList(rest[:closing], deps)
-		return false
-	}
-	parseInlineRequirementList(rest, deps)
-	return true
+	return nil
 }
 
-// isDependencyListKey reports whether a TOML key holds a PEP 508 requirement list.
-func isDependencyListKey(key string) bool {
-	key = strings.Trim(key, `"'`)
-	return key == "dependencies" || strings.HasSuffix(key, "-dependencies") ||
-		strings.HasSuffix(key, "_requires") || strings.HasSuffix(key, "install_requires")
+// parsePythonLists records bounded PEP 508 requirement strings.
+func parsePythonLists(requirements []string, deps map[string]string) error {
+	if len(requirements) > MaxScannedLines {
+		return fmt.Errorf("dependency list exceeds %d", MaxScannedLines)
+	}
+	for _, requirement := range requirements {
+		parsePythonReqLine(requirement, deps)
+	}
+	return nil
+}
+
+// parsePoetryDependencies records bounded Poetry dependency tables.
+func parsePoetryDependencies(dependencies map[string]any, deps map[string]string) error {
+	keys := slices.Sorted(maps.Keys(dependencies))
+	if len(keys) > MaxScannedLines {
+		return fmt.Errorf("poetry dependencies exceed %d", MaxScannedLines)
+	}
+	for _, name := range keys {
+		if strings.EqualFold(name, "python") {
+			continue
+		}
+		version := poetryVersion(dependencies[name])
+		deps[strings.ToLower(name)] = version
+	}
+	return nil
+}
+
+// poetryVersion reads a Poetry version string or its version field.
+func poetryVersion(value any) string {
+	if version, ok := value.(string); ok {
+		return version
+	}
+	fields, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	version, isString := fields["version"].(string)
+	if !isString {
+		return ""
+	}
+	return version
 }
 
 // parseInlineRequirementList splits a comma-separated requirement list fragment.
@@ -235,18 +280,6 @@ func parseInlineRequirementList(fragment string, deps map[string]string) {
 			parsePythonReqLine(clean, deps)
 		}
 	}
-}
-
-// parsePoetryDepLine records one `name = "^1.2"` or `name = { version = "1" }` entry.
-func parsePoetryDepLine(line string, deps map[string]string) {
-	if line == "" || strings.HasPrefix(line, "#") {
-		return
-	}
-	name, value, ok := splitTOMLAssignment(line)
-	if !ok || strings.EqualFold(name, "python") {
-		return
-	}
-	deps[strings.ToLower(name)] = value
 }
 
 // parseSetupPyFile extracts the install_requires list of a setup.py, which is the only

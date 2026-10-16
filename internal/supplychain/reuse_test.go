@@ -87,13 +87,7 @@ func TestReuseLabelsNegative(t *testing.T) {
 	}
 }
 
-// Positive: the read keeps only the path and license values of each annotations table, from a
-// string or an array spanning lines, and skips comments and the lines of a multi-line array of a
-// stepped-over key. It steps over the values of version, precedence and SPDX-FileCopyrightText,
-// whatever they hold: an array of strings with escape sequences, a multi-line copyright string,
-// and a multi-line literal string whose lines look like a table and a path. A basic string's
-// escape sequences decode, so a path written with the escaped star of the REUSE specification
-// keeps its backslash for the glob dialect, as a literal string does.
+// Positive: the parser reads path and license strings and arrays, including multi-line arrays.
 func TestReuseAnnotationTablesPositive(t *testing.T) {
 	checkAnnotationTablesBasic(t)
 	checkAnnotationTablesStepped(t)
@@ -117,7 +111,6 @@ func checkAnnotationTablesStepped(t *testing.T) {
 	stepped := `version = 1
 [[annotations]]
 path = "a/**"
-SPDX-FileCopyrightText = ["2024 A \"B\" C", "x"]
 SPDX-FileCopyrightText = """
 2024 A
 2025 B \"C\"
@@ -191,17 +184,6 @@ func checkReuseToolLint(t *testing.T, fixture string) {
 	})
 }
 
-// checkReuseToolIgnores runs reuse lint on fixture in a subtest and requires it to fail: REUSE
-// ignores the fixture's table, so README.md stays unlicensed.
-func checkReuseToolIgnores(t *testing.T, fixture string) {
-	t.Helper()
-	t.Run("reuse lint ignores the table", func(t *testing.T) {
-		if output, passed := reuseToolLint(t, fixture); passed {
-			t.Fatalf("reuse lint applied a table this read ignores:\n%s", output)
-		}
-	})
-}
-
 // Positive: REUSE 3.3 allows other keys and tables. The read steps over top-level keys other than
 // annotations, keys inside an [[annotations]] table other than path and SPDX-License-Identifier,
 // multi-line arrays of unknown keys, and unknown tables and arrays of tables. Where the reuse
@@ -245,20 +227,6 @@ SPDX-License-Identifier = "EUPL-1.2"
 		t.Fatalf("ignored table keys recorded on previous annotation: %+v", tables)
 	}
 
-	ignoredWithAnnotationsKey := `version = 1
-[[annotations]]
-path = "a"
-SPDX-License-Identifier = "MIT"
-
-[other]
-annotations = "stepped over"
-annotations.x = "also stepped over"
-`
-	tables = reuseTables(t, ignoredWithAnnotationsKey)
-	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "a" || strings.Join(tables[0].Licenses, " ") != "MIT" {
-		t.Fatalf("annotations key in ignored table not stepped over: %+v", tables)
-	}
-
 	checkReuseToolLint(t, "version = 1\n"+
 		"SPDX-PackageName = \"fixture-pkg\"\n"+
 		"SPDX-PackageSupplier = \"Supplier <supplier@example.com>\"\n"+
@@ -274,82 +242,20 @@ annotations.x = "also stepped over"
 		"[[contributors]]\nname = \"Alice\"\n")
 }
 
-// Negative: a line the read cannot follow is an error naming its line, not a table read past. A
-// path or license value the read cannot take as single-line strings fails, and so does another
-// key's value whose end it cannot find. The read is an allow-list: annotations written as an
-// inline array of tables, on one line or several, a dotted key whose first segment is annotations
-// at top level, [annotations], [annotations.x], [[annotations.x]], and a dotted key whose first
-// segment is path, precedence, SPDX-FileCopyrightText or SPDX-License-Identifier inside an
-// [[annotations]] table fail closed, naming the key or header and the form to write it in.
+// Negative: malformed TOML and values outside the annotation schema fail with file context.
 func TestReuseAnnotationTablesNegative(t *testing.T) {
-	for name, test := range map[string]struct{ text, want string }{
-		"not a key":            {"[[annotations]]\npath\n", "REUSE.toml:2: \"path\" is not a table header"},
-		"open array":           {"[[annotations]]\npath = [\n  \"a/**\",\n", "the path array is not closed"},
-		"number in array":      {"[[annotations]]\npath = [\"a\", 1]\n", "the path array holds something other than single-line strings"},
-		"undefined escape":     {"[[annotations]]\npath = \"a\\qb\"\n", "a literal string ('...') keeps every backslash as written"},
-		"undefined escape arr": {"[[annotations]]\npath = [\"a\\qb\", \"c\"]\n", "the path array holds something other than single-line strings"},
-		"multi-line path":      {"[[annotations]]\npath = \"\"\"\na/**\n\"\"\"\n", "path holds a multi-line string"},
-		"multi-line license":   {"[[annotations]]\nSPDX-License-Identifier = '''\nMIT\n'''\n", "SPDX-License-Identifier holds a multi-line string"},
-		"path as a number":     {"[[annotations]]\npath = 1\n", "path = 1 is not a single-line string"},
-		"open other value":     {"[[annotations]]\nSPDX-FileCopyrightText = \"\"\"\n2026 A\n", "the value of SPDX-FileCopyrightText is not closed"},
-		"open other string":    {"[[annotations]]\nSPDX-FileCopyrightText = \"2026 A\n", "the value of SPDX-FileCopyrightText is not one this read can find the end of"},
-		"inline tables, one line": {
-			"version = 1\nannotations = [ { path = \"vendor/**\", SPDX-License-Identifier = \"MIT\" }, { path = \"**\", SPDX-License-Identifier = \"EUPL-1.2\" } ]\n",
-			"REUSE.toml:2: the top-level key annotations is not one this read follows: write each annotation as a table of its own, opened by a [[annotations]] line",
-		},
-		"inline tables, lines": {
-			"version = 1\nannotations = [\n  { path = \"vendor/**\", SPDX-License-Identifier = \"MIT\" },\n  { path = \"**\", SPDX-License-Identifier = \"EUPL-1.2\" },\n]\n",
-			"REUSE.toml:2: the top-level key annotations is not one this read follows",
-		},
-		"dotted top-level key":   {"version = 1\nannotations.path = \"**\"\n", "the top-level key annotations.path is not one this read follows: write each annotation"},
-		"plain table header":     {"version = 1\n[annotations]\npath = \"**\"\n", "the table header [annotations] is not one this read follows"},
-		"plain sub-table header": {"version = 1\n[annotations.x]\npath = \"**\"\n", "the table header [annotations.x] is not one this read follows"},
-		"array sub-table header": {"[[annotations]]\npath = \"a\"\n[[annotations.more]]\n", "the table header [[annotations.more]] is not one this read follows"},
-		"dotted table key":       {"[[annotations]]\npath.glob = \"a\"\n", "the key path.glob of an [[annotations]] table is not one this read follows"},
-		"dotted table key x":     {"[[annotations]]\npath.x = \"a\"\n", "the key path.x of an [[annotations]] table is not one this read follows"},
-		"dotted table precedence": {
-			"[[annotations]]\npath = \"a\"\nprecedence.x = \"override\"\n",
-			"the key precedence.x of an [[annotations]] table is not one this read follows",
-		},
-		"dotted table copyright": {
-			"[[annotations]]\npath = \"a\"\nSPDX-FileCopyrightText.x = \"2026 Author\"\n",
-			"the key SPDX-FileCopyrightText.x of an [[annotations]] table is not one this read follows",
-		},
-		"dotted table license": {
-			"[[annotations]]\npath = \"a\"\nSPDX-License-Identifier.x = \"MIT\"\n",
-			"the key SPDX-License-Identifier.x of an [[annotations]] table is not one this read follows",
-		},
-		"quoted annotations table header": {
-			"version = 1\n[\"annotations\"]\npath = \"**\"\n",
-			"the table header [\"annotations\"] is not one this read follows",
-		},
-		"literal quoted annotations table header": {
-			"version = 1\n['annotations']\npath = \"**\"\n",
-			"the table header ['annotations'] is not one this read follows",
-		},
-		"quoted annotations dotted top-level key": {
-			"version = 1\n\"annotations\".path = \"**\"\n",
-			"the top-level key annotations.path is not one this read follows",
-		},
-		"empty table header": {
-			"[]\n",
-			"the table header [] is not one this read follows",
-		},
-		"escaped annotations header": {
-			"[[\"annot\\u0061tions\"]]\npath = \"**\"\nSPDX-License-Identifier = \"MIT\"\n",
-			"the table header [[\"annot\\u0061tions\"]] is not one this read follows",
-		},
-		"escaped top-level annotations key": {
-			"version = 1\n\"annot\\u0061tions\" = [{ path = \"**\", SPDX-License-Identifier = \"MIT\" }]\n",
-			"is not a table header, a key or a comment: write key = value, where a key is one or more segments",
-		},
-		"escaped path key": {
-			"[[annotations]]\n\"p\\u0061th\" = \"**\"\nSPDX-License-Identifier = \"MIT\"\n",
-			"is not a table header, a key or a comment: write key = value, where a key is one or more segments",
-		},
+	for name, text := range map[string]string{
+		"open array":              "[[annotations]]\npath = [\"a\"\n",
+		"duplicate key":           "[[annotations]]\npath = \"a\"\npath = \"b\"\n",
+		"malformed table":         "[[annotations]\npath = \"a\"\n",
+		"wrong path type":         "[[annotations]]\npath = 1\n",
+		"wrong array item":        "[[annotations]]\npath = [\"a\", 1]\n",
+		"plain annotations table": "[annotations]\npath = \"a\"\n",
+		"dotted annotations key":  "annotations.path = \"a\"\n",
+		"dotted path field":       "[[annotations]]\npath.glob = \"a\"\n",
 	} {
-		if _, err := ReuseAnnotationTables(test.text); err == nil || !strings.Contains(err.Error(), test.want) {
-			t.Errorf("%s: err = %v, want %q", name, err, test.want)
+		if _, err := ReuseAnnotationTables(text); err == nil || !strings.Contains(err.Error(), ReuseFile) {
+			t.Errorf("%s: err = %v, want refusal naming %s", name, err, ReuseFile)
 		}
 	}
 }
@@ -436,94 +342,5 @@ func assertSkillLicenseLabels(t *testing.T, tables []ReuseAnnotation) {
 		if rel := dir + "/hiss-audit/LICENSE"; labelled(t, tables, rel, "MIT") {
 			t.Errorf("%s is labelled MIT, though no upstream licence ships beside that skill", rel)
 		}
-	}
-}
-
-// reuseFixture is a REUSE.toml with one table opened by header covering "**" with MIT.
-func reuseFixture(header string) string {
-	return "version = 1\n\n" + header + "\npath = [\"**\"]\nSPDX-FileCopyrightText = \"2026 Test\"\nSPDX-License-Identifier = \"MIT\"\n"
-}
-
-// Positive (issue #896 review): a header with tabs or spaces around the key, or a quoted
-// annotations key, opens an annotation table, as REUSE reads it; a quoted key holding a space is
-// another key, so its table is ignored, as REUSE ignores it. Where reuse is installed it confirms
-// each fixture.
-func TestReuseHeaderTokenizerPositive(t *testing.T) {
-	for name, header := range map[string]string{
-		"tab after":      "[[annotations\t]]",
-		"tab before":     "[[\tannotations]]",
-		"quoted, tab":    "[[\"annotations\"\t]]",
-		"spaces inside":  "[[ annotations ]]",
-		"literal quoted": "[['annotations']]",
-		"comment":        "[[annotations]] # x",
-	} {
-		t.Run(name, func(t *testing.T) {
-			fixture := reuseFixture(header)
-			if tables := reuseTables(t, fixture); len(tables) != 1 || strings.Join(tables[0].Licenses, " ") != "MIT" {
-				t.Fatalf("%q is no annotation table: %+v", header, tables)
-			}
-			checkReuseToolLint(t, fixture)
-		})
-	}
-	for name, header := range map[string]string{
-		"space in quotes":       "[[\"annota tions\"]]",
-		"leading space, quoted": "[[\" annotations\"]]",
-		"other name":            "[[other]]",
-	} {
-		t.Run("ignored "+name, func(t *testing.T) {
-			fixture := reuseFixture(header)
-			if tables := reuseTables(t, fixture); len(tables) != 0 {
-				t.Fatalf("%q read as an annotation table: %+v", header, tables)
-			}
-			checkReuseToolIgnores(t, fixture)
-		})
-	}
-}
-
-// Negative (issue #896 review): headers and keys that do not tokenize exactly fail closed, naming
-// the line and the allowed shape; REUSE-reachable annotations spellings are refused.
-func TestReuseHeaderTokenizerNegative(t *testing.T) {
-	for name, text := range map[string]string{
-		"quoted first segment":        "[\"annotations\".x]\n",
-		"quoted first segment, array": "[[\"annotations\".x]]\n",
-		"literal first segment":       "['annotations'.x]\n",
-		"escape in quoted header":     "[[\"annot\\u0061tions\"]]\n",
-		"unclosed":                    "[foo\n",
-		"unclosed array":              "[[annotations]\n",
-		"trailing junk":               "[[annotations]] path = \"x\"\n",
-		"extra bracket":               "[annotations]]\n",
-		"empty":                       "[]\n",
-		"bare key character":          "[a!b]\n",
-		"unclosed quote":              "[\"foo]\n",
-		"escaped top-level key":       "\"annot\\u0061tions\" = 1\n",
-		"dotted precedence":           "[[annotations]]\nprecedence.x = \"override\"\n",
-		"dotted copyright":            "[[annotations]]\nSPDX-FileCopyrightText.x = \"a\"\n",
-		"dotted license":              "[[annotations]]\nSPDX-License-Identifier.x = \"MIT\"\n",
-		"quoted dotted path":          "[[annotations]]\n\"path\".x = \"a\"\n",
-		"space inside bare key":       "[[annotations]]\nSPDX License = \"MIT\"\n",
-		"key without equals":          "[[annotations]]\npath \"x\"\n",
-	} {
-		if _, err := ReuseAnnotationTables(text); err == nil || !strings.Contains(err.Error(), "REUSE.toml:") {
-			t.Errorf("%s: err = %v, want a refusal naming the line", name, err)
-		}
-	}
-	_, err := ReuseAnnotationTables("[[annotations]]\n[foo\n")
-	if err == nil || !strings.Contains(err.Error(), "bare key of A-Z a-z 0-9 _ -") {
-		t.Errorf("error does not name the allowed shape: %v", err)
-	}
-}
-
-// Boundary (issue #896 review): keys and tables of an ignored table, stepped over, never reach the
-// annotation table before it; a quoted path key is the path key.
-func TestReuseHeaderTokenizerBoundary(t *testing.T) {
-	tables := reuseTables(t, "[[annotations]]\npath = \"a\"\nSPDX-License-Identifier = \"MIT\"\n"+
-		"[other]\npath = \"**\"\nSPDX-License-Identifier = \"GPL-3.0-or-later\"\nannotations = 1\nannotations.x = 2\n"+
-		"\t[ \"quoted\" . sub ]\n\"path\" = \"z\"\n")
-	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "a" || strings.Join(tables[0].Licenses, " ") != "MIT" {
-		t.Fatalf("ignored tables changed the annotation: %+v", tables)
-	}
-	tables = reuseTables(t, "[[annotations]]\n\"path\" = \"q\"\n'SPDX-License-Identifier' = \"MIT\"\n")
-	if len(tables) != 1 || strings.Join(tables[0].Paths, " ") != "q" || strings.Join(tables[0].Licenses, " ") != "MIT" {
-		t.Fatalf("quoted keys not read: %+v", tables)
 	}
 }

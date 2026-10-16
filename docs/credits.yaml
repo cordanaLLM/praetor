@@ -141,6 +141,19 @@ entries:
     use: "Statically linked into every binary"
     paths:
       - "go.mod"
+  - name: "go-toml v2 (Go TOML parser; pronounced go tee-oh-em-el)"
+    url: "https://github.com/pelletier/go-toml"
+    detail: "(`github.com/pelletier/go-toml/v2` v2.4.3)"
+    section: "shipped"
+    kind: "dependency"
+    relation: "shipped"
+    license: "MIT"
+    notice: "© 2021–2023 Thomas Pelletier"
+    use: "Parses Cargo.toml, pyproject.toml, REUSE.toml and other TOML configuration"
+    paths:
+      - "go.mod"
+    packages:
+      - "go:github.com/pelletier/go-toml/v2"
   - name: "go-yaml v3"
     url: "https://github.com/go-yaml/yaml"
     detail: "(`gopkg.in/yaml.v3` v3.0.1)"

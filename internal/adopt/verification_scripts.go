@@ -133,17 +133,20 @@ func addNodeScript(p *VerificationPlan, name string, exists bool) {
 	}
 }
 
-func addPythonVerification(p *VerificationPlan, inputs verificationInputs) {
-	config, pytest := pytestConfiguration(inputs)
+func addPythonVerification(p *VerificationPlan, inputs verificationInputs) error {
+	config, pytest, err := pytestConfiguration(inputs)
+	if err != nil {
+		return err
+	}
 	if !inputs.has("pyproject.toml") && !pytest && len(inputs.pythonDirectories) == 0 {
-		return
+		return nil
 	}
 	p.Runtimes = append(p.Runtimes, "python")
 	if pytest {
 		command := []string{"python3", "-m", "pytest"}
 		p.Test = append(p.Test, command)
 		p.SelectedBy = append(p.SelectedBy, verificationCommand(command)+" from the pytest configuration in "+config)
-		return
+		return nil
 	}
 	if len(inputs.pythonDirectories) > 0 && pinnedModernPython(inputs.files[".python-version"]) {
 		// Python 3.14's unittest CLI fails with exit 5 when discovery runs no tests.
@@ -157,9 +160,10 @@ func addPythonVerification(p *VerificationPlan, inputs verificationInputs) {
 		for _, dir := range dirs {
 			p.Test = append(p.Test, []string{"python3", "-m", "unittest", "discover", "-s", dir})
 		}
-		return
+		return nil
 	}
 	p.unavailable("Select the Python test runner explicitly: a pytest configuration (pytest.toml, pytest.ini, a [tool.pytest] or [tool.pytest.ini_options] table in pyproject.toml, a [pytest] section in tox.ini or a [tool:pytest] section in setup.cfg), or tests/ with a Python 3.14+ pin; a pyproject.toml without a pytest table does not identify a runnable test gate.")
+	return nil
 }
 
 func pinnedModernPython(data []byte) bool {

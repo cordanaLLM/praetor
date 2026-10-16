@@ -72,7 +72,10 @@ func rustEditionOf(ctx context.Context, repoPath string) (edition, problem strin
 	if err != nil {
 		return "", rootManifestProblem(err)
 	}
-	root := parseCargoManifest(string(data))
+	root, parseErr := parseCargoManifest(filepath.Join(repoPath, "Cargo.toml"), data)
+	if parseErr != nil {
+		return "", fmt.Sprintf("the root Cargo.toml cannot be parsed (%v)", parseErr)
+	}
 	editions, problem := workspaceEditions(ctx, repoPath, root)
 	switch {
 	case problem != "":
@@ -158,7 +161,10 @@ func memberManifest(repoPath, dir string) (cargoCrate, string) {
 	if err != nil {
 		return cargoCrate{}, fmt.Sprintf("the workspace member %s cannot be read (%v)", rel, err)
 	}
-	manifest := parseCargoManifest(string(data))
+	manifest, parseErr := parseCargoManifest(filepath.Join(repoPath, filepath.FromSlash(rel)), data)
+	if parseErr != nil {
+		return cargoCrate{}, fmt.Sprintf("the workspace member %s cannot be parsed (%v)", rel, parseErr)
+	}
 	if !manifest.hasPackage {
 		return cargoCrate{}, fmt.Sprintf("the workspace member %s declares no [package]", rel)
 	}

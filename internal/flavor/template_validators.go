@@ -5,7 +5,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
-	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -64,20 +63,10 @@ func validDockerfile(content []byte) bool {
 	return false
 }
 
-// tomlKeyAssignment matches a line that assigns a bare, quoted or dotted TOML key.
-var tomlKeyAssignment = regexp.MustCompile(`^\s*(?:[A-Za-z0-9_-]+|"[^"]*"|'[^']*')(?:\s*\.\s*(?:[A-Za-z0-9_-]+|"[^"]*"|'[^']*'))*\s*=`)
-
-// assignsTOMLKey reports whether content assigns at least one TOML key. It is a shape check,
-// not a parser: the repository carries no TOML library, and what the audit must reject --
-// a comment-only placeholder, an empty file, prose -- assigns nothing.
+// assignsTOMLKey reports whether content is valid TOML with at least one assigned value.
 func assignsTOMLKey(content []byte) bool {
-	lines := strings.Split(string(content), "\n")
-	for i := 0; i < len(lines) && i < maxValidatedLines; i++ {
-		if tomlKeyAssignment.MatchString(lines[i]) {
-			return true
-		}
-	}
-	return false
+	var document map[string]any
+	return util.DecodeTOML("template.toml", content, &document) == nil && tomlHasValue(document)
 }
 
 // validGitleaksConfig reports whether a gitleaks configuration loads any rule.
@@ -87,44 +76,38 @@ func assignsTOMLKey(content []byte) bool {
 // path naming another config) nor declares [[rules]] of its own scans with zero rules and
 // exits 0 on every secret (#410). That file is worse than no file, and the audit says so.
 func validGitleaksConfig(content []byte) bool {
-	table := ""
-	lines := strings.Split(string(content), "\n")
-	for i := 0; i < len(lines) && i < maxValidatedLines; i++ {
-		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, "[") {
-			table = util.TOMLTableName(line)
-			if table == "[rules]" {
-				return true
+	var document struct {
+		Extend struct {
+			UseDefault bool   `toml:"useDefault"`
+			Path       string `toml:"path"`
+		} `toml:"extend"`
+		Rules []map[string]any `toml:"rules"`
+	}
+	return util.DecodeTOML(".gitleaks.toml", content, &document) == nil &&
+		(document.Extend.UseDefault || document.Extend.Path != "" || len(document.Rules) > 0)
+}
+
+// tomlHasValue checks decoded TOML tables without recursion.
+func tomlHasValue(document map[string]any) bool {
+	queue := []map[string]any{document}
+	for index := 0; index < len(queue) && index < maxValidatedTokens; index++ {
+		keys := make([]string, 0, len(queue[index]))
+		for key := range queue[index] {
+			if len(keys) >= maxValidatedTokens {
+				return false
 			}
-			continue
+			keys = append(keys, key)
 		}
-		if gitleaksExtendsRules(table, line) {
+		for keyIndex := 0; keyIndex < len(keys) && keyIndex < maxValidatedTokens; keyIndex++ {
+			value := queue[index][keys[keyIndex]]
+			if table, ok := value.(map[string]any); ok {
+				queue = append(queue, table)
+				continue
+			}
 			return true
 		}
 	}
 	return false
-}
-
-// gitleaksExtendsRules reports whether one key line, read inside table, makes gitleaks load
-// rules from elsewhere: useDefault = true or a path under [extend], or the dotted
-// extend.useDefault = true at the top level.
-func gitleaksExtendsRules(table, line string) bool {
-	key, value, ok := util.TOMLKeyValue(line)
-	if !ok {
-		return false
-	}
-	words := strings.Fields(value)
-	if len(words) == 0 {
-		return false
-	}
-	switch {
-	case table == "extend" && key == "useDefault", table == "" && key == "extend.useDefault":
-		return words[0] == "true"
-	case table == "extend" && key == "path":
-		return strings.Trim(words[0], `"'`) != ""
-	default:
-		return false
-	}
 }
 
 // validXMLDocument reports whether content is well-formed XML carrying at least one element.

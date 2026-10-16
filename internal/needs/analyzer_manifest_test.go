@@ -3,6 +3,7 @@ package needs
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,8 @@ func TestPythonAnalyzerManifestSyntaxForms(t *testing.T) {
 	pyproject := "[project]\nname = \"svc\"\n" +
 		"dependencies = [\"fastapi>=0.111\", \"pydantic>=2\"]\n\n" +
 		"[project.optional-dependencies]\ndev = [\"httpx~=0.27\"]\n\n" +
-		"[tool.poetry.dependencies]\npython = \"^3.12\"\nredis = \"^5.0\"\n"
+		"[tool.poetry.dependencies]\npython = \"^3.12\"\nredis = \"^5.0\"\n\n" +
+		"[tool.poetry.dev-dependencies]\nclick = \"^8.0\"\n"
 	writeFixture(t, tempDir, "pyproject.toml", pyproject)
 
 	repoNeeds, err := acmeRegistry(t).AnalyzePolyglot(context.Background(), tempDir)
@@ -26,7 +28,7 @@ func TestPythonAnalyzerManifestSyntaxForms(t *testing.T) {
 	for _, dep := range repoNeeds.Dependencies {
 		found[dep.Package] = dep.Status
 	}
-	for _, want := range []string{"fastapi", "pydantic", "httpx", "redis"} {
+	for _, want := range []string{"fastapi", "pydantic", "httpx", "redis", "click"} {
 		if _, ok := found[want]; !ok {
 			t.Errorf("expected %q to be discovered, got %v", want, found)
 		}
@@ -117,6 +119,22 @@ func TestRustAnalyzerTableForms(t *testing.T) {
 func TestRustAnalyzerNegativeMissingManifest(t *testing.T) {
 	if _, err := parseCargoToml("/nonexistent/Cargo.toml"); err == nil {
 		t.Fatal("expected an error for a missing Cargo.toml")
+	}
+}
+
+func TestRustAnalyzerRejectsMalformedTOMLWithFileContext(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "Cargo.toml", "[package]\nname = \"svc\"\nname = \"duplicate\"\n")
+	if _, err := NewRustAnalyzer().Analyze(context.Background(), root, acmeTargets()["rust"]); err == nil || !strings.Contains(err.Error(), "Cargo.toml") {
+		t.Fatalf("malformed Cargo.toml error = %v, want file context", err)
+	}
+}
+
+func TestPythonAnalyzerRejectsMalformedTOMLWithFileContext(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "pyproject.toml", "[project]\ndependencies = [\"fastapi\"\n")
+	if _, err := NewPythonAnalyzer().Analyze(context.Background(), root, acmeTargets()["python"]); err == nil || !strings.Contains(err.Error(), "pyproject.toml") {
+		t.Fatalf("malformed pyproject.toml error = %v, want file context", err)
 	}
 }
 

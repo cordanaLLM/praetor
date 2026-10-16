@@ -32,7 +32,10 @@ func CargoWarningsLints(ctx context.Context, repoPath string) forge.CargoLints {
 	case err != nil:
 		return forge.CargoLints{Detail: fmt.Sprintf("the root Cargo.toml cannot be read for its [lints] (%v)", err)}
 	}
-	root := parseCargoManifest(string(data))
+	root, err := parseCargoManifest("Cargo.toml", data)
+	if err != nil {
+		return forge.CargoLints{Detail: fmt.Sprintf("the root Cargo.toml cannot be parsed for its [lints] (%v)", err)}
+	}
 	crates, problem := workspaceCrates(ctx, repoPath, root)
 	switch {
 	case problem != "":

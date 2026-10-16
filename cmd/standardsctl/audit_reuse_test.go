@@ -165,16 +165,16 @@ func TestAuditReuseRecords_3D(t *testing.T) {
 	if output, err := auditReuseOrder(t, nil); err != nil || !strings.Contains(output, "[SKIP] REUSE.toml annotation order not checked") {
 		t.Fatalf("no REUSE.toml: %v\n%s", err, output)
 	}
-	unreadable := "version = 1\n[[annotations]]\npath = \"\"\"\n**\n\"\"\"\n"
-	if _, err := auditReuseOrder(t, &unreadable); err == nil || !strings.Contains(err.Error(), "not checked") {
+	unreadable := "version = 1\n[[annotations]]\npath = [\"**\"\n"
+	if _, err := auditReuseOrder(t, &unreadable); err == nil || !strings.Contains(err.Error(), "parse REUSE.toml") {
 		t.Fatalf("a REUSE.toml the read cannot follow passed: %v", err)
 	}
-	// The reversed order written as an inline array of tables, which REUSE reads, fails closed
-	// instead of passing over no annotation.
+	// The reversed order written as an inline array of tables is decoded and fails for the same
+	// ordering reason as [[annotations]].
 	inline := "version = 1\nannotations = [\n  { path = \"tools/figures/third_party/interfig/upstream/**\", SPDX-License-Identifier = \"MIT\" },\n" +
 		"  { path = \"**\", SPDX-License-Identifier = \"EUPL-1.2\" },\n]\n"
-	if output, err := auditReuseOrder(t, &inline); err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml annotation order not checked") ||
-		!strings.Contains(err.Error(), "top-level key annotations") || strings.Contains(output, "[PASS]") {
+	if output, err := auditReuseOrder(t, &inline); err == nil || !strings.Contains(err.Error(), "[FAIL] REUSE.toml annotation order: 1 path(s)") ||
+		!strings.Contains(output, "never takes effect") || strings.Contains(output, "[PASS]") {
 		t.Fatalf("annotations as an inline array of tables: %v\n%s", err, output)
 	}
 }
@@ -220,7 +220,7 @@ func TestAuditReuseRecords_Bound(t *testing.T) {
 // auditLicensing runs both licensing gates and prints both verdicts. Positive: a root whose
 // LICENSE holds the one LICENSES text passes, and an upstream COPYING the manifest keeps is named;
 // so does one whose REUSE.toml spells the whole-tree default as a union of globs and writes its
-// copyright as an array of escaped strings and as a multi-line string, which neither gate reads.
+// copyright as an array containing escaped and multi-line strings, which neither gate reads.
 // Negative: the same COPYING without the exception fails the root licence gate while the
 // annotation order gate still prints its verdict. Boundary: a root with neither LICENSES/ nor
 // REUSE.toml skips both, saying why.
@@ -241,7 +241,7 @@ func TestAuditLicensing_3D(t *testing.T) {
 		t.Fatalf("kept COPYING: %v\n%s", err, output)
 	}
 	writeFixtureFile(t, root, supplychain.ReuseFile, "version = 1\n\n[[annotations]]\npath = [\"*\", \".*\", \"*/**\", \".*/**\"]\n"+
-		"SPDX-FileCopyrightText = [\"2024 A \\\"B\\\" C\", \"x\"]\nSPDX-FileCopyrightText = \"\"\"\n2024 A\n2025 B\n\"\"\"\n"+
+		"SPDX-FileCopyrightText = [\"2024 A \\\"B\\\" C\", \"\"\"\n2024 A\n2025 B\n\"\"\"]\n"+
 		"SPDX-License-Identifier = \"MIT\"\n")
 	output, err = run(kept, root)
 	if err != nil || !strings.Contains(output, "[PASS] REUSE.toml annotation order") ||
