@@ -20,6 +20,15 @@ const (
 	gosecToolPackage  = gosecModule + "/cmd/gosec"
 )
 
+// GosecInstallGuide is the one install advice for a missing gosec (flavor tool lists, the gate's
+// security stage). A go install of gosec at any version, @latest included, resolves the
+// golang.org/x/tools its own go.mod names, below templates.GoSecurityXToolsFloor; only a module
+// that requires the floor raises it, so the advice names the tools module.
+const GosecInstallGuide = "go install -modfile=" + gomanifest.ToolModuleFile + " " + gosecToolPackage +
+	" (the tools module requires " + gosecModule + " " + templates.GoSecurityGosecVersion +
+	" and golang.org/x/tools " + templates.GoSecurityXToolsVersion +
+	" or later; a bare go install of gosec builds an x/tools too old for the go1.27.2 export data)"
+
 // securityWorkflowFacts selects the install form for the Security Scan workflow. A tools
 // module that declares both scanners remains the adopter's version source; every other repository
 // gets the template's pinned throwaway module, including the common case with no tools module.
