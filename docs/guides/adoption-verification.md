@@ -1068,6 +1068,12 @@ and installs both commands from that module. Module selection raises the scanner
 template context in `templates/embed.go`; `TestGoSecurityVersionsMatchToolsModule` fails with an
 update instruction when Renovate moves the tools module without them.
 
+When the security stage finds no `gosec` on the workstation, it prints the same pinned form as
+its install advice (`flavor.GosecInstallGuide`, `internal/flavor/security_go.go`): install
+through the tools module, whose `golang.org/x/tools` is at least
+`templates.GoSecurityXToolsFloor`. A bare `go install` of `gosec@latest` selects an older
+x/tools, whose analyzer cannot read Go 1.27.2 export data and fails on every package.
+
 Praetor does not create or alter an adopter's tools module. A missing or partial tools module is
 the normal fallback case, so flavor apply still writes the workflow and flavor audit accepts it
 as the managed template.

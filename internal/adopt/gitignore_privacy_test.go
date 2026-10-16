@@ -18,6 +18,8 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 		// The block as it rendered before the standards-mcp output cache joined it: the merge
 		// replaces it, so an already adopted repository gains the rule on the next run.
 		"pre-cache-block": "bin/\n\n" + gitIgnoreManagedBegin + "\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n" + gitIgnoreManagedEnd + "\n",
+		// The v3 block before client-local settings joined it: the merge replaces it with v4 (#1389).
+		"v3-block": "bin/\n\n" + gitIgnoreManagedBegin + "\n.workingdir/\n.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n/.standards/cache/\n" + gitIgnoreManagedEnd + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			// One fixture runs whole adoptions, the others the git-ignore step alone
@@ -72,6 +74,12 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 			}
 			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".standards/cache/mcp-out/"+strings.Repeat("a", 64)+".txt"); err != nil {
 				t.Fatalf("standards-mcp output cache remains publishable: %v", err)
+			}
+			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".claude/settings.local.json"); err != nil {
+				t.Fatalf("client-local settings remain publishable: %v", err)
+			}
+			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".claude/settings.json"); err == nil {
+				t.Fatal("shared client settings became ignored")
 			}
 			if strings.Count(got, gitIgnoreManagedBegin) != 1 {
 				t.Fatalf("the managed block must appear once: %q", got)

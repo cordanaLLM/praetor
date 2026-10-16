@@ -63,7 +63,7 @@ func TestRunPostToolReportsADueCheckpointAsANote(t *testing.T) {
 	_, getenv := buildStub(t, "python3")
 	stubStdout(t, dueReport("commit", "push"))
 	response := Run(context.Background(), checkpointInvocation(t, "post-tool", root, getenv, []byte(`{}`)))
-	if response.ExitCode != 0 || len(response.Stdout) != 0 {
+	if response.ExitCode != 0 || standardClockOutput(decodeStdout(t, response)) == "" {
 		t.Fatalf("due checkpoint must not block post-tool: %+v", response)
 	}
 	if !strings.Contains(string(response.Stderr), "Praetor checkpoint due") {
@@ -76,7 +76,7 @@ func TestRunPostToolAllowsWhenNothingIsDue(t *testing.T) {
 	_, getenv := buildStub(t, "python3")
 	stubStdout(t, cleanReport)
 	response := Run(context.Background(), checkpointInvocation(t, "post-tool", root, getenv, []byte(`{}`)))
-	if response.ExitCode != 0 || len(response.Stdout) != 0 || len(response.Stderr) != 0 {
+	if response.ExitCode != 0 || standardClockOutput(decodeStdout(t, response)) == "" || len(response.Stderr) != 0 {
 		t.Errorf("clean post-tool must allow silently: %+v", response)
 	}
 }
@@ -85,7 +85,7 @@ func TestRunPostToolNoInterpreterIsAStatedSkip(t *testing.T) {
 	root := repository(t, true)
 	empty := pathOnly(t.TempDir())
 	response := Run(context.Background(), checkpointInvocation(t, "post-tool", root, empty, []byte(`{}`)))
-	if response.ExitCode != 0 || !strings.Contains(string(response.Stderr), "no Python interpreter") {
+	if response.ExitCode != 0 || standardClockOutput(decodeStdout(t, response)) == "" || !strings.Contains(string(response.Stderr), "no Python interpreter") {
 		t.Errorf("missing interpreter must be a stated skip, not a block: %+v", response)
 	}
 }
@@ -99,7 +99,7 @@ func TestRunPostToolMissingOrDuplicateMarkerIsASkip(t *testing.T) {
 	} {
 		stubStdout(t, stdout)
 		response := Run(context.Background(), checkpointInvocation(t, "post-tool", root, getenv, []byte(`{}`)))
-		if response.ExitCode != 0 || !strings.Contains(string(response.Stderr), "unavailable") {
+		if response.ExitCode != 0 || standardClockOutput(decodeStdout(t, response)) == "" || !strings.Contains(string(response.Stderr), "unavailable") {
 			t.Errorf("%s marker: post-tool must degrade to a skip, not a block: %+v", name, response)
 		}
 	}
@@ -219,7 +219,7 @@ func TestRunPostToolEvaluatorTimeout(t *testing.T) {
 	defer cancel()
 	start := time.Now()
 	response := Run(ctx, checkpointInvocation(t, "post-tool", root, getenv, []byte(`{}`)))
-	if response.ExitCode != 0 || !strings.Contains(string(response.Stderr), "unavailable") {
+	if response.ExitCode != 0 || standardClockOutput(decodeStdout(t, response)) == "" || !strings.Contains(string(response.Stderr), "unavailable") {
 		t.Errorf("a timed-out evaluator must degrade post-tool to a skip: %+v", response)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {

@@ -549,7 +549,7 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := requireScanner(cfg, govuln.DefaultScanner, "go install golang.org/x/vuln/cmd/govulncheck@latest"); err != nil {
 		return "", err
 	}
-	if err := requireScanner(cfg, "gosec", "go install github.com/securego/gosec/v2/cmd/gosec@latest"); err != nil {
+	if err := requireScanner(cfg, "gosec", flavor.GosecInstallGuide); err != nil {
 		return "", err
 	}
 	confPath := filepath.Join(cfg.repoDir, GosecConfigFile)

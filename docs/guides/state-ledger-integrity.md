@@ -83,6 +83,12 @@ so a later `praetorctl adopt` recognizes it as its own. The same block also
 ignores the legacy scratch root `.workingdir2/` (`state.LegacyWorkingDirName`)
 unless the repository retired it
 ([Adoption, audit, and CI](documentation-governance.md#adoption-audit-and-ci)).
+Since block v4 it also ignores `/.claude/settings.local.json`, the per-user settings file
+Claude Code writes on first use, and the gate receipt `/.standards-receipt.json`. Without the
+first rule, `praetorctl state status` counted every checkout a client had run in as dirty;
+`internal/state/client_local_settings_test.go` reports a checkout holding only that file as
+clean and the same checkout without the rule as dirty. A repository still carrying block v3 is
+recognised and re-rendered, not refused.
 A `.gitignore` that cannot be merged, such as one with an unterminated managed
 block, fails the command. The behaviour is covered by
 [`internal/adopt/private_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/private_ignore_test.go),

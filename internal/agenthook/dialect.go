@@ -45,6 +45,7 @@ var dialectTable = []Dialect{
 	{Client: "claude", payloadClient: "claude", commandTools: []string{"Bash"}, denyExit: 2},
 	{Client: "codex", payloadClient: "codex", commandTools: []string{"Bash"}, denyExit: 2},
 	{Client: "gemini", payloadClient: "gemini", commandTools: []string{"run_shell_command"}, denyExit: 2},
+	{Client: "opencode", payloadClient: "opencode", denyExit: 2, encode: openCodeEncode},
 	{Client: "lefthook", payloadClient: "claude", everyToolIsCommand: true, denyExit: 1, allowMarker: CommandPolicyMarker},
 	// agy (Antigravity): commandTools carries the one docs-confirmed command tool
 	// (dialect_agy.go); decode/encode are agy's own functions, not the generic pair
@@ -128,6 +129,13 @@ func (d Dialect) Encode(canonical Canonical, verdict Verdict) Response {
 	if d.encode != nil {
 		return d.encode(d, canonical, verdict)
 	}
+	if verdict.AddedContext != "" {
+		response := d.encodeDelivery(canonical, verdict)
+		if verdict.Outcome == Skip && verdict.Reason != "" {
+			response.Stderr = []byte("praetor hook: " + boundReason(verdict.Reason) + ", skipped\n")
+		}
+		return response
+	}
 	switch verdict.Outcome {
 	case Allow:
 		return d.encodeAllow(canonical, verdict)
@@ -160,8 +168,18 @@ func (d Dialect) encodeAllow(canonical Canonical, verdict Verdict) Response {
 // tool input, and the notice as its reason; at SubagentStart additionalContext, which lands in
 // the subagent's context before its first prompt. Any other client fails closed.
 func (d Dialect) encodeDelivery(canonical Canonical, verdict Verdict) Response {
-	if d.Client != "claude" {
+	if d.Client == "opencode" {
+		data, err := json.Marshal(map[string]string{"additionalContext": verdict.AddedContext})
+		if err != nil {
+			return Response{Stderr: []byte("praetor hook: encode response: " + err.Error() + "\n"), ExitCode: d.denyExit}
+		}
+		return Response{Stdout: append(data, '\n')}
+	}
+	if d.Client != "claude" && d.Client != "codex" && d.Client != "gemini" {
 		return Response{Stderr: []byte("praetor hook: " + d.Client + " has no context delivery shape\n"), ExitCode: d.denyExit}
+	}
+	if verdict.UpdatedInput != nil && d.Client != "claude" {
+		return Response{Stderr: []byte("praetor hook: " + d.Client + " has no input rewrite shape\n"), ExitCode: d.denyExit}
 	}
 	specific := map[string]any{"hookEventName": nativeEventName(d.Client, canonical.Event)}
 	if verdict.UpdatedInput != nil {
@@ -176,6 +194,20 @@ func (d Dialect) encodeDelivery(canonical Canonical, verdict Verdict) Response {
 		return Response{Stderr: []byte("praetor hook: encode response: " + err.Error() + "\n"), ExitCode: d.denyExit}
 	}
 	return Response{Stdout: append(data, '\n')}
+}
+
+func openCodeEncode(_ Dialect, canonical Canonical, verdict Verdict) Response {
+	if verdict.AddedContext != "" {
+		data, err := json.Marshal(map[string]string{"additionalContext": verdict.AddedContext})
+		if err != nil {
+			return Response{Stderr: []byte("praetor hook: encode response: " + err.Error() + "\n"), ExitCode: usageExit}
+		}
+		return Response{Stdout: append(data, '\n')}
+	}
+	if verdict.Outcome == Deny {
+		return Response{Stderr: []byte(boundReason(verdict.Reason) + "\n"), ExitCode: usageExit}
+	}
+	return Response{Stderr: []byte("praetor hook: unsupported OpenCode event " + string(canonical.Event) + "\n"), ExitCode: usageExit}
 }
 
 // nativeEventName returns the native event of client's first registration row for event.

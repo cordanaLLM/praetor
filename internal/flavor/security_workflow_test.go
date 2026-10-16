@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
+	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
 )
@@ -322,6 +324,78 @@ func TestSecurityWorkflow_Boundary_Go1272FallbackScanners(t *testing.T) {
 	assertCleanScanners(t, ctx, dir, binDir)
 	assertGovulncheckFindsGO20221059(t, ctx, goBinary, binDir)
 	assertGosecFindsG101(t, ctx, binDir)
+	assertBareGosecFailsBelowFloor(t, ctx, dir)
+}
+
+// xtoolsMeetsFloor reports whether a golang.org/x/tools version reads go1.27.2 export data.
+func xtoolsMeetsFloor(t *testing.T, version string) bool {
+	t.Helper()
+	got, okGot := semver.Parse(version)
+	floor, okFloor := semver.Parse(templates.GoSecurityXToolsFloor)
+	if !okGot || !okFloor {
+		t.Fatalf("unparsable x/tools version %q or floor %q", version, templates.GoSecurityXToolsFloor)
+	}
+	return semver.Compare(got, floor) >= 0
+}
+
+// TestGoSecurityXToolsVersionMeetsTheExportDataFloor: the pinned golang.org/x/tools is at or above
+// the floor, and the one gosec install guide names the tools module and both pins, never @latest.
+func TestGoSecurityXToolsVersionMeetsTheExportDataFloor(t *testing.T) {
+	for version, want := range map[string]bool{"v0.49.0": false, templates.GoSecurityXToolsFloor: true, "v0.52.0": true} {
+		if got := xtoolsMeetsFloor(t, version); got != want {
+			t.Errorf("x/tools %s meets the floor %s = %v, want %v", version, templates.GoSecurityXToolsFloor, got, want)
+		}
+	}
+	if !xtoolsMeetsFloor(t, templates.GoSecurityXToolsVersion) {
+		t.Errorf("templates.GoSecurityXToolsVersion %s is below the floor %s: gosec cannot read go1.27.2 export data",
+			templates.GoSecurityXToolsVersion, templates.GoSecurityXToolsFloor)
+	}
+	guide := flavor.GosecInstallGuide
+	for _, want := range []string{"-modfile=" + gomanifest.ToolModuleFile, templates.GoSecurityGosecVersion, "golang.org/x/tools " + templates.GoSecurityXToolsVersion} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("gosec install guide lacks %q: %s", want, guide)
+		}
+	}
+	if strings.Contains(guide, "@latest") {
+		t.Errorf("gosec install guide installs @latest: %s", guide)
+	}
+}
+
+// assertBareGosecFailsBelowFloor is the mutation for the x/tools pin: gosec built the unpinned way
+// (go install at the pinned gosec version, no module raising golang.org/x/tools) must fail on the
+// clean fixture while its x/tools is below the floor, as plurano/pertica main did on 2026-10-16.
+func assertBareGosecFailsBelowFloor(t *testing.T, ctx context.Context, dir string) {
+	t.Helper()
+	bare := filepath.Join(t.TempDir(), "bin")
+	output, err := runSecurityCommand(ctx, dir, bare, "go", "install", "github.com/securego/gosec/v2/cmd/gosec@"+templates.GoSecurityGosecVersion)
+	if err != nil {
+		if isNetworkFailure(output) {
+			t.Skipf("gosec module unavailable from the network: %v\n%s", err, output)
+		}
+		t.Fatalf("bare gosec install: %v\n%s", err, output)
+	}
+	gosec := filepath.Join(bare, "gosec")
+	if runtime.GOOS == "windows" {
+		gosec += ".exe" // go install names it gosec.exe there, and go version -m opens the file by that name
+	}
+	info, err := runSecurityCommand(ctx, dir, bare, "go", "version", "-m", gosec)
+	if err != nil {
+		t.Fatalf("go version -m gosec: %v\n%s", err, info)
+	}
+	version := ""
+	for _, line := range strings.Split(info, "\n") {
+		if fields := strings.Fields(line); len(fields) >= 3 && fields[0] == "dep" && fields[1] == "golang.org/x/tools" {
+			version = fields[2]
+		}
+	}
+	if version == "" || xtoolsMeetsFloor(t, version) {
+		t.Logf("bare gosec %s builds golang.org/x/tools %q, not below the floor: the pin no longer carries the scan", templates.GoSecurityGosecVersion, version)
+		return
+	}
+	output, err = runSecurityCommand(ctx, dir, bare, gosec, "-conf", ".gosec.json", "./...")
+	if err == nil || !strings.Contains(output, "export data version") {
+		t.Fatalf("gosec with golang.org/x/tools %s (floor %s) loaded go1.27.2 export data: %v\n%s", version, templates.GoSecurityXToolsFloor, err, output)
+	}
 }
 
 func securityScanFixture(t *testing.T) string {

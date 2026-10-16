@@ -133,6 +133,16 @@ func NativeHookFile(client string) (HookFile, bool) {
 // Codex carries no pre-edit row: measured fact, section 1 of the rollout spec ("no pre-edit
 // event registered today").
 var registrationTable = []Registration{
+	// Hook surfaces checked 2026-10-16 against installed Claude Code 2.1.301,
+	// Codex CLI 0.162.1, Antigravity 1.4.0 and OpenCode 1.18.7, plus Gemini CLI's
+	// current upstream hooks reference (CLI absent locally). Sources:
+	// https://code.claude.com/docs/en/hooks (UserPromptSubmit/PostToolUse),
+	// https://developers.openai.com/codex/hooks (UserPromptSubmit/PostToolUse),
+	// https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md
+	// (BeforeAgent/AfterTool), https://antigravity.google/docs/hooks/ (PreInvocation),
+	// https://github.com/anomalyco/opencode/blob/dev/packages/plugin/src/index.ts
+	// and https://opencode.ai/docs/plugins/ (experimental.chat.messages.transform).
+	{Client: "claude", Event: EventPrompt, NativeEvent: "UserPromptSubmit", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventPreEdit, NativeEvent: "PreToolUse", Matcher: "^(Edit|Write)$", Timeout: 15 * time.Second},
 	{Client: "claude", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
@@ -154,11 +164,13 @@ var registrationTable = []Registration{
 	// projection for a read-only agent type (code.claude.com/docs/en/hooks, SubagentStart).
 	// The matcher selects a nonempty agent_type, as the SubagentStop row does.
 	{Client: "claude", Event: EventSubagentStart, NativeEvent: "SubagentStart", Matcher: "^.+$", Timeout: 15 * time.Second},
+	{Client: "codex", Event: EventPrompt, NativeEvent: "UserPromptSubmit", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "^Bash$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostTool, NativeEvent: "PostToolUse", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^spawn_agent$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostReturn, NativeEvent: "SubagentStop", Timeout: 60 * time.Second},
+	{Client: "gemini", Event: EventPrompt, NativeEvent: "BeforeAgent", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "^run_shell_command$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPreEdit, NativeEvent: "BeforeTool", Matcher: "^(replace|write_file)$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPostTool, NativeEvent: "AfterTool", Timeout: 60 * time.Second},
@@ -170,9 +182,19 @@ var registrationTable = []Registration{
 	// timeout in seconds. Defaults to 30"). Matcher "*" is the docs' own "matches all
 	// tools" spelling: agy classifies by payload, not by registration (3.5). Stop has no
 	// matcher at all (its hooks.json group is a flat handler list, not a matcher group).
+	// PreInvocation fires before each model call, so this row injects on the initial
+	// user prompt and refreshes after tool results before the next model call.
+	{Client: "agy", Event: EventPrompt, NativeEvent: "PreInvocation", Timeout: 15 * time.Second},
 	{Client: "agy", Event: EventPreTool, NativeEvent: "PreToolUse", Matcher: "*", Timeout: 30 * time.Second},
 	{Client: "agy", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "invoke_subagent", Timeout: 30 * time.Second},
 	{Client: "agy", Event: EventStop, NativeEvent: "Stop", Timeout: 30 * time.Second},
+	// Antigravity's documented PostToolUse output is always {}, so it cannot inject
+	// context after a tool. PreInvocation supplies the prompt clock via ephemeralMessage.
+	// OpenCode's plugin SDK invokes messages.transform before model calls and exposes
+	// the current message list. The plugin routes the newest message's role to prompt or
+	// post-tool, preserving the same clock builder as command-hook clients.
+	{Client: "opencode", Event: EventPrompt, NativeEvent: "messages.transform"},
+	{Client: "opencode", Event: EventPostTool, NativeEvent: "messages.transform"},
 }
 
 // Registrations returns a copy of the rows of one client, in table order. An unknown

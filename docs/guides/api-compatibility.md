@@ -250,7 +250,13 @@ binary you built.
    [Modules that need system libraries](#modules-that-need-system-libraries)), and then
    `go-apidiff <base> <HEAD> --repo-path=<root>` from that module's directory. go-apidiff loads
    `./...` from its working directory, which is what keeps a nested module from being skipped by
-   a run at the root.
+   a run at the root. When an exported type moves between packages within the module and remains in
+   its original package as an alias (`type Bucket = otherpkg.Bucket`), the gate verifies that the
+   alias target's declaration at `HEAD` is identical to the original declaration at base
+   (normalising package qualifiers). Reported changes matching that alias are accepted as
+   compatible (`compatible: alias of identical type`), while actual signature changes (added or
+   removed methods/fields, parameter type changes, removed names) remain incompatible
+   (`filterModuleOutput`; `TestGate_Positive_IdenticalTypeAliasAccepted`).
 5. **Root vendor directory.** go-apidiff loads every module with `-mod=vendor` when the
    repository root holds a `vendor` directory, and with `-mod=readonly` otherwise (`getPackages`
    in its `pkg/diff/run.go`). The go command vendors a nested module from that module's own
@@ -371,3 +377,5 @@ an adopting repository, so the forbidigo rule and the utility-sprawl check of
 - A nested module whose `go` language version is newer than the toolchain the checker was built
   with is type-checked by the checker's `go/types` and may not be reported; go-apidiff ignores
   package errors.
+- Type aliases across different modules are not resolved: alias verification reads declarations
+  within the compared module.
