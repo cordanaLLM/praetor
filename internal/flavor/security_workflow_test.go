@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -374,6 +375,9 @@ func assertBareGosecFailsBelowFloor(t *testing.T, ctx context.Context, dir strin
 		t.Fatalf("bare gosec install: %v\n%s", err, output)
 	}
 	gosec := filepath.Join(bare, "gosec")
+	if runtime.GOOS == "windows" {
+		gosec += ".exe" // go install names it gosec.exe there, and go version -m opens the file by that name
+	}
 	info, err := runSecurityCommand(ctx, dir, bare, "go", "version", "-m", gosec)
 	if err != nil {
 		t.Fatalf("go version -m gosec: %v\n%s", err, info)
