@@ -213,6 +213,28 @@ guard by one byte. `TestRegistrationTableMatchesTheTrackedClientFiles` and
 7. **Judge.** The process environment first, then the command policy.
 8. **Encode.** The verdict in the client's dialect.
 
+## Clock on every prompt
+
+Agents that estimate the time write wrong timestamps into ledgers and commit bodies, so
+`praetorctl hook <client> <event>` adds the system clock to the model's context. One builder
+(`internal/agenthook/clock.go`) renders the line; each client receives it where its hook
+interface accepts added context:
+
+| Client | Prompt event | After a tool |
+| :-- | :-- | :-- |
+| Claude Code, Codex | `UserPromptSubmit` | `PostToolUse` |
+| Gemini CLI | `BeforeAgent` | `AfterTool` |
+| Antigravity (`agy`) | `PreInvocation`, as an ephemeral message | none: its `PostToolUse` output carries no context, so the clock arrives before each model call instead |
+| opencode | the plugin's `messages.transform`, newest message from the user | the same transform, newest message from another role |
+
+The clock line is added inside and outside a governed repository, so the hook launcher answers
+the agy prompt row with `{}` when no engine is installed and the engine adds the line once it
+is. The opencode renderer refuses a `praetorctl` path below a `.workingdir` directory, because
+lane sandboxes hide those folders and the plugin would fail on every prompt
+(`internal/clientsetup/opencode_clock.go`). Tests: `TestRunPromptClockAdapters`,
+`TestRunPostToolClockAdapters` and `TestRunClockNegativeMalformedAndUnsupportedPairs` in
+`internal/agenthook/clock_test.go`, and `internal/clientsetup/opencode_clock_test.go`.
+
 ## Subagent text register gate
 
 The agent-traffic events reuse the same bounded stdin, workspace resolution, record mode and

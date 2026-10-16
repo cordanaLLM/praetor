@@ -251,6 +251,9 @@ a Go library.
   schedule. It installs both scanners through `tools/go/go.mod` when that module declares them,
   and otherwise in a throwaway module pinned to the versions of the engine's own tools module,
   never `@latest`, so an adoption pull request fails on the same findings main would (#1371).
+  The flavor's tool list and the security stage give the same pinned install advice for a
+  missing gosec (`flavor.GosecInstallGuide`), with the `golang.org/x/tools` floor Go 1.27.2
+  export data needs.
 - `flavor apply` also renders the branch ruleset (`.github/rulesets/main.json`) and lists every
   other required setting with the command that writes it
   ([flavor settings](archetype-authoring.md#flavor-settings-the-ruleset-is-rendered-the-rest-are-deferred)).
