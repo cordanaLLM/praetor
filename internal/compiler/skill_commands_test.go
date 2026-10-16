@@ -60,6 +60,11 @@ func parseSkillCommand(line string) (skillCommand, bool) {
 		if field == "--" {
 			break
 		}
+		if strings.HasPrefix(field, "-p:") {
+			optionsStarted = true
+			command.flags = append(command.flags, "-p")
+			continue
+		}
 		if strings.HasPrefix(field, "-") {
 			optionsStarted = true
 			if strings.HasPrefix(field, "--") || len(field) == 2 {
@@ -82,12 +87,40 @@ func verifySkillCommandFlags(commands []skillCommand, runner skillHelpRunner) er
 			return fmt.Errorf("%s help: %w", command.tool, err)
 		}
 		for _, flag := range command.flags {
-			if !strings.Contains(help, flag) {
-				return fmt.Errorf("%s command names unsupported flag %s", command.tool, flag)
+			if strings.Contains(help, flag) {
+				continue
 			}
+			if command.tool == "dotnet" && hasCommand(command.helpArgs, "build") && flag == "-p" {
+				msbuildHelp, err := runner("dotnet", []string{"msbuild", "--help"})
+				if err != nil {
+					return fmt.Errorf("dotnet msbuild help for property flag: %w", err)
+				}
+				if strings.Contains(msbuildHelp, flag) {
+					continue
+				}
+			}
+			if command.tool == "cargo" && hasCommand(command.helpArgs, "clippy") && flag == "--message-format" {
+				cargoHelp, err := runner("cargo", []string{"build", "--help"})
+				if err != nil {
+					return fmt.Errorf("cargo build help for inherited flag: %w", err)
+				}
+				if strings.Contains(cargoHelp, flag) {
+					continue
+				}
+			}
+			return fmt.Errorf("%s command names unsupported flag %s", command.tool, flag)
 		}
 	}
 	return nil
+}
+
+func hasCommand(args []string, want string) bool {
+	for i := 0; i < len(args) && i < 16; i++ {
+		if args[i] == want {
+			return true
+		}
+	}
+	return false
 }
 
 func runSkillHelp(tool string, args []string) (string, error) {
@@ -163,6 +196,22 @@ func TestSkillCommandFlags_NegativePlantedUnsupportedFlag(t *testing.T) {
 	err = verifySkillCommandFlags(commands, runner)
 	if err == nil || !strings.Contains(err.Error(), "--output-formatt") {
 		t.Fatalf("unsupported planted flag was not reported: %v", err)
+	}
+}
+
+func TestSkillCommandFlags_DotnetPropertyUsesMSBuildHelp(t *testing.T) {
+	command, ok := parseSkillCommand("dotnet build --no-restore -p:ErrorLog=diagnostics.sarif%2Cversion=2.1")
+	if !ok || len(command.flags) != 2 || command.flags[1] != "-p" {
+		t.Fatalf("MSBuild property flag was not normalized: %+v", command)
+	}
+	runner := func(tool string, args []string) (string, error) {
+		if len(args) > 0 && args[0] == "msbuild" {
+			return "Short form: -p", nil
+		}
+		return "--no-restore", nil
+	}
+	if err := verifySkillCommandFlags([]skillCommand{command}, runner); err != nil {
+		t.Fatal(err)
 	}
 }
 

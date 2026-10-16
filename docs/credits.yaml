@@ -33,6 +33,7 @@ originals:
   - ".agents/agents/praetor-needs-miner.md"
   - ".agents/agents/praetor-packager.md"
   - ".agents/skills/breaking-change-checker/SKILL.md"
+  - ".agents/skills/compiler-json/SKILL.md"
   - ".agents/skills/hiss-audit/SKILL.md"
   - ".agents/skills/infocard-generate/SKILL.md"
   - ".agents/skills/paperclip-operate/SKILL.md"
