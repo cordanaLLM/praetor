@@ -6,8 +6,9 @@ package util
 // cannot import it, yet each must name exactly the file and the command the gate uses (#136).
 const (
 	// GateReceiptFile is the Exit-0 receipt `praetorctl gate run` writes at the repository
-	// root. .gitignore deliberately leaves it untracked evidence and nothing commits it: it
-	// certifies the commit it was minted for, so committing it would move HEAD off that commit.
+	// root. Nothing commits it: it certifies the commit it was minted for, so committing it
+	// would move HEAD off that commit. The managed .gitignore block ignores it (REUSE leaves
+	// VCS-ignored build artifacts out of its check); `praetorctl gate verify` reads it all the same.
 	GateReceiptFile = ".standards-receipt.json"
 	// GateReceiptCommand is the canonical command string recorded in every gate receipt.
 	GateReceiptCommand = PraetorCLI + " gate run"

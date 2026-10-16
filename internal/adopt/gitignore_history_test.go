@@ -38,6 +38,7 @@ var pinnedGitIgnoreBlockVersions = map[string][]string{
 		"/.agents/mcp_config.json",
 		"/.standards/cache/",
 		"/.claude/settings.local.json",
+		"/.standards-receipt.json",
 	},
 }
 

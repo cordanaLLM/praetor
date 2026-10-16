@@ -26,6 +26,12 @@ const mcpOutputCacheIgnore = "/.standards/cache/"
 // leave the working tree dirty in state inspections (#1389).
 const claudeLocalSettingsIgnore = "/.claude/settings.local.json"
 
+// gateReceiptIgnore is the Exit-0 receipt `praetorctl gate run` writes at the repository root. It is
+// never committed, and REUSE takes a build artifact out of its compliance check only through the
+// VCS ignore list (REUSE FAQ, "exclude a file from REUSE compliance testing"): unignored, the
+// receipt failed `reuse lint` in every adopted repository without a catch-all annotation.
+const gateReceiptIgnore = "/" + util.GateReceiptFile
+
 const (
 	gitIgnoreManagedBegin = "# BEGIN praetor private artifacts (praetorctl adopt)"
 	gitIgnoreManagedEnd   = "# END praetor private artifacts"
@@ -42,7 +48,7 @@ const workingDirIgnore = state.WorkingDirName + "/"
 // private session ledger and the legacy scratch root, both at every depth, the container for
 // the isolated gate worktrees, whose leftovers would otherwise be scanned as repository
 // content and would keep the tree dirty for receipt minting, the per-host AGY workspace
-// configuration, the standards-mcp output cache, and client-local settings (#1389).
+// configuration, the standards-mcp output cache, client-local settings (#1389) and the gate receipt.
 // Adoption guarantees each in every adopted repository, except that a repository may
 // retire legacyScratchIgnore (keepsLegacyScratch).
 var managedIgnoreRules = []string{
@@ -52,6 +58,7 @@ var managedIgnoreRules = []string{
 	agyWorkspaceIgnore,
 	mcpOutputCacheIgnore,
 	claudeLocalSettingsIgnore,
+	gateReceiptIgnore,
 }
 
 // gitIgnoreBlockVersion identifies an accepted version of the managed .gitignore block.
