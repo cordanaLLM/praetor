@@ -828,7 +828,8 @@ below for the layering `hooks.command_policy.deny` shares with `hooks.scope` and
 ### Organisation folders (DEV-01)
 
 DEV-01 keeps every repository inside an organisation folder under the dev root. The
-built-in hook rule refuses only the dev root itself; neither the Go policy nor praetor's
+built-in hook rule refuses only the dev root itself, written bare or with one trailing `/` or
+`\`, so `C:\Users\u\dev\` is refused like `~/dev/` (#200); neither the Go policy nor praetor's
 Python guard names an organisation folder, so `praetorctl adopt ~/dev/acme` passes both
 (`deny-organisation-container` in the corpus is an `operator: true` case). An operator who
 also wants a folder root refused adds a pattern of the shape the replay uses

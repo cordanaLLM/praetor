@@ -4,6 +4,9 @@
 
 Accepted — 2026-09-28 (proposed 2026-09-27; updated 2026-09-28 with two further operator decisions).
 
+Superseding note (#1356): the committed player now lives at `tools/figures/player/`; historical
+references below describe the former `dist/` location.
+
 This record amends ADR-0015 while ADR-0015 is still Proposed (`docs/adr/README.md`, rule 4). The
 amended passages are listed under "Amendments to ADR-0015" below and are marked in ADR-0015
 itself. The owner decided the three questions the draft of this record left open on 2026-09-27

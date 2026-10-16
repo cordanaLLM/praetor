@@ -21,11 +21,13 @@ const (
 
 // Row is one known rule's audit result.
 type Row struct {
-	ID        string `json:"id"`
-	Class     Class  `json:"class"`
-	Evidence  string `json:"evidence"`
-	ProseOnly bool   `json:"prose_only"`
-	Candidate bool   `json:"convert_or_delete_candidate"`
+	ID        string            `json:"id"`
+	Class     Class             `json:"class"`
+	Evidence  string            `json:"evidence"`
+	Enforced  bool              `json:"enforced"`
+	ProseOnly bool              `json:"prose_only"`
+	Candidate bool              `json:"convert_or_delete_candidate"`
+	Forge     []ForgeComparison `json:"forge,omitempty"`
 }
 
 // Report is the complete, deterministic registry audit result.
@@ -63,8 +65,27 @@ func (r *Report) ProseOnlyIDs() []string {
 	return ids
 }
 
+// UnenforcedIDs returns every rule without a resolved executable enforcement path.
+func (r *Report) UnenforcedIDs() []string {
+	ids := []string{}
+	if r == nil {
+		return ids
+	}
+	for i := 0; i < len(r.Rows) && i < maxAuditRules; i++ {
+		if !r.Rows[i].Enforced {
+			ids = append(ids, r.Rows[i].ID)
+		}
+	}
+	return ids
+}
+
 // Audit classifies every known rule and resolves each declared evidence pointer.
 func Audit(ctx context.Context, root string) (*Report, error) {
+	return AuditWithOptions(ctx, root, AuditOptions{})
+}
+
+// AuditWithOptions classifies known rules and resolves local and live forge evidence.
+func AuditWithOptions(ctx context.Context, root string, opts AuditOptions) (*Report, error) {
 	known, err := KnownRules(ctx, root)
 	if err != nil {
 		return nil, err
@@ -75,8 +96,10 @@ func Audit(ctx context.Context, root string) (*Report, error) {
 	}
 	report := &Report{}
 	entries := indexEntries(registry, known, report)
+	forgeStates := loadForgeStates(ctx, registry, opts, report)
 	for i := 0; i < len(known) && i < maxAuditRules; i++ {
-		report.Rows = append(report.Rows, auditRule(ctx, root, known[i], entries[known[i].ID], report))
+		row := auditRule(ctx, root, known[i], entries[known[i].ID], forgeStates, report)
+		report.Rows = append(report.Rows, row)
 	}
 	if report.Valid() {
 		return report, nil
@@ -126,7 +149,14 @@ func validateEntry(entry *Entry, report *Report) {
 	}
 }
 
-func auditRule(ctx context.Context, root string, rule Rule, entry *Entry, report *Report) Row {
+func auditRule(
+	ctx context.Context,
+	root string,
+	rule Rule,
+	entry *Entry,
+	forgeStates map[ForgeSetting]ForgeState,
+	report *Report,
+) Row {
 	if entry == nil {
 		return proseRow(rule, "guidance")
 	}
@@ -139,15 +169,99 @@ func auditRule(ctx context.Context, root string, rule Rule, entry *Entry, report
 		row.Evidence = "unresolved: no evidence"
 		return row
 	}
-	for i := 0; i < len(entry.Evidence) && i < maxEvidencePointers; i++ {
-		if err := resolve(ctx, root, entry.Evidence[i]); err != nil {
-			row.Evidence = "unresolved: " + entry.Evidence[i]
-			report.Problems = append(report.Problems, fmt.Sprintf("%s: %v", rule.ID, err))
-			return row
+	resolver := evidenceResolver{
+		ctx:         ctx,
+		root:        root,
+		ruleID:      rule.ID,
+		forgeStates: forgeStates,
+		row:         &row,
+		report:      report,
+	}
+	resolution := resolver.resolve(entry.Evidence)
+	row.Enforced = row.Enforced || resolution.localPointers > 0 && resolution.localResolved
+	row.Evidence = evidenceSummary(row, resolution.localResolved, resolution.forgePending)
+	return row
+}
+
+type evidenceResolution struct {
+	localPointers int
+	localResolved bool
+	forgePending  bool
+}
+
+type evidenceResolver struct {
+	ctx         context.Context
+	root        string
+	ruleID      string
+	forgeStates map[ForgeSetting]ForgeState
+	row         *Row
+	report      *Report
+}
+
+func (r evidenceResolver) resolve(pointers []string) evidenceResolution {
+	result := evidenceResolution{localResolved: true}
+	for i := 0; i < len(pointers) && i < maxEvidencePointers; i++ {
+		pointer := pointers[i]
+		if strings.HasPrefix(pointer, "forge:") {
+			matched, pending := r.resolveForgePointer(pointer)
+			r.row.Enforced = r.row.Enforced || matched
+			result.forgePending = result.forgePending || pending
+			continue
+		}
+		result.localPointers++
+		if err := resolve(r.ctx, r.root, pointer); err != nil {
+			result.localResolved = false
+			r.row.Evidence = "unresolved: " + pointer
+			r.report.Problems = append(r.report.Problems, fmt.Sprintf("%s: %v", r.ruleID, err))
 		}
 	}
-	row.Evidence = "resolved"
-	return row
+	return result
+}
+
+func (r evidenceResolver) resolveForgePointer(pointer string) (bool, bool) {
+	setting, ok := forgeSetting(pointer)
+	if !ok {
+		r.report.Problems = append(r.report.Problems, fmt.Sprintf("%s: unresolved evidence pointer %q", r.ruleID, pointer))
+		return false, false
+	}
+	state, ok := r.forgeStates[setting]
+	if !ok || state.Asserted == "" {
+		r.report.Problems = append(r.report.Problems,
+			fmt.Sprintf("%s: forge setting %s has no committed assertion", r.ruleID, setting))
+		return false, false
+	}
+	comparison := ForgeComparison{Setting: setting, Asserted: state.Asserted, Observed: state.Observed,
+		Match: state.Match, ReadBack: state.ReadBack}
+	r.row.Forge = append(r.row.Forge, comparison)
+	if !state.AssertedEnforced {
+		r.report.Problems = append(r.report.Problems,
+			fmt.Sprintf("%s: forge setting %s is asserted as %s", r.ruleID, setting, state.Asserted))
+		return false, false
+	}
+	if !state.ReadBack {
+		return false, true
+	}
+	if state.Match {
+		return true, false
+	}
+	r.report.Problems = append(r.report.Problems, fmt.Sprintf(
+		"%s: forge setting %s mismatch: asserted %s, observed %s", r.ruleID, setting, state.Asserted, state.Observed))
+	return false, false
+}
+
+func evidenceSummary(row Row, localResolved, forgePending bool) string {
+	switch {
+	case !localResolved:
+		return row.Evidence
+	case row.Enforced && forgePending:
+		return "resolved; forge asserted, not read back"
+	case row.Enforced:
+		return "resolved"
+	case forgePending:
+		return "asserted, not read back"
+	default:
+		return "unresolved"
+	}
 }
 
 func proseRow(rule Rule, class Class) Row {
