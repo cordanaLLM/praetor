@@ -26,7 +26,7 @@ SPDX-License-Identifier = "MIT"
 # MIT texts (docs/adr/0016-figures-for-adopters.md, section 11). Like the table above, this one
 # must stay after the "**" table.
 [[annotations]]
-path = ["tools/figures/dist/**"]
+path = ["tools/figures/player/**"]
 precedence = "override"
 SPDX-FileCopyrightText = [
   "2026 Lusoris <lusoris@proton.me>",

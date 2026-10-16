@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -30,6 +31,10 @@ import (
 // any helper that resolves the repository root, and a name or file selection would be the same
 // one-at-a-time list #263 found incomplete.
 var identitySensitivePackages = []string{"./internal/config/...", "./internal/forge/...", "./internal/adopt/..."}
+
+// windowsAdoptReplayFiles lists the repository-relative slash paths of Windows-specific files
+// under internal/adopt whose tests replay on Windows under TestIdentitySensitivePackagesPassUnderTheOwnerOverlay (#1381).
+var windowsAdoptReplayFiles = []string{"internal/adopt/engine_launcher_windows_test.go"}
 
 // maxOverlaySuiteFiles bounds the tracked-file copy (HISS-02). The repository carries under
 // 2,000 tracked files today; an order of magnitude above that is still a defensive ceiling, not
@@ -109,16 +114,25 @@ func nestedGoTestTimeout(left time.Duration) time.Duration {
 	return max(timeout, time.Second)
 }
 
-// nestedGoTestArgs builds the nested go test arguments for packages, with -timeout from what
-// remains of ctx's deadline at now (nestedGoTestTimeout). It refuses a context without a
-// deadline, which would leave every package binary on go test's fixed default (HISS-02).
-func nestedGoTestArgs(ctx context.Context, now time.Time, packages []string) ([]string, error) {
+// nestedGoTestArgsWithRun builds the nested go test arguments for packages, with -timeout from what
+// remains of ctx's deadline at now (nestedGoTestTimeout), and an optional -run filter.
+func nestedGoTestArgsWithRun(ctx context.Context, now time.Time, runPattern string, packages []string) ([]string, error) {
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		return nil, errors.New("nested go test needs a context deadline to derive its -timeout from")
 	}
 	args := []string{"test", "-count=1", "-timeout", nestedGoTestTimeout(deadline.Sub(now)).String()}
+	if runPattern != "" {
+		args = append(args, "-run", runPattern)
+	}
 	return append(args, packages...), nil
+}
+
+// nestedGoTestArgs builds the nested go test arguments for packages, with -timeout from what
+// remains of ctx's deadline at now (nestedGoTestTimeout). It refuses a context without a
+// deadline, which would leave every package binary on go test's fixed default (HISS-02).
+func nestedGoTestArgs(ctx context.Context, now time.Time, packages []string) ([]string, error) {
+	return nestedGoTestArgsWithRun(ctx, now, "", packages)
 }
 
 // overlaySuiteFailure words a failed nested run. A run that its derived deadline stopped, or in
@@ -164,10 +178,71 @@ func TestIdentitySensitivePackagesPassUnderTheOwnerOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, runErr := runOverlaySuite(t, ctx, repoRoot, identitySensitivePackages)
+	out, runErr := runIdentityOverlayReplay(t, ctx, repoRoot, runtime.GOOS)
 	if runErr != nil {
 		t.Fatal(overlaySuiteFailure(deadline, ctx.Err(), runErr, out))
 	}
+}
+
+// runIdentityOverlayReplay executes the nested replay across packages, honoring Windows-specific
+// replay constraints for internal/adopt while running full suites on Linux and macOS (#1381).
+func runIdentityOverlayReplay(t *testing.T, ctx context.Context, repoRoot string, goos string) (string, error) {
+	t.Helper()
+	dest := t.TempDir()
+	copyTrackedTree(t, ctx, repoRoot, dest)
+	overlayManifestInPlace(t, dest)
+	if goos != "windows" {
+		t.Log("nested replay: full")
+		args, err := nestedGoTestArgs(ctx, time.Now(), identitySensitivePackages)
+		if err != nil {
+			return "", err
+		}
+		return util.RunCommand(ctx, dest, "go", args...)
+	}
+	return runWindowsIdentityOverlayReplay(t, ctx, dest, repoRoot)
+}
+
+func runWindowsIdentityOverlayReplay(t *testing.T, ctx context.Context, dest, repoRoot string) (string, error) {
+	t.Helper()
+	plan, err := planWindowsAdoptReplay(repoRoot, windowsAdoptReplayFiles)
+	if err != nil {
+		return "", err
+	}
+	if plan.skipReason != "" {
+		t.Log(plan.skipReason)
+	}
+	t.Log(plan.logMessage)
+	if plan.wholeAdopt {
+		args, err := nestedGoTestArgs(ctx, time.Now(), identitySensitivePackages)
+		if err != nil {
+			return "", err
+		}
+		return util.RunCommand(ctx, dest, "go", args...)
+	}
+	return runWindowsConfigForgeAndAdopt(ctx, dest, plan)
+}
+
+func runWindowsConfigForgeAndAdopt(ctx context.Context, dest string, plan windowsAdoptPlan) (string, error) {
+	basePackages := []string{"./internal/config/...", "./internal/forge/..."}
+	args1, err := nestedGoTestArgs(ctx, time.Now(), basePackages)
+	if err != nil {
+		return "", err
+	}
+	out1, err1 := util.RunCommand(ctx, dest, "go", args1...)
+	if err1 != nil || plan.skipAdopt {
+		return out1, err1
+	}
+	args2, err := nestedGoTestArgsWithRun(ctx, time.Now(), plan.runPattern, []string{"./internal/adopt/..."})
+	if err != nil {
+		return out1, err
+	}
+	out2, err2 := util.RunCommand(ctx, dest, "go", args2...)
+	if out1 != "" && out2 != "" {
+		out1 += "\n" + out2
+	} else if out2 != "" {
+		out1 = out2
+	}
+	return out1, err2
 }
 
 // runOverlaySuite copies repoRoot's working tree into a fresh directory, applies the owner

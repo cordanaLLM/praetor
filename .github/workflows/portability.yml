@@ -187,9 +187,61 @@ jobs:
       # go test's 10-minute default per package: on windows-latest internal/operationalsync
       # alone took 557 s, most of it a nested go test over a repository copy, so the default
       # was one slow runner away from a panic that names no failing test.
+      # go test -json keeps each test's elapsed time, which the plain output drops, so a package that
+      # runs close to the 30-minute bound on one platform can be profiled from the uploaded file
+      # (internal/adopt on Windows). Each go test run writes its stream to a file and the step prints
+      # that stream's output events when the run ends: a pipe into the printer would keep the step
+      # open as long as any process still held its write end, and on Windows train 4's step sat 28
+      # minutes after its last package passed until the job bound cancelled it (run 38798931720).
+      # The file goes to the runner's temporary folder, never the checkout: a test that copies the
+      # tracked tree with its untracked files (internal/identity) refused the 12 MB file there.
+      # The printer writes UTF-8 whatever the console code page: cp1252 cannot encode every character a
+      # test prints (run 38818801669 stopped at U+25CB), and a stderr line that is no JSON prints as is.
+      # internal/adopt runs on its own after the other packages: on Windows its suite takes about 31
+      # minutes since #166 runs its hermetic fixtures there, so it gets a longer bound under a dated
+      # test-timeout exception in .standards.yaml that fails the audit once it expires or excuses
+      # nothing (#1381). operationalsync's identity suite replays only the Windows-specific adopt
+      # tests on Windows, so it stays in the first run. Both runs always go; the step fails when either does.
       - name: Test Every Package
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
-        run: go test -timeout 30m ./...
+        shell: bash
+        run: |
+          adopt=$(go list ./internal/adopt)
+          # A read loop, not mapfile: macOS runners ship bash 3.2, which has no mapfile.
+          packages=()
+          while IFS= read -r package; do packages+=("$package"); done < <(go list ./... | grep -vxF "$adopt")
+          json="$RUNNER_TEMP/go-test-$RUNNER_OS.json"
+          : > "$json"
+          show() {
+            "$PYTHON" -B -c 'import json, sys
+          sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+          for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+              try:
+                  event = json.loads(line) if line.startswith("{") else {"Action": "output", "Output": line}
+              except ValueError:
+                  event = {"Action": "output", "Output": line}
+              if event.get("Action") in ("output", "build-output"):
+                  sys.stdout.write(event.get("Output", ""))' "$1"
+            cat "$1" >> "$json"
+          }
+          status=0
+          go test -json -timeout 30m "${packages[@]}" > "$RUNNER_TEMP/run-1.json" 2>&1 || status=$?
+          show "$RUNNER_TEMP/run-1.json"
+          go test -json -timeout "$ADOPT_TEST_TIMEOUT" "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
+          show "$RUNNER_TEMP/run-2.json"
+          exit "$status"
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+          ADOPT_TEST_TIMEOUT: ${{ matrix.name == 'Windows' && '60m' || '30m' }}
+
+      - name: Upload Per-Test Timing
+        if: ${{ !cancelled() && github.event.pull_request.draft != true }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-test-json-${{ matrix.name }}
+          path: ${{ runner.temp }}/go-test-${{ runner.os }}.json
+          if-no-files-found: error
+          retention-days: 14
 
       # tools/schemacheck is a nested module, outside ./... above. It validates every rendered
       # client config against the vendored upstream schemas and builds and drives standards-mcp,
@@ -385,7 +437,7 @@ jobs:
       # TypeScript arrive as per-platform npm optional dependencies, so this leg proves the
       # locked --ignore-scripts install works, that a rebuild is byte-identical to the committed
       # SVG and JSON, that each platform's esbuild rebuilds the committed player in
-      # tools/figures/dist/ byte for byte from the lock within its budget (the player adopters
+      # tools/figures/player/ byte for byte from the lock within its budget (the player adopters
       # receive, ADR-0016 section 3), and that the Node figure checks and their tests pass, on
       # each OS (the hashed files and the player are pinned to LF by the managed attribute block
       # at the end of .gitattributes). The Chromium smoke test needs a built site and runs in

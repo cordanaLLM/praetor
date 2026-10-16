@@ -44,7 +44,7 @@ const devcontainerLockFile = "internal/devcontainer/cli/package-lock.json"
 // (thirdPartyLicenses in tools/figures/bundle.mjs), and the pin of the vendored interfig source.
 const (
 	figureLockFile     = figureassets.Directory + "/package-lock.json"
-	figureLicensesFile = figureassets.Directory + "/dist/THIRD-PARTY-LICENSES.txt"
+	figureLicensesFile = figureassets.PlayerDirectory + "/THIRD-PARTY-LICENSES.txt"
 	interfigVendorFile = figureassets.Directory + "/third_party/interfig/vendor.json"
 )
 

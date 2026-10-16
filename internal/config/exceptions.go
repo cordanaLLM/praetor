@@ -71,12 +71,15 @@ const ExceptionRuleDedupe = "HISS-19"
 // that is not run by any CI workflow, naming the tool by tool.
 const ExceptionRuleDeclaredLinters = "declared-linters"
 
+// ExceptionRuleTestTimeout names the test-timeout rule.
+const ExceptionRuleTestTimeout = "test-timeout"
+
 // exceptionRules lists the rules an exceptions entry may name. Each one is a gate that reads
 // the list, so an entry naming any other rule would excuse nothing and is refused instead.
 var exceptionRules = []string{
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits, ExceptionRuleSupplyChain,
 	ExceptionRuleBuildWarnings, ExceptionRuleWorkflowTriggers, ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder,
-	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters,
+	ExceptionRuleDedupe, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout,
 }
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -85,6 +88,7 @@ var workflowRuleExamples = map[string]string{
 	ExceptionRuleSupplyChain:      "release.yml",
 	ExceptionRuleBuildWarnings:    "ci.yml",
 	ExceptionRuleWorkflowTriggers: "release.yml",
+	ExceptionRuleTestTimeout:      "portability.yml",
 }
 
 // Bounds of the exceptions list (HISS-02).

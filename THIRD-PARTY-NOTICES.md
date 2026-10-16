@@ -15,7 +15,7 @@ The component tables are generated. `praetorctl sbom notices` (`make third-party
 rewrites their rows from `go.mod`, the root `Dockerfile`, the embedded npm lock
 `tools/markdownlint/package-lock.json`, the interfig pin
 `tools/figures/third_party/interfig/vendor.json`, and the embedded figure player's
-`tools/figures/dist/THIRD-PARTY-LICENSES.txt` with the lock the player is built from,
+`tools/figures/player/THIRD-PARTY-LICENSES.txt` with the lock the player is built from,
 `tools/figures/package-lock.json`, and the embedded devcontainer CLI lock
 `internal/devcontainer/cli/package-lock.json`. It keeps the copyright line each row already states
 (`internal/supplychain/notices.go`). A component with no row yet, or a license outside the
@@ -302,7 +302,7 @@ The binaries embed the render source of interfig, vendored byte-identical at the
 
 ## npm packages of the figure player
 
-The embedded figure player `tools/figures/dist/player.js` contains the code of the packages
+The embedded figure player `tools/figures/player/player.js` contains the code of the packages
 below, bundled by esbuild from `tools/figures/package-lock.json`. The table covers every package
 the player's `THIRD-PARTY-LICENSES.txt` names beside interfig; versions and licenses are as the
 lock records them, copyright lines as each package's license file states them.

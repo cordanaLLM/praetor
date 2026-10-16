@@ -105,7 +105,7 @@ repository runs, and they skip with a stated reason where it has no figure. esbu
 TypeScript arrive as per-platform npm optional dependencies, so the leg proves that the install
 works without install scripts on each OS, `check` proves that a rebuild there is byte-identical to
 the committed SVG and JSON, and `bundle.mjs --check` proves that the platform's esbuild rebuilds
-the committed player in `tools/figures/dist/` byte for byte from the lock, within its size budget.
+the committed player in `tools/figures/player/` byte for byte from the lock, within its size budget.
 The hashed files and the player are pinned to LF by the managed block at the end of
 `.gitattributes`, which adoption writes in every adopting repository too, so a Windows checkout
 reads the same bytes. The

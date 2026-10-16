@@ -932,7 +932,7 @@ node tools/figures/build.mjs sources
 ```
 
 No step bundles before the build: the figures hook publishes the committed
-player from `tools/figures/dist/`.
+player from `tools/figures/player/`.
 
 The configuration decides which diagram kind a build accepts. A `figure`
 fence names a spec under `docs/figures/`. The root `mkdocs.yml` and the
@@ -1012,7 +1012,7 @@ fixtures in both directions and asserts the diagram kind each configuration
 enables (figures only, at the root and in the preset), so adding the
 mermaid fence back to either site or dropping the figures hook fails without
 a site build. It also runs the type check and rebuilds the committed player in
-`tools/figures/dist/` from the lock and compares it byte for byte within its
+`tools/figures/player/` from the lock and compares it byte for byte within its
 size budget (`node tools/figures/bundle.mjs --check`). The managed
 `make docs-figures` target, also part of `make verify-all` and the one every
 adopting repository receives, rebuilds every figure and compares it byte for

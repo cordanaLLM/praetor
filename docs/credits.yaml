@@ -405,11 +405,11 @@ entries:
     license: "MIT"
     notice: "© Meta Platforms, Inc. and affiliates"
     use: >-
-      Bundled with interfig into the figure player (`tools/figures/dist/player.js`) that the binaries embed and this
+      Bundled with interfig into the figure player (`tools/figures/player/player.js`) that the binaries embed and this
       site loads
     paths:
       - "tools/figures/package.json"
-      - "tools/figures/dist/THIRD-PARTY-LICENSES.txt"
+      - "tools/figures/player/THIRD-PARTY-LICENSES.txt"
       - "tools/figures/third_party/interfig/upstream/package.json"
     packages:
       - "npm:react"
@@ -682,6 +682,17 @@ entries:
       - ".github/workflows/ci.yml"
     packages:
       - "action:actions/setup-python"
+  - name: "actions/upload-artifact"
+    url: "https://github.com/actions/upload-artifact"
+    section: "actions"
+    kind: "action"
+    relation: "used by CI"
+    license: "MIT"
+    use: "Workflows; per-test timing files of the portability matrix"
+    paths:
+      - ".github/workflows/portability.yml"
+    packages:
+      - "action:actions/upload-artifact"
   - name: "actions/upload-pages-artifact"
     url: "https://github.com/actions/upload-pages-artifact"
     section: "actions"

@@ -1,0 +1,3 @@
+type: changed
+title: Move committed figure player to tools/figures/player
+issue: '#1356'
