@@ -16,7 +16,7 @@ import {
 } from './core.mjs';
 import { NO_FIGURES, OUT_DIR, ROOT, SPEC_DIR, VENDOR_JSON, compareOutputs, engineHash, hasFigures, listSpecs, main, renderAll } from './build.mjs';
 import {
-  DIST_DIR, DIST_FILES, MAX_INPUTS, PLAYER_BUDGET, budget, bundle, bundledPackages, bundlesInterfig, compareDist, lockMismatches,
+  DIST_FILES, MAX_INPUTS, PLAYER_BUDGET, PLAYER_DIR, budget, bundle, bundledPackages, bundlesInterfig, compareDist, lockMismatches,
   main as bundleMain, readJson, thirdPartyLicenses, writeDist,
 } from './bundle.mjs';
 import { svgSpecError } from './checks.mjs';
@@ -459,7 +459,7 @@ test('build and the checks need Node only: the engine imports builtins and relat
 });
 
 // ---------------------------------------------------------------------------------------------
-// The committed player (bundle.mjs, tools/figures/dist/)
+// The committed player (bundle.mjs, tools/figures/player/)
 // ---------------------------------------------------------------------------------------------
 
 test('bundle.mjs takes no argument or --check, nothing else', async () => {
@@ -481,20 +481,20 @@ test('the player budget: exactly the budget passes, one byte more fails', () => 
   assert.deepEqual(budget(sizes(0)).problems, []);
 });
 
-test('dist/ holds exactly the three player files, committed, and no chunk, spec or registry', () => {
+test('player/ holds exactly the three player files, committed, and no chunk, spec or registry', () => {
   assert.deepEqual([...DIST_FILES], ['THIRD-PARTY-LICENSES.txt', 'loader.js', 'player.js']);
-  assert.deepEqual(readdirSync(join(ROOT, DIST_DIR)).sort(), [...DIST_FILES]);
-  const loader = readFileSync(join(ROOT, DIST_DIR, 'loader.js'), 'utf8');
+  assert.deepEqual(readdirSync(join(ROOT, PLAYER_DIR)).sort(), [...DIST_FILES]);
+  const loader = readFileSync(join(ROOT, PLAYER_DIR, 'loader.js'), 'utf8');
   assert.ok(loader.includes('import("./player.js")'), 'the loader imports the player by its fixed name');
   // The player host opts out of Starlight's Markdown typography, which would space the scenario tabs apart.
   assert.ok(loader.includes('"praetor-figure__player not-content"'), 'the player host carries not-content');
   assert.doesNotMatch(loader, /registry\.json|specs\//);
   // The interfig notice leads both files; React's legal comments stay at the end of the player.
   for (const name of ['loader.js', 'player.js']) {
-    assert.match(readFileSync(join(ROOT, DIST_DIR, name), 'utf8'), /^\/\*! interfig \(c\) 2025 Vectorize AI, Inc\. MIT https:\/\/github\.com\//);
+    assert.match(readFileSync(join(ROOT, PLAYER_DIR, name), 'utf8'), /^\/\*! interfig \(c\) 2025 Vectorize AI, Inc\. MIT https:\/\/github\.com\//);
   }
-  assert.match(readFileSync(join(ROOT, DIST_DIR, 'player.js'), 'utf8'), /@license React/);
-  const notices = readFileSync(join(ROOT, DIST_DIR, 'THIRD-PARTY-LICENSES.txt'), 'utf8');
+  assert.match(readFileSync(join(ROOT, PLAYER_DIR, 'player.js'), 'utf8'), /@license React/);
+  const notices = readFileSync(join(ROOT, PLAYER_DIR, 'THIRD-PARTY-LICENSES.txt'), 'utf8');
   for (const part of ['interfig https://github.com/', 'react ', 'react-dom ', 'scheduler ']) assert.ok(notices.includes(`\n${part}`), part);
   assert.equal(notices.split('Permission is hereby granted').length - 1, 4, 'four full MIT texts');
 });
@@ -506,13 +506,13 @@ test('the committed player is a byte-for-byte rebuild from the lock', async (t) 
   }
   const run = await capture(() => bundleMain(['--check']));
   assert.equal(run.result, 0, run.output);
-  assert.match(run.output, /tools\/figures\/dist matches a rebuild from the lock byte for byte/);
+  assert.match(run.output, /tools\/figures\/player matches a rebuild from the lock byte for byte/);
 });
 
-test('a missing, stale or foreign dist file is reported with the rebuild command', () => withTempDir((dir) => {
+test('a missing, stale or foreign player file is reported with the rebuild command', () => withTempDir((dir) => {
   const files = new Map([['a.js', Buffer.from('a')], ['b.js', Buffer.from('b')]]);
   assert.deepEqual(compareDist(files, join(dir, 'absent')), [
-    `${DIST_DIR}/a.js is missing`, `${DIST_DIR}/b.js is missing`, 'rebuild with: node tools/figures/bundle.mjs',
+    `${PLAYER_DIR}/a.js is missing`, `${PLAYER_DIR}/b.js is missing`, 'rebuild with: node tools/figures/bundle.mjs',
   ]);
   writeDist(files, dir);
   assert.deepEqual(compareDist(files, dir), []);
@@ -520,8 +520,8 @@ test('a missing, stale or foreign dist file is reported with the rebuild command
   mkdirSync(join(dir, 'chunks'));
   writeFileSync(join(dir, 'registry.json'), '{}');
   assert.deepEqual(compareDist(files, dir), [
-    `${DIST_DIR}/b.js differs from a rebuild from the lock`, `${DIST_DIR}/chunks is not a bundle output`,
-    `${DIST_DIR}/registry.json is not a bundle output`, 'rebuild with: node tools/figures/bundle.mjs',
+    `${PLAYER_DIR}/b.js differs from a rebuild from the lock`, `${PLAYER_DIR}/chunks is not a bundle output`,
+    `${PLAYER_DIR}/registry.json is not a bundle output`, 'rebuild with: node tools/figures/bundle.mjs',
   ]);
   // Writing removes what the bundle no longer produces, directories included.
   writeDist(files, dir);

@@ -565,7 +565,7 @@ class TestUpdate(TreeCase):
         fetcher = DummyFetcher(self.responses())
         err = self.assertFails(self.run_update, fetcher, contains="git checkout -- tools/figures/third_party/interfig ")
         self.assertIn("docs/assets/figures", str(err))
-        self.assertIn(" tools/figures/dist && ", str(err))
+        self.assertIn(" tools/figures/player && ", str(err))
         self.assertIn("git clean -fd -- tools/figures/third_party/interfig/upstream ", str(err))
         self.assertIsInstance(err.__cause__, sync_interfig.SyncError)
 

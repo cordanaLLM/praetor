@@ -2,9 +2,11 @@ package adopt
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,7 +16,7 @@ import (
 const priorEvasionFixtures = "testdata/evasion"
 
 // currentEvasionFixture is the fixture holding the current rendering.
-const currentEvasionFixture = "merge-guard.block_evasion.py"
+const currentEvasionFixture = "dev-root-backslash.block_evasion.py"
 
 // adoptEvasionFixture adopts a fresh repository whose interceptor holds existing.
 func adoptEvasionFixture(t *testing.T, name, existing string, force bool) (string, *AdoptReport) {
@@ -54,9 +56,25 @@ func TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded(t *testing.T)
 // replace. The current rendering is verified, never refreshed.
 func TestAdopt_Positive_PriorEvasionHookRefreshedOnPlainRun(t *testing.T) {
 	current := buildBlockEvasionPY()
-	for name, data := range readFixtureDir(t, priorEvasionFixtures) {
-		for style, existing := range map[string]string{"lf": string(data), "crlf": crlfText(string(data))} {
-			repoPath, rep := adoptEvasionFixture(t, "evasion-"+style, existing, false)
+	fixtures := readFixtureDir(t, priorEvasionFixtures)
+	names := slices.Sorted(maps.Keys(fixtures))
+	for _, name := range names {
+		data := fixtures[name]
+		for _, style := range []string{"lf", "crlf"} {
+			existing := string(data)
+			if style == "crlf" {
+				existing = crlfText(existing)
+			}
+			// The first fixture is refreshed by a whole adoption, every other one by the
+			// interceptor step alone (adoptOrStep, office-w19a-c1-adopt).
+			repoPath := newTestRepo(t, "evasion-"+style)
+			mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(evasionHookFile)), existing)
+			rep, err := adoptOrStep(t, AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath},
+				name == names[0] && style == "lf", func(ctx context.Context, s *adoptSession) error { return reconcileEvasionHook(ctx, s, false) })
+			if err != nil {
+				t.Fatalf("%s (%s): %v", name, style, err)
+			}
+			assertNoIssues(t, rep)
 			want, detail := current, "Refreshed an unedited earlier"
 			if style == "crlf" {
 				want = crlfText(current)

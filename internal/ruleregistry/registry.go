@@ -177,8 +177,16 @@ func validClass(class Class) bool {
 	return class == ClassCIGate || class == ClassHook || class == ClassReviewGate || class == ClassGuidance || class == ClassStaged
 }
 
+// instructionOnlyPhrases is the allow-list of prohibition wording reported for conversion.
+// Adding broad tokens here would turn ordinary descriptive prose into false positives.
+var instructionOnlyPhrases = []string{"is told not to", "must not", "never"}
+
 func prohibited(text string) bool {
 	lower := strings.ToLower(text)
-	return strings.Contains(lower, "never") || strings.Contains(lower, "must not") ||
-		strings.Contains(lower, "do not") || strings.Contains(lower, "no ")
+	for i := 0; i < len(instructionOnlyPhrases); i++ {
+		if strings.Contains(lower, instructionOnlyPhrases[i]) {
+			return true
+		}
+	}
+	return false
 }

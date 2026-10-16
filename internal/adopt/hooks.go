@@ -472,6 +472,41 @@ def join_line_continuations(command):
     return re.sub(r"\\\r?\n", " ", command)
 
 
+# The git rule with an option run (the short skip flag rule) is searched once per run (#1283).
+# re retries a rule at every git it finds, and a git inside an option token (-git, --x=git,
+# -C dir/git) starts at a boundary of the run an earlier git already walked: each retry walked
+# the rest of that run again, quadratic in the line. A start at a walked boundary reaches the
+# same end, and only a run's end can be followed by the rest of the rule (every option starts
+# with a blank and a dash), so skipping it keeps re.search's answer. The adopter interceptor
+# carries this code byte for byte (TestEmittedInterceptorSearchesLikeTheEngineGuard).
+GIT_OPTION_RUN_HEAD = r"\bgit("
+GIT_OPTION_RUN_JOIN = r")*\s+("
+
+
+def search(pattern, text):
+    """re.search(pattern, text) is not None, with the git option-run rule in linear time."""
+    head, join, tail = pattern.partition(GIT_OPTION_RUN_JOIN)
+    if not join or not head.startswith(GIT_OPTION_RUN_HEAD):
+        return re.search(pattern, text) is not None
+    first = len(GIT_OPTION_RUN_HEAD)
+    option = re.compile(head[first:])
+    rest = re.compile(r"\s+(" + tail)
+    walked = set()
+    for found in re.finditer(r"\bgit", text):
+        position = found.end()
+        if position in walked:
+            continue
+        while position not in walked:
+            walked.add(position)
+            step = option.match(text, position)
+            if step is None or step.end() == position:
+                break
+            position = step.end()
+        if rest.match(text, position):
+            return True
+    return False
+
+
 def check_command(command):
     command = join_line_continuations(command)
     # re backtracks, so a longer command or line could stall this script past the harness's
@@ -483,7 +518,7 @@ def check_command(command):
     judged = without_read_only_words(command)
     for pattern, refusal in RULES:
         text = judged if pattern in READ_ONLY_EXEMPT else command
-        if re.search(pattern, text):
+        if search(pattern, text):
             raise Blocked(refusal + pattern)
 
 
@@ -832,6 +867,8 @@ var priorEvasionHookDigests = map[string]string{
 	"9db442d72dc16b74ce88250c1dbf1a0b05830bdc6716ab4b705c5aa1c7531a02": "named exempt patterns and a start-of-text veto anchor, clean under CodeQL (#1219)",
 	"74a3c9cb08bd3afeaf4c0e0e3b05f0b9ad7518beee1173465477270ed71f569d": "raise from error in pending_command under adopter ruff B904",
 	"e69d49af323fcd3b1d23394bc6736afa115629ff7925ffec664404bd048ec169": "refuse admin and API merges that bypass rulesets (#1300)",
+	"6b9ba7a53a4c2c3a28da48031983ff879aed3f925974fd84bba58be1da19bf0c": "git option run searched once per run, linear in the line (#1283)",
+	"526ccd7bd6ec2070ed8dc8dfb97a9f9857de99e9c49ae6359c15b5a88fc47273": "dev root ends in either path separator (#200)",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an
