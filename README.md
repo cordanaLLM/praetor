@@ -134,7 +134,7 @@ See the [HISS specification](docs/standards/hiss-spec.md) for the full invariant
 
 ```text
 .
-├── .agents/skills/             # Universal agent skill declarations
+├── .agents/skills/             # Canonical agent skills; compile-context projects these byte-for-byte to .agents/plugins/praetor/skills/ for Claude Code
 ├── .claude/                    # Target compilation for Claude Code (CLAUDE.md)
 ├── .codex/                     # Target compilation for OpenAI Codex
 ├── .config/                    # System & linter configurations

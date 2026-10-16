@@ -37,6 +37,7 @@ originals:
   - ".agents/skills/infocard-generate/SKILL.md"
   - ".agents/skills/paperclip-operate/SKILL.md"
   - ".agents/skills/prerelease-bump/SKILL.md"
+  - ".agents/skills/python-dev/SKILL.md"
   - ".agents/skills/repo-adopt/SKILL.md"
   - ".agents/skills/seo-audit/SKILL.md"
   - ".agents/skills/standards-sync/SKILL.md"

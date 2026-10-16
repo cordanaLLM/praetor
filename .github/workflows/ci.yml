@@ -180,6 +180,10 @@ jobs:
           GOBIN="$RUNNER_TEMP/praetor-hook-lint/bin" go install -modfile=tools/go/go.mod mvdan.cc/gofumpt
           echo "PRAETOR_HOOK_LINT_BIN=$RUNNER_TEMP/praetor-hook-lint/bin" >> "$GITHUB_ENV"
 
+      - name: Verify Canonical Skill Command Flags
+        if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
+        run: PATH="$RUNNER_TEMP/praetor-hook-lint/bin:$PATH" go test ./internal/compiler -run '^TestCanonicalSkillCommandFlags_PositiveToolsPresent$'
+
       - name: Verify Go Formatting (gofmt)
         if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
         # make fmt-check is the one gofmt check (testdata fixtures stay out of scope); the
