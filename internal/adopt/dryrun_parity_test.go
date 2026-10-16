@@ -273,7 +273,7 @@ func TestAdoptDryRunParity_Negative_HookActivationFailurePreviewed(t *testing.T)
 	source := newAdoptLockSource(t)
 	for _, dryRun := range []bool{true, false} {
 		stubDir := t.TempDir()
-		installStub(t, stubDir, "lefthook", lefthookFailsSource)
+		writeStub(t, stubDir, "lefthook", "exit 1\n")
 		hermeticPath(t, stubDir)
 		repo := filepath.Join(t.TempDir(), "no-git")
 		mustWrite(t, filepath.Join(repo, "README.md"), "# no git\n")

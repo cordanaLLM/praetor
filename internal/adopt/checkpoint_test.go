@@ -132,13 +132,6 @@ func TestAdoptCheckpointBundleRunsActualEvaluator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("checkpoint integration requires python3: %v", err)
 	}
-	// The interpreter itself, not what PATH names: a version manager's shim (mise, pyenv) looks
-	// its manager up on PATH and stops working once the fixture narrows PATH to git alone.
-	resolved, err := exec.CommandContext(t.Context(), python, "-B", "-c", "import sys; print(sys.executable)").Output()
-	if err != nil || strings.TrimSpace(string(resolved)) == "" {
-		t.Fatalf("checkpoint integration: %s does not name its interpreter: %v", python, err)
-	}
-	python = strings.TrimSpace(string(resolved))
 	session := checkpointSession(t, checkpointSourceFixture(t, false))
 	for _, name := range checkpointBundle {
 		data, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(name)))
