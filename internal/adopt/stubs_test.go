@@ -119,12 +119,10 @@ func main() {
 }
 `
 
-// stubCache holds each stand-in built in this test binary, by source, and the PATH the binary
-// started with, under which it builds them.
+// stubCache holds each stand-in built in this test binary, by source.
 var stubCache = struct {
 	sync.Mutex
 	dir   string
-	path  string
 	built map[string]string
 }{built: map[string]string{}}
 
@@ -135,7 +133,6 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	stubCache.dir = dir
-	stubCache.path = os.Getenv("PATH")
 	code := m.Run()
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "stub cache: %v\n", err)
@@ -144,7 +141,8 @@ func TestMain(m *testing.M) {
 }
 
 // installStub puts the stand-in built from source into dir as the executable called name and
-// returns its path. It may run after hermeticPath narrowed PATH (useLefthook does).
+// returns its path. Call it before hermeticPath narrows PATH: the first build of a source needs
+// the go command.
 func installStub(t *testing.T, dir, name, source string) string {
 	t.Helper()
 	built := builtStub(t, source)
@@ -170,15 +168,6 @@ func builtStub(t *testing.T, source string) string {
 	if err != nil {
 		t.Fatalf("stub cache: %v", err)
 	}
-	// The first build of a source may come after hermeticPath narrowed PATH, which holds no go
-	// command. BuildExecutable finds go on PATH, so the build runs under the binary's starting
-	// PATH, restored at once. Tests that change PATH do not run in parallel (t.Setenv), and the
-	// lock holds out the other builds.
-	narrowed := os.Getenv("PATH")
-	if err := os.Setenv("PATH", stubCache.path); err != nil {
-		t.Fatalf("stub cache: %v", err)
-	}
-	defer func() { _ = os.Setenv("PATH", narrowed) }()
 	path := testsupport.BuildExecutable(t, dir, "stub", source)
 	stubCache.built[source] = path
 	return path
@@ -206,19 +195,6 @@ func copyExecutable(from, to string) error {
 // fallback the same way a failing one does, so without this the tests that mean "lefthook
 // fails" or "lefthook installs" could pass on a platform where the stub never starts.
 func TestHermeticPathRunsTheBuiltStubs(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("hermeticPath keeps git's directory, and no git is on PATH: %v", err)
-	}
-	// A skip in hermeticPath would skip every fixture that uses it, this test's subtests
-	// included, and a skip is no failure: the narrowing itself must run here.
-	narrowed := false
-	t.Run("hermeticPath runs", func(t *testing.T) {
-		hermeticPath(t, t.TempDir())
-		narrowed = true
-	})
-	if !narrowed {
-		t.Fatal("hermeticPath did not run on this platform")
-	}
 	t.Run("failing stub is found and fails", func(t *testing.T) {
 		newTestRepo(t, "stub-fails")
 		path, err := exec.LookPath("lefthook")
