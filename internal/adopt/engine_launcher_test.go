@@ -260,7 +260,7 @@ func TestEngineLauncher_Negative_ConflictingPinsFailClosed(t *testing.T) {
 	f.declare("a.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n")
 	f.declare("b.yml", "env:\n  PRAETOR_REF: 1111111aaaaaaa\n")
 	out, code := f.run()
-	if code != 1 || !strings.Contains(out, "several PRAETOR_REF values") || !strings.Contains(out, "a.yml") || !strings.Contains(out, "b.yml") || strings.Contains(out, "path-engine") {
+	if code != 1 || !strings.Contains(out, "several engine pins") || !strings.Contains(out, "a.yml") || !strings.Contains(out, "b.yml") || strings.Contains(out, "path-engine") {
 		t.Fatalf("exit %d, output %q", code, out)
 	}
 }
@@ -272,7 +272,7 @@ func TestEngineLauncher_Boundary_NoPinKeepsPathBehaviourAndSaysSo(t *testing.T) 
 	writeStub(t, f.stubs, util.LegacyCLI, "echo \"legacy-engine $*\"\n")
 	f.declare("gate.yml", "steps:\n  - run: echo \"PRAETOR_REF is not declared here\" # PRAETOR_REF: "+enginePin+"\n")
 	out, code := f.run()
-	if code != 0 || !strings.Contains(out, "legacy-engine audit --offline") || !strings.Contains(out, "no PRAETOR_REF pin") {
+	if code != 0 || !strings.Contains(out, "legacy-engine audit --offline") || !strings.Contains(out, "no PRAETOR_REF or PRAETOR_COMMIT pin") {
 		t.Fatalf("legacy only: exit %d, output %q", code, out)
 	}
 	f.pathEngine()
@@ -323,7 +323,7 @@ func TestEngineLauncher_Negative_ConflictingUsesRefsFailClosed(t *testing.T) {
 	f.declare("a.yml", "jobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@"+enginePin+"\n")
 	f.declare("b.yml", "jobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@1111111aaaaaaa\n")
 	out, code := f.run()
-	if code != 1 || !strings.Contains(out, "several PRAETOR_REF values") || strings.Contains(out, "path-engine") {
+	if code != 1 || !strings.Contains(out, "several engine pins") || strings.Contains(out, "path-engine") {
 		t.Fatalf("exit %d, output %q, want conflicting uses refs to fail closed", code, out)
 	}
 }
@@ -346,7 +346,7 @@ func TestEngineLauncher_Boundary_NonPinUsesRefRunsOnPath(t *testing.T) {
 	f.pathEngine()
 	f.declare("gate.yml", "jobs:\n  gate:\n    steps:\n      - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main\n")
 	out, code := f.run()
-	if code != 0 || !strings.Contains(out, "path-engine audit --offline") || !strings.Contains(out, "no PRAETOR_REF pin") {
+	if code != 0 || !strings.Contains(out, "path-engine audit --offline") || !strings.Contains(out, "no PRAETOR_REF or PRAETOR_COMMIT pin") {
 		t.Fatalf("exit %d, output %q, want fallback to PATH engine with stderr notice", code, out)
 	}
 }

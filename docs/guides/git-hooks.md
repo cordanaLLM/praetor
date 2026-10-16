@@ -349,7 +349,11 @@ the repository declares, the one its hosted Standards job installs.
 are read past). A ref is a commit id of 7 to 40 hexadecimal digits or a full release tag such as
 `v1.2.3` (a tag without patch digits like `v1` or `v1.2` moves under `go install`, and a branch
 name moves, so they are no pin). A non-pin `uses:` ref such as `@main` is treated as unpinned (running
-the engine on `PATH`). Declaring two different pin values fails closed with refusal.
+the engine on `PATH`). A repository whose CI builds its gate engine from a commit may declare
+`PRAETOR_COMMIT` instead, read the same way; its value must be a full commit id of 40
+hexadecimal digits, and any other value (`main`, a short id, a tag) fails closed naming
+`PRAETOR_COMMIT` (#1366). `PRAETOR_REF` and `PRAETOR_COMMIT` with the same value are one pin.
+Declaring two different pin values, under either name, fails closed with refusal.
 
 **The cache** is `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>`, one directory per pin.
 The first hook run with a pin that is not cached installs it:
@@ -365,8 +369,8 @@ half-written engine and parallel jobs on a cold cache cannot remove each other's
 installs when needed, another directory; old directories stay until you delete them.
 
 **Without a pin** the hook runs the binary on `PATH`, `praetorctl` before `standardsctl`, as
-before, and prints `praetor hooks: no PRAETOR_REF pin under .github/workflows; running the
-engine on PATH: <path>` on standard error.
+before, and prints `praetor hooks: no PRAETOR_REF or PRAETOR_COMMIT pin under .github/workflows;
+running the engine on PATH: <path>` on standard error.
 
 **It never falls back.** A pin that is unusable, declared twice with different values, an unreadable workflow file, or an install that
 cannot complete (no Go toolchain, no network, a timeout) fails the hook with one message

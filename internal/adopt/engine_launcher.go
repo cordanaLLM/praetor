@@ -10,7 +10,8 @@ import (
 
 // engineLauncherFile is the launcher every governance job of the generated lefthook.yml and the
 // fallback pre-commit hook run (lefthookGovernedCommand). It chooses the engine that judges the
-// repository: the one the repository pins with PRAETOR_REF in a workflow under .github/workflows,
+// repository: the one the repository pins with PRAETOR_REF or PRAETOR_COMMIT (#1366) in a workflow
+// under .github/workflows,
 // installed once per pin into a cache keyed by the pin, and only where the repository pins none the
 // binary on PATH (#906). Without it a hook judged a repository pinned to an older engine by
 // whatever newer binary came first on PATH.
@@ -27,6 +28,7 @@ var priorEngineLauncherDigests = map[string]string{
 	"93387a66f5c910bd4df4dbe11bd016d489af208620f7c0deea69777cdad00387": "engine launcher with --print-path, uses-pin, full semver (#906)",
 	"888b3442bf8381166b8623c195c887260a68672ce5795bf327ae5ce8b77fcc7b": "engine launcher with explicit PRAETOR_REF priority (#906)",
 	"26a458c46116cce38b23e591902ce0ed1541b6f3cedf77807743edd2298fcff5": "engine launcher with install_pinned split under the strict function length (#906)",
+	"281f744b2c29d3948ef16db7386c0ce8d9b688fb356aec8e34c58b494ed3ce47": "engine launcher reading PRAETOR_COMMIT as a pin (#1366)",
 }
 
 // reconcileEngineLauncher scaffolds the launcher beside the lefthook.yml jobs that run it. An
