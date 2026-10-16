@@ -24,7 +24,20 @@ jobs:
 <% hostedGateDraftStep %>
       - name: Checkout source<% hostedGateStepIf %>
         uses: actions/checkout@v4
-      - name: Setup Java<% hostedGateStepIf %>
+
+      - name: Check for a Maven or Gradle build file<% hostedGateStepIf %>
+        id: manifest
+        run: |
+          if [ -f pom.xml ] || [ -f build.gradle ] || [ -f build.gradle.kts ] ||
+            [ -f settings.gradle ] || [ -f settings.gradle.kts ] ||
+            [ -f mvnw ] || [ -f gradlew ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no Maven or Gradle build file yet: JVM steps skipped until the first one lands"
+          fi
+
+      - name: Setup Java<% hostedGateManifestStepIf %>
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -33,7 +46,7 @@ jobs:
       # jvm-service matches Maven and Gradle builds alike, so the step runs
       # whichever the repository carries, preferring a checked-in wrapper over
       # the runner's own install.
-      - name: Build and verify<% hostedGateStepIf %>
+      - name: Build and verify<% hostedGateManifestStepIf %>
         run: |
           if [ -x ./mvnw ]; then
             ./mvnw -B verify

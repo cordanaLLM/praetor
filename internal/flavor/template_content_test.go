@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/templates"
 )
 
@@ -53,6 +54,33 @@ func TestEveryRequiredTemplateStatesItsContent(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("no template was checked")
+	}
+}
+
+// Every CI template validator accepts its guarded rendering and rejects one later step after
+// its manifest condition is removed. This is the negative fixture for the manifest guard.
+func TestManifestGuardedWorkflowValidator_RejectsAnUnguardedStep(t *testing.T) {
+	for _, flv := range builtinFlavorList() {
+		for _, tmpl := range flv.RequiredTemplates() {
+			if tmpl.Path != ".github/workflows/ci.yml" || tmpl.Source == "" {
+				continue
+			}
+			body, err := templateContent(tmpl, templates.Context{
+				RepoName: "widget", Owner: "acme", Node: templates.NodeContext{Manager: "npm"},
+			})
+			if err != nil {
+				t.Fatalf("render %s %s: %v", flv.Name(), tmpl.Source, err)
+			}
+			if !tmpl.Validator([]byte(body)) {
+				t.Errorf("%s accepts no manifest guard", flv.Name())
+				continue
+			}
+			mutated := strings.Replace(body, "if: "+ghworkflow.HostedGateManifestStepCondition,
+				"if: "+ghworkflow.HostedGateNotDraft, 1)
+			if mutated == body || tmpl.Validator([]byte(mutated)) {
+				t.Errorf("%s accepts a later step without the manifest condition", flv.Name())
+			}
+		}
 	}
 }
 

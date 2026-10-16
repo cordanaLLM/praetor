@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -37,6 +38,46 @@ func validWorkflow(content []byte) bool {
 		return false
 	}
 	return len(document.Jobs) > 0
+}
+
+// validManifestGuardedWorkflow reports whether the CI test job probes a root manifest and gates
+// every later step on both the hosted gate and that probe. Setup actions also need the manifest:
+// without it they can fail before the test command gets a chance to skip.
+func validManifestGuardedWorkflow(content []byte) bool {
+	spec, err := ghworkflow.Parse(content)
+	if err != nil {
+		return false
+	}
+	job, found := spec.Jobs["test"]
+	if !found || len(job.Steps) < 4 {
+		return false
+	}
+	manifest := manifestStepIndex(job.Steps)
+	return manifest == 2 && validManifestStep(job.Steps[manifest-1], job.Steps[manifest]) &&
+		allLaterStepsRequireManifest(job.Steps, manifest)
+}
+
+func manifestStepIndex(steps []ghworkflow.Step) int {
+	for i, step := range steps {
+		if step.ID == "manifest" {
+			return i
+		}
+	}
+	return -1
+}
+
+func validManifestStep(checkout, manifest ghworkflow.Step) bool {
+	return strings.HasPrefix(checkout.Uses, "actions/checkout@") &&
+		manifest.If == ghworkflow.HostedGateNotDraft && manifest.Run != ""
+}
+
+func allLaterStepsRequireManifest(steps []ghworkflow.Step, manifest int) bool {
+	for i := manifest + 1; i < len(steps); i++ {
+		if steps[i].If != ghworkflow.HostedGateManifestStepCondition {
+			return false
+		}
+	}
+	return true
 }
 
 // validClangTidyConfig reports whether content parses as a YAML mapping declaring a non-empty

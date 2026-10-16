@@ -17,7 +17,18 @@ jobs:
 <% hostedGateDraftStep %>
       - name: Checkout source<% hostedGateStepIf %>
         uses: actions/checkout@v7
-      - name: Setup Go<% hostedGateStepIf %>
+
+      - name: Check for go.mod<% hostedGateStepIf %>
+        id: manifest
+        run: |
+          if [ -f go.mod ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no go.mod yet: Go steps skipped until the first one lands"
+          fi
+
+      - name: Setup Go<% hostedGateManifestStepIf %>
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
@@ -33,7 +44,7 @@ jobs:
       # the commit, and runs past 80 columns, so yamllint's line-length rule is
       # off for the two cache steps alone.
       # yamllint disable rule:line-length
-      - name: Restore Go module cache<% hostedGateStepIf %>
+      - name: Restore Go module cache<% hostedGateManifestStepIf %>
         uses: actions/cache@v6
         with:
           path: ~/go/pkg/mod
@@ -47,7 +58,7 @@ jobs:
       # it every run misses, restores the newest prefix match, and saves what it
       # actually built. `test` names this job's build cache; give every job in
       # the repository a different name here.
-      - name: Restore Go build cache<% hostedGateStepIf %>
+      - name: Restore Go build cache<% hostedGateManifestStepIf %>
         uses: actions/cache@v6
         with:
           path: ~/.cache/go-build
@@ -60,8 +71,8 @@ jobs:
       # Only the Go toolchain runs here. Praetor's gates (compile-context,
       # audit, flavor audit) need praetorctl, which no step installs; the git
       # hooks adoption writes run them.
-      - name: Vet<% hostedGateStepIf %>
+      - name: Vet<% hostedGateManifestStepIf %>
         run: go vet ./...
 
-      - name: Test<% hostedGateStepIf %>
+      - name: Test<% hostedGateManifestStepIf %>
         run: go test -race ./...

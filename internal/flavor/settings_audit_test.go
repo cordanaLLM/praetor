@@ -42,8 +42,8 @@ func conformingNativeGPU(t *testing.T, settings map[string]string) string {
 	return repoWithFiles(t, withOverrides(files, settings))
 }
 
-// fixtureWorkflow is the smallest file validWorkflow accepts: a workflow with one job.
-const fixtureWorkflow = "name: ci\non: push\njobs:\n  test:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: make verify-all\n"
+// fixtureWorkflow is the smallest CI body accepted by the Go flavor's manifest-guard validator.
+const fixtureWorkflow = "name: ci\non: push\njobs:\n  test:\n    runs-on: ubuntu-26.04\n    steps:\n      - name: Draft\n      - uses: actions/checkout@v4\n      - id: manifest\n        if: github.event.pull_request.draft != true\n        run: echo \\\"present=true\\\" >> \\\"$GITHUB_OUTPUT\\\"\n      - if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'\n        run: go test ./...\n"
 
 // withOverrides applies a case's replacements over a flavor's own files, so a case changes
 // exactly one of them and reads the effect off the report. The repository itself is written

@@ -17,16 +17,27 @@ jobs:
 <% hostedGateDraftStep %>
       - name: Checkout source<% hostedGateStepIf %>
         uses: actions/checkout@v4
-      - name: Setup Flutter<% hostedGateStepIf %>
+
+      - name: Check for pubspec.yaml<% hostedGateStepIf %>
+        id: manifest
+        run: |
+          if [ -f pubspec.yaml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no pubspec.yaml yet: Flutter steps skipped until the first one lands"
+          fi
+
+      - name: Setup Flutter<% hostedGateManifestStepIf %>
         uses: subosito/flutter-action@v2
         with:
           channel: stable
 
-      - name: Install dependencies<% hostedGateStepIf %>
+      - name: Install dependencies<% hostedGateManifestStepIf %>
         run: flutter pub get
 
-      - name: Analyze<% hostedGateStepIf %>
+      - name: Analyze<% hostedGateManifestStepIf %>
         run: flutter analyze
 
-      - name: Test<% hostedGateStepIf %>
+      - name: Test<% hostedGateManifestStepIf %>
         run: flutter test

@@ -24,24 +24,28 @@ import (
 //     pending. Placed on a line of its own, it is followed by one blank line.
 //   - hostedGateStepIf is the condition every later step carries (ghworkflow.HostedGateStepIf),
 //     led by its line break: a body appends it to the step's name line.
+//   - hostedGateManifestStepIf also requires the root manifest probe to succeed before a
+//     toolchain step runs.
 const (
-	hostedGateOnFunc          = "hostedGateOn"
-	hostedGateScheduledOnFunc = "hostedGateScheduledOn"
-	hostedGateDraftStepFunc   = "hostedGateDraftStep"
-	hostedGateStepIfFunc      = "hostedGateStepIf"
-	securityGovulnVersionFunc = "securityGovulnVersion"
-	securityGosecVersionFunc  = "securityGosecVersion"
-	securityXToolsVersionFunc = "securityXToolsVersion"
+	hostedGateOnFunc             = "hostedGateOn"
+	hostedGateScheduledOnFunc    = "hostedGateScheduledOn"
+	hostedGateDraftStepFunc      = "hostedGateDraftStep"
+	hostedGateStepIfFunc         = "hostedGateStepIf"
+	hostedGateManifestStepIfFunc = "hostedGateManifestStepIf"
+	securityGovulnVersionFunc    = "securityGovulnVersion"
+	securityGosecVersionFunc     = "securityGosecVersion"
+	securityXToolsVersionFunc    = "securityXToolsVersion"
 )
 
 // templateFuncs is the function map execute hands every template. It keeps generated workflow
 // constants in Go so nested-module data never has to be embedded into the main module.
 var templateFuncs = template.FuncMap{
-	hostedGateOnFunc:          func() string { return ghworkflow.HostedGateOn },
-	hostedGateScheduledOnFunc: func() string { return ghworkflow.HostedGateScheduledOn },
-	hostedGateDraftStepFunc:   func() string { return ghworkflow.HostedGateDraftStep },
-	hostedGateStepIfFunc:      func() string { return ghworkflow.HostedGateStepIf },
-	securityGovulnVersionFunc: func() string { return GoSecurityGovulnVersion },
-	securityGosecVersionFunc:  func() string { return GoSecurityGosecVersion },
-	securityXToolsVersionFunc: func() string { return GoSecurityXToolsVersion },
+	hostedGateOnFunc:             func() string { return ghworkflow.HostedGateOn },
+	hostedGateScheduledOnFunc:    func() string { return ghworkflow.HostedGateScheduledOn },
+	hostedGateDraftStepFunc:      func() string { return ghworkflow.HostedGateDraftStep },
+	hostedGateStepIfFunc:         func() string { return ghworkflow.HostedGateStepIf },
+	hostedGateManifestStepIfFunc: func() string { return "\n        if: " + ghworkflow.HostedGateManifestStepCondition },
+	securityGovulnVersionFunc:    func() string { return GoSecurityGovulnVersion },
+	securityGosecVersionFunc:     func() string { return GoSecurityGosecVersion },
+	securityXToolsVersionFunc:    func() string { return GoSecurityXToolsVersion },
 }

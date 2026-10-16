@@ -28,8 +28,19 @@ jobs:
       - name: Checkout source
         if: github.event.pull_request.draft != true
         uses: actions/checkout@v4
-      - name: Setup Node.js
+
+      - name: Check for package.json
         if: github.event.pull_request.draft != true
+        id: manifest
+        run: |
+          if [ -f package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no package.json yet: Node steps skipped until the first one lands"
+          fi
+      - name: Setup Node.js
+        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -38,17 +49,17 @@ jobs:
       # npm ci installs exactly what package-lock.json records and fails when
       # the two disagree.
       - name: Install dependencies
-        if: github.event.pull_request.draft != true
+        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
         run: npm ci
 
       - name: Lint
-        if: github.event.pull_request.draft != true
+        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
         run: npm run lint --if-present
 
       - name: Build
-        if: github.event.pull_request.draft != true
+        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
         run: npm run build --if-present
 
       - name: Test
-        if: github.event.pull_request.draft != true
+        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
         run: npm test

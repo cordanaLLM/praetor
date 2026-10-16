@@ -22,19 +22,29 @@ jobs:
       - name: Checkout source<% hostedGateStepIf %>
         uses: actions/checkout@v4
 
+      - name: Check for Cargo.toml<% hostedGateStepIf %>
+        id: manifest
+        run: |
+          if [ -f Cargo.toml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no Cargo.toml yet: Rust steps skipped until the first one lands"
+          fi
+
       # rustup ships on the hosted runner image, so the toolchain needs no
       # third-party action.
-      - name: Install the stable toolchain<% hostedGateStepIf %>
+      - name: Install the stable toolchain<% hostedGateManifestStepIf %>
         run: |
           rustup toolchain install stable --profile minimal \
             --component clippy,rustfmt
           rustup default stable
 
-      - name: Check formatting<% hostedGateStepIf %>
+      - name: Check formatting<% hostedGateManifestStepIf %>
         run: cargo fmt --all -- --check
 
-      - name: Lint<% hostedGateStepIf %>
+      - name: Lint<% hostedGateManifestStepIf %>
         run: cargo clippy --all-targets --all-features -- -D warnings
 
-      - name: Test<% hostedGateStepIf %>
+      - name: Test<% hostedGateManifestStepIf %>
         run: cargo test --all-features
