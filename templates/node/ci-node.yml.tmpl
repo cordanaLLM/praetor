@@ -38,7 +38,7 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no package.json yet: Node steps skipped until the first one lands"
+            echo "::notice::Node steps skipped: no package.json yet"
           fi
 <%- if eq .Node.Manager "pnpm" %>
       - name: Setup Node.js<% hostedGateManifestStepIf %>

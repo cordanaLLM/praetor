@@ -37,13 +37,17 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no package.json yet: Node steps skipped until the first one lands"
+            echo "::notice::Node steps skipped: no package.json yet"
           fi
       - name: Setup Bun
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         uses: oven-sh/setup-bun@v2
       - name: Setup Node.js
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -51,17 +55,25 @@ jobs:
       # --frozen-lockfile installs exactly what the Bun lockfile records and
       # fails when the two disagree.
       - name: Install dependencies
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: bun install --frozen-lockfile
 
       - name: Lint
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: bun run --if-present lint
 
       - name: Build
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: bun run --if-present build
 
       - name: Test
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: bun run test

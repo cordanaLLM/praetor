@@ -90,6 +90,10 @@ const (
 	HostedGateManifestPresent = "steps.manifest.outputs.present == 'true'"
 	// HostedGateManifestStepCondition combines the ordinary gate condition with manifest presence.
 	HostedGateManifestStepCondition = HostedGateNotDraft + " && " + HostedGateManifestPresent
+	// HostedGateManifestStepIf is HostedGateManifestStepCondition at a gate step's indentation, led by its
+	// line break and folded over two lines: on one it runs past yamllint's 80 columns. YAML folds it
+	// back to HostedGateManifestStepCondition exactly, the string the workflow checks compare.
+	HostedGateManifestStepIf = "\n        if: >-\n          " + HostedGateNotDraft + " &&\n          " + HostedGateManifestPresent
 	// HostedGateDraftStepName names the draft step.
 	HostedGateDraftStepName = "Stop on a draft pull request"
 	// HostedGateDraftShell is the shell the draft step names, so neither the runner's default

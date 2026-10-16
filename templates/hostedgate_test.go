@@ -84,7 +84,7 @@ func TestCIWorkflowTemplatesGuardToolchainStepsOnRootManifest(t *testing.T) {
 				!strings.Contains(steps[manifest].Name, wantManifest[name]) ||
 				!strings.Contains(steps[manifest].Run, `present=true" >> "$GITHUB_OUTPUT"`) ||
 				!strings.Contains(steps[manifest].Run, `present=false" >> "$GITHUB_OUTPUT"`) ||
-				!strings.Contains(steps[manifest].Run, "::notice::no ") {
+				!strings.Contains(steps[manifest].Run, " steps skipped: no ") {
 				t.Errorf("%s as %s: incomplete root manifest probe: %#v", name, variant.name, steps[manifest])
 			}
 			for i := manifest + 1; i < len(steps); i++ {
@@ -107,7 +107,7 @@ func TestCIWorkflowTemplatesRenderTheHostedGateShape_Negative(t *testing.T) {
 	for label, mutated := range map[string]string{
 		"no draft step": strings.Replace(body, ghworkflow.HostedGateDraftStep, "", 1),
 		"a step off its guard": strings.Replace(body,
-			"- name: Test\n        if: "+ghworkflow.HostedGateManifestStepCondition,
+			"- name: Test"+ghworkflow.HostedGateManifestStepIf,
 			"- name: Test", 1),
 		"no ready_for_review":   strings.Replace(body, ", "+ghworkflow.HostedGateReadyType, "", 1),
 		"every branch push run": strings.Replace(body, ghworkflow.HostedGatePushBranchesPrefix+"main']", "\n    branches: ['**']", 1),
@@ -132,7 +132,7 @@ func TestHostedGateFunctionsRenderTheConstants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ghworkflow.HostedGateOn + "|" + ghworkflow.HostedGateScheduledOn + "|" + ghworkflow.HostedGateDraftStep + "|" + ghworkflow.HostedGateStepIf + "|\n        if: " + ghworkflow.HostedGateManifestStepCondition
+	want := ghworkflow.HostedGateOn + "|" + ghworkflow.HostedGateScheduledOn + "|" + ghworkflow.HostedGateDraftStep + "|" + ghworkflow.HostedGateStepIf + "|" + ghworkflow.HostedGateManifestStepIf
 	if got != want {
 		t.Errorf("Render = %q, want %q", got, want)
 	}

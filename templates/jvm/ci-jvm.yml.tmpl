@@ -34,7 +34,7 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no Maven or Gradle build file yet: JVM steps skipped until the first one lands"
+            echo "::notice::JVM steps skipped: no Maven or Gradle build yet"
           fi
 
       - name: Setup Java<% hostedGateManifestStepIf %>

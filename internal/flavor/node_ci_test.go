@@ -202,7 +202,7 @@ func (job *nodeJob) command(fields []string) string {
 		}
 		return ""
 	case command == `echo "present=true" >> "$GITHUB_OUTPUT"`, command == "else", command == `echo "present=false" >> "$GITHUB_OUTPUT"`,
-		command == `echo "::notice::no package.json yet: Node steps skipped until the first one lands"`, command == "fi":
+		command == `echo "::notice::Node steps skipped: no package.json yet"`, command == "fi":
 		return ""
 	case command == "npm install --global corepack@latest":
 		return job.install("npm", "corepack", command)

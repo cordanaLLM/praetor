@@ -37,23 +37,31 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no pubspec.yaml yet: Flutter steps skipped until the first one lands"
+            echo "::notice::Flutter steps skipped: no pubspec.yaml yet"
           fi
 
       - name: Setup Flutter
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
 
       - name: Install dependencies
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: flutter pub get
 
       - name: Analyze
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: flutter analyze
 
       - name: Test
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: flutter test

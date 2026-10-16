@@ -37,10 +37,12 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no package.json yet: Node steps skipped until the first one lands"
+            echo "::notice::Node steps skipped: no package.json yet"
           fi
       - name: Setup Node.js
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -49,7 +51,9 @@ jobs:
       # hands over to the release a .yarnrc.yml yarnPath names; Node 25 and
       # later ship without Corepack.
       - name: Enable Yarn
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: |
           npm install --global corepack@latest
           corepack enable yarn
@@ -57,13 +61,19 @@ jobs:
       # The locked install takes exactly what yarn.lock records and fails
       # when the two disagree.
       - name: Install dependencies
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: yarn install --frozen-lockfile
 
       - name: Build
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: yarn run build
 
       - name: Test
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: yarn run test

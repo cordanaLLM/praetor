@@ -39,11 +39,13 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no Maven or Gradle build file yet: JVM steps skipped until the first one lands"
+            echo "::notice::JVM steps skipped: no Maven or Gradle build yet"
           fi
 
       - name: Setup Java
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -53,7 +55,9 @@ jobs:
       # whichever the repository carries, preferring a checked-in wrapper over
       # the runner's own install.
       - name: Build and verify
-        if: github.event.pull_request.draft != true && steps.manifest.outputs.present == 'true'
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: |
           if [ -x ./mvnw ]; then
             ./mvnw -B verify

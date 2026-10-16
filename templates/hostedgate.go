@@ -44,7 +44,7 @@ var templateFuncs = template.FuncMap{
 	hostedGateScheduledOnFunc:    func() string { return ghworkflow.HostedGateScheduledOn },
 	hostedGateDraftStepFunc:      func() string { return ghworkflow.HostedGateDraftStep },
 	hostedGateStepIfFunc:         func() string { return ghworkflow.HostedGateStepIf },
-	hostedGateManifestStepIfFunc: func() string { return "\n        if: " + ghworkflow.HostedGateManifestStepCondition },
+	hostedGateManifestStepIfFunc: func() string { return ghworkflow.HostedGateManifestStepIf },
 	securityGovulnVersionFunc:    func() string { return GoSecurityGovulnVersion },
 	securityGosecVersionFunc:     func() string { return GoSecurityGosecVersion },
 	securityXToolsVersionFunc:    func() string { return GoSecurityXToolsVersion },

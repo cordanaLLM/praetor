@@ -76,8 +76,8 @@ func TestManifestGuardedWorkflowValidator_RejectsAnUnguardedStep(t *testing.T) {
 				t.Errorf("%s renders no manifest guard", flv.Name())
 				continue
 			}
-			mutated := strings.Replace(body, "if: "+ghworkflow.HostedGateManifestStepCondition,
-				"if: "+ghworkflow.HostedGateNotDraft, 1)
+			mutated := strings.Replace(body, ghworkflow.HostedGateManifestStepIf,
+				ghworkflow.HostedGateStepIf, 1)
 			if mutated == body || validManifestGuardedWorkflow([]byte(mutated)) {
 				t.Errorf("%s accepts a later step without the manifest condition", flv.Name())
 			}

@@ -25,7 +25,7 @@ jobs:
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no go.mod yet: Go steps skipped until the first one lands"
+            echo "::notice::Go steps skipped: no go.mod yet"
           fi
 
       - name: Setup Go<% hostedGateManifestStepIf %>
