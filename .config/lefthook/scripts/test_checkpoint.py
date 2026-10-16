@@ -27,6 +27,9 @@ CONFIG = {
 
 def git(root, *args, check=True):
     env = dict(os.environ)
+    for key in tuple(env):
+        if key.startswith("GIT_CONFIG_"):
+            env.pop(key)
     for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"):
         env.pop(key, None)
     result = subprocess.run(["git", *args], cwd=root, env=env,
@@ -791,6 +794,19 @@ class CheckpointTests(unittest.TestCase):
         result = self.inspect_with_env(GIT_SSH_COMMAND="/bin/false")
         self.assertFalse(result["deferred"])
         self.assertTrue(result["due"])
+
+    def test_git_helper_ignores_environment_git_configuration(self):
+        # #1370: GIT_CONFIG_COUNT/KEY/VALUE outrank repository configuration, and a cheap-lane
+        # job carries them. Negative: a plain git call under that environment reads the
+        # environment's value. Positive: the fixture helper reads the repository's own value.
+        git(self.root, "config", "credential.helper", "store")
+        injected = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": "lane"}
+        with mock.patch.dict(os.environ, injected):
+            raw = subprocess.run(["git", "config", "--get", "credential.helper"], cwd=self.root,
+                                 capture_output=True, check=True, timeout=30)
+            self.assertEqual(raw.stdout.decode().strip(), "lane")
+            helper = git(self.root, "config", "--get", "credential.helper")
+        self.assertEqual(helper.stdout.decode().strip(), "store")
 
     def test_detached_job_https_transport_depends_on_credential_helper(self):
         self.prepare_detached_job("https://github.com/acme/demo.git")
