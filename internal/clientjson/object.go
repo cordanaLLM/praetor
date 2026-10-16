@@ -107,7 +107,9 @@ func AppendMember(raw []byte, name string, value jsontext.Value) ([]byte, error)
 		if readErr != nil {
 			return nil, errNotObject
 		}
-		if token.Kind() == '}' {
+		// Only the object's own closing brace ends the walk: a nested object closes first and
+		// leaves the decoder one level deeper (StackDepth 1), the outer close leaves it at 0.
+		if token.Kind() == '}' && decoder.StackDepth() == 0 {
 			close := int(decoder.InputOffset()) - 1
 			key, marshalErr := json.Marshal(name)
 			if marshalErr != nil {

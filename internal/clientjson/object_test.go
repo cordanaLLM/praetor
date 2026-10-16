@@ -1,6 +1,7 @@
 package clientjson
 
 import (
+	"bytes"
 	"encoding/json/jsontext"
 	"errors"
 	"testing"
@@ -138,4 +139,43 @@ func TestAppendMember_RejectsDuplicateAndInvalidInputs(t *testing.T) {
 	if got, err := AppendMember([]byte(`{}`), "a", jsontext.Value(`bad`)); err == nil || got != nil {
 		t.Errorf("invalid value accepted: %q, %v", got, err)
 	}
+}
+
+// Negative and boundary: a member is appended to the outer object even when the first closing
+// brace in the text belongs to a nested object, empty or not, and the nested values stay as
+// they were.
+func TestAppendMember_Negative_NestedObjectsKeepTheirMembers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"nested object first": `{"a":{"type":"http","url":"https://x"}}`,
+		"empty nested object": `{"a":{"env":{}},"b":1}`,
+		"indented, deep":      "{\n  \"a\": {\n    \"env\": {\n      \"K\": \"v\"\n    }\n  }\n}\n",
+	} {
+		out, err := AppendMember([]byte(raw), "new", jsontext.Value(`{"command":"/usr/bin/true"}`))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		object, err := DecodeObject(out)
+		if err != nil {
+			t.Fatalf("%s: result %s: %v", name, out, err)
+		}
+		if _, ok := object.Get("new"); !ok || len(object) < 2 {
+			t.Fatalf("%s: new member not at the top level: %s", name, out)
+		}
+		before, err := DecodeObject([]byte(raw))
+		if err != nil {
+			t.Fatalf("%s: fixture: %v", name, err)
+		}
+		if a, _ := object.Get("a"); !bytes.Equal(a, mustGet(t, before, "a")) {
+			t.Fatalf("%s: nested member changed: %s", name, out)
+		}
+	}
+}
+
+func mustGet(t *testing.T, object Object, name string) jsontext.Value {
+	t.Helper()
+	value, ok := object.Get(name)
+	if !ok {
+		t.Fatalf("no member %q", name)
+	}
+	return value
 }
