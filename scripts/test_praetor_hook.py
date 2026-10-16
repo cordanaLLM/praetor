@@ -416,6 +416,13 @@ class TrackedRegistrations(unittest.TestCase):
                 result = subprocess.run([str(self.engine), "hook", *pair], cwd=outside, input=self.agy_payload(outside),
                                         capture_output=True, timeout=30, check=False)
                 self.assertEqual(result.returncode, 0, result.stderr)
+                if pair == ("agy", "prompt"):
+                    # The engine adds the clock line to every prompt, inside a repository or not, so this
+                    # row never skips; without an engine the launcher gives the empty prompt answer.
+                    steps = json.loads(result.stdout)["injectSteps"]
+                    self.assertTrue(steps[0]["ephemeralMessage"].startswith("clock: "), steps)
+                    self.assertEqual(json.loads(answer), {})
+                    continue
                 self.assertEqual(json.loads(result.stdout), json.loads(answer))
 
     def test_checkout_engine_still_enforces_over_an_old_installed_one(self):
