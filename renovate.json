@@ -214,6 +214,11 @@
       "enabled": false
     },
     {
+      "description": "Recorded DevContainer bundle fixture: internal/devcontainer/testdata/prior-release-bundle is a bundle recorded under an earlier engine release, kept byte for byte so the engine proves it still verifies; no manager updates it.",
+      "matchFileNames": ["internal/devcontainer/testdata/prior-release-bundle/devcontainer.json", "internal/devcontainer/testdata/prior-release-bundle/Dockerfile.praetor"],
+      "enabled": false
+    },
+    {
       "description": "Reviewed DevContainer images: the builder pin in internal/devcontainer/bootstrap.go and the FROM line of docker/dev/Dockerfile name one image, so one branch moves both, with the base pin, and the takeover runs one praetorctl devcontainer bump for it. matchPackageNames keeps the Alpine packages and the syntax directive the dockerfile manager also reads from docker/dev/Dockerfile in their own branches.",
       "matchFileNames": ["internal/devcontainer/bootstrap.go", "docker/dev/Dockerfile"],
       "matchPackageNames": ["golang", "docker.io/library/golang", "mcr.microsoft.com/devcontainers/base"],

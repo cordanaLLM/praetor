@@ -673,31 +673,38 @@ func expandCavemanPaths(ctx context.Context, args []string, extensions map[strin
 	}
 	var paths []string
 	for _, arg := range args {
-		if arg == "-" {
-			paths = append(paths, arg)
-			continue
-		}
-		// #nosec G703 -- arg is a file the operator names on the command line to lint, as with
-		// cat; no privilege boundary is crossed, and the read itself goes through the bounded,
-		// symlink-resistant contextopt.ReadSnapshot.
-		info, err := os.Stat(arg)
+		var err error
+		paths, err = expandCavemanArg(ctx, paths, arg, extensions)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", arg, err)
-		}
-		if !info.IsDir() {
-			paths = append(paths, arg)
-		} else {
-			before := len(paths)
-			if paths, err = appendCavemanFiles(ctx, paths, arg, extensions); err != nil {
-				return nil, err
-			}
-			if len(paths) == before {
-				return nil, fmt.Errorf("caveman check: directory %s matched zero files for --ext", arg)
-			}
+			return nil, err
 		}
 		if len(paths) > maxCavemanFiles {
 			return nil, fmt.Errorf("caveman: more than %d input files", maxCavemanFiles)
 		}
+	}
+	return paths, nil
+}
+
+func expandCavemanArg(ctx context.Context, paths []string, arg string, extensions map[string]bool) ([]string, error) {
+	if arg == "-" {
+		return append(paths, arg), nil
+	}
+	// #nosec G703 -- arg is a file the operator names on the command line to lint, as with
+	// cat; no privilege boundary is crossed, and the read itself goes through the bounded,
+	// symlink-resistant contextopt.ReadSnapshot.
+	info, err := os.Stat(arg)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", arg, err)
+	}
+	if !info.IsDir() {
+		return append(paths, arg), nil
+	}
+	before := len(paths)
+	if paths, err = appendCavemanFiles(ctx, paths, arg, extensions); err != nil {
+		return nil, err
+	}
+	if len(paths) == before {
+		return nil, fmt.Errorf("caveman check: directory %s matched zero files for --ext", arg)
 	}
 	return paths, nil
 }

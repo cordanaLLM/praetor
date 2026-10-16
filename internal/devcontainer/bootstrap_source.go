@@ -10,7 +10,9 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -25,12 +27,23 @@ const (
 	maxBootstrapFiles       = 4096
 	maxBootstrapSourceBytes = 16 * 1024 * 1024
 	maxBootstrapPathBytes   = 256
+	bundleSourceRepair      = "the bundle is generated: regenerate it with praetorctl devcontainer generate --source-root <reviewed Praetor checkout> --force"
 )
 
 type bootstrapSourceFile struct {
 	Name string
 	Data []byte
 }
+
+type sourceRules struct {
+	families func() ([]bootstrapAssetFamily, error)
+	repair   string
+}
+
+var (
+	captureRules = sourceRules{families: bootstrapAssetFamilies, repair: ""}
+	archiveRules = sourceRules{families: archivedAssetFamilies, repair: bundleSourceRepair}
+)
 
 // SourceRootForms is what every flag or parameter selecting a Praetor source root accepts, and
 // SourceRootGitNote the clause a command that prepares the bootstrap adds (ErrSourceNotGitCheckout).
@@ -151,7 +164,7 @@ func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
 		if path == "" {
 			continue
 		}
-		if err := validateBootstrapSourceName(path); err != nil {
+		if err := validateBootstrapSourceName(path, captureRules); err != nil {
 			return nil, err
 		}
 		unique[path] = true
@@ -193,45 +206,45 @@ func containsBootstrapSource(files []bootstrapSourceFile, name string) bool {
 	return false
 }
 
-func validateBootstrapSourceName(name string) error {
+func validateBootstrapSourceName(name string, rules sourceRules) error {
 	if name == "" || len(name) > maxBootstrapPathBytes || filepath.ToSlash(filepath.Clean(name)) != name || filepath.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") || strings.ContainsAny(name, "\\\x00\r\n") {
 		return errors.New("invalid bootstrap source path")
 	}
-	return validateBootstrapSourceKind(name)
+	return validateBootstrapSourceKind(name, rules)
 }
 
 // validateBootstrapSourceKind admits the module files, the assets of every declared go:embed
-// family (bootstrapAssetFamilies), and non-test Go source: the inputs go build
+// family (rules.families), and non-test Go source: the inputs go build
 // ./cmd/standardsctl reads. bootstrapSourcePathspec plus the family assets asks git for
 // exactly these. Go's test surface is refused first, so no asset allowance can admit a
 // _test.go file or a testdata member.
-func validateBootstrapSourceKind(name string) error {
+func validateBootstrapSourceKind(name string, rules sourceRules) error {
 	switch {
 	case util.IsGoTestSurface(name):
 		return fmt.Errorf("bootstrap source %s is test-only; go build never reads _test.go files or testdata directories", name)
 	case name == "go.mod", name == "go.sum", name == "LICENSE", strings.HasSuffix(name, ".go"):
 		return nil
 	}
-	asset, err := isBootstrapAsset(name)
+	families, err := rules.families()
 	if err != nil {
 		return err
 	}
-	if !asset {
+	if !isBootstrapAsset(name, families) {
 		return errors.New("unsupported bootstrap source file; non-Go build inputs require explicit capture support")
 	}
 	return nil
 }
 
-func validateBootstrapSourceFile(name string, data []byte) error {
-	_, err := parseBootstrapSourceFile(name, data)
+func validateBootstrapSourceFile(name string, data []byte, rules sourceRules) error {
+	_, err := parseBootstrapSourceFile(name, data, rules)
 	return err
 }
 
 // parseBootstrapSourceFile applies the name rule and, for Go source, the embed-directive
 // rule, and returns the parsed file so the build closure reads its imports without a
 // second parse. A non-Go member returns a nil file.
-func parseBootstrapSourceFile(name string, data []byte) (*ast.File, error) {
-	if err := validateBootstrapSourceName(name); err != nil {
+func parseBootstrapSourceFile(name string, data []byte, rules sourceRules) (*ast.File, error) {
+	if err := validateBootstrapSourceName(name, rules); err != nil {
 		return nil, err
 	}
 	if !strings.HasSuffix(name, ".go") {
@@ -243,7 +256,7 @@ func parseBootstrapSourceFile(name string, data []byte) (*ast.File, error) {
 	}
 	for _, group := range parsed.Comments {
 		for _, comment := range group.List {
-			if err := validateEmbedDirective(name, comment.Text); err != nil {
+			if err := validateEmbedDirective(name, comment.Text, rules); err != nil {
 				return nil, err
 			}
 		}
@@ -254,11 +267,11 @@ func parseBootstrapSourceFile(name string, data []byte) (*ast.File, error) {
 // validateEmbedDirective refuses a go:embed directive unless it is exactly the directive of
 // a declared asset family, in that family's source file: any other one would build a binary
 // missing the files it embeds, since the archive carries only the declared assets.
-func validateEmbedDirective(name, text string) error {
+func validateEmbedDirective(name, text string, rules sourceRules) error {
 	if !strings.HasPrefix(text, "//go:embed ") && !strings.HasPrefix(text, "//go:embed\t") {
 		return nil
 	}
-	families, err := bootstrapAssetFamilies()
+	families, err := rules.families()
 	if err != nil {
 		return err
 	}
@@ -266,6 +279,9 @@ func validateEmbedDirective(name, text string) error {
 		if name == family.source && text == family.directive {
 			return nil
 		}
+	}
+	if rules.repair != "" {
+		return fmt.Errorf("bootstrap source %s embeds assets; explicit asset capture is required; %s", name, rules.repair)
 	}
 	return fmt.Errorf("bootstrap source %s embeds assets; explicit asset capture is required", name)
 }
@@ -357,7 +373,7 @@ func validateBootstrapSourceSet(files []bootstrapSourceFile) error {
 		}
 	}
 	for _, file := range files {
-		if err := validateBootstrapSourceName(file.Name); err != nil {
+		if err := validateBootstrapSourceName(file.Name, captureRules); err != nil {
 			return err
 		}
 		if file.Name == "go.mod" && !declaresPraetorModule(file.Data) {
@@ -395,6 +411,60 @@ type bootstrapAssetFamily struct {
 	source    string
 	directive string
 	assets    []string
+	preMove   bool
+	moved     map[string]map[string]string
+}
+
+// preMoveBootstrapFamily derives the pre-move declaration for a family with Moved entries:
+// the same source file, the directive with each moved asset at its old path in the old order,
+// and the old repository-relative asset paths.
+func preMoveBootstrapFamily(family managedasset.Family) (bootstrapAssetFamily, bool) {
+	if len(family.Moved) == 0 {
+		return bootstrapAssetFamily{}, false
+	}
+	movedBase := make(map[string]string, len(family.Moved))
+	for oldRepoPath := range family.Moved {
+		oldRel := strings.TrimPrefix(oldRepoPath, family.Directory+"/")
+		movedBase[path.Base(oldRepoPath)] = oldRel
+	}
+	names := family.Names()
+	oldNames := make([]string, 0, len(names))
+	oldAssetPaths := make([]string, 0, len(names))
+	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
+		name := names[index]
+		if oldRel, ok := movedBase[path.Base(name)]; ok {
+			oldNames = append(oldNames, oldRel)
+			oldAssetPaths = append(oldAssetPaths, family.Directory+"/"+oldRel)
+		} else {
+			oldNames = append(oldNames, name)
+			oldAssetPaths = append(oldAssetPaths, family.AssetPath(name))
+		}
+	}
+	return bootstrapAssetFamily{
+		name:      family.Name + " (pre-move)",
+		source:    family.Source,
+		directive: "//go:embed " + strings.Join(oldNames, " "),
+		assets:    oldAssetPaths,
+		preMove:   true,
+		moved:     family.Moved,
+	}, true
+}
+
+// archivedAssetFamilies yields the asset families recognized when validating a recorded
+// archive: the current families plus pre-move declarations for families with Moved entries.
+func archivedAssetFamilies() ([]bootstrapAssetFamily, error) {
+	current, err := bootstrapAssetFamilies()
+	if err != nil {
+		return nil, err
+	}
+	managed := managedasset.Families()
+	families := slices.Clone(current)
+	for index := 0; index < len(managed) && index < managedasset.MaxFamilies; index++ {
+		if preMove, ok := preMoveBootstrapFamily(managed[index]); ok {
+			families = append(families, preMove)
+		}
+	}
+	return families, nil
 }
 
 // bootstrapAssetFamilies declares the embedded asset sets go build ./cmd/standardsctl needs:
@@ -434,20 +504,16 @@ func templateBootstrapAssetPaths() ([]string, error) {
 	return paths, nil
 }
 
-// isBootstrapAsset reports whether name is an asset of a declared family.
-func isBootstrapAsset(name string) (bool, error) {
-	families, err := bootstrapAssetFamilies()
-	if err != nil {
-		return false, err
-	}
+// isBootstrapAsset reports whether name is an asset of one of the given families.
+func isBootstrapAsset(name string, families []bootstrapAssetFamily) bool {
 	for _, family := range families {
 		for _, candidate := range family.assets {
 			if name == candidate {
-				return true, nil
+				return true
 			}
 		}
 	}
-	return false, nil
+	return false
 }
 
 func declaresPraetorModule(data []byte) bool {
@@ -466,4 +532,167 @@ func declaresPraetorModule(data []byte) bool {
 		}
 	}
 	return count == 1 && valid
+}
+
+func parseSourceEmbedDirective(file bootstrapSourceFile) (string, error) {
+	if !strings.HasSuffix(file.Name, ".go") {
+		return "", nil
+	}
+	parsed, err := parser.ParseFile(token.NewFileSet(), file.Name, file.Data, parser.ParseComments)
+	if err != nil {
+		return "", fmt.Errorf("parse bootstrap source %s: %w", file.Name, err)
+	}
+	var directive string
+	for _, group := range parsed.Comments {
+		for _, comment := range group.List {
+			text := comment.Text
+			if strings.HasPrefix(text, "//go:embed ") || strings.HasPrefix(text, "//go:embed\t") {
+				if directive != "" {
+					return "", fmt.Errorf("bootstrap source %s carries multiple go:embed directives", file.Name)
+				}
+				directive = text
+			}
+		}
+	}
+	return directive, nil
+}
+
+func selectFamilyDeclaration(source, directive string, archived []bootstrapAssetFamily) (*bootstrapAssetFamily, []*bootstrapAssetFamily, error) {
+	var selected *bootstrapAssetFamily
+	var unselected []*bootstrapAssetFamily
+	for i := range archived {
+		fam := &archived[i]
+		if fam.source != source {
+			continue
+		}
+		if fam.directive == directive {
+			selected = fam
+		} else {
+			unselected = append(unselected, fam)
+		}
+	}
+	if selected == nil {
+		return nil, nil, fmt.Errorf("bootstrap source %s embeds assets; explicit asset capture is required; %s", source, bundleSourceRepair)
+	}
+	return selected, unselected, nil
+}
+
+func verifySelectedFamilyAssets(selected *bootstrapAssetFamily, unselected []*bootstrapAssetFamily, files []bootstrapSourceFile, admitted map[string]bool) error {
+	for _, asset := range selected.assets {
+		if !containsBootstrapSource(files, asset) {
+			return fmt.Errorf("bootstrap %s asset %s is missing", selected.name, asset)
+		}
+		admitted[asset] = true
+	}
+	for _, other := range unselected {
+		for _, asset := range other.assets {
+			if !admitted[asset] && containsBootstrapSource(files, asset) {
+				return fmt.Errorf("bootstrap source %s does not belong to the selected %s declaration", asset, selected.name)
+			}
+		}
+	}
+	return nil
+}
+
+func verifyPreMoveAssetDigests(family bootstrapAssetFamily, files []bootstrapSourceFile) error {
+	if !family.preMove || len(family.moved) == 0 {
+		return nil
+	}
+	for _, file := range files {
+		digests, ok := family.moved[file.Name]
+		if !ok {
+			continue
+		}
+		sum := sha256.Sum256(file.Data)
+		hexSum := hex.EncodeToString(sum[:])
+		if digests[hexSum] == "" {
+			return fmt.Errorf("pre-move asset %s bytes match no release digest", file.Name)
+		}
+	}
+	return nil
+}
+
+func verifyAdmittedNonGoFiles(files []bootstrapSourceFile, admitted map[string]bool) error {
+	for _, file := range files {
+		if file.Name == "go.mod" || file.Name == "go.sum" || file.Name == "LICENSE" || strings.HasSuffix(file.Name, ".go") {
+			continue
+		}
+		if !admitted[file.Name] {
+			return fmt.Errorf("bootstrap source %s does not belong to any declared asset family", file.Name)
+		}
+	}
+	return nil
+}
+
+func uniqueFamilySources(families []bootstrapAssetFamily) []string {
+	var sources []string
+	seen := make(map[string]bool)
+	for _, fam := range families {
+		if !seen[fam.source] {
+			seen[fam.source] = true
+			sources = append(sources, fam.source)
+		}
+	}
+	return sources
+}
+
+func findBootstrapSource(files []bootstrapSourceFile, name string) (bootstrapSourceFile, bool) {
+	for _, file := range files {
+		if file.Name == name {
+			return file, true
+		}
+	}
+	return bootstrapSourceFile{}, false
+}
+
+func checkArchivedFileLimits(files []bootstrapSourceFile) error {
+	if len(files) > maxBootstrapFiles {
+		return errors.New("bootstrap source exceeds 4096 files")
+	}
+	for _, required := range []string{bootstrapBuildPackage + "/main.go", "go.mod", "go.sum", "LICENSE"} {
+		if !containsBootstrapSource(files, required) {
+			return errors.New("bootstrap requires CLI sources, go.mod, go.sum and LICENSE")
+		}
+	}
+	for _, file := range files {
+		if err := validateBootstrapSourceName(file.Name, archiveRules); err != nil {
+			return err
+		}
+		if file.Name == "go.mod" && !declaresPraetorModule(file.Data) {
+			return errors.New("bootstrap archive must declare the Praetor module")
+		}
+	}
+	return nil
+}
+
+func validateArchivedBootstrapSourceSet(files []bootstrapSourceFile) error {
+	if err := checkArchivedFileLimits(files); err != nil {
+		return err
+	}
+	archived, err := archivedAssetFamilies()
+	if err != nil {
+		return err
+	}
+	admitted := make(map[string]bool)
+	for _, source := range uniqueFamilySources(archived) {
+		file, ok := findBootstrapSource(files, source)
+		if !ok {
+			continue
+		}
+		directive, err := parseSourceEmbedDirective(file)
+		if err != nil {
+			return err
+		}
+		selected, other, err := selectFamilyDeclaration(source, directive, archived)
+		if err != nil {
+			return err
+		}
+		if err := verifySelectedFamilyAssets(selected, other, files, admitted); err != nil {
+			return err
+		}
+		if err := verifyPreMoveAssetDigests(*selected, files); err != nil {
+			return err
+		}
+	}
+	return verifyAdmittedNonGoFiles(files, admitted)
 }

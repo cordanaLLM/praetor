@@ -70,13 +70,13 @@ var refusedBootstrapTestPaths = []string{"main_test.go", "cmd/standardsctl/main_
 // test-only path is refused, and names that only resemble one are admitted.
 func TestBootstrapSourceNameRefusesTestSurface(t *testing.T) {
 	for _, name := range refusedBootstrapTestPaths {
-		err := validateBootstrapSourceName(name)
+		err := validateBootstrapSourceName(name, captureRules)
 		if err == nil || !strings.Contains(err.Error(), "test-only") {
 			t.Errorf("validateBootstrapSourceName(%q) = %v, want a test-only refusal", name, err)
 		}
 	}
 	for _, name := range []string{"x_test_helper.go", "testdata.go", "a/mytestdata/b.go", "a/testdatas/b.go", "test.go", "go.mod"} {
-		if err := validateBootstrapSourceName(name); err != nil {
+		if err := validateBootstrapSourceName(name, captureRules); err != nil {
 			t.Errorf("validateBootstrapSourceName(%q) refused a build input: %v", name, err)
 		}
 	}
@@ -126,12 +126,12 @@ func TestBootstrapMarkdownAssetsNeverAdmitTestSurface(t *testing.T) {
 		if util.IsGoTestSurface(asset) {
 			t.Errorf("declared asset %s lies on Go's test surface", asset)
 		}
-		if err := validateBootstrapSourceName(asset); err != nil {
+		if err := validateBootstrapSourceName(asset, captureRules); err != nil {
 			t.Errorf("declared asset %s refused: %v", asset, err)
 		}
 		directory, base := path.Split(asset)
 		for _, variant := range []string{directory + "testdata/" + base, "testdata/" + asset, strings.TrimSuffix(asset, path.Ext(asset)) + "_test.go"} {
-			if err := validateBootstrapSourceName(variant); err == nil || !strings.Contains(err.Error(), "test-only") {
+			if err := validateBootstrapSourceName(variant, captureRules); err == nil || !strings.Contains(err.Error(), "test-only") {
 				t.Errorf("validateBootstrapSourceName(%q) = %v, want a test-only refusal", variant, err)
 			}
 			injected := append(append([]bootstrapSourceFile(nil), files...), bootstrapSourceFile{Name: variant, Data: []byte("{}\n")})

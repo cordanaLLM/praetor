@@ -98,7 +98,7 @@ func decodeBootstrapArchive(ctx context.Context, data []byte) (files []bootstrap
 		if err != nil {
 			return nil, err
 		}
-		if err := validateBootstrapSourceFile(header.Name, content); err != nil {
+		if err := validateBootstrapSourceFile(header.Name, content, archiveRules); err != nil {
 			return nil, err
 		}
 		seen[header.Name] = true
@@ -123,7 +123,7 @@ func finishBootstrapArchive(reader *io.LimitedReader, files []bootstrapSourceFil
 		return nil, errors.New("bootstrap archive has trailing or excessive expanded content")
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
-	if err := validateBootstrapSourceSet(files); err != nil {
+	if err := validateArchivedBootstrapSourceSet(files); err != nil {
 		return nil, err
 	}
 	return files, nil

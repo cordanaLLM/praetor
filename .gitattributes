@@ -46,6 +46,10 @@ CLAUDE.md text eol=lf
 # devcontainer.json alone left it still failing; the base64 parts carry no line terminators
 # so this is a no-op for them, but the whole directory is one bootstrap unit (#135).
 .devcontainer/* text eol=lf
+# The bundle recorded under the previous engine release is verified the same way, byte for
+# byte (TestPriorReleaseBundleVerifiesAgainstCurrentEngine); a Windows checkout would turn
+# its Dockerfile.praetor into CRLF.
+internal/devcontainer/testdata/prior-release-bundle/* text eol=lf
 
 # The bootstrap source capture (bootstrapSourcePathspec in internal/devcontainer) hashes
 # go.mod, go.sum and LICENSE beside the Go sources, and `praetorctl devcontainer freshness`
