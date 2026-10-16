@@ -21,6 +21,11 @@ const agyWorkspaceIgnore = "/.agents/mcp_config.json"
 // (internal/mcp.OffloadCacheDir). It is host-local output and is never tracked.
 const mcpOutputCacheIgnore = "/.standards/cache/"
 
+// claudeLocalSettingsIgnore is Claude Code's per-user settings file (.claude/settings.local.json).
+// It carries client-local permissions, hooks and model choices, is never tracked, and must not
+// leave the working tree dirty in state inspections (#1389).
+const claudeLocalSettingsIgnore = "/.claude/settings.local.json"
+
 const (
 	gitIgnoreManagedBegin = "# BEGIN praetor private artifacts (praetorctl adopt)"
 	gitIgnoreManagedEnd   = "# END praetor private artifacts"
@@ -37,10 +42,17 @@ const workingDirIgnore = state.WorkingDirName + "/"
 // private session ledger and the legacy scratch root, both at every depth, the container for
 // the isolated gate worktrees, whose leftovers would otherwise be scanned as repository
 // content and would keep the tree dirty for receipt minting, the per-host AGY workspace
-// configuration, and the standards-mcp output cache.
+// configuration, the standards-mcp output cache, and client-local settings (#1389).
 // Adoption guarantees each in every adopted repository, except that a repository may
 // retire legacyScratchIgnore (keepsLegacyScratch).
-var managedIgnoreRules = []string{workingDirIgnore, legacyScratchIgnore, "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore, mcpOutputCacheIgnore}
+var managedIgnoreRules = []string{
+	workingDirIgnore,
+	legacyScratchIgnore,
+	"/" + worktree.WorktreeSubdir + "/",
+	agyWorkspaceIgnore,
+	mcpOutputCacheIgnore,
+	claudeLocalSettingsIgnore,
+}
 
 // gitIgnoreBlockVersion identifies an accepted version of the managed .gitignore block.
 type gitIgnoreBlockVersion struct {
@@ -50,7 +62,7 @@ type gitIgnoreBlockVersion struct {
 
 // canonicalGitIgnoreBlockVersion is the current canonical version of the managed .gitignore block.
 var canonicalGitIgnoreBlockVersion = gitIgnoreBlockVersion{
-	Version: "v3",
+	Version: "v4",
 	Rules:   managedIgnoreRules,
 }
 
@@ -72,6 +84,16 @@ var gitIgnoreBlockHistory = []gitIgnoreBlockVersion{
 		Rules: []string{
 			"/.workingdir/",
 			"/.workingdir2/",
+			"/.standards/worktrees/",
+			"/.agents/mcp_config.json",
+			"/.standards/cache/",
+		},
+	},
+	{
+		Version: "v3",
+		Rules: []string{
+			".workingdir/",
+			".workingdir2/",
 			"/.standards/worktrees/",
 			"/.agents/mcp_config.json",
 			"/.standards/cache/",
