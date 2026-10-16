@@ -248,10 +248,29 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 			defer release()
 		}
 	}
+	report, s, err := prepareAdoption(ctx, opts)
+	if err != nil {
+		return report, err
+	}
+	err = executeAdoptSteps(ctx, s)
+	report.FacetNotes = defaultFacetNotes(ctx, s)
+	if err != nil {
+		report.addError("%s", err)
+		return report, err
+	}
+	report.EffectivePolicy = s.policy
+	return report, nil
+}
 
+// prepareAdoption resolves what the step chain reads before its first step: the target, the
+// declared manifest, archetype, facets, verification plan, identity, default branch and ruleset
+// baseline, recorded on a new report and session. A failure returns the report it reached (nil
+// for a target that does not resolve). Adopt runs the chain on the session; a test replays one
+// step on it over many fixtures instead of a whole adoption each.
+func prepareAdoption(ctx context.Context, opts AdoptOptions) (*AdoptReport, *adoptSession, error) {
 	normPath, err := resolveTargetPath(opts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	declared, unreadable := declaredManifest(ctx, normPath)
 	decision := resolveArchetype(normPath, opts.Profile, manifestProfiles(declared))
@@ -261,30 +280,22 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, ResolveVerificationLimits(declared.DeclaredVerification(), opts.VerificationLimits))
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
-		return report, fmt.Errorf("resolve project verification: %w", err)
+		return report, nil, fmt.Errorf("resolve project verification: %w", err)
 	}
 	report.Archetype = adoptionArchetype(decision, verification)
 	report.Verification = verification
 	s := newAdoptSession(normPath, opts, report, declared)
 	if err := s.resolveIdentity(ctx); err != nil {
 		report.addError("%s", err)
-		return report, err
+		return report, nil, err
 	}
 	if err := s.resolveDefaultBranch(ctx, declared); err != nil {
 		report.addError("%s", err)
-		return report, err
+		return report, nil, err
 	}
 	report.addWarning("%s", verification.notice())
 	s.rulesetBaseline = readRulesetBaseline(ctx, s)
-
-	err = executeAdoptSteps(ctx, s)
-	report.FacetNotes = defaultFacetNotes(ctx, s)
-	if err != nil {
-		report.addError("%s", err)
-		return report, err
-	}
-	report.EffectivePolicy = s.policy
-	return report, nil
+	return report, s, nil
 }
 
 // adoptionRoots are the roots one adoption confines paths below: the target repository, as

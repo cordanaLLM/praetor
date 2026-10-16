@@ -103,6 +103,12 @@ func (s *Server) auditGates(p auditPaths, effective *config.EffectivePolicy) []a
 				Root: s.rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
 			})
 		},
+		// The CLI audit's test-timeout gate (#1381): a workflow timeout above the bound fails.
+		func(ctx context.Context) (string, error) {
+			return forge.AuditTestTimeouts(ctx, forge.TestTimeoutOptions{
+				Root: s.rootDir, Exceptions: manifest.Exceptions, Today: time.Now(),
+			})
+		},
 		// The CLI audit's HISS-10 build-warnings gate (#816).
 		func(ctx context.Context) (string, error) { return auditBuildWarnings(ctx, s.rootDir, manifest) },
 		func(ctx context.Context) (string, error) { return auditHookConfig(ctx, manifest, s.rootDir) },

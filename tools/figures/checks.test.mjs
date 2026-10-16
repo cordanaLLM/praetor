@@ -381,7 +381,7 @@ test('site: absolute image URLs, a missing loader and a loader without its playe
   assert.equal(fixture.check().errors.length, 2);
   write(fixture.page, fillSlots(META, '../assets/figures'));
   assert.deepEqual(fixture.check().errors, [`${join(fixture.docs, 'guide.md')}: holds figures but loads no assets/javascripts/figures/loader.js ` +
-    '(the figures hook publishes it from tools/figures/dist/)']);
+    '(the figures hook publishes it from tools/figures/player/)']);
   write(fixture.page, fillSlots(META, '../assets/figures') + LOADER_TAG);
   unlinkSync(join(fixture.site, 'assets/javascripts/figures/player.js'));
   assert.deepEqual(fixture.check().errors, [`${join(fixture.docs, 'guide.md')}: loads ../assets/javascripts/figures/loader.js, ` +
@@ -539,7 +539,7 @@ test('site: a Starlight build passes under the base path it was built for; the w
   assert.equal(errors.length, 3, errors.join('\n'));
   assert.match(errors[0], /figure demo: \/docs\/assets\/figures\/demo\.static\.svg does not resolve to a file under/);
   assert.match(errors[1], /figure demo: \/docs\/assets\/figures\/demo\.svg does not resolve/);
-  assert.match(errors[2], /loads no assets\/javascripts\/figures\/loader\.js \(tools\/figures\/astro\.mjs publishes it from tools\/figures\/dist\/\)$/);
+  assert.match(errors[2], /loads no assets\/javascripts\/figures\/loader\.js \(tools\/figures\/astro\.mjs publishes it from tools\/figures\/player\/\)$/);
   // A root-absolute URL outside the base path never resolves, even to a file that exists.
   write(join(fixture.site, 'elsewhere', 'demo.svg'), SPEC_SVG);
   write(fixture.page, inlineLoader('/docs/') + fillSlots(META, '/elsewhere'));

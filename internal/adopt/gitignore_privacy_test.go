@@ -20,6 +20,9 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 		"pre-cache-block": "bin/\n\n" + gitIgnoreManagedBegin + "\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n" + gitIgnoreManagedEnd + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
+			// One fixture runs whole adoptions, the others the git-ignore step alone
+			// (adoptOrStep, office-w19a-c1-adopt).
+			whole := name == "custom"
 			root := newTestRepo(t, name)
 			path := filepath.Join(root, ".gitignore")
 			if existing != "" {
@@ -27,12 +30,12 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 			}
 			opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t), DryRun: true}
 			before := snapshotTree(t, root)
-			if _, err := Adopt(t.Context(), opts); err != nil {
+			if _, err := adoptOrStep(t, opts, whole, reconcileGitIgnore); err != nil {
 				t.Fatal(err)
 			}
 			assertTreeUnchanged(t, before, snapshotTree(t, root))
 			opts.DryRun = false
-			if _, err := Adopt(t.Context(), opts); err != nil {
+			if _, err := adoptOrStep(t, opts, whole, reconcileGitIgnore); err != nil {
 				t.Fatal(err)
 			}
 			got := mustRead(t, path)
@@ -76,7 +79,7 @@ func TestAdoptionKeepsWorkingDirectoryPrivate(t *testing.T) {
 			if _, err := util.RunGit(t.Context(), root, "check-ignore", "--no-index", "--", ".agents/plugins/praetor/plugin.json"); err == nil {
 				t.Fatal("tracked plugin projection became ignored")
 			}
-			if _, err := Adopt(t.Context(), opts); err != nil {
+			if _, err := adoptOrStep(t, opts, whole, reconcileGitIgnore); err != nil {
 				t.Fatal(err)
 			}
 			if repeated := mustRead(t, path); repeated != got {
