@@ -64,6 +64,21 @@ const (
 	// HostedGateOn is a gate's whole 'on' block, rendered for HostedGateDefaultBranch.
 	HostedGateOn = "'on':\n  pull_request:\n    types: [" + hostedGateTypes + "]\n  push:" +
 		HostedGatePushBranchesPrefix + HostedGateDefaultBranch + "']\n" + HostedGateMergeGroupTrigger
+	// HostedGateConcurrency groups pull request runs by workflow and pull request number, so a
+	// newer run replaces an older one. Every other event gets its unique run id and cannot cancel
+	// or replace another push, merge-group, schedule, or dispatch run.
+	HostedGateConcurrency = "concurrency:\n  group: " + HostedGateConcurrencyGroup +
+		"\n  cancel-in-progress: " + HostedGateConcurrencyCancel + "\n"
+	// HostedGateConcurrencyGroup is the group expression: the pull request number on pull
+	// request events, the run id on every other event.
+	HostedGateConcurrencyGroup = "${{ github.workflow }}-${{ github.event.number || github.run_id }}"
+	// HostedGateConcurrencyCancel cancels an in-progress run only on pull request events.
+	HostedGateConcurrencyCancel = "${{ github.event_name == 'pull_request' }}"
+	// CheckoutActionPrefix starts the uses: value of every actions/checkout step.
+	CheckoutActionPrefix = "actions/checkout@"
+	// CheckoutPersistInput is the checkout input that, left at its default true, writes the job
+	// token into .git/config for every later step (zizmor artipacked).
+	CheckoutPersistInput = "persist-credentials"
 	// HostedGateScheduleCron is the daily UTC schedule of security gates: advisory databases can
 	// change without a repository event, so a pull request and push gate alone is insufficient.
 	HostedGateScheduleCron = "0 4 * * *"
@@ -156,6 +171,9 @@ func HostedGateFault(spec *Spec, jobID, branch string) error {
 	if err := hostedGateTriggerFault(&spec.On, branch); err != nil {
 		return err
 	}
+	if err := hostedGateConcurrencyFault(&spec.Concurrency); err != nil {
+		return err
+	}
 	job, found := spec.Jobs[jobID]
 	switch {
 	case !found:
@@ -166,6 +184,23 @@ func HostedGateFault(spec *Spec, jobID, branch string) error {
 		return fmt.Errorf("job %s continues on error, so its check passes whatever the gate finds", jobID)
 	}
 	return hostedGateStepsFault(jobID, job.Steps)
+}
+
+// hostedGateConcurrencyFault reports when a hosted workflow does not carry the exact concurrency
+// group that replaces only an older run of the same pull request.
+func hostedGateConcurrencyFault(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode || len(node.Content) != 4 {
+		return fmt.Errorf("the hosted gate lacks the exact concurrency group")
+	}
+	group := util.YAMLMappingValue(node, "group")
+	cancel := util.YAMLMappingValue(node, "cancel-in-progress")
+	if group == nil || group.Kind != yaml.ScalarNode || group.Value != HostedGateConcurrencyGroup {
+		return fmt.Errorf("the hosted gate's concurrency group must use the workflow and pull request number or run id")
+	}
+	if cancel == nil || cancel.Kind != yaml.ScalarNode || cancel.Value != HostedGateConcurrencyCancel {
+		return fmt.Errorf("the hosted gate must cancel only superseded pull request runs")
+	}
+	return nil
 }
 
 // hostedGateTriggerFault reports how an 'on' node departs from HostedGateOn rendered for branch.
@@ -239,9 +274,24 @@ func hostedGateStepsFault(jobID string, steps []Step) error {
 			return fmt.Errorf("job %s step %d (%s) does not run only when the pull request is not a draft (%s)",
 				jobID, i+1, steps[i].Name, HostedGateNotDraft)
 		}
+		if CheckoutPersistsCredentials(steps[i]) {
+			return fmt.Errorf("job %s step %d (%s) checks out without %s: false, so the job token stays in .git/config",
+				jobID, i+1, steps[i].Name, CheckoutPersistInput)
+		}
 		manifestSeen = manifestSeen || steps[i].ID == "manifest"
 	}
 	return nil
+}
+
+// CheckoutPersistsCredentials reports an actions/checkout step that does not set
+// persist-credentials to false. A gate reads the repository and pushes nothing, so the token
+// the checkout would keep only widens what a compromised later step can reach.
+func CheckoutPersistsCredentials(step Step) bool {
+	if !strings.HasPrefix(strings.TrimSpace(step.Uses), CheckoutActionPrefix) {
+		return false
+	}
+	persist, ok := step.With[CheckoutPersistInput].(bool)
+	return !ok || persist
 }
 
 func hostedGateLaterStepConditionValid(step Step, manifestSeen bool) bool {

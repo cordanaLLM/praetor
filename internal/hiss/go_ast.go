@@ -310,8 +310,21 @@ func (g *goScanner) checkCall(call *ast.CallExpr) {
 // checkUnboundedFor reports a for statement with no condition, the loop half of HISS-02.
 func (g *goScanner) checkUnboundedFor(loop *ast.ForStmt) {
 	if loop.Cond == nil {
-		g.record("HISS-02", loop.Pos(), "", "Unbounded for loop without an exit condition (for {} / for ;; )")
+		g.record("HISS-02", loop.Pos(), g.enclosingFunctionName(), "Unbounded for loop without an exit condition (for {} / for ;; )")
 	}
+}
+
+// enclosingFunctionName returns the name of the Go function containing the current AST node.
+func (g *goScanner) enclosingFunctionName() string {
+	fn := g.enclosingFunc()
+	if fn == nil || fn.Name == nil {
+		return ""
+	}
+	owner := ""
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		owner, _ = ReceiverTypeName(fn.Recv.List[0].Type)
+	}
+	return qualifiedName(owner, fn.Name.Name)
 }
 
 // checkGoto reports a goto, which HISS-01 forbids as non-DAG control flow.

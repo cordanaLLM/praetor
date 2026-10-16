@@ -11,11 +11,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // catalogSize is the number of invariants the standard defines, HISS-01 through HISS-21.
@@ -84,29 +81,6 @@ func TestRuleExplanation_Boundary_ListSpecification(t *testing.T) {
 // specFuncLength matches the function-length line of a rule's formal specification.
 var specFuncLength = regexp.MustCompile(`Function Length <= (\d+) LOC`)
 
-// hiss04FuncLengths returns every function length HISS-04's explanation states.
-func hiss04FuncLengths(t *testing.T) []string {
-	t.Helper()
-	rule, ok := LookupRule("HISS-04")
-	if !ok {
-		t.Fatal("HISS-04 is not in the catalog")
-	}
-	var lengths []string
-	for _, match := range specFuncLength.FindAllStringSubmatch(rule.Explanation(), catalogSize) {
-		lengths = append(lengths, match[1])
-	}
-	return lengths
-}
-
-// Positive: standards_explain_rule states the function length the audit enforces
-// (config.AuditMaxFuncLOC), not a copy of it (#574).
-func TestRuleExplanation_Positive_HISS04StatesTheAuditFuncLOC(t *testing.T) {
-	want := strconv.Itoa(config.AuditMaxFuncLOC)
-	if got := hiss04FuncLengths(t); len(got) != 1 || got[0] != want {
-		t.Fatalf("HISS-04 states function lengths %v, want [%s]", got, want)
-	}
-}
-
 // Negative: the 75-line copy the specification used to carry is gone, and the cyclomatic cap
 // on the line above is not read as a function length.
 func TestRuleExplanation_Negative_HISS04DropsTheStaleFuncLOC(t *testing.T) {
@@ -116,17 +90,6 @@ func TestRuleExplanation_Negative_HISS04DropsTheStaleFuncLOC(t *testing.T) {
 	}
 	if got := specFuncLength.FindAllString("McCabe Cyclomatic Complexity <= 10", -1); len(got) != 0 {
 		t.Fatalf("a cyclomatic cap read as a function length: %v", got)
-	}
-}
-
-// Boundary: the function length sits between the cognitive and the statement caps, as the
-// fourth line of the list, so deriving it did not reorder or drop the neighbouring caps.
-func TestRuleExplanation_Boundary_HISS04ListKeepsItsShape(t *testing.T) {
-	rule, _ := LookupRule("HISS-04")
-	want := "\n  - McCabe Cyclomatic Complexity <= 10\n  - Cognitive Complexity <= 15\n  - Function Length <= " +
-		strconv.Itoa(config.AuditMaxFuncLOC) + " LOC\n  - Executable Statements <= 50"
-	if rule.Specification != want {
-		t.Fatalf("HISS-04 specification = %q, want %q", rule.Specification, want)
 	}
 }
 

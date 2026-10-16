@@ -22,9 +22,9 @@ action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
 action replace tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+2372 lines, removed "// operator runner"); backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/verify.mjs
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
-action replace .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow; replaced existing content (-1/+53 lines, removed "name: Operator"); backup: .workingdir/adopt-backups/<stamp>/.github/workflows/praetor-docs.yml
+action replace .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow; replaced existing content (-1/+57 lines, removed "name: Operator"); backup: .workingdir/adopt-backups/<stamp>/.github/workflows/praetor-docs.yml
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:4df1894780cf41670c59b4b1eace88218168f7dbed8ee0f219156fc8af20c038
+file .github/workflows/praetor-docs.yml sha256:5dfc713c093fa90e2c36b042692da07df722535d95248ce4d094dc2ba53328f6
 file tools/markdownlint/package.json sha256:b2f28f69e4ec7599c47ba77576ed425f49612f78d0c2308ac62b67772d151ccb
 file tools/markdownlint/package-lock.json sha256:dc250eced16decfc99f38e830952d1e8679e2a2e68cd0faa7b893cd7aef8e795
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3

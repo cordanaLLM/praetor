@@ -117,10 +117,11 @@ template, whose earlier texts sit in `internal/flavor/testdata/ci-prior`.
 
 A CI workflow template takes its trigger and draft handling from the hosted gate shape
 (`internal/ghworkflow/hostedgate.go`) through the template functions `hostedGateOn`,
-`hostedGateDraftStep` and `hostedGateStepIf` (`templates/hostedgate.go`) instead of spelling
-them out ([Workflow trigger audit](workflow-triggers.md#workflows-praetor-writes-and-runs)).
-Each placed on a line of its own, the first two are followed by one blank line; the third goes
-on a step's `name:` line. A body with such actions commits its rendering under
+`hostedGateConcurrency`, `hostedGateDraftStep` and `hostedGateStepIf` (`templates/hostedgate.go`)
+instead of spelling them out
+([Workflow trigger audit](workflow-triggers.md#workflows-praetor-writes-and-runs)). The first
+three each sit on a line of their own, `hostedGateConcurrency` directly below `hostedGateOn`;
+the last goes on a step's `name:` line. Its checkout step sets `persist-credentials: false`. A body with such actions commits its rendering under
 `templates/testdata/rendered`, where the yamllint gate lints it
 (`TestBranchingYAMLTemplateRenderingsAreCommitted`), and
 `TestCIWorkflowTemplatesRenderTheHostedGateShape` holds every rendering to

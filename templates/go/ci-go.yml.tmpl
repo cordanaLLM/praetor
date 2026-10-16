@@ -10,6 +10,7 @@ unedited copy is refreshed without --force.
 name: CI
 
 <% hostedGateOn %>
+<% hostedGateConcurrency %>
 jobs:
   test:
     runs-on: ubuntu-26.04
@@ -17,6 +18,8 @@ jobs:
 <% hostedGateDraftStep %>
       - name: Checkout source<% hostedGateStepIf %>
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Check for go.mod<% hostedGateStepIf %>
         id: manifest

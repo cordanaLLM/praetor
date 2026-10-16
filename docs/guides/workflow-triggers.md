@@ -95,6 +95,21 @@ no finding:
   fresh adoption of each flavor audits clean
   (`TestAdoptThenAuditReportsNoFlavorWorkflowTriggerFinding` in
   `cmd/standardsctl/audit_workflow_triggers_test.go`).
+- **Superseded runs and checkout credentials.** Every emitted gate (the flavor CI workflows,
+  the Go Security Scan, `praetor-api.yml`, `praetor-docs.yml` and `reuse.yml`) carries
+  `ghworkflow.HostedGateConcurrency` right after its trigger block: the group is the workflow
+  plus `github.event.number || github.run_id`, and `cancel-in-progress` is true only for
+  `pull_request`. A new push to a pull request cancels that pull request's older run. Every
+  other event gets a group of its own run id, because GitHub replaces the older pending run of
+  a group whenever a newer one joins, even without `cancel-in-progress`: a group keyed on the
+  branch would drop queued pushes to `main`. Workflows without a `pull_request` trigger
+  (Praetor's own `adopt.yml`, `release-binaries.yml`, `wiki-sync.yml`) carry no group, since a
+  run-id group would change nothing there. Every `actions/checkout` step in an emitted gate sets
+  `persist-credentials: false`, since no gate pushes and the default leaves the job token in
+  `.git/config` for every later step (zizmor `artipacked`). `ghworkflow.HostedGateFault`
+  refuses a gate without the exact group or with a checkout that keeps the token
+  (`TestHostedGateFault_Negative_RequiresConcurrency`,
+  `TestHostedGateFault_CheckoutCredentials` in `internal/ghworkflow/hostedgate_test.go`).
 - **Updating an adopted copy.** Every text the CI templates rendered before is recorded
   (`internal/flavor/ci_prior.go`, fixtures in `internal/flavor/testdata/ci-prior`), so a plain
   `praetorctl adopt` or `praetorctl flavor apply` refreshes an unedited `ci.yml` without

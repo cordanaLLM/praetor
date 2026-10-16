@@ -334,7 +334,7 @@ func (g *goScanner) checkContextSink(call *ast.CallExpr) {
 		return
 	}
 	recorded := len(g.rep.Violations)
-	g.record("HISS-02", call.Args[free[0]].Pos(), "",
+	g.record("HISS-02", call.Args[free[0]].Pos(), g.enclosingFunctionName(),
 		"Context without a deadline reaches a call; derive it with context.WithTimeout or context.WithDeadline")
 	if len(g.rep.Violations) > recorded {
 		g.deferProof(call, free, sink)
@@ -362,7 +362,7 @@ func (g *goScanner) checkContextlessIO(call *ast.CallExpr) {
 	if !ok || g.shadowed(found.Local) {
 		return
 	}
-	g.record("HISS-02", call.Pos(), "",
+	g.record("HISS-02", call.Pos(), g.enclosingFunctionName(),
 		found.Name+" takes no context, so no deadline bounds it; use "+found.Replacement)
 }
 

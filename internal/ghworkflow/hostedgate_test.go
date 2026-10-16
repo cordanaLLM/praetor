@@ -22,7 +22,7 @@ const gateJob = "jobs:\n  gate:\n    name: Gate\n    runs-on: ubuntu-latest\n   
 const gateStep = "      - name: Run the gate" + HostedGateStepIf + "\n        run: make gate\n"
 
 // hostedGateFixture is a one-job workflow in the hosted gate shape for main.
-const hostedGateFixture = HostedGateOn + gateJob + HostedGateDraftStep + gateStep
+const hostedGateFixture = HostedGateOn + HostedGateConcurrency + gateJob + HostedGateDraftStep + gateStep
 
 // hostedGateFault parses doc and judges its job gate against the shape for branch.
 func hostedGateFault(t *testing.T, doc, branch string) error {
@@ -58,6 +58,51 @@ func TestHostedGateFault_Positive(t *testing.T) {
 	} {
 		if err := hostedGateFault(t, test.doc, test.branch); err != nil {
 			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// Negative: removing the concurrency group, changing its key or cancelling non-PR events fails.
+func TestHostedGateFault_Negative_RequiresConcurrency(t *testing.T) {
+	without := strings.Replace(hostedGateFixture, HostedGateConcurrency, "", 1)
+	wrongGroup := strings.Replace(hostedGateFixture, "github.event.number || github.run_id", "github.ref", 1)
+	wrongCancel := strings.Replace(hostedGateFixture, "github.event_name == 'pull_request'", "true", 1)
+	for name, doc := range map[string]string{
+		"missing block": without,
+		"wrong group":   wrongGroup,
+		"wrong cancel":  wrongCancel,
+	} {
+		if err := hostedGateFault(t, doc, HostedGateDefaultBranch); err == nil {
+			t.Errorf("%s: HostedGateFault accepted the workflow", name)
+		}
+	}
+}
+
+// checkoutStep checks out the source with the given with: block, empty for none.
+func checkoutStep(with string) string {
+	return "      - name: Checkout" + HostedGateStepIf + "\n        uses: " + CheckoutActionPrefix + "v7\n" + with
+}
+
+// Positive: a checkout that drops its credentials passes, as does a step that is no checkout.
+// Negative: a checkout without the input, with it true, or with a quoted string keeps the token
+// in .git/config and is refused. Boundary: another action's persist-credentials is not read.
+func TestHostedGateFault_CheckoutCredentials(t *testing.T) {
+	dropped := "        with:\n          persist-credentials: false\n"
+	other := "      - name: Other" + HostedGateStepIf + "\n        uses: example/other@v1\n"
+	for name, test := range map[string]struct {
+		step string
+		ok   bool
+	}{
+		"dropped":       {checkoutStep(dropped), true},
+		"other action":  {other, true},
+		"no with block": {checkoutStep(""), false},
+		"kept":          {checkoutStep(strings.Replace(dropped, "false", "true", 1)), false},
+		"quoted string": {checkoutStep(strings.Replace(dropped, "false", "'false'", 1)), false},
+		"other input":   {checkoutStep("        with:\n          fetch-depth: 0\n"), false},
+	} {
+		err := hostedGateFault(t, hostedGateFixture+test.step, HostedGateDefaultBranch)
+		if (err == nil) != test.ok {
+			t.Errorf("%s: fault %v, want ok=%t", name, err, test.ok)
 		}
 	}
 }

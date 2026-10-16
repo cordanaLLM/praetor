@@ -295,6 +295,18 @@ func RuleIDs() []string {
 	return ids
 }
 
+// ScannerRuleIDs returns the HISS rules whose enforcement registry assigns decisions to the
+// internal scanner. The enforcement field is the catalog's existing source for that distinction.
+func ScannerRuleIDs() []string {
+	ids := make([]string, 0, len(catalog))
+	for i := 0; i < len(catalog); i++ {
+		if strings.Contains(catalog[i].Enforcement, "internal/hiss scanner") {
+			ids = append(ids, catalog[i].ID)
+		}
+	}
+	return ids
+}
+
 // LookupRule returns the invariant with the given ID, its directive clauses copied. The ID is
 // matched exactly; callers normalise case and whitespace first.
 func LookupRule(id string) (Rule, bool) {

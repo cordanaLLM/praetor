@@ -19,6 +19,7 @@ import (
 //     activity types that can change what merges, ready_for_review among them, and push on the
 //     default branch only. Placed on a line of its own, it is followed by one blank line.
 //   - hostedGateScheduledOn extends that same block with the security gate's daily schedule.
+//   - hostedGateConcurrency groups pull request runs by request and gives other events unique run ids.
 //   - hostedGateDraftStep is a job's first step (ghworkflow.HostedGateDraftStep), at step
 //     indentation: it fails a draft with the annotation the checkpoint planner reads as draft
 //     pending. Placed on a line of its own, it is followed by one blank line.
@@ -29,6 +30,7 @@ import (
 const (
 	hostedGateOnFunc             = "hostedGateOn"
 	hostedGateScheduledOnFunc    = "hostedGateScheduledOn"
+	hostedGateConcurrencyFunc    = "hostedGateConcurrency"
 	hostedGateDraftStepFunc      = "hostedGateDraftStep"
 	hostedGateStepIfFunc         = "hostedGateStepIf"
 	hostedGateManifestStepIfFunc = "hostedGateManifestStepIf"
@@ -42,6 +44,7 @@ const (
 var templateFuncs = template.FuncMap{
 	hostedGateOnFunc:             func() string { return ghworkflow.HostedGateOn },
 	hostedGateScheduledOnFunc:    func() string { return ghworkflow.HostedGateScheduledOn },
+	hostedGateConcurrencyFunc:    func() string { return ghworkflow.HostedGateConcurrency },
 	hostedGateDraftStepFunc:      func() string { return ghworkflow.HostedGateDraftStep },
 	hostedGateStepIfFunc:         func() string { return ghworkflow.HostedGateStepIf },
 	hostedGateManifestStepIfFunc: func() string { return ghworkflow.HostedGateManifestStepIf },

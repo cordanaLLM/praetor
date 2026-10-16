@@ -5,9 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -345,6 +348,102 @@ func TestAudit_TouchedFileCleanRule(t *testing.T) {
 		t.Fatalf("clean touched files: %v", err)
 	}
 	mustContain(t, out, "(2 touched files clean)")
+}
+
+func TestAudit_HISSExceptionAllowsTouchedBaselinedFinding(t *testing.T) {
+	f := touchedBrowserContextFixture(t)
+
+	_, err := f.audit(t, "--touched=browser.go")
+	mustErrContain(t, err, "touched file must be clean")
+
+	expires := config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	writeHISSException(t, f, "browser.go", "NewBrowser", expires)
+	out, err := f.audit(t, "--touched=browser.go")
+	if err != nil {
+		t.Fatalf("live HISS exception must excuse the touched finding: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[EXCUSED] HISS-02", "browser.go", "NewBrowser", "exception until "+expires,
+		"browser lifecycle owns this long lived context")
+}
+
+func TestAudit_HISSExceptionScopeAndExpiry(t *testing.T) {
+	today := config.ExceptionDay(time.Now())
+	cases := []struct {
+		name, path, function, expires, want string
+	}{
+		{"other file", "other.go", "NewBrowser", today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout), "is unused"},
+		{"other function", "browser.go", "AnotherFunction", today.AddDate(0, 0, 30).Format(config.ExceptionDateLayout), "is unused"},
+		{"expired", "browser.go", "NewBrowser", today.AddDate(0, 0, -1).Format(config.ExceptionDateLayout), "touched file must be clean"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := touchedBrowserContextFixture(t)
+			if tc.path == "other.go" {
+				writeFixtureFile(t, f.dir, tc.path, "package p\n")
+			}
+			writeHISSException(t, f, tc.path, tc.function, tc.expires)
+			_, err := f.audit(t, "--touched=browser.go")
+			mustErrContain(t, err, tc.want)
+		})
+	}
+}
+
+func TestAudit_HISSExceptionForMissingFindingIsStale(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "clean.go", "package p\nfunc Clean() {}\n")
+	expires := config.ExceptionDay(time.Now()).AddDate(0, 0, 30).Format(config.ExceptionDateLayout)
+	writeHISSException(t, f, "clean.go", "", expires)
+	_, err := f.audit(t)
+	mustErrContain(t, err, "HISS exception (rule HISS-02, clean.go) is unused")
+}
+
+func touchedBrowserContextFixture(t *testing.T) *auditFixture {
+	t.Helper()
+	f := newAuditFixture(t)
+	inf := addBackgroundContextFinding(t, f)
+	f.writeBaseline(t, []baseline.Infraction{inf}, "")
+	gitCommitAll(t, f.dir, f.gitEnv, "baseline browser context finding")
+	writeFixtureFile(t, f.dir, "browser.go", browserContextSource+"// touched\n")
+	return f
+}
+
+const browserContextSource = `package p
+import "context"
+func NewBrowser() { launch(context.Background()) }
+`
+
+func addBackgroundContextFinding(t *testing.T, f *auditFixture) baseline.Infraction {
+	t.Helper()
+	writeFixtureFile(t, f.dir, "browser.go", browserContextSource)
+	report, err := hiss.Scan(t.Context(), f.dir, hiss.ScanOptions{})
+	if err != nil {
+		t.Fatalf("scan browser fixture: %v", err)
+	}
+	for _, violation := range report.Violations {
+		if violation.RuleID == "HISS-02" && violation.FilePath == "browser.go" {
+			if violation.Symbol != "NewBrowser" {
+				t.Fatalf("HISS-02 function = %q, want NewBrowser", violation.Symbol)
+			}
+			return hiss.ConvertToBaseline([]hiss.InvariantViolation{violation})[0]
+		}
+	}
+	t.Fatalf("browser fixture produced no HISS-02 finding: %+v", report.Violations)
+	return baseline.Infraction{}
+}
+
+func writeHISSException(t *testing.T, f *auditFixture, path, function, expires string) {
+	t.Helper()
+	content, err := os.ReadFile(f.manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := "exceptions:\n  - rule: HISS-02\n    path: " + path + "\n"
+	if function != "" {
+		entry += "    function: " + function + "\n"
+	}
+	entry += "    reason: browser lifecycle owns this long lived context\n    expires: \"" + expires + "\"\n"
+	updated := strings.Replace(string(content), "register:\n", entry+"register:\n", 1)
+	writeFixtureFile(t, f.dir, ".standards.yaml", updated)
 }
 
 func TestAudit_GitChangeSetAndGrowthGuard(t *testing.T) {

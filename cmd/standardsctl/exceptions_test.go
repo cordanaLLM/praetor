@@ -22,8 +22,12 @@ func writeExceptionsManifest(t *testing.T, entries ...config.Exception) string {
 	var sb strings.Builder
 	sb.WriteString("version: 1\nexceptions:\n")
 	for _, e := range entries {
-		fmt.Fprintf(&sb, "  - rule: %q\n    path: %q\n    reason: %q\n    expires: %q\n",
-			e.Rule, e.Path, e.Reason, e.Expires)
+		fmt.Fprintf(&sb, "  - rule: %q\n    path: %q\n", e.Rule, e.Path)
+		if e.Function != "" {
+			fmt.Fprintf(&sb, "    function: %q\n", e.Function)
+		}
+		fmt.Fprintf(&sb, "    reason: %q\n    expires: %q\n",
+			e.Reason, e.Expires)
 	}
 	if err := os.WriteFile(manifestPath, []byte(sb.String()), 0o600); err != nil {
 		t.Fatal(err)
@@ -36,6 +40,7 @@ func TestExceptionsList_Positive_ListsEntries(t *testing.T) {
 	manifest := writeExceptionsManifest(t,
 		config.Exception{Rule: "HISS-11", Path: ".github/workflows/rel.yml", Reason: "Level 2 builder", Expires: "2026-10-24"},
 		config.Exception{Rule: "clang-tidy-coverage", Path: "src/win.c", Reason: "Windows only", Expires: "2026-11-09"},
+		config.Exception{Rule: "HISS-02", Path: "src/browser.go", Function: "NewBrowser", Reason: "browser lifetime", Expires: "2026-11-09"},
 	)
 
 	out, err := captureStdout(t, func() error {
@@ -48,6 +53,7 @@ func TestExceptionsList_Positive_ListsEntries(t *testing.T) {
 		"=== Declared Exceptions ("+manifest+") ===",
 		"rule: HISS-11, path: .github/workflows/rel.yml, reason: Level 2 builder (14 days left)",
 		"rule: clang-tidy-coverage, path: src/win.c, reason: Windows only (30 days left)",
+		"rule: HISS-02, path: src/browser.go, function: NewBrowser, reason: browser lifetime (30 days left)",
 	)
 }
 
