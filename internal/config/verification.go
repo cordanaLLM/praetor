@@ -6,7 +6,7 @@ package config
 
 import (
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // VerificationPolicy is the manifest's verification section: the bounds of the repository

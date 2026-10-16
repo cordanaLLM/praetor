@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // scalarRoundTrip decodes `key: <scalar>` and returns the value the decoder reads back.

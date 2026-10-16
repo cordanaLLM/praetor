@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestInitCmd_FacetsDefault(t *testing.T) {

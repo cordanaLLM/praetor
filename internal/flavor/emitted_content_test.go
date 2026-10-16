@@ -19,7 +19,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/templates"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // digestPinned matches a FROM line carrying tag plus an explicit sha256 digest, optionally

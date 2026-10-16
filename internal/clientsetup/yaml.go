@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func mergeYAML(ctx context.Context, registry Registry, existing []byte) ([]byte, error) {

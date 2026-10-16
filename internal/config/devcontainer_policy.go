@@ -3,7 +3,7 @@ package config
 import (
 	"fmt"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Bounds of the devcontainer.freshness block (#338). `praetorctl devcontainer freshness`

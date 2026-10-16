@@ -38,13 +38,13 @@ func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 	}
 	found := false
 	for _, c := range bom.Components {
-		if c.Name == "gopkg.in/yaml.v3" {
+		if c.Name == "go.yaml.in/yaml/v3" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("expected gopkg.in/yaml.v3 among parsed components, got %+v", bom.Components)
+		t.Errorf("expected go.yaml.in/yaml/v3 among parsed components, got %+v", bom.Components)
 	}
 
 	// The metadata component must describe the repository actually scanned, never a

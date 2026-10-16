@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // lefthookPreCommit is the hook whose jobs a flavor's lefthook.yml claim is about.

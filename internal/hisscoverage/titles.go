@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // ErrTitleNotRewritable reports a stale title whose layout a one-line edit cannot rewrite in
