@@ -64,6 +64,12 @@ const (
 	// HostedGateOn is a gate's whole 'on' block, rendered for HostedGateDefaultBranch.
 	HostedGateOn = "'on':\n  pull_request:\n    types: [" + hostedGateTypes + "]\n  push:" +
 		HostedGatePushBranchesPrefix + HostedGateDefaultBranch + "']\n" + HostedGateMergeGroupTrigger
+	// HostedGateScheduleCron is the daily UTC schedule of security gates: advisory databases can
+	// change without a repository event, so a pull request and push gate alone is insufficient.
+	HostedGateScheduleCron = "0 4 * * *"
+	// HostedGateScheduledOn is HostedGateOn plus the security gate's schedule. Security workflow
+	// templates render it as one unit rather than restating the hosted trigger shape.
+	HostedGateScheduledOn = HostedGateOn + "  schedule:\n    - cron: '" + HostedGateScheduleCron + "'\n"
 	// PullRequestDraftField is the event payload field that is true on a draft pull request; a
 	// condition that reads it decides on drafts.
 	PullRequestDraftField = "github.event.pull_request.draft"

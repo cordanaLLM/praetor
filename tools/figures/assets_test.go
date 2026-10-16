@@ -60,8 +60,8 @@ var repositoryOnly = []string{
 	"third_party/interfig/upstream/src/svg.test.ts",
 }
 
-// distFiles is the complete committed player (DIST_FILES in bundle.mjs).
-var distFiles = []string{"dist/THIRD-PARTY-LICENSES.txt", "dist/loader.js", "dist/player.js"}
+// playerFiles is the complete committed player (DIST_FILES in bundle.mjs).
+var playerFiles = []string{"player/THIRD-PARTY-LICENSES.txt", "player/loader.js", "player/player.js"}
 
 const maxNPMProjectDirectories = 64
 
@@ -233,14 +233,14 @@ func TestAssetInventoryMatchesTrackedTree(t *testing.T) {
 			t.Errorf("repositoryOnly names %s, which git does not track; drop it from the list", name)
 		}
 	}
-	var dist []string
+	var player []string
 	for _, name := range tracked {
-		if strings.HasPrefix(name, "dist/") {
-			dist = append(dist, name)
+		if strings.HasPrefix(name, "player/") {
+			player = append(player, name)
 		}
 	}
-	if !slices.Equal(dist, distFiles) {
-		t.Fatalf("dist/ holds %q, want exactly %q", dist, distFiles)
+	if !slices.Equal(player, playerFiles) {
+		t.Fatalf("player/ holds %q, want exactly %q", player, playerFiles)
 	}
 }
 
@@ -253,12 +253,12 @@ func TestAssetInventoryRefusesRepositoryOnlyFiles(t *testing.T) {
 			t.Errorf("the inventory lists %s, which adoption must never write", name)
 		}
 	}
-	refused := append(slices.Clone(repositoryOnly), "", ".", "dist", "../assets.go", "node_modules/react/index.js", "/core.mjs", "dist/loader.js/")
+	refused := append(slices.Clone(repositoryOnly), "", ".", "player", "../assets.go", "node_modules/react/index.js", "/core.mjs", "player/loader.js/")
 	for _, name := range refused {
 		if _, err := Read(name); err == nil || !strings.Contains(err.Error(), "unknown figures asset") {
 			t.Errorf("Read(%q) = %v, want an unknown-asset refusal", name, err)
 		}
-		if _, err := fs.Stat(FS(), name); err == nil && name != "." && name != "dist" {
+		if _, err := fs.Stat(FS(), name); err == nil && name != "." && name != "player" {
 			t.Errorf("the embedded tree holds %s", name)
 		}
 	}
@@ -394,7 +394,7 @@ func TestAssetInventoryIsImportClosed(t *testing.T) {
 		"core.mjs -> third_party/interfig/upstream/src/svg.ts",
 		"third_party/interfig/upstream/src/svg.ts -> third_party/interfig/upstream/src/model.ts",
 		"astro.mjs -> serve.mjs",
-		"dist/loader.js -> dist/player.js",
+		"player/loader.js -> player/player.js",
 	} {
 		if !slices.Contains(edges, edge) {
 			t.Errorf("the import scan missed %s; it found %q", edge, edges)

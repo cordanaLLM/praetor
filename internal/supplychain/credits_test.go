@@ -29,7 +29,7 @@ func playerTerms(t *testing.T, sources NoticeSources) []string {
 
 // playerCreditsRow is a minimal credits row naming terms as the player's packages.
 func playerCreditsRow(terms []string) string {
-	return "| " + strings.Join(terms, ", ") + " | Bundled into the figure player (`tools/figures/dist/player.js`) | MIT |"
+	return "| " + strings.Join(terms, ", ") + " | Bundled into the figure player (`tools/figures/player/player.js`) | MIT |"
 }
 
 func checkoutNoticeSources(t *testing.T) NoticeSources {
@@ -95,7 +95,7 @@ func TestCreditsPackageTermBoundary(t *testing.T) {
 			t.Errorf("namesTerm(%q) = %v, want %v", text, got, want)
 		}
 	}
-	linkOnly := "| [react 19.3.0](https://example.test/react-dom 19.3.0 scheduler 0.28.0) | `tools/figures/dist/player.js` | MIT |"
+	linkOnly := "| [react 19.3.0](https://example.test/react-dom 19.3.0 scheduler 0.28.0) | `tools/figures/player/player.js` | MIT |"
 	if err := CheckCredits(linkOnly, checkoutNoticeSources(t)); err == nil {
 		t.Fatal("package names inside a link URL counted")
 	}

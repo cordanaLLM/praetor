@@ -40,11 +40,11 @@ const reuseOverrideTable = "\n[[annotations]]\npath = [\"tools/figures/third_par
 func TestVendoredLicenseWarningsPositive(t *testing.T) {
 	variants := []string{
 		reuseWithOverride,
-		reuseWithOverride + "\n[[annotations]]\npath = [\"docs/**\", \"tools/figures/dist/**\"]\nSPDX-License-Identifier = \"CC-BY-4.0\"\n",
+		reuseWithOverride + "\n[[annotations]]\npath = [\"docs/**\", \"tools/figures/player/**\"]\nSPDX-License-Identifier = \"CC-BY-4.0\"\n",
 		strings.Replace(reuseWithOverride, `SPDX-License-Identifier = "MIT"`, `SPDX-License-Identifier = "EUPL-1.2 AND (MIT)"`, 1),
 		strings.Replace(reuseWithOverride, `"tools/figures/third_party/interfig/upstream/**"`, `'tools/figures/third_party/interfig/upstream/**'`, 1),
 		strings.Replace(reuseWithOverride, `path = ["tools/figures/third_party/interfig/upstream/**"]`,
-			"path = [\n  \"tools/figures/dist/**\",\n  \"tools/figures/third_party/interfig/upstream/**\",\n]", 1),
+			"path = [\n  \"tools/figures/player/**\",\n  \"tools/figures/third_party/interfig/upstream/**\",\n]", 1),
 		strings.ReplaceAll(reuseWithOverride, "\n", "\r\n"),
 		reuseWithOverride + "\n[[annotations]]\npath = \"**/*.js\"\nSPDX-License-Identifier = \"MIT OR Apache-2.0\"\n",
 	}

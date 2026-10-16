@@ -40,7 +40,7 @@ func sbomNoticesRepo(t *testing.T, version, license string) string {
 	writeFixtureFile(t, dir, "tools/figures/package-lock.json",
 		`{"lockfileVersion":3,"packages":{"node_modules/react":{"version":"19.0.0","license":"MIT","dev":true}}}`)
 	rule := strings.Repeat("-", 78)
-	writeFixtureFile(t, dir, "tools/figures/dist/THIRD-PARTY-LICENSES.txt",
+	writeFixtureFile(t, dir, "tools/figures/player/THIRD-PARTY-LICENSES.txt",
 		rule+"\ninterfig https://example.com/tree/abc123\nLicense: MIT\n\nterms\n\n"+rule+"\nreact 19.0.0\nLicense: MIT\n\nterms\n")
 	writeFixtureFile(t, dir, "tools/figures/third_party/interfig/vendor.json", `{"commit":"abc123"}`)
 	writeFixtureFile(t, dir, "internal/devcontainer/cli/package-lock.json",

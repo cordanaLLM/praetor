@@ -95,7 +95,7 @@ func figurePlayerTermTexts(licenses string) map[string]string {
 // player that bundles React, react-dom and scheduler: every license text the embedded player's
 // THIRD-PARTY-LICENSES.txt holds must appear in the notices file as written.
 func TestThirdPartyNoticesCarryFigurePlayerTermsVerbatim(t *testing.T) {
-	licenses, err := figureassets.Read("dist/THIRD-PARTY-LICENSES.txt")
+	licenses, err := figureassets.Read("player/THIRD-PARTY-LICENSES.txt")
 	if err != nil {
 		t.Fatal(err)
 	}

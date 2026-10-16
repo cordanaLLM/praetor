@@ -76,11 +76,32 @@ type Context struct {
 	// apply reads it from the workspace's manifests (internal/flavor/rustfmt.go).
 	RustEdition string `json:"rust_edition"`
 
+	// GoSecurity selects the scanner installation rendered by
+	// go/security-go.yml.tmpl. Flavor apply derives it from tools/go/go.mod
+	// (internal/flavor/security_go.go); the zero value is the standalone,
+	// pinned fallback used by repositories without a scanner tools module.
+	GoSecurity GoSecurityContext `json:"go_security"`
+
 	// Node is what the Node CI body (node/ci-node.yml.tmpl) installs and runs scripts with.
 	// flavor apply reads it from package.json and the committed lockfile
 	// (internal/flavor/node_ci.go); the zero value renders the npm job.
 	Node NodeContext `json:"node"`
 }
+
+// GoSecurityContext describes which pinned scanner installation an adopted Go repository can
+// use. DeclaredScanners is true only when its tools module declares both scanner commands.
+type GoSecurityContext struct {
+	DeclaredScanners bool `json:"declared_scanners"`
+}
+
+// The fallback Security Scan builds these versions in a throwaway module. tools/go/go.mod is
+// the version source; TestGoSecurityVersionsMatchToolsModule names the required update whenever
+// Renovate moves one side without the other.
+const (
+	GoSecurityGovulnVersion = "v1.8.0"
+	GoSecurityGosecVersion  = "v2.29.0"
+	GoSecurityXToolsVersion = "v0.50.0"
+)
 
 // NodeContext describes a repository's Node package manager to the Node CI body.
 type NodeContext struct {
@@ -124,12 +145,12 @@ func Names() ([]string, error) {
 
 // execute is the one parse-and-execute path behind Render and RenderFile. An empty
 // template is refused: it renders an empty file, which is a placeholder, not content. Every
-// template may call the hosted gate functions (hostedGateFuncs).
+// template may call the shared workflow functions (templateFuncs).
 func execute(name, text, left, right string, ctx Context) (string, error) {
 	if text == "" {
 		return "", fmt.Errorf("template %s: content cannot be empty", name)
 	}
-	tmpl, err := template.New(name).Delims(left, right).Funcs(hostedGateFuncs).Parse(text)
+	tmpl, err := template.New(name).Delims(left, right).Funcs(templateFuncs).Parse(text)
 	if err != nil {
 		return "", fmt.Errorf("parse template %s: %w", name, err)
 	}
