@@ -34,7 +34,8 @@ func addDotnetVerification(p *VerificationPlan, inputs verificationInputs) error
 		}
 		argument := "./" + project
 		p.Build = append(p.Build, []string{"dotnet", "restore", argument, "--locked-mode"},
-			[]string{"dotnet", "build", argument, "-c", "Release", "--no-restore", "-warnaserror"})
+			[]string{"dotnet", "build", argument, "-c", "Release", "--no-restore", "-warnaserror",
+				"-p:ErrorLog=obj/praetor-build.sarif%2Cversion=2.1"})
 		if isTest {
 			p.Test = append(p.Test, dotnetTestCommand(argument, runner))
 			count++

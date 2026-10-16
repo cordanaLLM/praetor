@@ -1,0 +1,1 @@
+dotnet build ./App.csproj -c Release --no-restore -warnaserror -p:ErrorLog=obj/praetor-build.sarif%2Cversion=2.1
