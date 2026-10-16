@@ -28,20 +28,40 @@ jobs:
       - name: Checkout source
         if: github.event.pull_request.draft != true
         uses: actions/checkout@v4
-      - name: Setup Flutter
+
+      - name: Check for pubspec.yaml
         if: github.event.pull_request.draft != true
+        id: manifest
+        run: |
+          if [ -f pubspec.yaml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Flutter steps skipped: no pubspec.yaml yet"
+          fi
+
+      - name: Setup Flutter
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         uses: subosito/flutter-action@v2
         with:
           channel: stable
 
       - name: Install dependencies
-        if: github.event.pull_request.draft != true
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: flutter pub get
 
       - name: Analyze
-        if: github.event.pull_request.draft != true
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: flutter analyze
 
       - name: Test
-        if: github.event.pull_request.draft != true
+        if: >-
+          github.event.pull_request.draft != true &&
+          steps.manifest.outputs.present == 'true'
         run: flutter test

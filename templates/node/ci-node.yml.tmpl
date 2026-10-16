@@ -30,34 +30,44 @@ jobs:
 <% hostedGateDraftStep %>
       - name: Checkout source<% hostedGateStepIf %>
         uses: actions/checkout@v4
+
+      - name: Check for package.json<% hostedGateStepIf %>
+        id: manifest
+        run: |
+          if [ -f package.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Node steps skipped: no package.json yet"
+          fi
 <%- if eq .Node.Manager "pnpm" %>
-      - name: Setup Node.js<% hostedGateStepIf %>
+      - name: Setup Node.js<% hostedGateManifestStepIf %>
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
       # Corepack provisions the pnpm packageManager pins; Node 25 and later
       # ship without Corepack.
-      - name: Enable pnpm<% hostedGateStepIf %>
+      - name: Enable pnpm<% hostedGateManifestStepIf %>
         run: |
           npm install --global corepack@latest
           corepack enable pnpm
 
       # --frozen-lockfile installs exactly what pnpm-lock.yaml records and
       # fails when the two disagree.
-      - name: Install dependencies<% hostedGateStepIf %>
+      - name: Install dependencies<% hostedGateManifestStepIf %>
         run: pnpm install --frozen-lockfile
 
-      - name: Lint<% hostedGateStepIf %>
+      - name: Lint<% hostedGateManifestStepIf %>
         run: pnpm run --if-present lint
 
-      - name: Build<% hostedGateStepIf %>
+      - name: Build<% hostedGateManifestStepIf %>
         run: pnpm run --if-present build
 
-      - name: Test<% hostedGateStepIf %>
+      - name: Test<% hostedGateManifestStepIf %>
         run: pnpm run test
 <%- else if eq .Node.Manager "yarn" %>
-      - name: Setup Node.js<% hostedGateStepIf %>
+      - name: Setup Node.js<% hostedGateManifestStepIf %>
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -65,51 +75,51 @@ jobs:
       # Corepack provisions the Yarn packageManager pins, or Yarn 1, which
       # hands over to the release a .yarnrc.yml yarnPath names; Node 25 and
       # later ship without Corepack.
-      - name: Enable Yarn<% hostedGateStepIf %>
+      - name: Enable Yarn<% hostedGateManifestStepIf %>
         run: |
           npm install --global corepack@latest
           corepack enable yarn
 
       # The locked install takes exactly what yarn.lock records and fails
       # when the two disagree.
-      - name: Install dependencies<% hostedGateStepIf %>
+      - name: Install dependencies<% hostedGateManifestStepIf %>
         run: yarn install <% if .Node.YarnBerry %>--immutable<% else %>--frozen-lockfile<% end %>
 <%- if .Node.Lint %>
 
-      - name: Lint<% hostedGateStepIf %>
+      - name: Lint<% hostedGateManifestStepIf %>
         run: yarn run lint
 <%- end %>
 <%- if .Node.Build %>
 
-      - name: Build<% hostedGateStepIf %>
+      - name: Build<% hostedGateManifestStepIf %>
         run: yarn run build
 <%- end %>
 
-      - name: Test<% hostedGateStepIf %>
+      - name: Test<% hostedGateManifestStepIf %>
         run: yarn run test
 <%- else if eq .Node.Manager "bun" %>
-      - name: Setup Bun<% hostedGateStepIf %>
+      - name: Setup Bun<% hostedGateManifestStepIf %>
         uses: oven-sh/setup-bun@v2
-      - name: Setup Node.js<% hostedGateStepIf %>
+      - name: Setup Node.js<% hostedGateManifestStepIf %>
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
       # --frozen-lockfile installs exactly what the Bun lockfile records and
       # fails when the two disagree.
-      - name: Install dependencies<% hostedGateStepIf %>
+      - name: Install dependencies<% hostedGateManifestStepIf %>
         run: bun install --frozen-lockfile
 
-      - name: Lint<% hostedGateStepIf %>
+      - name: Lint<% hostedGateManifestStepIf %>
         run: bun run --if-present lint
 
-      - name: Build<% hostedGateStepIf %>
+      - name: Build<% hostedGateManifestStepIf %>
         run: bun run --if-present build
 
-      - name: Test<% hostedGateStepIf %>
+      - name: Test<% hostedGateManifestStepIf %>
         run: bun run test
 <%- else %>
-      - name: Setup Node.js<% hostedGateStepIf %>
+      - name: Setup Node.js<% hostedGateManifestStepIf %>
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -117,15 +127,15 @@ jobs:
 
       # npm ci installs exactly what package-lock.json records and fails when
       # the two disagree.
-      - name: Install dependencies<% hostedGateStepIf %>
+      - name: Install dependencies<% hostedGateManifestStepIf %>
         run: npm ci
 
-      - name: Lint<% hostedGateStepIf %>
+      - name: Lint<% hostedGateManifestStepIf %>
         run: npm run lint --if-present
 
-      - name: Build<% hostedGateStepIf %>
+      - name: Build<% hostedGateManifestStepIf %>
         run: npm run build --if-present
 
-      - name: Test<% hostedGateStepIf %>
+      - name: Test<% hostedGateManifestStepIf %>
         run: npm test
 <%- end %>

@@ -196,6 +196,14 @@ func (job *nodeJob) commands(run string) []string {
 func (job *nodeJob) command(fields []string) string {
 	command := strings.Join(fields, " ")
 	switch {
+	case command == "if [ -f package.json ]; then":
+		if !job.checkout["package.json"] {
+			return command + ": no package.json in the checkout"
+		}
+		return ""
+	case command == `echo "present=true" >> "$GITHUB_OUTPUT"`, command == "else", command == `echo "present=false" >> "$GITHUB_OUTPUT"`,
+		command == `echo "::notice::Node steps skipped: no package.json yet"`, command == "fi":
+		return ""
 	case command == "npm install --global corepack@latest":
 		return job.install("npm", "corepack", command)
 	case command == "corepack enable pnpm" || command == "corepack enable yarn":

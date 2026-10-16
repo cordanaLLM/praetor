@@ -84,6 +84,16 @@ const (
 	// line break: a gate text appends it to the step's name line, so every uses: line stays a
 	// line of its own in the Go source, where Renovate's line-based extractor finds it.
 	HostedGateStepIf = "\n        if: " + HostedGateNotDraft
+	// HostedGateManifestPresent is the output condition toolchain steps use after a root manifest
+	// probe. The probe itself runs on non-draft gate runs and records false with a notice when a
+	// newly scaffolded repository has not landed that manifest yet.
+	HostedGateManifestPresent = "steps.manifest.outputs.present == 'true'"
+	// HostedGateManifestStepCondition combines the ordinary gate condition with manifest presence.
+	HostedGateManifestStepCondition = HostedGateNotDraft + " && " + HostedGateManifestPresent
+	// HostedGateManifestStepIf is HostedGateManifestStepCondition at a gate step's indentation, led by its
+	// line break and folded over two lines: on one it runs past yamllint's 80 columns. YAML folds it
+	// back to HostedGateManifestStepCondition exactly, the string the workflow checks compare.
+	HostedGateManifestStepIf = "\n        if: >-\n          " + HostedGateNotDraft + " &&\n          " + HostedGateManifestPresent
 	// HostedGateDraftStepName names the draft step.
 	HostedGateDraftStepName = "Stop on a draft pull request"
 	// HostedGateDraftShell is the shell the draft step names, so neither the runner's default
@@ -215,7 +225,7 @@ func StringList(node *yaml.Node) []string {
 }
 
 // hostedGateStepsFault reports how a gate job's steps depart from the draft step followed by
-// gate steps that each carry HostedGateNotDraft.
+// gate steps that carry the hosted condition, or the manifest condition after its probe.
 func hostedGateStepsFault(jobID string, steps []Step) error {
 	if len(steps) < 2 || len(steps) > MaxStepsPerJob {
 		return fmt.Errorf("job %s does not run the draft step and at least one gate step", jobID)
@@ -223,14 +233,22 @@ func hostedGateStepsFault(jobID string, steps []Step) error {
 	if err := DraftStepFault(&steps[0]); err != nil {
 		return fmt.Errorf("job %s: %w", jobID, err)
 	}
+	manifestSeen := false
 	for i := 1; i < len(steps) && i < MaxStepsPerJob; i++ {
-		condition, closed := UnwrapExpression(steps[i].If)
-		if !closed || condition != HostedGateNotDraft || strings.TrimSpace(steps[i].ContinueOnError) != "" {
+		if !hostedGateLaterStepConditionValid(steps[i], manifestSeen) {
 			return fmt.Errorf("job %s step %d (%s) does not run only when the pull request is not a draft (%s)",
 				jobID, i+1, steps[i].Name, HostedGateNotDraft)
 		}
+		manifestSeen = manifestSeen || steps[i].ID == "manifest"
 	}
 	return nil
+}
+
+func hostedGateLaterStepConditionValid(step Step, manifestSeen bool) bool {
+	condition, closed := UnwrapExpression(step.If)
+	return closed && strings.TrimSpace(step.ContinueOnError) == "" &&
+		(condition == HostedGateNotDraft || manifestSeen && condition == HostedGateManifestStepCondition) &&
+		(step.ID != "manifest" || condition == HostedGateNotDraft)
 }
 
 // DraftStepFault reports how step departs from HostedGateDraftStep, or nil when it is that step:
