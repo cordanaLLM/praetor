@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -34,6 +35,8 @@ type Invocation struct {
 	// IssueClaims reads the live claim on an issue a brief names (#937). Nil means no lookup
 	// is wired, which refuses every brief that names an issue.
 	IssueClaims IssueClaimLookup
+	// Now supplies local wall-clock time for context-only events; nil uses time.Now.
+	Now func() time.Time
 }
 
 // Run serves one hook call: parse, read, decode, resolve, judge, encode. It never

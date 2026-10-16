@@ -7,17 +7,17 @@ import (
 	"strings"
 )
 
-// Antigravity ("agy") hook payload and response shapes, verified against the
-// "Lifecycle Hooks (hooks.json)" contract embedded in the installed Antigravity 1.2.7
-// binary (agy --help, AGY 1.2.x; the contract text is a string
-// literal in the binary itself, printed by the CLI's own in-app documentation, not
-// model memory). docs/guides/agent-hooks.md quotes the relevant sections verbatim.
+// Antigravity ("agy") hook payload and response shapes checked against the installed
+// Antigravity 1.4.0 binary and current hooks docs 2026-10-16:
+// https://antigravity.google/docs/hooks/ (PreInvocation injectSteps/ephemeralMessage;
+// PostToolUse output is {}).
 //
 // What is docs-confirmed and lands here directly (decision row 7,
 // .workingdir/planning/wrap-fork-rollout-spec-20260917.md:854):
 //   - the common fields on every payload: conversationId, workspacePaths, stepIdx
 //     (PreToolUse) / executionNum (Stop);
 //   - PreToolUse's toolCall.name and toolCall.args.CommandLine for the run_command tool;
+//   - PreInvocation's stdout injectSteps with an ephemeralMessage for prompt clock context;
 //   - PreToolUse's stdout: {"decision":"allow"|"deny","reason":...}, and on an allow the
 //     optional "overwrite" object, a shallow top-level merge into the tool call's arguments
 //     whose rewrite the agent is told about (re-read from the installed 1.3.3 binary
@@ -85,6 +85,11 @@ type agyStopPayload struct {
 // of the rollout spec): the argv event alone selects which shape below applies.
 func agyDecode(d Dialect, event Event, payload []byte) (Canonical, error) {
 	switch event {
+	case EventPrompt:
+		if _, err := decodeObject(payload); err != nil {
+			return Canonical{}, err
+		}
+		return Canonical{Event: event}, nil
 	case EventPreTool:
 		return agyDecodePreTool(d, payload)
 	case EventPreDispatch:
@@ -246,6 +251,14 @@ func agyCommandOf(args json.RawMessage) (string, error) {
 // object on stdout (the docs' contract has no exit-code channel at all).
 func agyEncode(d Dialect, canonical Canonical, verdict Verdict) Response {
 	switch canonical.Event {
+	case EventPrompt:
+		if verdict.AddedContext == "" {
+			if verdict.Outcome == Deny {
+				return agyRespond(map[string]any{"injectSteps": []any{map[string]string{"ephemeralMessage": boundReason(verdict.Reason)}}}, nil)
+			}
+			return agyRespond(map[string]any{}, nil)
+		}
+		return agyRespond(map[string]any{"injectSteps": []any{map[string]string{"ephemeralMessage": verdict.AddedContext}}}, nil)
 	case EventPreTool, EventPreDispatch:
 		return agyEncodePreTool(verdict)
 	case EventStop:

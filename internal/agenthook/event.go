@@ -23,6 +23,7 @@ type Event string
 const (
 	EventPreTool     Event = "pre-tool"
 	EventPreEdit     Event = "pre-edit"
+	EventPrompt      Event = "prompt"
 	EventPostTool    Event = "post-tool"
 	EventStop        Event = "stop"
 	EventEnvironment Event = "environment"

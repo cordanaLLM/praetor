@@ -56,7 +56,14 @@ func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocat
 		canonical = Canonical{Event: row.Event, StopActive: canonical.StopActive}
 		return canonical, returnBoundary(row, canonical, Verdict{Outcome: Deny, Reason: InvalidInputRefusal + err.Error()})
 	}
-	return canonical, returnBoundary(row, canonical, judge(ctx, row, canonical, in))
+	if row.Event == EventPrompt {
+		return canonical, Verdict{Outcome: Allow, AddedContext: clockContext(in.Now)}
+	}
+	verdict := returnBoundary(row, canonical, judge(ctx, row, canonical, in))
+	if row.Event == EventPostTool {
+		verdict.AddedContext = clockContext(in.Now)
+	}
+	return canonical, verdict
 }
 
 // judge resolves the governed root, checks the environment and dispatches the event.

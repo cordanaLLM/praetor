@@ -18,13 +18,14 @@ import (
 
 func TestRegistrationsPerClient(t *testing.T) {
 	for client, events := range map[string][]Event{
-		"claude": {EventPreTool, EventPreEdit, EventPostTool, EventStop, EventPreDispatch, EventDispatchReceipt,
+		"claude": {EventPrompt, EventPreTool, EventPreEdit, EventPostTool, EventStop, EventPreDispatch, EventDispatchReceipt,
 			EventDispatchAbort, EventDispatchAbort, EventPreHandback, EventHandbackReceipt, EventHandbackAbort,
 			EventHandbackAbort, EventPostReturn, EventSubagentStart},
-		"codex":    {EventPreTool, EventPostTool, EventStop, EventPreDispatch, EventPostReturn}, // no pre-edit row: measured fact, section 1
-		"gemini":   {EventPreTool, EventPreEdit, EventPostTool, EventStop, EventPreDispatch},
+		"codex":    {EventPrompt, EventPreTool, EventPostTool, EventStop, EventPreDispatch, EventPostReturn}, // no pre-edit row: measured fact, section 1
+		"gemini":   {EventPrompt, EventPreTool, EventPreEdit, EventPostTool, EventStop, EventPreDispatch},
 		"lefthook": {EventPreTool, EventEnvironment}, // checkpoint rows land in H4
-		"agy":      {EventPreTool, EventPreDispatch, EventStop},
+		"agy":      {EventPrompt, EventPreTool, EventPreDispatch, EventStop},
+		"opencode": {EventPrompt, EventPostTool},
 	} {
 		rows := Registrations(client)
 		if len(rows) != len(events) {
@@ -65,8 +66,8 @@ func TestNativePreToolRowSelectsTheCommandTool(t *testing.T) {
 		}
 		checked++
 	}
-	if checked != len(nativeHookFiles) {
-		t.Fatalf("checked %d pre-tool rows for %d hook files", checked, len(nativeHookFiles))
+	if checked != 3 {
+		t.Fatalf("checked %d pre-tool rows, want three command-hook files", checked)
 	}
 }
 
