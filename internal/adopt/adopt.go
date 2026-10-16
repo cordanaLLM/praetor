@@ -237,6 +237,9 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("adopt cancelled: %w", err)
 	}
+	// Several steps read the origin remote, and adoption never changes it: one git read
+	// answers them all (util.WithOriginCache, #1382).
+	ctx = util.WithOriginCache(ctx)
 	if err := validateBaselineOptions(opts); err != nil {
 		return nil, err
 	}

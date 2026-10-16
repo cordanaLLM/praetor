@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -612,16 +613,76 @@ func ResolveRemoteIdentity(ctx context.Context, repoPath string) (owner, repo st
 }
 
 // readOriginURL returns the raw origin remote URL. No origin remote, or an empty one, is
-// ErrRepoIdentityUnresolved; a read git did not answer is any other error.
+// ErrRepoIdentityUnresolved; a read git did not answer is any other error. Under a context from
+// WithOriginCache an answer git gave is read once per repository path.
 func readOriginURL(ctx context.Context, repoPath string) (string, error) {
+	cache, _ := ctx.Value(originCacheKey{}).(*originCache)
+	if remote, known := cache.lookup(repoPath); known {
+		if strings.TrimSpace(remote) == "" {
+			return "", fmt.Errorf("%w: no origin remote in %q", ErrRepoIdentityUnresolved, repoPath)
+		}
+		return remote, nil
+	}
 	remote, err := RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
 	if err != nil && !GitAnsweredUnset(ctx, err) {
 		return "", fmt.Errorf("util: read the origin remote in %q: %w", repoPath, err)
 	}
+	cache.store(repoPath, remote)
 	if strings.TrimSpace(remote) == "" {
 		return "", fmt.Errorf("%w: no origin remote in %q", ErrRepoIdentityUnresolved, repoPath)
 	}
 	return remote, nil
+}
+
+// originCacheKey keys the origin cache WithOriginCache puts on a context.
+type originCacheKey struct{}
+
+// originCache holds the origin remote git answered for each repository path under one context:
+// the URL as git printed it, or blank for none configured. A read git did not answer is never held.
+type originCache struct {
+	mu      sync.Mutex
+	remotes map[string]string
+}
+
+// WithOriginCache returns a context under which readOriginURL, and so ReadOriginRemote,
+// ResolveRemoteIdentity and ResolveRepoIdentity, asks git for a repository's origin remote once
+// and answers every later read from that answer. One adoption reads the remote from several steps
+// and each read started a git process, which costs tens of milliseconds on Windows (#1382). A
+// caller that changes the origin remote must not share such a context across the change.
+func WithOriginCache(ctx context.Context) context.Context {
+	if _, cached := ctx.Value(originCacheKey{}).(*originCache); cached {
+		return ctx
+	}
+	return context.WithValue(ctx, originCacheKey{}, &originCache{remotes: map[string]string{}})
+}
+
+// originCacheKeyFor is the cache key of repoPath: its cleaned absolute form.
+func originCacheKeyFor(repoPath string) string {
+	if abs, err := filepath.Abs(repoPath); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(repoPath)
+}
+
+// lookup returns the held answer for repoPath and whether there is one; a nil cache holds none.
+func (c *originCache) lookup(repoPath string) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	remote, known := c.remotes[originCacheKeyFor(repoPath)]
+	return remote, known
+}
+
+// store holds remote, git's answer for repoPath; a nil cache holds nothing.
+func (c *originCache) store(repoPath, remote string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.remotes[originCacheKeyFor(repoPath)] = remote
 }
 
 // GitAnsweredUnset reports whether err is git's answer that a requested key or ref is unset
