@@ -82,7 +82,7 @@ exceptions:
     expires: "2027-01-04"
   - rule: "test-timeout"
     path: ".github/workflows/portability.yml"
-    reason: "category B: internal/adopt on Windows takes about 31 minutes since #166 runs its hermetic fixtures there (1856 s, run 38778865104); 60m there, and the Windows job 180 minutes (engine-train4-cycle4-20261016: the job hit 120 with 88 to 117 minutes of tests), until the test-side split brings it under 900 s (#1381)"
+    reason: "category B: internal/adopt on Windows takes about 31 minutes since #166 runs its hermetic fixtures there (1856 s, run 38778865104); 60m there until the test-side split brings it under 900 s (#1381)"
     expires: "2026-10-18"
 
 # Text register per audience surface and task class (ADR-0010). Task keys are target_tasks

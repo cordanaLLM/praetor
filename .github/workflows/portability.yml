@@ -100,10 +100,8 @@ jobs:
     # the harness self-tests 12 to 13), against 12 on Linux and 19 on macOS; a slow runner took
     # a green run on #737 past the earlier 75-minute limit in its last step. The leg is a
     # required check, so a limit at that edge cancels a green run and blocks the pull request
-    # (#729 tracks the suite's growth). Since #166 runs the hermetic adopt fixtures on Windows the
-    # test step alone took 88 to more than 117 minutes (runs 38826002245 and 38838244065), so the
-    # job has 180 minutes until the adopt split (#1381) brings it back under 120.
-    timeout-minutes: 180
+    # (#729 tracks the suite's growth).
+    timeout-minutes: 120
     strategy:
       # One platform failing must never cancel the others. Which platforms are broken is
       # the entire output of this job; cancelling the rest discards it.
