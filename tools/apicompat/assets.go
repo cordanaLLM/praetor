@@ -133,6 +133,8 @@ jobs:
 // internal/managedasset/testdata/shipped/api-compatibility.sha256 records every text ever
 // shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
+	// The gate before it accepted identical type aliases across packages (engine-apicompat-alias-identical).
+	"45566ecd8cbec806eea0ab14d60f01cf95d134b170ea09a6a52b8aa73d7e14ca": Directory + "/" + GateFile,
 	// The gate that passed every pre-v1 incompatible change under policy auto as a warning, marked or
 	// not (#1317).
 	"fd668d77af454da56c6299dfcc1e4f5f49f8d007465489af0ead0067e96fc07d": Directory + "/" + GateFile,

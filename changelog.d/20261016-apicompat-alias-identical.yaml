@@ -1,0 +1,3 @@
+type: fixed
+title: "The API compatibility gate accepts a type that moved to another package behind an alias of an identical type, and still rejects real signature changes"
+breaking: false
