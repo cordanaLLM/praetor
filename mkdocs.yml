@@ -168,6 +168,7 @@ nav:
           - Workstation Sync: guides/devsync.md
           - Operational Configuration: guides/operational-configuration.md
           - Operational Sync: guides/operational-sync.md
+          - Admission for Heavy Steps: guides/admission.md
       - Build, Release & Deployment:
           - guides/build-and-release/index.md
           - Releasing and Release Flavors: guides/releasing.md
@@ -231,6 +232,7 @@ nav:
               - Upstream Contribution Workflow: plans/upstream-contribution-workflow.md
               - Wish Platform Integration: plans/wish-platform-integration.md
           - Research:
+              - Admission Runners: research/admission-runners.md
               - Compact Management Data: research/compact-management-data.md
               - Public Capability Discovery: research/dogfood-capability-discovery.md
               - Go Package Reuse: research/go-package-reuse.md
