@@ -18,3 +18,5 @@ Read [Workstation install and status](../workstation-update.md) first.
   the engine and which the operator supplies.
 - [Operational fork synchronization](../operational-sync.md): the `init`, `plan` and
   `prepare` stages of `praetorctl operational sync`.
+- [Admission for heavy local steps](../admission.md): `praetorctl admit`, which holds a heavy
+  step until the host has memory, swap and load headroom and runs it in its own systemd scope.

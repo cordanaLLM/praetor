@@ -1,0 +1,3 @@
+type: added
+title: 'Add hooks.admission to the operator settings: with enforce set, the engine''s pre-tool hook refuses a recognised heavy command (make, go test, cargo build, git push and the other built-in shapes, plus hooks.admission.commands) that does not run through praetorctl admit and names the admitted form; quoted text, comments and here-document bodies are not judged, and enforcement is off by default'
+issue: '#1131'

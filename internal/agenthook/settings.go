@@ -3,16 +3,24 @@ package agenthook
 import "github.com/cordanaLLM/praetor/internal/config"
 
 // This file wires `hooks.*` operator settings (S1, internal/config/operator_sections.go)
-// into the evaluator: the command-policy deny list, the checkpoint governance scope and the
-// Python interpreter candidates. It holds no filesystem access of its own; a caller resolves
+// into the evaluator: the command-policy deny list, the heavy-step admission check, the
+// checkpoint governance scope and the Python interpreter candidates. It holds no filesystem access of its own; a caller resolves
 // and loads config.OperatorSettings (config.SelectOperatorSettings, config.LoadOperatorSettings)
 // and hands the Hooks section in.
 
 // BuildPolicy compiles the command policy for one hooks section: the built-in rules plus
-// hooks.command_policy.deny. A zero HookSettings compiles the built-in rules alone, so a
-// caller that has not loaded any settings document still fails closed rather than nil.
+// hooks.command_policy.deny, and the heavy-step check when hooks.admission.enforce is set. A
+// zero HookSettings compiles the built-in rules alone, so a caller that has not loaded any
+// settings document still fails closed rather than nil.
 func BuildPolicy(hooks config.HookSettings) (*Policy, error) {
-	return NewPolicy(hooks.CommandPolicy.Deny)
+	policy, err := NewPolicy(hooks.CommandPolicy.Deny)
+	if err != nil {
+		return nil, err
+	}
+	if policy.admission, err = newAdmissionCheck(hooks.Admission); err != nil {
+		return nil, err
+	}
+	return policy, nil
 }
 
 // AppliesEverywhere reports hooks.scope: all, where the command policy still runs in an
