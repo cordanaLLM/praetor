@@ -41,8 +41,8 @@ func TestCompileContextPersonaModelRemedy_Positive_EarlierTemplateNamesRemedy(t 
 	}
 }
 
-// Negative: repository-edited persona text keeps the existing model-tier refusal and is not
-// presented as engine-owned text that adoption can replace.
+// Negative: repository-edited persona text keeps the model-tier refusal and is not presented as
+// engine-owned text that adoption can replace; the remedy names the tier adoption adds (#1426).
 func TestCompileContextPersonaModelRemedy_Negative_EditedPersonaKeepsCurrentError(t *testing.T) {
 	dir := newContextFixture(t, false)
 	edited := readPriorAuditorPersona(t) + "\nRepository edit.\n"
@@ -53,6 +53,7 @@ func TestCompileContextPersonaModelRemedy_Negative_EditedPersonaKeepsCurrentErro
 		t.Fatalf("want ErrPersonaModelTier, got %v", err)
 	}
 	mustErrContain(t, err, "persona model tier missing or invalid")
+	mustErrContain(t, err, "praetorctl adopt (no --force needed) adds the template's model tier")
 	if strings.Contains(err.Error(), "unedited copy") || strings.Contains(err.Error(), "praetorctl adopt replaces it") {
 		t.Fatalf("edited persona got earlier-template remedy: %v", err)
 	}

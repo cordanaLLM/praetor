@@ -69,3 +69,9 @@ func readHostMemory() (uint64, uint64, error) {
 	}
 	return status.totalPhys, status.availPhys, nil
 }
+
+// readHostSwap reports swap as unmeasured: GlobalMemoryStatusEx gives the commit limit, which
+// counts physical memory too, not the free swap meminfo's SwapFree names.
+func readHostSwap() (uint64, uint64, bool, error) {
+	return 0, 0, false, nil
+}

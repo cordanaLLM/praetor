@@ -88,6 +88,15 @@ type HookSettings struct {
 	Scope         string                `json:"scope"`
 	CommandPolicy CommandPolicySettings `json:"command_policy"`
 	Python        [][]string            `json:"python"`
+	Admission     AdmissionSettings     `json:"admission,omitzero"`
+}
+
+// AdmissionSettings turns on host admission for heavy commands (#1131): with Enforce set, the
+// pre-tool policy refuses a recognised heavy command that does not run through `praetorctl
+// admit`. Commands adds RE2 shapes to the built-in ones. Off by default: a host opts in.
+type AdmissionSettings struct {
+	Enforce  bool     `json:"enforce,omitzero"`
+	Commands []string `json:"commands,omitzero"`
 }
 
 // CommandPolicySettings carries the operator deny patterns (RE2). Organisation names and

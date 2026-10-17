@@ -237,6 +237,8 @@ Every string passes the literal rule shared with the MCP registry
 | `clients.selected.<id>.permissions.allow` | `[]` | at most 32 literals of up to 512 bytes, merged across layers |
 | `hooks.scope` | `governed` | `governed` guards repositories that carry `.standards.yaml`; `all` guards every workspace |
 | `hooks.command_policy.deny` | `[]` | at most 64 RE2 patterns of up to 512 bytes, compiled at load |
+| `hooks.admission.enforce` | `false` | boolean; `true` refuses heavy commands outside `praetorctl admit` ([heavy-step admission](agent-hooks.md#heavy-step-admission)) |
+| `hooks.admission.commands` | `[]` | at most 32 RE2 shapes of up to 512 bytes, compiled at load, added to the built-in ones |
 | `hooks.python` | `[python3, python, [py, -3]]` | up to 8 candidates: a bare command, or a list of a command and up to 8 arguments; an absolute path only in the workstation layer |
 | `update.channel` | `push` | `push`; `release` is reserved until release artifacts ship |
 | `update.source` | `checkout` | `checkout`; `artifact` is reserved |
@@ -355,12 +357,13 @@ fleet, organization, deployment, workstation.
   layers that set each concrete key, for example
   `clients.selected.agy.permissions.allow`.
 - Once a layer sets `clients.mode: strict`, `clients.govern: present`,
-  `required: true`, `update.require_signed: true` or `hooks.scope: all`, a later
-  layer cannot loosen it. The error names both layers. A built-in default is not a
-  layer, so the first layer may choose either value.
-- `hooks.command_policy.deny` and `permissions.allow` append without duplicates.
-  The bound applies to the merged list, so 40 fleet patterns plus 25 new
-  workstation patterns fail.
+  `required: true`, `update.require_signed: true`, `hooks.scope: all` or
+  `hooks.admission.enforce: true`, a later layer cannot loosen it. The error names
+  both layers. A built-in default is not a layer, so the first layer may choose
+  either value.
+- `hooks.command_policy.deny`, `hooks.admission.commands` and `permissions.allow`
+  append without duplicates. The bound applies to the merged list, so 40 fleet patterns
+  plus 25 new workstation patterns fail.
 - `topology.org_containers` appends the same way, bounded after merging;
   `framework.targets.<lang>.builder_kits` and `forge.reconcile_repos` are replaced
   by a later layer.

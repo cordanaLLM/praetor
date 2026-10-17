@@ -81,12 +81,13 @@ func runDecisionServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve repository path: %w", err)
 	}
-	return serverExitStatus(decisions.Serve(ctx, root, *outDir))
+	return childExitStatus(decisions.Serve(ctx, root, *outDir))
 }
 
-// serverExitStatus returns decided-mcp's own exit status silently: the child already wrote its
-// diagnostic to the stderr it shares with this process. Every other error keeps its text.
-func serverExitStatus(err error) error {
+// childExitStatus returns a child process's own exit status silently, as praetorctl's: the child
+// already wrote its diagnostic to the stderr it shares with this process (decided-mcp under
+// `decisions serve`, the admitted step under `admit`). Every other error keeps its text.
+func childExitStatus(err error) error {
 	var child *exec.ExitError
 	if errors.As(err, &child) && child.ExitCode() > 0 {
 		return exitStatusError{code: child.ExitCode()}

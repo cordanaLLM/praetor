@@ -28,7 +28,9 @@ var currentCheckpointDigests = map[string]string{
 // AuditCheckpointBundle returns one warning line per checkpoint bundle file of the repository
 // at rootDir that holds an earlier Praetor text of it, naming the release that shipped it
 // (#239). Such a copy can fail where the current one works: before #149 the evaluator called
-// os.O_DIRECTORY, which Python on Windows lacks. A plain adopt run refreshes it.
+// os.O_DIRECTORY, which Python on Windows lacks. A plain adopt run refreshes it, beside a kept
+// lefthook.yml too, unless another bundle file holds an edited copy: adoption keeps the bundle
+// as one unit then, so the line names that file instead of adopt.
 //
 // A missing file, the current text and an edited copy are not reported: adoption installs
 // the first and keeps the other two. A repository whose lefthook.yml extends the canonical
@@ -39,7 +41,30 @@ func AuditCheckpointBundle(ctx context.Context, rootDir string) ([]string, error
 	if err != nil || vendored {
 		return nil, err
 	}
+	digests, err := checkpointBundleDigests(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	remedy := "run praetorctl adopt (no --force needed) to refresh it."
+	if edited := editedCheckpointFile(digests); edited != "" {
+		remedy = "adoption keeps the bundle while " + edited + " holds an edited copy; restore that file " +
+			"or replace the bundle with this release's text, then run praetorctl adopt."
+	}
 	var lines []string
+	for i := 0; i < len(checkpointBundle) && i < maxCheckpointSources; i++ {
+		rel := checkpointBundle[i]
+		if release, ok := priorCheckpointDigests[rel][digests[rel]]; ok && digests[rel] != currentCheckpointDigests[rel] {
+			lines = append(lines, fmt.Sprintf("[WARN] %s holds the checkpoint evaluator Praetor shipped with %s, not this release's; %s",
+				rel, release, remedy))
+		}
+	}
+	return lines, nil
+}
+
+// checkpointBundleDigests returns the digest (util.CanonicalTextDigest) of every checkpoint
+// bundle file of the repository at rootDir that exists and has one; a missing file has no entry.
+func checkpointBundleDigests(ctx context.Context, rootDir string) (map[string]string, error) {
+	digests := make(map[string]string, len(checkpointBundle))
 	for i := 0; i < len(checkpointBundle) && i < maxCheckpointSources; i++ {
 		rel := checkpointBundle[i]
 		full, err := repoFile(rootDir, rel)
@@ -53,16 +78,27 @@ func AuditCheckpointBundle(ctx context.Context, rootDir string) ([]string, error
 		if !exists {
 			continue
 		}
-		digest, _, err := util.CanonicalTextDigest(data)
-		if err != nil || digest == currentCheckpointDigests[rel] {
-			continue
-		}
-		if release, ok := priorCheckpointDigests[rel][digest]; ok {
-			lines = append(lines, fmt.Sprintf("[WARN] %s holds the checkpoint evaluator Praetor shipped with %s, not this release's; "+
-				"run praetorctl adopt (no --force needed) to refresh it.", rel, release))
+		if digest, _, err := util.CanonicalTextDigest(data); err == nil {
+			digests[rel] = digest
 		}
 	}
-	return lines, nil
+	return digests, nil
+}
+
+// editedCheckpointFile returns the first bundle path whose digest is neither this release's nor
+// an earlier Praetor text of it, or "" when every existing file is one of those.
+func editedCheckpointFile(digests map[string]string) string {
+	for i := 0; i < len(checkpointBundle) && i < maxCheckpointSources; i++ {
+		rel := checkpointBundle[i]
+		digest, exists := digests[rel]
+		if !exists || digest == currentCheckpointDigests[rel] {
+			continue
+		}
+		if _, prior := priorCheckpointDigests[rel][digest]; !prior {
+			return rel
+		}
+	}
+	return ""
 }
 
 // extendsCanonicalLefthook reports whether the repository's lefthook.yml extends the canonical
