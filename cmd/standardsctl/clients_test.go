@@ -36,7 +36,7 @@ func TestClaudeLocalPrepareApplyAndSnapshotRefusal(t *testing.T) {
 	registry := filepath.Join(root, "registry.json")
 	target := filepath.Join(root, ".claude.json")
 	project := filepath.Join(root, "project")
-	before := []byte(`{"projects":{"/other":{"allowedTools":["Read"]},"` + project + `":{"hasTrustDialogAccepted":true}}}`)
+	before := []byte(`{"projects":{"/other":{"allowedTools":["Read"]},` + quoted(project) + `:{"hasTrustDialogAccepted":true}}}`)
 	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":`+quoted(trueCommand)+`,"args":[]}]}`))
 	writeClientFixture(t, target, before)
 	for _, args := range [][]string{

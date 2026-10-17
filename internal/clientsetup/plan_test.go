@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -51,8 +52,14 @@ func TestBuildPlanClientShapesAndReplay(t *testing.T) {
 }
 
 func TestBuildClaudeLocalPlanPreservesProjectsAndRejectsConflicts(t *testing.T) {
-	project := "/work/one"
-	before := []byte(`{"first":{"number":9007199254740993,"note":"keep\\u003c"},"projects":{"/work/one":{"allowedTools":["Read"],"mcpServers":{"other":{"command":"/other"}}},"/work/two":{"enabledMcpjsonServers":["mine"],"hasTrustDialogAccepted":true}}}`)
+	// A platform path: "/work/one" is not absolute on Windows. The JSON key is encoded, since a
+	// Windows path holds backslashes.
+	project := filepath.Join(t.TempDir(), "one")
+	key, err := json.Marshal(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := []byte(`{"first":{"number":9007199254740993,"note":"keep\\u003c"},"projects":{` + string(key) + `:{"allowedTools":["Read"],"mcpServers":{"other":{"command":"/other"}}},"/work/two":{"enabledMcpjsonServers":["mine"],"hasTrustDialogAccepted":true}}}`)
 	p, err := BuildClaudeLocalPlan(t.Context(), testRegistry(), project, before)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +72,7 @@ func TestBuildClaudeLocalPlanPreservesProjectsAndRejectsConflicts(t *testing.T) 
 	if !bytes.Contains(p.Content, []byte(`"mcpServers"`)) || !bytes.Contains(p.Content, []byte(`"praetor-dev"`)) {
 		t.Fatalf("local server missing: %s", p.Content)
 	}
-	conflict := []byte(`{"projects":{"/work/one":{"mcpServers":{"praetor-dev":{"command":"/other","args":[]}}}}}`)
+	conflict := []byte(`{"projects":{` + string(key) + `:{"mcpServers":{"praetor-dev":{"command":"/other","args":[]}}}}}`)
 	if _, err := BuildClaudeLocalPlan(t.Context(), testRegistry(), project, conflict); !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflict accepted: %v", err)
 	}
