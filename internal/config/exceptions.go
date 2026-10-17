@@ -78,11 +78,24 @@ const ExceptionRuleTestTimeout = "test-timeout"
 // ExceptionRuleMutants is the rule for tracked mutation-tool configuration exclusions.
 const ExceptionRuleMutants = "mutants"
 
+// ExceptionRuleBacklogCapsDefects is the rule of the defects backlog cap gate.
+const ExceptionRuleBacklogCapsDefects = "backlog.caps.defects"
+
+// ExceptionRuleBacklogCapsTasks is the rule of the tasks backlog cap gate.
+const ExceptionRuleBacklogCapsTasks = "backlog.caps.tasks"
+
+// ExceptionRuleBacklogCapsQuestions is the rule of the questions backlog cap gate.
+const ExceptionRuleBacklogCapsQuestions = "backlog.caps.questions"
+
+// ExceptionRuleBacklogCapsForgeAlerts is the rule of the forge alerts backlog cap gate.
+const ExceptionRuleBacklogCapsForgeAlerts = "backlog.caps.forge_alerts"
+
 // exceptionRules lists rules an exceptions entry may name. HISS IDs come from the single HISS
 // registry; the other entries are the non-HISS gates that read this list.
 var exceptionRules = append(hisscatalog.RuleIDs(),
 	ExceptionRuleAPICompatibility, ExceptionRuleClangTidyCoverage, ExceptionRuleCredits,
 	ExceptionRuleRootLicenseNotice, ExceptionRuleReuseAnnotationOrder, ExceptionRuleDeclaredLinters, ExceptionRuleTestTimeout, ExceptionRuleMutants,
+	ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks, ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts,
 )
 
 // workflowRuleExamples maps each rule whose entries name one workflow file by path to the
@@ -245,6 +258,38 @@ func ExceptionFor(entries []Exception, rel string, today time.Time, used []bool)
 	return live, expired
 }
 
+// BacklogCapRule returns the exception rule for category, e.g. "backlog.caps.defects" for "defects".
+func BacklogCapRule(category string) string {
+	return "backlog.caps." + category
+}
+
+// IsBacklogCapRule reports whether rule is one of the backlog cap exception rules.
+func IsBacklogCapRule(rule string) bool {
+	switch rule {
+	case ExceptionRuleBacklogCapsDefects, ExceptionRuleBacklogCapsTasks,
+		ExceptionRuleBacklogCapsQuestions, ExceptionRuleBacklogCapsForgeAlerts:
+		return true
+	}
+	return false
+}
+
+// BacklogExceptionFor returns the live and expired exceptions for category on today.
+func BacklogExceptionFor(entries []Exception, category string, today time.Time) (live, expired *Exception) {
+	rule := BacklogCapRule(category)
+	for index := 0; index < len(entries) && index < MaxExceptions; index++ {
+		if entries[index].Rule != rule {
+			continue
+		}
+		switch {
+		case !entries[index].Expired(today):
+			live = &entries[index]
+		case expired == nil:
+			expired = &entries[index]
+		}
+	}
+	return live, expired
+}
+
 // ValidateExceptions refuses an exceptions list a gate could not apply as written: more than
 // MaxExceptions entries, an unknown rule, an entry naming both or neither of path and glob, a
 // path that is not one clean repository-relative file, a glob outside the StyleExclusionProblem
@@ -382,10 +427,23 @@ func (e Exception) targetProblem() string {
 	if e.Rule == ExceptionRuleDeclaredLinters {
 		return e.declaredLintersTargetProblem()
 	}
+	if IsBacklogCapRule(e.Rule) {
+		return e.backlogCapTargetProblem()
+	}
 	if e.Tool != "" {
 		return fmt.Sprintf("rule %s must not set tool", e.Rule)
 	}
 	return e.pathOrGlobTargetProblem()
+}
+
+func (e Exception) backlogCapTargetProblem() string {
+	if e.Tool != "backlog" {
+		return "rule " + e.Rule + " must name tool: backlog"
+	}
+	if e.Path != "" || e.Glob != "" {
+		return "rule " + e.Rule + " must not set path or glob"
+	}
+	return ""
 }
 
 func (e Exception) declaredLintersTargetProblem() string {

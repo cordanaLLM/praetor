@@ -94,3 +94,15 @@ func NewForge(provider string, token string, endpoint string) (Forge, error) {
 		return nil, fmt.Errorf("unsupported forge provider: %s", provider)
 	}
 }
+
+// stubWrite checks outgoing text against the public text guard, authenticates the stub driver,
+// and returns ErrNotImplemented from the driver's unsupported helper.
+func stubWrite(ctx context.Context, auth func(context.Context) error, unsupported func(string) error, op string, texts ...string) error {
+	if err := DefaultPublicTextGuard().Check(ctx, texts...); err != nil {
+		return err
+	}
+	if err := auth(ctx); err != nil {
+		return err
+	}
+	return unsupported(op)
+}

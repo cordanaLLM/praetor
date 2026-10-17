@@ -1,0 +1,4 @@
+type: added
+title: "The backlog:bounded engine facet caps backlogs and the backlog cap gate supports dated exceptions to excuse categories until their expiry"
+issue: "#792"
+breaking: false

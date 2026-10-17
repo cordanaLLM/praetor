@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 var claimTestEpoch = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
@@ -128,5 +130,18 @@ func TestBriefClaims_Positive_ProseResemblingFieldsIsNotTouched(t *testing.T) {
 				t.Fatalf("prose must not reach the claim gate: exit %d, %d lookups, %s", response.ExitCode, calls, deniedText(response))
 			}
 		})
+	}
+}
+
+func TestBriefClaims_Positive_TaggedClaimMatchesBriefSession(t *testing.T) {
+	calls := 0
+	key, err := forge.LoadOrCreateDefaultClaimKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit7Tag := forge.ClaimTag(key, "session", "unit7")
+	table := map[string]*IssueClaim{"acme/widgets#7": {Session: unit7Tag, Updated: claimTestEpoch}}
+	if response := runClaimDispatch(t, claimBrief("acme/widgets#7", "unit7"), lookupOf(table, &calls)); response.ExitCode != 0 {
+		t.Fatalf("tagged claim matching session must pass: %+v\n%s", response, deniedText(response))
 	}
 }

@@ -47,6 +47,7 @@ var skillAllowedTokens = map[string]bool{
 	"CHANGELOG.md":                       true, // social-text: "Never edit CHANGELOG.md directly".
 	".yaml":                              true, // social-text: the "<date>-<slug>.yaml" changelog fragment name.
 	".standards-receipt.json":            true, // caveman: the gate receipt example at "wrote .standards-receipt.json".
+	".pin.json":                          true, // pinned upstream skills record.
 	".agents/skills/caveman/SKILL.md:42": true, // social-text: the file-and-line example.
 	"./":                                 true, // caveman: the Go package pattern "./..." once its trailing dots are trimmed.
 	"/":                                  true, // social-text: "58 lines / 1500 tokens".

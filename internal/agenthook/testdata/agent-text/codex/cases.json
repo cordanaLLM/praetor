@@ -9,7 +9,12 @@
       "tool_use_id": "tool-codex",
       "tool_input": {
         "message": "goal: patch hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n"
-      }
+      },
+      "cwd": "{repository}",
+      "model": "gpt-5-codex",
+      "permission_mode": "default",
+      "transcript_path": null,
+      "turn_id": "turn-codex"
     }
   },
   {
@@ -22,7 +27,12 @@
       "tool_use_id": "tool-codex",
       "tool_input": {
         "message": "goal: I will patch the hook\ninputs: internal/agenthook\nreturn: diff plus tests\nevidence: focused tests\ntask: feature_implementation\n"
-      }
+      },
+      "cwd": "{repository}",
+      "model": "gpt-5-codex",
+      "permission_mode": "default",
+      "transcript_path": null,
+      "turn_id": "turn-codex"
     }
   },
   {
@@ -33,7 +43,12 @@
       "hook_event_name": "PreToolUse",
       "tool_name": "spawn_agent",
       "tool_use_id": "tool-codex",
-      "tool_input": {}
+      "tool_input": {},
+      "cwd": "{repository}",
+      "model": "gpt-5-codex",
+      "permission_mode": "default",
+      "transcript_path": null,
+      "turn_id": "turn-codex"
     }
   },
   {

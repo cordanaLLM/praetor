@@ -378,6 +378,7 @@ func buildLefthookYAMLFor(shape lefthookShape, checkpoint bool) string {
 // generated values go through the layouts in emitted_layout.go, and every function stays
 // within the 35 lines the strictest public dogfood policy allows (checkpoint_loc_test.go).
 const blockEvasionTemplate = `#!/usr/bin/env python3
+# SPDX-License-Identifier: EUPL-1.2
 """Agent PreToolUse evasion interceptor (HISS), written by praetorctl adopt.
 
 Wire this script as a PreToolUse hook of the agent harness's shell tool. The harness passes
@@ -869,6 +870,8 @@ var priorEvasionHookDigests = map[string]string{
 	"e69d49af323fcd3b1d23394bc6736afa115629ff7925ffec664404bd048ec169": "refuse admin and API merges that bypass rulesets (#1300)",
 	"6b9ba7a53a4c2c3a28da48031983ff879aed3f925974fd84bba58be1da19bf0c": "git option run searched once per run, linear in the line (#1283)",
 	"526ccd7bd6ec2070ed8dc8dfb97a9f9857de99e9c49ae6359c15b5a88fc47273": "dev root ends in either path separator (#200)",
+	"b8937e971450935197b92af4ff3b05adba551939fd90212b142030c8ba85ee06": "SPDX-License-Identifier line behind the shebang (#1281)",
+	"682a8ed3eea87a45a9d6f4b9b5ddc68a1363a2cbeec0dca407cc50a6bee647dd": "current rendering after main changes and SPDX header",
 }
 
 // reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an

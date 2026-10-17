@@ -285,8 +285,9 @@ type preCommitRepo struct {
 }
 
 // preCommitConfigHook is one hook of a repo: the framework runs entry, split as a shell would,
-// with args appended, at each of its stages.
+// with args appended, at each of its stages; id names it (a remote hook shows no entry here).
 type preCommitConfigHook struct {
+	ID     string   `yaml:"id"`
 	Entry  string   `yaml:"entry"`
 	Args   []string `yaml:"args"`
 	Stages []string `yaml:"stages"`
@@ -372,10 +373,7 @@ func (h preCommitConfigHook) praetorArgs() ([]string, bool) {
 // which default to every stage, and the legacy name commit means pre-commit (_STAGES in
 // pre_commit/clientlib.py).
 func runsAtPreCommit(stages, defaultStages []string) bool {
-	if len(stages) == 0 {
-		stages = defaultStages
-	}
-	return len(stages) == 0 || slices.Contains(stages, "pre-commit") || slices.Contains(stages, "commit")
+	return runsAtStage("pre-commit", stages, defaultStages)
 }
 
 // isVerifyFlag reports whether arg sets compile-context's --verify flag, in any spelling Go's

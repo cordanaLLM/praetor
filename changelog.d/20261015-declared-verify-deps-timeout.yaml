@@ -1,0 +1,3 @@
+type: added
+title: "The declared-verification stage links git-ignored dependency folders (node_modules, .venv, venv) read-only into its isolated worktree and adopters can declare the stage bound via gate.declared_verify_timeout in .standards.yaml"
+breaking: false

@@ -45,10 +45,25 @@ func auditBacklogCaps(ctx context.Context, rootDir string, effective *config.Eff
 			strings.Join(skipped, ", "))
 	case report.Gated() == 0:
 		fmt.Println("[INFO] Backlog caps: no category declares action gate; nothing is gated.")
+	case report.Excepted() > 0:
+		fmt.Printf("[PASS] Backlog caps: every category with action gate was counted; over its cap and excepted: %s.\n",
+			strings.Join(exceptedGatedCategories(report), ", "))
 	default:
 		fmt.Println("[PASS] Backlog caps: every category with action gate was counted and is within its cap.")
 	}
 	return nil
+}
+
+// exceptedGatedCategories names the gated categories over their cap that an unexpired
+// exceptions entry excuses, in report order.
+func exceptedGatedCategories(report *backlogcap.Report) []string {
+	var names []string
+	for i := 0; i < len(report.Categories); i++ {
+		if report.Categories[i].Gated() && report.Categories[i].Excepted() {
+			names = append(names, report.Categories[i].Name)
+		}
+	}
+	return names
 }
 
 // auditBacklogPrefix marks a category line in the audit: SKIP for a gated category whose

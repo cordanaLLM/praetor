@@ -1,0 +1,10 @@
+{
+  "cwd": "/work/repo",
+  "hook_event_name": "UserPromptSubmit",
+  "model": "gpt-5.6",
+  "permission_mode": "default",
+  "prompt": "Check the schema fixture.",
+  "session_id": "schema-session",
+  "transcript_path": null,
+  "turn_id": "schema-turn"
+}

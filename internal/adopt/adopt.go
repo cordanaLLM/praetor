@@ -1232,12 +1232,18 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 	name, err := resolveAdoptionFlavor(s.repoPath, s.arch)
 	if flavor.IsScaffoldSkip(err) {
 		s.report.recordSkipped(flavorReportPath, flavorSkipDetail(s.arch, err))
+		s.reconcileGoSecurityConfig(ctx, nil)
 		return
 	}
 	if err != nil {
 		// A bad pin or an unreadable manifest is not "not applicable": the pre-push audit
 		// refuses it, so adoption reports it instead of promising a skip.
 		s.report.addError("resolve flavor: %v", err)
+		return
+	}
+	flv, flvErr := flavor.Get(name)
+	if flvErr != nil {
+		s.report.addError("get flavor %s: %v", name, flvErr)
 		return
 	}
 	// Templates only: the branch-ruleset step renders the ruleset once every workflow of the
@@ -1248,6 +1254,7 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 	if err != nil {
 		s.report.addError("apply flavor %s: %v", name, err)
 	}
+	s.reconcileGoSecurityConfig(ctx, flv)
 }
 
 // resolveAdoptionFlavor names the one root flavor adoption scaffolds for profile.

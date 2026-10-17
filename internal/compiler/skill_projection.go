@@ -10,8 +10,10 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -349,6 +351,102 @@ func clientSkillProjections(ctx context.Context, rootDir string, dirs []string, 
 			return nil, err
 		}
 		files = append(files, copies...)
+	}
+	pinned, err := pinnedSkillProjections(ctx, rootDir, dirs)
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, pinned...)
+	return files, nil
+}
+
+// verifyPinnedSkillManifest checks that a skill carrying .pin.json is declared in .standards.yaml
+// skills.upstream with matching repo, tag and commit, and that its file hashes match.
+// If the skill has no .pin.json, it returns (nil, false, nil).
+// If the skill has .pin.json but is not declared in skills.upstream, or if coordinates/hashes mismatch,
+// it returns an error.
+func verifyPinnedSkillManifest(skillName, skillDir string, policy *config.SkillsPolicy) (*caveman.SkillPinRecord, bool, error) {
+	record, exists, err := caveman.ReadSkillPinRecord(skillDir)
+	if err != nil {
+		return nil, false, fmt.Errorf("read pinned skill %s: %w", skillName, err)
+	}
+	if !exists {
+		return nil, false, nil
+	}
+	src, found := policy.UpstreamSkillSourceFor(skillName)
+	if !found {
+		return nil, true, fmt.Errorf("pinned skill %s carries %s but is not declared in %s skills.upstream",
+			skillName, caveman.SkillPinRecordName, config.ManifestFileName)
+	}
+	if !record.MatchesUpstream(src.Repo, src.Tag, src.Commit) {
+		return nil, true, fmt.Errorf("pinned skill %s pin mismatch: manifest declares %s@%s (%s), pin record has %s@%s (%s)",
+			skillName, src.Repo, src.Tag, src.Commit, record.Repo, record.Tag, record.Commit)
+	}
+	if _, err := caveman.VerifySkillPin(skillDir); err != nil {
+		return nil, true, fmt.Errorf("verify pinned skill %s: %w", skillName, err)
+	}
+	return record, true, nil
+}
+
+// pinnedSkillProjections returns the projected copies of every pinned upstream skill in dirs.
+func pinnedSkillProjections(ctx context.Context, rootDir string, dirs []string) ([]projectionFile, error) {
+	canonicalSkills, err := listCanonicalSkills(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := config.LoadSkillsPolicy(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	bundle := config.RegisterSkillBundle()
+	var files []projectionFile
+	for i := 0; i < len(canonicalSkills) && i < maxSkillProjections; i++ {
+		skillName := canonicalSkills[i]
+		if slices.Contains(bundle, skillName) {
+			continue
+		}
+		skillDir := filepath.Join(rootDir, filepath.FromSlash(CanonicalSkillsRel), skillName)
+		record, isPinned, err := verifyPinnedSkillManifest(skillName, skillDir, policy)
+		if err != nil {
+			return nil, err
+		}
+		if !isPinned {
+			continue
+		}
+		copies, err := pinnedSkillCopies(skillDir, skillName, dirs, record)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, copies...)
+	}
+	return files, nil
+}
+
+// maxPinnedSkillFileBytes bounds the size of any one pinned skill file read for projection (HISS-02).
+const maxPinnedSkillFileBytes = 1 << 20
+
+// pinnedSkillCopies reads all files declared in record.Files and returns projection files for dirs.
+func pinnedSkillCopies(skillDir, skillName string, dirs []string, record *caveman.SkillPinRecord) ([]projectionFile, error) {
+	fileKeys := make([]string, 0, len(record.Files))
+	for k := range record.Files {
+		fileKeys = append(fileKeys, k)
+	}
+	slices.Sort(fileKeys)
+
+	var files []projectionFile
+	for _, fileRel := range fileKeys {
+		filePath, err := util.ConfinePath(skillDir, filepath.FromSlash(fileRel))
+		if err != nil {
+			return nil, fmt.Errorf("read pinned skill %s file %s: %w", skillName, fileRel, err)
+		}
+		data, err := util.ReadFileLimited(filePath, maxPinnedSkillFileBytes)
+		if err != nil {
+			return nil, fmt.Errorf("read pinned skill %s file %s: %w", skillName, fileRel, err)
+		}
+		for j := 0; j < len(dirs) && j < maxSkillProjections; j++ {
+			rel := dirs[j] + "/" + skillName + "/" + fileRel
+			files = append(files, projectionFile{rel: rel, data: data})
+		}
 	}
 	return files, nil
 }

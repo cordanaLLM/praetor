@@ -10,8 +10,11 @@ Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing
 or older than its floor ([linter version floors](#linter-version-floors)).
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
-from source using the existing repository `@latest` policy. `tools/go/go.mod` pins `gosec`,
-`govulncheck` and `gitleaks` as tool directives, which Renovate keeps current: `make sec`,
+from the pinned `tools/lint/go.mod` tool directive when present, or from a matching directive
+in `tools/go/go.mod`. The hook refuses Go pushes when neither module pins it; add a golangci-lint
+tool directive to `tools/lint/go.mod` before pushing. Adoption does not currently create that pin.
+`tools/go/go.mod` pins `gosec`, `govulncheck` and `gitleaks` as tool directives, which Renovate
+keeps current: `make sec`,
 `make vuln` and `make secrets` run exactly those versions through `go tool -modfile` (`make vuln`
 hands govulncheck to `praetorctl security govuln`, the
 [Go vulnerability gate](adoption-verification.md#go-vulnerabilities-and-the-openvex-document)), and
@@ -123,7 +126,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |
 | `prepare-commit-msg` | Add an instructional comment to a fresh empty message. |
 | `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then apply the commit message policy (`praetorctl forge check-message`: a conventional subject, Git merge/revert subjects accepted, the HISS-14 `Migration:` footer on a breaking change, and an offline warning for ambiguous closing references; explicit pull request URLs require `Closes-own: <reference>`) and require a DCO sign-off. |
-| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
+| `pre-push` | Audit and verify live state before inspecting each actual pushed commit. Run `praetorctl forge refactor-check --base=<base> --head=<head>` over the pushed range for the REF-02 assertion lock; a push without a known base skips it with that reason, and CI checks the pull request range. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
 | `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
@@ -709,8 +712,16 @@ pull request (`.github/workflows/ci.yml`, the two steps after the documentation 
 | `commit-msg`: the HISS-14 `Migration:` footer on a breaking change | the same command | `TestForgeCheckCommits_EnforcesBreakingMigrationFooter` |
 | `commit-msg`: closing keywords (`close`, `fix`, `resolve` and their forms, as GitHub lists them) are resolved in CI; issues pass, pull requests opened by the checked pull request author pass, and pull requests opened by anyone else fail unless a `Closes-own: <reference>` line marks the closure as intended. Offline, `#N` and `owner/repo#N` warn because only CI can resolve them; `/pull/` and `/pulls/` URLs fail immediately. | the same command; `praetorctl forge validate-pr` applies the same function to the pull request body | `TestClosingKeywords_OnlineResolution` |
 | `commit-msg`: the DCO sign-off | `scripts/dco_check.sh` in `.github/workflows/compliance.yml` | `scripts/test_dco_check.py` |
+| `refactor:` commits: REF-02 refuses changed assertion lines or removed test functions; REF-01 runs touched Go package tests at that commit | pre-push runs `praetorctl forge refactor-check --base=<base> --head=<head>` without test execution; CI runs the same range with `--run-tests` | `TestForgeRefactorCheck_*` |
 | `pre-commit`: whitespace errors and conflict markers (`git diff --cached --check`) | `python3 -B .config/lefthook/scripts/hooks.py commits origin/<base>`, which runs `git log --check` over the range | `CommitRange` in `.config/lefthook/scripts/test_hooks.py` |
 | `pre-commit` and `pre-push`: private `.workingdir` content | the same stage, through `check_private_history` | `CommitRange` |
+
+The `refactor:` row checks the preparatory refactoring practice, from Martin Fowler's
+[Preparatory Refactoring](https://martinfowler.com/articles/preparatory-refactoring-example.html)
+and Kent Beck's [Tidy First?](https://newsletter.kentbeck.com/p/structure-and-behavior-prs): the
+reshape lands in its own behaviour-preserving commit before the change that needs it. The
+`preparatory-refactoring` skill (`.agents/skills/preparatory-refactoring/SKILL.md`) tells agents
+when to split one off; the assertion lock and the suite check are this repository's own.
 
 The commit-msg hook and CI share one implementation of the message policy, `forge.AnalyzeCommit`
 (`internal/forge/commit_message.go`). The hook runs `praetorctl forge check-message <file>` on the
@@ -718,6 +729,15 @@ message file Git hands it, which first drops what Git removes before it records 
 lines that start with `#`, and the scissors line with everything after it. A message file over
 1 MiB, or of more than 100000 lines before the scissors line, is refused, not checked in part
 (`TestCleanCommitMessage_Boundary_LineBound`).
+
+`standardsctl forge refactor-check` uses the same Conventional Commits subject parser as
+`AnalyzeCommit` to select `refactor:` commits. REF-02 checks changed `*_test.go` hunks for
+`t.Error`, `t.Errorf`, `t.Fatal`, `t.Fatalf`, `assert.*`, `require.*`, and `cmp.Diff` lines, and
+refuses removed `Test*` functions. A pure test-file rename passes. REF-01 runs `go test` for
+packages touched by each refactor commit in a temporary worktree of that commit, bounded by a
+20-minute test timeout; an unavailable or failing test command fails the gate. Pre-push omits
+suite execution to keep the local range check fast. CI runs it with `--run-tests` on pull-request
+ranges. REF-03 public API invariance remains covered by the engine API compatibility gate.
 
 These checks are not re-run per commit:
 
@@ -949,8 +969,10 @@ The gate's untracked Exit-0 receipt `.standards-receipt.json` at the root is out
 the binding too, so a `praetorctl gate run` after the sync leaves the ledger current
 (#136); the [state ledger integrity guide](state-ledger-integrity.md) states why.
 
-This repository's native Stop/AfterAgent bridge calls the shared `agent-state-stop`
-job and requires its unique success marker. Missing, stale or invalid state blocks
+This repository's native Stop/AfterAgent registration reaches the engine, which runs
+`state sync --verify` and `state audit` itself; with no engine the launcher falls back
+to the bridge that calls the shared `agent-state-stop` job and requires its unique
+success marker. Missing, stale or invalid state blocks
 completion. The Git hooks rebuild the checkout CLI before ledger checks to avoid
 accepting an older installed binary. Generated adoption bundles require their own
 compatible CLI and hook integration; this repository's activation is not evidence

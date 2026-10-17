@@ -115,8 +115,15 @@ func validateClaimOptionals(c Claim) error {
 	return nil
 }
 
-// RenderClaimMarker renders the marker line of a claim after validating it.
-func RenderClaimMarker(c Claim) (string, error) {
+// RenderClaimMarkerWithKey renders the marker line of a claim using key to tag plain identities.
+func RenderClaimMarkerWithKey(c Claim, key []byte) (string, error) {
+	if len(key) == 0 && (!IsClaimTag(c.Session) || !IsClaimTag(c.Lane)) {
+		return "", errors.New("claim tag key is required to render marker")
+	}
+	if err := validateClaim(c); err != nil {
+		return "", err
+	}
+	c = tagClaim(c, key)
 	if err := validateClaim(c); err != nil {
 		return "", err
 	}

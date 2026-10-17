@@ -1,0 +1,18 @@
+---
+id: "backlog:bounded"
+name: "Bounded Backlog Caps"
+description: >-
+  Caps open defects at 20 with action gate, tasks at 50 with action batch,
+  and questions at 10 with action batch
+
+backlog:
+  caps:
+    defects:
+      max: 20
+      action: gate
+    tasks:
+      max: 50
+      action: batch
+    questions:
+      max: 10
+      action: batch

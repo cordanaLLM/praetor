@@ -7,6 +7,7 @@
 package forgetest
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,9 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
+
+// DefaultFakeKey is the deterministic 32-byte key the fake uses when none is set.
+var DefaultFakeKey = bytes.Repeat([]byte{0x42}, forge.ClaimKeySize)
 
 // ClaimFake is an in-memory forge for one repository that implements forge.ClaimForge.
 // FailOn names a method that fails with an error.
@@ -29,6 +33,7 @@ type ClaimFake struct {
 	Labels    map[string]bool // labels the repository has
 	OnIssue   map[string]bool // labels on the issue
 	Assignees []string
+	Key       []byte
 	FailOn    string
 	Calls     []string
 	// BeforeList runs before ListIssueComments answers, to stage a concurrent writer.
@@ -40,9 +45,16 @@ type ClaimFake struct {
 
 var _ forge.ClaimForge = (*ClaimFake)(nil)
 
-// NewClaimFake returns an empty open fake issue.
+// NewClaimFake returns an empty open fake issue with DefaultFakeKey.
 func NewClaimFake() *ClaimFake {
-	return &ClaimFake{State: "open", NextID: 100, Labels: map[string]bool{}, OnIssue: map[string]bool{}}
+	return &ClaimFake{State: "open", NextID: 100, Labels: map[string]bool{}, OnIssue: map[string]bool{}, Key: DefaultFakeKey}
+}
+
+// NewClaimFakeWithKey returns an empty open fake issue with an explicit key.
+func NewClaimFakeWithKey(key []byte) *ClaimFake {
+	f := NewClaimFake()
+	f.Key = key
+	return f
 }
 
 // Opener returns an opener that serves this fake for every repository.
@@ -121,6 +133,20 @@ func (f *ClaimFake) EditIssueComment(_ context.Context, id int64, body string) e
 	return fmt.Errorf("fake forge: no comment %d", id)
 }
 
+// DeleteIssueComment removes a comment by id.
+func (f *ClaimFake) DeleteIssueComment(_ context.Context, id int64) error {
+	if err := f.record("DeleteIssueComment"); err != nil {
+		return err
+	}
+	for i := range f.Comments {
+		if f.Comments[i].ID == id {
+			f.Comments = append(f.Comments[:i], f.Comments[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("fake forge: no comment %d", id)
+}
+
 // EnsureLabel creates the label on the repository.
 func (f *ClaimFake) EnsureLabel(_ context.Context, l forge.Label) error {
 	if err := f.record("EnsureLabel"); err != nil {
@@ -179,7 +205,11 @@ func (f *ClaimFake) RemoveAssignees(_ context.Context, _ int, logins []string) e
 // returns its id.
 func (f *ClaimFake) Seed(tb testing.TB, c forge.Claim, association string) int64 {
 	tb.Helper()
-	marker, err := forge.RenderClaimMarker(c)
+	key := f.Key
+	if len(key) == 0 {
+		key = DefaultFakeKey
+	}
+	marker, err := forge.RenderClaimMarkerWithKey(c, key)
 	if err != nil {
 		tb.Fatalf("seed claim: %v", err)
 	}

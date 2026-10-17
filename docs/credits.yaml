@@ -38,6 +38,7 @@ originals:
   - ".agents/skills/hiss-audit/SKILL.md"
   - ".agents/skills/infocard-generate/SKILL.md"
   - ".agents/skills/paperclip-operate/SKILL.md"
+  - ".agents/skills/preparatory-refactoring/SKILL.md"
   - ".agents/skills/prerelease-bump/SKILL.md"
   - ".agents/skills/python-dev/SKILL.md"
   - ".agents/skills/repo-adopt/SKILL.md"
@@ -132,6 +133,98 @@ entries:
       - "docs/adr/README.md"
     match:
       - "decision record"
+  - name: "Preparatory Refactoring"
+    url: "https://martinfowler.com/articles/preparatory-refactoring-example.html"
+    detail: "by Martin Fowler (2015), and Kent Beck's [Tidy First?](https://newsletter.kentbeck.com/p/structure-and-behavior-prs)"
+    section: "adapted"
+    kind: "inspiration"
+    relation: "inspired"
+    license: "none"
+    notice: "the idea only; no text is taken"
+    artifact: "the `refactor:` commit checks of `praetorctl forge refactor-check`, `docs/guides/git-hooks.md`"
+    use: >-
+      The practice of reshaping code in its own behaviour-preserving commit before the change that needs
+      the new shape. The assertion lock, the suite check, the HISS-04 trigger and the
+      `preparatory-refactoring` skill text are praetor's own.
+    paths:
+      - "docs/guides/git-hooks.md"
+    match:
+      - "preparatory refactoring"
+  - name: "eval-harness"
+    url: "https://github.com/affaan-m/ecc/tree/1e8c7e7994223e0ff337d1626cd08e04a1ae67ed/skills/eval-harness"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Affaan Mustafa: the MIT terms of the upstream skill when this skill was adapted from it (2026-10-15),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 1e8c7e799
+    artifact: "`eval-harness` skill, `.agents/skills/eval-harness/SKILL.md`"
+    use: >-
+      Evaluation-driven development methodology: define task pass criteria before coding, track pass@k and pass^k
+      metrics, and run deterministic evaluations. Rewritten in praetor's internal caveman register.
+    paths:
+      - ".agents/skills/eval-harness/SKILL.md"
+    match:
+      - "eval-harness"
+      - "mustafa"
+  - name: "ecc-tools-cost-audit"
+    url: "https://github.com/affaan-m/ecc/tree/1e8c7e7994223e0ff337d1626cd08e04a1ae67ed/skills/ecc-tools-cost-audit"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Affaan Mustafa: the MIT terms of the upstream skill when this skill was adapted from it (2026-10-15),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 1e8c7e799
+    artifact: "`cost-audit` skill, `.agents/skills/cost-audit/SKILL.md`"
+    use: >-
+      Model token consumption and spend auditing methodology: track per-turn prompt and completion tokens, audit context
+      growth rate, and prevent prompt runaway. Rewritten in praetor's internal caveman register.
+    paths:
+      - ".agents/skills/cost-audit/SKILL.md"
+    match:
+      - "cost-audit"
+      - "ecc-tools-cost-audit"
+      - "mustafa"
+  - name: "deep-research"
+    url: "https://github.com/affaan-m/ecc/tree/2aebdd340860f2ca9f1cbebed9d85d90e9e4fb59/skills/deep-research"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Affaan Mustafa: the MIT terms of the upstream skill when this skill was adapted from it (2026-10-15),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 2aebdd340
+    artifact: "`research-method` skill, `.agents/skills/research-method/SKILL.md`"
+    use: >-
+      Systematic inquiry and evidence synthesis methodology: clarify scope, execute iterative search with primary source
+      prioritization, and cross-validate findings. Rewritten in praetor's internal caveman register.
+    paths:
+      - ".agents/skills/research-method/SKILL.md"
+    match:
+      - "research-method"
+      - "deep-research"
+      - "mustafa"
+  - name: "skill-comply"
+    url: "https://github.com/affaan-m/ecc/tree/2aebdd340860f2ca9f1cbebed9d85d90e9e4fb59/skills/skill-comply"
+    section: "adapted"
+    kind: "adapted code"
+    relation: "adapted"
+    license: "MIT"
+    notice: >-
+      © 2026 Affaan Mustafa: the MIT terms of the upstream skill when this skill was adapted from it (2026-10-15),
+      shipped byte for byte as `LICENSE` beside the skill from upstream commit 2aebdd340
+    artifact: "`skill-compliance` skill, `.agents/skills/skill-compliance/SKILL.md`"
+    use: >-
+      Agent skill specification, scenario evaluation, and behavioral compliance audit methodology. Upstream test runner
+      scripts and network dependencies dropped; inspection protocol rewritten in praetor's internal caveman register.
+    paths:
+      - ".agents/skills/skill-compliance/SKILL.md"
+    match:
+      - "skill-compliance"
+      - "skill-comply"
+      - "mustafa"
   - name: "Go"
     url: "https://go.dev"
     detail: "standard library and runtime"
@@ -171,6 +264,127 @@ entries:
       - "go.mod"
     packages:
       - "go:go.yaml.in/yaml/v3"
+  - name: "SchemaStore Claude Code settings schema"
+    url: "https://github.com/SchemaStore/schemastore"
+    detail: "(`claude-code-settings.json` at commit `ce64da2`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "Apache-2.0"
+    notice: "© SchemaStore contributors"
+    use: >-
+      Checks the Claude Code settings and hook files Praetor renders; vendored byte-identical under
+      `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files) (docs/guides/client-schemas.md)
+    paths:
+      - "internal/clientschema/upstream/manifest.json"
+    match:
+      - "SchemaStore/schemastore"
+  - name: "Gemini CLI settings schema"
+    url: "https://github.com/google-gemini/gemini-cli"
+    detail: "(`schemas/settings.schema.json` at `v0.63.0`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "Apache-2.0"
+    notice: "© Google LLC"
+    use: >-
+      Checks the Gemini CLI settings and hook files Praetor renders; vendored byte-identical under
+      `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files)
+    paths:
+      - "internal/clientschema/upstream/manifest.json"
+    match:
+      - "google-gemini/gemini-cli"
+  - name: "Codex config and hook schemas"
+    url: "https://github.com/openai/codex"
+    detail: "(`codex-rs/core/config.schema.json` and `codex-rs/hooks/schema/generated/` at `rust-v0.162.0`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "Apache-2.0"
+    notice: "© OpenAI"
+    use: >-
+      Checks the Codex hook files and payload fixtures and generates the Codex hook event types
+      (`internal/codexhook`); vendored byte-identical under `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files)
+    paths:
+      - "internal/clientschema/upstream/manifest.json"
+    match:
+      - "openai/codex"
+  - name: "Model Context Protocol schema"
+    url: "https://github.com/modelcontextprotocol/modelcontextprotocol"
+    detail: "(`schema/2025-11-25/schema.json`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "MIT"
+    notice: "© 2024–2025 Anthropic, PBC and contributors; the LICENSE file at tag 2025-11-25 states MIT"
+    use: >-
+      Checks the `standards-mcp` responses and generates the MCP message types (`internal/mcpwire`); vendored
+      byte-identical under `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files)
+    paths:
+      - "internal/clientschema/upstream/manifest.json"
+    match:
+      - "modelcontextprotocol/modelcontextprotocol"
+  - name: "opencode config schema"
+    url: "https://github.com/anomalyco/opencode"
+    detail: "(hosted `https://opencode.ai/config.json`, observed beside release `v1.18.35`)"
+    section: "shipped"
+    kind: "vendored file"
+    relation: "vendored"
+    license: "MIT"
+    notice: "© 2025 opencode"
+    use: >-
+      Checks the `opencode.json` MCP projection Praetor renders; vendored byte-identical under
+      `internal/clientschema/upstream/` and used at build and test time only (the binaries carry the generated types, not the schema files)
+    paths:
+      - "internal/clientschema/upstream/manifest.json"
+    match:
+      - "anomalyco/opencode"
+  - name: "jsonschema"
+    url: "https://github.com/santhosh-tekuri/jsonschema"
+    detail: "(`v6.0.3`)"
+    section: "development"
+    kind: "dependency"
+    relation: "used by CI"
+    license: "Apache-2.0"
+    use: >-
+      The JSON Schema oracle of the test-only module `tools/schemacheck`; the production module does not
+      link it
+    paths:
+      - "tools/schemacheck/go.mod"
+    packages:
+      - "go:github.com/santhosh-tekuri/jsonschema/v6"
+  - name: "go-toml v2"
+    url: "https://github.com/pelletier/go-toml"
+    detail: "(`v2.4.3`)"
+    section: "development"
+    kind: "dependency"
+    relation: "used by CI"
+    license: "MIT"
+    notice: "© 2021–2023 Thomas Pelletier"
+    use: >-
+      TOML reading for validating Codex configurations against JSON Schema in the test-only module
+      `tools/schemacheck`; the production module does not link it
+    paths:
+      - "tools/schemacheck/go.mod"
+    packages:
+      - "go:github.com/pelletier/go-toml/v2"
+  - name: "go-yaml v3"
+    url: "https://github.com/go-yaml/yaml"
+    detail: "(`gopkg.in/yaml.v3` v3.0.1)"
+    section: "development"
+    kind: "dependency"
+    relation: "used by CI"
+    license: "MIT AND Apache-2.0"
+    notice: >-
+      MIT for the files ported from libyaml, © 2006–2011 Kirill Simonov; Apache-2.0 for the rest, © 2011–2019
+      Canonical Ltd
+    use: >-
+      YAML parsing for validating rendered client configurations in test-only module `tools/schemacheck`;
+      the production module does not link it
+    paths:
+      - "tools/schemacheck/go.mod"
+    packages:
+      - "go:gopkg.in/yaml.v3"
   - name: "markdownlint"
     url: "https://github.com/DavidAnson/markdownlint"
     detail: "0.41.1"
@@ -310,7 +524,7 @@ entries:
       - "interfig"
   - name: "React"
     url: "https://github.com/facebook/react"
-    detail: "19.3.0, with react-dom 19.3.0 and scheduler 0.28.0"
+    detail: "19.3.1, with react-dom 19.3.1 and scheduler 0.28.0"
     section: "shipped"
     kind: "dependency"
     relation: "shipped"

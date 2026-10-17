@@ -88,6 +88,9 @@ func (g *GitHubDriver) ListIssueComments(ctx context.Context, number int) ([]Iss
 
 // CreateIssueComment posts a comment on an issue.
 func (g *GitHubDriver) CreateIssueComment(ctx context.Context, number int, body string) (IssueComment, error) {
+	if err := g.guardText(ctx, body); err != nil {
+		return IssueComment{}, err
+	}
 	if number <= 0 {
 		return IssueComment{}, fmt.Errorf("create comment: issue number must be positive, got %d", number)
 	}
@@ -111,6 +114,9 @@ func (g *GitHubDriver) CreateIssueComment(ctx context.Context, number int, body 
 
 // EditIssueComment replaces the body of an existing issue comment.
 func (g *GitHubDriver) EditIssueComment(ctx context.Context, commentID int64, body string) error {
+	if err := g.guardText(ctx, body); err != nil {
+		return err
+	}
 	if commentID <= 0 {
 		return fmt.Errorf("edit comment: comment id must be positive, got %d", commentID)
 	}
@@ -124,6 +130,25 @@ func (g *GitHubDriver) EditIssueComment(ctx context.Context, commentID int64, bo
 	}
 	if status != http.StatusOK {
 		return fmt.Errorf("unexpected status %d editing comment %d: %s", status, commentID, util.BodyPreview(resp))
+	}
+	return nil
+}
+
+// DeleteIssueComment deletes an existing issue comment.
+func (g *GitHubDriver) DeleteIssueComment(ctx context.Context, commentID int64) error {
+	if commentID <= 0 {
+		return fmt.Errorf("delete comment: comment id must be positive, got %d", commentID)
+	}
+	path, err := g.repoPath(fmt.Sprintf("issues/comments/%d", commentID))
+	if err != nil {
+		return fmt.Errorf("delete comment %d: %w", commentID, err)
+	}
+	resp, status, err := g.sendRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("failed deleting comment %d: %w", commentID, err)
+	}
+	if status != http.StatusNoContent && status != http.StatusOK {
+		return fmt.Errorf("unexpected status %d deleting comment %d: %s", status, commentID, util.BodyPreview(resp))
 	}
 	return nil
 }

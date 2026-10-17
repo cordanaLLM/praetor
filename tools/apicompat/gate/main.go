@@ -661,11 +661,13 @@ type module struct {
 // version at HEAD of the base's module, added at HEAD only, removed from HEAD, and not public
 // because the module path has an internal element.
 type modulePlan struct {
-	compared  []module
-	newMajor  []module
-	added     []module
-	removed   []module
-	notPublic []module
+	baseModules []module
+	headModules []module
+	compared    []module
+	newMajor    []module
+	added       []module
+	removed     []module
+	notPublic   []module
 }
 
 func (p modulePlan) empty() bool {
@@ -681,7 +683,7 @@ func planModules(ctx context.Context, repo repository) (modulePlan, error) {
 	if err != nil {
 		return modulePlan{}, err
 	}
-	var plan modulePlan
+	plan := modulePlan{baseModules: slices.Clone(base), headModules: slices.Clone(head)}
 	base, plan.notPublic = splitPublic(base, nil)
 	head, plan.notPublic = splitPublic(head, plan.notPublic)
 	for index := 0; index < len(head) && index < maxModules; index++ {
@@ -880,13 +882,17 @@ func compareModules(
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, release()) }()
-	return compareEach(ctx, repo, plan, checker, sites, stdout, stderr)
+	aliases, err := collectAliasesAtHead(ctx, repo.root, repo.head, plan.headModules)
+	if err != nil {
+		return nil, fmt.Errorf("collect aliases at HEAD: %w", err)
+	}
+	return compareEach(ctx, repo, plan, checker, sites, aliases, stdout, stderr)
 }
 
 // compareEach builds and compares each compared module in directory order, stopping at the
 // first failure.
 func compareEach(
-	ctx context.Context, repo repository, plan modulePlan, checker string, sites checkerSites, stdout, stderr *printer,
+	ctx context.Context, repo repository, plan modulePlan, checker string, sites checkerSites, aliases []typeAlias, stdout, stderr *printer,
 ) ([]result, error) {
 	results := make([]result, 0, len(plan.compared))
 	for index := 0; index < len(plan.compared) && index < maxModules; index++ {
@@ -901,7 +907,7 @@ func compareEach(
 			results = append(results, result{module: target, notCompared: note})
 			continue
 		}
-		incompatible, err := compareModule(ctx, checker, sites.of(target.dir), target, stdout.w, stderr.w)
+		incompatible, err := compareModule(ctx, checker, sites.of(target.dir), target, plan.baseModules, plan.headModules, aliases, stdout.w, stderr.w)
 		if err != nil {
 			return nil, fmt.Errorf("module %s (%s): %w", target.dir, target.path, err)
 		}
@@ -944,7 +950,7 @@ func excuseBuildFailure(repo repository, target module, buildErr error, stderr *
 // compareModule runs the checker on the module's directory in site, after buildModule built the
 // module. A vendor-free clone has no checkout, so the module's directory is created there for the
 // checker to start in.
-func compareModule(ctx context.Context, checker string, site checkerSite, target module, stdout, stderr io.Writer) (bool, error) {
+func compareModule(ctx context.Context, checker string, site checkerSite, target module, baseModules, headModules []module, aliases []typeAlias, stdout, stderr io.Writer) (bool, error) {
 	checkerDir := filepath.Join(site.root, filepath.FromSlash(target.dir))
 	if err := os.MkdirAll(checkerDir, 0o700); err != nil {
 		return false, fmt.Errorf("create the checker's directory: %w", err)
@@ -963,7 +969,7 @@ func compareModule(ctx context.Context, checker string, site checkerSite, target
 		}
 		return false, nil
 	}
-	stillIncompatible, filteredOutput, filterErr := filterModuleOutput(ctx, site.root, site.base, site.head, target, buf.String())
+	stillIncompatible, filteredOutput, filterErr := filterModuleOutput(ctx, site.root, site.base, site.head, target, baseModules, headModules, aliases, buf.String())
 	if filterErr != nil {
 		if _, writeErr := stdout.Write(buf.Bytes()); writeErr != nil {
 			return false, writeErr
@@ -1783,25 +1789,28 @@ func appendTypeSpecs(aliases []typeAlias, specs []ast.Spec, imports map[string]s
 	return aliases
 }
 
-func collectAliasesAtHead(ctx context.Context, root, head string, target module) ([]typeAlias, error) {
-	files, err := listModuleGoFiles(ctx, root, head, target)
-	if err != nil {
-		return nil, err
-	}
+func collectAliasesAtHead(ctx context.Context, root, head string, modules []module) ([]typeAlias, error) {
 	fset := token.NewFileSet()
 	aliases := make([]typeAlias, 0, maxAliases)
-	for index := 0; index < len(files) && index < maxGoFiles && len(aliases) < maxAliases; index++ {
-		filePath := files[index]
-		data, err := gitCapture(ctx, root, maxDeclBytes, "cat-file", "blob", head+":"+filePath)
+	for modIndex := 0; modIndex < len(modules) && modIndex < maxModules && len(aliases) < maxAliases; modIndex++ {
+		target := modules[modIndex]
+		files, err := listModuleGoFiles(ctx, root, head, target)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("list Go files in module %s: %w", target.dir, err)
 		}
-		f, err := parser.ParseFile(fset, filePath, data, parser.SkipObjectResolution)
-		if err != nil {
-			continue
+		for index := 0; index < len(files) && index < maxGoFiles && len(aliases) < maxAliases; index++ {
+			filePath := files[index]
+			data, err := gitCapture(ctx, root, maxDeclBytes, "cat-file", "blob", head+":"+filePath)
+			if err != nil {
+				return nil, fmt.Errorf("read alias source %s: %w", filePath, err)
+			}
+			f, err := parser.ParseFile(fset, filePath, data, parser.SkipObjectResolution)
+			if err != nil {
+				continue
+			}
+			pkgPath := filePackagePath(target.path, target.dir, filePath)
+			aliases = appendAliases(aliases, f, pkgPath)
 		}
-		pkgPath := filePackagePath(target.path, target.dir, filePath)
-		aliases = appendAliases(aliases, f, pkgPath)
 	}
 	return aliases, nil
 }
@@ -1827,35 +1836,38 @@ func matchTypeDeclInFile(fset *token.FileSet, filePath string, data []byte, type
 	return "", false
 }
 
-func findTypeDecl(ctx context.Context, root, rev string, target module, pkgPath, typeName string) (string, error) {
-	files, err := listModuleGoFiles(ctx, root, rev, target)
-	if err != nil {
-		return "", err
-	}
+func findTypeDecl(ctx context.Context, root, rev string, modules []module, pkgPath, typeName string) (string, error) {
 	fset := token.NewFileSet()
-	for index := 0; index < len(files) && index < maxGoFiles; index++ {
-		filePath := files[index]
-		if filePackagePath(target.path, target.dir, filePath) != pkgPath {
-			continue
-		}
-		data, err := gitCapture(ctx, root, maxDeclBytes, "cat-file", "blob", rev+":"+filePath)
+	for modIndex := 0; modIndex < len(modules) && modIndex < maxModules; modIndex++ {
+		target := modules[modIndex]
+		files, err := listModuleGoFiles(ctx, root, rev, target)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("list Go files in module %s: %w", target.dir, err)
 		}
-		decl, found := matchTypeDeclInFile(fset, filePath, data, typeName)
-		if found {
-			return decl, nil
+		for index := 0; index < len(files) && index < maxGoFiles; index++ {
+			filePath := files[index]
+			if filePackagePath(target.path, target.dir, filePath) != pkgPath {
+				continue
+			}
+			data, err := gitCapture(ctx, root, maxDeclBytes, "cat-file", "blob", rev+":"+filePath)
+			if err != nil {
+				return "", fmt.Errorf("read type source %s: %w", filePath, err)
+			}
+			decl, found := matchTypeDeclInFile(fset, filePath, data, typeName)
+			if found {
+				return decl, nil
+			}
 		}
 	}
 	return "", nil
 }
 
-func verifyIdenticalAliases(ctx context.Context, root, base, head string, target module, aliases []typeAlias) ([]typeAlias, []typeAlias) {
+func verifyIdenticalAliases(ctx context.Context, root, base, head string, baseModules, headModules []module, aliases []typeAlias) ([]typeAlias, []typeAlias) {
 	var identical, nonIdentical []typeAlias
 	for index := 0; index < len(aliases) && index < maxAliases; index++ {
 		a := aliases[index]
-		bDecl, errB := findTypeDecl(ctx, root, base, target, a.pkgPath, a.aliasName)
-		hDecl, errH := findTypeDecl(ctx, root, head, target, a.targetPkg, a.targetName)
+		bDecl, errB := findTypeDecl(ctx, root, base, baseModules, a.pkgPath, a.aliasName)
+		hDecl, errH := findTypeDecl(ctx, root, head, headModules, a.targetPkg, a.targetName)
 		if errB == nil && errH == nil && bDecl != "" && bDecl == hDecl {
 			identical = append(identical, a)
 		} else {
@@ -1965,15 +1977,11 @@ func filterOutput(output string, identical, nonIdentical []typeAlias) (bool, str
 	return hasIncompatible, res.String()
 }
 
-func filterModuleOutput(ctx context.Context, root, base, head string, target module, rawOutput string) (bool, string, error) {
-	aliases, err := collectAliasesAtHead(ctx, root, head, target)
-	if err != nil {
-		return true, rawOutput, err
-	}
+func filterModuleOutput(ctx context.Context, root, base, head string, target module, baseModules, headModules []module, aliases []typeAlias, rawOutput string) (bool, string, error) {
 	if len(aliases) == 0 {
 		return true, rawOutput, nil
 	}
-	identical, nonIdentical := verifyIdenticalAliases(ctx, root, base, head, target, aliases)
+	identical, nonIdentical := verifyIdenticalAliases(ctx, root, base, head, baseModules, headModules, aliases)
 	hasIncompatible, filtered := filterOutput(rawOutput, identical, nonIdentical)
 	return hasIncompatible, filtered, nil
 }

@@ -42,8 +42,9 @@ func renderPipelineHarness(t *testing.T, pipelines hisscatalog.Pipeline, targets
 
 // TestHarnessTableFollowsGeneratedPipelines: a row credits only the pipelines the run
 // generates. Positive: lefthook alone keeps the hook stages. Negative: without praetor's
-// lefthook.yml the hook-only rules read not enforced and rule 5 claims no hooks. Boundary:
-// with no pipeline every row reads not enforced and the legend says so.
+// lefthook.yml the hook-only rules read unknown and rule 5 claims no hooks. Boundary: with no
+// pipeline no row credits one (each reads the audit scanner or unknown, #1412) and the legend
+// says so.
 func TestHarnessTableFollowsGeneratedPipelines(t *testing.T) {
 	hooksOnly := renderPipelineHarness(t, hisscatalog.PipelineLefthook, agentcontext.AllVendorTargets())
 	if row := rowFor(t, hooksOnly, "HISS-16"); !strings.Contains(row, "`praetorctl compile-context --verify` in lefthook pre-commit | drift blocks commit |") ||
@@ -56,7 +57,7 @@ func TestHarnessTableFollowsGeneratedPipelines(t *testing.T) {
 
 	makeOnly := renderPipelineHarness(t, hisscatalog.PipelineVerifyAll, agentcontext.AllVendorTargets())
 	for _, id := range []string{"HISS-10", "HISS-17"} {
-		if row := rowFor(t, makeOnly, id); !strings.HasSuffix(row, "| not enforced | advisory |") {
+		if row := rowFor(t, makeOnly, id); !strings.HasSuffix(row, "| unknown | advisory |") {
 			t.Errorf("%s credited to a lefthook.yml praetor did not write: %s", id, row)
 		}
 	}
@@ -66,7 +67,7 @@ func TestHarnessTableFollowsGeneratedPipelines(t *testing.T) {
 
 	none := renderPipelineHarness(t, 0, agentcontext.AllVendorTargets())
 	for _, row := range invariantRows(none) {
-		if !strings.HasSuffix(row, "| not enforced | advisory |") {
+		if !uncredited(row) {
 			t.Errorf("row credited without any generated pipeline: %s", row)
 		}
 	}
@@ -212,7 +213,7 @@ func TestAdoptHarnessDropsDeclinedAndPreservedPipelines(t *testing.T) {
 	}
 	harness := mustRead(t, filepath.Join(declined, agentsFile))
 	for _, row := range invariantRows(harness) {
-		if !strings.HasSuffix(row, "| not enforced | advisory |") {
+		if !uncredited(row) {
 			t.Errorf("declined pipelines still credited: %s", row)
 		}
 	}
@@ -232,4 +233,15 @@ func TestAdoptHarnessDropsDeclinedAndPreservedPipelines(t *testing.T) {
 		!strings.Contains(row, "in lefthook pre-commit") {
 		t.Errorf("preserved verify-all still credited: %s", row)
 	}
+}
+
+// uncredited reports whether a harness row names no generated pipeline: it reads unknown or the
+// engine's own audit scanner, and no hook stage or verify-all target (#1412).
+func uncredited(row string) bool {
+	for _, pipeline := range []string{" in lefthook", " in verify-all", "make verify-all`"} {
+		if strings.Contains(row, pipeline) {
+			return false
+		}
+	}
+	return strings.HasSuffix(row, "| unknown | advisory |") || strings.Contains(row, "| `praetorctl audit` ")
 }

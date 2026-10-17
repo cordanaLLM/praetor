@@ -419,8 +419,18 @@ func prepareClaudeCorrelation(t *testing.T, root, state, session, toolID, agentI
 	}
 }
 
+// repositoryPlaceholder stands for the test repository in a fixture's cwd, so a fixture can carry
+// every field the client's published hook schema requires (tools/schemacheck validates the
+// fixtures against it) while the hook still resolves a real workspace.
+const repositoryPlaceholder = "{repository}"
+
 func runAgentHook(t *testing.T, root, state, client string, event Event, payload []byte) Response {
 	t.Helper()
+	escaped, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = bytes.ReplaceAll(payload, []byte(repositoryPlaceholder), escaped[1:len(escaped)-1])
 	return Run(context.Background(), Invocation{Client: client, Event: string(event), Stdin: bytes.NewReader(payload),
 		Getenv: noEnvironment, WorkDir: root, Policy: policy(t), CorrelationDir: state})
 }

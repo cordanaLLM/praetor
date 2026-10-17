@@ -69,15 +69,15 @@ func Refresh(ctx context.Context, opts RefreshOptions) (RefreshResult, error) {
 		return RefreshResult{}, errors.New("workstation: refresh requires a context and a settings selector")
 	}
 	if opts.Module == "" || checkoutModule(opts.Install.Checkout) != opts.Module {
-		return skipRefresh("source is not a checkout of this engine's module"), nil
+		return skipRefresh("source is not a checkout of this engine's module", 0), nil
 	}
 	plan, reason, err := planRefresh(ctx, opts)
 	if err != nil || reason != "" {
-		return skipRefresh(reason), err
+		return skipRefresh(reason, 0), err
 	}
 	behind, reason, err := refreshGate(ctx, plan)
 	if err != nil || reason != "" {
-		return skipRefresh(reason), err
+		return skipRefresh(reason, behind), err
 	}
 	result, err := Install(ctx, plan.install)
 	if err != nil {
@@ -87,8 +87,8 @@ func Refresh(ctx context.Context, opts RefreshOptions) (RefreshResult, error) {
 		Reason: refreshReason(behind, plan.missing)}, nil
 }
 
-func skipRefresh(reason string) RefreshResult {
-	return RefreshResult{Reason: reason}
+func skipRefresh(reason string, behind int) RefreshResult {
+	return RefreshResult{Reason: reason, CommitsBehind: behind}
 }
 
 // refreshReason says why a refresh reinstalled: the commits the install lagged, the binaries
@@ -174,7 +174,7 @@ func refreshGate(ctx context.Context, plan refreshPlan) (int, string, error) {
 	}
 	dirty, err := trackedChanges(ctx, checkout)
 	if err != nil || dirty {
-		return 0, "checkout has modified tracked files", err
+		return behind, "checkout has modified tracked files", err
 	}
 	return behind, "", nil
 }

@@ -39,7 +39,7 @@ func ownClaim(t *testing.T, f *forgetest.ClaimFake) (forge.Claim, string) {
 // seedAuthored adds a claim comment written by author, as the account that claimed it.
 func seedAuthored(t *testing.T, f *forgetest.ClaimFake, c forge.Claim, author string) {
 	t.Helper()
-	marker, err := forge.RenderClaimMarker(c)
+	marker, err := forge.RenderClaimMarkerWithKey(c, f.Key)
 	if err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestClaim_Boundary_TakeoverInheritsOnlyTheSameAccountsAssignment(t *testing
 func TestClaimMarker_AssigneeRoundTripAndShape(t *testing.T) {
 	c := claimAt("s1", claimEpoch)
 	c.Assignee = forge.ClaimAssigneeBefore
-	marker, err := forge.RenderClaimMarker(c)
+	marker, err := forge.RenderClaimMarkerWithKey(c, testKey)
 	if err != nil || !strings.Contains(marker, " assignee=before") {
 		t.Fatalf("render: %q %v", marker, err)
 	}
@@ -220,7 +220,7 @@ func TestClaimMarker_AssigneeRoundTripAndShape(t *testing.T) {
 		t.Fatalf("round trip: %+v %v", got, ok)
 	}
 	c.Assignee = "maybe"
-	if _, err := forge.RenderClaimMarker(c); err == nil {
+	if _, err := forge.RenderClaimMarkerWithKey(c, testKey); err == nil {
 		t.Fatal("an unknown assignee case must not render")
 	}
 	base := strings.TrimSuffix(strings.Replace(marker, " assignee=before", "", 1), " -->")

@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -382,6 +383,16 @@ func inspectState(ctx context.Context, dir string) (*state.StateSnapshot, error)
 	return state.InspectState(ctx, dir)
 }
 
+// stateAuditNotApplicableReason is printed when state audit runs inside the declared-verify
+// stage worktree without a private ledger.
+const stateAuditNotApplicableReason = "state audit: not applicable inside the declared-verify stage worktree: the private ledger (.workingdir) is git-ignored and never part of the pushed tree; the commit hook and the checkout's own verify-all audit it"
+
+// stateAuditNotApplicable reports whether state audit runs inside the declared-verify
+// stage worktree without a private ledger, where the audit is not applicable.
+func stateAuditNotApplicable(rep *state.StateAuditReport) bool {
+	return os.Getenv(gating.DeclaredVerifyGuardEnv) != "" && !rep.WorkingDirExists
+}
+
 func runStateAudit(args []string) error {
 	dirFlag, rest, err := stateArgs("state audit", args, nil)
 	if err != nil {
@@ -392,6 +403,11 @@ func runStateAudit(args []string) error {
 	report, err := state.AuditWorkingDir(dir)
 	if err != nil {
 		return fmt.Errorf("state audit failed: %w", err)
+	}
+
+	if stateAuditNotApplicable(report) {
+		fmt.Println(stateAuditNotApplicableReason)
+		return nil
 	}
 
 	fmt.Printf("=== State Audit: %s (Valid: %v) ===\n", dir, report.Valid)

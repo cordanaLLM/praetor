@@ -249,6 +249,12 @@ jobs:
         if: github.event_name == 'pull_request'
         run: go run ./cmd/standardsctl forge check-commits --base="origin/${{ github.base_ref }}" --head=HEAD
 
+      - name: Enforce Preparatory Refactoring Invariance (REF-01/02)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: go run ./cmd/standardsctl forge refactor-check --base="origin/${BASE_REF}" --head=HEAD --run-tests
+
       - name: Re-run Commit Hook Checks Over Every Pull Request Commit
         if: github.event_name == 'pull_request'
         env:

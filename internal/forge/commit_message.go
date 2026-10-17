@@ -72,6 +72,21 @@ func commitSubjectError(subject string) string {
 		commitSubjectTypes + "; got " + quoteSubject(subject)
 }
 
+// IsRefactorCommit reports whether a valid Conventional Commit subject uses the refactor type.
+// The subject policy remains the single parser for both the hook and range gates.
+func IsRefactorCommit(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	subject, _, _ := strings.Cut(trimmed, "\n")
+	subject = strings.TrimSuffix(subject, "\r")
+	if !commitSubjectRegex.MatchString(subject) {
+		return false
+	}
+	typeToken, _, _ := strings.Cut(subject, ":")
+	typeToken = strings.TrimSuffix(typeToken, "!")
+	typeToken, _, _ = strings.Cut(typeToken, "(")
+	return typeToken == "refactor"
+}
+
 // maxQuotedSubjectBytes bounds the subject a failure quotes.
 const maxQuotedSubjectBytes = 120
 

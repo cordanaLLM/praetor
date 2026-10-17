@@ -198,7 +198,7 @@ var catalog = []Rule{
 		FailureAction: "PR status gate rejection.",
 		Scope:         "debt ratchet",
 		Directive:     []Clause{{Text: "recorded infractions never grow vs committed baseline"}},
-		Adoption:      AdoptedCheck{Check: "`praetorctl audit` ratchet vs `.standards-baseline.json`", Trigger: "growth", Stages: auditStages},
+		Adoption:      AdoptedCheck{Check: "`praetorctl audit` ratchet vs `.standards-baseline.json`", AuditScanner: true, Trigger: "growth", Stages: auditStages},
 	},
 	{
 		ID:            "HISS-14",

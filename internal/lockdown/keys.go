@@ -91,7 +91,7 @@ func LoadSigningKey() (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	raw, err := readKeyFile(path)
+	raw, err := ReadKeyFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -102,17 +102,17 @@ func LoadSigningKey() (ed25519.PrivateKey, error) {
 	return key, nil
 }
 
-// readKeyFile reads at most maxKeyFileBytes from the per-user key file after verifying
+// ReadKeyFile reads at most maxKeyFileBytes from the per-user key file after verifying
 // that its mode excludes group and other access.
-func readKeyFile(path string) (string, error) {
+func ReadKeyFile(path string) (string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("%w (looked in %s)", ErrNoSigningKey, path)
 		}
-		return "", fmt.Errorf("stat receipt signing key %s: %w", path, err)
+		return "", fmt.Errorf("stat key file %s: %w", path, err)
 	}
-	if err := verifyKeyPermissions(path, info); err != nil {
+	if err := VerifyKeyPermissions(path, info); err != nil {
 		return "", fmt.Errorf("%w; or set %s to sign without the key file", err, SigningKeyEnv)
 	}
 
@@ -123,7 +123,7 @@ func readKeyFile(path string) (string, error) {
 		return "", fmt.Errorf("%s: %w: %w", path, ErrMalformedSigningKey, err)
 	}
 	if err != nil {
-		return "", fmt.Errorf("read receipt signing key %s: %w", path, err)
+		return "", fmt.Errorf("read key file %s: %w", path, err)
 	}
 	return string(data), nil
 }

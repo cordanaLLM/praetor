@@ -26,7 +26,7 @@ from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
                     semgrep_commands, is_fixture, is_chart_template, file_checks, gofmt_check,
-                    lint_commands, self_test_commands,
+                    lint_commands, golangci_lint_command, self_test_commands,
                     run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
                     GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES)
 import hooks
@@ -1067,6 +1067,19 @@ print("fixture hook self-tests passed")
         prepare_message(str(message), "2")
         self.assertEqual(message.read_text(), "fix: already written\n")
 
+    def test_refactor_range_uses_exact_base_or_skips_without_one(self):
+        with mock.patch("hooks.cli") as run_cli:
+            hooks.check_refactor_range("base-sha", "head-sha")
+        run_cli.assert_called_once_with([
+            "forge", "refactor-check", "--base=base-sha", "--head=head-sha",
+        ])
+        for base in (None, ""):
+            with self.subTest(base=base), mock.patch("hooks.cli") as run_cli, \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                hooks.check_refactor_range(base, "head-sha")
+            run_cli.assert_not_called()
+            self.assertIn("Refactor check: skipped, no pushed-range base", out.getvalue())
+
     def test_real_push_initial_docs_update_new_branch_and_deletion(self):
         remote = Path(self.temp.name) / "remote.git"
         command(self.repo, "git", "init", "--bare", "-q", str(remote))
@@ -1107,13 +1120,16 @@ print("fixture hook self-tests passed")
             # committed bytes, not let core.autocrlf rewrite its isolated snapshot.
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
-                    mock.patch("hooks.source_checks", return_value=False) as check:
+                    mock.patch("hooks.source_checks", return_value=False) as check, \
+                    mock.patch("hooks.check_refactor_range") as refactors:
                 pre_push("origin")
                 self.assertEqual(check.call_args.kwargs, {"base": base})
                 self.assertEqual(check.call_args.args[1], ["README.md"])
+                refactors.assert_called_once_with(base, head)
             with mock.patch.dict(os.environ, AUTOCRLF_ENV), \
                     mock.patch("hooks.sys.stdin", io.StringIO(protocol.replace(base, "f" * 40))), \
-                    mock.patch("hooks.source_checks", return_value=False) as check:
+                    mock.patch("hooks.source_checks", return_value=False) as check, \
+                    mock.patch("hooks.check_refactor_range"):
                 pre_push("origin")
                 self.assertIsNone(check.call_args.kwargs["base"])
                 self.assertIn("lefthook.yml", check.call_args.args[1])
@@ -1172,6 +1188,7 @@ print("fixture hook self-tests passed")
             os.chdir(self.repo)
             # Only the destination determines policy; the local branch is irrelevant.
             with mock.patch("hooks.sys.stdin", io.StringIO(strict)), \
+                    mock.patch("hooks.check_refactor_range"), \
                     mock.patch("hooks.checkpoint_checks") as wip, \
                     mock.patch("hooks.source_checks", return_value=False) as full:
                 pre_push("origin")
@@ -1182,12 +1199,14 @@ print("fixture hook self-tests passed")
             for protocol in (checkpoint + strict, checkpoint + checkpoint + strict, strict + checkpoint):
                 with self.subTest(protocol=protocol), \
                         mock.patch("hooks.sys.stdin", io.StringIO(protocol)), \
+                        mock.patch("hooks.check_refactor_range"), \
                         mock.patch("hooks.source_checks", side_effect=HookError("strict release rejected")) as full:
                     with self.assertRaisesRegex(HookError, "strict release rejected"):
                         pre_push("origin")
                     full.assert_called_once()
             # File checks are mandatory before either mode's source checks.
             with mock.patch("hooks.sys.stdin", io.StringIO(checkpoint)), \
+                    mock.patch("hooks.check_refactor_range"), \
                     mock.patch("hooks.file_checks", side_effect=HookError("invalid snapshot syntax")), \
                     mock.patch("hooks.checkpoint_checks") as wip:
                 with self.assertRaisesRegex(HookError, "invalid snapshot syntax"):
@@ -1445,6 +1464,46 @@ class ScopeAndGuard(unittest.TestCase):
                        ".claude/skills/caveman/SKILL.md"):
             self.assertIn(vendor, written)
         self.assertEqual([name for name in written if not context_changed([name])], [])
+
+    def _compile_context_below_planted_git(self, plant):
+        # Plants a .git entry above a temporary tree with plant(parent), then compiles the child.
+        with tempfile.TemporaryDirectory(prefix="praetor-context-planted-") as temp:
+            parent = Path(temp)
+            plant(parent)
+            root = parent / "child"
+            skill = "---\nname: demo\ndescription: demo\n---\n\nRun tests.\n"
+            persona = "---\nname: demo\ndescription: demo\nmodel: flash\n---\n\nRun tests.\n"  # personas carry a tier
+            for name, text in {"AGENTS.md": "# Demo\n\nRun tests before commit.\n",
+                               ".agents/agents/demo.md": persona,
+                               ".agents/skills/demo/SKILL.md": skill,
+                               ".agents/skills/caveman/SKILL.md": skill,
+                               ".agents/plugins/praetor/plugin.json": '{"name": "praetor"}\n'}.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(text, encoding="utf-8")
+            run(["go", "run", "./cmd/standardsctl", "compile-context", "--source",
+                 str(root / "AGENTS.md"), "--target-dir", str(root)],
+                cwd=ROOT, env=clean_env(), timeout=600)
+            written = sorted(path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file())
+            self.assertIn(".claude/agents/demo.md", written)
+
+    def test_compile_context_succeeds_with_planted_empty_git_above_temp_dir(self):
+        # A planted empty .git above a temporary tree must not count as a repository (#1100).
+        # Previously, GitWorktreePresent treated any .git entry as a worktree root, causing
+        # compile-context to invoke git ignore and ls-files against an invalid repository.
+        self._compile_context_below_planted_git(lambda parent: (parent / ".git").mkdir())
+
+    @unittest.skipIf(os.name == "nt", "creating symlinks requires optional Windows privileges")
+    def test_compile_context_succeeds_with_dangling_git_symlink_above_temp_dir(self):
+        # Git skips a dangling .git symlink and keeps walking up, so it is no repository (#1100).
+        self._compile_context_below_planted_git(
+            lambda parent: (parent / ".git").symlink_to(parent / "nowhere"))
+
+    def test_compile_context_succeeds_with_planted_head_only_git_above_temp_dir(self):
+        # git requires objects/ and refs/ and walks past a .git holding only HEAD (#1100).
+        def plant(parent):
+            (parent / ".git").mkdir()
+            (parent / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        self._compile_context_below_planted_git(plant)
 
     def test_context_changed_ignores_paths_compile_context_does_not_touch(self):
         # Negative and boundary: documentation, vendor settings beside the persona directories,
@@ -2036,19 +2095,28 @@ class ScopeAndGuard(unittest.TestCase):
         query = ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"]
         # PRAETOR_GATE_DEVCONTAINER=off keeps the table independent of the host: where a container
         # runtime exists, the deadline also reserves the devcontainer image build bound.
-        expected = {"": 1500, "soon": 1500, "30m": 2100, "31m": 2100}
-        for value, seconds in expected.items():
+        expected = {
+            "": ("20m0s", ""),
+            "soon": ("20m0s", "not a duration"),
+            "30m": ("30m0s", "raised"),
+            "31m": ("30m0s", "clamped"),
+        }
+        for value, (stage_bound, note) in expected.items():
             with self.subTest(value=value):
                 environment = dict(
                     clean_env(), PRAETOR_TEST_STAGE_TIMEOUT=value, PRAETOR_GATE_DEVCONTAINER="off"
                 )
                 report = run(query, cwd=ROOT, env=environment, timeout=GATE_QUERY_TIMEOUT)
-                self.assertEqual(gate_timeout(report), seconds + GATE_LAUNCH_MARGIN)
+                resolved = json.loads(report)
+                self.assertEqual(resolved["stage_bound"], stage_bound)
+                self.assertIn(note, resolved.get("note", ""))
+                self.assertEqual(gate_timeout(report), resolved["timeout_seconds"] + GATE_LAUNCH_MARGIN)
         # With the default (auto) the hook still reads the CLI's figure: the plain deadline, or the
         # plain deadline plus the 15-minute image build bound when this host can build the image.
         report = run(query, cwd=ROOT, env=dict(clean_env(), PRAETOR_TEST_STAGE_TIMEOUT=""),
                      timeout=GATE_QUERY_TIMEOUT)
-        self.assertIn(gate_timeout(report) - GATE_LAUNCH_MARGIN, (1500, 1500 + 900))
+        resolved = json.loads(report)
+        self.assertEqual(gate_timeout(report), resolved["timeout_seconds"] + GATE_LAUNCH_MARGIN)
 
     def test_audit_range_uses_exact_oid_and_touched_paths(self):
         with tempfile.TemporaryDirectory(prefix="praetor-audit-range-") as temp:
@@ -2091,6 +2159,9 @@ class ScopeAndGuard(unittest.TestCase):
             (root / "go.mod").write_text("module example.test/scopes\n\ngo 1.27\n")
             (root / ".golangci.yml").write_text(
                 'version: "2"\nlinters:\n  default: none\n  enable: [errcheck]\n')
+            (root / "tools/lint").mkdir(parents=True)
+            shutil.copyfile(ROOT / "tools/lint/go.mod", root / "tools/lint/go.mod")
+            shutil.copyfile(ROOT / "tools/lint/go.sum", root / "tools/lint/go.sum")
             (root / "core").mkdir()
             (root / "core/core.go").write_text("package core\nfunc Value() int { return 1 }\n")
             consumer = root / "consumer.go"
@@ -2177,7 +2248,10 @@ class ScopeAndGuard(unittest.TestCase):
         Plain govulncheck over the affected packages failed only on a called symbol and judged
         no OpenVEX statement, a second vulnerability check that could drift from the gate.
         """
-        root = Path(tempfile.gettempdir())
+        root = Path(tempfile.mkdtemp(prefix="praetor-vuln-gate-test-"))
+        self.addCleanup(shutil.rmtree, root)
+        (root / "tools/lint").mkdir(parents=True)
+        (root / "tools/lint/go.mod").write_text("module lint\n")
         gate = ["go", "run", "./cmd/standardsctl", "security", "govuln", "--path=.", "--",
                 "govulncheck"]
         for gate_name, governance in (("vuln", []), ("all", [["go", "run", "./cmd/standardsctl",
@@ -2187,6 +2261,8 @@ class ScopeAndGuard(unittest.TestCase):
                     mock.patch("checks.governance_commands", return_value=governance), \
                     mock.patch("checks.semgrep_commands", return_value=[]), \
                     mock.patch("checks.local_package_patterns", return_value=["./core"]), \
+                    mock.patch("checks.run", return_value=(
+                        b"github.com/golangci/golangci-lint/v2/cmd/golangci-lint\n")), \
                     mock.patch("checks.parallel") as jobs:
                 self.assertFalse(source_checks(root, ["core/core.go"], gate_name))
                 commands = jobs.call_args_list[-1].args[0]
@@ -2485,9 +2561,10 @@ class ScopeAndGuard(unittest.TestCase):
 class InstallRefresh(unittest.TestCase):
     """post-merge refreshes a lagging engine install through the engine's own decision (BUG-1004)."""
 
-    def refresh(self, answer):
+    def refresh(self, answer, head=b"8d2d46183\n"):
         out = io.StringIO()
         with mock.patch("hooks.run", side_effect=[b"", answer]) as process, \
+                mock.patch("hooks.git", return_value=head), \
                 contextlib.redirect_stdout(out):
             hooks.refresh_install()
         return process, out.getvalue()
@@ -2507,8 +2584,24 @@ class InstallRefresh(unittest.TestCase):
             self.refresh(b"not json")
 
     def test_skip_prints_nothing(self):
-        _, out = self.refresh(b'{"refreshed":false,"reason":"no install manifest at /x; nothing installed to refresh"}')
-        self.assertEqual(out, "")
+        for answer in (
+            b'{"refreshed":false,"reason":"no install manifest at /x; nothing installed to refresh"}',
+            b'{"refreshed":false,"reason":"installed commit is not behind the checkout HEAD","commits_behind":0}',
+        ):
+            with self.subTest(answer=answer):
+                _, out = self.refresh(answer)
+                self.assertEqual(out, "")
+
+    def test_refused_while_behind_prints_warning(self):
+        _, out = self.refresh(
+            b'{"refreshed":false,"reason":"checkout has modified tracked files","commits_behind":7}',
+            head=b"8d2d46183\n",
+        )
+        self.assertEqual(
+            out,
+            "engine install: NOT refreshed, 7 commits behind 8d2d46183: checkout has modified tracked files; "
+            "next: clean checkout, run make dev-install\n",
+        )
 
     def test_post_merge_refreshes_context_then_install(self):
         order = []
@@ -2580,6 +2673,40 @@ class ToolFloors(unittest.TestCase):
         self.assertEqual([tool for tool in floors if tool not in floored], [UNFLOORED])
         for tool, floor in floored.items():
             self.assertRegex(floor, r"^\d+\.\d+\.\d+$", tool)
+
+    def test_golangci_lint_uses_lint_module_pin_first(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tools/lint").mkdir(parents=True)
+            (root / "tools/lint/go.mod").write_text("module lint\n")
+            (root / "tools/go").mkdir(parents=True)
+            (root / "tools/go/go.mod").write_text("module tools\n")
+            with mock.patch("checks.run", return_value=b"github.com/golangci/golangci-lint/v2/cmd/golangci-lint\n") as run:
+                command = golangci_lint_command(root, ["./..."])
+        self.assertEqual(command, ["go", "tool", "-modfile=tools/lint/go.mod",
+                                   "golangci-lint", "run", "./..."])
+        self.assertEqual(run.call_args.args[0], ["go", "list", "-modfile=tools/lint/go.mod", "tool"])
+
+    def test_golangci_lint_uses_go_module_pin_when_lint_module_lacks_tool(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "tools/lint").mkdir(parents=True)
+            (root / "tools/lint/go.mod").write_text("module lint\n")
+            (root / "tools/go").mkdir(parents=True)
+            (root / "tools/go/go.mod").write_text("module tools\n")
+            answers = [b"unrelated/tool\n", b"github.com/golangci/golangci-lint/v2/cmd/golangci-lint\n"]
+            with mock.patch("checks.run", side_effect=answers):
+                command = golangci_lint_command(root, ["./pkg"])
+        self.assertEqual(command, ["go", "tool", "-modfile=tools/go/go.mod",
+                                   "golangci-lint", "run", "./pkg"])
+
+    def test_golangci_lint_without_pin_fails_with_remedy(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with mock.patch("checks.run") as run:
+                with self.assertRaisesRegex(HookError, r"golangci-lint.*tools/lint/go.mod"):
+                    golangci_lint_command(root, ["./..."])
+            run.assert_not_called()
 
     def test_floor_lines_parse_with_comments_and_blanks(self):
         text = "# header\n\nshellcheck>=0.11.0  # trailing\n  yamllint>=1.38\r\nhadolint\n"

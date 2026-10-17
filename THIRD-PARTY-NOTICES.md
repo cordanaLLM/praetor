@@ -345,8 +345,8 @@ lock records them, copyright lines as each package's license file states them.
 
 | Package | Version | License | Copyright |
 | :-- | :-- | :-- | :-- |
-| `react` | 19.3.0 | MIT | `Copyright (c) Meta Platforms, Inc. and affiliates.` |
-| `react-dom` | 19.3.0 | MIT | `Copyright (c) Meta Platforms, Inc. and affiliates.` |
+| `react` | 19.3.1 | MIT | `Copyright (c) Meta Platforms, Inc. and affiliates.` |
+| `react-dom` | 19.3.1 | MIT | `Copyright (c) Meta Platforms, Inc. and affiliates.` |
 | `scheduler` | 0.28.0 | MIT | `Copyright (c) Meta Platforms, Inc. and affiliates.` |
 
 <!-- REUSE-IgnoreEnd -->
@@ -438,3 +438,29 @@ are as the lock records them, copyright lines as each package's license file sta
 | `@devcontainers/cli` | 0.89.0 | MIT | `Copyright (c) Microsoft Corporation.` |
 
 <!-- REUSE-IgnoreEnd -->
+
+## Vendored client schemas
+
+The binaries embed vendored client configuration and hook schemas under
+`internal/clientschema/upstream/` (`internal/clientschema/clientschema.go`).
+Generated type definitions for OpenAI Codex hooks (`internal/codexhook/events_gen.go`)
+carry types and comments derived from the vendored Codex schemas.
+
+### OpenAI Codex NOTICE
+
+Verbatim from `NOTICE` in OpenAI Codex (`openai/codex`), as section 4(d) of the Apache License 2.0 requires:
+
+<!-- SPDX-SnippetBegin -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-SnippetCopyrightText: 2025 OpenAI -->
+
+```text
+OpenAI Codex
+Copyright 2025 OpenAI
+
+This project includes code derived from [Ratatui](https://github.com/ratatui/ratatui), licensed under the MIT license.
+Copyright (c) 2016-2022 Florian Dehau
+Copyright (c) 2023-2025 The Ratatui Developers
+```
+
+<!-- SPDX-SnippetEnd -->

@@ -153,6 +153,12 @@ This repository's `post-merge` hook runs it after every merge
 (`refresh_install` in `.config/lefthook/scripts/hooks.py`, see [Git hooks](git-hooks.md)): a
 skip prints nothing, a rebuild prints one line. A native scheduler can run the same command.
 
+When a refresh is refused while the install is behind the checkout HEAD—such as when
+tracked files in the checkout are modified—`refresh_install` prints a one-line warning
+naming how many commits the install lags, the checkout HEAD, and the refusal reason:
+`engine install: NOT refreshed, N commits behind <checkout HEAD short>: <reason>; next: clean checkout, run make dev-install`.
+Skips where the install is not behind stay silent.
+
 ## Engine build check
 
 `praetorctl compile-context` and the MCP `standards_compile_context` write refuse to write

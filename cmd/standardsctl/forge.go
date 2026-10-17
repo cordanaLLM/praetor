@@ -36,7 +36,10 @@ func printForgeUsage() {
 	fmt.Println("  sync-wiki [--output=docs/wiki]        Generate git-backed wiki documentation suite")
 	fmt.Println("  validate-pr <pr-body-file>            Verify HISS checklist and the Ed25519 Exit-0 receipt")
 	fmt.Println("  check-commits --base=<ref> [--head=HEAD]  Enforce the commit message policy on a commit range")
+	fmt.Println("  refactor-check --base=<ref> [--head=HEAD] [--run-tests]  Check refactor commits in a range")
 	fmt.Println("  check-message <commit-message-file>   Enforce the commit message policy on one message (commit-msg hook)")
+	fmt.Println("  claims migrate --repo OWNER/NAME --issue N [--issue N ...] [--apply]")
+	fmt.Println("                                        Migrate legacy plain claim comments to hashed tags")
 }
 
 func runForge(args []string) error {
@@ -47,7 +50,11 @@ func runForge(args []string) error {
 
 	sub := args[0]
 	subArgs := args[1:]
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	timeout := 2 * time.Minute
+	if sub == "refactor-check" {
+		timeout = 35 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	switch sub {
@@ -60,8 +67,12 @@ func runForge(args []string) error {
 		return runForgeValidatePR(subArgs)
 	case "check-commits":
 		return runForgeCheckCommits(ctx, subArgs)
+	case "refactor-check":
+		return runForgeRefactorCheck(ctx, subArgs)
 	case "check-message":
 		return runForgeCheckMessage(subArgs)
+	case "claims", "claim":
+		return runForgeClaims(ctx, subArgs)
 	default:
 		return fmt.Errorf("unknown forge subcommand: %s", sub)
 	}

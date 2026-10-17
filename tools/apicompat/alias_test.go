@@ -63,7 +63,14 @@ func main() {
 		}
 		os.Exit(0)
 	}
-	stubText, err := git(root, "show", os.Args[2]+":apidiff-stub")
+	stubPath := filepath.ToSlash(rel + "/apidiff-stub")
+	if rel == "." {
+		stubPath = "apidiff-stub"
+	}
+	stubText, err := git(root, "show", os.Args[2]+":"+stubPath)
+	if err == nil && strings.TrimSpace(stubText) == "compatible" {
+		os.Exit(0)
+	}
 	if err == nil && stubText != "" {
 		fmt.Print(stubText)
 		os.Exit(1)
@@ -77,6 +84,87 @@ func main() {
 	os.Exit(1)
 }
 `
+
+func crossModuleAliasFixture(t *testing.T, h aliasTestHarness) (*fixture, string, string) {
+	t.Helper()
+	f := newFixture(t, gateHarness{env: h.env})
+	baseFiles := map[string]string{
+		"go.mod":                  "module example.com/storage\n\ngo 1.21\n\nrequire example.com/storage/core v0.0.0\nreplace example.com/storage/core => ./core\n",
+		"storage/storage.go":      "package storage\n\ntype Bucket struct { Name string }\n",
+		"core/go.mod":             "module example.com/storage/core\n\ngo 1.21\n",
+		"core/storage/storage.go": "package storage\n\ntype Bucket struct { Name string }\n",
+		"core/apidiff-stub":       "compatible\n",
+		"apidiff-stub":            "compatible\n",
+		"split/go.mod":            "module example.com/storage/split\n\ngo 1.21\n\nrequire (\n\texample.com/storage v0.0.0\n\texample.com/storage/core v0.0.0\n)\nreplace example.com/storage => ..\nreplace example.com/storage/core => ../core\n",
+		"split/img/img.go":        "package img\n\nimport \"example.com/storage/storage\"\n\ntype Source struct{}\nfunc SourceFromBucket(bucket storage.Bucket) Source { return Source{} }\n",
+		"split/apidiff-stub":      "example.com/storage/split/img\n  Incompatible changes:\n  - SourceFromBucket: changed from func(example.com/storage/storage.Bucket) Source to func(example.com/storage/storage.Bucket) Source\n",
+		"plain/go.mod":            "module example.com/storage/plain\n\ngo 1.21\n",
+		"plain/plain/plain.go":    "package plain\n\nfunc Value() int { return 1 }\n",
+		"plain/apidiff-stub":      "compatible\n",
+	}
+	base := f.commit("fixture", baseFiles)
+	f.git("tag", "v1.0.0")
+	headFiles := map[string]string{
+		"storage/storage.go": "package storage\n\nimport corestorage \"example.com/storage/core/storage\"\n\ntype Bucket = corestorage.Bucket\n",
+	}
+	head := f.commit("alias root type", headFiles)
+	return f, base, head
+}
+
+// Positive: a root module alias reclassifies an identical signature change in a split module.
+func TestGate_Positive_CrossModuleIdenticalAliasAccepted(t *testing.T) {
+	t.Parallel()
+	h := newAliasHarness(t)
+	f, base, head := crossModuleAliasFixture(t, h)
+	run := h.run(t, f.dir, nil, "-base="+base, "-policy=reject")
+	if run.status != gateExitCompatible {
+		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitCompatible, run.stdout, run.stderr)
+	}
+	if !strings.Contains(run.stdout, "SourceFromBucket: changed from func(example.com/storage/storage.Bucket) Source to func(example.com/storage/storage.Bucket) Source (compatible: alias of identical type)") {
+		t.Fatalf("stdout misses split-module alias reclassification: %s", run.stdout)
+	}
+	if !strings.Contains(run.stdout, head[:12]) {
+		t.Fatalf("stdout misses compared head %s: %s", head[:12], run.stdout)
+	}
+}
+
+// Negative: cross-module alias filtering keeps a real parameter change incompatible.
+func TestGate_Negative_CrossModuleAliasKeepsRealChangeRejected(t *testing.T) {
+	t.Parallel()
+	h := newAliasHarness(t)
+	f, base, _ := crossModuleAliasFixture(t, h)
+	stub := "example.com/storage/split/img\n  Incompatible changes:\n" +
+		"  - SourceFromBucket: changed from func(example.com/storage/storage.Bucket) Source to func(example.com/storage/storage.Bucket) Source\n" +
+		"  - SourceFromName: changed from func(int) Source to func(string) Source\n"
+	f.commit("plant parameter change", map[string]string{"split/apidiff-stub": stub})
+	run := h.run(t, f.dir, nil, "-base="+base, "-policy=reject")
+	if run.status != gateExitRejected {
+		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitRejected, run.stdout, run.stderr)
+	}
+	if !strings.Contains(run.stdout, "SourceFromBucket: changed from func(example.com/storage/storage.Bucket) Source to func(example.com/storage/storage.Bucket) Source (compatible: alias of identical type)") {
+		t.Fatalf("stdout misses compatible alias reclassification: %s", run.stdout)
+	}
+	if !strings.Contains(run.stdout, "- SourceFromName: changed from func(int) Source to func(string) Source") {
+		t.Fatalf("stdout lost the real parameter change: %s", run.stdout)
+	}
+}
+
+// Boundary: a target with no aliased type keeps the checker's incompatible output unchanged.
+func TestGate_Boundary_CrossModuleAliasesDoNotChangeUnrelatedTarget(t *testing.T) {
+	t.Parallel()
+	h := newAliasHarness(t)
+	f, base, _ := crossModuleAliasFixture(t, h)
+	stub := "example.com/storage/plain/plain\n  Incompatible changes:\n" +
+		"  - Value: changed from func() int to func() string\n"
+	f.commit("plant unrelated change", map[string]string{"plain/apidiff-stub": stub})
+	run := h.run(t, f.dir, nil, "-base="+base, "-policy=reject")
+	if run.status != gateExitRejected {
+		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitRejected, run.stdout, run.stderr)
+	}
+	if !strings.Contains(run.stdout, stub) || strings.Contains(run.stdout, "Value: changed from func() int to func() string (compatible:") {
+		t.Fatalf("stdout changed unrelated target output: %s", run.stdout)
+	}
+}
 
 type aliasTestHarness struct {
 	gate    string

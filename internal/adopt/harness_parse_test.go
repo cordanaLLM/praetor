@@ -10,7 +10,8 @@ import (
 // read by the same parser as praetor's own (hisscatalog.ParseGatedInvariants, which feeds the
 // generated wiki), so every catalog rule parses back with the cells the harness wrote.
 func TestHarnessDirectives_ParseGatedInvariants(t *testing.T) {
-	content, err := buildAgentHarness(adoptedFacts("owner", "repo", "praetor", &VerificationPlan{}))
+	facts := adoptedFacts("owner", "repo", "praetor", &VerificationPlan{})
+	content, err := buildAgentHarness(facts)
 	if err != nil {
 		t.Fatalf("buildAgentHarness failed: %v", err)
 	}
@@ -23,7 +24,8 @@ func TestHarnessDirectives_ParseGatedInvariants(t *testing.T) {
 		t.Fatalf("parsed %d invariants from the harness, catalog has %d", len(gated), len(rules))
 	}
 	for i, rule := range rules {
-		check, failure := rule.Adopted(hisscatalog.AllPipelines)
+		generated, failure := rule.AdoptedFor(facts.pipelines, facts.hiss)
+		check := harnessEnforcement(rule, facts, generated)
 		want := hisscatalog.GatedInvariant{ID: rule.ID, Scope: rule.Scope, Rule: rule.AdoptedDirective(repositoryFacts(nil, 0)), Enforcement: check, OnFail: failure}
 		if gated[i] != want {
 			t.Errorf("row %d parsed as %+v, want %+v", i, gated[i], want)

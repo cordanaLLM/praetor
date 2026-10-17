@@ -66,8 +66,8 @@ type declineContract struct {
 // adoption cannot accept a decline that audit then fails on without saying so (#600).
 var declineContracts = map[string]declineContract{
 	"git-ignore": {audit: DeclineAuditRetained,
-		retains: "Git to ignore the agent evidence directory .workingdir/evidence/, and the documentation gate's " +
-			"private paths, through the repository's own ignore rules"},
+		retains: "Git to ignore the agent evidence directory (register.evidence.dir, default .workingdir/evidence/), " +
+			"and the documentation gate's private paths, through the repository's own ignore rules"},
 	"policy-catalog": {audit: DeclineAuditRetained, mcp: true,
 		retains: "the catalog the lock pins under .config/archetypes, which adoption and audit resolve the effective policy from"},
 	"agent-harness": {audit: DeclineAuditRetained, mcp: true,

@@ -177,6 +177,7 @@ def pre_push(remote):
         # scope. One line here is the difference between a five-minute diagnosis and an hour.
         print(f"Push scope: {len(names)} file(s) versus "
               f"{base[:12] if base else 'the full tree'}")
+        check_refactor_range(base, head)
         if not names:
             continue
         check_pushed_snapshot(head, base, mode, names)
@@ -184,6 +185,19 @@ def pre_push(remote):
             print(f"WIP checkpoint: {destination}; local file/build/race checks passed. "
                   "Full CI diagnostics remain required; no release receipt issued.")
         print(f"Push: {head[:12]} checked ({len(names)} changed paths)")
+
+
+def check_refactor_range(base, head):
+    """Run the REF-02 assertion lock over the exact outgoing commit range.
+
+    Without a pushed-range base the range would be the whole history, whose old refactor
+    commits this push did not make, so the check is skipped with that reason; CI checks the
+    pull request range against its base either way.
+    """
+    if not base:
+        print("Refactor check: skipped, no pushed-range base; CI checks pull request range")
+        return
+    cli(["forge", "refactor-check", f"--base={base}", f"--head={head}"])
 
 
 def check_commits(base):
@@ -295,6 +309,10 @@ def refresh_install():
         raise HookError("workstation install --if-stale returned an invalid result")
     if report["refreshed"]:
         print(f"engine install: refreshed; {report.get('reason', '')}.")
+    elif report.get("commits_behind", 0) > 0:
+        head = git("rev-parse", "--short", "HEAD").decode().strip()
+        print(f"engine install: NOT refreshed, {report['commits_behind']} commits behind {head}: "
+              f"{report.get('reason', '')}; next: clean checkout, run make dev-install")
 
 
 def post_stage(stage, args):

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -65,15 +66,56 @@ func LintCanonicalPersonas(ctx context.Context, rootDir string) (int, error) {
 	return len(names), nil
 }
 
+// isPinnedSkillExempt checks whether skillName has a valid pin record that matches an upstream
+// source entry declared in .standards.yaml skills.upstream and whose file hashes match.
+// If .pin.json does not exist or has no matching manifest entry, it returns (false, nil) so
+// the skill is linted as an own skill. If a manifest entry exists with differing commit, tag,
+// or repo, or if file hashes do not match, it returns (false, error).
+func isPinnedSkillExempt(skillName, skillDir string, policy *config.SkillsPolicy) (bool, error) {
+	record, exists, err := caveman.ReadSkillPinRecord(skillDir)
+	if err != nil {
+		return false, fmt.Errorf("canonical skill %s: %w", skillName, err)
+	}
+	if !exists {
+		return false, nil
+	}
+	src, found := policy.UpstreamSkillSourceFor(skillName)
+	if !found {
+		return false, nil
+	}
+	if !record.MatchesUpstream(src.Repo, src.Tag, src.Commit) {
+		return false, fmt.Errorf("canonical skill %s: manifest entry (%s@%s %s) does not match pin record (%s@%s %s)",
+			skillName, src.Repo, src.Tag, src.Commit, record.Repo, record.Tag, record.Commit)
+	}
+	if _, err := caveman.VerifySkillPin(skillDir); err != nil {
+		return false, fmt.Errorf("canonical skill %s: %w", skillName, err)
+	}
+	return true, nil
+}
+
 // LintCanonicalSkillFiles runs the caveman lint plus AgentTextCeiling over every
 // canonical skill's SKILL.md under .agents/skills, on the same SurfaceContext basis as
-// LintCanonicalPersonas. It returns the number of skills linted.
+// LintCanonicalPersonas. A skill carrying a valid pin record whose files all match their
+// recorded hashes skips the caveman lint when it is declared in .standards.yaml skills.upstream
+// with matching repo, tag and commit. It returns the number of skills linted.
 func LintCanonicalSkillFiles(ctx context.Context, rootDir string) (int, error) {
 	names, err := listCanonicalSkills(ctx, rootDir)
 	if err != nil {
 		return 0, err
 	}
+	policy, err := config.LoadSkillsPolicy(rootDir)
+	if err != nil {
+		return 0, err
+	}
 	for i := 0; i < len(names) && i < maxSkillProjections; i++ {
+		skillDir := filepath.Join(rootDir, filepath.FromSlash(CanonicalSkillsRel), names[i])
+		exempt, err := isPinnedSkillExempt(names[i], skillDir, policy)
+		if err != nil {
+			return 0, err
+		}
+		if exempt {
+			continue
+		}
 		data, err := readCanonicalSkill(ctx, rootDir, names[i])
 		if err != nil {
 			return 0, err

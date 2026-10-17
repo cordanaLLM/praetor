@@ -82,10 +82,20 @@ func (f *GoServiceFlavor) Detect(repoPath string) bool {
 	return hasMod && (hasCmd || hasDocker)
 }
 
+// GosecTemplate returns the pinned gosec configuration template item.
+func GosecTemplate() TemplateItem {
+	return TemplateItem{
+		Path:        ".gosec.json",
+		Description: "Go security analyzer configuration",
+		Source:      "go/.gosec.json.tmpl",
+		Validator:   validJSONObject,
+	}
+}
+
 func (f *GoServiceFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
 		{Path: ".golangci.yml", Description: "Unified Go linter configuration", Source: "go/.golangci.yml.tmpl", Validator: validYAMLMapping},
-		{Path: ".gosec.json", Description: "Go security analyzer configuration", Source: "go/.gosec.json.tmpl", Validator: validJSONObject},
+		GosecTemplate(),
 		{Path: ".github/workflows/ci.yml", Description: "Continuous integration matrix", Source: "go/ci-go.yml.tmpl", Validator: validWorkflow, Prior: priorGoCIDigests},
 		{
 			Path:        ".github/workflows/security.yml",
@@ -115,7 +125,7 @@ func (f *GoServiceFlavor) RequiredToolchains() []ToolchainItem {
 		{Binary: "go", Purpose: "Go Compiler & Toolchain", InstallGuide: "https://golang.org/dl/"},
 		{Binary: "govulncheck", Purpose: "Go vulnerability detection", InstallGuide: "go install golang.org/x/vuln/cmd/govulncheck@latest"},
 		{Binary: "gosec", Purpose: "Go AST security scanner", InstallGuide: GosecInstallGuide},
-		{Binary: "golangci-lint", Purpose: "Go unified linter", InstallGuide: "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run"},
+		{Binary: "golangci-lint", Purpose: "Go unified linter", InstallGuide: "go tool -modfile=tools/lint/go.mod golangci-lint run"},
 	}
 }
 

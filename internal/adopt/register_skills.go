@@ -47,6 +47,7 @@ var priorSkillDigests = map[string]map[string]string{
 		"c0ab6d15d42d9dab2640eb53abf7865495ab99979931cd463540646974d59b49": "first shipped, REUSE header and upstream credit (#235)",
 		"7f76820594f9792d620eb1aa9fbe5f5b9e67c7fe0dbd256d46dd329078862cef": "inline credit, no repository path an adopter lacks (#850)",
 		"e41df51da59f984e672f0fed8a066b2f3903c026dfc72516c258a526b4cc03ca": "passes markdownlint's default rules: 80 columns, blank lines around blocks (#70)",
+		"8334c468dc7dfbf0d73fd6d0ebd623320a423a05dd90dcfb84a61c82ce396605": "register policy can configure the evidence directory (#641)",
 	},
 	compiler.CanonicalSkillRel("adhd-format"): {
 		"1db3a6e0ec137143cb81002491bab5f5ae6a9331333126423de199a1c66edb44": "first shipped, REUSE header and upstream credit (#235)",

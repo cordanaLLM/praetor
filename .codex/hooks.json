@@ -54,9 +54,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/checkpoint.py\"",
-            "commandWindows": "(for /f \"delims=\" %r in ('git rev-parse --show-toplevel') do @python3 -B \"%r/.config/agent/hooks/checkpoint.py\") || exit 2",
-            "timeout": 60
+            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py\" codex stop",
+            "commandWindows": "(for /f \"delims=\" %r in ('git rev-parse --show-toplevel') do @python3 -B \"%r/.config/agent/hooks/praetor_hook.py\" codex stop) || exit 2",
+            "timeout": 90
           }
         ]
       }

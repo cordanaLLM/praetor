@@ -123,7 +123,7 @@ func ReadCreditInventory(ctx context.Context, root string) ([]InventoryItem, err
 		if err != nil {
 			return nil, err
 		}
-		for _, read := range inventoryReaders(rel, listed) {
+		for _, read := range inventoryReaders(root, rel, listed) {
 			found, err := read(rel, string(data))
 			if err != nil {
 				return nil, err

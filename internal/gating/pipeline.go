@@ -53,8 +53,8 @@ const (
 	TestStageTimeout = 20 * time.Minute
 	// MaxTestStageTimeout caps what the environment may ask for. HISS-02 requires an upper
 	// bound on the stage, not that the bound be unreachable, so the override is clamped
-	// rather than trusted.
-	MaxTestStageTimeout = 30 * time.Minute
+	// rather than trusted. It tracks the declared-verification ceiling in config.
+	MaxTestStageTimeout = config.MaxDeclaredVerifyTimeout
 	// TestStageTimeoutEnv names the variable that overrides TestStageTimeout.
 	TestStageTimeoutEnv = "PRAETOR_TEST_STAGE_TIMEOUT"
 	// CleanupTimeout bounds worktree removal after the test stage.
@@ -558,7 +558,7 @@ func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	}
 	confPath := filepath.Join(cfg.repoDir, GosecConfigFile)
 	if !util.FileExists(confPath) {
-		return "", fmt.Errorf("%s is missing: the security gate refuses to run gosec without its pinned configuration", GosecConfigFile)
+		return "", fmt.Errorf("%s is missing: the security gate refuses to run gosec without its pinned configuration; run praetorctl adopt to write it", GosecConfigFile)
 	}
 	results, err := runGoModules(ctx, cfg, runGoSecurityModule)
 	if err != nil {
