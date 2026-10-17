@@ -116,7 +116,14 @@ fmt-check:
 lint: fmt-check
 	go vet ./...
 	go vet -tags=apicompatgate ./tools/apicompat/gate/
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
+	$(GO_LINT_TOOL) golangci-lint run
+
+# golangci-lint is pinned in its own module, tools/lint/go.mod, which Renovate keeps current; `go
+# tool` builds exactly that version, whatever is on PATH. It ran as @latest before, and an
+# upstream release turned main red with no change here (ledger engine-golangci-latest-pin-1335).
+# It cannot share tools/go/go.mod: its dependency graph raised modules that gitleaks then failed
+# to build against (charmbracelet/x/cellbuf, CI run 39002762239), so each tool graph stays apart.
+GO_LINT_TOOL := go tool -modfile=tools/lint/go.mod
 
 # The security scanners and gitleaks are pinned in one place, tools/go/go.mod, which Renovate
 # keeps current; `go tool` builds and caches exactly that version, whatever is on PATH.
