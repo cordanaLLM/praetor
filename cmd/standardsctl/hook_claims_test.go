@@ -21,7 +21,7 @@ func useFakeHookDesk(t *testing.T, fake *forgetest.ClaimFake, now time.Time) *in
 	previous := hookClaimDesk
 	hookClaimDesk = func(context.Context, config.ForgeSettings) (*forge.ClaimDesk, error) {
 		built++
-		return &forge.ClaimDesk{Open: fake.Opener(), Stale: 6 * time.Hour, Now: func() time.Time { return now }}, nil
+		return &forge.ClaimDesk{Open: fake.Opener(), Stale: 6 * time.Hour, Now: func() time.Time { return now }, Key: fake.Key}, nil
 	}
 	t.Cleanup(func() { hookClaimDesk = previous })
 	return &built
@@ -33,9 +33,11 @@ func TestHookIssueClaims_Positive_ReportsTheLiveClaimAndBuildsTheDeskOnce(t *tes
 	fake.Seed(t, forge.Claim{Session: "other", Lane: "agy", Branch: "feat/o", Stage: "review", Started: now, Updated: now}, "OWNER")
 	built := useFakeHookDesk(t, fake, now.Add(time.Hour))
 	lookup := hookIssueClaims(config.ForgeSettings{})
+	key := fake.Key
+	wantSession := forge.ClaimTag(key, "session", "other")
 	for i := 0; i < 2; i++ {
 		claim, err := lookup(context.Background(), "acme/widgets#7")
-		if err != nil || claim == nil || claim.Session != "other" || claim.Stage != "review" || claim.Branch != "feat/o" {
+		if err != nil || claim == nil || claim.Session != wantSession || claim.Stage != "review" || claim.Branch != "feat/o" {
 			t.Fatalf("lookup %d: %+v %v", i, claim, err)
 		}
 	}

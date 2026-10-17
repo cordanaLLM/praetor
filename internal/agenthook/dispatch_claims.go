@@ -79,11 +79,15 @@ func checkBriefIssues(ctx context.Context, index int, claim forge.BriefClaim, lo
 }
 
 func judgeIssueClaim(index int, ref, session string, held *IssueClaim) Verdict {
-	switch {
-	case held == nil:
+	if held == nil {
 		return claimDenied("brief %d: %s is unclaimed; claim it first: praetorctl issue claim %s --session %s --lane <lane> --branch <branch>",
 			index, ref, ref, session)
-	case held.Session != session:
+	}
+	key, err := forge.LoadOrCreateDefaultClaimKey()
+	if err != nil {
+		return claimDenied("brief %d: claim key unreadable: %v", index, err)
+	}
+	if !forge.SameIdentity(held.Session, session, "session", key) {
 		return claimDenied("brief %d: %s is claimed by session %s (lane %s, branch %s, stage %s, updated %s), not by session %s",
 			index, ref, held.Session, held.Lane, held.Branch, held.Stage, held.Updated.UTC().Format(time.RFC3339), session)
 	}

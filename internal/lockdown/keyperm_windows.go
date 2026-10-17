@@ -13,7 +13,7 @@ import (
 	"strings"
 )
 
-// verifyKeyPermissions confines the signing key to the per-user configuration tree.
+// VerifyKeyPermissions confines the signing key to the per-user configuration tree.
 //
 // The POSIX comparison used on other platforms cannot be used here, and the reason is
 // not that it is merely approximate: on Windows a file's protection is its NTFS ACL,
@@ -33,7 +33,7 @@ import (
 // ACL has been widened inside that directory is not detected. Reading the ACL needs
 // golang.org/x/sys/windows, which this module does not depend on; see the discussion
 // in the private-artefact permissions issue.
-func verifyKeyPermissions(path string, info os.FileInfo) error {
+func VerifyKeyPermissions(path string, info os.FileInfo) error {
 	if info.IsDir() {
 		return fmt.Errorf("%w: %s is a directory", ErrInsecureKeyPerm, path)
 	}

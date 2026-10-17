@@ -32,12 +32,14 @@ func TestClaimRun_Positive_DispatchesEachCommand(t *testing.T) {
 		{forge.ClaimCommand{Op: forge.ClaimOpStatus, Ref: "acme/widgets#7", Session: "s1"}, "read"},
 		{forge.ClaimCommand{Op: forge.ClaimOpRelease, Ref: "acme/widgets#7", Session: "s1", Outcome: "landed"}, "released"},
 	}
+	key := f.Key
+	wantSession := forge.ClaimTag(key, "session", "s1")
 	for _, step := range steps {
 		res, err := d.Run(ctx, step.cmd)
 		if err != nil || res.Action != step.action {
 			t.Fatalf("%s: %+v %v", step.cmd.Op, res, err)
 		}
-		if !strings.HasPrefix(res.Summary(), step.action+" acme/widgets#7: session s1") {
+		if !strings.HasPrefix(res.Summary(), step.action+" acme/widgets#7: session "+wantSession) {
 			t.Fatalf("summary = %q", res.Summary())
 		}
 	}
@@ -62,7 +64,9 @@ func TestClaimSummary_Positive_NamesTheTakenOverClaim(t *testing.T) {
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
 	f.Seed(t, claimAt("old", claimEpoch.Add(-7*time.Hour)), "OWNER")
 	res, err := newTestDesk(f, clock).Run(context.Background(), forge.ClaimCommand{Op: forge.ClaimOpClaim, Ref: "acme/widgets#7", Session: "new", Lane: "l", Branch: "b"})
-	if err != nil || !strings.Contains(res.Summary(), "replaced the stale claim: claimed by session old") {
+	key := f.Key
+	oldTag := forge.ClaimTag(key, "session", "old")
+	if err != nil || !strings.Contains(res.Summary(), "replaced the stale claim: claimed by session "+oldTag) {
 		t.Fatalf("summary = %q err %v", res.Summary(), err)
 	}
 }

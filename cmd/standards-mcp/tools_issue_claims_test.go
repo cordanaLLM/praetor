@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,11 @@ import (
 var mcpClaimEpoch = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 
 func fakeClaimDesk(fake *forgetest.ClaimFake) *forge.ClaimDesk {
-	return &forge.ClaimDesk{Open: fake.Opener(), Stale: 6 * time.Hour, Now: func() time.Time { return mcpClaimEpoch }}
+	key := forgetest.DefaultFakeKey
+	if fake != nil && len(fake.Key) > 0 {
+		key = fake.Key
+	}
+	return &forge.ClaimDesk{Open: fake.Opener(), Stale: 6 * time.Hour, Now: func() time.Time { return mcpClaimEpoch }, Key: key}
 }
 
 func useFakeMCPDesk(t *testing.T, fake *forgetest.ClaimFake) {
@@ -82,12 +87,13 @@ func TestIssueClaimMCP_Negative_RefusalsAndBadArguments(t *testing.T) {
 	srv, _ := newFixtureServer(t)
 	fake := forgetest.NewClaimFake()
 	useFakeMCPDesk(t, fake)
+	firstTag := forge.ClaimTag(forgetest.DefaultFakeKey, "session", "first")
 	claim := map[string]any{"ref": "acme/widgets#7", "session": "first", "lane": "agy", "branch": "feat/first"}
 	if result := callTool(t, srv, "standards_issue_claim", claim); result.IsError {
 		t.Fatal(result.Content[0].Text)
 	}
 	second := map[string]any{"ref": "acme/widgets#7", "session": "second", "lane": "codex", "branch": "feat/second"}
-	expectError(t, "second claimer", callTool(t, srv, "standards_issue_claim", second), "session first")
+	expectError(t, "second claimer", callTool(t, srv, "standards_issue_claim", second), "session "+firstTag)
 	expectError(t, "bad reference", callTool(t, srv, "standards_issue_claim",
 		map[string]any{"ref": "7", "session": "s", "lane": "l", "branch": "b"}), "not <owner>/<repo>#<number>")
 	expectError(t, "non-string argument", callTool(t, srv, "standards_issue_claim",
@@ -95,7 +101,7 @@ func TestIssueClaimMCP_Negative_RefusalsAndBadArguments(t *testing.T) {
 	expectError(t, "bad stage", callTool(t, srv, "standards_issue_status",
 		map[string]any{"ref": "acme/widgets#7", "session": "first", "stage": "released"}), "stage")
 	expectError(t, "foreign release", callTool(t, srv, "standards_issue_release",
-		map[string]any{"ref": "acme/widgets#7", "session": "second", "outcome": "landed"}), "session first")
+		map[string]any{"ref": "acme/widgets#7", "session": "second", "outcome": "landed"}), "session "+firstTag)
 	if len(fake.Comments) != 1 {
 		t.Fatalf("refusals must add no comment: %d", len(fake.Comments))
 	}
@@ -117,5 +123,27 @@ func TestIssueClaimMCP_Negative_ForgeErrorAndNoToken(t *testing.T) {
 		map[string]any{"ref": "acme/widgets#7", "session": "s"}), "forge token")
 	if strings.Contains(res.Content[0].Text, "held") {
 		t.Fatal("a forge error must not read as a held claim")
+	}
+}
+
+func TestClaimKey_DefaultPathUnderTempRoot(t *testing.T) {
+	if testConfigRoot == "" {
+		t.Fatal("testConfigRoot not initialized by TestMain")
+	}
+	p, err := forge.DefaultClaimKeyPath()
+	if err != nil {
+		t.Fatalf("DefaultClaimKeyPath: %v", err)
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(testConfigRoot)
+	if err != nil {
+		canonicalRoot = testConfigRoot
+	}
+	canonicalPath, err := filepath.EvalSymlinks(filepath.Dir(p))
+	if err != nil {
+		canonicalPath = filepath.Dir(p)
+	}
+	rel, err := filepath.Rel(canonicalRoot, canonicalPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		t.Fatalf("DefaultClaimKeyPath %s does not lie under testConfigRoot %s (rel: %s)", p, testConfigRoot, rel)
 	}
 }

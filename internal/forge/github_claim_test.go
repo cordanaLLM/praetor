@@ -24,6 +24,7 @@ func claimRoutes(t *testing.T) func(w http.ResponseWriter, r *http.Request, inde
 		{http.MethodGet, "/issues/7/comments", http.StatusOK, []map[string]any{{"id": 5, "user": map[string]any{"login": "a"}, "author_association": "OWNER", "body": "hi"}}},
 		{http.MethodPost, "/issues/7/comments", http.StatusCreated, map[string]any{"id": 6, "user": map[string]any{"login": "operator"}, "author_association": "OWNER", "body": "x"}},
 		{http.MethodPatch, "/issues/comments/6", http.StatusOK, map[string]any{"id": 6}},
+		{http.MethodDelete, "/issues/comments/6", http.StatusNoContent, nil},
 		{http.MethodPost, "/issues/7/assignees", http.StatusCreated, map[string]any{}},
 		{http.MethodDelete, "/issues/7/assignees", http.StatusOK, map[string]any{}},
 		{http.MethodGet, "/issues/7", http.StatusOK, map[string]any{"number": 7, "title": "t", "state": "closed", "assignees": []map[string]any{{"login": "operator"}, {"login": "alice"}}}},
@@ -56,6 +57,9 @@ func TestGitHubClaim_Positive_ViewerAndComments(t *testing.T) {
 	}
 	if err := gh.EditIssueComment(ctx, 6, "y"); err != nil {
 		t.Fatalf("edit: %v", err)
+	}
+	if err := gh.DeleteIssueComment(ctx, 6); err != nil {
+		t.Fatalf("delete: %v", err)
 	}
 }
 

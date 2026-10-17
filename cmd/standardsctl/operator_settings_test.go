@@ -10,11 +10,17 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
+
+var testConfigRoot string
 
 // TestMain keeps every test off the operator's own settings: no install manifest and no
 // settings or framework environment variable reaches a command unless a test sets one, and no
 // forge token, so the audit's live Actions checks never ask the real forge.
+// It points the user configuration directory at a fresh temporary directory across
+// Linux (XDG_CONFIG_HOME/HOME), macOS (HOME), and Windows (AppData/APPDATA) so tests never touch
+// the developer's real configuration or claim keys.
 func TestMain(m *testing.M) {
 	installManifestPath = func() (string, error) { return "", nil }
 	resolveActionsToken = func(context.Context) string { return "" }
@@ -25,7 +31,17 @@ func TestMain(m *testing.M) {
 			os.Exit(2)
 		}
 	}
-	os.Exit(m.Run())
+
+	root, cleanup, err := testsupport.IsolateUserConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "isolate user config: %v\n", err)
+		os.Exit(2)
+	}
+	testConfigRoot = root
+
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 // acmeWorkstation writes a workstation document whose go target is example.com/acme/kit,

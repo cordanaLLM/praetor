@@ -45,7 +45,7 @@ func TestVerifyKeyPermissionsAcceptsKeyInsideUserConfigDir(t *testing.T) {
 		}
 	})
 	path, info := keyAt(t, dir, "receipt.key")
-	if err := verifyKeyPermissions(path, info); err != nil {
+	if err := VerifyKeyPermissions(path, info); err != nil {
 		t.Fatalf("key inside the per-user configuration directory rejected: %v", err)
 	}
 }
@@ -54,7 +54,7 @@ func TestVerifyKeyPermissionsAcceptsKeyInsideUserConfigDir(t *testing.T) {
 // location outside this user's configuration tree is rejected.
 func TestVerifyKeyPermissionsRefusesKeyOutsideUserConfigDir(t *testing.T) {
 	path, info := keyAt(t, t.TempDir(), "receipt.key")
-	err := verifyKeyPermissions(path, info)
+	err := VerifyKeyPermissions(path, info)
 	if err == nil {
 		t.Fatal("key outside the per-user configuration directory accepted")
 	}
@@ -82,7 +82,7 @@ func TestVerifyKeyPermissionsRefusesADirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyKeyPermissions(dir, info); !errors.Is(err, ErrInsecureKeyPerm) {
+	if err := VerifyKeyPermissions(dir, info); !errors.Is(err, ErrInsecureKeyPerm) {
 		t.Fatalf("directory accepted as a signing key: %v", err)
 	}
 }

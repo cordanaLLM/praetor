@@ -19,6 +19,7 @@ token` or `--token`.
 | `praetorctl issue claim <ref> --session <id> --lane <lane> --branch <branch>` | `standards_issue_claim` | Claim the issue. |
 | `praetorctl issue status <ref> --session <id> --stage <stage> [--note <text>]` | `standards_issue_status` | Record a stage. Without `--stage` it reports the current claim and writes nothing. |
 | `praetorctl issue release <ref> --session <id> --outcome landed\|abandoned\|handed-over [--note <text>]` | `standards_issue_release` | Finalise the claim. |
+| `standardsctl forge claims migrate --repo <owner/repo> --issue N [--apply]` | - | Migrate legacy claim comments with plain identities to keyed tags. |
 
 The CLI subcommands and the MCP tools build the same `forge.ClaimCommand` and run it on the
 same `forge.ClaimDesk`, so they cannot drift
@@ -45,11 +46,12 @@ On an open issue, a claim does three things:
   the claim.
 
 The comment starts with a marker line, an HTML comment the forge does not render, followed by
-human text:
+human text. To prevent internal session IDs, lane names, hostnames, or private names from leaking into
+public forge text, sessions and lanes are written as keyed identity tags (`h:` plus 12 hex characters):
 
 ```text
-<!-- praetor-claim v=1 session=s1 lane=agy branch=feat/x started=2026-10-08T12:00:00Z updated=2026-10-08T12:30:00Z stage=review assignee=claim -->
-**Praetor claim** - session `s1`, lane `agy`, branch `feat/x`
+<!-- praetor-claim v=1 session=h:5f4dcc3b5aa7 lane=h:098f6bcd4621 branch=feat/x started=2026-10-08T12:00:00Z updated=2026-10-08T12:30:00Z stage=review assignee=claim -->
+**Praetor claim** - session `h:5f4dcc3b5aa7`, lane `h:098f6bcd4621`, branch `feat/x`
 
 - Stage: review
 - Started: 2026-10-08T12:00:00Z
@@ -64,6 +66,62 @@ claim assigned the account and `before` when the issue listed the account alread
 text repeats it. A resumed claim keeps the value its comment records. A takeover of a stale
 claim that the same account wrote and whose assignment it added keeps `claim`. A marker
 written before this key existed has none.
+
+### Identity tags and key storage
+
+Session and lane values are rendered as keyed HMAC tags: `ClaimTag(key, kind, value)` computes
+`h:` followed by the first 12 hexadecimal characters of HMAC-SHA256(key, kind + "\x00" + value).
+The key is 32 random bytes stored in `<os.UserConfigDir()>/praetor/claim-tag.key` with owner-only
+permissions (`0600`). It is created on first use and is never printed, logged, returned in an error,
+or committed. If the key cannot be read or created, the claim operation fails; it never falls back
+to plain values.
+
+Legacy claim markers with plain session or lane values continue to parse. Comparisons between stored
+claims and requested identities evaluate via `SameIdentity`: a stored tag compares with the tag of
+the request, and a stored plain value compares plain.
+
+### Public text guard
+
+All forge driver write paths (issue comments, issue bodies and titles, pull request bodies and
+titles) pass through a centralized text guard. The guard refuses text that contains any protected
+value (the session and lane of the current operation, `os.Hostname()`, or non-empty lines from
+`<os.UserConfigDir()>/praetor/private-names.txt`) using case-insensitive word-boundary matching.
+Refusal returns an error naming the category of protected value without leaking the value itself.
+
+### Legacy claim migration
+
+Legacy claim comments carrying plain session or lane values are migrated to keyed identity tags
+via `standardsctl forge claims migrate` (`internal/forge/claim_migrate.go`):
+
+```bash
+# Dry run: report legacy claim comments and their target tags without modifying the forge
+standardsctl forge claims migrate --repo OWNER/NAME --issue 7 --issue 8
+
+# Apply migration: post tagged replacement comments, delete legacy comments, and verify read-back
+standardsctl forge claims migrate --repo OWNER/NAME --issue 7 --issue 8 --apply
+```
+
+A comment whose first line is a valid claim marker with an untagged session or lane is identified
+as a legacy claim. Comments that are not claims are never touched.
+
+- **Dry run (default)**: prints one line per legacy comment naming the issue number, comment ID,
+  stage, and computed identity tags (`issue N comment ID: stage S, session h:... lane h:...`).
+  Plain values are never printed. If a free-text note carries a protected value, dry run prints
+  `note dropped: carries a protected <kind>`.
+- **Apply (`--apply`)**:
+  1. Posts a new comment rendering the same claim with tagged identities (`h:...`), preserving stage,
+     started and updated timestamps, outcome, branch, and assignee case. Any free-text note is dropped
+     unless it passes the public text guard; when dropped, apply prints
+     `note dropped: carries a protected <kind>`.
+  2. Deletes the legacy comment via `DeleteIssueComment`. If deletion fails after posting, both comment
+     IDs are reported and the command halts without posting duplicate comments.
+  3. Reads back the issue thread. The command fails if any legacy claim marker remains, any newly
+     posted comment is missing, or the active issue holder changed
+     (`TestClaimsMigrate_Positive_LegacyCommentMigrates`,
+     `TestClaimsMigrate_Negative_MutantSkipsReadback`,
+     `TestClaimsMigrate_Negative_Planted_ReadbackFailsWhenHolderChanges`). Migration also refuses an issue
+     up front (and dry run names it) when a tagged unreleased claim sits after a legacy unreleased claim
+     (`TestClaimsMigrate_Negative_Planted_TaggedUnreleasedAfterLegacyRefusedUpfront`).
 
 ### How the marker is read
 

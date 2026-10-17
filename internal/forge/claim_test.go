@@ -18,15 +18,22 @@ import (
 
 var claimEpoch = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
 
+var testKey = forgetest.DefaultFakeKey
+
 type deskClock struct{ now time.Time }
 
 func (c *deskClock) Now() time.Time { return c.now }
 
 func newTestDesk(f *forgetest.ClaimFake, clock *deskClock) *forge.ClaimDesk {
+	key := f.Key
+	if len(key) == 0 {
+		key = testKey
+	}
 	return &forge.ClaimDesk{
 		Open:  f.Opener(),
 		Stale: 6 * time.Hour,
 		Now:   clock.Now,
+		Key:   key,
 	}
 }
 
@@ -74,7 +81,9 @@ func requireClaimSideEffects(t *testing.T, f *forgetest.ClaimFake) {
 		t.Fatalf("account not assigned: %v", f.Assignees)
 	}
 	got, ok := forge.ParseClaimMarker(f.Comments[0].Body)
-	if !ok || got.Session != "s1" || got.Branch != "feat/s1" || !got.Started.Equal(claimEpoch) {
+	key := f.Key
+	wantSession := forge.ClaimTag(key, "session", "s1")
+	if !ok || got.Session != wantSession || got.Branch != "feat/s1" || !got.Started.Equal(claimEpoch) {
 		t.Fatalf("marker not readable back: %+v ok=%v", got, ok)
 	}
 }
@@ -89,7 +98,9 @@ func TestClaim_Negative_SecondSessionRefusedNamingFirst(t *testing.T) {
 	if !errors.Is(err, forge.ErrClaimHeld) || !errors.As(err, &held) {
 		t.Fatalf("second claimer must be refused with forge.ErrClaimHeld, got %v", err)
 	}
-	if held.Holder.Session != "first" || !strings.Contains(err.Error(), "session first") || !strings.Contains(err.Error(), "feat/first") {
+	key := f.Key
+	firstTag := forge.ClaimTag(key, "session", "first")
+	if held.Holder.Session != firstTag || !strings.Contains(err.Error(), "session "+firstTag) || !strings.Contains(err.Error(), "feat/first") {
 		t.Fatalf("refusal must name the first claim, got %q", err)
 	}
 	if countClaimComments(f) != 1 {
@@ -130,14 +141,16 @@ func TestClaim_Boundary_StaleWindowEdge(t *testing.T) {
 // requireTakeover checks that a stale claim was taken over by writing a new comment and finalising the old one.
 func requireTakeover(t *testing.T, f *forgetest.ClaimFake, res forge.ClaimResult, err error, oldID int64) {
 	t.Helper()
-	if err != nil || res.Action != "took-over" || res.TookOver == nil || res.TookOver.Session != "old" {
+	key := f.Key
+	oldTag := forge.ClaimTag(key, "session", "old")
+	if err != nil || res.Action != "took-over" || res.TookOver == nil || res.TookOver.Session != oldTag {
 		t.Fatalf("stale claim must be taken over naming the old one: res=%+v err=%v", res, err)
 	}
 	if res.Claim.CommentID == oldID || countClaimComments(f) != 2 {
 		t.Fatalf("takeover must write a new comment and keep old finalised comment, got id %d and %d claim comments", res.Claim.CommentID, countClaimComments(f))
 	}
 	requireOldCommentFinalised(t, f.Comments[0].Body)
-	if !strings.Contains(f.Comments[1].Body, "replaces the stale claim of session old") {
+	if !strings.Contains(f.Comments[1].Body, "replaces the stale claim of session "+oldTag) {
 		t.Fatalf("new comment must name the old claim:\n%s", f.Comments[1].Body)
 	}
 }
@@ -251,7 +264,9 @@ func TestStatus_Positive_NoStageReadsWithoutWriting(t *testing.T) {
 	mustClaim(t, d, "s1")
 	before := f.Comments[0].Body
 	res, err := d.Status(context.Background(), testRef(), forge.StatusRequest{Session: "other"})
-	if err != nil || res.Action != "read" || res.Claim.Session != "s1" || f.Comments[0].Body != before {
+	key := f.Key
+	s1Tag := forge.ClaimTag(key, "session", "s1")
+	if err != nil || res.Action != "read" || res.Claim.Session != s1Tag || f.Comments[0].Body != before {
 		t.Fatalf("read must report the holder and write nothing: %+v %v", res, err)
 	}
 }
@@ -264,7 +279,9 @@ func TestStatus_Positive_TakeoverNoteSurvivesEdits(t *testing.T) {
 	if _, err := d.Status(context.Background(), testRef(), forge.StatusRequest{Session: "new", Stage: "review"}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(f.Comments[1].Body, "replaces the stale claim of session old") {
+	key := f.Key
+	oldTag := forge.ClaimTag(key, "session", "old")
+	if !strings.Contains(f.Comments[1].Body, "replaces the stale claim of session "+oldTag) {
 		t.Fatalf("takeover note lost on a status edit:\n%s", f.Comments[1].Body)
 	}
 }
@@ -376,18 +393,20 @@ func TestClaim_Negative_LabelFailureAbandonsTheComment(t *testing.T) {
 
 func TestClaim_Negative_MalformedAndForeignMarkersIgnored(t *testing.T) {
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
-	good, err := forge.RenderClaimMarker(claimAt("ghost", claimEpoch))
+	key := f.Key
+	ghostTag := forge.ClaimTag(key, "session", "ghost")
+	good, err := forge.RenderClaimMarkerWithKey(claimAt("ghost", claimEpoch), key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.Comments = []forge.IssueComment{
 		{ID: 1, Association: "OWNER", Body: strings.Replace(good, "v=1", "v=2", 1)},
 		{ID: 2, Association: "OWNER", Body: strings.Replace(good, "stage=implementing", "stage=implementing extra=1", 1)},
-		{ID: 3, Association: "OWNER", Body: strings.Replace(good, "session=ghost", "session=ghost session=twin", 1)},
+		{ID: 3, Association: "OWNER", Body: strings.Replace(good, "session="+ghostTag, "session="+ghostTag+" session=twin", 1)},
 		{ID: 4, Association: "OWNER", Body: "intro text\n" + good},
 		{ID: 5, Association: "NONE", Body: good},
 		{ID: 6, Association: "CONTRIBUTOR", Body: good},
-		{ID: 7, Association: "OWNER", Body: strings.Replace(good, "session=ghost", "session=gh ost", 1)},
+		{ID: 7, Association: "OWNER", Body: strings.Replace(good, "session="+ghostTag, "session=gh ost", 1)},
 		{ID: 8, Association: "OWNER", Body: strings.Replace(good, "updated=2026-10-08T12:00:00Z", "updated=yesterday", 1)},
 		{ID: 9, Association: "OWNER", Body: "<!-- praetor-claim"},
 	}
@@ -402,7 +421,7 @@ func TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID(t *testing.T) {
 	f, clock := forgetest.NewClaimFake(), &deskClock{now: claimEpoch}
 	f.BeforeList = func(f *forgetest.ClaimFake, call int) {
 		if call == 2 { // the read-back after our write: a rival's older comment appears
-			rival, err := forge.RenderClaimMarker(claimAt("rival", claimEpoch))
+			rival, err := forge.RenderClaimMarkerWithKey(claimAt("rival", claimEpoch), f.Key)
 			if err != nil {
 				t.Errorf("render rival marker: %v", err)
 			}
@@ -411,7 +430,9 @@ func TestClaim_Negative_ConcurrentClaimerLosesToLowerCommentID(t *testing.T) {
 	}
 	_, err := newTestDesk(f, clock).Claim(context.Background(), testRef(), forge.ClaimRequest{Session: "late", Lane: "l", Branch: "b"})
 	var held *forge.ClaimHeldError
-	if !errors.As(err, &held) || held.Holder.Session != "rival" {
+	key := f.Key
+	rivalTag := forge.ClaimTag(key, "session", "rival")
+	if !errors.As(err, &held) || held.Holder.Session != rivalTag {
 		t.Fatalf("the later claimer must lose naming the rival, got %v", err)
 	}
 	mine, _ := forge.ParseClaimMarker(f.Comments[1].Body)
@@ -455,7 +476,8 @@ func requireWinnerAndLoser(t *testing.T, resA forge.ClaimResult, errA error, res
 		t.Fatalf("claimer B must lose, got success: %+v", resB)
 	}
 	var held *forge.ClaimHeldError
-	if !errors.As(errB, &held) || held.Holder.Session != "session-A" {
+	key := testKey
+	if !errors.As(errB, &held) || !forge.SameIdentity(held.Holder.Session, "session-A", "session", key) {
 		t.Fatalf("claimer B must lose naming session-A, got %v", errB)
 	}
 	if resA.Claim.CommentID == 0 {
@@ -486,7 +508,11 @@ func TestClaim_Negative_InterleavedClaimersOnStaleCommentExactlyOneHolds(t *test
 func requireClaimHeldBy(t *testing.T, err error, session string) {
 	t.Helper()
 	var held *forge.ClaimHeldError
-	if !errors.As(err, &held) || held.Holder.Session != session {
+	if !errors.As(err, &held) {
+		t.Fatalf("expected claim held error, got: %v", err)
+	}
+	key := testKey
+	if !forge.SameIdentity(held.Holder.Session, session, "session", key) {
 		t.Fatalf("expected claim held by %s, got: %v", session, err)
 	}
 }
@@ -494,7 +520,11 @@ func requireClaimHeldBy(t *testing.T, err error, session string) {
 func requireLiveClaim(t *testing.T, d *forge.ClaimDesk, session string) {
 	t.Helper()
 	live, err := d.LiveClaim(context.Background(), testRef())
-	if err != nil || live == nil || live.Session != session {
+	if err != nil || live == nil {
+		t.Fatalf("LiveClaim must not be nil, got: %+v %v", live, err)
+	}
+	key := testKey
+	if !forge.SameIdentity(live.Session, session, "session", key) {
 		t.Fatalf("LiveClaim must be %s, got: %+v %v", session, live, err)
 	}
 }
@@ -730,26 +760,28 @@ func TestClaimMarker_RoundTripAndBounds(t *testing.T) {
 	c := claimAt("s-1", claimEpoch)
 	c.Outcome = "landed"
 	c.Stage = forge.ClaimStageReleased
-	marker, err := forge.RenderClaimMarker(c)
+	key := testKey
+	marker, err := forge.RenderClaimMarkerWithKey(c, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, ok := forge.ParseClaimMarker(marker + "\r\nrest")
-	if !ok || got.Session != "s-1" || got.Outcome != "landed" || !got.Released() {
+	wantSession := forge.ClaimTag(key, "session", "s-1")
+	if !ok || got.Session != wantSession || got.Outcome != "landed" || !got.Released() {
 		t.Fatalf("round trip failed: %+v %v", got, ok)
 	}
 	bad := c
 	bad.Branch = "has space"
-	if _, err := forge.RenderClaimMarker(bad); err == nil {
+	if _, err := forge.RenderClaimMarkerWithKey(bad, key); err == nil {
 		t.Fatal("a value outside the allow-list must not render")
 	}
 	bad = c
 	bad.Session = strings.Repeat("a", 129)
-	if _, err := forge.RenderClaimMarker(bad); err == nil {
+	if _, err := forge.RenderClaimMarkerWithKey(bad, key); err == nil {
 		t.Fatal("a 129-character value must not render")
 	}
 	bad.Session = strings.Repeat("a", 128)
-	if _, err := forge.RenderClaimMarker(bad); err != nil {
+	if _, err := forge.RenderClaimMarkerWithKey(bad, key); err != nil {
 		t.Fatalf("a 128-character value must render: %v", err)
 	}
 	if _, ok := forge.ParseClaimMarker(strings.Repeat("x", forge.MaxClaimMarkerBytes+1)); ok {
@@ -781,7 +813,9 @@ func assertResumeFailureLeavesClaimLive(t *testing.T, setup func(f *forgetest.Cl
 	f.FailOn = ""
 	f.BeforeList = nil
 	holder, err := d.LiveClaim(context.Background(), testRef())
-	if err != nil || holder == nil || holder.Session != "s1" || holder.Released() {
+	key := testKey
+	wantSession := forge.ClaimTag(key, "session", "s1")
+	if err != nil || holder == nil || holder.Session != wantSession || holder.Released() {
 		t.Fatalf("the earlier valid claim must stay live: %+v %v", holder, err)
 	}
 	if !f.OnIssue[forge.LabelInProgress] {

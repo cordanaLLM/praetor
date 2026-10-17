@@ -37,6 +37,8 @@ func printForgeUsage() {
 	fmt.Println("  validate-pr <pr-body-file>            Verify HISS checklist and the Ed25519 Exit-0 receipt")
 	fmt.Println("  check-commits --base=<ref> [--head=HEAD]  Enforce the commit message policy on a commit range")
 	fmt.Println("  check-message <commit-message-file>   Enforce the commit message policy on one message (commit-msg hook)")
+	fmt.Println("  claims migrate --repo OWNER/NAME --issue N [--issue N ...] [--apply]")
+	fmt.Println("                                        Migrate legacy plain claim comments to hashed tags")
 }
 
 func runForge(args []string) error {
@@ -62,6 +64,8 @@ func runForge(args []string) error {
 		return runForgeCheckCommits(ctx, subArgs)
 	case "check-message":
 		return runForgeCheckMessage(subArgs)
+	case "claims", "claim":
+		return runForgeClaims(ctx, subArgs)
 	default:
 		return fmt.Errorf("unknown forge subcommand: %s", sub)
 	}
