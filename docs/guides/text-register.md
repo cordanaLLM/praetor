@@ -269,9 +269,11 @@ splice the block before their first compile for the same reason.
 
 ### Register skills
 
-Adoption ships the skills the block names. With `--lock-source-root`, the agent-harness step
-installs `social-text`, `caveman` and `adhd-format`, which `social-text` inherits from, into
-`.agents/skills/` from that checkout (`config.RegisterSkillBundle`). Each `SKILL.md` carries its
+Adoption ships the skills in the compiled bundle. With `--lock-source-root`, the agent-harness
+step installs `social-text`, `caveman`, `adhd-format` and `preparatory-refactoring` into
+`.agents/skills/` from that checkout (`config.RegisterSkillBundle`). `social-text` inherits
+from `adhd-format`; `preparatory-refactoring` is the workflow skill shipped alongside the
+register skills and projected to each selected agent harness. Each `SKILL.md` carries its
 REUSE header, its `metadata.derived_from` credit and an inline credit paragraph naming the upstream
 author, repository and licence terms; the credit points at no file of this repository. Beside it
 sits a `LICENSE` file with the upstream MIT text, byte for byte, as the upstream stated it when
@@ -307,7 +309,7 @@ included; an unedited earlier Praetor text is refreshed (`priorSkillDigests` and
 `priorSkillLicenseDigests` in `internal/adopt/register_skills.go`,
 `TestAdopt_Negative_EditedSkillIsKeptAndReported`).
 
-The three skills pass markdownlint's default rules without a disable pragma: prose is wrapped at
+The four bundled skills pass markdownlint's default rules without a disable pragma: prose is wrapped at
 80 columns, and headings, lists and tables stand between blank lines, inside a block quote and a
 list item too. An adopter's own Markdown gate therefore reads the installed copies under
 `.agents/skills/` and `.claude/skills/` without an exclusion
@@ -317,7 +319,7 @@ gate excludes `.agents/skills/`, so that test is the gate for them.
 
 Codex, Gemini CLI, Cursor, Copilot and Windsurf read `.agents/skills/`; Claude Code reads
 `.claude/skills/` only (`agentcontext.SkillDirs`). When `agent_clients` selects Claude Code,
-`compile-context` copies each of the three skills the repository carries into
+`compile-context` copies each bundled skill the repository carries into
 `.claude/skills/`, and `--verify` and the audit's projection gate refuse a missing or edited
 copy (`compiler.VerifyClientSkills`, `internal/compiler/client_skills_test.go`). A
 repository's own unpinned skills are not copied, and `.claude/skills/` may hold skills of its own.
@@ -335,7 +337,7 @@ write the copies `--verify` then requires
 
 The copies are written through the same symlink-refusing writer as the persona copies, so a
 `.claude/skills` that is a symlink, such as `.claude/skills -> ../.agents/skills`, is refused:
-`compile-context` fails in a repository that carries one of the three skills, and adoption with
+`compile-context` fails in a repository that carries one of the four bundled skills, and adoption with
 `--lock-source-root` fails before its first write, naming the copy and
 `path component must be a directory, never a symlink` (`compiler.CheckSkillTargets`,
 `TestVerifyClientSkills_Negative_MissingOrEditedCopy`). Replace
