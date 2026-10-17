@@ -123,10 +123,17 @@ func hasCommand(args []string, want string) bool {
 	return false
 }
 
+// skillHelpTimeout bounds one --help call. A fresh CI runner's first dotnet call sets the SDK up
+// and was killed at 5 s (run 39001372651); the first-run work is also switched off below.
+const skillHelpTimeout = 60 * time.Second
+
 func runSkillHelp(tool string, args []string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), skillHelpTimeout)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, tool, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, tool, args...)
+	cmd.Env = append(os.Environ(), "DOTNET_NOLOGO=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
+		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "DOTNET_GENERATE_ASPNET_CERTIFICATE=false")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("run %s %s: %w: %s", tool, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
