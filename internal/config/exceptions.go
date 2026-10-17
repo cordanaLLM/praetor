@@ -554,6 +554,35 @@ func (e Exception) ExpiringWithin(today time.Time, days int) bool {
 	return daysLeft >= 0 && daysLeft <= days
 }
 
+// WarningDays returns how many days before an expiry the audit begins warning for e.
+// Uncategorized entries warn for ExceptionExpiryWarningDays (14 days). Categorized
+// entries warn for min(ExceptionExpiryWarningDays, interval/2), where interval is the
+// category's duration in days (B: 3 -> 1, C: 10 -> 5, D: 120 -> 14). For category A,
+// interval is the days from entered to expires when both parse; if either does not
+// parse, WarningDays falls back to ExceptionExpiryWarningDays (14 days).
+func (e Exception) WarningDays() int {
+	if e.Category == "" {
+		return ExceptionExpiryWarningDays
+	}
+	if e.Category == "A" {
+		entered, err := time.Parse(ExceptionDateLayout, e.Entered)
+		if err != nil {
+			return ExceptionExpiryWarningDays
+		}
+		expires, err := time.Parse(ExceptionDateLayout, e.Expires)
+		if err != nil {
+			return ExceptionExpiryWarningDays
+		}
+		interval := max(0, int(expires.Sub(entered).Hours()/24)) // an expiry before entry warns for 0 days, never less
+		return min(ExceptionExpiryWarningDays, interval/2)
+	}
+	interval, ok := exceptionCategoryDays(e.Category)
+	if !ok {
+		return ExceptionExpiryWarningDays
+	}
+	return min(ExceptionExpiryWarningDays, interval/2)
+}
+
 // FormatDaysLeft formats the remaining days into human-readable text.
 func FormatDaysLeft(days int) string {
 	switch {
