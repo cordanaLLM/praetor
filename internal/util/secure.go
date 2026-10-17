@@ -335,6 +335,12 @@ func WithinRoot(root, p string) bool {
 	return strings.HasPrefix(p, prefix)
 }
 
+// ResolveExistingAncestor is resolveExistingAncestor for callers outside util: two spellings of
+// one location, such as macOS's /var and /private/var, resolve alike before the location exists.
+func ResolveExistingAncestor(path string) (string, error) {
+	return resolveExistingAncestor(path)
+}
+
 // resolveExistingAncestor resolves symlinks in the deepest existing ancestor of path and
 // re-attaches the not-yet-existing trailing segments. The walk is walkToExistingAncestor under
 // os.Lstat, so a symlink counts as existing whatever it points at.

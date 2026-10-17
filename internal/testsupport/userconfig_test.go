@@ -7,7 +7,6 @@ package testsupport
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,17 +23,9 @@ func TestIsolateUserConfig_Positive_UserConfigDirUnderRoot(t *testing.T) {
 		t.Fatalf("os.UserConfigDir: %v", err)
 	}
 
-	canonicalRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		canonicalRoot = root
-	}
-	canonicalDir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		canonicalDir = dir
-	}
-	rel, err := filepath.Rel(canonicalRoot, canonicalDir)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		t.Fatalf("os.UserConfigDir %s does not lie under root %s (rel: %s)", dir, root, rel)
+	rel, under, err := PathUnder(root, dir)
+	if err != nil || !under {
+		t.Fatalf("os.UserConfigDir %s does not lie under root %s (rel: %s, %v)", dir, root, rel, err)
 	}
 }
 

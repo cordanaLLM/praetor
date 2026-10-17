@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
@@ -48,16 +47,8 @@ func TestClaimKey_DefaultPathUnderTempRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultClaimKeyPath: %v", err)
 	}
-	canonicalRoot, err := filepath.EvalSymlinks(testConfigRoot)
-	if err != nil {
-		canonicalRoot = testConfigRoot
-	}
-	canonicalPath, err := filepath.EvalSymlinks(filepath.Dir(p))
-	if err != nil {
-		canonicalPath = filepath.Dir(p)
-	}
-	rel, err := filepath.Rel(canonicalRoot, canonicalPath)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		t.Fatalf("DefaultClaimKeyPath %s does not lie under testConfigRoot %s (rel: %s)", p, testConfigRoot, rel)
+	rel, under, err := testsupport.PathUnder(testConfigRoot, filepath.Dir(p))
+	if err != nil || !under {
+		t.Fatalf("DefaultClaimKeyPath %s does not lie under testConfigRoot %s (rel: %s, %v)", p, testConfigRoot, rel, err)
 	}
 }
