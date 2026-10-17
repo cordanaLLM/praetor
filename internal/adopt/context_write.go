@@ -10,7 +10,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // CompileAgentContext is the agent context write every command shares: it makes Git ignore the
@@ -33,9 +32,9 @@ func CompileAgentContext(ctx context.Context, w io.Writer, tr *compiler.Transpil
 	return earlierPersonaModelTierRemedy(ctx, targetDir, err)
 }
 
-// earlierPersonaModelTierRemedy adds the recovery path only when the rejected canonical persona
-// is byte-for-byte one of adoption's earlier generated texts. An edited persona keeps the compiler
-// error unchanged because adoption preserves it rather than replacing it.
+// earlierPersonaModelTierRemedy adds the recovery path to a model-tier refusal of a generated
+// persona (PersonaModelTierRemedy): adoption replaces an unedited earlier copy and adds the tier
+// to an edited one. Any other refusal is returned unchanged.
 func earlierPersonaModelTierRemedy(ctx context.Context, targetDir string, err error) error {
 	if !errors.Is(err, compiler.ErrPersonaModelTier) {
 		return err
@@ -43,15 +42,9 @@ func earlierPersonaModelTierRemedy(ctx context.Context, targetDir string, err er
 	personas := generatedPersonas()
 	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
 		rel := personas[i].rel
-		if !strings.Contains(err.Error(), rel+":") {
-			continue
+		if strings.Contains(err.Error(), rel+":") {
+			return fmt.Errorf("%w: %s", err, PersonaModelTierRemedy(ctx, targetDir, rel))
 		}
-		data, exists, readErr := contextopt.ObserveSnapshotIn(ctx, targetDir, filepath.FromSlash(rel))
-		if readErr != nil || !exists || !isPriorRendering(data, priorPersonaDigests[rel]) {
-			return err
-		}
-		return fmt.Errorf("%w: the file is an unedited copy of an earlier engine's template; "+
-			"praetorctl adopt replaces it, or run the engine the repository pins", err)
 	}
 	return err
 }

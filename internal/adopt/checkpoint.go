@@ -132,6 +132,23 @@ func installCheckpointSources(ctx context.Context, s *adoptSession, sources []ch
 	return nil
 }
 
+// keptConfigOwnsCheckpoint reports whether the checkpoint bundle beside a kept lefthook.yml
+// belongs to that configuration: a bundle file holds neither its verified source nor an earlier
+// Praetor text of it (keptCheckpointSource), or the bundle cannot be read to tell, in which case
+// reconcileCheckpointBundle reports why. Otherwise every file is absent, current or an unedited
+// earlier Praetor text, and the bundle is refreshed as one unit.
+func keptConfigOwnsCheckpoint(ctx context.Context, s *adoptSession) bool {
+	if s.opts.LockSourceRoot == "" {
+		return true
+	}
+	sources, err := readCheckpointSources(ctx, s.opts.LockSourceRoot)
+	if err != nil {
+		return true
+	}
+	kept, err := keptCheckpointSource(ctx, s, sources)
+	return err != nil || kept >= 0
+}
+
 // maxCheckpointSources bounds a walk over the checkpoint bundle's files (HISS-02).
 const maxCheckpointSources = 8
 

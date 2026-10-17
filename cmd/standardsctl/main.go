@@ -267,6 +267,7 @@ func coreCommandTable() map[string]commandFunc {
 		"seo":                      runSEO,
 		"sentinel":                 runSentinel,
 		"skills":                   runSkills,
+		"admit":                    runAdmit,
 		"efficiency":               runEfficiency,
 		"efficiency-ledger":        runEfficiency,
 		"worktree":                 runWorktree,

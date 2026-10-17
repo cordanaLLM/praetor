@@ -145,3 +145,30 @@ func TestAuditAgentDefinitionsFrontMatterBoundaries(t *testing.T) {
 		t.Fatalf("a declined gate decoded the personas: %v", err)
 	}
 }
+
+// Negative (#1426): a persona that predates the model key fails the audit with the remedy that
+// fits it: an unedited earlier generated persona and an edited keyless one each name a plain
+// adopt run, and a persona the repository wrote itself names the line by hand. The summary
+// names the model key beside the other required keys.
+func TestAuditAgentDefinitions_Negative_ModelTierNamesTheRemedy(t *testing.T) {
+	prior := readPriorAuditorPersona(t)
+	edited := strings.Replace(prior, `description: "`, `description: '`, 1)
+	edited = strings.Replace(edited, `compliance."`, `compliance.'`, 1) + "\n"
+	cases := map[string]struct{ rel, persona, want string }{
+		"unedited earlier": {".agents/agents/repo-auditor.md", prior, "unedited copy of an earlier engine's template; praetorctl adopt replaces it"},
+		"edited keyless":   {".agents/agents/repo-auditor.md", edited, "praetorctl adopt (no --force needed) adds the template's model tier"},
+		"own persona":      {".agents/agents/custom.md", "---\nname: custom\ndescription: \"Own.\"\n---\n", "add model: flash or model: pro to its front matter"},
+	}
+	for name, tc := range cases {
+		root := t.TempDir()
+		writeFixtureFile(t, root, tc.rel, tc.persona)
+		_, err := runAgentDefinitions(t, nil, root)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err %v, want the remedy %q", name, err, tc.want)
+			continue
+		}
+		if !strings.Contains(err.Error(), "declaring name, description and model (flash, pro)") {
+			t.Errorf("%s: the summary does not name the model key: %v", name, err)
+		}
+	}
+}
