@@ -39,6 +39,11 @@ type HostStats struct {
 	// three loads are then zero, which an idle Linux host can also report, so zero alone cannot
 	// say whether anything was measured.
 	CPULoadMeasured bool `json:"cpu_load_measured"`
+	// SwapTotalBytes and SwapFreeBytes are meminfo's SwapTotal and SwapFree; SwapMeasured is false
+	// where the platform has no such source (macOS, Windows), as CPULoadMeasured is for the load.
+	SwapTotalBytes uint64 `json:"swap_total_bytes"`
+	SwapFreeBytes  uint64 `json:"swap_free_bytes"`
+	SwapMeasured   bool   `json:"swap_measured"`
 }
 
 // HostReport summarizes health evaluations, invariant checks, and throttling directives.
@@ -93,6 +98,12 @@ func ReadHostStats(path string) (HostStats, error) {
 	stats.CPULoad1Min = l1
 	stats.CPULoad5Min = l5
 	stats.CPULoad15Min = l15
+
+	swapTotal, swapFree, swapMeasured, err := readHostSwap()
+	if err != nil {
+		return stats, fmt.Errorf("read swap stats: %w", err)
+	}
+	stats.SwapTotalBytes, stats.SwapFreeBytes, stats.SwapMeasured = swapTotal, swapFree, swapMeasured
 
 	return stats, nil
 }
@@ -256,8 +267,30 @@ func readMeminfoMemory() (total uint64, free uint64, resultErr error) {
 	return parseMeminfo(f)
 }
 
-// parseMeminfo parses MemTotal, MemAvailable, MemFree, Buffers, and Cached fields from meminfo.
-func parseMeminfo(r io.Reader) (uint64, uint64, error) {
+// readMeminfoSwap reads SwapTotal and SwapFree from /proc/meminfo; measured is false where the
+// file cannot be opened, as readMeminfoMemory reports an absent source.
+func readMeminfoSwap() (total, free uint64, measured bool, resultErr error) {
+	f, err := os.Open(meminfoPath)
+	if err != nil {
+		return 0, 0, false, nil
+	}
+	defer func() { resultErr = errors.Join(resultErr, f.Close()) }()
+	return parseSwap(f)
+}
+
+// parseSwap parses SwapTotal and SwapFree from meminfo. A meminfo without SwapTotal is no swap
+// reading; a host without swap reports SwapTotal 0, which is measured.
+func parseSwap(r io.Reader) (total, free uint64, measured bool, err error) {
+	values, err := meminfoValues(r)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	total, measured = values["SwapTotal"]
+	return total, values["SwapFree"], measured, nil
+}
+
+// meminfoValues returns the meminfo fields memoryField reads, in bytes.
+func meminfoValues(r io.Reader) (map[string]uint64, error) {
 	scanner := bufio.NewScanner(r)
 	values := make(map[string]uint64)
 	for i := 0; i < MaxScanLines && scanner.Scan(); i++ {
@@ -267,7 +300,16 @@ func parseMeminfo(r io.Reader) (uint64, uint64, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return 0, 0, fmt.Errorf("scanner error in meminfo: %w", err)
+		return nil, fmt.Errorf("scanner error in meminfo: %w", err)
+	}
+	return values, nil
+}
+
+// parseMeminfo parses MemTotal, MemAvailable, MemFree, Buffers, and Cached fields from meminfo.
+func parseMeminfo(r io.Reader) (uint64, uint64, error) {
+	values, err := meminfoValues(r)
+	if err != nil {
+		return 0, 0, err
 	}
 	total, found := values["MemTotal"]
 	if !found {
@@ -287,7 +329,7 @@ func memoryField(line string) (string, uint64, bool) {
 	}
 	key := strings.TrimSuffix(parts[0], ":")
 	switch key {
-	case "MemTotal", "MemFree", "MemAvailable", "Buffers", "Cached":
+	case "MemTotal", "MemFree", "MemAvailable", "Buffers", "Cached", "SwapTotal", "SwapFree":
 	default:
 		return "", 0, false
 	}

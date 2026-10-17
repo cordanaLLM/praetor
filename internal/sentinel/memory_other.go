@@ -7,3 +7,9 @@ package sentinel
 func readHostMemory() (uint64, uint64, error) {
 	return readMeminfoMemory()
 }
+
+// readHostSwap reads SwapTotal and SwapFree from /proc/meminfo; where it is absent (macOS) swap
+// is reported as unmeasured.
+func readHostSwap() (uint64, uint64, bool, error) {
+	return readMeminfoSwap()
+}
