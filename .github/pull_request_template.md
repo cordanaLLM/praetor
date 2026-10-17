@@ -55,13 +55,9 @@ Every public method and modified component must include three dimensions of auto
 
 ## 4. Ed25519 Exit-0 Verification Receipt
 
-Paste the **signed receipt JSON** below, inside the fence labelled `receipt`. The label is what
-the validator looks for: an unlabelled or `text` fence is treated as a code snippet in a
-description and never read.
+Paste the **signed receipt JSON** below, inside the fence labelled `receipt`. The label is what the validator looks for: an unlabelled or `text` fence is treated as a code snippet in a description and never read.
 
-`praetorctl gate run` writes it to `.standards-receipt.json`, and the pre-push hook keeps a copy
-at `.git/praetor-receipts/<sha>.json`. It must certify the pull request's head commit; a rebase
-invalidates it, so re-mint after one.
+`praetorctl gate run` writes it to `.standards-receipt.json`, and the pre-push hook keeps a copy at `.git/praetor-receipts/<sha>.json`. It must certify the pull request's head commit; a rebase invalidates it, so re-mint after one.
 
 ```receipt
 <!-- Paste the contents of .standards-receipt.json here, replacing this line. -->

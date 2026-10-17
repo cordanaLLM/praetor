@@ -596,7 +596,7 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 
 	payload := map[string]any{
 		"title": req.Title,
-		"body":  req.Body,
+		"body":  UnwrapForgeText(req.Body),
 		"head":  req.Head,
 		"base":  req.Base,
 		"draft": req.Draft,
@@ -625,7 +625,7 @@ func (g *GitHubDriver) CreatePullRequest(ctx context.Context, req PRRequest) (*P
 func (g *GitHubDriver) buildIssuePayload(ctx context.Context, spec IssueSpec) (map[string]any, error) {
 	payload := map[string]any{
 		"title": spec.Title,
-		"body":  spec.Body,
+		"body":  UnwrapForgeText(spec.Body),
 	}
 	if len(spec.Labels) > 0 {
 		payload["labels"] = spec.Labels
@@ -883,7 +883,7 @@ func (g *GitHubDriver) EditIssueBody(ctx context.Context, number int, body strin
 	if number <= 0 {
 		return fmt.Errorf("edit issue body: issue number must be positive, got %d", number)
 	}
-	return g.patchIssue(ctx, number, map[string]any{"body": body})
+	return g.patchIssue(ctx, number, map[string]any{"body": UnwrapForgeText(body)})
 }
 
 // patchIssue sends one PATCH of an existing issue: the single write path UpdateIssue and

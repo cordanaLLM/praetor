@@ -1,6 +1,8 @@
 package adopt
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -8,15 +10,16 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // Positive: every governance document adoption scaffolds passes markdownlint's default
-// rules without disabling any of them.
+// rules without disabling any of them. prTemplateFile is excluded here because it is forge
+// text (tested separately under forge text unwrapping rules in TestScaffoldedPullRequestTemplatePassesForgeTextValidation).
 func TestScaffoldedGovernanceDocumentsPassDefaultMarkdownlint(t *testing.T) {
 	documents := map[string]string{
 		contributingFile: buildContributingGuide("acme-widgets"),
-		prTemplateFile:   buildPullRequestTemplate(),
 		securityFile:     buildSecurityPolicy(),
 		adrIndexFile:     buildADRIndex(),
 		adrTemplateFile:  buildADRTemplate(),
@@ -28,6 +31,52 @@ func TestScaffoldedGovernanceDocumentsPassDefaultMarkdownlint(t *testing.T) {
 		if strings.Contains(doc, "markdownlint-disable") {
 			t.Errorf("%s disables a lint rule it should satisfy", name)
 		}
+	}
+}
+
+// TestScaffoldedPullRequestTemplatePassesForgeTextValidation verifies that the scaffolded PR template
+// complies with forge text paragraph wrapping rules.
+func TestScaffoldedPullRequestTemplatePassesForgeTextValidation(t *testing.T) {
+	doc := buildPullRequestTemplate()
+	findings := forge.ValidateForgeParagraphs(doc, prTemplateFile)
+	if len(findings) != 0 {
+		t.Fatalf("scaffolded PR template has hard-wrapped forge paragraphs: %v\n%s", findings, doc)
+	}
+}
+
+// TestPriorPullRequestTemplate_RefreshesPrior verifies that an adopter repository holding
+// the earlier hard-wrapped pull request template is migrated to the unwrapped template.
+func TestPriorPullRequestTemplate_RefreshesPrior(t *testing.T) {
+	priorContent := markdownDocument(
+		"# Pull Request",
+		"",
+		"## Description",
+		"",
+		"<!-- Summarize the changes and their architectural rationale. -->",
+		"",
+		"## Pre-Merge Verification Checklist",
+		"",
+		"- [ ] Local verification passed: `make verify-all`",
+		"- [ ] No new HISS / NASA Power-of-10 infractions (all new/modified functions",
+		"  $\\le 60$ LOC)",
+		"- [ ] 3D Tests included (Positive, Negative, Boundary) for public APIs",
+		"- [ ] Agent contexts in sync: `standardsctl compile-context --verify`",
+		"- [ ] Commit messages adhere to Conventional Commits format",
+	)
+	repoPath := newTestRepo(t, "pr-template-refresh")
+	target := filepath.Join(repoPath, filepath.FromSlash(prTemplateFile))
+	mustWrite(t, target, priorContent)
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	assertNoIssues(t, rep)
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read refreshed template: %v", err)
+	}
+	if string(after) != buildPullRequestTemplate() {
+		t.Fatalf("pull request template was not refreshed:\n got: %s\nwant: %s", string(after), buildPullRequestTemplate())
 	}
 }
 

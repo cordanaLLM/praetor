@@ -46,6 +46,7 @@ type ReceiptPolicy struct {
 	PinnedKey         ed25519.PublicKey
 	HeadSHA           string
 	ClosingReferences ClosingReferencePolicy
+	Filename          string
 }
 
 // ReviewerAssignment contains mapped human owners and review automation bots.
@@ -110,6 +111,11 @@ func ValidatePRChecklistWithPolicyContext(ctx context.Context, prBody string, po
 	closingErrors, closingWarnings := closingReferenceFindings(ctx, strings.Join(lines, "\n"), "pull request body", policy.ClosingReferences)
 	res.Errors = append(res.Errors, closingErrors...)
 	res.Warnings = append(res.Warnings, closingWarnings...)
+	where := policy.Filename
+	if where == "" {
+		where = "pull request body"
+	}
+	res.Errors = append(res.Errors, ValidateForgeParagraphs(prBody, where)...)
 	receipt, err := extractReceiptBlock(lines)
 	if err != nil {
 		res.Errors = append(res.Errors, err.Error())

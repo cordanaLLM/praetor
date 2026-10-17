@@ -1,0 +1,3 @@
+type: changed
+title: Keep forge text on one line per paragraph and unwrap squash bodies before they are sent
+breaking: false
