@@ -148,7 +148,10 @@ func restrictToOwner(file *os.File, dir bool) error {
 	})
 }
 
-// writeDACHandle returns a handle on the object file names that may change its DACL.
+// writeDACHandle returns a handle on the object file names that may change its DACL. A
+// directory is opened by its name, following a link the way os.Open did, so an in-root link
+// gets the DACL on the directory it names; the identity check refuses a name that now names
+// another object than the one file holds.
 func writeDACHandle(file *os.File, dir bool) (syscall.Handle, error) {
 	if !dir {
 		handle, _, callErr := procReOpenFile.Call(file.Fd(), accessWriteDAC|accessReadControl, fileShareAll, 0)
@@ -162,7 +165,7 @@ func writeDACHandle(file *os.File, dir bool) (syscall.Handle, error) {
 		return 0, err
 	}
 	handle, err := syscall.CreateFile(name, accessWriteDAC|accessReadControl, fileShareAll, nil, syscall.OPEN_EXISTING,
-		syscall.FILE_FLAG_BACKUP_SEMANTICS|syscall.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+		syscall.FILE_FLAG_BACKUP_SEMANTICS, 0)
 	if err != nil {
 		return 0, fmt.Errorf("util: open %q to set its DACL: %w", file.Name(), err)
 	}
