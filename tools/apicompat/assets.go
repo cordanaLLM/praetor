@@ -138,6 +138,8 @@ var priorDigests = map[string]string{
 	"12d6d77464b18617aa0e1001a05c7850b76641c5205447e70f1b0e72ff630ebb": WorkflowFile, // the draft skip workflow before its concurrency group
 	// The gate before it accepted identical type aliases across packages (engine-apicompat-alias-identical).
 	"45566ecd8cbec806eea0ab14d60f01cf95d134b170ea09a6a52b8aa73d7e14ca": Directory + "/" + GateFile,
+	// The gate before it collected aliases across tracked modules (#1411).
+	"fe26bf523fce6ef124244e389bef93dd89395f3f52c00fbcd1c6fd6b6f42feee": Directory + "/" + GateFile,
 	// The gate that passed every pre-v1 incompatible change under policy auto as a warning, marked or
 	// not (#1317).
 	"fd668d77af454da56c6299dfcc1e4f5f49f8d007465489af0ead0067e96fc07d": Directory + "/" + GateFile,
