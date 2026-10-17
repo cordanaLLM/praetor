@@ -268,7 +268,7 @@ dependencies:
       status: gap
       notes: External PyPI dependency requiring a target framework adapter or evaluation
     - package: pymdown-extensions
-      version: 12.2 \
+      version: 12.3 \
       language: python
       ecosystem: pypi
       capability: python.external.pymdown_extensions
@@ -504,4 +504,4 @@ readiness:
     total_third_party_deps: 60
     covered_deps: 0
     gap_deps: 60
-updated_at: 2026-10-17T03:18:59.159786529Z
+updated_at: 2026-10-17T03:20:17.423161774Z
