@@ -1,0 +1,4 @@
+type: added
+title: Vendor the published upstream schemas for Claude Code, Gemini CLI, Codex, opencode and MCP at pinned versions, validate every rendered client config, hook fixture and standards-mcp response against them in a test-only module, generate the Codex hook and MCP message types with go generate and a staleness gate, and report the pinned schema version per client in clients capabilities
+issue: "#909"
+breaking: false

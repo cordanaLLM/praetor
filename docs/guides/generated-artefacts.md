@@ -52,6 +52,7 @@ files exist, so a repository without a needs manifest has no "needs manifest" ar
 | needs manifest | `.needs.yaml` | `praetorctl needs scan --write --manifest=`, with no operator settings | the manifest exists |
 | documentation figures | the `.json` and `.svg` renderings in `docs/assets/figures/` | `node tools/figures/build.mjs build` | `tools/figures/build.mjs` exists |
 | shipped-text ledger | the ledgers in `internal/managedasset/testdata/shipped/` | `go test` of `TestShippedTextLedger` with `PRAETOR_UPDATE_SHIPPED_TEXTS=1` | a Praetor source checkout |
+| client schema types | `internal/codexhook/events_gen.go` and `internal/mcpwire/messages_gen.go` | `go test` of `TestGeneratedTypesAreFresh` with `PRAETOR_UPDATE_CLIENT_SCHEMA_TYPES=1` ([client schemas](client-schemas.md)) | a Praetor source checkout |
 | devcontainer bundle | the files `devcontainer generate` writes to `.devcontainer/` | `praetorctl devcontainer generate --source-root=. --force` | a Praetor source checkout with `.devcontainer/Dockerfile.praetor` |
 
 They render in this order, so the README block reads the baseline the row above it has just

@@ -1,0 +1,14 @@
+{
+  "cwd": "{repository}",
+  "model": "gpt-5-codex",
+  "permission_mode": "default",
+  "session_id": "session-codex",
+  "transcript_path": null,
+  "turn_id": "turn-codex",
+  "hook_event_name": "SubagentStop",
+  "agent_id": "agent-codex",
+  "agent_type": "default",
+  "agent_transcript_path": null,
+  "last_assistant_message": "goal: patch\ninputs: a\nreturn: diff\nevidence: tests\ntask: feature_implementation\n",
+  "stop_hook_active": false
+}

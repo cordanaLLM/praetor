@@ -29,6 +29,7 @@ const (
 	NameFigures       = "documentation figures"
 	NameShippedTexts  = "shipped-text ledger"
 	NameDevContainer  = "devcontainer bundle"
+	NameClientTypes   = "client schema types"
 )
 
 // praetorSourceMarker is the file only a Praetor source checkout holds; the artefacts rendered
@@ -83,6 +84,11 @@ func builtinArtefacts(manifest *config.Manifest) ([]builtin, error) {
 			Command: []string{"go", "test", "-count=1", "-run", "^TestShippedTextLedger$", "./internal/managedasset"},
 			Env:     map[string]string{"PRAETOR_UPDATE_SHIPPED_TEXTS": "1"},
 			Sources: []string{"internal/managedasset/*.go", "tools/markdownlint/**", "tools/apicompat/**", "tools/figures/**", ".github/workflows/praetor-*.yml"}}},
+		{praetor: true, decl: config.GeneratedArtefact{Name: NameClientTypes,
+			Paths:   []string{"internal/codexhook/events_gen.go", "internal/mcpwire/messages_gen.go"},
+			Command: []string{"go", "test", "-count=1", "-run", "^TestGeneratedTypesAreFresh$", "./internal/clientschema/typegen"},
+			Env:     map[string]string{"PRAETOR_UPDATE_CLIENT_SCHEMA_TYPES": "1"},
+			Sources: []string{"internal/clientschema/upstream/**", "internal/clientschema/typegen/*.go"}}},
 		{praetor: true, requires: ".devcontainer/Dockerfile.praetor", decl: config.GeneratedArtefact{Name: NameDevContainer,
 			Paths:   []string{".devcontainer/devcontainer.json", ".devcontainer/Dockerfile.praetor", ".devcontainer/praetor-source.*.b64"},
 			Command: []string{SelfCommand, "devcontainer", "generate", "--source-root=.", "--force"},

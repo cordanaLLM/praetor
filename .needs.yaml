@@ -68,6 +68,8 @@ capabilities:
         - ui.external.jsonc_parser
         - ui.external.markdownlint
         - ui.external.smol_toml
+        - custom.github_com_pelletier_go_toml_v2
+        - custom.github_com_santhosh_tekuri_jsonschema_v6
     optional:
         - clikit.cli
         - mcp.server
@@ -482,10 +484,24 @@ dependencies:
       capability: ui.external.smol_toml
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: github.com/santhosh-tekuri/jsonschema/v6
+      version: v6.0.3
+      language: go
+      ecosystem: go
+      capability: custom.github_com_santhosh_tekuri_jsonschema_v6
+      status: gap
+      notes: Third-party package without a target framework equivalent
+    - package: gopkg.in/yaml.v3
+      version: v3.0.1
+      language: go
+      ecosystem: go
+      capability: config.yaml
+      status: gap
+      notes: YAML parser and serializer (archived upstream 2025-04-01)
 readiness:
     basis: not-configured
     score: 0
-    total_third_party_deps: 58
+    total_third_party_deps: 60
     covered_deps: 0
-    gap_deps: 58
-updated_at: 2026-10-16T22:55:04.467549542Z
+    gap_deps: 60
+updated_at: 2026-10-17T03:18:59.159786529Z

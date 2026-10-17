@@ -13,6 +13,12 @@ It reports projection mode, documented destination and lifecycle definition
 coverage. `runtime_verified: false` and `activation: unverified` mean that the
 inventory has not inspected or activated any native client session.
 
+The same report names, per client, the upstream schema Praetor checks that client's
+formats against (`schema.state`, `schema.version`, `schema.sources`). Claude Code, Codex,
+Gemini CLI and the `opencode-v1` adapter are pinned; the others report `none` with the
+reason. [Client schemas](client-schemas.md) lists each pin, how a bump flows and the formats
+that have no upstream schema.
+
 VS Code is not in that inventory (`internal/clientid/clientid.go`). The Praetor
 VS Code extension offers the workspace `standards-mcp` server to VS Code chat
 through the MCP server definition provider API, so `praetorctl clients` writes

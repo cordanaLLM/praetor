@@ -51,6 +51,8 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 		return nil, fmt.Errorf("failed to scan AST imports: %w", err)
 	}
 
+	dropLocalModuleImports(astImports, module.localModules)
+
 	repoNeeds := &RepoNeeds{
 		Version:            1,
 		Repository:         repoName,

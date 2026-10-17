@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -148,7 +147,7 @@ func (c *ScanCoverage) ScannedLanguageNames() []string {
 	if c == nil {
 		return nil
 	}
-	return sortedLanguages(c.LanguagesRead)
+	return util.SortedKeys(c.LanguagesRead)
 }
 
 // UnscannedSourceSummary names every source language no scanner examined, with its file
@@ -159,7 +158,7 @@ func (c *ScanCoverage) UnscannedSourceSummary() string {
 	if c == nil {
 		return ""
 	}
-	languages := sortedLanguages(c.UnscannedLanguages)
+	languages := util.SortedKeys(c.UnscannedLanguages)
 	parts := make([]string, 0, len(languages)+1)
 	for _, language := range languages {
 		unit := "files"
@@ -168,7 +167,7 @@ func (c *ScanCoverage) UnscannedSourceSummary() string {
 		}
 		parts = append(parts, fmt.Sprintf("%s (%d %s)", language, c.UnscannedLanguages[language], unit))
 	}
-	if shells := sortedLanguages(c.UnscannedRunBlocks); len(shells) > 0 {
+	if shells := util.SortedKeys(c.UnscannedRunBlocks); len(shells) > 0 {
 		blocks := make([]string, 0, len(shells))
 		for _, shell := range shells {
 			blocks = append(blocks, fmt.Sprintf("%d %s", c.UnscannedRunBlocks[shell], shell))
@@ -176,15 +175,6 @@ func (c *ScanCoverage) UnscannedSourceSummary() string {
 		parts = append(parts, "GitHub Actions run: blocks ("+strings.Join(blocks, ", ")+")")
 	}
 	return strings.Join(parts, ", ")
-}
-
-func sortedLanguages(counts map[string]int) []string {
-	languages := make([]string, 0, len(counts))
-	for language := range counts {
-		languages = append(languages, language)
-	}
-	sort.Strings(languages)
-	return languages
 }
 
 // recordUnscanned counts one unscanned file under the language its extension names, if any.

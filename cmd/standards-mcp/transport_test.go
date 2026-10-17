@@ -629,7 +629,7 @@ func TestStdio_Negative_InvalidMessagesCarryNullOrReadableID(t *testing.T) {
 	}
 	for i, tc := range cases {
 		responses := decodeLines(t, lines[i])
-		if responses[0].Error == nil || responses[0].Error.Code != tc.code || !strings.Contains(lines[i], tc.id) {
+		if responses[0].Error == nil || responses[0].Error.Code != int64(tc.code) || !strings.Contains(lines[i], tc.id) {
 			t.Errorf("%s -> %s, want code %d and %s", tc.line, lines[i], tc.code, tc.id)
 		}
 	}

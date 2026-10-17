@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/mcpwire"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -107,11 +108,10 @@ func undeclaredArgumentsError(undeclared []string, properties map[string]Propert
 	return fmt.Errorf("%w: %s (declared: %s)", ErrUndeclaredArgument, strings.Join(names, ", "), accepted)
 }
 
-// ContentItem represents a typed content payload in an MCP tool execution result.
-type ContentItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
+// ContentItem represents a typed content payload in an MCP tool execution result. It is the MCP
+// schema's TextContent, generated from the vendored schema (internal/mcpwire); Praetor sets Type
+// and Text only, and the optional members stay out of the encoded result.
+type ContentItem = mcpwire.TextContent
 
 // ToolResult represents the output of an executed MCP tool.
 type ToolResult struct {
