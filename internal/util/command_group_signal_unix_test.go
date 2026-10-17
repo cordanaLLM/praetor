@@ -129,3 +129,40 @@ func deadGroupLeader(t *testing.T) int {
 	}
 	return cmd.Process.Pid
 }
+
+// TestGroupSignaller_PositiveNegativeBoundary_TargetBounds covers pid bounds for groupSignaller:
+// Refuse pid <= 1 (pid -1, 0, 1) and own group without calling g.kill. Real child's pid passes.
+func TestGroupSignaller_PositiveNegativeBoundary_TargetBounds(t *testing.T) {
+	ownPgrp := syscall.Getpgrp()
+	refused := []struct {
+		name string
+		pid  int
+	}{
+		{"boundary pid 1", 1},
+		{"boundary pid 0", 0},
+		{"negative pid -1", -1},
+		{"negative own group", ownPgrp},
+	}
+	for _, tc := range refused {
+		groups, script := scriptedGroups(3, nil)
+		err := groups.signal(tc.pid, syscall.SIGTERM)
+		if err == nil {
+			t.Errorf("%s (pid %d) was not refused", tc.name, tc.pid)
+		}
+		if len(script.calls) != 0 {
+			t.Errorf("%s (pid %d) called kill %v, want 0 calls", tc.name, tc.pid, script.calls)
+		}
+	}
+
+	childPid := deadGroupLeader(t)
+	if childPid <= 1 || childPid == ownPgrp {
+		t.Fatalf("deadGroupLeader returned unexpected pid %d", childPid)
+	}
+	groups, script := scriptedGroups(3, nil)
+	if err := groups.signal(childPid, syscall.SIGTERM); err != nil {
+		t.Fatalf("real child pid %d failed: %v", childPid, err)
+	}
+	if len(script.calls) != 1 || script.calls[0].pid != -childPid {
+		t.Fatalf("real child pid %d calls = %v, want [{-childPid, SIGTERM}]", childPid, script.calls)
+	}
+}

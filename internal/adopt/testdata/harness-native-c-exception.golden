@@ -25,7 +25,7 @@ Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. 
 | **HISS-05** scoping | declare every identifier in smallest lexical scope serving it | unknown | advisory |
 | **HISS-06** concurrency | explicit scalar upper bound on every worker pool + concurrent fan-out | unknown | advisory |
 | **HISS-07** errors | every error handled or wrapped with context | unknown | advisory |
-| **HISS-08** determinism | zero dynamic code execution (`eval` / `exec`); C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`) | `praetorctl audit` HISS scan in verify-all: C banned calls, Python `eval` / `exec`; Go unchecked | new finding fails verify-all |
+| **HISS-08** determinism | zero dynamic code execution (`eval` / `exec`); C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`); a process signal's target is bounded above 1 (`killpg`, `kill(-pid)`, Go `syscall.Kill`) | `praetorctl audit` HISS scan in verify-all: C banned calls, Python `eval` / `exec`, Go `syscall.Kill` / `unix.Kill` | new finding fails verify-all |
 | **HISS-09** reference safety | n/a: no such construct in repository languages; advisory | unknown | advisory |
 | **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | unknown | advisory |
 | **HISS-11** supply chain | pinned lockfiles; zero floating tags; signed provenance | unknown | advisory |

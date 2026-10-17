@@ -68,6 +68,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"c1572868510a383605b92cd80fad267c1a0b3d14e2bfd3dadd4d29db1aa5907a": "neutrality sweep (#509)",
 		"23dc3a3f64fcf17d5fb1a3aac8b0b42d5f266470bd8a67579dbcca6cd533c0ed": "stated reason for a component the root walk skips (#1219)",
 		"f5e11ef5e868e8799d47d9cf845dbcd5ad7f36f51d2dc34f759993a1dc0c07b2": "clean import order under adopter ruff",
+		"4e71a56df13bdf1f995bf89080bf9ef5201a6240061ec31895c7ba5939ccf801": "process signal bound above 1",
 	},
 	checkpointLauncher: {
 		"8b6266ea16912a362c2e26d9a936887ca955ecf68f69744c935f2259d1a2c8dc": "proven interpreter candidates (#339)",

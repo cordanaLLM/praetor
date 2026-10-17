@@ -305,6 +305,7 @@ func (g *goScanner) checkCall(call *ast.CallExpr) {
 	g.checkDotUnsafeCall(call)
 	g.checkContextSink(call)
 	g.checkContextlessIO(call)
+	g.checkSignalCall(call)
 }
 
 // checkUnboundedFor reports a for statement with no condition, the loop half of HISS-02.

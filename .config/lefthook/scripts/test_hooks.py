@@ -136,8 +136,11 @@ def reap_command_group(root):
     if not raw:
         return False
     try:
-        os.killpg(int(raw), signal.SIGKILL)
-    except ProcessLookupError:
+        pid = int(raw)
+        if pid <= 1 or pid == os.getpgrp():
+            return False
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, ValueError):
         return False
     return True
 

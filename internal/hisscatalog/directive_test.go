@@ -44,7 +44,7 @@ func TestAdoptedDirective_Positive_LanguageClausesFollowTheRepository(t *testing
 		{LanguageRust, "HISS-07", "every error handled or wrapped with context; Rust: zero `.unwrap()` / `.expect()` outside tests"},
 		{LanguageRust, "HISS-09", "Rust: `// SAFETY:` proof before every `unsafe` block"},
 		{LanguageC, "HISS-01", "recursion prohibited; call graph = DAG; C/C++: zero `goto`"},
-		{LanguageC, "HISS-08", "zero dynamic code execution (`eval` / `exec`); C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`)"},
+		{LanguageC, "HISS-08", "zero dynamic code execution (`eval` / `exec`); C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`); a process signal's target is bounded above 1 (`killpg`, `kill(-pid)`, Go `syscall.Kill`)"},
 	}
 	for _, tc := range cases {
 		if got := directiveOf(t, tc.id, Facts{Languages: tc.language}); got != tc.want {

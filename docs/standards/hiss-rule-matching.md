@@ -522,7 +522,8 @@ of a URL written in JSX text (`https://example.com`) opens no comment
   (`script_header.go` recognises the headers).
 - HISS-07: an empty catch block, a `.catch` with an empty handler, and `process.exit` outside a test
   file, module scope and a top-level `main`.
-- HISS-08: `eval`, the `Function` constructor and a string passed to `setTimeout` or `setInterval`.
+- HISS-08: `eval`, the `Function` constructor, a string passed to `setTimeout` or `setInterval`,
+  and `process.kill(-pid)` whose target is not bounded above 1.
 
 A parameter list may hold a destructuring pattern, an object type or a default value, on one line
 or wrapped one name per line, as a React component's props usually are: `closeParen` in

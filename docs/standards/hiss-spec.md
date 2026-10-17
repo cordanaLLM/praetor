@@ -109,6 +109,10 @@ Dynamic runtime code evaluation is strictly banned:
 
 - Total ban on `eval()`, `exec()`, and dynamic string compilation.
 - Total ban on insecure C runtime functions (`gets`, `strcpy`, `sprintf`).
+- A process signal needs a target bounded above 1 (`killpg`, `kill(-pid)`, Go `syscall.Kill`, `unix.Kill`, Node `process.kill(-pid)`). Signal calls to a process group or process must verify the target exceeds 1 or is guarded earlier in the scope.
+  - Python guard shape: `if not isinstance(pgid, int) or isinstance(pgid, bool) or pgid <= 1 or pgid == os.getpgrp(): <refuse>`
+  - Go guard shape: `if pid <= 1 || pid == os.Getpid() || pid == syscall.Getpgrp() { <refuse> }`
+  - JavaScript / TypeScript guard shape: `if (child.pid <= 1) <refuse>`
 
 ### HISS-09: Reference Safety & Mandatory Safety Proofs
 
