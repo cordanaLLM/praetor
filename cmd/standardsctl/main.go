@@ -116,6 +116,7 @@ func printCoreCommands() {
 	fmt.Println("  go vet            Run go vet ./... in every tracked Go module")
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
+	fmt.Println("  skills             Fetch, verify, and manage pinned upstream skills (pin-sync, pin-verify)")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
 }
 
@@ -265,6 +266,7 @@ func coreCommandTable() map[string]commandFunc {
 		"go":                       runGo,
 		"seo":                      runSEO,
 		"sentinel":                 runSentinel,
+		"skills":                   runSkills,
 		"efficiency":               runEfficiency,
 		"efficiency-ledger":        runEfficiency,
 		"worktree":                 runWorktree,

@@ -296,7 +296,14 @@ Codex, Gemini CLI, Cursor, Copilot and Windsurf read `.agents/skills/`; Claude C
 `compile-context` copies each of the three skills the repository carries into
 `.claude/skills/`, and `--verify` and the audit's projection gate refuse a missing or edited
 copy (`compiler.VerifyClientSkills`, `internal/compiler/client_skills_test.go`). A
-repository's own skills are not copied, and `.claude/skills/` may hold skills of its own.
+repository's own unpinned skills are not copied, and `.claude/skills/` may hold skills of its own.
+Pinned upstream skills (`skills.upstream` in `.standards.yaml`, fetched via `praetorctl skills pin-sync`)
+carry a `.pin.json` record; `compile-context` projects them into `.claude/skills/` alongside bundle
+skills, and `--verify` and `audit` refuse missing, tampered, or drifted copies
+(`compiler.VerifyClientSkills`, `cmd/standardsctl/skills_test.go`). A `.pin.json` record without a matching
+manifest entry (`skills.upstream` listing the skill with equal repo, tag and commit) causes `--verify` to fail
+naming the skill and the missing manifest entry. Licence detection during `pin-sync` requires an identified
+licence from LICENSE text or front matter, refusing to record unknown or empty licences.
 Adoption writes the copies in its agent-definitions step. With that step declined and Claude
 Code selected, the agent-harness step installs no skill and warns why, because no step would
 write the copies `--verify` then requires
@@ -749,6 +756,14 @@ lint, plus a 600-prose-word ceiling (`compiler.AgentTextCeiling`), over every fi
 skills are agent-only text under `SurfaceContext`, not an emission surface a manifest can
 turn off. The gate shares one run with the nested AGENTS.md lint above, and a pass prints
 both counts:
+
+An upstream skill pinned via `skills.upstream` in `.standards.yaml` and recorded with a valid
+`.pin.json` whose file digests match is scoped out of the 600-prose-word ceiling and caveman
+lint (`caveman.VerifySkillPin`, `compiler.LintCanonicalSkillFiles`). Any modification or tampering
+fails the hash check and causes `compile-context --verify` and `audit` to fail closed.
+The exemption is strictly scoped by the manifest: a skill counts as pinned only when `skills.upstream`
+lists its name under an entry whose repo, tag and commit equal the pin record's. A `.pin.json` without
+such an entry is linted as an own skill, and a manifest entry whose commit differs from the record is refused.
 
 ```text
 0 nested AGENTS.md, 6 personas and 13 skills passed the caveman lint (personas and skills <= 600 prose words each).
