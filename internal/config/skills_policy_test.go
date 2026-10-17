@@ -295,3 +295,24 @@ func TestValidSkillName_Planted_EvilRefused(t *testing.T) {
 		t.Fatal("ValidSkillName(skill.1_2) = false; want true")
 	}
 }
+
+// Positive (HISS-21): a temporary directory, which is C:\Users\... on Windows, is a valid
+// repository path on every platform; so is a path relative to the manifest in this host's
+// separator. The Windows leg refused every TestSkillsPinSync fixture before this.
+func TestValidRepoLocation_Positive_HostAbsoluteAndRelativePaths(t *testing.T) {
+	for _, repo := range []string{t.TempDir(), "./skills", "../skills", "." + string(filepath.Separator) + "skills",
+		"https://github.com/example/skills", "file:///srv/skills"} {
+		if !ValidRepoLocation(repo) {
+			t.Errorf("ValidRepoLocation(%q) = false, want true", repo)
+		}
+	}
+}
+
+// Negative: a bare name, a line break, an over-long value and an empty value stay refused.
+func TestValidRepoLocation_Negative_NotALocation(t *testing.T) {
+	for _, repo := range []string{"", "skills", "github.com/example/skills", "./a\nb", "/" + strings.Repeat("a", MaxUpstreamRepoBytes)} {
+		if ValidRepoLocation(repo) {
+			t.Errorf("ValidRepoLocation(%q) = true, want false", repo)
+		}
+	}
+}

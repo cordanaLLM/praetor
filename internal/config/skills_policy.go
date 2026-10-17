@@ -98,7 +98,9 @@ func ValidSkillName(name string) bool {
 	return skillNameRe.MatchString(name)
 }
 
-// ValidRepoLocation reports whether repo is a non-empty, bounded repository URL or path.
+// ValidRepoLocation reports whether repo is a non-empty, bounded repository URL or path: an
+// http(s) or file URL, a path absolute on this host (filepath.IsAbs, so C:\x on Windows), or a
+// path relative to the manifest that starts with ./ or ../ in either separator.
 func ValidRepoLocation(repo string) bool {
 	if len(repo) == 0 || len(repo) > MaxUpstreamRepoBytes {
 		return false
@@ -110,7 +112,15 @@ func ValidRepoLocation(repo string) bool {
 		_, err := url.Parse(repo)
 		return err == nil
 	}
-	return strings.HasPrefix(repo, "/") || strings.HasPrefix(repo, "./") || strings.HasPrefix(repo, "../")
+	if strings.HasPrefix(repo, "/") || filepath.IsAbs(repo) {
+		return true
+	}
+	for _, prefix := range []string{"./", "../", "." + string(filepath.Separator), ".." + string(filepath.Separator)} {
+		if strings.HasPrefix(repo, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateManifestSkills validates the `skills` section of the manifest.
