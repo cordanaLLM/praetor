@@ -144,3 +144,17 @@ func TestForgeRefactorCheck_Boundary_RootCommit(t *testing.T) {
 		t.Fatalf("root refactor commit: %v\n%s", err, out)
 	}
 }
+
+// Boundary: a removed line whose text starts with "-- " is a body line of its hunk, not a file
+// header, so the removed assertion after it is still found on its own line.
+func TestForgeRefactorCheck_Boundary_RemovedDashLineKeepsLineNumbers(t *testing.T) {
+	f := newRefactorFixture(t)
+	writeFixtureFile(t, f.dir, "value_test.go", "package sample\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n got := Value()\n _ = `\n-- seed`\n if got != 1 { t.Fatalf(\"got %d\", got) }\n}\n")
+	f.base = commitRefactorFixture(t, f, "test: seed a raw string")
+	writeFixtureFile(t, f.dir, "value_test.go", "package sample\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n got := Value()\n _ = `\n`\n _ = got\n}\n")
+	commitRefactorFixture(t, f, "refactor: drop the seed")
+	out, err := runRefactorFixture(t, f, false)
+	if err == nil || !strings.Contains(out, "value_test.go:9 removed or edited assertion line") {
+		t.Fatalf("the removed assertion after a dash line must fail the gate: %v\n%s", err, out)
+	}
+}

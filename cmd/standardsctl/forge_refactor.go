@@ -185,65 +185,111 @@ func checkRefactorCommit(ctx context.Context, repo string, commit refactorCommit
 
 type sourceLineSpan struct{ start, end int }
 
+// maxRefactorPatchLines bounds the test diff one refactor commit is checked against (HISS-02).
+const maxRefactorPatchLines = 1 << 22
+
+// refactorAssertionChange returns why commit's test diff, patch (unified, no context), breaks
+// the assertion lock, or "" when it does not: a removed or added line inside an assertion call
+// of the parent's or the commit's file, or a removed test function.
 func refactorAssertionChange(ctx context.Context, repo string, commit refactorCommit, patch string) (string, error) {
-	oldPath, newPath := "", ""
-	oldLine, newLine := 0, 0
-	var oldAssertions, newAssertions []sourceLineSpan
-	loaded := false
-	for _, line := range strings.Split(patch, "\n") {
-		if strings.HasPrefix(line, "diff --git a/") {
-			var err error
-			oldPath, newPath, err = refactorDiffPaths(line)
-			if err != nil {
-				return "", err
-			}
-			loaded = false
-		}
-		if line == "--- /dev/null" {
-			oldPath = "/dev/null"
-		}
-		if line == "+++ /dev/null" {
-			newPath = "/dev/null"
-		}
-		if match := refactorHunk.FindStringSubmatch(line); len(match) == 3 {
-			if !loaded {
-				var err error
-				oldAssertions, newAssertions, err = loadRefactorAssertionSpans(ctx, repo, commit, oldPath, newPath)
-				if err != nil {
-					return "", err
-				}
-				loaded = true
-			}
-			parsedOld, parsedNew, err := refactorHunkLines(match)
-			if err != nil {
-				return "", err
-			}
-			oldLine, newLine = parsedOld, parsedNew
-			continue
-		}
-		if strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") || line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "-") {
-			if reason := removedTestLine(line[1:], oldPath, oldLine, oldAssertions); reason != "" {
-				return reason, nil
-			}
-			oldLine++
-			continue
-		}
-		if strings.HasPrefix(line, "+") {
-			if reason := addedTestLine(newPath, newLine, newAssertions); reason != "" {
-				return reason, nil
-			}
-			newLine++
-			continue
-		}
-		if line[0] == ' ' {
-			oldLine++
-			newLine++
+	lines := strings.Split(patch, "\n")
+	if len(lines) > maxRefactorPatchLines {
+		return "", fmt.Errorf("test diff exceeds %d lines", maxRefactorPatchLines)
+	}
+	walk := refactorPatchWalk{repo: repo, commit: commit}
+	for i := 0; i < len(lines) && i < maxRefactorPatchLines; i++ {
+		reason, err := walk.step(ctx, lines[i])
+		if err != nil || reason != "" {
+			return reason, err
 		}
 	}
 	return "", nil
+}
+
+// refactorPatchWalk follows a unified test diff one line at a time: the file it is in, whether
+// it is inside a hunk, and the parent and commit line each body line stands on. Header lines
+// are read only before a file's first hunk, so a removed line whose text starts with "-- " is a
+// body line.
+type refactorPatchWalk struct {
+	repo               string
+	commit             refactorCommit
+	oldPath, newPath   string
+	oldLine, newLine   int
+	oldSpans, newSpans []sourceLineSpan
+	loaded, inHunk     bool
+}
+
+// step reads one diff line and returns the lock violation it shows, if any.
+func (w *refactorPatchWalk) step(ctx context.Context, line string) (string, error) {
+	switch {
+	case strings.HasPrefix(line, "diff --git a/"):
+		return "", w.startFile(line)
+	case strings.HasPrefix(line, "@@ "):
+		return "", w.startHunk(ctx, line)
+	case !w.inHunk:
+		w.header(line)
+		return "", nil
+	}
+	return w.body(line), nil
+}
+
+// startFile resets the walk for the file a "diff --git" line opens.
+func (w *refactorPatchWalk) startFile(line string) error {
+	oldPath, newPath, err := refactorDiffPaths(line)
+	if err != nil {
+		return err
+	}
+	*w = refactorPatchWalk{repo: w.repo, commit: w.commit, oldPath: oldPath, newPath: newPath}
+	return nil
+}
+
+// header records a side the file header marks as absent.
+func (w *refactorPatchWalk) header(line string) {
+	switch line {
+	case "--- /dev/null":
+		w.oldPath = "/dev/null"
+	case "+++ /dev/null":
+		w.newPath = "/dev/null"
+	}
+}
+
+// startHunk loads the file's assertion spans at its first hunk and moves to the hunk's lines.
+func (w *refactorPatchWalk) startHunk(ctx context.Context, line string) error {
+	match := refactorHunk.FindStringSubmatch(line)
+	if len(match) != 3 {
+		return fmt.Errorf("malformed test diff hunk header %q", line)
+	}
+	if !w.loaded {
+		oldSpans, newSpans, err := loadRefactorAssertionSpans(ctx, w.repo, w.commit, w.oldPath, w.newPath)
+		if err != nil {
+			return err
+		}
+		w.oldSpans, w.newSpans, w.loaded = oldSpans, newSpans, true
+	}
+	oldLine, newLine, err := refactorHunkLines(match)
+	if err != nil {
+		return err
+	}
+	w.oldLine, w.newLine, w.inHunk = oldLine, newLine, true
+	return nil
+}
+
+// body checks one hunk line against the assertion spans and advances the line counters.
+func (w *refactorPatchWalk) body(line string) string {
+	switch {
+	case strings.HasPrefix(line, "-"):
+		reason := removedTestLine(line[1:], w.oldPath, w.oldLine, w.oldSpans)
+		w.oldLine++
+		return reason
+	case strings.HasPrefix(line, "+"):
+		reason := addedTestLine(w.newPath, w.newLine, w.newSpans)
+		w.newLine++
+		return reason
+	case strings.HasPrefix(line, " "):
+		w.oldLine++
+		w.newLine++
+	}
+	return ""
 }
 
 func removedTestLine(text, path string, line int, assertions []sourceLineSpan) string {
@@ -373,7 +419,6 @@ func runRefactorTests(ctx context.Context, repo string, commit refactorCommit) s
 	if err != nil {
 		return "create temporary worktree: " + err.Error()
 	}
-	defer os.RemoveAll(worktree)
 	if err := refactorWorktree(ctx, repo, "add", "--detach", worktree, commit.sha); err != nil {
 		removeErr := os.RemoveAll(worktree)
 		if removeErr != nil {
@@ -383,7 +428,8 @@ func runRefactorTests(ctx context.Context, repo string, commit refactorCommit) s
 	}
 	args := append([]string{"test", "-timeout", refactorTestTimeout.String()}, packages...)
 	testErr := refactorGoTest(ctx, worktree, args)
-	removeWorktreeErr := refactorWorktree(context.Background(), repo, "remove", "--force", worktree)
+	// The cleanup runs after a cancelled check too, so it keeps ctx's values but not its cancel.
+	removeWorktreeErr := refactorWorktree(context.WithoutCancel(ctx), repo, "remove", "--force", worktree)
 	removeDirErr := os.RemoveAll(worktree)
 	if removeWorktreeErr != nil || removeDirErr != nil {
 		return fmt.Sprintf("temporary worktree cleanup failed: git=%v directory=%v", removeWorktreeErr, removeDirErr)
