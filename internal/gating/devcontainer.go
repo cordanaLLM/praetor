@@ -423,7 +423,39 @@ func devcontainerHome(ctx context.Context) (string, error) {
 	if home, err = util.ResolveExistingPath(ctx, home); err != nil {
 		return "", fmt.Errorf("resolve the devcontainer home to mount: %w", err)
 	}
+	if err := disableContainerTelemetry(home); err != nil {
+		return "", err
+	}
 	return home, nil
+}
+
+// containerTelemetryModeRel is where the Go tools in the container read their telemetry mode:
+// os.UserConfigDir below the container's HOME, the image setting no XDG_CONFIG_HOME, then
+// go/telemetry/mode (golang.org/x/telemetry's Dir).
+const containerTelemetryModeRel = ".config/go/telemetry/mode"
+
+// maxTelemetryModeBytes bounds the mode file read: a mode and an optional date fit in 32 bytes.
+const maxTelemetryModeBytes = 256
+
+// disableContainerTelemetry records telemetry mode off in home, the devcontainer HOME every gate
+// run on the host mounts. With the default mode, local, the Go tools of concurrent runs map the
+// same counter files there, and a go build crashed with SIGBUS when another run grew one (#1429);
+// with telemetry off no Go process writes or maps a counter. A file that already says off is left
+// as it is.
+func disableContainerTelemetry(home string) error {
+	modeFile := filepath.Join(home, filepath.FromSlash(containerTelemetryModeRel))
+	if data, err := util.ReadConfinedLimited(home, filepath.FromSlash(containerTelemetryModeRel), maxTelemetryModeBytes); err == nil {
+		if fields := strings.Fields(string(data)); len(fields) > 0 && fields[0] == "off" {
+			return nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(modeFile), 0o700); err != nil {
+		return fmt.Errorf("create the devcontainer telemetry directory: %w", err)
+	}
+	if err := util.WriteFileAtomic(modeFile, []byte("off\n"), 0o600); err != nil {
+		return fmt.Errorf("turn Go telemetry off in the devcontainer home: %w", err)
+	}
+	return nil
 }
 
 // toolchain is a Go toolchain whose commands run in the devcontainer, started through base.
