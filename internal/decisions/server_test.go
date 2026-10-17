@@ -63,7 +63,7 @@ func TestRunChildPassesStreamsAndExitCode(t *testing.T) {
 	stdin := strings.NewReader("request\n")
 	var stdout, stderr bytes.Buffer
 	err := runChild(t.Context(), os.Args[0], []string{"-test.run=TestDecisionChildHelper"}, stdin, &stdout, &stderr)
-	if err != nil || stdout.String() != "request\nPASS\n" || stderr.String() != "child stderr\n" {
+	if err != nil || stdout.String() != "request\n" || stderr.String() != "child stderr\n" {
 		t.Fatalf("child streams stdout=%q stderr=%q err=%v", stdout.String(), stderr.String(), err)
 	}
 	t.Setenv("PRAETOR_DECISION_HELPER_EXIT", "23")
@@ -88,6 +88,9 @@ func TestDecisionChildHelper(t *testing.T) {
 	if value != "0" {
 		os.Exit(23)
 	}
+	// Exit before the testing framework prints PASS and, under -cover, a coverage line: the
+	// parent compares stdout exactly.
+	os.Exit(0)
 }
 
 func TestPinCheckCancelled(t *testing.T) {

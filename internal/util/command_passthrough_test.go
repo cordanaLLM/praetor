@@ -16,7 +16,7 @@ func TestRunCommandPassthroughStreamsAndExit(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := RunCommandPassthrough(t.Context(), "", os.Args[0], bytes.NewBufferString("request\n"), &stdout, &stderr,
 		"-test.run=^TestCommandPassthroughHelper$")
-	if err != nil || stdout.String() != "request\nPASS\n" || stderr.String() != "child stderr\n" {
+	if err != nil || stdout.String() != "request\n" || stderr.String() != "child stderr\n" {
 		t.Fatalf("stdout=%q stderr=%q err=%v", stdout.String(), stderr.String(), err)
 	}
 }
@@ -60,4 +60,7 @@ func TestCommandPassthroughHelper(t *testing.T) {
 	if os.Getenv("PRAETOR_COMMAND_PASSTHROUGH_EXIT") == "23" {
 		os.Exit(23)
 	}
+	// Exit before the testing framework prints PASS and, under -cover, a coverage line: the
+	// parent compares stdout exactly.
+	os.Exit(0)
 }
