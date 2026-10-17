@@ -258,7 +258,13 @@ binary you built.
    (normalising package qualifiers). Reported changes matching that alias are accepted as
    compatible (`compatible: alias of identical type`), while actual signature changes (added or
    removed methods/fields, parameter type changes, removed names) remain incompatible
-   (`filterModuleOutput`; `TestGate_Positive_IdenticalTypeAliasAccepted`).
+   (`filterModuleOutput`; `TestGate_Positive_IdenticalTypeAliasAccepted`). The aliases are
+   collected once from every tracked module at `HEAD`, and each alias and its target are looked
+   up across the base and `HEAD` module sets, so a split module whose API names a type another
+   module turned into an alias is matched the same way (#1411;
+   `TestGate_Positive_CrossModuleIdenticalAliasAccepted`,
+   `TestGate_Negative_CrossModuleAliasKeepsRealChangeRejected`,
+   `TestGate_Boundary_CrossModuleAliasesDoNotChangeUnrelatedTarget`).
 5. **Root vendor directory.** go-apidiff loads every module with `-mod=vendor` when the
    repository root holds a `vendor` directory, and with `-mod=readonly` otherwise (`getPackages`
    in its `pkg/diff/run.go`). The go command vendors a nested module from that module's own
