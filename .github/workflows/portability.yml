@@ -197,11 +197,12 @@ jobs:
       # tracked tree with its untracked files (internal/identity) refused the 12 MB file there.
       # The printer writes UTF-8 whatever the console code page: cp1252 cannot encode every character a
       # test prints (run 38818801669 stopped at U+25CB), and a stderr line that is no JSON prints as is.
-      # internal/adopt runs on its own after the other packages: on Windows its suite takes about 31
-      # minutes since #166 runs its hermetic fixtures there, so it gets a longer bound under a dated
-      # test-timeout exception in .standards.yaml that fails the audit once it expires or excuses
-      # nothing (#1381). operationalsync's identity suite replays only the Windows-specific adopt
-      # tests on Windows, so it stays in the first run. Both runs always go; the step fails when either does.
+      # internal/adopt runs on its own after the other packages, under the same 30-minute bound. On
+      # Windows it took 1856 s while #166 ran its hermetic fixtures there; with that enablement taken
+      # out again (#1369) it takes 129 s (run 38983863003), so its longer bound and the dated
+      # exception for it are gone (#1381). operationalsync's identity suite replays only the
+      # Windows-specific adopt tests on Windows, so it stays in the first run. Both runs always go;
+      # the step fails when either does.
       - name: Test Every Package
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
         shell: bash
@@ -227,12 +228,11 @@ jobs:
           status=0
           go test -json -timeout 30m "${packages[@]}" > "$RUNNER_TEMP/run-1.json" 2>&1 || status=$?
           show "$RUNNER_TEMP/run-1.json"
-          go test -json -timeout "$ADOPT_TEST_TIMEOUT" "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
+          go test -json -timeout 30m "$adopt" > "$RUNNER_TEMP/run-2.json" 2>&1 || status=$?
           show "$RUNNER_TEMP/run-2.json"
           exit "$status"
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
-          ADOPT_TEST_TIMEOUT: ${{ matrix.name == 'Windows' && '60m' || '30m' }}
 
       - name: Upload Per-Test Timing
         if: ${{ !cancelled() && github.event.pull_request.draft != true }}
