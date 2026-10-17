@@ -673,8 +673,9 @@ rules:
           RUSTFLAGS, CARGO_TARGET_<triple>_RUSTFLAGS and CARGO_BUILD_RUSTFLAGS, a deny in the
           [lints.rust] table of every crate of the root Cargo.toml, CARGO_BUILD_WARNINGS=deny, or
           -D warnings after cargo clippy's "--"; a --cap-lints below deny defeats it. The
-          scaffolded Rust CI workflow (templates/rust/ci-rust.yml.tmpl) sets RUSTFLAGS: -D
-          warnings on its job. This repository holds no .rs file and no cargo lane. internal/hiss
+          scaffolded Rust CI workflows, templates/rust/ci-rust.yml.tmpl and
+          templates/rust/ci-rust-library.yml.tmpl, set RUSTFLAGS: -D warnings on their jobs.
+          This repository holds no .rs file and no cargo lane. internal/hiss
           reads .rs but implements only HISS-02/04/07/09.
         rationale: >-
           Measured with rustc 1.98.1 and clippy-driver from the same toolchain, each run once

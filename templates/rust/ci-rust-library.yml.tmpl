@@ -1,0 +1,62 @@
+<%- /* Rust library CI. cargo-semver-checks is pinned to the release checked by the flavor. */ -%>
+---
+name: CI
+
+<% hostedGateOn %>
+<% hostedGateConcurrency %>
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    env:
+      RUSTFLAGS: -D warnings
+    steps:
+<% hostedGateDraftStep %>
+      - name: Checkout source<% hostedGateStepIf %>
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check for Cargo.toml<% hostedGateStepIf %>
+        id: manifest
+        run: |
+          if [ -f Cargo.toml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Rust steps skipped: no Cargo.toml yet"
+          fi
+
+      - name: Install the stable toolchain<% hostedGateManifestStepIf %>
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --component clippy,rustfmt
+          rustup default stable
+
+      - name: Install cargo-semver-checks 0.51.0<% hostedGateManifestStepIf %>
+        run: cargo install cargo-semver-checks --version 0.51.0 --locked
+
+      - name: Check formatting<% hostedGateManifestStepIf %>
+        run: cargo fmt --all -- --check
+
+      - name: Lint<% hostedGateManifestStepIf %>
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test<% hostedGateManifestStepIf %>
+        run: cargo test --all-features
+
+      - name: Check API compatibility against the base revision<% hostedGateManifestStepIf %>
+        env:
+          BASELINE_REV: >-
+            ${{ github.event.pull_request.base.sha
+                || github.event.before }}
+        run: |
+          case "$BASELINE_REV" in
+            ""|0000000000000000000000000000000000000000)
+              echo "::notice::No baseline revision; API compatibility skipped"
+              exit 0
+              ;;
+          esac
+          cargo semver-checks \
+            --workspace \
+            --baseline-rev "$BASELINE_REV"

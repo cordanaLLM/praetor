@@ -512,8 +512,8 @@ A root with either marker still fails the job when its toolchain stages did not 
 `TestLefthookGate_Positive_PrePushGateAdmitsUnsupportedLanguages` in
 `internal/adopt/lefthook_gate_admit_test.go` runs the job line against a stub.
 
-The `rust-systems` flavor describes this setting as pre-commit clippy and rustfmt enforcement,
-and `flavor audit` holds it to that: `lefthook.yml` satisfies it only when its `pre-commit` run
+The `rust-systems` and `rust-library` flavors describe this setting as pre-commit clippy and
+rustfmt enforcement, and `flavor audit` holds it to that: `lefthook.yml` satisfies it only when its `pre-commit` run
 lines call `cargo fmt` (or `rustfmt`) and `cargo clippy`, in the commands map or a jobs list
 (`validRustLefthook` in `internal/flavor/lefthook_setting.go`, tests in
 `internal/flavor/lefthook_setting_test.go`). The other flavors accept any non-empty mapping.

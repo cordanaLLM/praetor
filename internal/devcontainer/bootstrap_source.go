@@ -411,8 +411,11 @@ type bootstrapAssetFamily struct {
 	source    string
 	directive string
 	assets    []string
-	preMove   bool
-	moved     map[string]map[string]string
+	// optional are assets a recorded archive may lack: templatesSinceRelease for the template
+	// family of an archived bundle.
+	optional []string
+	preMove  bool
+	moved    map[string]map[string]string
 }
 
 // preMoveBootstrapFamily derives the pre-move declaration for a family with Moved entries:
@@ -450,6 +453,14 @@ func preMoveBootstrapFamily(family managedasset.Family) (bootstrapAssetFamily, b
 	}, true
 }
 
+// templatesSinceRelease are the template bodies added after the latest release, which a bundle
+// recorded at that release cannot hold. An archived bundle verifies without them; a current one
+// must still carry every template. TestPriorReleaseBundleVerifiesAgainstCurrentEngine fails
+// until a new template is listed here, and the list empties once a release records them.
+var templatesSinceRelease = []string{
+	"templates/rust/ci-rust-library.yml.tmpl", // rust-library flavor (#67)
+}
+
 // archivedAssetFamilies yields the asset families recognized when validating a recorded
 // archive: the current families plus pre-move declarations for families with Moved entries.
 func archivedAssetFamilies() ([]bootstrapAssetFamily, error) {
@@ -459,6 +470,11 @@ func archivedAssetFamilies() ([]bootstrapAssetFamily, error) {
 	}
 	managed := managedasset.Families()
 	families := slices.Clone(current)
+	for index := range families {
+		if families[index].name == "template" {
+			families[index].optional = templatesSinceRelease
+		}
+	}
 	for index := 0; index < len(managed) && index < managedasset.MaxFamilies; index++ {
 		if preMove, ok := preMoveBootstrapFamily(managed[index]); ok {
 			families = append(families, preMove)
@@ -580,6 +596,9 @@ func selectFamilyDeclaration(source, directive string, archived []bootstrapAsset
 func verifySelectedFamilyAssets(selected *bootstrapAssetFamily, unselected []*bootstrapAssetFamily, files []bootstrapSourceFile, admitted map[string]bool) error {
 	for _, asset := range selected.assets {
 		if !containsBootstrapSource(files, asset) {
+			if slices.Contains(selected.optional, asset) {
+				continue
+			}
 			return fmt.Errorf("bootstrap %s asset %s is missing", selected.name, asset)
 		}
 		admitted[asset] = true

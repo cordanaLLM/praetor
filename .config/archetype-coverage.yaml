@@ -693,6 +693,15 @@ fields:
           re-reads each pinned file's features for
           config.ResolveDevContainerFeatures, which the devcontainer
           command, adoption and audit resolve
+  - key: devcontainer_features_by_language
+    go: [Archetype.DevFeaturesByLanguage]
+    state: consumed
+    consumers:
+      - func: internal/config.decodeArtifactFeatures
+        kind: acts
+        effect: >-
+          selects language-scoped DevContainer features from repository
+          manifests when resolving pinned catalog artifacts
   - key: backlog.caps.defects.max
     go: [BacklogCap.Max]
     state: consumed

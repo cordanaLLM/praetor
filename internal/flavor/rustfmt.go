@@ -118,9 +118,11 @@ func workspaceEditions(ctx context.Context, repoPath string, root cargoManifest)
 }
 
 // cargoCrate is one crate of a workspace: its name for messages, "the root package" or its
-// manifest's path, and what parseCargoManifest read from that manifest.
+// manifest's path, whether it is the root package, and what parseCargoManifest read from that
+// manifest.
 type cargoCrate struct {
 	name     string
+	root     bool
 	manifest cargoManifest
 }
 
@@ -134,7 +136,7 @@ func workspaceCrates(ctx context.Context, repoPath string, root cargoManifest) (
 	}
 	var crates []cargoCrate
 	if root.hasPackage {
-		crates = append(crates, cargoCrate{name: "the root package", manifest: root})
+		crates = append(crates, cargoCrate{name: "the root package", root: true, manifest: root})
 	}
 	dirs, problem := workspaceMemberDirs(repoPath, root)
 	if problem != "" {

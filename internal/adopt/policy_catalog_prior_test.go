@@ -43,6 +43,8 @@ var catalogValuesChangedSinceBUG782 = map[string]bool{
 	// install on Ubuntu 26.04, the reviewed base image; 4.1.1 and later install it there.
 	"app-service.yaml":     true,
 	"container-image.yaml": true,
+	// library-client now has language-selected linter and DevContainer requirements.
+	"library-client.yaml": true,
 }
 
 // Positive and negative, a deliberate tripwire: the shipped text of every earlier catalog file

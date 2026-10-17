@@ -211,6 +211,7 @@ func loadEffectivePolicy(ctx context.Context, opts EffectiveOptions, inputs map[
 		return nil, err
 	}
 	result.CatalogArtifacts = loader.artifacts
+	result.Root = paths.Root
 	return result, nil
 }
 

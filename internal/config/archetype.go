@@ -18,13 +18,14 @@ import (
 // the effective-policy loader and DevContainer feature resolution all read catalog files
 // through decodeArchetype, so the schema has exactly one reader.
 type Archetype struct {
-	ID          string
-	Name        string
-	Description string
-	Runtime     string
-	Complexity  ComplexityOverride
-	Controls    ArchetypeControls
-	Backlog     BacklogCaps
+	ID                    string
+	Name                  string
+	Description           string
+	Runtime               string
+	Complexity            ComplexityOverride
+	Controls              ArchetypeControls
+	DevFeaturesByLanguage map[string][]DevContainerFeature
+	Backlog               BacklogCaps
 }
 
 // ArchetypeControls are the lattice dimensions an archetype contributes besides
@@ -43,18 +44,19 @@ type ArchetypeControls struct {
 // fields refused, so a misspelled or unsupported key fails the file instead of silently
 // contributing nothing while the archetype reads as configured.
 type archetypeDocument struct {
-	ID                   string                 `yaml:"id"`
-	Name                 string                 `yaml:"name"`
-	Description          string                 `yaml:"description"`
-	Runtime              string                 `yaml:"runtime"`
-	Complexity           yaml.Node              `yaml:"complexity"`
-	Memory               MemoryPolicy           `yaml:"memory"`
-	ErrorUnwraps         ErrorUnwrapMode        `yaml:"error_unwraps"`
-	BranchProtection     BranchProtectionPolicy `yaml:"branch_protection"`
-	SupplyChain          SupplyChainPolicy      `yaml:"supply_chain"`
-	Linters              []string               `yaml:"linters"`
-	DevContainerFeatures yaml.Node              `yaml:"devcontainer_features"`
-	Backlog              BacklogSection         `yaml:"backlog"`
+	ID                    string                 `yaml:"id"`
+	Name                  string                 `yaml:"name"`
+	Description           string                 `yaml:"description"`
+	Runtime               string                 `yaml:"runtime"`
+	Complexity            yaml.Node              `yaml:"complexity"`
+	Memory                MemoryPolicy           `yaml:"memory"`
+	ErrorUnwraps          ErrorUnwrapMode        `yaml:"error_unwraps"`
+	BranchProtection      BranchProtectionPolicy `yaml:"branch_protection"`
+	SupplyChain           SupplyChainPolicy      `yaml:"supply_chain"`
+	Linters               []string               `yaml:"linters"`
+	DevContainerFeatures  yaml.Node              `yaml:"devcontainer_features"`
+	DevFeaturesByLanguage yaml.Node              `yaml:"devcontainer_features_by_language"`
+	Backlog               BacklogSection         `yaml:"backlog"`
 }
 
 // ArchetypeKeys returns every key the closed archetype schema decodes, sorted: a top-level key
@@ -129,6 +131,10 @@ func (d *archetypeDocument) archetype(path string) (Archetype, error) {
 	if err != nil {
 		return Archetype{}, err
 	}
+	byLanguage, err := decodeLanguageFeatureMap(declaredNode(&d.DevFeaturesByLanguage))
+	if err != nil {
+		return Archetype{}, err
+	}
 	controls := ArchetypeControls{
 		BranchProtection: d.BranchProtection, SupplyChain: d.SupplyChain, Memory: d.Memory,
 		ErrorUnwraps: d.ErrorUnwraps, Linters: d.Linters, DevFeatures: features,
@@ -138,7 +144,8 @@ func (d *archetypeDocument) archetype(path string) (Archetype, error) {
 	}
 	return Archetype{
 		ID: id, Name: d.Name, Description: d.Description, Runtime: d.Runtime,
-		Complexity: complexity, Controls: controls, Backlog: d.Backlog.Caps,
+		Complexity: complexity, Controls: controls, DevFeaturesByLanguage: byLanguage,
+		Backlog: d.Backlog.Caps,
 	}, nil
 }
 

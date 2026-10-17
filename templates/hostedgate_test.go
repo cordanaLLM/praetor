@@ -58,11 +58,12 @@ func TestCIWorkflowTemplatesRenderTheHostedGateShape(t *testing.T) {
 // behind the combined hosted gate and manifest condition. Node variants cover each manager.
 func TestCIWorkflowTemplatesGuardToolchainStepsOnRootManifest(t *testing.T) {
 	wantManifest := map[string]string{
-		"flutter/ci-flutter.yml.tmpl": "pubspec.yaml",
-		"go/ci-go.yml.tmpl":           "go.mod",
-		"jvm/ci-jvm.yml.tmpl":         "Maven or Gradle build file",
-		"node/ci-node.yml.tmpl":       "package.json",
-		"rust/ci-rust.yml.tmpl":       "Cargo.toml",
+		"flutter/ci-flutter.yml.tmpl":   "pubspec.yaml",
+		"go/ci-go.yml.tmpl":             "go.mod",
+		"jvm/ci-jvm.yml.tmpl":           "Maven or Gradle build file",
+		"node/ci-node.yml.tmpl":         "package.json",
+		"rust/ci-rust-library.yml.tmpl": "Cargo.toml",
+		"rust/ci-rust.yml.tmpl":         "Cargo.toml",
 	}
 	for name, variants := range ciWorkflowTemplates() {
 		for _, variant := range variants {

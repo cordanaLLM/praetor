@@ -69,6 +69,11 @@ Options a catalog gives `common-utils` merge over Praetor's hardening defaults, 
 with no options keeps them
 ([feature options](devcontainer-bootstrap.md#feature-options-and-editor-settings)).
 
+Profiles that support more than one language can put language-specific features under
+`devcontainer_features_by_language`. The effective policy resolves `go.mod` and `Cargo.toml` in
+the repository root and adds the matching feature list. A mixed Go and Rust repository receives
+both lists. The legacy `devcontainer_features` list stays language-neutral.
+
 A major bump is first read against the feature's own definition in
 [devcontainers/features](https://github.com/devcontainers/features) (`devcontainer-feature.json`,
 `NOTES.md` and `install.sh` under `src/<name>/`): the options the catalog passes must still exist,
@@ -77,12 +82,12 @@ and the feature must install on the reviewed base image, `DefaultBaseImage` in
 exits on its default `moby: true` and releases from 4.1.1 install Moby.
 
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
-settings and toolchains a repository of that kind requires. Five profiles currently have any flavor
-implementing them — `app-service`, `framework`, `native-gpu-systems`, `container-image` and
-`os-image`. For the other nine, `flavor audit`, `flavor apply` and adoption report **not applicable**
-(`flavor audit` skips with exit 0) rather than measuring or scaffolding the repository against an
-inferred language flavor. The same holds where the profile has flavors, none matches and none is
-pinned (`flavor.IsNotApplicable`). A flavor
+settings and toolchains a repository of that kind requires. Six profiles currently have any flavor
+implementing them — `app-service`, `framework`, `library-client`, `native-gpu-systems`,
+`container-image` and `os-image`. For the other eight, `flavor audit`, `flavor apply` and adoption
+report **not applicable** (`flavor audit` skips with exit 0) rather than measuring or scaffolding
+the repository against an inferred language flavor. The same holds where the profile has flavors,
+none matches and none is pinned (`flavor.IsNotApplicable`). A flavor
 is only ever chosen among the flavors of the repository's profile (`internal/flavor/resolve.go`).
 
 ### Flavor templates: one embedded body, checked content

@@ -161,6 +161,7 @@ list by `TestFlavorTable_MatchesTheBuiltinFlavors` in `internal/flavor/flavor_ta
 | `infra-k8s` | `container-image` | `Chart.yaml`, `kustomization.yaml` or `helmfile.yaml` at the root |
 | `python-ml` | `app-service` | a machine-learning dependency in `pyproject.toml` or `requirements.txt` |
 | `native-gpu-systems` | `native-gpu-systems` | `meson.build` (root, `core/` or `libvmaf/`) or `CMakeLists.txt` |
+| `rust-library` | `library-client` | Declared `library-client` on a Cargo crate or workspace with library targets and no published binary target; a helper package with `publish = false` or `publish = []`, its own or inherited from `[workspace.package]`, may contain binaries. Without that declaration a Cargo repository classifies as `native-gpu-systems` and keeps `rust-systems` |
 | `rust-systems` | `native-gpu-systems` | `Cargo.toml` |
 | `frontend-svelte` | `app-service` | `package.json` with `svelte.config.js`, `src/routes` or `vite.config.ts` |
 | `typescript-node` | `app-service` | `package.json` without `svelte.config.js` or `src/routes` |

@@ -31,7 +31,7 @@ const ciPriorFixtures = "testdata/ci-prior"
 // ciWorkflowFlavors maps each flavor that scaffolds a CI workflow to its template's directory
 // under templates/, which names its fixtures under ciPriorFixtures.
 var ciWorkflowFlavors = map[string]string{
-	"go-service": "go", "go-library": "go", "rust-systems": "rust", "typescript-node": "node",
+	"go-service": "go", "go-library": "go", "rust-library": "rust", "rust-systems": "rust", "typescript-node": "node",
 	"jvm-service": "jvm", "mobile-flutter": "flutter",
 }
 
