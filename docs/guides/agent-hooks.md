@@ -872,6 +872,55 @@ contributor's `<home>/dev` and passes the same on every machine; set `PRAETOR_DE
 your workstation there (`TestTopologyAudit_SkipUnconfigured_3D` in
 `cmd/standardsctl/devroot_test.go`).
 
+## Heavy-step admission
+
+Heavy-step admission is off by default. A host turns it on with `hooks.admission.enforce:
+true` in one of its operator layers ([operator settings](effective-policy.md#operator-settings)).
+`praetorctl hook <client> pre-tool` then also refuses a command that starts a heavy step
+outside `praetorctl admit` ([admission for heavy local steps](admission.md)). The check is
+`internal/agenthook/admission.go` and runs after the deny rules.
+
+The command is read the way the HISS shell scanner reads a script (`hiss.ShellCode`):
+quoted text, comments and here-document bodies are not commands, so a commit message that
+mentions `make` or `git push` is not a heavy step. The code is split into simple commands at
+`;`, `&`, `|`, parentheses and braces. Each simple command is judged from its command name,
+after any variable assignments and the keywords that may stand before a command (`if`,
+`then`, `do`, `!` and the like). A wrapper command is looked through to the command it runs:
+`env`, `nice`, `ionice`, `timeout`, `nohup`, `time`, `command`, `exec`, `setsid`, `stdbuf`,
+`chrt`, `taskset`, `flock`, `sudo`, `doas`, `xargs` and `systemd-run`, past their options and
+the values those options take.
+
+The built-in shapes are RE2, matched against the command's words joined by one space, from
+the base name of the command on (`builtinHeavyShapes`):
+
+| Shape | Covers |
+| :--- | :--- |
+| `make`, `gmake`, `ninja` | every target |
+| `go build`, `go install`, `go test` | Go builds and test runs |
+| `cargo bench`, `build`, `check`, `clippy`, `install`, `test` | Rust builds and test runs |
+| `meson compile`, `meson test`, `cmake --build` | C and C++ builds |
+| `npm`, `pnpm`, `yarn` with `build`, `test` or `run build` | JavaScript builds and tests |
+| `pytest`, `tox`, `nox` | Python test runs |
+| `praetorctl gate`, `standardsctl gate` | the engine's gate |
+| `git push`, also after `-C dir` or `-c key=value` | the pre-push gate |
+| `docker build`, `podman build`, `buildah bud` | image builds |
+| `bazel build`, `bazel test`, `gradle`, `mvn` | other build tools |
+
+`hooks.admission.commands` adds shapes in the same form, for example `'^just build( |$)'`.
+A refused command names the shape and the admitted form, with a label taken from the
+command:
+
+```text
+[BLOCKED BY HISS] heavy step needs host admission: go test; run: praetorctl admit --label go-test -- <command>, in background; admit waits for memory, swap and load headroom (docs/guides/admission.md)
+```
+
+A command the reader cannot follow (an open quote or here-document, or more than 4096 lines)
+is refused while enforcement is on. `praetorctl admit -- <step>` passes, since `praetorctl` is
+neither a shape nor a wrapper. A heavy step inside a script, or in a string handed to `sh -c`,
+is not seen. Only the engine call applies this check: this repository's Python guard and the
+adopted interceptor do not read operator settings. `internal/agenthook/admission_test.go`
+replays refused, admitted and unreadable commands.
+
 ## Record mode
 
 Set `PRAETOR_HOOK_RECORD_DIR` to a private, writable directory and every hook call, for

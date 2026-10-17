@@ -253,7 +253,8 @@ func (c *ClientSettings) targets() map[string]any {
 }
 
 func (h *HookSettings) targets() map[string]any {
-	return map[string]any{"hooks.scope": &h.Scope, "hooks.command_policy.deny": &h.CommandPolicy.Deny, "hooks.python": &h.Python}
+	return map[string]any{"hooks.scope": &h.Scope, "hooks.command_policy.deny": &h.CommandPolicy.Deny, "hooks.python": &h.Python,
+		"hooks.admission.enforce": &h.Admission.Enforce, "hooks.admission.commands": &h.Admission.Commands}
 }
 
 func (u *UpdateSettings) targets() map[string]any {

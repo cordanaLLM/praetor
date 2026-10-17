@@ -23,6 +23,8 @@ import (
 const (
 	MaxCommandPolicyDenyPatterns = 64
 	MaxCommandPolicyPatternBytes = 512
+	// MaxAdmissionCommands bounds hooks.admission.commands, merged across layers.
+	MaxAdmissionCommands = 32
 	// MaxPermissionGrants bounds one client's merged grant list.
 	MaxPermissionGrants = 32
 	// MaxBuilderKits bounds framework.targets.<language>.builder_kits.
@@ -99,6 +101,9 @@ var operatorSpecs = map[string]settingSpec{
 	"hooks.scope":                           {rule: ruleTighten, strict: HookScopeAll, check: oneOf(HookScopeGoverned, HookScopeAll)},
 	"hooks.command_policy":                  {kind: kindMapping},
 	"hooks.command_policy.deny":             {kind: kindList, rule: ruleAppend, maxItems: MaxCommandPolicyDenyPatterns, check: denyList},
+	"hooks.admission":                       {kind: kindMapping},
+	"hooks.admission.enforce":               {kind: kindBool, rule: ruleTighten, strict: "true"},
+	"hooks.admission.commands":              {kind: kindList, rule: ruleAppend, maxItems: MaxAdmissionCommands, check: admissionList},
 	"hooks.python":                          {kind: kindArgv, check: pythonCandidates},
 	"update":                                {kind: kindMapping},
 	"update.channel":                        {check: oneOf("push")},
@@ -218,16 +223,28 @@ func settingSpecFor(path string) (settingSpec, error) {
 // bytes of valid UTF-8 without control bytes, each compiling as RE2. Patterns are exempt from
 // the literal rule because a regular expression needs `$`; they are compiled, never expanded.
 func ValidateCommandPolicyDeny(patterns []string) error {
-	if len(patterns) > MaxCommandPolicyDenyPatterns {
-		return fmt.Errorf("command policy deny list exceeds %d patterns", MaxCommandPolicyDenyPatterns)
+	return validatePatterns("command policy deny", patterns, MaxCommandPolicyDenyPatterns)
+}
+
+// ValidateAdmissionCommands checks hooks.admission.commands under the deny list's rules: at
+// most 32 patterns, each 1..512 bytes without control bytes, each compiling as RE2.
+func ValidateAdmissionCommands(patterns []string) error {
+	return validatePatterns("admission command", patterns, MaxAdmissionCommands)
+}
+
+// validatePatterns is the one check behind every operator RE2 list; what names the list in
+// its errors.
+func validatePatterns(what string, patterns []string, maxPatterns int) error {
+	if len(patterns) > maxPatterns {
+		return fmt.Errorf("%s list exceeds %d patterns", what, maxPatterns)
 	}
-	for i := 0; i < len(patterns) && i < MaxCommandPolicyDenyPatterns; i++ {
+	for i := 0; i < len(patterns) && i < maxPatterns; i++ {
 		pattern := patterns[i]
 		if pattern == "" || len(pattern) > MaxCommandPolicyPatternBytes || strings.ContainsFunc(pattern, isControl) {
-			return fmt.Errorf("command policy deny pattern %d must be 1..%d bytes without control bytes", i, MaxCommandPolicyPatternBytes)
+			return fmt.Errorf("%s pattern %d must be 1..%d bytes without control bytes", what, i, MaxCommandPolicyPatternBytes)
 		}
 		if _, err := regexp.Compile(pattern); err != nil {
-			return fmt.Errorf("command policy deny pattern %d: %w", i, err)
+			return fmt.Errorf("%s pattern %d: %w", what, i, err)
 		}
 	}
 	return nil
@@ -323,6 +340,13 @@ func grantList(_ string, setting OperatorSetting) error {
 
 func denyList(_ string, setting OperatorSetting) error {
 	if err := ValidateCommandPolicyDeny(setting.List); err != nil {
+		return fmt.Errorf("%s: %w", setting.Path, err)
+	}
+	return nil
+}
+
+func admissionList(_ string, setting OperatorSetting) error {
+	if err := ValidateAdmissionCommands(setting.List); err != nil {
 		return fmt.Errorf("%s: %w", setting.Path, err)
 	}
 	return nil
