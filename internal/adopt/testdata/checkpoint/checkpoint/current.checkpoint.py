@@ -2,13 +2,13 @@
 """Read-only periodic checkpoint and draft-publication planner."""
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
 import stat
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -753,12 +753,44 @@ def _judge_worktree(root, cfg, entry, path, deadline):
         return entry, reasons, False
 
 
+def _ordered_map(fn, items):
+    """fn over items on at most WORKTREE_CHECK_WORKERS threads, results in item order.
+
+    Plain threads, because the minimal Python of the devcontainer (python3-minimal) has
+    neither concurrent.futures nor queue. The first exception a call raised is raised
+    again after every thread has finished, as ThreadPoolExecutor.map does.
+    """
+    results, errors, lock, cursor = [None] * len(items), [], threading.Lock(), [0]
+
+    def work():
+        for _ in range(len(items)):
+            with lock:
+                index, cursor[0] = cursor[0], cursor[0] + 1
+            if index >= len(items):
+                return
+            try:
+                results[index] = fn(items[index])
+            except Exception as error:  # noqa: BLE001  re-raised below, after the join
+                errors.append(error)
+                return
+
+    threads = [
+        threading.Thread(target=work)
+        for _ in range(min(WORKTREE_CHECK_WORKERS, len(items)))
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    if errors:
+        raise errors[0]
+    return results
+
+
 def _judge_worktree_candidates(root, cfg, candidates, deadline):
     """Separate unfinished records from branches requiring bounded PR state reads."""
     jobs = [(cfg, entry, path, deadline) for entry, path in candidates]
-    with ThreadPoolExecutor(max_workers=WORKTREE_CHECK_WORKERS) as workers:
-        judged = workers.map(lambda job: _judge_worktree(root, *job), jobs)
-        results = list(judged)
+    results = _ordered_map(lambda job: _judge_worktree(root, *job), jobs)
     records = [(entry, reasons) for entry, reasons, _ in results]
     pr_candidates = []
     for entry, _reasons, needs_pr in results:

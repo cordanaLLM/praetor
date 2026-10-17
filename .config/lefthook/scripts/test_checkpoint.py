@@ -1166,6 +1166,61 @@ class CheckedPolicyRead(PolicyRoot):
         self.assertIsNone(checkpoint._policy_bytes_checked(self.root / "absent"))
 
 
+# The top-level modules the minimal Python of the devcontainer (python3-minimal 3.14.4, image of
+# 2026-10-17) imports, measured inside that image. The checkpoint bundle runs there on adoption,
+# so a stdlib module it lacks (concurrent.futures and queue are two) fails every adopter's hook.
+MINIMAL_PYTHON_MODULES = frozenset(
+    "argparse ast contextlib errno hashlib json math os pathlib re selectors shutil signal stat"
+    " subprocess sys tempfile threading time typing urllib".split()
+)
+
+
+class MinimalPythonBundle(unittest.TestCase):
+    """The checkpoint bundle imports only modules python3-minimal provides, and runs its checks
+    in parallel without concurrent.futures."""
+
+    def bundle_imports(self, name):
+        import ast
+
+        tree = ast.parse((Path(__file__).parent / name).read_text())
+        found = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                found |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                found.add(node.module.split(".")[0])
+        return found - {"checkpoint", "common"}
+
+    def test_bundle_imports_only_minimal_python_modules(self):
+        for name in ("checkpoint.py", "common.py"):
+            with self.subTest(name=name):
+                extra = self.bundle_imports(name) - MINIMAL_PYTHON_MODULES
+                self.assertFalse(extra, f"{name} imports modules python3-minimal lacks: {sorted(extra)}")
+
+    def test_ordered_map_keeps_order_and_bounds_threads(self):
+        seen = []
+        lock = __import__("threading").Lock()
+
+        def double(value):
+            with lock:
+                seen.append(__import__("threading").current_thread().name)
+            return value * 2
+
+        items = list(range(25))
+        self.assertEqual(checkpoint._ordered_map(double, items), [value * 2 for value in items])
+        self.assertLessEqual(len(set(seen)), checkpoint.WORKTREE_CHECK_WORKERS)
+        self.assertEqual(checkpoint._ordered_map(double, []), [])
+
+    def test_ordered_map_raises_the_first_failure(self):
+        def fail_on_three(value):
+            if value == 3:
+                raise ValueError("three")
+            return value
+
+        with self.assertRaisesRegex(ValueError, "three"):
+            checkpoint._ordered_map(fail_on_three, list(range(6)))
+
+
 class ThreadedBoundedOutput(unittest.TestCase):
     """The pipe reader Windows uses because select() there accepts only sockets."""
 
