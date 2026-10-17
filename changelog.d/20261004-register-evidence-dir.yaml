@@ -1,0 +1,3 @@
+type: added
+title: "register.evidence.dir in .standards.yaml names the directory the text register block sends agent evidence to (default .workingdir/evidence/); compile-context, its --verify, audit and the MCP mirrors render, reconcile and probe that directory, and a value that is absolute, leaves the repository or is not ignored by Git is refused"
+breaking: false
