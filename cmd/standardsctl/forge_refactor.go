@@ -2,9 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha1"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,7 +9,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -21,6 +17,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -140,22 +137,14 @@ func refactorCommitParent(ctx context.Context, repo, sha string) (string, error)
 	return emptyTreeID(ctx, repo)
 }
 
+// emptyTreeID asks git for the empty tree's id in repo's object format, the parent a root
+// commit is compared against. Without -w nothing is written; standard input is the null device.
 func emptyTreeID(ctx context.Context, repo string) (string, error) {
-	format, err := refactorGit(ctx, repo, "rev-parse", "--show-object-format")
+	id, err := refactorGit(ctx, repo, "hash-object", "-t", "tree", "--stdin")
 	if err != nil {
-		return "", fmt.Errorf("read Git object format: %w", err)
+		return "", fmt.Errorf("compute empty tree id: %w", err)
 	}
-	object := []byte("tree 0\x00")
-	switch strings.TrimSpace(string(format)) {
-	case "sha1":
-		hash := sha1.Sum(object)
-		return hex.EncodeToString(hash[:]), nil
-	case "sha256":
-		hash := sha256.Sum256(object)
-		return hex.EncodeToString(hash[:]), nil
-	default:
-		return "", fmt.Errorf("unsupported Git object format %q", strings.TrimSpace(string(format)))
-	}
+	return strings.TrimSpace(string(id)), nil
 }
 
 func checkRefactorCommits(ctx context.Context, repo string, commits []refactorCommit, runTests bool) ([]refactorResult, error) {
@@ -385,7 +374,7 @@ func runRefactorTests(ctx context.Context, repo string, commit refactorCommit) s
 		return "create temporary worktree: " + err.Error()
 	}
 	defer os.RemoveAll(worktree)
-	if _, err := refactorGitWithTimeout(ctx, refactorWorktreeTimeout, repo, "worktree", "add", "--detach", worktree, commit.sha); err != nil {
+	if err := refactorWorktree(ctx, repo, "add", "--detach", worktree, commit.sha); err != nil {
 		removeErr := os.RemoveAll(worktree)
 		if removeErr != nil {
 			return fmt.Sprintf("create temporary worktree: %v; remove temporary directory: %v", err, removeErr)
@@ -393,8 +382,8 @@ func runRefactorTests(ctx context.Context, repo string, commit refactorCommit) s
 		return "create temporary worktree: " + err.Error()
 	}
 	args := append([]string{"test", "-timeout", refactorTestTimeout.String()}, packages...)
-	_, testErr := refactorRun(ctx, refactorTestTimeout, worktree, "go", args...)
-	_, removeWorktreeErr := refactorGitWithTimeout(context.Background(), refactorWorktreeTimeout, repo, "worktree", "remove", "--force", worktree)
+	testErr := refactorGoTest(ctx, worktree, args)
+	removeWorktreeErr := refactorWorktree(context.Background(), repo, "remove", "--force", worktree)
 	removeDirErr := os.RemoveAll(worktree)
 	if removeWorktreeErr != nil || removeDirErr != nil {
 		return fmt.Sprintf("temporary worktree cleanup failed: git=%v directory=%v", removeWorktreeErr, removeDirErr)
@@ -453,22 +442,38 @@ func nonemptyLines(data []byte) []string {
 	return lines
 }
 
+// refactorGit runs one read-only git inspection in repo through util.RunGitProbeWithin, which
+// isolates it from the ambient git configuration and hooks (HISS-19), bounded by
+// refactorGitTimeout (HISS-02).
 func refactorGit(ctx context.Context, repo string, args ...string) ([]byte, error) {
-	return refactorRun(ctx, refactorGitTimeout, repo, "git", append([]string{"-C", repo}, args...)...)
-}
-
-func refactorGitWithTimeout(ctx context.Context, timeout time.Duration, repo string, args ...string) ([]byte, error) {
-	return refactorRun(ctx, timeout, repo, "git", append([]string{"-C", repo}, args...)...)
-}
-
-func refactorRun(ctx context.Context, timeout time.Duration, dir, program string, args ...string) ([]byte, error) {
-	bounded, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	cmd := exec.CommandContext(bounded, program, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	result, err := util.RunGitProbeWithin(ctx, repo, util.MaxCommandOutputBytes, refactorGitTimeout, args...)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w: %s", program, err, strings.TrimSpace(string(out)))
+		return nil, util.CommandDiagnostic(err, result.Stderr)
 	}
-	return out, nil
+	return result.Stdout, nil
+}
+
+// refactorWorktree runs one git worktree subcommand in repo, bounded by refactorWorktreeTimeout.
+// util.RunGitBytes drops the variables that bind git to the pushing repository, which a pre-push
+// hook exports (BUG-886).
+func refactorWorktree(ctx context.Context, repo string, args ...string) error {
+	bounded, cancel := context.WithTimeout(ctx, refactorWorktreeTimeout)
+	defer cancel()
+	result, err := util.RunGitBytes(bounded, repo, util.MaxCommandOutputBytes, append([]string{"worktree"}, args...)...)
+	if err != nil {
+		return util.CommandDiagnostic(err, result.Stderr)
+	}
+	return nil
+}
+
+// refactorGoTest runs go with args in worktree, bounded by refactorTestTimeout. go test reports
+// failures on standard output, so a failure carries both streams.
+func refactorGoTest(ctx context.Context, worktree string, args []string) error {
+	bounded, cancel := context.WithTimeout(ctx, refactorTestTimeout)
+	defer cancel()
+	result, err := util.RunCommandBytes(bounded, worktree, "go", util.MaxCommandOutputBytes, args...)
+	if err != nil {
+		return util.CommandDiagnostic(err, append(result.Stdout, result.Stderr...))
+	}
+	return nil
 }
