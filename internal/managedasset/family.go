@@ -252,9 +252,9 @@ func figureEngine() Family {
 	}
 }
 
-// releasedFigurePlayerDigests records the exact contents git log --format=%H origin/main --
-// tools/figures/dist/<file> reports before #1356: c9bf497702 released all three files, and
-// 732589684 released the second loader. The migration recognises only these release bytes.
+// releasedFigurePlayerDigests records exact bytes recognized at the retired dist path. Older
+// entries are release contents from before #1356; current bundle hashes also cover a transition
+// checkout that copied the generated player and license inventory to dist before migration.
 func releasedFigurePlayerDigests() map[string]map[string]string {
 	return map[string]map[string]string{
 		"tools/figures/dist/loader.js": {
@@ -263,9 +263,11 @@ func releasedFigurePlayerDigests() map[string]map[string]string {
 		},
 		"tools/figures/dist/player.js": {
 			"2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"5e0f6d26e888c954ed2983ffe66d7fe8d68c1069b1489212ad6fc32477a52646": "current generated player",
 		},
 		"tools/figures/dist/THIRD-PARTY-LICENSES.txt": {
 			"c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18": "c9bf497702c29ff981b29bb93364637db27fc3d9",
+			"fe156b1f350ef8779088bc9c73f37609d6266d8f2f04a29995d1586b0451cf9d": "current generated license inventory",
 		},
 	}
 }

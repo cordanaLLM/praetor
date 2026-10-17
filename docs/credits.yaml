@@ -506,7 +506,7 @@ entries:
       - "interfig"
   - name: "React"
     url: "https://github.com/facebook/react"
-    detail: "19.3.0, with react-dom 19.3.0 and scheduler 0.28.0"
+    detail: "19.3.1, with react-dom 19.3.1 and scheduler 0.28.0"
     section: "shipped"
     kind: "dependency"
     relation: "shipped"
