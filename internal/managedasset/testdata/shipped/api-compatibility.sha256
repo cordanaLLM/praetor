@@ -21,3 +21,4 @@ f68c08bc7e6001290ade191d6838d17c6458669a3511492692e971b67333ad83  .github/workfl
 fe26bf523fce6ef124244e389bef93dd89395f3f52c00fbcd1c6fd6b6f42feee  tools/apicompat/gate/main.go
 b1b8cda8e5e0f06c5f8d58e4df59fa7c567b599382da19854228466696b157a6  .github/workflows/praetor-api.yml
 93c21827f1d47ae68d719e51312f4ecf5e8a53a418da4d8770a1f60dea6cdc2b  tools/apicompat/gate/main.go
+d801cdffdbcc4c378ffcb87870d3c3b49a8428e59767325804311fa9d5d75f7f  tools/apicompat/gate/main.go
