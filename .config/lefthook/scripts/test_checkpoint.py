@@ -209,6 +209,59 @@ class CheckpointTests(unittest.TestCase):
         result, _ = self.observe_worktrees()
         self.assertTrue(result["due"])
 
+    def test_stop_open_line_names_key_value_and_path_forms(self):
+        # The inventory lines write "branch=<branch>" and a path under the dev root; a sentence
+        # may end with the name. Each form names the worktree (engine-orphan-inventory-triage).
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        state = self.root / ".workingdir" / "OPEN.md"
+        state.parent.mkdir(parents=True)
+        for line in (
+            "- [ ] ORPHAN-20261017 dev/other branch=checkpoint/orphan head=abc",
+            f"- [ ] ORPHAN-20261017 dev/repo/worktrees/{path.name} branch=x",
+            f"see worktrees/{path.name}.",
+        ):
+            state.write_text(line + "\n")
+            result, _ = self.observe_worktrees()
+            self.assertFalse(result["due"], line)
+
+    def test_open_extended_or_dotted_name_does_not_name_worktree(self):
+        path = self.add_linked_worktree()
+        (path / "public.txt").write_text("unfinished\n")
+        state = self.root / ".workingdir" / "OPEN.md"
+        state.parent.mkdir(parents=True)
+        for line in (f"{path.name}.old", f"{path.name}x", f"old-{path.name}", "branch=checkpoint/orphan2"):
+            state.write_text(line + "\n")
+            result, _ = self.observe_worktrees()
+            self.assertTrue(result["due"], line)
+
+    def test_stop_branch_whose_change_landed_by_squash_is_not_due(self):
+        # A train or squash merge lands the change under another commit: the branch keeps commits
+        # on no remote and has no pull request of its own head, yet nothing of it is unfinished.
+        bare = self.root.parent / (self.root.name + "-remote.git")
+        self.external_paths.append(bare)
+        git(self.root, "init", "--bare", "-q", str(bare))
+        git(self.root, "remote", "add", "origin", str(bare))
+        git(self.root, "push", "-q", "-u", "origin", "main")
+        path = self.add_linked_worktree()
+        (path / "new.txt").write_text("landed\n")
+        git(path, "add", "new.txt")
+        git(path, "commit", "-q", "-m", "unit")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"], "before the squash lands")
+        git(self.root, "switch", "-q", "main")
+        (self.root / "new.txt").write_text("landed\n")
+        git(self.root, "add", "new.txt")
+        git(self.root, "commit", "-q", "-m", "train (unit)")
+        git(self.root, "push", "-q", "origin", "main")
+        git(self.root, "switch", "-q", "checkpoint/test")
+        git(path, "fetch", "-q", "origin")
+        result, _ = self.observe_worktrees()
+        self.assertEqual(result.get("unfinished_worktrees", []), [])
+        (path / "new.txt").write_text("changed after landing\n")
+        result, _ = self.observe_worktrees()
+        self.assertTrue(result["due"], "a public change after the landing is still unfinished")
+
     def test_stop_worktree_commit_without_remote_blocks(self):
         path = self.add_linked_worktree()
         (path / "new.txt").write_text("commit\n")

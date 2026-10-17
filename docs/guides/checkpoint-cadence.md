@@ -88,13 +88,18 @@ On stop, the evaluator also checks linked worktrees whose Git admin directory,
 for work created or changed during the session because the hook has no session
 start time. The checkout running the hook is excluded. Recent unnamed worktrees
 with public changes, commits not on a remote, or a pushed advance without an open
-or merged PR keep the stop checkpoint due. If checkpoint publication is disabled
-or has no configured repository, PR state is skipped and reported.
+or merged PR keep the stop checkpoint due, unless the worktree is clean and its
+net change since its merge base is already in the remote base (its reversed patch
+applies to a temporary index of the base): a branch landed through a squash or a
+train is finished without a pull request of its own head. If checkpoint
+publication is disabled or has no configured repository, PR state is skipped and
+reported.
 
 To keep a worktree visible without blocking this turn, name it in
-`.workingdir/OPEN.md`: a branch name, directory basename, or full path must appear
-as a whitespace-delimited token. A longer token that merely contains the name
-does not match. Include an id, branch, last step, and next step so the next turn
+`.workingdir/OPEN.md` by its branch name, directory basename, or full path. A
+name counts when nothing on either side continues it: `branch=feat/x`,
+`.../worktrees/x` and a sentence ending in `x.` name the worktree, while
+`feat/x2`, `old-x` and `x.old` do not. Include an id, branch, last step, and next step so the next turn
 can resume it. The evaluator reads this ledger only and does not change it.
 The optional backward-compatible `enforce_batch_scope` field enables native
 file-tool admission once due: Claude `Edit`/`Write` and Gemini `replace`/

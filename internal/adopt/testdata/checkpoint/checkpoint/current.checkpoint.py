@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -26,6 +27,8 @@ WORKTREE_ACTIVITY_WINDOW = 24 * 60 * 60
 WORKTREE_CHECK_BUDGET = 22
 WORKTREE_CHECK_WORKERS = 8
 WORKTREE_COMMAND_TIMEOUT = 1
+# Seconds per Git call of the landed-by-content check, which diffs and applies a whole branch.
+LANDED_CHECK_TIMEOUT = 5
 PULL_REQUEST_TIMEOUT = 2
 # gh 2.100.0 requests the first 100 contexts for pr list; equality is incomplete.
 MAX_CHECKS = 100
@@ -70,7 +73,7 @@ class CheckpointError(Exception):
     """A bounded, actionable planner failure."""
 
 
-def _run(argv, root, *, allowed=(0,), network=False, timeout=None):
+def _run(argv, root, *, allowed=(0,), network=False, timeout=None, index=None):
     env = dict(os.environ)
     for key in (
         "GIT_DIR",
@@ -84,6 +87,8 @@ def _run(argv, root, *, allowed=(0,), network=False, timeout=None):
     env.update(
         GIT_TERMINAL_PROMPT="0", GH_PROMPT_DISABLED="1", PYTHONDONTWRITEBYTECODE="1"
     )
+    if index is not None:
+        env["GIT_INDEX_FILE"] = str(index)
     try:
         return run_bounded(
             argv,
@@ -466,17 +471,36 @@ def _worktree_recent(path, common_dir, now):
     return newest > 0 and 0 <= age <= WORKTREE_ACTIVITY_WINDOW
 
 
+# Characters that continue a name, a dot aside: a branch may hold "/", a directory name may not,
+# and a whole path is bounded by white space. A dot continues a name only when a name character
+# follows it, so a name that ends a sentence still counts. OPEN.md holds a name when nothing on
+# either side continues it: "branch=feat/x" and ".../worktrees/x." name the worktree, while
+# "feat/x2", "old-x" and "x.old" do not.
+BRANCH_NAME_CHARS = "A-Za-z0-9_/-"
+DIRECTORY_NAME_CHARS = "A-Za-z0-9_-"
+
+
+def _name_held(open_text, name, chars):
+    """Whether open_text holds name with no name character, or dot and name character, around it."""
+    if not name:
+        return False
+    pattern = f"(?<![.{chars}])" + re.escape(name) + f"(?![{chars}]|\\.[{chars}])"
+    return re.search(pattern, open_text) is not None
+
+
+def _path_held(open_text, path):
+    """Whether open_text holds path bounded by white space, a sentence-ending dot allowed."""
+    pattern = r"(?<!\S)" + re.escape(path) + r"(?![^\s.]|\.\S)"
+    return bool(path) and re.search(pattern, open_text) is not None
+
+
 def _named_worktree(open_text, entry):
-    """Match branch, basename, or whole path token in bounded OPEN.md text."""
-    names = (
-        entry.get("branch", "").removeprefix("refs/heads/"),
-        Path(entry["path"]).name,
-        entry["path"],
+    """Match branch, directory name, or whole path in bounded OPEN.md text."""
+    return (
+        _name_held(open_text, entry.get("branch", "").removeprefix("refs/heads/"), BRANCH_NAME_CHARS)
+        or _name_held(open_text, Path(entry["path"]).name, DIRECTORY_NAME_CHARS)
+        or _path_held(open_text, entry["path"])
     )
-    for name in names:
-        if name and re.search(r"(?<!\S)" + re.escape(name) + r"(?!\S)", open_text):
-            return True
-    return False
 
 
 def _open_worktree_text(root):
@@ -652,6 +676,46 @@ def _public_change_reason(path):
         return [str(error)]
 
 
+def _content_in_base(path, cfg):
+    """Whether the worktree's net change since its merge base is already in the remote base.
+
+    A branch that landed through a squash or a train has neither a remote copy of its commits
+    nor a pull request of its own head, yet nothing of it is unfinished. Its reversed patch then
+    applies to the base. Read-only: the index lives in a temporary folder outside the repository.
+    """
+    base_ref = f"refs/remotes/{cfg.get('remote') or 'origin'}/{cfg.get('base') or 'main'}"
+    if not _remote_ref_exists(path, base_ref):
+        return False
+    fork = _git(path, "merge-base", base_ref, "HEAD", timeout=LANDED_CHECK_TIMEOUT)
+    patch = _git(
+        path, "diff", "--binary", *WORKTREE_DIFF, fork.decode().strip(), "HEAD",
+        timeout=LANDED_CHECK_TIMEOUT,
+    )
+    if not patch.strip():
+        return True
+    with tempfile.TemporaryDirectory(prefix="praetor-landed-") as scratch:
+        index = Path(scratch) / "index"
+        change = Path(scratch) / "change.patch"
+        change.write_bytes(patch)
+        _git(path, "read-tree", base_ref, index=index, timeout=LANDED_CHECK_TIMEOUT)
+        try:
+            _git(
+                path, "apply", "--check", "--reverse", "--cached", str(change),
+                index=index, timeout=LANDED_CHECK_TIMEOUT,
+            )
+        except CheckpointError:
+            return False
+    return True
+
+
+def _landed(path, cfg):
+    """_content_in_base, failing closed: a check that cannot run leaves the worktree judged."""
+    try:
+        return _content_in_base(path, cfg)
+    except (CheckpointError, ValueError, OSError):
+        return False
+
+
 def _worktree_unpublished_count(path):
     """Count HEAD commits unreachable from every remote, using the canonical criterion."""
     return _rev_list_count(path, "--remotes")
@@ -666,6 +730,8 @@ def _judge_worktree(root, cfg, entry, path, deadline):
             False,
         )
     reasons = _public_change_reason(path)
+    if not reasons and _landed(path, cfg):
+        return entry, [], False
     try:
         count = _worktree_unpublished_count(path)
     except (CheckpointError, ValueError, OSError) as error:

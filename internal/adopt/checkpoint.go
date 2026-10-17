@@ -53,7 +53,7 @@ var priorCheckpointDigests = map[string]map[string]string{
 		"ffb3fc5d33818c465b57f5bfd758a45c72ea05d60c794750915756189f553941": "policy descriptors closed where they are opened (#1219)",
 		"2b933d3cefb1c51a40766ab0df36ef2b8fa090f7c91984809eb3e290c2c9df83": "clean import order and merged comparisons under adopter ruff",
 		"39138445b6927bde92db48182781070d48fed84daa8417e555bec744015606e9": "defer the checkpoint inside a detached job that cannot publish",
-		"784fc1e5222887822da21973263ea1c979a83fbd804fb0b4d96cb79e671ad156": "stop checkpoint finds recent unnamed worktrees",
+		"4708dac25fba3d778069c539f937e8b9504d456d0043590d7ba3d7a395e3362d": "stop checkpoint finds recent unnamed worktrees",
 	},
 	checkpointCommon: {
 		"61ccf1481d43073ca29aab6c6e6b78cc6f5cb4a86bf1e7603b8b0e01d02f71a9": "platform promotion (#14)",
