@@ -2096,9 +2096,13 @@ Malformed or oversized command metadata now fails before any adoption writes.
   `TestAdopt_Negative_ForceKeepsMixedEndingCurrentLefthook`,
   `TestAdopt_Boundary_ForceKeepsSymlinkedLefthook`). The skip reason names the generated jobs
   the file lacks and the jobs it adds, whether they are declared in `commands` or `scripts`
-  maps or in a `jobs` list; the checkpoint jobs count as neither. Beside a kept file only
-  absent checkpoint files are installed. To regenerate it, remove `lefthook.yml` and re-run
-  adopt.
+  maps or in a `jobs` list; the checkpoint jobs count as neither. Beside a kept file the
+  checkpoint bundle is refreshed as one unit while each of its files is absent, current or an
+  unedited earlier Praetor text, the copies the audit reports; once one holds an edited copy,
+  the kept file runs scripts of its own, so each file stays and only absent ones are installed
+  (`TestAdopt_Positive_KeptLefthookRefreshesEarlierCheckpointBundle`,
+  `TestAdopt_Negative_KeptLefthookKeepsBundleBesideEditedCopy`). To regenerate it, remove
+  `lefthook.yml` and re-run adopt.
 - A configuration that reaches `.config/lefthook/praetor.yml`, the vendorable canonical
   policy, through `extends` or through the `configs` of a `remotes` entry is kept the same
   way, and so is `.config/agent/hooks/block_evasion.py` beside it, so the policy and its

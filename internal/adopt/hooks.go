@@ -709,14 +709,17 @@ func (s *adoptSession) renderLefthook(ctx context.Context, target lefthookTarget
 	return s.writeLefthookConfig(ctx, target, existing, prior)
 }
 
-// keepLefthookConfig records why adoption keeps lefthook.yml and installs beside it only what
-// is absent: the checkpoint files, each on its own, never refreshing one that exists, since the
-// kept configuration may run its own copies; and the interceptor, refreshed from an unedited
-// earlier rendering only when the configuration does not extend the canonical policy, whose
-// vendored bundle owns it (BUG-858). When the kept configuration does not call the launcher yet,
-// adoption reports the prefix to use (#1172).
+// keepLefthookConfig records why adoption keeps lefthook.yml and reconciles beside it what
+// Praetor owns: the checkpoint files, and the interceptor, refreshed from an unedited earlier
+// rendering only when the configuration does not extend the canonical policy, whose vendored
+// bundle owns both (BUG-858). Outside that policy the checkpoint bundle is refreshed as one unit
+// while every file is absent, current or an earlier Praetor text, the copies AuditCheckpointBundle
+// reports; once the kept configuration runs a copy of its own (keptConfigOwnsCheckpoint), each
+// file stays as it is and only absent ones are installed. When the kept configuration does not
+// call the launcher yet, adoption reports the prefix to use (#1172).
 func keepLefthookConfig(ctx context.Context, s *adoptSession, identity lefthookIdentity, existing []byte) error {
-	if _, err := reconcileCheckpointLifecycle(ctx, s, true); err != nil {
+	vendored := identity.canonical || keptConfigOwnsCheckpoint(ctx, s)
+	if _, err := reconcileCheckpointLifecycle(ctx, s, vendored); err != nil {
 		return err
 	}
 	detail := identity.reason
