@@ -31,7 +31,7 @@ func TestApplyOverrides_Negative_CannotLoosen(t *testing.T) {
 	if p.Complexity != base.Complexity {
 		t.Fatalf("looser complexity caps must be ignored: got %+v want %+v", p.Complexity, base.Complexity)
 	}
-	if p.BranchProtection != base.BranchProtection {
+	if !p.BranchProtection.Equal(base.BranchProtection) {
 		t.Fatalf("branch protection must never weaken: got %+v want %+v", p.BranchProtection, base.BranchProtection)
 	}
 	if p.SupplyChain != base.SupplyChain {
@@ -43,7 +43,7 @@ func TestApplyOverrides_Boundary_NilSectionsAndZeroValues(t *testing.T) {
 	p := DefaultPolicy()
 	base := *p
 	p.ApplyOverrides(Overrides{})
-	if p.Complexity != base.Complexity || p.BranchProtection != base.BranchProtection || p.SupplyChain != base.SupplyChain {
+	if p.Complexity != base.Complexity || !p.BranchProtection.Equal(base.BranchProtection) || p.SupplyChain != base.SupplyChain {
 		t.Fatalf("empty overrides must be a no-op: got %+v want %+v", *p, base)
 	}
 	p.ApplyOverrides(Overrides{Complexity: &ComplexityPolicy{}})

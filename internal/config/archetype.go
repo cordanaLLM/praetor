@@ -163,6 +163,9 @@ func (c ArchetypeControls) validate() error {
 	if c.BranchProtection.RequiredApprovingReviewers < 0 || c.SupplyChain.SLSALevel < 0 {
 		return errors.New("required_approving_reviewers and slsa_level cannot be negative")
 	}
+	if err := c.BranchProtection.Validate(); err != nil {
+		return err
+	}
 	if !c.ErrorUnwraps.known() {
 		return fmt.Errorf("unsupported error_unwraps mode %q", c.ErrorUnwraps)
 	}

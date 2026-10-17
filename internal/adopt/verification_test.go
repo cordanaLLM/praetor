@@ -43,7 +43,8 @@ func TestVerificationMixedProjectCommands(t *testing.T) {
 	}
 	for _, want := range [][]string{
 		{"dotnet", "restore", "./src/Plugin.csproj", "--locked-mode"},
-		{"dotnet", "build", "./src/Plugin.csproj", "-c", "Release", "--no-restore", "-warnaserror"},
+		{"dotnet", "build", "./src/Plugin.csproj", "-c", "Release", "--no-restore", "-warnaserror",
+			"-p:ErrorLog=obj/praetor-build.sarif%2Cversion=2.1"},
 		{"dotnet", "test", "--project", "./tests/Plugin.Tests.csproj", "-c", "Release", "--no-build"},
 		{"npm", "run", "test"}, {"python3", "-m", "unittest", "discover", "-s", "tests/python"},
 	} {
@@ -51,6 +52,32 @@ func TestVerificationMixedProjectCommands(t *testing.T) {
 	}
 	if strings.Contains(buildMakefile(plan), "'go'") || strings.Contains(buildMakefile(plan), "meson") {
 		t.Fatal("governance guessed an unrelated toolchain")
+	}
+}
+
+func TestVerificationDotnetBuildWritesSARIF(t *testing.T) {
+	_, plan := verificationFixture(t, map[string]string{
+		"App.csproj": `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>`,
+	})
+	want := []string{"dotnet", "build", "./App.csproj", "-c", "Release", "--no-restore", "-warnaserror",
+		"-p:ErrorLog=obj/praetor-build.sarif%2Cversion=2.1"}
+	assertVerificationCommand(t, plan, want)
+}
+
+func TestVerificationDotnetBuildGolden(t *testing.T) {
+	_, plan := verificationFixture(t, map[string]string{
+		"App.csproj": `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>`,
+	})
+	if len(plan.Build) < 2 || len(plan.Build[1]) < 2 || plan.Build[1][1] != "build" {
+		t.Fatalf("dotnet build command missing from verification plan: %+v", plan.Build)
+	}
+	got := strings.Join(plan.Build[1], " ") + "\n"
+	want, err := os.ReadFile(filepath.Join("testdata", "verification-dotnet-build.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(want) {
+		t.Fatalf("dotnet build plan differs from golden:\n%s", got)
 	}
 }
 

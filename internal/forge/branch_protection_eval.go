@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -263,6 +265,11 @@ func EvaluateBranchProtection(policy config.BranchProtectionPolicy, contexts []s
 	if finding, compared := rulesetEnforcementFinding(live); compared {
 		findings = append(findings, finding)
 	}
+	prFindings, err := evaluatePullRequestRule(policy.AllowedMergeMethods, policy.RequireExtraApprovalForUnattributedChanges, live)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate branch protection: %w", err)
+	}
+	findings = append(findings, prFindings...)
 	return append(findings, MergeQueueRulesetFindings(policy, live)...), nil
 }
 
@@ -364,4 +371,296 @@ func ProtectionDrifts(findings []ProtectionFinding) []string {
 		}
 	}
 	return drifted
+}
+
+// maxPRParams bounds the parameters evaluated on a pull_request rule (HISS-02).
+const maxPRParams = 32
+
+// findLivePullRequestRule returns the active pull_request rule of the managed ruleset, or the
+// first active pull_request rule found if no managed ruleset applies.
+func findLivePullRequestRule(live *LiveBranchProtection) (*LiveBranchRule, bool) {
+	if live == nil {
+		return nil, false
+	}
+	managedID, _, hasManaged := live.managedRuleset()
+	if hasManaged {
+		for i := 0; i < len(live.Rules) && i < maxBranchRules; i++ {
+			if live.Rules[i].Type == "pull_request" && live.Rules[i].RulesetID == managedID {
+				return &live.Rules[i], true
+			}
+		}
+	}
+	for i := 0; i < len(live.Rules) && i < maxBranchRules; i++ {
+		if live.Rules[i].Type == "pull_request" {
+			return &live.Rules[i], true
+		}
+	}
+	return nil, false
+}
+
+// evaluatePullRequestRule evaluates the rendered pull_request parameters against the live
+// ruleset rule, reporting findings for declared/rendered parameters and drift on live parameters
+// that differ from forge defaults.
+func evaluatePullRequestRule(allowedMethods []string, extraApproval *bool, live *LiveBranchProtection) ([]ProtectionFinding, error) {
+	liveRule, hasLiveRule := findLivePullRequestRule(live)
+	if !hasLiveRule {
+		return evaluateUnenforcedPRParams(allowedMethods, extraApproval), nil
+	}
+	var liveParams map[string]any
+	if err := decodeRuleParameters(liveRule.Parameters, &liveParams); err != nil {
+		return nil, err
+	}
+	label := live.RulesetLabel(*liveRule)
+	renderedFindings := compareRenderedPRParams(allowedMethods, extraApproval, liveParams, label)
+	liveOnlyFindings := compareLiveOnlyPRParams(allowedMethods, extraApproval, liveParams, label)
+	return append(renderedFindings, liveOnlyFindings...), nil
+}
+
+// evaluateUnenforcedPRParams reports drift for declared PR parameters when no live pull_request
+// rule applies to the branch.
+func evaluateUnenforcedPRParams(allowedMethods []string, extraApproval *bool) []ProtectionFinding {
+	var findings []ProtectionFinding
+	if len(allowedMethods) > 0 {
+		findings = append(findings, ProtectionFinding{
+			Property: "allowed_merge_methods",
+			Declared: formatMethods(allowedMethods),
+			Live:     "not enforced",
+			Verdict:  ProtectionDrift,
+		})
+	}
+	if extraApproval != nil {
+		findings = append(findings, ProtectionFinding{
+			Property: "require_extra_approval_for_unattributed_changes",
+			Declared: strconv.FormatBool(*extraApproval),
+			Live:     "not enforced",
+			Verdict:  ProtectionDrift,
+		})
+	}
+	return findings
+}
+
+// compareRenderedPRParams compares parameters rendered by praetorctl with live values.
+func compareRenderedPRParams(allowedMethods []string, extraApproval *bool, liveParams map[string]any, label string) []ProtectionFinding {
+	var findings []ProtectionFinding
+	if len(allowedMethods) > 0 {
+		declaredSet := toSet(allowedMethods)
+		liveSet := extractStringSet(liveParams["allowed_merge_methods"])
+		verdict := ProtectionEnforced
+		if !maps.Equal(declaredSet, liveSet) {
+			verdict = ProtectionDrift
+		}
+		findings = append(findings, ProtectionFinding{
+			Property:   "allowed_merge_methods",
+			Declared:   formatMethods(allowedMethods),
+			Live:       formatMethods(sortedKeys(liveSet)),
+			EnforcedBy: []string{label},
+			Verdict:    verdict,
+		})
+	}
+	if extraApproval != nil {
+		declared := *extraApproval
+		live := toBool(liveParams["require_extra_approval_for_unattributed_changes"])
+		verdict := ProtectionEnforced
+		if declared != live {
+			verdict = ProtectionDrift
+		}
+		findings = append(findings, ProtectionFinding{
+			Property:   "require_extra_approval_for_unattributed_changes",
+			Declared:   strconv.FormatBool(declared),
+			Live:       strconv.FormatBool(live),
+			EnforcedBy: []string{label},
+			Verdict:    verdict,
+		})
+	}
+	findings = append(findings, compareStaticPRParams(liveParams, label)...)
+	return findings
+}
+
+// compareStaticPRParams checks static pull_request parameters praetor renders (require_last_push_approval: false,
+// required_review_thread_resolution: true) against live values.
+func compareStaticPRParams(liveParams map[string]any, label string) []ProtectionFinding {
+	var findings []ProtectionFinding
+	if toBool(liveParams["require_last_push_approval"]) {
+		findings = append(findings, ProtectionFinding{
+			Property:   "require_last_push_approval",
+			Declared:   "false",
+			Live:       "true",
+			EnforcedBy: []string{label},
+			Verdict:    ProtectionDrift,
+		})
+	}
+	if raw, ok := liveParams["required_review_thread_resolution"]; ok && !toBool(raw) {
+		findings = append(findings, ProtectionFinding{
+			Property:   "required_review_thread_resolution",
+			Declared:   "true",
+			Live:       "false",
+			EnforcedBy: []string{label},
+			Verdict:    ProtectionDrift,
+		})
+	}
+	return findings
+}
+
+// compareLiveOnlyPRParams checks live parameters not carried by the render against forge defaults.
+func compareLiveOnlyPRParams(allowedMethods []string, extraApproval *bool, liveParams map[string]any, label string) []ProtectionFinding {
+	keys := make([]string, 0, len(liveParams))
+	for k := range liveParams {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	var findings []ProtectionFinding
+	for i := 0; i < len(keys) && i < maxPRParams; i++ {
+		key := keys[i]
+		if isCarriedByRender(key, allowedMethods, extraApproval) {
+			continue
+		}
+		val := liveParams[key]
+		if isLiveOnlyDefault(key, val) {
+			continue
+		}
+		findings = append(findings, ProtectionFinding{
+			Property:   key,
+			Declared:   declaredDefault(key),
+			Live:       formatLiveValue(key, val),
+			EnforcedBy: []string{label},
+			Verdict:    ProtectionDrift,
+		})
+	}
+	return findings
+}
+
+// isCarriedByRender reports whether key is a pull_request parameter rendered under policy.
+func isCarriedByRender(key string, allowedMethods []string, extraApproval *bool) bool {
+	switch key {
+	case "required_approving_review_count", "dismiss_stale_reviews_on_push",
+		"require_code_owner_review", "require_last_push_approval",
+		"required_review_thread_resolution":
+		return true
+	case "allowed_merge_methods":
+		return len(allowedMethods) > 0
+	case "require_extra_approval_for_unattributed_changes":
+		return extraApproval != nil
+	default:
+		return false
+	}
+}
+
+// isLiveOnlyDefault reports whether val matches the GitHub default for an un-rendered parameter.
+func isLiveOnlyDefault(key string, val any) bool {
+	switch key {
+	case "allowed_merge_methods":
+		defaultSet := map[string]bool{"merge": true, "squash": true, "rebase": true}
+		return maps.Equal(extractStringSet(val), defaultSet)
+	case "dismissal_restriction":
+		return isDefaultDismissalRestriction(val)
+	case "required_reviewers":
+		items, ok := val.([]any)
+		return !ok || len(items) == 0
+	default:
+		return isDefaultScalar(val)
+	}
+}
+
+func isDefaultDismissalRestriction(val any) bool {
+	obj, ok := val.(map[string]any)
+	if !ok || obj == nil {
+		return true
+	}
+	if enabled, okEnabled := obj["enabled"].(bool); okEnabled && enabled {
+		return false
+	}
+	if actors, okActors := obj["allowed_actors"].([]any); okActors && len(actors) > 0 {
+		return false
+	}
+	return true
+}
+
+func isDefaultScalar(val any) bool {
+	if b, ok := val.(bool); ok {
+		return !b
+	}
+	if n, err := jsonInteger(val); err == nil {
+		return n == 0
+	}
+	return val == nil
+}
+
+func declaredDefault(key string) string {
+	switch key {
+	case "allowed_merge_methods":
+		return "[merge, squash, rebase]"
+	case "dismissal_restriction":
+		return "enabled: false, allowed_actors: []"
+	case "required_reviewers":
+		return "[]"
+	default:
+		return "false"
+	}
+}
+
+func formatLiveValue(key string, val any) string {
+	switch key {
+	case "allowed_merge_methods":
+		return formatMethods(sortedKeys(extractStringSet(val)))
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
+func toSet(items []string) map[string]bool {
+	set := make(map[string]bool, len(items))
+	for i := 0; i < len(items) && i < maxPRParams; i++ {
+		set[items[i]] = true
+	}
+	return set
+}
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return sortMethods(keys)
+}
+
+func sortMethods(methods []string) []string {
+	order := map[string]int{"merge": 1, "squash": 2, "rebase": 3}
+	sorted := slices.Clone(methods)
+	slices.SortFunc(sorted, func(a, b string) int {
+		return order[a] - order[b]
+	})
+	return sorted
+}
+
+func formatMethods(methods []string) string {
+	sorted := sortMethods(methods)
+	return "[" + strings.Join(sorted, ", ") + "]"
+}
+
+func extractStringSet(raw any) map[string]bool {
+	set := make(map[string]bool, 4)
+	switch items := raw.(type) {
+	case []string:
+		for i := 0; i < len(items) && i < maxPRParams; i++ {
+			set[items[i]] = true
+		}
+	case []any:
+		for i := 0; i < len(items) && i < maxPRParams; i++ {
+			if s, ok := items[i].(string); ok {
+				set[s] = true
+			}
+		}
+	}
+	return set
+}
+
+func toBool(val any) bool {
+	switch b := val.(type) {
+	case bool:
+		return b
+	case string:
+		return b == "true"
+	default:
+		return false
+	}
 }

@@ -397,16 +397,22 @@ func TransformPersonaForDir(targetDir, rel string, data []byte) ([]byte, error) 
 		}
 		return nil, fmt.Errorf("%s: %s", rel, problem)
 	}
+	var projected []byte
+	var err error
 	switch targetDir {
 	case CanonicalAgentsRel, PluginAgentsRel:
 		return data, nil
 	case ".claude/agents":
-		return rewriteClaudePersonaModel(data)
+		projected, err = rewriteClaudePersonaModel(data)
 	case ".github/agents", ".gemini/agents", ".codex/agents":
-		return removePersonaModelLine(data)
+		projected, err = removePersonaModelLine(data)
 	default:
-		return removePersonaModelLine(data)
+		projected, err = removePersonaModelLine(data)
 	}
+	if err != nil {
+		return nil, fmt.Errorf("transform persona model for %s: %w", targetDir, err)
+	}
+	return projectPersonaTools(targetDir, rel, projected)
 }
 
 // rewriteClaudePersonaModel rewrites the model line inside the leading front matter block

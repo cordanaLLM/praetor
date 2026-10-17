@@ -180,6 +180,28 @@ func TestValidateExceptionsBoundary(t *testing.T) {
 	}
 }
 
+func TestValidateExceptionsCategories(t *testing.T) {
+	base := Exception{Rule: ExceptionRuleMutants, Path: ".cargo/mutants.toml", Reason: "unsupported generated code", Category: "D", Entered: "2026-10-16", Expires: "2027-02-13"}
+	if err := ValidateExceptions([]Exception{base}, time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("category D exception refused: %v", err)
+	}
+	if err := ValidateExceptions([]Exception{base}, time.Date(2027, 2, 14, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("an expired declaration must remain valid for its owning gate to fail: %v", err)
+	}
+	base.Category, base.Expires = "C", "2026-10-27"
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "category C requires expires 2026-10-26") {
+		t.Fatalf("category C with a mismatched expiry = %v", err)
+	}
+	base = validException()
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err != nil {
+		t.Fatalf("uncategorized exception changed behavior: %v", err)
+	}
+	base.Category, base.Entered, base.Expires = "A", "2026-10-06", "2027-01-05"
+	if err := ValidateExceptions([]Exception{base}, exceptionsToday); err == nil || !strings.Contains(err.Error(), "more than 90 days") {
+		t.Fatalf("category A escaped the 90-day cap: %v", err)
+	}
+}
+
 func TestValidateExceptions_HISSRulesAndFunctionScope(t *testing.T) {
 	for _, rule := range hisscatalog.RuleIDs() {
 		entry := Exception{Rule: rule, Path: "src/a.go", Reason: "by design", Expires: "2026-12-31"}

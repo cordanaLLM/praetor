@@ -174,6 +174,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditLockDigestsContext(ctx, manifest, rootDir, opts.policy.CatalogRoot) },
 		func() error { return auditExceptionsExpiry(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditBaselineAndInvariants(ctx, opts) },
+		func() error { return auditMutationExclusions(ctx, manifest, rootDir, time.Now()) },
 		func() error { return auditReadmeGovernance(ctx, manifest, opts) },
 		func() error {
 			return auditDocumentationGate(ctx, manifest, rootDir, opts.effective.Policy.BranchProtection)
@@ -443,6 +444,13 @@ func auditAgentProjections(ctx context.Context, rootDir string) error {
 	}
 	if verified > 0 {
 		fmt.Printf("[PASS] Agent persona projections verified (%d copies identical to .agents/agents).\n", verified)
+	}
+	gaps, err := compiler.PersonaToolPermissionGaps(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Agent tool permission audit failed: %w", err)
+	}
+	for i := range gaps {
+		fmt.Printf("[GAP] Agent tool permissions: %s.\n", gaps[i])
 	}
 	skills, err := compiler.VerifyClientSkills(ctx, rootDir)
 	if err != nil {

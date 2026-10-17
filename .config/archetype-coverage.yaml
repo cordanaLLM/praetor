@@ -92,6 +92,12 @@ plumbing:
     role: fills unset limits from the HISS-04 ceiling
   - func: internal/config.BranchProtectionPolicy.applyOverride
     role: applies a repository branch protection override
+  - func: internal/config.BranchProtectionPolicy.Equal
+    role: compares two branch protection policies
+  - func: internal/config.BranchProtectionPolicy.scalarFieldsEqual
+    role: compares scalar branch protection settings
+  - func: internal/config.BranchProtectionPolicy.Validate
+    role: validates branch protection parameters
   - func: internal/config.newEffectivePolicy
     role: digests the built-in defaults as the first policy source
   - func: internal/config.BacklogCaps.validate
@@ -398,6 +404,30 @@ fields:
         effect: >-
           names the setting with both values when a declared facet raises it
           (the facet effects the policy reports)
+  - key: branch_protection.allowed_merge_methods
+    go: [BranchProtectionPolicy.AllowedMergeMethods]
+    state: consumed
+    consumers:
+      - func: internal/forge.protectionRules
+        kind: acts
+        effect: sets allowed_merge_methods in the rendered ruleset
+      - func: internal/forge.EvaluateBranchProtection
+        kind: reports
+        effect: >-
+          compares the allowed merge methods GitHub enforces on the default branch with the
+          declared ones (plan --remote, sync --remote readback)
+  - key: branch_protection.require_extra_approval_for_unattributed_changes
+    go: [BranchProtectionPolicy.RequireExtraApprovalForUnattributedChanges]
+    state: consumed
+    consumers:
+      - func: internal/forge.protectionRules
+        kind: acts
+        effect: sets require_extra_approval_for_unattributed_changes in the rendered ruleset
+      - func: internal/forge.EvaluateBranchProtection
+        kind: reports
+        effect: >-
+          compares the unattributed changes approval requirement GitHub enforces on the default branch with the
+          declared one (plan --remote, sync --remote readback)
   - key: branch_protection.review_mode
     go: [BranchProtectionPolicy.ReviewMode]
     state: refused

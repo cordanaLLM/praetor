@@ -343,13 +343,16 @@ A newer binary on `PATH` therefore never judges a repository that pins an older 
 the repository declares, the one its hosted Standards job installs.
 
 **The pin** is the value of `PRAETOR_REF` declared in any file under `.github/workflows`, as
-`PRAETOR_REF: <ref>` or `PRAETOR_REF=<ref>`, or the `uses:` reference of `praetor-adopt`
+`PRAETOR_REF: <ref>` or `PRAETOR_REF=<ref>`, a `PRAETOR_COMMIT` value that is exactly 40
+lowercase hexadecimal characters, or the `uses:` reference of `praetor-adopt`
 (`uses: cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>`) or a reusable workflow under
 `cordanaLLM/praetor/.github/workflows/` (quotes, a trailing comment and CRLF line endings
 are read past). A ref is a commit id of 7 to 40 hexadecimal digits or a full release tag such as
 `v1.2.3` (a tag without patch digits like `v1` or `v1.2` moves under `go install`, and a branch
 name moves, so they are no pin). A non-pin `uses:` ref such as `@main` is treated as unpinned (running
-the engine on `PATH`). Declaring two different pin values fails closed with refusal.
+the engine on `PATH`). A `PRAETOR_COMMIT` value that is not a full lowercase commit is named in a
+note and ignored. Declaring two different pin values across `PRAETOR_REF` and `PRAETOR_COMMIT`
+fails closed; declaring the same value through both names is one pin.
 
 **The cache** is `${XDG_CACHE_HOME:-$HOME/.cache}/praetor/engine/<pin>`, one directory per pin.
 The first hook run with a pin that is not cached installs it:
@@ -365,8 +368,8 @@ half-written engine and parallel jobs on a cold cache cannot remove each other's
 installs when needed, another directory; old directories stay until you delete them.
 
 **Without a pin** the hook runs the binary on `PATH`, `praetorctl` before `standardsctl`, as
-before, and prints `praetor hooks: no PRAETOR_REF pin under .github/workflows; running the
-engine on PATH: <path>` on standard error.
+before, and prints `praetor hooks: no PRAETOR_REF pin or full PRAETOR_COMMIT pin under
+.github/workflows; running the engine on PATH: <path>` on standard error.
 
 **It never falls back.** A pin that is unusable, declared twice with different values, an unreadable workflow file, or an install that
 cannot complete (no Go toolchain, no network, a timeout) fails the hook with one message
@@ -399,7 +402,7 @@ Where `engine.mk` is neither installed nor planned (such as when `git-hooks` is 
 **One pin reader.** `.config/lefthook/engine.sh` is also a standalone entry point: an adopter
 `Makefile` target or script runs `sh .config/lefthook/engine.sh <arguments>` from the repository
 root to get the same pin resolution, cache and refusals as the hooks, and needs no second reader
-of `PRAETOR_REF`. When a recipe or rule needs the binary path directly, `--print-path` prints
+of `PRAETOR_REF` and `PRAETOR_COMMIT`. When a recipe or rule needs the binary path directly, `--print-path` prints
 only the path of the resolved binary, which `.config/praetor/engine.mk` uses:
 
 ```makefile

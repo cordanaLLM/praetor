@@ -23,8 +23,9 @@ import (
 // utilities the script uses (hookToolbox).
 
 const (
-	enginePin      = "492a00f930e1"
-	engineLauncher = "sh " + engineLauncherFile + " audit --offline"
+	enginePin       = "492a00f930e1"
+	engineCommitPin = "492a00f930e11111222233334444555566667777"
+	engineLauncher  = "sh " + engineLauncherFile + " audit --offline"
 )
 
 // engineFixture is one repository directory with its stubs and engine cache.
@@ -106,6 +107,60 @@ func TestEngineLauncher_Positive_PinnedEngineWinsOverPath(t *testing.T) {
 	out, code := f.run()
 	if code != 0 || strings.TrimSpace(out) != "pinned-engine audit --offline" {
 		t.Fatalf("exit %d, output %q, want the pinned engine and nothing from PATH", code, out)
+	}
+}
+
+// Positive: a full lowercase PRAETOR_COMMIT is the repository's engine pin and takes the same
+// cold-install path as PRAETOR_REF instead of running the engine on PATH.
+func TestEngineLauncher_Positive_PraetorCommitInstallsPinnedEngine(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.goStub(installingGo)
+	f.declare("gate.yml", "env:\n  PRAETOR_COMMIT: \""+engineCommitPin+"\"\n")
+	out, code := f.run()
+	if code != 0 || !strings.Contains(out, "installed-engine audit --offline") || strings.Contains(out, "path-engine") {
+		t.Fatalf("exit %d, output %q, want the PRAETOR_COMMIT-pinned engine", code, out)
+	}
+	if got := mustRead(t, f.log); !strings.Contains(got, "@"+engineCommitPin) {
+		t.Fatalf("go calls = %q, want the PRAETOR_COMMIT pin", got)
+	}
+}
+
+// Negative: a PRAETOR_COMMIT that is not a full lowercase commit is not a pin; the PATH engine
+// still runs, and the note names the declaration and file instead of silently ignoring it.
+func TestEngineLauncher_Negative_NonFullPraetorCommitIsNamedAndIgnored(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.declare("gate.yml", "env:\n  PRAETOR_COMMIT: \"main\"\n")
+	out, code := f.run()
+	if code != 0 || !strings.Contains(out, "path-engine audit --offline") ||
+		!strings.Contains(out, "PRAETOR_COMMIT=main in .github/workflows/gate.yml is not a full commit") {
+		t.Fatalf("exit %d, output %q, want the invalid commit note and PATH engine", code, out)
+	}
+}
+
+// Negative: distinct pins across PRAETOR_REF and PRAETOR_COMMIT fail closed and name both
+// declarations, so the launcher never chooses between them.
+func TestEngineLauncher_Negative_PraetorRefAndCommitConflict(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+enginePin+"\n  PRAETOR_COMMIT: "+engineCommitPin+"\n")
+	out, code := f.run()
+	if code != 1 || !strings.Contains(out, "several") || !strings.Contains(out, "PRAETOR_REF="+enginePin) ||
+		!strings.Contains(out, "PRAETOR_COMMIT="+engineCommitPin) || strings.Contains(out, "path-engine") {
+		t.Fatalf("exit %d, output %q, want a refusal naming both declarations", code, out)
+	}
+}
+
+// Boundary: the same full commit declared through both names is one pin, not a conflict.
+func TestEngineLauncher_Boundary_PraetorRefAndCommitSameValueAreOnePin(t *testing.T) {
+	f := newEngineFixture(t)
+	f.pathEngine()
+	f.cached(engineCommitPin)
+	f.declare("gate.yml", "env:\n  PRAETOR_REF: "+engineCommitPin+"\n  PRAETOR_COMMIT: "+engineCommitPin+"\n")
+	out, code := f.run()
+	if code != 0 || strings.TrimSpace(out) != "pinned-engine audit --offline" {
+		t.Fatalf("exit %d, output %q, want one pinned engine", code, out)
 	}
 }
 

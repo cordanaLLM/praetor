@@ -337,6 +337,13 @@ name (`TestAuditPaperclip_Migration_HarnessNamingAbsentCaveman`), or, with
 provider, kept as a private review artifact (`dogfood.SaveRepairPlan`), never repository
 content.
 
+### Compiler diagnostic skills
+
+Praetor also carries `.agents/skills/compiler-json/SKILL.md` for repairing Rust
+diagnostics from Cargo JSON and `.agents/skills/dotnet-sarif/SKILL.md` for
+repairing .NET diagnostics from SARIF 2.1. They describe engine workflows and
+are not part of the adoption register-skill bundle above.
+
 ## Internal briefs and returns
 
 A brief to another agent states the goal, the inputs (paths, not pasted content), the

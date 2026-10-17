@@ -3,6 +3,7 @@ package forge
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -180,5 +181,19 @@ func TestMergeRuleset_Boundary_EqualAbsentAndUnorderedParameters(t *testing.T) {
 	}
 	if !parameterStricter(3, json.Number("2")) {
 		t.Error("an int above a json.Number must be stricter")
+	}
+}
+
+// Positive: require_extra_approval_for_unattributed_changes lowered from true to false is reported.
+func TestMergeRuleset_Positive_ExtraApprovalLoweredIsReported(t *testing.T) {
+	live := reviewRuleset(t, `{"require_extra_approval_for_unattributed_changes":true}`)
+	desired := reviewRuleset(t, `{"require_extra_approval_for_unattributed_changes":false}`)
+	params, lowered := mergedReviewParameters(t, live, desired)
+	if got := fmt.Sprint(params["require_extra_approval_for_unattributed_changes"]); got != "false" {
+		t.Fatalf("expected false, got %s", got)
+	}
+	want := []string{"pull_request.require_extra_approval_for_unattributed_changes=true->false"}
+	if !slices.Equal(lowered, want) {
+		t.Fatalf("lowered = %v, want %v", lowered, want)
 	}
 }

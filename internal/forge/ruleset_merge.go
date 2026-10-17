@@ -286,6 +286,7 @@ var stricterParameters = []string{
 	"require_last_push_approval",
 	"required_review_thread_resolution",
 	"strict_required_status_checks_policy",
+	"require_extra_approval_for_unattributed_changes",
 }
 
 // loweredParameters returns each parameter of stricterParameters whose live value is stricter

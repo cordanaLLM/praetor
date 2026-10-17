@@ -544,6 +544,8 @@ tested by `TestLoadEffectivePolicyJoinsEveryProfileDimension` in
 | :-- | :-- | :-- |
 | `complexity.*` | lowest positive limit; `0` means no bound | 15 / 20 / 60 / 75 |
 | `branch_protection.enforce_linear_history`, `require_signed_commits`, `dismiss_stale_reviews` | `true` wins | `true`, `false`, `true` |
+| `branch_protection.allowed_merge_methods` | intersection | forge default (all three) |
+| `branch_protection.require_extra_approval_for_unattributed_changes` | `true` wins | unset (default `false`) |
 | `branch_protection.required_approving_reviewers` | maximum | 1 |
 | `branch_protection.review_mode` | no catalog layer may set it (`TestLoadEffectivePolicyRejectsInvalidArchetypes`), so the join keeps `independent`; only the repository override may relax it to `single_maintainer`, after the join | `independent` |
 | `supply_chain.slsa_level` | maximum | 0 |

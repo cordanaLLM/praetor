@@ -60,6 +60,11 @@ func parseSkillCommand(line string) (skillCommand, bool) {
 		if field == "--" {
 			break
 		}
+		if strings.HasPrefix(field, "-p:") {
+			optionsStarted = true
+			command.flags = append(command.flags, "-p")
+			continue
+		}
 		if strings.HasPrefix(field, "-") {
 			optionsStarted = true
 			if strings.HasPrefix(field, "--") || len(field) == 2 {
@@ -82,18 +87,53 @@ func verifySkillCommandFlags(commands []skillCommand, runner skillHelpRunner) er
 			return fmt.Errorf("%s help: %w", command.tool, err)
 		}
 		for _, flag := range command.flags {
-			if !strings.Contains(help, flag) {
-				return fmt.Errorf("%s command names unsupported flag %s", command.tool, flag)
+			if strings.Contains(help, flag) {
+				continue
 			}
+			if command.tool == "dotnet" && hasCommand(command.helpArgs, "build") && flag == "-p" {
+				msbuildHelp, err := runner("dotnet", []string{"msbuild", "--help"})
+				if err != nil {
+					return fmt.Errorf("dotnet msbuild help for property flag: %w", err)
+				}
+				if strings.Contains(msbuildHelp, flag) {
+					continue
+				}
+			}
+			if command.tool == "cargo" && hasCommand(command.helpArgs, "clippy") && flag == "--message-format" {
+				cargoHelp, err := runner("cargo", []string{"build", "--help"})
+				if err != nil {
+					return fmt.Errorf("cargo build help for inherited flag: %w", err)
+				}
+				if strings.Contains(cargoHelp, flag) {
+					continue
+				}
+			}
+			return fmt.Errorf("%s command names unsupported flag %s", command.tool, flag)
 		}
 	}
 	return nil
 }
 
+func hasCommand(args []string, want string) bool {
+	for i := 0; i < len(args) && i < 16; i++ {
+		if args[i] == want {
+			return true
+		}
+	}
+	return false
+}
+
+// skillHelpTimeout bounds one --help call. A fresh CI runner's first dotnet call sets the SDK up
+// and was killed at 5 s (run 39001372651); the first-run work is also switched off below.
+const skillHelpTimeout = 60 * time.Second
+
 func runSkillHelp(tool string, args []string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), skillHelpTimeout)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, tool, args...).CombinedOutput()
+	cmd := exec.CommandContext(ctx, tool, args...)
+	cmd.Env = append(os.Environ(), "DOTNET_NOLOGO=1", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
+		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "DOTNET_GENERATE_ASPNET_CERTIFICATE=false")
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("run %s %s: %w: %s", tool, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
 	}
@@ -163,6 +203,22 @@ func TestSkillCommandFlags_NegativePlantedUnsupportedFlag(t *testing.T) {
 	err = verifySkillCommandFlags(commands, runner)
 	if err == nil || !strings.Contains(err.Error(), "--output-formatt") {
 		t.Fatalf("unsupported planted flag was not reported: %v", err)
+	}
+}
+
+func TestSkillCommandFlags_DotnetPropertyUsesMSBuildHelp(t *testing.T) {
+	command, ok := parseSkillCommand("dotnet build --no-restore -p:ErrorLog=diagnostics.sarif%2Cversion=2.1")
+	if !ok || len(command.flags) != 2 || command.flags[1] != "-p" {
+		t.Fatalf("MSBuild property flag was not normalized: %+v", command)
+	}
+	runner := func(tool string, args []string) (string, error) {
+		if len(args) > 0 && args[0] == "msbuild" {
+			return "Short form: -p", nil
+		}
+		return "--no-restore", nil
+	}
+	if err := verifySkillCommandFlags([]skillCommand{command}, runner); err != nil {
+		t.Fatal(err)
 	}
 }
 

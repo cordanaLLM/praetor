@@ -1955,7 +1955,11 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   other, and the build script all stay
   (`internal/adopt/verification_scripts.go`, #1264).
 - C# project files: locked restore and Release build with warnings as errors;
-  explicit unconditional test projects receive `dotnet test`. Conditional,
+  explicit unconditional test projects receive `dotnet test`. Each build writes
+  SARIF 2.1 to `obj/praetor-build.sarif` relative to that project. Restore creates
+  `obj/` before CoreCompile; a custom `ErrorLog` parent must exist before then or
+  the compiler can fail with CS0016. The command encodes the version separator as
+  `%2C` in `-p:ErrorLog=obj/praetor-build.sarif%2Cversion=2.1`. Conditional,
   contradictory, or disabled test markers cannot establish a test gate.
 - Python: explicit pytest configuration, or tests under `tests/` with an exact
   Python 3.14+ version pin. Pytest configuration is any root file pytest itself

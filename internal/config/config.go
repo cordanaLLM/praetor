@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -92,12 +93,81 @@ type BranchProtectionPolicy struct {
 	// (EffectivePolicy.seal) encodes the struct, and a repository that declares neither keeps
 	// the digest it had before the keys existed.
 	CodeQLDefaultSetup bool `yaml:"codeql_default_setup,omitempty" json:",omitempty"`
+	// AllowedMergeMethods restricts merge methods for pull requests on the branch (merge, squash, rebase).
+	AllowedMergeMethods []string `yaml:"allowed_merge_methods,omitempty" json:",omitempty"`
+	// RequireExtraApprovalForUnattributedChanges requires approval for unattributed changes.
+	// require_extra_approval_for_unattributed_changes is observed live (golusoris/golusoris ruleset 24664947, read 2026-10-16),
+	// absent from the pinned schema (github/rest-api-description 51a4657888cc).
+	RequireExtraApprovalForUnattributedChanges *bool `yaml:"require_extra_approval_for_unattributed_changes,omitempty" json:",omitempty"`
 }
 
 // branchProtectionKeys is the closed key set of a branch_protection section.
 var branchProtectionKeys = []string{
 	"enforce_linear_history", "require_signed_commits", "required_approving_reviewers",
 	"dismiss_stale_reviews", "review_mode", "merge_queue", "codeql_default_setup",
+	"allowed_merge_methods", "require_extra_approval_for_unattributed_changes",
+}
+
+// MergeMethod enum values supported by GitHub pull request rulesets.
+const (
+	MergeMethodMerge  = "merge"
+	MergeMethodSquash = "squash"
+	MergeMethodRebase = "rebase"
+)
+
+var knownMergeMethods = map[string]bool{
+	MergeMethodMerge:  true,
+	MergeMethodSquash: true,
+	MergeMethodRebase: true,
+}
+
+// Validate checks that allowed_merge_methods contains valid, non-empty, non-duplicate enum values.
+func (b BranchProtectionPolicy) Validate() error {
+	if b.AllowedMergeMethods != nil {
+		if len(b.AllowedMergeMethods) == 0 {
+			return errors.New("allowed_merge_methods cannot be empty")
+		}
+		seen := make(map[string]bool, len(b.AllowedMergeMethods))
+		for i := 0; i < len(b.AllowedMergeMethods) && i < 16; i++ {
+			method := b.AllowedMergeMethods[i]
+			if !knownMergeMethods[method] {
+				return fmt.Errorf("unknown allowed_merge_method %q", method)
+			}
+			if seen[method] {
+				return fmt.Errorf("duplicate allowed_merge_method %q", method)
+			}
+			seen[method] = true
+		}
+	}
+	return nil
+}
+
+// Equal reports whether b and other declare identical branch protection settings.
+func (b BranchProtectionPolicy) Equal(other BranchProtectionPolicy) bool {
+	if !b.scalarFieldsEqual(other) {
+		return false
+	}
+	if !slices.Equal(b.AllowedMergeMethods, other.AllowedMergeMethods) {
+		return false
+	}
+	return boolPointersEqual(b.RequireExtraApprovalForUnattributedChanges, other.RequireExtraApprovalForUnattributedChanges)
+}
+
+func (b BranchProtectionPolicy) scalarFieldsEqual(other BranchProtectionPolicy) bool {
+	return b.EnforceLinearHistory == other.EnforceLinearHistory &&
+		b.RequireSignedCommits == other.RequireSignedCommits &&
+		b.RequiredApprovingReviewers == other.RequiredApprovingReviewers &&
+		b.DismissStaleReviews == other.DismissStaleReviews &&
+		b.ReviewMode == other.ReviewMode &&
+		b.MergeQueue == other.MergeQueue &&
+		b.CodeQLDefaultSetup == other.CodeQLDefaultSetup
+}
+
+func boolPointersEqual(a, b *bool) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // UnmarshalYAML distinguishes an omitted review mode from an explicitly null
@@ -112,12 +182,23 @@ func (b *BranchProtectionPolicy) UnmarshalYAML(node *yaml.Node) error {
 	if reviewMode != nil && (reviewMode.Kind != yaml.ScalarNode || reviewMode.Tag != "!!str") {
 		return errors.New("branch protection review_mode must be a string enum")
 	}
+	mergeMethods := policyMember(node, "allowed_merge_methods")
+	if mergeMethods != nil && mergeMethods.Kind != yaml.SequenceNode {
+		return errors.New("allowed_merge_methods must be a list")
+	}
 	type rawBranchProtectionPolicy BranchProtectionPolicy
 	var decoded rawBranchProtectionPolicy
 	if err := node.Decode(&decoded); err != nil {
 		return err
 	}
-	*b = BranchProtectionPolicy(decoded)
+	if mergeMethods != nil && len(mergeMethods.Content) == 0 {
+		return errors.New("allowed_merge_methods cannot be empty")
+	}
+	policy := BranchProtectionPolicy(decoded)
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	*b = policy
 	return nil
 }
 
@@ -461,6 +542,9 @@ func validateManifestReviewPolicy(m *Manifest) error {
 	if m == nil || m.Overrides.BranchProtection == nil {
 		return nil
 	}
+	if err := m.Overrides.BranchProtection.Validate(); err != nil {
+		return err
+	}
 	_, _, err := m.Overrides.BranchProtection.EffectiveReviewRequirements()
 	return err
 }
@@ -574,7 +658,31 @@ func joinBranchProtection(a, b BranchProtectionPolicy) BranchProtectionPolicy {
 		ReviewMode:                 joinReviewMode(a.ReviewMode, b.ReviewMode),
 		MergeQueue:                 a.MergeQueue || b.MergeQueue,
 		CodeQLDefaultSetup:         a.CodeQLDefaultSetup || b.CodeQLDefaultSetup,
+		AllowedMergeMethods:        joinAllowedMergeMethods(a.AllowedMergeMethods, b.AllowedMergeMethods),
+		RequireExtraApprovalForUnattributedChanges: joinExtraApproval(a.RequireExtraApprovalForUnattributedChanges, b.RequireExtraApprovalForUnattributedChanges),
 	}
+}
+
+func joinAllowedMergeMethods(a, b []string) []string {
+	if len(b) > 0 {
+		return slices.Clone(b)
+	}
+	if len(a) > 0 {
+		return slices.Clone(a)
+	}
+	return nil
+}
+
+func joinExtraApproval(a, b *bool) *bool {
+	if b != nil {
+		val := *b
+		return &val
+	}
+	if a != nil {
+		val := *a
+		return &val
+	}
+	return nil
 }
 
 // joinSupplyChain keeps the higher SLSA level and every mandatory attestation.
@@ -615,6 +723,11 @@ func clonePolicy(p *ResolvedPolicy) *ResolvedPolicy {
 	clone := *p
 	clone.Linters = append([]string(nil), p.Linters...)
 	clone.DevFeatures = append([]string(nil), p.DevFeatures...)
+	clone.BranchProtection.AllowedMergeMethods = slices.Clone(p.BranchProtection.AllowedMergeMethods)
+	if p.BranchProtection.RequireExtraApprovalForUnattributedChanges != nil {
+		val := *p.BranchProtection.RequireExtraApprovalForUnattributedChanges
+		clone.BranchProtection.RequireExtraApprovalForUnattributedChanges = &val
+	}
 	return &clone
 }
 
@@ -662,6 +775,13 @@ func (b *BranchProtectionPolicy) applyOverride(o *BranchProtectionPolicy) {
 	}
 	*b = joinBranchProtection(*b, *o)
 	b.ReviewMode = mode
+	if o.AllowedMergeMethods != nil {
+		b.AllowedMergeMethods = slices.Clone(o.AllowedMergeMethods)
+	}
+	if o.RequireExtraApprovalForUnattributedChanges != nil {
+		val := *o.RequireExtraApprovalForUnattributedChanges
+		b.RequireExtraApprovalForUnattributedChanges = &val
+	}
 }
 
 // joinReviewMode preserves invalid input for downstream rejection while ensuring
