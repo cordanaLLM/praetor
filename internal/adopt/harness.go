@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/hisscoverage"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
 )
@@ -113,7 +115,8 @@ type harnessFacts struct {
 	// workflows are the CI workflows this run scaffolds, with what each runs (rule 5).
 	workflows []scaffoldedWorkflow
 	// hiss is what the invariant rows depend on: languages and the enforced function length.
-	hiss hisscatalog.Facts
+	hiss     hisscatalog.Facts
+	coverage *hisscoverage.Catalog
 	// register is the text register block compile-context splices for this repository
 	// (compiler.LoadRegisterBlock): the manifest's register policy, and the dispatch hook
 	// sentence only where a pre-dispatch hook is registered. Adoption registers only the
@@ -216,8 +219,8 @@ func foreignInstructions(existing string) string {
 
 // buildAgentHarnessDirectives renders the invariant table and the operational rules. Every row
 // comes from the one HISS catalog (hisscatalog.Rules), so the table lists every rule the MCP
-// explain_rule tool explains, and each row states the check the pipelines this run generates
-// give it, or that none exists (BUG-779, BUG-804). The rows keep the shape
+// explain_rule tool explains, with repository coverage claims, generated checks, or audit
+// scanners. The rows keep the shape
 // hisscatalog.ParseGatedInvariants reads, the parser the generated wiki uses. Each rule's
 // directive names only the language constructs of the repository's languages and the
 // function length its audit enforces (#68). Rule 5 states the local hooks and the CI
@@ -228,7 +231,8 @@ func buildAgentHarnessDirectives(facts harnessFacts) string {
 	b.WriteString(adoptedCheckLegend(facts.pipelines))
 	b.WriteString("| Invariant | Rule | Adopted check | On fail |\n| :--- | :--- | :--- | :--- |\n")
 	for _, rule := range hisscatalog.Rules() {
-		check, failure := rule.AdoptedFor(facts.pipelines, facts.hiss)
+		generated, failure := rule.AdoptedFor(facts.pipelines, facts.hiss)
+		check := harnessEnforcement(rule, facts, generated)
 		fmt.Fprintf(&b, "| **%s** %s | %s | %s | %s |\n", rule.ID, rule.Scope, rule.AdoptedDirective(facts.hiss), check, failure)
 	}
 	b.WriteString("\n" + harnessOperationalRules)
@@ -239,8 +243,47 @@ func buildAgentHarnessDirectives(facts harnessFacts) string {
 	return b.String()
 }
 
-// adoptedCheckLegend names the pipelines the Adopted check column reads from, or says there
-// are none, so a reader never takes a row for a gate the run did not generate.
+// harnessEnforcement prefers declared coverage, then the check this adoption generated (which
+// names the pipeline that runs it), then the audit scanner, then an explicit unknown. Claims
+// retain their language labels because coverage is recorded per language.
+func harnessEnforcement(rule hisscatalog.Rule, facts harnessFacts, generated string) string {
+	if claim := declaredEnforcement(rule.ID, facts.coverage); claim != "" {
+		return claim
+	}
+	if generated != "" && generated != hisscatalog.NotEnforced {
+		return generated
+	}
+	if scanner := engineScannerEnforcement(rule, facts.hiss.Languages); scanner != "" {
+		return scanner
+	}
+	return "unknown"
+}
+
+// declaredEnforcement renders every language claim for one rule in file order.
+func declaredEnforcement(ruleID string, catalog *hisscoverage.Catalog) string {
+	if catalog == nil {
+		return ""
+	}
+	for i := 0; i < len(catalog.Rules); i++ {
+		if catalog.Rules[i].ID != ruleID {
+			continue
+		}
+		claims := make([]string, 0, len(catalog.Rules[i].Coverage))
+		for j := 0; j < len(catalog.Rules[i].Coverage); j++ {
+			claim := catalog.Rules[i].Coverage[j]
+			claims = append(claims, string(claim.State)+" ("+claim.Language+"): "+claim.Mechanism)
+		}
+		return strings.Join(claims, "; ")
+	}
+	return ""
+}
+
+// engineScannerEnforcement names the HISS audit scanner only where its catalog says it decides.
+func engineScannerEnforcement(rule hisscatalog.Rule, languages hisscatalog.Language) string {
+	return rule.AuditScanner(hisscatalog.Facts{Languages: languages})
+}
+
+// adoptedCheckLegend names the coverage source and the gates this adoption generated.
 func adoptedCheckLegend(pipelines hisscatalog.Pipeline) string {
 	var generated []string
 	if pipelines&hisscatalog.PipelineVerifyAll != 0 {
@@ -253,8 +296,7 @@ func adoptedCheckLegend(pipelines hisscatalog.Pipeline) string {
 	if len(generated) > 0 {
 		source = strings.Join(generated, " + ")
 	}
-	return "Adopted check = check adoption generated here (" + source + "), as written at adoption; later edits to those files not reflected. `" +
-		hisscatalog.NotEnforced + "` = rule binds, no generated check decides it for repository languages.\n\n"
+	return "Adopted check = coverage state + mechanism; else audit scanner; else `unknown`. Gates = (" + source + "); edits not reflected.\n\n"
 }
 
 // transpilerRuleHead opens rule 3 with the files compile-context writes under agent_clients,
@@ -481,9 +523,13 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	if err != nil {
 		return harnessFacts{}, err
 	}
+	coverage, err := hisscoverage.LoadCatalog(ctx, s.repoPath)
+	if err != nil && !errors.Is(err, hisscoverage.ErrCatalogAbsent) {
+		return harnessFacts{}, fmt.Errorf("read HISS coverage for adopted harness: %w", err)
+	}
 	owner, name := s.harnessIdentity()
 	return harnessFacts{owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
-		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), register: register}, nil
+		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), coverage: coverage, register: register}, nil
 }
 
 // resolveAgentsContent writes AGENTS.md with harness, the harness this run renders: created,

@@ -55,8 +55,11 @@ func TestHarnessTableListsEveryRegisteredInvariant(t *testing.T) {
 		t.Fatalf("table has %d rows, catalog %d", len(rows), len(rules))
 	}
 	goFacts := repositoryFacts(truthPlan, 0)
+	facts := adoptedFacts("", "fixture", "framework", truthPlan)
 	for i, rule := range rules {
-		check, failure := rule.AdoptedFor(hisscatalog.AllPipelines, goFacts)
+		generated, _ := rule.AdoptedFor(facts.pipelines, facts.hiss)
+		check := harnessEnforcement(rule, facts, generated)
+		_, failure := rule.AdoptedFor(hisscatalog.AllPipelines, goFacts)
 		want := "| **" + rule.ID + "** " + rule.Scope + " | " + rule.AdoptedDirective(goFacts) +
 			" | " + check + " | " + failure + " |"
 		if rows[i] != want {

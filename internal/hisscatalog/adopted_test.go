@@ -152,3 +152,26 @@ func TestAdoptedFor(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditScanner_PositiveNegativeBoundary(t *testing.T) {
+	scanner, ok := LookupRule("HISS-01")
+	if !ok {
+		t.Fatal("HISS-01 missing from catalog")
+	}
+	if got := scanner.AuditScanner(Facts{Languages: LanguageGo}); got == "" {
+		t.Fatal("Go audit scanner not reported for HISS-01")
+	}
+	if got := scanner.AuditScanner(Facts{Languages: LanguageOther}); got != "" {
+		t.Errorf("scanner applies to other-language repository: %q", got)
+	}
+	unknown, ok := LookupRule("HISS-05")
+	if !ok {
+		t.Fatal("HISS-05 missing from catalog")
+	}
+	if got := unknown.AuditScanner(Facts{Languages: LanguageGo}); got != "" {
+		t.Errorf("non-scanner rule acquired audit scanner: %q", got)
+	}
+	if got := scanner.AuditScanner(Facts{}); got == "" {
+		t.Error("unknown language set must retain possible scanner")
+	}
+}

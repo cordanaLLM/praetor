@@ -76,6 +76,8 @@ const auditStages = StageVerifyAll | StagePreCommit | StagePrePush
 type AdoptedCheck struct {
 	// Check names the command or scan, such as "`praetorctl audit` HISS scan".
 	Check string
+	// AuditScanner marks a check the engine's HISS audit scanner itself decides.
+	AuditScanner bool
 	// Coverage qualifies what the check decides, such as the languages it reads; optional.
 	Coverage string
 	// Trigger is what fails the check, such as "new finding".
@@ -97,7 +99,7 @@ const scannedLanguages = LanguageGo | LanguageRust | LanguagePython | LanguageC
 // auditCheck is an adopted `praetorctl audit` HISS scan qualified by what it decides and the
 // languages the scan decides it in, a subset of scannedLanguages.
 func auditCheck(languages Language, coverage string) AdoptedCheck {
-	return AdoptedCheck{Check: adoptedAudit, Coverage: coverage, Trigger: "new finding", Stages: auditStages, Languages: languages}
+	return AdoptedCheck{Check: adoptedAudit, AuditScanner: true, Coverage: coverage, Trigger: "new finding", Stages: auditStages, Languages: languages}
 }
 
 // Adopted returns the check an adopted repository gets from the pipelines adoption generated
@@ -124,6 +126,18 @@ func (r Rule) AdoptedFor(generated Pipeline, f Facts) (check, failure string) {
 		return NotEnforced, Advisory
 	}
 	return r.Adopted(generated)
+}
+
+// AuditScanner returns the HISS audit scanner that decides this rule for languages, if any.
+func (r Rule) AuditScanner(f Facts) string {
+	if !r.Adoption.AuditScanner || (f.Languages != 0 && !r.decidedIn(f.Languages)) {
+		return ""
+	}
+	check := r.Adoption.Check
+	if r.Adoption.Coverage != "" {
+		check += ": " + r.Adoption.Coverage
+	}
+	return check
 }
 
 // decidedIn reports whether the rule binds a repository carrying languages and its check reads
