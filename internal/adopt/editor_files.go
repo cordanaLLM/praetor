@@ -16,6 +16,22 @@ import (
 // names; the rest are counted.
 const maxQuotedEditorMembers = 5
 
+const jetBrainsInspectionProfile = ".idea/inspectionProfiles/standards.xml"
+
+// priorJetBrainsProfileDigests records every distinct profile the generator shipped, and the
+// current renderings used by the boundary check. Fixtures reproduce each digest.
+var priorJetBrainsProfileDigests = map[string]string{
+	"0bf9fd966885d96c44b010880daa108d7507fc59b0d518340687445890659806": "current framework profile",
+	"22f502f2d1f05fe61a9ea75d9e9d02c3eea1a3ce9a5efc435e98bf3fabfc5b53": "current app-service profile",
+	"3dc0f5b2ece34da72f32c1b31594e26ca843769a1bdc0629ce99f7c149bdae78": "current native-gpu-systems profile",
+	"7b5e6ebfa0d16ff657ab879f06b25a7bb6a219e31e56aacd7e3ba4ec5b67f082": "HISS inspections before #476, framework, resolved 60-line limit",
+	"b8dca54ff4a2c30065c3837eb927137c7d25a9b9c97864930d8997cc8606691b": "HISS inspections before #476, app-service, resolved 60-line limit",
+	"8de313f1d551e2834af66923d58851e23d09e47e0b60528c6636473e13d627ac": "HISS inspections before #476, native-gpu-systems, resolved 60-line limit",
+	"5bef7fae916b419bb7fc99a72ea4d0c6a23a1ac69e5064d1801eba905cbf212c": "first release and pre-#439 framework profile, 75-line limit",
+	"31c119f8597a0b199e600608a35e0d8f385cfcd23fc4310e821000fca1b7b2f5": "pre-#439 app-service profile, 75-line limit",
+	"1e27fe78fdd0c04bdde70b079f11eef69f4050b16341f06d230ff96eef047708": "pre-#439 native-gpu-systems profile, 75-line limit",
+}
+
 // reconcileEditorFile creates f when it is absent. An existing file is resolved through
 // editor.ResolveExisting with drift kept, the rule `editors generate` applies except that
 // adoption never overwrites an editor file nothing audits (#502):
@@ -45,12 +61,47 @@ func (s *adoptSession) reconcileEditorFile(ctx context.Context, f editor.Generat
 	if !exists {
 		return s.createEditorFile(full, f)
 	}
+	refreshed, err := s.refreshPriorJetBrainsProfile(ctx, full, f, existing)
+	if err != nil {
+		return fmt.Errorf("refresh editor file %s: %w", f.Path, err)
+	}
+	if refreshed {
+		return nil
+	}
 	resolution, err := editor.ResolveExisting(f, existing, true)
 	if err != nil {
 		s.keepEditorFile(f.Path, unmergedEditorReason(f.Path, err, s.forceCommand()))
 		return nil
 	}
 	return s.applyEditorResolution(ctx, full, f, existing, resolution)
+}
+
+// refreshPriorJetBrainsProfile replaces a recorded unedited profile with the current generator
+// output. It keeps the existing consistent line-ending style and binds the write to the bytes
+// observed before reconciliation; an edit or a current profile falls through unchanged.
+func (s *adoptSession) refreshPriorJetBrainsProfile(ctx context.Context, full string, f editor.GeneratedFile, existing []byte) (bool, error) {
+	if f.Path != jetBrainsInspectionProfile {
+		return false, nil
+	}
+	known, crlf := priorRendering(existing, priorJetBrainsProfileDigests)
+	if !known {
+		return false, nil
+	}
+	current, err := util.CanonicalTextEquivalent(existing, []byte(f.Content))
+	if err != nil {
+		return false, fmt.Errorf("compare current profile: %w", err)
+	}
+	if current {
+		return false, nil
+	}
+	content := []byte(util.RestoreLineEndings(f.Content, crlf))
+	if err := contextopt.ReplaceSnapshot(ctx, full, content, contextopt.ReplaceOptions{
+		Expected: existing, Exists: true, Mode: filePerm,
+	}); err != nil {
+		return false, fmt.Errorf("publish current profile: %w", err)
+	}
+	s.report.recordReconciled(f.Path, "Refreshed an unedited earlier JetBrains inspection profile")
+	return true, nil
 }
 
 // createEditorFile writes f's template at full, which does not exist yet.
