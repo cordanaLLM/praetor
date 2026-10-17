@@ -24,7 +24,11 @@ func TestTestStageTimeoutResolvesFromEnvironment(t *testing.T) {
 		{"blank", "   ", TestStageTimeout, ""},
 		// Positive: a usable value is honoured and announced, so a raised bound is visible
 		// in the receipt rather than an invisible local difference.
-		{"raised", "10m", 10 * time.Minute, "raised"},
+		{"raised", "25m", 25 * time.Minute, "raised"},
+		// Boundary: a value under the default, or equal to it, is honoured and announced as what
+		// it is, not as a raise (#1419).
+		{"lowered", "10m", 10 * time.Minute, "lowered"},
+		{"at default", TestStageTimeout.String(), TestStageTimeout, "set to"},
 		// Negative: an unusable value falls back rather than removing or shrinking the bound.
 		{"unparseable", "soon", TestStageTimeout, "not a duration"},
 		{"zero", "0s", TestStageTimeout, "not positive"},
@@ -78,6 +82,60 @@ func TestTestStageDistinguishesItsDeadlineFromAFailingSuite(t *testing.T) {
 		if !strings.Contains(message, want) {
 			t.Errorf("deadline message must mention %q, got %q", want, message)
 		}
+	}
+}
+
+// Boundary (#1419): a suite that blocks forever is stopped at the shipped default bound and at a
+// raised one, and both are reported as the bound firing with the bound's value, not as a failing
+// suite. The bound's clock runs for a millisecond so the test does not wait out twenty minutes.
+func TestTestStageCutsAHungSuiteAtTheDefaultAndARaisedBound(t *testing.T) {
+	cases := []struct {
+		name, raw string
+		want      time.Duration
+	}{
+		{"default", "", TestStageTimeout},
+		{"raised", "28m", 28 * time.Minute},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := newHermeticGitRepo(t)
+			seedGoModule(t, repoDir)
+			cfg, _ := newTestConfig(t, repoDir, false)
+			var seen time.Duration
+			ran := false
+			cfg.run = blockedSuite(&ran, holdStageBoundAt(cfg, time.Millisecond, &seen))
+			t.Setenv(TestStageTimeoutEnv, tc.raw)
+			_, err := runTestStage(context.Background(), cfg)
+			if err == nil || !ran {
+				t.Fatalf("a hung suite must be stopped after it started: ran=%v err=%v", ran, err)
+			}
+			if seen != tc.want {
+				t.Errorf("the stage asked for a %s bound, want %s", seen, tc.want)
+			}
+			message := err.Error()
+			if strings.Contains(message, "tests failed") {
+				t.Errorf("a hung suite cut by the bound must not read as a test failure, got %q", message)
+			}
+			for _, want := range []string{"hit the " + tc.want.String() + " stage bound", "bound firing", TestStageTimeoutEnv} {
+				if !strings.Contains(message, want) {
+					t.Errorf("deadline message must mention %q, got %q", want, message)
+				}
+			}
+		})
+	}
+}
+
+// Boundary (#1419): the shipped default covers the slowest full race run measured on a loaded
+// workstation, with half of it again to spare, and stays under the ceiling so an operator can
+// still raise it. The old 3-minute default fails the first check.
+func TestTestStageTimeoutDefaultCoversTheMeasuredRuns(t *testing.T) {
+	// The engine's full race run at load 45 to 60 on 2026-10-17; adopters took 4 to 7 minutes.
+	const slowestMeasured = 10*time.Minute + 5*time.Second
+	if TestStageTimeout < slowestMeasured*3/2 {
+		t.Errorf("default race stage bound %s is under 1.5 x the slowest measured run %s", TestStageTimeout, slowestMeasured)
+	}
+	if TestStageTimeout >= MaxTestStageTimeout {
+		t.Errorf("default race stage bound %s leaves no room under the %s ceiling", TestStageTimeout, MaxTestStageTimeout)
 	}
 }
 

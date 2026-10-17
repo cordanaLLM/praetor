@@ -25,7 +25,7 @@ func TestResolveRunBudgetDerivesTheRunDeadlineFromTheStageBound(t *testing.T) {
 		wantNote string
 	}{
 		// Positive: a raised bound raises the run deadline with it, past the old fixed cap.
-		{"raised past the old cap", "12m", 12 * time.Minute, "raised"},
+		{"raised past the old cap", "25m", 25 * time.Minute, "raised"},
 		// Negative: an unusable value falls back to the default rather than removing the bound.
 		{"unparseable", "soon", TestStageTimeout, "not a duration"},
 		{"negative", "-5m", TestStageTimeout, "not positive"},
@@ -61,7 +61,7 @@ func TestRunBudgetTimeoutSecondsRoundsUp(t *testing.T) {
 		budget RunBudget
 		want   int64
 	}{
-		{RunBudget{StageBound: 180 * time.Second, Allowance: OtherStagesAllowance}, 480},
+		{RunBudget{StageBound: TestStageTimeout, Allowance: OtherStagesAllowance}, 1500},
 		{RunBudget{StageBound: 1500 * time.Millisecond}, 2},
 		{RunBudget{StageBound: time.Nanosecond}, 1},
 	}
@@ -185,10 +185,25 @@ func holdDeadline(parent context.Context, start deadlineFunc) (context.Context, 
 // holdStageBound holds back the clock of cfg's race stage bound, which the stage itself creates
 // before its worktree, and returns the arm that starts it.
 func holdStageBound(cfg *stageConfig) func() {
+	return holdStageBoundAt(cfg, 0, nil)
+}
+
+// holdStageBoundAt is holdStageBound with the bound's clock running for clock instead of the
+// bound itself when clock is positive, and the bound the stage asked for recorded in seen when
+// seen is not nil. A suite that blocks forever is then cut at a bound of minutes, the shipped
+// default included, without the test waiting for it; the cause stays the stage bound's own.
+func holdStageBoundAt(cfg *stageConfig, clock time.Duration, seen *time.Duration) func() {
 	var arm func()
 	cfg.boundStage = func(ctx context.Context, bound time.Duration) (context.Context, context.CancelFunc) {
+		if seen != nil {
+			*seen = bound
+		}
+		runs := bound
+		if clock > 0 {
+			runs = clock
+		}
 		held, cancel, armBound := holdDeadline(ctx, func(parent context.Context) (context.Context, context.CancelFunc) {
-			return withStageBound(parent, bound)
+			return withStageBound(parent, runs)
 		})
 		arm = armBound
 		return held, cancel

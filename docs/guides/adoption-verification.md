@@ -1621,15 +1621,21 @@ prints the same files with their names and descriptions under **Missing or Inval
 ### The race stage's bound, and what firing it means
 
 The race-detector stage is bounded, because an unbounded stage is how a gate hangs instead of
-failing (HISS-02). The default is 180 seconds, and `PRAETOR_TEST_STAGE_TIMEOUT` raises it up to a
-30-minute ceiling. The stage passes the same bound to `go test -race -timeout`, so every package
+failing (HISS-02). The default is 20 minutes, and `PRAETOR_TEST_STAGE_TIMEOUT` raises it up to a
+30-minute ceiling. The default rests on measured runs (#1419): on a workstation at load 45 to 60 a
+full race run took 9 to 10 minutes for the engine and 4 to 7 minutes for adopted repositories, and
+the earlier 3-minute default refused ordinary pushes there. Twenty minutes is about twice the
+slowest of those runs and leaves room under the ceiling (`TestTestStageTimeoutDefaultCoversTheMeasuredRuns`
+in `internal/gating/race_bound_test.go`). A suite that blocks forever is still stopped at the
+bound and reported as the bound firing, at the default and at a raised value
+(`TestTestStageCutsAHungSuiteAtTheDefaultAndARaisedBound`). The stage passes the same bound to `go test -race -timeout`, so every package
 binary may use the whole stage budget; go test's own default of ten minutes per package would
 otherwise panic a slow package mid-suite while the stage still had budget left
 (`TestRunTestStage_3D` in `internal/gating/gating_test.go` pins the command line).
 
 The override is clamped rather than trusted. An empty, unparseable, zero, negative or
 over-ceiling value falls back to the default or the ceiling and **says which**, so a typo cannot
-quietly remove the bound or shrink it to nothing. A raised bound is printed as the stage's reason,
+quietly remove the bound or shrink it to nothing. A raised or lowered bound is printed as the stage's reason,
 so it appears in the receipt: an override that changed the gate's strictness without showing up in
 its output would be an invisible difference between what one operator verified and what every
 reviewer reads.
@@ -1638,7 +1644,7 @@ When the bound fires, the stage says so rather than reporting a test failure. Th
 outcomes and used to print identically:
 
 ```text
-5. [FAIL] Race-Detector Tests  (3m0.024s)
+5. [FAIL] Race-Detector Tests  (20m0.024s)
    Reason: tests failed in .standards/worktrees/gate-2856-...: ok github.com/... 1.437s
 ```
 
@@ -1660,7 +1666,7 @@ the suite. Creation now reports the bound when the deadline is what stopped it, 
 `gate run` has a deadline of its own, and it is derived from the race stage's bound rather than
 fixed: the resolved bound plus a five-minute allowance for every other stage
 (`OtherStagesAllowance` in [`internal/gating/deadline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/deadline.go)).
-The default is therefore 3 + 5 = 8 minutes, and the 30-minute ceiling gives 35. The run prints
+The default is therefore 20 + 5 = 25 minutes, and the 30-minute ceiling gives 35. The run prints
 the value it applies on its `Run Deadline:` line, and `praetorctl gate deadline [--json]` prints
 it without running anything:
 
@@ -1682,14 +1688,14 @@ The deadline is sized to the repository `--path` names (`ResolveRepoRunBudget` i
 | `Cargo.lock`, no discoverable `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
 | N discoverable `go.mod` files and `Cargo.lock` | N + 1 | 9 min |
 
-A mixed repository with one Go module therefore gets 2 × 3 + 9 = 15 minutes by default. Sized for one suite, the run
+A mixed repository with one Go module therefore gets 2 × 20 + 9 = 49 minutes by default. Sized for one suite, the run
 deadline let the Go suite and the Cargo commands spend the time the Cargo suite needed, and no value
 of the variable could fix it. `gate deadline` takes the same `--path` (default `.`) and reports the
 suite count as `test_suites` in its JSON:
 
 ```text
 $ praetorctl gate deadline --path=.
-Run Deadline: 15m0s (2 test suites at a 3m0s stage bound each + 9m0s for the other stages)
+Run Deadline: 49m0s (2 test suites at a 20m0s stage bound each + 9m0s for the other stages)
 ```
 
 A run that will build the repository's devcontainer
@@ -1702,7 +1708,7 @@ reserves it exactly when the run plans a build, so `gate run`, `gate deadline` a
 hook still agree; the human form names it and the JSON reports it as `devcontainer_image_build`:
 
 ```text
-Run Deadline: 23m0s (3m0s race stage bound + 5m0s for the other stages + 15m0s to build the devcontainer image)
+Run Deadline: 40m0s (20m0s race stage bound + 5m0s for the other stages + 15m0s to build the devcontainer image)
 ```
 
 `gate run --dry-run` builds no image, so it reserves nothing and asks no container runtime.
@@ -1716,7 +1722,7 @@ run deadline and its value instead:
 
 ```text
 race-detector tests in .standards/worktrees/gate-… did not finish: the gate run's deadline of
-8m0s (3m0s race stage bound + 5m0s for the other stages) fired first, not the 3m0s stage bound,
+25m0s (20m0s race stage bound + 5m0s for the other stages) fired first, not the 20m0s stage bound,
 and this is not a test failure.
 ```
 

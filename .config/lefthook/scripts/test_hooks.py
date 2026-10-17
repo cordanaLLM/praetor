@@ -1309,10 +1309,10 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertEqual(spawned.call_count, 1)
 
     def test_gate_timeout_adds_only_the_launch_margin(self):
-        # Boundary: the smallest deadline, and the default 180 s bound plus the 300 s allowance,
-        # which keeps the hook at exactly the 600 s it used before the deadline was derived.
+        # Boundary: the smallest deadline, and the default 1200 s bound plus the 300 s allowance,
+        # which gets the launch margin and nothing else.
         self.assertEqual(gate_timeout(b'{"timeout_seconds": 1}'), 1 + GATE_LAUNCH_MARGIN)
-        self.assertEqual(gate_timeout(b'{"timeout_seconds": 480}'), 600)
+        self.assertEqual(gate_timeout(b'{"timeout_seconds": 1500}'), 1500 + GATE_LAUNCH_MARGIN)
 
     def test_clean_env_final_bound_is_composable_for_nested_children(self):
         unmanaged = MAX_PROCESS_ENV_ENTRIES - len(MANAGED_PROCESS_ENV)
@@ -2036,7 +2036,7 @@ class ScopeAndGuard(unittest.TestCase):
         query = ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"]
         # PRAETOR_GATE_DEVCONTAINER=off keeps the table independent of the host: where a container
         # runtime exists, the deadline also reserves the devcontainer image build bound.
-        expected = {"": 480, "soon": 480, "30m": 2100, "31m": 2100}
+        expected = {"": 1500, "soon": 1500, "30m": 2100, "31m": 2100}
         for value, seconds in expected.items():
             with self.subTest(value=value):
                 environment = dict(
@@ -2048,7 +2048,7 @@ class ScopeAndGuard(unittest.TestCase):
         # plain deadline plus the 15-minute image build bound when this host can build the image.
         report = run(query, cwd=ROOT, env=dict(clean_env(), PRAETOR_TEST_STAGE_TIMEOUT=""),
                      timeout=GATE_QUERY_TIMEOUT)
-        self.assertIn(gate_timeout(report) - GATE_LAUNCH_MARGIN, (480, 480 + 900))
+        self.assertIn(gate_timeout(report) - GATE_LAUNCH_MARGIN, (1500, 1500 + 900))
 
     def test_audit_range_uses_exact_oid_and_touched_paths(self):
         with tempfile.TemporaryDirectory(prefix="praetor-audit-range-") as temp:
