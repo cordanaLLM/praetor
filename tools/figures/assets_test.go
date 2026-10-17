@@ -531,7 +531,10 @@ func TestPriorDigestsBoundary(t *testing.T) {
 
 // pythonLicenceLine is the first line of every managed Python asset: an adopter's licence-header
 // gate reads every tracked Python file, and the audit refuses an edited copy (#1281).
+// REUSE-IgnoreStart: the string below is a licence line as test data, not this file's licence.
 const pythonLicenceLine = "# SPDX-License-Identifier: EUPL-1.2\n"
+
+// REUSE-IgnoreEnd
 
 // pythonLicenceProblems names each Python asset in texts whose first line is not its licence line.
 func pythonLicenceProblems(texts map[string]string) []string {

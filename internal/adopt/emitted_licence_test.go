@@ -17,6 +17,8 @@ import (
 // shebang, within the header an adopter's licence-header gate reads (#1281).
 const licenceHeaderLines = 5
 
+// REUSE-IgnoreStart: the strings below hold licence lines as test data, not this file's licence.
+
 // licenceLine is the comment line that names the licence of a shell or Python file. The launcher
 // may end it in its carriage-return guard, " #".
 var licenceLine = regexp.MustCompile(`^# SPDX-License-Identifier: [A-Za-z0-9.+-]+( (AND|OR|WITH) [A-Za-z0-9.+-]+)*( #)?$`)
@@ -108,3 +110,5 @@ func TestEmittedScripts_Boundary_LicenceLineForms(t *testing.T) {
 		}
 	}
 }
+
+// REUSE-IgnoreEnd

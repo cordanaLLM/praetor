@@ -419,7 +419,9 @@ func extractSPDXIdentifier(text string) string {
 	lines := strings.Split(text, "\n")
 	for i := 0; i < len(lines) && i < 32; i++ {
 		trimmed := strings.TrimSpace(lines[i])
+		// REUSE-IgnoreStart: the tag below is the string the scan looks for, not this file's licence.
 		const tag = "SPDX-License-Identifier:"
+		// REUSE-IgnoreEnd
 		if idx := strings.Index(trimmed, tag); idx >= 0 {
 			id := strings.TrimSpace(trimmed[idx+len(tag):])
 			id = strings.Trim(id, " \t\r*/#")
