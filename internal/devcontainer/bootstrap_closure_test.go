@@ -218,10 +218,11 @@ func framedSpec(t *testing.T, archive []byte, parts int) *BootstrapSpec {
 	return spec
 }
 
-// TestBootstrapSpecPartCountBounds covers the recorded part count: one and eight frames are
-// valid, zero and nine are refused whatever the Dockerfile digest says.
+// TestBootstrapSpecPartCountBounds covers the recorded part count: one, eight (the cap until
+// 2026-10-18) and twelve frames are valid, zero and thirteen are refused whatever the Dockerfile
+// digest says.
 func TestBootstrapSpecPartCountBounds(t *testing.T) {
-	for parts, valid := range map[int]bool{0: false, 1: true, 4: true, 5: true, 8: true, 9: false} {
+	for parts, valid := range map[int]bool{0: false, 1: true, 4: true, 5: true, 8: true, 12: true, 13: false} {
 		err := validateBootstrapSpec(framedSpec(t, []byte("archive"), parts))
 		if (err == nil) != valid {
 			t.Errorf("ArchiveParts %d: validation = %v, want valid %v", parts, err, valid)

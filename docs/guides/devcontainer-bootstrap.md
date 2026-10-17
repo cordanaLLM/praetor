@@ -50,7 +50,7 @@ source snapshot, compressed archive, Dockerfile, and immutable builder/base
 images. The compiled CLI retains the version declared by the selected source;
 its displayed version is not the bundle digest. Read the source identity from
 the retained bootstrap specification and verified companions. The compressed
-source is carried in at most eight 512 KiB base64 files (`maxBootstrapParts`
+source is carried in at most twelve 512 KiB base64 files (`maxBootstrapParts`
 in `internal/devcontainer/bootstrap.go`), alongside
 `Dockerfile.praetor`. Keep these files together with the JSON. They are
 source-bearing artifacts: select and review the source before copying a bundle
@@ -62,8 +62,9 @@ or a release signature.
 capture against the frame capacity, the 16 MiB total and the file count. It
 fails above 80% of any of them, so growth is reported before a bootstrap stops
 fitting; run it with `go test -v` to print the current usage. With Praetor's
-source compressing to about a third, the frame capacity (eight 512 KiB base64
-files) binds before the 16 MiB total does.
+source compressing to about a third, the frame capacity (twelve 512 KiB base64
+files) binds before the 16 MiB total does. The cap rose from eight to twelve on
+2026-10-18, when Praetor's own capture passed 80% of eight frames.
 
 The Dockerfile verifies the archive, checks module integrity without changing
 `go.mod` or `go.sum`, and builds the selected CLI. The runtime installs it at
@@ -592,7 +593,7 @@ CLI does not change, because `go build` never read the removed files.
 
 Before #501 the archive held every non-test Go file of the module, so packages
 the CLI never imports filled the four-frame cap. Preparation now captures the
-import closure of `cmd/standardsctl`, and the cap is eight frames. A ready
+import closure of `cmd/standardsctl`, and the cap is twelve frames. A ready
 bootstrap recorded earlier still verifies: its extra packages pass the same
 name rule, and its part count is within the new cap. Regenerating it with
 `--force` shrinks the archive and changes the recorded digests. A bundle that
