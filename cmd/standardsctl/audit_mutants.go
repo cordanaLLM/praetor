@@ -64,81 +64,28 @@ func requireMutantsException(manifest *config.Manifest, path string, count int, 
 	return fmt.Errorf("[FAIL] Exceptions: %s has %d mutation exclusion(s) and no live categorized mutants exception; add rule mutants, path %s, category, entered, reason and expires to .standards.yaml", path, count, path)
 }
 
+// cargoMutantsFile holds the exclusion keys cargo-mutants reads from .cargo/mutants.toml. The
+// file is parsed by the repository's TOML reader (util.DecodeTOML, go-toml/v2), which refuses a
+// repeated key and a value of the wrong type; every other key is ignored.
+type cargoMutantsFile struct {
+	ExcludeRe    []string `toml:"exclude_re"`
+	ExcludeGlobs []string `toml:"exclude_globs"`
+}
+
 func cargoMutantsExclusionCount(root, path string) (int, error) {
 	data, err := util.ReadConfinedLimited(root, path, maxMutantsConfigBytes)
 	if err != nil {
 		return 0, err
 	}
-	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-	if len(lines) > maxMutantsConfigLines {
-		return 0, fmt.Errorf("has %d lines, maximum is %d", len(lines), maxMutantsConfigLines)
-	}
-	return countCargoMutantsKeys(lines)
+	return countCargoMutants(path, data)
 }
 
-func countCargoMutantsKeys(lines []string) (int, error) {
-	section := ""
-	total := 0
-	seen := make(map[string]bool, 2)
-	for index := 0; index < len(lines) && index < maxMutantsConfigLines; index++ {
-		key, value, found, err := cargoMutantsLine(lines[index], &section, seen)
-		if err != nil {
-			return 0, err
-		}
-		if !found {
-			continue
-		}
-		count, err := cargoMutantsArray(lines, &index, key, value)
-		if err != nil {
-			return 0, err
-		}
-		total += count
+// countCargoMutants counts the top-level exclude_re and exclude_globs entries of one
+// .cargo/mutants.toml text; a key inside another table is not cargo-mutants' own.
+func countCargoMutants(path string, data []byte) (int, error) {
+	var cfg cargoMutantsFile
+	if err := util.DecodeTOML(path, data, &cfg); err != nil {
+		return 0, err
 	}
-	return total, nil
-}
-
-func cargoMutantsLine(line string, section *string, seen map[string]bool) (string, string, bool, error) {
-	line = strings.TrimSpace(line)
-	if line == "" || strings.HasPrefix(line, "#") {
-		return "", "", false, nil
-	}
-	if strings.HasPrefix(line, "[") {
-		*section = util.TOMLTableName(line)
-		return "", "", false, nil
-	}
-	key, value, ok := mutationTOMLAssignment(line)
-	if !ok || *section != "" || (key != "exclude_re" && key != "exclude_globs") {
-		return "", "", false, nil
-	}
-	if seen[key] {
-		return "", "", false, fmt.Errorf("TOML config repeats %s", key)
-	}
-	seen[key] = true
-	return key, value, true, nil
-}
-
-func cargoMutantsArray(lines []string, index *int, key, value string) (int, error) {
-	items, closed, valid := util.TOMLStringArray(value)
-	for !closed && valid && *index+1 < len(lines) && *index+1 < maxMutantsConfigLines {
-		*index++
-		more, end, ok := util.TOMLStringArray("[" + strings.TrimSpace(lines[*index]))
-		items = append(items, more...)
-		closed, valid = end, ok
-	}
-	if !valid || !closed {
-		return 0, fmt.Errorf("%s must be a closed array of strings", key)
-	}
-	return len(items), nil
-}
-
-func mutationTOMLAssignment(line string) (string, string, bool) {
-	keys, rest, err := util.TOMLKeyPath(line)
-	if err != nil || len(keys) != 1 {
-		return "", "", false
-	}
-	assignment, found := strings.CutPrefix(rest, "=")
-	if !found {
-		return "", "", false
-	}
-	return keys[0], strings.TrimSpace(assignment), true
+	return len(cfg.ExcludeRe) + len(cfg.ExcludeGlobs), nil
 }

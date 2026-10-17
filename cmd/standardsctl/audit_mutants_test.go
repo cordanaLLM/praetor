@@ -69,16 +69,17 @@ func TestAuditMutationExclusionsIntegration(t *testing.T) {
 }
 
 func TestAuditMutationExclusionCountMalformed(t *testing.T) {
-	for index, text := range []string{"exclude_re = [\"open\"\n", "exclude_globs = [1]\n"} {
-		if _, err := countCargoMutantsKeys(strings.Split(text, "\n")); err == nil {
+	for index, text := range []string{"exclude_re = [\"open\"\n", "exclude_globs = [1]\n", "exclude_re = \"one\"\n"} {
+		if _, err := countCargoMutants(cargoMutantsConfig, []byte(text)); err == nil {
 			t.Errorf("case %d malformed exclusion array was accepted", index)
 		}
 	}
-	count, err := countCargoMutantsKeys([]string{`"exclude_re" = [`, `"first",`, `# between values`, `"second"`, `]`, `[other]`, `exclude_globs = ["ignored"]`})
+	lines := []string{`"exclude_re" = [`, `"first",`, `# between values`, `"second"`, `]`, `[other]`, `exclude_globs = ["ignored"]`}
+	count, err := countCargoMutants(cargoMutantsConfig, []byte(strings.Join(lines, "\n")))
 	if err != nil || count != 2 {
 		t.Fatalf("quoted, multiline cargo-mutants keys = %d, %v; want 2", count, err)
 	}
-	if _, err := countCargoMutantsKeys([]string{`exclude_re = ["first"]`, `exclude_re = ["second"]`}); err == nil {
+	if _, err := countCargoMutants(cargoMutantsConfig, []byte("exclude_re = [\"first\"]\nexclude_re = [\"second\"]\n")); err == nil {
 		t.Fatal("duplicate cargo-mutants exclusions were accepted")
 	}
 	if _, err := countStrykerExclusions([]byte(`{"mutate":["!a"],"mutate":["!b"]}`)); err == nil {
@@ -128,5 +129,19 @@ func TestAuditMutationExceptionRuleRequiresPath(t *testing.T) {
 	err := config.ValidateExceptions([]config.Exception{{Rule: config.ExceptionRuleMutants, Glob: "**/*.toml", Reason: "temporary", Expires: "2026-11-01"}}, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "one mutation-tool configuration file by path") {
 		t.Fatalf("globbed mutants exception = %v", err)
+	}
+}
+
+func TestAuditMutationExclusionCountMutmutTOML(t *testing.T) {
+	text := "[project]\nname = \"demo\"\n\n[tool.mutmut]\ndo_not_mutate = \"src/generated.py\"\nonly_mutate = [\"src/a.py\", \"src/b.py\"]\npaths_to_mutate = \"src/\"\n"
+	count, err := countMutmutTOML("pyproject.toml", text)
+	if err != nil || count != 3 {
+		t.Fatalf("mutmut string and array exclusions = %d, %v; want 3", count, err)
+	}
+	if count, err := countMutmutTOML("pyproject.toml", "[tool.other]\ndo_not_mutate = [\"x\"]\n"); err != nil || count != 0 {
+		t.Fatalf("a key outside [tool.mutmut] = %d, %v; want 0", count, err)
+	}
+	if _, err := countMutmutTOML("pyproject.toml", "[tool.mutmut]\ndo_not_mutate = [1]\n"); err == nil {
+		t.Fatal("a mutmut exclusion array of numbers was accepted")
 	}
 }

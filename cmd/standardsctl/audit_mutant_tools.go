@@ -12,11 +12,12 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func mutationConfigTool(path string) (string, bool) {
@@ -85,17 +86,27 @@ func countMutmutExclusions(path, content string) (int, error) {
 	return countMutmutTOML(path, content)
 }
 
+// mutmutExclusionKeys are the [tool.mutmut] and [mutmut] keys that narrow what mutmut mutates.
+var mutmutExclusionKeys = []string{"do_not_mutate", "do_not_mutate_patterns", "only_mutate"}
+
+// countMutmutTOML counts the exclusions under [tool.mutmut] of a pyproject.toml, parsed by the
+// repository's TOML reader (util.DecodeTOML); each key holds a string or an array of strings.
 func countMutmutTOML(path, content string) (int, error) {
-	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
-	if len(lines) > maxMutantsConfigLines {
-		return 0, fmt.Errorf("has %d lines, maximum is %d", len(lines), maxMutantsConfigLines)
+	var file struct {
+		Tool struct {
+			Mutmut map[string]any `toml:"mutmut"`
+		} `toml:"tool"`
 	}
-	section, total := "", 0
-	seen := make(map[string]bool, 3)
-	for index := 0; index < len(lines) && index < maxMutantsConfigLines; index++ {
-		var count int
-		var err error
-		section, count, err = mutmutTOMLLine(path, lines, &index, section, seen)
+	if err := util.DecodeTOML(path, []byte(content), &file); err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, key := range mutmutExclusionKeys {
+		value, ok := file.Tool.Mutmut[key]
+		if !ok {
+			continue
+		}
+		count, err := mutmutValueCount(path, key, value)
 		if err != nil {
 			return 0, err
 		}
@@ -104,24 +115,20 @@ func countMutmutTOML(path, content string) (int, error) {
 	return total, nil
 }
 
-func mutmutTOMLLine(path string, lines []string, index *int, section string, seen map[string]bool) (string, int, error) {
-	line := strings.TrimSpace(lines[*index])
-	if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-		return strings.Trim(line, "[]"), 0, nil
+func mutmutValueCount(path, key string, value any) (int, error) {
+	switch v := value.(type) {
+	case string:
+		return 1, nil
+	case []any:
+		for index := 0; index < len(v) && index < maxMutantsConfigLines; index++ {
+			if _, ok := v[index].(string); !ok {
+				return 0, fmt.Errorf("%s: %s must be a string or string array", path, key)
+			}
+		}
+		return len(v), nil
+	default:
+		return 0, fmt.Errorf("%s: %s must be a string or string array", path, key)
 	}
-	key, value, ok := tomlAssignment(line)
-	if !ok || !mutmutSection(path, section) || !mutmutExclusionKey(key) {
-		return section, 0, nil
-	}
-	if seen[key] {
-		return section, 0, fmt.Errorf("%s repeats %s", path, key)
-	}
-	seen[key] = true
-	items, closed, valid := readStringList(value, lines, index)
-	if !valid || !closed {
-		return section, 0, fmt.Errorf("%s: %s must be a string or string array", path, key)
-	}
-	return section, len(items), nil
 }
 
 func countMutmutINI(content string) (int, error) {
@@ -163,38 +170,8 @@ func mutmutINILine(text, section, key string) (string, string, int, error) {
 	return section, key, 0, nil
 }
 
-func mutmutSection(path, section string) bool {
-	if filepath.Base(path) == "pyproject.toml" {
-		return section == "tool.mutmut"
-	}
-	return section == "mutmut"
-}
-
 func mutmutExclusionKey(key string) bool {
-	return key == "do_not_mutate" || key == "do_not_mutate_patterns" || key == "only_mutate"
-}
-
-func tomlAssignment(line string) (string, string, bool) {
-	if line == "" || strings.HasPrefix(line, "#") {
-		return "", "", false
-	}
-	key, value, ok := strings.Cut(line, "=")
-	return strings.TrimSpace(key), strings.TrimSpace(value), ok && strings.TrimSpace(key) != ""
-}
-
-func readStringList(value string, lines []string, index *int) ([]string, bool, bool) {
-	items, closed, ok := readTOMLStrings(value)
-	for !closed && ok && *index+1 < len(lines) && *index+1 < maxMutantsConfigLines {
-		*index++
-		more, end, valid := readTOMLStrings("[" + strings.TrimSpace(lines[*index]))
-		items = append(items, more...)
-		closed, ok = end, valid
-	}
-	return items, closed, ok
-}
-
-func readTOMLStrings(text string) ([]string, bool, bool) {
-	return util.TOMLStringArray(text)
+	return slices.Contains(mutmutExclusionKeys, key)
 }
 
 func countStrykerExclusions(data []byte) (int, error) {
