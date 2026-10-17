@@ -72,17 +72,16 @@ func RegisterSkills() []string {
 	return names
 }
 
-// registerSkillInheritance names the skills a register skill inherits from by reference:
-// social-text takes three principles from adhd-format, so the social register is incomplete
-// without it (#235).
-var registerSkillInheritance = []string{"adhd-format"}
+// registerSkillBundleAdditions names related skills shipped beside the register skills:
+// social-text takes three principles from adhd-format, and preparatory-refactoring applies to
+// every agent harness (#235, #1423).
+var registerSkillBundleAdditions = []string{"adhd-format", "preparatory-refactoring"}
 
-// RegisterSkillBundle returns the skills Praetor ships for the text register: the register skills
-// (RegisterSkills), then the skills they inherit from. Adoption installs them, and
-// compile-context copies each one a repository carries into the skill directory of every agent
-// client that does not read .agents/skills.
+// RegisterSkillBundle returns register skills and the related skills Praetor ships with them.
+// Adoption installs the bundle. compile-context copies carried skills into each agent client's
+// skill directory when that client does not read .agents/skills.
 func RegisterSkillBundle() []string {
-	return append(RegisterSkills(), registerSkillInheritance...)
+	return append(RegisterSkills(), registerSkillBundleAdditions...)
 }
 
 // namedForm returns the form of register r, led by the skill that states it at length when r

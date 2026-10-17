@@ -25,10 +25,10 @@ func TestRegisterSkills_Positive_NamedByDefault(t *testing.T) {
 	if got := RegisterSkills(); !slices.Equal(got, []string{"social-text", "caveman"}) {
 		t.Fatalf("RegisterSkills() = %v", got)
 	}
-	// The bundle adds adhd-format, which social-text inherits from, and a caller appending to
-	// one result never changes the next.
+	// The bundle adds adhd-format and preparatory-refactoring, and a caller appending to one
+	// result never changes the next.
 	bundle := RegisterSkillBundle()
-	if !slices.Equal(bundle, []string{"social-text", "caveman", "adhd-format"}) {
+	if !slices.Equal(bundle, []string{"social-text", "caveman", "adhd-format", "preparatory-refactoring"}) {
 		t.Fatalf("RegisterSkillBundle() = %v", bundle)
 	}
 	bundle[0] = "changed"
