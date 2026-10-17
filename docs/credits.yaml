@@ -38,6 +38,7 @@ originals:
   - ".agents/skills/hiss-audit/SKILL.md"
   - ".agents/skills/infocard-generate/SKILL.md"
   - ".agents/skills/paperclip-operate/SKILL.md"
+  - ".agents/skills/preparatory-refactoring/SKILL.md"
   - ".agents/skills/prerelease-bump/SKILL.md"
   - ".agents/skills/python-dev/SKILL.md"
   - ".agents/skills/repo-adopt/SKILL.md"
@@ -132,6 +133,23 @@ entries:
       - "docs/adr/README.md"
     match:
       - "decision record"
+  - name: "Preparatory Refactoring"
+    url: "https://martinfowler.com/articles/preparatory-refactoring-example.html"
+    detail: "by Martin Fowler (2015), and Kent Beck's [Tidy First?](https://newsletter.kentbeck.com/p/structure-and-behavior-prs)"
+    section: "adapted"
+    kind: "inspiration"
+    relation: "inspired"
+    license: "none"
+    notice: "the idea only; no text is taken"
+    artifact: "the `refactor:` commit checks of `praetorctl forge refactor-check`, `docs/guides/git-hooks.md`"
+    use: >-
+      The practice of reshaping code in its own behaviour-preserving commit before the change that needs
+      the new shape. The assertion lock, the suite check, the HISS-04 trigger and the
+      `preparatory-refactoring` skill text are praetor's own.
+    paths:
+      - "docs/guides/git-hooks.md"
+    match:
+      - "preparatory refactoring"
   - name: "eval-harness"
     url: "https://github.com/affaan-m/ecc/tree/1e8c7e7994223e0ff337d1626cd08e04a1ae67ed/skills/eval-harness"
     section: "adapted"

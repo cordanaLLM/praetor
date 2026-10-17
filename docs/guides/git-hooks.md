@@ -716,6 +716,13 @@ pull request (`.github/workflows/ci.yml`, the two steps after the documentation 
 | `pre-commit`: whitespace errors and conflict markers (`git diff --cached --check`) | `python3 -B .config/lefthook/scripts/hooks.py commits origin/<base>`, which runs `git log --check` over the range | `CommitRange` in `.config/lefthook/scripts/test_hooks.py` |
 | `pre-commit` and `pre-push`: private `.workingdir` content | the same stage, through `check_private_history` | `CommitRange` |
 
+The `refactor:` row checks the preparatory refactoring practice, from Martin Fowler's
+[Preparatory Refactoring](https://martinfowler.com/articles/preparatory-refactoring-example.html)
+and Kent Beck's [Tidy First?](https://newsletter.kentbeck.com/p/structure-and-behavior-prs): the
+reshape lands in its own behaviour-preserving commit before the change that needs it. The
+`preparatory-refactoring` skill (`.agents/skills/preparatory-refactoring/SKILL.md`) tells agents
+when to split one off; the assertion lock and the suite check are this repository's own.
+
 The commit-msg hook and CI share one implementation of the message policy, `forge.AnalyzeCommit`
 (`internal/forge/commit_message.go`). The hook runs `praetorctl forge check-message <file>` on the
 message file Git hands it, which first drops what Git removes before it records the message: the
