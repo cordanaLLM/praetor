@@ -175,10 +175,13 @@ Filter entries due to expire soon by passing `--expiring-within=<days>`
 praetorctl exceptions list --expiring-within=14
 ```
 
-The governance audit (`praetorctl audit`) warns 14 days before an exception expires
-(`config.ExceptionExpiryWarningDays`, `cmd/standardsctl/audit_exceptions.go`,
-`TestAuditExceptionsExpiry_3D`, `TestAudit_ExceptionsExpiryWarning_Integration`), prompting
-maintainers to address or renew the debt before the owning gate fails upon expiry:
+The governance audit (`praetorctl audit`) warns before an exception expires: 14 days
+for uncategorized entries (`config.ExceptionExpiryWarningDays`), or a per-category
+window of `min(14, interval/2)` days for categorized entries (category B: 1 day, C: 5 days,
+D: 14 days, A: half the declared interval up to 14 days; `entry.WarningDays()`,
+`cmd/standardsctl/audit_exceptions.go`, `TestAuditExceptionsExpiry_3D`,
+`TestAudit_ExceptionsExpiryWarning_Integration`), prompting maintainers to address
+or renew the debt before the owning gate fails upon expiry:
 
 ```text
 [WARN] Exceptions: the exceptions entry (rule HISS-11, .github/workflows/rel.yml) expires on 2026-10-24 (14 days left): Level 2 builder
