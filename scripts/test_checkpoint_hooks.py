@@ -699,6 +699,17 @@ class NativeLefthook(unittest.TestCase):
         self.state("sync")
         for worktree in worktrees:
             with self.subTest(worktree=str(worktree)):
+                open_items = worktree / ".workingdir" / "OPEN.md"
+                names = [self.root, *(other for other in worktrees if other != worktree)]
+                for index, other in enumerate(names):
+                    branch = run_child(["git", "branch", "--show-current"], cwd=other,
+                                       capture_output=True, timeout=20, check=True).stdout.decode().strip()
+                    with open_items.open("a", encoding="utf-8") as stream:
+                        stream.write(
+                            f"\n- [ ] TEST-ORPHAN-{index} {branch} {other} "
+                            "last step fixture setup next step verify hook isolation\n"
+                        )
+                self.state("sync", worktree)
                 nested = worktree / "nested"
                 nested.mkdir()
                 new, stop = self.claude_worktree_calls(worktree, nested)
