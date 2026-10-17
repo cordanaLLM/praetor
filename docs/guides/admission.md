@@ -70,6 +70,31 @@ swapped out and finished, so a growing step pushed the rest of the host into swa
 at its deadline. Both cases were measured on 2026-10-17. The defaults leave room for a full gate
 on a workstation with 64 GiB; a step that needs less should ask for less.
 
+## Make agents use it
+
+A host can make every agent session route heavy steps through `praetorctl admit`. Set this
+in one of the host's operator layers, usually the workstation or fleet document
+([operator settings](effective-policy.md#operator-settings)):
+
+```yaml
+hooks:
+  admission:
+    enforce: true
+```
+
+The engine's pre-tool hook (`praetorctl hook <client> pre-tool`) then refuses a recognised
+heavy command, such as `make`, `go test`, `cargo build` or `git push`, that does not run
+through `praetorctl admit`, and names the command to run instead. The recognised shapes and
+how commands are read are in [heavy-step admission](agent-hooks.md#heavy-step-admission).
+The hook refuses rather than rewriting the command: a rewritten step that waits for room
+would wait inside the client's tool timeout, while a refused one is started again in the
+background.
+
+Enforcement is off by default, so an adopter who sets nothing sees no change. Once a layer
+turns it on, a later layer cannot turn it off. With `hooks.scope: governed`, the default, the
+hook runs only in repositories that carry `.standards.yaml`; `hooks.scope: all` covers every
+workspace.
+
 ## Platforms
 
 On Linux with a systemd user manager the step runs in a transient scope:

@@ -321,6 +321,8 @@ var builtinMessages = map[string]string{"HISS": evasionMessage, "DEV-01": topolo
 // Policy is the compiled command policy: built-in rules first, operator rules after.
 type Policy struct {
 	rules []denyRule
+	// admission is the heavy-step check of hooks.admission; nil unless it is enforced.
+	admission *admissionCheck
 }
 
 // NewPolicy compiles the built-in rules plus the operator deny patterns (RE2). It fails
@@ -370,6 +372,9 @@ func (p *Policy) Command(command string) Verdict {
 		if rule.pattern.MatchString(text) {
 			return Verdict{Outcome: Deny, Reason: rule.prefix + rule.source}
 		}
+	}
+	if p.admission != nil {
+		return p.admission.judge(command)
 	}
 	return Verdict{Outcome: Allow}
 }
