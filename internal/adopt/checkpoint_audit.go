@@ -20,7 +20,7 @@ import (
 // an earlier release left behind. TestCurrentCheckpointDigests_Boundary_MatchShippedBundle
 // fails until a changed script is recorded in both.
 var currentCheckpointDigests = map[string]string{
-	checkpointScript:   "39138445b6927bde92db48182781070d48fed84daa8417e555bec744015606e9",
+	checkpointScript:   "0c6cc34793581a303e4b183c617954a32ae281fb87be26ce265f005624e97f50",
 	checkpointCommon:   "f5e11ef5e868e8799d47d9cf845dbcd5ad7f36f51d2dc34f759993a1dc0c07b2",
 	checkpointLauncher: "28f19d46625ce26a3eeafd16d88abbc7fda68f46c677bcb6566cf8dc6c70f8fd",
 }
@@ -80,8 +80,8 @@ func extendsCanonicalLefthook(ctx context.Context, rootDir string) (bool, error)
 		return false, nil
 	}
 	var parsed map[string]any
-	if yaml.Unmarshal(data, &parsed) != nil {
-		return false, nil
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		return false, nil //nolint:nilerr // a lefthook.yml that does not parse extends no canonical policy
 	}
 	return extendsCanonicalPolicy(parsed), nil
 }

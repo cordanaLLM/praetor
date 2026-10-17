@@ -79,6 +79,9 @@ func withDACL(sddl string, fn func(dacl uintptr) error) error {
 		return err
 	}
 	var sd uintptr
+	// SAFETY: text is the NUL-terminated UTF-16 string UTF16PtrFromString returned and sd a
+	// local the call writes the descriptor address into; both are converted to uintptr inside
+	// the call expression, so they stay valid for the whole system call (unsafe.Pointer rule 4).
 	if ok, _, callErr := procConvertStringSDToSD.Call(uintptr(unsafe.Pointer(text)), sddlRevision1,
 		uintptr(unsafe.Pointer(&sd)), 0); ok == 0 {
 		return fmt.Errorf("util: convert security descriptor %q: %w", sddl, callErr)
@@ -86,6 +89,9 @@ func withDACL(sddl string, fn func(dacl uintptr) error) error {
 	defer syscall.LocalFree(syscall.Handle(sd)) //nolint:errcheck // frees the converted descriptor
 	var present, defaulted int32
 	var dacl uintptr
+	// SAFETY: present, dacl and defaulted are locals that outlive the call, converted inside the
+	// call expression (unsafe.Pointer rule 4); sd is the descriptor converted above, freed only
+	// by the deferred LocalFree after fn has used the DACL that points into it.
 	if ok, _, callErr := procGetSecurityDescriptorDacl.Call(sd, uintptr(unsafe.Pointer(&present)),
 		uintptr(unsafe.Pointer(&dacl)), uintptr(unsafe.Pointer(&defaulted))); ok == 0 {
 		return fmt.Errorf("util: read DACL of %q: %w", sddl, callErr)
@@ -108,6 +114,8 @@ func setNamedDACL(path, sddl string) error {
 		info |= protectedDaclSecurityInformation
 	}
 	return withDACL(sddl, func(dacl uintptr) error {
+		// SAFETY: name is the NUL-terminated UTF-16 path UTF16PtrFromString returned, kept alive
+		// by the closure and converted inside the call expression (unsafe.Pointer rule 4).
 		if code, _, _ := procSetNamedSecurityInfo.Call(uintptr(unsafe.Pointer(name)), seFileObject, info,
 			0, 0, dacl, 0); code != 0 {
 			return fmt.Errorf("util: set DACL of %q: %w", path, syscall.Errno(code))
@@ -193,17 +201,25 @@ func namedDACLString(path string) (string, error) {
 		return "", err
 	}
 	var dacl, sd uintptr
+	// SAFETY: name is the NUL-terminated UTF-16 path UTF16PtrFromString returned; dacl and sd are
+	// locals the call writes, all converted inside the call expression (unsafe.Pointer rule 4).
 	if code, _, _ := procGetNamedSecurityInfo.Call(uintptr(unsafe.Pointer(name)), seFileObject,
 		daclSecurityInformation, 0, 0, uintptr(unsafe.Pointer(&dacl)), 0, uintptr(unsafe.Pointer(&sd))); code != 0 {
 		return "", fmt.Errorf("util: read DACL of %q: %w", path, syscall.Errno(code))
 	}
 	defer syscall.LocalFree(syscall.Handle(sd)) //nolint:errcheck // frees the returned descriptor
 	var text *uint16
+	// SAFETY: text is a local the call writes the address of a LocalAlloc'ed string into,
+	// converted inside the call expression (unsafe.Pointer rule 4).
 	if ok, _, callErr := procConvertSDToStringSD.Call(sd, sddlRevision1, daclSecurityInformation,
 		uintptr(unsafe.Pointer(&text)), 0); ok == 0 {
 		return "", fmt.Errorf("util: format DACL of %q: %w", path, callErr)
 	}
+	// SAFETY: text was allocated by the system with LocalAlloc, which LocalFree takes back by its
+	// address as a handle; it is freed once, after the last read below.
 	defer syscall.LocalFree(syscall.Handle(unsafe.Pointer(text))) //nolint:errcheck // frees the string
+	// SAFETY: maxSDDLChars returns the index of the string's NUL terminator, which the system
+	// writes inside the allocation, so the slice covers only characters before it.
 	return syscall.UTF16ToString(unsafe.Slice(text, maxSDDLChars(text))), nil
 }
 
@@ -211,6 +227,8 @@ func namedDACLString(path string) (string, error) {
 // characters (HISS-02).
 func maxSDDLChars(text *uint16) int {
 	const limit = 1 << 16
+	// SAFETY: the system NUL-terminates the string inside its allocation, and the loop below
+	// reads no element past the first NUL, so no character beyond the allocation is read.
 	chars := unsafe.Slice(text, limit)
 	for i, c := range chars {
 		if c == 0 {

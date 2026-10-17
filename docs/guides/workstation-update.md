@@ -20,6 +20,11 @@ with the legacy aliases of the first three (`standardsctl`, `standards-mcp`,
 `internal/clientsetup/roots.go`, `LocationBinDir`). `status` reports what is installed
 there without changing anything.
 
+On Windows each binary is placed as `<name>.exe`, the only form Windows runs, and each alias
+is a copy of its binary instead of a symlink, because Windows creates symlinks only with
+Developer Mode or elevation (`targetFileName` in `internal/workstation/binaries.go`, #208).
+The install manifest and every report keep the bare names.
+
 Both commands take flags in any order and no positional argument. A stray positional is
 refused, and so is any token after a `--` terminator, since everything after `--` is
 positional (`parseInterspersed`, `cmd/standardsctl/flagargs.go`).

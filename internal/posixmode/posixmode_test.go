@@ -111,6 +111,39 @@ func TestComparisons_3D(t *testing.T) {
 	}
 }
 
+// The mask walk is a bounded loop (HISS-01, HISS-02). Positive: a Perm() call under two literal
+// masks, the literal on either side, is a mode. Negative: a mask by a variable is not. Boundary:
+// maxMaskDepth masks are unwrapped, one more is not.
+func TestIsModeWalksNestedMasks(t *testing.T) {
+	nested := func(depth int) string {
+		expr := "info.Mode().Perm()"
+		for i := 0; i < depth; i++ {
+			expr = "(" + expr + " & 0o777)"
+		}
+		return expr
+	}
+	cases := []struct {
+		name, expr string
+		want       bool
+	}{
+		{"two masks", "0o700 &^ (info.Mode().Perm() & 0o777)", true},
+		{"variable mask", "info.Mode().Perm() & perm", false},
+		{"at the bound", nested(maxMaskDepth), true},
+		{"past the bound", nested(maxMaskDepth + 1), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := parser.ParseExpr(tc.expr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := isMode(expr); got != tc.want {
+				t.Errorf("isMode(%s) = %v, want %v", tc.expr, got, tc.want)
+			}
+		})
+	}
+}
+
 // The engine's own tree compares no permission mode with a literal in a file every platform
 // builds, except the reviewed uses allowedModeChecks names, and every entry still names one.
 func TestRepositoryHasNoUntaggedPosixModeComparison(t *testing.T) {

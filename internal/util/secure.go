@@ -703,6 +703,8 @@ func MkdirSecure(path string, perm os.FileMode) error {
 	if err := tightenMode(path, info, perm, func(mode os.FileMode) error { return os.Chmod(path, mode) }); err != nil {
 		return err
 	}
+	// #nosec G304 -- path is the directory MkdirAll created above; it is opened only to restrict
+	// its access, and nothing is read from it.
 	return restrictOpened(func() (*os.File, error) { return os.Open(path) }, perm)
 }
 

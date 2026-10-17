@@ -110,18 +110,38 @@ func declName(decl ast.Decl) string {
 	return fn.Name.Name
 }
 
-// isMode reports whether expr is a Perm() call, or one masked with & or &^ by a literal.
+// maxMaskDepth bounds how many literal masks isMode unwraps around a Perm() call (HISS-02).
+const maxMaskDepth = 8
+
+// isMode reports whether expr is a Perm() call, or one masked with & or &^ by a literal, masks
+// nested up to maxMaskDepth deep. It walks the masks in a bounded loop rather than by recursion,
+// so the call graph stays acyclic (HISS-01).
 func isMode(expr ast.Expr) bool {
-	expr = ast.Unparen(expr)
-	if call, ok := expr.(*ast.CallExpr); ok {
-		selector, isSelector := call.Fun.(*ast.SelectorExpr)
-		return isSelector && selector.Sel.Name == "Perm" && len(call.Args) == 0
+	for depth := 0; expr != nil && depth <= maxMaskDepth; depth++ {
+		expr = ast.Unparen(expr)
+		if call, ok := expr.(*ast.CallExpr); ok {
+			selector, isSelector := call.Fun.(*ast.SelectorExpr)
+			return isSelector && selector.Sel.Name == "Perm" && len(call.Args) == 0
+		}
+		expr = maskedOperand(expr)
 	}
+	return false
+}
+
+// maskedOperand returns the operand that a literal & or &^ mask applies to, or nil when expr is
+// no such mask.
+func maskedOperand(expr ast.Expr) ast.Expr {
 	mask, ok := expr.(*ast.BinaryExpr)
 	if !ok || (mask.Op != token.AND && mask.Op != token.AND_NOT) {
-		return false
+		return nil
 	}
-	return (isMode(mask.X) && isIntLiteral(mask.Y)) || (isMode(mask.Y) && isIntLiteral(mask.X))
+	if isIntLiteral(mask.Y) {
+		return mask.X
+	}
+	if isIntLiteral(mask.X) {
+		return mask.Y
+	}
+	return nil
 }
 
 // isIntLiteral reports whether expr is an integer literal.

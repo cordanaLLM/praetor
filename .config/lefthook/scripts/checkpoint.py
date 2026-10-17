@@ -497,7 +497,11 @@ def _path_held(open_text, path):
 def _named_worktree(open_text, entry):
     """Match branch, directory name, or whole path in bounded OPEN.md text."""
     return (
-        _name_held(open_text, entry.get("branch", "").removeprefix("refs/heads/"), BRANCH_NAME_CHARS)
+        _name_held(
+            open_text,
+            entry.get("branch", "").removeprefix("refs/heads/"),
+            BRANCH_NAME_CHARS,
+        )
         or _name_held(open_text, Path(entry["path"]).name, DIRECTORY_NAME_CHARS)
         or _path_held(open_text, entry["path"])
     )
@@ -683,26 +687,26 @@ def _content_in_base(path, cfg):
     nor a pull request of its own head, yet nothing of it is unfinished. Its reversed patch then
     applies to the base. Read-only: the index lives in a temporary folder outside the repository.
     """
-    base_ref = f"refs/remotes/{cfg.get('remote') or 'origin'}/{cfg.get('base') or 'main'}"
+    remote, base = cfg.get("remote") or "origin", cfg.get("base") or "main"
+    base_ref = f"refs/remotes/{remote}/{base}"
     if not _remote_ref_exists(path, base_ref):
         return False
     fork = _git(path, "merge-base", base_ref, "HEAD", timeout=LANDED_CHECK_TIMEOUT)
-    patch = _git(
-        path, "diff", "--binary", *WORKTREE_DIFF, fork.decode().strip(), "HEAD",
-        timeout=LANDED_CHECK_TIMEOUT,
-    )
-    if not patch.strip():
-        return True
+    diff = ["diff", "--binary", *WORKTREE_DIFF, fork.decode().strip(), "HEAD"]
+    patch = _git(path, *diff, timeout=LANDED_CHECK_TIMEOUT)
+    return not patch.strip() or _reverse_applies(path, base_ref, patch)
+
+
+def _reverse_applies(path, base_ref, patch):
+    """Whether patch applies in reverse to base_ref, on an index in a temporary folder."""
     with tempfile.TemporaryDirectory(prefix="praetor-landed-") as scratch:
         index = Path(scratch) / "index"
         change = Path(scratch) / "change.patch"
         change.write_bytes(patch)
         _git(path, "read-tree", base_ref, index=index, timeout=LANDED_CHECK_TIMEOUT)
+        check = ["apply", "--check", "--reverse", "--cached", str(change)]
         try:
-            _git(
-                path, "apply", "--check", "--reverse", "--cached", str(change),
-                index=index, timeout=LANDED_CHECK_TIMEOUT,
-            )
+            _git(path, *check, index=index, timeout=LANDED_CHECK_TIMEOUT)
         except CheckpointError:
             return False
     return True

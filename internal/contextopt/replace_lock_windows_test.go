@@ -35,6 +35,8 @@ func markClaimPendingDelete(t *testing.T, dir string) (closeHandle func()) {
 	const fileDispositionInfo = 4
 	disposition := uint32(1) // FILE_DISPOSITION_INFO.DeleteFile
 	setInfo := syscall.NewLazyDLL("kernel32.dll").NewProc("SetFileInformationByHandle")
+	// SAFETY: disposition is a local that outlives the call, converted inside the call expression
+	// (unsafe.Pointer rule 4); its 4 bytes cover FILE_DISPOSITION_INFO, a single BOOLEAN.
 	if ok, _, callErr := setInfo.Call(uintptr(handle), fileDispositionInfo,
 		uintptr(unsafe.Pointer(&disposition)), unsafe.Sizeof(disposition)); ok == 0 {
 		_ = syscall.CloseHandle(handle)
