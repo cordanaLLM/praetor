@@ -163,7 +163,7 @@ func TestRunDeclaredVerifyStage_RunsNothingWhereItDoesNotApply(t *testing.T) {
 			return cfg
 		}, StageSkipped, "make is not on PATH"},
 		{"inside a declared verification", func(t *testing.T) *stageConfig {
-			t.Setenv(declaredVerifyGuardEnv, "1")
+			t.Setenv(DeclaredVerifyGuardEnv, "1")
 			return declaredStageConfig(t, verifyAllMakefile, "pyproject.toml")
 		}, StageNotApplicable, "not run again"},
 	}
@@ -217,18 +217,21 @@ func TestDeclaredVerifyFailureNamesTheOutcome(t *testing.T) {
 	defer cancel()
 	long := strings.Repeat("x", 3*maxDeclaredVerifyDiagnostic) + "last line"
 	cases := []struct {
-		name string
-		ctx  context.Context
-		err  error
-		want []string
+		name   string
+		ctx    context.Context
+		origin string
+		err    error
+		want   []string
 	}{
-		{"exit code", context.Background(), exitCodeError{3}, []string{"declared verification make verify-all exited 3"}},
-		{"bound fired", expired, exitCodeError{1}, []string{"make verify-all did not finish within 2m0s"}},
-		{"no exit code", context.Background(), errors.New("exec: no such file"), []string{"make verify-all failed to run", "no such file"}},
-		{"long output keeps its end", context.Background(), errors.New(long), []string{"...", "last line"}},
+		{"exit code", context.Background(), "default", exitCodeError{3}, []string{"declared verification make verify-all exited 3"}},
+		{"bound fired default", expired, "default", exitCodeError{1}, []string{"make verify-all did not finish within 2m0s (default)"}},
+		{"bound fired environment", expired, "environment", exitCodeError{1}, []string{"make verify-all did not finish within 2m0s (environment)"}},
+		{"bound fired standards", expired, ".standards.yaml", exitCodeError{1}, []string{"make verify-all did not finish within 2m0s (.standards.yaml)"}},
+		{"no exit code", context.Background(), "default", errors.New("exec: no such file"), []string{"make verify-all failed to run", "no such file"}},
+		{"long output keeps its end", context.Background(), "default", errors.New(long), []string{"...", "last line"}},
 	}
 	for _, tc := range cases {
-		got := declaredVerifyFailure(tc.ctx, 2*time.Minute, tc.err).Error()
+		got := declaredVerifyFailure(tc.ctx, 2*time.Minute, tc.origin, tc.err).Error()
 		for _, want := range tc.want {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s: %q does not name %q", tc.name, got, want)

@@ -1,0 +1,253 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package gating
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+func skipIfWindowsSymlinksRefused(t *testing.T, rep *PipelineReport) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return
+	}
+	for _, s := range rep.Stages {
+		if strings.Contains(s.Message, "developer mode or administrator rights on Windows") {
+			t.Skipf("skipping on Windows: symlinks refused (%s)", s.Message)
+		}
+	}
+}
+
+func createIgnoredDependencyRepo(t *testing.T, recipe string) string {
+	t.Helper()
+	dir := committedAdmitRepo(t, "pyproject.toml")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "node_modules/\n.venv/\nvenv/\nbuild/\n")
+	treeGit(t, dir, "add", "--", ".gitignore")
+	treeGit(t, dir, "commit", "-q", "-m", "ignore dependency folders")
+
+	if recipe != "" {
+		writeFile(t, filepath.Join(dir, "Makefile"), ".PHONY: verify-all\nverify-all:\n\t"+recipe+"\n")
+		treeGit(t, dir, "add", "--", "Makefile")
+		treeGit(t, dir, "commit", "-q", "-m", "declare verify-all")
+	}
+	return dir
+}
+
+// Positive: a verify-all that needs node_modules/x passes with the folder present in the checkout and git-ignored.
+func TestRunGatedPipeline_Positive_DeclaredVerifyWithIgnoredDependencyFolder(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "test -f node_modules/x/ok")
+
+	depFile := filepath.Join(dir, "node_modules", "x", "ok")
+	writeFile(t, depFile, "dependency content\n")
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	skipIfWindowsSymlinksRefused(t, rep)
+	got := stageNamed(t, rep, stageDeclaredVerify)
+	if rep.Status != StatusAdmitted || got.Status != StagePassed || got.Message != "make verify-all exited 0" {
+		t.Fatalf("status %s, stage %s %q; want admitted with stage passed", rep.Status, got.Status, got.Message)
+	}
+
+	// Verify the checkout's dependency folder and file are preserved and never deleted.
+	if _, err := os.Stat(depFile); err != nil {
+		t.Fatalf("checkout dependency folder was deleted or damaged: %v", err)
+	}
+}
+
+// Negative: the same repository without the folder still fails the stage (absent dependencies outside the gate still fail).
+func TestRunGatedPipeline_Negative_DeclaredVerifyFailsWithoutDependencyFolder(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "test -f node_modules/x/ok")
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	got := rep.Stages[len(rep.Stages)-1]
+	if rep.Status != StatusRejected || got.Name != stageDeclaredVerify || got.Status != StageFailed {
+		t.Fatalf("status %s, last stage %s %s; want rejected at declared verification: %+v", rep.Status, got.Name, got.Status, rep.Stages)
+	}
+	if !recipeStatus.MatchString(got.Message) {
+		t.Errorf("reason %q does not name recipe status", got.Message)
+	}
+}
+
+// Negative: a verify-all that writes into node_modules fails the stage and names the folder.
+func TestRunGatedPipeline_Negative_DeclaredVerifyFailsWhenWritingIntoDependencyFolder(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "@echo modified > node_modules/x/ok")
+
+	depFile := filepath.Join(dir, "node_modules", "x", "ok")
+	writeFile(t, depFile, "clean\n")
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	skipIfWindowsSymlinksRefused(t, rep)
+	got := rep.Stages[len(rep.Stages)-1]
+	if rep.Status != StatusRejected || got.Name != stageDeclaredVerify || got.Status != StageFailed {
+		t.Fatalf("status %s, last stage %s %s; want rejected at declared verification: %+v", rep.Status, got.Name, got.Status, rep.Stages)
+	}
+	want := "declared verification wrote into the checkout's dependencies in node_modules"
+	if !strings.Contains(got.Message, want) {
+		t.Errorf("reason %q does not contain %q", got.Message, want)
+	}
+}
+
+// Negative: a real test failure (verify-all exits 1) with dependencies present is still refused.
+func TestRunGatedPipeline_Negative_DeclaredVerifyRealTestFailureWithDependenciesPresent(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "test -f node_modules/x/ok && exit 1")
+
+	depFile := filepath.Join(dir, "node_modules", "x", "ok")
+	writeFile(t, depFile, "present\n")
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	skipIfWindowsSymlinksRefused(t, rep)
+	got := rep.Stages[len(rep.Stages)-1]
+	if rep.Status != StatusRejected || got.Name != stageDeclaredVerify || got.Status != StageFailed {
+		t.Fatalf("status %s, last stage %s %s; want rejected at declared verification: %+v", rep.Status, got.Name, got.Status, rep.Stages)
+	}
+	if !recipeStatus.MatchString(got.Message) {
+		t.Errorf("reason %q does not name recipe status", got.Message)
+	}
+}
+
+// Boundary: a folder name not on the allow-list (for example build/) is not linked.
+func TestRunGatedPipeline_Boundary_FolderNotOnAllowListIsNotLinked(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "test -f build/x/ok")
+
+	buildFile := filepath.Join(dir, "build", "x", "ok")
+	writeFile(t, buildFile, "present\n")
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	got := rep.Stages[len(rep.Stages)-1]
+	if rep.Status != StatusRejected || got.Name != stageDeclaredVerify || got.Status != StageFailed {
+		t.Fatalf("status %s, last stage %s %s; want rejected because un-allowlisted build/ is not linked: %+v", rep.Status, got.Name, got.Status, rep.Stages)
+	}
+	if !recipeStatus.MatchString(got.Message) {
+		t.Errorf("reason %q does not name recipe status", got.Message)
+	}
+}
+
+// Boundary: the 65th dependency folder fails closed naming the bound.
+func TestRunGatedPipeline_Boundary_65thDependencyFolderFailsClosed(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "@exit 0")
+
+	// Create 65 folders whose parent exists in HEAD and whose base is on the allow-list.
+	var addPaths []string
+	for i := 0; i < 65; i++ {
+		pkg := fmt.Sprintf("pkg%02d", i)
+		writeFile(t, filepath.Join(dir, pkg, "keep.txt"), "tracked\n")
+		addPaths = append(addPaths, filepath.Join(pkg, "keep.txt"))
+	}
+	treeGit(t, dir, append([]string{"add", "--"}, addPaths...)...)
+	treeGit(t, dir, "commit", "-q", "-m", "commit 65 package directories")
+
+	for i := 0; i < 65; i++ {
+		pkg := fmt.Sprintf("pkg%02d", i)
+		writeFile(t, filepath.Join(dir, pkg, "node_modules", "dep.txt"), "dep\n")
+	}
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	got := rep.Stages[len(rep.Stages)-1]
+	if rep.Status != StatusRejected || got.Name != stageDeclaredVerify || got.Status != StageFailed {
+		t.Fatalf("status %s, last stage %s %s; want rejected on dependency folder bound: %+v", rep.Status, got.Name, got.Status, rep.Stages)
+	}
+	wantBound := fmt.Sprintf("exceeded bound of %d", maxDependencyFolders)
+	if !strings.Contains(got.Message, wantBound) {
+		t.Errorf("reason %q does not contain %q", got.Message, wantBound)
+	}
+}
+
+// Positive: a repository with a tracked tree deeper than 6 levels passes declared verification;
+// search does not descend below depth 6, but links node_modules at the root.
+func TestRunGatedPipeline_Positive_DeepTrackedTreeDoesNotFailStage(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "test -f node_modules/x/ok")
+
+	depFile := filepath.Join(dir, "node_modules", "x", "ok")
+	writeFile(t, depFile, "dependency content\n")
+
+	// Create and commit a tracked file 8 levels deep: a/b/c/d/e/f/g/h.txt.
+	deepFile := filepath.Join(dir, "a", "b", "c", "d", "e", "f", "g", "h.txt")
+	writeFile(t, deepFile, "deep content\n")
+	treeGit(t, dir, "add", "--", filepath.Join("a", "b", "c", "d", "e", "f", "g", "h.txt"))
+	treeGit(t, dir, "commit", "-q", "-m", "commit deep tracked file")
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	skipIfWindowsSymlinksRefused(t, rep)
+
+	got := stageNamed(t, rep, stageDeclaredVerify)
+	if rep.Status != StatusAdmitted || got.Status != StagePassed || got.Message != "make verify-all exited 0" {
+		t.Fatalf("status %s, stage %s %q; want admitted with stage passed", rep.Status, got.Status, got.Message)
+	}
+
+	if _, err := os.Stat(depFile); err != nil {
+		t.Fatalf("checkout dependency folder was deleted or damaged: %v", err)
+	}
+}
+
+// Boundary: search exceeding folder visit bound fails closed naming the bound.
+func TestRunGatedPipeline_Boundary_SearchFolderVisitBoundFailsClosed(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "@exit 0")
+
+	// Create multiple tracked subdirectories so queue has remaining items when bound is exceeded.
+	for i := 0; i < 5; i++ {
+		pkg := fmt.Sprintf("subpkg%02d", i)
+		writeFile(t, filepath.Join(dir, pkg, "keep.txt"), "tracked\n")
+		treeGit(t, dir, "add", "--", filepath.Join(pkg, "keep.txt"))
+	}
+	treeGit(t, dir, "commit", "-q", "-m", "commit subpackages")
+
+	oldIterations := maxSearchIterations
+	maxSearchIterations = 2
+	defer func() { maxSearchIterations = oldIterations }()
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	got := rep.Stages[len(rep.Stages)-1]
+	if rep.Status != StatusRejected || got.Name != stageDeclaredVerify || got.Status != StageFailed {
+		t.Fatalf("status %s, last stage %s %s; want rejected on search visit bound: %+v", rep.Status, got.Name, got.Status, rep.Stages)
+	}
+
+	wantBound := fmt.Sprintf("exceeded bound of %d folder visits", 2)
+	if !strings.Contains(got.Message, wantBound) {
+		t.Errorf("reason %q does not contain %q", got.Message, wantBound)
+	}
+}
+
+// Negative: symlink permission failure (Windows without developer mode) fails the stage naming the cause and two ways out.
+func TestRunGatedPipeline_Negative_SymlinkPermissionErrorNamesCauseAndRemediation(t *testing.T) {
+	requireMake(t)
+	dir := createIgnoredDependencyRepo(t, "@exit 0")
+	writeFile(t, filepath.Join(dir, "node_modules", "dep.txt"), "dep\n")
+
+	oldSymlink := symlinkFunc
+	symlinkFunc = func(oldname, newname string) error {
+		return &os.LinkError{Op: "symlink", Old: oldname, New: newname, Err: os.ErrPermission}
+	}
+	defer func() { symlinkFunc = oldSymlink }()
+
+	rep := gatedRun(t, dir, RunOptions{AdmitUnsupported: true})
+	got := rep.Stages[len(rep.Stages)-1]
+	if rep.Status != StatusRejected || got.Name != stageDeclaredVerify || got.Status != StageFailed {
+		t.Fatalf("status %s, last stage %s %s; want rejected at declared verification: %+v", rep.Status, got.Name, got.Status, rep.Stages)
+	}
+
+	wantSubs := []string{
+		"developer mode or administrator rights on Windows",
+		"enable developer mode",
+		"run make verify-all in the checkout",
+		"permission denied",
+	}
+	for _, sub := range wantSubs {
+		if !strings.Contains(got.Message, sub) {
+			t.Errorf("stage message %q does not contain %q", got.Message, sub)
+		}
+	}
+}

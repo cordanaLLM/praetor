@@ -423,6 +423,9 @@ type Manifest struct {
 	// Skills declares pinned upstream skill libraries (skills.upstream). It is repository-only,
 	// like Documentation.
 	Skills *SkillsPolicy `yaml:"skills,omitempty"`
+	// Gate configures the anti-direct-merge gating pipeline: declared_verify_timeout sets the stage
+	// bound for the declared-verification stage. It is repository-only and stays out of ResolvedPolicy.
+	Gate *GatePolicy `yaml:"gate,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -507,6 +510,7 @@ var manifestValidators = [...]func(*Manifest) error{
 	validateManifestAPI,
 	validateManifestEfficiency,
 	validateManifestSkills,
+	validateManifestGate,
 }
 
 // DecodeManifest parses the manifest with no unknown fields, so a misspelled key is an

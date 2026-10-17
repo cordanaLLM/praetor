@@ -1204,9 +1204,30 @@ Where the root holds neither a `go.mod` nor a `Cargo.lock` and the target is dec
 runs `make verify-all`:
 
 - **Where:** in an isolated worktree of `HEAD`, as the test suites run, so it checks what is pushed
-  and writes nothing into the working tree.
-- **Bound:** the race stage's bound (`PRAETOR_TEST_STAGE_TIMEOUT`). Output capture is bounded by
-  `util.RunCommand`.
+  and writes nothing into the working tree. Because the private ledger (`.workingdir/`) is git-ignored,
+  the stage worktree never holds it: `praetorctl state audit` recognizes `PRAETOR_GATE_DECLARED_VERIFY`,
+  reports not applicable, and passes, while an existing but invalid ledger still fails.
+- **Dependencies:** before the stage runs, git-ignored folders in the checkout whose base name is on an
+  allow-list (`node_modules`, `.venv`, `venv`) and whose parent exists in the stage worktree are
+  discovered (the search does not descend below depth 6; at most 64 folders; folder visits bounded to
+  100,000; exceeding the folder count or visit bound fails closed; folders deeper than depth 6 are not
+  linked) and symlinked into the stage worktree at the same relative path. On Windows, creating symlinks
+  requires Developer Mode or administrator rights; if refused, the stage fails naming the cause and
+  the two ways out (enable Developer Mode, or run `make verify-all` in the checkout). The stage prints
+  one line naming every linked folder.
+- **Read-only by check:** each linked folder is fingerprinted before the run (relative path, size, and
+  mtime of each entry, bounded to at most 250,000 entries; exceeding fails closed) and checked again
+  after. If any entry differs, the stage fails and names the folder because verification wrote into
+  the checkout's dependencies. The symlinks are removed with the stage worktree; the checkout's folders
+  are never deleted. Where the stage worktree still lacks required dependencies, a real failure of
+  `make verify-all` still fails the stage.
+- **Bound:** defaults to the race stage's default (`180s`), or can be declared in `.standards.yaml` via
+  `gate: declared_verify_timeout: <duration>` (e.g. `20m`, Go duration, positive and at most 30 minutes;
+  values above 30m or non-positive are refused naming the key, value, and ceiling).
+  `PRAETOR_TEST_STAGE_TIMEOUT` overrides the declared value when set. The whole-run deadline
+  (`RunBudget`) reserves the declared bound so the run deadline does not cut the stage short (#314).
+  When the bound fires, the stage's reason line names where the bound came from (`default`,
+  `environment`, `.standards.yaml`). Output capture is bounded by `util.RunCommand`.
 - **Non-zero exit:** fails the stage and refuses the push. The reason names the command, its exit
   code and the end of its output, for example
   `declared verification make verify-all exited 2: ... Error 1` (GNU Make exits 2 when a recipe

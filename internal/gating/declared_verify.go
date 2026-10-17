@@ -23,9 +23,10 @@ import (
 const (
 	// declaredVerifyTarget is the Makefile target a repository declares its verification in.
 	declaredVerifyTarget = "verify-all"
-	// declaredVerifyGuardEnv is set in the command's environment, so a verify-all that itself
-	// runs `gate run` does not run verify-all again inside it.
-	declaredVerifyGuardEnv = "PRAETOR_GATE_DECLARED_VERIFY"
+	// DeclaredVerifyGuardEnv is set in the command's environment, so a verify-all that itself
+	// runs `gate run` does not run verify-all again inside it. It also signals to state audit
+	// that it is running inside the isolated stage worktree where the git-ignored ledger is absent.
+	DeclaredVerifyGuardEnv = "PRAETOR_GATE_DECLARED_VERIFY"
 	// maxMakefileBytes bounds the Makefile read to find the target (HISS-02).
 	maxMakefileBytes = 4 << 20
 	// maxDeclaredVerifyDiagnostic bounds the command output quoted in a failed stage's reason;
@@ -63,15 +64,12 @@ func runDeclaredVerifyStage(ctx context.Context, cfg *stageConfig) (string, erro
 		return "", err
 	}
 	bound := budget.StageBound
+	origin := budget.BoundOrigin
+	if origin == "" {
+		origin = "default"
+	}
 	stageErr := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
-		runCtx, envErr := util.WithCommandEnvironment(tCtx, util.InheritedEnvironment([]string{declaredVerifyGuardEnv + "=1"}))
-		if envErr != nil {
-			return fmt.Errorf("%s: %w", declaredVerifyCommand, envErr)
-		}
-		if _, runErr := cfg.run(runCtx, dir, "make", declaredVerifyTarget); runErr != nil {
-			return declaredVerifyFailure(tCtx, bound, runErr)
-		}
-		return nil
+		return executeDeclaredVerify(tCtx, cfg, dir, bound, origin)
 	})
 	if stageErr != nil {
 		return "", stageErr
@@ -82,8 +80,8 @@ func runDeclaredVerifyStage(ctx context.Context, cfg *stageConfig) (string, erro
 
 // declaredVerifyNotApplicable says why the stage runs nothing, or returns "" when it applies.
 func declaredVerifyNotApplicable(ctx context.Context, cfg *stageConfig) (string, error) {
-	if os.Getenv(declaredVerifyGuardEnv) != "" {
-		return "running inside " + declaredVerifyCommand + " (" + declaredVerifyGuardEnv + "); not run again", nil
+	if os.Getenv(DeclaredVerifyGuardEnv) != "" {
+		return "running inside " + declaredVerifyCommand + " (" + DeclaredVerifyGuardEnv + "); not run again", nil
 	}
 	holdsMarker, err := holdsToolchainMarker(ctx, cfg)
 	if err != nil {
@@ -114,12 +112,12 @@ func declaresVerifyTarget(repoDir string) bool {
 
 // declaredVerifyFailure names the command, its exit code or why it has none, and the end of
 // what it reported.
-func declaredVerifyFailure(ctx context.Context, bound time.Duration, err error) error {
+func declaredVerifyFailure(ctx context.Context, bound time.Duration, origin string, err error) error {
 	outcome := "failed to run"
 	var exit interface{ ExitCode() int }
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
-		outcome = fmt.Sprintf("did not finish within %s", bound)
+		outcome = fmt.Sprintf("did not finish within %s (%s)", bound, origin)
 	case errors.As(err, &exit):
 		outcome = fmt.Sprintf("exited %d", exit.ExitCode())
 	}
