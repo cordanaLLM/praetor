@@ -87,10 +87,45 @@ type Category struct {
 	Items   []Item
 	// Findings are entries the count could not classify, such as a bug row without a kind.
 	Findings []string
+	// Exception is the exception entry for this category, if one is declared.
+	Exception *config.Exception
+	// Today is the reference time for expiry judgements; zero means time.Now().
+	Today time.Time
 }
 
 // Count is the number of counted items.
 func (c *Category) Count() int { return len(c.Items) }
+
+// TodayOrNow returns the reference date for expiry evaluation.
+func (c *Category) TodayOrNow() time.Time {
+	if c.Today.IsZero() {
+		return time.Now()
+	}
+	return c.Today
+}
+
+// ApplyExceptions updates the active exception for the category based on today.
+func (c *Category) ApplyExceptions(entries []config.Exception, today time.Time) {
+	c.Today = today
+	live, expired := config.BacklogExceptionFor(entries, c.Name, c.TodayOrNow())
+	if live != nil {
+		c.Exception = live
+	} else if expired != nil {
+		c.Exception = expired
+	} else {
+		c.Exception = nil
+	}
+}
+
+// Excepted reports whether the category is over its cap but excused by an unexpired exception.
+func (c *Category) Excepted() bool {
+	return c.State() == StateOver && c.Exception != nil && !c.Exception.Expired(c.TodayOrNow())
+}
+
+// ExpiredException reports whether the category has a declared exception that has expired.
+func (c *Category) ExpiredException() bool {
+	return c.Exception != nil && c.Exception.Expired(c.TodayOrNow())
+}
 
 // State places the count against the cap.
 func (c *Category) State() State {
@@ -114,6 +149,10 @@ func (c *Category) Line() string {
 	if !c.Counted {
 		return fmt.Sprintf("%s: not counted: %s (%s)", c.Name, c.Reason, origin)
 	}
+	if c.Excepted() {
+		return fmt.Sprintf("%s: %d of %d, %s, excepted until %s by the exceptions entry (rule %s, %s): %s (%s)",
+			c.Name, c.Count(), c.Cap.Limit(), c.State(), c.Exception.Expires, c.Exception.Rule, c.Exception.Target(), c.Exception.Reason, origin)
+	}
 	return fmt.Sprintf("%s: %d of %d, %s (%s)", c.Name, c.Count(), c.Cap.Limit(), c.State(), origin)
 }
 
@@ -123,6 +162,30 @@ func (c *Category) Gated() bool { return c.Cap.EffectiveAction() == config.Backl
 // Report is every capped category of one repository, in config.BacklogCategories order.
 type Report struct {
 	Categories []Category
+	Exceptions []config.Exception
+	Today      time.Time
+}
+
+// SetToday sets the evaluation date for expiry checks on the report and all categories.
+func (r *Report) SetToday(today time.Time) {
+	if r == nil {
+		return
+	}
+	r.Today = today
+	for i := range r.Categories {
+		r.Categories[i].ApplyExceptions(r.Exceptions, today)
+	}
+}
+
+// Excepted counts the gated categories that are over their cap but excused by an unexpired exception.
+func (r *Report) Excepted() int {
+	excepted := 0
+	for i := 0; r != nil && i < len(r.Categories); i++ {
+		if r.Categories[i].Gated() && r.Categories[i].Excepted() {
+			excepted++
+		}
+	}
+	return excepted
 }
 
 // Gate returns an error naming every category whose action is gate and that is over its cap
@@ -136,13 +199,27 @@ func (r *Report) Gate() error {
 		if !category.Gated() {
 			continue
 		}
+		if category.Excepted() {
+			continue
+		}
 		switch category.State() {
 		case StateNotCounted:
 			failures = append(failures, fmt.Errorf("backlog cap %s has action gate but cannot be counted: %s",
 				category.Name, category.Reason))
 		case StateOver:
-			failures = append(failures, fmt.Errorf("backlog cap %s: %d items, over the cap of %d (action gate, max set by %s)",
-				category.Name, category.Count(), category.Cap.Limit(), config.BacklogOrigin(category.MaxBy)))
+			if category.ExpiredException() {
+				failures = append(failures, fmt.Errorf("backlog cap %s: %d items, over the cap of %d (action gate, max set by %s); the exceptions entry (rule %s, %s) expired on %s",
+					category.Name, category.Count(), category.Cap.Limit(), config.BacklogOrigin(category.MaxBy),
+					category.Exception.Rule, category.Exception.Target(), category.Exception.Expires))
+			} else {
+				failures = append(failures, fmt.Errorf("backlog cap %s: %d items, over the cap of %d (action gate, max set by %s)",
+					category.Name, category.Count(), category.Cap.Limit(), config.BacklogOrigin(category.MaxBy)))
+			}
+		default:
+			if category.ExpiredException() {
+				failures = append(failures, fmt.Errorf("backlog cap %s: the exceptions entry (rule %s, %s) expired on %s",
+					category.Name, category.Exception.Rule, category.Exception.Target(), category.Exception.Expires))
+			}
 		}
 	}
 	return errors.Join(failures...)
@@ -211,6 +288,19 @@ func Evaluate(ctx context.Context, root string, policy *config.EffectivePolicy) 
 	}
 	ctx, cancel := context.WithTimeout(ctx, evaluateTimeout)
 	defer cancel()
+
+	var allExceptions []config.Exception
+	if policy.Manifest != nil {
+		allExceptions = policy.Manifest.Exceptions
+	} else {
+		manifest, err := config.LoadManifest(filepath.Join(root, config.ManifestFileName))
+		if err == nil && manifest != nil {
+			allExceptions = manifest.Exceptions
+		}
+	}
+	report.Exceptions = allExceptions
+	report.Today = time.Now()
+
 	names := config.BacklogCategories()
 	for i, entry := range policy.Policy.Backlog.Caps() {
 		if !entry.Declared() {
@@ -222,6 +312,7 @@ func Evaluate(ctx context.Context, root string, policy *config.EffectivePolicy) 
 		}
 		category := evaluateCategory(ctx, root, names[i], entry, reader)
 		category.MaxBy, category.ActionBy = policy.BacklogSources(names[i])
+		category.ApplyExceptions(allExceptions, report.Today)
 		report.Categories = append(report.Categories, category)
 	}
 	return report, nil
