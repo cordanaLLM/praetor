@@ -164,8 +164,10 @@ class CheckpointTests(unittest.TestCase):
         (path / "public.txt").write_text("unfinished\n")
         result, _ = self.observe_worktrees()
         self.assertTrue(result["due"])
-        self.assertTrue(any(str(path) in action for action in result["actions"]))
-        self.assertEqual(result["unfinished_worktrees"][0]["path"], str(path))
+        # git reports the worktree by its resolved path: /private/var/... for macOS's /var/...
+        expected = str(path.resolve())
+        self.assertTrue(any(expected in action for action in result["actions"]))
+        self.assertEqual(result["unfinished_worktrees"][0]["path"], expected)
 
     def test_stop_linked_public_change_is_detected_when_head_is_remote_clean(self):
         bare = self.root.parent / (self.root.name + "-remote.git")
@@ -333,7 +335,8 @@ class CheckpointTests(unittest.TestCase):
         self.assertFalse(any(call[:2] == ["gh", "pr"] for call in calls))
         (self.root / "root-change.txt").write_text("root work\n")
         result, _ = self.observe_worktrees()
-        self.assertNotIn(str(self.root), [item["path"] for item in result.get("unfinished_worktrees", [])])
+        reported = [str(Path(item["path"]).resolve()) for item in result.get("unfinished_worktrees", [])]
+        self.assertNotIn(str(self.root.resolve()), reported)
 
     def test_missing_config_is_explicitly_disabled(self):
         (self.root / ".config" / "agent" / "checkpoint.json").unlink()
