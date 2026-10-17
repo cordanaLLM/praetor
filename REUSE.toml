@@ -62,3 +62,22 @@ path = [
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Ayoub Ghriss"
 SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = [
+  ".agents/skills/cost-audit/LICENSE",
+  ".agents/skills/eval-harness/LICENSE",
+  ".agents/skills/research-method/LICENSE",
+  ".agents/skills/skill-compliance/LICENSE",
+  ".agents/plugins/praetor/skills/cost-audit/LICENSE",
+  ".agents/plugins/praetor/skills/eval-harness/LICENSE",
+  ".agents/plugins/praetor/skills/research-method/LICENSE",
+  ".agents/plugins/praetor/skills/skill-compliance/LICENSE",
+  ".claude/skills/cost-audit/LICENSE",
+  ".claude/skills/eval-harness/LICENSE",
+  ".claude/skills/research-method/LICENSE",
+  ".claude/skills/skill-compliance/LICENSE",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Affaan Mustafa"
+SPDX-License-Identifier = "MIT"
