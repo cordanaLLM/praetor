@@ -1509,6 +1509,7 @@ func (b *boundedBuffer) String() string {
 const maxTypeStringBytes = 1 << 16
 
 type typeAlias struct {
+	moduleDir  string
 	pkgPath    string
 	aliasName  string
 	targetPkg  string
@@ -1707,7 +1708,32 @@ func checkCompatibleAlias(line, currentPkg string, identical, nonIdentical []typ
 	return false, ""
 }
 
-func listModuleGoFiles(ctx context.Context, root, rev string, target module) ([]string, error) {
+func moduleDirs(modules []module) []string {
+	dirs := make([]string, 0, min(len(modules), maxModules))
+	for index := 0; index < len(modules) && index < maxModules; index++ {
+		dirs = append(dirs, modules[index].dir)
+	}
+	return dirs
+}
+
+func ownerModuleDir(filePath string, moduleDirs []string) string {
+	p := strings.TrimPrefix(path.Clean(filepath.ToSlash(filePath)), "/")
+	owner := "."
+	bestLen := 0
+	for index := 0; index < len(moduleDirs) && index < maxModules; index++ {
+		dir := strings.TrimPrefix(path.Clean(filepath.ToSlash(moduleDirs[index])), "/")
+		if dir == "." || dir == "" {
+			continue
+		}
+		if (p == dir || strings.HasPrefix(p, dir+"/")) && len(dir) > bestLen {
+			owner = dir
+			bestLen = len(dir)
+		}
+	}
+	return owner
+}
+
+func listModuleGoFiles(ctx context.Context, root, rev string, target module, modules []module) ([]string, error) {
 	args := []string{"ls-tree", "-r", "-z", "--full-tree", "--name-only", rev}
 	if target.dir != "." && target.dir != "" {
 		args = append(args, "--", target.dir)
@@ -1716,9 +1742,14 @@ func listModuleGoFiles(ctx context.Context, root, rev string, target module) ([]
 	if err != nil {
 		return nil, err
 	}
+	targetDir := path.Clean(filepath.ToSlash(target.dir))
+	dirs := moduleDirs(modules)
 	files := make([]string, 0, min(len(records), maxTreeEntries))
 	for index := 0; index < len(records) && index < maxTreeEntries; index++ {
-		files = append(files, records[index])
+		filePath := records[index]
+		if ownerModuleDir(filePath, dirs) == targetDir {
+			files = append(files, filePath)
+		}
 	}
 	return files, nil
 }
@@ -1735,7 +1766,7 @@ func filePackagePath(modulePath, moduleDir, filePath string) string {
 	return modulePath + "/" + path.Clean(dir)
 }
 
-func resolveAliasTarget(ts *ast.TypeSpec, imports map[string]string, pkgPath string) (typeAlias, bool) {
+func resolveAliasTarget(ts *ast.TypeSpec, imports map[string]string, moduleDir, pkgPath string) (typeAlias, bool) {
 	switch expr := ts.Type.(type) {
 	case *ast.SelectorExpr:
 		ident, ok := expr.X.(*ast.Ident)
@@ -1747,6 +1778,7 @@ func resolveAliasTarget(ts *ast.TypeSpec, imports map[string]string, pkgPath str
 			return typeAlias{}, false
 		}
 		return typeAlias{
+			moduleDir:  moduleDir,
 			pkgPath:    pkgPath,
 			aliasName:  ts.Name.Name,
 			targetPkg:  targetPkg,
@@ -1754,6 +1786,7 @@ func resolveAliasTarget(ts *ast.TypeSpec, imports map[string]string, pkgPath str
 		}, true
 	case *ast.Ident:
 		return typeAlias{
+			moduleDir:  moduleDir,
 			pkgPath:    pkgPath,
 			aliasName:  ts.Name.Name,
 			targetPkg:  pkgPath,
@@ -1764,25 +1797,25 @@ func resolveAliasTarget(ts *ast.TypeSpec, imports map[string]string, pkgPath str
 	}
 }
 
-func appendAliases(aliases []typeAlias, f *ast.File, pkgPath string) []typeAlias {
+func appendAliases(aliases []typeAlias, f *ast.File, moduleDir, pkgPath string) []typeAlias {
 	imports := collectFileImports(f.Imports)
 	for dIdx := 0; dIdx < len(f.Decls) && dIdx < maxDecls && len(aliases) < maxAliases; dIdx++ {
 		gen, ok := f.Decls[dIdx].(*ast.GenDecl)
 		if !ok || gen.Tok != token.TYPE {
 			continue
 		}
-		aliases = appendTypeSpecs(aliases, gen.Specs, imports, pkgPath)
+		aliases = appendTypeSpecs(aliases, gen.Specs, imports, moduleDir, pkgPath)
 	}
 	return aliases
 }
 
-func appendTypeSpecs(aliases []typeAlias, specs []ast.Spec, imports map[string]string, pkgPath string) []typeAlias {
+func appendTypeSpecs(aliases []typeAlias, specs []ast.Spec, imports map[string]string, moduleDir, pkgPath string) []typeAlias {
 	for sIdx := 0; sIdx < len(specs) && sIdx < maxSpecs && len(aliases) < maxAliases; sIdx++ {
 		ts, ok := specs[sIdx].(*ast.TypeSpec)
 		if !ok || !ts.Assign.IsValid() || !ast.IsExported(ts.Name.Name) {
 			continue
 		}
-		if alias, found := resolveAliasTarget(ts, imports, pkgPath); found {
+		if alias, found := resolveAliasTarget(ts, imports, moduleDir, pkgPath); found {
 			aliases = append(aliases, alias)
 		}
 	}
@@ -1794,7 +1827,7 @@ func collectAliasesAtHead(ctx context.Context, root, head string, modules []modu
 	aliases := make([]typeAlias, 0, maxAliases)
 	for modIndex := 0; modIndex < len(modules) && modIndex < maxModules && len(aliases) < maxAliases; modIndex++ {
 		target := modules[modIndex]
-		files, err := listModuleGoFiles(ctx, root, head, target)
+		files, err := listModuleGoFiles(ctx, root, head, target, modules)
 		if err != nil {
 			return nil, fmt.Errorf("list Go files in module %s: %w", target.dir, err)
 		}
@@ -1809,7 +1842,7 @@ func collectAliasesAtHead(ctx context.Context, root, head string, modules []modu
 				continue
 			}
 			pkgPath := filePackagePath(target.path, target.dir, filePath)
-			aliases = appendAliases(aliases, f, pkgPath)
+			aliases = appendAliases(aliases, f, target.dir, pkgPath)
 		}
 	}
 	return aliases, nil
@@ -1840,7 +1873,7 @@ func findTypeDecl(ctx context.Context, root, rev string, modules []module, pkgPa
 	fset := token.NewFileSet()
 	for modIndex := 0; modIndex < len(modules) && modIndex < maxModules; modIndex++ {
 		target := modules[modIndex]
-		files, err := listModuleGoFiles(ctx, root, rev, target)
+		files, err := listModuleGoFiles(ctx, root, rev, target, modules)
 		if err != nil {
 			return "", fmt.Errorf("list Go files in module %s: %w", target.dir, err)
 		}
@@ -1977,11 +2010,35 @@ func filterOutput(output string, identical, nonIdentical []typeAlias) (bool, str
 	return hasIncompatible, res.String()
 }
 
+func isNestedBeneath(subDir, parentDir string) bool {
+	p := path.Clean(filepath.ToSlash(parentDir))
+	s := path.Clean(filepath.ToSlash(subDir))
+	if p == s {
+		return false
+	}
+	if p == "." || p == "" {
+		return s != "." && s != ""
+	}
+	return strings.HasPrefix(s, p+"/")
+}
+
+func filterAliasesForTarget(aliases []typeAlias, target module) []typeAlias {
+	filtered := make([]typeAlias, 0, len(aliases))
+	for index := 0; index < len(aliases) && index < maxAliases; index++ {
+		a := aliases[index]
+		if !isNestedBeneath(a.moduleDir, target.dir) {
+			filtered = append(filtered, a)
+		}
+	}
+	return filtered
+}
+
 func filterModuleOutput(ctx context.Context, root, base, head string, target module, baseModules, headModules []module, aliases []typeAlias, rawOutput string) (bool, string, error) {
-	if len(aliases) == 0 {
+	targetAliases := filterAliasesForTarget(aliases, target)
+	if len(targetAliases) == 0 {
 		return true, rawOutput, nil
 	}
-	identical, nonIdentical := verifyIdenticalAliases(ctx, root, base, head, baseModules, headModules, aliases)
+	identical, nonIdentical := verifyIdenticalAliases(ctx, root, base, head, baseModules, headModules, targetAliases)
 	hasIncompatible, filtered := filterOutput(rawOutput, identical, nonIdentical)
 	return hasIncompatible, filtered, nil
 }

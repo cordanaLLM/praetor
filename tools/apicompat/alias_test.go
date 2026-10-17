@@ -166,6 +166,172 @@ func TestGate_Boundary_CrossModuleAliasesDoNotChangeUnrelatedTarget(t *testing.T
 	}
 }
 
+func nestedModuleAliasFixture(t *testing.T, h aliasTestHarness) (*fixture, string, string) {
+	t.Helper()
+	f := newFixture(t, gateHarness{env: h.env})
+	baseFiles := map[string]string{
+		"go.mod":           "module example.com/repo\n\ngo 1.21\n\nrequire (\n\texample.com/dep v0.0.0\n\texample.com/repo/sub v0.0.0\n)\nreplace example.com/dep => ./dep\nreplace example.com/repo/sub => ./sub\n",
+		"p/p.go":           "package p\n\nimport (\n\t\"example.com/repo/sub/a\"\n)\n\ntype Config struct{}\ntype W struct{}\ntype S func() error\n\nfunc New(Config, S, a.T) (*W, error) { return nil, nil }\n",
+		"sub/go.mod":       "module example.com/repo/sub\n\ngo 1.21\n\nrequire example.com/dep v0.0.0\nreplace example.com/dep => ../dep\n",
+		"sub/a/a.go":       "package a\n\nimport \"example.com/dep/dep\"\n\ntype T = dep.T\n",
+		"sub/apidiff-stub": "compatible\n",
+		"dep/go.mod":       "module example.com/dep\n\ngo 1.21\n",
+		"dep/dep/dep.go":   "package dep\n\ntype T struct{}\n",
+		"dep/apidiff-stub": "compatible\n",
+		"apidiff-stub":     "compatible\n",
+	}
+	base := f.commit("fixture", baseFiles)
+	f.git("tag", "v1.0.0")
+	headFiles := map[string]string{
+		"p/ptypes/types.go": "package ptypes\n\ntype S func() error\n",
+		"p/p.go":            "package p\n\nimport (\n\t\"example.com/repo/p/ptypes\"\n\t\"example.com/repo/sub/a\"\n)\n\ntype Config struct{}\ntype W struct{}\ntype S = ptypes.S\n\nfunc New(Config, S, a.T) (*W, error) { return nil, nil }\n",
+		"apidiff-stub":      "example.com/repo/p\n  Incompatible changes:\n  - New: changed from func(Config, S, a.T) (*W, error) to func(Config, S, a.T) (*W, error)\n  - S: changed from S to example.com/repo/p/ptypes.S\n",
+	}
+	head := f.commit("alias root type S", headFiles)
+	return f, base, head
+}
+
+// Positive: repo with root module example.com/repo and nested module example.com/repo/sub;
+// sub/a/a.go has type T = dep.T with dep a package of a third module; root package p has
+// type S func() error and func New(Config, S, a.T) (*W, error); commit moves S into p/ptypes
+// and leaves type S = ptypes.S in p. Gate with -policy=reject must exit compatible and print
+// the alias-of-identical-type reclassification for New.
+func TestGate_Positive_NestedModuleAliasesDoNotPolluteRoot(t *testing.T) {
+	t.Parallel()
+	h := newAliasHarness(t)
+	f, base, head := nestedModuleAliasFixture(t, h)
+	run := h.run(t, f.dir, nil, "-base="+base, "-policy=reject")
+	if run.status != gateExitCompatible {
+		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitCompatible, run.stdout, run.stderr)
+	}
+	if !strings.Contains(run.stdout, "New: changed from func(Config, S, a.T) (*W, error) to func(Config, S, a.T) (*W, error) (compatible: alias of identical type)") {
+		t.Fatalf("stdout misses New alias reclassification: %s", run.stdout)
+	}
+	if !strings.Contains(run.stdout, head[:12]) {
+		t.Fatalf("stdout misses compared head %s: %s", head[:12], run.stdout)
+	}
+}
+
+// Negative: same fixture, but the commit really changes New's parameter (S -> func() int): still rejected.
+func TestGate_Negative_RootModuleRealParameterChangeWithNestedModule(t *testing.T) {
+	t.Parallel()
+	h := newAliasHarness(t)
+	f, base, _ := nestedModuleAliasFixture(t, h)
+	stub := "example.com/repo/p\n  Incompatible changes:\n" +
+		"  - New: changed from func(Config, S, a.T) (*W, error) to func(Config, func() int, a.T) (*W, error)\n" +
+		"  - S: changed from S to example.com/repo/p/ptypes.S\n"
+	f.commit("plant parameter change", map[string]string{"apidiff-stub": stub})
+	run := h.run(t, f.dir, nil, "-base="+base, "-policy=reject")
+	if run.status != gateExitRejected {
+		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitRejected, run.stdout, run.stderr)
+	}
+	if !strings.Contains(run.stdout, "S: changed from S to example.com/repo/p/ptypes.S (compatible: alias of identical type)") {
+		t.Fatalf("stdout misses compatible alias reclassification for S: %s", run.stdout)
+	}
+	if !strings.Contains(run.stdout, "- New: changed from func(Config, S, a.T) (*W, error) to func(Config, func() int, a.T) (*W, error)") {
+		t.Fatalf("stdout lost the real parameter change for New: %s", run.stdout)
+	}
+}
+
+func nestedDeeperModuleAliasFixture(t *testing.T, h aliasTestHarness) (*fixture, string, string) {
+	t.Helper()
+	f := newFixture(t, gateHarness{env: h.env})
+	baseFiles := map[string]string{
+		"go.mod":                "module example.com/repo\n\ngo 1.21\n\nrequire (\n\texample.com/dep v0.0.0\n\texample.com/repo/sub v0.0.0\n)\nreplace example.com/dep => ./dep\nreplace example.com/repo/sub => ./sub\n",
+		"apidiff-stub":          "compatible\n",
+		"dep/go.mod":            "module example.com/dep\n\ngo 1.21\n",
+		"dep/dep/dep.go":        "package dep\n\ntype T struct{}\n",
+		"dep/apidiff-stub":      "compatible\n",
+		"sub/go.mod":            "module example.com/repo/sub\n\ngo 1.21\n\nrequire (\n\texample.com/dep v0.0.0\n\texample.com/repo/sub/deep v0.0.0\n)\nreplace example.com/dep => ../dep\nreplace example.com/repo/sub/deep => ./deep\n",
+		"sub/subpkg/subpkg.go":  "package subpkg\n\nimport \"example.com/repo/sub/deep/deep\"\n\ntype X func() error\n\nfunc Do(X, deep.D) error { return nil }\n",
+		"sub/apidiff-stub":      "compatible\n",
+		"sub/deep/go.mod":       "module example.com/repo/sub/deep\n\ngo 1.21\n\nrequire example.com/dep v0.0.0\nreplace example.com/dep => ../../dep\n",
+		"sub/deep/deep/deep.go": "package deep\n\ntype D struct{}\n\nfunc Run(int) error { return nil }\n",
+		"sub/deep/apidiff-stub": "compatible\n",
+	}
+	base := f.commit("fixture", baseFiles)
+	f.git("tag", "v1.0.0")
+	headFiles := map[string]string{
+		"sub/subpkg/subtypes/types.go": "package subtypes\n\ntype X func() error\n",
+		"sub/subpkg/subpkg.go":         "package subpkg\n\nimport (\n\t\"example.com/repo/sub/deep/deep\"\n\t\"example.com/repo/sub/subpkg/subtypes\"\n)\n\ntype X = subtypes.X\n\nfunc Do(X, deep.D) error { return nil }\n",
+		"sub/apidiff-stub":             "example.com/repo/sub/subpkg\n  Incompatible changes:\n  - Do: changed from func(X, deep.D) error to func(X, deep.D) error\n  - X: changed from X to example.com/repo/sub/subpkg/subtypes.X\n",
+		"sub/deep/deep/deep.go":        "package deep\n\nimport \"example.com/dep/dep\"\n\ntype D = dep.T\n\nfunc Run(string) error { return nil }\n",
+		"sub/deep/apidiff-stub":        "example.com/repo/sub/deep/deep\n  Incompatible changes:\n  - Run: changed from func(int) error to func(string) error\n",
+	}
+	head := f.commit("alias sub type and plant real change in sub/deep", headFiles)
+	return f, base, head
+}
+
+// Boundary: target is the nested module sub, which holds a deeper module sub/deep with its own
+// alias; an alias-identical change inside sub is accepted, a real change inside sub/deep is
+// reported for sub/deep only.
+func TestGate_Boundary_NestedModuleAliasWithDeeperModule(t *testing.T) {
+	t.Parallel()
+	h := newAliasHarness(t)
+	f, base, _ := nestedDeeperModuleAliasFixture(t, h)
+	run := h.run(t, f.dir, nil, "-base="+base, "-policy=reject")
+	if run.status != gateExitRejected {
+		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitRejected, run.stdout, run.stderr)
+	}
+	if !strings.Contains(run.stdout, "Do: changed from func(X, deep.D) error to func(X, deep.D) error (compatible: alias of identical type)") {
+		t.Fatalf("stdout misses Do alias reclassification in sub: %s", run.stdout)
+	}
+	if !strings.Contains(run.stdout, "X: changed from X to example.com/repo/sub/subpkg/subtypes.X (compatible: alias of identical type)") {
+		t.Fatalf("stdout misses X alias reclassification in sub: %s", run.stdout)
+	}
+	if !strings.Contains(run.stdout, "- Run: changed from func(int) error to func(string) error") {
+		t.Fatalf("stdout misses real change in sub/deep: %s", run.stdout)
+	}
+	if strings.Contains(run.stdout, "Run: changed from func(int) error to func(string) error (compatible:") {
+		t.Fatalf("stdout incorrectly reclassified real change in sub/deep: %s", run.stdout)
+	}
+}
+
+func siblingPrefixAliasFixture(t *testing.T, h aliasTestHarness) (*fixture, string, string) {
+	t.Helper()
+	f := newFixture(t, gateHarness{env: h.env})
+	baseFiles := map[string]string{
+		"go.mod":           "module example.com/repo\n\ngo 1.21\n\nrequire (\n\texample.com/dep v0.0.0\n\texample.com/repo/sub v0.0.0\n)\nreplace example.com/dep => ./dep\nreplace example.com/repo/sub => ./sub\n",
+		"subx/subx.go":     "package subx\n\nimport (\n\t\"example.com/repo/sub/a\"\n)\n\ntype Config struct{}\ntype W struct{}\ntype S func() error\n\nfunc New(Config, S, a.T) (*W, error) { return nil, nil }\n",
+		"sub/go.mod":       "module example.com/repo/sub\n\ngo 1.21\n\nrequire example.com/dep v0.0.0\nreplace example.com/dep => ../dep\n",
+		"sub/a/a.go":       "package a\n\nimport \"example.com/dep/dep\"\n\ntype T = dep.T\n",
+		"sub/apidiff-stub": "compatible\n",
+		"dep/go.mod":       "module example.com/dep\n\ngo 1.21\n",
+		"dep/dep/dep.go":   "package dep\n\ntype T struct{}\n",
+		"dep/apidiff-stub": "compatible\n",
+		"apidiff-stub":     "compatible\n",
+	}
+	base := f.commit("fixture", baseFiles)
+	f.git("tag", "v1.0.0")
+	headFiles := map[string]string{
+		"subx/subtypes/types.go": "package subtypes\n\ntype S func() error\n",
+		"subx/subx.go":           "package subx\n\nimport (\n\t\"example.com/repo/subx/subtypes\"\n\t\"example.com/repo/sub/a\"\n)\n\ntype Config struct{}\ntype W struct{}\ntype S = subtypes.S\n\nfunc New(Config, S, a.T) (*W, error) { return nil, nil }\n",
+		"apidiff-stub":           "example.com/repo/subx\n  Incompatible changes:\n  - New: changed from func(Config, S, a.T) (*W, error) to func(Config, S, a.T) (*W, error)\n  - S: changed from S to example.com/repo/subx/subtypes.S\n",
+	}
+	head := f.commit("alias root package subx type S", headFiles)
+	return f, base, head
+}
+
+// Boundary: root module has package subx (no go.mod) sharing directory prefix with nested
+// module sub; sub declares an alias, and root package subx turns a type into an alias of an
+// identical type. Gate must not let prefix matching assign subx/ files to module sub, keeping
+// the root alias valid and accepted under -policy=reject.
+func TestGate_Boundary_SiblingPrefixNotMaskedByNestedModule(t *testing.T) {
+	t.Parallel()
+	h := newAliasHarness(t)
+	f, base, head := siblingPrefixAliasFixture(t, h)
+	run := h.run(t, f.dir, nil, "-base="+base, "-policy=reject")
+	if run.status != gateExitCompatible {
+		t.Fatalf("status = %d, want %d (stdout: %s, stderr: %s)", run.status, gateExitCompatible, run.stdout, run.stderr)
+	}
+	if !strings.Contains(run.stdout, "New: changed from func(Config, S, a.T) (*W, error) to func(Config, S, a.T) (*W, error) (compatible: alias of identical type)") {
+		t.Fatalf("stdout misses New alias reclassification: %s", run.stdout)
+	}
+	if !strings.Contains(run.stdout, head[:12]) {
+		t.Fatalf("stdout misses compared head %s: %s", head[:12], run.stdout)
+	}
+}
+
 type aliasTestHarness struct {
 	gate    string
 	checker string

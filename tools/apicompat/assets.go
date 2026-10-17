@@ -140,6 +140,8 @@ var priorDigests = map[string]string{
 	"45566ecd8cbec806eea0ab14d60f01cf95d134b170ea09a6a52b8aa73d7e14ca": Directory + "/" + GateFile,
 	// The gate before it collected aliases across tracked modules (#1411).
 	"fe26bf523fce6ef124244e389bef93dd89395f3f52c00fbcd1c6fd6b6f42feee": Directory + "/" + GateFile,
+	// The gate whose root-module alias scan also read nested modules' aliases (#1421).
+	"93c21827f1d47ae68d719e51312f4ecf5e8a53a418da4d8770a1f60dea6cdc2b": Directory + "/" + GateFile,
 	// The gate that passed every pre-v1 incompatible change under policy auto as a warning, marked or
 	// not (#1317).
 	"fd668d77af454da56c6299dfcc1e4f5f49f8d007465489af0ead0067e96fc07d": Directory + "/" + GateFile,
