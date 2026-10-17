@@ -123,6 +123,9 @@ func TestRefresh_Negative_Skips(t *testing.T) {
 	e.write("cmd/engine/main.go", "package main\n\nfunc main() { println() }\n")
 	result, err = Refresh(context.Background(), e.refreshOptions(e.branch))
 	requireSkipped(t, result, err, "modified tracked files")
+	if result.CommitsBehind != 1 {
+		t.Fatalf("want 1 commit behind on dirty refusal, got %d", result.CommitsBehind)
+	}
 	e.git("checkout", "-q", "--", "cmd/engine/main.go")
 
 	e.git("reset", "-q", "--hard", e.installed)

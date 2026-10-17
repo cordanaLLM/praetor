@@ -295,6 +295,10 @@ def refresh_install():
         raise HookError("workstation install --if-stale returned an invalid result")
     if report["refreshed"]:
         print(f"engine install: refreshed; {report.get('reason', '')}.")
+    elif report.get("commits_behind", 0) > 0:
+        head = git("rev-parse", "--short", "HEAD").decode().strip()
+        print(f"engine install: NOT refreshed, {report['commits_behind']} commits behind {head}: "
+              f"{report.get('reason', '')}; next: clean checkout, run make dev-install")
 
 
 def post_stage(stage, args):
