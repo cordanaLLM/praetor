@@ -1078,7 +1078,11 @@ Praetor does not create or alter an adopter's tools module. A missing or partial
 the normal fallback case, so flavor apply still writes the workflow and flavor audit accepts it
 as the managed template.
 
-The adopted workflow runs `govulncheck ./...` and `gosec -conf .gosec.json ./...`. It scans the
+The adopted workflow runs `govulncheck ./...` and `gosec -conf .gosec.json ./...`. Adoption writes the
+pinned `.gosec.json` configuration (`templates/go/.gosec.json.tmpl`) into every repository where git
+tracks at least one `go.mod` (root or nested), independent of the selected flavor, so the security
+gate that requires it never refuses an adopted repository for a missing configuration. An edited
+`.gosec.json` is kept and reported without being overwritten. It scans the
 whole module with gosec: the narrower `.config/lefthook/scripts/security_scope.py` wrapper is an
 engine file that adoption does not ship. An unedited workflow written before this trigger and
 pinned-install change is a recorded prior rendering and refreshes to the correct variant on the

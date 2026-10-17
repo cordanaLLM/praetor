@@ -507,11 +507,12 @@ func TestRunSecurityStage_3D(t *testing.T) {
 		t.Error("expected the stage to fail when a scanner reports findings")
 	}
 
-	// Negative: the pinned gosec configuration is mandatory.
+	// Negative: the pinned gosec configuration is mandatory and names the remedy.
 	noConf := newGoModuleDir(t)
 	noConfCfg, _ := newTestConfig(t, noConf, false)
-	if _, err := runSecurityStage(ctx, noConfCfg); err == nil || !strings.Contains(err.Error(), GosecConfigFile) {
-		t.Errorf("expected a missing-%s error, got %v", GosecConfigFile, err)
+	const wantMissingGosec = ".gosec.json is missing: the security gate refuses to run gosec without its pinned configuration; run praetorctl adopt to write it"
+	if _, err := runSecurityStage(ctx, noConfCfg); err == nil || err.Error() != wantMissingGosec {
+		t.Errorf("expected missing-%s error naming praetorctl adopt: got %v, want %q", GosecConfigFile, err, wantMissingGosec)
 	}
 
 	// Boundary: a repository without go.mod reports the Go scanners not applicable.
