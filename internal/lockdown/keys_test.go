@@ -540,7 +540,7 @@ func TestReadKeyFile_Negative_RefusalNamesTheEnvironmentRoute(t *testing.T) {
 	if err := os.WriteFile(path, []byte(strings.Repeat("ab", 32)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := readKeyFile(path)
+	_, err := ReadKeyFile(path)
 	if !errors.Is(err, ErrInsecureKeyPerm) {
 		t.Fatalf("key outside the protected location accepted or refused for another reason: %v", err)
 	}
