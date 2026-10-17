@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // MaxDeclaredVerifyTimeout is the maximum duration gate.declared_verify_timeout may declare (30 min).
