@@ -34,6 +34,15 @@ func (s *scriptedKill) kill(pid int, sig syscall.Signal) error {
 	return s.answers[len(s.calls)-1]
 }
 
+// otherGroup returns want, or the next id when want is this test's own process group: the gate runs the tests in a
+// container where the test's own group is a small number (7 on 2026-10-18), which the signaller refuses.
+func otherGroup(want int) int {
+	if want == syscall.Getpgrp() {
+		return want + 1
+	}
+	return want
+}
+
 func scriptedGroups(polls int, answers ...error) (groupSignaller, *scriptedKill) {
 	script := &scriptedKill{answers: answers}
 	return groupSignaller{kill: script.kill, polls: polls, delay: time.Millisecond}, script
@@ -44,10 +53,11 @@ func scriptedGroups(polls int, answers ...error) (groupSignaller, *scriptedKill)
 // (#558). The signal and every probe address the group, never the leader alone.
 func TestGroupSignallerPositive_UnreapedGroupIsDoneOnceGone(t *testing.T) {
 	groups, script := scriptedGroups(5, syscall.EPERM, syscall.EPERM, syscall.EPERM, syscall.ESRCH)
-	if err := groups.signal(42, syscall.SIGKILL); !errors.Is(err, os.ErrProcessDone) {
+	group := otherGroup(42)
+	if err := groups.signal(group, syscall.SIGKILL); !errors.Is(err, os.ErrProcessDone) {
 		t.Fatalf("signal = %v, want os.ErrProcessDone", err)
 	}
-	want := []killCall{{-42, syscall.SIGKILL}, {-42, 0}, {-42, 0}, {-42, 0}}
+	want := []killCall{{-group, syscall.SIGKILL}, {-group, 0}, {-group, 0}, {-group, 0}}
 	if len(script.calls) != len(want) {
 		t.Fatalf("calls = %v, want %v", script.calls, want)
 	}
@@ -77,7 +87,7 @@ func TestGroupSignallerNegative_EPERMStandsWhileTheGroupExists(t *testing.T) {
 	}
 	for _, tc := range cases {
 		groups, script := scriptedGroups(3, tc.answers...)
-		err := groups.signal(7, syscall.SIGTERM)
+		err := groups.signal(otherGroup(7), syscall.SIGTERM)
 		if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) || errors.Is(err, os.ErrProcessDone) {
 			t.Errorf("%s: signal = %v, want %v", tc.name, err, tc.want)
 		}
@@ -105,7 +115,7 @@ func TestGroupSignallerBoundary_ProbeBound(t *testing.T) {
 	}
 	for _, tc := range cases {
 		groups, script := scriptedGroups(tc.polls, tc.answers...)
-		err := groups.signal(9, syscall.SIGINT)
+		err := groups.signal(otherGroup(9), syscall.SIGINT)
 		if done := errors.Is(err, os.ErrProcessDone); done != tc.done || (!done && !errors.Is(err, syscall.EPERM)) {
 			t.Errorf("%s: signal = %v, want done=%t", tc.name, err, tc.done)
 		}
