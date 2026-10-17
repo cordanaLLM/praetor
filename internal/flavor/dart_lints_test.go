@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // dartAnalysisConfig is the part of analysis_options.yaml the check reads.

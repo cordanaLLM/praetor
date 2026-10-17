@@ -7,11 +7,12 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func testRegistry() Registry {
@@ -47,6 +48,40 @@ func TestBuildPlanClientShapesAndReplay(t *testing.T) {
 				t.Fatalf("non-idempotent replay: %v %+v", err, again)
 			}
 		})
+	}
+}
+
+func TestBuildClaudeLocalPlanPreservesProjectsAndRejectsConflicts(t *testing.T) {
+	// A platform path: "/work/one" is not absolute on Windows. The JSON key is encoded, since a
+	// Windows path holds backslashes.
+	project := filepath.Join(t.TempDir(), "one")
+	key, err := json.Marshal(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := []byte(`{"first":{"number":9007199254740993,"note":"keep\\u003c"},"projects":{` + string(key) + `:{"allowedTools":["Read"],"mcpServers":{"other":{"command":"/other"}}},"/work/two":{"enabledMcpjsonServers":["mine"],"hasTrustDialogAccepted":true}}}`)
+	p, err := BuildClaudeLocalPlan(t.Context(), testRegistry(), project, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range [][]byte{[]byte(`9007199254740993`), []byte(`"keep\\u003c"`), []byte(`"enabledMcpjsonServers":["mine"]`), []byte(`"hasTrustDialogAccepted":true`), []byte(`"allowedTools":["Read"]`)} {
+		if !bytes.Contains(p.Content, keep) {
+			t.Fatalf("unowned value changed or lost: %s", keep)
+		}
+	}
+	if !bytes.Contains(p.Content, []byte(`"mcpServers"`)) || !bytes.Contains(p.Content, []byte(`"praetor-dev"`)) {
+		t.Fatalf("local server missing: %s", p.Content)
+	}
+	conflict := []byte(`{"projects":{` + string(key) + `:{"mcpServers":{"praetor-dev":{"command":"/other","args":[]}}}}}`)
+	if _, err := BuildClaudeLocalPlan(t.Context(), testRegistry(), project, conflict); !errors.Is(err, ErrConflict) {
+		t.Fatalf("conflict accepted: %v", err)
+	}
+	if _, err := BuildClaudeLocalPlan(t.Context(), testRegistry(), "relative", nil); err == nil {
+		t.Fatal("relative project accepted")
+	}
+	created, err := BuildClaudeLocalPlan(t.Context(), testRegistry(), project, []byte(`{"elsewhere":true}`))
+	if err != nil || !bytes.Contains(created.Content, []byte(`"projects"`)) {
+		t.Fatalf("missing projects map not created: %v", err)
 	}
 }
 

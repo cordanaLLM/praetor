@@ -70,7 +70,9 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 	if err := addDotnetVerification(plan, inputs); err != nil {
 		return nil, err
 	}
-	addStandardVerification(plan, inputs)
+	if err := addStandardVerification(plan, inputs); err != nil {
+		return nil, err
+	}
 	addZigVerification(plan, inputs)
 	plan.SourceLanguages = inputs.cSources.languages(ctx, root)
 	if len(plan.Runtimes) == 0 {
@@ -97,7 +99,7 @@ func (p *VerificationPlan) unavailable(reason string) {
 	p.Reasons = append(p.Reasons, reason)
 }
 
-func addStandardVerification(p *VerificationPlan, inputs verificationInputs) {
+func addStandardVerification(p *VerificationPlan, inputs verificationInputs) error {
 	if inputs.has("go.mod") {
 		p.Runtimes = append(p.Runtimes, "go")
 		p.Build = append(p.Build, []string{"go", "build", "-v", "./..."})
@@ -108,13 +110,16 @@ func addStandardVerification(p *VerificationPlan, inputs verificationInputs) {
 		p.Build = append(p.Build, []string{"cargo", "build", "--locked"})
 		p.Test = append(p.Test, []string{"cargo", "test", "--locked"})
 	}
-	addPythonVerification(p, inputs)
+	if err := addPythonVerification(p, inputs); err != nil {
+		return err
+	}
 	for _, marker := range []string{"meson.build", "core/meson.build", "CMakeLists.txt", "pom.xml", "build.gradle", "build.gradle.kts", "pubspec.yaml"} {
 		if inputs.has(marker) {
 			p.Runtimes = append(p.Runtimes, marker)
 			p.nativeStepUnavailable(marker, "test/build")
 		}
 	}
+	return nil
 }
 
 // nativeStepUnavailable records that the project's own steps for marker, a build whose steps

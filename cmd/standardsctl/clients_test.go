@@ -31,6 +31,49 @@ func TestClientApplyPreservesSettingsAndBackup(t *testing.T) {
 	}
 }
 
+func TestClaudeLocalPrepareApplyAndSnapshotRefusal(t *testing.T) {
+	root := t.TempDir()
+	registry := filepath.Join(root, "registry.json")
+	target := filepath.Join(root, ".claude.json")
+	project := filepath.Join(root, "project")
+	before := []byte(`{"projects":{"/other":{"allowedTools":["Read"]},` + quoted(project) + `:{"hasTrustDialogAccepted":true}}}`)
+	writeClientFixture(t, registry, []byte(`{"version":1,"servers":[{"name":"shared","command":`+quoted(trueCommand)+`,"args":[]}]}`))
+	writeClientFixture(t, target, before)
+	for _, args := range [][]string{
+		{"prepare", "--registry", registry, "--client", "claude-local", "--out", filepath.Join(root, "missing")},
+		{"prepare", "--registry", registry, "--client", "claude-local", "--project", "relative", "--out", filepath.Join(root, "relative")},
+		{"prepare", "--registry", registry, "--client", "gemini", "--project", project, "--out", filepath.Join(root, "wrong-client")},
+	} {
+		if err := runClients(args); err == nil {
+			t.Fatalf("invalid project arguments accepted: %v", args)
+		}
+	}
+	if err := runClients([]string{"prepare", "--registry", registry, "--client", "claude-local", "--project", project, "--existing", target, "--out", filepath.Join(root, "prepared")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runClients([]string{"apply", "--registry", registry, "--client", "claude-local", "--project", project, "--target", target, "--out", filepath.Join(root, "backup")}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil || !bytes.Contains(after, []byte(`"shared"`)) || !bytes.Contains(after, []byte(`"allowedTools"`)) {
+		t.Fatalf("local scope not applied: %s %v", after, err)
+	}
+	plan, err := clientsetup.BuildClaudeLocalPlan(t.Context(), clientsetup.Registry{Version: 1, Servers: []clientsetup.Server{{Name: "new", Command: trueCommand}}}, project, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := []byte(`{"concurrent":true}`)
+	stale := filepath.Join(root, "stale.json")
+	writeClientFixture(t, stale, changed)
+	if err := publishClientPlan(t.Context(), plan, stale, filepath.Join(root, "stale-backup"), before, true); err == nil {
+		t.Fatal("changed snapshot accepted")
+	}
+	got, err := os.ReadFile(stale)
+	if err != nil || !bytes.Equal(got, changed) {
+		t.Fatalf("stale target changed: %v", err)
+	}
+}
+
 func TestClientApplyRejectsChangedSnapshotAndSymlink(t *testing.T) {
 	registry := clientsetup.Registry{Version: 1, Servers: []clientsetup.Server{{Name: "shared", Command: trueCommand}}}
 	before := []byte(`{}`)

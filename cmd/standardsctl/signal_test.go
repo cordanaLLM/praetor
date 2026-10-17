@@ -9,6 +9,7 @@ func TestOwnsTerminationSignals_3D(t *testing.T) {
 		args []string
 	}{
 		{"serve", nil},
+		{"decisions", []string{"serve"}},
 		{"gate", []string{"run"}},
 		{"gate", []string{"run", "--path=."}},
 		{"agent", []string{"run", "praetor-gatekeeper"}},
@@ -48,13 +49,14 @@ func TestOwnsTerminationSignals_3D(t *testing.T) {
 }
 
 func TestNeedsSignalRootContext_3D(t *testing.T) {
-	// Positive: gate run and gatekeeper agent derive work from signal-notified root context.
+	// Positive: decisions serve, gate run and gatekeeper agent derive work from signal-notified root context.
 	for _, tc := range []struct {
 		cmd  string
 		args []string
 	}{
 		{"gate", []string{"run"}},
 		{"gate", []string{"run", "--path=."}},
+		{"decisions", []string{"serve"}},
 		{"agent", []string{"run", "praetor-gatekeeper"}},
 		{"agent", []string{"run", "praetor_gatekeeper"}},
 	} {
@@ -71,6 +73,7 @@ func TestNeedsSignalRootContext_3D(t *testing.T) {
 	}{
 		{"serve", nil},
 		{"audit", nil},
+		{"decisions", []string{"export"}},
 		{"hiss", nil},
 		{"compile-context", nil},
 		{"dedupe", nil},

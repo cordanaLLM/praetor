@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // settingsPresence records which operator-owned settings an existing catalog declares:

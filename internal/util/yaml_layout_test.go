@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // digestValue is a lock or register digest, 71 columns on its own.

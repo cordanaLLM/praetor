@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 const maxFragmentEntries = 10000

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // workflowRunCheckTimeout bounds one AuditWorkflowRunHealth call, every forge question

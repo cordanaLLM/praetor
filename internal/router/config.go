@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // DefaultConfigPath is the repository-relative routing catalog every consumer reads.

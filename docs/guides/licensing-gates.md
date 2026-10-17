@@ -92,6 +92,11 @@ in `internal/supplychain/reuse_shadow_test.go`, and `TestAuditReuseRecords_3D` i
 
 ### What the audit reads
 
+`REUSE.toml` is parsed as TOML by `github.com/pelletier/go-toml/v2` (`util.DecodeTOML`), so
+malformed TOML, a duplicate key included, is refused with the file named instead of being read
+line by line, and a multi-line `path` array or an inline annotation table reads as the reuse tool
+reads it (`TestDecodeTOMLNegative` in
+[`internal/util/toml_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/toml_test.go)).
 Both audit checks read `REUSE.toml` against an allow-list, following what the reuse tool parses
 (`ReuseTOML.from_dict` and `AnnotationsItem.from_dict` in `reuse/global_licensing.py`), stepping over
 metadata keys and tables while refusing shapes that could define untracked annotations

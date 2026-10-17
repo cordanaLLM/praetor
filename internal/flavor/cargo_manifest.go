@@ -5,174 +5,117 @@
 package flavor
 
 import (
-	"strings"
+	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// cargoManifest is what one Cargo.toml declares about crate editions, workspace members and the
-// level of the warnings lint group, as parseCargoManifest reads it.
 type cargoManifest struct {
-	// hasPackage reports a [package] table: the manifest describes a crate.
-	hasPackage bool
-	// edition is the well-formed edition (rustEdition) [package] declares, "" for none.
-	edition string
-	// inherits reports that [package] takes the edition [workspace.package] declares, as
-	// edition.workspace = true or edition = { workspace = true }.
-	inherits bool
-	// workspaceEdition is the well-formed edition [workspace.package] declares, "" for none.
-	workspaceEdition string
-	// members and exclude are the path lists [workspace] declares.
-	members, exclude []string
-	// invalid says why a members or exclude value could not be read, "" when both could.
-	invalid string
-	// warnings is the level [lints.rust] gives the warnings lint group, "" for none, and
-	// lintsInherit reports [lints] workspace = true, which takes [workspace.lints] instead.
-	warnings     string
-	lintsInherit bool
-	// workspaceWarnings is the level [workspace.lints.rust] gives the warnings lint group.
+	hasPackage        bool
+	edition           string
+	inherits          bool
+	workspaceEdition  string
+	members, exclude  []string
+	invalid           string
+	warnings          string
+	lintsInherit      bool
 	workspaceWarnings string
 }
 
-// cargoScan is parseCargoManifest's position in the manifest.
-type cargoScan struct {
-	manifest cargoManifest
-	// table is the full name of the table the lines being read belong to, "" at the top level.
-	table string
-	// listKey is the members or exclude key whose array is still open, "" when none is.
-	listKey string
-	// listItems holds the strings read so far from the array listKey opened.
-	listItems []string
+type cargoManifestDocument struct {
+	Package   *cargoPackageDocument   `toml:"package"`
+	Workspace *cargoWorkspaceDocument `toml:"workspace"`
+	Lints     cargoLintsDocument      `toml:"lints"`
 }
 
-// parseCargoManifest reads the edition, workspace and warnings lint keys of a Cargo.toml. Like
-// the other TOML reads of the module (internal/util/toml.go) it reads the file's shape, not TOML:
-// table headers, single-line keys, dotted or under their table, and the arrays members and
-// exclude hold, which may span lines. Cargo parses the file and rejects a malformed one.
-func parseCargoManifest(text string) cargoManifest {
-	var scan cargoScan
-	lines := strings.Split(text, "\n")
-	for i := 0; i < len(lines) && i < maxValidatedLines; i++ {
-		scan.read(strings.TrimSpace(lines[i]))
-	}
-	if scan.listKey != "" {
-		scan.manifest.invalid = scan.listKey + " in Cargo.toml never closes its array"
-	}
-	return scan.manifest
+type cargoPackageDocument struct {
+	Edition any `toml:"edition"`
 }
 
-// read takes one trimmed line: the next part of an open array, a table header, or a key.
-func (s *cargoScan) read(line string) {
-	switch {
-	case s.listKey != "":
-		// No element spans lines, so each line of an open array reads as an array of its own.
-		s.readList("[" + line)
-	case strings.HasPrefix(line, "["):
-		s.table = util.TOMLTableName(line)
-		s.manifest.hasPackage = s.manifest.hasPackage || s.table == "package"
-	case line != "" && !strings.HasPrefix(line, "#"):
-		s.assign(line)
-	}
+type cargoWorkspaceDocument struct {
+	Members any                  `toml:"members"`
+	Exclude any                  `toml:"exclude"`
+	Package cargoPackageDocument `toml:"package"`
+	Lints   cargoLintsDocument   `toml:"lints"`
 }
 
-// assign records the key line assigns, when it is one parseCargoManifest reads.
-func (s *cargoScan) assign(line string) {
-	key, value, ok := util.TOMLKeyValue(line)
+type cargoLintsDocument struct {
+	Workspace any `toml:"workspace"`
+	Rust      struct {
+		Warnings any `toml:"warnings"`
+	} `toml:"rust"`
+}
+
+// parseCargoManifest reads the package, workspace and lints values from a Cargo.toml.
+func parseCargoManifest(name string, data []byte) (cargoManifest, error) {
+	var document cargoManifestDocument
+	if err := util.DecodeTOML(name, data, &document); err != nil {
+		return cargoManifest{}, err
+	}
+	manifest := cargoManifest{hasPackage: document.Package != nil}
+	if document.Package != nil {
+		manifest.edition, manifest.inherits = cargoEdition(document.Package.Edition)
+	}
+	manifest.warnings = cargoLintLevel(document.Lints.Rust.Warnings)
+	manifest.lintsInherit = cargoBool(document.Lints.Workspace)
+	if workspace := document.Workspace; workspace != nil {
+		manifest.workspaceEdition, _ = cargoEdition(workspace.Package.Edition)
+		manifest.workspaceWarnings = cargoLintLevel(workspace.Lints.Rust.Warnings)
+		manifest.members, manifest.invalid = cargoStringList(workspace.Members, "workspace.members", name)
+		if manifest.invalid == "" {
+			manifest.exclude, manifest.invalid = cargoStringList(workspace.Exclude, "workspace.exclude", name)
+		}
+	}
+	return manifest, nil
+}
+
+// cargoStringList reads a members or exclude value, retaining a useful shape error.
+func cargoStringList(value any, key, name string) ([]string, string) {
+	if value == nil {
+		return nil, ""
+	}
+	items, ok := value.([]any)
 	if !ok {
-		return
+		return nil, fmt.Sprintf("%s in %s is not an array of plain strings", key, name)
 	}
-	if s.table != "" {
-		key = s.table + "." + key
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Sprintf("%s in %s is not an array of plain strings", key, name)
+		}
+		result = append(result, text)
 	}
-	s.manifest.hasPackage = s.manifest.hasPackage || strings.HasPrefix(key, "package.")
-	switch key {
-	case "package.edition":
-		s.manifest.edition = editionValue(value)
-		s.manifest.inherits = s.manifest.inherits || inheritsWorkspace(value)
-	case "package.edition.workspace":
-		s.manifest.inherits = s.manifest.inherits || tomlTrue(value)
-	case "workspace.package.edition":
-		s.manifest.workspaceEdition = editionValue(value)
-	case "workspace.members", "workspace.exclude":
-		s.listKey, s.listItems = key, nil
-		s.readList(value)
-	default:
-		s.assignLints(key, value)
-	}
+	return result, ""
 }
 
-// assignLints records the warnings lint keys: [lints.rust] warnings and [workspace.lints.rust]
-// warnings, each a level string or a { level = ..., priority = ... } table, and [lints]
-// workspace = true, also written lints = { workspace = true }
-// (https://doc.rust-lang.org/cargo/reference/manifest.html#the-lints-section,
-// https://doc.rust-lang.org/cargo/reference/workspaces.html#the-lints-table).
-func (s *cargoScan) assignLints(key, value string) {
-	switch key {
-	case "lints.rust.warnings":
-		s.manifest.warnings = lintLevel(value)
-	case "workspace.lints.rust.warnings":
-		s.manifest.workspaceWarnings = lintLevel(value)
-	case "lints.workspace":
-		s.manifest.lintsInherit = s.manifest.lintsInherit || tomlTrue(value)
-	case "lints":
-		s.manifest.lintsInherit = s.manifest.lintsInherit || inheritsWorkspace(value)
+// cargoEdition extracts a literal edition or Cargo's workspace inheritance table.
+func cargoEdition(value any) (string, bool) {
+	if edition, ok := value.(string); ok && rustEdition.MatchString(edition) {
+		return edition, false
 	}
+	fields, ok := value.(map[string]any)
+	return "", ok && cargoBool(fields["workspace"])
 }
 
-// lintLevel returns the level a [lints] entry's value gives: the string itself, or the level
-// field of an inline table; "" for anything else.
-func lintLevel(value string) string {
-	if level, ok := util.TOMLStringValue(value); ok {
+// cargoLintLevel reads a lint level string or the level field of an inline table.
+func cargoLintLevel(value any) string {
+	if level, ok := value.(string); ok {
 		return level
 	}
-	level := ""
-	util.TOMLInlineTableFields(value, func(key, fieldValue string) {
-		if text, ok := util.TOMLStringValue(fieldValue); ok && key == "level" {
-			level = text
-		}
-	})
+	fields, ok := value.(map[string]any)
+	if !ok {
+		return ""
+	}
+	level, isString := fields["level"].(string)
+	if !isString {
+		return ""
+	}
 	return level
 }
 
-// readList reads text, one line of the array listKey opened, and records the array once it
-// closes.
-func (s *cargoScan) readList(text string) {
-	items, closed, ok := util.TOMLStringArray(text + "\n")
-	switch {
-	case !ok:
-		s.manifest.invalid = s.listKey + " in Cargo.toml is not an array of plain strings"
-		s.listKey = ""
-	case closed && s.listKey == "workspace.members":
-		s.manifest.members, s.listKey = append(s.listItems, items...), ""
-	case closed:
-		s.manifest.exclude, s.listKey = append(s.listItems, items...), ""
-	default:
-		s.listItems = append(s.listItems, items...)
-	}
-}
-
-// editionValue returns the edition value assigns when it is a well-formed edition string
-// (rustEdition), else "".
-func editionValue(value string) string {
-	edition, ok := util.TOMLStringValue(value)
-	if !ok || !rustEdition.MatchString(edition) {
-		return ""
-	}
-	return edition
-}
-
-// inheritsWorkspace reports whether value is an inline table setting workspace = true, the
-// edition = { workspace = true } spelling of an inherited edition.
-func inheritsWorkspace(value string) bool {
-	inherits := false
-	util.TOMLInlineTableFields(value, func(key, fieldValue string) {
-		inherits = inherits || (key == "workspace" && tomlTrue(fieldValue))
-	})
-	return inherits
-}
-
-// tomlTrue reports whether value is the boolean true, a comment after it aside.
-func tomlTrue(value string) bool {
-	value, _, _ = strings.Cut(value, "#")
-	return strings.TrimSpace(value) == "true"
+// cargoBool reports whether value is the boolean true.
+func cargoBool(value any) bool {
+	result, isBool := value.(bool)
+	return isBool && result
 }

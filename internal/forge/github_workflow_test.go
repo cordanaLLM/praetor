@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Protection must select actual check-run display names, not YAML job IDs. Read

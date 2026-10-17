@@ -37,6 +37,7 @@ func prepareClientConfig(args []string) error {
 	flags := flag.NewFlagSet("clients prepare", flag.ContinueOnError)
 	registryPath := flags.String("registry", "", "Canonical shared stdio server registry")
 	client := flags.String("client", "", "Client adapter identifier")
+	project := flags.String("project", "", "Absolute project path for claude-local scope")
 	existing := flags.String("existing", "", "Existing client config to preserve and merge")
 	output := flags.String("out", "", "New private artifact directory; parent must exist")
 	if _, err := parseInterspersed(flags, args); err != nil {
@@ -45,9 +46,12 @@ func prepareClientConfig(args []string) error {
 	if flags.NArg() != 0 || *registryPath == "" || *client == "" || *output == "" {
 		return errors.New("registry, client and output directory are required without positional arguments")
 	}
+	if err := validateClientProject(*client, *project); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	plan, err := prepareClient(ctx, *registryPath, *client, *existing)
+	plan, err := prepareClientForProject(ctx, *registryPath, *client, *existing, *project)
 	if err != nil {
 		return err
 	}
@@ -60,6 +64,7 @@ func applyClientConfig(args []string) error {
 	flags := flag.NewFlagSet("clients apply", flag.ContinueOnError)
 	registry := flags.String("registry", "", "Canonical shared stdio server registry")
 	client := flags.String("client", "", "Client adapter identifier")
+	project := flags.String("project", "", "Absolute project path for claude-local scope")
 	target := flags.String("target", "", "Exact client configuration destination")
 	output := flags.String("out", "", "New private backup and plan directory")
 	if _, err := parseInterspersed(flags, args); err != nil {
@@ -68,13 +73,16 @@ func applyClientConfig(args []string) error {
 	if flags.NArg() != 0 || *registry == "" || *client == "" || *target == "" || *output == "" {
 		return errors.New("registry, client, target and new output directory are required")
 	}
+	if err := validateClientProject(*client, *project); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	before, exists, err := contextopt.ObserveSnapshot(ctx, *target)
 	if err != nil {
 		return err
 	}
-	plan, err := buildClientPlan(ctx, *registry, *client, before)
+	plan, err := buildClientPlanForProject(ctx, *registry, *client, before, *project)
 	if err != nil {
 		return err
 	}
@@ -213,6 +221,10 @@ func retainClientPlan(ctx context.Context, plan *clientsetup.Plan, output string
 }
 
 func prepareClient(ctx context.Context, registryPath, client, existing string) (*clientsetup.Plan, error) {
+	return prepareClientForProject(ctx, registryPath, client, existing, "")
+}
+
+func prepareClientForProject(ctx context.Context, registryPath, client, existing, project string) (*clientsetup.Plan, error) {
 	var before []byte
 	var err error
 	if existing != "" {
@@ -221,10 +233,10 @@ func prepareClient(ctx context.Context, registryPath, client, existing string) (
 			return nil, fmt.Errorf("read existing client config: %w", err)
 		}
 	}
-	return buildClientPlan(ctx, registryPath, client, before)
+	return buildClientPlanForProject(ctx, registryPath, client, before, project)
 }
 
-func buildClientPlan(ctx context.Context, registryPath, client string, before []byte) (*clientsetup.Plan, error) {
+func buildClientPlanForProject(ctx context.Context, registryPath, client string, before []byte, project string) (*clientsetup.Plan, error) {
 	raw, err := contextopt.ReadSnapshot(ctx, registryPath)
 	if err != nil {
 		return nil, fmt.Errorf("read client registry: %w", err)
@@ -233,7 +245,23 @@ func buildClientPlan(ctx context.Context, registryPath, client string, before []
 	if err != nil {
 		return nil, err
 	}
+	if client == string(clientsetup.ClaudeLocal) {
+		return clientsetup.BuildClaudeLocalPlan(ctx, registry, project, before)
+	}
 	return clientsetup.BuildPlan(ctx, registry, clientsetup.Client(client), before)
+}
+
+func validateClientProject(client, project string) error {
+	if client == string(clientsetup.ClaudeLocal) {
+		if project == "" || !filepath.IsAbs(project) || filepath.Clean(project) != project {
+			return errors.New("claude-local requires a clean absolute --project path")
+		}
+		return nil
+	}
+	if project != "" {
+		return errors.New("--project is only valid for claude-local")
+	}
+	return nil
 }
 
 // clientPlanArtifacts is the one artifact set shared by prepared and retained plans:

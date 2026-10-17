@@ -633,6 +633,7 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `pull-request-template` | `.github/pull_request_template.md` |
 | `security-policy` | `SECURITY.md` |
 | `adr` | `docs/adr/README.md` and `docs/adr/0000-template.md` |
+| `asdecided` | `.standards/cache/decisions/` and project MCP files for Claude, Gemini, OpenCode and Continue when ADR records exist |
 | `readme` | the governance block in an existing `README.md` |
 | `reuse-gate` | `.github/workflows/reuse.yml`, where the root carries `REUSE.toml` or `.reuse/dep5` |
 | `working-dir-and-flavor` | the private `.workingdir/` ledger and the detected flavor's templates ([flavors](guides/onboarding.md#flavors)) |
@@ -642,6 +643,9 @@ writes any (`TestAdoptionScaffoldTable_MatchesTheStepChain` in
 | `agent-definitions` | `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, projected to `.claude/agents/`, `.github/agents/`, `.gemini/agents/` and `.codex/agents/` |
 | `git-hooks` | `lefthook.yml`, `.config/lefthook/`, `.config/agent/checkpoint.json`, `.config/agent/hooks/block_evasion.py`, the installed `.git/hooks/pre-commit` |
 | `agent-hooks` | the hook settings of `.claude/settings.json`, `.gemini/settings.json` and `.codex/hooks.json` for the clients `agent_clients` selects |
+
+The `asdecided` step and its export and pin-check commands are described in
+[Decision recall](guides/decision-recall.md).
 
 The groups with behavior of their own:
 

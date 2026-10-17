@@ -6,7 +6,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // onlineAuditRenderings are the renderings under testdata/lefthook whose pre-commit audit still

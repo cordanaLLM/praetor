@@ -9,7 +9,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // RepositoryMetadata describes the identity and public metadata of the target repository.

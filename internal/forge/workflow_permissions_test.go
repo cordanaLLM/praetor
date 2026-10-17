@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // theShapePagesShipped is what .github/workflows/pages.yml declared before #292: two write

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // The toolchains a build lane is named by (BuildLane.Toolchain). ToolchainUnreadCompiler names a

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // The hook lint toolchain (black, flake8, yamllint) is pinned once, in requirements.in and

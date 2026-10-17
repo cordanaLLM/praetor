@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // A matrix job reports one check per leg, and the name of each check is what a required context

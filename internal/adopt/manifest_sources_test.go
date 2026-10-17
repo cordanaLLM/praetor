@@ -11,7 +11,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // releasedIOInvariant is the released harness's HISS-02 wording; a refreshed harness states the

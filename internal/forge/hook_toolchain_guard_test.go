@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // The hook policy resolves its interpreter and its make from fixed candidates, each proven

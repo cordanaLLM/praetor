@@ -81,7 +81,10 @@ var CapabilityCatalog = []CatalogEntry{
 	{Package: "go.uber.org/fx", Capability: "runtime.di", Notes: "Dependency injection and application lifecycle"},
 
 	// Serialization & Configuration Formats
-	{Package: "gopkg.in/yaml.v3", Capability: "config.yaml", Notes: "YAML parser and serializer"},
+	{Package: "github.com/pelletier/go-toml/v2", Capability: "config.toml", Notes: "TOML parser and serializer"},
+	{Package: "go.yaml.in/yaml/v3", Capability: "config.yaml", Notes: "YAML parser and serializer (maintained continuation of gopkg.in/yaml.v3)"},
+	{Package: "go.yaml.in/yaml/v4", Capability: "config.yaml", Notes: "YAML parser and serializer, v4 line"},
+	{Package: "gopkg.in/yaml.v3", Capability: "config.yaml", Notes: "YAML parser and serializer (archived upstream 2025-04-01)"},
 	{Package: "gopkg.in/yaml.v2", Capability: "config.yaml", Notes: "Legacy YAML v2 parser and serializer"},
 
 	// Model Context Protocol (MCP)

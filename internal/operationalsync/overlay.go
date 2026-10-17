@@ -12,7 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 var ownerPaths = []string{".standards.yaml", ".devcontainer/devcontainer.json", ".paperclip/harness.json", ".paperclip/rules.md"}

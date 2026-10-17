@@ -14,7 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 const (

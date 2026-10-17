@@ -11,7 +11,7 @@ import (
 	"unicode"
 
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // exprTokenKind identifies one allow-listed token in an expression.

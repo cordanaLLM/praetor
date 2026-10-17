@@ -43,6 +43,8 @@ func TestCargoWarningsLints(t *testing.T) {
 		"negative: warn": {map[string]string{"Cargo.toml": lintedCrate("w", "\n[lints.rust]\nwarnings = \"warn\"\n")}, "", "the root package does not deny"},
 		"negative: a missing member": {map[string]string{"Cargo.toml": "[workspace]\nmembers = [\"gone\"]\n"},
 			"", "the workspace member gone/Cargo.toml cannot be read"},
+		"negative: malformed TOML": {map[string]string{"Cargo.toml": "[package]\nname = \"w\"\nname = \"duplicate\"\n"},
+			"", "Cargo.toml cannot be parsed"},
 		"boundary: no root manifest":  {map[string]string{"README.md": "x\n"}, "", ""},
 		"boundary: no crate declared": {map[string]string{"Cargo.toml": "[workspace]\nmembers = []\n"}, "", "declares no crate"},
 	}

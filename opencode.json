@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "asdecided": {
+      "command": [
+        "praetorctl",
+        "decisions",
+        "serve"
+      ],
+      "type": "local"
+    }
+  }
+}

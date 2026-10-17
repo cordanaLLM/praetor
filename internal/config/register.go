@@ -11,7 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/router"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // TextRegister names the voice a text is written in. The audience decides it, never a

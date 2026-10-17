@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Flavor defines a release track and its tag convention.

@@ -560,8 +560,8 @@ malformed decline entry fails closed. `cmd/standardsctl/audit_agent_definitions_
 ### What audit does with a declined step
 
 `adoption.decline` in `.standards.yaml` lists adoption steps a repository keeps for itself.
-Adoption skips each one and reports it `declined`. `manifest`, `lockfile`, `baseline` and
-`documentation-gate` cannot be declined: adoption refuses the list before its first write
+Adoption skips each one and reports it `declined`. `manifest`, `lockfile`, `baseline`,
+`documentation-gate` and `asdecided` cannot be declined: adoption refuses the list before its first write
 (`mandatoryArtifacts` in
 [`internal/adopt/declined.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/declined.go)).
 Every other step has an audit contract in the same file (`declineContracts`). Every audit gate

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/adoptclients"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/harvester"
@@ -87,8 +88,7 @@ func runAdopt(args []string) error {
 		return err
 	}
 
-	// The options every adopted repository shares; --all-missing passes exactly these.
-	opts := adopt.AdoptOptions{LockSourceRoot: resolvedLockSource, DryRun: *dryRun, Force: *force}
+	opts := newCommandAdoptOptions(resolvedLockSource, *dryRun, *force)
 	baselineFlags.apply(&opts)
 	if *allMissing {
 		root, err := resolveDevRootDir(*devDir, "--dev-dir")
@@ -115,6 +115,11 @@ func runAdopt(args []string) error {
 		return fmt.Errorf("%w: %d error(s) listed above", errAdoptIncomplete, len(report.Errors))
 	}
 	return nil
+}
+
+func newCommandAdoptOptions(source string, dryRun, force bool) adopt.AdoptOptions {
+	return adopt.AdoptOptions{LockSourceRoot: source, DryRun: dryRun, Force: force,
+		DecisionMCPReconcile: adoptclients.ReconcileAsDecided}
 }
 
 // adoptBaselineFlags holds adopt's baseline flags. --record-baseline records a first baseline and

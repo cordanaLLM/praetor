@@ -25,7 +25,7 @@ func writeDecisionRecords(t *testing.T, root string, count int) {
 	if count < 0 || count > maxRecords+1 {
 		t.Fatalf("unsafe decision-record fixture count: %d", count)
 	}
-	directory := filepath.Join(root, recordDirectory)
+	directory := filepath.Join(root, RecordDirectory)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		t.Fatalf("creating decision-record directory: %v", err)
 	}

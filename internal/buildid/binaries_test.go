@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/testsupport"

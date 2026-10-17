@@ -9,6 +9,7 @@ languages:
 go_version: "1.27"
 capabilities:
     required:
+        - config.toml
         - config.yaml
         - python.external.mkdocs
         - python.external.mkdocs_material
@@ -75,13 +76,20 @@ capabilities:
         - ast.analyzer
         - telemetry.logging
 dependencies:
-    - package: gopkg.in/yaml.v3
-      version: v3.0.1
+    - package: github.com/pelletier/go-toml/v2
+      version: v2.4.3
+      language: go
+      ecosystem: go
+      capability: config.toml
+      status: gap
+      notes: TOML parser and serializer
+    - package: go.yaml.in/yaml/v3
+      version: v3.0.5
       language: go
       ecosystem: go
       capability: config.yaml
       status: gap
-      notes: YAML parser and serializer
+      notes: YAML parser and serializer (maintained continuation of gopkg.in/yaml.v3)
     - package: babel
       version: 2.18.0 \
       language: python
@@ -477,7 +485,7 @@ dependencies:
 readiness:
     basis: not-configured
     score: 0
-    total_third_party_deps: 57
+    total_third_party_deps: 58
     covered_deps: 0
-    gap_deps: 57
-updated_at: 2026-10-16T00:13:40.201836986Z
+    gap_deps: 58
+updated_at: 2026-10-16T22:55:04.467549542Z

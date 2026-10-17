@@ -6,7 +6,6 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -100,14 +99,19 @@ type cargoDependency struct {
 
 // with applies one dependency key. Every other key (features, optional,
 // default-features, git, ...) leaves the classification unchanged.
-func (d cargoDependency) with(key, value string) cargoDependency {
+func (d cargoDependency) with(key string, value any) cargoDependency {
 	switch key {
 	case "version":
-		d.version = value
+		version, isString := value.(string)
+		if isString {
+			d.version = version
+		}
 	case "path":
-		d.local = true
+		path, isString := value.(string)
+		d.local = isString && path != ""
 	case "workspace":
-		d.inherited = value == "true"
+		inherited, isBool := value.(bool)
+		d.inherited = isBool && inherited
 	}
 	return d
 }
@@ -195,145 +199,82 @@ func cargoWorkspaceRoot(ctx context.Context, crateDir string, crate *cargoManife
 	return &cargoManifest{}, nil
 }
 
-// cargoState tracks which Cargo.toml table the line scanner is inside.
-type cargoState struct {
-	manifest *cargoManifest
-	// table receives the entries of the dependency table the scanner is inside, nil
-	// outside every dependency table.
-	table map[string]cargoDependency
-	// crate names the crate when inside a [dependencies.<crate>] sub-table.
-	crate string
-}
-
-// parseCargoToml reads a Cargo.toml's dependency tables in every spelling Cargo accepts:
-// [dependencies], [dev-dependencies], [build-dependencies], [workspace.dependencies],
-// [target.'cfg(...)'.dependencies] and the [dependencies.<crate>] sub-table, each entry
-// a version string, an inline table (`{ version = "1" }`, `{ path = "../core" }`,
-// `{ workspace = true }`) or dotted keys (`cc.workspace = true`). It also records
-// whether the manifest is a workspace root.
+// parseCargoToml reads a Cargo manifest through the TOML parser.
 func parseCargoToml(cargoPath string) (*cargoManifest, error) {
-	st := cargoState{manifest: &cargoManifest{
-		deps:          make(map[string]cargoDependency),
-		workspaceDeps: make(map[string]cargoDependency),
-	}}
-	if err := scanManifestLines(cargoPath, st.consume); err != nil {
+	data, err := readManifest(cargoPath)
+	if err != nil {
 		return nil, err
 	}
-	return st.manifest, nil
-}
-
-// consume classifies a single trimmed Cargo.toml line.
-func (s *cargoState) consume(line string) {
-	if strings.HasPrefix(line, "[") {
-		s.enterTable(util.TOMLTableName(line))
-		return
+	var document map[string]any
+	if err := util.DecodeTOML(cargoPath, data, &document); err != nil {
+		return nil, err
 	}
-	if s.table == nil || line == "" || strings.HasPrefix(line, "#") {
-		return
-	}
-	key, value, ok := splitTOMLKey(line)
-	if !ok {
-		return
-	}
-	if s.crate != "" {
-		s.table[s.crate] = s.table[s.crate].with(key, tomlScalar(value))
-		return
-	}
-	if crate, field, dotted := strings.Cut(key, "."); dotted {
-		crate = unquoteTOMLKey(crate)
-		s.table[crate] = s.table[crate].with(unquoteTOMLKey(field), tomlScalar(value))
-		return
-	}
-	s.table[key] = parseCargoDependency(value)
-}
-
-// parseCargoDependency reads the value of a `name = value` dependency entry: a version
-// string or an inline table of dependency keys.
-func parseCargoDependency(value string) cargoDependency {
-	if !strings.HasPrefix(value, "{") {
-		return cargoDependency{version: tomlScalar(value)}
-	}
-	var dep cargoDependency
-	util.TOMLInlineTableFields(value, func(key, fieldValue string) {
-		dep = dep.with(unquoteTOMLKey(key), tomlScalar(fieldValue))
-	})
-	return dep
-}
-
-// enterTable updates the scanner state for a TOML table name in util.TOMLTableName form.
-func (s *cargoState) enterTable(name string) {
-	s.table, s.crate = nil, ""
-	segments := strings.Split(name, ".")
-	for i := range segments {
-		segments[i] = unquoteTOMLKey(segments[i])
-	}
-	if segments[0] == "workspace" {
-		s.manifest.workspace = true
-	}
-	last := len(segments) - 1
-	switch {
-	case isCargoDependencyTable(segments[last]):
-		s.table = s.manifest.tableFor(segments[0])
-	case last >= 1 && isCargoDependencyTable(segments[last-1]):
-		s.table, s.crate = s.manifest.tableFor(segments[0]), segments[last]
-		if _, seen := s.table[s.crate]; !seen {
-			s.table[s.crate] = cargoDependency{}
+	manifest := &cargoManifest{deps: make(map[string]cargoDependency), workspaceDeps: make(map[string]cargoDependency)}
+	if workspace, ok := document["workspace"].(map[string]any); ok {
+		manifest.workspace = true
+		if err := addCargoDependencies(manifest.workspaceDeps, workspace["dependencies"]); err != nil {
+			return nil, fmt.Errorf("%s: %w", cargoPath, err)
 		}
 	}
-}
-
-// tableFor returns the map filled by a dependency table whose name starts with first.
-func (m *cargoManifest) tableFor(first string) map[string]cargoDependency {
-	if first == "workspace" {
-		return m.workspaceDeps
-	}
-	return m.deps
-}
-
-// isCargoDependencyTable reports whether a table name holds crate dependencies.
-func isCargoDependencyTable(name string) bool {
-	return name == "dependencies" || name == "dev-dependencies" ||
-		name == "build-dependencies"
-}
-
-// unquoteTOMLKey trims the white space and quotes around one TOML key segment.
-func unquoteTOMLKey(key string) string {
-	return strings.Trim(strings.TrimSpace(key), `"'`)
-}
-
-// splitTOMLKey splits `key = value` as util.TOMLKeyValue does and unquotes the key; a key
-// that unquotes to nothing is no assignment.
-func splitTOMLKey(line string) (string, string, bool) {
-	key, value, ok := util.TOMLKeyValue(line)
-	key = unquoteTOMLKey(key)
-	return key, value, ok && key != ""
-}
-
-// tomlScalar normalises a raw TOML value: a trailing comment is dropped and a string
-// loses its quotes.
-func tomlScalar(value string) string {
-	if comment := strings.Index(value, "#"); comment >= 0 {
-		value = strings.TrimSpace(value[:comment])
-	}
-	return strings.Trim(value, `"',`)
-}
-
-// splitTOMLAssignment splits `key = value` and normalises the value: a bare string loses
-// its quotes, an inline table is reduced to its `version` field, empty when the table
-// pins the dependency by path, git revision or workspace.
-func splitTOMLAssignment(line string) (string, string, bool) {
-	name, value, ok := splitTOMLKey(line)
-	if !ok {
-		return "", "", false
-	}
-	if !strings.HasPrefix(value, "{") {
-		return name, tomlScalar(value), true
-	}
-	version := ""
-	util.TOMLInlineTableFields(value, func(key, fieldValue string) {
-		if unquoteTOMLKey(key) == "version" {
-			version = tomlScalar(fieldValue)
+	for _, table := range []string{"dependencies", "dev-dependencies", "build-dependencies"} {
+		if err := addCargoDependencies(manifest.deps, document[table]); err != nil {
+			return nil, fmt.Errorf("%s: %w", cargoPath, err)
 		}
-	})
-	return name, version, true
+	}
+	if err := addTargetCargoDependencies(manifest.deps, document["target"]); err != nil {
+		return nil, fmt.Errorf("%s: %w", cargoPath, err)
+	}
+	return manifest, nil
+}
+
+// addTargetCargoDependencies reads dependency tables nested under Cargo target selectors.
+func addTargetCargoDependencies(destination map[string]cargoDependency, value any) error {
+	targets, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	keys := slices.Sorted(maps.Keys(targets))
+	if len(keys) > MaxScannedLines {
+		return fmt.Errorf("target tables exceed %d", MaxScannedLines)
+	}
+	for _, target := range keys {
+		tables, isTable := targets[target].(map[string]any)
+		if !isTable {
+			continue
+		}
+		for _, table := range []string{"dependencies", "dev-dependencies", "build-dependencies"} {
+			if err := addCargoDependencies(destination, tables[table]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// addCargoDependencies reads a dependency table into destination.
+func addCargoDependencies(destination map[string]cargoDependency, value any) error {
+	entries, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	keys := slices.Sorted(maps.Keys(entries))
+	if len(keys) > MaxScannedLines {
+		return fmt.Errorf("dependency entries exceed %d", MaxScannedLines)
+	}
+	for _, name := range keys {
+		dependency := cargoDependency{}
+		if fields, ok := entries[name].(map[string]any); ok {
+			fieldNames := slices.Sorted(maps.Keys(fields))
+			if len(fieldNames) > MaxScannedLines {
+				return fmt.Errorf("fields for %s exceed %d", name, MaxScannedLines)
+			}
+			for _, field := range fieldNames {
+				dependency = dependency.with(field, fields[field])
+			}
+		} else {
+			dependency = dependency.with("version", entries[name])
+		}
+		destination[name] = dependency
+	}
+	return nil
 }

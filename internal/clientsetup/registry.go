@@ -51,6 +51,10 @@ func DecodeRegistry(ctx context.Context, raw []byte) (Registry, error) {
 }
 
 func validatedRegistry(ctx context.Context, registry Registry) (Registry, error) {
+	return validatedRegistryMode(ctx, registry, false)
+}
+
+func validatedRegistryMode(ctx context.Context, registry Registry, project bool) (Registry, error) {
 	if err := checkContext(ctx); err != nil {
 		return Registry{}, err
 	}
@@ -61,17 +65,14 @@ func validatedRegistry(ctx context.Context, registry Registry) (Registry, error)
 	seen := make(map[string]bool)
 	total := 0
 	for i, server := range registry.Servers {
-		if err := validateServer(server); err != nil {
+		if err := validateRegistryServer(server, project); err != nil {
 			return Registry{}, fmt.Errorf("server %d: %w", i, err)
 		}
 		if seen[server.Name] {
 			return Registry{}, errors.New("duplicate registry server name")
 		}
 		seen[server.Name] = true
-		total += len(server.Name) + len(server.Command)
-		for _, arg := range server.Args {
-			total += len(arg)
-		}
+		total += registryServerValueSize(server)
 		server.Args = append([]string{}, server.Args...)
 		result.Servers[i] = server
 	}
@@ -82,12 +83,44 @@ func validatedRegistry(ctx context.Context, registry Registry) (Registry, error)
 	return result, checkContext(ctx)
 }
 
+func validateRegistryServer(server Server, project bool) error {
+	if !project {
+		return validateServer(server)
+	}
+	return validateProjectServer(server)
+}
+
+func registryServerValueSize(server Server) int {
+	total := len(server.Name) + len(server.Command)
+	for i := 0; i < len(server.Args) && i < MaxArgs; i++ {
+		total += len(server.Args[i])
+	}
+	return total
+}
+
 func validateServer(server Server) error {
-	if !serverName(server.Name) {
-		return errors.New("server name requires 1..64 ASCII letters, digits, underscores or hyphens and a letter first")
+	if err := validateServerValues(server); err != nil {
+		return err
 	}
 	if !literal(server.Command) || !filepath.IsAbs(server.Command) || filepath.Clean(server.Command) != server.Command {
 		return errors.New("server command requires a clean absolute literal executable path")
+	}
+	return nil
+}
+
+func validateProjectServer(server Server) error {
+	if err := validateServerValues(server); err != nil {
+		return err
+	}
+	if server.Command != "praetorctl" {
+		return errors.New("project command must be the allow-listed PATH name praetorctl")
+	}
+	return nil
+}
+
+func validateServerValues(server Server) error {
+	if !serverName(server.Name) {
+		return errors.New("server name requires 1..64 ASCII letters, digits, underscores or hyphens and a letter first")
 	}
 	if len(server.Args) > MaxArgs {
 		return errors.New("server exceeds 64 arguments")

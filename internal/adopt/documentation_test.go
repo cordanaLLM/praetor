@@ -14,7 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestAdoptionDocumentationGatePositive(t *testing.T) {

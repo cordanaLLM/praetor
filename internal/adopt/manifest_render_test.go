@@ -8,7 +8,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // priorManifestFixture is a manifest an earlier adoption wrote (yaml.Marshal's text). Its

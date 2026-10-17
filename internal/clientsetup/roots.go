@@ -118,6 +118,10 @@ var globalRoots = map[Client]globalRoot{
 		segments:    []string{".claude"},
 		relocations: []relocation{{variable: "CLAUDE_CONFIG_DIR", verified: true}},
 	},
+	ClaudeLocal: {
+		segments:    []string{".claude"},
+		relocations: []relocation{{variable: "CLAUDE_CONFIG_DIR", verified: true}},
+	},
 	// cline/cline sdk/packages/shared/src/storage/paths.ts resolveClineDir:
 	// CLINE_DIR, else <home>/.cline; settings live under its data directory.
 	Cline: {

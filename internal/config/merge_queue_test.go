@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // Positive: the repository override declares a merge queue and CodeQL default setup, and the

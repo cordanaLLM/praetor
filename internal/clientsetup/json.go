@@ -69,6 +69,126 @@ func mergeJSON(ctx context.Context, registry Registry, client Client, existing [
 	return marshalJSON(root)
 }
 
+func mergeClaudeLocal(ctx context.Context, registry Registry, project string, existing []byte) ([]byte, error) {
+	root := bytes.Clone(existing)
+	if len(root) == 0 {
+		root = []byte(`{}`)
+	}
+	if err := clientjson.Validate(ctx, root); err != nil {
+		return nil, err
+	}
+	projects, hasProjects, err := objectMember(root, "projects")
+	if err != nil {
+		return nil, err
+	}
+	if !hasProjects {
+		projects = []byte(`{}`)
+	}
+	mergedProjects, changed, err := mergeClaudeLocalProjects(ctx, registry, project, projects, hasProjects)
+	if err != nil {
+		return nil, err
+	}
+	if !changed && hasProjects {
+		return bytes.Clone(existing), nil
+	}
+	return updateJSONMember(root, "projects", mergedProjects, hasProjects)
+}
+
+func mergeClaudeLocalProjects(ctx context.Context, registry Registry, project string, projects []byte, hasProjects bool) ([]byte, bool, error) {
+	projectBytes, hasProject, err := objectMember(projects, project)
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasProject {
+		projectBytes = []byte(`{}`)
+	}
+	mergedProject, changed, err := mergeClaudeLocalProject(ctx, registry, projectBytes, hasProject)
+	if err != nil {
+		return nil, false, err
+	}
+	if !changed && hasProject {
+		return bytes.Clone(projects), false, nil
+	}
+	updated, err := updateJSONMember(projects, project, mergedProject, hasProject)
+	return updated, true, err
+}
+
+func mergeClaudeLocalProject(ctx context.Context, registry Registry, project []byte, hasProject bool) ([]byte, bool, error) {
+	servers, hasServers, err := objectMember(project, "mcpServers")
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasServers {
+		servers = []byte(`{}`)
+	}
+	merged, changed, err := mergeOrderedJSONServers(ctx, registry, servers)
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasServers {
+		changed = true
+	}
+	if !hasProject {
+		changed = true
+	}
+	if !changed {
+		return bytes.Clone(project), false, nil
+	}
+	updated, err := updateJSONMember(project, "mcpServers", merged, hasServers)
+	return updated, true, err
+}
+
+func updateJSONMember(raw []byte, name string, value []byte, exists bool) ([]byte, error) {
+	if exists {
+		return clientjson.ReplaceMember(raw, name, value)
+	}
+	return clientjson.AppendMember(raw, name, value)
+}
+
+func objectMember(raw []byte, name string) ([]byte, bool, error) {
+	object, err := clientjson.DecodeObject(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	value, found := object.Get(name)
+	return value, found, nil
+}
+
+func mergeOrderedJSONServers(ctx context.Context, registry Registry, raw []byte) ([]byte, bool, error) {
+	if err := clientjson.Validate(ctx, raw); err != nil {
+		return nil, false, err
+	}
+	changed := false
+	for _, server := range registry.Servers {
+		if err := checkContext(ctx); err != nil {
+			return nil, false, err
+		}
+		current, exists, err := objectMember(raw, server.Name)
+		if err != nil {
+			return nil, false, err
+		}
+		if exists {
+			if !matchingJSONServer(current, ClaudeLocal, server) {
+				return nil, false, fmt.Errorf("%w: %s", ErrConflict, server.Name)
+			}
+			continue
+		}
+		encoded, encodeErr := marshalJSON(serverFields(server, ClaudeLocal))
+		if encodeErr != nil {
+			return nil, false, encodeErr
+		}
+		raw, err = clientjson.AppendMember(raw, server.Name, encoded)
+		if err != nil {
+			return nil, false, err
+		}
+		changed = true
+	}
+	if !changed {
+		return bytes.Clone(raw), false, nil
+	}
+	return raw, changed, nil
+}
+
 func mergeJSONServers(registry Registry, client Client, servers map[string]jsontext.Value) (bool, error) {
 	changed := false
 	for _, server := range registry.Servers {
@@ -93,7 +213,7 @@ func serverFields(server Server, client Client) map[string]any {
 		return map[string]any{"type": "local", "command": append([]string{server.Command}, server.Args...)}
 	}
 	fields := map[string]any{"command": server.Command, "args": server.Args}
-	if client == Claude {
+	if client == Claude || client == ClaudeLocal {
 		fields["type"] = "stdio"
 	}
 	return fields

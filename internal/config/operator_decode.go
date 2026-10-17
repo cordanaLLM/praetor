@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // OperatorSetting is one decoded key of an operator section (operatorSectionNames). Path is

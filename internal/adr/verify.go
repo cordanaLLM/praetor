@@ -15,7 +15,8 @@ import (
 )
 
 const (
-	recordDirectory        = "docs/adr"
+	// RecordDirectory is the canonical root for repository ADR records.
+	RecordDirectory        = "docs/adr"
 	maxRecords             = 4096
 	maxDecisionConstraints = 16384
 	maxScanFiles           = 20000
@@ -68,7 +69,7 @@ func Verify(ctx context.Context, repoPath string) (*Report, error) {
 
 // loadConstraints reads every decision record and returns the constraints they declare.
 func loadConstraints(ctx context.Context, repoPath string) (_ []Constraint, records int, err error) {
-	root, err := contextopt.OpenDirectoryIn(ctx, repoPath, recordDirectory)
+	root, err := contextopt.OpenDirectoryIn(ctx, repoPath, RecordDirectory)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, nil
 	}
@@ -84,9 +85,9 @@ func loadConstraints(ctx context.Context, repoPath string) (_ []Constraint, reco
 	for i := 0; i < len(names) && i < maxRecords; i++ {
 		data, readErr := contextopt.ReadRootSnapshot(ctx, root, names[i])
 		if readErr != nil {
-			return nil, 0, fmt.Errorf("%s/%s: %w", recordDirectory, names[i], readErr)
+			return nil, 0, fmt.Errorf("%s/%s: %w", RecordDirectory, names[i], readErr)
 		}
-		parsed, parseErr := Parse(path.Join(recordDirectory, names[i]), data)
+		parsed, parseErr := Parse(path.Join(RecordDirectory, names[i]), data)
 		if parseErr != nil {
 			return nil, 0, parseErr
 		}

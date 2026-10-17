@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/adoptclients"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 	"github.com/cordanaLLM/praetor/internal/mcp"
@@ -122,13 +123,14 @@ func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.To
 	defer cancel()
 
 	report, err := adopt.Adopt(adoptCtx, adopt.AdoptOptions{
-		Path:           a.path,
-		Profile:        a.profile,
-		Facets:         a.facets,
-		LockSourceRoot: a.sourceRoot,
-		DryRun:         a.dryRun,
-		Force:          a.force,
-		RecordBaseline: a.recordBase,
+		Path:                 a.path,
+		Profile:              a.profile,
+		Facets:               a.facets,
+		LockSourceRoot:       a.sourceRoot,
+		DryRun:               a.dryRun,
+		Force:                a.force,
+		RecordBaseline:       a.recordBase,
+		DecisionMCPReconcile: adoptclients.ReconcileAsDecided,
 	})
 	if err != nil {
 		var details mcpTextBuilder

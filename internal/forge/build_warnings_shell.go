@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/ghworkflow"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // How MeasureBuildWarnings reads one run: script: its fields (scriptFields) are cut into

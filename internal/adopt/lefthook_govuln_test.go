@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // plainGovulncheckRenderings are the renderings under testdata/lefthook whose pre-push security job

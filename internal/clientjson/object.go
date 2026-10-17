@@ -88,6 +88,49 @@ func ReplaceMember(raw []byte, name string, value jsontext.Value) ([]byte, error
 	return nil, fmt.Errorf("%w: %q", errNoMember, name)
 }
 
+// AppendMember inserts a new member immediately before an object's closing brace and keeps all
+// existing bytes, including member order, whitespace, escapes, and number spellings.
+func AppendMember(raw []byte, name string, value jsontext.Value) ([]byte, error) {
+	if !value.IsValid() || !jsontext.Value(raw).IsValid() {
+		return nil, errNotObject
+	}
+	object, _, err := decodeMembers(raw)
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := object.Get(name); exists {
+		return nil, errNoMember
+	}
+	decoder := jsontext.NewDecoder(bytes.NewReader(raw))
+	for i := 0; i <= len(raw); i++ {
+		token, readErr := decoder.ReadToken()
+		if readErr != nil {
+			return nil, errNotObject
+		}
+		// Only the object's own closing brace ends the walk: a nested object closes first and
+		// leaves the decoder one level deeper (StackDepth 1), the outer close leaves it at 0.
+		if token.Kind() == '}' && decoder.StackDepth() == 0 {
+			close := int(decoder.InputOffset()) - 1
+			key, marshalErr := json.Marshal(name)
+			if marshalErr != nil {
+				return nil, errEncode
+			}
+			separator := []byte("")
+			if len(object) > 0 {
+				separator = []byte(",")
+			}
+			out := make([]byte, 0, len(raw)+len(key)+len(value)+4)
+			out = append(out, raw[:close]...)
+			out = append(out, separator...)
+			out = append(out, key...)
+			out = append(out, ':')
+			out = append(out, value...)
+			return append(out, raw[close:]...), nil
+		}
+	}
+	return nil, errNotObject
+}
+
 // errNoMember refuses a ReplaceMember of a member the object does not hold.
 var errNoMember = errors.New("JSON object has no such member")
 

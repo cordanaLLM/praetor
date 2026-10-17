@@ -37,7 +37,7 @@ var pytestConfigFiles = [...]pytestConfigFile{
 	{name: ".pytest.toml"},
 	{name: "pytest.ini"},
 	{name: ".pytest.ini"},
-	{name: "pyproject.toml", tables: []string{"tool.pytest", "tool.pytest.ini_options"}},
+	{name: "pyproject.toml", tables: []string{"tool.pytest.ini_options", "tool.pytest"}},
 	{name: "tox.ini", sections: []string{"pytest"}, optional: true},
 	{name: "setup.cfg", sections: []string{"tool:pytest"}, optional: true},
 }
@@ -77,49 +77,85 @@ func pytestOptionalMarker(rel string) bool {
 // and, where the file needs one, the table or section that makes it pytest's, such as
 // "pyproject.toml [tool.pytest.ini_options]". It reports false when no file pytest reads holds
 // pytest configuration.
-func pytestConfiguration(inputs verificationInputs) (string, bool) {
+func pytestConfiguration(inputs verificationInputs) (string, bool, error) {
 	for _, candidate := range pytestConfigFiles {
 		data, ok := inputs.files[candidate.name]
 		if !ok {
 			continue
 		}
 		if len(candidate.tables) == 0 && len(candidate.sections) == 0 {
-			return candidate.name, true
+			return candidate.name, true, nil
 		}
-		if header, found := pytestHeader(string(data), candidate); found {
-			return candidate.name + " " + header, true
+		header, found, err := pytestHeader(string(data), candidate)
+		if err != nil {
+			return "", false, err
+		}
+		if found {
+			return candidate.name + " " + header, true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
-// pytestHeader returns the first header in data that makes it pytest configuration: one of
-// candidate's TOML tables, read by util.TOMLTableName, or one of its INI sections, read as the
-// iniconfig parser pytest uses reads a section line (iniSectionName). Like util.TOMLTableName it
-// reads each line's shape and is not a parser: a table written only as dotted keys under [tool]
-// is not seen, and a header-shaped line inside a multi-line string is. The metadata byte bound
-// caps data, and so the number of lines read.
-func pytestHeader(data string, candidate pytestConfigFile) (string, bool) {
-	lines := strings.Split(data, "\n")
-	for _, line := range lines {
-		if name, ok := tomlTableHeader(line); ok && slices.Contains(candidate.tables, name) {
-			return "[" + name + "]", true
+// pytestHeader reads candidate's TOML tables with the TOML parser and INI sections by their
+// section syntax. The verification input byte bound caps both reads.
+func pytestHeader(data string, candidate pytestConfigFile) (string, bool, error) {
+	if len(candidate.tables) > 0 {
+		var document map[string]any
+		if err := util.DecodeTOML(candidate.name, []byte(data), &document); err != nil {
+			return "", false, err
 		}
+		for _, name := range candidate.tables {
+			if tomlHasTable(document, name) {
+				return "[" + name + "]", true, nil
+			}
+		}
+	}
+	for _, line := range strings.Split(data, "\n") {
 		if name, ok := iniSectionName(line); ok && slices.Contains(candidate.sections, name) {
-			return "[" + name + "]", true
+			return "[" + name + "]", true, nil
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
-// tomlTableHeader returns the name of the standard table line opens; an array-of-tables header
-// ([[name]]) and any other line open none.
-func tomlTableHeader(line string) (string, bool) {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "[[") {
-		return "", false
+// tomlHasTable checks a dotted path in a parsed TOML document.
+func tomlHasTable(document map[string]any, dotted string) bool {
+	var current any = document
+	segments := strings.Split(dotted, ".")
+	if len(segments) > 16 {
+		return false
 	}
-	return util.TOMLTableName(trimmed), true
+	for index := 0; index < len(segments) && index < 16; index++ {
+		table, ok := current.(map[string]any)
+		if !ok {
+			return false
+		}
+		current = table[segments[index]]
+	}
+	table, ok := current.(map[string]any)
+	return ok && tomlTableHasDirectValue(table)
+}
+
+// tomlTableHasDirectValue rejects a candidate reached only through a child subtable.
+func tomlTableHasDirectValue(table map[string]any) bool {
+	if len(table) == 0 {
+		return true
+	}
+	keys := make([]string, 0, len(table))
+	for key := range table {
+		if len(keys) >= maxVerificationInputBytes {
+			return false
+		}
+		keys = append(keys, key)
+	}
+	for index := 0; index < len(keys) && index < maxVerificationInputBytes; index++ {
+		value := table[keys[index]]
+		if _, nested := value.(map[string]any); !nested {
+			return true
+		}
+	}
+	return false
 }
 
 // iniSectionName returns the section a line of an INI file opens, as pytest's iniconfig parser

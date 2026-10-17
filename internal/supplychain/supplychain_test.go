@@ -36,15 +36,20 @@ func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 	if len(bom.Components) == 0 {
 		t.Fatal("expected at least one component parsed from this repository's go.mod, got 0")
 	}
-	found := false
+	found, foundTOML := false, false
 	for _, c := range bom.Components {
-		if c.Name == "gopkg.in/yaml.v3" {
+		if c.Name == "go.yaml.in/yaml/v3" {
 			found = true
-			break
+		}
+		if c.Name == "github.com/pelletier/go-toml/v2" {
+			foundTOML = true
 		}
 	}
 	if !found {
-		t.Errorf("expected gopkg.in/yaml.v3 among parsed components, got %+v", bom.Components)
+		t.Errorf("expected go.yaml.in/yaml/v3 among parsed components, got %+v", bom.Components)
+	}
+	if !foundTOML {
+		t.Errorf("expected github.com/pelletier/go-toml/v2 among parsed components, got %+v", bom.Components)
 	}
 
 	// The metadata component must describe the repository actually scanned, never a
