@@ -59,8 +59,9 @@ func auditAgentDefinitions(ctx context.Context, manifest *config.Manifest, rootD
 	}
 	if n := len(problems); n > 0 {
 		return fmt.Errorf("[FAIL] %s holds personas whose front matter does not decode (%d): %s; each persona "+
-			"opens with a YAML front matter block declaring %s", compiler.CanonicalAgentsRel, n,
-			listPersonaProblems(problems), strings.Join(compiler.PersonaRequiredKeys, " and "))
+			"opens with a YAML front matter block declaring %s and %s (%s)", compiler.CanonicalAgentsRel, n,
+			listPersonaProblems(ctx, rootDir, problems), strings.Join(compiler.PersonaRequiredKeys, ", "),
+			compiler.PersonaModelKey, compiler.PersonaAllowedModels)
 	}
 	fmt.Printf("[PASS] Agent definitions verified (%d agents registered).\n", len(inventory.Personas))
 	return nil
@@ -82,10 +83,14 @@ func describeAgentInventory(inventory compiler.AgentInventory) string {
 
 // listPersonaProblems names at most maxReportedAgentEntries personas with what is wrong with
 // each, and says how many more there are.
-func listPersonaProblems(problems []compiler.PersonaFrontMatterProblem) string {
+func listPersonaProblems(ctx context.Context, rootDir string, problems []compiler.PersonaFrontMatterProblem) string {
 	parts := make([]string, 0, maxReportedAgentEntries+1)
 	for i := 0; i < len(problems) && i < maxReportedAgentEntries; i++ {
-		parts = append(parts, fmt.Sprintf("%s (%s)", problems[i].Rel, problems[i].Problem))
+		problem := problems[i].Problem
+		if problems[i].ModelTier {
+			problem += "; " + adopt.PersonaModelTierRemedy(ctx, rootDir, problems[i].Rel)
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", problems[i].Rel, problem))
 	}
 	if more := len(problems) - maxReportedAgentEntries; more > 0 {
 		parts = append(parts, fmt.Sprintf("and %d more", more))
