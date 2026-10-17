@@ -16,9 +16,11 @@ The repository's `AGENTS.md` and compiled vendor context provide the same
 fallback instructions to supported agent environments. Context projection is
 configuration delivery; it is not lifecycle enforcement.
 
-Native Stop/AfterAgent first requires `agent-state-stop` to verify that the
-existing private ledger has a fresh state snapshot. This calls the shared CLI
-through the Git-hook entry point and requires its structured success marker.
+Native Stop/AfterAgent first verifies that the existing private ledger has a
+fresh state snapshot and passes `state audit`. The engine does this in Go
+(`evaluateStopLedger`); the no-engine fallback adapter calls the shared
+`agent-state-stop` job through the Git-hook entry point and requires its
+structured success marker.
 Missing, malformed, stale, or unverifiable state requests continuation even when
 checkpoint publication policy is disabled. Repair the ledger and run
 `praetorctl state sync .` before retrying. Stop does not silently synchronize it.

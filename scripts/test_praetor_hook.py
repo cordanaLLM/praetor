@@ -45,6 +45,8 @@ usage: praetorctl hook <client> <event>
   praetorctl hook agy pre-tool
   praetorctl hook agy stop
 """
+# An engine that predates the stop rows serves none of them.
+NO_STOP = b"".join(line + b"\n" for line in OLD_LISTING.splitlines() if not line.endswith(b" stop"))
 NEW_LISTING = OLD_LISTING + (b"  praetorctl hook claude pre-dispatch\n  praetorctl hook codex post-return\n"
                              b"  praetorctl hook agy pre-dispatch\n")
 
@@ -153,6 +155,59 @@ class Launcher(unittest.TestCase):
                 self.assertIn("usage: praetor_hook.py <client> <event>", stderr)
                 self.assertEqual((engines.calls, self.stdout), ([], ""))
 
+    def adapter(self):
+        path = self.root / ".config" / "agent" / "hooks" / "checkpoint.py"
+        path.parent.mkdir(parents=True)
+        path.write_text("")
+        return str(path)
+
+    def test_stop_without_an_engine_falls_back_to_the_checkpoint_adapter(self):
+        adapter = self.adapter()
+        for pair in (["claude", "stop"], ["codex", "stop"], ["gemini", "stop"]):
+            for exit_code in (0, 2):
+                with self.subTest(pair=pair, exit=exit_code):
+                    engines = FakeEngines({self.installed: NO_STOP},
+                                          exits={sys.executable: exit_code})
+                    code, stderr = self.launch(pair, engines)
+                    self.assertEqual(code, exit_code, "the adapter's verdict reaches the client")
+                    self.assertEqual(engines.calls[-1], [sys.executable, "-B", adapter])
+                    self.assertEqual(stderr.count("\n"), 1, stderr)
+                    self.assertIn("falling back to checkpoint.py", stderr)
+                    self.assertEqual(self.stdout, "")
+
+    def test_stop_fallback_waits_for_the_adapters_own_backstop(self):
+        seen = []
+
+        def run(argv, **kwargs):
+            seen.append(kwargs["timeout"])
+            return subprocess.CompletedProcess(argv, 0)
+
+        LAUNCHER.serve("checkpoint.py", ["claude", "stop"], run, ["python3", "checkpoint.py"])
+        self.assertEqual(seen.pop(), LAUNCHER.STOP_FALLBACK_TIMEOUT)
+        self.assertGreater(LAUNCHER.STOP_FALLBACK_TIMEOUT, LAUNCHER.STOP_RUN_TIMEOUT)
+
+    def test_stop_fallback_is_not_taken_when_an_engine_serves_or_the_pair_is_not_stop(self):
+        self.adapter()
+        engines = FakeEngines({self.installed: NEW_LISTING}, exits={self.installed: 2})
+        code, stderr = self.launch(["claude", "stop"], engines)
+        self.assertEqual((code, stderr), (2, ""))
+        self.assertEqual(engines.served(), [[self.installed, "hook", "claude", "stop"]])
+        engines = FakeEngines({self.installed: OLD_LISTING})
+        code, stderr = self.launch(PAIR, engines)
+        self.assertEqual(code, 0)
+        self.assertIn("gate unenforced", stderr)
+        self.assertNotIn(sys.executable, [call[0] for call in engines.calls])
+
+    def test_stop_without_engine_or_adapter_and_agy_stop_stay_stated_skips(self):
+        engines = FakeEngines({})
+        code, stderr = self.launch(["claude", "stop"], engines, installed=False)
+        self.assertEqual(code, 0)
+        self.assertIn("gate unenforced", stderr)
+        self.adapter()
+        code, stderr = self.launch(["agy", "stop"], FakeEngines({self.installed: NO_STOP}))
+        self.assertEqual((code, self.stdout), (0, "{}\n"))
+        self.assertIn("gate unenforced", stderr)
+
     def test_missing_engine_is_a_stated_skip(self):
         stdin = io.BytesIO(b'{"payload": true}')
         stderr = io.StringIO()
@@ -197,6 +252,20 @@ class Launcher(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn("praetor hook: " + self.installed, stderr)
                 self.assertEqual(self.stdout, "")
+
+    def test_stop_pair_waits_the_stop_timeout_and_every_other_pair_the_run_timeout(self):
+        seen = []
+
+        def run(argv, **kwargs):
+            seen.append(kwargs["timeout"])
+            return subprocess.CompletedProcess(argv, 0)
+
+        for pair, want in ((["claude", "stop"], LAUNCHER.STOP_RUN_TIMEOUT),
+                           (["codex", "stop"], LAUNCHER.STOP_RUN_TIMEOUT),
+                           (["claude", "pre-dispatch"], LAUNCHER.RUN_TIMEOUT)):
+            LAUNCHER.serve("praetorctl", pair, run)
+            self.assertEqual(seen.pop(), want, pair)
+        self.assertNotEqual(LAUNCHER.STOP_RUN_TIMEOUT, LAUNCHER.RUN_TIMEOUT)
 
     def test_agy_engine_that_hangs_or_vanishes_is_an_allow_not_a_block(self):
         for error in (subprocess.TimeoutExpired("praetorctl", LAUNCHER.RUN_TIMEOUT), FileNotFoundError("gone")):
