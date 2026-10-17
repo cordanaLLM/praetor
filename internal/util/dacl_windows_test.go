@@ -101,4 +101,32 @@ func TestOwnerOnlyEntries_3D(t *testing.T) {
 	if _, _, err := ownerOnlyEntries("O:BA", sid); err == nil {
 		t.Error("a descriptor without a DACL was judged")
 	}
+	// Boundary: the system writes the built-in Administrator (RID 500), the account a CI runner
+	// may run as, under its alias LA; the entry is the user's only when that alias is passed in.
+	const admin = "D:P(A;;FA;;;LA)(A;;FA;;;SY)(A;;FA;;;BA)"
+	if got, other, err := ownerOnlyEntries(admin, "S-1-5-21-1-2-3-500"); err != nil || got || other != "LA" {
+		t.Errorf("LA without its alias: owner-only=%v other=%q err=%v, want false and LA", got, other, err)
+	}
+	if got, _, err := ownerOnlyEntries(admin, "S-1-5-21-1-2-3-500", "LA"); err != nil || !got {
+		t.Errorf("LA with its alias: owner-only=%v err=%v, want true", got, err)
+	}
+}
+
+// userTrustee reads the name back the way the system writes it: SYSTEM is always SY, and the
+// current account gets a name that ownerOnlyEntries accepts for a DACL naming only it.
+func TestUserTrustee_Windows(t *testing.T) {
+	if got, err := userTrustee("S-1-5-18"); err != nil || got != "SY" {
+		t.Fatalf("userTrustee(SYSTEM) = %q, %v, want SY", got, err)
+	}
+	sid, err := currentUserSID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias, err := userTrustee(sid)
+	if err != nil || alias == "" {
+		t.Fatalf("userTrustee(current) = %q, %v", alias, err)
+	}
+	if got, other, err := ownerOnlyEntries("D:P(A;;FA;;;"+alias+")", sid, alias); err != nil || !got {
+		t.Errorf("the current account under %q: owner-only=%v other=%q err=%v", alias, got, other, err)
+	}
 }

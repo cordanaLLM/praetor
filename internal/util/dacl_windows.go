@@ -116,7 +116,7 @@ func setNamedDACL(path, sddl string) error {
 	return withDACL(sddl, func(dacl uintptr) error {
 		// SAFETY: name is the NUL-terminated UTF-16 path UTF16PtrFromString returned, kept alive
 		// by the closure and converted inside the call expression (unsafe.Pointer rule 4).
-		if code, _, _ := procSetNamedSecurityInfo.Call(uintptr(unsafe.Pointer(name)), seFileObject, info,
+		if code, _, _ := procSetNamedSecurityInfo.Call(uintptr(unsafe.Pointer(name)), seFileObject, info, //nolint:errcheck // the API returns its error as the result code, checked below
 			0, 0, dacl, 0); code != 0 {
 			return fmt.Errorf("util: set DACL of %q: %w", path, syscall.Errno(code))
 		}
@@ -140,7 +140,7 @@ func restrictToOwner(file *os.File, dir bool) error {
 	}
 	defer syscall.CloseHandle(handle) //nolint:errcheck // handle only carries WRITE_DAC
 	return withDACL(sddl, func(dacl uintptr) error {
-		if code, _, _ := procSetSecurityInfo.Call(uintptr(handle), seFileObject,
+		if code, _, _ := procSetSecurityInfo.Call(uintptr(handle), seFileObject, //nolint:errcheck // the API returns its error as the result code, checked below
 			daclSecurityInformation|protectedDaclSecurityInformation, 0, 0, dacl, 0); code != 0 {
 			return fmt.Errorf("util: set owner-only DACL of %q: %w", file.Name(), syscall.Errno(code))
 		}
@@ -206,17 +206,23 @@ func namedDACLString(path string) (string, error) {
 	var dacl, sd uintptr
 	// SAFETY: name is the NUL-terminated UTF-16 path UTF16PtrFromString returned; dacl and sd are
 	// locals the call writes, all converted inside the call expression (unsafe.Pointer rule 4).
-	if code, _, _ := procGetNamedSecurityInfo.Call(uintptr(unsafe.Pointer(name)), seFileObject,
+	if code, _, _ := procGetNamedSecurityInfo.Call(uintptr(unsafe.Pointer(name)), seFileObject, //nolint:errcheck // the API returns its error as the result code, checked below
 		daclSecurityInformation, 0, 0, uintptr(unsafe.Pointer(&dacl)), 0, uintptr(unsafe.Pointer(&sd))); code != 0 {
 		return "", fmt.Errorf("util: read DACL of %q: %w", path, syscall.Errno(code))
 	}
 	defer syscall.LocalFree(syscall.Handle(sd)) //nolint:errcheck // frees the returned descriptor
+	return formatDACL(sd, path)
+}
+
+// formatDACL returns the DACL of the security descriptor sd in SDDL form, the way the system
+// writes it: a well-known account appears under its alias. what names sd in an error.
+func formatDACL(sd uintptr, what string) (string, error) {
 	var text *uint16
 	// SAFETY: text is a local the call writes the address of a LocalAlloc'ed string into,
 	// converted inside the call expression (unsafe.Pointer rule 4).
 	if ok, _, callErr := procConvertSDToStringSD.Call(sd, sddlRevision1, daclSecurityInformation,
 		uintptr(unsafe.Pointer(&text)), 0); ok == 0 {
-		return "", fmt.Errorf("util: format DACL of %q: %w", path, callErr)
+		return "", fmt.Errorf("util: format DACL of %q: %w", what, callErr)
 	}
 	// SAFETY: text was allocated by the system with LocalAlloc, which LocalFree takes back by its
 	// address as a handle; it is freed once, after the last read below.
@@ -253,12 +259,42 @@ func OwnerOnlyAccess(path string) (bool, string, error) {
 	if err != nil {
 		return false, "", err
 	}
-	return ownerOnlyEntries(sddl, sid)
+	alias, err := userTrustee(sid)
+	if err != nil {
+		return false, "", err
+	}
+	return ownerOnlyEntries(sddl, sid, alias)
 }
 
-// ownerOnlyEntries judges a DACL in SDDL form: every access-allowed entry must name sid,
-// SYSTEM (SY), the Administrators group (BA) or the owner rights (OW).
-func ownerOnlyEntries(sddl, sid string) (bool, string, error) {
+// userTrustee returns the name the system writes sid under in a DACL: its alias for a well-known
+// account, such as LA for the built-in Administrator a CI runner may run as, else sid itself.
+// It formats a one-entry DACL naming sid and reads the entry's trustee back.
+func userTrustee(sid string) (string, error) {
+	text, err := syscall.UTF16PtrFromString("D:(A;;FA;;;" + sid + ")")
+	if err != nil {
+		return "", err
+	}
+	var sd uintptr
+	// SAFETY: text is the NUL-terminated UTF-16 string UTF16PtrFromString returned and sd a
+	// local the call writes the descriptor address into; both are converted to uintptr inside
+	// the call expression, so they stay valid for the whole system call (unsafe.Pointer rule 4).
+	if ok, _, callErr := procConvertStringSDToSD.Call(uintptr(unsafe.Pointer(text)), sddlRevision1,
+		uintptr(unsafe.Pointer(&sd)), 0); ok == 0 {
+		return "", fmt.Errorf("util: convert the DACL naming %s: %w", sid, callErr)
+	}
+	defer syscall.LocalFree(syscall.Handle(sd)) //nolint:errcheck // frees the converted descriptor
+	rendered, err := formatDACL(sd, sid)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Split(strings.TrimSuffix(rendered, ")"), ";")
+	return fields[len(fields)-1], nil
+}
+
+// ownerOnlyEntries judges a DACL in SDDL form: every access-allowed entry must name one of user
+// (the account's SID and the alias the system writes it under), SYSTEM (SY), the Administrators
+// group (BA) or the owner rights (OW).
+func ownerOnlyEntries(sddl string, user ...string) (bool, string, error) {
 	body, ok := strings.CutPrefix(sddl, "D:")
 	if !ok {
 		return false, "", fmt.Errorf("util: %q is not a DACL", sddl)
@@ -266,7 +302,10 @@ func ownerOnlyEntries(sddl, sid string) (bool, string, error) {
 	if strings.HasPrefix(body, "NO_ACCESS_CONTROL") {
 		return false, "everyone (null DACL)", nil
 	}
-	allowed := map[string]bool{sid: true, "SY": true, "BA": true, "OW": true}
+	allowed := map[string]bool{"SY": true, "BA": true, "OW": true}
+	for i := 0; i < len(user) && i <= maxDACLEntries; i++ {
+		allowed[user[i]] = true
+	}
 	entries := strings.Split(body, "(")
 	for i := 1; i < len(entries) && i <= maxDACLEntries; i++ {
 		fields := strings.Split(strings.TrimSuffix(entries[i], ")"), ";")
